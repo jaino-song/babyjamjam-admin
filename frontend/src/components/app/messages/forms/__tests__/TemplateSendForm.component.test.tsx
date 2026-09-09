@@ -4,8 +4,10 @@
  *
  * Pure-helper unit tests live in TemplateSendForm.test.ts — do NOT merge them here.
  */
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { createProblemDetails } from "@babyjamjam/shared";
 import { useQueryClient } from "@tanstack/react-query";
+import { StrictMode } from "react";
 
 import type { MessageLogRecord } from "@/features/message-triggers/types";
 import { messageTriggerKeys } from "@/features/message-triggers/hooks/keys";
@@ -176,7 +178,7 @@ function buildSendSuccess() {
     provider: "aligo_sms" as const,
     triggerType: "immediate" as const,
     request: { receiver: "", msgType: "SMS" as const, testMode: false },
-    result: { resultCode: 1, message: "success", errorCount: 0 },
+    result: { resultCode: 1, message: "success", successCount: 1, errorCount: 0 },
   };
 }
 
@@ -508,9 +510,9 @@ describe("A: partial-failure send keeps only failed recipients in queue", () => 
       '[data-component="desktop_messages_sections_template-send-form_feedback"]',
     );
 
-    // Feedback must mention both 발송 완료 and 실패 (partial summary).
-    expect(feedback?.textContent).toContain("발송 완료");
-    expect(feedback?.textContent).toContain("실패");
+    expect(feedback?.textContent).toContain("1건 발송 요청을 접수했어요");
+    expect(feedback?.textContent).toContain("작업 상태를 확인해 주세요");
+    expect(submitButton).toBeDisabled();
 
     // Only the FAILED recipient (010-2222-2222) must remain in the queue.
     // The succeeded recipient (010-1111-1111) must be gone.
@@ -555,8 +557,9 @@ describe("A: partial-failure send keeps only failed recipients in queue", () => 
     const feedback = document.querySelector(
       '[data-component="desktop_messages_sections_template-send-form_feedback"]',
     );
-    expect(feedback?.textContent).toContain("발송 완료");
-    expect(feedback?.textContent).toContain("실패");
+    expect(feedback?.textContent).toContain("1건 발송 요청을 접수했어요");
+    expect(feedback?.textContent).toContain("작업 상태를 확인해 주세요");
+    expect(screen.getByRole("button", { name: /즉시 발송/ })).toBeDisabled();
 
     const remainingPills = document.querySelectorAll(
       '[data-component="desktop_messages_sections_template-send-form-recipient"]',
@@ -685,5 +688,186 @@ describe("B: editing name for already-queued phone updates the pill in place", (
       expect(pills[0].textContent).toContain("김영희");
       expect(pills[0].textContent).not.toContain("김철수");
     });
+  });
+});
+
+describe("Phase2a SMS outcome state machine", () => {
+  it("locks malformed, transport, and legacy errors with safe status guidance", async () => {
+    const cases: Array<{ error?: unknown; response?: unknown }> = [
+      { response: { result: { resultCode: 1, successCount: 2, errorCount: 0 } } },
+      { error: new Error("Bearer secret; SELECT * FROM provider_tokens") },
+      { error: { isAxiosError: true, response: { status: 409, data: { message: "provider secret" } } } },
+    ];
+    for (const testCase of cases) {
+      cleanup();
+      jest.clearAllMocks();
+      mockEmptyHistory();
+      useFormStore.setState({ clientId: null, name: "", phone: "" });
+      renderInfoForm();
+      await queueRecipient("01011111111");
+      const submitButton = screen.getByRole("button", { name: /즉시 발송/ });
+
+      if (testCase.response) mockedSendSms.mockResolvedValueOnce(testCase.response as never);
+      else mockedSendSms.mockRejectedValueOnce(testCase.error);
+      fireEvent.click(submitButton);
+      await waitFor(() => expect(submitButton).toBeDisabled());
+      const feedback = document.querySelector(
+        '[data-component="desktop_messages_sections_template-send-form_feedback"]',
+      );
+      expect(feedback).toHaveTextContent("작업 상태를 확인해 주세요");
+      expect(feedback).not.toHaveTextContent("Bearer");
+      expect(feedback).not.toHaveTextContent("SELECT");
+      expect(feedback).not.toHaveTextContent("provider secret");
+      fireEvent.change(screen.getByTestId("autocomplete-휴대 전화번호"), {
+        target: { value: "01022222222" },
+      });
+      expect(feedback).toHaveTextContent("작업 상태를 확인해 주세요");
+      expect(mockedSendSms).toHaveBeenCalledTimes(1);
+    }
+  });
+  it("allows a verified NOT_APPLIED request to be submitted again", async () => {
+    renderInfoForm();
+    await queueRecipient("01011111111");
+    const problem = createProblemDetails({
+      code: "VALIDATION_FAILED",
+      requestId: "req-not-applied",
+      status: 422,
+      outcome: "NOT_APPLIED",
+    });
+    mockedSendSms
+      .mockRejectedValueOnce({ isAxiosError: true, response: { status: 422, data: problem } })
+      .mockResolvedValueOnce(buildSendSuccess());
+    const submitButton = screen.getByRole("button", { name: /즉시 발송/ });
+    fireEvent.click(submitButton);
+    await waitFor(() => expect(submitButton).toBeEnabled());
+    expect(document.querySelector('[data-component="desktop_messages_sections_template-send-form_feedback"]'))
+      .toHaveTextContent("수정한 뒤 다시 시도해 주세요");
+    expect(document.querySelector('[data-component="desktop_messages_sections_template-send-form_feedback_request-id"]'))
+      .toHaveTextContent("req-not-applied");
+
+    fireEvent.click(submitButton);
+    await waitFor(() => expect(mockedSendSms).toHaveBeenCalledTimes(2));
+    expect(document.querySelector('[data-component="desktop_messages_sections_template-send-form_feedback"]'))
+      .toHaveTextContent("메시지 발송 요청 1건을 접수했어요");
+  });
+  it("keeps accepted current input out of a NOT_APPLIED retry", async () => {
+    renderInfoForm();
+    await queueRecipient("01011111111");
+    await queueRecipient("01022222222");
+    const problem = createProblemDetails({
+      code: "VALIDATION_FAILED",
+      requestId: "req-not-applied",
+      status: 422,
+      outcome: "NOT_APPLIED",
+    });
+    mockedSendSms.mockImplementation((payload) => payload.receiver === "010-2222-2222"
+      ? Promise.resolve(buildSendSuccess())
+      : Promise.reject({ isAxiosError: true, response: { status: 422, data: problem } }));
+
+    const submitButton = screen.getByRole("button", { name: /즉시 발송/ });
+    fireEvent.click(submitButton);
+    await waitFor(() => expect(mockedSendSms).toHaveBeenCalledTimes(2));
+    expect(document.querySelectorAll('[data-component="desktop_messages_sections_template-send-form-recipient"]'))
+      .toHaveLength(1);
+    expect(document.querySelector('[data-component="desktop_messages_sections_template-send-form-recipient"]'))
+      .toHaveTextContent("010-1111-1111");
+    fireEvent.click(submitButton);
+    await waitFor(() => expect(mockedSendSms).toHaveBeenCalledTimes(3));
+    expect(mockedSendSms.mock.calls[2]?.[0]).toEqual(expect.objectContaining({ receiver: "010-1111-1111" }));
+  });
+  it("locks a mixed UNKNOWN and NOT_APPLIED outcome without retry copy", async () => {
+    const view = renderInfoForm();
+    await queueRecipient("01011111111");
+    await queueRecipient("01022222222");
+    const unknown = createProblemDetails({
+      code: "MESSAGE_SEND_UNCONFIRMED",
+      requestId: "req-unknown",
+      status: 502,
+      outcome: "UNKNOWN",
+    });
+    const notApplied = createProblemDetails({
+      code: "VALIDATION_FAILED",
+      requestId: "req-not-applied",
+      status: 422,
+      outcome: "NOT_APPLIED",
+    });
+    mockedSendSms.mockImplementation((payload) => payload.receiver === "010-1111-1111"
+      ? Promise.reject({ isAxiosError: true, response: { status: 502, data: unknown } })
+      : Promise.reject({ isAxiosError: true, response: { status: 422, data: notApplied } }));
+    const submitButton = screen.getByRole("button", { name: /즉시 발송/ });
+    fireEvent.click(submitButton);
+    await waitFor(() => expect(submitButton).toBeDisabled());
+    const feedback = document.querySelector('[data-component="desktop_messages_sections_template-send-form_feedback"]');
+    expect(feedback).toHaveTextContent("작업 상태를 확인해 주세요");
+    expect(feedback).not.toHaveTextContent("수정한 뒤 다시 시도해 주세요");
+    view.rerender(<TemplateSendForm templateId="builtin:service-feedback-link" templateName="제공기록지 작성 링크" message="안내 메시지입니다." deliveryMode="service-feedback-link" />);
+    view.rerender(<TemplateSendForm templateId="builtin:info" templateName="서비스 안내" message="안내 메시지입니다." />);
+    await waitFor(() => expect(screen.getByRole("button", { name: /즉시 발송/ })).toBeDisabled());
+    expect(document.querySelector('[data-component="desktop_messages_sections_template-send-form_feedback"]'))
+      .toHaveTextContent("작업 상태를 확인해 주세요");
+  });
+  it("guards same-tick submit and duplicate confirmation re-entry", async () => {
+    const record = buildHistoryRecord({ messageBody: "안내 메시지입니다." });
+    const refetch = jest.fn().mockResolvedValue({ data: [record] });
+    mockedUseMessageHistory.mockReturnValue({ data: [record], refetch } as never);
+    renderInfoForm();
+    await queueRecipient("01011111111");
+    mockedSendSms.mockResolvedValue(buildSendSuccess());
+    const submitButton = screen.getByRole("button", { name: /즉시 발송/ });
+
+    fireEvent.click(submitButton);
+    fireEvent.click(submitButton);
+    await waitFor(() => expect(screen.getByRole("button", { name: "전송" })).toBeInTheDocument());
+    expect(refetch).toHaveBeenCalledTimes(1);
+    expect(mockedSendSms).not.toHaveBeenCalled();
+    const approve = screen.getByRole("button", { name: "전송" });
+    fireEvent.click(approve);
+    fireEvent.click(approve);
+    await waitFor(() => expect(mockedSendSms).toHaveBeenCalledTimes(1));
+  });
+  it("does not send after editing while duplicate lookup is pending", async () => {
+    let resolveRefetch!: (value: { data: MessageLogRecord[] }) => void;
+    const refetch = jest.fn().mockImplementation(() => new Promise((resolve) => { resolveRefetch = resolve; }));
+    mockedUseMessageHistory.mockReturnValue({ data: [], refetch } as never);
+    renderInfoForm();
+    await queueRecipient("01011111111");
+    const submitButton = screen.getByRole("button", { name: /즉시 발송/ });
+    fireEvent.click(submitButton);
+    await waitFor(() => expect(refetch).toHaveBeenCalledTimes(1));
+    fireEvent.change(screen.getByTestId("autocomplete-휴대 전화번호"), {
+      target: { value: "01022222222" },
+    });
+    await act(async () => resolveRefetch({ data: [] }));
+    await waitFor(() => expect(submitButton).toBeEnabled());
+    expect(mockedSendSms).not.toHaveBeenCalled();
+  });
+  it("preserves a newer draft while a mixed provider response is pending", async () => {
+    let resolveUnknown!: (value: unknown) => void;
+    const unknown = new Promise((resolve) => { resolveUnknown = resolve; });
+    renderInfoForm();
+    await queueRecipient("01011111111");
+    await queueRecipient("01022222222");
+    mockedSendSms.mockImplementation((payload) => payload.receiver === "010-1111-1111"
+      ? Promise.resolve(buildSendSuccess()) : unknown as Promise<never>);
+    const submitButton = screen.getByRole("button", { name: /즉시 발송/ });
+    fireEvent.click(submitButton);
+    await waitFor(() => expect(mockedSendSms).toHaveBeenCalledTimes(2));
+    fireEvent.change(screen.getByTestId("autocomplete-휴대 전화번호"), { target: { value: "01033333333" } });
+    await act(async () => resolveUnknown(new Error("provider unavailable")));
+    await waitFor(() => expect(submitButton).toBeDisabled());
+    expect(screen.getByTestId("autocomplete-휴대 전화번호")).toHaveValue("01033333333");
+    expect(mockedSendSms).toHaveBeenCalledTimes(2);
+  });
+
+  it("restores the mounted guard during StrictMode effect replay", async () => {
+    render(
+      <StrictMode>
+        <TemplateSendForm templateId="builtin:info" templateName="서비스 안내" message="안내 메시지입니다." />
+      </StrictMode>,
+    );
+    await queueRecipient("01011111111");
+    mockedSendSms.mockResolvedValue(buildSendSuccess());
+    fireEvent.click(screen.getByRole("button", { name: /즉시 발송/ }));
+    await waitFor(() => expect(mockedSendSms).toHaveBeenCalledTimes(1));
   });
 });

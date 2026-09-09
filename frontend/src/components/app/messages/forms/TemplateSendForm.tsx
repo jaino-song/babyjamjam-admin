@@ -1,10 +1,15 @@
 "use client";
-import { getUserErrorMessage } from "@babyjamjam/shared";
+import {
+  getUserErrorMessage,
+  normalizeApiError,
+  resolveProblemPresentation,
+  type NormalizedApiError,
+} from "@babyjamjam/shared";
 
 
 import { isAxiosError } from "axios";
 import { useQueryClient } from "@tanstack/react-query";
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Calendar, Loader2, Send, X } from "lucide-react";
 
 import { ClientAutocomplete } from "@/components/app/clients/ClientAutocomplete";
@@ -70,6 +75,24 @@ interface DuplicateSendMatch {
   recipient: RecipientQueueItem;
   record: MessageLogRecord;
 }
+
+type SmsAttemptClassification = "accepted" | "not-applied" | "blocked";
+
+interface SmsAttemptResult {
+  recipient: RecipientQueueItem;
+  classification: SmsAttemptClassification;
+  normalized?: NormalizedApiError;
+}
+
+interface SmsSubmissionSnapshot {
+  recipients: RecipientQueueItem[];
+  templateId: string;
+  templateName: string;
+  message: string;
+  requiresRecipientName: boolean;
+}
+
+type SubmissionGuard = "idle" | "checking" | "awaiting-confirm" | "sending";
 
 interface TemplateSendFormProps {
   templateId: string;
@@ -179,6 +202,51 @@ export function findRecentDuplicateSend(
     })[0] ?? null;
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function isStrictSmsSuccess(value: unknown): boolean {
+  if (!isRecord(value) || !isRecord(value.result)) return false;
+
+  const { resultCode, successCount, errorCount } = value.result;
+  return typeof resultCode === "number"
+    && Number.isInteger(resultCode)
+    && resultCode === 1
+    && typeof successCount === "number"
+    && Number.isInteger(successCount)
+    && successCount === 1
+    && typeof errorCount === "number"
+    && Number.isInteger(errorCount)
+    && errorCount === 0;
+}
+
+function normalizeSmsFailure(error: unknown): NormalizedApiError {
+  return normalizeApiError(error, { locale: "ko-KR", operation: "mutation" });
+}
+
+function normalizeMalformedSmsResponse(value: unknown): NormalizedApiError {
+  return normalizeSmsFailure({ response: { status: 200, data: value } });
+}
+
+function withSmsStatusCheckGuidance(message: string): string {
+  const guidance = resolveProblemPresentation("ko-KR").checkStatus;
+  return message.includes(guidance) ? message : `${message} ${guidance}`;
+}
+
+function recipientsMatch(left: RecipientQueueItem[], right: RecipientQueueItem[]): boolean {
+  return left.length === right.length && left.every((item, index) => {
+    const other = right[index];
+    if (!other) return false;
+    return item.id === other.id
+      && item.clientId === other.clientId
+      && item.name === other.name
+      && item.phone === other.phone
+      && item.formattedPhone === other.formattedPhone
+      && item.message === other.message;
+  });
+}
+
 export function TemplateSendForm({
   templateId,
   templateName,
@@ -197,9 +265,22 @@ export function TemplateSendForm({
   const [selectedClientId, setSelectedClientId] = useState<number | null>(null);
   const [isSending, setIsSending] = useState(false);
   const [isCheckingDuplicate, setIsCheckingDuplicate] = useState(false);
-  const [feedback, setFeedback] = useState<{ tone: "success" | "error"; message: string } | null>(null);
+  const [feedback, setFeedback] = useState<{
+    tone: "success" | "error";
+    message: string;
+    requestId?: string;
+  } | null>(null);
   const [duplicateSendCandidates, setDuplicateSendCandidates] = useState<DuplicateSendMatch[] | null>(null);
   const [recipientQueue, setRecipientQueue] = useState<RecipientQueueItem[]>([]);
+  const [smsOutcomeLocked, setSmsOutcomeLocked] = useState(false);
+  const submissionGuardRef = useRef<SubmissionGuard>("idle");
+  const duplicateSubmissionRef = useRef<SmsSubmissionSnapshot | null>(null);
+  const mountedRef = useRef(true);
+  const feedbackRef = useRef<HTMLDivElement | null>(null);
+  const smsOutcomeLockedRef = useRef(false);
+  const smsLockedFeedbackRef = useRef<typeof feedback>(null);
+  const acceptedCurrentPhoneRef = useRef<string | null>(null);
+  const latestSmsSnapshotRef = useRef<SmsSubmissionSnapshot | null>(null);
   const { data: historyData = [], refetch: refetchHistory } = useMessageHistory();
   const {
     clientId,
@@ -280,6 +361,7 @@ export function TemplateSendForm({
       : null;
   const currentQueueItem = useMemo<RecipientQueueItem | null>(() => {
     if (isServiceRecordLinkDelivery) return null;
+    if (acceptedCurrentPhoneRef.current === recipientPhone) return null;
 
     if (recipientValidationMessage || templateFieldValidationMessage || messageValidationMessage) {
       return null;
@@ -313,8 +395,43 @@ export function TemplateSendForm({
   const isSubmitDisabled = Boolean(validationMessage)
     || (isServiceRecordLinkDelivery && !serviceRecordLinkPreparation)
     || isSending
-    || isCheckingDuplicate;
+    || isCheckingDuplicate
+    || (!isServiceRecordLinkDelivery && smsOutcomeLocked);
   const resolvedFormId = formId ?? `messages-template-send-form-${templateId.replace(/[^a-zA-Z0-9_-]/g, "-")}`;
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      submissionGuardRef.current = "idle";
+    };
+  }, []);
+
+  useEffect(() => {
+    if (isServiceRecordLinkDelivery || feedback?.tone !== "error") return;
+
+    const timer = window.setTimeout(() => {
+      feedbackRef.current?.focus({ preventScroll: true });
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [feedback, isServiceRecordLinkDelivery]);
+
+  useEffect(() => {
+    if (!isServiceRecordLinkDelivery && smsOutcomeLockedRef.current && smsLockedFeedbackRef.current && feedback !== smsLockedFeedbackRef.current) setFeedback(smsLockedFeedbackRef.current);
+  }, [feedback, isServiceRecordLinkDelivery]);
+
+  const clearFeedbackUnlessSmsLocked = () => {
+    if (!smsOutcomeLockedRef.current) {
+      setFeedback(null);
+    }
+  };
+
+  const lockSmsOutcome = () => {
+    if (!smsOutcomeLockedRef.current) {
+      smsOutcomeLockedRef.current = true;
+      setSmsOutcomeLocked(true);
+    }
+  };
 
   useEffect(() => {
     if (!currentQueueItem) return;
@@ -365,8 +482,9 @@ export function TemplateSendForm({
   };
 
   const handleRecipientChange = (clientId: number | null, client: Client | null) => {
+    acceptedCurrentPhoneRef.current = null;
     setSelectedClientId(clientId);
-    setFeedback(null);
+    clearFeedbackUnlessSmsLocked();
 
     if (!client) {
       setClientId(null);
@@ -377,29 +495,32 @@ export function TemplateSendForm({
   };
 
   const handleManualRecipientNameChange = (value: string) => {
+    acceptedCurrentPhoneRef.current = null;
     setSelectedClientId(null);
     setClientId(null);
     setName(value);
-    setFeedback(null);
+    clearFeedbackUnlessSmsLocked();
   };
 
   const handlePhoneChange = (value: string) => {
+    acceptedCurrentPhoneRef.current = null;
     setSelectedClientId(null);
     setClientId(null);
     setPhone(value);
     if (!requiresRecipientName) {
       setName("");
     }
-    setFeedback(null);
+    clearFeedbackUnlessSmsLocked();
   };
 
   const handleClearRecipient = ({ clearFeedback = true }: { clearFeedback?: boolean } = {}) => {
+    acceptedCurrentPhoneRef.current = null;
     setSelectedClientId(null);
     setClientId(null);
     setName("");
     setPhone("");
     if (clearFeedback) {
-      setFeedback(null);
+      clearFeedbackUnlessSmsLocked();
     }
   };
 
@@ -459,11 +580,14 @@ export function TemplateSendForm({
 
   const getRecipientsForSubmit = () => {
     if (recipientQueue.length > 0) {
-      if (currentQueueItem && !recipientQueue.some((item) => item.phone === currentQueueItem.phone)) {
-        return [...recipientQueue, currentQueueItem];
+      const queuedRecipients = acceptedCurrentPhoneRef.current
+        ? recipientQueue.filter((item) => item.phone !== acceptedCurrentPhoneRef.current)
+        : recipientQueue;
+      if (currentQueueItem && !queuedRecipients.some((item) => item.phone === currentQueueItem.phone)) {
+        return [...queuedRecipients, currentQueueItem];
       }
 
-      return recipientQueue;
+      return queuedRecipients;
     }
 
     if (currentQueueItem) return [currentQueueItem];
@@ -471,67 +595,122 @@ export function TemplateSendForm({
     return [];
   };
 
+  latestSmsSnapshotRef.current = {
+    recipients: getRecipientsForSubmit().map((recipient) => ({ ...recipient })),
+    templateId,
+    templateName,
+    message,
+    requiresRecipientName,
+  };
+
   const sendMessages = async (recipients: RecipientQueueItem[]) => {
+    if (smsOutcomeLockedRef.current) {
+      submissionGuardRef.current = "idle";
+      return;
+    }
     if (recipients.length === 0 || validationMessage) {
       setFeedback({ tone: "error", message: validationMessage ?? "발송할 수신자 정보를 입력해 주세요." });
+      submissionGuardRef.current = "idle";
       return;
     }
 
     setIsSending(true);
     setFeedback(null);
     setDuplicateSendCandidates(null);
+    const submittedSnapshot = createSmsSubmissionSnapshot(recipients);
 
-    const settled = await Promise.allSettled(
-      recipients.map((recipient) => (
-        messageDeliveryApi.sendSms({
-          receiver: recipient.formattedPhone,
-          message: recipient.message,
-          msgType: "AUTO",
-          triggerType: "immediate",
-          ...(recipient.clientId ? { clientId: recipient.clientId } : {}),
-          ...(requiresRecipientName && recipient.name ? { recipientName: recipient.name } : {}),
-          ...(getTextByteLength(recipient.message) > SMS_BYTE_LIMIT ? { title: getLmsTitle(templateName) } : {}),
-        })
-      )),
-    );
-
-    const succeededRecipients: RecipientQueueItem[] = [];
-    const failedRecipients: RecipientQueueItem[] = [];
-
-    settled.forEach((result, index) => {
-      const recipient = recipients[index];
-      if (
-        result.status === "fulfilled" &&
-        result.value.result.resultCode === 1 &&
-        (result.value.result.errorCount ?? 0) === 0
-      ) {
-        succeededRecipients.push(recipient);
-      } else {
-        failedRecipients.push(recipient);
-      }
-    });
-
-    setIsSending(false);
-
-    if (failedRecipients.length === 0) {
-      // All succeeded — existing happy path.
-      setFeedback({ tone: "success", message: `메시지 발송 요청 ${recipients.length}건을 접수했어요` });
-      setRecipientQueue([]);
-      handleClearRecipient({ clearFeedback: false });
-    } else {
-      // Remove only the successfully-sent recipients so a retry re-sends only failures.
-      const succeededPhones = new Set(succeededRecipients.map((r) => r.phone));
-      setRecipientQueue((currentQueue) =>
-        currentQueue.filter((item) => !succeededPhones.has(item.phone)),
+    try {
+      const settled = await Promise.allSettled(
+        recipients.map((recipient) => (
+          messageDeliveryApi.sendSms({
+            receiver: recipient.formattedPhone,
+            message: recipient.message,
+            msgType: "AUTO",
+            triggerType: "immediate",
+            ...(recipient.clientId ? { clientId: recipient.clientId } : {}),
+            ...(requiresRecipientName && recipient.name ? { recipientName: recipient.name } : {}),
+            ...(getTextByteLength(recipient.message) > SMS_BYTE_LIMIT ? { title: getLmsTitle(templateName) } : {}),
+          })
+        )),
       );
 
-      if (succeededRecipients.length === 0) {
-        setFeedback({ tone: "error", message: `${failedRecipients.length}건을 보내지 못했어요` });
-      } else {
+      if (!mountedRef.current) return;
+
+      const attempts: SmsAttemptResult[] = settled.map((result, index) => {
+        const recipient = recipients[index];
+        if (result.status === "fulfilled") {
+          return isStrictSmsSuccess(result.value)
+            ? { recipient, classification: "accepted" }
+            : {
+                recipient,
+                classification: "blocked",
+                normalized: normalizeMalformedSmsResponse(result.value),
+              };
+        }
+
+        const normalized = normalizeSmsFailure(result.reason);
+        return {
+          recipient,
+          classification: normalized.verified && normalized.outcome === "NOT_APPLIED"
+            ? "not-applied"
+            : "blocked",
+          normalized,
+        };
+      });
+
+      const acceptedRecipients = attempts
+        .filter((attempt) => attempt.classification === "accepted")
+        .map((attempt) => attempt.recipient);
+      const notAppliedAttempts = attempts.filter((attempt) => attempt.classification === "not-applied");
+      const blockedAttempts = attempts.filter((attempt) => attempt.classification === "blocked");
+      const acceptedPhones = new Set(acceptedRecipients.map((recipient) => recipient.phone));
+      const submissionStillCurrent = isSmsSubmissionSnapshotCurrent(submittedSnapshot);
+
+      setRecipientQueue((currentQueue) =>
+        currentQueue.filter((item) => !acceptedRecipients.some((recipient) => recipientsMatch([recipient], [item]))),
+      );
+      if (submissionStillCurrent && acceptedPhones.has(recipientPhone)) {
+        handleClearRecipient({ clearFeedback: false });
+        acceptedCurrentPhoneRef.current = recipientPhone;
+      }
+
+      if (blockedAttempts.length > 0) {
+        lockSmsOutcome();
+        const firstBlocked = blockedAttempts[0]?.normalized;
+        const safeFailureMessage = withSmsStatusCheckGuidance(
+          firstBlocked?.message ?? "문자 발송 결과를 확인할 수 없어요.",
+        );
+        const acceptedSummary = acceptedRecipients.length > 0
+          ? `${acceptedRecipients.length}건 발송 요청을 접수했어요. `
+          : "";
+        smsLockedFeedbackRef.current = {
+          tone: "error",
+          message: `${acceptedSummary}${safeFailureMessage}`,
+          requestId: firstBlocked?.problem?.requestId,
+        };
+        setFeedback(smsLockedFeedbackRef.current);
+      } else if (notAppliedAttempts.length > 0) {
+        const firstNotApplied = notAppliedAttempts[0]?.normalized;
+        const acceptedSummary = acceptedRecipients.length > 0
+          ? `${acceptedRecipients.length}건 발송 요청을 접수했어요. `
+          : "";
         setFeedback({
           tone: "error",
-          message: `${succeededRecipients.length}건 발송 완료, ${failedRecipients.length}건 실패. 실패한 수신자에게 재발송해 주세요.`,
+          message: `${acceptedSummary}${firstNotApplied?.message ?? "입력 내용을 확인해 주세요."} 수정한 뒤 다시 시도해 주세요.`,
+          requestId: firstNotApplied?.problem?.requestId,
         });
+      } else {
+        setFeedback({ tone: "success", message: `메시지 발송 요청 ${acceptedRecipients.length}건을 접수했어요` });
+        if (submissionStillCurrent) {
+          setRecipientQueue([]);
+          handleClearRecipient({ clearFeedback: false });
+        }
+      }
+    } finally {
+      duplicateSubmissionRef.current = null;
+      submissionGuardRef.current = "idle";
+      if (mountedRef.current) {
+        setIsSending(false);
       }
     }
   };
@@ -551,7 +730,11 @@ export function TemplateSendForm({
         if (record) matches.push({ recipient, record });
       }
       return matches;
-    } catch {
+    } catch (error) {
+      const normalized = normalizeSmsFailure(error);
+      if (normalized.canceled) {
+        throw error;
+      }
       const matches: DuplicateSendMatch[] = [];
       for (const recipient of recipients) {
         const record = findRecentDuplicateSend(smsHistoryData, {
@@ -564,6 +747,24 @@ export function TemplateSendForm({
     } finally {
       setIsCheckingDuplicate(false);
     }
+  };
+
+  const createSmsSubmissionSnapshot = (recipients: RecipientQueueItem[]): SmsSubmissionSnapshot => ({
+    recipients: recipients.map((recipient) => ({ ...recipient })),
+    templateId,
+    templateName,
+    message,
+    requiresRecipientName,
+  });
+
+  const isSmsSubmissionSnapshotCurrent = (snapshot: SmsSubmissionSnapshot) => {
+    const latest = latestSmsSnapshotRef.current;
+    return latest !== null
+      && snapshot.templateId === latest.templateId
+      && snapshot.templateName === latest.templateName
+      && snapshot.message === latest.message
+      && snapshot.requiresRecipientName === latest.requiresRecipientName
+      && recipientsMatch(snapshot.recipients, latest.recipients);
   };
 
   const sendServiceRecordLink = async () => {
@@ -617,6 +818,14 @@ export function TemplateSendForm({
   const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
 
+    if (!mountedRef.current) return;
+    if (
+      !isServiceRecordLinkDelivery
+      && (submissionGuardRef.current !== "idle" || smsOutcomeLockedRef.current)
+    ) {
+      return;
+    }
+
     if (validationMessage) {
       setFeedback({ tone: "error", message: validationMessage });
       if (isServiceRecordLinkDelivery) {
@@ -636,18 +845,57 @@ export function TemplateSendForm({
       return;
     }
 
-    const duplicates = await findDuplicateBeforeSend(recipients);
-    if (duplicates.length > 0) {
-      setFeedback(null);
-      setDuplicateSendCandidates(duplicates);
+    const snapshot = createSmsSubmissionSnapshot(recipients);
+    submissionGuardRef.current = "checking";
+    let duplicates: DuplicateSendMatch[];
+    try {
+      duplicates = await findDuplicateBeforeSend(snapshot.recipients);
+    } catch (error) {
+      submissionGuardRef.current = "idle";
+      if (!normalizeSmsFailure(error).canceled) {
+        setFeedback({
+          tone: "error",
+          message: withSmsStatusCheckGuidance("중복 발송 여부를 확인하지 못했어요."),
+        });
+      }
       return;
     }
 
-    await sendMessages(recipients);
+    if (!mountedRef.current || submissionGuardRef.current !== "checking") {
+      if (mountedRef.current) submissionGuardRef.current = "idle";
+      return;
+    }
+    if (!isSmsSubmissionSnapshotCurrent(snapshot)) {
+      submissionGuardRef.current = "idle";
+      return;
+    }
+
+    if (duplicates.length > 0) {
+      setFeedback(null);
+      setDuplicateSendCandidates(duplicates);
+      duplicateSubmissionRef.current = snapshot;
+      submissionGuardRef.current = "awaiting-confirm";
+      return;
+    }
+
+    submissionGuardRef.current = "sending";
+    await sendMessages(snapshot.recipients);
   };
 
   const handleConfirmDuplicateSend = async () => {
-    await sendMessages(getRecipientsForSubmit());
+    if (!mountedRef.current || submissionGuardRef.current !== "awaiting-confirm") return;
+
+    const snapshot = duplicateSubmissionRef.current;
+    if (!snapshot || !isSmsSubmissionSnapshotCurrent(snapshot)) {
+      duplicateSubmissionRef.current = null;
+      setDuplicateSendCandidates(null);
+      submissionGuardRef.current = "idle";
+      setFeedback({ tone: "error", message: "입력 내용이 변경되어 전송 확인을 다시 진행해 주세요." });
+      return;
+    }
+
+    submissionGuardRef.current = "sending";
+    await sendMessages(snapshot.recipients);
   };
 
   return (
@@ -742,6 +990,7 @@ export function TemplateSendForm({
 
       {feedback ? (
         <div
+          ref={feedbackRef}
           data-component="desktop_messages_sections_template-send-form_feedback"
           className={cn(
             "mt-4 rounded-[14px] px-4 py-3 text-[calc(12.48px*var(--glint-ui-scale,1))] font-semibold",
@@ -750,8 +999,17 @@ export function TemplateSendForm({
               : "bg-v3-burgundy-light text-v3-burgundy",
           )}
           role="status"
+          tabIndex={feedback.tone === "error" ? -1 : undefined}
         >
           {feedback.message}
+          {feedback.requestId ? (
+            <span
+              data-component="desktop_messages_sections_template-send-form_feedback_request-id"
+              className="mt-1 block text-[0.72rem] font-medium"
+            >
+              요청 ID: {feedback.requestId}
+            </span>
+          ) : null}
         </div>
       ) : null}
 
@@ -761,6 +1019,10 @@ export function TemplateSendForm({
         onOpenChange={(open) => {
           if (!open) {
             setDuplicateSendCandidates(null);
+            duplicateSubmissionRef.current = null;
+            if (submissionGuardRef.current === "awaiting-confirm") {
+              submissionGuardRef.current = "idle";
+            }
           }
         }}
         dataComponent="desktop_messages_sections_duplicate-send-confirm-dialog"
