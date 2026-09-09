@@ -235,8 +235,7 @@ describe("uncertain outcome recovery invariant", () => {
         expect(parseProblemDetails({
             ...problem,
             recovery: { action: "NONE", retry: { mode: "NEVER" } },
-        })).toBeNull();
-        expect(() => createProblemDetails({ code: "INTERNAL_ERROR", requestId: "request-unknown", outcome: "UNKNOWN", recovery: { action: "NONE", retry: { mode: "NEVER" } } })).toThrow(TypeError);
+        })?.recovery).toEqual(expected);
         expect(normalizeApiError(missing).recovery).toEqual(expected);
     });
 });

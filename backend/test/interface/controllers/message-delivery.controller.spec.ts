@@ -679,6 +679,121 @@ describe("MessageDeliveryController", () => {
         });
     });
 
+    it.each([0, 2])("should keep unregistered non-negative provider result codes unconfirmed (%s)", async (resultCode) => {
+        aligoService.sendSms.mockResolvedValue({
+            request: {
+                senderPhone: "0212345678",
+                receiver: "01012345678",
+                msgType: "SMS",
+                testModeYn: "N",
+            },
+            response: {
+                result_code: resultCode,
+                message: "provider response",
+            },
+        });
+
+        const error = await controller.sendSms(
+            { branchId: "org-1" },
+            { receiver: "01012345678", message: "등록되지 않은 결과 코드" },
+        ).catch((caught: unknown) => caught);
+
+        expect(error).toBeInstanceOf(BadGatewayException);
+        expect((error as BadGatewayException).getResponse()).toMatchObject({
+            code: "MESSAGE_SEND_UNCONFIRMED",
+            outcome: "UNKNOWN",
+        });
+        expect(prismaService.message_log.update).toHaveBeenCalledWith({
+            where: { id: 42 },
+            data: expect.objectContaining({
+                providerAcceptanceState: "uncertain",
+                nextRetryAt: null,
+            }),
+        });
+    });
+
+    it("should treat a negative provider result with absent counters as an explicit rejection", async () => {
+        aligoService.sendSms.mockResolvedValue({
+            request: {
+                senderPhone: "0212345678",
+                receiver: "01012345678",
+                msgType: "SMS",
+                testModeYn: "N",
+            },
+            response: {
+                result_code: -101,
+                message: "provider rejected",
+            },
+        });
+
+        const error = await controller.sendSms(
+            { branchId: "org-1" },
+            { receiver: "01012345678", message: "명시적 거부" },
+        ).catch((caught: unknown) => caught);
+
+        expect(error).toBeInstanceOf(BadGatewayException);
+        expect((error as BadGatewayException).getResponse()).toMatchObject({
+            code: "MESSAGE_SEND_REJECTED",
+            outcome: "FAILED",
+        });
+    });
+
+    it("should keep negative provider results with malformed counters unconfirmed", async () => {
+        aligoService.sendSms.mockResolvedValue({
+            request: {
+                senderPhone: "0212345678",
+                receiver: "01012345678",
+                msgType: "SMS",
+                testModeYn: "N",
+            },
+            response: {
+                result_code: -101,
+                message: "provider response",
+                success_cnt: -1,
+                error_cnt: 1,
+            },
+        });
+
+        const error = await controller.sendSms(
+            { branchId: "org-1" },
+            { receiver: "01012345678", message: "거부 카운터 불일치" },
+        ).catch((caught: unknown) => caught);
+
+        expect(error).toBeInstanceOf(BadGatewayException);
+        expect((error as BadGatewayException).getResponse()).toMatchObject({
+            code: "MESSAGE_SEND_UNCONFIRMED",
+            outcome: "UNKNOWN",
+        });
+    });
+
+    it("should classify a complete result-code-one error count as rejected", async () => {
+        aligoService.sendSms.mockResolvedValue({
+            request: {
+                senderPhone: "0212345678",
+                receiver: "01012345678",
+                msgType: "SMS",
+                testModeYn: "N",
+            },
+            response: {
+                result_code: 1,
+                message: "all recipients rejected",
+                success_cnt: 0,
+                error_cnt: 1,
+            },
+        });
+
+        const error = await controller.sendSms(
+            { branchId: "org-1" },
+            { receiver: "01012345678", message: "전체 거부" },
+        ).catch((caught: unknown) => caught);
+
+        expect(error).toBeInstanceOf(BadGatewayException);
+        expect((error as BadGatewayException).getResponse()).toMatchObject({
+            code: "MESSAGE_SEND_REJECTED",
+            outcome: "FAILED",
+        });
+    });
+
     it("should classify a pre-send fingerprint mismatch separately from an existing request", async () => {
         const messageLogModel = prismaService.message_log as typeof prismaService.message_log & {
             findUnique: jest.Mock;

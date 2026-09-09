@@ -594,7 +594,7 @@ export class MessageDeliveryController {
                 : this.nextRetryAt(),
             variables: {
                 triggerType,
-                msgType: request?.["msgType"],
+                msgType: request?.["msgType"] ?? null,
                 scheduledDate: request?.["scheduledDate"] ?? null,
                 scheduledTime: request?.["scheduledTime"] ?? null,
                 testMode: request?.["testModeYn"] === "Y" ? "true" : "false",
@@ -692,12 +692,21 @@ export class MessageDeliveryController {
             if (successCount > 0 && errorCount > 0) {
                 return "partial";
             }
+            // A result code of 1 with every requested recipient counted as
+            // an error is an explicit all-rejected provider response.  A zero
+            // total remains UNKNOWN because it carries no usable evidence.
+            if (successCount === 0 && errorCount === expectedRecipientCount && errorCount > 0) {
+                return "rejected";
+            }
             return "unknown";
         }
 
-        // A non-success result code is explicit provider rejection only when
-        // its counters do not claim that any recipient was accepted.  If the
-        // counters contradict that result, retain UNKNOWN evidence.
+        // Aligo documents negative result codes as failures.  Zero and other
+        // positive codes are not a registered success/rejection signal, so
+        // preserve UNKNOWN instead of guessing from a provider message.
+        if (resultCode >= 0) {
+            return "unknown";
+        }
         const normalizedSuccessCount = successCount ?? 0;
         const normalizedErrorCount = errorCount ?? 0;
         if (normalizedSuccessCount !== 0
@@ -749,13 +758,13 @@ export class MessageDeliveryController {
     }
 
     private smsResultCodeForLog(result: unknown): string {
-        const value = this.smsResponse(result)?.["result_code"];
-        return typeof value === "string" || typeof value === "number" ? String(value) : "unknown";
+        const parsed = this.smsInteger(this.smsResponse(result)?.["result_code"]);
+        return parsed === undefined ? "unknown" : String(parsed);
     }
 
     private smsErrorCountForLog(result: unknown): string {
-        const value = this.smsResponse(result)?.["error_cnt"];
-        return typeof value === "string" || typeof value === "number" ? String(value) : "unknown";
+        const parsed = this.smsCounter(this.smsResponse(result)?.["error_cnt"]);
+        return parsed === undefined ? "unknown" : String(parsed);
     }
 
     private smsProviderMessage(response: Record<string, unknown> | null): string {

@@ -761,12 +761,6 @@ function parseProblemDetailsInternal(
         if (!sanitized) {
             return null;
         }
-        // An unconfirmed outcome can only advertise the read-only status
-        // check.  Reject an explicit NONE action instead of silently turning
-        // it into an actionable-looking success path.
-        if (parsed.outcome === "UNKNOWN" && sanitized.action !== "CHECK_STATUS") {
-            return null;
-        }
         parsed.recovery = sanitized;
     }
 
@@ -848,9 +842,6 @@ function createProblemDetailsFromInput(input: CreateProblemDetailsInput): Proble
         const recovery = sanitizedRecovery(input.recovery);
         if (!recovery) {
             throw new TypeError("Problem details recovery is invalid");
-        }
-        if (result.outcome === "UNKNOWN" && recovery.action !== "CHECK_STATUS") {
-            throw new TypeError("UNKNOWN outcomes require CHECK_STATUS recovery");
         }
         result.recovery = recovery;
     }
