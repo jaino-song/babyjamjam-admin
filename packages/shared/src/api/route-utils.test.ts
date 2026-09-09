@@ -202,6 +202,24 @@ describe("createRouteUtils legacy-message errorResponse", () => {
 });
 
 describe("local request-body validation", () => {
+    it.each([
+        ["enum", z.enum(["enabled", "disabled"])],
+        ["literal", z.literal("enabled")],
+        ["union", z.union([z.string(), z.number()])],
+    ])("distinguishes missing %s fields from supplied invalid values", async (_name, fieldSchema) => {
+        const schema = z.object({ field: fieldSchema });
+        const missing = await parseBody(schema, createJsonRequest("{}"));
+        const supplied = await parseBody(schema, createJsonRequest('{"field":false}'));
+        expect(await missing.response?.json()).toMatchObject({
+            outcome: "NOT_APPLIED",
+            errors: [{ pointer: "/field", code: "REQUIRED" }],
+        });
+        expect(await supplied.response?.json()).toMatchObject({
+            outcome: "NOT_APPLIED",
+            errors: [{ pointer: "/field", code: "INVALID_VALUE" }],
+        });
+    });
+
     it("returns a canonical validation problem for every issue without reflecting custom messages", async () => {
         const secret = "Bearer validation-secret";
         const schema = z.object({

@@ -166,6 +166,9 @@ function zodIssueCode(
                 : "INVALID_FORMAT";
         case "invalid_value":
         case "invalid_union":
+            return !input.present || input.value === undefined
+                ? "REQUIRED"
+                : "INVALID_VALUE";
         case "invalid_key":
         case "invalid_element":
         case "custom":
