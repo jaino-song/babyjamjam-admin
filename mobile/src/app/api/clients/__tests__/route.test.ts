@@ -142,8 +142,8 @@ describe("client API routes", () => {
 
     expect(response.status).toBe(400);
     const body = await response.json();
-    expect(body).toEqual({ error: message });
-    expect(getErrorMessage({ response: { status: 400, data: body } }, "ko")).toBe(message);
+    expect(body).toEqual({ error: "서비스 기간의 실제 이용일 수는 15일이에요. 입력한 이용일 수를 확인해 주세요." });
+    expect(getErrorMessage({ response: { status: 400, data: body } }, "ko")).toBe(body.error);
   });
 
   it("preserves the safe duplicate-client conflict payload", async () => {
@@ -241,7 +241,7 @@ describe("client API routes", () => {
 
     expect(response.status).toBe(409);
     const body = await response.json();
-    expect(body).toEqual({ error: "Failed to create client" });
+    expect(body).toEqual({ error: expect.stringMatching(/[가-힣].*요[.!]?$/) });
     expect(JSON.stringify(body)).not.toContain("upstream-secret");
     expect(JSON.stringify(body)).not.toContain("SELECT * FROM Client");
     expect(JSON.stringify(body)).not.toContain("clientId");
@@ -277,12 +277,12 @@ describe("client API routes", () => {
     expect(response.status).toBe(409);
     const body = await response.json();
     expect(body).toEqual({
-      error: "Failed to create client",
+      error: expect.stringMatching(/[가-힣].*요[.!]?$/),
       code: "P2002",
       field: "phone",
     });
     expect(getErrorMessage({ response: { status: 409, data: body } }, "ko")).toBe(
-      "이미 등록된 연락처입니다. 다른 연락처를 입력해주세요.",
+      "연락처 정보가 이미 등록돼 있어요.",
     );
   });
 

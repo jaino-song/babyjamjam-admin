@@ -1,4 +1,6 @@
 "use client";
+import { getUserErrorMessage } from "@babyjamjam/shared";
+
 
 import { useRouter, useSearchParams } from "next/navigation";
 import { useState } from "react";
@@ -42,7 +44,7 @@ export function useResetPasswordPageController() {
     setFieldErrors({});
 
     if (!token) {
-      setError("유효하지 않은 비밀번호 재설정 링크입니다.");
+      setError(getUserErrorMessage("유효하지 않은 비밀번호 재설정 링크예요."));
       return;
     }
 
@@ -67,7 +69,7 @@ export function useResetPasswordPageController() {
       if (response.success) {
         setIsSuccess(true);
       } else {
-        setError(response.message || "비밀번호 재설정에 실패했습니다.");
+        setError(getUserErrorMessage(response.message || "비밀번호 재설정에 실패했어요."));
       }
     } catch (requestError) {
       console.error("Reset password error:", requestError);
@@ -75,8 +77,8 @@ export function useResetPasswordPageController() {
         ? (requestError as { response?: { data?: { code?: unknown } } }).response?.data
         : undefined;
       setError(
-        getResetPasswordErrorMessage(errorData?.code)
-        ?? "네트워크 오류가 발생했습니다. 다시 시도해 주세요.",
+        getUserErrorMessage(requestError, getResetPasswordErrorMessage(errorData?.code)
+        ?? "네트워크 오류가 발생했어요. 다시 시도해 주세요."),
       );
     } finally {
       setIsLoading(false);

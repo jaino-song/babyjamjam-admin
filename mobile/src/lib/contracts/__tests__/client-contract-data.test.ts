@@ -87,6 +87,6 @@ describe("resolveContractAreaTemplateId", () => {
         },
         areaTemplates,
       ),
-    ).toThrow("계약서 유형을 주소에서 판단할 수 없습니다.");
+    ).toThrow("계약서 유형을 주소에서 판단할 수 없어요.");
   });
 });

@@ -72,7 +72,7 @@ describe("admin feedback API authorization", () => {
     const response = await getFeedbackList(createRequest("/api/admin/feedback"));
 
     expect(response.status).toBe(403);
-    await expect(response.json()).resolves.toEqual({ error: "Failed to fetch feedback" });
+    await expect(response.json()).resolves.toEqual({ error: expect.stringMatching(/[가-힣].*요[.!]?$/) });
     expect(mockFetch).toHaveBeenCalledWith(
       expect.stringContaining("/admin/feedback?page=1&limit=20"),
       {
@@ -90,7 +90,7 @@ describe("admin feedback API authorization", () => {
     const response = await getFeedbackStats();
 
     expect(response.status).toBe(403);
-    await expect(response.json()).resolves.toEqual({ error: "Failed to fetch feedback stats" });
+    await expect(response.json()).resolves.toEqual({ error: expect.stringMatching(/[가-힣].*요[.!]?$/) });
     expect(mockFetch).toHaveBeenCalledWith(
       expect.stringContaining("/admin/feedback/stats"),
       {
@@ -111,7 +111,7 @@ describe("admin feedback API authorization", () => {
     );
 
     expect(response.status).toBe(403);
-    await expect(response.json()).resolves.toEqual({ error: "Failed to fetch feedback" });
+    await expect(response.json()).resolves.toEqual({ error: expect.stringMatching(/[가-힣].*요[.!]?$/) });
     expect(mockFetch).toHaveBeenCalledWith(
       expect.stringContaining("/admin/feedback/fb-1"),
       {

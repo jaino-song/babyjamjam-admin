@@ -31,7 +31,7 @@ export async function GET(request: NextRequest) {
 
         logUpstreamError("fetch user", error);
         return NextResponse.json(
-            sanitizeUpstreamClientError(upstreamData, "Failed to fetch user"),
+            sanitizeUpstreamClientError(upstreamData, "Failed to fetch user", status),
             { status }
         );
     }

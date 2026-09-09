@@ -1,4 +1,6 @@
 "use client";
+import { getUserErrorMessage } from "@babyjamjam/shared";
+
 
 import { AlertTriangle, CheckCircle } from "lucide-react";
 
@@ -98,7 +100,7 @@ export function ResetPasswordPageContent({ variant }: ResetPasswordPageContentPr
         <>
           {error ? (
             <Alert variant="destructive" onClose={clearError}>
-              {error}
+              {error && getUserErrorMessage(error)}
             </Alert>
           ) : null}
 

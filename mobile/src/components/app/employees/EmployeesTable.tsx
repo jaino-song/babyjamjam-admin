@@ -1,4 +1,6 @@
 "use client";
+import { getUserErrorMessage } from "@babyjamjam/shared";
+
 
 import { useState, useMemo } from "react";
 import { Plus } from "lucide-react";
@@ -175,7 +177,7 @@ export function EmployeesTable() {
                 <div data-component={`${EMPLOYEES_TABLE_BASE}_error`} className="p-3">
                     <Alert variant="destructive">
                         <AlertDescription>
-                            직원 목록을 불러오는데 실패했습니다: {errorMessage}
+                            직원 목록을 불러오는데 실패했습니다: {errorMessage && getUserErrorMessage(errorMessage)}
                         </AlertDescription>
                     </Alert>
                 </div>

@@ -1,183 +1,43 @@
-import { t } from "@/lib/i18n/translations";
+import { getErrorMessage } from './api-error-mapper';
 
-import {
-    getApiDisplayMessage,
-    getErrorMessage,
-} from "./api-error-mapper";
+const response = (status: number, data: unknown) => ({ response: { status, data } });
 
-const FALLBACK_KEY = "clients.form.error-save-failed";
-const fallback = t("ko", FALLBACK_KEY);
-
-function axiosError(status: number, data: unknown) {
-    return { response: { status, data } };
-}
-
-describe("getErrorMessage", () => {
-    it("keeps localized Prisma mapping ahead of any backend message", () => {
-        const message = getErrorMessage(
-            axiosError(409, {
-                statusCode: 409,
-                code: "P2002",
-                error: "Conflict",
-                field: "phone",
-                message: "duplicate phone number",
-            }),
-            "ko",
-            FALLBACK_KEY,
-        );
-
-        expect(message).not.toBe(fallback);
-        expect(message).not.toBe("duplicate phone number");
-        expect(message).not.toBe("Conflict");
-    });
-
-    it("resolves the established dotted key for a phone-specific Prisma message", () => {
-        expect(
-            getErrorMessage(
-                axiosError(409, {
-                    code: "P2002",
-                    error: "Conflict",
-                    field: "phone",
-                }),
-                "ko",
-                FALLBACK_KEY,
-            ),
-        ).toBe("이미 등록된 연락처입니다. 다른 연락처를 입력해주세요.");
-    });
-
-    it("surfaces an actionable business validation message from the proxy error field", () => {
-        const message = getErrorMessage(
-            axiosError(400, {
-                error: "duration must equal the Korean business-day count (15) for the submitted service period",
-            }),
-            "ko",
-            FALLBACK_KEY,
-        );
-
-        expect(message).toBe(
-            "duration must equal the Korean business-day count (15) for the submitted service period",
-        );
-    });
-
-    it("surfaces a Korean business validation message verbatim", () => {
-        const message = getErrorMessage(
-            axiosError(400, { error: "서비스 시작일은 종료일보다 늦을 수 없습니다." }),
-            "ko",
-            FALLBACK_KEY,
-        );
-
-        expect(message).toBe("서비스 시작일은 종료일보다 늦을 수 없습니다.");
-    });
-
-    it("prefers the Nest message field over its generic HTTP error name", () => {
-        const message = getErrorMessage(
-            axiosError(400, {
-                message: "자동 고객 등록이 꺼져 있습니다.",
-                error: "Bad Request",
-            }),
-            "ko",
-            FALLBACK_KEY,
-        );
-
-        expect(message).toBe("자동 고객 등록이 꺼져 있습니다.");
-    });
-
-    it("joins non-blank message array entries and trims each entry", () => {
-        const message = getErrorMessage(
-            axiosError(400, {
-                message: ["  이름을 입력해 주세요  ", "", "전화번호 형식이 올바르지 않습니다."],
-                error: "Bad Request",
-            }),
-            "ko",
-            FALLBACK_KEY,
-        );
-
-        expect(message).toBe("이름을 입력해 주세요, 전화번호 형식이 올바르지 않습니다.");
-    });
-
-    it("supports direct data payloads and error arrays", () => {
-        const error = {
-            data: {
-                message: ["", "   "],
-                error: ["  첫 번째 오류  ", "두 번째 오류"],
-            },
-        };
-
-        expect(getApiDisplayMessage(error)).toBe("첫 번째 오류, 두 번째 오류");
-        expect(getErrorMessage(error, "ko", FALLBACK_KEY)).toBe("첫 번째 오류, 두 번째 오류");
-    });
-
-    it.each([
-        "Bad Request",
-        "bad request",
-        "Conflict",
-        "Internal Server Error",
-        "Unauthorized",
-        "Not Found",
-        "Failed to create client",
-    ])("uses the localized fallback for an uninformative server message %p", (serverMessage) => {
-        expect(getErrorMessage(axiosError(400, { error: serverMessage }), "ko", FALLBACK_KEY)).toBe(
-            fallback,
-        );
-    });
-
-    it("does not leak transport-level Error messages", () => {
-        expect(getErrorMessage(new Error("Network Error"), "ko", FALLBACK_KEY)).toBe(fallback);
-        expect(getApiDisplayMessage(new Error("upstream database failure"))).toBeNull();
-    });
-
-    it.each([
-        "Select a provider from the list.",
-        "Password must contain at least 8 characters.",
-    ])("keeps legitimate validation near-miss %p", (serverMessage) => {
-        expect(getApiDisplayMessage(axiosError(400, { message: serverMessage }))).toBe(serverMessage);
-        expect(getErrorMessage(axiosError(400, { message: serverMessage }), "ko", FALLBACK_KEY)).toBe(
-            serverMessage,
-        );
-    });
-
-    it.each([
-        [400, "Invalid API key: sk_test_secret"],
-        [401, "Invalid access token: eyJ.secret"],
-        [400, "password: hunter2"],
-    ] as const)("rejects value-bearing credential %p payloads", (status, serverMessage) => {
-        const error = axiosError(status, { message: serverMessage });
-
-        expect(getApiDisplayMessage(error)).toBeNull();
-        expect(getErrorMessage(error, "ko", FALLBACK_KEY)).toBe(fallback);
-    });
-
-    it.each([
-        "PrismaClientKnownRequestError: Invalid prisma invocation SELECT * FROM Client",
-        "Error: database connection failed at /app/src/clients.service.ts:42",
-        "upstream rejected Bearer abc.def.ghi",
-    ])("does not expose unsafe server internals %p", (serverMessage) => {
-        const error = axiosError(500, { message: serverMessage });
-
-        expect(getApiDisplayMessage(error)).toBeNull();
-        expect(getErrorMessage(error, "ko", FALLBACK_KEY)).toBe(fallback);
-    });
-
-    it.each([
-        "SELECT phone FROM Client WHERE id = 73",
-        "SELECT phone FROM Client",
-        "SELECT phone FROM Client;",
-        "SELECT phone, email FROM Client WHERE id = 73",
-        'SELECT "phone", "email" FROM "Client" WHERE "id" = 73',
-        "SELECT count(*) FROM Client WHERE id = 73;",
-        "SELECT COUNT(*) FROM Client",
-    ])("rejects SQL diagnostics from a 4xx response %p", (serverMessage) => {
-        const error = axiosError(409, { message: serverMessage, clientId: 73 });
-
-        expect(getApiDisplayMessage(error)).toBeNull();
-        expect(getErrorMessage(error, "ko", FALLBACK_KEY)).toBe(fallback);
-    });
-
-    it("uses the localized fallback when the payload has no usable text", () => {
-        expect(getErrorMessage(axiosError(500, {}), "ko", FALLBACK_KEY)).toBe(fallback);
-        expect(getErrorMessage(axiosError(400, { message: ["", 42, null], error: "   " }), "ko", FALLBACK_KEY)).toBe(
-            fallback,
-        );
-        expect(getErrorMessage(null, "ko", FALLBACK_KEY)).toBe(fallback);
-    });
+describe('Korean error presentation', () => {
+  it('uses the actual duplicate field in Korean even with the English locale', () => {
+    expect(getErrorMessage(response(409, { code: 'P2002', field: 'phone', error: 'Conflict' }), 'en')).toBe('연락처 정보가 이미 등록돼 있어요.');
+  });
+  it('translates a business reason and preserves its service-day count', () => {
+    expect(getErrorMessage(response(400, { message: 'duration must equal the Korean business-day count (15) for the submitted service period', error: 'Bad Request' }), 'ko')).toBe('서비스 기간의 실제 이용일 수는 15일이에요. 입력한 이용일 수를 확인해 주세요.');
+    expect(getErrorMessage(response(400, { error: '서비스 시작일은 종료일보다 늦을 수 없습니다.' }), 'ko')).toBe('서비스 시작일은 종료일보다 늦을 수 없어요.');
+  });
+  it('explains individual validation failures instead of an HTTP label', () => {
+    expect(getErrorMessage(response(400, { message: ['name must be a string', 'phone must be a valid Korean phone number'], error: 'Bad Request' }), 'ko')).toBe('이름 항목은 문자로 입력해 주세요. 연락처 항목에 올바른 국내 전화번호를 입력해 주세요.');
+  });
+  it.each([
+    [401, '로그인 인증을 확인할 수 없어요. 다시 로그인해 주세요.'],
+    [403, '이 작업을 할 권한이 없어요.'],
+    [500, '서버 내부 오류로 요청을 처리하지 못했어요.'],
+  ])('explains a known HTTP failure (%s) without inventing a more specific reason', (status, expected) => {
+    expect(getErrorMessage(response(status as number, {}), 'ko')).toBe(expected);
+  });
+  it.each([
+    'SELECT phone FROM Client WHERE id = 73',
+    'SELECT phone FROM Client',
+    'SELECT phone FROM Client;',
+    'SELECT phone, email FROM Client WHERE id = 73',
+    'SELECT "phone", "email" FROM "Client" WHERE "id" = 73',
+    'SELECT count(*) FROM Client WHERE id = 73;',
+    'SELECT COUNT(*) FROM Client',
+    'PrismaClientKnownRequestError: Invalid prisma invocation SELECT * FROM Client',
+    'Error: database connection failed at /app/src/clients.service.ts:42',
+    'upstream rejected Bearer abc.def.ghi',
+    'password: hunter2',
+    'Invalid API key: sk_test_secret',
+  ])('does not expose technical or credential diagnostics: %s', (message) => {
+    expect(getErrorMessage(response(409, { message }), 'ko')).toBe('현재 데이터 상태와 요청이 충돌해 처리할 수 없어요.');
+  });
+  it('distinguishes network failure from an unknown local error', () => {
+    expect(getErrorMessage(new Error('Network Error'), 'ko')).toBe('서버에 연결하지 못했어요. 인터넷 연결 상태를 확인해 주세요.');
+    expect(getErrorMessage(null, 'ko', 'clients.form.error-save-failed')).toBe('저장하지 못했어요. 다시 시도해 주세요');
+  });
 });

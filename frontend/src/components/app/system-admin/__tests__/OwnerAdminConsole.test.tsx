@@ -543,7 +543,7 @@ describe("OwnerAdminConsole", () => {
     });
 
     expect(screen.getByRole("alert")).toHaveTextContent(
-      "다른 곳에서 계정 정보가 변경되었습니다. 창을 닫고 목록을 새로고침한 뒤 다시 시도해 주세요.",
+      "다른 곳에서 계정 정보가 변경됐어요. 창을 닫고 목록을 새로고침한 뒤 다시 시도해 주세요.",
     );
     expect(screen.getByRole("combobox", { name: /^권한/ })).toHaveValue("user");
   });

@@ -130,7 +130,7 @@ export default function FilteredClientsPage() {
             setDeleteErrorMessage(
                 getApiErrorMessage(
                     err,
-                    "고객 삭제에 실패했습니다. 다시 시도해 주세요.",
+                    "고객 삭제에 실패했어요. 다시 시도해 주세요.",
                 ),
             );
         }
@@ -224,7 +224,7 @@ export default function FilteredClientsPage() {
                 }}
                 data-component="desktop_clients-filtered_delete-approval"
                 title="고객을 삭제하시겠습니까?"
-                description="삭제한 고객 정보는 복구할 수 없습니다."
+                description="삭제한 고객 정보는 복구할 수 없어요."
                 approvalLabel="삭제"
                 pendingLabel="삭제 중..."
                 approvalVariant="destructive"

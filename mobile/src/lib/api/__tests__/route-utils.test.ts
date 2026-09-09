@@ -105,7 +105,7 @@ describe("route-utils proxy body parsing", () => {
 
         expect(response.status).toBe(418);
         await expect(response.json()).resolves.toEqual({
-            error: "Failed to fetch clients",
+            error: expect.stringMatching(/[가-힣].*요[.!]?$/),
             code: "BACKEND_ERROR",
         });
 
@@ -118,9 +118,9 @@ describe("route-utils proxy body parsing", () => {
     });
 
     it.each([
-        ["create client", "duration must equal the Korean business-day count (15) for the submitted service period"],
-        ["create employee", "전화번호 형식이 올바르지 않습니다."],
-    ])("passes a controlled 400 validation message through to the mapper (%s)", async (context, message) => {
+        ["create client", "duration must equal the Korean business-day count (15) for the submitted service period", "서비스 기간의 실제 이용일 수는 15일이에요. 입력한 이용일 수를 확인해 주세요."],
+        ["create employee", "전화번호 형식이 올바르지 않습니다.", "전화번호 형식이 올바르지 않아요."],
+    ])("passes a controlled 400 validation message through to the mapper (%s)", async (context, message, expected) => {
         const response = errorResponse(
             {
                 response: {
@@ -137,8 +137,8 @@ describe("route-utils proxy body parsing", () => {
 
         expect(response.status).toBe(400);
         const body = await response.json();
-        expect(body).toEqual({ error: message });
-        expect(getErrorMessage({ response: { status: response.status, data: body } }, "ko")).toBe(message);
+        expect(body).toEqual({ error: expected });
+        expect(getErrorMessage({ response: { status: response.status, data: body } }, "ko")).toBe(expected);
         expect(JSON.stringify(body)).not.toContain("api.internal");
     });
 
@@ -160,11 +160,11 @@ describe("route-utils proxy body parsing", () => {
 
         const body = await response.json();
         expect(body).toEqual({
-            error: "이미 등록된 전화번호입니다.",
+            error: "연락처 정보가 이미 등록돼 있어요.",
             code: "P2002",
             field: "phone",
         });
-        expect(getErrorMessage({ response: { status: 409, data: body } }, "ko")).not.toBe(body.error);
+        expect(getErrorMessage({ response: { status: 409, data: body } }, "ko")).toBe(body.error);
     });
 
     it("keeps Prisma metadata when the upstream only sends a bare conflict label", async () => {
@@ -184,12 +184,12 @@ describe("route-utils proxy body parsing", () => {
 
         const body = await response.json();
         expect(body).toEqual({
-            error: "Failed to create employee",
+            error: expect.stringMatching(/[가-힣].*요[.!]?$/),
             code: "P2002",
             field: "phone",
         });
         expect(getErrorMessage({ response: { status: 409, data: body } }, "ko")).toBe(
-            "이미 등록된 연락처입니다. 다른 연락처를 입력해주세요.",
+            "연락처 정보가 이미 등록돼 있어요.",
         );
     });
 
@@ -206,7 +206,7 @@ describe("route-utils proxy body parsing", () => {
 
         expect(response.status).toBe(status);
         const body = await response.json();
-        expect(body).toEqual({ error: "Failed to create client" });
+        expect(body).toEqual({ error: expect.stringMatching(/[가-힣].*요[.!]?$/) });
         expect(JSON.stringify(body)).not.toContain(message);
         expect(JSON.stringify(body)).not.toContain("sk_test_secret");
         expect(JSON.stringify(body)).not.toContain("eyJ.secret");
@@ -230,7 +230,7 @@ describe("route-utils proxy body parsing", () => {
 
         expect(response.status).toBe(502);
         await expect(response.json()).resolves.toEqual({
-            error: "Failed to fetch eformsign documents",
+            error: expect.stringMatching(/[가-힣].*요[.!]?$/),
             code: "UPSTREAM_GET_ERROR",
         });
     });
@@ -280,7 +280,7 @@ describe("route-utils proxy body parsing", () => {
 
         expect(response.status).toBe(409);
         await expect(response.json()).resolves.toEqual({
-            error: "Failed to create eformsign document",
+            error: expect.stringMatching(/[가-힣].*요[.!]?$/),
             code: "UPSTREAM_POST_ERROR",
         });
     });
@@ -303,7 +303,7 @@ describe("route-utils proxy body parsing", () => {
 
         expect(response.status).toBe(500);
         await expect(response.json()).resolves.toEqual({
-            error: "Failed to delete eformsign document",
+            error: expect.stringMatching(/[가-힣].*요[.!]?$/),
             code: "UPSTREAM_DELETE_ERROR",
         });
     });

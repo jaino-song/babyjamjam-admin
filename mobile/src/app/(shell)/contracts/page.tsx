@@ -1,4 +1,6 @@
 "use client";
+import { getUserErrorMessage } from "@babyjamjam/shared";
+
 
 import type { ComponentType, ReactNode } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -1107,7 +1109,7 @@ function contractStageItems(
       icon: sendFailed ? X : Send,
       iconVariant: sendFailed ? "danger" : "info",
       text: sendFailed
-        ? "이용자에게 문서 전송에 실패했습니다."
+        ? "이용자에게 문서 전송에 실패했어요."
         : "이용자에게 문서가 발송되었습니다.",
       time: createdAt,
     },
@@ -1155,7 +1157,7 @@ function contractStageItems(
     items.push({
       icon: AlertTriangle,
       iconVariant: "danger",
-      text: "문서 기간이 만료되었습니다",
+      text: "문서 기간이 만료됐어요",
       time: updatedAt,
     });
     return items;
@@ -1276,7 +1278,7 @@ function ContractDetailContent({
     if (!stepSeq || stepType !== "05") {
       toast({
         variant: "destructive",
-        description: "지금 단계에서는 재알림을 보낼 수 없어요",
+        description: getUserErrorMessage("지금 단계에서는 재알림을 보낼 수 없어요"),
       });
       return;
     }
@@ -1302,7 +1304,7 @@ function ContractDetailContent({
     } catch (error) {
       toast({
         variant: "destructive",
-        description: requestErrorMessage(error, "재알림을 보내지 못했어요"),
+        description: getUserErrorMessage(error, requestErrorMessage(error, "재알림을 보내지 못했어요")),
       });
     } finally {
       setIsReRequesting(false);
@@ -1322,7 +1324,7 @@ function ContractDetailContent({
       toast({
         variant: "destructive",
         title: "영수증 문자를 보내지 못했습니다",
-        description: describeReceiptLinkError(error),
+        description: getUserErrorMessage(describeReceiptLinkError(error)),
       });
     } finally {
       setIsSendingReceiptLink(false);
@@ -1339,7 +1341,7 @@ function ContractDetailContent({
         toast({
           variant: "destructive",
           title: "영수증 공유 실패",
-          description: message || RECEIPT_SHARE_ERROR_MESSAGE,
+          description: getUserErrorMessage(message, message || RECEIPT_SHARE_ERROR_MESSAGE),
         }),
     });
   };
@@ -1685,7 +1687,7 @@ export default function ContractsPage() {
           toast({
             variant: "destructive",
             title: "최종 확인을 마치지 못했어요",
-            description: response.message ?? "알 수 없는 오류예요",
+            description: getUserErrorMessage(response, response.message ?? "알 수 없는 오류예요"),
           });
         },
         onAction: (response) => {
@@ -1772,7 +1774,7 @@ export default function ContractsPage() {
     } catch (error) {
       toast({
         variant: "destructive",
-        description: requestErrorMessage(error, "계약서를 삭제하지 못했어요"),
+        description: getUserErrorMessage(error, requestErrorMessage(error, "계약서를 삭제하지 못했어요")),
       });
     } finally {
       setIsDeletingDocument(false);
@@ -1912,7 +1914,7 @@ export default function ContractsPage() {
         keepFinalizeSubmittingUntilIframeCloses = true;
       } catch (fallbackErr) {
         const msg = fallbackErr instanceof Error ? fallbackErr.message : "최종 확인을 준비하지 못했어요";
-        toast({ variant: "destructive", description: msg });
+        toast({ variant: "destructive", description: getUserErrorMessage(fallbackErr, msg) });
       }
     }
 
@@ -2475,7 +2477,7 @@ export default function ContractsPage() {
         data-component="mobile_contracts_delete-confirmation_modal"
         open={deleteTargetDoc !== null}
         title="계약서 삭제"
-        description="전자문서가 취소되어 수신자가 더 이상 서명할 수 없습니다. 복구할 수 없습니다."
+        description="전자문서가 취소되어 수신자가 더 이상 서명할 수 없어요. 복구할 수 없어요."
         cancelLabel="취소"
         confirmLabel="삭제"
         loading={isDeleteDocumentBusy}

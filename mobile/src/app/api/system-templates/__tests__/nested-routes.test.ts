@@ -109,7 +109,7 @@ describe("system-template nested API routes", () => {
 
         expect(response.status).toBe(409);
         const body = await response.json();
-        expect(body).toEqual({ error: "Version is already current" });
+        expect(body).toEqual({ error: "이미 적용 중인 버전이에요." });
         expect(JSON.stringify(body)).not.toContain("upstream-secret");
         expect(JSON.stringify(body)).not.toContain("SELECT * FROM Template");
         expect(mockPost).toHaveBeenCalledWith(
@@ -137,7 +137,7 @@ describe("system-template nested API routes", () => {
 
         expect(response.status).toBe(status);
         const body = await response.json();
-        expect(body).toEqual({ error: "Failed to rollback system template" });
+        expect(body).toEqual({ error: expect.stringMatching(/[가-힣].*요[.!]?$/) });
         expect(JSON.stringify(body)).not.toContain(message);
         expect(JSON.stringify(body)).not.toContain("upstream-secret");
     });

@@ -1,4 +1,6 @@
 "use client";
+import { getUserErrorMessage } from "@babyjamjam/shared";
+
 
 import { useEffect, useState, type ReactNode } from "react";
 import { useQueryClient } from "@tanstack/react-query";
@@ -585,7 +587,7 @@ function EmployeeFormContent({
             data-component="desktop_employees_form-dialog_error"
             className="rounded-[18px] border-none bg-v3-burgundy-light px-4 py-3 text-v3-burgundy [&>svg]:text-v3-burgundy"
         >
-            <AlertDescription>{error}</AlertDescription>
+            <AlertDescription>{error && getUserErrorMessage(error)}</AlertDescription>
         </Alert>
     ) : null;
 

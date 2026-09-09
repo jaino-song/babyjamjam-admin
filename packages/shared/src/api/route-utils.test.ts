@@ -85,7 +85,7 @@ describe("createRouteUtils legacy-message errorResponse", () => {
 
         expect(response.status).toBe(400);
         await expect(response.json()).resolves.toEqual({
-            error: "duration must equal the Korean business-day count (15) for the submitted service period",
+            error: "서비스 기간의 실제 이용일 수는 15일이에요. 입력한 이용일 수를 확인해 주세요.",
         });
     });
 
@@ -100,7 +100,7 @@ describe("createRouteUtils legacy-message errorResponse", () => {
         );
 
         await expect(response.json()).resolves.toEqual({
-            error: "name must be a string, phone must be a valid Korean phone number",
+            error: "이름 항목은 문자로 입력해 주세요. 연락처 항목에 올바른 국내 전화번호를 입력해 주세요.",
         });
     });
 
@@ -111,14 +111,14 @@ describe("createRouteUtils legacy-message errorResponse", () => {
         );
 
         await expect(response.json()).resolves.toEqual({
-            error: "자동 고객 등록이 꺼져 있습니다.",
+            error: "자동 고객 등록이 꺼져 있어요.",
         });
     });
 
     it("falls back to the context placeholder when the upstream body carries nothing usable", async () => {
         const response = errorResponse(upstreamError(500, {}), "create client");
 
-        await expect(response.json()).resolves.toEqual({ error: "Failed to create client" });
+        await expect(response.json()).resolves.toEqual({ error: "서버 내부 오류로 요청을 처리하지 못했어요." });
     });
 
     it("still redacts credentials that appear inside an upstream message", async () => {
@@ -128,7 +128,7 @@ describe("createRouteUtils legacy-message errorResponse", () => {
         );
 
         const body = await response.json();
-        expect(body.error).toContain("[REDACTED]");
+        expect(body.error).toBe("입력 정보가 요청 조건에 맞지 않아요. 입력 내용을 확인해 주세요.");
         expect(body.error).not.toContain("abc.def.ghi");
     });
 });

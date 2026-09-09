@@ -41,7 +41,7 @@ export function useVerifyEmailPageController() {
           setMessage(response.message || "이메일 인증이 완료되었습니다.");
         } else {
           setStatus("error");
-          setMessage(response.message || "이메일 인증에 실패했습니다.");
+          setMessage(response.message || "이메일 인증에 실패했어요.");
         }
       } catch (requestError) {
         if (cancelled) {
@@ -50,7 +50,7 @@ export function useVerifyEmailPageController() {
 
         console.error("Email verification error:", requestError);
         setStatus("error");
-        setMessage("네트워크 오류가 발생했습니다. 다시 시도해 주세요.");
+        setMessage("네트워크 오류가 발생했어요. 다시 시도해 주세요.");
       }
     };
 
@@ -83,13 +83,13 @@ export function useVerifyEmailPageController() {
         type: response.success ? "success" : "error",
         text: response.message || (response.success
           ? "인증 이메일이 재발송되었습니다."
-          : "재발송에 실패했습니다."),
+          : "재발송에 실패했어요."),
       });
     } catch (requestError) {
       console.error("Resend verification error:", requestError);
       setResendMessage({
         type: "error",
-        text: "네트워크 오류가 발생했습니다.",
+        text: "네트워크 오류가 발생했어요.",
       });
     } finally {
       setResendLoading(false);

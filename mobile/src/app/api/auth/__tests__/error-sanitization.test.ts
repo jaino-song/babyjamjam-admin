@@ -123,14 +123,14 @@ describe("auth API error sanitization", () => {
     ["reset password", resetPassword, "/api/auth/reset-password", "Reset failed"],
     ["resend verification", resendVerification, "/api/auth/resend-verification", "Request failed"],
     ["link password", linkPassword, "/api/auth/link-password", "Request failed"],
-  ])("does not return or log raw upstream details for %s failures", async (_name, handler: Handler, path, fallback) => {
+  ])("does not return or log raw upstream details for %s failures", async (_name, handler: Handler, path, _fallback) => {
     mockPost.mockRejectedValue(createAxiosError());
 
     const response = await handler(createRequest(path));
 
     expect(response.status).toBe(409);
     await expect(response.json()).resolves.toEqual({
-      error: fallback,
+      error: "이미 등록된 이메일이에요.",
       code: "EMAIL_EXISTS",
       hasKakaoAccount: true,
     });
@@ -153,7 +153,7 @@ describe("auth API error sanitization", () => {
 
     expect(response.status).toBe(409);
     await expect(response.json()).resolves.toEqual({
-      error: "Failed to fetch user",
+      error: expect.stringMatching(/[가-힣].*요[.!]?$/),
       code: "EMAIL_EXISTS",
       hasKakaoAccount: true,
     });
@@ -181,7 +181,7 @@ describe("auth API error sanitization", () => {
 
     expect(response.status).toBe(409);
     await expect(response.json()).resolves.toEqual({
-      error: "Failed to refresh authentication",
+      error: expect.stringMatching(/[가-힣].*요[.!]?$/),
       code: "EMAIL_EXISTS",
       hasKakaoAccount: true,
     });

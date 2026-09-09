@@ -196,7 +196,7 @@ function FileDetailContent({
       await navigator.clipboard.writeText(url);
       setActionStatus("공유 링크를 복사했습니다.");
     } catch {
-      setActionStatus("공유 링크 복사에 실패했습니다.");
+      setActionStatus("공유 링크 복사에 실패했어요.");
     }
   };
 

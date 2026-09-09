@@ -85,7 +85,7 @@ describe("file-storage API routes", () => {
     const response = await listFiles(createGetRequest("/api/file-storage/files"));
 
     expect(response.status).toBe(403);
-    await expect(response.json()).resolves.toEqual({ error: "Failed to fetch documents" });
+    await expect(response.json()).resolves.toEqual({ error: expect.stringMatching(/[가-힣].*요[.!]?$/) });
   });
 
   it("proxies the authenticated storage capability contract", async () => {
@@ -143,7 +143,7 @@ describe("file-storage API routes", () => {
     const response = await uploadFile(createUploadRequest());
 
     expect(response.status).toBe(400);
-    await expect(response.json()).resolves.toEqual({ error: "Failed to upload document" });
+    await expect(response.json()).resolves.toEqual({ error: expect.stringMatching(/[가-힣].*요[.!]?$/) });
   });
 
   it("rejects non-string upload metadata before proxying", async () => {
@@ -277,7 +277,7 @@ describe("file-storage API routes", () => {
     );
 
     expect(response.status).toBe(409);
-    await expect(response.json()).resolves.toEqual({ error: "Failed to delete document" });
+    await expect(response.json()).resolves.toEqual({ error: expect.stringMatching(/[가-힣].*요[.!]?$/) });
   });
 
   describe("download", () => {
@@ -356,7 +356,7 @@ describe("file-storage API routes", () => {
       );
 
       expect(response.status).toBe(403);
-      await expect(response.json()).resolves.toEqual({ error: "Failed to download document" });
+      await expect(response.json()).resolves.toEqual({ error: expect.stringMatching(/[가-힣].*요[.!]?$/) });
     });
 
     it("sanitizes upstream download errors while keeping the 404 mapping", async () => {

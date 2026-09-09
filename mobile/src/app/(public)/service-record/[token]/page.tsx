@@ -1,4 +1,6 @@
 "use client";
+import { getUserErrorMessage } from "@babyjamjam/shared";
+
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useParams } from "next/navigation";
@@ -506,7 +508,7 @@ export default function ServiceRecordPage() {
     );
 
     async function submitPhone() {
-        if (phone.replace(/\D/g, "").length < 10) { setPhoneError("휴대폰 번호를 입력해 주세요."); return; }
+        if (phone.replace(/\D/g, "").length < 10) { setPhoneError(getUserErrorMessage("휴대폰 번호를 입력해 주세요.")); return; }
         setBusy(true); setPhoneError(null);
         try {
             const res = await api("/verify", {
@@ -516,10 +518,10 @@ export default function ServiceRecordPage() {
             if (data?.ok) {
                 await loadContext("push");
             } else {
-                setPhoneError("휴대폰 번호가 일치하지 않습니다.");
+                setPhoneError(getUserErrorMessage("휴대폰 번호가 일치하지 않아요."));
             }
         } catch {
-            setPhoneError("확인 중 오류가 발생했습니다. 잠시 후 다시 시도해 주세요.");
+            setPhoneError(getUserErrorMessage("확인 중 오류가 발생했어요. 잠시 후 다시 시도해 주세요."));
         } finally { setBusy(false); }
     }
     function handlePhoneChange(value: string) {
@@ -547,7 +549,7 @@ export default function ServiceRecordPage() {
             const response = await api("/header", { method: "PUT", body: JSON.stringify(header) });
             if (!response.ok) {
                 const error = await response.json().catch(() => ({}));
-                setErrorNotificationMessage(error?.message ?? "기본정보 저장에 실패했습니다.");
+                setErrorNotificationMessage(error?.message ?? "기본정보 저장에 실패했어요.");
                 return;
             }
             clearStoredFormState(token);
@@ -606,9 +608,9 @@ export default function ServiceRecordPage() {
                 if (e?.code === "CLIENT_SIGNATURE_REQUIRED") {
                     setErrorNotificationMessage("산모 서명이 필요합니다.");
                 } else if (e?.code === "SERVICE_DATE_IMMUTABLE") {
-                    setErrorNotificationMessage(e?.message ?? "제공일자는 변경할 수 없습니다.");
+                    setErrorNotificationMessage(e?.message ?? "제공일자는 변경할 수 없어요.");
                 } else {
-                    setErrorNotificationMessage(e?.message ?? "제출에 실패했습니다.");
+                    setErrorNotificationMessage(e?.message ?? "제출에 실패했어요.");
                 }
                 return;
             }
@@ -658,7 +660,7 @@ export default function ServiceRecordPage() {
                 await loadContext();
                 return;
             }
-            setErrorNotificationMessage(data?.error ?? data?.message ?? "일정 변경 요청에 실패했습니다.");
+            setErrorNotificationMessage(data?.error ?? data?.message ?? "일정 변경 요청에 실패했어요.");
         } finally {
             setScheduleChangeBusy(false);
         }
@@ -856,7 +858,7 @@ export default function ServiceRecordPage() {
                         <p className="muted">본인 휴대폰 번호를 입력하면 서비스 기간 동안 유효한 접근 권한이 발급됩니다.</p>
                         <label data-component="mobile_service-record_wizard_body_phone-label" className="lab" htmlFor="service-record-phone">휴대폰 번호</label>
                         <input id="service-record-phone" data-component="mobile_service-record_wizard_body_phone-input" className="in" type="tel" inputMode="numeric" autoComplete="tel" maxLength={13} placeholder="예) 01012345678" value={phone} onChange={(e) => handlePhoneChange(e.target.value)} />
-                        {phoneError && <p className="err">{phoneError}</p>}
+                        {phoneError && <p className="err">{phoneError && getUserErrorMessage(phoneError)}</p>}
                         <button data-component="mobile_service-record_wizard_body_phone-submit" className="btn primary" disabled={busy} onClick={submitPhone}>{busy ? "확인 중…" : "확인하기"}</button>
                     </>
                 )}

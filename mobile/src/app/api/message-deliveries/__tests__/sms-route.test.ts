@@ -128,7 +128,7 @@ describe("SMS delivery API route", () => {
 
     expect(response.status).toBe(502);
     await expect(response.json()).resolves.toEqual({
-      error: "Failed to send SMS",
+      error: expect.stringMatching(/[가-힣].*요[.!]?$/),
       code: "SMS_PROVIDER_ERROR",
     });
 

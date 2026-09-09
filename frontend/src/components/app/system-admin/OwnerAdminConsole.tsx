@@ -834,7 +834,7 @@ export function OwnerAdminConsole() {
     },
     onError: async (error) => {
       if (!isAxiosError(error) || error.response?.status !== 409) {
-        setAccountEditErrorMessage("계정 수정에 실패했습니다. 잠시 후 다시 시도해 주세요.");
+        setAccountEditErrorMessage("계정 수정에 실패했어요. 잠시 후 다시 시도해 주세요.");
         return;
       }
 

@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 
+import { getUserErrorMessage } from "../errors/user-error-message";
+
 export const NO_STORE_CACHE_CONTROL = "no-store, max-age=0";
 
 class InvalidJsonBodyError extends Error {
@@ -216,7 +218,7 @@ export function withNoStore(response: NextResponse): NextResponse {
 
 export function getUpstreamErrorStatus(error: unknown, fallbackStatus = 500): number {
     if (error && typeof error === "object" && "response" in error) {
-        const status = (error as UpstreamErrorLike).response?.status;
+        const status = (error as UpstreamErrorLike | null)?.response?.status;
         if (typeof status === "number" && status >= 400 && status <= 599) {
             return status;
         }
@@ -227,7 +229,7 @@ export function getUpstreamErrorStatus(error: unknown, fallbackStatus = 500): nu
 
 function getUpstreamErrorData(error: unknown): unknown {
     if (error && typeof error === "object" && "response" in error) {
-        return (error as UpstreamErrorLike).response?.data;
+        return (error as UpstreamErrorLike | null)?.response?.data;
     }
 
     return undefined;
@@ -270,16 +272,20 @@ function sanitizeSensitiveText(value: unknown): string {
 export function sanitizeUpstreamClientError(
     upstreamData: unknown,
     fallbackMessage: string,
-): { error: string; code?: string; hasKakaoAccount?: boolean } {
-    const payload: { error: string; code?: string; hasKakaoAccount?: boolean } = {
-        error: fallbackMessage,
+    status?: number,
+): { error: string; code?: string; field?: string; hasKakaoAccount?: boolean } {
+    const payload: { error: string; code?: string; field?: string; hasKakaoAccount?: boolean } = {
+        error: getUserErrorMessage({ response: { status, data: upstreamData } }, fallbackMessage),
     };
 
     if (upstreamData && typeof upstreamData === "object") {
-        const data = upstreamData as { code?: unknown; hasKakaoAccount?: unknown };
+        const data = upstreamData as { code?: unknown; field?: unknown; hasKakaoAccount?: unknown };
         const code = safeErrorCode(data.code);
         if (code) {
             payload.code = code;
+            if (/^P\d{4}$/.test(code) && typeof data.field === "string" && /^[A-Za-z][\w.-]{0,63}$/.test(data.field)) {
+                payload.field = data.field;
+            }
         }
         if (typeof data.hasKakaoAccount === "boolean") {
             payload.hasKakaoAccount = data.hasKakaoAccount;
@@ -371,43 +377,24 @@ export function unauthorizedResponse(
 }
 
 export function errorResponse(error: unknown, context: string): NextResponse {
-    const upstreamData = (error as UpstreamErrorLike).response?.data as UpstreamErrorPayload | undefined;
-    const status = (error as UpstreamErrorLike).response?.status || 500;
+    const upstreamData = (error as UpstreamErrorLike | null)?.response?.data as UpstreamErrorPayload | undefined;
+    const status = (error as UpstreamErrorLike | null)?.response?.status || 500;
 
     logUpstreamError(context, error);
     return NextResponse.json(
-        sanitizeUpstreamClientError(upstreamData, `Failed to ${context}`),
+        sanitizeUpstreamClientError(upstreamData, `Failed to ${context}`, status),
         { status },
     );
 }
 
-/**
- * Pick the actionable half of a Nest error body. Nest puts the explanation in
- * `message` and the bare HTTP status name ("Bad Request", "Conflict") in
- * `error`, so reading `error` first masks every reason with a status label.
- */
-function upstreamDisplayMessage(payload: UpstreamErrorPayload | undefined): string | undefined {
-    if (!payload) return undefined;
-
-    const message = Array.isArray(payload.message)
-        ? payload.message
-            .filter((entry): entry is string => typeof entry === "string" && entry.trim().length > 0)
-            .join(", ")
-        : payload.message;
-    if (typeof message === "string" && message.trim()) return message;
-    if (typeof payload.error === "string" && payload.error.trim()) return payload.error;
-
-    return undefined;
-}
-
 function createLegacyErrorResponse(error: unknown, context: string): NextResponse {
-    const upstreamData = (error as UpstreamErrorLike).response?.data as UpstreamErrorPayload | undefined;
-    const status = (error as UpstreamErrorLike).response?.status || 500;
-    const message = sanitizeSensitiveText(upstreamDisplayMessage(upstreamData)
-        || (error instanceof Error ? error.message : `Failed to ${context}`));
-
-    console.error(`[${context}] Error:`, message);
-    return NextResponse.json({ error: message }, { status });
+    const upstreamData = (error as UpstreamErrorLike | null)?.response?.data as UpstreamErrorPayload | undefined;
+    const status = (error as UpstreamErrorLike | null)?.response?.status || 500;
+    logUpstreamError(context, error);
+    return NextResponse.json(
+        sanitizeUpstreamClientError(upstreamData, `Failed to ${context}`, status),
+        { status },
+    );
 }
 
 export function createRouteUtils({
@@ -439,7 +426,7 @@ export function createRouteUtils({
 
             if ((response.status ?? 200) >= 400) {
                 return NextResponse.json(
-                    sanitizeUpstreamClientError(response.data, `Failed to ${context}`),
+                    sanitizeUpstreamClientError(response.data, `Failed to ${context}`, response.status),
                     { status: response.status },
                 );
             }
@@ -472,7 +459,7 @@ export function createRouteUtils({
 
             if ((response.status ?? 200) >= 400) {
                 return NextResponse.json(
-                    sanitizeUpstreamClientError(response.data, `Failed to ${context}`),
+                    sanitizeUpstreamClientError(response.data, `Failed to ${context}`, response.status),
                     { status: response.status },
                 );
             }
@@ -519,7 +506,7 @@ export function createRouteUtils({
 
             if ((response.status ?? 200) >= 400) {
                 return NextResponse.json(
-                    sanitizeUpstreamClientError(response.data, `Failed to ${context}`),
+                    sanitizeUpstreamClientError(response.data, `Failed to ${context}`, response.status),
                     { status: response.status },
                 );
             }
@@ -578,7 +565,7 @@ export function createRouteUtils({
 
             if ((response.status ?? 200) >= 400) {
                 return NextResponse.json(
-                    sanitizeUpstreamClientError(response.data, `Failed to ${context}`),
+                    sanitizeUpstreamClientError(response.data, `Failed to ${context}`, response.status),
                     { status: response.status },
                 );
             }

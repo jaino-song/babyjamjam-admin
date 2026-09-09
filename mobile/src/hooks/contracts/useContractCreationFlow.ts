@@ -1,4 +1,6 @@
 "use client";
+import { getUserErrorMessage } from "@babyjamjam/shared";
+
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
@@ -579,7 +581,7 @@ export function useContractCreationFlow(): ContractCreationFlow {
   }, [startDate, voucherDuration, setEndDate]);
 
   const showErrorToast = (message: string) => {
-    toast({ variant: "destructive", description: message });
+    toast({ variant: "destructive", description: getUserErrorMessage(message) });
   };
 
   useEffect(() => () => {

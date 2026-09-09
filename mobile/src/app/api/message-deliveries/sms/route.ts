@@ -47,7 +47,7 @@ export async function POST(request: NextRequest) {
         const status = getUpstreamErrorStatus(error);
         logUpstreamError("API send SMS", error);
         return NextResponse.json(
-          sanitizeUpstreamClientError(axiosErr.response.data, "Failed to send SMS"),
+          sanitizeUpstreamClientError(axiosErr.response.data, "Failed to send SMS", status),
           { status },
         );
       }

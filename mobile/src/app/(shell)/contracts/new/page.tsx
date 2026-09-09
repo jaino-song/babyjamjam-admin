@@ -1,4 +1,6 @@
 "use client";
+import { getUserErrorMessage } from "@babyjamjam/shared";
+
 
 import { useState, useMemo, useEffect, useRef, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
@@ -454,7 +456,7 @@ export default function ContractCreationPage() {
   }, [startDate, voucherDuration, setEndDate]);
 
   const showErrorToast = (message: string) => {
-    toast({ variant: "destructive", description: message });
+    toast({ variant: "destructive", description: getUserErrorMessage(message) });
   };
 
   useEffect(() => () => {
@@ -731,7 +733,7 @@ export default function ContractCreationPage() {
         } catch (error) {
           if (!isAxiosError<{ message?: string; error?: string; clientId?: number }>(error) || error.response?.status !== 409) throw error;
           const conflict = error.response.data;
-          if (!conflict.clientId) throw new Error(getApiErrorMessage(error, "고객 자동 등록에 실패했습니다."));
+          if (!conflict.clientId) throw new Error(getApiErrorMessage(error, "고객 자동 등록에 실패했어요."));
           const shouldReuse = await requestConfirmation("이미 같은 전화번호의 고객이 있습니다. 기존 고객으로 계약을 진행할까요?");
           if (!shouldReuse) return;
           reusedExistingClient = true;
@@ -861,12 +863,12 @@ export default function ContractCreationPage() {
             queryClient.invalidateQueries({ queryKey: eformsignQueryKeys.documents() });
             setTimeout(() => { setIsProgressModalOpen(false); router.push("/contracts"); }, SUCCESS_REDIRECT_DELAY_MS);
           } catch {
-            setProgressErrorHint("문서는 생성되었으나 등록에 실패했습니다. 잠시 후 다시 시도해 주세요.");
+            setProgressErrorHint("문서는 생성되었으나 등록에 실패했어요. 잠시 후 다시 시도해 주세요.");
           }
           return;
         }
         if (headless.reason === "remote_unconfirmed" || headless.fallbackHint === "manual_check" || headless.fallbackHint === "adopt-or-manual") {
-          setProgressErrorHint("문서 생성 상태를 확인할 수 없습니다. 전자문서 목록에서 확인 후 다시 시도해 주세요.");
+          setProgressErrorHint("문서 생성 상태를 확인할 수 없어요. 전자문서 목록에서 확인 후 다시 시도해 주세요.");
           return;
         }
         if (headless.reason === "duplicate_pending_document") {
@@ -937,7 +939,7 @@ export default function ContractCreationPage() {
       }
     } catch (err: unknown) {
       setIsProgressModalOpen(false);
-      const msg = err instanceof Error ? err.message : "계약서 생성 중 오류가 발생했습니다.";
+      const msg = err instanceof Error ? err.message : "계약서 생성 중 오류가 발생했어요.";
       showErrorToast(autoRegisteredClientId ? `${msg} 방금 자동 등록된 고객이 남아 있어요` : msg);
       if (autoRegisteredClientId && (await requestConfirmation("방금 자동 등록된 고객이 남아 있습니다. 고객을 삭제할까요?"))) {
         try {

@@ -1,4 +1,6 @@
 "use client";
+import { getUserErrorMessage } from "@babyjamjam/shared";
+
 
 import { useMemo, useState } from "react";
 import {
@@ -462,7 +464,7 @@ export function MessagesHistoryPage() {
       setJobPendingCancel(null);
       toast({
         title: MESSAGE_JOB_CANCEL_COPY.action,
-        description: MESSAGE_JOB_CANCEL_COPY.failure,
+        description: getUserErrorMessage(MESSAGE_JOB_CANCEL_COPY.failure),
         variant: "destructive",
       });
     }

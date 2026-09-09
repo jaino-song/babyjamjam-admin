@@ -1,3 +1,5 @@
+import { getUserErrorMessage } from './user-error-message';
+
 interface ApiErrorLike {
   response?: {
     status?: unknown;
@@ -40,7 +42,7 @@ function getPayloadMessage(payload: ApiErrorPayload | null): string | null {
 }
 
 export function getApiErrorMessage(error: unknown, fallback: string): string {
-  return getPayloadMessage(getResponsePayload(error)) ?? fallback;
+  return getUserErrorMessage(error, fallback);
 }
 
 export function getConflictPayload(error: unknown): ConflictPayload | null {
@@ -53,7 +55,7 @@ export function getConflictPayload(error: unknown): ConflictPayload | null {
   const message = getPayloadMessage(payload);
   if (!message) return null;
 
-  return { message };
+  return { message: getUserErrorMessage(error) };
 }
 
 export function getClientConflictPayload(error: unknown): ClientConflictPayload | null {

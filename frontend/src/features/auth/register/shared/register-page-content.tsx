@@ -1,4 +1,6 @@
 "use client";
+import { getUserErrorMessage } from "@babyjamjam/shared";
+
 
 import * as React from "react";
 import { motion } from "framer-motion";
@@ -459,7 +461,7 @@ export function RegisterPageContent({ variant }: RegisterPageContentProps) {
               {serverError ? (
                 <div data-component="desktop_auth_register_body_alert">
                   <Alert variant="destructive" onClose={clearServerError}>
-                    {serverError}
+                    {serverError && getUserErrorMessage(serverError)}
                   </Alert>
                 </div>
               ) : null}

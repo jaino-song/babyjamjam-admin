@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import { getUserErrorMessage } from "@babyjamjam/shared";
 
 const TOAST_LIMIT = 1;
 const TOAST_REMOVE_DELAY = 300;
@@ -70,19 +71,28 @@ const addToRemoveQueue = (toastId: string) => {
   toastTimeouts.set(toastId, timeout);
 };
 
+function normalizeErrorToast(toast: ToasterToast): ToasterToast {
+  if (toast.variant !== "destructive") return toast;
+  return {
+    ...toast,
+    title: toast.title ? getUserErrorMessage(toast.title, "요청을 처리하지 못했어요") : toast.title,
+    description: toast.description ? getUserErrorMessage(toast.description) : toast.description,
+  };
+}
+
 export const reducer = (state: State, action: Action): State => {
   switch (action.type) {
     case "ADD_TOAST":
       return {
         ...state,
-        toasts: [{ ...action.toast, open: true }, ...state.toasts].slice(0, TOAST_LIMIT),
+        toasts: [{ ...normalizeErrorToast(action.toast), open: true }, ...state.toasts].slice(0, TOAST_LIMIT),
       };
 
     case "UPDATE_TOAST":
       return {
         ...state,
         toasts: state.toasts.map((t) =>
-          t.id === action.toast.id ? { ...t, ...action.toast } : t
+          t.id === action.toast.id ? normalizeErrorToast({ ...t, ...action.toast }) : t
         ),
       };
 

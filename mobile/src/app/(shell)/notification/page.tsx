@@ -1,4 +1,6 @@
 "use client";
+import { getUserErrorMessage } from "@babyjamjam/shared";
+
 
 import { useEffect, useState, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -118,7 +120,7 @@ export default function NotificationPage() {
     onError: () => {
       toast({
         title: "이메일 알림 설정을 저장하지 못했어요",
-        description: "이전 설정을 유지합니다",
+        description: getUserErrorMessage("이전 설정을 유지해요"),
         variant: "destructive",
       });
     },
@@ -132,12 +134,12 @@ export default function NotificationPage() {
   const appNotificationDescription = !PWA_NOTIFICATIONS_ENABLED
     ? "앱 알림은 현재 비활성화되어 있습니다."
     : !isAppNotificationSupported
-    ? "이 브라우저는 앱 알림을 지원하지 않습니다."
+    ? "이 브라우저는 앱 알림을 지원하지 않아요."
     : appNotificationPermission === "denied"
       ? "브라우저에서 알림 권한이 차단되어 있습니다."
       : isAppNotificationEnabled
         ? "앱에서 중요한 업무 알림을 받고 있습니다."
-        : "앱에서 중요한 업무 알림을 받지 않습니다.";
+        : "앱에서 중요한 업무 알림을 받지 않아요.";
   const emailNotificationDescription = !NOTIFICATION_EMAIL_ENABLED
     ? "이메일 알림은 현재 비활성화되어 있습니다."
     : !accountEmail
@@ -147,7 +149,7 @@ export default function NotificationPage() {
         : notificationPreferencesQuery.isError
           ? "이메일 알림 설정을 불러오지 못했어요. 잠시 후 다시 시도해 주세요."
           : updateNotificationPreferencesMutation.isError
-            ? "이메일 알림 설정을 저장하지 못했어요. 이전 설정을 유지합니다."
+            ? "이메일 알림 설정을 저장하지 못했어요. 이전 설정을 유지해요."
             : `${accountEmail}로 주요 알림을 받습니다.`;
 
   const testNotificationMutation = useMutation({
@@ -165,7 +167,7 @@ export default function NotificationPage() {
     onError: () => {
       toast({
         title: "테스트 알림을 보내지 못했어요",
-        description: "잠시 후 다시 시도해 주세요",
+        description: getUserErrorMessage("잠시 후 다시 시도해 주세요"),
         variant: "destructive",
       });
     },
@@ -181,9 +183,9 @@ export default function NotificationPage() {
     if (!success) {
       toast({
         title: "앱 알림 설정을 바꾸지 못했어요",
-        description: checked
+        description: getUserErrorMessage(checked
           ? "앱 알림을 켜지 못했어요. 브라우저 알림 권한을 확인해 주세요"
-          : "앱 알림을 끄지 못했어요. 잠시 후 다시 시도해 주세요",
+          : "앱 알림을 끄지 못했어요. 잠시 후 다시 시도해 주세요"),
         variant: "destructive",
       });
     }

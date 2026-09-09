@@ -1,3 +1,5 @@
+import { getUserErrorMessage, getSafeApiDisplayMessage } from '@babyjamjam/shared';
+
 import { t, Locale } from '@/lib/i18n/translations';
 
 /**
@@ -103,75 +105,8 @@ export function mapPrismaError(error: unknown, locale: Locale): string | null {
     return message;
 }
 
-/**
- * Bare HTTP status names and this app's own proxy placeholder. A backend that
- * only gives us one of these has told the operator nothing, so the localized
- * fallback is the better message.
- */
-const UNINFORMATIVE_MESSAGES = new Set([
-    'bad request',
-    'unauthorized',
-    'payment required',
-    'forbidden',
-    'not found',
-    'method not allowed',
-    'conflict',
-    'gone',
-    'unprocessable entity',
-    'too many requests',
-    'internal server error',
-    'not implemented',
-    'bad gateway',
-    'service unavailable',
-    'gateway timeout',
-]);
-
-function isUninformative(message: string): boolean {
-    const normalized = message.trim().toLowerCase();
-    return UNINFORMATIVE_MESSAGES.has(normalized) || normalized.startsWith('failed to ');
-}
-
-/**
- * Read the response body only. Surfacing an Error's own `message` would leak
- * transport strings ("Network Error") that mean nothing to an operator.
- */
-function getResponsePayload(error: unknown): { error?: unknown; message?: unknown } | null {
-    if (!error || typeof error !== 'object') {
-        return null;
-    }
-
-    const candidate = error as { response?: { data?: unknown }; data?: unknown };
-    const data = candidate.response?.data ?? candidate.data;
-    if (!data || typeof data !== 'object' || Array.isArray(data)) {
-        return null;
-    }
-
-    return data as { error?: unknown; message?: unknown };
-}
-
-/**
- * Pull the backend's own explanation out of an API error response. Nest puts it
- * in `message`; the Next proxy flattens that into `error` before it reaches the
- * browser, so both are read, `message` first.
- *
- * @returns The backend's message, or null when it carries no usable text
- */
 export function getApiDisplayMessage(error: unknown): string | null {
-    const payload = getResponsePayload(error);
-    if (!payload) {
-        return null;
-    }
-
-    for (const candidate of [payload.message, payload.error]) {
-        const text = Array.isArray(candidate)
-            ? candidate.filter((entry): entry is string => typeof entry === 'string').join(', ')
-            : candidate;
-        if (typeof text === 'string' && text.trim() && !isUninformative(text)) {
-            return text.trim();
-        }
-    }
-
-    return null;
+    return getSafeApiDisplayMessage(error);
 }
 
 /**
@@ -183,8 +118,5 @@ export function getErrorMessage(
     locale: Locale,
     fallbackKey: string = 'errors.generic'
 ): string {
-    const apiError = extractApiError(error);
-    return mapPrismaError(apiError, locale)
-        || getApiDisplayMessage(error)
-        || t(locale, fallbackKey);
+    return getUserErrorMessage(error, t('ko', fallbackKey));
 }

@@ -101,7 +101,7 @@ describe("POST /api/voucher-price-infos/parse-image", () => {
 
         expect(response.status).toBe(422);
         await expect(response.json()).resolves.toEqual({
-            error: "바우처 이미지 파싱에 실패했습니다",
+            error: "바우처 이미지 파싱에 실패했어요",
         });
 
         const logged = consoleErrorSpy.mock.calls

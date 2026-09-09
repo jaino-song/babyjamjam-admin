@@ -1,4 +1,6 @@
 "use client";
+import { getUserErrorMessage } from "@babyjamjam/shared";
+
 
 import { type KeyboardEvent, useEffect, useMemo, useRef, useState } from "react";
 import { isAxiosError } from "axios";
@@ -813,9 +815,9 @@ function NewMessageForm({ initialBody, initialTemplateId, initialClientId, initi
 
   const validationError = useMemo(() => {
     if (!receiverPayload) return RECIPIENT_REQUIRED_MESSAGE;
-    if (!PHONE_REGEX.test(receiverPayload)) return "수신자 연락처 형식이 올바르지 않습니다. (숫자, '-', ',' 만 허용)";
+    if (!PHONE_REGEX.test(receiverPayload)) return "수신자 연락처 형식이 올바르지 않아요. (숫자, '-', ',' 만 허용)";
     if (splitRecipientPhones(receiverPayload).some((phone) => !SINGLE_PHONE_REGEX.test(phone))) {
-      return "수신자 연락처 형식이 올바르지 않습니다. (숫자, '-', ',' 만 허용)";
+      return "수신자 연락처 형식이 올바르지 않아요. (숫자, '-', ',' 만 허용)";
     }
     if (recipientCount > MAX_RECIPIENTS) return `수신자는 한 번에 최대 ${MAX_RECIPIENTS}명까지 선택할 수 있습니다.`;
     const missingVariable = selectedTemplateVariables.find(
@@ -845,7 +847,7 @@ function NewMessageForm({ initialBody, initialTemplateId, initialClientId, initi
         data.result &&
         (data.result.resultCode !== 1 || (data.result.errorCount ?? 0) > 0)
       ) {
-        throw new Error(data.result.message ?? "발송에 실패했습니다.");
+        throw new Error(data.result.message ?? "발송에 실패했어요.");
       }
       return data;
     },
@@ -863,14 +865,14 @@ function NewMessageForm({ initialBody, initialTemplateId, initialClientId, initi
       if (isAxiosError<{ error?: string; message?: string | string[] }>(err)) {
         const data = err.response?.data;
         const msg = Array.isArray(data?.message) ? data?.message.join(", ") : data?.message;
-        setErrorMessage(msg ?? data?.error ?? "발송에 실패했습니다.");
+        setErrorMessage(getUserErrorMessage(err, msg ?? data?.error ?? "발송에 실패했어요."));
         return;
       }
       if (err instanceof Error && err.message) {
-        setErrorMessage(err.message);
+        setErrorMessage(getUserErrorMessage(err, err.message));
         return;
       }
-      setErrorMessage("발송에 실패했습니다.");
+      setErrorMessage(getUserErrorMessage(err, "발송에 실패했어요."));
     },
   });
 
@@ -887,7 +889,7 @@ function NewMessageForm({ initialBody, initialTemplateId, initialClientId, initi
     });
 
     if (filteredRecipients.length === 0) {
-      setErrorMessage(DUPLICATE_RECIPIENT_MESSAGE);
+      setErrorMessage(getUserErrorMessage(DUPLICATE_RECIPIENT_MESSAGE));
       return false;
     }
 
@@ -904,12 +906,12 @@ function NewMessageForm({ initialBody, initialTemplateId, initialClientId, initi
 
     const normalizedPhone = normalizeKoreanPhoneDigits(client.phone);
     if (!normalizedPhone) {
-      setErrorMessage(CLIENT_WITHOUT_PHONE_MESSAGE);
+      setErrorMessage(getUserErrorMessage(CLIENT_WITHOUT_PHONE_MESSAGE));
       return;
     }
 
     if (recipients.length >= MAX_RECIPIENTS) {
-      setErrorMessage(`수신자는 한 번에 최대 ${MAX_RECIPIENTS}명까지 선택할 수 있습니다.`);
+      setErrorMessage(getUserErrorMessage(`수신자는 한 번에 최대 ${MAX_RECIPIENTS}명까지 선택할 수 있습니다.`));
       return;
     }
 
@@ -969,12 +971,12 @@ function NewMessageForm({ initialBody, initialTemplateId, initialClientId, initi
     const normalizedPhones = splitRecipientPhones(rawQuery);
 
     if (normalizedPhones.length === 0 || normalizedPhones.some((phone) => !SINGLE_PHONE_REGEX.test(phone))) {
-      setErrorMessage(INVALID_PHONE_ENTRY_MESSAGE);
+      setErrorMessage(getUserErrorMessage(INVALID_PHONE_ENTRY_MESSAGE));
       return;
     }
 
     if (recipients.length + normalizedPhones.length > MAX_RECIPIENTS) {
-      setErrorMessage(`수신자는 한 번에 최대 ${MAX_RECIPIENTS}명까지 선택할 수 있습니다.`);
+      setErrorMessage(getUserErrorMessage(`수신자는 한 번에 최대 ${MAX_RECIPIENTS}명까지 선택할 수 있습니다.`));
       return;
     }
 
@@ -1084,12 +1086,12 @@ function NewMessageForm({ initialBody, initialTemplateId, initialClientId, initi
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (needsSenderApproval || isSenderApprovalLoading) {
-      setErrorMessage("메시지 전송 권한이 필요합니다.");
+      setErrorMessage(getUserErrorMessage("메시지 전송 권한이 필요합니다."));
       return;
     }
 
     if (validationError || sendMutation.isPending) {
-      if (validationError) setErrorMessage(validationError);
+      if (validationError) setErrorMessage(getUserErrorMessage(validationError));
       return;
     }
     sendMutation.mutate();
@@ -1519,7 +1521,7 @@ function NewMessageForm({ initialBody, initialTemplateId, initialClientId, initi
                 variant="destructive"
                 className={styles.feedbackAlert}
               >
-                {errorMessage}
+                {errorMessage && getUserErrorMessage(errorMessage)}
               </Alert>
             ) : null}
 

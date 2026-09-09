@@ -55,7 +55,7 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
         return NextResponse.json(
             sanitizeUpstreamClientError(
                 getUpstreamErrorData(error),
-                "Failed to fetch client",
+                "Failed to fetch client", getUpstreamErrorStatus(error),
             ),
             { status: getUpstreamErrorStatus(error) },
         );
@@ -81,7 +81,7 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
         return NextResponse.json(
             sanitizeUpstreamClientError(
                 getUpstreamErrorData(error),
-                "Failed to update client",
+                "Failed to update client", getUpstreamErrorStatus(error),
             ),
             { status: getUpstreamErrorStatus(error) },
         );

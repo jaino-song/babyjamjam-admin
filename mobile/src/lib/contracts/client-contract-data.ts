@@ -85,7 +85,7 @@ export function resolveContractAreaTemplateId(
     return candidates[0].areaId;
   }
 
-  throw new Error("계약서 유형을 주소에서 판단할 수 없습니다. 고객 주소를 확인해 주세요.");
+  throw new Error("계약서 유형을 주소에서 판단할 수 없어요. 고객 주소를 확인해 주세요.");
 }
 
 export function buildClientContractData({

@@ -87,7 +87,7 @@ describe("ContractDocumentJobsPopover", () => {
       },
     });
 
-    expect(screen.getByTitle("연결된 계약서가 없어 이동할 수 없습니다.")).toBeInTheDocument();
+    expect(screen.getByTitle("연결된 계약서가 없어 이동할 수 없어요.")).toBeInTheDocument();
     expect(screen.queryByRole("link", { name: /전자문서 최종 처리/ })).not.toBeInTheDocument();
   });
 

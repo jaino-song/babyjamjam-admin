@@ -444,7 +444,7 @@ describe("NewMessagePage", () => {
 
     const { rerender } = renderPage();
 
-    expect(screen.queryByText("선택한 고객에 등록된 연락처가 없습니다.")).not.toBeInTheDocument();
+    expect(screen.queryByText("선택한 고객에 등록된 연락처가 없어요.")).not.toBeInTheDocument();
 
     mockUseAllClients.mockReturnValue({
       data: [{ ...mockClients[0], phone: "" }],
@@ -456,7 +456,7 @@ describe("NewMessagePage", () => {
       </QueryClientProvider>,
     );
 
-    expect(await screen.findByText("선택한 고객에 등록된 연락처가 없습니다.")).toBeInTheDocument();
+    expect(await screen.findByText("선택한 고객에 등록된 연락처가 없어요.")).toBeInTheDocument();
   });
 
   it("does not re-add a deep-linked recipient the user removed when the client list refetches", async () => {
@@ -495,7 +495,7 @@ describe("NewMessagePage", () => {
     fireEvent.change(receiverInput, { target: { value: tooManyRecipients } });
     fireEvent.keyDown(receiverInput, { key: "Enter" });
 
-    expect(await screen.findByText("수신자는 한 번에 최대 50명까지 선택할 수 있습니다.")).toBeInTheDocument();
+    expect(await screen.findByText("수신자는 한 번에 최대 50명까지 선택할 수 있어요.")).toBeInTheDocument();
     expect(api.post).not.toHaveBeenCalled();
   });
 

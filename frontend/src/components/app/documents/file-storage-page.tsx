@@ -1,4 +1,6 @@
 "use client";
+import { getUserErrorMessage } from "@babyjamjam/shared";
+
 
 import { useMemo, useState } from "react";
 import dynamic from "next/dynamic";
@@ -104,7 +106,7 @@ export function FileStoragePage() {
       setUploadDropzoneState(EMPTY_UPLOAD_STATE);
       toast({ description: "문서를 업로드했어요", variant: "success" });
     } catch {
-      toast({ description: "문서를 업로드하지 못했어요", variant: "destructive" });
+      toast({ description: getUserErrorMessage("문서를 업로드하지 못했어요"), variant: "destructive" });
     }
   };
 
@@ -123,7 +125,7 @@ export function FileStoragePage() {
       setEditDoc(null);
       toast({ description: "문서를 수정했어요", variant: "success" });
     } catch {
-      toast({ description: "문서를 수정하지 못했어요", variant: "destructive" });
+      toast({ description: getUserErrorMessage("문서를 수정하지 못했어요"), variant: "destructive" });
     }
   };
 
@@ -134,7 +136,7 @@ export function FileStoragePage() {
       setDeleteDoc(null);
       toast({ description: "문서를 삭제했어요", variant: "success" });
     } catch {
-      toast({ description: "문서를 삭제하지 못했어요", variant: "destructive" });
+      toast({ description: getUserErrorMessage("문서를 삭제하지 못했어요"), variant: "destructive" });
     }
   };
 
@@ -144,7 +146,7 @@ export function FileStoragePage() {
       setIsAddCategoryOpen(false);
       toast({ description: "카테고리를 추가했어요", variant: "success" });
     } catch {
-      toast({ description: "카테고리를 추가하지 못했어요", variant: "destructive" });
+      toast({ description: getUserErrorMessage("카테고리를 추가하지 못했어요"), variant: "destructive" });
     }
   };
 
@@ -354,7 +356,7 @@ export function FileStoragePage() {
         }}
         dataComponent="desktop_files_delete-approval"
         title="문서를 삭제하시겠습니까?"
-        description="이 작업은 되돌릴 수 없습니다."
+        description="이 작업은 되돌릴 수 없어요."
         approvalLabel="삭제"
         pendingLabel="삭제 중..."
         approvalVariant="destructive"

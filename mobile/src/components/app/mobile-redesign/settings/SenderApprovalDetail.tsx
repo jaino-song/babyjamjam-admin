@@ -1,4 +1,6 @@
 "use client";
+import { getUserErrorMessage } from "@babyjamjam/shared";
+
 
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -69,11 +71,11 @@ function getApprovalErrorMessage(error: unknown): string {
   if (isAxiosError<{ error?: string; message?: string | string[] }>(error)) {
     const data = error.response?.data;
     const message = Array.isArray(data?.message) ? data.message.join(", ") : data?.message;
-    return message ?? data?.error ?? "승인 신청에 실패했습니다.";
+    return message ?? data?.error ?? "승인 신청에 실패했어요.";
   }
 
   if (error instanceof Error && error.message) return error.message;
-  return "승인 신청에 실패했습니다.";
+  return "승인 신청에 실패했어요.";
 }
 
 function approvalStatusLabel(approval?: MessageSenderApprovalResponse): string {
@@ -116,7 +118,7 @@ export function SenderApprovalDetail({
       router.replace("/all");
     },
     onError: (error) => {
-      setErrorMessage(getApprovalErrorMessage(error));
+      setErrorMessage(getUserErrorMessage(error, getApprovalErrorMessage(error)));
     },
   });
 
@@ -293,7 +295,7 @@ export function SenderApprovalDetail({
           variant="destructive"
           className={styles.feedbackAlert}
         >
-          <AlertDescription>{errorMessage}</AlertDescription>
+          <AlertDescription>{errorMessage && getUserErrorMessage(errorMessage)}</AlertDescription>
         </Alert>
       ) : null}
 

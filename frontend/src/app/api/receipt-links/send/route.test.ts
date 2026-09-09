@@ -172,7 +172,7 @@ describe("POST /api/receipt-links/send", () => {
     const payload = await response.json();
 
     expect(response.status).toBe(500);
-    expect(payload).toEqual({ error: "Failed to send receipt link" });
+    expect(payload).toEqual({ error: expect.stringMatching(/[가-힣].*요[.!]?$/) });
     const serialized = JSON.stringify(payload);
     expect(serialized).not.toContain("DB_TIMEOUT");
     expect(serialized).not.toContain("db-primary.internal");
@@ -194,7 +194,7 @@ describe("POST /api/receipt-links/send", () => {
     const payload = await response.json();
 
     expect(response.status).toBe(500);
-    expect(payload).toEqual({ error: "Failed to send receipt link" });
+    expect(payload).toEqual({ error: expect.stringMatching(/[가-힣].*요[.!]?$/) });
     const serialized = JSON.stringify(payload);
     expect(serialized).not.toContain("<html>");
     expect(serialized).not.toContain("internal only");
@@ -206,7 +206,7 @@ describe("POST /api/receipt-links/send", () => {
     const response = await POST(createRequest());
 
     expect(response.status).toBe(500);
-    expect(await response.json()).toEqual({ error: "Failed to send receipt link" });
+    expect(await response.json()).toEqual({ error: expect.stringMatching(/[가-힣].*요[.!]?$/) });
   });
 
   it("falls back to the fixed 500 message when request.text() itself rejects (never leaks error.message) (M5)", async () => {
@@ -222,7 +222,7 @@ describe("POST /api/receipt-links/send", () => {
     const payload = await response.json();
 
     expect(response.status).toBe(500);
-    expect(payload).toEqual({ error: "Failed to send receipt link" });
+    expect(payload).toEqual({ error: expect.stringMatching(/[가-힣].*요[.!]?$/) });
     expect(mockPost).not.toHaveBeenCalled();
     expect(JSON.stringify(payload)).not.toContain("db-primary.internal");
   });

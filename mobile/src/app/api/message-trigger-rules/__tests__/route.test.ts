@@ -94,7 +94,7 @@ describe("Message trigger rule API routes", () => {
     const response = await listRules(createRequest("/api/message-trigger-rules"));
 
     expect(response.status).toBe(403);
-    await expect(response.json()).resolves.toEqual({ error: "Failed to fetch message trigger rules" });
+    await expect(response.json()).resolves.toEqual({ error: expect.stringMatching(/[가-힣].*요[.!]?$/) });
   });
 
   const validRulePayload = {

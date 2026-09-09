@@ -1,4 +1,6 @@
 "use client";
+import { getUserErrorMessage } from "@babyjamjam/shared";
+
 
 import { isAxiosError } from "axios";
 import { useQueryClient } from "@tanstack/react-query";
@@ -46,7 +48,7 @@ type ServiceRecordLinkFailureStage = "assignment" | "send";
 const SERVICE_RECORD_LINK_ERROR_MESSAGES: Record<string, string> = {
   "Assignment not found": "선택한 관리사님과 산모님의 배정 일정을 찾지 못해 제공기록지 링크를 보내지 못했어요",
   "제공인력 전화번호가 없습니다": "선택한 관리사님의 전화번호가 없어 제공기록지 링크를 보내지 못했어요",
-  "준비된 제공기록지 링크가 만료되었거나 유효하지 않습니다": "제공기록지 링크가 만료됐어요. 입력 정보를 다시 선택해 새 링크를 준비해 주세요",
+  "준비된 제공기록지 링크가 만료되었거나 유효하지 않아요": "제공기록지 링크가 만료됐어요. 입력 정보를 다시 선택해 새 링크를 준비해 주세요",
 };
 
 export interface TemplateSendFormSubmitState {
@@ -570,7 +572,7 @@ export function TemplateSendForm({
         serviceRecordValidationMessage ??
         "제공기록지 링크를 준비하고 있어요. 잠시 후 다시 시도해 주세요";
       setFeedback({ tone: "error", message: errorMessage });
-      toast({ variant: "destructive", description: errorMessage });
+      toast({ variant: "destructive", description: getUserErrorMessage(errorMessage) });
       return;
     }
 
@@ -599,12 +601,12 @@ export function TemplateSendForm({
             ? "바로 보내지 못해 재시도 대기열에 넣었어요"
             : "제공기록지 링크를 바로 보내지 못했어요";
         setFeedback({ tone: "error", message: errorMessage });
-        toast({ variant: "destructive", description: errorMessage });
+        toast({ variant: "destructive", description: getUserErrorMessage(errorMessage) });
       }
     } catch (error) {
       const errorMessage = getServiceRecordLinkErrorMessage(error, failureStage);
       setFeedback({ tone: "error", message: errorMessage });
-      toast({ variant: "destructive", description: errorMessage });
+      toast({ variant: "destructive", description: getUserErrorMessage(errorMessage) });
     } finally {
       void queryClient.invalidateQueries({ queryKey: messageTriggerKeys.upcoming() });
       void queryClient.invalidateQueries({ queryKey: messageTriggerKeys.history() });
@@ -618,7 +620,7 @@ export function TemplateSendForm({
     if (validationMessage) {
       setFeedback({ tone: "error", message: validationMessage });
       if (isServiceRecordLinkDelivery) {
-        toast({ variant: "destructive", description: validationMessage });
+        toast({ variant: "destructive", description: getUserErrorMessage(validationMessage) });
       }
       return;
     }

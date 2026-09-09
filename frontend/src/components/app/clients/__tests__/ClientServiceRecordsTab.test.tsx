@@ -319,7 +319,7 @@ describe("ClientServiceRecordsTab", () => {
     it("labels rejected manual sends as failures while preserving the server detail", async () => {
         mutateAsync.mockRejectedValue({
             response: {
-                data: { message: "수신자 전화번호가 없습니다" },
+                data: { message: "수신자 전화번호가 없어요" },
             },
         });
 
@@ -337,7 +337,7 @@ describe("ClientServiceRecordsTab", () => {
         await waitFor(() => {
             expect(toast).toHaveBeenCalledWith({
                 variant: "destructive",
-                description: "제공기록지 링크 발송에 실패했어요: 수신자 전화번호가 없습니다",
+                description: "제공기록지 링크 발송에 실패했어요: 수신자 전화번호가 없어요",
             });
         });
     });

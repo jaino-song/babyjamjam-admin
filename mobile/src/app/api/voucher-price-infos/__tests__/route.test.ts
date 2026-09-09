@@ -199,7 +199,7 @@ describe("voucher price info API routes", () => {
 
     expect(response.status).toBe(409);
     await expect(response.json()).resolves.toEqual({
-      error: "바우처 가격 정보 업데이트에 실패했습니다",
+      error: "바우처 가격 정보 업데이트에 실패했어요",
     });
 
     const logged = consoleErrorSpy.mock.calls

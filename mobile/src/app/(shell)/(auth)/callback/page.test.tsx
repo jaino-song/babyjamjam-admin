@@ -62,7 +62,7 @@ describe("AuthCallbackPage", () => {
 
     render(<AuthCallbackPage />);
 
-    expect(await screen.findByText("로그인 중 오류가 발생했습니다.")).toBeInTheDocument();
+    expect(await screen.findByText("로그인 중 오류가 발생했어요.")).toBeInTheDocument();
     await waitFor(() => expect(mockExchangeToken).not.toHaveBeenCalled());
   });
 

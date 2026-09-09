@@ -8,3 +8,5 @@ export * from "./template/utils";
 export * from "./template/data-sources";
 export * from "./agent";
 export * from "./file-storage/capabilities";
+export * from "./errors/user-error-message";
+export { getSafeApiDisplayMessage, sanitizeApiDisplayMessage } from "./errors/safe-api-error-message";

@@ -1,4 +1,6 @@
 "use client";
+import { getUserErrorMessage } from "@babyjamjam/shared";
+
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -527,7 +529,7 @@ export default function ContractsPage() {
       toast({
         variant: "destructive",
         title: "계약 정보를 불러오지 못했어요",
-        description: "고객 정보를 직접 입력해 주세요",
+        description: getUserErrorMessage("고객 정보를 직접 입력해 주세요"),
       });
     }
   }, [registerCandidateQuery.isError, registerClientDocumentId, toast]);
@@ -693,7 +695,7 @@ export default function ContractsPage() {
         const failedItem = response.result?.fail_result?.find(
           (item) => item.document_id === deleteTargetDocumentId
         );
-        throw new Error(failedItem?.message || "문서 삭제에 실패했습니다.");
+        throw new Error(failedItem?.message || "문서 삭제에 실패했어요.");
       }
 
       if (selectedDocId === deleteTargetDocumentId) {
@@ -715,9 +717,9 @@ export default function ContractsPage() {
       toast({
         title: "문서를 삭제하지 못했어요",
         description:
-          deleteError instanceof Error
+          getUserErrorMessage(deleteError, deleteError instanceof Error
             ? deleteError.message
-            : "잠시 후 다시 시도해 주세요",
+            : "잠시 후 다시 시도해 주세요"),
         variant: "destructive",
       });
     }
@@ -728,8 +730,8 @@ export default function ContractsPage() {
       <div data-component="desktop_contracts_error" className="p-[calc(24px*var(--glint-ui-scale,1))]">
         <div data-component="desktop_contracts_error_banner" className="rounded-[18px] bg-v3-burgundy-light p-[calc(24px*var(--glint-ui-scale,1))] text-center text-v3-burgundy">
           {authError
-            ? "인증에 실패했습니다. 페이지를 새로고침 해주세요."
-            : "문서를 불러오는데 실패했습니다."}
+            ? "인증에 실패했어요. 페이지를 새로고침 해 주세요."
+            : "문서를 불러오는데 실패했어요."}
         </div>
       </div>
     );
@@ -1124,7 +1126,7 @@ export default function ContractsPage() {
         }}
         data-component="desktop_contracts_modals_delete-approval"
         title="문서를 삭제하시겠습니까?"
-        description="전자문서가 취소되어 수신자가 더 이상 서명할 수 없습니다. 복구할 수 없습니다."
+        description="전자문서가 취소되어 수신자가 더 이상 서명할 수 없어요. 복구할 수 없어요."
         approvalLabel="삭제"
         pendingLabel="삭제 중..."
         approvalVariant="destructive"
@@ -1457,7 +1459,7 @@ export function ContractDetail({
     onError: (error) => {
       toast({
         variant: "destructive",
-        description: error instanceof Error ? error.message : "재요청하지 못했어요",
+        description: getUserErrorMessage(error, error instanceof Error ? error.message : "재요청하지 못했어요"),
       });
     },
   });
@@ -1572,7 +1574,7 @@ export function ContractDetail({
       toast({
         variant: "destructive",
         title: "최종 확인을 마치지 못했어요",
-        description: error instanceof Error ? error.message : "잠시 후 다시 시도해 주세요",
+        description: getUserErrorMessage(error, error instanceof Error ? error.message : "잠시 후 다시 시도해 주세요"),
       });
     },
   });
@@ -1591,7 +1593,7 @@ export function ContractDetail({
       toast({
         variant: "destructive",
         title: "영수증 문자를 보내지 못했습니다",
-        description: describeReceiptLinkError(error),
+        description: getUserErrorMessage(describeReceiptLinkError(error)),
       });
     },
   });
@@ -1620,7 +1622,7 @@ export function ContractDetail({
     toast({
       variant: "destructive",
       title: "최종 확인을 마치지 못했어요",
-      description: message,
+      description: getUserErrorMessage(message),
     });
     closeStaffCompletionModal();
   };
@@ -1777,7 +1779,7 @@ export function ContractDetail({
     activityItems.push({
       icon: AlertTriangle,
       iconVariant: "danger",
-      text: "문서 기간이 만료되었습니다",
+      text: "문서 기간이 만료됐어요",
       time: formatDateTime(detailedDocument.updated_date),
     });
   } else {

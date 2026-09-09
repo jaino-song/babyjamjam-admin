@@ -102,7 +102,7 @@ export async function POST(request: NextRequest) {
             const responseData = axiosError.response?.data;
 
             return NextResponse.json(
-                sanitizeUpstreamClientError(responseData, "Login failed"),
+                sanitizeUpstreamClientError(responseData, "Login failed", status),
                 { status }
             );
         }

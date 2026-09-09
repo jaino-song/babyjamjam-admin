@@ -552,7 +552,7 @@ describe("messages page — merged 발송 기록 section", () => {
   });
 
   it("shows exactly one failure notification and closes the dialog when the cancel request is rejected", async () => {
-    mockCancelMutateAsync.mockRejectedValue(new Error("이미 발송되었거나 취소할 수 없는 상태입니다."));
+    mockCancelMutateAsync.mockRejectedValue(new Error("이미 발송되었거나 취소할 수 없는 상태예요."));
     mockData({
       upcoming: [buildUpcomingJob()],
     });
@@ -567,7 +567,7 @@ describe("messages page — merged 발송 기록 section", () => {
 
     await waitFor(() =>
       expect(mockToast).toHaveBeenCalledWith(
-        expect.objectContaining({ variant: "destructive", description: "이미 발송되었거나 취소할 수 없는 상태입니다." }),
+        expect.objectContaining({ variant: "destructive", description: "이미 발송되었거나 취소할 수 없는 상태예요." }),
       ),
     );
     expect(mockToast).toHaveBeenCalledTimes(1);

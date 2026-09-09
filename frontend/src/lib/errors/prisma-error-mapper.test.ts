@@ -1,90 +1,43 @@
 import { getErrorMessage } from './prisma-error-mapper';
-import { t } from '@/lib/i18n/translations';
 
-const FALLBACK_KEY = 'clients.form.error-save-failed';
-const fallback = t('ko', FALLBACK_KEY);
+const response = (status: number, data: unknown) => ({ response: { status, data } });
 
-function axiosError(status: number, data: unknown) {
-    return { response: { status, data } };
-}
-
-describe('getErrorMessage', () => {
-    it('still maps a Prisma error code ahead of any raw message', () => {
-        const message = getErrorMessage(
-            axiosError(409, {
-                statusCode: 409,
-                code: 'P2002',
-                error: 'Conflict',
-                field: 'phone',
-            }),
-            'ko',
-            FALLBACK_KEY,
-        );
-
-        expect(message).not.toBe(fallback);
-        expect(message).not.toBe('Conflict');
-    });
-
-    it('surfaces an actionable backend message instead of the generic fallback', () => {
-        const message = getErrorMessage(
-            axiosError(400, {
-                error: 'duration must equal the Korean business-day count (15) for the submitted service period',
-            }),
-            'ko',
-            FALLBACK_KEY,
-        );
-
-        expect(message).toBe(
-            'duration must equal the Korean business-day count (15) for the submitted service period',
-        );
-    });
-
-    it('surfaces a Korean backend message verbatim', () => {
-        const message = getErrorMessage(
-            axiosError(400, { error: '서비스 시작일은 종료일보다 늦을 수 없습니다.' }),
-            'ko',
-            FALLBACK_KEY,
-        );
-
-        expect(message).toBe('서비스 시작일은 종료일보다 늦을 수 없습니다.');
-    });
-
-    it.each([
-        'Bad Request',
-        'bad request',
-        'Conflict',
-        'Internal Server Error',
-        'Unauthorized',
-        'Not Found',
-    ])('keeps the localized fallback for the bare HTTP status name %p', (statusName) => {
-        const message = getErrorMessage(axiosError(400, { error: statusName }), 'ko', FALLBACK_KEY);
-
-        expect(message).toBe(fallback);
-    });
-
-    it('keeps the localized fallback for the proxy placeholder message', () => {
-        const message = getErrorMessage(
-            axiosError(500, { error: 'Failed to create client' }),
-            'ko',
-            FALLBACK_KEY,
-        );
-
-        expect(message).toBe(fallback);
-    });
-
-    it('keeps the localized fallback when the payload carries nothing usable', () => {
-        expect(getErrorMessage(axiosError(500, {}), 'ko', FALLBACK_KEY)).toBe(fallback);
-        expect(getErrorMessage(new Error('boom'), 'ko', FALLBACK_KEY)).toBe(fallback);
-        expect(getErrorMessage(null, 'ko', FALLBACK_KEY)).toBe(fallback);
-    });
-
-    it('reads a message field when the payload was not flattened by the proxy', () => {
-        const message = getErrorMessage(
-            axiosError(400, { message: '자동 고객 등록이 꺼져 있습니다.', error: 'Bad Request' }),
-            'ko',
-            FALLBACK_KEY,
-        );
-
-        expect(message).toBe('자동 고객 등록이 꺼져 있습니다.');
-    });
+describe('Korean error presentation', () => {
+  it('uses the actual duplicate field in Korean even with the English locale', () => {
+    expect(getErrorMessage(response(409, { code: 'P2002', field: 'phone', error: 'Conflict' }), 'en')).toBe('연락처 정보가 이미 등록돼 있어요.');
+  });
+  it('translates a business reason and preserves its service-day count', () => {
+    expect(getErrorMessage(response(400, { message: 'duration must equal the Korean business-day count (15) for the submitted service period', error: 'Bad Request' }), 'ko')).toBe('서비스 기간의 실제 이용일 수는 15일이에요. 입력한 이용일 수를 확인해 주세요.');
+    expect(getErrorMessage(response(400, { error: '서비스 시작일은 종료일보다 늦을 수 없습니다.' }), 'ko')).toBe('서비스 시작일은 종료일보다 늦을 수 없어요.');
+  });
+  it('explains individual validation failures instead of an HTTP label', () => {
+    expect(getErrorMessage(response(400, { message: ['name must be a string', 'phone must be a valid Korean phone number'], error: 'Bad Request' }), 'ko')).toBe('이름 항목은 문자로 입력해 주세요. 연락처 항목에 올바른 국내 전화번호를 입력해 주세요.');
+  });
+  it.each([
+    [401, '로그인 인증을 확인할 수 없어요. 다시 로그인해 주세요.'],
+    [403, '이 작업을 할 권한이 없어요.'],
+    [500, '서버 내부 오류로 요청을 처리하지 못했어요.'],
+  ])('explains a known HTTP failure (%s) without inventing a more specific reason', (status, expected) => {
+    expect(getErrorMessage(response(status as number, {}), 'ko')).toBe(expected);
+  });
+  it.each([
+    'SELECT phone FROM Client WHERE id = 73',
+    'SELECT phone FROM Client',
+    'SELECT phone FROM Client;',
+    'SELECT phone, email FROM Client WHERE id = 73',
+    'SELECT "phone", "email" FROM "Client" WHERE "id" = 73',
+    'SELECT count(*) FROM Client WHERE id = 73;',
+    'SELECT COUNT(*) FROM Client',
+    'PrismaClientKnownRequestError: Invalid prisma invocation SELECT * FROM Client',
+    'Error: database connection failed at /app/src/clients.service.ts:42',
+    'upstream rejected Bearer abc.def.ghi',
+    'password: hunter2',
+    'Invalid API key: sk_test_secret',
+  ])('does not expose technical or credential diagnostics: %s', (message) => {
+    expect(getErrorMessage(response(409, { message }), 'ko')).toBe('현재 데이터 상태와 요청이 충돌해 처리할 수 없어요.');
+  });
+  it('distinguishes network failure from an unknown local error', () => {
+    expect(getErrorMessage(new Error('Network Error'), 'ko')).toBe('서버에 연결하지 못했어요. 인터넷 연결 상태를 확인해 주세요.');
+    expect(getErrorMessage(null, 'ko', 'clients.form.error-save-failed')).toBe('저장에 실패했어요. 다시 시도해 주세요.');
+  });
 });

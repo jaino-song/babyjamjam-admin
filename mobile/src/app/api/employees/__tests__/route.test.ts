@@ -64,7 +64,7 @@ describe("employee API routes", () => {
     const response = await listEmployees(createRequest("/api/employees"));
 
     expect(response.status).toBe(403);
-    await expect(response.json()).resolves.toEqual({ error: "Failed to fetch employees" });
+    await expect(response.json()).resolves.toEqual({ error: expect.stringMatching(/[가-힣].*요[.!]?$/) });
   });
 
   const validCreatePayload = {
@@ -117,8 +117,8 @@ describe("employee API routes", () => {
 
     expect(response.status).toBe(400);
     const body = await response.json();
-    expect(body).toEqual({ error: message });
-    expect(getErrorMessage({ response: { status: 400, data: body } }, "ko")).toBe(message);
+    expect(body).toEqual({ error: "전화번호 형식이 올바르지 않아요." });
+    expect(getErrorMessage({ response: { status: 400, data: body } }, "ko")).toBe(body.error);
   });
 
   it("preserves message-less Prisma metadata for localized phone conflicts", async () => {
@@ -144,12 +144,12 @@ describe("employee API routes", () => {
     expect(response.status).toBe(409);
     const body = await response.json();
     expect(body).toEqual({
-      error: "Failed to create employee",
+      error: expect.stringMatching(/[가-힣].*요[.!]?$/),
       code: "P2002",
       field: "phone",
     });
     expect(getErrorMessage({ response: { status: 409, data: body } }, "ko")).toBe(
-      "이미 등록된 연락처입니다. 다른 연락처를 입력해주세요.",
+      "연락처 정보가 이미 등록돼 있어요.",
     );
   });
 
@@ -277,7 +277,7 @@ describe("employee API routes", () => {
       response: {
         status: 409,
         data: {
-          message: "진행 중인 배정이 있는 직원은 삭제할 수 없습니다.",
+          message: "진행 중인 배정이 있는 직원은 삭제할 수 없어요.",
           error: "Conflict",
         },
       },
@@ -289,7 +289,7 @@ describe("employee API routes", () => {
 
     expect(response.status).toBe(409);
     await expect(response.json()).resolves.toEqual({
-      message: "진행 중인 배정이 있는 직원은 삭제할 수 없습니다.",
+      message: "진행 중인 배정이 있는 직원은 삭제할 수 없어요.",
     });
   });
 

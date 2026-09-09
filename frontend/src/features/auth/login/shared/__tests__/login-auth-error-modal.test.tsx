@@ -27,10 +27,10 @@ describe("LoginAuthErrorModal", () => {
   });
 
   it.each([
-    ["ACCOUNT_REJECTED", "가입이 거부되었습니다."],
-    ["ACCOUNT_PROFILE_INCOMPLETE", "가입 정보가 누락되었습니다."],
+    ["ACCOUNT_REJECTED", "가입이 거부됐어요."],
+    ["ACCOUNT_PROFILE_INCOMPLETE", "가입 정보가 누락됐어요."],
     ["OAUTH_CANCELLED", "카카오 로그인이 취소되었습니다."],
-    ["INVALID_OAUTH_STATE", "로그인 요청이 만료되었습니다."],
+    ["INVALID_OAUTH_STATE", "로그인 요청이 만료됐어요."],
   ])("shows the allowlisted %s error", (code, title) => {
     authError = code;
     render(<LoginAuthErrorModal />);

@@ -1,4 +1,6 @@
 "use client";
+import { getUserErrorMessage } from "@babyjamjam/shared";
+
 
 import { useState, useMemo, useEffect, useRef, type ReactNode } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
@@ -304,7 +306,7 @@ export default function NewClientPage() {
           : "muted";
 
   const showErrorToast = (message: string) => {
-    toast({ variant: "destructive", description: message });
+    toast({ variant: "destructive", description: getUserErrorMessage(message) });
   };
 
 
@@ -1281,7 +1283,7 @@ export default function NewClientPage() {
         data-component="mobile_clients-new_screen_root_duration-confirmation"
         open={pendingDurationConfirmation !== null}
         title="서비스 기간 확인"
-        description="평일 기준으로 서비스 기간이 맞지 않습니다. 그래도 저장할까요?"
+        description="평일 기준으로 서비스 기간이 맞지 않아요. 그래도 저장할까요?"
         cancelLabel="취소"
         confirmLabel="확인"
         confirmVariant="default"

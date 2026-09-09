@@ -1,4 +1,6 @@
 "use client";
+import { getUserErrorMessage } from "@babyjamjam/shared";
+
 
 import { Fragment, useState, useEffect, useMemo, useRef, useCallback, type ReactNode } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
@@ -771,7 +773,7 @@ function ClientFormContent({
     };
 
     const setErrorAndScroll = (errorMessage: string) => {
-        setError(errorMessage);
+        setError(getUserErrorMessage(errorMessage));
         // Use setTimeout to ensure the Alert is rendered before scrolling
         setTimeout(scrollToTop, 0);
     };
@@ -1893,7 +1895,7 @@ function ClientFormContent({
 
     const formError = error ? (
         <Alert variant="destructive">
-            <AlertDescription>{error}</AlertDescription>
+            <AlertDescription>{error && getUserErrorMessage(error)}</AlertDescription>
         </Alert>
     ) : null;
 
@@ -1912,7 +1914,7 @@ function ClientFormContent({
             data-component={`${base}_content`}
             className="space-y-5"
         >
-            {formError}
+            {formError && getUserErrorMessage(formError)}
             {dialogFormSteps}
         </div>
     );
@@ -1926,7 +1928,7 @@ function ClientFormContent({
                 data-component={`${base}_duration-confirmation`}
                 size="compact"
                 title="서비스 기간 확인"
-                description="평일 기준으로 서비스 기간이 맞지 않습니다. 그래도 저장할까요?"
+                description="평일 기준으로 서비스 기간이 맞지 않아요. 그래도 저장할까요?"
                 footer={(
                     <>
                         <Button

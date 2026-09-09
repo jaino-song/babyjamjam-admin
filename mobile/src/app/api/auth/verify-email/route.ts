@@ -26,7 +26,7 @@ export async function POST(request: NextRequest) {
             const responseData = error.response?.data;
 
             return NextResponse.json(
-                sanitizeUpstreamClientError(responseData, "Verification failed"),
+                sanitizeUpstreamClientError(responseData, "Verification failed", status),
                 { status }
             );
         }

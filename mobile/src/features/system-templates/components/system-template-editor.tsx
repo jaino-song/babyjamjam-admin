@@ -1,4 +1,6 @@
 'use client';
+import { getUserErrorMessage } from "@babyjamjam/shared";
+
 
 import { useState } from 'react';
 import { Plus, X, Loader2 } from 'lucide-react';
@@ -30,7 +32,7 @@ export function SystemTemplateEditor({ template }: Props) {
     if (!newVariable.key.trim() || !newVariable.label.trim()) {
       toast({
         variant: 'destructive',
-        description: '변수 키와 레이블을 입력해 주세요',
+        description: getUserErrorMessage('변수 키와 레이블을 입력해 주세요'),
       });
       return;
     }
@@ -39,7 +41,7 @@ export function SystemTemplateEditor({ template }: Props) {
     if (customVariables.some((v) => v.key === newVariable.key)) {
       toast({
         variant: 'destructive',
-        description: '이미 있는 변수 키예요',
+        description: getUserErrorMessage('이미 있는 변수 키예요'),
       });
       return;
     }
@@ -75,7 +77,7 @@ export function SystemTemplateEditor({ template }: Props) {
         error instanceof Error ? error.message : '템플릿을 저장하지 못했어요';
       toast({
         variant: 'destructive',
-        description: errorMessage,
+        description: getUserErrorMessage(errorMessage),
       });
     }
   };

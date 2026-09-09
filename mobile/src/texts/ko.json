@@ -32,7 +32,7 @@
     "close": "닫기",
     "delete-confirm": "정말로 삭제하시겠습니까?",
     "no-data": "데이터가 없습니다.",
-    "error-loading": "데이터를 불러오는데 실패했습니다.",
+    "error-loading": "데이터를 불러오는데 실패했어요.",
     "view": "보기"
   },
   "nav": {
@@ -263,7 +263,7 @@
     "add": "추가",
     "search-placeholder": "이름, 연락처, 주소 검색",
     "no-data": "등록된 고객이 없습니다.",
-    "load-error": "고객 목록을 불러오는데 실패했습니다.",
+    "load-error": "고객 목록을 불러오는데 실패했어요.",
     "delete-confirm": "정말로 이 고객을 삭제하시겠습니까?",
     "delete-success": "고객을 삭제했어요",
     "delete-success-description": "선택한 고객을 목록에서 지웠어요",
@@ -382,11 +382,11 @@
       "open-to-next-work": "다음 배정 가능 여부",
       "registered-date": "등록일",
       "registered-date-unknown": "알 수 없음",
-      "phone-required": "연락처를 입력해주세요",
-      "work-area-required": "근무 지역을 선택해주세요",
-      "error-phone-duplicate": "이미 등록된 연락처입니다. 다른 연락처를 입력해주세요.",
-      "error-create-failed": "제공인력 등록에 실패했습니다. 다시 시도해주세요.",
-      "error-update-failed": "제공인력 정보 수정에 실패했습니다. 다시 시도해주세요.",
+      "phone-required": "연락처를 입력해 주세요",
+      "work-area-required": "근무 지역을 선택해 주세요",
+      "error-phone-duplicate": "이미 등록된 연락처예요. 다른 연락처를 입력해 주세요.",
+      "error-create-failed": "제공인력 등록에 실패했어요. 다시 시도해 주세요.",
+      "error-update-failed": "제공인력 정보 수정에 실패했어요. 다시 시도해 주세요.",
       "error-save-failed": "저장하지 못했어요. 다시 시도해 주세요",
       "create-description": "새로운 제공인력을 등록하기 위해 양식을 작성하세요",
       "edit-description": "제공인력 정보를 수정합니다"
@@ -398,7 +398,7 @@
     "delete-confirm": {
       "title": "제공인력 삭제",
       "message": "정말로 이 제공인력을 삭제하시겠습니까? 이 작업은 되돌릴 수 없습니다.",
-      "error": "제공인력 삭제에 실패했습니다. 다시 시도해주세요."
+      "error": "제공인력 삭제에 실패했어요. 다시 시도해 주세요."
     },
     "delete-success": "제공인력을 삭제했어요",
     "delete-success-description": "선택한 제공인력을 목록에서 지웠어요",
@@ -458,25 +458,25 @@
         "partial-failure": "일부 항목 처리 실패:"
       },
       "errors": {
-        "invalid-file-type": "허용되지 않는 파일 형식입니다. 허용 형식: PNG, JPG, JPEG, PDF",
-        "file-too-large": "파일 크기가 10MB를 초과합니다",
-        "parse-failed": "이미지 파싱에 실패했습니다",
-        "update-failed": "업데이트에 실패했습니다"
+        "invalid-file-type": "허용되지 않는 파일 형식이에요. 허용 형식: PNG, JPG, JPEG, PDF",
+        "file-too-large": "파일 크기가 10MB를 초과해요",
+        "parse-failed": "이미지 파싱에 실패했어요",
+        "update-failed": "업데이트에 실패했어요"
       }
     }
   },
   "errors": {
-    "generic": "오류가 발생했습니다. 다시 시도해주세요.",
-    "network": "네트워크 오류가 발생했습니다.",
+    "generic": "오류가 발생했어요. 다시 시도해 주세요.",
+    "network": "네트워크 오류가 발생했어요.",
     "prisma": {
-      "P2002": "{field}이(가) 이미 존재합니다.",
-      "P2002.phone": "이미 등록된 연락처입니다. 다른 연락처를 입력해주세요.",
-      "P2002.email": "이미 등록된 이메일입니다.",
-      "P2003": "참조된 데이터가 존재하지 않습니다.",
-      "P2025": "요청한 데이터를 찾을 수 없습니다.",
-      "P2011": "필수 필드가 누락되었습니다.",
-      "P2006": "{field}에 유효하지 않은 값이 입력되었습니다.",
-      "unknown": "데이터베이스 오류가 발생했습니다."
+      "P2002": "{field}이(가) 이미 존재해요.",
+      "P2002.phone": "이미 등록된 연락처예요. 다른 연락처를 입력해 주세요.",
+      "P2002.email": "이미 등록된 이메일이에요.",
+      "P2003": "참조된 데이터가 존재하지 않아요.",
+      "P2025": "요청한 데이터를 찾을 수 없어요.",
+      "P2011": "필수 필드가 누락됐어요.",
+      "P2006": "{field}에 유효하지 않은 값이 입력됐어요.",
+      "unknown": "데이터베이스 오류가 발생했어요."
     },
     "fields": {
       "phone": "연락처",

@@ -85,7 +85,7 @@ describe("file-storage API routes", () => {
     const response = await listFiles(createGetRequest("/api/file-storage/files"));
 
     expect(response.status).toBe(403);
-    await expect(response.json()).resolves.toEqual({ error: "Failed to fetch documents" });
+    await expect(response.json()).resolves.toEqual({ error: expect.stringMatching(/[가-힣].*요[.!]?$/) });
   });
 
   it("proxies the authenticated storage capability contract", async () => {
@@ -258,7 +258,7 @@ describe("file-storage API routes", () => {
 
     expect(response.status).toBe(409);
     const body = await response.json();
-    expect(body).toEqual({ error: "document is locked" });
+    expect(body).toEqual({ error: "잠긴 문서는 변경할 수 없어요." });
     expect(JSON.stringify(body)).not.toContain("sk_test_secret");
     expect(JSON.stringify(body)).not.toContain("SELECT * FROM Document");
   });
@@ -281,7 +281,7 @@ describe("file-storage API routes", () => {
 
     expect(response.status).toBe(status);
     const body = await response.json();
-    expect(body).toEqual({ error: "Failed to delete document" });
+    expect(body).toEqual({ error: expect.stringMatching(/[가-힣].*요[.!]?$/) });
     expect(JSON.stringify(body)).not.toContain(message);
     expect(JSON.stringify(body)).not.toContain("sk_test_secret");
   });

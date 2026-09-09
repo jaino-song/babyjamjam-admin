@@ -1,4 +1,6 @@
 "use client";
+import { getUserErrorMessage } from "@babyjamjam/shared";
+
 
 import { useState, useEffect, useMemo } from "react";
 import { useLocale } from "@/providers/LocaleProvider";
@@ -286,15 +288,15 @@ export function EmployeeFormDialog({
             return;
         }
         if (hasPhoneDuplicateCheckFailed) {
-            setError(getPhoneDuplicateCheckFailedMessage(locale));
+            setError(getUserErrorMessage(getPhoneDuplicateCheckFailedMessage(locale)));
             return;
         }
         if (isPhoneDuplicate) {
-            setError(t(locale, "employees.form.error-phone-duplicate"));
+            setError(getUserErrorMessage(t(locale, "employees.form.error-phone-duplicate")));
             return;
         }
         if (!isPhoneDuplicateCheckReady) {
-            setError(getPhoneDuplicateCheckPendingMessage(locale));
+            setError(getUserErrorMessage(getPhoneDuplicateCheckPendingMessage(locale)));
             return;
         }
 
@@ -385,7 +387,7 @@ export function EmployeeFormDialog({
                     data-component={`${EMPLOYEE_FORM_DIALOG_BASE}_error`}
                     className={styles.error}
                 >
-                    <AlertDescription>{error}</AlertDescription>
+                    <AlertDescription>{error && getUserErrorMessage(error)}</AlertDescription>
                 </Alert>
             )}
 

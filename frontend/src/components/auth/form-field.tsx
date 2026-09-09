@@ -1,3 +1,4 @@
+import { getUserErrorMessage } from "@babyjamjam/shared";
 import * as React from "react";
 import { TitleTextInputMolecule } from "@/components/ui/title-text-input-molecule";
 import { cn } from "@/lib/utils";
@@ -37,7 +38,7 @@ export const FormField = React.forwardRef<HTMLInputElement, FormFieldProps>(
       shouldShowInlineError ? (
         <InlineFieldError
           id={errorId}
-          message={error}
+          message={error ? getUserErrorMessage(error) : undefined}
           reserveSpace
         />
       ) : undefined;
@@ -60,7 +61,7 @@ export const FormField = React.forwardRef<HTMLInputElement, FormFieldProps>(
         value={value}
         onChange={onChange}
         error={!!error}
-        helperText={error && !hideErrorMessage && !shouldShowInlineError ? error : undefined}
+        helperText={error && !hideErrorMessage && !shouldShowInlineError ? getUserErrorMessage(error) : undefined}
         helperTextClassName="text-sm animate-fade-in"
         helperTextId={errorId}
         containerClassName="gap-2"

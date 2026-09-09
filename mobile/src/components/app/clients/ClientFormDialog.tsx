@@ -1,4 +1,6 @@
 "use client";
+import { getUserErrorMessage } from "@babyjamjam/shared";
+
 
 import { useState, useEffect, useMemo, useRef } from "react";
 import {
@@ -309,7 +311,7 @@ export function ClientFormDialog({ open, onClose, client, onSuccess }: ClientFor
     };
 
     const setErrorAndScroll = (errorMessage: string) => {
-        setError(errorMessage);
+        setError(getUserErrorMessage(errorMessage));
         // Use setTimeout to ensure the Alert is rendered before scrolling
         setTimeout(scrollToTop, 0);
     };
@@ -419,7 +421,7 @@ export function ClientFormDialog({ open, onClose, client, onSuccess }: ClientFor
                 <div ref={contentRef} data-component={`${CLIENT_FORM_DIALOG_BASE}_content`} className="space-y-6 py-4">
                     {error && (
                         <Alert variant="destructive">
-                            <AlertDescription>{error}</AlertDescription>
+                            <AlertDescription>{error && getUserErrorMessage(error)}</AlertDescription>
                         </Alert>
                     )}
 

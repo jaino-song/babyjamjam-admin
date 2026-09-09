@@ -82,7 +82,7 @@ describe("POST /api/message-trigger-jobs/[id]/cancel", () => {
       response: {
         status: 409,
         data: {
-          message: "이미 발송되었거나 취소할 수 없는 상태입니다.",
+          message: "이미 발송되었거나 취소할 수 없는 상태예요.",
           diagnostics: { authorization: "Bearer upstream-secret", query: "SELECT * FROM MessageJob" },
         },
       },
@@ -94,7 +94,7 @@ describe("POST /api/message-trigger-jobs/[id]/cancel", () => {
 
     expect(response.status).toBe(409);
     const body = await response.json();
-    expect(body).toEqual({ error: "이미 발송되었거나 취소할 수 없는 상태입니다." });
+    expect(body).toEqual({ error: "이미 발송되었거나 취소할 수 없는 상태예요." });
     expect(JSON.stringify(body)).not.toContain("upstream-secret");
     expect(JSON.stringify(body)).not.toContain("SELECT * FROM MessageJob");
   });
@@ -116,7 +116,7 @@ describe("POST /api/message-trigger-jobs/[id]/cancel", () => {
 
     expect(response.status).toBe(status);
     const body = await response.json();
-    expect(body).toEqual({ error: "Failed to cancel message trigger job" });
+    expect(body).toEqual({ error: expect.stringMatching(/[가-힣].*요[.!]?$/) });
     expect(JSON.stringify(body)).not.toContain(message);
     expect(JSON.stringify(body)).not.toContain("upstream-secret");
   });

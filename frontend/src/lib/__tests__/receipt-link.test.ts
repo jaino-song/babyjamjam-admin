@@ -25,7 +25,7 @@ describe("RECEIPT_LINK_REASON_MESSAGES", () => {
 
   it("uses the literal Korean copy for missing_phone", () => {
     expect(RECEIPT_LINK_REASON_MESSAGES.missing_phone).toBe(
-      "산모 연락처가 없거나 형식이 올바르지 않습니다.",
+      "산모 연락처가 없거나 형식이 올바르지 않아요.",
     );
   });
 });

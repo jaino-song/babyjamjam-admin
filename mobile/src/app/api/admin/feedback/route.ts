@@ -1,3 +1,4 @@
+import { getUserErrorMessage } from "@babyjamjam/shared";
 import { NextRequest, NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
 import { BACKEND_BASE_URL } from '@/lib/api/server';
@@ -26,7 +27,7 @@ export async function GET(request: NextRequest) {
   });
   
   if (!response.ok) {
-    return NextResponse.json({ error: 'Failed to fetch feedback' }, { status: response.status });
+    return NextResponse.json({ error: getUserErrorMessage({ status: response.status }) }, { status: response.status });
   }
   
   const data = await response.json();

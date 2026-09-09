@@ -1,4 +1,6 @@
 "use client";
+import { getUserErrorMessage } from "@babyjamjam/shared";
+
 
 import { createContext, useContext, useMemo, useState, type KeyboardEvent, type ReactNode } from "react";
 import {
@@ -288,7 +290,7 @@ function LinkCard({
             toast({ variant: "success", description: "제공기록지 링크를 보냈어요" });
         } catch (error) {
             toast({
-                description: getErrorDescription(error),
+                description: getUserErrorMessage(getErrorDescription(error)),
                 variant: "destructive",
             });
         } finally {

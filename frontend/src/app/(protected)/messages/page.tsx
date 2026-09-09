@@ -1,4 +1,6 @@
 "use client";
+import { getUserErrorMessage } from "@babyjamjam/shared";
+
 
 import {
   cloneElement,
@@ -307,7 +309,7 @@ const PLACEHOLDER_COPY: Record<
       {
         id: "settings-alert",
         label: "알림 및 감사",
-        summary: "오류 알림, 감사 로그, 운영자 확인 항목을 모아둔 영역입니다.",
+        summary: "오류 알림, 감사 로그, 운영자 확인 항목을 모아둔 영역이에요.",
         badge: "감사",
         detailTitle: "알림 및 감사 상세",
         detailDescription: "운영자 알림과 설정 변경 기록을 함께 관리하는 상세 영역입니다.",
@@ -477,7 +479,7 @@ function getScheduledJobFallbackMessage(job: UpcomingMessageTriggerJob, variable
     return serviceInfoMsgTemplate({ name: variables.name?.trim() || "{{name}}" });
   }
 
-  return "예약 발송 메시지 본문을 불러올 수 없습니다.";
+  return "예약 발송 메시지 본문을 불러올 수 없어요.";
 }
 
 function buildScheduledJobMessageBody(job: UpcomingMessageTriggerJob | null, systemTemplateContent?: string) {
@@ -861,7 +863,7 @@ function MessageHistorySection() {
     } catch (error) {
       toast({
         variant: "destructive",
-        description: error instanceof Error ? error.message : "재발송을 요청하지 못했어요",
+        description: getUserErrorMessage(error, error instanceof Error ? error.message : "재발송을 요청하지 못했어요"),
       });
     }
   }, [retryHistory, selectedRecord, toast]);
@@ -886,7 +888,7 @@ function MessageHistorySection() {
       // this dialog would just 409 again — the failure toast is the feedback,
       // the modal has nothing left to offer, so close it here too instead of
       // trapping the user behind a confirm button that can only fail.
-      toast({ variant: "destructive", description: MESSAGE_JOB_CANCEL_COPY.failure });
+      toast({ variant: "destructive", description: getUserErrorMessage(MESSAGE_JOB_CANCEL_COPY.failure) });
     } finally {
       setCancelDialogOpen(false);
     }

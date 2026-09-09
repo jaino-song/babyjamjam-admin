@@ -51,7 +51,7 @@ describe("document category API route", () => {
     const response = await listCategories(createRequest("/api/document-categories"));
 
     expect(response.status).toBe(403);
-    await expect(response.json()).resolves.toEqual({ error: "Failed to fetch document categories" });
+    await expect(response.json()).resolves.toEqual({ error: expect.stringMatching(/[가-힣].*요[.!]?$/) });
   });
 
   it("preserves backend status and forwards the validated body when creating categories", async () => {

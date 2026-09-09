@@ -174,7 +174,7 @@ export default function EmployeesPage() {
             setDeleteTargetEmployeeId(null);
             setDeleteErrorMessage(getApiErrorMessage(
                 err,
-                "제공인력 삭제에 실패했습니다. 다시 시도해 주세요.",
+                "제공인력 삭제에 실패했어요. 다시 시도해 주세요.",
             ));
         }
     };
@@ -365,7 +365,7 @@ export default function EmployeesPage() {
                 }}
                 dataComponent="desktop_employees_delete-approval"
                 title="직원을 삭제하시겠습니까?"
-                description="삭제한 직원 정보는 복구할 수 없습니다."
+                description="삭제한 직원 정보는 복구할 수 없어요."
                 approvalLabel="삭제"
                 pendingLabel="삭제 중..."
                 approvalVariant="destructive"
