@@ -63,6 +63,7 @@ const mockRetryMutateAsync = jest.fn();
 // the render-level gate itself reacts, not just the nav's disabled flag.
 const mockUseMessageSenderApproval = jest.fn();
 const mockUseAllClients = jest.fn();
+const mockUseSystemTemplates = jest.fn();
 
 jest.mock("@/providers/LocaleProvider", () => ({
   useLocale: () => "ko",
@@ -105,6 +106,15 @@ jest.mock("@/features/clients/hooks/use-clients", () => ({
 
 jest.mock("@/features/system-templates/hooks", () => ({
   useSystemTemplate: () => ({ data: undefined, isLoading: false }),
+  useSystemTemplates: () => mockUseSystemTemplates(),
+}));
+
+jest.mock("@/features/system-templates/components/system-template-editor", () => ({
+  SystemTemplateEditor: ({ template }: { template: { templateKey: string; content: string } }) => (
+    <div data-testid="system-template-editor">
+      {template.templateKey}:{template.content}
+    </div>
+  ),
 }));
 
 jest.mock("@/hooks/use-toast", () => ({
@@ -313,6 +323,21 @@ function buildHistoryRecord(overrides: Partial<MessageLogRecord> = {}): MessageL
   };
 }
 
+function buildSystemTemplate(overrides: Record<string, unknown> = {}) {
+  return {
+    id: "system-template-1",
+    templateKey: "GREETING",
+    name: "인사(소개)",
+    description: "초기 문의 안내",
+    content: "안녕하세요 {{name}}",
+    requiredVariables: [],
+    customVariables: [],
+    createdAt: "2026-09-01T00:00:00.000Z",
+    updatedAt: "2026-09-01T00:00:00.000Z",
+    ...overrides,
+  };
+}
+
 function mockData({
   upcoming = [],
   history = [],
@@ -382,6 +407,7 @@ beforeEach(() => {
     isLoading: false,
   });
   mockUseAllClients.mockReturnValue({ data: [], isLoading: false });
+  mockUseSystemTemplates.mockReturnValue({ data: [], isLoading: false, isError: false });
 
   mockedUseRetryMessageHistory.mockReturnValue({
     mutateAsync: mockRetryMutateAsync,
@@ -393,6 +419,67 @@ beforeEach(() => {
   } as unknown as ReturnType<typeof useCancelUpcomingMessageTriggerJob>);
 
   mockData();
+});
+
+describe("messages page — server system-template catalog", () => {
+  it("renders server-added keys and selects SERVICE_END_NOTICE detail content without service-record routing", () => {
+    mockUseSystemTemplates.mockReturnValue({
+      data: [
+        buildSystemTemplate({
+          templateKey: "SERVICE_END_NOTICE",
+          name: "서비스 종료 안내",
+          content: "영수증 링크: {{receiptUrl}}",
+        }),
+        buildSystemTemplate({
+          templateKey: "FUTURE_TEMPLATE",
+          name: "새 서버 템플릿",
+          content: "미래 템플릿 본문",
+        }),
+      ],
+      isLoading: false,
+      isError: false,
+    });
+
+    render(<MessagesPage />);
+
+    expect(screen.getByText("서비스 종료 안내")).toBeInTheDocument();
+    expect(screen.getByText("새 서버 템플릿")).toBeInTheDocument();
+    expect(screen.queryByText("인사(소개)")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByText("서비스 종료 안내"));
+
+    expect(screen.getByLabelText("템플릿 내용")).toHaveValue("영수증 링크: {{receiptUrl}}");
+    expect(screen.getByText("이 화면에서는 직접 발송할 수 없습니다.")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "즉시 발송" })).not.toBeInTheDocument();
+    expect(screen.queryByText("제공기록지 작성 링크")).not.toBeInTheDocument();
+  });
+
+  it.each([
+    ["loading", { data: undefined, isLoading: true, isError: false }],
+    ["error", { data: undefined, isLoading: false, isError: true }],
+    ["missing", { data: undefined, isLoading: false, isError: false }],
+  ])("does not silently fall back to legacy rows on %s", (_state, result) => {
+    mockUseSystemTemplates.mockReturnValue(result);
+
+    render(<MessagesPage />);
+
+    expect(screen.queryByText("인사(소개)")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("system-template-editor")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "즉시 발송" })).not.toBeInTheDocument();
+  });
+
+  it("does not silently select the first server row while the compact list is shown", () => {
+    mockUseSystemTemplates.mockReturnValue({
+      data: [buildSystemTemplate({ templateKey: "FUTURE_TEMPLATE", name: "새 서버 템플릿" })],
+      isLoading: false,
+      isError: false,
+    });
+
+    render(<MessagesPage />);
+
+    expect(screen.getByTestId("split-layout")).toHaveAttribute("data-has-selection", "false");
+    expect(screen.queryByTestId("system-template-editor")).not.toBeInTheDocument();
+  });
 });
 
 describe("messages page — merged 발송 기록 section", () => {
