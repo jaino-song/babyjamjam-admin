@@ -1351,7 +1351,21 @@ function isRevisionDocumentJobPayload(value: unknown): boolean {
         || kind === "service_record_revision_operations";
 }
 
-function isServiceRecordRevisionGenerationPayload(value: unknown): boolean {
+function isServiceRecordRevisionGenerationPayload(value: unknown, requestKey?: unknown): boolean {
+    const normalizedRequestKey = typeof requestKey === "string" ? requestKey : null;
+    const excludedRequestKey = normalizedRequestKey !== null && (
+        normalizedRequestKey.startsWith("service-record-revision-operations:")
+        || normalizedRequestKey.startsWith("create:")
+        || normalizedRequestKey.startsWith("finalize:")
+    );
+    if (excludedRequestKey) return false;
+    if (normalizedRequestKey !== null && (
+        normalizedRequestKey.startsWith("service-record-revision:")
+        || normalizedRequestKey.startsWith("service-record-initial-finalization:")
+    )) {
+        return true;
+    }
+
     let parsed = value;
     if (typeof value === "string") {
         try {
@@ -1370,7 +1384,18 @@ function documentJobSupersessionPredicate(
     scope: DocumentJobSupersessionScope,
 ): Prisma.Sql {
     if (scope === "revision_generation") {
-        return Prisma.sql`COALESCE(job.payload->>'kind' = 'service_record_revision', false)`;
+        return Prisma.sql`
+            (
+                COALESCE(job.request_key, '') NOT LIKE 'service-record-revision-operations:%'
+                AND COALESCE(job.request_key, '') NOT LIKE 'create:%'
+                AND COALESCE(job.request_key, '') NOT LIKE 'finalize:%'
+                AND (
+                    job.payload->>'kind' = 'service_record_revision'
+                    OR COALESCE(job.request_key, '') LIKE 'service-record-revision:%'
+                    OR COALESCE(job.request_key, '') LIKE 'service-record-initial-finalization:%'
+                )
+            )
+        `;
     }
     return Prisma.sql`TRUE`;
 }
@@ -3516,6 +3541,7 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
                     id?: string;
                     progressStep?: string;
                     status?: string;
+                    requestKey?: string;
                     payload?: unknown;
                 }>>;
                 updateMany?: (args: unknown) => Promise<unknown>;
@@ -3539,10 +3565,13 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
                 status: { in: ["processing", "reconciling"] },
                 progressStep: { in: ["creating", "sent"] },
             },
-            select: { id: true, status: true, progressStep: true, payload: true },
+            select: { id: true, status: true, progressStep: true, requestKey: true, payload: true },
         }) ?? [];
         const scopedInFlightDocuments = scope === "revision_generation"
-            ? inFlightDocuments.filter((document) => isServiceRecordRevisionGenerationPayload(document.payload))
+            ? inFlightDocuments.filter((document) => isServiceRecordRevisionGenerationPayload(
+                document.payload,
+                document.requestKey,
+            ))
             : inFlightDocuments;
         if (scopedInFlightDocuments.length > 0) {
             throw new ServiceRecordEditConflictError(
@@ -3564,20 +3593,20 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
                 jobType: { in: ["create_document", "finalize_document"] },
                 status: { in: ["queued", "processing", "reconciling"] },
             },
-            select: { id: true, payload: true },
+            select: { id: true, requestKey: true, payload: true },
         }) ?? [];
         const revisionDocumentIds = cancellableDocuments
-            .filter((document): document is { id: string; payload?: unknown } => (
+            .filter((document): document is { id: string; requestKey?: string; payload?: unknown } => (
                 typeof document.id === "string"
                 && (scope === "revision_generation"
-                    ? isServiceRecordRevisionGenerationPayload(document.payload)
+                    ? isServiceRecordRevisionGenerationPayload(document.payload, document.requestKey)
                     : isRevisionDocumentJobPayload(document.payload))
             ))
             .map((document) => document.id);
         const legacyDocumentIds = scope === "revision_generation"
             ? []
             : cancellableDocuments
-                .filter((document): document is { id: string; payload?: unknown } => (
+                .filter((document): document is { id: string; requestKey?: string; payload?: unknown } => (
                     typeof document.id === "string"
                     && !isRevisionDocumentJobPayload(document.payload)
                 ))

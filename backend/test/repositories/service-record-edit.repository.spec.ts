@@ -640,7 +640,7 @@ describe("ServiceRecordEditRepository", () => {
         }));
     });
 
-    it("creates an unlocked future day from the canonical confirmation plan", async () => {
+    it("creates an unlocked future day and narrows partial confirmation supersession", async () => {
         const source = futureSource();
         const activeDraft = draftRow({ sourceCaseVersion: source.caseVersion });
         const service_record_edit_draft = {
@@ -707,7 +707,16 @@ describe("ServiceRecordEditRepository", () => {
             revision: null,
             dispatchContext: null,
             documentStatus: "capability_unverified",
-            documentJob: null,
+            documentJob: {
+                requestKey: `service-record-revision:${caseId}:draft-1`,
+                activeKey: `service-record-revision:${caseId}`,
+                payload: {
+                    kind: "service_record_revision",
+                    completeness: "partial",
+                    periodChanged: false,
+                },
+                payloadFingerprint: "c".repeat(64),
+            },
         };
 
         await expect(repository.confirmDraft({
@@ -747,6 +756,13 @@ describe("ServiceRecordEditRepository", () => {
             }),
         });
         expect(service_record_day.updateMany).not.toHaveBeenCalled();
+        const documentStatements = tx.$queryRaw.mock.calls
+            .map(([query]) => sqlTextWithValues(query))
+            .filter((query) => query.includes('"eformsign_document_job"'));
+        expect(documentStatements.some((query) => (
+            query.includes("COALESCE(job.request_key, '') LIKE 'service-record-revision:%'")
+            && query.includes("COALESCE(job.request_key, '') LIKE 'service-record-initial-finalization:%'")
+        ))).toBe(true);
     });
 
     it("allocates the next revision number under a case lock and never updates a prior revision", async () => {
@@ -937,10 +953,102 @@ describe("ServiceRecordEditRepository", () => {
 
         const inFlight = sqlTextWithValues(tx.$queryRaw.mock.calls[0]?.[0]);
         const documentUpdate = sqlTextWithValues(tx.$queryRaw.mock.calls[2]?.[0]);
-        const scopePredicate = "COALESCE(job.payload->>'kind' = 'service_record_revision', false)";
-        expect(inFlight).toContain(scopePredicate);
-        expect(documentUpdate).toContain(scopePredicate);
+        for (const statement of [inFlight, documentUpdate]) {
+            expect(statement).toContain("job.payload->>'kind' = 'service_record_revision'");
+            expect(statement).toContain("COALESCE(job.request_key, '') LIKE 'service-record-revision:%'");
+            expect(statement).toContain("COALESCE(job.request_key, '') LIKE 'service-record-initial-finalization:%'");
+            expect(statement).toContain("NOT LIKE 'service-record-revision-operations:%'");
+            expect(statement).toContain("NOT LIKE 'create:%'");
+            expect(statement).toContain("NOT LIKE 'finalize:%'");
+        }
         expect(documentUpdate).toContain("job_type IN ('create_document', 'finalize_document')");
+    });
+
+    it("fallback supersession blocks redacted record generations and retains contract or operation jobs", async () => {
+        const documentJobs = {
+            findMany: jest.fn()
+                .mockResolvedValueOnce([{
+                    id: "redacted-in-flight",
+                    status: "processing",
+                    progressStep: "creating",
+                    requestKey: "service-record-initial-finalization:revision-1",
+                    payload: null,
+                }]),
+        };
+        const tx = {
+            client: { findFirst: jest.fn().mockResolvedValue({ eDocId: "document-1" }) },
+            eformsign_doc: { findMany: jest.fn().mockResolvedValue([]) },
+            eformsign_document_job: documentJobs,
+            message_trigger_job: { findMany: jest.fn().mockResolvedValue([]) },
+        };
+        const repository = new ServiceRecordEditRepository({} as never);
+
+        await expect((repository as unknown as {
+            invalidateSupersededJobs: (
+                client: unknown,
+                branch: string,
+                serviceCase: string,
+                clientId: number,
+                scope: "all" | "revision_generation",
+            ) => Promise<void>;
+        }).invalidateSupersededJobs(tx, branchId, caseId, 101, "revision_generation")).rejects.toThrow(
+            "A service-record document dispatch is already irreversible",
+        );
+        expect(documentJobs.findMany).toHaveBeenCalledTimes(1);
+    });
+
+    it("fallback content-only cancellation retains redacted operations and ordinary contract jobs", async () => {
+        const documentJobs = {
+            findMany: jest.fn()
+                .mockResolvedValueOnce([])
+                .mockResolvedValueOnce([
+                    {
+                        id: "redacted-record",
+                        requestKey: "service-record-initial-finalization:revision-1",
+                        payload: null,
+                    },
+                    {
+                        id: "ordinary-contract",
+                        requestKey: "create:client-101",
+                        payload: null,
+                    },
+                    {
+                        id: "redacted-operation",
+                        requestKey: "service-record-revision-operations:revision-1:contract+receipt",
+                        payload: null,
+                    },
+                ]),
+            updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+        };
+        const tx = {
+            client: { findFirst: jest.fn().mockResolvedValue({ eDocId: "document-1" }) },
+            eformsign_doc: { findMany: jest.fn().mockResolvedValue([]) },
+            eformsign_document_job: documentJobs,
+            message_trigger_job: {
+                findMany: jest.fn().mockResolvedValue([]),
+                updateMany: jest.fn().mockResolvedValue({ count: 0 }),
+            },
+        };
+        const repository = new ServiceRecordEditRepository({} as never);
+
+        await expect((repository as unknown as {
+            invalidateSupersededJobs: (
+                client: unknown,
+                branch: string,
+                serviceCase: string,
+                clientId: number,
+                scope: "all" | "revision_generation",
+            ) => Promise<void>;
+        }).invalidateSupersededJobs(tx, branchId, caseId, 101, "revision_generation")).resolves.toBeUndefined();
+
+        expect(documentJobs.updateMany).toHaveBeenCalledTimes(1);
+        expect(documentJobs.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+            where: { id: { in: ["redacted-record"] } },
+            data: expect.objectContaining({
+                status: "failed",
+                lastErrorCode: "SERVICE_RECORD_REVISION_SUPERSEDED",
+            }),
+        }));
     });
 
     it("period-changing revisions retain broad document-job invalidation", async () => {
