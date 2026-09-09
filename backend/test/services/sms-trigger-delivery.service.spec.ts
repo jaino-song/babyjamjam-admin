@@ -480,6 +480,29 @@ describe("SmsTriggerDeliveryService", () => {
         expect(logRepository.save).not.toHaveBeenCalled();
     });
 
+    it.each([
+        new Error("unexpected template read failure"),
+        new Prisma.PrismaClientKnownRequestError("Template column unavailable", {
+            code: "P2022",
+            clientVersion: "test",
+        }),
+    ])("preserves template resolution errors before any provider call: %s", async (readError) => {
+        const aligoService = { sendSms: jest.fn() };
+        const systemTemplateService = {
+            getByKeyForBranch: jest.fn().mockRejectedValue(readError),
+        };
+        const logRepository = { save: jest.fn() };
+        const service = new SmsTriggerDeliveryService(
+            aligoService as unknown as AligoService,
+            systemTemplateService as unknown as SystemTemplateService,
+            logRepository as unknown as IMessageLogRepository,
+        );
+
+        await expect(service.sendJob(createServiceInfoJob())).rejects.toBe(readError);
+        expect(aligoService.sendSms).not.toHaveBeenCalled();
+        expect(logRepository.save).not.toHaveBeenCalled();
+    });
+
     it("sms pre-provider transient DB error defers the job transiently", async () => {
         const prismaError = createTransientPrismaError();
         const aligoService = { sendSms: jest.fn() };
@@ -760,7 +783,7 @@ https://mobile.test/service-record/efl_token`;
         expect(savedLog.nextRetryAt).toBeInstanceOf(Date);
     });
 
-    it("uses the registry default when the editable service-record link template row is unavailable", async () => {
+    it("does not send a registry default when branch template resolution fails", async () => {
         const aligoService = {
             sendSms: jest.fn().mockResolvedValue({
                 request: { receiver: "01011112222", msgType: "LMS", testModeYn: "N" },
@@ -775,12 +798,9 @@ https://mobile.test/service-record/efl_token`;
         const job = createServiceRecordJob();
         job.payload.messageBody = "   ";
 
-        await expect(service.sendJob(job)).resolves.toBe(true);
-
-        expect(aligoService.sendSms).toHaveBeenCalledWith(expect.objectContaining({
-            message: renderedServiceRecordLinkMessage,
-            title: "제공기록지 작성 링크",
-        }));
+        await expect(service.sendJob(job)).rejects.toThrow("template row unavailable");
+        expect(aligoService.sendSms).not.toHaveBeenCalled();
+        expect(logRepository.save).not.toHaveBeenCalled();
     });
 });
 

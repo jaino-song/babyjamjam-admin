@@ -8,7 +8,6 @@ import {
     type AligoSmsMessageType,
 } from "application/dto/aligo/send-sms.dto";
 import { SYSTEM_TEMPLATE_REGISTRY, SystemTemplateKey } from "domain/constants/system-template-registry";
-import { BranchSystemTemplateSnapshotError } from "domain/entities/branch-system-template-snapshot";
 import { MessageTriggerTemplateKey } from "domain/constants/message-trigger-catalog";
 import {
     SERVICE_RECORD_LINK_SMS_AUTOMATION_KEY,
@@ -726,9 +725,6 @@ export class SmsTriggerDeliveryService {
                 requiredVariableKeys: [...requiredVariableKeys],
             };
         } catch (error) {
-            if (error instanceof BranchSystemTemplateSnapshotError) {
-                throw error;
-            }
             if (isTransientPrismaConnectivityError(error)) {
                 throw new TriggerJobDeferredError(
                     "transient",
@@ -736,21 +732,9 @@ export class SmsTriggerDeliveryService {
                 );
             }
 
-            this.logger.warn(
-                `[SMS Automation] Failed to load system template ${systemTemplateKey}, using registry default: ${
-                    error instanceof Error ? error.message : String(error)
-                }`,
-            );
-            const content = SYSTEM_TEMPLATE_REGISTRY[systemTemplateKey].defaultContent;
-            const hash = this.hash(content);
-            return {
-                content,
-                version: `registry-default:${systemTemplateKey}`,
-                hash,
-                requiredVariableKeys: SYSTEM_TEMPLATE_REGISTRY[systemTemplateKey].requiredVariables
-                    .filter((variable) => variable.required)
-                    .map((variable) => variable.key),
-            };
+            // Missing rows are normalized by the branch resolver. Any failure
+            // here means the effective content is unknown and must not be sent.
+            throw error;
         }
     }
 
