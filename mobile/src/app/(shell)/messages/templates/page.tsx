@@ -3,7 +3,7 @@
 import { useMemo, useState } from "react";
 import type { KeyboardEvent } from "react";
 import { useRouter } from "next/navigation";
-import { formatMessageDateTimeCompact } from "@babyjamjam/shared";
+import { formatMessageDateTimeCompact, normalizeApiError } from "@babyjamjam/shared";
 
 import "@/components/app/mobile-redesign/redesign.css";
 import { useSystemTemplates } from "@/features/system-templates/hooks";
@@ -15,6 +15,9 @@ import {
   ListLoadMoreSentinel,
 } from "@/components/app/mobile-redesign/primitives";
 import { MessageSectionNav } from "@/components/app/mobile-redesign/MessageSectionNav";
+import { ErrorFallback } from "@/components/app/ui/error-fallback";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Button } from "@/components/ui/button";
 
 import styles from "./page.module.css";
 
@@ -85,9 +88,46 @@ export default function TemplatesPage() {
   const [activeFilter, setActiveFilter] = useState<TemplateFilter>("전체");
   const [searchQuery, setSearchQuery] = useState("");
 
-  const { data: systemTemplates, isLoading: isLoadingSystemTemplates } = useSystemTemplates();
-  const { data: userTemplates, isLoading: isLoadingUserTemplates } = useMessageTemplates();
+  const {
+    data: systemTemplates,
+    isLoading: isLoadingSystemTemplates,
+    isError: isSystemTemplatesError,
+    error: systemTemplatesError,
+    refetch: refetchSystemTemplates,
+    isFetching: isFetchingSystemTemplates,
+  } = useSystemTemplates();
+  const {
+    data: userTemplates,
+    isLoading: isLoadingUserTemplates,
+    isError: isUserTemplatesError,
+    error: userTemplatesError,
+    refetch: refetchUserTemplates,
+    isFetching: isFetchingUserTemplates,
+  } = useMessageTemplates();
   const isLoading = isLoadingSystemTemplates || isLoadingUserTemplates;
+  const hasSystemData = systemTemplates !== undefined;
+  const hasUserData = userTemplates !== undefined;
+  const systemNormalizedError = systemTemplatesError
+    ? normalizeApiError(systemTemplatesError, { operation: "read", locale: "ko-KR" })
+    : null;
+  const userNormalizedError = userTemplatesError
+    ? normalizeApiError(userTemplatesError, { operation: "read", locale: "ko-KR" })
+    : null;
+  const showSystemTemplatesError = isSystemTemplatesError && Boolean(systemNormalizedError) && !systemNormalizedError?.suppress;
+  const showUserTemplatesError = isUserTemplatesError && Boolean(userNormalizedError) && !userNormalizedError?.suppress;
+  const initialReadError = showUserTemplatesError && !hasUserData
+    ? {
+        title: "지점 템플릿을 불러오지 못했어요",
+        description: userNormalizedError?.message ?? "요청한 정보를 불러오지 못했어요.",
+        refetch: refetchUserTemplates,
+      }
+    : showSystemTemplatesError && !hasSystemData
+      ? {
+          title: "기본 템플릿을 불러오지 못했어요",
+          description: systemNormalizedError?.message ?? "요청한 정보를 불러오지 못했어요.",
+          refetch: refetchSystemTemplates,
+        }
+      : null;
 
   const liveRows = useMemo<TemplateRow[]>(() => {
     const systemRows = (systemTemplates || []).map<TemplateRow>((template, index) => ({
@@ -200,10 +240,64 @@ export default function TemplatesPage() {
             />
           ) : null}
         >
+            {showSystemTemplatesError ? (
+              <Alert
+                variant="warning"
+                role="status"
+                aria-live="polite"
+                data-component="mobile_messages_templates_page_content_list-card_system-read-error"
+              >
+                <AlertTitle>기본 템플릿을 새로 불러오지 못했어요</AlertTitle>
+                <AlertDescription>
+                  <p>{systemNormalizedError?.message}</p>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="mt-3"
+                    onClick={() => void refetchSystemTemplates()}
+                    disabled={isFetchingSystemTemplates}
+                  >
+                    다시 시도
+                  </Button>
+                </AlertDescription>
+              </Alert>
+            ) : null}
+            {showUserTemplatesError ? (
+              <Alert
+                variant="warning"
+                role="status"
+                aria-live="polite"
+                data-component="mobile_messages_templates_page_content_list-card_user-read-error"
+              >
+                <AlertTitle>지점 템플릿을 새로 불러오지 못했어요</AlertTitle>
+                <AlertDescription>
+                  <p>{userNormalizedError?.message}</p>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="mt-3"
+                    onClick={() => void refetchUserTemplates()}
+                    disabled={isFetchingUserTemplates}
+                  >
+                    다시 시도
+                  </Button>
+                </AlertDescription>
+              </Alert>
+            ) : null}
             {isLoading ? (
               <div className="detail-empty-state" data-component="mobile_messages_templates_page_content_list-card_body_loading">
                 템플릿을 불러오고 있습니다.
               </div>
+            ) : null}
+            {!isLoading && initialReadError && visibleRows.length === 0 ? (
+              <ErrorFallback
+                title={initialReadError.title}
+                description={initialReadError.description}
+                onReset={() => void initialReadError.refetch()}
+                className="min-h-0 px-4 py-8"
+              />
             ) : null}
             {systemRows.length > 0 && (
               <TemplateSection
@@ -221,7 +315,7 @@ export default function TemplatesPage() {
                 onKeyDown={handleRowKeyDown}
               />
             )}
-            {!isLoading && visibleRows.length === 0 ? (
+            {!isLoading && !initialReadError && visibleRows.length === 0 ? (
               <div className="detail-empty-state" data-component="mobile_messages_templates_page_content_list-card_body_empty">
                 {searchQuery.trim() ? "조건에 맞는 템플릿이 없습니다." : "등록된 템플릿이 없습니다."}
               </div>

@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo } from "react";
+import { normalizeApiError } from "@babyjamjam/shared";
 import {
   BarChart3,
   Bell,
@@ -19,6 +20,8 @@ import { useEmployees } from "@/hooks/useEmployees";
 import { useMessageTemplates } from "@/hooks/use-message-templates";
 import { useUnreadCount, usePushNotification } from "@/hooks/usePushNotification";
 import { AllSettingsRedesign } from "@/components/app/mobile-redesign/AllSettingsRedesign";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Button } from "@/components/ui/button";
 import type { MenuGroup } from "@/components/app/mobile-redesign/mockup-data";
 
 /** Canonical data-component base for the /all route. */
@@ -45,11 +48,25 @@ export default function AllMenuPage() {
   const clients = safeArrayPayload(clientsQuery.data);
   const employees = safeArrayPayload(employeesQuery.data);
   const messageTemplates = safeArrayPayload(messageTemplatesQuery.data);
-  const unreadNotifCount = typeof unreadCountQuery.data === "number" ? unreadCountQuery.data : 0;
-  const isClientsInitialLoading = clientsQuery.isLoading && !clientsQuery.data;
-  const isEmployeesInitialLoading = employeesQuery.isLoading && !employeesQuery.data;
-  const isMessageTemplatesInitialLoading = messageTemplatesQuery.isLoading && !messageTemplatesQuery.data;
+  const unreadNotifCount = typeof unreadCountQuery.data === "number" ? unreadCountQuery.data : undefined;
+  const isClientsInitialLoading = clientsQuery.isLoading && clientsQuery.data === undefined;
+  const isEmployeesInitialLoading = employeesQuery.isLoading && employeesQuery.data === undefined;
+  const isMessageTemplatesInitialLoading = messageTemplatesQuery.isLoading && messageTemplatesQuery.data === undefined;
   const isUnreadInitialLoading = unreadCountQuery.isLoading && unreadCountQuery.data === undefined;
+  const clientsNormalizedError = clientsQuery.error
+    ? normalizeApiError(clientsQuery.error, { operation: "read", locale: "ko-KR" })
+    : null;
+  const messageTemplatesNormalizedError = messageTemplatesQuery.error
+    ? normalizeApiError(messageTemplatesQuery.error, { operation: "read", locale: "ko-KR" })
+    : null;
+  const unreadNormalizedError = unreadCountQuery.error
+    ? normalizeApiError(unreadCountQuery.error, { operation: "read", locale: "ko-KR" })
+    : null;
+  const showClientsError = clientsQuery.isError && Boolean(clientsNormalizedError) && !clientsNormalizedError?.suppress;
+  const showMessageTemplatesError = messageTemplatesQuery.isError && Boolean(messageTemplatesNormalizedError) && !messageTemplatesNormalizedError?.suppress;
+  const showUnreadError = unreadCountQuery.isError && Boolean(unreadNormalizedError) && !unreadNormalizedError?.suppress;
+  const isClientsValueUnavailable = isClientsInitialLoading || (showClientsError && clientsQuery.data === undefined);
+  const isMessageTemplatesValueUnavailable = isMessageTemplatesInitialLoading || (showMessageTemplatesError && messageTemplatesQuery.data === undefined);
 
   const menuGroups = useMemo<MenuGroup[]>(() => {
     return [
@@ -63,15 +80,15 @@ export default function AllMenuPage() {
             tone: "burgundy",
             badgeLoading: isUnreadInitialLoading,
             badgeSkeletonWidth: "18px",
-            ...(unreadNotifCount > 0 ? { badge: String(unreadNotifCount) } : {}),
+            ...(unreadNotifCount !== undefined && unreadNotifCount > 0 ? { badge: String(unreadNotifCount) } : {}),
           },
           {
             label: "고객",
             href: "/clients",
             icon: Users,
             tone: "primary",
-            value: isClientsInitialLoading ? undefined : `${clients.length}명`,
-            valueLoading: isClientsInitialLoading,
+            value: isClientsValueUnavailable ? undefined : `${clients.length}명`,
+            valueLoading: isClientsValueUnavailable,
             valueSkeletonWidth: "28px",
           },
           {
@@ -116,8 +133,8 @@ export default function AllMenuPage() {
             href: "/messages/new",
             icon: MessageSquareText,
             tone: "primary",
-            value: isMessageTemplatesInitialLoading ? undefined : `${messageTemplates.length}건`,
-            valueLoading: isMessageTemplatesInitialLoading,
+            value: isMessageTemplatesValueUnavailable ? undefined : `${messageTemplates.length}건`,
+            valueLoading: isMessageTemplatesValueUnavailable,
             valueSkeletonWidth: "32px",
           },
           {
@@ -150,9 +167,9 @@ export default function AllMenuPage() {
     employees.length,
     messageTemplates.length,
     unreadNotifCount,
-    isClientsInitialLoading,
     isEmployeesInitialLoading,
-    isMessageTemplatesInitialLoading,
+    isClientsValueUnavailable,
+    isMessageTemplatesValueUnavailable,
     isUnreadInitialLoading,
     pushNotification.isLoading,
     pushNotification.isSubscribed,
@@ -160,6 +177,81 @@ export default function AllMenuPage() {
 
   return (
     <div data-component={ALL_PAGE_BASE} data-slot="all-page" className="md:hidden">
+      {showClientsError ? (
+        <div className="space-y-3 px-4 pt-4">
+          <Alert
+            variant="warning"
+            role="status"
+            aria-live="polite"
+            data-component="mobile_all_page_clients-read-error"
+          >
+            <AlertTitle>고객 수를 새로 불러오지 못했어요</AlertTitle>
+            <AlertDescription>
+              <p>{clientsNormalizedError?.message}</p>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="mt-3"
+                onClick={() => void clientsQuery.refetch()}
+                disabled={clientsQuery.isFetching}
+              >
+                다시 시도
+              </Button>
+            </AlertDescription>
+          </Alert>
+        </div>
+      ) : null}
+      {showMessageTemplatesError ? (
+        <div className="space-y-3 px-4 pt-4">
+          <Alert
+            variant="warning"
+            role="status"
+            aria-live="polite"
+            data-component="mobile_all_page_message-templates-read-error"
+          >
+            <AlertTitle>메시지 템플릿 수를 새로 불러오지 못했어요</AlertTitle>
+            <AlertDescription>
+              <p>{messageTemplatesNormalizedError?.message}</p>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="mt-3"
+                onClick={() => void messageTemplatesQuery.refetch()}
+                disabled={messageTemplatesQuery.isFetching}
+              >
+                다시 시도
+              </Button>
+            </AlertDescription>
+          </Alert>
+        </div>
+      ) : null}
+      {showUnreadError ? (
+        <div className="space-y-3 px-4 pt-4">
+          <Alert
+            variant="warning"
+            role="status"
+            aria-live="polite"
+            data-component="mobile_all_page_unread-count-read-error"
+          >
+            <AlertTitle>읽지 않은 알림 수를 불러오지 못했어요</AlertTitle>
+            <AlertDescription>
+              <p>{unreadNormalizedError?.message}</p>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="mt-3"
+                onClick={() => void unreadCountQuery.refetch()}
+                disabled={unreadCountQuery.isFetching}
+              >
+                다시 시도
+              </Button>
+            </AlertDescription>
+          </Alert>
+        </div>
+      ) : null}
       <AllSettingsRedesign menuGroups={menuGroups} />
     </div>
   );

@@ -84,7 +84,7 @@ export function useAllClients() {
                 if (Array.isArray((data as Record<string, unknown>).data)) return (data as Record<string, unknown>).data as Client[];
                 if (Array.isArray((data as Record<string, unknown>).items)) return (data as Record<string, unknown>).items as Client[];
             }
-            return [];
+            throw new Error("Clients response shape is invalid");
         },
         staleTime: 1000 * 60 * 5,
     });
