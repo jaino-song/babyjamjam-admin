@@ -455,6 +455,7 @@ function ClientFormContent({
     const [isEmployeeDialogOpen, setIsEmployeeDialogOpen] = useState(false);
     const [employeeDialogTarget, setEmployeeDialogTarget] = useState<"primary" | "secondary" | null>(null);
     const contentRef = useRef<HTMLDivElement>(null);
+    const formSessionRef = useRef<{ open: boolean; clientId: number | null }>({ open: false, clientId: null });
     const [initializedEditClientId, setInitializedEditClientId] = useState<number | null>(null);
     const [hasUserEditedSinceOpen, setHasUserEditedSinceOpen] = useState(false);
     const [internalActiveStep, setInternalActiveStep] = useState(0);
@@ -702,6 +703,13 @@ function ClientFormContent({
 
     // Reset form when dialog opens/closes or client changes
     useEffect(() => {
+        if (!open) {
+            formSessionRef.current.open = false;
+            return;
+        }
+        const sessionClientId = client?.id ?? null;
+        if (formSessionRef.current.open && formSessionRef.current.clientId === sessionClientId) return;
+        formSessionRef.current = { open: true, clientId: sessionClientId };
         if (open) {
             skipNextEndDateRecalculationRef.current = true;
             let nextFormData: ClientFormData | null = null;

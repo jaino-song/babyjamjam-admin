@@ -163,6 +163,7 @@ export function ClientFormDialog({ open, onClose, client, onSuccess }: ClientFor
     const [errorState, setErrorState] = useState<ClientFormErrorState | null>(null);
     const [hasUnknownMutationOutcome, setHasUnknownMutationOutcome] = useState(false);
     const contentRef = useRef<HTMLDivElement>(null);
+    const formSessionRef = useRef<{ open: boolean; clientId: number | null }>({ open: false, clientId: null });
     const errorSummaryRef = useRef<HTMLDivElement>(null);
 
     // State for EmployeeFormDialog
@@ -264,6 +265,13 @@ export function ClientFormDialog({ open, onClose, client, onSuccess }: ClientFor
 
     // Reset form when dialog opens/closes or client changes
     useEffect(() => {
+        if (!open) {
+            formSessionRef.current.open = false;
+            return;
+        }
+        const sessionClientId = client?.id ?? null;
+        if (formSessionRef.current.open && formSessionRef.current.clientId === sessionClientId) return;
+        formSessionRef.current = { open: true, clientId: sessionClientId };
         if (!open) {
             return;
         }
@@ -428,8 +436,13 @@ export function ClientFormDialog({ open, onClose, client, onSuccess }: ClientFor
                 locale: locale === "en" ? "en-US" : "ko-KR",
                 operation: "mutation",
             });
-            const shouldUseNormalized = normalized.verified
-                || (normalized.origin === "transport" && normalized.status === undefined);
+            const responseData = error && typeof error === "object" && "response" in error
+                ? (error.response as { data?: unknown } | undefined)?.data : error;
+            const claimsProblem = responseData !== null && typeof responseData === "object"
+                && ("type" in responseData || "requestId" in responseData);
+            const isLegacyClientError = !normalized.verified && !claimsProblem
+                && normalized.status !== undefined && normalized.status >= 400 && normalized.status < 500;
+            const shouldUseNormalized = !isLegacyClientError;
             if (shouldUseNormalized) {
                 setErrorAndScroll(normalized.message, normalized);
                 return;

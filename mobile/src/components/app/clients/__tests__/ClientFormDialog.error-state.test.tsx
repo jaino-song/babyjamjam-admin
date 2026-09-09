@@ -1,3 +1,4 @@
+import type { ComponentProps } from "react";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { createProblemDetails } from "@babyjamjam/shared/errors/problem-details";
@@ -206,4 +207,35 @@ describe("ClientFormDialog mutation error presentation", () => {
         expect(onSuccess).toHaveBeenCalledWith(validClient);
         expect(onClose).toHaveBeenCalledTimes(1);
     });
+    it.each([
+        { response: { status: 502, data: "<html>gateway failure</html>" } },
+        { response: { status: 400, data: { type: "invalid", requestId: "bad-response" } } },
+        new Error("local callback failed after sending"),
+    ])("blocks unknown results even when the error contract is invalid", async (cause) => {
+        const mutateAsync = jest.fn().mockRejectedValue(cause);
+        mockUseCreateClient.mockReturnValue({ mutateAsync, isPending: false } as unknown as ReturnType<typeof useCreateClient>);
+        renderDialog();
+        await fillRequiredFields();
+        fireEvent.click(submitButton());
+        await waitFor(() => expect(submitButton()).toBeDisabled());
+        expect(await screen.findByRole("alert")).toHaveTextContent("변경 결과를 확인할 수 없으니");
+        fireEvent.click(submitButton());
+        expect(mutateAsync).toHaveBeenCalledTimes(1);
+    });
+
+    it("preserves a failed edit when the same customer is refreshed", async () => {
+        const mutateAsync = jest.fn().mockRejectedValue({ response: { status: 500, data: unknownProblem } });
+        mockUseUpdateClient.mockReturnValue({ mutateAsync, isPending: false } as unknown as ReturnType<typeof useUpdateClient>);
+        const props = { open: true, onClose: jest.fn(), client: validClient as ComponentProps<typeof ClientFormDialog>["client"] };
+        const view = render(<ClientFormDialog {...props} />);
+        await waitFor(() => expect(screen.getByLabelText(/이름/)).toHaveValue("김고객"));
+        fireEvent.click(screen.getByRole("button", { name: "저장" }));
+        await waitFor(() => expect(screen.getByRole("button", { name: "저장" })).toBeDisabled());
+        fireEvent.change(screen.getByLabelText(/이름/), { target: { value: "보존할 수정값" } });
+        view.rerender(<ClientFormDialog {...props} client={{ ...props.client! }} />);
+        await waitFor(() => expect(screen.getByLabelText(/이름/)).toHaveValue("보존할 수정값"));
+        expect(screen.getByRole("alert")).toHaveTextContent("요청 ID: request-bjj-319-unknown");
+        expect(screen.getByRole("button", { name: "저장" })).toBeDisabled();
+    });
+
 });
