@@ -38,6 +38,7 @@ export const TENANT_MODELS: ReadonlySet<string> = new Set([
     "service_record_day",
     "service_record_edit_draft",
     "service_record_revision",
+    "service_record_revision_document_state",
     "service_record_snapshot_chunk",
     "service_record_token",
     "user_branch",

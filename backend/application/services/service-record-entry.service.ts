@@ -19,7 +19,7 @@ import {
 import { validateServiceRecordAnswers } from "application/policies/service-record-answer-validation.policy";
 import { getServiceRecordTokenExpiresAt } from "domain/constants/service-record-link-message";
 import { SERVICE_RECORD_TEXT_LIMITS } from "domain/constants/service-record-text-limits";
-import { addBusinessDaysKr } from "domain/utils/business-days";
+import { addBusinessDaysKr, UnsupportedKoreanHolidayYearError } from "domain/utils/business-days";
 import { serviceRecordSessionCount } from "domain/utils/service-record-session-count";
 import { PrismaService } from "infrastructure/database/prisma.service";
 import { SaveServiceHeaderDto, UpsertSessionDto } from "interface/dto/service-record-entry.dto";
@@ -130,10 +130,39 @@ function hasAuthoritativeRevision(record: {
     currentRevisionId?: string | null;
     currentUsableRevisionId?: string | null;
     currentUsableDocumentVersion?: number | null;
+    plannedSessions?: Prisma.JsonValue | null;
 }): boolean {
     return record.currentRevisionId != null
         || record.currentUsableRevisionId != null
-        || record.currentUsableDocumentVersion != null;
+        || record.currentUsableDocumentVersion != null
+        || record.plannedSessions != null;
+}
+
+function entrySessionCount(record: {
+    startDate: Date | null;
+    endDate: Date | null;
+    requiredSessionCount: number | null;
+    currentRevisionId?: string | null;
+    currentUsableRevisionId?: string | null;
+    currentUsableDocumentVersion?: number | null;
+    plannedSessions?: Prisma.JsonValue | null;
+}): number {
+    // A confirmed revision stores the actual N independently of the current
+    // calendar span. Legacy transfers retain the provider flow's in-period
+    // cap, while unsupported legacy years remain viewable with their stored N.
+    if (hasAuthoritativeRevision(record)) return record.requiredSessionCount ?? 0;
+    try {
+        return serviceRecordSessionCount(
+            record.startDate,
+            record.endDate,
+            record.requiredSessionCount,
+        ) ?? 0;
+    } catch (error) {
+        if (error instanceof UnsupportedKoreanHolidayYearError) {
+            return record.requiredSessionCount ?? 0;
+        }
+        throw error;
+    }
 }
 
 function plannedSessionDateUnavailable(): ConflictException {
@@ -206,7 +235,7 @@ export class ServiceRecordEntryService {
         return {
             employee: { id: schedule.primaryEmployee.id, name: schedule.primaryEmployee.name },
             client: { id: schedule.client.id, name: schedule.client.name },
-            totalSessions: serviceRecordSessionCount(record.startDate, record.endDate, record.requiredSessionCount) ?? 0,
+            totalSessions: entrySessionCount(record),
             startDate: record.startDate,
             endDate: record.endDate,
             recordStatus: record.status,
@@ -431,7 +460,7 @@ export class ServiceRecordEntryService {
                 throw new ConflictException({ code: "SERVICE_RECORD_FINALIZED" });
             }
 
-            const total = serviceRecordSessionCount(record.startDate, record.endDate, record.requiredSessionCount) ?? 0;
+            const total = entrySessionCount(record);
             if (sessionIndex < 1 || sessionIndex > total) {
                 throw new BadRequestException(`Session ${sessionIndex} is outside the contracted range 1..${total}`);
             }

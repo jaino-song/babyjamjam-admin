@@ -337,6 +337,20 @@ describe("ServiceRecordEntryService planned-session dates", () => {
         employeeId: 20,
         provenanceVersion: "revision-1",
     }));
+    const authoritativeRevisionSessions = Array.from({ length: 13 }, (_, offset) => {
+        const serviceDate = addBusinessDaysKr("2026-09-03", offset);
+        return {
+            sessionIndex: offset + 1,
+            serviceDate,
+            originalDate: serviceDate,
+            assignmentId: `assignment-${offset + 1}`,
+            scheduleId: 10,
+            employeeId: 20,
+            provenanceVersion: "revision-1",
+        };
+    });
+    const authoritativeRevisionPrevious = authoritativeRevisionSessions[11]!;
+    const authoritativeRevisionLast = authoritativeRevisionSessions[12]!;
 
     it("exposes the complete persisted planned vector, including future unwritten sessions", async () => {
         const record = createRecord({ plannedSessions });
@@ -380,6 +394,85 @@ describe("ServiceRecordEntryService planned-session dates", () => {
 
         expect(result.plannedSessionDates).toBeUndefined();
         expect(result.totalSessions).toBe(record.requiredSessionCount);
+    });
+
+    it("preserves the authoritative revision N when the current period is a shorter transfer span", async () => {
+        const record = createRecord({
+            requiredSessionCount: 13,
+            startDate: new Date("2026-09-03T00:00:00.000Z"),
+            endDate: new Date("2026-09-08T00:00:00.000Z"),
+            currentRevisionId: "revision-1",
+            plannedSessions: authoritativeRevisionSessions,
+        });
+        const service = new ServiceRecordEntryService(
+            createContextPrisma(record) as unknown as PrismaService,
+            {} as ServiceRecordTokenService,
+            {} as ServiceRecordLifecycleService,
+        );
+
+        const result = await service.getContext(context);
+
+        expect(result.totalSessions).toBe(13);
+        expect(result.plannedSessionDates).toHaveLength(13);
+        expect(result.plannedSessionDates?.at(-1)).toEqual({
+            sessionIndex: 13,
+            serviceDate: authoritativeRevisionLast.serviceDate,
+        });
+    });
+
+    it("keeps unsupported-year legacy totals viewable using the stored count", async () => {
+        const record = createRecord({
+            requiredSessionCount: 5,
+            startDate: new Date("2028-01-03T00:00:00.000Z"),
+            endDate: new Date("2028-01-05T00:00:00.000Z"),
+            plannedSessions: null,
+        });
+        const service = new ServiceRecordEntryService(
+            createContextPrisma(record) as unknown as PrismaService,
+            {} as ServiceRecordTokenService,
+            {} as ServiceRecordLifecycleService,
+        );
+
+        const result = await service.getContext(context);
+        expect(result.totalSessions).toBe(5);
+        expect(result.plannedSessionDates).toBeUndefined();
+    });
+
+    it("uses the authoritative revision N for a later provider slot after a transfer span shortens", async () => {
+        const transactionRecord = createRecord({
+            requiredSessionCount: 13,
+            startDate: new Date("2026-09-03T00:00:00.000Z"),
+            endDate: new Date("2026-09-08T00:00:00.000Z"),
+            currentRevisionId: "revision-1",
+            plannedSessions: authoritativeRevisionSessions,
+        });
+        const { service, upsert, transactionClient } = createHarness({ transactionRecord });
+        transactionClient.service_record_day.findUnique.mockImplementation(({ where }: {
+            where: { serviceRecordCaseId_caseSessionIndex?: { caseSessionIndex?: number } };
+        }) => {
+            const sessionIndex = where.serviceRecordCaseId_caseSessionIndex?.caseSessionIndex;
+            if (sessionIndex === 12) {
+                return Promise.resolve(createDay({
+                    caseSessionIndex: 12,
+                    sessionIndex: 12,
+                    serviceDate: new Date(`${authoritativeRevisionPrevious.serviceDate}T00:00:00.000Z`),
+                    locked: true,
+                }));
+            }
+            return Promise.resolve(null);
+        });
+
+        await service.upsertSession(
+            context,
+            13,
+            createDto({ serviceDate: `${authoritativeRevisionLast.serviceDate}T00:00:00.000Z` }),
+            false,
+        );
+
+        expect(upsert).toHaveBeenCalledWith(expect.objectContaining({
+            create: expect.objectContaining({ caseSessionIndex: 13 }),
+            update: expect.objectContaining({ caseSessionIndex: 13 }),
+        }));
     });
 
     it("fails closed when a revision pointer has no persisted planned vector", async () => {
