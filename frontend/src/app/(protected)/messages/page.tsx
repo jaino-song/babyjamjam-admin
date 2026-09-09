@@ -1668,6 +1668,7 @@ export default function MessagesPage() {
       {isBuiltin && !SelectedBuiltinForm && selectedSystemTemplate ? (
         activeSection === "templates" ? (
           <SystemTemplateEditor
+            key={selectedSystemTemplate.templateKey}
             // Registry keys can be added server-side before the shared package
             // union is updated; the editor consumes the same wire shape.
             template={selectedSystemTemplate as SystemTemplate}
@@ -1676,7 +1677,7 @@ export default function MessagesPage() {
           <AppContentCard
             data-component="desktop_messages_sections_template-detail-readonly-content"
             title="템플릿 내용"
-            description="이 템플릿은 자동 전송 규칙에서 사용됩니다."
+            description="선택한 템플릿의 내용을 확인하세요."
             contentClassName="min-h-0"
           >
             <MsgField label="템플릿 내용" value={templatePreviewMessage} />

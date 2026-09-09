@@ -64,6 +64,8 @@ const mockRetryMutateAsync = jest.fn();
 const mockUseMessageSenderApproval = jest.fn();
 const mockUseAllClients = jest.fn();
 const mockUseSystemTemplates = jest.fn();
+const mockUseInitialUser = jest.fn();
+const mockUpdateSystemTemplate = jest.fn();
 
 jest.mock("@/providers/LocaleProvider", () => ({
   useLocale: () => "ko",
@@ -72,7 +74,7 @@ jest.mock("@/providers/LocaleProvider", () => ({
 jest.mock("@/providers/UserProvider", () => ({
   // Non-owner role on purpose: history must be reachable for anyone once SMS
   // sending is approved, not just the branch owner.
-  useInitialUser: () => ({ id: "user-1", role: "manager" }),
+  useInitialUser: () => mockUseInitialUser(),
 }));
 
 jest.mock("@/components/app/messages/MessageApprovalGate", () => ({
@@ -107,14 +109,7 @@ jest.mock("@/features/clients/hooks/use-clients", () => ({
 jest.mock("@/features/system-templates/hooks", () => ({
   useSystemTemplate: () => ({ data: undefined, isLoading: false }),
   useSystemTemplates: () => mockUseSystemTemplates(),
-}));
-
-jest.mock("@/features/system-templates/components/system-template-editor", () => ({
-  SystemTemplateEditor: ({ template }: { template: { templateKey: string; content: string } }) => (
-    <div data-testid="system-template-editor">
-      {template.templateKey}:{template.content}
-    </div>
-  ),
+  useUpdateSystemTemplate: () => ({ mutateAsync: mockUpdateSystemTemplate, isPending: false }),
 }));
 
 jest.mock("@/hooks/use-toast", () => ({
@@ -390,6 +385,8 @@ function getDetailPanel() {
 }
 
 beforeEach(() => {
+  mockUseInitialUser.mockReturnValue({ id: "user-1", role: "manager" });
+  mockUpdateSystemTemplate.mockResolvedValue(undefined);
   mockToast.mockReset();
   mockCancelMutateAsync.mockReset();
   mockCancelMutateAsync.mockResolvedValue({ id: "job-1", status: "canceled" });
@@ -422,6 +419,31 @@ beforeEach(() => {
 });
 
 describe("messages page — server system-template catalog", () => {
+  it("saves only the newly selected template's content and variables after switching editors", async () => {
+    mockUseInitialUser.mockReturnValue({ id: "owner-1", role: "owner" });
+    const secondVariables = [{ key: "second", label: "두 번째 변수", required: true }];
+    mockUseSystemTemplates.mockReturnValue({
+      data: [
+        buildSystemTemplate({ templateKey: "SERVICE_END_NOTICE", name: "서비스 종료 안내", content: "첫 번째 본문" }),
+        buildSystemTemplate({ templateKey: "FUTURE_TEMPLATE", name: "새 서버 템플릿", content: "두 번째 본문", customVariables: secondVariables }),
+      ],
+      isLoading: false,
+      isError: false,
+    });
+    render(<MessagesPage />);
+    fireEvent.click(screen.getAllByRole("button", { name: "템플릿" })[0]);
+    fireEvent.click(screen.getByText("서비스 종료 안내"));
+    const placeholder = "템플릿 내용을 입력하세요. 변수는 {{변수명}} 형식으로 사용합니다.";
+    fireEvent.change(screen.getByPlaceholderText(placeholder), { target: { value: "첫 번째 미저장 수정" } });
+    fireEvent.click(screen.getByText("새 서버 템플릿"));
+    expect(screen.getByPlaceholderText(placeholder)).toHaveValue("두 번째 본문");
+    fireEvent.change(screen.getByPlaceholderText(placeholder), { target: { value: "두 번째 수정" } });
+    fireEvent.click(screen.getByRole("button", { name: "저장" }));
+    await waitFor(() => expect(mockUpdateSystemTemplate).toHaveBeenCalledWith({
+      key: "FUTURE_TEMPLATE", content: "두 번째 수정", customVariables: secondVariables,
+    }));
+  });
+
   it("renders server-added keys and selects SERVICE_END_NOTICE detail content without service-record routing", () => {
     mockUseSystemTemplates.mockReturnValue({
       data: [
@@ -464,7 +486,7 @@ describe("messages page — server system-template catalog", () => {
     render(<MessagesPage />);
 
     expect(screen.queryByText("인사(소개)")).not.toBeInTheDocument();
-    expect(screen.queryByTestId("system-template-editor")).not.toBeInTheDocument();
+    expect(screen.queryByPlaceholderText("템플릿 내용을 입력하세요. 변수는 {{변수명}} 형식으로 사용합니다.")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "즉시 발송" })).not.toBeInTheDocument();
   });
 
@@ -478,7 +500,7 @@ describe("messages page — server system-template catalog", () => {
     render(<MessagesPage />);
 
     expect(screen.getByTestId("split-layout")).toHaveAttribute("data-has-selection", "false");
-    expect(screen.queryByTestId("system-template-editor")).not.toBeInTheDocument();
+    expect(screen.queryByPlaceholderText("템플릿 내용을 입력하세요. 변수는 {{변수명}} 형식으로 사용합니다.")).not.toBeInTheDocument();
   });
 });
 
