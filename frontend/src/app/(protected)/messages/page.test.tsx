@@ -47,9 +47,6 @@ describe("MessagesPage sender approval gating", () => {
     );
   });
 });
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-
-import { getMessageTemplateLabel } from "@babyjamjam/shared";
 import {
   useCancelUpcomingMessageTriggerJob,
   useMessageHistory,
@@ -66,19 +63,18 @@ const mockRetryMutateAsync = jest.fn();
 // the render-level gate itself reacts, not just the nav's disabled flag.
 const mockUseMessageSenderApproval = jest.fn();
 const mockUseAllClients = jest.fn();
-// jest.fn()s (rather than the hardcoded returns these mocks used to have) so a
-// single test can change the signed-in role or hand the page a branch template
-// without disturbing every other case's defaults, restored in beforeEach.
+const mockUseSystemTemplates = jest.fn();
+const mockUseSystemTemplate = jest.fn();
 const mockUseInitialUser = jest.fn();
-const mockUseMessageTemplates = jest.fn();
+const mockUpdateSystemTemplate = jest.fn();
 
 jest.mock("@/providers/LocaleProvider", () => ({
   useLocale: () => "ko",
 }));
 
 jest.mock("@/providers/UserProvider", () => ({
-  // Non-owner role by default on purpose: history must be reachable for anyone
-  // once SMS sending is approved, not just the branch owner.
+  // Non-owner role on purpose: history must be reachable for anyone once SMS
+  // sending is approved, not just the branch owner.
   useInitialUser: () => mockUseInitialUser(),
 }));
 
@@ -104,7 +100,7 @@ jest.mock("@/components/app/messages/MessageApprovalGate", () => ({
 }));
 
 jest.mock("@/features/message-templates/hooks/use-message-templates", () => ({
-  useMessageTemplates: () => mockUseMessageTemplates(),
+  useMessageTemplates: () => ({ data: [], isLoading: false }),
 }));
 
 jest.mock("@/features/clients/hooks/use-clients", () => ({
@@ -112,7 +108,9 @@ jest.mock("@/features/clients/hooks/use-clients", () => ({
 }));
 
 jest.mock("@/features/system-templates/hooks", () => ({
-  useSystemTemplate: () => ({ data: undefined, isLoading: false }),
+  useSystemTemplate: (key: string) => mockUseSystemTemplate(key),
+  useSystemTemplates: () => mockUseSystemTemplates(),
+  useUpdateSystemTemplate: () => ({ mutateAsync: mockUpdateSystemTemplate, isPending: false }),
 }));
 
 jest.mock("@/hooks/use-toast", () => ({
@@ -321,20 +319,39 @@ function buildHistoryRecord(overrides: Partial<MessageLogRecord> = {}): MessageL
   };
 }
 
+function buildSystemTemplate(overrides: Record<string, unknown> = {}) {
+  return {
+    id: "system-template-1",
+    templateKey: "GREETING",
+    name: "인사(소개)",
+    description: "초기 문의 안내",
+    content: "안녕하세요 {{name}}",
+    requiredVariables: [],
+    customVariables: [],
+    createdAt: "2026-09-01T00:00:00.000Z",
+    updatedAt: "2026-09-01T00:00:00.000Z",
+    ...overrides,
+  };
+}
+
 function mockData({
   upcoming = [],
   history = [],
+  upcomingLoading = false,
+  historyLoading = false,
 }: {
   upcoming?: UpcomingMessageTriggerJob[];
   history?: MessageLogRecord[];
+  upcomingLoading?: boolean;
+  historyLoading?: boolean;
 } = {}) {
   mockedUseUpcomingMessageTriggerJobs.mockReturnValue({
-    data: upcoming,
-    isLoading: false,
+    data: upcomingLoading ? undefined : upcoming,
+    isLoading: upcomingLoading,
   } as unknown as ReturnType<typeof useUpcomingMessageTriggerJobs>);
   mockedUseMessageHistory.mockReturnValue({
-    data: history,
-    isLoading: false,
+    data: historyLoading ? undefined : history,
+    isLoading: historyLoading,
     isError: false,
   } as unknown as ReturnType<typeof useMessageHistory>);
 }
@@ -351,7 +368,26 @@ function getZoneContainer(zone: "upcoming" | "past") {
   );
 }
 
+// The zone/header count pills keep the same data-component in both the
+// skeleton and settled state (see page.tsx), so a single query finds the
+// node either way; tests distinguish state via data-slot="skeleton"/text.
+function getCountNode(dataComponent: string) {
+  return document.querySelector(`[data-component="${dataComponent}"]`);
+}
+
+// Scopes "발송 취소" button queries to the detail panel: once the past-status
+// filter tabs read the same badge wording (see MESSAGE_RECORD_STATUS_FILTER_LABELS),
+// the "취소" tab and the upcoming-job cancel-trigger button share the exact
+// text "발송 취소", so an unscoped role query would match both.
+function getDetailPanel() {
+  return document.querySelector(
+    '[data-component="desktop_messages_sections_split-layout_detail-panel"]',
+  );
+}
+
 beforeEach(() => {
+  mockUseInitialUser.mockReturnValue({ id: "user-1", role: "manager" });
+  mockUpdateSystemTemplate.mockResolvedValue(undefined);
   mockToast.mockReset();
   mockCancelMutateAsync.mockReset();
   mockCancelMutateAsync.mockResolvedValue({ id: "job-1", status: "canceled" });
@@ -369,10 +405,8 @@ beforeEach(() => {
     isLoading: false,
   });
   mockUseAllClients.mockReturnValue({ data: [], isLoading: false });
-  mockUseInitialUser.mockReset();
-  mockUseInitialUser.mockReturnValue({ id: "user-1", role: "manager" });
-  mockUseMessageTemplates.mockReset();
-  mockUseMessageTemplates.mockReturnValue({ data: [], isLoading: false });
+  mockUseSystemTemplates.mockReturnValue({ data: [], isLoading: false, isError: false });
+  mockUseSystemTemplate.mockReturnValue({ data: undefined, isLoading: false, isError: false });
 
   mockedUseRetryMessageHistory.mockReturnValue({
     mutateAsync: mockRetryMutateAsync,
@@ -384,6 +418,240 @@ beforeEach(() => {
   } as unknown as ReturnType<typeof useCancelUpcomingMessageTriggerJob>);
 
   mockData();
+});
+
+describe("messages page — server system-template catalog", () => {
+  it("saves only the newly selected template's content and variables after switching editors", async () => {
+    mockUseInitialUser.mockReturnValue({ id: "owner-1", role: "owner" });
+    const secondVariables = [{ key: "second", label: "두 번째 변수", required: true }];
+    const templates = [
+      buildSystemTemplate({ templateKey: "SERVICE_END_NOTICE", name: "서비스 종료 안내", content: "첫 번째 본문" }),
+      buildSystemTemplate({ templateKey: "FUTURE_TEMPLATE", name: "새 서버 템플릿", content: "두 번째 본문", customVariables: secondVariables }),
+    ];
+    mockUseSystemTemplates.mockReturnValue({
+      data: templates,
+      isLoading: false,
+      isError: false,
+    });
+    mockUseSystemTemplate.mockImplementation((key: string) => ({
+      data: templates.find((template) => template.templateKey === key),
+      isLoading: false,
+      isError: false,
+    }));
+    render(<MessagesPage />);
+    fireEvent.click(screen.getAllByRole("button", { name: "템플릿" })[0]);
+    fireEvent.click(screen.getByText("서비스 종료 안내"));
+    const placeholder = "템플릿 내용을 입력하세요. 변수는 {{변수명}} 형식으로 사용합니다.";
+    fireEvent.change(screen.getByPlaceholderText(placeholder), { target: { value: "첫 번째 미저장 수정" } });
+    fireEvent.click(screen.getByText("새 서버 템플릿"));
+    expect(screen.getByPlaceholderText(placeholder)).toHaveValue("두 번째 본문");
+    fireEvent.change(screen.getByPlaceholderText(placeholder), { target: { value: "두 번째 수정" } });
+    fireEvent.click(screen.getByRole("button", { name: "저장" }));
+    await waitFor(() => expect(mockUpdateSystemTemplate).toHaveBeenCalledWith({
+      key: "FUTURE_TEMPLATE", content: "두 번째 수정", customVariables: secondVariables,
+    }));
+  });
+
+  it("renders server-added keys and selects SERVICE_END_NOTICE detail content without service-record routing", () => {
+    mockUseSystemTemplates.mockReturnValue({
+      data: [
+        buildSystemTemplate({
+          templateKey: "SERVICE_END_NOTICE",
+          name: "서비스 종료 안내",
+          content: "영수증 링크: {{receiptUrl}}",
+        }),
+        buildSystemTemplate({
+          templateKey: "FUTURE_TEMPLATE",
+          name: "새 서버 템플릿",
+          content: "미래 템플릿 본문",
+        }),
+      ],
+      isLoading: false,
+      isError: false,
+    });
+    mockUseSystemTemplate.mockReturnValue({
+      data: buildSystemTemplate({
+        templateKey: "SERVICE_END_NOTICE",
+        name: "서비스 종료 안내",
+        content: "영수증 링크: {{receiptUrl}}",
+      }),
+      isLoading: false,
+      isError: false,
+    });
+
+    render(<MessagesPage />);
+
+    expect(screen.getByText("서비스 종료 안내")).toBeInTheDocument();
+    expect(screen.getAllByText("새 서버 템플릿").length).toBeGreaterThan(0);
+    expect(screen.queryByText("인사(소개)")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByText("서비스 종료 안내"));
+
+    expect(screen.getByLabelText("템플릿 내용")).toHaveValue("영수증 링크: {{receiptUrl}}");
+    expect(screen.getByText("이 화면에서는 직접 발송할 수 없습니다.")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "즉시 발송" })).not.toBeInTheDocument();
+    expect(screen.queryByText("제공기록지 작성 링크")).not.toBeInTheDocument();
+  });
+
+  it("keeps cached rows and the editor draft visible when the catalog refetch fails", () => {
+    mockUseInitialUser.mockReturnValue({ id: "owner-1", role: "owner" });
+    const template = buildSystemTemplate({
+      templateKey: "FUTURE_TEMPLATE",
+      name: "새 서버 템플릿",
+      content: "서버 본문",
+    });
+    mockUseSystemTemplates.mockReturnValue({
+      data: [template],
+      isLoading: false,
+      isError: false,
+    });
+    mockUseSystemTemplate.mockReturnValue({ data: template, isLoading: false, isError: false });
+
+    const { rerender } = render(<MessagesPage />);
+    fireEvent.click(screen.getAllByRole("button", { name: "템플릿" })[0]);
+    fireEvent.click(screen.getByText("새 서버 템플릿"));
+
+    const placeholder = "템플릿 내용을 입력하세요. 변수는 {{변수명}} 형식으로 사용합니다.";
+    fireEvent.change(screen.getByPlaceholderText(placeholder), {
+      target: { value: "임시로 수정한 본문" },
+    });
+
+    mockUseSystemTemplates.mockReturnValue({
+      data: [template],
+      isLoading: false,
+      isError: true,
+    });
+    rerender(<MessagesPage />);
+
+    expect(screen.getAllByText("새 서버 템플릿").length).toBeGreaterThan(0);
+    expect(screen.getByPlaceholderText(placeholder)).toHaveValue("임시로 수정한 본문");
+    expect(screen.queryByText("기본 템플릿을 불러오지 못했습니다.")).not.toBeInTheDocument();
+  });
+
+  it("waits for fresh detail data before mounting an editable unknown template", () => {
+    mockUseInitialUser.mockReturnValue({ id: "owner-1", role: "owner" });
+    const listTemplate = buildSystemTemplate({
+      templateKey: "FUTURE_TEMPLATE",
+      name: "새 서버 템플릿",
+      content: "목록의 오래된 본문",
+    });
+    const detailTemplate = buildSystemTemplate({
+      templateKey: "FUTURE_TEMPLATE",
+      name: "새 서버 템플릿",
+      content: "상세의 최신 본문",
+    });
+    mockUseSystemTemplates.mockReturnValue({
+      data: [listTemplate],
+      isLoading: false,
+      isError: false,
+    });
+    mockUseSystemTemplate.mockReturnValue({ data: undefined, isLoading: true, isError: false });
+
+    const { rerender } = render(<MessagesPage />);
+    fireEvent.click(screen.getAllByRole("button", { name: "템플릿" })[0]);
+    fireEvent.click(screen.getByText("새 서버 템플릿"));
+
+    const placeholder = "템플릿 내용을 입력하세요. 변수는 {{변수명}} 형식으로 사용합니다.";
+    expect(screen.queryByPlaceholderText(placeholder)).not.toBeInTheDocument();
+    expect(screen.queryByText("선택한 템플릿 정보를 불러오지 못했습니다.")).not.toBeInTheDocument();
+    expect(
+      document.querySelector(
+        '[data-component="desktop_messages_sections_templates_split-layout_detail-panel_header_title-group_title-row_title-skeleton"]',
+      ),
+    ).toBeInTheDocument();
+
+    mockUseSystemTemplate.mockReturnValue({ data: detailTemplate, isLoading: false, isError: false });
+    rerender(<MessagesPage />);
+
+    expect(screen.getByPlaceholderText(placeholder)).toHaveValue("상세의 최신 본문");
+    expect(screen.getByRole("button", { name: "저장" })).toBeDisabled();
+  });
+
+  it("preserves a dirty draft when fresher detail data arrives and previews that draft", () => {
+    mockUseInitialUser.mockReturnValue({ id: "owner-1", role: "owner" });
+    const initialTemplate = buildSystemTemplate({
+      templateKey: "FUTURE_TEMPLATE",
+      name: "새 서버 템플릿",
+      content: "처음 본문",
+    });
+    const refreshedTemplate = buildSystemTemplate({
+      templateKey: "FUTURE_TEMPLATE",
+      name: "새 서버 템플릿",
+      content: "새로 받은 본문",
+    });
+    mockUseSystemTemplates.mockReturnValue({
+      data: [initialTemplate],
+      isLoading: false,
+      isError: false,
+    });
+    mockUseSystemTemplate.mockReturnValue({ data: initialTemplate, isLoading: false, isError: false });
+
+    const { rerender } = render(<MessagesPage />);
+    fireEvent.click(screen.getAllByRole("button", { name: "템플릿" })[0]);
+    fireEvent.click(screen.getByText("새 서버 템플릿"));
+
+    const placeholder = "템플릿 내용을 입력하세요. 변수는 {{변수명}} 형식으로 사용합니다.";
+    fireEvent.change(screen.getByPlaceholderText(placeholder), {
+      target: { value: "저장하지 않은 본문" },
+    });
+
+    mockUseSystemTemplate.mockReturnValue({ data: refreshedTemplate, isLoading: false, isError: false });
+    rerender(<MessagesPage />);
+
+    expect(screen.getByPlaceholderText(placeholder)).toHaveValue("저장하지 않은 본문");
+    fireEvent.click(screen.getByRole("tab", { name: "미리보기" }));
+    expect(
+      document.querySelector(
+        '[data-component="desktop_messages_sections_section-content_templates-section_split-layout_detail-panel_preview_preview-message-text"]',
+      ),
+    ).toHaveTextContent("저장하지 않은 본문");
+  });
+
+  it("instruments the unsupported manual-send badge under the template item owner path", () => {
+    const template = buildSystemTemplate({
+      templateKey: "FUTURE_TEMPLATE",
+      name: "새 서버 템플릿",
+    });
+    mockUseSystemTemplates.mockReturnValue({
+      data: [template],
+      isLoading: false,
+      isError: false,
+    });
+
+    const { container } = render(<MessagesPage />);
+    const badge = container.querySelector(
+      '[data-component="desktop_messages_sections_template-item_status_badge"]',
+    );
+
+    expect(badge).toHaveTextContent("직접 발송 불가");
+  });
+
+  it.each([
+    ["loading", { data: undefined, isLoading: true, isError: false }],
+    ["error", { data: undefined, isLoading: false, isError: true }],
+    ["missing", { data: undefined, isLoading: false, isError: false }],
+  ])("does not silently fall back to legacy rows on %s", (_state, result) => {
+    mockUseSystemTemplates.mockReturnValue(result);
+
+    render(<MessagesPage />);
+
+    expect(screen.queryByText("인사(소개)")).not.toBeInTheDocument();
+    expect(screen.queryByPlaceholderText("템플릿 내용을 입력하세요. 변수는 {{변수명}} 형식으로 사용합니다.")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "즉시 발송" })).not.toBeInTheDocument();
+  });
+
+  it("does not silently select the first server row while the compact list is shown", () => {
+    mockUseSystemTemplates.mockReturnValue({
+      data: [buildSystemTemplate({ templateKey: "FUTURE_TEMPLATE", name: "새 서버 템플릿" })],
+      isLoading: false,
+      isError: false,
+    });
+
+    render(<MessagesPage />);
+
+    expect(screen.getByTestId("split-layout")).toHaveAttribute("data-has-selection", "false");
+    expect(screen.queryByPlaceholderText("템플릿 내용을 입력하세요. 변수는 {{변수명}} 형식으로 사용합니다.")).not.toBeInTheDocument();
+  });
 });
 
 describe("messages page — merged 발송 기록 section", () => {
@@ -418,8 +686,8 @@ describe("messages page — merged 발송 기록 section", () => {
     expect(getZoneContainer("upcoming")).not.toBeNull();
     expect(getZoneContainer("past")).toBeNull();
 
-    // "발송" tab: only the matching zone-2 rows show.
-    fireEvent.click(screen.getByRole("button", { name: "발송" }));
+    // "발송 성공" tab: only the matching zone-2 rows show.
+    fireEvent.click(screen.getByRole("button", { name: "발송 성공" }));
     expect(getZoneContainer("upcoming")).toBeNull();
     expect(getZoneContainer("past")).not.toBeNull();
   });
@@ -440,7 +708,13 @@ describe("messages page — merged 발송 기록 section", () => {
     const upcomingZone = getZoneContainer("upcoming");
     expect(upcomingZone).not.toBeNull();
     expect(within(upcomingZone as HTMLElement).getByText("김서연")).toBeInTheDocument();
-    expect(getZoneContainer("past")).toBeNull();
+
+    // The past zone is merely empty (filtered down to zero rows), not hidden
+    // by the tab filter, so it still renders its label and a settled "0" count.
+    const pastZone = getZoneContainer("past");
+    expect(pastZone).not.toBeNull();
+    expect(getCountNode("desktop_messages_sections_split-layout_list-panel-3_zone-past_count")?.textContent).toBe("0");
+    expect(within(pastZone as HTMLElement).queryByText("이하은")).not.toBeInTheDocument();
   });
 
   it("shows the cancel reason inline on a canceled row", () => {
@@ -470,10 +744,17 @@ describe("messages page — merged 발송 기록 section", () => {
     goToHistorySection();
 
     fireEvent.click(screen.getByText("박지민"));
-    expect(screen.queryByRole("button", { name: "발송 취소" })).not.toBeInTheDocument();
+    // Scoped to the detail panel: the "취소" status tab now reads "발송 취소"
+    // too (see MESSAGE_RECORD_STATUS_FILTER_LABELS), so an unscoped query
+    // would match that tab even when the detail panel has no cancel button.
+    expect(
+      within(getDetailPanel() as HTMLElement).queryByRole("button", { name: "발송 취소" }),
+    ).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByText("김서연"));
-    expect(screen.getByRole("button", { name: "발송 취소" })).toBeInTheDocument();
+    expect(
+      within(getDetailPanel() as HTMLElement).getByRole("button", { name: "발송 취소" }),
+    ).toBeInTheDocument();
   });
 
   it("cancels an upcoming send after confirmation, shows exactly one success notification, and the row moves zones on refetch", async () => {
@@ -486,7 +767,7 @@ describe("messages page — merged 발송 기록 section", () => {
     goToHistorySection();
 
     fireEvent.click(screen.getByText("김서연"));
-    fireEvent.click(screen.getByRole("button", { name: "발송 취소" }));
+    fireEvent.click(within(getDetailPanel() as HTMLElement).getByRole("button", { name: "발송 취소" }));
 
     const dialog = screen.getByRole("alertdialog");
     expect(within(dialog).getByText("예정된 발송을 취소할까요?")).toBeInTheDocument();
@@ -517,7 +798,13 @@ describe("messages page — merged 발송 기록 section", () => {
     });
     rerender(<MessagesPage />);
 
-    expect(getZoneContainer("upcoming")).toBeNull();
+    // The upcoming zone is now merely empty (the job moved to history), not
+    // hidden by the tab filter, so it still renders with a settled "0" count.
+    const upcomingZone = getZoneContainer("upcoming");
+    expect(upcomingZone).not.toBeNull();
+    expect(getCountNode("desktop_messages_sections_split-layout_list-panel-3_zone-upcoming_count")?.textContent).toBe("0");
+    expect(within(upcomingZone as HTMLElement).queryByText("김서연")).not.toBeInTheDocument();
+
     const pastZone = getZoneContainer("past");
     expect(pastZone).not.toBeNull();
     expect(within(pastZone as HTMLElement).getByText("김서연")).toBeInTheDocument();
@@ -533,7 +820,7 @@ describe("messages page — merged 발송 기록 section", () => {
     goToHistorySection();
 
     fireEvent.click(screen.getByText("김서연"));
-    fireEvent.click(screen.getByRole("button", { name: "발송 취소" }));
+    fireEvent.click(within(getDetailPanel() as HTMLElement).getByRole("button", { name: "발송 취소" }));
     const dialog = screen.getByRole("alertdialog");
     fireEvent.click(within(dialog).getByRole("button", { name: "발송 취소" }));
 
@@ -646,74 +933,102 @@ describe("messages page — merged 발송 기록 section", () => {
       "desktop_messages_sections_section-content_history-section_approval-gate",
     );
   });
-});
 
-describe("messages page — 기본 템플릿 편집 링크", () => {
-  const GREETING_LABEL = getMessageTemplateLabel("GREETING");
-
-  function goToTemplatesSection() {
-    const navButtons = screen.getAllByRole("button", { name: "템플릿" });
-    fireEvent.click(navButtons[0]);
-  }
-
-  // Selecting a template inside 전송하기 mounts the real send form, which calls
-  // useQueryClient; the other suites never reach it, so only this one needs the
-  // provider.
-  function renderWithQueryClient() {
-    const queryClient = new QueryClient({
-      defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
-    });
-    render(
-      <QueryClientProvider client={queryClient}>
-        <MessagesPage />
-      </QueryClientProvider>,
-    );
-  }
-
-  it("points the owner at the admin console for the selected default template", () => {
-    mockUseInitialUser.mockReturnValue({ id: "user-1", role: "owner" });
-
-    render(<MessagesPage />);
-    goToTemplatesSection();
-    fireEvent.click(screen.getByText(GREETING_LABEL));
-
-    expect(screen.getByRole("link", { name: /관리자 페이지에서 수정/ })).toHaveAttribute(
-      "href",
-      "/system-admin?section=templates&template=GREETING",
-    );
-  });
-
-  it("hides the link for a branch template, which the owner edits in place", () => {
-    mockUseInitialUser.mockReturnValue({ id: "user-1", role: "owner" });
-    mockUseMessageTemplates.mockReturnValue({
-      data: [{ id: "tpl-1", name: "지점 인사말", content: "안녕하세요", variables: [] }],
-      isLoading: false,
+  it("skeletons the whole panel while the upcoming query is still loading, even with a cached history record", () => {
+    mockData({
+      history: [buildHistoryRecord()],
+      upcomingLoading: true,
     });
 
     render(<MessagesPage />);
-    goToTemplatesSection();
-    fireEvent.click(screen.getByRole("button", { name: "지점 템플릿" }));
-    fireEvent.click(screen.getByText("지점 인사말"));
+    goToHistorySection();
 
-    expect(screen.queryByRole("link", { name: /관리자 페이지에서 수정/ })).not.toBeInTheDocument();
+    const upcomingZone = getZoneContainer("upcoming");
+    const pastZone = getZoneContainer("past");
+    expect(upcomingZone).not.toBeNull();
+    expect(pastZone).not.toBeNull();
+
+    // The history query already settled with a cached record, but the past
+    // list must still show only skeleton slots while the upcoming query
+    // (isPanelLoading) is in flight — never the real cached row. Assert on the
+    // list slots themselves: the zone's count pill is also a skeleton, so a
+    // zone-level skeleton query would pass even if real rows rendered.
+    const pastSlots = (pastZone as HTMLElement).querySelectorAll(
+      '[data-component="desktop_messages_sections_split-layout_list-panel-3_history-list_item"]',
+    );
+    expect(pastSlots).toHaveLength(4);
+    pastSlots.forEach((slot) => {
+      expect(slot.querySelector('[data-slot="skeleton"]')).not.toBeNull();
+    });
+    expect(within(pastZone as HTMLElement).queryByText("이하은")).not.toBeInTheDocument();
+
+    for (const dataComponent of [
+      "desktop_messages_sections_split-layout_list-panel-3_zone-upcoming_count",
+      "desktop_messages_sections_split-layout_list-panel-3_zone-past_count",
+      "desktop_messages_sections_history-list-count",
+    ]) {
+      const node = getCountNode(dataComponent);
+      expect(node).not.toBeNull();
+      expect(node).toHaveAttribute("data-slot", "skeleton");
+      expect(node?.textContent ?? "").not.toMatch(/\d/);
+    }
   });
 
-  it("keeps the link out of the 전송하기 flow, where the same detail header is reused", () => {
-    mockUseInitialUser.mockReturnValue({ id: "user-1", role: "owner" });
+  it("skeletons the upcoming zone while the history query is still loading, even with a settled upcoming job", () => {
+    mockData({
+      upcoming: [buildUpcomingJob()],
+      historyLoading: true,
+    });
 
-    // No navigation: 전송하기 is the landing section and shares this split
-    // layout with 템플릿, so only the section check keeps the link out.
-    renderWithQueryClient();
-    fireEvent.click(screen.getByText(GREETING_LABEL));
+    render(<MessagesPage />);
+    goToHistorySection();
 
-    expect(screen.queryByRole("link", { name: /관리자 페이지에서 수정/ })).not.toBeInTheDocument();
+    const upcomingZone = getZoneContainer("upcoming");
+    expect(upcomingZone).not.toBeNull();
+    const upcomingSlots = (upcomingZone as HTMLElement).querySelectorAll(
+      '[data-component="desktop_messages_sections_split-layout_list-panel-3_upcoming-list_item"]',
+    );
+    expect(upcomingSlots).toHaveLength(3);
+    upcomingSlots.forEach((slot) => {
+      expect(slot.querySelector('[data-slot="skeleton"]')).not.toBeNull();
+    });
+    expect(within(upcomingZone as HTMLElement).queryByText("김서연")).not.toBeInTheDocument();
   });
 
-  it("hides the link from a non-owner, who cannot open the admin console at all", () => {
-    renderWithQueryClient();
-    goToTemplatesSection();
-    fireEvent.click(screen.getByText(GREETING_LABEL));
+  it("settles the upcoming zone at a zero count next to a real past count once both queries resolve", () => {
+    mockData({
+      history: [buildHistoryRecord()],
+    });
 
-    expect(screen.queryByRole("link", { name: /관리자 페이지에서 수정/ })).not.toBeInTheDocument();
+    render(<MessagesPage />);
+    goToHistorySection();
+
+    const upcomingZone = getZoneContainer("upcoming");
+    expect(upcomingZone).not.toBeNull();
+    expect(within(upcomingZone as HTMLElement).getByText("예정")).toBeInTheDocument();
+    expect(
+      getCountNode("desktop_messages_sections_split-layout_list-panel-3_zone-upcoming_count")?.textContent,
+    ).toBe("0");
+    expect(
+      (upcomingZone as HTMLElement).querySelectorAll(
+        '[data-component="desktop_messages_sections_split-layout_list-panel-3_upcoming-list_item"]',
+      ).length,
+    ).toBe(0);
+
+    expect(
+      getCountNode("desktop_messages_sections_split-layout_list-panel-3_zone-past_count")?.textContent,
+    ).toBe("1");
+    expect(screen.getByText("1건")).toBeInTheDocument();
+  });
+
+  it("hides both zones and shows the shared empty state once both queries settle with zero items", () => {
+    mockData();
+
+    render(<MessagesPage />);
+    goToHistorySection();
+
+    expect(getZoneContainer("upcoming")).toBeNull();
+    expect(getZoneContainer("past")).toBeNull();
+    expect(screen.getByText("표시할 메시지가 없습니다.")).toBeInTheDocument();
   });
 });

@@ -96,7 +96,7 @@ describe("employee schedule invariants policy", () => {
         expect(employeeScheduleDatesOverlap(range.startDate, sameEndAndStart, nextDay, range.endDate)).toBe(false);
     });
 
-    it("uses inclusive overlap bounds and branch scoping", async () => {
+    it("checks only the same client with inclusive bounds and branch scoping", async () => {
         const transaction = createTransaction({ id: 42 });
 
         await expect(assertNoActiveEmployeeScheduleOverlap(transaction as never, {
@@ -109,19 +109,30 @@ describe("employee schedule invariants policy", () => {
         })).rejects.toBeInstanceOf(ConflictException);
 
         expect(transaction.employee_schedule.findFirst).toHaveBeenCalledWith({
-            where: expect.objectContaining({
+            where: {
                 branchId: "branch-a",
                 replaced: false,
+                terminatedAt: null,
                 startDate: { lte: range.endDate },
                 endDate: { gte: range.startDate },
-                OR: expect.arrayContaining([
-                    { clientId: 1 },
-                    { primaryEmployeeId: { in: [7] } },
-                ]),
-            }),
+                clientId: 1,
+            },
             orderBy: { id: "asc" },
             select: expect.any(Object),
         });
+    });
+
+    it("allows initial assignment for a new client even when an employee has another schedule", async () => {
+        const transaction = createTransaction({ id: 42 });
+
+        await expect(assertNoActiveEmployeeScheduleOverlap(transaction as never, {
+            branchId: "branch-a",
+            primaryEmployeeId: 7,
+            secondaryEmployeeId: 8,
+            ...range,
+            replaced: false,
+        })).resolves.toBeUndefined();
+        expect(transaction.employee_schedule.findFirst).not.toHaveBeenCalled();
     });
 
     it("allows replaced schedules and excludes the schedule being updated", async () => {

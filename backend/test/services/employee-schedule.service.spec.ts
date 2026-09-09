@@ -15,6 +15,9 @@ describe("EmployeeScheduleService", () => {
             scheduleForServiceStart: jest.fn().mockResolvedValue(undefined),
             extendExpiryForEndDate: jest.fn().mockResolvedValue(undefined),
         };
+        const serviceRecordLifecycleService = {
+            ensureForClient: jest.fn().mockResolvedValue(undefined),
+        };
         const transaction = {};
         let transactionCommitted = false;
         const prisma = {
@@ -44,6 +47,7 @@ describe("EmployeeScheduleService", () => {
                 prisma as never,
                 messageAutomationIntentService as never,
                 serviceRecordLinkService as never,
+                serviceRecordLifecycleService as never,
             ),
             createUsecase,
             updateUsecase,
@@ -52,8 +56,51 @@ describe("EmployeeScheduleService", () => {
             prisma,
             messageAutomationIntentService,
             serviceRecordLinkService,
+            serviceRecordLifecycleService,
+            findByIdUsecase,
+            deleteUsecase,
         };
     };
+
+    it("deletes the schedule and refreshes lifecycle in the same owning transaction", async () => {
+        const {
+            service,
+            findByIdUsecase,
+            deleteUsecase,
+            transaction,
+            prisma,
+            serviceRecordLifecycleService,
+        } = createService();
+        const schedule = new EmployeeScheduleEntity(
+            10,
+            1,
+            2,
+            null,
+            "서울",
+            new Date("2026-07-03T00:00:00.000Z"),
+            new Date("2026-07-12T00:00:00.000Z"),
+        );
+        findByIdUsecase.execute.mockResolvedValue(schedule);
+
+        await service.delete("branch-1", schedule.id);
+
+        expect(prisma.$transaction).toHaveBeenCalledTimes(1);
+        expect(deleteUsecase.execute).toHaveBeenCalledWith("branch-1", schedule.id, transaction);
+        expect(serviceRecordLifecycleService.ensureForClient)
+            .toHaveBeenCalledWith(schedule.clientId, transaction);
+        expect(deleteUsecase.execute.mock.invocationCallOrder[0])
+            .toBeLessThan(serviceRecordLifecycleService.ensureForClient.mock.invocationCallOrder[0]!);
+    });
+
+    it("keeps the scoped delete usecase responsible for a missing discovery row", async () => {
+        const { service, findByIdUsecase, deleteUsecase, prisma } = createService();
+        findByIdUsecase.execute.mockResolvedValue(null);
+        deleteUsecase.execute.mockRejectedValue(new Error("not found"));
+
+        await expect(service.delete("branch-1", 10)).rejects.toThrow("not found");
+        expect(prisma.$transaction).not.toHaveBeenCalled();
+        expect(deleteUsecase.execute).toHaveBeenCalledWith("branch-1", 10);
+    });
 
     it("schedules the service-record link SMS when a service schedule is created", async () => {
         const { service, createUsecase, serviceRecordLinkService } = createService();
@@ -302,7 +349,7 @@ describe("EmployeeScheduleService assignment eligibility", () => {
             findFirst: jest.fn().mockResolvedValue(client),
         };
         const transaction = {
-            $queryRaw: jest.fn().mockResolvedValue([]),
+            $queryRaw: jest.fn().mockResolvedValue([{ id: 100 }]),
             client: clientRepository,
             employee,
         };

@@ -86,13 +86,13 @@ jobs:
       - name: Migration idempotency gate
         run: node --test scripts/ci/migration-idempotency.test.mjs
 
-      - name: Verify vendored agent contracts
+      - name: Verify vendored shared runtime
         run: |
           pnpm --filter @babyjamjam/shared run build:backend-runtime
-          git diff --exit-code -- backend/vendor/shared-agent/agent
-          untracked="$(git ls-files --others --exclude-standard backend/vendor/shared-agent/agent)"
+          git diff --exit-code -- backend/vendor/shared-agent
+          untracked="$(git ls-files --others --exclude-standard backend/vendor/shared-agent)"
           if [ -n "$untracked" ]; then
-            echo "Generated agent contract files are not committed:"
+            echo "Generated shared runtime files are not committed:"
             echo "$untracked"
             exit 1
           fi
@@ -139,8 +139,25 @@ jobs:
           backend/deploy/ci/wait-database-patches.test.sh
           node --test backend/deploy/fallback-server/ci/*.test.mjs
 
+      # pdfjs-dist is ESM-only and its Jest VM import can outlive a neighboring
+      # CommonJS test environment when both suites share a worker. Keep the
+      # strict installed-pdf proof in its own Jest process; the regular unit
+      # command still runs every other configured unit suite and retains all
+      # existing e2e/runtime exclusions.
+      - name: Receipt PDF verifier unit test
+        run: pnpm --filter ./backend test --runTestsByPath test/services/receipt-pdf-verifier.service.spec.ts --runInBand
+        env:
+          CI: true
+
       - name: Unit tests
-        run: pnpm --filter ./backend test
+        run: >-
+          pnpm --filter ./backend test
+          --testPathIgnorePatterns=/node_modules/
+          --testPathIgnorePatterns=/dist/
+          --testPathIgnorePatterns='<rootDir>/test/e2e/'
+          --testPathIgnorePatterns='<rootDir>/test/auth-e2e/'
+          --testPathIgnorePatterns='<rootDir>/test/agent-e2e/runtime/'
+          --testPathIgnorePatterns='<rootDir>/test/services/receipt-pdf-verifier\.service\.spec\.ts'
         env:
           CI: true
 

@@ -9,12 +9,56 @@ export type {
     ServiceScheduleChangePreviewResponse,
     ServiceRecordAssignment,
     ServiceRecordCase,
+    ServiceRecordEditPreviewAssignmentRange,
+    ServiceRecordEditPreviewBlockingReason,
+    ServiceRecordEditPreviewContentChanges,
+    ServiceRecordEditPreviewResponse,
+    ServiceRecordEditPreviewVector,
+    ServiceRecordEditConfirmDocumentStatus,
+    ServiceRecordEditConfirmResponse,
+    ServiceRecordEditConfirmStatus,
+    ServiceRecordEditDocumentChunk,
+    ServiceRecordEditDocumentScope,
+    ServiceRecordEditEvidence,
+    ServiceRecordEditSignatureMetadata,
+    ServiceRecordEditSignatureSessionMetadata,
+    ServiceRecordEditSignatureTreatment,
     ServiceRecordHeader,
     ServiceRecordLink,
     ServiceRecordLinkStatus,
     ServiceRecordOverview,
     ServiceRecordSession,
+    ServiceRecordPlannedSession,
+    ServiceRecordScheduleProjection,
     ServiceRecordToken,
     ServiceRecordTokenState,
     SignatureDocStatus,
 } from "@babyjamjam/shared/types/service-record";
+
+export type {
+    AdminServiceRecordEditChanges,
+    AdminServiceRecordEditDateMove,
+    AdminServiceRecordEditDraft,
+    AdminServiceRecordEditDraftStatus,
+    AdminServiceRecordEditHeaderChanges,
+    AdminServiceRecordEditSessionChanges,
+    AdminServiceRecordEditState,
+} from "./admin-edit";
+export { AdminServiceRecordEditApiError } from "./admin-edit";
+
+export type {
+    RetryServiceRecordDocumentInput,
+    ServiceRecordRevisionDocumentOperation,
+    ServiceRecordRevisionDocumentStatus,
+    ServiceRecordRevisionDocumentSummary,
+    ServiceRecordRevisionHistoryEntry,
+    ServiceRecordRevisionHistoryResponse,
+} from "./revisions";
+export {
+    SERVICE_RECORD_REVISION_DOCUMENT_OPERATIONS,
+    SERVICE_RECORD_REVISION_DOCUMENT_STATUSES,
+    SERVICE_RECORD_DOCUMENT_OPERATIONS,
+    SERVICE_RECORD_DOCUMENT_STATUSES,
+    normalizeServiceRecordRevisionDocumentSummary,
+    normalizeServiceRecordRevisionHistory,
+} from "./revisions";

@@ -91,11 +91,14 @@ describe("system-template nested API routes", () => {
         });
     });
 
-    it("proxies rollback requests and sanitizes backend failure payload", async () => {
+    it("forwards a safe rollback message while omitting diagnostics", async () => {
         mockPost.mockRejectedValue({
             response: {
                 status: 409,
-                data: { message: "Version is already current" },
+                data: {
+                    message: "Version is already current",
+                    diagnostics: { authorization: "Bearer upstream-secret", query: "SELECT * FROM Template" },
+                },
             },
         });
 
@@ -105,12 +108,38 @@ describe("system-template nested API routes", () => {
         );
 
         expect(response.status).toBe(409);
-        await expect(response.json()).resolves.toEqual({ error: "Failed to rollback system template" });
+        const body = await response.json();
+        expect(body).toEqual({ error: "Version is already current" });
+        expect(JSON.stringify(body)).not.toContain("upstream-secret");
+        expect(JSON.stringify(body)).not.toContain("SELECT * FROM Template");
         expect(mockPost).toHaveBeenCalledWith(
             "/system-templates/GREETING/rollback/2",
             {},
             { headers: { Authorization: expectedAuthorization } },
         );
+    });
+
+    it.each([
+        [400, "Invalid access token: eyJ.secret"],
+        [500, "PrismaClientKnownRequestError: SELECT * FROM Template"],
+    ])("suppresses unsafe rollback diagnostics from %i responses", async (status, message) => {
+        mockPost.mockRejectedValue({
+            response: {
+                status,
+                data: { message, diagnostics: { authorization: "Bearer upstream-secret" } },
+            },
+        });
+
+        const response = await rollbackTemplate(
+            createRequest("/api/system-templates/GREETING/rollback/2", "POST", "auth_token=token-1"),
+            { params: Promise.resolve({ key: "GREETING", version: "2" }) },
+        );
+
+        expect(response.status).toBe(status);
+        const body = await response.json();
+        expect(body).toEqual({ error: "Failed to rollback system template" });
+        expect(JSON.stringify(body)).not.toContain(message);
+        expect(JSON.stringify(body)).not.toContain("upstream-secret");
     });
 
     it("rejects malformed template action JSON before proxying", async () => {

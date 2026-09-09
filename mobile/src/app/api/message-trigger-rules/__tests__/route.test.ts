@@ -166,6 +166,26 @@ describe("Message trigger rule API routes", () => {
     );
   });
 
+  it.each(["system:service_record_link", "system:service_end_notice"])("forwards system rule %s safely", async (triggerId) => {
+    mockPut.mockResolvedValue({ status: 200, data: { id: triggerId, isActive: false } });
+    const { PUT } = await import("../[triggerId]/branch-activation/route");
+    const response = await PUT(createRequest("/api/message-trigger-rules/system/branch-activation", {
+      method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ isActive: false }),
+    }), { params: Promise.resolve({ triggerId }) });
+    expect(response.status).toBe(200);
+    expect(mockPut).toHaveBeenCalledWith(`/message-trigger-rules/${encodeURIComponent(triggerId)}/branch-activation`,
+      { isActive: false }, expect.anything());
+  });
+
+  it.each(["system:bad/id", "system:bad%2Fid", "../rule", "system:rule?x=1"])("rejects unsafe activation ID %s", async (triggerId) => {
+    const { PUT } = await import("../[triggerId]/branch-activation/route");
+    const response = await PUT(createRequest("/api/message-trigger-rules/system/branch-activation", {
+      method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ isActive: false }),
+    }), { params: Promise.resolve({ triggerId }) });
+    expect(response.status).toBe(400);
+    expect(mockPut).not.toHaveBeenCalled();
+  });
+
   it("rejects malformed create JSON before proxying", async () => {
     const response = await createRule(
       createRequest("/api/message-trigger-rules", {

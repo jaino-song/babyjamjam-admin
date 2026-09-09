@@ -20,7 +20,7 @@ type Screen =
     | { kind: "image"; branchName: string; clientName: string | null };
 
 const BRANCH_FALLBACK = "인천 아이미래로";
-const FOOTER = "이 링크는 발송일로부터 30일간 유효합니다.";
+const FOOTER = "이 링크는 서비스 종료일 이후 14일까지 유효합니다.";
 const MAX_ATTEMPTS = 5;
 const MIN_LOCK_REFRESH_DELAY_MS = 1_000;
 const INITIAL_CLOCK_SKEW_REFRESH_DELAY_MS = 10_000;
@@ -335,7 +335,7 @@ export function ReceiptLinkScreen({ token }: ReceiptLinkScreenProps) {
                     <ClockIcon />
                     <h2>링크 유효기간이 지났습니다</h2>
                     <p className="rcpt-desc">
-                        영수증 링크는 문자 발송일로부터 30일간 열어보실 수 있습니다. 영수증이 다시 필요하시면 인천 아이미래로에
+                        영수증 링크는 서비스 종료일 이후 14일까지 열어보실 수 있습니다. 영수증이 다시 필요하시면 인천 아이미래로에
                         연락 주세요.
                     </p>
                 </section>

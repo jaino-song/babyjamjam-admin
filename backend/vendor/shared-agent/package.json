@@ -13,6 +13,22 @@
     "./utils/business-days": {
       "types": "./utils/business-days.d.ts",
       "require": "./utils/business-days.js"
+    },
+    "./utils/birthday": {
+      "types": "./utils/birthday.d.ts",
+      "require": "./utils/birthday.js"
+    },
+    "./utils/service-record-schedule": {
+      "types": "./utils/service-record-schedule.d.ts",
+      "require": "./utils/service-record-schedule.js"
+    },
+    "./types/service-record": {
+      "types": "./types/service-record.d.ts",
+      "require": "./types/service-record.js"
+    },
+    "./constants/service-record-form-layout": {
+      "types": "./constants/service-record-form-layout.d.ts",
+      "require": "./constants/service-record-form-layout.js"
     }
   },
   "dependencies": {

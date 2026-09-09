@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MESSAGE_JOB_CANCEL_COPY } from "@babyjamjam/shared";
 
@@ -153,14 +153,153 @@ describe("mobile message data pages (merged 발송 기록 screen)", () => {
     expect(screen.getByText("2건")).toBeInTheDocument();
   });
 
-  it("hides a zone that has nothing to show", () => {
+  it("keeps an empty zone visible at a zero count instead of hiding it", () => {
     mockUseUpcomingMessageTriggerJobs.mockReturnValue({ isLoading: false, isError: false, data: [] });
     mockUseMessageHistory.mockReturnValue({ isLoading: false, isError: false, data: [sentRecord] });
 
     const { container } = render(<MessagesHistoryPage />);
 
-    expect(container.querySelector('[data-component$="_zone-upcoming"]')).not.toBeInTheDocument();
+    expect(container.querySelector('[data-component$="_zone-upcoming"]')).toBeInTheDocument();
+    expect(container.querySelector('[data-component$="_zone-upcoming_header"]')).toHaveTextContent("예정 0건");
     expect(container.querySelector('[data-component$="_zone-past"]')).toBeInTheDocument();
+    expect(container.querySelector('[data-component$="_zone-past_header"]')).toHaveTextContent("지난 발송 1건");
+  });
+
+  it("keeps the past zone visible at a zero count too", () => {
+    mockUseUpcomingMessageTriggerJobs.mockReturnValue({ isLoading: false, isError: false, data: [cancelableJob] });
+    mockUseMessageHistory.mockReturnValue({ isLoading: false, isError: false, data: [] });
+
+    const { container } = render(<MessagesHistoryPage />);
+
+    expect(container.querySelector('[data-component$="_zone-past"]')).toBeInTheDocument();
+    expect(container.querySelector('[data-component$="_zone-past_header"]')).toHaveTextContent("지난 발송 0건");
+    expect(container.querySelector('[data-component$="_zone-upcoming_header"]')).toHaveTextContent("예정 1건");
+  });
+
+  it("shows the skeleton panel, not the empty state, on a cold load with no cached data", () => {
+    mockUseUpcomingMessageTriggerJobs.mockReturnValue({ isLoading: true, isError: false, data: undefined });
+    mockUseMessageHistory.mockReturnValue({ isLoading: true, isError: false, data: undefined });
+
+    const { container } = render(<MessagesHistoryPage />);
+
+    // Nothing is settled, so totalVisibleCount is 0 — but a loading panel must
+    // never collapse into "표시할 메시지가 없습니다.".
+    expect(screen.queryByText("표시할 메시지가 없습니다.")).not.toBeInTheDocument();
+    expect(container.querySelector('[data-component$="_zone-upcoming"]')).toBeInTheDocument();
+    expect(container.querySelector('[data-component$="_zone-past"]')).toBeInTheDocument();
+    expect(container.querySelectorAll('[data-component$="_zone-upcoming_row-skeleton"]')).toHaveLength(3);
+    expect(container.querySelectorAll('[data-component$="_zone-past_row-skeleton"]')).toHaveLength(4);
+    expect(screen.getByRole("status")).toHaveTextContent("불러오고 있습니다");
+    // The filter pills must not publish confident zeros next to skeletons.
+    expect(container.querySelectorAll('.filter-pill-skeleton')).toHaveLength(5);
+  });
+
+  it("shows a zone's error message with no fabricated count", () => {
+    mockUseUpcomingMessageTriggerJobs.mockReturnValue({ isLoading: false, isError: true, data: undefined });
+    mockUseMessageHistory.mockReturnValue({ isLoading: false, isError: false, data: [sentRecord] });
+
+    const { container } = render(<MessagesHistoryPage />);
+
+    expect(screen.getByText("발송 예정 내역을 불러오지 못했습니다.")).toBeInTheDocument();
+    expect(container.querySelector('[data-component$="_zone-upcoming_header_count"]')).not.toBeInTheDocument();
+    expect(container.querySelector('[data-component$="_zone-upcoming_header"]')).toHaveTextContent("예정");
+    // The healthy zone is unaffected.
+    expect(container.querySelector('[data-component$="_zone-past_header"]')).toHaveTextContent("지난 발송 1건");
+  });
+
+  it("marks the card and upcoming-dependent filters unavailable when upcoming loading fails", () => {
+    mockUseUpcomingMessageTriggerJobs.mockReturnValue({ isLoading: false, isError: true, data: undefined });
+    mockUseMessageHistory.mockReturnValue({ isLoading: false, isError: false, data: [sentRecord] });
+
+    const { container } = render(<MessagesHistoryPage />);
+    const filterBar = container.querySelector('[data-component$="_filters"]') as HTMLElement;
+    const cardHeader = container.querySelector('[data-component$="_content_list-card_header"]') as HTMLElement;
+
+    expect(cardHeader.querySelector('[data-count-state="unavailable"]')).toHaveAccessibleName("집계 실패");
+    expect(container.querySelector('[data-component$="_zone-upcoming_header_count"]')).not.toBeInTheDocument();
+    expect(container.querySelector('[data-component$="_zone-past_header"]')).toHaveTextContent("지난 발송 1건");
+
+    expect(within(filterBar).getByRole("button", { name: /전체/ })).toHaveTextContent("집계 실패");
+    expect(within(filterBar).getByRole("button", { name: /예정/ })).toHaveTextContent("집계 실패");
+    expect(within(filterBar).getByRole("button", { name: /발송 성공/ })).toHaveTextContent("1");
+    expect(within(filterBar).getByRole("button", { name: /발송 실패/ })).toHaveTextContent("0");
+    expect(within(filterBar).getByRole("button", { name: /발송 취소/ })).toHaveTextContent("0");
+  });
+
+  it("marks the card and history-dependent filters unavailable when history loading fails", () => {
+    mockUseUpcomingMessageTriggerJobs.mockReturnValue({ isLoading: false, isError: false, data: [cancelableJob] });
+    mockUseMessageHistory.mockReturnValue({ isLoading: false, isError: true, data: undefined });
+
+    const { container } = render(<MessagesHistoryPage />);
+    const filterBar = container.querySelector('[data-component$="_filters"]') as HTMLElement;
+    const cardHeader = container.querySelector('[data-component$="_content_list-card_header"]') as HTMLElement;
+
+    expect(cardHeader.querySelector('[data-count-state="unavailable"]')).toHaveAccessibleName("집계 실패");
+    expect(container.querySelector('[data-component$="_zone-past_header_count"]')).not.toBeInTheDocument();
+    expect(container.querySelector('[data-component$="_zone-upcoming_header"]')).toHaveTextContent("예정 1건");
+
+    expect(within(filterBar).getByRole("button", { name: /전체/ })).toHaveTextContent("집계 실패");
+    expect(within(filterBar).getByRole("button", { name: /예정/ })).toHaveTextContent("1");
+    expect(within(filterBar).getByRole("button", { name: /발송 성공/ })).toHaveTextContent("집계 실패");
+    expect(within(filterBar).getByRole("button", { name: /발송 실패/ })).toHaveTextContent("집계 실패");
+    expect(within(filterBar).getByRole("button", { name: /발송 취소/ })).toHaveTextContent("집계 실패");
+  });
+
+  it("shows the past zone's error message while the upcoming zone still loads", () => {
+    mockUseUpcomingMessageTriggerJobs.mockReturnValue({ isLoading: true, isError: false, data: undefined });
+    mockUseMessageHistory.mockReturnValue({ isLoading: false, isError: true, data: undefined });
+
+    const { container } = render(<MessagesHistoryPage />);
+
+    expect(screen.getByText("발송 기록을 불러오지 못했습니다.")).toBeInTheDocument();
+    expect(container.querySelector('[data-component$="_zone-past_header_count"]')).not.toBeInTheDocument();
+    expect(container.querySelectorAll('[data-component$="_zone-past_row-skeleton"]')).toHaveLength(0);
+    expect(container.querySelectorAll('[data-component$="_zone-upcoming_row-skeleton"]')).toHaveLength(3);
+  });
+
+  it("collapses to the empty state only when both zones are settled and empty", () => {
+    mockUseUpcomingMessageTriggerJobs.mockReturnValue({ isLoading: false, isError: false, data: [] });
+    mockUseMessageHistory.mockReturnValue({ isLoading: false, isError: false, data: [] });
+
+    const { container } = render(<MessagesHistoryPage />);
+
+    expect(container.querySelector('[data-component$="_zone-upcoming"]')).not.toBeInTheDocument();
+    expect(container.querySelector('[data-component$="_zone-past"]')).not.toBeInTheDocument();
+    expect(screen.getByText("표시할 메시지가 없습니다.")).toBeInTheDocument();
+  });
+
+  it("skeletons both zones and every count while the upcoming query loads, even with cached history", () => {
+    mockUseUpcomingMessageTriggerJobs.mockReturnValue({ isLoading: true, isError: false, data: undefined });
+    mockUseMessageHistory.mockReturnValue({ isLoading: false, isError: false, data: [sentRecord] });
+
+    const { container } = render(<MessagesHistoryPage />);
+
+    // The cached past record must not render while the sibling query is in
+    // flight — the whole list skeletons as one unit.
+    expect(screen.queryByText(/김문자/)).not.toBeInTheDocument();
+    expect(container.querySelectorAll('[data-component$="_zone-upcoming_row-skeleton"]')).toHaveLength(3);
+    expect(container.querySelectorAll('[data-component$="_zone-past_row-skeleton"]')).toHaveLength(4);
+
+    for (const suffix of [
+      "_zone-upcoming_header_count",
+      "_zone-past_header_count",
+      "_content_list-card_header_count",
+    ]) {
+      const node = container.querySelector(`[data-component$="${suffix}"]`);
+      expect(node).toBeInTheDocument();
+      expect(node).toHaveAttribute("data-source-component", "ListCountSkeleton");
+      expect(node?.textContent ?? "").not.toMatch(/\d/);
+    }
+  });
+
+  it("skeletons the list while the history query loads, even with a settled upcoming job", () => {
+    mockUseUpcomingMessageTriggerJobs.mockReturnValue({ isLoading: false, isError: false, data: [cancelableJob] });
+    mockUseMessageHistory.mockReturnValue({ isLoading: true, isError: false, data: undefined });
+
+    const { container } = render(<MessagesHistoryPage />);
+
+    expect(screen.queryByText("김고객")).not.toBeInTheDocument();
+    expect(container.querySelectorAll('[data-component$="_zone-upcoming_row-skeleton"]')).toHaveLength(3);
   });
 
   it("shows SMS history and excludes non-SMS provider records", () => {
@@ -179,11 +318,15 @@ describe("mobile message data pages (merged 발송 기록 screen)", () => {
       ],
     });
 
-    render(<MessagesHistoryPage />);
+    const { container } = render(<MessagesHistoryPage />);
 
     expect(screen.getByText(/김문자/)).toBeInTheDocument();
     expect(screen.queryByText("김알림톡")).not.toBeInTheDocument();
-    expect(screen.getByText("발송 성공")).toBeInTheDocument();
+    // Scoped to the past zone: the "발송" status filter chip now reads
+    // "발송 성공" too (see MESSAGE_RECORD_STATUS_FILTER_LABELS), so an
+    // unscoped query would also match that chip, not just this row's badge.
+    const pastZone = container.querySelector('[data-component$="_zone-past"]') as HTMLElement;
+    expect(within(pastZone).getByText("발송 성공")).toBeInTheDocument();
   });
 
   it("shows a canceled row's reason inline, prefixed with 사유", () => {
@@ -261,8 +404,13 @@ describe("mobile message data pages (merged 발송 기록 screen)", () => {
     expect(container.querySelector('[data-component$="_zone-upcoming"]')).toBeInTheDocument();
     expect(container.querySelector('[data-component$="_zone-past"]')).not.toBeInTheDocument();
 
-    // "취소" filter: zone 1 hidden, zone 2 shows only the canceled row.
-    await user.click(screen.getByRole("button", { name: /^취소/ }));
+    // "발송 취소" filter: zone 1 hidden, zone 2 shows only the canceled row.
+    // Scoped to the filter bar: the upcoming zone's still-visible cancel-row
+    // button (MESSAGE_JOB_CANCEL_COPY.action) is also exactly "발송 취소",
+    // and the filter chip's label now shares that wording too (see
+    // MESSAGE_RECORD_STATUS_FILTER_LABELS), so an unscoped query would match both.
+    const filterBar = container.querySelector('[data-component$="_filters"]') as HTMLElement;
+    await user.click(within(filterBar).getByRole("button", { name: /^발송 취소/ }));
     expect(container.querySelector('[data-component$="_zone-upcoming"]')).not.toBeInTheDocument();
     expect(screen.getByText("취소 고객")).toBeInTheDocument();
     expect(screen.queryByText(/김문자/)).not.toBeInTheDocument();

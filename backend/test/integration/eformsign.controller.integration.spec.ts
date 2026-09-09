@@ -1,3 +1,4 @@
+import { PdfPageRasterizerService, PdfPageOutOfRangeError } from "infrastructure/pdf/pdf-page-rasterizer.service";
 import { BadRequestException, ExecutionContext, INestApplication, ValidationPipe } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { Test, TestingModule } from "@nestjs/testing";
@@ -127,6 +128,7 @@ describe("EformsignController (Integration)", () => {
         const moduleFixture: TestingModule = await Test.createTestingModule({
             controllers: [EformsignController],
             providers: [
+                { provide: PdfPageRasterizerService, useValue: { renderPageToPng: jest.fn() } },
                 {
                     provide: EformsignService,
                     useValue: {
@@ -753,6 +755,47 @@ describe("EformsignController (Integration)", () => {
         expect(documentMirrorService.getStoredFile).not.toHaveBeenCalled();
     });
 
+    it("downloads the selected document receipt using the message-link PNG renderer", async () => {
+        eformsignDocService.findAll.mockResolvedValue([{ documentId: "branch-1-doc" }] as never);
+        const pdf = Buffer.from("pdf");
+        const png = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
+        documentMirrorService.getStoredFile.mockResolvedValue({
+            status: 200, contentType: "application/pdf", body: pdf,
+        });
+        const rasterizer = app.get(PdfPageRasterizerService);
+        jest.mocked(rasterizer.renderPageToPng).mockResolvedValue(png);
+
+        const response = await request(app.getHttpServer())
+            .get("/api/documents/branch-1-doc/download_files?fileType=document&format=receipt-png");
+
+        expect(response.status).toBe(200);
+        expect(response.headers["content-type"]).toContain("image/png");
+        expect(response.headers["content-disposition"]).toBe("attachment");
+        expect(response.headers["cache-control"]).toBe("private, no-store");
+        expect(response.body).toEqual(png);
+        expect(rasterizer.renderPageToPng).toHaveBeenCalledWith(pdf, 7, { width: 1240 });
+    });
+
+    it("rejects receipt PNG access outside the current branch before rendering", async () => {
+        eformsignDocService.findAll.mockResolvedValue([]);
+        const response = await request(app.getHttpServer())
+            .get("/api/documents/other-branch-doc/download_files?format=receipt-png");
+        expect(response.status).toBe(403);
+        expect(app.get(PdfPageRasterizerService).renderPageToPng).not.toHaveBeenCalled();
+    });
+
+    it("returns a readable error when the receipt page is missing", async () => {
+        eformsignDocService.findAll.mockResolvedValue([{ documentId: "branch-1-doc" }] as never);
+        documentMirrorService.getStoredFile.mockResolvedValue({
+            status: 200, contentType: "application/pdf", body: Buffer.from("pdf"),
+        });
+        jest.mocked(app.get(PdfPageRasterizerService).renderPageToPng)
+            .mockRejectedValue(new PdfPageOutOfRangeError(7, 2));
+        const response = await request(app.getHttpServer())
+            .get("/api/documents/branch-1-doc/download_files?format=receipt-png");
+        expect(response.status).toBe(400);
+    });
+
     it("repairs a missing document PDF before serving HEAD metadata", async () => {
         eformsignDocService.findAll.mockResolvedValue([
             { documentId: "branch-1-doc" },
@@ -1090,6 +1133,7 @@ describe("EformsignController (Integration)", () => {
             const fixture = await Test.createTestingModule({
                 controllers: [EformsignController],
                 providers: [
+                { provide: PdfPageRasterizerService, useValue: { renderPageToPng: jest.fn() } },
                     { provide: EformsignService, useValue: eformsignService },
                     {
                         provide: AreaTemplateService,

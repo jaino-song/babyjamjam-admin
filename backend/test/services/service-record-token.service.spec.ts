@@ -1,3 +1,5 @@
+import { checkWriteArgs } from "infrastructure/database/tenant-isolation.extension";
+import { tenantContextStore } from "infrastructure/tenant/tenant-context.store";
 import {
     SERVICE_RECORD_PHONE_CHALLENGE_WINDOW_MS,
     ServiceRecordTokenService,
@@ -7,8 +9,17 @@ import {
 function makePrismaMock() {
     const rows: any[] = [];
     let seq = 0;
+    const schedules = [{ id: 10, clientId: 1, branchId: "b1", replaced: false, primaryEmployeeId: 7,
+        primaryEmployee: { id: 7, phone: "010-1111-2222", deletedAt: null }, client: { serviceStatus: "in_progress" } }];
     const prisma = {
+        __schedules: schedules,
+        $executeRaw: jest.fn(),
+        employee_schedule: {
+            findUnique: jest.fn(async ({ where }: any) => schedules.find(s => s.id === where.id) ?? null),
+            findFirst: jest.fn(async ({ where }: any) => [...schedules].reverse().find(s => s.clientId === where.clientId && s.branchId === where.branchId && !s.replaced) ?? null),
+        },
         __rows: rows,
+        service_record_case: { findFirst: jest.fn().mockResolvedValue(null) },
         service_record_token: {
             create: jest.fn(async ({ data }: any) => {
                 const row = {
@@ -25,6 +36,7 @@ function makePrismaMock() {
                 rows.push(row);
                 return row;
             }),
+            findMany: jest.fn(async ({ where }: any) => rows.filter(r => r.branchId === where.branchId && where.OR.some((c: any) => c.scheduleId === r.scheduleId || (c.serviceRecordCaseId && c.serviceRecordCaseId === r.serviceRecordCaseId)))),
             findUnique: jest.fn(async ({ where }: any) => {
                 if (where.linkTokenHash) return rows.find((r) => r.linkTokenHash === where.linkTokenHash) ?? null;
                 if (where.accessTokenHash) return rows.find((r) => r.accessTokenHash === where.accessTokenHash) ?? null;
@@ -132,6 +144,93 @@ describe("ServiceRecordTokenService", () => {
         expect(ctx).toEqual({ tokenId: expect.any(String), branchId: "b1", scheduleId: 10, employeeId: 7 });
     });
 
+    it("does not reactivate finalized tokens when preparing the composer", async () => {
+        const { prisma, svc } = setup();
+        const params = { branchId: "b1", scheduleId: 10, employeeId: 7,
+            expectedPhone: "01011112222", expiresAt: future() };
+        await svc.issueLink(params);
+        Object.assign(prisma.__rows[0], { active: false, revokedAt: new Date(), accessTokenHash: null });
+        prisma.service_record_case.findFirst.mockResolvedValue({ finalizedAt: new Date() });
+        const before = { ...prisma.__rows[0] };
+        await expect(svc.prepareLink(params)).rejects.toThrow("최종 확정된 제공기록지");
+        expect(prisma.__rows[0]).toEqual(before);
+    });
+
+    it.each(["case1", undefined])("blocks a finalized replacement without reactivating its old token (case %s)", async (serviceRecordCaseId) => {
+        const { prisma, svc } = setup();
+        const params = { branchId: "b1", scheduleId: 10, employeeId: 7, serviceRecordCaseId,
+            expectedPhone: "01011112222", expiresAt: future() };
+        const { linkToken } = await svc.issueLink(params);
+        await svc.revokeForSchedule(10);
+        prisma.__schedules[0]!.replaced = true;
+        prisma.__schedules.push({ ...prisma.__schedules[0]!, id: 11, replaced: false, primaryEmployeeId: 8,
+            primaryEmployee: { id: 8, phone: "01033334444", deletedAt: null } });
+        prisma.service_record_case.findFirst.mockResolvedValue({ finalizedAt: new Date() });
+        const before = { ...prisma.__rows[0] };
+        prisma.service_record_token.update.mockClear();
+        expect(await svc.resolveLink(linkToken)).toBeNull();
+        expect(await svc.verifyPhoneAndMintAccess(linkToken, "01033334444")).toMatchObject({ ok: false });
+        expect(prisma.service_record_case.findFirst).toHaveBeenLastCalledWith({
+            where: { branchId: "b1", clientId: 1 }, select: { finalizedAt: true },
+        });
+        expect(prisma.service_record_token.update).not.toHaveBeenCalled();
+        expect(prisma.__rows[0]).toEqual(before);
+    });
+
+    it("rejects an existing session and prepared activation after finalization even if a legacy row remains active", async () => {
+        const { prisma, svc } = setup();
+        const params = { branchId: "b1", scheduleId: 10, employeeId: 7,
+            expectedPhone: "01011112222", expiresAt: future() };
+        const { linkToken } = await svc.issueLink(params);
+        const auth = await svc.verifyPhoneAndMintAccess(linkToken, params.expectedPhone);
+        expect(auth.ok).toBe(true);
+        prisma.service_record_case.findFirst.mockResolvedValue({ finalizedAt: new Date() });
+        prisma.service_record_token.update.mockClear();
+        if (auth.ok) expect(await svc.resolveAccess(auth.accessToken)).toBeNull();
+        expect(await svc.activatePreparedLink({ ...params, linkToken })).toBe(false);
+        expect(await svc.reuseActiveLink(params)).toBeNull();
+        expect(prisma.service_record_token.update).not.toHaveBeenCalled();
+    });
+
+    it("waits for the case lock and rechecks finalization before locking or changing a token", async () => {
+        const { prisma, svc } = setup();
+        const { linkToken } = await svc.issueLink({ branchId: "b1", scheduleId: 10, employeeId: 7,
+            expectedPhone: "01011112222", expiresAt: future() });
+        prisma.$executeRaw.mockImplementationOnce(async () => {
+            // A finalizer commits while verification waits for its case lock.
+            prisma.service_record_case.findFirst.mockResolvedValue({ finalizedAt: new Date() });
+            return 1;
+        });
+        const tokenLock = jest.fn();
+        (prisma as any).$queryRaw = tokenLock;
+        prisma.service_record_token.update.mockClear();
+        expect(await svc.verifyPhoneAndMintAccess(linkToken, "01011112222")).toMatchObject({ ok: false });
+        expect(tokenLock).not.toHaveBeenCalled();
+        expect(prisma.service_record_token.update).not.toHaveBeenCalled();
+        const query = (prisma.$executeRaw.mock.calls.at(-1) as unknown as [{ sql: string }])[0];
+        expect(query.sql).toContain("FOR SHARE");
+    });
+
+    it("uses the resolved tenant for public verification and branch-pins every challenge write", async () => {
+        const { prisma, svc } = setup();
+        const { linkToken } = await svc.issueLink({ branchId: "b1", scheduleId: 10, employeeId: 7, expectedPhone: "01011112222", expiresAt: future() });
+        const findUnique = prisma.service_record_token.findUnique;
+        prisma.service_record_token.findUnique = jest.fn(async (args: any) => {
+            expect(tenantContextStore.get()?.systemScope).toBe(true);
+            return findUnique(args);
+        });
+        const update = prisma.service_record_token.update;
+        prisma.service_record_token.update = jest.fn(async (args: any) => {
+            expect(tenantContextStore.get()).toEqual({ origin: "http", branchId: "b1" });
+            expect(checkWriteArgs("update", args, "b1")).toBeNull();
+            return update(args);
+        });
+        await tenantContextStore.run({ origin: "http" }, async () => {
+            expect(await svc.verifyPhoneAndMintAccess(linkToken, "01011112222")).toMatchObject({ ok: true });
+            expect(tenantContextStore.get()).toEqual({ origin: "http" });
+        });
+    });
+
     it("allows the correct phone on the final allowed attempt and clears transient failures", async () => {
         const { prisma, svc } = setup();
         const { linkToken } = await svc.issueLink({
@@ -210,15 +309,10 @@ describe("ServiceRecordTokenService", () => {
         });
         const staleHash = prisma.__rows[0].expectedPhoneHash;
         // Admin has since corrected the employee's phone.
-        prisma.employee.findFirst.mockResolvedValue({ phone: "010-9999-8888" });
+        prisma.__schedules[0]!.primaryEmployee.phone = "010-9999-8888";
 
         const result = await svc.verifyPhoneAndMintAccess(linkToken, "010-9999-8888");
         expect(result).toMatchObject({ ok: true });
-
-        // Only non-deleted employees back the fallback.
-        expect(prisma.employee.findFirst).toHaveBeenCalledWith(
-            expect.objectContaining({ where: expect.objectContaining({ id: 7, deletedAt: null }) }),
-        );
 
         // The snapshot is healed to the corrected phone…
         expect(prisma.__rows[0].expectedPhoneHash).not.toBe(staleHash);
@@ -228,7 +322,6 @@ describe("ServiceRecordTokenService", () => {
             reason: "verification_failed",
         });
         // And the corrected number keeps matching via the snapshot alone.
-        prisma.employee.findFirst.mockResolvedValue(null);
         expect(await svc.verifyPhoneAndMintAccess(linkToken, "01099998888")).toMatchObject({ ok: true });
 
         const accessToken = (result as { ok: true; accessToken: string }).accessToken;
@@ -240,7 +333,7 @@ describe("ServiceRecordTokenService", () => {
         const { linkToken } = await svc.issueLink({
             branchId: "b1", scheduleId: 10, employeeId: 7, expectedPhone: "010-1111-2222", expiresAt: future(),
         });
-        prisma.employee.findFirst.mockResolvedValue({ phone: "010-9999-8888" });
+        prisma.__schedules[0]!.primaryEmployee.phone = "010-9999-8888";
 
         expect(await svc.verifyPhoneAndMintAccess(linkToken, "010-0000-0000")).toEqual({
             ok: false,
@@ -298,7 +391,7 @@ describe("ServiceRecordTokenService", () => {
         const { linkToken } = await svc.issueLink({
             branchId: "b1", scheduleId: 10, employeeId: 7, expectedPhone: "010-1111-2222", expiresAt: future(),
         });
-        prisma.employee.findFirst.mockResolvedValue({ phone: "" });
+        prisma.__schedules[0]!.primaryEmployee.phone = "";
 
         expect(await svc.verifyPhoneAndMintAccess(linkToken, "")).toEqual({
             ok: false,
@@ -366,17 +459,79 @@ describe("ServiceRecordTokenService", () => {
         expect(await svc.resolveLink(linkToken)).toBeNull();
     });
 
-    it("re-issuing a link for the same schedule revokes the prior link", async () => {
-        const { svc } = setup();
+    it("reuses the URL on provider change and invalidates the former session", async () => {
+        const { prisma, svc } = setup();
         const first = await svc.issueLink({
             branchId: "b1", scheduleId: 10, employeeId: 7, expectedPhone: "010-1111-2222", expiresAt: future(),
         });
-        await svc.issueLink({
+        const oldAuth = await svc.verifyPhoneAndMintAccess(first.linkToken, "01011112222");
+        expect(oldAuth.ok).toBe(true);
+        prisma.__schedules[0]!.primaryEmployeeId = 8;
+        prisma.__schedules[0]!.primaryEmployee = { id: 8, phone: "010-3333-4444", deletedAt: null };
+        const second = await svc.issueLink({
             branchId: "b1", scheduleId: 10, employeeId: 8, expectedPhone: "010-3333-4444", expiresAt: future(),
         });
 
-        // the first (now-replaced) provider's link is dead
+        expect(second.linkToken).toBe(first.linkToken);
+        expect(await svc.resolveLink(first.linkToken)).toMatchObject({ employeeId: 8 });
+        if (oldAuth.ok) expect(await svc.resolveAccess(oldAuth.accessToken)).toBeNull();
+        expect(await svc.verifyPhoneAndMintAccess(first.linkToken, "01011112222")).toEqual({ ok: false, reason: "verification_failed" });
+        expect(await svc.verifyPhoneAndMintAccess(first.linkToken, "01033334444")).toMatchObject({ ok: true });
+    });
+
+    it("keeps the contract URL and rejects former authentication immediately after replacement, before resend", async () => {
+        const { prisma, svc } = setup();
+        const params = { branchId: "b1", scheduleId: 10, employeeId: 7, serviceRecordCaseId: "case1", expectedPhone: "01011112222", expiresAt: future() };
+        const first = await svc.issueLink(params);
+        const auth = await svc.verifyPhoneAndMintAccess(first.linkToken, params.expectedPhone);
+        prisma.__schedules[0]!.replaced = true;
+        prisma.__schedules.push({ ...prisma.__schedules[0]!, id: 11, replaced: false, primaryEmployeeId: 8,
+            primaryEmployee: { id: 8, phone: "01033334444", deletedAt: null } });
+        if (auth.ok) expect(await svc.resolveAccess(auth.accessToken)).toBeNull();
+        await svc.revokeForSchedule(10);
+        expect(await svc.resolveLink(first.linkToken)).not.toBeNull();
+        expect(await svc.verifyPhoneAndMintAccess(first.linkToken, params.expectedPhone)).toMatchObject({ ok: false });
+        const nextAuth = await svc.verifyPhoneAndMintAccess(first.linkToken, "01033334444");
+        expect(nextAuth.ok).toBe(true);
+        if (nextAuth.ok) expect(await svc.resolveAccess(nextAuth.accessToken)).toMatchObject({ scheduleId: 11, employeeId: 8 });
+        const resend = await svc.issueLink({ ...params, scheduleId: 11, employeeId: 8, expectedPhone: "01033334444" });
+        expect(resend.linkToken).toBe(first.linkToken);
+        expect(prisma.__rows).toHaveLength(1);
+        await expect(svc.issueLink(params)).rejects.toThrow("no longer current");
+    });
+
+    it("rejects an old session and old phone as soon as the registered phone changes", async () => {
+        const { prisma, svc } = setup();
+        const first = await svc.issueLink({ branchId: "b1", scheduleId: 10, employeeId: 7, expectedPhone: "01011112222", expiresAt: future() });
+        const auth = await svc.verifyPhoneAndMintAccess(first.linkToken, "01011112222");
+        prisma.__schedules[0]!.primaryEmployee.phone = "01033334444";
+        if (auth.ok) expect(await svc.resolveAccess(auth.accessToken)).toBeNull();
+        expect(await svc.verifyPhoneAndMintAccess(first.linkToken, "01011112222")).toMatchObject({ ok: false });
+        expect(await svc.verifyPhoneAndMintAccess(first.linkToken, "01033334444")).toMatchObject({ ok: true });
+    });
+
+    it("does not reset a locked challenge on resend; explicit reset retains the URL", async () => {
+        const { prisma, svc } = setup();
+        const params = { branchId: "b1", scheduleId: 10, employeeId: 7, expectedPhone: "01011112222", expiresAt: future() };
+        const first = await svc.issueLink(params);
+        for (let i = 0; i < 5; i++) await svc.verifyPhoneAndMintAccess(first.linkToken, "wrong");
+        expect(await svc.issueLink(params)).toEqual(first);
+        expect(prisma.__rows[0].lockedAt).not.toBeNull();
+        expect(await svc.issueLink({ ...params, resetChallenge: true })).toEqual(first);
+        expect(prisma.__rows[0].lockedAt).toBeNull();
+        expect(await svc.verifyPhoneAndMintAccess(first.linkToken, params.expectedPhone)).toMatchObject({ ok: true });
+    });
+
+    it("rejects a branch mismatch and refuses access when no current assignment remains", async () => {
+        const { prisma, svc } = setup();
+        const params = { branchId: "b1", scheduleId: 10, employeeId: 7, expectedPhone: "01011112222", expiresAt: future() };
+        await expect(svc.issueLink({ ...params, branchId: "b2" })).rejects.toThrow("no longer current");
+        const first = await svc.issueLink(params);
+        const auth = await svc.verifyPhoneAndMintAccess(first.linkToken, params.expectedPhone);
+        prisma.__schedules[0]!.replaced = true;
         expect(await svc.resolveLink(first.linkToken)).toBeNull();
+        expect(await svc.verifyPhoneAndMintAccess(first.linkToken, params.expectedPhone)).toMatchObject({ ok: false });
+        if (auth.ok) expect(await svc.resolveAccess(auth.accessToken)).toBeNull();
     });
 
     it("reuses the active link for the same provider and extends its expiry without clearing verification", async () => {
@@ -486,7 +641,7 @@ describe("ServiceRecordTokenService", () => {
         expect(await svc.resolveLink(prepared.linkToken)).toBeNull();
     });
 
-    it("activates the exact prepared link and revokes the previously active link", async () => {
+    it("keeps the same URL through preview and activation", async () => {
         const { svc } = setup();
         const previous = await svc.issueLink({
             branchId: "b1", scheduleId: 10, employeeId: 7, expectedPhone: "010-1111-2222", expiresAt: future(),
@@ -505,7 +660,8 @@ describe("ServiceRecordTokenService", () => {
             expiresAt: activatedExpiry,
         })).resolves.toBe(true);
 
-        expect(await svc.resolveLink(previous.linkToken)).toBeNull();
+        expect(prepared.linkToken).toBe(previous.linkToken);
+        expect(await svc.resolveLink(previous.linkToken)).toMatchObject({ active: true });
         expect(await svc.resolveLink(prepared.linkToken)).toMatchObject({
             branchId: "b1",
             scheduleId: 10,
@@ -564,11 +720,12 @@ describe("ServiceRecordTokenService", () => {
         })).resolves.toBe(false);
 
         expect(prisma.__rows[0]).toMatchObject({ active: true, lockedAt: expect.any(Date) });
-        expect(prisma.__rows[1]).toMatchObject({ active: false, lockedAt: null });
+        expect(prisma.__rows).toHaveLength(1);
+        expect(prepared.linkToken).toBe(previous.linkToken);
         expect(await svc.resolveLink(prepared.linkToken)).toBeNull();
     });
 
-    it("locks active assignment rows before prepared-link revocation and activation", async () => {
+    it("locks active assignment rows before activating the persistent link", async () => {
         const { prisma, svc } = setup();
         const previous = await svc.issueLink({
             branchId: "b1", scheduleId: 10, employeeId: 7, expectedPhone: "010-1111-2222", expiresAt: future(),
@@ -599,8 +756,9 @@ describe("ServiceRecordTokenService", () => {
 
         expect(queryRaw).toHaveBeenCalledTimes(1);
         expect(order[0]).toContain("FOR UPDATE");
-        expect(order[1]).toBe("revoke");
-        expect(await svc.resolveLink(previous.linkToken)).toBeNull();
+        expect(order).toHaveLength(1);
+        expect(prepared.linkToken).toBe(previous.linkToken);
+        expect(await svc.resolveLink(previous.linkToken)).toMatchObject({ active: true });
         expect(await svc.resolveLink(prepared.linkToken)).toMatchObject({ active: true });
     });
 });

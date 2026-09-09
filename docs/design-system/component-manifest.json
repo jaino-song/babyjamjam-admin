@@ -751,6 +751,22 @@
         ]
       },
       {
+        "name": "SystemTemplateEditor",
+        "layer": "organism",
+        "import": "@/components/app/ui/SystemTemplateEditor",
+        "file": "frontend/src/components/app/ui/SystemTemplateEditor.tsx",
+        "exports": [
+          "SystemTemplateEditor",
+          "SystemTemplateEditorProps"
+        ],
+        "replaces": [
+          "feature-local system template editor in pages"
+        ],
+        "requiredFor": [
+          "system template editing"
+        ]
+      },
+      {
         "name": "Tabs",
         "layer": "molecule",
         "import": "@/components/app/ui/tabs",
@@ -1374,6 +1390,46 @@
         "exports": [
           "AutomationStatusNotice"
         ]
+      },
+      {
+        "name": "ServiceRecordAdminWizard",
+        "layer": "organism",
+        "import": "@/components/app/service-record/ServiceRecordAdminWizard",
+        "file": "frontend/src/components/app/service-record/ServiceRecordAdminWizard.tsx",
+        "exports": [
+          "ServiceRecordAdminViewer",
+          "ServiceRecordAdminWizard",
+          "AdminServiceRecordEditorOverview"
+        ],
+        "requiredFor": [
+          "authenticated read-only service-record editor route"
+        ]
+      },
+      {
+        "name": "ServiceRecordDateSelectionDialog",
+        "layer": "organism",
+        "import": "@/components/app/service-record/ServiceRecordDateSelectionDialog",
+        "file": "frontend/src/components/app/service-record/ServiceRecordDateSelectionDialog.tsx",
+        "exports": [
+          "ServiceRecordDateSelectionDialog",
+          "ServiceRecordDateSelectionDialogProps"
+        ],
+        "requiredFor": [
+          "service-record admin provisional business-date selection"
+        ]
+      },
+      {
+        "name": "ServiceRecordEditPreviewDialog",
+        "layer": "organism",
+        "import": "@/components/app/service-record/ServiceRecordEditPreviewDialog",
+        "file": "frontend/src/components/app/service-record/ServiceRecordEditPreviewDialog.tsx",
+        "exports": [
+          "ServiceRecordEditPreviewDialog",
+          "ServiceRecordEditPreviewDialogProps"
+        ],
+        "requiredFor": [
+          "service-record admin read-only draft preview"
+        ]
       }
     ],
     "mobile": [
@@ -1795,6 +1851,21 @@
         ]
       },
       {
+        "name": "ListCountSkeleton",
+        "layer": "molecule",
+        "import": "@/components/app/mobile-redesign/primitives",
+        "file": "mobile/src/components/app/mobile-redesign/primitives.tsx",
+        "exports": [
+          "ListCountSkeleton"
+        ],
+        "replaces": [
+          "page-local list count loading placeholders"
+        ],
+        "requiredFor": [
+          "list count loading state"
+        ]
+      },
+      {
         "name": "ListPanel",
         "layer": "organism",
         "import": "@/components/app/v3",
@@ -2109,6 +2180,19 @@
         ],
         "requiredFor": [
           "mobile document uploads"
+        ]
+      },
+      {
+        "name": "ServiceRecordWizard",
+        "layer": "organism",
+        "import": "@/components/app/service-record/ServiceRecordWizard",
+        "file": "mobile/src/components/app/service-record/ServiceRecordWizard.tsx",
+        "exports": [
+          "MobileServiceRecordWizard",
+          "MobileServiceRecordWizardProps"
+        ],
+        "requiredFor": [
+          "public service-record route assembly"
         ]
       }
     ]

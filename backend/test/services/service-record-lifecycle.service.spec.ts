@@ -20,6 +20,8 @@ function lockedSnapshot(overrides: Record<string, unknown> = {}) {
         documentId: rawQueryDocumentId,
         branchId: rawQueryBranchId,
         documentKind: "service_record_snapshot",
+        revisionId: null,
+        snapshotVersion: null,
         statusType: "062",
         detailPayload: { id: "snapshot-062" },
         detailSourceUpdatedDate: new Date("2026-07-30T01:00:00.000Z"),
@@ -95,15 +97,10 @@ describe("ServiceRecordLifecycleService", () => {
         expect(prisma.service_record_day.deleteMany).not.toHaveBeenCalled();
     });
 
-    it("keeps the stored client duration as the required session count even when the period is longer", async () => {
-        // Regression test for the incident: an earlier "repair" path
-        // rewrote client.duration to match the date-derived count whenever
-        // it disagreed with the stored value, silently shrinking a
-        // 15-session contract to whatever the (postponed) period implied.
-        // duration is the contracted session count and is authoritative
-        // once set: a longer period (2026-08-10 -> 2026-09-03 is 18 Korean
-        // business days) must not shrink or grow the persisted count, and
-        // must never trigger a client.updateMany repair write.
+    it("derives a new case N from the complete business-day period without changing nominal duration", async () => {
+        // A brand-new case has no authoritative N yet. Its actual provided
+        // session count is derived from the complete supported client period;
+        // the nominal voucher duration remains a separate client field.
         const record = { id: "case-1" };
         const prisma = {
             client: {
@@ -133,9 +130,177 @@ describe("ServiceRecordLifecycleService", () => {
 
         expect(prisma.client.updateMany).not.toHaveBeenCalled();
         expect(prisma.service_record_case.upsert).toHaveBeenCalledWith(expect.objectContaining({
-            create: expect.objectContaining({ requiredSessionCount: 15 }),
-            update: expect.objectContaining({ requiredSessionCount: 15 }),
+            create: expect.objectContaining({ requiredSessionCount: 18 }),
+            update: expect.objectContaining({ requiredSessionCount: 18 }),
         }));
+    });
+
+    it("preserves an initialized actual N when a nominal 15-session voucher period is stretched", async () => {
+        const record = {
+            id: "case-1",
+            status: SERVICE_RECORD_CASE_STATUS.IN_PROGRESS,
+            requiredSessionCount: 13,
+        };
+        const prisma = {
+            client: {
+                findUnique: jest.fn().mockResolvedValue({
+                    id: 1,
+                    branchId: "branch-1",
+                    startDate: date("2026-08-10"),
+                    endDate: date("2026-09-03"),
+                    duration: 15,
+                    serviceStatus: "in_progress",
+                    employeeSchedules: [],
+                }),
+                updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+            },
+            service_record_case: {
+                findUnique: jest.fn().mockResolvedValue(record),
+                upsert: jest.fn().mockResolvedValue(record),
+            },
+            service_record_token: {
+                updateMany: jest.fn().mockResolvedValue({ count: 0 }),
+            },
+        };
+        const service = new ServiceRecordLifecycleService(prisma as unknown as PrismaService);
+        jest.spyOn(service, "recompute").mockResolvedValue(record as never);
+
+        await service.ensureForClient(1);
+
+        expect(prisma.client.updateMany).not.toHaveBeenCalled();
+        expect(prisma.service_record_case.upsert).toHaveBeenCalledWith(expect.objectContaining({
+            create: expect.objectContaining({ requiredSessionCount: 13 }),
+            update: expect.objectContaining({ requiredSessionCount: 13 }),
+        }));
+    });
+
+    it("does not reproject client dates or assignments after finalization has claimed the case", async () => {
+        const record = {
+            id: "case-finalizing",
+            branchId: rawQueryBranchId,
+            clientId: 1,
+            status: SERVICE_RECORD_CASE_STATUS.FINALIZING,
+            requiredSessionCount: 13,
+            plannedSessions: [{ sessionIndex: 1, serviceDate: "2026-08-10" }],
+        };
+        const prisma = {
+            client: {
+                findUnique: jest.fn().mockResolvedValue({
+                    id: 1,
+                    branchId: rawQueryBranchId,
+                    startDate: date("2026-08-11"),
+                    endDate: date("2026-09-04"),
+                    duration: 15,
+                    serviceStatus: "in_progress",
+                    employeeSchedules: [{
+                        id: 19,
+                        branchId: rawQueryBranchId,
+                        clientId: 1,
+                        primaryEmployeeId: 20,
+                        secondaryEmployeeId: null,
+                        startDate: date("2026-08-11"),
+                        endDate: date("2026-09-04"),
+                        replaced: false,
+                        primaryEmployee: { id: 20, name: "제공자", phone: "010-0000-0000" },
+                    }],
+                }),
+                updateMany: jest.fn(),
+            },
+            service_record_case: {
+                findUnique: jest.fn().mockResolvedValue(record),
+                upsert: jest.fn().mockResolvedValue(record),
+            },
+            service_record_assignment: { upsert: jest.fn() },
+            service_record: { updateMany: jest.fn() },
+            service_record_token: { updateMany: jest.fn() },
+            eformsign_doc: { updateMany: jest.fn() },
+            service_record_day: { findMany: jest.fn(), aggregate: jest.fn(), update: jest.fn() },
+        };
+        const service = new ServiceRecordLifecycleService(prisma as unknown as PrismaService);
+        jest.spyOn(service, "recompute").mockResolvedValue(record as never);
+
+        await service.ensureForClient(1);
+
+        expect(prisma.service_record_case.upsert).toHaveBeenCalledWith(expect.objectContaining({
+            update: { branchId: rawQueryBranchId },
+        }));
+        expect(prisma.service_record_assignment.upsert).not.toHaveBeenCalled();
+        expect(prisma.client.updateMany).not.toHaveBeenCalled();
+        expect(prisma.service_record_token.updateMany).not.toHaveBeenCalled();
+    });
+
+    it("does not initialize N from a zero-business-day period", async () => {
+        const record = { id: "case-weekend", requiredSessionCount: null };
+        const prisma = {
+            client: {
+                findUnique: jest.fn().mockResolvedValue({
+                    id: 1,
+                    branchId: "branch-1",
+                    startDate: date("2026-09-26"),
+                    endDate: date("2026-09-27"),
+                    duration: null,
+                    serviceStatus: "in_progress",
+                    employeeSchedules: [],
+                }),
+                updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+            },
+            service_record_case: {
+                findUnique: jest.fn().mockResolvedValue(null),
+                upsert: jest.fn().mockResolvedValue(record),
+            },
+            service_record_token: {
+                updateMany: jest.fn().mockResolvedValue({ count: 0 }),
+            },
+        };
+        const service = new ServiceRecordLifecycleService(prisma as unknown as PrismaService);
+        jest.spyOn(service, "recompute").mockResolvedValue(record as never);
+
+        await service.ensureForClient(1);
+
+        expect(prisma.client.updateMany).not.toHaveBeenCalled();
+        expect(prisma.service_record_case.upsert).toHaveBeenCalledWith(expect.objectContaining({
+            create: expect.objectContaining({ requiredSessionCount: null }),
+            update: expect.objectContaining({ requiredSessionCount: null }),
+        }));
+    });
+
+    it.each([null, 15, 4])("uses actual remaining days with stored count %s without rewriting voucher duration", async (stored) => {
+        const record = { id: "case-1" };
+        const prisma = {
+            client: {
+                findUnique: jest.fn().mockResolvedValue({
+                    id: 1, branchId: "branch-1", startDate: date("2026-09-03"),
+                    endDate: date("2026-09-08"), duration: 15,
+                    serviceStatus: "in_progress", employeeSchedules: [],
+                }),
+                updateMany: jest.fn(),
+            },
+            service_record_case: {
+                findUnique: jest.fn().mockResolvedValue(stored === null ? null : {
+                    ...record, requiredSessionCount: stored, status: "IN_PROGRESS",
+                    startDate: date("2026-09-03"), endDate: date("2026-09-08"),
+                }),
+                upsert: jest.fn().mockResolvedValue(record),
+            },
+            service_record_token: { updateMany: jest.fn() },
+        };
+        const service = new ServiceRecordLifecycleService(prisma as unknown as PrismaService);
+        jest.spyOn(service, "recompute").mockResolvedValue(record as never);
+        await service.ensureForClient(1);
+        expect(prisma.client.updateMany).not.toHaveBeenCalled();
+        expect(prisma.service_record_case.upsert).toHaveBeenCalledWith(expect.objectContaining({
+            create: expect.objectContaining({ requiredSessionCount: 4 }),
+            update: expect.objectContaining({ requiredSessionCount: 4 }),
+        }));
+        if (stored !== null) {
+            prisma.client.findUnique.mockResolvedValue({
+                ...(await prisma.client.findUnique()), endDate: date("2026-09-09"),
+            });
+            await service.ensureForClient(1);
+            expect(prisma.service_record_case.upsert).toHaveBeenLastCalledWith(expect.objectContaining({
+                update: expect.objectContaining({ requiredSessionCount: 4 }),
+            }));
+        }
     });
 
     it("fills a still-null client duration from the actual service period", async () => {
@@ -167,7 +332,7 @@ describe("ServiceRecordLifecycleService", () => {
         await service.ensureForClient(1);
 
         expect(prisma.client.updateMany).toHaveBeenCalledWith({
-            where: { id: 1 },
+            where: { id: 1, branchId: "branch-1" },
             data: { duration: 6 },
         });
         expect(prisma.service_record_case.upsert).toHaveBeenCalledWith(expect.objectContaining({
@@ -224,6 +389,7 @@ describe("ServiceRecordLifecycleService", () => {
         expect(prisma.service_record_token.updateMany).toHaveBeenCalledWith({
             where: {
                 serviceRecordCaseId: record.id,
+                branchId: "branch-1",
                 active: true,
                 revokedAt: null,
                 expiresAt: { lt: tokenExpiresAt },
@@ -275,6 +441,7 @@ describe("ServiceRecordLifecycleService", () => {
         expect(prisma.service_record_token.updateMany).toHaveBeenCalledWith({
             where: {
                 serviceRecordCaseId: record.id,
+                branchId: "branch-1",
                 active: true,
                 revokedAt: null,
                 expiresAt: { lt: tokenExpiresAt },
@@ -406,6 +573,51 @@ describe("ServiceRecordLifecycleService", () => {
         }));
     });
 
+    it("does not backfill a nominal duration for an existing case with legacy null duration", async () => {
+        const transactionClient = {
+            service_record_case: {
+                findUnique: jest.fn().mockResolvedValue({
+                    id: "case-13",
+                    status: SERVICE_RECORD_CASE_STATUS.IN_PROGRESS,
+                    startDate: date("2026-08-10"),
+                    endDate: date("2026-08-20"),
+                    requiredSessionCount: 13,
+                    days: [],
+                }),
+            },
+            client: {
+                findUnique: jest.fn().mockResolvedValue({
+                    startDate: date("2026-08-10"),
+                    duration: null,
+                }),
+                updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+            },
+        };
+        const prisma = {
+            $transaction: jest.fn((callback: (tx: typeof transactionClient) => Promise<unknown>) =>
+                callback(transactionClient)),
+        };
+        const service = new ServiceRecordLifecycleService(prisma as unknown as PrismaService);
+        jest.spyOn(service, "ensureForClient").mockResolvedValue(null);
+
+        await service.syncEndDateFromContract({
+            branchId: rawQueryBranchId,
+            clientId: 1,
+            endDate: date("2026-09-03"),
+        });
+
+        expect(transactionClient.client.updateMany).toHaveBeenCalledWith({
+            where: {
+                id: 1,
+                OR: [
+                    { branchId: rawQueryBranchId },
+                    { branchId: null },
+                ],
+            },
+            data: { endDate: date("2026-09-03") },
+        });
+    });
+
     it("leaves duration untouched when syncing a contract end date and the client already has a stored duration", async () => {
         // duration is authoritative once set: a contract sync must only move
         // endDate, never re-derive and overwrite the contracted count.
@@ -449,6 +661,65 @@ describe("ServiceRecordLifecycleService", () => {
         });
     });
 
+    it("locks client-owned rows before the mirror generation fence on the complete transaction surface", async () => {
+        const transactionClient = {
+            $queryRaw: jest.fn().mockImplementation(async (query: { strings?: string[] }) => {
+                const sql = query.strings?.join(" ") ?? "";
+                return sql.includes("detail_source_updated_date") ? [] : [{ id: 1 }];
+            }),
+            client: {
+                findUnique: jest.fn().mockResolvedValue({
+                    id: 1,
+                    branchId: rawQueryBranchId,
+                }),
+                updateMany: jest.fn(),
+            },
+            employee_schedule: {
+                findMany: jest.fn().mockResolvedValue([{
+                    id: 10,
+                    primaryEmployeeId: 20,
+                    secondaryEmployeeId: null,
+                }]),
+            },
+            service_record_case: {
+                findUnique: jest.fn().mockResolvedValue({
+                    id: rawQueryCaseId,
+                    branchId: rawQueryBranchId,
+                    clientId: 1,
+                }),
+            },
+        };
+        const prisma = {
+            $transaction: jest.fn((callback: (tx: typeof transactionClient) => Promise<unknown>) =>
+                callback(transactionClient)),
+        };
+        const service = new ServiceRecordLifecycleService(prisma as unknown as PrismaService);
+
+        await expect(service.syncEndDateFromMirroredContract({
+            branchId: rawQueryBranchId,
+            clientId: 1,
+            endDate: date("2026-07-20"),
+            documentId: rawQueryDocumentId,
+            detailSourceUpdatedDate: new Date("2026-07-30T01:00:00.000Z"),
+            detailSyncedAt: new Date("2026-07-30T01:01:00.000Z"),
+        })).resolves.toBe(false);
+
+        const lockTables = transactionClient.$queryRaw.mock.calls
+            .map(([query]) => (query as { strings?: string[] }).strings?.join(" ").toLowerCase() ?? "")
+            .filter((query) => query.includes("for update"))
+            .map((query) => query.match(/from\s+"?([a-z_]+)"?/)?.[1] ?? "unknown");
+        expect(lockTables.slice(0, 7)).toEqual([
+            "client",
+            "employee",
+            "service_record_case",
+            "employee_schedule",
+            "service_record_assignment",
+            "service_record_day",
+            "eformsign_doc",
+        ]);
+        expect(transactionClient.client.updateMany).not.toHaveBeenCalled();
+    });
+
     it("does not let a stale mirror version update a client after the parent-row fence loses", async () => {
         const transactionClient = {
             $queryRaw: jest.fn().mockResolvedValue([]),
@@ -480,6 +751,148 @@ describe("ServiceRecordLifecycleService", () => {
         expect(fenceSql).toContain("file_type = 'audit_trail'");
         expect(transactionClient.client.updateMany).not.toHaveBeenCalled();
         expect(ensureSpy).not.toHaveBeenCalled();
+    });
+
+    it("does not persist a ready mirror when the client pointer belongs to a newer revision", async () => {
+        const currentRevisionId = "77777777-7777-4777-8777-777777777777";
+        const transactionClient = {
+            $queryRaw: jest.fn().mockImplementation(async (query: { strings?: string[] }) => {
+                const sql = query.strings?.join(" ") ?? "";
+                if (sql.includes("detail_source_updated_date")) {
+                    return [{
+                        id: 7,
+                        clientId: 1,
+                        branchId: rawQueryBranchId,
+                        serviceRecordCaseId: rawQueryCaseId,
+                        revisionId: null,
+                    }];
+                }
+                if (sql.includes("e_doc_id")) {
+                    return [{ id: 1, eDocId: "newer-contract", branchId: rawQueryBranchId }];
+                }
+                if (sql.includes("current_revision_id")) {
+                    return [{
+                        id: rawQueryCaseId,
+                        branchId: rawQueryBranchId,
+                        clientId: 1,
+                        currentRevisionId,
+                        currentUsableRevisionId: currentRevisionId,
+                        currentUsableDocumentVersion: 2,
+                    }];
+                }
+                return [{ id: 7 }];
+            }),
+            eformsign_doc: {
+                findFirst: jest.fn().mockResolvedValue({ id: 7 }),
+            },
+            client: {
+                findUnique: jest.fn().mockResolvedValue({
+                    id: 1,
+                    branchId: rawQueryBranchId,
+                    eDocId: "newer-contract",
+                }),
+                updateMany: jest.fn(),
+            },
+            employee_schedule: { findMany: jest.fn().mockResolvedValue([]) },
+            service_record_case: {
+                findUnique: jest.fn().mockResolvedValue({
+                    id: rawQueryCaseId,
+                    branchId: rawQueryBranchId,
+                    clientId: 1,
+                }),
+            },
+        };
+        const prisma = {
+            $transaction: jest.fn((callback: (tx: typeof transactionClient) => Promise<unknown>) =>
+                callback(transactionClient)),
+        };
+        const service = new ServiceRecordLifecycleService(prisma as unknown as PrismaService);
+        const persistSpy = jest.spyOn(
+            service as unknown as { syncEndDateFromContractInTransaction: jest.Mock },
+            "syncEndDateFromContractInTransaction",
+        ).mockResolvedValue(undefined);
+
+        await expect(service.syncEndDateFromMirroredContract({
+            branchId: rawQueryBranchId,
+            clientId: 1,
+            endDate: date("2026-08-14"),
+            documentId: rawQueryDocumentId,
+            detailSourceUpdatedDate: new Date("2026-07-30T01:00:00.000Z"),
+            detailSyncedAt: new Date("2026-07-30T01:01:00.000Z"),
+        })).resolves.toBe(false);
+
+        expect(persistSpy).not.toHaveBeenCalled();
+        expect(transactionClient.client.updateMany).not.toHaveBeenCalled();
+    });
+
+    it("persists a ready mirrored contract only when the current pointer and legacy revision state agree", async () => {
+        const transactionClient = {
+            $queryRaw: jest.fn().mockImplementation(async (query: { strings?: string[] }) => {
+                const sql = query.strings?.join(" ") ?? "";
+                if (sql.includes("detail_source_updated_date")) {
+                    return [{
+                        id: 7,
+                        clientId: 1,
+                        branchId: rawQueryBranchId,
+                        serviceRecordCaseId: rawQueryCaseId,
+                        revisionId: null,
+                    }];
+                }
+                if (sql.includes("e_doc_id")) {
+                    return [{ id: 1, eDocId: rawQueryDocumentId, branchId: rawQueryBranchId }];
+                }
+                if (sql.includes("current_revision_id")) {
+                    return [{
+                        id: rawQueryCaseId,
+                        branchId: rawQueryBranchId,
+                        clientId: 1,
+                        currentRevisionId: null,
+                        currentUsableRevisionId: null,
+                        currentUsableDocumentVersion: null,
+                    }];
+                }
+                return [{ id: 7 }];
+            }),
+            eformsign_doc: {
+                findFirst: jest.fn().mockResolvedValue({ id: 7 }),
+            },
+            client: {
+                findUnique: jest.fn().mockResolvedValue({
+                    id: 1,
+                    branchId: rawQueryBranchId,
+                    eDocId: rawQueryDocumentId,
+                }),
+                updateMany: jest.fn(),
+            },
+            employee_schedule: { findMany: jest.fn().mockResolvedValue([]) },
+            service_record_case: {
+                findUnique: jest.fn().mockResolvedValue({
+                    id: rawQueryCaseId,
+                    branchId: rawQueryBranchId,
+                    clientId: 1,
+                }),
+            },
+        };
+        const prisma = {
+            $transaction: jest.fn((callback: (tx: typeof transactionClient) => Promise<unknown>) =>
+                callback(transactionClient)),
+        };
+        const service = new ServiceRecordLifecycleService(prisma as unknown as PrismaService);
+        const persistSpy = jest.spyOn(
+            service as unknown as { syncEndDateFromContractInTransaction: jest.Mock },
+            "syncEndDateFromContractInTransaction",
+        ).mockResolvedValue(undefined);
+
+        await expect(service.syncEndDateFromMirroredContract({
+            branchId: rawQueryBranchId,
+            clientId: 1,
+            endDate: date("2026-08-14"),
+            documentId: rawQueryDocumentId,
+            detailSourceUpdatedDate: new Date("2026-07-30T01:00:00.000Z"),
+            detailSyncedAt: new Date("2026-07-30T01:01:00.000Z"),
+        })).resolves.toBe(true);
+
+        expect(persistSpy).toHaveBeenCalledTimes(1);
     });
 
     it("completes a service-record case idempotently when every locked snapshot is in the completed set", async () => {
@@ -537,6 +950,185 @@ describe("ServiceRecordLifecycleService", () => {
         expect(transactionClient.$queryRaw).toHaveBeenCalledTimes(4);
     });
 
+    it("completes a revision-backed case only for its current usable revision and document version", async () => {
+        const revisionId = "44444444-4444-4444-8444-444444444444";
+        const documentVersion = 3;
+        const transactionClient = {
+            eformsign_doc: {
+                findFirst: jest.fn().mockResolvedValue({
+                    serviceRecordCaseId: rawQueryCaseId,
+                    revisionId,
+                    snapshotVersion: documentVersion,
+                }),
+            },
+            $queryRaw: jest.fn()
+                .mockResolvedValueOnce([{
+                    id: rawQueryCaseId,
+                    currentRevisionId: revisionId,
+                    currentUsableRevisionId: revisionId,
+                    currentUsableDocumentVersion: documentVersion,
+                }])
+                .mockResolvedValueOnce([lockedSnapshot({
+                    revisionId,
+                    snapshotVersion: documentVersion,
+                })]),
+            service_record_case: {
+                updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+            },
+        };
+        const prisma = {
+            $transaction: jest.fn((callback: (tx: typeof transactionClient) => Promise<unknown>) =>
+                callback(transactionClient)),
+        };
+        const service = new ServiceRecordLifecycleService(prisma as unknown as PrismaService);
+
+        await expect(service.completeServiceRecordSnapshotIfReady({
+            branchId: rawQueryBranchId,
+            documentId: rawQueryDocumentId,
+        })).resolves.toBe(true);
+
+        const [caseLockQuery] = transactionClient.$queryRaw.mock.calls[0];
+        expect(caseLockQuery.strings.join(" ")).toContain("current_revision_id");
+        expect(caseLockQuery.strings.join(" ")).toContain("current_usable_revision_id");
+        expect(caseLockQuery.strings.join(" ")).toContain("current_usable_document_version");
+        expect(caseLockQuery.strings.join(" ")).not.toContain("form_version");
+        expect(transactionClient.service_record_case.updateMany).toHaveBeenCalledWith(
+            expect.objectContaining({
+                where: expect.objectContaining({
+                    id: rawQueryCaseId,
+                    branchId: rawQueryBranchId,
+                    status: SERVICE_RECORD_CASE_STATUS.DOCUMENTS_CREATED,
+                }),
+            }),
+        );
+    });
+
+    it("ignores an incomplete older revision snapshot while completing the current usable version", async () => {
+        const currentRevisionId = "44444444-4444-4444-8444-444444444444";
+        const oldRevisionId = "55555555-5555-4555-8555-555555555555";
+        const documentVersion = 4;
+        const transactionClient = {
+            eformsign_doc: {
+                findFirst: jest.fn().mockResolvedValue({
+                    serviceRecordCaseId: rawQueryCaseId,
+                    revisionId: currentRevisionId,
+                    snapshotVersion: documentVersion,
+                }),
+            },
+            $queryRaw: jest.fn()
+                .mockResolvedValueOnce([{
+                    id: rawQueryCaseId,
+                    currentRevisionId,
+                    currentUsableRevisionId: currentRevisionId,
+                    currentUsableDocumentVersion: documentVersion,
+                }])
+                .mockResolvedValueOnce([
+                    lockedSnapshot({
+                        id: 6,
+                        documentId: "old-snapshot",
+                        revisionId: oldRevisionId,
+                        snapshotVersion: 3,
+                        syncStatus: "partial",
+                    }),
+                    lockedSnapshot({
+                        revisionId: currentRevisionId,
+                        snapshotVersion: documentVersion,
+                    }),
+                ]),
+            service_record_case: {
+                updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+            },
+        };
+        const prisma = {
+            $transaction: jest.fn((callback: (tx: typeof transactionClient) => Promise<unknown>) =>
+                callback(transactionClient)),
+        };
+        const service = new ServiceRecordLifecycleService(prisma as unknown as PrismaService);
+
+        await expect(service.completeServiceRecordSnapshotIfReady({
+            branchId: rawQueryBranchId,
+            documentId: rawQueryDocumentId,
+        })).resolves.toBe(true);
+
+        expect(transactionClient.service_record_case.updateMany).toHaveBeenCalledTimes(1);
+    });
+
+    it("does not mutate the case for a stale revision callback after ownership moved forward", async () => {
+        const oldRevisionId = "55555555-5555-4555-8555-555555555555";
+        const currentRevisionId = "66666666-6666-4666-8666-666666666666";
+        const transactionClient = {
+            eformsign_doc: {
+                findFirst: jest.fn().mockResolvedValue({
+                    serviceRecordCaseId: rawQueryCaseId,
+                    revisionId: oldRevisionId,
+                    snapshotVersion: 3,
+                }),
+            },
+            $queryRaw: jest.fn().mockResolvedValueOnce([{
+                id: rawQueryCaseId,
+                currentRevisionId,
+                currentUsableRevisionId: currentRevisionId,
+                currentUsableDocumentVersion: 4,
+            }]),
+            service_record_case: { updateMany: jest.fn() },
+        };
+        const prisma = {
+            $transaction: jest.fn((callback: (tx: typeof transactionClient) => Promise<unknown>) =>
+                callback(transactionClient)),
+        };
+        const service = new ServiceRecordLifecycleService(prisma as unknown as PrismaService);
+
+        await expect(service.completeServiceRecordSnapshotIfReady({
+            branchId: rawQueryBranchId,
+            documentId: rawQueryDocumentId,
+        })).resolves.toBe(false);
+
+        expect(transactionClient.$queryRaw).toHaveBeenCalledTimes(1);
+        expect(transactionClient.service_record_case.updateMany).not.toHaveBeenCalled();
+    });
+
+    it("does not let a legacy callback complete a case with revision-linked snapshot evidence", async () => {
+        const revisionId = "66666666-6666-4666-8666-666666666666";
+        const transactionClient = {
+            eformsign_doc: {
+                findFirst: jest.fn().mockResolvedValue({
+                    serviceRecordCaseId: rawQueryCaseId,
+                    revisionId: null,
+                    snapshotVersion: 3,
+                }),
+            },
+            $queryRaw: jest.fn()
+                .mockResolvedValueOnce([{
+                    id: rawQueryCaseId,
+                    currentRevisionId: null,
+                    currentUsableRevisionId: null,
+                    currentUsableDocumentVersion: null,
+                }])
+                .mockResolvedValueOnce([
+                    lockedSnapshot(),
+                    lockedSnapshot({
+                        id: 8,
+                        documentId: "revision-snapshot",
+                        revisionId,
+                        snapshotVersion: 3,
+                    }),
+                ]),
+            service_record_case: { updateMany: jest.fn() },
+        };
+        const prisma = {
+            $transaction: jest.fn((callback: (tx: typeof transactionClient) => Promise<unknown>) =>
+                callback(transactionClient)),
+        };
+        const service = new ServiceRecordLifecycleService(prisma as unknown as PrismaService);
+
+        await expect(service.completeServiceRecordSnapshotIfReady({
+            branchId: rawQueryBranchId,
+            documentId: rawQueryDocumentId,
+        })).resolves.toBe(false);
+
+        expect(transactionClient.service_record_case.updateMany).not.toHaveBeenCalled();
+    });
+
     it("does not lock snapshots when the case is absent or no longer awaits documents", async () => {
         const transactionClient = {
             eformsign_doc: {
@@ -589,7 +1181,11 @@ describe("ServiceRecordLifecycleService", () => {
                 documentKind: "service_record_snapshot",
                 serviceRecordCaseId: { not: null },
             }),
-            select: { serviceRecordCaseId: true },
+            select: {
+                serviceRecordCaseId: true,
+                revisionId: true,
+                snapshotVersion: true,
+            },
         });
         expect(transactionClient.$queryRaw).not.toHaveBeenCalled();
         expect(transactionClient.service_record_case.updateMany).not.toHaveBeenCalled();
@@ -835,19 +1431,15 @@ describe("ServiceRecordLifecycleService", () => {
         );
     });
 
-    it("moves a complete in-period record to READY_TO_FINALIZE while preserving outside rows", async () => {
-        jest.useFakeTimers({ now: new Date("2026-08-10T00:00:00.000Z") });
+    it("completes four transferred service days while preserving outside rows", async () => {
+        jest.useFakeTimers({ now: new Date("2026-09-08T00:00:00.000Z") });
         const record = {
             id: "case-1",
             status: SERVICE_RECORD_CASE_STATUS.IN_PROGRESS,
-            startDate: date("2026-08-03"),
-            endDate: date("2026-08-10"),
-            // requiredSessionCount is the stored, authoritative session
-            // count now (no longer re-derived from the dates every time),
-            // so it must already equal the actually recordable count for
-            // this test's "complete" case to hold.
-            requiredSessionCount: 6,
-            finalizationDueAt: new Date("2026-08-10T11:00:00.000Z"),
+            startDate: date("2026-09-03"),
+            endDate: date("2026-09-08"),
+            requiredSessionCount: 15,
+            finalizationDueAt: new Date("2026-09-08T11:00:00.000Z"),
             completedAt: null,
             momName: "산모",
             momBirth: "900101",
@@ -857,7 +1449,7 @@ describe("ServiceRecordLifecycleService", () => {
             babyWeight: "3.2",
             assignments: [{ schedule: { replaced: false } }],
             days: [
-                ...["2026-08-03", "2026-08-04", "2026-08-05", "2026-08-06", "2026-08-07", "2026-08-10"]
+                ...["2026-09-03", "2026-09-04", "2026-09-07", "2026-09-08"]
                     .map((serviceDate, index) => ({
                         caseSessionIndex: index + 1,
                         serviceDate: date(serviceDate),
@@ -865,8 +1457,8 @@ describe("ServiceRecordLifecycleService", () => {
                         momApproval: "approved",
                     })),
                 {
-                    caseSessionIndex: 7,
-                    serviceDate: date("2026-08-11"),
+                    caseSessionIndex: 5,
+                    serviceDate: date("2026-09-09"),
                     locked: true,
                     momApproval: "approved",
                 },
@@ -886,8 +1478,128 @@ describe("ServiceRecordLifecycleService", () => {
             data: expect.objectContaining({
                 status: SERVICE_RECORD_CASE_STATUS.READY_TO_FINALIZE,
                 completedAt: expect.any(Date),
-                requiredSessionCount: 6,
+                requiredSessionCount: 4,
             }),
         }));
+    });
+
+    it("uses the moved future end date before selecting an incomplete lifecycle status", async () => {
+        jest.useFakeTimers({ now: new Date("2026-09-08T00:00:00.000Z") });
+        const movedEndDate = date("2026-09-20");
+        const staleDeadline = new Date("2026-09-01T11:00:00.000Z");
+        const record = {
+            id: "case-moved-future",
+            status: SERVICE_RECORD_CASE_STATUS.READY_TO_FINALIZE,
+            startDate: date("2026-09-01"),
+            endDate: movedEndDate,
+            requiredSessionCount: 13,
+            finalizationDueAt: staleDeadline,
+            completedAt: null,
+            momName: null,
+            momBirth: null,
+            babyName: null,
+            babyBirth: null,
+            deliveryType: null,
+            babyWeight: null,
+            assignments: [{ schedule: { replaced: false } }],
+            days: [],
+        };
+        const prisma = {
+            service_record_case: {
+                findUnique: jest.fn().mockResolvedValue(record),
+                update: jest.fn().mockImplementation(({ data }) => Promise.resolve({ ...record, ...data })),
+            },
+        };
+        const service = new ServiceRecordLifecycleService(prisma as unknown as PrismaService);
+
+        const result = await service.recompute(record.id);
+        const effectiveDeadline = getServiceRecordFinalizationDueAt(movedEndDate);
+
+        expect(result.status).toBe(SERVICE_RECORD_CASE_STATUS.IN_PROGRESS);
+        expect(prisma.service_record_case.update).toHaveBeenCalledWith(expect.objectContaining({
+            data: expect.objectContaining({
+                status: SERVICE_RECORD_CASE_STATUS.IN_PROGRESS,
+                finalizationDueAt: effectiveDeadline,
+            }),
+        }));
+    });
+
+    it("owns a root recompute transaction before deriving a writable status", async () => {
+        const staleRecord = {
+            id: "case-1",
+            branchId: rawQueryBranchId,
+            clientId: 1,
+            status: SERVICE_RECORD_CASE_STATUS.IN_PROGRESS,
+            startDate: date("2026-08-03"),
+            endDate: date("2026-08-10"),
+            requiredSessionCount: 1,
+            finalizationDueAt: new Date("2026-08-10T11:00:00.000Z"),
+            completedAt: null,
+            momName: null,
+            momBirth: null,
+            babyName: null,
+            babyBirth: null,
+            deliveryType: null,
+            babyWeight: null,
+            assignments: [],
+            days: [],
+        };
+        const freshRecord = {
+            ...staleRecord,
+            momName: "산모",
+            momBirth: "900101",
+            babyName: "아기",
+            babyBirth: "260701",
+            deliveryType: "자연분만",
+            babyWeight: "3.2",
+            assignments: [{ schedule: { replaced: false } }],
+            days: [{
+                caseSessionIndex: 1,
+                serviceDate: date("2026-08-03"),
+                locked: true,
+                momApproval: "approved",
+            }],
+        };
+        const transaction = {
+            $queryRaw: jest.fn().mockResolvedValue([{ id: rawQueryCaseId }]),
+            client: {
+                findUnique: jest.fn().mockResolvedValue({
+                    id: 1,
+                    branchId: rawQueryBranchId,
+                }),
+            },
+            employee: {},
+            employee_schedule: {
+                findMany: jest.fn().mockResolvedValue([]),
+            },
+            service_record_case: {
+                findUnique: jest.fn().mockResolvedValue(freshRecord),
+                update: jest.fn().mockImplementation(({ data }) => Promise.resolve({ ...freshRecord, ...data })),
+            },
+            service_record_assignment: {},
+            service_record_day: {},
+            eformsign_doc: {},
+        };
+        const prisma = {
+            $transaction: jest.fn((callback: (tx: typeof transaction) => Promise<unknown>) =>
+                callback(transaction)),
+            service_record_case: {
+                findUnique: jest.fn().mockResolvedValue(staleRecord),
+                update: jest.fn().mockImplementation(({ data }) => Promise.resolve({ ...staleRecord, ...data })),
+            },
+        };
+        const service = new ServiceRecordLifecycleService(prisma as unknown as PrismaService);
+
+        await service.recompute(staleRecord.id);
+
+        expect(prisma.$transaction).toHaveBeenCalledTimes(1);
+        const lockQueries = transaction.$queryRaw.mock.calls
+            .map(([query]) => (query as { strings?: string[] }).strings?.join(" ").toLowerCase() ?? "")
+            .filter((query) => query.includes("for update"));
+        expect(lockQueries[0]).toContain("from \"client\"");
+        expect(transaction.service_record_case.update).toHaveBeenCalledWith(expect.objectContaining({
+            data: expect.objectContaining({ status: SERVICE_RECORD_CASE_STATUS.READY_TO_FINALIZE }),
+        }));
+        expect(prisma.service_record_case.update).not.toHaveBeenCalled();
     });
 });

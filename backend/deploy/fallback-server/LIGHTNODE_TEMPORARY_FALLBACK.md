@@ -31,3 +31,30 @@ singleton scheduler/document-worker ownership, preload-before-recreate order,
 and automatic rollback contract of `replace-temporary-active`.
 
 For failback, verify AWS health and reconciliation, restore the protected `api.babyjamjam.com` DNS value, and confirm public HTTPS on AWS before stopping Fallback. Then revoke the LightNode Aligo egress, disable Caddy, revoke Tailscale device/auth material, stop and confirm API absence, scrub, **Release** (not Stop), and confirm billing ended. Never image a host after runtime secrets or a production container existed: Docker Config.Env/deleted-block history can retain them. Golden images are allowed only before secret injection; otherwise Release without imaging. A recreated instance/public IP requires new Aligo registration and approval hash.
+
+## Explicit no-automatic-shutdown operation
+
+The production operator may explicitly prohibit automatic shutdown. Record that
+policy in `/opt/babyjamjam-fallback-server/automatic-shutdown-policy`, a regular
+non-symlink `root:root` mode `0400` file containing exactly `disabled` and a newline.
+This is a host policy, not a caller environment variable. All four
+`babyjamjam-fallback-temporary-active-{guard,stop}.{service,timer}` units must
+remain masked to `/dev/null` and inactive. The installer preserves those masks;
+neither release replacement nor rollback schedules an expiry stop. The API
+uses `unless-stopped` so a host restart does not leave the public route down.
+
+After an approved recovery has restarted an existing API but expiry cleanup
+removed its active state, run `babyjamjam-fallback-server adopt-persistent-active`
+through the existing administrator provisioning channel. It verifies the unique
+running release, healthy API, Production DB identity, active gates, scheduler
+lease, protected original approval/evidence and approved egress, then restores
+state from those existing artifacts without restarting the API. It cannot start
+a stopped service or invent approval/evidence values.
+
+Status reports `automatic_shutdown=disabled`. The restricted CI interface stays
+`status`/`replace`; each replacement still requires automation authority, public
+routing identity, a fresh release-bound transaction approval, immutable image
+verification, readiness and automatic image rollback. Historical approval expiry
+does not stop the persistent runtime. Missing policy retains the original
+expiry-bound behavior; malformed policy or unmasked shutdown units refuse deployment.
+Do not restore timers as a deployment repair for a host with this policy.

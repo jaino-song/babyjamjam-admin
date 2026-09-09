@@ -11,6 +11,9 @@ import { PrismaService } from "infrastructure/database/prisma.service";
 
 describe("AdminServiceRecordService", () => {
     const createPrisma = () => ({
+        client: {
+            findFirst: jest.fn(),
+        },
         service_record_case: {
             findFirst: jest.fn().mockResolvedValue(null),
         },
@@ -75,14 +78,18 @@ describe("AdminServiceRecordService", () => {
         serviceRecordTokens: [],
     });
 
-    it("keeps the stored session count as the total even when the period is longer than its business-day span", async () => {
+    it.each([
+        ["2026-09-03", "2026-09-08", 15, 4],
+        ["2026-08-10", "2026-09-03", 15, 15],
+        ["2026-09-03", "2026-09-09", 4, 4],
+    ])("bounds the stored count by the service period %s to %s", async (start, end, stored, expected) => {
         const prisma = createPrisma();
         prisma.service_record_case.findFirst.mockResolvedValue({
             id: "case-1",
             status: "IN_PROGRESS",
-            startDate: new Date("2026-08-03T00:00:00.000Z"),
-            endDate: new Date("2026-08-10T00:00:00.000Z"),
-            requiredSessionCount: 15,
+            startDate: new Date(start),
+            endDate: new Date(end),
+            requiredSessionCount: stored,
             completedAt: null,
             finalizationDueAt: new Date("2026-08-10T11:00:00.000Z"),
             finalizedAt: null,
@@ -108,10 +115,316 @@ describe("AdminServiceRecordService", () => {
 
         const overview = await service.getClientOverview("branch-1", 100);
 
-        // requiredSessionCount (15) is the contracted count and is
-        // authoritative; the 6-business-day span for the current dates is
-        // no longer used to override it.
-        expect(overview.record?.totalSessions).toBe(15);
+        expect(overview.record?.totalSessions).toBe(expected);
+    });
+
+    it("uses four actual days for assignments while preserving the 15-day voucher", async () => {
+        const prisma = createPrisma();
+        const schedule = createSchedule(1, "2026-09-03");
+        schedule.endDate = new Date("2026-09-08");
+        Object.assign(schedule.client, {
+            startDate: schedule.startDate, endDate: schedule.endDate, duration: 15,
+        });
+        prisma.employee_schedule.findMany.mockResolvedValue([schedule]);
+        prisma.message_trigger_job.findMany.mockResolvedValue([]);
+        prisma.message_log.findMany.mockResolvedValue([]);
+        const service = new AdminServiceRecordService(
+            prisma as unknown as PrismaService,
+            createLinkService() as unknown as ServiceRecordLinkService,
+            createTriggerService() as unknown as MessageTriggerService,
+        );
+        const overview = await service.getClientOverview("branch-1", 100);
+        expect(overview.assignments[0]?.totalSessions).toBe(4);
+        expect(schedule.client.duration).toBe(15);
+    });
+
+    it("asserts branch-owned client access before reading the editor overview", async () => {
+        const prisma = createPrisma();
+        const service = new AdminServiceRecordService(
+            prisma as unknown as PrismaService,
+            createLinkService() as unknown as ServiceRecordLinkService,
+            createTriggerService() as unknown as MessageTriggerService,
+        );
+        prisma.client.findFirst.mockResolvedValue({ id: 100 });
+        prisma.service_record_case.findFirst.mockResolvedValue(null);
+        prisma.employee_schedule.findMany.mockResolvedValue([]);
+
+        await expect(service.getClientEditor("branch-1", 100)).resolves.toEqual({
+            record: null,
+            assignments: [],
+            scheduleProjection: {
+                entries: [],
+                blockingReasons: [{
+                    code: "EDITOR_PROJECTION_UNAVAILABLE",
+                    message: "서비스 예정 회차 근거를 확인할 수 없습니다.",
+                }],
+            },
+        });
+
+        expect(prisma.client.findFirst).toHaveBeenCalledWith({
+            where: { id: 100, branchId: "branch-1" },
+            select: { id: true },
+        });
+        expect(prisma.service_record_case.findFirst).toHaveBeenCalled();
+        expect(prisma.employee_schedule.findMany).toHaveBeenCalled();
+    });
+
+    it("adds the canonical all-session projection to the regular overview for unwritten slots", async () => {
+        const prisma = createPrisma();
+        const assignmentId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+        const source = {
+            caseId: "case-1",
+            caseVersion: 7,
+            formVersion: 3,
+            requiredSessionCount: 3,
+            startDate: "2026-09-01",
+            endDate: "2026-09-03",
+            header: {
+                momName: null,
+                momBirth: null,
+                babyName: null,
+                babyBirth: null,
+                deliveryType: null,
+                babyWeight: null,
+            },
+            sessions: [],
+            assignments: [{
+                id: assignmentId,
+                branchId: "branch-1",
+                serviceRecordCaseId: "case-1",
+                scheduleId: 55,
+                employeeId: 9,
+                startDate: "2026-09-01",
+                endDate: "2026-09-03",
+                replaced: false,
+                employeeName: "제공자",
+                scheduleStartDate: "2026-09-01",
+                scheduleEndDate: "2026-09-03",
+                scheduleTerminatedAt: null,
+                primaryEmployeeId: 9,
+                secondaryEmployeeId: null,
+                primaryEmployeeName: "제공자",
+            }],
+            plannedSessions: ["2026-09-01", "2026-09-02", "2026-09-03"].map((serviceDate, index) => ({
+                sessionIndex: index + 1,
+                serviceDate,
+                originalDate: serviceDate,
+                assignmentId,
+                scheduleId: 55,
+                employeeId: 9,
+                provenanceVersion: "case-7",
+            })),
+            client: {
+                id: 100,
+                branchId: "branch-1",
+                name: "김산모",
+                duration: 15,
+                startDate: "2026-09-01",
+                endDate: "2026-09-03",
+                serviceStatus: "in_progress",
+            },
+        };
+        prisma.client.findFirst.mockResolvedValue({ id: 100 });
+        prisma.service_record_case.findFirst.mockResolvedValue(null);
+        prisma.employee_schedule.findMany.mockResolvedValue([]);
+        const editRepository = { loadSource: jest.fn().mockResolvedValue(source) };
+        const service = new AdminServiceRecordService(
+            prisma as unknown as PrismaService,
+            createLinkService() as unknown as ServiceRecordLinkService,
+            createTriggerService() as unknown as MessageTriggerService,
+            undefined,
+            editRepository as never,
+        );
+
+        const overview = await service.getClientOverview("branch-1", 100);
+
+        expect(overview.scheduleProjection?.blockingReasons).toEqual([]);
+        expect(overview.scheduleProjection?.entries.map((entry) => entry.serviceDate)).toEqual([
+            "2026-09-01", "2026-09-02", "2026-09-03",
+        ]);
+        expect(overview.scheduleProjection?.entries[2]).toEqual(expect.objectContaining({
+            sessionIndex: 3,
+            originalDate: "2026-09-03",
+            assignmentId,
+            scheduleId: 55,
+            employeeId: 9,
+        }));
+        expect(editRepository.loadSource).toHaveBeenCalledWith("branch-1", { clientId: 100 });
+    });
+
+    it("keeps unsupported-year legacy cases viewable while blocking the canonical projection", async () => {
+        const prisma = createPrisma();
+        prisma.client.findFirst.mockResolvedValue({ id: 100 });
+        prisma.service_record_case.findFirst.mockResolvedValue({
+            id: "case-unsupported",
+            status: "IN_PROGRESS",
+            startDate: new Date("2028-01-03T00:00:00.000Z"),
+            endDate: new Date("2028-01-05T00:00:00.000Z"),
+            requiredSessionCount: null,
+            completedAt: null,
+            finalizationDueAt: null,
+            finalizedAt: null,
+            documentsCompletedAt: null,
+            lastError: null,
+            momName: "산모",
+            momBirth: null,
+            babyName: null,
+            babyBirth: null,
+            deliveryType: null,
+            babyWeight: null,
+            createdAt: new Date("2028-01-03T00:00:00.000Z"),
+            updatedAt: new Date("2028-01-03T00:00:00.000Z"),
+            days: [{
+                sessionIndex: 1,
+                caseSessionIndex: 1,
+                serviceDate: new Date("2028-01-03T00:00:00.000Z"),
+                locked: false,
+                submittedAt: null,
+                updatedAt: new Date("2028-01-03T00:00:00.000Z"),
+                answers: {},
+                etcService: null,
+                notes: null,
+                paymentConfirmed: false,
+                momApproval: null,
+                clientSignature: null,
+                clientSignedAt: null,
+                employeeId: null,
+                employeeNameSnapshot: null,
+                formVersion: 1,
+            }],
+        } as never);
+        prisma.employee_schedule.findMany.mockResolvedValue([]);
+        const editRepository = {
+            loadSource: jest.fn().mockResolvedValue({
+                caseId: "case-unsupported",
+                caseVersion: 1,
+                formVersion: 1,
+                requiredSessionCount: null,
+                startDate: "2028-01-03",
+                endDate: "2028-01-05",
+                header: {
+                    momName: "산모",
+                    momBirth: null,
+                    babyName: null,
+                    babyBirth: null,
+                    deliveryType: null,
+                    babyWeight: null,
+                },
+                sessions: [],
+                assignments: [],
+                plannedSessions: null,
+                client: {
+                    id: 100,
+                    branchId: "branch-1",
+                    name: "김산모",
+                    duration: null,
+                    startDate: "2028-01-03",
+                    endDate: "2028-01-05",
+                    serviceStatus: "in_progress",
+                },
+            }),
+        };
+        const service = new AdminServiceRecordService(
+            prisma as unknown as PrismaService,
+            createLinkService() as unknown as ServiceRecordLinkService,
+            createTriggerService() as unknown as MessageTriggerService,
+            undefined,
+            editRepository as never,
+        );
+
+        const overview = await service.getClientEditor("branch-1", 100);
+
+        expect(overview.record?.totalSessions).toBe(0);
+        expect(overview.record?.sessions).toHaveLength(1);
+        expect(overview.scheduleProjection?.entries).toEqual([]);
+        expect(overview.scheduleProjection?.blockingReasons).toEqual(expect.arrayContaining([
+            expect.objectContaining({ code: "INVALID_SESSION_COUNT" }),
+        ]));
+    });
+
+    it("returns not found for a foreign or missing client without reading records or invoking mutations", async () => {
+        const prisma = createPrisma();
+        const linkService = createLinkService();
+        const triggerService = createTriggerService();
+        const service = new AdminServiceRecordService(
+            prisma as unknown as PrismaService,
+            linkService as unknown as ServiceRecordLinkService,
+            triggerService as unknown as MessageTriggerService,
+        );
+        prisma.client.findFirst.mockResolvedValue(null);
+
+        await expect(service.getClientEditor("branch-1", 404)).rejects.toBeInstanceOf(NotFoundException);
+
+        expect(prisma.client.findFirst).toHaveBeenCalledWith({
+            where: { id: 404, branchId: "branch-1" },
+            select: { id: true },
+        });
+        expect(prisma.service_record_case.findFirst).not.toHaveBeenCalled();
+        expect(prisma.employee_schedule.findMany).not.toHaveBeenCalled();
+        expect(linkService.prepareLink).not.toHaveBeenCalled();
+        expect(linkService.sendNow).not.toHaveBeenCalled();
+        expect(triggerService.dispatchPendingJobNow).not.toHaveBeenCalled();
+    });
+
+    it("only includes stored signature material on the owner/admin editor projection", async () => {
+        const prisma = createPrisma();
+        const session = {
+            sessionIndex: 1,
+            caseSessionIndex: 1,
+            serviceDate: new Date("2026-07-01T00:00:00.000Z"),
+            locked: true,
+            submittedAt: new Date("2026-07-01T01:00:00.000Z"),
+            updatedAt: new Date("2026-07-01T01:00:00.000Z"),
+            answers: {},
+            etcService: null,
+            notes: null,
+            paymentConfirmed: true,
+            momApproval: "approved",
+            clientSignature: "data:image/png;base64,stored",
+            clientSignedAt: new Date("2026-07-01T01:00:00.000Z"),
+            employeeId: null,
+            employeeNameSnapshot: null,
+            formVersion: 1,
+        };
+        prisma.service_record_case.findFirst.mockResolvedValue({
+            id: "case-1",
+            status: "COMPLETED",
+            startDate: new Date("2026-07-01T00:00:00.000Z"),
+            endDate: new Date("2026-07-01T00:00:00.000Z"),
+            requiredSessionCount: 1,
+            completedAt: null,
+            finalizationDueAt: null,
+            finalizedAt: new Date("2026-07-02T00:00:00.000Z"),
+            documentsCompletedAt: null,
+            lastError: null,
+            momName: null,
+            momBirth: null,
+            babyName: null,
+            babyBirth: null,
+            deliveryType: null,
+            babyWeight: null,
+            createdAt: new Date("2026-07-01T00:00:00.000Z"),
+            updatedAt: new Date("2026-07-01T00:00:00.000Z"),
+            days: [session],
+        } as never);
+        prisma.employee_schedule.findMany.mockResolvedValue([]);
+        prisma.client.findFirst.mockResolvedValue({ id: 100 });
+
+        const service = new AdminServiceRecordService(
+            prisma as unknown as PrismaService,
+            createLinkService() as unknown as ServiceRecordLinkService,
+            createTriggerService() as unknown as MessageTriggerService,
+        );
+
+        const overview = await service.getClientOverview("branch-1", 100);
+        expect(overview.record?.sessions[0]).not.toHaveProperty("clientSignature");
+        expect(overview.record?.sessions[0]).not.toHaveProperty("clientSignedAt");
+
+        const editor = await service.getClientEditor("branch-1", 100);
+        expect(editor.record?.sessions[0]).toEqual(expect.objectContaining({
+            clientSignature: "data:image/png;base64,stored",
+            clientSignedAt: session.clientSignedAt,
+        }));
     });
 
     it("derives link status for none, scheduled, sent, and failed assignments", async () => {

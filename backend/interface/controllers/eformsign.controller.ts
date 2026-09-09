@@ -7,6 +7,9 @@ import { INCHEON_STAFF_BRANCH_SLUG } from "domain/constants/branch-routing.const
 import { CurrentTenant, TenantGuard } from "infrastructure/tenant";
 import { JwtGuard } from "infrastructure/auth/jwt.guard";
 import { Response } from "express";
+
+import { PdfPageRasterizerService, PdfPageOutOfRangeError } from "infrastructure/pdf/pdf-page-rasterizer.service";
+import { RECEIPT_PAGE_NUMBER, RECEIPT_IMAGE_WIDTH } from "application/services/receipt-link-issue.service";
 import { parseInteger } from "interface/parse-integer";
 import { parseBooleanQuery } from "interface/parse-boolean";
 import {
@@ -204,6 +207,7 @@ export class EformsignController {
         private readonly templateScopeService: EformsignTemplateScopeService,
         private readonly getContractClientCandidateUsecase: GetContractClientCandidateUsecase,
         private readonly credentialBoundary: EformsignCredentialBoundary,
+        private readonly rasterizer: PdfPageRasterizerService,
     ) { }
 
     /**
@@ -933,9 +937,16 @@ export class EformsignController {
         @Param("documentId") documentId: string,
         @Query("fileType") fileType: string | undefined,
         @Res() res: Response,
+        @Query("format") format?: string,
     ) {
         try {
             const parsedFileType = parseDownloadFileType(fileType);
+            if (format !== undefined && format !== "receipt-png") {
+                throw new BadRequestException("format must be receipt-png");
+            }
+            if (format === "receipt-png" && parsedFileType !== "document") {
+                throw new BadRequestException("Receipt images require fileType=document");
+            }
             const allowedDocuments = await this.filterDocumentsByBranch(
                 tenant.branchId ?? "",
                 [{ id: documentId }],
@@ -965,6 +976,20 @@ export class EformsignController {
                 });
             }
 
+            if (format === "receipt-png") {
+                const png = await this.rasterizer.renderPageToPng(
+                    file.body, RECEIPT_PAGE_NUMBER, { width: RECEIPT_IMAGE_WIDTH },
+                );
+                res.status(file.status).set({
+                    "Content-Type": "image/png",
+                    "Content-Disposition": "attachment",
+                    "Content-Length": String(png.length),
+                    "Cache-Control": "private, no-store",
+                });
+                res.send(png);
+                return;
+            }
+
             res.status(file.status);
             res.set({
                 "Content-Type": file.contentType,
@@ -973,6 +998,9 @@ export class EformsignController {
             });
             res.send(file.body);
         } catch (error) {
+            if (error instanceof PdfPageOutOfRangeError) {
+                throw new BadRequestException("계약서에서 영수증 페이지를 찾을 수 없습니다.");
+            }
             throwHttpOrInternalError(error);
         }
     }

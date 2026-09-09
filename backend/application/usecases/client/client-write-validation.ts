@@ -109,17 +109,20 @@ export function deriveClientDuration(
  * once set; the service period only needs to be long enough to contain it
  * (it may be longer, e.g. when a session is postponed and the end date is
  * extended while the session count stays fixed), so a supplied duration must
- * be <= the derived business-day count, not equal to it.
+ * be <= the derived business-day count, not equal to it. A confirmed admin
+ * save may exceed it for services performed on weekends or holidays.
+ * Confirmation never bypasses integer, positivity, or date validation.
  */
 export function assertClientDurationMatchesDates(
     suppliedDuration: number | null | undefined,
     derivedDuration: number | null,
+    allowBusinessDayMismatch = false,
 ): void {
     // Undefined means the caller omitted duration. Null is an explicit clear
     // and is only valid while no complete date range exists; once both dates
     // are present, every supplied value must fit within the derived count.
     if (suppliedDuration === undefined || derivedDuration === null) return;
-    if (suppliedDuration === null || !Number.isSafeInteger(suppliedDuration) || suppliedDuration < 1 || suppliedDuration > derivedDuration) {
+    if (suppliedDuration === null || !Number.isSafeInteger(suppliedDuration) || suppliedDuration < 1 || (suppliedDuration > derivedDuration && allowBusinessDayMismatch !== true)) {
         throw new BadRequestException(clientDurationOutOfRangeMessage(derivedDuration));
     }
 }

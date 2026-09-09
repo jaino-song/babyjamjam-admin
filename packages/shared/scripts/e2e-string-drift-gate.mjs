@@ -25,7 +25,12 @@ import { spawnSync } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-const SOURCE_GLOBS = ["frontend/src", "mobile/src", "packages/shared/src"];
+const SOURCE_GLOBS = [
+  "frontend/src",
+  "mobile/src",
+  "packages/shared/src",
+  "packages/service-record-ui/src",
+];
 const E2E_GLOBS = ["frontend/tests", "mobile/tests"];
 
 /** Hangul syllables, so a run of at least this many is a real phrase and not a word fragment. */

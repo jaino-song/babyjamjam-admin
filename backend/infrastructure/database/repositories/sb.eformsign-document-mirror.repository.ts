@@ -4,7 +4,7 @@ import { Prisma } from "@prisma/client";
 import {
     EFORMSIGN_COMPLETED_STATUS_STORAGE_VALUES,
     UNASSIGNED_TERMINAL_STATUS_CODES,
-    isUnassignedReviewStageStatus,
+    isReviewStageDocumentPdfReadable,
 } from "domain/constants/eformsign-doc-status.constants";
 import {
     EformsignDocumentFileType,
@@ -100,7 +100,7 @@ implements IEformsignDocumentMirrorRepository {
         });
         const row = document?.files[0];
         const canReadReviewStageDocument = fileType === "document"
-            && isUnassignedReviewStageStatus(
+            && isReviewStageDocumentPdfReadable(
                 (document?.detailPayload as EformsignApiDocumentResponse | null)
                     ?.current_status?.status_type,
             );
@@ -555,6 +555,8 @@ implements IEformsignDocumentMirrorRepository {
                         serviceRecordTokens: { none: {} },
                         legacyHeaders: { none: {} },
                         snapshotChunks: { none: {} },
+                        editDrafts: { none: {} },
+                        revisions: { none: {} },
                         eformsignDocs: { none: {} },
                     },
                 });

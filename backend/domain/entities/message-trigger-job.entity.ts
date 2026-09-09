@@ -7,6 +7,7 @@ import {
     TRIGGER_JOB_MAX_ATTEMPTS,
     TRIGGER_JOB_RETRY_DELAY_MS,
 } from "domain/constants/message-automation-policy";
+import type { ServiceRecordRevisionDispatchContext } from "@babyjamjam/shared/types/service-record";
 
 export type MessageTriggerJobStatus =
     | "pending"
@@ -52,6 +53,12 @@ export interface MessageTriggerJobPayload {
      * jobs, which keep deriving the document from the client at delivery time.
      */
     receiptEformsignDocId?: number | null;
+    /**
+     * Immutable service-record revision context captured when this message was
+     * scheduled. The dispatcher revalidates it under the service-record write
+     * lock before crossing the SMS provider boundary.
+     */
+    serviceRecordRevisionContext?: ServiceRecordRevisionDispatchContext;
 }
 
 export class MessageTriggerJobEntity {

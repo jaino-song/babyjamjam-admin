@@ -9,9 +9,8 @@ import { Prisma } from "@prisma/client";
 import { assertEmployeeAssignmentEligibility, type EmployeeAssignmentCandidate } from "application/policies/employee-assignment-eligibility.policy";
 import {
     assertEmployeeScheduleWriteIsAvailable,
-    lockClientForScheduleWrite,
-    lockEmployeesForScheduleWrite,
 } from "application/policies/employee-schedule-invariants.policy";
+import { lockServiceRecordWriteSet } from "application/policies/service-record-write-lock.policy";
 import { PrismaService } from "infrastructure/database/prisma.service";
 
 type CreateEmployeeScheduleParams = {
@@ -48,8 +47,28 @@ export class CreateEmployeeScheduleUsecase {
 
             const employeeIds = [params.primaryEmployeeId, params.secondaryEmployeeId]
                 .filter((employeeId): employeeId is number => employeeId !== null);
-            await lockClientForScheduleWrite(tx, branchid, params.clientId);
-            await lockEmployeesForScheduleWrite(tx, branchid, employeeIds);
+            const existingCase = tx.service_record_case?.findUnique
+                ? await tx.service_record_case.findUnique({
+                    where: { clientId: params.clientId },
+                    select: { id: true },
+                })
+                : null;
+            await lockServiceRecordWriteSet(tx, {
+                branchId: branchid,
+                clientId: params.clientId,
+                caseId: existingCase?.id,
+                employeeIds,
+            });
+            // The initial client lookup is discovery only. Revalidate branch
+            // ownership after the stable-row lock before reading employees or
+            // writing the new schedule.
+            const lockedClient = await tx.client.findFirst({
+                where: { id: params.clientId, branchId: branchid },
+                select: { id: true },
+            });
+            if (!lockedClient) {
+                throw new NotFoundException("Client not found for branch");
+            }
             const employees: EmployeeAssignmentCandidate[] = await tx.employee.findMany({
                 where: {
                     id: { in: employeeIds },

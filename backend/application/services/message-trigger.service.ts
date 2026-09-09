@@ -11,6 +11,15 @@ import {
 import { Prisma } from "@prisma/client";
 import { createHash } from "node:crypto";
 import { PrismaService } from "infrastructure/database/prisma.service";
+import type { ServiceRecordRevisionDispatchContext } from "@babyjamjam/shared/types/service-record";
+import {
+    authorizeServiceRecordDispatch,
+    deriveServiceRecordDocumentSyncStatus,
+    isValidServiceRecordDispatchContext,
+    isRevisionDocumentDispatchAllowed,
+} from "application/policies/service-record-revision-state.policy";
+import type { ServiceRecordDocumentSyncFacts } from "application/policies/service-record-revision-state.policy";
+import { lockServiceRecordWriteSet } from "application/policies/service-record-write-lock.policy";
 import {
     MESSAGE_TRIGGER_TEMPLATE_CATALOG,
     EVENT_OFFSET_OPTIONS,
@@ -55,6 +64,10 @@ import {
     IMessageLogRepository,
 } from "domain/repositories/message-log.repository.interface";
 import { MessageTriggerDeliveryService } from "./message-trigger-delivery.service";
+import {
+    SMS_DELIVERY_SNAPSHOT_VARIABLE,
+    type SmsTriggerDeliveryPreparation,
+} from "./sms-trigger-delivery.service";
 import { hasColumn, hasTable } from "infrastructure/database/schema-capabilities";
 import { MessageSenderApprovalService } from "./message-sender-approval.service";
 import { buildSmsClientVariables } from "./sms-client-variables";
@@ -339,6 +352,78 @@ type PreProviderSendFenceResult =
 
 const SMS_PROVIDER_ACCEPTANCE_UNCERTAIN_REASON =
     "문자 발송 결과가 불확실하여 자동 재전송을 중단했습니다. 제공자 이력 확인 후 수동 확인이 필요합니다.";
+
+function plannedSessionDatesFromJson(value: Prisma.JsonValue | null): Array<{
+    sessionIndex: number;
+    serviceDate: string;
+}> {
+    if (!Array.isArray(value)) return [];
+    return value
+        .map((entry) => {
+            if (!entry || typeof entry !== "object" || Array.isArray(entry)) return null;
+            const row = entry as Record<string, Prisma.JsonValue>;
+            const sessionIndex = row["sessionIndex"];
+            const serviceDate = row["serviceDate"];
+            if (
+                typeof sessionIndex !== "number"
+                || !Number.isInteger(sessionIndex)
+                || typeof serviceDate !== "string"
+            ) return null;
+            return { sessionIndex, serviceDate };
+        })
+        .filter((entry): entry is { sessionIndex: number; serviceDate: string } => entry !== null)
+        .sort((left, right) => left.sessionIndex - right.sessionIndex);
+}
+
+function stableJson(value: unknown): string {
+    if (Array.isArray(value)) return `[${value.map(stableJson).join(",")}]`;
+    if (value && typeof value === "object") {
+        return `{${Object.entries(value as Record<string, unknown>)
+            .sort(([left], [right]) => left.localeCompare(right))
+            .map(([key, nested]) => `${JSON.stringify(key)}:${stableJson(nested)}`)
+            .join(",")}}`;
+    }
+    return JSON.stringify(value) ?? "null";
+}
+
+function revisionPayloadFingerprint(payload: Prisma.JsonValue | null | undefined): string | null {
+    if (payload === null || payload === undefined) return null;
+    return createHash("sha256").update(stableJson(payload)).digest("hex");
+}
+
+function revisionDocumentJobFacts(
+    row: {
+        payload: Prisma.JsonValue | null;
+        payload_fingerprint: string | null;
+        status: string;
+        progress_step: string | null;
+    } | null,
+): ServiceRecordDocumentSyncFacts["revisionJob"] {
+    if (!row) return null;
+    const payload = row.payload;
+    if (!payload || Array.isArray(payload) || typeof payload !== "object") {
+        return {
+            revisionId: null,
+            payloadFingerprint: row.payload_fingerprint,
+            status: row.status,
+            progressStep: row.progress_step,
+            completeness: null,
+            manualReviewRequired: true,
+        };
+    }
+    const record = payload as Record<string, Prisma.JsonValue>;
+    const completeness = record["completeness"] === "complete" || record["completeness"] === "partial"
+        ? record["completeness"]
+        : null;
+    return {
+        revisionId: typeof record["revisionId"] === "string" ? record["revisionId"] : null,
+        payloadFingerprint: row.payload_fingerprint,
+        status: row.status,
+        progressStep: row.progress_step,
+        completeness,
+        manualReviewRequired: record["manualReviewRequired"] === true,
+    };
+}
 
 @Injectable()
 export class MessageTriggerService {
@@ -2047,7 +2132,65 @@ export class MessageTriggerService {
         }
 
         job.markProcessing(claimToken);
-        const authorization = await this.authorizeClaimedJobForDispatch(job);
+        // Keep narrow legacy test doubles and third-party in-process callers
+        // on the established one-step path until they provide the new
+        // preparation seam. The production MessageTriggerDeliveryService
+        // always exposes both methods, so real dispatches use the frozen
+        // snapshot boundary below.
+        const supportsPreparedDelivery = typeof (this.deliveryService as unknown as {
+            prepareJob?: unknown;
+            sendPreparedJob?: unknown;
+        }).prepareJob === "function"
+            && typeof (this.deliveryService as unknown as {
+                sendPreparedJob?: unknown;
+            }).sendPreparedJob === "function";
+        if (!supportsPreparedDelivery) {
+            const authorization = await this.authorizeClaimedJobForDispatch(job);
+            if (authorization.kind === "lost") {
+                return;
+            }
+            if (authorization.kind === "stale") {
+                job.cancel(authorization.reason);
+                await this.persistTriggerJobStatus(job, "persist stale trigger job");
+                return;
+            }
+            job.markDispatchAuthorized();
+            await this.deliverClaimedJob(job);
+            await this.persistTriggerJobStatus(job, "persist dispatched trigger job");
+            return;
+        }
+
+        // Receipt preparation can render, upload, and mint a token. Revalidate
+        // the persisted service-record source while the claim is still
+        // reversible, then release the common locks before opening that
+        // preparation boundary. The post-preparation authorization below is
+        // still required because a confirm may win while preparation runs.
+        const preparationFence = await this.authorizeClaimedJobBeforePreparation(job);
+        if (preparationFence.kind === "lost") {
+            return;
+        }
+        if (preparationFence.kind === "stale") {
+            job.cancel(preparationFence.reason);
+            await this.persistTriggerJobStatus(job, "persist stale trigger job before preparation");
+            return;
+        }
+
+        const preparation = await this.prepareClaimedJob(job);
+        if (!preparation) {
+            // Preparation either canceled the job with a policy skip reason or
+            // recorded a failed/deferred state. In both cases the irreversible
+            // dispatching marker must remain untouched.
+            if (job.status === "processing") {
+                job.markFailed("Provider disabled or delivery failed");
+                await this.persistTriggerJobStatus(job, "persist unsupported trigger delivery");
+            }
+            return;
+        }
+        if (!(await this.persistPreparedDelivery(job))) {
+            return;
+        }
+
+        const authorization = await this.authorizeClaimedJobForDispatch(job, preparation);
         if (authorization.kind === "lost") {
             return;
         }
@@ -2065,8 +2208,80 @@ export class MessageTriggerService {
         // Provider delivery and its message_log writes must happen outside the
         // claim transaction so the FK insert cannot wait on a held row lock.
         job.markDispatchAuthorized();
-        await this.deliverClaimedJob(job);
+        await this.deliverClaimedJob(job, preparation);
         await this.persistTriggerJobStatus(job, "persist dispatched trigger job");
+    }
+
+    /**
+     * Check revised service-record ownership and document readiness before
+     * receipt preparation. This transaction never marks the job dispatching;
+     * it only holds the common aggregate locks for the authoritative reread,
+     * then commits and releases them before rendering/upload/token work.
+     *
+     * Legacy SMS jobs have no revision context, so the source helper keeps
+     * their established common-lock behavior and the claim-token check still
+     * protects the preparation boundary. Their existing post-preparation
+     * claim fence remains responsible for cancellation races after a source
+     * change during preparation.
+     */
+    private async authorizeClaimedJobBeforePreparation(
+        job: MessageTriggerJobEntity,
+    ): Promise<PreProviderSendFenceResult> {
+        return this.prisma.$transaction(async (transaction) => {
+            const revisionFence = await this.fenceServiceRecordRevisionBeforeProviderSend(
+                job,
+                transaction,
+            );
+            if (revisionFence.kind !== "allow") {
+                return revisionFence;
+            }
+
+            // Verify that the claim is still processing and owned by this
+            // worker before releasing the source locks. No snapshot exists
+            // yet, so the post-preparation snapshot CAS remains authoritative
+            // after enrichment completes.
+            return this.fenceClaimTokenBeforeProviderSend(job, transaction);
+        }, {
+            maxWait: CLAIM_DISPATCH_AUTHORIZATION_TIMEOUT_MS,
+            timeout: CLAIM_DISPATCH_AUTHORIZATION_TIMEOUT_MS,
+        });
+    }
+
+    /**
+     * Prepare the exact provider payload while the claim is still reversible.
+     * A preparation failure is terminal/deferred at the job layer and never
+     * reaches the durable dispatch authorization transaction.
+     */
+    private async prepareClaimedJob(
+        job: MessageTriggerJobEntity,
+    ): Promise<SmsTriggerDeliveryPreparation | null> {
+        try {
+            return await this.deliveryService.prepareJob(job);
+        } catch (error) {
+            if (error instanceof TriggerJobDeferredError) {
+                job.defer(error.kind, error.message);
+            } else {
+                job.markFailed(error instanceof Error ? error.message : String(error));
+            }
+            await this.persistTriggerJobStatus(job, "persist failed trigger delivery preparation");
+            return null;
+        }
+    }
+
+    /**
+     * Persist the frozen delivery snapshot before any dispatch marker can be
+     * committed. If this write loses the claim, fail closed without opening a
+     * provider boundary.
+     */
+    private async persistPreparedDelivery(job: MessageTriggerJobEntity): Promise<boolean> {
+        try {
+            await this.jobRepository.update(job);
+            return true;
+        } catch (error) {
+            job.markFailed(error instanceof Error ? error.message : String(error));
+            await this.persistTriggerJobStatus(job, "persist failed frozen delivery snapshot");
+            return false;
+        }
     }
 
     /**
@@ -2077,8 +2292,19 @@ export class MessageTriggerService {
      */
     private async authorizeClaimedJobForDispatch(
         job: MessageTriggerJobEntity,
+        preparation?: SmsTriggerDeliveryPreparation,
     ): Promise<PreProviderSendFenceResult> {
         return this.prisma.$transaction(async (transaction) => {
+            // Revised service-record messages carry a server-derived context.
+            // Acquire the same client-owned lock set before the job row and
+            // compare that context after the lock. This keeps a confirm that
+            // wins the common boundary from being followed by an old SMS.
+            const revisionFence = await this.fenceServiceRecordRevisionBeforeProviderSend(
+                job,
+                transaction,
+            );
+            if (revisionFence.kind === "lost") return revisionFence;
+
             // Employee schedule writers lock the source row before committing
             // their replacement. Preserve that order here, then lock the job
             // row for the token/CAS check; no provider work occurs while either
@@ -2091,16 +2317,25 @@ export class MessageTriggerService {
                 return sourceFence;
             }
 
-            const tokenFence = await this.fenceClaimTokenBeforeProviderSend(job, transaction);
+            const tokenFence = await this.fenceClaimTokenBeforeProviderSend(
+                job,
+                transaction,
+                preparation?.serializedSnapshot,
+            );
             if (tokenFence.kind === "lost") {
                 return tokenFence;
             }
-            if (sourceFence.kind === "stale") {
+            const staleFence = sourceFence.kind === "stale"
+                ? sourceFence
+                : revisionFence.kind === "stale"
+                    ? revisionFence
+                    : null;
+            if (staleFence) {
                 const canceled = await transaction.$queryRaw<Array<{ id: string }>>(Prisma.sql`
                     UPDATE "message_trigger_job"
                     SET status = 'canceled',
                         canceled_at = date_trunc('milliseconds', clock_timestamp()),
-                        cancel_reason = ${sourceFence.reason},
+                        cancel_reason = ${staleFence.reason},
                         claim_token = NULL,
                         updated_at = date_trunc('milliseconds', clock_timestamp())
                     WHERE id = ${job.id}
@@ -2108,7 +2343,7 @@ export class MessageTriggerService {
                       AND claim_token = ${job.claimToken}
                     RETURNING id
                 `);
-                return canceled.length === 1 ? sourceFence : { kind: "lost" as const };
+                return canceled.length === 1 ? staleFence : { kind: "lost" as const };
             }
 
             const authorized = await transaction.$queryRaw<Array<{ id: string }>>(Prisma.sql`
@@ -2127,9 +2362,188 @@ export class MessageTriggerService {
         });
     }
 
-    private async deliverClaimedJob(job: MessageTriggerJobEntity): Promise<void> {
+    /**
+     * Revalidate an optional service-record revision context while holding the
+     * common client-owned write locks. Legacy jobs omit the context and retain
+     * their existing source fences. Missing Prisma delegates are treated as a
+     * lost authorization so a narrow test double can never accidentally claim
+     * a revised job without the database boundary.
+     */
+    private async fenceServiceRecordRevisionBeforeProviderSend(
+        job: MessageTriggerJobEntity,
+        transaction: Prisma.TransactionClient,
+    ): Promise<PreProviderSendFenceResult> {
+        const expected = job.payload.serviceRecordRevisionContext;
+        if (expected === undefined) {
+            // Legacy client jobs predate the revision context, but they still
+            // share the service-record aggregate with confirm and schedule
+            // writers. Acquire the common client-owned lock set before the
+            // claim-token CAS so a confirm that wins this boundary can cancel
+            // the pending/processing job before any provider call.
+            if (!job.branchId || job.clientId === null) return { kind: "allow" };
+            // Narrow unit doubles used by the existing message scheduler tests
+            // intentionally expose only the message/job delegates. A real
+            // Prisma transaction always has the service-record case delegate;
+            // preserve those doubles' legacy source-fence behavior while
+            // keeping the aggregate lock mandatory on the database path.
+            const caseDelegate = (transaction as unknown as {
+                service_record_case?: { findUnique?: unknown };
+            }).service_record_case;
+            if (typeof caseDelegate?.findUnique !== "function") return { kind: "allow" };
+            await lockServiceRecordWriteSet(transaction, {
+                branchId: job.branchId,
+                clientId: job.clientId,
+            });
+            return { kind: "allow" };
+        }
+        if (
+            !job.branchId
+            || job.clientId === null
+            || !isValidServiceRecordDispatchContext(expected)
+            || expected.branchId !== job.branchId
+            || expected.clientId !== job.clientId
+        ) {
+            return { kind: "stale", reason: "SERVICE_RECORD_REVISION_CONTEXT_INVALID" };
+        }
+
+        const caseDelegate = transaction.service_record_case as unknown as {
+            findUnique?: (args: unknown) => Promise<{
+                id: string;
+                branchId: string;
+                clientId: number | null;
+                requiredSessionCount: number | null;
+                plannedSessions: Prisma.JsonValue | null;
+                currentRevisionId: string | null;
+                currentUsableRevisionId: string | null;
+                currentUsableDocumentVersion: number | null;
+                formVersion: number;
+                status: string;
+            } | null>;
+        } | undefined;
+        const revisionDelegate = transaction.service_record_revision as unknown as {
+            findUnique?: (args: unknown) => Promise<{
+                revisionNumber: number;
+                payload: Prisma.JsonValue;
+            } | null>;
+        } | undefined;
+        if (typeof caseDelegate?.findUnique !== "function") {
+            return { kind: "lost" };
+        }
+
+        await lockServiceRecordWriteSet(transaction, {
+            branchId: job.branchId,
+            clientId: expected.clientId,
+            caseId: expected.serviceRecordCaseId,
+        });
+
+        const current = await caseDelegate.findUnique({
+            where: { id: expected.serviceRecordCaseId },
+            select: {
+                id: true,
+                branchId: true,
+                clientId: true,
+                requiredSessionCount: true,
+                plannedSessions: true,
+                currentRevisionId: true,
+                currentUsableRevisionId: true,
+                currentUsableDocumentVersion: true,
+                formVersion: true,
+                status: true,
+            },
+        });
+        if (
+            !current
+            || current.id !== expected.serviceRecordCaseId
+            || current.branchId !== expected.branchId
+            || current.clientId !== expected.clientId
+        ) {
+            return { kind: "lost", };
+        }
+
+        let revisionNumber = current.currentRevisionId === null ? null : expected.revisionNumber;
+        let businessFingerprint = expected.businessFingerprint;
+        if (current.currentRevisionId !== null && typeof revisionDelegate?.findUnique === "function") {
+            const revision = await revisionDelegate.findUnique({
+                where: { id: current.currentRevisionId },
+                select: { revisionNumber: true, payload: true },
+            });
+            if (!revision) return { kind: "lost", };
+            revisionNumber = revision.revisionNumber;
+            businessFingerprint = revisionPayloadFingerprint(revision.payload) ?? "";
+        }
+
+        // The expected context's documentSyncStatus is only a captured input;
+        // derive the observed value from the locked, persisted revision job and
+        // current usable pointers. A job row without matching complete
+        // pointers is deliberately treated as unknown by the shared policy.
+        const revisionJobRows = typeof transaction.$queryRaw === "function"
+            ? await transaction.$queryRaw<Array<{
+                payload: Prisma.JsonValue | null;
+                payload_fingerprint: string | null;
+                status: string;
+                progress_step: string | null;
+            }>>(Prisma.sql`
+                SELECT payload,
+                       payload_fingerprint,
+                       status,
+                       progress_step
+                FROM "eformsign_document_job"
+                WHERE branch_id = ${expected.branchId}::uuid
+                  AND job_type = 'create_document'
+                  AND payload->'context'->>'serviceRecordCaseId' = ${expected.serviceRecordCaseId}
+                  AND payload->'context'->>'branchId' = ${expected.branchId}
+                  AND payload->'context'->>'clientId' = ${String(expected.clientId)}
+                ORDER BY created_at DESC
+                LIMIT 1
+                FOR UPDATE
+            `)
+            : [];
+        const observedDocumentSyncStatus = deriveServiceRecordDocumentSyncStatus({
+            currentRevisionId: current.currentRevisionId ?? null,
+            currentUsableRevisionId: current.currentUsableRevisionId ?? null,
+            currentUsableDocumentVersion: current.currentUsableDocumentVersion ?? null,
+            revisionJob: revisionDocumentJobFacts(revisionJobRows[0] ?? null),
+        });
+
+        const observed: ServiceRecordRevisionDispatchContext = {
+            branchId: current.branchId,
+            clientId: current.clientId,
+            serviceRecordCaseId: current.id,
+            revisionId: current.currentRevisionId,
+            revisionNumber,
+            businessFingerprint,
+            plannedSessionCount: current.requiredSessionCount,
+            plannedSessionDates: plannedSessionDatesFromJson(current.plannedSessions),
+            documentSyncStatus: observedDocumentSyncStatus,
+            lifecycleStatus: current.status,
+            formVersion: current.formVersion,
+        };
+        const authorization = authorizeServiceRecordDispatch(expected, observed);
+        if (authorization.kind === "allow" && !isRevisionDocumentDispatchAllowed(observed)) {
+            return {
+                kind: "stale",
+                reason: "SERVICE_RECORD_DOCUMENT_SYNC_UNVERIFIED",
+            };
+        }
+        if (authorization.kind === "stale") {
+            return {
+                kind: "stale",
+                reason: authorization.reason ?? "SERVICE_RECORD_REVISION_CONTEXT_STALE",
+            };
+        }
+        return authorization.kind === "lost"
+            ? { kind: "lost" }
+            : { kind: "allow" };
+    }
+
+    private async deliverClaimedJob(
+        job: MessageTriggerJobEntity,
+        preparation?: SmsTriggerDeliveryPreparation,
+    ): Promise<void> {
         try {
-            const sent = await this.deliveryService.sendJob(job);
+            const sent = preparation
+                ? await this.deliveryService.sendPreparedJob(job, preparation)
+                : await this.deliveryService.sendJob(job);
             if (sent) {
                 job.markSent();
             } else if (job.status === "processing" || job.status === "dispatching") {
@@ -2355,6 +2769,7 @@ export class MessageTriggerService {
     private async fenceClaimTokenBeforeProviderSend(
         job: MessageTriggerJobEntity,
         transaction: Prisma.TransactionClient,
+        expectedPreparedSnapshot?: string,
     ): Promise<PreProviderSendFenceResult> {
         if (!job.claimToken) return { kind: "lost" };
 
@@ -2367,6 +2782,7 @@ export class MessageTriggerService {
             employee_schedule_id?: number | null;
             recipient_type?: string;
             template_key?: string;
+            payload?: Prisma.JsonValue | null;
         }>>(Prisma.sql`
             SELECT status,
                    claim_token,
@@ -2375,7 +2791,8 @@ export class MessageTriggerService {
                    client_id,
                    employee_schedule_id,
                    recipient_type,
-                   template_key
+                   template_key,
+                   payload
             FROM "message_trigger_job"
             WHERE id = ${job.id}
             FOR UPDATE
@@ -2393,6 +2810,25 @@ export class MessageTriggerService {
             || (current.template_key !== undefined && current.template_key !== job.templateKey)
         ) {
             return { kind: "lost" };
+        }
+
+        if (expectedPreparedSnapshot !== undefined) {
+            const persistedPayload = current.payload;
+            const persistedTemplateVariables = persistedPayload
+                && typeof persistedPayload === "object"
+                && !Array.isArray(persistedPayload)
+                && persistedPayload["templateVariables"]
+                && typeof persistedPayload["templateVariables"] === "object"
+                && !Array.isArray(persistedPayload["templateVariables"])
+                ? persistedPayload["templateVariables"]
+                : null;
+            const persistedSnapshot = persistedTemplateVariables
+                && typeof persistedTemplateVariables[SMS_DELIVERY_SNAPSHOT_VARIABLE] === "string"
+                ? persistedTemplateVariables[SMS_DELIVERY_SNAPSHOT_VARIABLE]
+                : undefined;
+            if (persistedSnapshot !== expectedPreparedSnapshot) {
+                return { kind: "lost" };
+            }
         }
 
         return { kind: "allow" };
