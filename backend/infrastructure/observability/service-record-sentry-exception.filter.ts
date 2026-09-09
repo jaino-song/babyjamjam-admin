@@ -31,13 +31,14 @@ export class ServiceRecordSentryExceptionFilter
         if (host.getType() === "http") {
             const request = host.switchToHttp().getRequest<Request>();
             const path = request.originalUrl || request.url;
-            const statusCode = exception instanceof HttpException
+            const originalStatusCode = exception instanceof HttpException
                 ? exception.getStatus()
                 : HttpStatus.INTERNAL_SERVER_ERROR;
 
             const response = host.switchToHttp().getResponse<Response>();
             const requestId = getProblemRequestId(response);
             const problem = mapHttpProblem(exception, request, response);
+            const statusCode = problem?.status ?? originalStatusCode;
             if (statusCode >= 500) {
                 try {
                     if (isServiceRecordSignal(path)) {

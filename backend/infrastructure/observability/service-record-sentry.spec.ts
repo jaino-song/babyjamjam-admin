@@ -462,6 +462,20 @@ describe("service-record backend Sentry contract", () => {
         expect(mockCaptureException).toHaveBeenCalledTimes(1);
     });
 
+    it("captures invalid public contracts as the effective 500 response", () => {
+        const response = { locals: {}, setHeader: jest.fn(), status: jest.fn().mockReturnThis(), json: jest.fn() };
+        const filter = new ServiceRecordSentryExceptionFilter({ httpAdapter: { reply: jest.fn() } } as unknown as HttpAdapterHost);
+        const host = {
+            getType: () => "http",
+            switchToHttp: () => ({ getRequest: () => ({ url: "/clients", method: "POST" }), getResponse: () => response }),
+        } as unknown as ArgumentsHost;
+        filter.catch(new BadRequestException({ code: "REQUEST_INVALID", type: "invalid" }), host);
+        expect(response.status).toHaveBeenCalledWith(500);
+        expect(mockScope.setTag).toHaveBeenCalledWith("status_code", "500");
+        expect(mockScope.setTag).toHaveBeenCalledWith("error.code", "INTERNAL_ERROR");
+        expect(mockCaptureException).toHaveBeenCalledTimes(1);
+    });
+
     it.each(["backend", "service-records", "database-failover"])("retains bounded public problem tags after %s sanitization", (feature) => {
         const event = sanitizeSentryEvent({ tags: { feature, "error.code": "DEPENDENCY_UNAVAILABLE", outcome: "UNKNOWN", "db.failover_eligible": "true" } });
         expect(event.tags).toMatchObject({ "error.code": "DEPENDENCY_UNAVAILABLE", outcome: "UNKNOWN" });
