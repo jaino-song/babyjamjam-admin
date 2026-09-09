@@ -59,6 +59,7 @@ type SmsProblemCode = Extract<
     | "MESSAGE_SEND_REJECTED"
     | "MESSAGE_SEND_ALREADY_REQUESTED"
     | "MESSAGE_REQUEST_KEY_CONFLICT"
+    | "RESOURCE_NOT_FOUND"
 >;
 
 type SmsProblemBody = Pick<
@@ -474,7 +475,7 @@ export class MessageDeliveryController {
                 select: { id: true, name: true, phone: true },
             });
             if (!client) {
-                throw new NotFoundException("Client not found for branch");
+                throw new NotFoundException(this.smsProblemBody("RESOURCE_NOT_FOUND", "NOT_APPLIED"));
             }
             const phone = normalizePhone(client.phone);
             if (!phone || phone !== normalizedReceivers[0]) {
@@ -491,7 +492,7 @@ export class MessageDeliveryController {
                 select: { id: true, name: true, phone: true },
             });
             if (!employee) {
-                throw new NotFoundException("Employee not found for branch");
+                throw new NotFoundException(this.smsProblemBody("RESOURCE_NOT_FOUND", "NOT_APPLIED"));
             }
             const phone = normalizePhone(employee.phone);
             if (!phone || phone !== normalizedReceivers[0]) {
@@ -506,7 +507,7 @@ export class MessageDeliveryController {
                     throw new BadRequestException("SMS recipient matches more than one branch record");
                 }
                 if (!client && !employee) {
-                    throw new NotFoundException("SMS recipient not found for branch");
+                    throw new NotFoundException(this.smsProblemBody("RESOURCE_NOT_FOUND", "NOT_APPLIED"));
                 }
                 if (client) {
                     recipients.push({ id: client.id, name: client.name, phone, kind: "client" });

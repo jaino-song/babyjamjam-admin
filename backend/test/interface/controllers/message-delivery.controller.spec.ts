@@ -1,3 +1,6 @@
+import type { Request, Response } from "express";
+import { normalizeApiError, PROBLEM_CATALOG } from "@babyjamjam/shared/errors/problem-details";
+import { mapHttpProblem, sendProblemResponse } from "infrastructure/filters/problem-response";
 import {
     BadGatewayException,
     BadRequestException,
@@ -306,7 +309,7 @@ describe("MessageDeliveryController", () => {
                     clientId: 7,
                 },
             ),
-        ).rejects.toThrow("Client not found for branch");
+        ).rejects.toMatchObject({ status: 404, response: { code: "RESOURCE_NOT_FOUND", outcome: "NOT_APPLIED" } });
 
         expect(prismaService.client.findFirst).toHaveBeenCalledWith({
             where: { id: 7, branchId: "branch-a" },
@@ -370,10 +373,79 @@ describe("MessageDeliveryController", () => {
                     message: "임의 번호 발송 시도",
                 },
             ),
-        ).rejects.toThrow("SMS recipient not found for branch");
+        ).rejects.toMatchObject({ status: 404, response: { code: "RESOURCE_NOT_FOUND", outcome: "NOT_APPLIED" } });
 
         expect(messageSenderApprovalService.ensureApproved).not.toHaveBeenCalled();
         expect(prismaService.message_log.create).not.toHaveBeenCalled();
+        expect(aligoService.sendSms).not.toHaveBeenCalled();
+    });
+
+
+    it.each([{ clientId: 7 }, { employeeId: 12 }, {}])(
+        "preserves a safe pre-send recipient 404 through the public response: %j",
+        async (selection) => {
+            prismaService.client.findFirst.mockResolvedValue(null);
+            prismaService.employee?.findFirst.mockResolvedValue(null);
+            for (const locale of ["ko-KR", "en-US"] as const) {
+                const exception: unknown = await controller.sendSms(
+                    { branchId: "branch-a" },
+                    { receiver: "01099998888", message: "private message", ...selection },
+                ).catch((error: unknown) => error);
+                const requestId = `test-recipient-404-${locale}`;
+                const response = {
+                    locals: { errorRequestId: requestId },
+                    setHeader: jest.fn(), status: jest.fn().mockReturnThis(), json: jest.fn(),
+                };
+                const problem = mapHttpProblem(exception,
+                    { method: "POST", acceptsLanguages: () => locale } as unknown as Request,
+                    response as unknown as Response);
+                if (!problem) throw new Error("Expected a registered recipient problem");
+                sendProblemResponse(response as unknown as Response, problem);
+                const body: unknown = response.json.mock.calls[0]?.[0];
+                expect(body).toMatchObject({
+                    code: "RESOURCE_NOT_FOUND", status: 404, requestId, params: {},
+                    outcome: "NOT_APPLIED", detail: PROBLEM_CATALOG.RESOURCE_NOT_FOUND.detail[locale],
+                    recovery: { action: "NONE", retry: { mode: "NEVER" } },
+                });
+                expect(problem.params).toEqual({});
+                expect(response.status).toHaveBeenCalledWith(404);
+                expect(response.setHeader).toHaveBeenCalledWith("Content-Type", "application/problem+json");
+                expect(response.setHeader).toHaveBeenCalledWith("Content-Language", locale);
+                expect(response.setHeader).toHaveBeenCalledWith("Cache-Control", "no-store");
+                expect(response.setHeader).toHaveBeenCalledWith("X-Request-Id", requestId);
+                const normalized = normalizeApiError({ response: { status: 404, data: body } }, { operation: "mutation", locale });
+                expect(normalized).toMatchObject({ verified: true, outcome: "NOT_APPLIED", problem: { requestId } });
+                expect(normalized.message).toBe(PROBLEM_CATALOG.RESOURCE_NOT_FOUND.detail[locale]);
+                for (const privateValue of ["branch-a", "01099998888", "private message", "Client not found", "Employee not found"]) {
+                    expect(JSON.stringify(body)).not.toContain(privateValue);
+                }
+            }
+            const query = expect.objectContaining({ where: expect.objectContaining({ branchId: "branch-a" }) });
+            if ("clientId" in selection) expect(prismaService.client.findFirst).toHaveBeenCalledWith(query);
+            else if ("employeeId" in selection) {
+                expect(prismaService.employee?.findFirst).toHaveBeenCalledWith(expect.objectContaining({
+                    where: { id: 12, branchId: "branch-a", deletedAt: null },
+                }));
+            } else {
+                expect(prismaService.client.findFirst).toHaveBeenCalledWith(query);
+                expect(prismaService.employee?.findFirst).toHaveBeenCalledWith(query);
+            }
+            expect(messageSenderApprovalService.ensureApproved).not.toHaveBeenCalled();
+            expect(prismaService.message_log.create).not.toHaveBeenCalled();
+            expect(prismaService.message_log.update).not.toHaveBeenCalled();
+            expect(aligoService.sendSms).not.toHaveBeenCalled();
+        },
+    );
+
+    it("does not turn an unexpected recipient lookup error into a known 404", async () => {
+        const failure = new Error("private database lookup failure");
+        prismaService.client.findFirst.mockRejectedValue(failure);
+        await expect(controller.sendSms({ branchId: "branch-a" }, {
+            receiver: "01099998888", message: "test", clientId: 7,
+        })).rejects.toBe(failure);
+        expect(messageSenderApprovalService.ensureApproved).not.toHaveBeenCalled();
+        expect(prismaService.message_log.create).not.toHaveBeenCalled();
+        expect(prismaService.message_log.update).not.toHaveBeenCalled();
         expect(aligoService.sendSms).not.toHaveBeenCalled();
     });
 
