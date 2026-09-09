@@ -444,18 +444,24 @@ describe("MessageDeliveryController", () => {
             },
         });
 
-        await expect(
-            controller.sendSms(
-                { branchId: "org-1" },
-                {
-                    receiver: "01012345678",
-                    message: "테스트 발송 본문",
-                    title: "안내",
-                    triggerType: "immediate",
-                    msgType: "AUTO",
-                },
-            ),
-        ).rejects.toThrow(BadGatewayException);
+        const error = await controller.sendSms(
+            { branchId: "org-1" },
+            {
+                receiver: "01012345678",
+                message: "테스트 발송 본문",
+                title: "안내",
+                triggerType: "immediate",
+                msgType: "AUTO",
+            },
+        ).catch((caught: unknown) => caught);
+        expect(error).toBeInstanceOf(BadGatewayException);
+        expect((error as BadGatewayException).getResponse()).toMatchObject({
+            code: "MESSAGE_SEND_REJECTED",
+            outcome: "FAILED",
+            operationId: "42",
+            recovery: { action: "NONE", retry: { mode: "NEVER" } },
+        });
+        expect(JSON.stringify((error as BadGatewayException).getResponse())).not.toContain("수신번호 형식");
 
         expect(prismaService.message_log.update).toHaveBeenCalledWith({
             where: { id: 42 },
@@ -488,18 +494,23 @@ describe("MessageDeliveryController", () => {
             },
         });
 
-        await expect(
-            controller.sendSms(
-                { branchId: "org-1" },
-                {
-                    receiver: "01012345678,01099999999",
-                    message: "테스트 발송 본문",
-                    title: "안내",
-                    triggerType: "immediate",
-                    msgType: "AUTO",
-                },
-            ),
-        ).rejects.toThrow(BadGatewayException);
+        const error = await controller.sendSms(
+            { branchId: "org-1" },
+            {
+                receiver: "01012345678,01099999999",
+                message: "테스트 발송 본문",
+                title: "안내",
+                triggerType: "immediate",
+                msgType: "AUTO",
+            },
+        ).catch((caught: unknown) => caught);
+        expect(error).toBeInstanceOf(BadGatewayException);
+        expect((error as BadGatewayException).getResponse()).toMatchObject({
+            code: "MESSAGE_SEND_PARTIAL",
+            outcome: "PARTIALLY_APPLIED",
+            operationId: "42",
+            recovery: { action: "CHECK_STATUS", retry: { mode: "NEVER" } },
+        });
 
         expect(prismaService.message_log.update).toHaveBeenCalledWith({
             where: { id: 42 },
@@ -545,16 +556,19 @@ describe("MessageDeliveryController", () => {
     it("should not call the provider when the initial delivery record cannot be created", async () => {
         prismaService.message_log.create.mockRejectedValue(new Error("database unavailable"));
 
-        await expect(
-            controller.sendSms(
-                { branchId: "org-1" },
-                {
-                    receiver: "01012345678",
-                    message: "테스트 발송 본문",
-                    triggerType: "immediate",
-                },
-            ),
-        ).rejects.toThrow(ServiceUnavailableException);
+        const error = await controller.sendSms(
+            { branchId: "org-1" },
+            {
+                receiver: "01012345678",
+                message: "테스트 발송 본문",
+                triggerType: "immediate",
+            },
+        ).catch((caught: unknown) => caught);
+        expect(error).toBeInstanceOf(ServiceUnavailableException);
+        expect((error as ServiceUnavailableException).getResponse()).toMatchObject({
+            code: "MESSAGE_SEND_NOT_STARTED",
+            outcome: "NOT_APPLIED",
+        });
 
         expect(aligoService.sendSms).not.toHaveBeenCalled();
     });
@@ -578,18 +592,19 @@ describe("MessageDeliveryController", () => {
         });
         prismaService.message_log.update.mockRejectedValue(new Error("database unavailable"));
 
-        await expect(
-            controller.sendSms(
-                { branchId: "org-1" },
-                {
-                    receiver: "01012345678",
-                    message: "테스트 발송 본문",
-                    triggerType: "immediate",
-                },
-            ),
-        ).rejects.toThrow(
-            "문자 공급자에는 접수되었지만 발송 기록 상태를 갱신하지 못했습니다.",
-        );
+        const error = await controller.sendSms(
+            { branchId: "org-1" },
+            {
+                receiver: "01012345678",
+                message: "테스트 발송 본문",
+                triggerType: "immediate",
+            },
+        ).catch((caught: unknown) => caught);
+        expect(error).toBeInstanceOf(ServiceUnavailableException);
+        expect((error as ServiceUnavailableException).getResponse()).toMatchObject({
+            code: "MESSAGE_SEND_UNCONFIRMED",
+            outcome: "UNKNOWN",
+        });
 
         expect(prismaService.message_log.create).toHaveBeenCalledTimes(1);
         expect(aligoService.sendSms).toHaveBeenCalledTimes(1);
@@ -605,20 +620,157 @@ describe("MessageDeliveryController", () => {
         prismaService.message_log.update.mockRejectedValue(new Error("database unavailable"));
         aligoService.sendSms.mockRejectedValue(new Error("provider connection reset"));
 
-        await expect(
-            controller.sendSms(
-                { branchId: "org-1" },
-                {
-                    receiver: "01012345678",
-                    message: "결과가 불확실한 발송",
-                    triggerType: "immediate",
-                },
-            ),
-        ).rejects.toThrow(BadGatewayException);
+        const error = await controller.sendSms(
+            { branchId: "org-1" },
+            {
+                receiver: "01012345678",
+                message: "결과가 불확실한 발송",
+                triggerType: "immediate",
+            },
+        ).catch((caught: unknown) => caught);
+        expect(error).toBeInstanceOf(ServiceUnavailableException);
+        expect((error as ServiceUnavailableException).getResponse()).toMatchObject({
+            code: "MESSAGE_SEND_UNCONFIRMED",
+            outcome: "UNKNOWN",
+        });
 
         expect(row.providerAcceptanceState).toBe("started");
         expect(prismaService.message_log.update).toHaveBeenCalledTimes(1);
         expect(aligoService.sendSms).toHaveBeenCalledTimes(1);
+    });
+
+    it("should keep malformed provider counters unconfirmed without scheduling a retry", async () => {
+        aligoService.sendSms.mockResolvedValue({
+            request: {
+                senderPhone: "0212345678",
+                receiver: "01012345678",
+                msgType: "SMS",
+                testModeYn: "N",
+            },
+            response: {
+                result_code: 1,
+                message: "성공",
+                msg_id: 321,
+                success_cnt: 2,
+                error_cnt: 0,
+                msg_type: "SMS",
+            },
+        });
+
+        const error = await controller.sendSms(
+            { branchId: "org-1" },
+            { receiver: "01012345678", message: "카운터 불일치" },
+        ).catch((caught: unknown) => caught);
+
+        expect(error).toBeInstanceOf(BadGatewayException);
+        expect((error as BadGatewayException).getResponse()).toMatchObject({
+            code: "MESSAGE_SEND_UNCONFIRMED",
+            outcome: "UNKNOWN",
+            operationId: "42",
+            recovery: { action: "CHECK_STATUS", retry: { mode: "NEVER" } },
+        });
+        expect(prismaService.message_log.update).toHaveBeenCalledWith({
+            where: { id: 42 },
+            data: expect.objectContaining({
+                providerAcceptanceState: "uncertain",
+                providerAcceptedAt: null,
+                nextRetryAt: null,
+            }),
+        });
+    });
+
+    it("should classify a pre-send fingerprint mismatch separately from an existing request", async () => {
+        const messageLogModel = prismaService.message_log as typeof prismaService.message_log & {
+            findUnique: jest.Mock;
+        };
+        messageLogModel.findUnique = jest.fn().mockResolvedValue({
+            id: 73,
+            providerAcceptanceFingerprint: "different-fingerprint",
+            providerAcceptanceState: "prepared",
+        });
+
+        const error = await controller.sendSms(
+            { branchId: "org-1" },
+            {
+                receiver: "01012345678",
+                message: "다른 내용",
+                idempotencyKey: "same-key",
+            },
+        ).catch((caught: unknown) => caught);
+
+        expect(error).toBeInstanceOf(ConflictException);
+        expect((error as ConflictException).getResponse()).toMatchObject({
+            code: "MESSAGE_REQUEST_KEY_CONFLICT",
+            outcome: "NOT_APPLIED",
+            recovery: { action: "NONE", retry: { mode: "NEVER" } },
+        });
+        expect(prismaService.message_log.create).not.toHaveBeenCalled();
+        expect(aligoService.sendSms).not.toHaveBeenCalled();
+    });
+
+    it("should classify a matching durable request as UNKNOWN and avoid the provider", async () => {
+        const messageLogModel = prismaService.message_log as typeof prismaService.message_log & {
+            findUnique: jest.Mock;
+        };
+        messageLogModel.findUnique = jest.fn().mockResolvedValue({
+            id: 74,
+            providerAcceptanceFingerprint: undefined,
+            providerAcceptanceState: "started",
+            status: "pending",
+        });
+        const request = {
+            receiver: "01012345678",
+            message: "이미 기록된 요청",
+            idempotencyKey: "already-requested",
+        };
+        // Derive the fingerprint through the first call's create path, then
+        // return a matching durable record for the retrying identity.
+        messageLogModel.findUnique.mockResolvedValueOnce(null);
+        prismaService.message_log.create.mockImplementationOnce(async ({ data }: { data: Record<string, unknown> }) => ({
+            ...data,
+            id: 74,
+            providerAcceptanceState: "started",
+            status: "pending",
+        }));
+        aligoService.sendSms.mockResolvedValueOnce(undefined as never);
+        await expect(controller.sendSms({ branchId: "org-1" }, request)).rejects.toThrow(BadGatewayException);
+        const createdData = prismaService.message_log.create.mock.calls[0]?.[0]?.data as Record<string, unknown>;
+        messageLogModel.findUnique.mockReset();
+        messageLogModel.findUnique.mockResolvedValue({
+            id: 74,
+            providerAcceptanceFingerprint: createdData["providerAcceptanceFingerprint"],
+            providerAcceptanceState: "started",
+            status: "pending",
+        });
+
+        const error = await controller.sendSms({ branchId: "org-1" }, request).catch((caught: unknown) => caught);
+        expect(error).toBeInstanceOf(ConflictException);
+        expect((error as ConflictException).getResponse()).toMatchObject({
+            code: "MESSAGE_SEND_ALREADY_REQUESTED",
+            outcome: "UNKNOWN",
+            operationId: "74",
+            recovery: { action: "CHECK_STATUS", retry: { mode: "NEVER" } },
+        });
+        expect(aligoService.sendSms).toHaveBeenCalledTimes(1);
+    });
+
+    it("should not cross Aligo when provider-call boundary persistence is unavailable", async () => {
+        const messageLogModel = prismaService.message_log as typeof prismaService.message_log & {
+            updateMany: jest.Mock;
+        };
+        messageLogModel.updateMany = jest.fn().mockRejectedValue(new Error("database unavailable"));
+
+        const error = await controller.sendSms(
+            { branchId: "org-1" },
+            { receiver: "01012345678", message: "경계 기록 실패" },
+        ).catch((caught: unknown) => caught);
+
+        expect(error).toBeInstanceOf(ServiceUnavailableException);
+        expect((error as ServiceUnavailableException).getResponse()).toMatchObject({
+            code: "MESSAGE_SEND_UNCONFIRMED",
+            outcome: "UNKNOWN",
+        });
+        expect(aligoService.sendSms).not.toHaveBeenCalled();
     });
 
     it("should converge duplicate manual requests with one idempotency key before crossing Aligo", async () => {
