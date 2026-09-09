@@ -1,4 +1,5 @@
 import { HttpException } from "@nestjs/common";
+import { PROBLEM_CATALOG, type ProblemCode, type ProblemOutcome } from "@babyjamjam/shared/errors/problem-details";
 import * as Sentry from "@sentry/nestjs";
 import type {
     ErrorEvent,
@@ -22,7 +23,12 @@ type ExceptionValue = NonNullable<NonNullable<Event["exception"]>["values"]>[num
 type Stacktrace = NonNullable<ExceptionValue["stacktrace"]>;
 type StackFrame = NonNullable<Stacktrace["frames"]>[number];
 
-export interface PrismaSentryErrorContext {
+interface PublicProblemContext {
+    problemCode?: ProblemCode;
+    outcome?: ProblemOutcome;
+}
+
+export interface PrismaSentryErrorContext extends PublicProblemContext {
     requestId?: string;
     code: string;
     eligible: boolean;
@@ -43,7 +49,7 @@ export type ServiceRecordOperation =
     | "webhook"
     | "link-schedule";
 
-export interface ServiceRecordErrorContext {
+export interface ServiceRecordErrorContext extends PublicProblemContext {
     operation: ServiceRecordOperation;
     handled: boolean;
     statusCode?: number;
@@ -54,7 +60,7 @@ export interface ServiceRecordErrorContext {
     smokeTest?: boolean;
 }
 
-export interface BackendErrorContext {
+export interface BackendErrorContext extends PublicProblemContext {
     handled: boolean;
     statusCode?: number;
     requestId?: string;
@@ -95,7 +101,7 @@ function getDatabaseFailoverTags(event: Event): Record<string, string> {
     if (environment) tags["environment"] = environment;
     if (route) tags["db.route"] = route;
 
-    return tags;
+    return { ...tags, ...getPublicProblemTags(sourceTags["error.code"], sourceTags["outcome"]) };
 }
 
 export function isDatabaseFailoverEvent(event: Event): boolean {
@@ -146,6 +152,7 @@ const SAFE_TAG_KEYS = new Set([
     "provider_request_id",
     "provider.request_id",
     "outcome",
+    "error.code",
     "correlation_id",
     "correlation.id",
     "handled",
@@ -227,14 +234,14 @@ function sanitizeSentryTags(
 ): Record<string, string> {
     const tags: Record<string, string> = { feature };
     for (const [key, value] of Object.entries(sourceTags ?? {})) {
-        if (!SAFE_TAG_KEYS.has(key) || key === "feature") continue;
+        if (!SAFE_TAG_KEYS.has(key) || key === "feature" || key === "error.code") continue;
         if (typeof value === "string") {
             tags[key] = sanitizeText(value);
         } else if (typeof value === "number" || typeof value === "boolean") {
             tags[key] = String(value);
         }
     }
-    return tags;
+    return { ...tags, ...getPublicProblemTags(sourceTags?.["error.code"], undefined) };
 }
 
 function sanitizeHeaders(
@@ -500,6 +507,27 @@ export function getSentryOptions(): NodeOptions {
     };
 }
 
+/** Bounded public catalog values are tags; request identifiers stay in contexts. */
+function getPublicProblemTags(code: unknown, outcome: unknown): Record<string, string> {
+    const tags: Record<string, string> = {};
+    if (typeof code === "string" && Object.prototype.hasOwnProperty.call(PROBLEM_CATALOG, code)) {
+        tags["error.code"] = code;
+    }
+    if (typeof outcome === "string" && ["NOT_APPLIED", "FAILED", "PARTIALLY_APPLIED", "UNKNOWN"].includes(outcome)) {
+        tags["outcome"] = outcome;
+    }
+    return tags;
+}
+
+function setPublicProblemTags(
+    scope: Pick<Sentry.Scope, "setTag">,
+    context: PublicProblemContext,
+): void {
+    for (const [key, value] of Object.entries(getPublicProblemTags(context.problemCode, context.outcome))) {
+        scope.setTag(key, value);
+    }
+}
+
 export function captureBackendError(
     error: unknown,
     context: BackendErrorContext,
@@ -522,6 +550,7 @@ export function captureBackendError(
 
     return Sentry.withScope((scope) => {
         scope.setLevel("error");
+        setPublicProblemTags(scope, context);
         scope.setTag("feature", BACKEND_FEATURE);
         scope.setTag("app", "backend");
         scope.setTag("runtime", "node");
@@ -558,6 +587,7 @@ export function captureServiceRecordError(
     }
     return Sentry.withScope((scope) => {
         scope.setLevel("error");
+        setPublicProblemTags(scope, context);
         scope.setTag("feature", SERVICE_RECORD_FEATURE);
         scope.setTag("app", "backend");
         scope.setTag("runtime", "node");
@@ -597,6 +627,7 @@ export function capturePrismaError(
 
     return Sentry.withScope((scope) => {
         scope.setLevel("error");
+        setPublicProblemTags(scope, context);
         scope.setTag("feature", DATABASE_FAILOVER_FEATURE);
         scope.setTag("environment", getSentryEnvironment());
         scope.setTag("db.route", normalizeDatabaseRoute(context.route) ?? "unknown");

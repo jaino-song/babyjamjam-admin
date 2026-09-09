@@ -82,6 +82,10 @@ describe("PrismaExceptionFilter database failover telemetry", () => {
         expect(mockScope.setTag).toHaveBeenCalledWith("db.route", "shared");
         expect(mockScope.setTag).toHaveBeenCalledWith("db.failover_eligible", "true");
         expect(mockScope.setTag).toHaveBeenCalledWith("prisma.code", code);
+        if (code === "P1001" || code === "P1017") {
+            expect(mockScope.setTag).toHaveBeenCalledWith("error.code", "DEPENDENCY_UNAVAILABLE");
+            expect(mockScope.setTag).toHaveBeenCalledWith("outcome", "UNKNOWN");
+        }
         expect(mockCaptureException).toHaveBeenCalledTimes(1);
         expect(mockCaptureException.mock.calls[0]?.[0]).toMatchObject({
             message: "Database connectivity failure",

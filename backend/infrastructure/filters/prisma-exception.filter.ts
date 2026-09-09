@@ -56,11 +56,19 @@ export class PrismaExceptionFilter implements ExceptionFilter {
         const prismaCode = code ?? "unknown";
         const status = PRISMA_ERROR_STATUS[prismaCode] || HttpStatus.INTERNAL_SERVER_ERROR;
         const requestId = getProblemRequestId(response);
+        const problem = status >= 500 ? createProblemDetails({
+            code: status === HttpStatus.SERVICE_UNAVAILABLE ? "DEPENDENCY_UNAVAILABLE" : "INTERNAL_ERROR",
+            requestId,
+            locale: getProblemLocale(request, response),
+            ...(["GET", "HEAD", "OPTIONS"].includes(request.method) ? {} : { outcome: "UNKNOWN" as const }),
+        }) : undefined;
         this.logger.error({ code: prismaCode, requestId, status });
         try {
             capturePrismaError(exception, {
                 code: prismaCode,
                 requestId,
+                problemCode: problem?.code,
+                outcome: problem?.outcome,
                 eligible: isPrismaFailoverEligible(exception),
                 route: getDatabaseConnectionMode(),
             });
@@ -77,14 +85,6 @@ export class PrismaExceptionFilter implements ExceptionFilter {
                 error: status === 409 ? "Conflict" : status === 404 ? "Not Found" : "Bad Request",
             });
         }
-        const locale = getProblemLocale(request, response);
-        // DB 제약만으로 고객 중복이나 삭제 제한을 추측하지 않아요.
-        const problem = createProblemDetails({
-            code: status === HttpStatus.SERVICE_UNAVAILABLE ? "DEPENDENCY_UNAVAILABLE" : "INTERNAL_ERROR",
-            requestId,
-            locale,
-            ...(["GET", "HEAD", "OPTIONS"].includes(request.method) ? {} : { outcome: "UNKNOWN" as const }),
-        });
-        return sendProblemResponse(response, problem);
+        if (problem) return sendProblemResponse(response, problem);
     }
 }

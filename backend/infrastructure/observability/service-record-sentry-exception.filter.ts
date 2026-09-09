@@ -37,29 +37,33 @@ export class ServiceRecordSentryExceptionFilter
 
             const response = host.switchToHttp().getResponse<Response>();
             const requestId = getProblemRequestId(response);
+            const problem = mapHttpProblem(exception, request, response);
             if (statusCode >= 500) {
                 try {
-                if (isServiceRecordSignal(path)) {
-                    captureServiceRecordError(exception, {
-                        operation: getServiceRecordOperation(path),
-                        handled: false,
-                        statusCode,
-                        requestId,
-                    });
-                } else {
-                    captureBackendError(exception, {
-                        operation: "http",
-                        handled: false,
-                        statusCode,
-                        requestId,
-                    });
-                }
+                    if (isServiceRecordSignal(path)) {
+                        captureServiceRecordError(exception, {
+                            operation: getServiceRecordOperation(path),
+                            handled: false,
+                            statusCode,
+                            requestId,
+                            problemCode: problem?.code,
+                            outcome: problem?.outcome,
+                        });
+                    } else {
+                        captureBackendError(exception, {
+                            operation: "http",
+                            handled: false,
+                            statusCode,
+                            requestId,
+                            problemCode: problem?.code,
+                            outcome: problem?.outcome,
+                        });
+                    }
                 } catch {
                     // 관측 도구의 실패가 원래 요청 오류를 덮지 않아요.
                 }
             }
 
-            const problem = mapHttpProblem(exception, request, response);
             if (problem) {
                 sendProblemResponse(response, problem);
                 return;

@@ -445,6 +445,30 @@ describe("service-record backend Sentry contract", () => {
         expect(reply).toHaveBeenCalledTimes(2);
     });
 
+    it.each(["/clients", "/service-record/finalize"])("connects the public response to one capture for %s", (url) => {
+        const response = { locals: {}, setHeader: jest.fn(), status: jest.fn().mockReturnThis(), json: jest.fn() };
+        const filter = new ServiceRecordSentryExceptionFilter({ httpAdapter: { reply: jest.fn() } } as unknown as HttpAdapterHost);
+        const host = {
+            getType: () => "http",
+            switchToHttp: () => ({ getRequest: () => ({ url, method: "POST" }), getResponse: () => response }),
+        } as unknown as ArgumentsHost;
+        const exception = new ServiceUnavailableException({ code: "DEPENDENCY_UNAVAILABLE", outcome: "UNKNOWN" });
+        filter.catch(exception, host);
+        const problem = response.json.mock.calls[0]?.[0];
+        expect(problem).toMatchObject({ code: "DEPENDENCY_UNAVAILABLE", outcome: "UNKNOWN", requestId: expect.any(String) });
+        expect(mockScope.setTag).toHaveBeenCalledWith("error.code", problem.code);
+        expect(mockScope.setTag).toHaveBeenCalledWith("outcome", problem.outcome);
+        expect(mockScope.setContext).toHaveBeenCalledWith("requestReference", { requestId: problem.requestId });
+        expect(mockCaptureException).toHaveBeenCalledTimes(1);
+    });
+
+    it.each(["backend", "service-records", "database-failover"])("retains bounded public problem tags after %s sanitization", (feature) => {
+        const event = sanitizeSentryEvent({ tags: { feature, "error.code": "DEPENDENCY_UNAVAILABLE", outcome: "UNKNOWN", "db.failover_eligible": "true" } });
+        expect(event.tags).toMatchObject({ "error.code": "DEPENDENCY_UNAVAILABLE", outcome: "UNKNOWN" });
+        const invalid = sanitizeSentryEvent({ tags: { feature, "error.code": "private-internal-detail", "db.failover_eligible": "true" } });
+        expect(invalid.tags).not.toHaveProperty("error.code");
+    });
+
     it("samples service-record performance at 10 percent in production", () => {
         const previousEnvironment = process.env["SENTRY_ENVIRONMENT"];
         process.env["SENTRY_ENVIRONMENT"] = "production";
