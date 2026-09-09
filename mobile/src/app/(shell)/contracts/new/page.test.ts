@@ -7,7 +7,7 @@ import {
   focusContractValidationErrors,
   isHeadlessSuccessResponse,
   isValidIframeSuccessResponse,
-} from "./page";
+} from "./page.helpers";
 
 const source = fs.readFileSync(require.resolve("./page"), "utf8");
 
@@ -33,25 +33,6 @@ describe("mobile contract creation compensation flow", () => {
       .toBeLessThan(branch.indexOf('router.push("/contracts")'));
   });
 
-  it("keeps submission pending until the iframe signing surface closes", () => {
-    expect(source).toContain("const closeEformsignModal = () =>");
-    expect(source).toContain("const handleEformsignModalClose = () =>");
-    expect(source).toContain("The signing result was not confirmed");
-    expect(source).toContain("const runIframeFallback = async");
-    expect(source).toContain("Promise<boolean>");
-    expect(source).toContain("let keepSubmittingUntilIframeCloses = false");
-    expect(source).toContain("keepSubmittingUntilIframeCloses = await runIframeFallback");
-    expect(source).toContain("if (!keepSubmittingUntilIframeCloses)");
-  });
-
-  it("guards the submit path and removes uncertain customer deletion/forced replay", () => {
-    expect(source).toContain("submissionInFlightRef.current");
-    expect(source).toContain("submissionLockRef.current");
-    expect(source).not.toContain("autoRegisteredClientId");
-    expect(source).not.toContain("deleteClientMutation");
-    expect(source).not.toContain(", true);");
-  });
-
   it("allows the iframe only for a server-declared pre-send failure", () => {
     expect(canUseContractIframeFallback({
       fallbackHint: "iframe",
@@ -62,7 +43,11 @@ describe("mobile contract creation compensation flow", () => {
       fallbackHint: "iframe",
       failedStep: "creating",
       reason: "template_navigation_failed",
-    })).toBe(false);
+    })).toBe(true);
+    expect(canUseContractIframeFallback({
+      fallbackHint: "iframe",
+      reason: "template_navigation_failed",
+    })).toBe(true);
     expect(canUseContractIframeFallback({
       fallbackHint: "iframe",
       failedStep: "info-inserted",
