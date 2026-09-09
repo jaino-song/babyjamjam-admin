@@ -384,6 +384,7 @@ model eformsign_doc {
   client                     client?                        @relation("eformsign_doc_client_idToclient", fields: [clientId], references: [id], onDelete: SetNull, onUpdate: NoAction)
   employeeSchedule           employee_schedule?             @relation(fields: [employeeScheduleId], references: [id], onDelete: SetNull, onUpdate: NoAction)
   serviceRecordCase          service_record_case?           @relation(fields: [serviceRecordCaseId], references: [id], onDelete: SetNull, onUpdate: NoAction)
+  revision                   service_record_revision?       @relation("eformsign_doc_revision", fields: [branchId, serviceRecordCaseId, revisionId], references: [branchId, serviceRecordCaseId, id], onDelete: NoAction, onUpdate: NoAction, map: "eformsign_doc_revision_fkey")
   serviceRecordSnapshotChunk service_record_snapshot_chunk?
   branch                     branch?                        @relation(fields: [branchId], references: [id], onDelete: NoAction, onUpdate: NoAction)
   files                      eformsign_doc_file[]
@@ -1285,6 +1286,8 @@ model service_record_revision {
   currentRevisionCases  service_record_case[] @relation("service_record_case_current_revision")
   currentUsableRevisionCases service_record_case[] @relation("service_record_case_current_usable_revision")
   documentStates        service_record_revision_document_state[]
+  eformsignDocs         eformsign_doc[] @relation("eformsign_doc_revision")
+  snapshotChunks        service_record_snapshot_chunk[] @relation("service_record_snapshot_chunk_revision")
 
   @@unique([branchId, serviceRecordCaseId, id], map: "uniq_service_record_revision_branch_case_id")
   @@unique([serviceRecordCaseId, revisionNumber], map: "uniq_service_record_revision_case_number")
@@ -1320,8 +1323,8 @@ model service_record_revision_document_state {
   version             Int      @default(0)
   createdAt           DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt           DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
-  branch              branch   @relation(fields: [branchId], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  client              client   @relation(fields: [clientId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  branch              branch   @relation(fields: [branchId], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "service_record_revision_document_state_branch_fkey")
+  client              client   @relation(fields: [clientId], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "service_record_revision_document_state_client_fkey")
   serviceRecordCase   service_record_case @relation(fields: [branchId, clientId, serviceRecordCaseId], references: [branchId, clientId, id], onDelete: NoAction, onUpdate: NoAction, map: "service_record_revision_document_state_case_owner_fkey")
   revision            service_record_revision @relation(fields: [branchId, serviceRecordCaseId, revisionId], references: [branchId, serviceRecordCaseId, id], onDelete: NoAction, onUpdate: NoAction, map: "service_record_revision_document_state_revision_fkey")
 
@@ -1385,6 +1388,7 @@ model service_record_snapshot_chunk {
   serviceRecordCase    service_record_case        @relation(fields: [serviceRecordCaseId], references: [id], onDelete: Cascade, onUpdate: NoAction)
   assignment           service_record_assignment? @relation(fields: [assignmentId], references: [id], onDelete: SetNull, onUpdate: NoAction)
   eformsignDoc         eformsign_doc?             @relation(fields: [eformsignDocumentId], references: [documentId], onDelete: SetNull, onUpdate: NoAction)
+  revision             service_record_revision?   @relation("service_record_snapshot_chunk_revision", fields: [branchId, serviceRecordCaseId, revisionId], references: [branchId, serviceRecordCaseId, id], onDelete: NoAction, onUpdate: NoAction, map: "service_record_snapshot_chunk_revision_fkey")
 
   @@unique([serviceRecordCaseId, snapshotVersion, chunkIndex], map: "uniq_service_record_snapshot_chunk")
   @@index([branchId], map: "idx_service_record_snapshot_chunk_branch")
