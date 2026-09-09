@@ -174,15 +174,15 @@ describe("contract operation guard", () => {
     })).toBe(true);
   });
 
-  it("keeps legacy known 4xx compatibility retryable without exposing raw details", () => {
+  it("keeps unverified legacy 4xx outcomes unknown without exposing raw details", () => {
     const normalized = normalizeContractMutationError(
       { response: { status: 422, data: { message: ["endDate must be a valid ISO 8601 date string"] } } },
       "finalize",
       "doc-1",
     );
 
-    expect(normalized.outcome).toBe("NOT_APPLIED");
-    expect(normalized.retryAllowed).toBe(true);
+    expect(normalized.outcome).toBe("UNKNOWN");
+    expect(normalized.retryAllowed).toBe(false);
     expect(normalized.message).not.toContain("ISO 8601");
   });
 
@@ -216,6 +216,13 @@ describe("contract operation guard", () => {
     expect(throwingRefresh).toHaveBeenCalledTimes(1);
     expect(mutation).not.toHaveBeenCalled();
     expect(getContractOperationRecord(state, "receipt", "doc-1")?.state).toBe("in-flight");
+  });
+
+  it("blocks an in-flight operation when its iframe closes without confirmation", () => {
+    const state = started(new Map() as ContractOperationGuardState, "finalize", "doc-1");
+    const closed = cancelContractOperation(state, "finalize", "doc-1");
+    expect(getContractOperationRecord(closed, "finalize", "doc-1")?.presentation?.outcome).toBe("UNKNOWN");
+    expect(beginContractOperation(closed, "finalize", "doc-1").accepted).toBe(false);
   });
 
   it("does not let a close or read refresh unlock an uncertain operation", () => {

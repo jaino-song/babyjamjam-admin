@@ -1,7 +1,5 @@
-import { getUserErrorMessage } from "@babyjamjam/shared";
 import {
   normalizeApiError,
-  type NormalizedApiError,
   type ProblemDetails,
   type ProblemError,
   type ProblemOutcome,
@@ -66,30 +64,6 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
-function responseData(error: unknown): unknown {
-  if (!isRecord(error)) return error;
-  const response = error.response;
-  if (isRecord(response) && Object.prototype.hasOwnProperty.call(response, "data")) {
-    return response.data;
-  }
-  return error;
-}
-
-function claimsProblemDetails(error: unknown): boolean {
-  const payload = responseData(error);
-  return isRecord(payload)
-    && (Object.prototype.hasOwnProperty.call(payload, "type")
-      || Object.prototype.hasOwnProperty.call(payload, "requestId"));
-}
-
-function isKnownLegacyClientStatus(normalized: NormalizedApiError, error: unknown): boolean {
-  return !normalized.verified
-    && !claimsProblemDetails(error)
-    && normalized.status !== undefined
-    && normalized.status >= 400
-    && normalized.status < 500;
-}
-
 /**
  * Begin/settle are pure transitions so the page can perform the duplicate
  * request check synchronously before React state has rendered a new frame.
@@ -145,9 +119,10 @@ export function cancelContractOperation(
   const key = operationKey(operation, resourceId);
   const existing = state.get(key);
   if (!existing || existing.state !== "in-flight") return state;
-  const next = new Map(state);
-  next.delete(key);
-  return next;
+  return settleContractOperation(
+    state,
+    createUnknownContractMutationPresentation(operation, resourceId),
+  );
 }
 
 export function getContractOperationRecord(
@@ -167,22 +142,17 @@ export function normalizeContractMutationError(
     locale: "ko-KR",
     operation: "mutation",
   });
-  const legacyKnown4xx = isKnownLegacyClientStatus(normalized, error);
   const outcome: ProblemOutcome = normalized.verified
     ? normalized.outcome ?? "UNKNOWN"
-    : legacyKnown4xx
-      ? "NOT_APPLIED"
-      : "UNKNOWN";
-  const retryAllowed = normalized.verified
-    ? outcome === "NOT_APPLIED"
-    : legacyKnown4xx;
+    : "UNKNOWN";
+  const retryAllowed = normalized.verified && outcome === "NOT_APPLIED";
 
   return {
     operation,
     resourceId,
     outcome,
     retryAllowed,
-    message: legacyKnown4xx ? getUserErrorMessage(error, normalized.message) : normalized.message,
+    message: normalized.message,
     requestId: normalized.problem?.requestId,
     status: normalized.status,
     problem: normalized.problem,
