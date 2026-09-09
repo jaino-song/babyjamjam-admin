@@ -8,7 +8,7 @@ import { systemTemplateKeys } from './useSystemTemplates';
 
 export function useTemplateVersions(key: string) {
     return useQuery<VersionHistoryItem[]>({
-        queryKey: systemTemplateKeys.versions(key),
+        queryKey: systemTemplateKeys.global.versions(key),
         queryFn: () => systemTemplateService.getVersions(key).then((r) => r.data),
         enabled: !!key,
     });

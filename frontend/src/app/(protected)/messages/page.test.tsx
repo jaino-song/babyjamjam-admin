@@ -12,22 +12,24 @@ describe("MessagesPage template type labels", () => {
     expect(source).toContain("const isBranchTemplate = userTemplateId !== null");
     expect(source).toContain('isBranchTemplate ? "지점 템플릿" : "기본 템플릿"');
     expect(source).toContain("지점 템플릿 · 정보를 불러오지 못했습니다.");
+    expect(source).not.toContain("관리자 페이지에서 수정");
   });
 });
 
 describe("MessagesPage unreleased section gating", () => {
-  it("keeps templates/triggers disabled for non-owners, now that scheduled/history merged into one always-available section", () => {
+  it("keeps only trigger rules owner-only while branch users can edit templates", () => {
     const unreleasedIds = source
       .split("const UNRELEASED_SECTION_IDS = new Set<MessageSectionId>([")[1]
       ?.split("]);")[0];
 
     expect(unreleasedIds).toBeDefined();
     // "scheduled" and "history" are folded into one section that's gated only by
-    // sender approval (see SENDER_APPROVAL_EXEMPT_SECTION_IDS below), not by
-    // owner-only unreleased status anymore.
+    // sender approval (see SENDER_APPROVAL_EXEMPT_SECTION_IDS below). Templates
+    // are editable by every authenticated branch user, while trigger rules stay
+    // owner-only.
     expect(unreleasedIds).not.toContain('"scheduled"');
     expect(unreleasedIds).not.toContain('"history"');
-    expect(unreleasedIds).toContain('"templates"');
+    expect(unreleasedIds).not.toContain('"templates"');
     expect(unreleasedIds).toContain('"triggers"');
     expect(source).toContain("const isOwner = user?.role === ROLES.owner");
     expect(source).toContain("UNRELEASED_SECTION_IDS.has(section.id) && !isOwner");
@@ -35,9 +37,9 @@ describe("MessagesPage unreleased section gating", () => {
 });
 
 describe("MessagesPage sender approval gating", () => {
-  it("keeps only send and settings available while sender approval is pending", () => {
+  it("keeps send, settings, and template editing available while sender approval is pending", () => {
     expect(source).toContain(
-      'const SENDER_APPROVAL_EXEMPT_SECTION_IDS = new Set<MessageSectionId>(["send", "settings"]);',
+      'const SENDER_APPROVAL_EXEMPT_SECTION_IDS = new Set<MessageSectionId>(["send", "settings", "templates"]);',
     );
     expect(source).toContain(
       "const isSenderApprovalRequired = senderApproval?.isApproved === false",
@@ -85,12 +87,14 @@ jest.mock("@/components/app/messages/MessageApprovalGate", () => ({
   MessageApprovalGate: ({
     children,
     dataComponent,
+    enabled = true,
   }: {
     children: ReactNode;
     dataComponent: string;
+    enabled?: boolean;
   }) => {
     const { data, isLoading } = mockUseMessageSenderApproval();
-    return isLoading || data?.isApproved ? (
+    return !enabled || isLoading || data?.isApproved ? (
       children
     ) : (
       <div data-testid="approval-gate-blocked" data-component={dataComponent} />
@@ -386,6 +390,7 @@ function getDetailPanel() {
 }
 
 beforeEach(() => {
+  document.cookie = "selected_branch_id=branch-test; path=/";
   mockUseInitialUser.mockReturnValue({ id: "user-1", role: "manager" });
   mockUpdateSystemTemplate.mockResolvedValue(undefined);
   mockToast.mockReset();
@@ -448,7 +453,11 @@ describe("messages page — server system-template catalog", () => {
     fireEvent.change(screen.getByPlaceholderText(placeholder), { target: { value: "두 번째 수정" } });
     fireEvent.click(screen.getByRole("button", { name: "저장" }));
     await waitFor(() => expect(mockUpdateSystemTemplate).toHaveBeenCalledWith({
-      key: "FUTURE_TEMPLATE", content: "두 번째 수정", customVariables: secondVariables,
+      key: "FUTURE_TEMPLATE",
+      content: "두 번째 수정",
+      customVariables: secondVariables,
+      scope: "branch",
+      branchId: "branch-test",
     }));
   });
 
@@ -932,6 +941,37 @@ describe("messages page — merged 발송 기록 section", () => {
       "data-component",
       "desktop_messages_sections_section-content_history-section_approval-gate",
     );
+  });
+
+  it("keeps branch template editing available to nonowners while sending remains approval-gated", () => {
+    mockUseInitialUser.mockReturnValue({ id: "manager-1", role: "manager" });
+    mockUseMessageSenderApproval.mockReturnValue({
+      data: {
+        approvalStatus: "pending",
+        isApproved: false,
+        canRequest: true,
+        requestedAt: "2026-01-01T00:00:00.000Z",
+        approvedAt: null,
+      },
+      isLoading: false,
+    });
+    const template = buildSystemTemplate({
+      templateKey: "SERVICE_INFO",
+      name: "서비스 안내",
+      content: "지점 기본 본문",
+    });
+    mockUseSystemTemplates.mockReturnValue({ data: [template], isLoading: false, isError: false });
+    mockUseSystemTemplate.mockReturnValue({ data: template, isLoading: false, isError: false });
+
+    render(<MessagesPage />);
+    fireEvent.click(screen.getAllByRole("button", { name: "템플릿" })[0]);
+    fireEvent.click(screen.getByText("서비스 안내"));
+
+    expect(screen.getByPlaceholderText("템플릿 내용을 입력하세요. 변수는 {{변수명}} 형식으로 사용합니다.")).toHaveValue(
+      "지점 기본 본문",
+    );
+    expect(screen.getByText(/지점의 모든 템플릿이 현재 기본값으로 고정됩니다/)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "즉시 발송" })).not.toBeInTheDocument();
   });
 
   it("skeletons the whole panel while the upcoming query is still loading, even with a cached history record", () => {
