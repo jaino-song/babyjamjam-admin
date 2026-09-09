@@ -157,10 +157,7 @@ export function buildContractSubmissionAlert(
     operation: "mutation",
     locale: "ko-KR",
   });
-  const outcome = normalized.problem?.outcome
-    ?? (normalized.problem && normalized.problem.status >= 400 && normalized.problem.status < 500
-      ? "NOT_APPLIED"
-      : fallbackOutcome);
+  const outcome = normalized.problem?.outcome ?? fallbackOutcome;
   const copy = CONTRACT_OUTCOME_COPY[outcome];
   const problem = normalized.problem;
   const verified = normalized.verified && problem !== undefined;

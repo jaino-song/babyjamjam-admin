@@ -77,6 +77,7 @@ describe("mobile contract creation compensation flow", () => {
   it("keeps typed validation safe while retaining request ids and focusing represented fields", () => {
     const problem = createProblemDetails({
       code: "VALIDATION_FAILED",
+      outcome: "NOT_APPLIED",
       requestId: "request-123",
       status: 400,
       errors: [{ pointer: "/contractData/customerContact", code: "INVALID_FORMAT", detail: "raw provider detail" }],
@@ -96,6 +97,13 @@ describe("mobile contract creation compensation flow", () => {
     expect(setStep).toHaveBeenCalledWith(0);
     expect(document.activeElement).toBe(input);
     input.remove();
+  });
+
+  it("does not infer an unapplied mutation from a client-error status", () => {
+    const problem = createProblemDetails({ code: "REQUEST_CONFLICT", requestId: "request-no-outcome" });
+    const alert = buildContractSubmissionAlert({ ...problem, outcome: undefined });
+    expect(alert.outcome).toBe("UNKNOWN");
+    expect(alert.locked).toBe(true);
   });
 
   it("locks an unverified mutation outcome and never offers a blind retry", () => {
