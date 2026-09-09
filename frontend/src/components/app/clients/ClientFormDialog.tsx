@@ -1,12 +1,14 @@
 "use client";
-import { getUserErrorMessage } from "@babyjamjam/shared";
-
 
 import { Fragment, useState, useEffect, useMemo, useRef, useCallback, type ReactNode } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
     findOutOfPocketPriceInfo,
     formatOutOfPocketDurationLabel,
+    getUserErrorMessage,
+    normalizeApiError,
+    type ProblemError,
+    type ProblemOutcome,
 } from "@babyjamjam/shared";
 import { useCreateClient, useUpdateClient } from "@/hooks/useClients";
 import { useClientPhoneDuplicateCheck } from "@/hooks/useClientPhoneDuplicateCheck";
@@ -94,6 +96,74 @@ export const CLIENT_FORM_STEPPER_STEPS = [
 ] as const;
 
 const CLIENT_FORM_LAST_STEP_INDEX = CLIENT_FORM_STEPPER_STEPS.length - 1;
+
+type ClientFormField = "name" | "phone";
+
+interface ClientFormErrorState {
+    message: string;
+    fieldErrors: readonly ProblemError[];
+    requestId?: string;
+    outcome?: ProblemOutcome;
+}
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+    typeof value === "object" && value !== null;
+
+const getErrorResponseStatus = (error: unknown): number | undefined => {
+    if (!isRecord(error)) return undefined;
+
+    const response = isRecord(error.response) ? error.response : undefined;
+    const responseStatus = response?.status;
+    if (typeof responseStatus === "number" && Number.isInteger(responseStatus)) {
+        return responseStatus;
+    }
+
+    const directStatus = error.status;
+    if (typeof directStatus === "number" && Number.isInteger(directStatus)) {
+        return directStatus;
+    }
+
+    const responseData = response?.data;
+    const data = isRecord(responseData)
+        ? responseData
+        : isRecord(error.data)
+            ? error.data
+            : error;
+    const statusCode = data.statusCode;
+    return typeof statusCode === "number" && Number.isInteger(statusCode) ? statusCode : undefined;
+};
+
+const getErrorResponsePayload = (error: unknown): unknown => {
+    if (!isRecord(error)) return undefined;
+    const response = isRecord(error.response) ? error.response : undefined;
+    if (response && "data" in response) return response.data;
+    if ("data" in error) return error.data;
+    return error;
+};
+
+const isUnstructuredLegacyClientError = (
+    error: unknown,
+    normalized: ReturnType<typeof normalizeApiError>,
+): boolean => {
+    if (normalized.verified) return false;
+    const status = getErrorResponseStatus(error);
+    if (status === undefined || status < 400 || status >= 500) return false;
+
+    const payload = getErrorResponsePayload(error);
+    return !isRecord(payload) || (!("type" in payload) && !("requestId" in payload));
+};
+
+const fieldForProblemError = (problemError: ProblemError): ClientFormField | undefined => {
+    if (problemError.location !== undefined && problemError.location !== "body") return undefined;
+    if (problemError.pointer === "/name") return "name";
+    if (problemError.pointer === "/phone") return "phone";
+    return undefined;
+};
+
+const combineAriaDescribedBy = (...ids: Array<string | undefined>): string | undefined => {
+    const value = ids.filter((id): id is string => Boolean(id)).join(" ");
+    return value || undefined;
+};
 
 interface ClientDialogSectionProps {
     dataComponent: string;
@@ -375,9 +445,13 @@ function ClientFormContent({
             (lastCheckedPhoneDigits === phoneDigits && isPhoneDuplicate));
     const isPhoneCheckBlockingSubmit = phoneDigits.length === 11 && !isPhoneCheckReady;
 
-    const [error, setError] = useState<string | null>(null);
+    const [error, setError] = useState<ClientFormErrorState | null>(null);
     const [pendingDurationConfirmation, setPendingDurationConfirmation] = useState<string | null>(null);
     const submissionInFlightRef = useRef(false);
+    const summaryRef = useRef<HTMLDivElement>(null);
+    const nameInputRef = useRef<HTMLInputElement>(null);
+    const phoneInputRef = useRef<HTMLInputElement>(null);
+    const pendingFieldFocusRef = useRef<ClientFormField | null>(null);
     const [isEmployeeDialogOpen, setIsEmployeeDialogOpen] = useState(false);
     const [employeeDialogTarget, setEmployeeDialogTarget] = useState<"primary" | "secondary" | null>(null);
     const contentRef = useRef<HTMLDivElement>(null);
@@ -395,6 +469,26 @@ function ClientFormContent({
         },
         [controlledActiveStep, onActiveStepChange]
     );
+
+    const focusField = useCallback((field: ClientFormField) => {
+        if (surface === "panel" && activeStep !== 0) {
+            pendingFieldFocusRef.current = field;
+            setActiveStep(0);
+            return;
+        }
+
+        const inputRef = field === "name" ? nameInputRef : phoneInputRef;
+        inputRef.current?.focus();
+    }, [activeStep, setActiveStep, surface]);
+
+    useEffect(() => {
+        const field = pendingFieldFocusRef.current;
+        if (field === null || (surface === "panel" && activeStep !== 0)) return;
+
+        pendingFieldFocusRef.current = null;
+        const inputRef = field === "name" ? nameInputRef : phoneInputRef;
+        inputRef.current?.focus();
+    }, [activeStep, surface]);
 
     // Track if prices were manually edited
     const [pricesManuallyEdited, setPricesManuallyEdited] = useState(false);
@@ -688,6 +782,7 @@ function ClientFormContent({
                 setPricesManuallyEdited(nextPricesManuallyEdited);
                 setVoucherYear(null); // Reset to default (current year, falling back to latest available)
                 setError(null);
+                pendingFieldFocusRef.current = null;
                 setPendingDurationConfirmation(null);
             });
         }
@@ -769,24 +864,70 @@ function ClientFormContent({
 
     const scrollToTop = () => {
         // Scroll the DialogContent (parent of our content div) to top
-        contentRef.current?.parentElement?.scrollTo({ top: 0, behavior: "smooth" });
+        const scrollContainer = contentRef.current?.parentElement;
+        if (scrollContainer && typeof scrollContainer.scrollTo === "function") {
+            scrollContainer.scrollTo({ top: 0, behavior: "smooth" });
+        }
+    };
+
+    const clearFormError = () => {
+        setError((current) => current?.outcome === "UNKNOWN" ? current : null);
     };
 
     const setErrorAndScroll = (errorMessage: string) => {
-        setError(getUserErrorMessage(errorMessage));
+        setError({
+            message: getUserErrorMessage(errorMessage),
+            fieldErrors: [],
+        });
         // Use setTimeout to ensure the Alert is rendered before scrolling
         setTimeout(scrollToTop, 0);
     };
 
+    const setMutationError = (cause: unknown) => {
+        const normalized = normalizeApiError(cause, {
+            locale: locale === "en" ? "en-US" : "ko-KR",
+            operation: "mutation",
+        });
+
+        if (isUnstructuredLegacyClientError(cause, normalized)) {
+            setError({
+                message: getErrorMessage(cause, locale, "clients.form.error-save-failed"),
+                fieldErrors: [],
+            });
+            return;
+        }
+
+        const fieldErrors = normalized.problem?.errors ?? [];
+        if (surface === "panel" && fieldErrors.some((fieldError) => fieldForProblemError(fieldError))) {
+            setActiveStep(0);
+        }
+        setError({
+            message: normalized.message,
+            fieldErrors,
+            requestId: normalized.problem?.requestId,
+            outcome: normalized.outcome,
+        });
+    };
+
+    useEffect(() => {
+        if (!error) return;
+
+        const timer = setTimeout(() => {
+            summaryRef.current?.focus({ preventScroll: true });
+            scrollToTop();
+        }, 0);
+        return () => clearTimeout(timer);
+    }, [error]);
+
     const handleStepChange = (nextStep: number) => {
-        setError(null);
+        clearFormError();
         setActiveStep(nextStep);
         setTimeout(scrollToTop, 0);
     };
 
     const handleSubmit = async (confirmedPeriod?: string) => {
-        if (submissionInFlightRef.current) return;
-        setError(null);
+        if (submissionInFlightRef.current || error?.outcome === "UNKNOWN") return;
+        clearFormError();
 
         if (isLegacyNoopEdit && client) {
             submissionInFlightRef.current = true;
@@ -799,8 +940,7 @@ function ClientFormContent({
                 onSuccess?.(updatedClient);
                 onClose();
             } catch (error: unknown) {
-                console.error("Failed to save client:", error);
-                setErrorAndScroll(getErrorMessage(error, locale, "clients.form.error-save-failed"));
+                setMutationError(error);
             } finally {
                 submissionInFlightRef.current = false;
             }
@@ -934,8 +1074,7 @@ function ClientFormContent({
             }
             onClose();
         } catch (error: unknown) {
-            console.error("Failed to save client:", error);
-            setErrorAndScroll(getErrorMessage(error, locale, "clients.form.error-save-failed"));
+            setMutationError(error);
         } finally {
             submissionInFlightRef.current = false;
         }
@@ -969,6 +1108,18 @@ function ClientFormContent({
             Boolean(formData.phone?.trim()),
         ].filter(Boolean).length
     }개 입력됨`;
+    const formErrorEntries = (error?.fieldErrors ?? []).map((fieldError, index) => ({
+        fieldError,
+        field: fieldForProblemError(fieldError),
+        id: `${base}_error_${index}`,
+    }));
+    const getFieldErrorIds = (field: ClientFormField): string[] =>
+        formErrorEntries
+            .filter((entry) => entry.field === field)
+            .map((entry) => entry.id);
+    const nameErrorIds = getFieldErrorIds("name");
+    const phoneErrorIds = getFieldErrorIds("phone");
+    const isUnknownOutcome = error?.outcome === "UNKNOWN";
 
     const handleDialogClose = () => {
         setPendingDurationConfirmation(null);
@@ -998,7 +1149,7 @@ function ClientFormContent({
                 variant="positive"
                 size="sm"
                 onClick={() => void handleSubmit()}
-                disabled={isSubmitting || (!isLegacyNoopEdit && isPhoneCheckBlockingSubmit)}
+                disabled={isSubmitting || isUnknownOutcome || (!isLegacyNoopEdit && isPhoneCheckBlockingSubmit)}
                 data-component={`${base}_submit`}
                 className="w-full sm:flex-1"
             >
@@ -1056,7 +1207,7 @@ function ClientFormContent({
                         type="button"
                         size="sm"
                         onClick={() => void handleSubmit()}
-                        disabled={isSubmitting || !isFormComplete}
+                        disabled={isSubmitting || isUnknownOutcome || !isFormComplete}
                         data-component={`${base}_submit`}
                         className="min-w-[calc(132px*var(--glint-ui-scale,1))]"
                     >
@@ -1087,10 +1238,13 @@ function ClientFormContent({
                     required
                 >
                     <FormTextInput
+                        ref={nameInputRef}
                         id="name"
                         placeholder="홍길동"
                         value={formData.name}
                         onChange={(e) => handleChange("name", e.target.value)}
+                        error={nameErrorIds.length > 0}
+                        aria-describedby={combineAriaDescribedBy(...nameErrorIds)}
                     />
                 </FormField>
 
@@ -1160,6 +1314,7 @@ function ClientFormContent({
                     ) : null}
                 >
                     <FormTextInput
+                        ref={phoneInputRef}
                         id="phone"
                         type="tel"
                         inputMode="numeric"
@@ -1167,11 +1322,14 @@ function ClientFormContent({
                         value={formData.phone ?? ""}
                         onChange={(e) => {
                             handleChange("phone", formatPhoneNumber(e.target.value));
-                            setError(null);
+                            clearFormError();
                         }}
                         maxLength={13}
-                        error={hasPhoneStatusError}
-                        aria-describedby={phoneInlineMessage ? "clients-form-dialog-phone-helper" : undefined}
+                        error={hasPhoneStatusError || phoneErrorIds.length > 0}
+                        aria-describedby={combineAriaDescribedBy(
+                            phoneInlineMessage ? "clients-form-dialog-phone-helper" : undefined,
+                            ...phoneErrorIds,
+                        )}
                     />
                 </FormField>
 
@@ -1517,10 +1675,13 @@ function ClientFormContent({
                 required
             >
                 <FormTextInput
+                    ref={nameInputRef}
                     id="name"
                     placeholder="홍길동"
                     value={formData.name}
                     onChange={(event) => handleChange("name", event.target.value)}
+                    error={nameErrorIds.length > 0}
+                    aria-describedby={combineAriaDescribedBy(...nameErrorIds)}
                 />
             </FormField>
 
@@ -1585,6 +1746,7 @@ function ClientFormContent({
                 ) : null}
             >
                 <FormTextInput
+                    ref={phoneInputRef}
                     id="phone"
                     type="tel"
                     inputMode="numeric"
@@ -1592,11 +1754,14 @@ function ClientFormContent({
                     value={formData.phone ?? ""}
                     onChange={(event) => {
                         handleChange("phone", formatPhoneNumber(event.target.value));
-                        setError(null);
+                        clearFormError();
                     }}
                     maxLength={13}
-                    error={hasPhoneStatusError}
-                    aria-describedby={phoneInlineMessage ? "clients-form-panel-phone-helper" : undefined}
+                    error={hasPhoneStatusError || phoneErrorIds.length > 0}
+                    aria-describedby={combineAriaDescribedBy(
+                        phoneInlineMessage ? "clients-form-panel-phone-helper" : undefined,
+                        ...phoneErrorIds,
+                    )}
                 />
             </FormField>
 
@@ -1894,8 +2059,52 @@ function ClientFormContent({
     ] as const;
 
     const formError = error ? (
-        <Alert variant="destructive">
-            <AlertDescription>{error && getUserErrorMessage(error)}</AlertDescription>
+        <Alert
+            ref={summaryRef}
+            tabIndex={-1}
+            variant="destructive"
+            data-component={`${base}_error-summary`}
+        >
+            <AlertDescription>
+                <div className="flex flex-col gap-2">
+                    <p>{error.message}</p>
+                    {formErrorEntries.length > 0 ? (
+                        <ul className="flex flex-col gap-1">
+                            {formErrorEntries.map(({ fieldError, field, id }) => {
+                                const fieldLabel = field === "name"
+                                    ? t(locale, "clients.form.name")
+                                    : field === "phone"
+                                        ? t(locale, "clients.form.phone")
+                                        : fieldError.pointer;
+                                const detail = `${fieldLabel}: ${fieldError.detail}`;
+
+                                return (
+                                    <li key={id} id={id}>
+                                        {field ? (
+                                            <Button
+                                                type="button"
+                                                variant="link"
+                                                size="sm"
+                                                className="h-auto whitespace-normal p-0 text-left"
+                                                onClick={() => focusField(field)}
+                                            >
+                                                {detail}
+                                            </Button>
+                                        ) : (
+                                            <span>{detail}</span>
+                                        )}
+                                    </li>
+                                );
+                            })}
+                        </ul>
+                    ) : null}
+                    {error.requestId ? (
+                        <FormHelperText data-component={`${base}_error-summary_request-id`}>
+                            {locale === "en" ? `Request ID: ${error.requestId}` : `요청 ID: ${error.requestId}`}
+                        </FormHelperText>
+                    ) : null}
+                </div>
+            </AlertDescription>
         </Alert>
     ) : null;
 
@@ -1914,7 +2123,7 @@ function ClientFormContent({
             data-component={`${base}_content`}
             className="space-y-5"
         >
-            {formError && getUserErrorMessage(formError)}
+            {formError}
             {dialogFormSteps}
         </div>
     );
@@ -1942,7 +2151,7 @@ function ClientFormContent({
                         <Button
                             type="button"
                             data-component={`${base}_duration-confirmation_confirm`}
-                            disabled={isSubmitting}
+                            disabled={isSubmitting || isUnknownOutcome}
                             onClick={() => {
                                 if (pendingDurationConfirmation !== null) {
                                     void handleSubmit(pendingDurationConfirmation);
