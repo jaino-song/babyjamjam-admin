@@ -1,10 +1,14 @@
 "use client";
-import { getUserErrorMessage, normalizeApiError } from "@babyjamjam/shared";
-
+import {
+  getUserErrorMessage,
+  normalizeApiError,
+  resolveProblemPresentation,
+  type NormalizedApiError,
+} from "@babyjamjam/shared";
 
 import { type KeyboardEvent, useEffect, useMemo, useRef, useState } from "react";
-import { isAxiosError } from "axios";
 import { useMutation } from "@tanstack/react-query";
+import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { X } from "lucide-react";
 
@@ -92,6 +96,8 @@ const DUPLICATE_RECIPIENT_MESSAGE = "이미 추가된 수신자입니다.";
 const INVALID_PHONE_ENTRY_MESSAGE = "기존 고객이 없으면 올바른 전화번호를 입력한 뒤 Enter를 눌러 추가해 주세요.";
 const CLIENT_WITHOUT_PHONE_MESSAGE = "선택한 고객에 등록된 연락처가 없습니다.";
 const DEFAULT_LMS_TITLE = "안내";
+const SMS_HISTORY_HREF = "/messages/history";
+const INVALID_SMS_RESPONSE_MESSAGE = "SMS_SEND_RESPONSE_INVALID";
 const GREETING_TEMPLATE_ID = "GREETING";
 const INFO_TEMPLATE_ID = "INFO";
 const PRICE_INFO_TEMPLATE_ID = "PRICE_INFO";
@@ -106,6 +112,105 @@ const CUSTOM_TEMPLATE_OPTION: TemplateOption = {
   body: "",
   variables: [],
 };
+
+type SmsSubmission = {
+  payload: Record<string, unknown>;
+  fingerprint: string;
+  idempotencyKey: string;
+};
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isOptionalFiniteNumber(value: unknown): boolean {
+  return value === undefined || (typeof value === "number" && Number.isFinite(value));
+}
+
+function isNonNegativeInteger(value: unknown): value is number {
+  return typeof value === "number" && Number.isInteger(value) && value >= 0;
+}
+
+function countSmsRecipients(receiver: string): number {
+  return receiver
+    .split(",")
+    .map((phone) => phone.trim())
+    .filter(Boolean)
+    .length;
+}
+
+function isSmsSendResponse(value: unknown): value is SendResponse {
+  if (!isRecord(value)) return false;
+
+  const request = value.request;
+  const result = value.result;
+  if (
+    value.provider !== "aligo_sms" ||
+    (value.triggerType !== "immediate" && value.triggerType !== "scheduled") ||
+    !isRecord(request) ||
+    typeof request.receiver !== "string" ||
+    request.receiver.trim().length === 0 ||
+    (request.msgType !== "SMS" && request.msgType !== "LMS") ||
+    typeof request.testMode !== "boolean" ||
+    !isRecord(result) ||
+    typeof result.resultCode !== "number" ||
+    !Number.isInteger(result.resultCode) ||
+    typeof result.message !== "string" ||
+    result.message.trim().length === 0 ||
+    !isOptionalFiniteNumber(result.msgId) ||
+    !isNonNegativeInteger(result.successCount) ||
+    !isNonNegativeInteger(result.errorCount)
+  ) {
+    return false;
+  }
+
+  if (
+    request.senderPhone !== undefined && typeof request.senderPhone !== "string" ||
+    request.scheduledAt !== undefined && typeof request.scheduledAt !== "string" ||
+    result.msgType !== undefined &&
+      result.msgType !== "SMS" &&
+      result.msgType !== "LMS" &&
+      result.msgType !== "MMS"
+  ) {
+    return false;
+  }
+
+  return true;
+}
+
+function isAcceptedSmsSendResponse(
+  value: unknown,
+  submittedReceiver: unknown,
+): value is SendResponse {
+  if (!isSmsSendResponse(value) || typeof submittedReceiver !== "string") {
+    return false;
+  }
+
+  // The backend canonicalizes phone formatting, so compare recipient counts
+  // against the submitted receiver list instead of requiring string equality.
+  const expectedRecipientCount = countSmsRecipients(submittedReceiver);
+
+  return expectedRecipientCount > 0
+    && countSmsRecipients(value.request.receiver) === expectedRecipientCount
+    && value.result.resultCode === 1
+    && value.result.successCount === expectedRecipientCount
+    && value.result.errorCount === 0;
+}
+
+function stablePayloadFingerprint(payload: Record<string, unknown>): string {
+  return JSON.stringify(
+    Object.entries(payload).sort(([left], [right]) => left.localeCompare(right)),
+  );
+}
+
+function createIdempotencyKey(): string {
+  if (typeof globalThis.crypto?.randomUUID === "function") {
+    return globalThis.crypto.randomUUID();
+  }
+
+  return `sms-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+}
+
 const NAME_FALLBACK_VARIABLES: TemplateInputVariable[] = [
   { key: "name", label: "산모명", required: true, type: "string" },
 ];
@@ -569,8 +674,13 @@ function NewMessageForm({ initialBody, initialTemplateId, initialClientId, initi
   const [errorMessage, setErrorMessage] = useState<string | null>(
     initialClient && !initialClientPhone ? CLIENT_WITHOUT_PHONE_MESSAGE : null,
   );
+  const [sendError, setSendError] = useState<NormalizedApiError | null>(null);
+  const [sendRetryFingerprint, setSendRetryFingerprint] = useState<string | null>(null);
+  const [sendOutcomeLocked, setSendOutcomeLocked] = useState(false);
 
   const seededClientIdsRef = useRef<Set<number>>(new Set());
+  const inFlightRef = useRef(false);
+  const submissionRef = useRef<SmsSubmission | null>(null);
   useEffect(() => {
     if (!initialClient) return;
     if (seededClientIdsRef.current.has(initialClient.id)) return;
@@ -841,6 +951,24 @@ function NewMessageForm({ initialBody, initialTemplateId, initialClientId, initi
   }, [recipients]);
   const recipientCount = recipients.length;
 
+  const sendPayload = useMemo<Record<string, unknown>>(() => {
+    const message = body.trim();
+    const payload: Record<string, unknown> = {
+      receiver: receiverPayload,
+      message,
+      triggerType: "immediate",
+      msgType: "AUTO",
+    };
+    if (payloadClientId !== null) payload.clientId = payloadClientId;
+    if (shouldSendAsLms(message)) payload.title = getLmsTitle(selectedTemplate);
+    if (payloadRecipientName.trim()) payload.recipientName = payloadRecipientName.trim();
+    return payload;
+  }, [body, payloadClientId, payloadRecipientName, receiverPayload, selectedTemplate]);
+  const sendPayloadFingerprint = useMemo(
+    () => stablePayloadFingerprint(sendPayload),
+    [sendPayload],
+  );
+
   const showVariableHint = useMemo(() => hasUnreplacedVariables(body), [body]);
   const isPriceInfoTemplateSelected = selectedTemplate.id === PRICE_INFO_TEMPLATE_ID;
   const selectedPriceInfoSummary = useMemo(() => {
@@ -879,48 +1007,45 @@ function NewMessageForm({ initialBody, initialTemplateId, initialClientId, initi
 
   const sendMutation = useMutation<SendResponse, unknown, void>({
     mutationFn: async () => {
-      const message = body.trim();
-      const payload: Record<string, unknown> = {
-        receiver: receiverPayload,
-        message,
-        triggerType: "immediate",
-        msgType: "AUTO",
-      };
-      if (payloadClientId !== null) payload.clientId = payloadClientId;
-      if (shouldSendAsLms(message)) payload.title = getLmsTitle(selectedTemplate);
-      if (payloadRecipientName.trim()) payload.recipientName = payloadRecipientName.trim();
-      const res = await api.post<SendResponse>("/message-deliveries/sms", payload);
+      const submission = submissionRef.current;
+      if (!submission) {
+        throw new Error(INVALID_SMS_RESPONSE_MESSAGE);
+      }
+
+      const res = await api.post<SendResponse>("/message-deliveries/sms", submission.payload);
       const data = res.data;
-      if (
-        data.result &&
-        (data.result.resultCode !== 1 || (data.result.errorCount ?? 0) > 0)
-      ) {
-        throw new Error(data.result.message ?? "발송에 실패했어요.");
+      if (!isAcceptedSmsSendResponse(data, submission.payload.receiver)) {
+        throw new Error(INVALID_SMS_RESPONSE_MESSAGE);
       }
       return data;
     },
     onSuccess: () => {
       setErrorMessage(null);
+      setSendError(null);
+      setSendRetryFingerprint(null);
+      setSendOutcomeLocked(false);
       setSuccessMessage("메시지 발송 요청이 접수되었습니다.");
       setReceiver("");
       setRecipientNameInputValue("");
       setRecipients([]);
       setTemplateVariableValues({});
       setBodyOverride(null);
+      submissionRef.current = null;
     },
     onError: (err) => {
+      const normalized = normalizeApiError(err, { operation: "mutation", locale: "ko-KR" });
       setSuccessMessage(null);
-      if (isAxiosError<{ error?: string; message?: string | string[] }>(err)) {
-        const data = err.response?.data;
-        const msg = Array.isArray(data?.message) ? data?.message.join(", ") : data?.message;
-        setErrorMessage(getUserErrorMessage(err, msg ?? data?.error ?? "발송에 실패했어요."));
-        return;
-      }
-      if (err instanceof Error && err.message) {
-        setErrorMessage(getUserErrorMessage(err, err.message));
-        return;
-      }
-      setErrorMessage(getUserErrorMessage(err, "발송에 실패했어요."));
+      setErrorMessage(null);
+      setSendError(normalized);
+
+      const isAmbiguous = normalized.outcome === "UNKNOWN"
+        || normalized.outcome === "PARTIALLY_APPLIED"
+        || normalized.recovery?.action === "CHECK_STATUS";
+      setSendOutcomeLocked(isAmbiguous);
+      setSendRetryFingerprint(submissionRef.current?.fingerprint ?? null);
+    },
+    onSettled: () => {
+      inFlightRef.current = false;
     },
   });
 
@@ -1138,15 +1263,44 @@ function NewMessageForm({ initialBody, initialTemplateId, initialClientId, initi
       return;
     }
 
-    if (validationError || sendMutation.isPending) {
+    if (inFlightRef.current || sendMutation.isPending || sendOutcomeLocked) {
+      return;
+    }
+
+    if (validationError) {
       if (validationError) setErrorMessage(getUserErrorMessage(validationError));
       return;
     }
+
+    if (sendRetryFingerprint === sendPayloadFingerprint) {
+      return;
+    }
+
+    const previousSubmission = submissionRef.current;
+    const idempotencyKey = previousSubmission?.fingerprint === sendPayloadFingerprint
+      ? previousSubmission.idempotencyKey
+      : createIdempotencyKey();
+    submissionRef.current = {
+      payload: {
+        ...sendPayload,
+        idempotencyKey,
+      },
+      fingerprint: sendPayloadFingerprint,
+      idempotencyKey,
+    };
+    setErrorMessage(null);
+    setSuccessMessage(null);
+    inFlightRef.current = true;
     sendMutation.mutate();
   };
 
   const isSubmitDisabled =
-    Boolean(validationError) || sendMutation.isPending || isSenderApprovalLoading || needsSenderApproval;
+    Boolean(validationError) ||
+    sendMutation.isPending ||
+    isSenderApprovalLoading ||
+    needsSenderApproval ||
+    sendOutcomeLocked ||
+    sendRetryFingerprint === sendPayloadFingerprint;
 
   return (
     <section
@@ -1586,6 +1740,57 @@ function NewMessageForm({ initialBody, initialTemplateId, initialClientId, initi
                 </div>
               </div>
             </div>
+
+            {sendError ? (
+              <Alert
+                variant="destructive"
+                aria-live="assertive"
+                data-component="mobile_messages_new_page_screen_form_scroll_list-card_body_send-outcome"
+                dataComponents={{
+                  root: "mobile_messages_new_page_screen_form_scroll_list-card_body_send-outcome",
+                  icon: "mobile_messages_new_page_screen_form_scroll_list-card_body_send-outcome_icon",
+                  content: "mobile_messages_new_page_screen_form_scroll_list-card_body_send-outcome_content",
+                }}
+                className={styles.feedbackAlert}
+              >
+                <AlertTitle data-component="mobile_messages_new_page_screen_form_scroll_list-card_body_send-outcome_title">
+                  {sendError.problem?.title ?? "문자 발송 결과를 확인해 주세요"}
+                </AlertTitle>
+                <AlertDescription data-component="mobile_messages_new_page_screen_form_scroll_list-card_body_send-outcome_description">
+                  <p data-component="mobile_messages_new_page_screen_form_scroll_list-card_body_send-outcome_description_message">
+                    {sendError.message}
+                  </p>
+                  {sendError.problem?.requestId ? (
+                    <p data-component="mobile_messages_new_page_screen_form_scroll_list-card_body_send-outcome_description_request-id">
+                      요청 ID: <code data-component="mobile_messages_new_page_screen_form_scroll_list-card_body_send-outcome_description_request-id_value">{sendError.problem.requestId}</code>
+                    </p>
+                  ) : null}
+                  {sendError.outcome === "UNKNOWN"
+                    || sendError.outcome === "PARTIALLY_APPLIED"
+                    || sendError.recovery?.action === "CHECK_STATUS" ? (
+                    <>
+                      <p data-component="mobile_messages_new_page_screen_form_scroll_list-card_body_send-outcome_description_check-status">
+                        {resolveProblemPresentation("ko-KR").checkStatus}
+                      </p>
+                      <Button
+                        asChild
+                        variant="link"
+                        size="sm"
+                        data-component="mobile_messages_new_page_screen_form_scroll_list-card_body_send-outcome_history-link"
+                        className="mt-3"
+                      >
+                        <Link
+                          href={SMS_HISTORY_HREF}
+                          data-component="mobile_messages_new_page_screen_form_scroll_list-card_body_send-outcome_history-link_anchor"
+                        >
+                          발송 상태·내역 확인
+                        </Link>
+                      </Button>
+                    </>
+                  ) : null}
+                </AlertDescription>
+              </Alert>
+            ) : null}
 
             {errorMessage ? (
               <Alert
