@@ -50,7 +50,7 @@ export function mapHttpProblem(
         if (parsed) return parsed;
     }
     return createProblemDetails({
-        code: selectedCode,
+        code: code ? "INTERNAL_ERROR" : selectedCode,
         requestId,
         locale,
         ...(["GET", "HEAD", "OPTIONS"].includes(request.method) ? {} : { outcome: "UNKNOWN" as const }),
