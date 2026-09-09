@@ -1,5 +1,12 @@
 "use client";
-import { getApiErrorMessage, getUserErrorMessage, normalizeApiError } from "@babyjamjam/shared";
+import {
+  getUserErrorMessage,
+  normalizeApiError,
+  type NormalizedApiError,
+  type ProblemDetails,
+  type ProblemError,
+  type ProblemOutcome,
+} from "@babyjamjam/shared";
 
 
 import { useState, useMemo, useEffect, useRef, type ReactNode } from "react";
@@ -14,7 +21,7 @@ import { useEformsign } from "@/hooks/useEformsign";
 import { useNavigationPending } from "@/hooks/use-navigation-pending";
 import { toast } from "@/hooks/use-toast";
 import { useVoucherYears, useVoucherPriceInfos, useAreaTemplates, useAllVoucherPrices } from "@/hooks";
-import { useAllClients, useCreateClient, useDeleteClient, useUpdateClient } from "@/hooks/useClients";
+import { useAllClients, useCreateClient, useUpdateClient } from "@/hooks/useClients";
 import { useEmployees, type Employee } from "@/hooks/useEmployees";
 import { eformsignQueryKeys } from "@/hooks/useEformsignDocuments";
 import { eformsignApi } from "@/services/api";
@@ -175,13 +182,194 @@ const normalizeClientIdentityName = (value: string | null | undefined): string =
 const normalizeClientIdentityPhone = (value: string | null | undefined): string =>
   normalizeKoreanPhoneDigits(value);
 
+type ValidationTarget = {
+  selector: string;
+  step: number;
+};
+
+export interface ContractSubmissionAlert {
+  title: string;
+  message: string;
+  outcome: ProblemOutcome;
+  requestId?: string;
+  operationId?: string;
+  errors?: ProblemError[];
+  problem?: ProblemDetails;
+  locked: boolean;
+  verified: boolean;
+}
+
+const CONTRACT_VALIDATION_TARGETS: Readonly<Record<string, ValidationTarget>> = Object.freeze({
+  name: { selector: "#contract-create-client-name", step: 0 },
+  clientName: { selector: "#contract-create-client-name", step: 0 },
+  customerName: { selector: "#contract-create-client-name", step: 0 },
+  phone: { selector: "[data-component=\"mobile_contracts-new_screen_root_page_root_form-scroll_card_phone-input\"]", step: 0 },
+  clientPhone: { selector: "[data-component=\"mobile_contracts-new_screen_root_page_root_form-scroll_card_phone-input\"]", step: 0 },
+  customerContact: { selector: "[data-component=\"mobile_contracts-new_screen_root_page_root_form-scroll_card_phone-input\"]", step: 0 },
+  birthday: { selector: "[data-component=\"mobile_contracts-new_screen_root_page_root_form-scroll_card_birthday-input\"]", step: 0 },
+  customerDOB: { selector: "[data-component=\"mobile_contracts-new_screen_root_page_root_form-scroll_card_birthday-input\"]", step: 0 },
+  birthDate: { selector: "[data-component=\"mobile_contracts-new_screen_root_page_root_form-scroll_card_birthday-input\"]", step: 0 },
+  address: { selector: "[data-component=\"mobile_contracts-new_screen_root_page_root_form-scroll_card_address-input\"]", step: 0 },
+  customerAddress: { selector: "[data-component=\"mobile_contracts-new_screen_root_page_root_form-scroll_card_address-input\"]", step: 0 },
+  area: { selector: "[data-component=\"mobile_contracts-new_screen_root_page_root_form-scroll_area-card_area-select\"]", step: 0 },
+  areaId: { selector: "[data-component=\"mobile_contracts-new_screen_root_page_root_form-scroll_area-card_area-select\"]", step: 0 },
+  employeeId: { selector: "[data-component=\"mobile_contracts-new_screen_root_page_root_form-scroll_primary-card_primary-autocomplete-field_primary-autocomplete_input\"]", step: 1 },
+  primaryEmployeeId: { selector: "[data-component=\"mobile_contracts-new_screen_root_page_root_form-scroll_primary-card_primary-autocomplete-field_primary-autocomplete_input\"]", step: 1 },
+  caretaker1Name: { selector: "[data-component=\"mobile_contracts-new_screen_root_page_root_form-scroll_primary-card_primary-autocomplete-field_primary-autocomplete_input\"]", step: 1 },
+  employeePhone: { selector: "[data-component=\"mobile_contracts-new_screen_root_page_root_form-scroll_primary-card_primary-phone-input\"]", step: 1 },
+  caretaker1Contact: { selector: "[data-component=\"mobile_contracts-new_screen_root_page_root_form-scroll_primary-card_primary-phone-input\"]", step: 1 },
+  employee2Id: { selector: "[data-component=\"mobile_contracts-new_screen_root_page_root_form-scroll_secondary-card_secondary-autocomplete-field_secondary-autocomplete_input\"]", step: 1 },
+  secondaryEmployeeId: { selector: "[data-component=\"mobile_contracts-new_screen_root_page_root_form-scroll_secondary-card_secondary-autocomplete-field_secondary-autocomplete_input\"]", step: 1 },
+  employee2Phone: { selector: "[data-component=\"mobile_contracts-new_screen_root_page_root_form-scroll_secondary-card_secondary-phone-input\"]", step: 1 },
+  secondaryEmployeePhone: { selector: "[data-component=\"mobile_contracts-new_screen_root_page_root_form-scroll_secondary-card_secondary-phone-input\"]", step: 1 },
+  voucherYear: { selector: "[data-component=\"mobile_contracts-new_screen_root_page_root_form-scroll_selection-card_year-select\"]", step: 2 },
+  year: { selector: "[data-component=\"mobile_contracts-new_screen_root_page_root_form-scroll_selection-card_year-select\"]", step: 2 },
+  voucherType: { selector: "[data-component=\"mobile_contracts-new_screen_root_page_root_form-scroll_selection-card_type-select\"]", step: 2 },
+  type: { selector: "[data-component=\"mobile_contracts-new_screen_root_page_root_form-scroll_selection-card_type-select\"]", step: 2 },
+  voucherDuration: { selector: "[data-component=\"mobile_contracts-new_screen_root_page_root_form-scroll_selection-card_duration-select\"]", step: 2 },
+  duration: { selector: "[data-component=\"mobile_contracts-new_screen_root_page_root_form-scroll_selection-card_duration-select\"]", step: 2 },
+  days: { selector: "[data-component=\"mobile_contracts-new_screen_root_page_root_form-scroll_selection-card_duration-select\"]", step: 2 },
+  fullPrice: { selector: "[data-component=\"mobile_contracts-new_screen_root_page_root_form-scroll_price-card_full-price-input\"]", step: 2 },
+  grant: { selector: "[data-component=\"mobile_contracts-new_screen_root_page_root_form-scroll_price-card_grant-input\"]", step: 2 },
+  actualPrice: { selector: "[data-component=\"mobile_contracts-new_screen_root_page_root_form-scroll_price-card_actual-price-input\"]", step: 2 },
+  startDate: { selector: "[data-component=\"mobile_contracts-new_screen_root_page_root_form-scroll_period-card_start-date-input\"]", step: 3 },
+  endDate: { selector: "[data-component=\"mobile_contracts-new_screen_root_page_root_form-scroll_period-card_end-date-input\"]", step: 3 },
+  paymentDate: { selector: "[data-component=\"mobile_contracts-new_screen_root_page_root_form-scroll_payment-card_payment-date-input\"]", step: 3 },
+});
+
+const CONTRACT_OUTCOME_COPY: Readonly<Record<ProblemOutcome, { title: string; message: string }>> = Object.freeze({
+  NOT_APPLIED: {
+    title: "계약서를 생성하지 못했어요",
+    message: "계약서 생성 요청이 적용되지 않았어요. 입력 내용을 확인해 주세요.",
+  },
+  FAILED: {
+    title: "계약서 생성을 처리하지 못했어요",
+    message: "계약서 생성 요청이 처리되지 않았어요. 입력 내용을 확인해 주세요.",
+  },
+  PARTIALLY_APPLIED: {
+    title: "계약서 생성 결과가 일부만 확인됐어요",
+    message: "일부 처리 결과만 확인되어 새 계약서를 다시 만들지 말고 계약 목록에서 상태를 확인해 주세요.",
+  },
+  UNKNOWN: {
+    title: "계약서 생성 결과를 확인할 수 없어요",
+    message: "계약서 생성 결과를 확인할 수 없어 새 계약서를 다시 만들지 말고 계약 목록에서 상태를 확인해 주세요.",
+  },
+});
+
+const HEADLESS_UNSAFE_FALLBACK_REASONS = new Set([
+  "remote_unconfirmed",
+  "dispatch_uncertain_manual_reconciliation_required",
+  "operation_lock_lost",
+  "local_persist_failed",
+  "provider_success_without_document_id",
+  "send_outcome_unknown",
+  "provider_timeout",
+  "ambiguous",
+  "operation_in_progress",
+  "operation_lock_unavailable",
+  "manual_check",
+]);
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isSafeClientId(value: unknown): value is number {
+  return typeof value === "number" && Number.isSafeInteger(value) && value > 0;
+}
+
+export function isHeadlessSuccessResponse(value: unknown): value is { ok: true; documentId: string; durationMs: number } {
+  if (!isRecord(value) || value.ok !== true) return false;
+  return typeof value.documentId === "string"
+    && value.documentId.trim().length > 0
+    && typeof value.durationMs === "number"
+    && Number.isFinite(value.durationMs)
+    && value.durationMs >= 0;
+}
+
+export function isValidIframeSuccessResponse(value: unknown): value is { document_id: string } {
+  return isRecord(value)
+    && typeof value.document_id === "string"
+    && value.document_id.trim().length > 0;
+}
+
+function getPointerField(pointer: string): string | null {
+  const raw = pointer.split("/").pop();
+  if (!raw) return null;
+  return raw.replace(/~1/g, "/").replace(/~0/g, "~");
+}
+
+export function focusContractValidationErrors(
+  errors: readonly ProblemError[] | undefined,
+  setStep: (step: number) => void,
+): string | null {
+  if (typeof document === "undefined") return null;
+  for (const error of errors ?? []) {
+    const field = getPointerField(error.pointer);
+    if (!field) continue;
+    const target = CONTRACT_VALIDATION_TARGETS[field];
+    if (!target) continue;
+    setStep(target.step);
+    const element = document.querySelector<HTMLElement>(target.selector);
+    if (element) {
+      element.focus({ preventScroll: true });
+      return field;
+    }
+    if (typeof window !== "undefined") {
+      window.setTimeout(() => {
+        document.querySelector<HTMLElement>(target.selector)?.focus({ preventScroll: true });
+      }, 0);
+    }
+    return field;
+  }
+  return null;
+}
+
+export function buildContractSubmissionAlert(
+  error: unknown,
+  fallbackOutcome: ProblemOutcome = "UNKNOWN",
+): ContractSubmissionAlert {
+  const normalized: NormalizedApiError = normalizeApiError(error, {
+    operation: "mutation",
+    locale: "ko-KR",
+  });
+  const outcome = normalized.problem?.outcome
+    ?? (normalized.problem && normalized.problem.status >= 400 && normalized.problem.status < 500
+      ? "NOT_APPLIED"
+      : fallbackOutcome);
+  const copy = CONTRACT_OUTCOME_COPY[outcome];
+  const problem = normalized.problem;
+  const verified = normalized.verified && problem !== undefined;
+  return {
+    title: verified ? problem.title : copy.title,
+    message: verified ? normalized.message : copy.message,
+    outcome,
+    ...(verified && problem.requestId ? { requestId: problem.requestId } : {}),
+    ...(verified && problem.operationId ? { operationId: problem.operationId } : {}),
+    ...(verified && problem.errors ? { errors: problem.errors } : {}),
+    ...(verified ? { problem } : {}),
+    locked: outcome === "UNKNOWN" || outcome === "PARTIALLY_APPLIED",
+    verified,
+  };
+}
+
+export function canUseContractIframeFallback(input: {
+  fallbackHint: unknown;
+  failedStep: unknown;
+  reason: unknown;
+}): boolean {
+  if (input.fallbackHint !== "iframe") return false;
+  if (input.failedStep !== "client-started" && input.failedStep !== "info-inserted") return false;
+  if (typeof input.reason === "string" && HEADLESS_UNSAFE_FALLBACK_REASONS.has(input.reason)) return false;
+  return true;
+}
+
 export default function ContractCreationPage() {
   const router = useRouter();
   const { isNavigationPending, startNavigation } = useNavigationPending();
   const queryClient = useQueryClient();
 
   const createClientMutation = useCreateClient();
-  const deleteClientMutation = useDeleteClient();
   const updateClientMutation = useUpdateClient();
   const { isLoaded: isEformsignLoaded, openDocument } = useEformsign();
   const {
@@ -227,6 +415,11 @@ export default function ContractCreationPage() {
   const [isEformsignModalOpen, setIsEformsignModalOpen] = useState(false);
   const [isProgressModalOpen, setIsProgressModalOpen] = useState(false);
   const [isExistingContractConfirmOpen, setIsExistingContractConfirmOpen] = useState(false);
+  const [submissionAlert, setSubmissionAlert] = useState<ContractSubmissionAlert | null>(null);
+  const [submissionLock, setSubmissionLock] = useState<ContractSubmissionAlert | null>(null);
+  const submissionInFlightRef = useRef(false);
+  const submissionLockRef = useRef<ContractSubmissionAlert | null>(null);
+  const iframeOutcomeConfirmedRef = useRef(false);
   const confirmationResolverRef = useRef<((approved: boolean) => void) | null>(null);
   const [confirmationMessage, setConfirmationMessage] = useState<string | null>(null);
   const requestConfirmation = (message: string): Promise<boolean> => {
@@ -471,6 +664,20 @@ export default function ContractCreationPage() {
     toast({ variant: "destructive", description: getUserErrorMessage(message) });
   };
 
+  const showSubmissionFailure = (
+    error: unknown,
+    fallbackOutcome: ProblemOutcome = "UNKNOWN",
+  ): ContractSubmissionAlert => {
+    const alert = buildContractSubmissionAlert(error, fallbackOutcome);
+    setSubmissionAlert(alert);
+    focusContractValidationErrors(alert.errors, setActiveStep);
+    if (alert.locked) {
+      submissionLockRef.current = alert;
+      setSubmissionLock(alert);
+    }
+    return alert;
+  };
+
   useEffect(() => () => {
     progressSourceRef.current?.close();
   }, []);
@@ -652,6 +859,24 @@ export default function ContractCreationPage() {
   const closeEformsignModal = () => {
     setIsEformsignModalOpen(false);
     setIsSubmitting(false);
+    submissionInFlightRef.current = false;
+    iframeOutcomeConfirmedRef.current = false;
+  };
+
+  const handleEformsignModalClose = () => {
+    // Closing the signing surface without a validated callback leaves the
+    // provider outcome unknown. Keep the durable submission lock in place so
+    // the user cannot accidentally create a second contract.
+    if (submissionInFlightRef.current && !iframeOutcomeConfirmedRef.current) {
+      setCreationProgress((current) => ({
+        step: current.step ?? "client-started",
+        completed: false,
+        failed: true,
+      }));
+      setProgressErrorHint(CONTRACT_OUTCOME_COPY.UNKNOWN.message);
+      showSubmissionFailure(new Error("The signing result was not confirmed"), "UNKNOWN");
+    }
+    closeEformsignModal();
   };
 
   const runIframeFallback = async (
@@ -667,24 +892,34 @@ export default function ContractCreationPage() {
       contractData as unknown as Parameters<typeof eformsignApi.generateDocument>[0],
       finalClientId,
     );
+    if (!isRecord(documentOption) || !isRecord(documentOption.mode)) {
+      throw new Error("The signing document response was invalid");
+    }
+    iframeOutcomeConfirmedRef.current = false;
     setIsEformsignModalOpen(true);
     setTimeout(() => {
       openDocument(documentOption, "eformsign_iframe", {
         onSuccess: async (response) => {
-          if (finalClientId && response.document_id) {
-            try {
-              await eformsignApi.createDocRecord(buildInitialSignRequestDocRecord({
-                documentId: response.document_id,
-                clientId: finalClientId,
-                stepRecipientName: name,
-                stepRecipientSms: phone,
-                expiredDate: expiry.add(30, "day").toISOString(),
-                linkToClient: true,
-              }));
-            } catch (docError) {
-              console.error("Failed to create eformsign doc record:", docError);
-            }
+          if (!isValidIframeSuccessResponse(response)) {
+            showSubmissionFailure(response, "UNKNOWN");
+            closeEformsignModal();
+            return;
           }
+          try {
+            await eformsignApi.createDocRecord(buildInitialSignRequestDocRecord({
+              documentId: response.document_id,
+              clientId: finalClientId,
+              stepRecipientName: name,
+              stepRecipientSms: phone,
+              expiredDate: expiry.add(30, "day").toISOString(),
+              linkToClient: true,
+            }));
+          } catch (docError) {
+            showSubmissionFailure(docError, "UNKNOWN");
+            closeEformsignModal();
+            return;
+          }
+          iframeOutcomeConfirmedRef.current = true;
           queryClient.invalidateQueries({ queryKey: eformsignQueryKeys.documents() });
           startNavigation();
           setTimeout(() => {
@@ -693,7 +928,8 @@ export default function ContractCreationPage() {
           }, SUCCESS_REDIRECT_DELAY_MS);
         },
         onError: (response) => {
-          showErrorToast(`문서를 만들지 못했어요. ${response.message}`);
+          iframeOutcomeConfirmedRef.current = true;
+          showSubmissionFailure(response, "FAILED");
           closeEformsignModal();
         },
         onAction: () => { /* noop */ },
@@ -703,18 +939,23 @@ export default function ContractCreationPage() {
   };
 
   const handleSubmit = async () => {
+    // React state updates are asynchronous; this ref closes the same-tick
+    // double-click window before the first network mutation starts.
+    if (submissionLockRef.current || submissionInFlightRef.current || isSubmitting) return;
     if (employeeId === null || (showEmployee2 && employee2Id === null)) {
       setActiveStep(1);
       showErrorToast("등록된 제공인력을 목록에서 선택해 주세요");
       return;
     }
+    submissionInFlightRef.current = true;
     setIsSubmitting(true);
+    setSubmissionAlert(null);
     setProgressErrorHint(null);
 
-    let autoRegisteredClientId: number | null = null;
     let keepSubmittingUntilIframeCloses = false;
     try {
-      // 1. Manual-entry client creation
+      // 1. Manual-entry client creation. The confirmed id is retained in the
+      // form store so an uncertain dispatch never suggests deleting it.
       let finalClientId = clientId ?? storedClientByIdentity?.id ?? storedClientByPhone?.id ?? null;
       const assignment = {
         primaryEmployeeId: employeeId,
@@ -744,38 +985,53 @@ export default function ContractCreationPage() {
           breastPump: false,
           source: "contract_auto_registration" as const,
         };
-        let newClient;
-        let reusedExistingClient = false;
+        let newClient: unknown;
         try {
           newClient = await createClientMutation.mutateAsync(autoRegistrationPayload);
         } catch (error) {
-          if (!isAxiosError<{ message?: string; error?: string; clientId?: number }>(error) || error.response?.status !== 409) throw error;
+          if (!isAxiosError<{ message?: string; error?: string; clientId?: number }>(error) || error.response?.status !== 409) {
+            showSubmissionFailure(error, "UNKNOWN");
+            return;
+          }
           const conflict = error.response.data;
-          if (!conflict.clientId) throw new Error(getApiErrorMessage(error, "고객 자동 등록에 실패했어요."));
+          if (!conflict.clientId) {
+            showSubmissionFailure(error, "NOT_APPLIED");
+            return;
+          }
           const shouldReuse = await requestConfirmation("이미 같은 전화번호의 고객이 있습니다. 기존 고객으로 계약을 진행할까요?");
           if (!shouldReuse) return;
-          reusedExistingClient = true;
-          newClient = await createClientMutation.mutateAsync({ ...autoRegistrationPayload, reuseExistingClient: true });
+          try {
+            newClient = await createClientMutation.mutateAsync({ ...autoRegistrationPayload, reuseExistingClient: true });
+          } catch (reuseError) {
+            showSubmissionFailure(reuseError, "UNKNOWN");
+            return;
+          }
+        }
+        if (!isRecord(newClient) || !isSafeClientId(newClient.id)) {
+          showSubmissionFailure(new Error("The customer response was invalid"), "UNKNOWN");
+          return;
         }
         finalClientId = newClient.id;
-        if (!reusedExistingClient) autoRegisteredClientId = newClient.id;
-        setClientId(newClient.id);
+        setClientId(finalClientId);
       }
       if (!finalClientId) {
-        throw new Error("고객 정보를 먼저 선택하거나 등록해 주세요.");
+        showErrorToast("고객 정보를 먼저 선택하거나 등록해 주세요.");
+        return;
       }
       if (clientId !== null || storedClientByIdentity || storedClientByPhone) {
-        await updateClientMutation.mutateAsync({
-          id: finalClientId,
-          dto: clientData,
-        });
+        try {
+          await updateClientMutation.mutateAsync({
+            id: finalClientId,
+            dto: clientData,
+          });
+        } catch (error) {
+          showSubmissionFailure(error, "UNKNOWN");
+          return;
+        }
       }
 
       // Provider identity remains server-owned; this page sends only contract data.
-      // No client-side authentication or token material is accepted.
-      // The server-mediated operation performs dispatch under a worker principal.
-      // 2. Build contract data. Provider credentials are acquired only inside
-      // the server-mediated dispatch operation.
+      // 2. Build contract data for the server-mediated dispatch operation.
       const start = dayjs(startDate);
       const end = dayjs(endDate);
       const payment = dayjs(effectivePaymentDate);
@@ -796,12 +1052,11 @@ export default function ContractCreationPage() {
         fullPrice, grant, actualPrice,
       };
 
-      // 4. Headless dispatch (primary path)
+      // 3. Headless dispatch (primary path).
       const progressId = createHeadlessProgressId();
-      let headlessOk = false;
-      let headlessFailureReason: string | undefined;
-      let headlessFailureStep: string | undefined;
-      let headlessFallbackHint: string | undefined;
+      let headlessFailureReason: unknown;
+      let headlessFailureStep: unknown;
+      let headlessFallbackHint: unknown;
       let progressSource: EventSource | null = null;
       setCreationProgress({ step: "client-started", completed: false, failed: false });
       setIsProgressModalOpen(true);
@@ -817,36 +1072,33 @@ export default function ContractCreationPage() {
           catch { return; }
           if (data.step === "failed") {
             const errorHint = getSafeHeadlessFailureMessage(data.reason);
-          setCreationProgress((current) => {
-            const next = resolveFailedHeadlessProgress(
-              current,
-              data.failedStep,
-              CONTRACT_CREATION_PROGRESS_STEPS,
-            );
-            if (next !== current) {
-              setProgressErrorHint(errorHint);
-            }
-            return next;
-          });
-          headlessFailureReason = data.reason;
-          headlessFailureStep = data.failedStep;
-          return;
-        }
-          if (!isHeadlessProgressStepKey(data.step, CONTRACT_CREATION_PROGRESS_STEPS)) return;
+            setCreationProgress((current) => {
+              const next = resolveFailedHeadlessProgress(
+                current,
+                data.failedStep,
+                CONTRACT_CREATION_PROGRESS_STEPS,
+              );
+              if (next !== current) setProgressErrorHint(errorHint);
+              return next;
+            });
+            headlessFailureReason = data.reason;
+            headlessFailureStep = data.failedStep;
+            return;
+          }
           const nextStep = data.step;
+          if (!isHeadlessProgressStepKey(nextStep, CONTRACT_CREATION_PROGRESS_STEPS)) return;
           setCreationProgress((current) =>
             resolveNextHeadlessProgress(current, nextStep, CONTRACT_CREATION_PROGRESS_STEPS),
           );
         });
 
-        const headless = await eformsignApi.dispatchHeadless(
+        const headless: unknown = await eformsignApi.dispatchHeadless(
           contractData as unknown as Parameters<typeof eformsignApi.dispatchHeadless>[0],
           finalClientId,
           progressId,
         );
 
-        if (headless.ok) {
-          headlessOk = true;
+        if (isHeadlessSuccessResponse(headless)) {
           startNavigation();
           setCreationProgress({ step: "sent", completed: true, failed: false });
           queryClient.invalidateQueries({ queryKey: eformsignQueryKeys.documents() });
@@ -857,121 +1109,119 @@ export default function ContractCreationPage() {
           return;
         }
 
-        if (headless.reason === "local_persist_failed" && headless.remoteDocumentId) {
-          try {
-            const adopted = await eformsignApi.adoptDocument(
-              headless.remoteDocumentId,
-              finalClientId,
-            );
-            if (adopted.warnings?.includes("mirror_sync_failed")) {
-              queryClient.invalidateQueries({ queryKey: eformsignQueryKeys.documents() });
-              setProgressErrorHint(
-                "문서는 생성·전송되었지만 전자문서와 PDF 동기화가 완료되지 않았습니다. "
-                + "새 계약서를 다시 만들지 말고 잠시 후 전자문서 목록에서 확인해 주세요.",
-              );
-              setCreationProgress((current) => ({
-                step: current.step ?? "client-started",
-                completed: false,
-                failed: true,
-              }));
-              return;
-            }
-            startNavigation();
-            setCreationProgress({ step: "sent", completed: true, failed: false });
-            queryClient.invalidateQueries({ queryKey: eformsignQueryKeys.documents() });
-            setTimeout(() => { setIsProgressModalOpen(false); router.push("/contracts"); }, SUCCESS_REDIRECT_DELAY_MS);
-          } catch {
-            setProgressErrorHint("문서는 생성되었으나 등록에 실패했어요. 잠시 후 다시 시도해 주세요.");
-          }
+        // A typed ProblemDetails response is already sanitized by the shared
+        // parser. Preserve its request/operation ids and factual outcome.
+        const normalizedHeadless = normalizeApiError(headless, {
+          operation: "mutation",
+          locale: "ko-KR",
+        });
+        if (normalizedHeadless.verified) {
+          setProgressErrorHint(normalizedHeadless.message);
+          showSubmissionFailure(headless, normalizedHeadless.problem?.outcome ?? "UNKNOWN");
           return;
         }
-        if (headless.reason === "remote_unconfirmed" || headless.fallbackHint === "manual_check" || headless.fallbackHint === "adopt-or-manual") {
-          setProgressErrorHint("문서 생성 상태를 확인할 수 없어요. 전자문서 목록에서 확인 후 다시 시도해 주세요.");
-          return;
-        }
-        if (headless.reason === "duplicate_pending_document") {
-          setProgressErrorHint("최근 생성된 진행 중 문서가 있습니다.");
-          if (await requestConfirmation("최근 생성된 진행 중 문서가 있습니다. 그래도 새로 생성하시겠습니까?")) {
-            const forced = await eformsignApi.dispatchHeadless(contractData as unknown as Parameters<typeof eformsignApi.dispatchHeadless>[0], finalClientId, progressId, true);
-            if (forced.ok) {
-              startNavigation();
-              setCreationProgress({ step: "sent", completed: true, failed: false });
-              queryClient.invalidateQueries({ queryKey: eformsignQueryKeys.documents() });
-              setTimeout(() => { setIsProgressModalOpen(false); router.push("/contracts"); }, SUCCESS_REDIRECT_DELAY_MS);
-            }
-          }
+        if (!isRecord(headless) || headless.ok !== false) {
+          setProgressErrorHint(CONTRACT_OUTCOME_COPY.UNKNOWN.message);
+          showSubmissionFailure(new Error("The contract dispatch response was invalid"), "UNKNOWN");
           return;
         }
 
         headlessFailureReason = headless.reason;
         headlessFailureStep = headless.failedStep;
         headlessFallbackHint = headless.fallbackHint;
-        console.warn("[contract-creation] headless dispatch returned ok=false", {
-          reason: headless.reason,
-          failedStep: headless.failedStep,
-          durationMs: headless.durationMs,
-        });
-        const errorHint = getSafeHeadlessFailureMessage(headless.reason);
-        setCreationProgress((current) => {
-          const next = resolveFailedHeadlessProgress(
-            current,
-            headless.failedStep,
-            CONTRACT_CREATION_PROGRESS_STEPS,
-          );
-          if (next !== current) {
-            setProgressErrorHint(errorHint);
+
+        const remoteDocumentId = typeof headless.remoteDocumentId === "string"
+          && headless.remoteDocumentId.trim().length > 0
+          ? headless.remoteDocumentId
+          : null;
+        if (headless.reason === "local_persist_failed" && remoteDocumentId) {
+          try {
+            const adopted = await eformsignApi.adoptDocument(remoteDocumentId, finalClientId);
+            if (adopted.warnings?.includes("mirror_sync_failed")) {
+              queryClient.invalidateQueries({ queryKey: eformsignQueryKeys.documents() });
+              setCreationProgress((current) => ({
+                step: current.step ?? "client-started",
+                completed: false,
+                failed: true,
+              }));
+              setProgressErrorHint("전자문서와 PDF 동기화가 완료되지 않았습니다. 계약 목록에서 상태를 확인해 주세요.");
+              showSubmissionFailure(adopted, "UNKNOWN");
+              return;
+            }
+            if (typeof adopted.documentId !== "string" || adopted.documentId.trim().length === 0) {
+              setProgressErrorHint(CONTRACT_OUTCOME_COPY.UNKNOWN.message);
+              showSubmissionFailure(new Error("The adopted document response was invalid"), "UNKNOWN");
+              return;
+            }
+            startNavigation();
+            setCreationProgress({ step: "sent", completed: true, failed: false });
+            queryClient.invalidateQueries({ queryKey: eformsignQueryKeys.documents() });
+            setTimeout(() => { setIsProgressModalOpen(false); router.push("/contracts"); }, SUCCESS_REDIRECT_DELAY_MS);
+          } catch (error) {
+            setProgressErrorHint("전자문서 등록 상태를 확인할 수 없어 계약 목록에서 확인해 주세요.");
+            showSubmissionFailure(error, "UNKNOWN");
           }
-          return next;
+          return;
+        }
+
+        if (headless.reason === "remote_unconfirmed"
+          || headless.fallbackHint === "manual_check"
+          || headless.fallbackHint === "adopt-or-manual"
+          || headless.reason === "dispatch_uncertain_manual_reconciliation_required") {
+          setProgressErrorHint(CONTRACT_OUTCOME_COPY.UNKNOWN.message);
+          showSubmissionFailure(headless, "UNKNOWN");
+          return;
+        }
+        if (headless.reason === "duplicate_pending_document") {
+          setProgressErrorHint("최근 생성된 진행 중 문서가 있어 계약 목록에서 상태를 확인해 주세요.");
+          showSubmissionFailure(headless, "UNKNOWN");
+          return;
+        }
+
+        const safeFallback = canUseContractIframeFallback({
+          fallbackHint: headlessFallbackHint,
+          failedStep: headlessFailureStep,
+          reason: headlessFailureReason,
         });
+        if (safeFallback) {
+          setProgressErrorHint(getSafeHeadlessFailureMessage(
+            typeof headlessFailureReason === "string" ? headlessFailureReason : undefined,
+          ));
+          setIsProgressModalOpen(false);
+          try {
+            keepSubmittingUntilIframeCloses = await runIframeFallback(contractData, finalClientId, end);
+          } catch (error) {
+            showSubmissionFailure(error, "UNKNOWN");
+          }
+          return;
+        }
+
+        setProgressErrorHint(getSafeHeadlessFailureMessage(
+          typeof headlessFailureReason === "string" ? headlessFailureReason : undefined,
+        ));
+        showSubmissionFailure(headless, "UNKNOWN");
       } catch (headlessError) {
-        headlessFailureReason = headlessError instanceof Error ? headlessError.message : undefined;
-        console.warn("[contract-creation] headless dispatch threw", headlessError);
-        const errorHint = getSafeHeadlessFailureMessage(headlessFailureReason);
-        setCreationProgress((current) => {
-          const next = resolveFailedHeadlessProgress(
-            current,
-            undefined,
-            CONTRACT_CREATION_PROGRESS_STEPS,
-          );
-          if (next !== current) {
-            setProgressErrorHint(errorHint);
-          }
-          return next;
-        });
+        // A thrown dispatch has no server guarantee that the provider was not
+        // reached. Do not open the iframe or permit a blind replay.
+        setCreationProgress((current) => resolveFailedHeadlessProgress(
+          current,
+          undefined,
+          CONTRACT_CREATION_PROGRESS_STEPS,
+        ));
+        setProgressErrorHint(CONTRACT_OUTCOME_COPY.UNKNOWN.message);
+        showSubmissionFailure(headlessError, "UNKNOWN");
+        return;
       } finally {
         progressSource?.close();
         progressSourceRef.current = null;
       }
-
-      // 5. Fallback to iframe modal if headless failed
-      if (!headlessOk && headlessFallbackHint === "iframe") {
-        console.warn("[contract-creation] falling back to iframe", {
-          reason: headlessFailureReason,
-          failedStep: headlessFailureStep,
-        });
-        if (headlessFailureReason) {
-          showErrorToast(getSafeHeadlessFailureMessage(headlessFailureReason));
-        }
-        setIsProgressModalOpen(false);
-        keepSubmittingUntilIframeCloses = await runIframeFallback(contractData, finalClientId, end);
-      }
-    } catch (err: unknown) {
+    } catch (error: unknown) {
       setIsProgressModalOpen(false);
-      const msg = err instanceof Error ? err.message : "계약서 생성 중 오류가 발생했어요.";
-      showErrorToast(autoRegisteredClientId ? `${msg} 방금 자동 등록된 고객이 남아 있어요` : msg);
-      if (autoRegisteredClientId && (await requestConfirmation("방금 자동 등록된 고객이 남아 있습니다. 고객을 삭제할까요?"))) {
-        try {
-          await deleteClientMutation.mutateAsync(autoRegisteredClientId);
-          setClientId(null);
-        } catch (deleteError) {
-          if (isAxiosError<{ message?: string }>(deleteError)) {
-            showErrorToast(deleteError.response?.data.message || "고객을 삭제하지 못했어요");
-          }
-        }
-      }
+      showSubmissionFailure(error, "UNKNOWN");
     } finally {
       if (!keepSubmittingUntilIframeCloses) {
         setIsSubmitting(false);
+        submissionInFlightRef.current = false;
       }
     }
   };
@@ -982,7 +1232,7 @@ export default function ContractCreationPage() {
   const isFirstStep = activeStep === 0;
   const isLastStep = isContractInfoStep;
   const isBusy = isSubmitting || isNavigationPending;
-  const isPrimaryDisabled = isBusy || !isCurrentStepValid;
+  const isPrimaryDisabled = isBusy || Boolean(submissionLock) || !isCurrentStepValid;
 
   return (
     <>
@@ -1039,6 +1289,49 @@ export default function ContractCreationPage() {
                 </AlertDescription>
               </Alert>
             ) : null}
+            {submissionAlert ? (
+              <Alert
+                variant="warning"
+                role="alert"
+                aria-live="assertive"
+                data-component="mobile_contracts-new_screen_root_submission-alert"
+              >
+                <AlertTitle data-component="mobile_contracts-new_screen_root_submission-alert_title">
+                  {submissionAlert.title}
+                </AlertTitle>
+                <AlertDescription data-component="mobile_contracts-new_screen_root_submission-alert_description">
+                  <p>{submissionAlert.message}</p>
+                  {submissionAlert.errors?.length ? (
+                    <ul>
+                      {submissionAlert.errors.map((error, index) => (
+                        <li key={`${error.pointer}-${error.code}-${index}`}>{error.detail}</li>
+                      ))}
+                    </ul>
+                  ) : null}
+                  {submissionAlert.requestId ? (
+                    <p data-component="mobile_contracts-new_screen_root_submission-alert_request-id">
+                      요청 ID: {submissionAlert.requestId}
+                    </p>
+                  ) : null}
+                  {submissionAlert.operationId ? (
+                    <p data-component="mobile_contracts-new_screen_root_submission-alert_operation-id">
+                      작업 ID: {submissionAlert.operationId}
+                    </p>
+                  ) : null}
+                  {submissionAlert.locked ? (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => router.push("/contracts")}
+                      data-component="mobile_contracts-new_screen_root_submission-alert_status-button"
+                    >
+                      계약 목록에서 상태 확인
+                    </Button>
+                  ) : null}
+                </AlertDescription>
+              </Alert>
+            ) : null}
             <div className={styles.wizardHeader} data-component="mobile_contracts-new_screen_root_page_root_header">
               <div className={styles.progressRow} data-component="mobile_contracts-new_screen_root_page_root_header_progress-row">
                 <div className={styles.progressTrack} data-component="mobile_contracts-new_screen_root_page_root_header_progress-row_progress-track" aria-hidden="true">
@@ -1071,6 +1364,7 @@ export default function ContractCreationPage() {
                     <Field dataComponent="mobile_contracts-new_client_name-field" label="이름" required>
                       <ClientAutocomplete
                         data-component="mobile_contracts-new_screen_root_page_root_form-scroll_card_autocomplete"
+                        inputId="contract-create-client-name"
                         value={clientId}
                         onChange={handleClientSelect}
                         inputValue={name}
@@ -1512,7 +1806,7 @@ export default function ContractCreationPage() {
             <button
               data-component="mobile_contracts-new_signing_modal_header_close-button"
               type="button"
-              onClick={closeEformsignModal}
+              onClick={handleEformsignModalClose}
               className={styles.navbarIconButton}
               aria-label="닫기"
             >
