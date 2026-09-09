@@ -46,6 +46,29 @@ describe("logUpstreamError", () => {
         expect(logged).not.toContain("staff@example.com");
         expect(logged).toContain("safe");
     });
+
+    it("redacts every credential in compound Cookie and Set-Cookie headers", () => {
+        const errorSpy = jest.spyOn(console, "error").mockImplementation(() => undefined);
+
+        logUpstreamError(
+            "proxy",
+            new Error("provider failed"),
+            JSON.stringify({
+                Cookie: "auth_token=auth-secret; refresh_token=refresh-secret",
+                "Set-Cookie": "auth_token=set-cookie-secret; Path=/",
+                safe: "kept",
+            }),
+        );
+
+        const logged = errorSpy.mock.calls[0]?.[1] as { body?: string };
+        expect(logged.body).toContain('"Cookie":[REDACTED]');
+        expect(logged.body).toContain('"Set-Cookie":[REDACTED]');
+        const loggedText = JSON.stringify(logged);
+        expect(loggedText).not.toContain("auth-secret");
+        expect(loggedText).not.toContain("refresh-secret");
+        expect(loggedText).not.toContain("set-cookie-secret");
+        expect(loggedText).toContain("safe");
+    });
 });
 
 describe("createRouteUtils legacy-message errorResponse", () => {
@@ -130,5 +153,22 @@ describe("createRouteUtils legacy-message errorResponse", () => {
         const body = await response.json();
         expect(body.error).toBe("입력 정보가 요청 조건에 맞지 않아요. 입력 내용을 확인해 주세요.");
         expect(body.error).not.toContain("abc.def.ghi");
+    });
+
+    it.each([
+        "auth_token=auth-secret 오류입니다.",
+        "refresh_token: refresh-secret 오류입니다.",
+        '"Cookie": "auth_token=auth-secret; refresh_token=refresh-secret"',
+        "Set-Cookie: auth_token=auth-secret; Path=/",
+    ])("does not reflect session cookie diagnostics from a 4xx message (%s)", async (message) => {
+        const response = errorResponse(
+            upstreamError(400, { message }),
+            "create client",
+        );
+
+        const body = await response.json();
+        expect(body.error).toBe("입력 정보가 요청 조건에 맞지 않아요. 입력 내용을 확인해 주세요.");
+        expect(JSON.stringify(body)).not.toContain("auth-secret");
+        expect(JSON.stringify(body)).not.toContain("refresh-secret");
     });
 });

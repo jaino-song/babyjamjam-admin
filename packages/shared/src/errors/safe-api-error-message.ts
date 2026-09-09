@@ -69,6 +69,47 @@ const SQL_RELATION_TAIL_KEYWORDS = new Set([
 const SQL_OPERATOR_CHARS = "+-*/%<>=!|&^~:";
 const SQL_PUNCTUATION_CHARS = ".,()[];";
 
+/**
+ * Keep sensitive names in one policy so response rejection and diagnostic
+ * redaction cannot drift apart. Cookie headers are handled as whole values
+ * because one header can contain several cookie pairs.
+ */
+const SENSITIVE_KEY_PATTERN_SOURCE = [
+    "access[ _-]?token",
+    "refresh[ _-]?token",
+    "oauth[ _-]?token",
+    "external[ _-]?token",
+    "auth[ _-]?token",
+    "api[ _-]?key",
+    "authorization",
+    "member[ _-]?(?:email|id)",
+    "client[ _-]?secret",
+    "password",
+    "secret",
+    "cookie",
+    "set-cookie",
+].join("|");
+
+const SENSITIVE_KEY_ASSIGNMENT_PATTERN = new RegExp(
+    `(?:^|[^A-Za-z0-9_])(?:["']?(?:${SENSITIVE_KEY_PATTERN_SOURCE})["']?)\\s*[:=]\\s*(?:["'][^"']*["']|\\S+)`,
+    "i",
+);
+
+const SENSITIVE_QUERY_PATTERN = new RegExp(
+    `([?&](?:${SENSITIVE_KEY_PATTERN_SOURCE})=)[^&\\s]+`,
+    "gi",
+);
+
+const COOKIE_HEADER_PATTERN = new RegExp(
+    `(^|[^A-Za-z0-9_])(["']?(?:cookie|set-cookie)["']?\\s*[:=]\\s*)(?:["'][^"']*["']|[^\\n\\r,}]+)`,
+    "gi",
+);
+
+const SENSITIVE_VALUE_ASSIGNMENT_PATTERN = new RegExp(
+    `(^|[^A-Za-z0-9_])(["']?(?:${SENSITIVE_KEY_PATTERN_SOURCE})["']?\\s*[:=]\\s*)(?:["'][^"']*["']|[^"'\\s,;}&]+)`,
+    "gi",
+);
+
 function isSqlWordStart(char: string | undefined): boolean {
     return char !== undefined && /[A-Za-z_$]/.test(char);
 }
@@ -383,11 +424,6 @@ const UNSAFE_SERVER_MESSAGE_PATTERNS = [
     /\b(?:stack\s*trace|node_modules|referenceerror|typeerror|syntaxerror|econn(?:refused|reset|aborted))\b/i,
     /\bupstream\s+(?:error|failure|rejected)\b/i,
     /\bbearer\s+\S+/i,
-    /\b(?:access|refresh|oauth)[ _-]?token\s*[:=]\s*\S+/i,
-    /\bapi[ _-]?key\s*[:=]\s*\S+/i,
-    /\bclient[ _-]?secret\s*[:=]\s*\S+/i,
-    /\bpassword\s*[:=]\s*\S+/i,
-    /\bauthorization\s*[:=]\s*(?:bearer\s+)?\S+/i,
     /(?:^|[\s:])(?:\/(?:users|home|app|var|tmp|workspace)\/|[A-Za-z]:[\\/])/i,
 ];
 
@@ -416,7 +452,8 @@ function isUnsafeServerMessage(message: string, status: number | undefined): boo
         return true;
     }
 
-    return UNSAFE_SERVER_MESSAGE_PATTERNS.some((pattern) => pattern.test(message));
+    return SENSITIVE_KEY_ASSIGNMENT_PATTERN.test(message)
+        || UNSAFE_SERVER_MESSAGE_PATTERNS.some((pattern) => pattern.test(message));
 }
 
 function getResponsePayload(error: unknown): ResponsePayload | null {
@@ -485,14 +522,9 @@ export function getSafeApiDisplayMessage(error: unknown): string | null {
 export function sanitizeApiDisplayMessage(message: string): string {
     return message
         .replace(/Bearer\s+\S+/gi, "Bearer [REDACTED]")
-        .replace(
-            /([?&](?:access[_-]?token|refresh[_-]?token|oauth[_-]?token|external[_-]?token|api[ _-]?key|authorization|member[_-]?email|member[_-]?id)=)[^&\s]+/gi,
-            "$1[REDACTED]",
-        )
-        .replace(
-            /(["']?(?:access[ _-]?token|refresh[ _-]?token|oauth[ _-]?token|external[ _-]?token|api[ _-]?key|authorization|member[ _-]?(?:email|id)|client[ _-]?secret|password|secret)["']?\s*[:=]\s*)["']?[^"'\s,;}&]+["']?/gi,
-            "$1[REDACTED]",
-        )
+        .replace(SENSITIVE_QUERY_PATTERN, "$1[REDACTED]")
+        .replace(COOKIE_HEADER_PATTERN, "$1$2[REDACTED]")
+        .replace(SENSITIVE_VALUE_ASSIGNMENT_PATTERN, "$1$2[REDACTED]")
         .replace(
             /\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi,
             "[REDACTED_EMAIL]",
