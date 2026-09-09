@@ -7,7 +7,7 @@
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { createProblemDetails } from "@babyjamjam/shared";
 import { useQueryClient } from "@tanstack/react-query";
-import { StrictMode } from "react";
+import { StrictMode, type ReactNode } from "react";
 
 import type { MessageLogRecord } from "@/features/message-triggers/types";
 import { messageTriggerKeys } from "@/features/message-triggers/hooks/keys";
@@ -230,6 +230,31 @@ function renderNameRequiredForm() {
       message="안내 메시지입니다."
       requiresRecipientName
     />,
+  );
+}
+
+const MODE_FORM_PROPS = {
+  templateId: "builtin:info",
+  templateName: "서비스 안내",
+  message: "안내 메시지입니다.",
+} as const;
+const MODE_SERVICE_PREPARATION = {
+  scheduleId: 11,
+  serviceStartDate: "2026-07-03",
+  serviceRecordUrl: "https://mobile.test/service-record/efl_prepared",
+  preparedLinkToken: "efl_prepared",
+  expiresAt: "2026-07-20T00:00:00.000Z",
+  recipientPhone: "01011112222",
+} as const;
+function modeForm(mode: "sms" | "service-feedback-link", children?: ReactNode) {
+  return (
+    <TemplateSendForm
+      {...MODE_FORM_PROPS}
+      deliveryMode={mode}
+      serviceRecordLinkPreparation={MODE_SERVICE_PREPARATION}
+    >
+      {children}
+    </TemplateSendForm>
   );
 }
 
@@ -803,8 +828,9 @@ describe("Phase2a SMS outcome state machine", () => {
     view.rerender(<TemplateSendForm templateId="builtin:service-feedback-link" templateName="제공기록지 작성 링크" message="안내 메시지입니다." deliveryMode="service-feedback-link" />);
     view.rerender(<TemplateSendForm templateId="builtin:info" templateName="서비스 안내" message="안내 메시지입니다." />);
     await waitFor(() => expect(screen.getByRole("button", { name: /즉시 발송/ })).toBeDisabled());
-    expect(document.querySelector('[data-component="desktop_messages_sections_template-send-form_feedback"]'))
-      .toHaveTextContent("작업 상태를 확인해 주세요");
+    await waitFor(() => expect(
+      document.querySelector('[data-component="desktop_messages_sections_template-send-form_feedback"]'),
+    ).toHaveTextContent("작업 상태를 확인해 주세요"));
   });
   it("guards same-tick submit and duplicate confirmation re-entry", async () => {
     const record = buildHistoryRecord({ messageBody: "안내 메시지입니다." });
@@ -856,6 +882,9 @@ describe("Phase2a SMS outcome state machine", () => {
     await act(async () => resolveUnknown(new Error("provider unavailable")));
     await waitFor(() => expect(submitButton).toBeDisabled());
     expect(screen.getByTestId("autocomplete-휴대 전화번호")).toHaveValue("01033333333");
+    await waitFor(() => expect(
+      document.querySelector('[data-component="desktop_messages_sections_template-send-form_feedback"]'),
+    ).toHaveTextContent("작업 상태를 확인해 주세요"));
     expect(mockedSendSms).toHaveBeenCalledTimes(2);
   });
 
@@ -869,5 +898,104 @@ describe("Phase2a SMS outcome state machine", () => {
     mockedSendSms.mockResolvedValue(buildSendSuccess());
     fireEvent.click(screen.getByRole("button", { name: /즉시 발송/ }));
     await waitFor(() => expect(mockedSendSms).toHaveBeenCalledTimes(1));
+  });
+
+  it("invalidates a pending duplicate lookup across an SMS mode roundtrip", async () => {
+    const record = buildHistoryRecord();
+    let resolveLookup!: (value: { data: MessageLogRecord[] }) => void;
+    const refetch = jest.fn().mockImplementation(
+      () => new Promise((resolve) => { resolveLookup = resolve; }),
+    );
+    mockedUseMessageHistory.mockReturnValue({ data: [], refetch } as never);
+    const view = render(modeForm("sms"));
+    await queueRecipient("01011111111");
+    fireEvent.click(screen.getByRole("button", { name: /즉시 발송/ }));
+    await waitFor(() => expect(refetch).toHaveBeenCalledTimes(1));
+
+    view.rerender(modeForm("service-feedback-link"));
+    view.rerender(modeForm("sms"));
+    await act(async () => resolveLookup({ data: [record] }));
+
+    await waitFor(() => expect(screen.getByRole("button", { name: /즉시 발송/ })).toBeEnabled());
+    expect(screen.queryByRole("button", { name: "전송" })).not.toBeInTheDocument();
+    expect(mockedSendSms).not.toHaveBeenCalled();
+  });
+
+  it("discards a pending duplicate confirmation when leaving SMS", async () => {
+    const record = buildHistoryRecord();
+    const refetch = jest.fn().mockResolvedValue({ data: [record] });
+    mockedUseMessageHistory.mockReturnValue({ data: [record], refetch } as never);
+    const view = render(modeForm("sms"));
+    await queueRecipient("01011111111");
+    fireEvent.click(screen.getByRole("button", { name: /즉시 발송/ }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "전송" })).toBeInTheDocument());
+
+    view.rerender(modeForm("service-feedback-link"));
+    expect(screen.queryByRole("button", { name: "전송" })).not.toBeInTheDocument();
+    view.rerender(modeForm("sms"));
+    expect(screen.queryByRole("button", { name: "전송" })).not.toBeInTheDocument();
+    expect(mockedSendSms).not.toHaveBeenCalled();
+  });
+
+  it("keeps active service loading and feedback isolated from a late SMS result", async () => {
+    let rejectSms!: (reason: unknown) => void;
+    const pendingSms = new Promise<never>((_, reject) => { rejectSms = reject; });
+    let resolveService!: (value: unknown) => void;
+    const pendingService = new Promise((resolve) => { resolveService = resolve; });
+    mockedSendSms.mockReturnValue(pendingSms as never);
+    mockedSendServiceRecordLink.mockReturnValue(pendingService as never);
+    const unknown = createProblemDetails({
+      code: "MESSAGE_SEND_UNCONFIRMED",
+      requestId: "req-mode-switch",
+      status: 502,
+      outcome: "UNKNOWN",
+    });
+    const view = render(modeForm("sms"));
+    await queueRecipient("01011111111");
+    fireEvent.click(screen.getByRole("button", { name: /즉시 발송/ }));
+    await waitFor(() => expect(mockedSendSms).toHaveBeenCalledTimes(1));
+
+    await act(async () => {
+      useFormStore.setState({
+        clientId: 20,
+        name: "김산모",
+        phone: "010-1111-1111",
+        employeeId: 30,
+        employeeName: "홍제공",
+        employeePhone: "010-1111-2222",
+      });
+    });
+    view.rerender(modeForm("service-feedback-link", <div data-testid="service-draft" />));
+    const serviceButton = screen.getByRole("button", { name: /즉시 발송/ });
+    await waitFor(() => expect(serviceButton).toBeEnabled());
+    fireEvent.click(serviceButton);
+    await waitFor(() => expect(mockedSendServiceRecordLink).toHaveBeenCalledTimes(1));
+    expect(screen.getByRole("button", { name: /발송 중/ })).toBeDisabled();
+
+    await act(async () => rejectSms({ isAxiosError: true, response: { status: 502, data: unknown } }));
+    expect(screen.getByRole("button", { name: /발송 중/ })).toBeDisabled();
+    expect(screen.getByTestId("service-draft")).toBeInTheDocument();
+    expect(document.querySelector('[data-component="desktop_messages_sections_template-send-form_feedback"]'))
+      .not.toBeInTheDocument();
+    expect(useFormStore.getState()).toEqual(expect.objectContaining({
+      clientId: 20,
+      name: "김산모",
+      phone: "010-1111-1111",
+      employeeId: 30,
+      employeeName: "홍제공",
+      employeePhone: "010-1111-2222",
+    }));
+
+    await act(async () => resolveService({
+      data: { ok: true, jobId: "job-11", status: "sent", scheduledFor: "2026-07-10T00:00:00.000Z" },
+    }));
+    await waitFor(() => expect(
+      document.querySelector('[data-component="desktop_messages_sections_template-send-form_feedback"]'),
+    ).toHaveTextContent("제공기록지 링크를 바로 보냈어요"));
+
+    view.rerender(modeForm("sms"));
+    await waitFor(() => expect(screen.getByRole("button", { name: /즉시 발송/ })).toBeDisabled());
+    expect(document.querySelector('[data-component="desktop_messages_sections_template-send-form_feedback"]'))
+      .toHaveTextContent("작업 상태를 확인해 주세요");
   });
 });

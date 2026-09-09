@@ -90,6 +90,8 @@ interface SmsSubmissionSnapshot {
   templateName: string;
   message: string;
   requiresRecipientName: boolean;
+  deliveryMode: TemplateMessageDeliveryMode;
+  deliveryGeneration: number;
 }
 
 type SubmissionGuard = "idle" | "checking" | "awaiting-confirm" | "sending";
@@ -263,7 +265,8 @@ export function TemplateSendForm({
   const queryClient = useQueryClient();
   const { toast } = useToast();
   const [selectedClientId, setSelectedClientId] = useState<number | null>(null);
-  const [isSending, setIsSending] = useState(false);
+  const [isSmsSending, setIsSmsSending] = useState(false);
+  const [isServiceRecordLinkSending, setIsServiceRecordLinkSending] = useState(false);
   const [isCheckingDuplicate, setIsCheckingDuplicate] = useState(false);
   const [feedback, setFeedback] = useState<{
     tone: "success" | "error";
@@ -281,6 +284,19 @@ export function TemplateSendForm({
   const smsLockedFeedbackRef = useRef<typeof feedback>(null);
   const acceptedCurrentPhoneRef = useRef<string | null>(null);
   const latestSmsSnapshotRef = useRef<SmsSubmissionSnapshot | null>(null);
+  const deliveryModeRef = useRef(deliveryMode);
+  const deliveryGenerationRef = useRef(0);
+  const smsLookupIdRef = useRef(0);
+  const smsLookupGenerationRef = useRef<number | null>(null);
+  const smsSendIdRef = useRef(0);
+  const serviceSendIdRef = useRef(0);
+  if (deliveryModeRef.current !== deliveryMode) {
+    deliveryModeRef.current = deliveryMode;
+    deliveryGenerationRef.current += 1;
+    smsLookupGenerationRef.current = null;
+    duplicateSubmissionRef.current = null;
+    if (submissionGuardRef.current !== "sending") submissionGuardRef.current = "idle";
+  }
   const { data: historyData = [], refetch: refetchHistory } = useMessageHistory();
   const {
     clientId,
@@ -312,6 +328,10 @@ export function TemplateSendForm({
   } = useFormStore();
 
   const isServiceRecordLinkDelivery = deliveryMode === "service-feedback-link";
+  const isActiveDuplicateCheck = !isServiceRecordLinkDelivery
+    && isCheckingDuplicate
+    && smsLookupGenerationRef.current === deliveryGenerationRef.current;
+  const isSending = isServiceRecordLinkDelivery ? isServiceRecordLinkSending : isSmsSending;
   const recipientPhone = useMemo(
     () => normalizeKoreanPhoneLookupKey(phone),
     [phone],
@@ -395,7 +415,7 @@ export function TemplateSendForm({
   const isSubmitDisabled = Boolean(validationMessage)
     || (isServiceRecordLinkDelivery && !serviceRecordLinkPreparation)
     || isSending
-    || isCheckingDuplicate
+    || isActiveDuplicateCheck
     || (!isServiceRecordLinkDelivery && smsOutcomeLocked);
   const resolvedFormId = formId ?? `messages-template-send-form-${templateId.replace(/[^a-zA-Z0-9_-]/g, "-")}`;
 
@@ -408,6 +428,12 @@ export function TemplateSendForm({
   }, []);
 
   useEffect(() => {
+    setDuplicateSendCandidates(null);
+    duplicateSubmissionRef.current = null;
+    if (submissionGuardRef.current !== "sending") submissionGuardRef.current = "idle";
+  }, [deliveryMode]);
+
+  useEffect(() => {
     if (isServiceRecordLinkDelivery || feedback?.tone !== "error") return;
 
     const timer = window.setTimeout(() => {
@@ -418,7 +444,7 @@ export function TemplateSendForm({
 
   useEffect(() => {
     if (!isServiceRecordLinkDelivery && smsOutcomeLockedRef.current && smsLockedFeedbackRef.current && feedback !== smsLockedFeedbackRef.current) setFeedback(smsLockedFeedbackRef.current);
-  }, [feedback, isServiceRecordLinkDelivery]);
+  }, [feedback, isServiceRecordLinkDelivery, smsOutcomeLocked]);
 
   const clearFeedbackUnlessSmsLocked = () => {
     if (!smsOutcomeLockedRef.current) {
@@ -595,13 +621,17 @@ export function TemplateSendForm({
     return [];
   };
 
-  latestSmsSnapshotRef.current = {
-    recipients: getRecipientsForSubmit().map((recipient) => ({ ...recipient })),
-    templateId,
-    templateName,
-    message,
-    requiresRecipientName,
-  };
+  if (!isServiceRecordLinkDelivery) {
+    latestSmsSnapshotRef.current = {
+      recipients: getRecipientsForSubmit().map((recipient) => ({ ...recipient })),
+      templateId,
+      templateName,
+      message,
+      requiresRecipientName,
+      deliveryMode,
+      deliveryGeneration: deliveryGenerationRef.current,
+    };
+  }
 
   const sendMessages = async (recipients: RecipientQueueItem[]) => {
     if (smsOutcomeLockedRef.current) {
@@ -614,7 +644,8 @@ export function TemplateSendForm({
       return;
     }
 
-    setIsSending(true);
+    const sendId = ++smsSendIdRef.current;
+    setIsSmsSending(true);
     setFeedback(null);
     setDuplicateSendCandidates(null);
     const submittedSnapshot = createSmsSubmissionSnapshot(recipients);
@@ -688,34 +719,42 @@ export function TemplateSendForm({
           message: `${acceptedSummary}${safeFailureMessage}`,
           requestId: firstBlocked?.problem?.requestId,
         };
-        setFeedback(smsLockedFeedbackRef.current);
+        if (submissionStillCurrent) setFeedback(smsLockedFeedbackRef.current);
       } else if (notAppliedAttempts.length > 0) {
         const firstNotApplied = notAppliedAttempts[0]?.normalized;
         const acceptedSummary = acceptedRecipients.length > 0
           ? `${acceptedRecipients.length}건 발송 요청을 접수했어요. `
           : "";
-        setFeedback({
-          tone: "error",
-          message: `${acceptedSummary}${firstNotApplied?.message ?? "입력 내용을 확인해 주세요."} 수정한 뒤 다시 시도해 주세요.`,
-          requestId: firstNotApplied?.problem?.requestId,
-        });
-      } else {
-        setFeedback({ tone: "success", message: `메시지 발송 요청 ${acceptedRecipients.length}건을 접수했어요` });
         if (submissionStillCurrent) {
+          setFeedback({
+            tone: "error",
+            message: `${acceptedSummary}${firstNotApplied?.message ?? "입력 내용을 확인해 주세요."} 수정한 뒤 다시 시도해 주세요.`,
+            requestId: firstNotApplied?.problem?.requestId,
+          });
+        }
+      } else {
+        if (submissionStillCurrent) {
+          setFeedback({ tone: "success", message: `메시지 발송 요청 ${acceptedRecipients.length}건을 접수했어요` });
           setRecipientQueue([]);
           handleClearRecipient({ clearFeedback: false });
         }
       }
     } finally {
-      duplicateSubmissionRef.current = null;
-      submissionGuardRef.current = "idle";
-      if (mountedRef.current) {
-        setIsSending(false);
+      if (smsSendIdRef.current === sendId) {
+        duplicateSubmissionRef.current = null;
+        submissionGuardRef.current = "idle";
+        if (mountedRef.current) {
+          setIsSmsSending(false);
+        }
       }
     }
   };
 
-  const findDuplicateBeforeSend = async (recipients: RecipientQueueItem[]): Promise<DuplicateSendMatch[]> => {
+  const findDuplicateBeforeSend = async (
+    recipients: RecipientQueueItem[],
+    lookupId: number,
+  ): Promise<DuplicateSendMatch[]> => {
+    smsLookupGenerationRef.current = deliveryGenerationRef.current;
     setIsCheckingDuplicate(true);
     try {
       const result = await refetchHistory();
@@ -745,7 +784,10 @@ export function TemplateSendForm({
       }
       return matches;
     } finally {
-      setIsCheckingDuplicate(false);
+      if (smsLookupIdRef.current === lookupId) {
+        smsLookupGenerationRef.current = null;
+        setIsCheckingDuplicate(false);
+      }
     }
   };
 
@@ -755,11 +797,18 @@ export function TemplateSendForm({
     templateName,
     message,
     requiresRecipientName,
+    deliveryMode,
+    deliveryGeneration: deliveryGenerationRef.current,
   });
 
   const isSmsSubmissionSnapshotCurrent = (snapshot: SmsSubmissionSnapshot) => {
     const latest = latestSmsSnapshotRef.current;
-    return latest !== null
+    return deliveryModeRef.current === "sms"
+      && snapshot.deliveryMode === "sms"
+      && snapshot.deliveryGeneration === deliveryGenerationRef.current
+      && latest !== null
+      && latest.deliveryMode === "sms"
+      && latest.deliveryGeneration === deliveryGenerationRef.current
       && snapshot.templateId === latest.templateId
       && snapshot.templateName === latest.templateName
       && snapshot.message === latest.message
@@ -777,7 +826,13 @@ export function TemplateSendForm({
       return;
     }
 
-    setIsSending(true);
+    const sendId = ++serviceSendIdRef.current;
+    const sendGeneration = deliveryGenerationRef.current;
+    const isCurrentServiceSend = () => mountedRef.current
+      && deliveryModeRef.current === "service-feedback-link"
+      && deliveryGenerationRef.current === sendGeneration
+      && serviceSendIdRef.current === sendId;
+    setIsServiceRecordLinkSending(true);
     setFeedback(null);
     const failureStage: ServiceRecordLinkFailureStage = "send";
 
@@ -787,6 +842,7 @@ export function TemplateSendForm({
         recipientPhone: serviceRecordLinkPreparation.recipientPhone,
       });
       const { status } = response.data;
+      if (!isCurrentServiceSend()) return;
 
       if (status === "sent") {
         setFeedback({ tone: "success", message: "제공기록지 링크를 바로 보냈어요" });
@@ -805,13 +861,17 @@ export function TemplateSendForm({
         toast({ variant: "destructive", description: getUserErrorMessage(errorMessage) });
       }
     } catch (error) {
-      const errorMessage = getServiceRecordLinkErrorMessage(error, failureStage);
-      setFeedback({ tone: "error", message: errorMessage });
-      toast({ variant: "destructive", description: getUserErrorMessage(errorMessage) });
+      if (isCurrentServiceSend()) {
+        const errorMessage = getServiceRecordLinkErrorMessage(error, failureStage);
+        setFeedback({ tone: "error", message: errorMessage });
+        toast({ variant: "destructive", description: getUserErrorMessage(errorMessage) });
+      }
     } finally {
       void queryClient.invalidateQueries({ queryKey: messageTriggerKeys.upcoming() });
       void queryClient.invalidateQueries({ queryKey: messageTriggerKeys.history() });
-      setIsSending(false);
+      if (serviceSendIdRef.current === sendId && mountedRef.current) {
+        setIsServiceRecordLinkSending(false);
+      }
     }
   };
 
@@ -847,12 +907,15 @@ export function TemplateSendForm({
 
     const snapshot = createSmsSubmissionSnapshot(recipients);
     submissionGuardRef.current = "checking";
+    const lookupId = ++smsLookupIdRef.current;
     let duplicates: DuplicateSendMatch[];
     try {
-      duplicates = await findDuplicateBeforeSend(snapshot.recipients);
+      duplicates = await findDuplicateBeforeSend(snapshot.recipients, lookupId);
     } catch (error) {
-      submissionGuardRef.current = "idle";
-      if (!normalizeSmsFailure(error).canceled) {
+      if (smsLookupIdRef.current === lookupId && submissionGuardRef.current === "checking") {
+        submissionGuardRef.current = "idle";
+      }
+      if (!normalizeSmsFailure(error).canceled && isSmsSubmissionSnapshotCurrent(snapshot)) {
         setFeedback({
           tone: "error",
           message: withSmsStatusCheckGuidance("중복 발송 여부를 확인하지 못했어요."),
@@ -862,11 +925,10 @@ export function TemplateSendForm({
     }
 
     if (!mountedRef.current || submissionGuardRef.current !== "checking") {
-      if (mountedRef.current) submissionGuardRef.current = "idle";
       return;
     }
     if (!isSmsSubmissionSnapshotCurrent(snapshot)) {
-      submissionGuardRef.current = "idle";
+      if (smsLookupIdRef.current === lookupId) submissionGuardRef.current = "idle";
       return;
     }
 
@@ -883,20 +945,32 @@ export function TemplateSendForm({
   };
 
   const handleConfirmDuplicateSend = async () => {
-    if (!mountedRef.current || submissionGuardRef.current !== "awaiting-confirm") return;
+    if (
+      !mountedRef.current
+      || deliveryModeRef.current !== "sms"
+      || submissionGuardRef.current !== "awaiting-confirm"
+    ) return;
 
     const snapshot = duplicateSubmissionRef.current;
     if (!snapshot || !isSmsSubmissionSnapshotCurrent(snapshot)) {
       duplicateSubmissionRef.current = null;
       setDuplicateSendCandidates(null);
       submissionGuardRef.current = "idle";
-      setFeedback({ tone: "error", message: "입력 내용이 변경되어 전송 확인을 다시 진행해 주세요." });
+      if (deliveryModeRef.current === "sms") {
+        setFeedback({ tone: "error", message: "입력 내용이 변경되어 전송 확인을 다시 진행해 주세요." });
+      }
       return;
     }
 
     submissionGuardRef.current = "sending";
     await sendMessages(snapshot.recipients);
   };
+
+  const activeDuplicateSendCandidates = !isServiceRecordLinkDelivery
+    && duplicateSubmissionRef.current?.deliveryMode === "sms"
+    && duplicateSubmissionRef.current.deliveryGeneration === deliveryGenerationRef.current
+    ? duplicateSendCandidates
+    : null;
 
   return (
     <form
@@ -919,12 +993,12 @@ export function TemplateSendForm({
             disabled={isSubmitDisabled}
             className="shrink-0"
           >
-            {isSending || isCheckingDuplicate ? (
+            {isSending || isActiveDuplicateCheck ? (
               <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
             ) : (
               <Send className="h-4 w-4" aria-hidden="true" />
             )}
-            {isSending ? "발송 중…" : isCheckingDuplicate ? "확인 중…" : "즉시 발송"}
+            {isSending ? "발송 중…" : isActiveDuplicateCheck ? "확인 중…" : "즉시 발송"}
           </Button>
         ) : null}
       </div>
@@ -1014,7 +1088,7 @@ export function TemplateSendForm({
       ) : null}
 
       <TwoButtonModal
-        open={Boolean(duplicateSendCandidates && duplicateSendCandidates.length > 0)}
+        open={Boolean(activeDuplicateSendCandidates && activeDuplicateSendCandidates.length > 0)}
         size="detail"
         onOpenChange={(open) => {
           if (!open) {
@@ -1031,8 +1105,8 @@ export function TemplateSendForm({
         footerDataComponent="desktop_messages_sections_duplicate-send-confirm-dialog_footer"
         title="중복 전송 확인"
         description={
-          duplicateSendCandidates && duplicateSendCandidates.length > 1
-            ? `최근 같은 내용의 메시지를 보낸 기록이 ${duplicateSendCandidates.length}건 있습니다. 동일한 메시지를 재전송 할까요?`
+          activeDuplicateSendCandidates && activeDuplicateSendCandidates.length > 1
+            ? `최근 같은 내용의 메시지를 보낸 기록이 ${activeDuplicateSendCandidates.length}건 있습니다. 동일한 메시지를 재전송 할까요?`
             : "최근 같은 내용의 메시지를 보낸 기록이 있습니다. 동일한 메시지를 재전송 할까요?"
         }
         isDescriptionVisuallyHidden={false}
@@ -1041,12 +1115,12 @@ export function TemplateSendForm({
         isPending={isSending}
         onApprove={() => void handleConfirmDuplicateSend()}
       >
-        {duplicateSendCandidates && duplicateSendCandidates.length > 0 ? (
+        {activeDuplicateSendCandidates && activeDuplicateSendCandidates.length > 0 ? (
           <div
             data-component="desktop_messages_sections_template-send-form_duplicate-send-confirm-list"
             className="flex flex-col gap-2"
           >
-            {duplicateSendCandidates.map((match) => (
+            {activeDuplicateSendCandidates.map((match) => (
               <div
                 key={match.recipient.phone}
                 data-component="desktop_messages_sections_template-send-form_duplicate-send-confirm-list_recent"
