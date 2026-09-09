@@ -452,7 +452,7 @@ describe("messages page — server system-template catalog", () => {
     }));
   });
 
-  it("renders server-added keys and selects SERVICE_END_NOTICE detail content without service-record routing", () => {
+  it("renders server-added keys and routes SERVICE_END_NOTICE through the receipt-link form", () => {
     mockUseSystemTemplates.mockReturnValue({
       data: [
         buildSystemTemplate({
@@ -487,9 +487,10 @@ describe("messages page — server system-template catalog", () => {
 
     fireEvent.click(screen.getByText("서비스 종료 안내"));
 
-    expect(screen.getByLabelText("템플릿 내용")).toHaveValue("영수증 링크: {{receiptUrl}}");
-    expect(screen.getByText("이 화면에서는 직접 발송할 수 없습니다.")).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "즉시 발송" })).not.toBeInTheDocument();
+    expect(screen.queryByText("이 화면에서는 직접 발송할 수 없습니다.")).not.toBeInTheDocument();
+    expect(screen.getByText("산모님 성함")).toBeInTheDocument();
+    expect(screen.getByText("산모님 전화번호")).toBeInTheDocument();
+    expect(screen.getByText("서비스 종료 안내")).toBeInTheDocument();
     expect(screen.queryByText("제공기록지 작성 링크")).not.toBeInTheDocument();
   });
 

@@ -15,7 +15,7 @@ import { useMessageHistory } from "@/features/message-triggers/hooks/use-message
 import type { MessageLogRecord } from "@/features/message-triggers/types";
 import { serviceRecordsApi } from "@/features/service-records/api/service-records.api";
 import { useToast } from "@/hooks/use-toast";
-import { messageDeliveryApi } from "@/services/api";
+import { eformsignApi, messageDeliveryApi } from "@/services/api";
 import type { Client } from "@/lib/client/types";
 import {
   formatKoreanPhoneNumber,
@@ -31,10 +31,12 @@ import {
 } from "@/lib/message/byte-length";
 import { cn } from "@/lib/utils";
 import { useFormStore } from "@/stores/form-store";
+import { describeReceiptLinkError } from "@/lib/receipt-link";
 import { ContactInput } from "./form-components/ContactInput";
 import { TemplateFieldGrid, TemplateFieldGridItem } from "./form-components/TemplateFieldGrid";
 import type {
   ServiceRecordLinkPreparation,
+  ReceiptLinkPreparation,
   TemplateMessageDeliveryMode,
 } from "./form-components/TemplateMessageFormLayout";
 
@@ -80,6 +82,7 @@ interface TemplateSendFormProps {
   formId?: string;
   showSubmitButton?: boolean;
   serviceRecordLinkPreparation?: ServiceRecordLinkPreparation | null;
+  receiptLinkPreparation?: ReceiptLinkPreparation | null;
   onSubmitStateChange?: (state: TemplateSendFormSubmitState | null) => void;
 }
 
@@ -188,6 +191,7 @@ export function TemplateSendForm({
   formId,
   showSubmitButton = true,
   serviceRecordLinkPreparation,
+  receiptLinkPreparation,
   onSubmitStateChange,
 }: TemplateSendFormProps) {
   const queryClient = useQueryClient();
@@ -229,6 +233,8 @@ export function TemplateSendForm({
   } = useFormStore();
 
   const isServiceRecordLinkDelivery = deliveryMode === "service-feedback-link";
+  const isReceiptLinkDelivery = deliveryMode === "receipt-link";
+  const isPreparedLinkDelivery = isServiceRecordLinkDelivery || isReceiptLinkDelivery;
   const recipientPhone = useMemo(
     () => normalizeKoreanPhoneLookupKey(phone),
     [phone],
@@ -271,13 +277,23 @@ export function TemplateSendForm({
         : clientId === null
           ? "산모님을 선택해 주세요"
           : null;
+  const receiptLinkValidationMessage = clientId === null || !recipientName
+    ? "산모님을 선택해 주세요"
+    : !isRecipientValid
+      ? "산모님 전화번호 형식이 올바르지 않아요"
+      : !receiptLinkPreparation
+        ? "영수증 링크를 준비하고 있어요. 잠시 후 다시 시도해 주세요"
+        : receiptLinkPreparation.clientId !== clientId
+          || normalizeKoreanPhoneLookupKey(receiptLinkPreparation.recipientPhone) !== recipientPhone
+          ? "산모 정보가 변경되었습니다. 산모를 다시 선택해 영수증 링크를 준비해 주세요"
+          : null;
   const messageValidationMessage = !trimmedMessage
     ? "메시지 본문을 입력해 주세요"
     : isBodyTooLong
       ? `본문은 최대 ${MAX_BODY_LENGTH}자까지 입력할 수 있어요`
       : null;
   const currentQueueItem = useMemo<RecipientQueueItem | null>(() => {
-    if (isServiceRecordLinkDelivery) return null;
+    if (isPreparedLinkDelivery) return null;
 
     if (recipientValidationMessage || templateFieldValidationMessage || messageValidationMessage) {
       return null;
@@ -293,7 +309,7 @@ export function TemplateSendForm({
     };
   }, [
     formattedRecipientPhone,
-    isServiceRecordLinkDelivery,
+    isPreparedLinkDelivery,
     messageValidationMessage,
     recipientName,
     recipientPhone,
@@ -305,11 +321,14 @@ export function TemplateSendForm({
   const hasQueuedRecipients = recipientQueue.length > 0;
   const validationMessage = isServiceRecordLinkDelivery
     ? serviceRecordValidationMessage
+    : isReceiptLinkDelivery
+      ? receiptLinkValidationMessage
     : hasQueuedRecipients
       ? null
       : recipientValidationMessage ?? templateFieldValidationMessage ?? messageValidationMessage;
   const isSubmitDisabled = Boolean(validationMessage)
     || (isServiceRecordLinkDelivery && !serviceRecordLinkPreparation)
+    || (isReceiptLinkDelivery && !receiptLinkPreparation)
     || isSending
     || isCheckingDuplicate;
   const resolvedFormId = formId ?? `messages-template-send-form-${templateId.replace(/[^a-zA-Z0-9_-]/g, "-")}`;
@@ -612,12 +631,45 @@ export function TemplateSendForm({
     }
   };
 
+  const sendReceiptLink = async () => {
+    if (clientId === null || !receiptLinkPreparation) {
+      const errorMessage =
+        receiptLinkValidationMessage
+        ?? "영수증 링크를 준비하고 있어요. 잠시 후 다시 시도해 주세요";
+      setFeedback({ tone: "error", message: errorMessage });
+      toast({ variant: "destructive", description: errorMessage });
+      return;
+    }
+
+    setIsSending(true);
+    setFeedback(null);
+
+    try {
+      await eformsignApi.sendReceiptLink(receiptLinkPreparation.documentId, {
+        clientId: receiptLinkPreparation.clientId,
+        recipientPhone: receiptLinkPreparation.recipientPhone,
+      });
+      const successMessage = "서비스 종료 안내 발송 요청을 접수했어요";
+      setFeedback({ tone: "success", message: successMessage });
+      toast({ variant: "success", description: successMessage });
+      resetClientFields();
+    } catch (error) {
+      const errorMessage = describeReceiptLinkError(error);
+      setFeedback({ tone: "error", message: errorMessage });
+      toast({ variant: "destructive", description: errorMessage });
+    } finally {
+      void queryClient.invalidateQueries({ queryKey: messageTriggerKeys.upcoming() });
+      void queryClient.invalidateQueries({ queryKey: messageTriggerKeys.history() });
+      setIsSending(false);
+    }
+  };
+
   const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
 
     if (validationMessage) {
       setFeedback({ tone: "error", message: validationMessage });
-      if (isServiceRecordLinkDelivery) {
+      if (isPreparedLinkDelivery) {
         toast({ variant: "destructive", description: validationMessage });
       }
       return;
@@ -625,6 +677,10 @@ export function TemplateSendForm({
 
     if (isServiceRecordLinkDelivery) {
       await sendServiceRecordLink();
+      return;
+    }
+    if (isReceiptLinkDelivery) {
+      await sendReceiptLink();
       return;
     }
 
@@ -679,7 +735,7 @@ export function TemplateSendForm({
         ) : null}
       </div>
 
-      {isServiceRecordLinkDelivery ? (
+      {isPreparedLinkDelivery ? (
         children ? <TemplateFieldGrid layout="stack">{children}</TemplateFieldGrid> : null
       ) : shouldUseInlinePhoneRecipient ? (
         <>
@@ -736,7 +792,7 @@ export function TemplateSendForm({
         </TemplateFieldGrid>
       )}
 
-      {isServiceRecordLinkDelivery ? null : recipientPills}
+      {isPreparedLinkDelivery ? null : recipientPills}
 
       {feedback ? (
         <div

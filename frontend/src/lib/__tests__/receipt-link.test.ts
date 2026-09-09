@@ -9,7 +9,7 @@ function errorWithData(data: unknown) {
 }
 
 describe("RECEIPT_LINK_REASON_MESSAGES", () => {
-  it("declares exactly the seven backend reason codes, no more, no less", () => {
+  it("declares the backend receipt eligibility reason codes", () => {
     expect(Object.keys(RECEIPT_LINK_REASON_MESSAGES).sort()).toEqual(
       [
         "not_voucher_client",
@@ -17,7 +17,11 @@ describe("RECEIPT_LINK_REASON_MESSAGES", () => {
         "no_contract_document",
         "document_not_linked",
         "document_not_found",
+        "missing_end_date",
+        "service_period_expired",
         "pdf_unavailable",
+        "render_failed",
+        "upload_failed",
         "missing_phone",
       ].sort(),
     );

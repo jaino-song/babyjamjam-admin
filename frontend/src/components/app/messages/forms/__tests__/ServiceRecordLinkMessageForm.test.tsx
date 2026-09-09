@@ -1,8 +1,10 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 
 import { serviceRecordsApi } from "@/features/service-records/api/service-records.api";
 import { useSystemTemplate } from "@/features/system-templates/hooks";
+import { eformsignApi } from "@/services/api";
 import { useFormStore } from "@/stores/form-store";
+import type { ReceiptLinkPreparation } from "../form-components/TemplateMessageFormLayout";
 
 import { ServiceRecordLinkMessageForm } from "../ServiceRecordLinkMessageForm";
 
@@ -14,6 +16,12 @@ jest.mock("@/features/service-records/api/service-records.api", () => ({
   serviceRecordsApi: {
     getClientOverview: jest.fn(),
     prepareLink: jest.fn(),
+  },
+}));
+
+jest.mock("@/services/api", () => ({
+  eformsignApi: {
+    prepareReceiptLink: jest.fn(),
   },
 }));
 
@@ -95,7 +103,7 @@ jest.mock("@/components/app/clients/ClientAutocomplete", () => ({
         aria-label={label}
         aria-controls="client-options"
         aria-expanded="false"
-        onClick={() => onChange(20, { id: 20, name: "김산모" })}
+        onClick={() => onChange(20, { id: 20, name: "김산모", phone: "010-1234-5678" })}
       >
         {manualValue || placeholder || "산모 선택"}
       </button>
@@ -130,18 +138,21 @@ jest.mock("../form-components/TemplateMessageFormLayout", () => ({
     deliveryMode,
     renderLayout,
     serviceRecordLinkPreparation,
+    receiptLinkPreparation,
   }: {
     fields: React.ReactNode;
     messageCard: React.ReactNode;
     deliveryMode?: string;
     renderLayout?: (args: Record<string, unknown>) => React.ReactNode;
     serviceRecordLinkPreparation?: Record<string, unknown> | null;
+    receiptLinkPreparation?: Record<string, unknown> | null;
   }) => renderLayout ? renderLayout({
     fields,
     messageCard,
     requiresRecipientName: false,
     deliveryMode,
     serviceRecordLinkPreparation,
+    receiptLinkPreparation,
   }) : (
       <div data-delivery-mode={deliveryMode}>
         {fields}
@@ -189,6 +200,14 @@ describe("ServiceRecordLinkMessageForm", () => {
         expiresAt: "2026-07-20T00:00:00.000Z",
       },
     } as never);
+    jest.mocked(eformsignApi.prepareReceiptLink).mockResolvedValue({
+      clientId: 20,
+      clientName: "김산모",
+      recipientPhone: "01012345678",
+      documentId: "doc-receipt-1",
+      receiptUrl: "https://mobile.test/receipt/efr_prepared",
+      expiresAt: "2026-07-20T00:00:00.000Z",
+    });
     jest.mocked(useSystemTemplate).mockReturnValue({
       data: {
         content: serviceRecordLinkTemplate,
@@ -362,6 +381,99 @@ describe("ServiceRecordLinkMessageForm", () => {
     await waitFor(() => {
       expect(screen.getByTestId("prepared-link-state")).toHaveTextContent(
         "efl_prepared|2026-07-03",
+      );
+    });
+  });
+
+  it("uses only the mother autocomplete in receipt mode and previews the prepared authoritative values", async () => {
+    jest.mocked(useSystemTemplate).mockReturnValue({
+      data: {
+        content: "{{name}}|{{clientName}}|{{phone}}|{{receiptUrl}}",
+        description: "서비스 종료 안내",
+      },
+    } as ReturnType<typeof useSystemTemplate>);
+
+    render(<ServiceRecordLinkMessageForm mode="receipt-link" />);
+
+    expect(screen.queryByRole("combobox", { name: "관리사님 성함" })).not.toBeInTheDocument();
+    const clientNameInput = screen.getByRole("combobox", { name: "산모님 성함" });
+    fireEvent.click(clientNameInput);
+
+    const phoneInput = await screen.findByRole("textbox", { name: /산모님 전화번호/ });
+    await waitFor(() => {
+      expect(eformsignApi.prepareReceiptLink).toHaveBeenCalledWith(20);
+      expect(phoneInput).toHaveValue("010-1234-5678");
+      expect(phoneInput).toBeDisabled();
+      expect(screen.getByTestId("generated-message")).toHaveTextContent(
+        "김산모|김산모|01012345678|https://mobile.test/receipt/efr_prepared",
+      );
+    });
+
+    expect(document.querySelector('[data-delivery-mode="receipt-link"]')).toBeInTheDocument();
+    expect(screen.getByText("{{receiptUrl}}")).toBeInTheDocument();
+  });
+
+  it("ignores an out-of-order receipt preparation response after changing the selected mother", async () => {
+    jest.mocked(useSystemTemplate).mockReturnValue({
+      data: {
+        content: "{{name}}|{{clientName}}|{{phone}}|{{receiptUrl}}",
+        description: "서비스 종료 안내",
+      },
+    } as ReturnType<typeof useSystemTemplate>);
+
+    let resolveA: ((value: ReceiptLinkPreparation) => void) | undefined;
+    let resolveB: ((value: ReceiptLinkPreparation) => void) | undefined;
+    const preparationA = new Promise<ReceiptLinkPreparation>((resolve) => {
+      resolveA = resolve;
+    });
+    const preparationB = new Promise<ReceiptLinkPreparation>((resolve) => {
+      resolveB = resolve;
+    });
+    jest.mocked(eformsignApi.prepareReceiptLink).mockImplementation((clientId) => (
+      clientId === 20 ? preparationA : preparationB
+    ));
+
+    render(
+      <ServiceRecordLinkMessageForm
+        mode="receipt-link"
+      />,
+    );
+
+    await act(async () => {
+      useFormStore.setState({ clientId: 20, name: "A 산모", phone: "010-1111-1111" });
+    });
+    await waitFor(() => expect(eformsignApi.prepareReceiptLink).toHaveBeenCalledWith(20));
+
+    await act(async () => {
+      useFormStore.setState({ clientId: 21, name: "B 산모", phone: "010-2222-2222" });
+    });
+    await waitFor(() => expect(eformsignApi.prepareReceiptLink).toHaveBeenCalledWith(21));
+
+    await act(async () => {
+      resolveA?.({
+        clientId: 20,
+        clientName: "A 산모",
+        recipientPhone: "01011111111",
+        documentId: "doc-a",
+        receiptUrl: "https://mobile.test/receipt/old",
+        expiresAt: "2026-07-20T00:00:00.000Z",
+      });
+    });
+    expect(screen.getByTestId("generated-message")).not.toHaveTextContent("receipt/old");
+
+    await act(async () => {
+      resolveB?.({
+        clientId: 21,
+        clientName: "B 산모",
+        recipientPhone: "01022222222",
+        documentId: "doc-b",
+        receiptUrl: "https://mobile.test/receipt/current",
+        expiresAt: "2026-07-20T00:00:00.000Z",
+      });
+    });
+    await waitFor(() => {
+      expect(screen.getByTestId("generated-message")).toHaveTextContent(
+        "B 산모|B 산모|01022222222|https://mobile.test/receipt/current",
       );
     });
   });

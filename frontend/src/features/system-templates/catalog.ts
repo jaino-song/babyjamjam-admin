@@ -6,8 +6,10 @@ import type {
 
 /**
  * The server registry is the source of truth for the template list. The
- * frontend keeps this compatibility map only for the eight legacy ids that
- * are already used by the messages page and existing links.
+ * frontend keeps this compatibility map only for the legacy ids that are
+ * already used by the messages page and existing links. SERVICE_END_NOTICE
+ * keeps its server-derived stable id while opting into the manual form flow
+ * through the separate manual type map below.
  */
 export const LEGACY_SYSTEM_TEMPLATE_IDS = {
   GREETING: "builtin:greeting",
@@ -30,7 +32,8 @@ export type LegacyBuiltinTemplateType =
   | "reminder"
   | "thanks"
   | "survey"
-  | "info";
+  | "info"
+  | "service-end-notice";
 
 const LEGACY_BUILTIN_TYPE_BY_KEY: Readonly<Record<LegacySystemTemplateKey, LegacyBuiltinTemplateType>> = {
   GREETING: "greeting",
@@ -42,6 +45,18 @@ const LEGACY_BUILTIN_TYPE_BY_KEY: Readonly<Record<LegacySystemTemplateKey, Legac
   SURVEY: "survey",
   INFO: "info",
 };
+
+const MANUAL_BUILTIN_TYPE_BY_TEMPLATE_KEY: Readonly<Record<string, LegacyBuiltinTemplateType>> = {
+  SERVICE_END_NOTICE: "service-end-notice",
+};
+
+/** Legacy automation-only rows are intentionally retired from this manual-send catalog. */
+export const RETIRED_MANUAL_TEMPLATE_KEYS = new Set([
+  "CLIENT_WELCOME",
+  "SERVICE_START_REMINDER",
+  "SERVICE_END_REMINDER",
+  "EMPLOYEE_ASSIGNED",
+]);
 
 const LEGACY_ID_BY_KEY = new Map<string, string>(Object.entries(LEGACY_SYSTEM_TEMPLATE_IDS));
 
@@ -68,7 +83,7 @@ export interface SystemTemplateCatalogItem {
   /** The complete server record is retained for detail/edit rendering. */
   template: ServerSystemTemplate;
   legacyType: LegacyBuiltinTemplateType | null;
-  /** Only legacy form flows are known to safely prepare a manual send. */
+  /** Known manual form flows that can safely prepare a send. */
   manualSendAvailability: SystemTemplateManualSendAvailability;
 }
 
@@ -120,10 +135,13 @@ export function buildSystemTemplateCatalog(
     if (!template) return [];
 
     const { templateKey } = template;
+    if (RETIRED_MANUAL_TEMPLATE_KEYS.has(templateKey)) return [];
     const legacyType =
       Object.prototype.hasOwnProperty.call(LEGACY_BUILTIN_TYPE_BY_KEY, templateKey)
         ? LEGACY_BUILTIN_TYPE_BY_KEY[templateKey as LegacySystemTemplateKey]
-        : null;
+        : Object.prototype.hasOwnProperty.call(MANUAL_BUILTIN_TYPE_BY_TEMPLATE_KEY, templateKey)
+          ? MANUAL_BUILTIN_TYPE_BY_TEMPLATE_KEY[templateKey]
+          : null;
 
     return [
       {
