@@ -1,5 +1,10 @@
 "use client";
-import { getUserErrorMessage } from "@babyjamjam/shared";
+import {
+  getUserErrorMessage,
+  normalizeApiError,
+  resolveProblemPresentation,
+} from "@babyjamjam/shared";
+import type { NormalizedApiError } from "@babyjamjam/shared/errors/problem-details";
 
 
 import { useState, useMemo, useEffect, useRef, type ReactNode } from "react";
@@ -25,6 +30,8 @@ import { SERVICE_STATUS_OPTIONS } from "@/lib/client/types";
 import { api } from "@/lib/api/client";
 import { EmployeeAutocomplete } from "@/components/app/clients/EmployeeAutocomplete";
 import { EmployeeFormDialog } from "@/components/app/employees/EmployeeFormDialog";
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Button } from "@/components/ui/button";
 import { FormNativeSelect } from "@/components/app/ui/form-section";
 import { MobileTwoButtonModal } from "@/components/app/ui/MobileTwoButtonModal";
 import { TogglePill } from "@/components/app/ui/toggle-pill";
@@ -34,7 +41,6 @@ import { useClientDialogStore } from "@/stores/client-dialog-store";
 import { useClientWizardStore } from "@/stores/client-wizard-store";
 import { useLocale } from "@/providers/LocaleProvider";
 import { t } from "@/lib/i18n/translations";
-import { getErrorMessage } from "@/lib/errors/api-error-mapper";
 import voucherOptions from "@/components/app/messages/templates/json/voucher.json";
 import { calcEndDateBusinessDays } from "@/lib/date/business-days";
 import {
@@ -49,6 +55,12 @@ import { eformsignApi } from "@/services/api";
 import { cn } from "@/lib/utils";
 import { resolveVoucherLookupYear } from "./voucher-year";
 import { getServiceDateDurationCheck } from "./duration-mismatch";
+import {
+  CLIENT_WIZARD_ERROR_SUMMARY_ID,
+  getClientWizardFieldStep,
+  presentClientWizardErrors,
+  type ClientWizardFieldId,
+} from "./error-presentation";
 import styles from "./page.module.css";
 
 const PHONE_DUPLICATE_CHECK_MAX_RETRIES = 3;
@@ -76,6 +88,7 @@ type HelperTone = "muted" | "ok" | "err" | "pending";
 function Field({
   "data-component": dataComponent,
   label,
+  htmlFor,
   required,
   children,
   helper,
@@ -84,6 +97,7 @@ function Field({
 }: {
   "data-component": string;
   label: ReactNode;
+  htmlFor?: string;
   required?: boolean;
   children: ReactNode;
   helper?: ReactNode;
@@ -106,7 +120,7 @@ function Field({
   return (
     <div className={styles.formRow} data-component={dataComponent}>
       <div className={styles.formFieldHeader} data-component={`${dataComponent}_header`}>
-        <label className={styles.formLabel}>
+        <label className={styles.formLabel} htmlFor={htmlFor}>
           {label}
           {required ? <span className={styles.requiredMark}>*</span> : null}
         </label>
@@ -245,6 +259,8 @@ export default function NewClientPage() {
   const [hasPhoneDuplicateCheckFailed, setHasPhoneDuplicateCheckFailed] = useState(false);
   const [lastCheckedPhoneDigits, setLastCheckedPhoneDigits] = useState<string | null>(null);
   const [pendingDurationConfirmation, setPendingDurationConfirmation] = useState<string | null>(null);
+  const [errorState, setErrorState] = useState<NormalizedApiError | null>(null);
+  const [hasUnknownMutationOutcome, setHasUnknownMutationOutcome] = useState(false);
   const lastInitializedFormKeyRef = useRef<string | null>(null);
   const lastHydratedIdRef = useRef<number | null>(null);
   const lastHydratedContractDocIdRef = useRef<string | null>(null);
@@ -254,6 +270,7 @@ export default function NewClientPage() {
     duration: number | null | undefined;
   } | null>(null);
   const submissionInFlightRef = useRef(false);
+  const errorSummaryRef = useRef<HTMLDivElement>(null);
 
   const { data: editingContractDocument } = useQuery({
     queryKey: ["eformsign-docs", "document", editingClient?.eDocId],
@@ -321,6 +338,8 @@ export default function NewClientPage() {
     previousServicePeriodRef.current = null;
     submissionInFlightRef.current = false;
     setPendingDurationConfirmation(null);
+    setErrorState(null);
+    setHasUnknownMutationOutcome(false);
     reset();
   }, [formSessionKey, reset]);
 
@@ -818,7 +837,7 @@ export default function NewClientPage() {
   };
 
   const handleComplete = async (confirmedPeriod?: string) => {
-    if (submissionInFlightRef.current) return;
+    if (submissionInFlightRef.current || hasUnknownMutationOutcome) return;
     if (!validateStep(currentStep)) return;
 
     const { hasMismatch, periodKey } = serviceDateDurationCheck;
@@ -862,10 +881,19 @@ export default function NewClientPage() {
       } else {
         await createClient.mutateAsync(dto);
       }
+      setErrorState(null);
+      setHasUnknownMutationOutcome(false);
       startNavigation();
       router.push(clientsReturnHref);
     } catch (err: unknown) {
-      showErrorToast(getErrorMessage(err, locale, "clients.form.error-save-failed"));
+      const normalized = normalizeApiError(err, {
+        locale: locale === "en" ? "en-US" : "ko-KR",
+        operation: "mutation",
+      });
+      setErrorState(normalized);
+      if (normalized.outcome === "UNKNOWN") {
+        setHasUnknownMutationOutcome(true);
+      }
     } finally {
       submissionInFlightRef.current = false;
       setPendingDurationConfirmation(null);
@@ -887,6 +915,69 @@ export default function NewClientPage() {
   const progress = ((activeStep + 1) / WIZARD_STEPS.length) * 100;
   const clientsReturnHref = editingClientId !== null ? `/clients?id=${editingClientId}` : "/clients";
   const isSaving = createClient.isPending || updateClient.isPending || isNavigationPending;
+  const structuredErrors = useMemo(
+    () => presentClientWizardErrors(errorState?.problem?.errors ?? [], locale),
+    [errorState, locale],
+  );
+  const fieldErrorMessageIds = useMemo(() => {
+    const ids: Record<ClientWizardFieldId, string[]> = {
+      name: [],
+      phone: [],
+      birthday: [],
+      dueDate: [],
+      birthDate: [],
+      address: [],
+      primaryEmployeeId: [],
+      secondaryEmployeeId: [],
+      type: [],
+      duration: [],
+      fullPrice: [],
+      grant: [],
+      actualPrice: [],
+      startDate: [],
+      endDate: [],
+      careCenter: [],
+      voucherClient: [],
+      breastPump: [],
+      serviceStatus: [],
+    };
+    structuredErrors.forEach((problemError) => {
+      if (problemError.fieldId) {
+        ids[problemError.fieldId].push(problemError.summaryId);
+      }
+    });
+    return ids;
+  }, [structuredErrors]);
+
+  useEffect(() => {
+    if (!errorState) return;
+
+    const timeoutId = window.setTimeout(() => {
+      errorSummaryRef.current?.scrollIntoView?.({ block: "start" });
+      errorSummaryRef.current?.focus();
+    }, 0);
+    return () => window.clearTimeout(timeoutId);
+  }, [errorState]);
+
+  const focusWizardField = (fieldId: ClientWizardFieldId) => {
+    const focusTarget = () => {
+      const element = document.getElementById(fieldId);
+      const target = element?.matches("input,select,button,textarea,[tabindex]")
+        ? element
+        : element?.querySelector<HTMLElement>("input,select,button,textarea,[tabindex]");
+      target?.focus();
+    };
+
+    const targetStep = getClientWizardFieldStep(fieldId);
+    if (targetStep !== activeStep) {
+      setCurrentStep(targetStep);
+      window.setTimeout(focusTarget, 0);
+      return;
+    }
+
+    focusTarget();
+  };
+
   const goBackToClients = () => {
     if (isSaving) return;
     router.push(clientsReturnHref);
@@ -906,7 +997,7 @@ export default function NewClientPage() {
     handleStepChange(activeStep + 1);
   };
 
-  const isPrimaryDisabled = isSaving || !isStepSatisfied(activeStep);
+  const isPrimaryDisabled = isSaving || hasUnknownMutationOutcome || !isStepSatisfied(activeStep);
 
   return (
     <>
@@ -955,19 +1046,87 @@ export default function NewClientPage() {
             </div>
 
             <div className={styles.formScroll} data-component="mobile_clients-new_screen_root_page_wizard_form-scroll">
+              {errorState ? (
+                <Alert
+                  ref={errorSummaryRef}
+                  id={CLIENT_WIZARD_ERROR_SUMMARY_ID}
+                  data-component={CLIENT_WIZARD_ERROR_SUMMARY_ID}
+                  dataComponents={{
+                    root: CLIENT_WIZARD_ERROR_SUMMARY_ID,
+                    icon: `${CLIENT_WIZARD_ERROR_SUMMARY_ID}_icon`,
+                    content: `${CLIENT_WIZARD_ERROR_SUMMARY_ID}_content`,
+                  }}
+                  variant="destructive"
+                  tabIndex={-1}
+                >
+                  <AlertDescription data-component={`${CLIENT_WIZARD_ERROR_SUMMARY_ID}_description`}>
+                    <p data-component={`${CLIENT_WIZARD_ERROR_SUMMARY_ID}_message`}>{errorState.message}</p>
+                    {structuredErrors.length > 0 ? (
+                      <ul data-component={`${CLIENT_WIZARD_ERROR_SUMMARY_ID}_items`}>
+                        {structuredErrors.map((problemError, index) => {
+                          const message = `${problemError.label}: ${problemError.detail}`;
+                          const fieldId = problemError.fieldId;
+                          return (
+                            <li
+                              key={problemError.summaryId}
+                              id={problemError.summaryId}
+                              data-component={`${CLIENT_WIZARD_ERROR_SUMMARY_ID}_items_item-${index}`}
+                            >
+                              {fieldId ? (
+                                <Button
+                                  asChild
+                                  variant="link"
+                                  size="sm"
+                                  data-component={`${CLIENT_WIZARD_ERROR_SUMMARY_ID}_items_item-${index}_link`}
+                                >
+                                  <a
+                                    href={`#${fieldId}`}
+                                    onClick={(event) => {
+                                      event.preventDefault();
+                                      focusWizardField(fieldId);
+                                    }}
+                                  >
+                                    {message}
+                                  </a>
+                                </Button>
+                              ) : message}
+                            </li>
+                          );
+                        })}
+                      </ul>
+                    ) : null}
+                    {errorState.problem?.requestId ? (
+                      <p data-component={`${CLIENT_WIZARD_ERROR_SUMMARY_ID}_request-id`}>
+                        {locale === "en" ? "Request ID" : "요청 ID"}: {errorState.problem.requestId}
+                      </p>
+                    ) : null}
+                    {hasUnknownMutationOutcome ? (
+                      <p data-component={`${CLIENT_WIZARD_ERROR_SUMMARY_ID}_status-guidance`}>
+                        {resolveProblemPresentation(locale).checkStatus}
+                      </p>
+                    ) : null}
+                  </AlertDescription>
+                </Alert>
+              ) : null}
+
               {activeStep === 0 ? (
                 <>
                   <div className={styles.formCard} data-component="mobile_clients-new_screen_root_page_wizard_form-scroll_basic-contact-card">
-                    <Field data-component="mobile_clients-new_screen_root_page_wizard_form-scroll_basic-contact-card_name-field" label="이름" required>
+                    <Field data-component="mobile_clients-new_screen_root_page_wizard_form-scroll_basic-contact-card_name-field" label="이름" htmlFor="name" required>
                       <Input
+                        id="name"
                         data-component="mobile_clients-new_screen_root_page_wizard_form-scroll_basic-contact-card_name-field_name-input"
                         value={store.name}
                         onChange={(e) => setField("name", e.target.value)}
                         placeholder="홍길동"
+                        error={fieldErrorMessageIds.name.length > 0}
+                        aria-invalid={fieldErrorMessageIds.name.length > 0}
+                        aria-describedby={fieldErrorMessageIds.name.join(" ") || undefined}
                       />
                     </Field>
-                    <Field data-component="mobile_clients-new_screen_root_page_wizard_form-scroll_basic-contact-card_phone-field" label="연락처" required helper={phoneInlineMessage} helperTone={phoneHelperTone} helperPlacement="label">
+                    <Field data-component="mobile_clients-new_screen_root_page_wizard_form-scroll_basic-contact-card_phone-field" label="연락처" htmlFor="phone" required helper={phoneInlineMessage} helperTone={phoneHelperTone} helperPlacement="label">
                       <Input
+                        id="phone"
                         data-component="mobile_clients-new_screen_root_page_wizard_form-scroll_basic-contact-card_phone-field_phone-input"
                         value={store.phone}
                         onChange={(e) => setField("phone", formatPhoneNumber(e.target.value))}
@@ -975,47 +1134,66 @@ export default function NewClientPage() {
                         inputMode="numeric"
                         maxLength={13}
                         placeholder="010-1234-5678"
+                        error={fieldErrorMessageIds.phone.length > 0}
+                        aria-invalid={fieldErrorMessageIds.phone.length > 0}
+                        aria-describedby={fieldErrorMessageIds.phone.join(" ") || undefined}
                       />
                     </Field>
                   </div>
 
                   <div className={styles.formCard} data-component="mobile_clients-new_screen_root_page_wizard_form-scroll_basic-details-card">
-                    <Field data-component="mobile_clients-new_screen_root_page_wizard_form-scroll_basic-details-card_birthday-field" label="생년월일">
+                    <Field data-component="mobile_clients-new_screen_root_page_wizard_form-scroll_basic-details-card_birthday-field" label="생년월일" htmlFor="birthday">
                       <Input
+                        id="birthday"
                         data-component="mobile_clients-new_screen_root_page_wizard_form-scroll_basic-details-card_birthday-field_birthday-input"
                         value={store.birthday}
                         onChange={(e) => setField("birthday", e.target.value)}
                         inputMode="numeric"
                         maxLength={6}
                         placeholder="YYMMDD"
+                        error={fieldErrorMessageIds.birthday.length > 0}
+                        aria-invalid={fieldErrorMessageIds.birthday.length > 0}
+                        aria-describedby={fieldErrorMessageIds.birthday.join(" ") || undefined}
                       />
                     </Field>
-                    <Field data-component="mobile_clients-new_screen_root_page_wizard_form-scroll_basic-details-card_due-date-field" label="출산 예정일">
+                    <Field data-component="mobile_clients-new_screen_root_page_wizard_form-scroll_basic-details-card_due-date-field" label="출산 예정일" htmlFor="dueDate">
                       <Input
+                        id="dueDate"
                         data-component="mobile_clients-new_screen_root_page_wizard_form-scroll_basic-details-card_due-date-field_due-date-input"
                         value={store.dueDate}
                         onChange={(e) => setField("dueDate", formatIsoDateInput(e.target.value))}
                         inputMode="numeric"
                         maxLength={10}
                         placeholder="YYYY-MM-DD"
+                        error={fieldErrorMessageIds.dueDate.length > 0}
+                        aria-invalid={fieldErrorMessageIds.dueDate.length > 0}
+                        aria-describedby={fieldErrorMessageIds.dueDate.join(" ") || undefined}
                       />
                     </Field>
-                    <Field data-component="mobile_clients-new_screen_root_page_wizard_form-scroll_basic-details-card_birth-date-field" label="출산일">
+                    <Field data-component="mobile_clients-new_screen_root_page_wizard_form-scroll_basic-details-card_birth-date-field" label="출산일" htmlFor="birthDate">
                       <Input
+                        id="birthDate"
                         data-component="mobile_clients-new_screen_root_page_wizard_form-scroll_basic-details-card_birth-date-field_birth-date-input"
                         value={store.birthDate}
                         onChange={(e) => setField("birthDate", formatIsoDateInput(e.target.value))}
                         inputMode="numeric"
                         maxLength={10}
                         placeholder="YYYY-MM-DD"
+                        error={fieldErrorMessageIds.birthDate.length > 0}
+                        aria-invalid={fieldErrorMessageIds.birthDate.length > 0}
+                        aria-describedby={fieldErrorMessageIds.birthDate.join(" ") || undefined}
                       />
                     </Field>
-                    <Field data-component="mobile_clients-new_screen_root_page_wizard_form-scroll_basic-details-card_address-field" label="주소">
+                    <Field data-component="mobile_clients-new_screen_root_page_wizard_form-scroll_basic-details-card_address-field" label="주소" htmlFor="address">
                       <Input
+                        id="address"
                         data-component="mobile_clients-new_screen_root_page_wizard_form-scroll_basic-details-card_address-field_address-input"
                         value={store.address}
                         onChange={(e) => setField("address", e.target.value)}
                         placeholder="서울시 강남구..."
+                        error={fieldErrorMessageIds.address.length > 0}
+                        aria-invalid={fieldErrorMessageIds.address.length > 0}
+                        aria-describedby={fieldErrorMessageIds.address.join(" ") || undefined}
                       />
                     </Field>
                   </div>
@@ -1025,11 +1203,12 @@ export default function NewClientPage() {
               {activeStep === 1 ? (
                 <>
                   <div className={styles.formCard} data-component="mobile_clients-new_screen_root_page_wizard_form-scroll_voucher-card">
-                    <div
-                      data-component="mobile_clients-new_screen_root_page_wizard_form-scroll_voucher-card_customer-type-field"
-                      className="flex justify-center pb-3"
-                    >
-                      <TogglePill
+                      <div
+                        id="voucherClient"
+                        data-component="mobile_clients-new_screen_root_page_wizard_form-scroll_voucher-card_customer-type-field"
+                        className="flex justify-center pb-3"
+                      >
+                        <TogglePill
                         data-component="mobile_clients-new_screen_root_page_wizard_form-scroll_voucher-card_customer-type-field_toggle"
                         value={store.voucherClient}
                         onValueChange={handleVoucherClientChange}
@@ -1039,21 +1218,25 @@ export default function NewClientPage() {
                         indicatorDataComponent="mobile_clients-new_screen_root_page_wizard_form-scroll_voucher-card_customer-type-field_toggle_indicator"
                         leftButtonDataComponent="mobile_clients-new_screen_root_page_wizard_form-scroll_voucher-card_customer-type-field_toggle_voucher-button"
                         rightButtonDataComponent="mobile_clients-new_screen_root_page_wizard_form-scroll_voucher-card_customer-type-field_toggle_self-pay-button"
+                        aria-invalid={fieldErrorMessageIds.voucherClient.length > 0}
+                        aria-describedby={fieldErrorMessageIds.voucherClient.join(" ") || undefined}
                       />
                     </div>
                     <div className={styles.formCardTitle} data-component="mobile_clients-new_screen_root_page_wizard_form-scroll_voucher-card_card-title">
                       {store.voucherClient ? "바우처" : "자부담"}
                     </div>
-                    {store.voucherClient ? <Field data-component="mobile_clients-new_screen_root_page_wizard_form-scroll_voucher-card_voucher-year-field" label="바우처 연도">
+                    {store.voucherClient ? <Field data-component="mobile_clients-new_screen_root_page_wizard_form-scroll_voucher-card_voucher-year-field" label="바우처 연도" htmlFor="voucherYear">
                       <FormNativeSelect
+                        id="voucherYear"
                         data-component="mobile_clients-new_screen_root_page_wizard_form-scroll_voucher-card_voucher-year-field_select-wrap"
                         value={resolvedVoucherYear.toString()}
                         onValueChange={handleVoucherYearChange}
                         options={voucherYearOptions}
                       />
                     </Field> : null}
-                    {store.voucherClient ? <Field data-component="mobile_clients-new_screen_root_page_wizard_form-scroll_voucher-card_voucher-type-field" label="바우처 유형">
+                    {store.voucherClient ? <Field data-component="mobile_clients-new_screen_root_page_wizard_form-scroll_voucher-card_voucher-type-field" label="바우처 유형" htmlFor="type">
                       <FormNativeSelect
+                        id="type"
                         data-component="mobile_clients-new_screen_root_page_wizard_form-scroll_voucher-card_voucher-type-field_select-wrap"
                         value={store.type}
                         onValueChange={handleTypeChange}
@@ -1061,14 +1244,18 @@ export default function NewClientPage() {
                           { value: "", label: "선택하세요" },
                           ...VOUCHER_TYPE_SELECT_OPTIONS,
                         ]}
+                        aria-invalid={fieldErrorMessageIds.type.length > 0}
+                        aria-describedby={fieldErrorMessageIds.type.join(" ") || undefined}
                       />
                     </Field> : null}
                     <Field
                       data-component="mobile_clients-new_screen_root_page_wizard_form-scroll_voucher-card_duration-field"
                       label="기간"
+                      htmlFor="duration"
                       helper={store.voucherClient ? "바우처 유형에 따라 선택 가능한 기간이 달라집니다." : undefined}
                     >
                       <FormNativeSelect
+                        id="duration"
                         data-component="mobile_clients-new_screen_root_page_wizard_form-scroll_voucher-card_duration-field_select-wrap"
                         value={effectiveDuration?.toString() || ""}
                         onValueChange={(value) => {
@@ -1090,6 +1277,8 @@ export default function NewClientPage() {
                           { value: "", label: "선택하세요" },
                           ...durationOptions,
                         ]}
+                        aria-invalid={fieldErrorMessageIds.duration.length > 0}
+                        aria-describedby={fieldErrorMessageIds.duration.join(" ") || undefined}
                       />
                     </Field>
                     {!store.voucherClient && isOutOfPocketPriceError ? (
@@ -1105,34 +1294,46 @@ export default function NewClientPage() {
                   <div className={styles.formCard} data-component="mobile_clients-new_screen_root_page_wizard_form-scroll_employee-card">
                     <div className={styles.formCardTitle} data-component="mobile_clients-new_screen_root_page_wizard_form-scroll_employee-card_card-title">제공인력 배정</div>
                     <Field data-component="mobile_clients-new_screen_root_page_wizard_form-scroll_employee-card_primary-field" label="제공인력 1">
-                      <EmployeeAutocomplete
-                        data-component="mobile_clients-new_screen_root_page_wizard_form-scroll_employee-card_primary-field_autocomplete"
-                        refreshOnMount
-                        value={store.primaryEmployeeId}
-                        onChange={(id) => setField("primaryEmployeeId", id)}
-                        label=""
-                        excludeIds={store.secondaryEmployeeId != null ? [store.secondaryEmployeeId] : []}
-                        allowManualEntry
-                        onManualEntry={() => {
-                          setEmployeeDialogTarget("primary");
-                          setIsEmployeeDialogOpen(true);
-                        }}
-                      />
+                      <div
+                        id="primaryEmployeeId"
+                        aria-describedby={fieldErrorMessageIds.primaryEmployeeId.join(" ") || undefined}
+                      >
+                        <EmployeeAutocomplete
+                          data-component="mobile_clients-new_screen_root_page_wizard_form-scroll_employee-card_primary-field_autocomplete"
+                          refreshOnMount
+                          value={store.primaryEmployeeId}
+                          onChange={(id) => setField("primaryEmployeeId", id)}
+                          label=""
+                          error={fieldErrorMessageIds.primaryEmployeeId.length > 0}
+                          excludeIds={store.secondaryEmployeeId != null ? [store.secondaryEmployeeId] : []}
+                          allowManualEntry
+                          onManualEntry={() => {
+                            setEmployeeDialogTarget("primary");
+                            setIsEmployeeDialogOpen(true);
+                          }}
+                        />
+                      </div>
                     </Field>
                     <Field data-component="mobile_clients-new_screen_root_page_wizard_form-scroll_employee-card_secondary-field" label="제공인력 2">
-                      <EmployeeAutocomplete
-                        data-component="mobile_clients-new_screen_root_page_wizard_form-scroll_employee-card_secondary-field_autocomplete"
-                        refreshOnMount
-                        value={store.secondaryEmployeeId}
-                        onChange={(id) => setField("secondaryEmployeeId", id)}
-                        label=""
-                        excludeIds={store.primaryEmployeeId != null ? [store.primaryEmployeeId] : []}
-                        allowManualEntry
-                        onManualEntry={() => {
-                          setEmployeeDialogTarget("secondary");
-                          setIsEmployeeDialogOpen(true);
-                        }}
-                      />
+                      <div
+                        id="secondaryEmployeeId"
+                        aria-describedby={fieldErrorMessageIds.secondaryEmployeeId.join(" ") || undefined}
+                      >
+                        <EmployeeAutocomplete
+                          data-component="mobile_clients-new_screen_root_page_wizard_form-scroll_employee-card_secondary-field_autocomplete"
+                          refreshOnMount
+                          value={store.secondaryEmployeeId}
+                          onChange={(id) => setField("secondaryEmployeeId", id)}
+                          label=""
+                          error={fieldErrorMessageIds.secondaryEmployeeId.length > 0}
+                          excludeIds={store.primaryEmployeeId != null ? [store.primaryEmployeeId] : []}
+                          allowManualEntry
+                          onManualEntry={() => {
+                            setEmployeeDialogTarget("secondary");
+                            setIsEmployeeDialogOpen(true);
+                          }}
+                        />
+                      </div>
                     </Field>
                   </div>
 
@@ -1143,39 +1344,51 @@ export default function NewClientPage() {
                         <span className={styles.autoBadge}>자동입력</span>
                       ) : null}
                     </div>
-                    <Field data-component="mobile_clients-new_screen_root_page_wizard_form-scroll_pricing-card_full-price-field" label="총 서비스 금액">
+                    <Field data-component="mobile_clients-new_screen_root_page_wizard_form-scroll_pricing-card_full-price-field" label="총 서비스 금액" htmlFor="fullPrice">
                       <div className={styles.priceInput} data-component="mobile_clients-new_screen_root_page_wizard_form-scroll_pricing-card_full-price-field_input-wrap">
                         <Input
+                          id="fullPrice"
                           data-component="mobile_clients-new_screen_root_page_wizard_form-scroll_pricing-card_full-price-field_input-wrap_input"
                           value={arePriceInputsLocked ? "" : formatPrice(store.fullPrice)}
                           onChange={(e) => handlePriceChange("fullPrice", e.target.value.replace(/,/g, ""))}
                           inputMode="numeric"
                           placeholder="0"
                           disabled={arePriceInputsLocked}
+                          error={fieldErrorMessageIds.fullPrice.length > 0}
+                          aria-invalid={fieldErrorMessageIds.fullPrice.length > 0}
+                          aria-describedby={fieldErrorMessageIds.fullPrice.join(" ") || undefined}
                         />
                         <span>원</span>
                       </div>
                     </Field>
-                    {store.voucherClient ? <Field data-component="mobile_clients-new_screen_root_page_wizard_form-scroll_pricing-card_grant-field" label="정부지원금">
+                    {store.voucherClient ? <Field data-component="mobile_clients-new_screen_root_page_wizard_form-scroll_pricing-card_grant-field" label="정부지원금" htmlFor="grant">
                       <div className={styles.priceInput} data-component="mobile_clients-new_screen_root_page_wizard_form-scroll_pricing-card_grant-field_input-wrap">
                         <Input
+                          id="grant"
                           data-component="mobile_clients-new_screen_root_page_wizard_form-scroll_pricing-card_grant-field_input-wrap_input"
                           value={formatPrice(store.grant)}
                           onChange={(e) => handlePriceChange("grant", e.target.value.replace(/,/g, ""))}
                           inputMode="numeric"
                           placeholder="0"
+                          error={fieldErrorMessageIds.grant.length > 0}
+                          aria-invalid={fieldErrorMessageIds.grant.length > 0}
+                          aria-describedby={fieldErrorMessageIds.grant.join(" ") || undefined}
                         />
                         <span>원</span>
                       </div>
                     </Field> : null}
-                    {store.voucherClient ? <Field data-component="mobile_clients-new_screen_root_page_wizard_form-scroll_pricing-card_actual-price-field" label="본인부담금">
+                    {store.voucherClient ? <Field data-component="mobile_clients-new_screen_root_page_wizard_form-scroll_pricing-card_actual-price-field" label="본인부담금" htmlFor="actualPrice">
                       <div className={styles.priceInput} data-component="mobile_clients-new_screen_root_page_wizard_form-scroll_pricing-card_actual-price-field_input-wrap">
                         <Input
+                          id="actualPrice"
                           data-component="mobile_clients-new_screen_root_page_wizard_form-scroll_pricing-card_actual-price-field_input-wrap_input"
                           value={formatPrice(store.actualPrice)}
                           onChange={(e) => handlePriceChange("actualPrice", e.target.value.replace(/,/g, ""))}
                           inputMode="numeric"
                           placeholder="0"
+                          error={fieldErrorMessageIds.actualPrice.length > 0}
+                          aria-invalid={fieldErrorMessageIds.actualPrice.length > 0}
+                          aria-describedby={fieldErrorMessageIds.actualPrice.join(" ") || undefined}
                         />
                         <span>원</span>
                       </div>
@@ -1191,9 +1404,11 @@ export default function NewClientPage() {
                       ]).map(({ key, label }) => (
                         <button
                           key={key}
+                          id={key}
                           type="button"
                           onClick={() => setField(key, !store[key])}
                           className={cn(styles.toggleChip, store[key] && styles.selected)}
+                          aria-describedby={fieldErrorMessageIds[key].join(" ") || undefined}
                         >
                           {label}
                         </button>
@@ -1208,17 +1423,21 @@ export default function NewClientPage() {
                   <div className={styles.formCard} data-component="mobile_clients-new_screen_root_page_wizard_form-scroll_contract-status-card">
                     <div className={styles.formCardTitle} data-component="mobile_clients-new_screen_root_page_wizard_form-scroll_contract-status-card_card-title">계약 상태</div>
                     <FormNativeSelect
+                      id="serviceStatus"
                       data-component="mobile_clients-new_screen_root_page_wizard_form-scroll_contract-status-card_select-wrap"
                       value={store.serviceStatus}
                       onValueChange={(value) => setField("serviceStatus", value as ServiceStatus)}
                       options={SERVICE_STATUS_OPTIONS}
+                      aria-invalid={fieldErrorMessageIds.serviceStatus.length > 0}
+                      aria-describedby={fieldErrorMessageIds.serviceStatus.join(" ") || undefined}
                     />
                   </div>
 
                   <div className={styles.formCard} data-component="mobile_clients-new_screen_root_page_wizard_form-scroll_service-period-card">
                     <div className={styles.formCardTitle} data-component="mobile_clients-new_screen_root_page_wizard_form-scroll_service-period-card_card-title">서비스 기간</div>
-                    <Field data-component="mobile_clients-new_screen_root_page_wizard_form-scroll_service-period-card_start-date-field" label="시작일">
+                    <Field data-component="mobile_clients-new_screen_root_page_wizard_form-scroll_service-period-card_start-date-field" label="시작일" htmlFor="startDate">
                       <Input
+                        id="startDate"
                         data-component="mobile_clients-new_screen_root_page_wizard_form-scroll_service-period-card_start-date-field_start-date-input"
                         value={store.startDate}
                         onChange={(e) => {
@@ -1228,10 +1447,14 @@ export default function NewClientPage() {
                         inputMode="numeric"
                         maxLength={10}
                         placeholder="YYYY-MM-DD"
+                        error={fieldErrorMessageIds.startDate.length > 0}
+                        aria-invalid={fieldErrorMessageIds.startDate.length > 0}
+                        aria-describedby={fieldErrorMessageIds.startDate.join(" ") || undefined}
                       />
                     </Field>
-                    <Field data-component="mobile_clients-new_screen_root_page_wizard_form-scroll_service-period-card_end-date-field" label="종료일">
+                    <Field data-component="mobile_clients-new_screen_root_page_wizard_form-scroll_service-period-card_end-date-field" label="종료일" htmlFor="endDate">
                       <Input
+                        id="endDate"
                         data-component="mobile_clients-new_screen_root_page_wizard_form-scroll_service-period-card_end-date-field_end-date-input"
                         value={store.endDate}
                         onChange={(e) => {
@@ -1241,6 +1464,9 @@ export default function NewClientPage() {
                         inputMode="numeric"
                         maxLength={10}
                         placeholder="YYYY-MM-DD"
+                        error={fieldErrorMessageIds.endDate.length > 0}
+                        aria-invalid={fieldErrorMessageIds.endDate.length > 0}
+                        aria-describedby={fieldErrorMessageIds.endDate.join(" ") || undefined}
                       />
                     </Field>
                   </div>
