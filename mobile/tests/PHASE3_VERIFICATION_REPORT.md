@@ -116,3 +116,35 @@ All commands below exited 0. Logs are kept outside the worktree at
   `phase3-hydration-red.log`.
 - `NEXT_PUBLIC_API_BASE_URL=http://localhost:3001 pnpm --dir mobile build` —
   pass (`mobile-build-final6.log`).
+
+## PR647 review-fix integration
+
+The final integrated source for the five review fixes is
+`2d73c7bdd2dac3fe39e5857d41ec0dcf4b1a8c3f`. The P1 SQL recognizer follow-up
+was included after a focused audit found that an aliased relation with a
+`WHERE` clause could still expose a diagnostic. The source-sensitive reruns
+for that final commit are recorded under `/tmp/mobile-pr647-review-fixes/`:
+
+- `pnpm --dir mobile exec jest --runInBand` — 216 suites, 1,363 tests, 0
+  snapshots (`mobile-jest-final.log`).
+- `pnpm --filter ./mobile run type-check` — pass
+  (`mobile-typecheck-final.log`).
+- `pnpm --filter ./mobile run lint` — 0 errors, 407 warnings
+  (`mobile-lint-final.log`).
+- `NEXT_PUBLIC_API_BASE_URL=https://ci-build.invalid pnpm --filter ./mobile
+  run build` — pass; static generation logs the expected DNS failure for the
+  placeholder backend and completes successfully (`mobile-build-final.log`).
+- `PHASE3_TEST_MATCH='phase3-integration.spec.ts' pnpm exec playwright test
+  --config=phase3-e2e.config.mjs --grep='shows localized duplicate-phone
+  validation and hides unsafe server details'` — 1 test passed
+  (`phase3-error-browser-final.log`).
+
+The following deterministic evidence was captured at the immediately
+preceding integrated source `c1efe3083e11098ae593bafd972455841d455bb1` and is
+unchanged by the P1-only error-recognizer correction: the cookie-host,
+server-port, and shared-auth-path Node regressions passed 17/17
+(`phase3-node-regressions.log`); the synthetic Phase 3 matrix passed 9/9,
+including the new fixture-routing test and receipt/PDF matrix
+(`phase3-playwright.log`); the standalone receipt contract passed 1/1
+(`receipt-playwright.log`); and the standalone fixture-routing test passed
+1/1 (`new-fixture-playwright.log`).
