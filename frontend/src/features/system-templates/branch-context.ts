@@ -1,3 +1,5 @@
+import { useSyncExternalStore } from "react";
+
 const ACTIVE_BRANCH_COOKIE_NAMES = ["selected_branch_id", "selected_organization_id"] as const;
 
 /**
@@ -42,4 +44,22 @@ export function isBranchContextAligned(branchId: string | null): boolean {
 
   const currentBranchId = getActiveBranchId();
   return currentBranchId !== null && currentBranchId === branchId;
+}
+
+function subscribeToBranchContext(onChange: () => void): () => void {
+  window.addEventListener("focus", onChange);
+  window.addEventListener("pageshow", onChange);
+  document.addEventListener("visibilitychange", onChange);
+  return () => {
+    window.removeEventListener("focus", onChange);
+    window.removeEventListener("pageshow", onChange);
+    document.removeEventListener("visibilitychange", onChange);
+  };
+}
+
+const getServerBranchId = (): null => null;
+
+/** Hydrate with the same empty context as the server before reading cookies. */
+export function useActiveBranchId(): string | null {
+  return useSyncExternalStore(subscribeToBranchContext, getActiveBranchId, getServerBranchId);
 }

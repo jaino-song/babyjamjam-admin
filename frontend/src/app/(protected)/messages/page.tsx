@@ -33,7 +33,7 @@ import { ROLES } from "@/lib/constants/roles";
 import { useMessageTemplates } from "@/features/message-templates/hooks/use-message-templates";
 import { useSystemTemplate, useSystemTemplates } from "@/features/system-templates/hooks";
 import type { SystemTemplate } from "@/features/system-templates/types";
-import { getActiveBranchId } from "@/features/system-templates/branch-context";
+import { useActiveBranchId } from "@/features/system-templates/branch-context";
 import { SystemTemplateEditor } from "@/components/app/ui/SystemTemplateEditor";
 import {
   buildSystemTemplateCatalog,
@@ -838,7 +838,7 @@ function MessageHistorySection() {
   const selectedJobPhone = selectedJob?.recipientPhone ?? selectedJob?.payload.recipientPhone ?? "-";
   const selectedJobVariables = selectedJob ? Object.entries(selectedJob.payload.templateVariables) : [];
   const selectedJobSystemTemplateKey = selectedJob ? SMS_TRIGGER_TO_SYSTEM_TEMPLATE[selectedJob.templateKey] ?? "" : "";
-  const activeBranchId = getActiveBranchId();
+  const activeBranchId = useActiveBranchId();
   const { data: selectedJobSystemTemplate } = useSystemTemplate(selectedJobSystemTemplateKey, {
     scope: "branch",
     branchId: activeBranchId,
@@ -1400,7 +1400,7 @@ export default function MessagesPage() {
     useState<TemplateSendFormSubmitState | null>(null);
   const user = useInitialUser();
   const isOwner = user?.role === ROLES.owner;
-  const activeBranchId = getActiveBranchId();
+  const activeBranchId = useActiveBranchId();
   const { data: senderApproval } = useMessageSenderApproval();
   const isSenderApprovalRequired = senderApproval?.isApproved === false;
   const messageSections = useMemo(

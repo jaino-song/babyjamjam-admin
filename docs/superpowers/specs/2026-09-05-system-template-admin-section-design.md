@@ -1,11 +1,13 @@
 # 관리자 페이지 메시지 템플릿 섹션 — 기본 템플릿 편집 (Design Spec)
 
 **Date:** 2026-09-05
-**Status:** Approved in chat, pending spec review
+**Status:** Superseded by the 2026-09-10 branch-wide editing requirements
 **Author:** David Jinho Song (+ Claude)
 **Builds on:** `2026-06-30-sms-trigger-any-system-template-design.md` (시스템 템플릿이 SMS 자동 발송 본문의 단일 출처가 된 결정)
 
 ---
+
+> 이 문서는 2026-09-05의 이전 설계를 보존한 기록이다. 아래의 전역 전용·9종·관리자 수정 링크·프론트엔드 전용 범위는 더 이상 구현 기준이 아니다. 현재 동작과 검증은 [지점별 템플릿 검증 기록](2026-09-10-branch-system-template-verification.md)을 따른다.
 
 ## 1. Goal
 

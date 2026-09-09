@@ -4,7 +4,7 @@ import { useQuery } from '@tanstack/react-query';
 
 import { systemTemplateService } from '@/services/system-template.service';
 import type { SystemTemplate } from '../types';
-import { getActiveBranchId, isBranchContextAligned } from '../branch-context';
+import { useActiveBranchId, isBranchContextAligned } from '../branch-context';
 import {
     systemTemplateKeys,
     type SystemTemplateScope,
@@ -17,10 +17,11 @@ export interface UseSystemTemplateOptions {
 }
 
 export function useSystemTemplate(key: string, options: UseSystemTemplateOptions = {}) {
+    const activeBranchId = useActiveBranchId();
     const scope = options.scope ?? 'branch';
     const branchId = scope === 'branch'
         ? options.branchId === undefined
-            ? getActiveBranchId()
+            ? activeBranchId
             : options.branchId
         : null;
     const branchContextReady = scope === 'global' || isBranchContextAligned(branchId);

@@ -157,7 +157,7 @@ export function SystemTemplatesManager({
             {detailQuery.isError && !detail ? (
               <DetailEmptyState message="선택한 템플릿 정보를 불러오지 못했습니다." />
             ) : detail ? (
-              <div data-component={component("detail-content")} className="grid min-h-0 gap-6 xl:grid-cols-[minmax(0,1fr)_minmax(280px,360px)]">
+              <div data-component={component("detail-content")} className="grid min-h-0 gap-6">
                 <SystemTemplateEditor
                   key={`global:${detail.templateKey}`}
                   template={detail as SystemTemplate}
