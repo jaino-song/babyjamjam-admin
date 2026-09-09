@@ -3,6 +3,7 @@ import { z } from "zod";
 
 import { parseProblemDetails, normalizeApiError, type ProblemDetails } from "../errors/problem-details";
 
+import { sanitizeApiDisplayMessage } from "../errors/safe-api-error-message";
 import { getUserErrorMessage } from "../errors/user-error-message";
 
 export const NO_STORE_CACHE_CONTROL = "no-store, max-age=0";
@@ -245,32 +246,6 @@ function safeErrorCode(value: unknown): string | undefined {
     return /^[A-Z][A-Z0-9_:-]{0,63}$/.test(value) ? value : undefined;
 }
 
-/**
- * Keep operator-visible proxy diagnostics useful without copying provider
- * credentials or caller identity into logs/responses. This is intentionally
- * local to the shared route layer so every frontend/mobile proxy gets the same
- * redaction even when an upstream adapter throws a plain Error.
- */
-function sanitizeSensitiveText(value: unknown): string {
-    const text = typeof value === "string" ? value : String(value);
-    return text
-        .replace(/Bearer\s+\S+/gi, "Bearer [REDACTED]")
-        .replace(
-            /([?&](?:access[_-]?token|refresh[_-]?token|oauth[_-]?token|external[_-]?token|api[_-]?key|authorization|member[_-]?email|member[_-]?id)=)[^&\s]+/gi,
-            "$1[REDACTED]",
-        )
-        .replace(
-            /(["']?(?:access[_-]?token|refresh[_-]?token|oauth[_-]?token|external[_-]?token|api[_-]?key|authorization|member[_-]?(?:email|id)|client[_-]?secret|password|secret)["']?\s*[:=]\s*)["']?[^"'\s,;}&]+["']?/gi,
-            "$1[REDACTED]",
-        )
-        .replace(
-            /\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi,
-            "[REDACTED_EMAIL]",
-        )
-        .replace(/\s+/g, " ")
-        .trim();
-}
-
 export function sanitizeUpstreamClientError(
     upstreamData: unknown,
     fallbackMessage: string,
@@ -311,7 +286,7 @@ export function logUpstreamError(
     const maxUpstreamBodyLength = 2_000;
     const sanitizedUpstreamBody = upstreamBody === undefined
         ? undefined
-        : sanitizeSensitiveText(upstreamBody);
+        : sanitizeApiDisplayMessage(upstreamBody);
     const loggedUpstreamBody = sanitizedUpstreamBody !== undefined && sanitizedUpstreamBody.length > maxUpstreamBodyLength
         ? `${sanitizedUpstreamBody.slice(0, maxUpstreamBodyLength)}…(truncated)`
         : sanitizedUpstreamBody;

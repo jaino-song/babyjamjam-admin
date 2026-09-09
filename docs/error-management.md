@@ -23,17 +23,33 @@ packages/shared/src/errors/user-error-message.ts의 문자열 기반 번역은 �
 
 제거 조건: 전체 기능의 서버 오류 코드 전환, 웹/모바일 개별 입력 연결 및 복구 검증, 지원 중인 구버전 소비자 호환 검증을 모두 완료한 뒤 레거시 어댑터와 별칭을 제거한다. 임의 날짜로 제거를 약속하지 않는다.
 
+## 적용한 고객 폼
+
+- 웹 `frontend/src/components/app/clients/ClientFormDialog.tsx`의 dialog/panel과 모바일 `mobile/src/components/app/clients/ClientFormDialog.tsx`의 고객 편집 경로에 적용했다.
+- `EM-VAL-02/03`, `EM-UI-01/02/03/06`: 모든 구조화 오류를 각각 표시하고, 이름/연락처는 입력란과 연결한다. 연결되지 않은 항목은 내부 JSON Pointer 대신 공통 공개 라벨로 표시한다. 실제 응답의 요청 ID만 표시한다.
+- `EM-FE-02/07`, `EM-RETRY-05`: 입력과 편집 맥락을 유지하며 같은 고객의 재조회로 초기화하지 않는다. 검증된 UNKNOWN 및 비정상 응답/통신 실패의 UNKNOWN 모두 상태 확인을 안내하고 같은 폼 세션에서 재전송을 차단한다.
+- `EM-I18N-01`: 공개 필드 오류는 공통 카탈로그, 연결되지 않은 항목 라벨과 상태 확인 안내는 `packages/shared/src/errors/problem-presentation.ts`를 사용한다.
+- 이 UI 잠금은 서버 멱등성이나 상태 확인 API의 구현 증거가 아니다. 모바일 기본 `/clients/new` 등록 마법사와 나머지 폼은 후속 전환 대상이다.
+
 ## 아직 전체 완료가 아닌 항목
 
 - 등록되지 않은 모든 업무 4xx 오류의 코드 카탈로그 전환과 전수 경로 목록.
-- 모든 화면의 필드별 연결, 초점, 입력 보존 및 지속 상태 UI 검증.
+- 위 고객 폼 외 모든 화면의 필드별 연결, 초점, 입력 보존 및 지속 상태 UI 검증.
 - 모든 외부 연동/비동기 작업의 outcome, 상태 확인, 동시 실행/멱등성/복구 검증.
 - 서명된 계약 수정, 발송 응답 유실, 등록 성공 후 발송 실패, 동시 수정, 테넌트 경계의 전체 실환경 회귀.
 - Sentry 운영 활성화/보존기간, preview 배포/롤백, production 검증.
 
 ## 검증 기록
 
-통합 검증 후 실제 명령/결과와 독립 검토 결과를 기록한다. 위 미완료 목록을 체크 해제 없이 완료로 바꾸지 않는다.
+- 공통 HTTP 계약: backend 집중 테스트 45개, shared problem/proxy/route 테스트 41개 및 backend 타입 검사 통과. 실제 Nest HTTP 테스트에서 검증 거절은 변경 0회, 정상 요청은 변경 1회, 부수 효과 후 오류는 UNKNOWN임을 확인했다. 실제 DB 연결이나 외부 발송을 사용한 테스트가 아니다.
+- UI 통합 `4c3bc1f2e`: 웹 전체 216개 suite / 1,375개 test, 모바일 전체 219개 suite / 1,365개 test 통과. 뒤이어 웹의 구조화 UNKNOWN 회귀 1개를 추가했고 해당 파일 4개 test를 통과했다.
+- 로컬 브라우저: 웹 고객 등록 panel과 모바일 dashboard 고객 편집에서 두 필드 오류/요청 ID/요약 초점/필드 링크/입력 보존을 확인했다. UNKNOWN 후 입력·단계를 변경해도 저장이 잠겨 있고 합성 백엔드 요청 횟수가 1회임을 확인했다. 고립된 로컬 합성 서버를 사용했으며 실제 고객/DB/문자 발송은 변경하지 않았다.
+- 공통 계약 독립 Sol 검수: `01939ec04`에서 SHIP. 기존 문구 단계와 UI 단계의 별도 검수는 쿠키 차단, 내부 필드명 표시, 공통 복구 안내 보완을 요구했으며 최종 통합 재검수 결과는 아래에 기록한다.
+
+- 최종 통합 `72ce5d3c6`: 웹 전체 216 suite / 1,376 test, 모바일 전체 219 suite / 1,365 test, shared 21 suite / 244 Jest test + 76 Node test 통과. shared/web/mobile 타입 검사와 UI architecture gate 통과. 공통 민감정보 정책은 auth_token, refresh_token, Cookie, Set-Cookie 및 접힌 다중 쿠키 헤더를 검사하며 진단 로그도 같은 정책으로 마스킹한다 (`EM-SEC-01`).
+- 의존성 변경은 없으며 기존 의존성 감사에는 critical 2 / high 7 / moderate 8 / low 1 항목이 남아 있다. 이번 오류 처리 변경이 해당 취약점을 해결했거나 실제 악용 가능성을 입증한 것은 아니다.
+
+위 미완료 목록은 전체 규격 준수 선언과 구분한다.
 
 ## 공개 오류 코드
 
