@@ -12,12 +12,21 @@ import {
     lockClientForScheduleWrite,
     lockEmployeesForScheduleWrite,
 } from "application/policies/employee-schedule-invariants.policy";
+import {
+    lockServiceRecordCaseForWrite,
+    lockServiceRecordWriteSet,
+} from "application/policies/service-record-write-lock.policy";
+import { validateServiceRecordAnswers } from "application/policies/service-record-answer-validation.policy";
 import { getServiceRecordTokenExpiresAt } from "domain/constants/service-record-link-message";
 import { SERVICE_RECORD_TEXT_LIMITS } from "domain/constants/service-record-text-limits";
-import { addBusinessDaysKr } from "domain/utils/business-days";
+import { addBusinessDaysKr, UnsupportedKoreanHolidayYearError } from "domain/utils/business-days";
 import { serviceRecordSessionCount } from "domain/utils/service-record-session-count";
 import { PrismaService } from "infrastructure/database/prisma.service";
 import { SaveServiceHeaderDto, UpsertSessionDto } from "interface/dto/service-record-entry.dto";
+import {
+    validateServiceRecordScheduleVector,
+    type ServiceRecordPlannedSession,
+} from "@babyjamjam/shared/utils/service-record-schedule";
 
 import {
     ServiceRecordTokenService,
@@ -29,26 +38,135 @@ import {
     ServiceRecordLifecycleService,
 } from "./service-record-lifecycle.service";
 
-const MAX_ANSWERS_BYTES = 16 * 1024;
-const ANSWER_KEYS = new Set([
-    "perineum",
-    "breast",
-    "excretion",
-    "sitzBath",
-    "meals_meal",
-    "meals_snack",
-    "temperature_temp",
-    "sleep",
-    "breastFeeding_count",
-    "formulaFeeding_count",
-    "formulaFeeding_ml",
-    "stool",
-    "stool_color",
-    "bath",
-]);
-
 function toIso(d: Date): string {
     return d.toISOString().slice(0, 10);
+}
+
+type PlannedSessionVectorResult = {
+    state: "absent" | "valid" | "invalid";
+    entries: ServiceRecordPlannedSession[] | null;
+};
+
+/**
+ * Read the persisted, complete planned-session vector without inventing
+ * provenance or dates.  Provider callers only need the date projection, but
+ * validating the full row here prevents a malformed/partial admin revision
+ * from silently falling back to the legacy start-date calculation.
+ */
+function plannedSessionVector(
+    raw: Prisma.JsonValue | null | undefined,
+    requiredSessionCount: number | null | undefined,
+): PlannedSessionVectorResult {
+    if (raw === null || raw === undefined) return { state: "absent", entries: null };
+    const values = Array.isArray(raw)
+        ? raw
+        : typeof raw === "object" && raw !== null && !Array.isArray(raw)
+            ? ((raw as Record<string, Prisma.JsonValue>)["sessions"]
+                ?? (raw as Record<string, Prisma.JsonValue>)["entries"]
+                ?? (raw as Record<string, Prisma.JsonValue>)["plannedSessions"])
+            : null;
+    if (!Array.isArray(values)) return { state: "invalid", entries: null };
+
+    const entries: ServiceRecordPlannedSession[] = [];
+    for (const value of values) {
+        if (typeof value !== "object" || value === null || Array.isArray(value)) {
+            return { state: "invalid", entries: null };
+        }
+        const row = value as Record<string, Prisma.JsonValue>;
+        const provenance = typeof row["provenance"] === "object" && row["provenance"] !== null && !Array.isArray(row["provenance"])
+            ? row["provenance"] as Record<string, Prisma.JsonValue>
+            : null;
+        const sessionIndex = row["sessionIndex"];
+        const serviceDate = row["serviceDate"];
+        const originalDate = row["originalDate"];
+        const assignmentId = row["assignmentId"];
+        const scheduleId = row["scheduleId"] ?? provenance?.["scheduleId"];
+        const employeeId = row["employeeId"] ?? provenance?.["employeeId"];
+        const provenanceVersion = row["provenanceVersion"]
+            ?? provenance?.["version"]
+            ?? row["version"];
+        if (
+            typeof sessionIndex !== "number"
+            || !Number.isInteger(sessionIndex)
+            || typeof serviceDate !== "string"
+            || typeof originalDate !== "string"
+            || typeof assignmentId !== "string"
+            || typeof scheduleId !== "number"
+            || !Number.isInteger(scheduleId)
+            || typeof employeeId !== "number"
+            || !Number.isInteger(employeeId)
+            || (typeof provenanceVersion !== "string" && typeof provenanceVersion !== "number")
+        ) {
+            return { state: "invalid", entries: null };
+        }
+        entries.push({
+            sessionIndex,
+            serviceDate,
+            originalDate,
+            assignmentId,
+            scheduleId,
+            employeeId,
+            provenanceVersion: String(provenanceVersion),
+        });
+    }
+    try {
+        return {
+            state: "valid",
+            entries: validateServiceRecordScheduleVector(entries, requiredSessionCount ?? undefined),
+        };
+    } catch {
+        return { state: "invalid", entries: null };
+    }
+}
+
+function persistedPlannedSessionDates(
+    raw: Prisma.JsonValue | null | undefined,
+    requiredSessionCount: number | null | undefined,
+): PlannedSessionVectorResult {
+    return plannedSessionVector(raw, requiredSessionCount);
+}
+
+function hasAuthoritativeRevision(record: {
+    currentRevisionId?: string | null;
+    currentUsableRevisionId?: string | null;
+    currentUsableDocumentVersion?: number | null;
+    plannedSessions?: Prisma.JsonValue | null;
+}): boolean {
+    return record.currentRevisionId != null
+        || record.currentUsableRevisionId != null
+        || record.currentUsableDocumentVersion != null
+        || record.plannedSessions != null;
+}
+
+function entrySessionCount(record: {
+    startDate: Date | null;
+    endDate: Date | null;
+    requiredSessionCount: number | null;
+    currentRevisionId?: string | null;
+    currentUsableRevisionId?: string | null;
+    currentUsableDocumentVersion?: number | null;
+    plannedSessions?: Prisma.JsonValue | null;
+}): number {
+    // A confirmed revision stores the actual N independently of the current
+    // calendar span. Legacy transfers retain the provider flow's in-period
+    // cap, while unsupported legacy years remain viewable with their stored N.
+    if (hasAuthoritativeRevision(record)) return record.requiredSessionCount ?? 0;
+    try {
+        return serviceRecordSessionCount(
+            record.startDate,
+            record.endDate,
+            record.requiredSessionCount,
+        ) ?? 0;
+    } catch (error) {
+        if (error instanceof UnsupportedKoreanHolidayYearError) {
+            return record.requiredSessionCount ?? 0;
+        }
+        throw error;
+    }
+}
+
+function plannedSessionDateUnavailable(): ConflictException {
+    return new ConflictException({ code: "SERVICE_RECORD_PLANNED_DATE_UNAVAILABLE" });
 }
 
 /**
@@ -100,10 +218,24 @@ export class ServiceRecordEntryService {
         if (!schedule) throw new NotFoundException("Assignment not found");
         if (!record) throw new NotFoundException("Service record not found");
 
+        const persistedDates = persistedPlannedSessionDates(
+            record.plannedSessions,
+            record.requiredSessionCount,
+        );
+        if (
+            persistedDates.state === "invalid"
+            || (persistedDates.state === "absent" && hasAuthoritativeRevision(record))
+        ) {
+            throw plannedSessionDateUnavailable();
+        }
+        const plannedSessionDates = persistedDates.state === "valid"
+            ? persistedDates.entries?.map(({ sessionIndex, serviceDate }) => ({ sessionIndex, serviceDate })) ?? null
+            : null;
+
         return {
             employee: { id: schedule.primaryEmployee.id, name: schedule.primaryEmployee.name },
             client: { id: schedule.client.id, name: schedule.client.name },
-            totalSessions: serviceRecordSessionCount(record.startDate, record.endDate, record.requiredSessionCount) ?? 0,
+            totalSessions: entrySessionCount(record),
             startDate: record.startDate,
             endDate: record.endDate,
             recordStatus: record.status,
@@ -115,6 +247,7 @@ export class ServiceRecordEntryService {
                 ...day,
                 sessionIndex: day.caseSessionIndex ?? day.sessionIndex,
             })),
+            ...(plannedSessionDates ? { plannedSessionDates } : {}),
             pendingScheduleChange: pendingScheduleChange
                 ? {
                     id: pendingScheduleChange.id,
@@ -145,6 +278,92 @@ export class ServiceRecordEntryService {
         }
 
         const updated = await this.prisma.$transaction(async (tx) => {
+            const schedule = tx.employee_schedule?.findUnique
+                ? await tx.employee_schedule.findUnique({
+                    where: { id: ctx.scheduleId },
+                    select: {
+                        id: true,
+                        clientId: true,
+                        branchId: true,
+                        primaryEmployeeId: true,
+                        secondaryEmployeeId: true,
+                    },
+                })
+                : null;
+            if (schedule && typeof schedule.clientId === "number") {
+                await lockServiceRecordWriteSet(tx, {
+                    branchId: ctx.branchId,
+                    clientId: schedule.clientId,
+                    caseId: record.id,
+                    scheduleIds: [schedule.id],
+                    employeeIds: [schedule.primaryEmployeeId, schedule.secondaryEmployeeId],
+                });
+                const rereadSchedule = await tx.employee_schedule.findUnique({
+                    where: { id: ctx.scheduleId },
+                    select: {
+                        id: true,
+                        clientId: true,
+                        branchId: true,
+                        primaryEmployeeId: true,
+                        secondaryEmployeeId: true,
+                    },
+                });
+                if (
+                    !rereadSchedule
+                    || rereadSchedule.clientId !== schedule.clientId
+                    || (
+                        rereadSchedule.branchId !== undefined
+                        && rereadSchedule.branchId !== ctx.branchId
+                    )
+                ) {
+                    throw new ConflictException("Assignment changed while acquiring service-record locks");
+                }
+            } else {
+                // Narrow unit doubles without assignment ownership fields keep
+                // the old case-only lock; production never enters this branch.
+                const caseLocked = await lockServiceRecordCaseForWrite(tx, ctx.branchId, record.id);
+                if (typeof tx.$queryRaw === "function" && !caseLocked) {
+                    throw new NotFoundException("Service record not found");
+                }
+            }
+            // The pre-transaction checks above are only an early rejection.
+            // The client/case lock can wait behind a submit or finalization,
+            // so reread both the case status and locked-day set before the
+            // first header or legacy-row write.
+            const rereadRecord = typeof tx.service_record_case?.findUnique === "function"
+                ? await tx.service_record_case.findUnique({
+                    where: { id: record.id },
+                })
+                : record;
+            if (
+                !rereadRecord
+                || (
+                    rereadRecord.branchId !== undefined
+                    && rereadRecord.branchId !== ctx.branchId
+                )
+            ) {
+                throw new ConflictException("Service record changed while acquiring write locks");
+            }
+            const dayDelegate = tx.service_record_day as unknown as {
+                count?: (args: unknown) => Promise<number>;
+            } | undefined;
+            const rereadLockedCount = typeof dayDelegate?.count === "function"
+                ? await dayDelegate.count({
+                    where: { serviceRecordCaseId: record.id, branchId: ctx.branchId, locked: true },
+                })
+                : 0;
+            if (rereadLockedCount > 0) {
+                throw new ConflictException({ code: "SERVICE_RECORD_HEADER_LOCKED" });
+            }
+            if ([
+                SERVICE_RECORD_CASE_STATUS.FINALIZING,
+                SERVICE_RECORD_CASE_STATUS.FINALIZATION_FAILED,
+                SERVICE_RECORD_CASE_STATUS.DOCUMENTS_CREATED,
+                SERVICE_RECORD_CASE_STATUS.COMPLETED,
+            ].includes(rereadRecord.status as never)) {
+                throw new ConflictException({ code: "SERVICE_RECORD_FINALIZED" });
+            }
+
             const aggregate = await tx.service_record_case.update({
                 where: { id: record.id, branchId: ctx.branchId },
                 data: { ...dto, version: { increment: 1 } },
@@ -171,31 +390,67 @@ export class ServiceRecordEntryService {
      */
     async upsertSession(ctx: ServiceRecordTokenContext, sessionIndex: number, dto: UpsertSessionDto, lock: boolean) {
         const aggregate = await this.resolveCase(ctx);
-        const answers = this.validateAnswers(dto.answers ?? {});
+        // The public mobile form historically mirrors its flat draft into the
+        // `answers` object, so the two adjacent free-form fields and payment
+        // flag arrive there as well as their dedicated DTO properties. Keep
+        // that wire shape compatible while sending only the canonical 14
+        // structured answer keys through the shared validator.
+        const answerInput = Object.fromEntries(
+            Object.entries(dto.answers ?? {})
+                .filter(([key]) => !["etcService", "notes", "paymentConfirmed"].includes(key)),
+        );
+        const answers = validateServiceRecordAnswers(answerInput);
         const saved = await this.prisma.$transaction(async (tx) => {
-            // Serialize all entry writes for this case before reading a session snapshot.
-            // Otherwise a draft can write stale unlocked data after a submission commits.
-            const lockedCases = await tx.$queryRaw<{ id: string }[]>(Prisma.sql`
-                SELECT "id"
-                FROM "service_record_case"
-                WHERE "id" = ${aggregate.id}::uuid
-                  AND "branch_id" = ${ctx.branchId}::uuid
-                FOR UPDATE
-            `);
-            if (lockedCases.length !== 1) {
-                throw new NotFoundException("Service record not found");
-            }
-
-            const [initialRecord, schedule] = await Promise.all([
-                tx.service_record_case.findUnique({ where: { id: aggregate.id } }),
-                tx.employee_schedule.findUnique({
+            // Discover the assignment before locking. Production rows carry a
+            // client id, so the common policy then locks client -> employees ->
+            // case -> schedule/assignment/day and rereads both owner rows. The
+            // fallback preserves narrow unit-test doubles that expose only the
+            // historical case lock seam.
+            let schedule = await tx.employee_schedule.findUnique({
+                where: { id: ctx.scheduleId },
+                include: { primaryEmployee: true },
+            });
+            if (!schedule) throw new NotFoundException("Assignment not found");
+            let record = await tx.service_record_case.findUnique({ where: { id: aggregate.id } });
+            if (typeof schedule.clientId === "number") {
+                await lockServiceRecordWriteSet(tx, {
+                    branchId: ctx.branchId,
+                    clientId: schedule.clientId,
+                    caseId: aggregate.id,
+                    scheduleIds: [schedule.id],
+                    employeeIds: [schedule.primaryEmployeeId, schedule.secondaryEmployeeId],
+                    sessionIndexes: [sessionIndex, sessionIndex - 1],
+                });
+                const rereadSchedule = await tx.employee_schedule.findUnique({
                     where: { id: ctx.scheduleId },
                     include: { primaryEmployee: true },
-                }),
-            ]);
-            let record = initialRecord;
+                });
+                if (
+                    !rereadSchedule
+                    || rereadSchedule.clientId !== schedule.clientId
+                    || (
+                        rereadSchedule.branchId !== undefined
+                        && rereadSchedule.branchId !== ctx.branchId
+                    )
+                ) {
+                    throw new ConflictException("Assignment changed while acquiring service-record locks");
+                }
+                schedule = rereadSchedule;
+                record = await tx.service_record_case.findUnique({ where: { id: aggregate.id } });
+            } else {
+                // Serialize all entry writes for this case before reading a
+                // session snapshot when a legacy test adapter omits ownership
+                // fields. Real Prisma transactions never take this branch.
+                const locked = await lockServiceRecordCaseForWrite(tx, ctx.branchId, aggregate.id);
+                if (typeof tx.$queryRaw === "function" && !locked) {
+                    throw new NotFoundException("Service record not found");
+                }
+                record = await tx.service_record_case.findUnique({ where: { id: aggregate.id } });
+            }
             if (!record) throw new NotFoundException("Service record not found");
-            if (!schedule) throw new NotFoundException("Assignment not found");
+            if (record.branchId !== ctx.branchId) {
+                throw new NotFoundException("Service record not found");
+            }
             if ([
                 SERVICE_RECORD_CASE_STATUS.FINALIZING,
                 SERVICE_RECORD_CASE_STATUS.FINALIZATION_FAILED,
@@ -205,7 +460,7 @@ export class ServiceRecordEntryService {
                 throw new ConflictException({ code: "SERVICE_RECORD_FINALIZED" });
             }
 
-            const total = serviceRecordSessionCount(record.startDate, record.endDate, record.requiredSessionCount) ?? 0;
+            const total = entrySessionCount(record);
             if (sessionIndex < 1 || sessionIndex > total) {
                 throw new BadRequestException(`Session ${sessionIndex} is outside the contracted range 1..${total}`);
             }
@@ -215,6 +470,28 @@ export class ServiceRecordEntryService {
             }
             if (record.startDate && serviceDate < record.startDate) {
                 throw new BadRequestException("Service date cannot precede the service start date.");
+            }
+
+            // A confirmed administrator revision is authoritative for every
+            // provider slot, including slots that do not yet have a day row.
+            // Check the persisted vector after the common lock/reread and
+            // before any schedule/client extension so stale provider input can
+            // never mutate derived periods first.
+            const persistedDates = plannedSessionVector(record.plannedSessions, total);
+            if (
+                persistedDates.state === "invalid"
+                || (persistedDates.state === "absent" && hasAuthoritativeRevision(record))
+            ) {
+                throw plannedSessionDateUnavailable();
+            }
+            if (persistedDates.state === "valid") {
+                const plannedDate = persistedDates.entries?.find((entry) => entry.sessionIndex === sessionIndex)?.serviceDate;
+                if (!plannedDate) {
+                    throw plannedSessionDateUnavailable();
+                }
+                if (toIso(serviceDate) !== plannedDate) {
+                    throw new ConflictException({ code: "SERVICE_RECORD_PLANNED_DATE_STALE" });
+                }
             }
 
             // A postponed session (a later serviceDate than originally
@@ -232,11 +509,16 @@ export class ServiceRecordEntryService {
             }
             if (currentEndIso && requiredEndIso > currentEndIso) {
                 const newEndDate = new Date(`${requiredEndIso}T00:00:00.000Z`);
-                await lockClientForScheduleWrite(tx, ctx.branchId, schedule.clientId);
-                await lockEmployeesForScheduleWrite(tx, ctx.branchId, [
-                    schedule.primaryEmployeeId,
-                    schedule.secondaryEmployeeId,
-                ]);
+                // Production already owns these locks from the common set
+                // above. Keep the helper calls only for legacy unit doubles
+                // that omit client ownership fields.
+                if (typeof schedule.clientId !== "number") {
+                    await lockClientForScheduleWrite(tx, ctx.branchId, schedule.clientId);
+                    await lockEmployeesForScheduleWrite(tx, ctx.branchId, [
+                        schedule.primaryEmployeeId,
+                        schedule.secondaryEmployeeId,
+                    ]);
+                }
                 if (schedule.startDate) {
                     try {
                         await assertNoActiveEmployeeScheduleOverlap(tx, {
@@ -474,31 +756,6 @@ export class ServiceRecordEntryService {
             record.deliveryType,
             record.babyWeight,
         ].every((value) => Boolean(value?.trim()));
-    }
-
-    private validateAnswers(raw: Record<string, unknown>): Record<string, unknown> {
-        if (Buffer.byteLength(JSON.stringify(raw), "utf8") > MAX_ANSWERS_BYTES) {
-            throw new BadRequestException("제공기록 입력값이 너무 큽니다.");
-        }
-        const answers: Record<string, unknown> = {};
-        for (const [key, value] of Object.entries(raw)) {
-            if (["etcService", "notes", "paymentConfirmed"].includes(key)) continue;
-            if (!ANSWER_KEYS.has(key)) {
-                throw new BadRequestException(`Unknown service-record field: ${key}`);
-            }
-            if (Array.isArray(value)) {
-                if (value.length > 8 || value.some((item) => typeof item !== "string" || item.length > 80)) {
-                    throw new BadRequestException(`Invalid service-record field: ${key}`);
-                }
-                answers[key] = value;
-                continue;
-            }
-            if (!["string", "number", "boolean"].includes(typeof value) || (typeof value === "string" && value.length > 500)) {
-                throw new BadRequestException(`Invalid service-record field: ${key}`);
-            }
-            answers[key] = value;
-        }
-        return answers;
     }
 
     private trimNullable(value: string | null | undefined, maxLength: number): string | null {

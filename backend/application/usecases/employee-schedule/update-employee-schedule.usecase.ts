@@ -1,4 +1,4 @@
-import { BadRequestException, Inject, Injectable, NotFoundException, Optional } from "@nestjs/common";
+import { BadRequestException, ConflictException, Inject, Injectable, NotFoundException, Optional } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
 import {
     assertEmployeeAssignmentEligibility,
@@ -7,9 +7,8 @@ import {
 } from "application/policies/employee-assignment-eligibility.policy";
 import {
     assertEmployeeScheduleWriteIsAvailable,
-    lockClientForScheduleWrite,
-    lockEmployeesForScheduleWrite,
 } from "application/policies/employee-schedule-invariants.policy";
+import { lockServiceRecordWriteSet } from "application/policies/service-record-write-lock.policy";
 import {
     EmployeeScheduleDateRangeError,
     EmployeeScheduleEntity,
@@ -78,13 +77,39 @@ export class UpdateEmployeeScheduleUsecase {
             // updates lock the client/employees and validate eligibility and
             // overlap before the repository write.
             if (tx && tx.employee?.findMany) {
-                await lockClientForScheduleWrite(tx, branchid, updated.clientId);
-                await lockEmployeesForScheduleWrite(tx, branchid, [
-                    schedule.primaryEmployeeId,
-                    schedule.secondaryEmployeeId,
-                    updated.primaryEmployeeId,
-                    updated.secondaryEmployeeId,
-                ]);
+                const existingCase = tx.service_record_case?.findUnique
+                    ? await tx.service_record_case.findUnique({
+                        where: { clientId: updated.clientId },
+                        select: { id: true },
+                    })
+                    : null;
+                await lockServiceRecordWriteSet(tx, {
+                    branchId: branchid,
+                    clientId: updated.clientId,
+                    caseId: existingCase?.id,
+                    scheduleIds: [schedule.id],
+                    employeeIds: [
+                        schedule.primaryEmployeeId,
+                        schedule.secondaryEmployeeId,
+                        updated.primaryEmployeeId,
+                        updated.secondaryEmployeeId,
+                    ],
+                });
+                // Re-read the row after client/employee locks. If another
+                // writer changed the owner or assignment target between the
+                // discovery read and lock acquisition, abort instead of
+                // applying this stale update to a different target set.
+                const lockedSchedule = await this.employeeScheduleRepository.findById(branchid, id, tx);
+                if (!lockedSchedule) {
+                    throw new NotFoundException(`Employee schedule with id ${id} not found`);
+                }
+                if (
+                    lockedSchedule.clientId !== schedule.clientId
+                    || lockedSchedule.primaryEmployeeId !== schedule.primaryEmployeeId
+                    || lockedSchedule.secondaryEmployeeId !== schedule.secondaryEmployeeId
+                ) {
+                    throw new ConflictException("Employee schedule changed while acquiring write locks");
+                }
                 const employeeIds = [...new Set(
                     [updated.primaryEmployeeId, updated.secondaryEmployeeId]
                         .filter((employeeId): employeeId is number => employeeId !== null),

@@ -18,6 +18,7 @@ const createMockPrismaService = () => ({
         findFirst: jest.fn(),
         create: jest.fn(),
         update: jest.fn(),
+        updateMany: jest.fn(),
     },
     employee_schedule: {
         findFirst: jest.fn(),
@@ -32,6 +33,7 @@ const createMockPrismaService = () => ({
     service_record_case: {
         findFirst: jest.fn(),
         findUnique: jest.fn().mockResolvedValue({ id: "case-1", formVersion: 1 }),
+        update: jest.fn(),
     },
     client: {
         update: jest.fn(),
@@ -106,6 +108,16 @@ const createRequest = (overrides: Record<string, unknown> = {}) => ({
     decidedAt: null,
     ...overrides,
 });
+
+const createPlannedSessions = (dates: string[]) => dates.map((serviceDate, offset) => ({
+    sessionIndex: offset + 1,
+    serviceDate,
+    originalDate: serviceDate,
+    assignmentId: `assignment-${offset + 1}`,
+    scheduleId: SCHEDULE_ID,
+    employeeId: 5,
+    provenanceVersion: "revision-1",
+}));
 
 const expectConflictCode = async (
     action: () => Promise<unknown>,
@@ -183,6 +195,30 @@ describe("ScheduleChangeService", () => {
 
             await expect(service.preview(ctx)).resolves.toEqual({
                 sessionIndex: 3,
+                fromDate: "2026-07-03",
+                toDate: "2026-07-06",
+            });
+        });
+
+        it("uses the case N and canonical planned date for an irregular future vector", async () => {
+            prismaService.employee_schedule.findUnique.mockResolvedValue(createSchedule({
+                client: { id: CLIENT_ID, duration: 15 },
+            }));
+            prismaService.service_record_case.findUnique.mockResolvedValue({
+                id: "case-1",
+                requiredSessionCount: 3,
+                plannedSessions: createPlannedSessions([
+                    "2026-07-01",
+                    "2026-07-03",
+                    "2026-07-07",
+                ]),
+            });
+            prismaService.service_record_day.findMany.mockResolvedValue([
+                createDay(1, "2026-07-01", true),
+            ]);
+
+            await expect(service.preview(ctx)).resolves.toEqual({
+                sessionIndex: 2,
                 fromDate: "2026-07-03",
                 toDate: "2026-07-06",
             });
@@ -393,6 +429,76 @@ describe("ScheduleChangeService", () => {
             });
         });
 
+        it("shifts the canonical vector without inventing day rows and keeps N separate from duration", async () => {
+            const plannedSessions = createPlannedSessions([
+                "2026-07-01",
+                "2026-07-03",
+                "2026-07-07",
+            ]);
+            txPrismaService.employee_schedule.findFirst.mockResolvedValue(createSchedule({
+                endDate: toDbDate("2026-07-07"),
+                client: { id: CLIENT_ID, duration: 15 },
+            }));
+            txPrismaService.service_record_case.findFirst.mockResolvedValue({
+                id: "case-1",
+                branchId: BRANCH_ID,
+                clientId: CLIENT_ID,
+                formVersion: 1,
+                requiredSessionCount: 3,
+                plannedSessions,
+            });
+            txPrismaService.schedule_change_request.findFirst.mockResolvedValue(null);
+            txPrismaService.service_record_day.findMany
+                .mockResolvedValueOnce([createDay(1, "2026-07-01", true)])
+                .mockResolvedValueOnce([]);
+            txPrismaService.service_record_case.update.mockResolvedValue({
+                id: "case-1",
+                requiredSessionCount: 3,
+                plannedSessions,
+            });
+            txPrismaService.schedule_change_request.create.mockResolvedValue(createRequest({
+                status: "approved",
+                sessionIndex: 2,
+                fromDate: toDbDate("2026-07-03"),
+                toDate: toDbDate("2026-07-06"),
+                oldEndDate: toDbDate("2026-07-07"),
+                newEndDate: toDbDate("2026-07-08"),
+                decidedBy: USER_ID,
+                decidedAt: toDbDate("2026-07-02"),
+            }));
+
+            await expect(
+                service.applyAdminChange(SCHEDULE_ID, "2026-07-06", tenant),
+            ).resolves.toMatchObject({
+                status: "approved",
+                sessionIndex: 2,
+                fromDate: "2026-07-03",
+                toDate: "2026-07-06",
+                newEndDate: "2026-07-08",
+            });
+
+            expect(txPrismaService.service_record_day.upsert).not.toHaveBeenCalled();
+            expect(txPrismaService.service_record_case.update).toHaveBeenCalledWith({
+                where: { id: "case-1", branchId: BRANCH_ID },
+                data: expect.objectContaining({
+                    version: { increment: 1 },
+                    plannedSessions: [
+                        expect.objectContaining({ sessionIndex: 1, serviceDate: "2026-07-01" }),
+                        expect.objectContaining({ sessionIndex: 2, serviceDate: "2026-07-06" }),
+                        expect.objectContaining({ sessionIndex: 3, serviceDate: "2026-07-08" }),
+                    ],
+                }),
+            });
+            expect(txPrismaService.employee_schedule.update).toHaveBeenCalledWith({
+                where: { id: SCHEDULE_ID },
+                data: { endDate: toDbDate("2026-07-08") },
+            });
+            expect(txPrismaService.client.update).toHaveBeenCalledWith({
+                where: { id: CLIENT_ID },
+                data: { endDate: toDbDate("2026-07-08") },
+            });
+        });
+
         it("should supersede a pending request when an admin applies a schedule change directly", async () => {
             const pendingRequest = createRequest({
                 fromDate: toDbDate("2026-07-20"),
@@ -553,6 +659,73 @@ describe("ScheduleChangeService", () => {
             expect(events).toEqual(["transaction:start", "transaction:commit", "sync"]);
         });
 
+        it("approves against the canonical vector and does not create an unwritten target row", async () => {
+            const plannedSessions = createPlannedSessions([
+                "2026-07-01",
+                "2026-07-03",
+                "2026-07-07",
+            ]);
+            txPrismaService.schedule_change_request.findFirst.mockResolvedValue(createRequest({
+                sessionIndex: 2,
+                fromDate: toDbDate("2026-07-03"),
+                toDate: toDbDate("2026-07-06"),
+            }));
+            txPrismaService.employee_schedule.findUnique.mockResolvedValue(createSchedule({
+                endDate: toDbDate("2026-07-07"),
+                client: { id: CLIENT_ID, duration: 15 },
+            }));
+            txPrismaService.service_record_case.findUnique.mockResolvedValue({
+                id: "case-1",
+                branchId: BRANCH_ID,
+                clientId: CLIENT_ID,
+                formVersion: 1,
+                requiredSessionCount: 3,
+                plannedSessions,
+            });
+            txPrismaService.service_record_day.findMany
+                .mockResolvedValueOnce([createDay(1, "2026-07-01", true)])
+                .mockResolvedValueOnce([]);
+            txPrismaService.service_record_case.update.mockResolvedValue({
+                id: "case-1",
+                requiredSessionCount: 3,
+                plannedSessions,
+            });
+            txPrismaService.schedule_change_request.update.mockResolvedValue(createRequest({
+                status: "approved",
+                sessionIndex: 2,
+                fromDate: toDbDate("2026-07-03"),
+                toDate: toDbDate("2026-07-06"),
+                newEndDate: toDbDate("2026-07-08"),
+                decidedBy: USER_ID,
+                decidedAt: toDbDate("2026-07-02"),
+            }));
+
+            await expect(service.approve("request-1", tenant)).resolves.toMatchObject({
+                status: "approved",
+                sessionIndex: 2,
+                fromDate: "2026-07-03",
+                toDate: "2026-07-06",
+                newEndDate: "2026-07-08",
+            });
+
+            expect(txPrismaService.service_record_day.upsert).not.toHaveBeenCalled();
+            expect(txPrismaService.service_record_case.update).toHaveBeenCalledWith({
+                where: { id: "case-1", branchId: BRANCH_ID },
+                data: expect.objectContaining({
+                    version: { increment: 1 },
+                    plannedSessions: [
+                        expect.objectContaining({ sessionIndex: 1, serviceDate: "2026-07-01" }),
+                        expect.objectContaining({ sessionIndex: 2, serviceDate: "2026-07-06" }),
+                        expect.objectContaining({ sessionIndex: 3, serviceDate: "2026-07-08" }),
+                    ],
+                }),
+            });
+            expect(txPrismaService.employee_schedule.update).toHaveBeenCalledWith({
+                where: { id: SCHEDULE_ID },
+                data: { endDate: toDbDate("2026-07-08") },
+            });
+        });
+
         it("approval resyncs client trigger rules after the transaction commits", async () => {
             txPrismaService.schedule_change_request.findFirst.mockResolvedValue(createRequest());
             txPrismaService.employee_schedule.findUnique.mockResolvedValue(createSchedule());
@@ -651,7 +824,7 @@ describe("ScheduleChangeService", () => {
             );
         });
 
-        it("should mark the request stale outside the transaction when current state drifted", async () => {
+        it("should mark the request stale with a pending-state compare when current state drifted", async () => {
             txPrismaService.schedule_change_request.findFirst.mockResolvedValue(createRequest());
             txPrismaService.employee_schedule.findUnique.mockResolvedValue(createSchedule());
             txPrismaService.service_record_day.findMany.mockResolvedValue([
@@ -665,14 +838,34 @@ describe("ScheduleChangeService", () => {
             );
 
             await expectConflictCode(() => service.approve("request-1", tenant), "REQUEST_STALE");
-            expect(prismaService.schedule_change_request.update).toHaveBeenCalledWith({
-                where: { id: "request-1" },
+            expect(prismaService.schedule_change_request.updateMany).toHaveBeenCalledWith({
+                where: { id: "request-1", branchId: BRANCH_ID, status: "pending" },
                 data: { status: "stale", decidedAt: expect.any(Date) },
             });
             expect(txPrismaService.schedule_change_request.update).not.toHaveBeenCalled();
             expect(txPrismaService.employee_schedule.update).not.toHaveBeenCalled();
             expect(txPrismaService.client.update).not.toHaveBeenCalled();
             expect(triggerService.syncEmployeeAssignmentRulesForSchedule).not.toHaveBeenCalled();
+        });
+
+        it("does not overwrite an already-approved request when the stale transition races", async () => {
+            txPrismaService.schedule_change_request.findFirst.mockResolvedValue(createRequest());
+            txPrismaService.employee_schedule.findUnique.mockResolvedValue(createSchedule());
+            txPrismaService.service_record_day.findMany.mockResolvedValue([
+                createDay(1, "2026-07-01", true),
+                createDay(2, "2026-07-02", true),
+                createDay(3, "2026-07-03", true),
+                createDay(4, "2026-07-06", false),
+            ]);
+            prismaService.schedule_change_request.updateMany.mockResolvedValue({ count: 0 });
+
+            await expectConflictCode(() => service.approve("request-1", tenant), "REQUEST_STALE");
+
+            expect(prismaService.schedule_change_request.updateMany).toHaveBeenCalledWith({
+                where: { id: "request-1", branchId: BRANCH_ID, status: "pending" },
+                data: { status: "stale", decidedAt: expect.any(Date) },
+            });
+            expect(prismaService.schedule_change_request.update).not.toHaveBeenCalled();
         });
 
         it("should reject non-pending requests", async () => {
@@ -687,9 +880,33 @@ describe("ScheduleChangeService", () => {
     });
 
     describe("reject", () => {
+        it("rechecks the request under the owning lock and does not reject an approval that won the race", async () => {
+            const pendingRequest = createRequest();
+            prismaService.schedule_change_request.findFirst.mockResolvedValue(pendingRequest);
+            txPrismaService.schedule_change_request.findFirst.mockResolvedValue(
+                createRequest({ status: "approved" }),
+            );
+            txPrismaService.employee_schedule.findUnique.mockResolvedValue(createSchedule());
+        txPrismaService.service_record_case.findUnique.mockResolvedValue({
+            id: "case-1",
+            branchId: BRANCH_ID,
+            clientId: CLIENT_ID,
+        });
+        prismaService.schedule_change_request.update.mockResolvedValue(
+            createRequest({ status: "rejected" }),
+        );
+
+        await expectConflictCode(
+                () => service.reject("request-1", tenant, "provider unavailable"),
+                "REQUEST_NOT_PENDING",
+            );
+
+            expect(prismaService.schedule_change_request.update).not.toHaveBeenCalled();
+        });
+
         it("should reject a pending request with decided metadata and reason", async () => {
             prismaService.schedule_change_request.findFirst.mockResolvedValue(createRequest());
-            prismaService.schedule_change_request.update.mockResolvedValue(
+            txPrismaService.schedule_change_request.update.mockResolvedValue(
                 createRequest({
                     status: "rejected",
                     decidedBy: USER_ID,
@@ -704,7 +921,7 @@ describe("ScheduleChangeService", () => {
                 decidedBy: USER_ID,
                 reason: "provider unavailable",
             });
-            expect(prismaService.schedule_change_request.update).toHaveBeenCalledWith({
+            expect(txPrismaService.schedule_change_request.update).toHaveBeenCalledWith({
                 where: { id: "request-1" },
                 data: {
                     status: "rejected",
@@ -713,6 +930,7 @@ describe("ScheduleChangeService", () => {
                     reason: "provider unavailable",
                 },
             });
+            expect(prismaService.schedule_change_request.update).not.toHaveBeenCalled();
             expect(prismaService.employee_schedule.update).not.toHaveBeenCalled();
             expect(prismaService.client.update).not.toHaveBeenCalled();
         });

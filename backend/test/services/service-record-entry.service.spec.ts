@@ -182,6 +182,24 @@ function createHarness(options: {
     };
 }
 
+function createContextPrisma(record: ReturnType<typeof createRecord>) {
+    return {
+        service_record_case: {
+            findFirst: jest.fn().mockResolvedValue(record),
+            findUnique: jest.fn().mockResolvedValue({ ...record, days: [] }),
+        },
+        employee_schedule: {
+            findUnique: jest.fn().mockResolvedValue({
+                client: { id: 100, name: "고객" },
+                primaryEmployee: { id: 20, name: "제공자" },
+            }),
+        },
+        schedule_change_request: {
+            findFirst: jest.fn().mockResolvedValue(null),
+        },
+    };
+}
+
 function createConcurrentHarness() {
     type SessionWrite = Partial<ReturnType<typeof createDay>> & { locked: boolean };
 
@@ -303,9 +321,263 @@ async function expectException(
     }
 }
 
+describe("ServiceRecordEntryService planned-session dates", () => {
+    const plannedSessions = [
+        "2026-07-01",
+        "2026-07-02",
+        "2026-07-03",
+        "2026-07-06",
+        "2026-07-07",
+    ].map((serviceDate, offset) => ({
+        sessionIndex: offset + 1,
+        serviceDate,
+        originalDate: serviceDate,
+        assignmentId: `assignment-${offset + 1}`,
+        scheduleId: 10,
+        employeeId: 20,
+        provenanceVersion: "revision-1",
+    }));
+    const authoritativeRevisionSessions = Array.from({ length: 13 }, (_, offset) => {
+        const serviceDate = addBusinessDaysKr("2026-09-03", offset);
+        return {
+            sessionIndex: offset + 1,
+            serviceDate,
+            originalDate: serviceDate,
+            assignmentId: `assignment-${offset + 1}`,
+            scheduleId: 10,
+            employeeId: 20,
+            provenanceVersion: "revision-1",
+        };
+    });
+    const authoritativeRevisionPrevious = authoritativeRevisionSessions[11]!;
+    const authoritativeRevisionLast = authoritativeRevisionSessions[12]!;
+
+    it("exposes the complete persisted planned vector, including future unwritten sessions", async () => {
+        const record = createRecord({ plannedSessions });
+        const prisma = createContextPrisma(record);
+        const service = new ServiceRecordEntryService(
+            prisma as unknown as PrismaService,
+            {} as ServiceRecordTokenService,
+            {} as ServiceRecordLifecycleService,
+        );
+
+        const result = await service.getContext(context);
+
+        expect(result.plannedSessionDates).toEqual(plannedSessions.map(({ sessionIndex, serviceDate }) => ({
+            sessionIndex,
+            serviceDate,
+        })));
+    });
+
+    it("fails closed when a persisted planned vector is malformed instead of omitting it", async () => {
+        const record = createRecord({ plannedSessions: plannedSessions.slice(0, -1) });
+        const service = new ServiceRecordEntryService(
+            createContextPrisma(record) as unknown as PrismaService,
+            {} as ServiceRecordTokenService,
+            {} as ServiceRecordLifecycleService,
+        );
+
+        await expect(service.getContext(context)).rejects.toMatchObject({
+            response: { code: "SERVICE_RECORD_PLANNED_DATE_UNAVAILABLE" },
+        });
+    });
+
+    it("keeps the legacy provider date fallback only for an unrevisioned absent vector", async () => {
+        const record = createRecord({ plannedSessions: null });
+        const service = new ServiceRecordEntryService(
+            createContextPrisma(record) as unknown as PrismaService,
+            {} as ServiceRecordTokenService,
+            {} as ServiceRecordLifecycleService,
+        );
+
+        const result = await service.getContext(context);
+
+        expect(result.plannedSessionDates).toBeUndefined();
+        expect(result.totalSessions).toBe(record.requiredSessionCount);
+    });
+
+    it("preserves the authoritative revision N when the current period is a shorter transfer span", async () => {
+        const record = createRecord({
+            requiredSessionCount: 13,
+            startDate: new Date("2026-09-03T00:00:00.000Z"),
+            endDate: new Date("2026-09-08T00:00:00.000Z"),
+            currentRevisionId: "revision-1",
+            plannedSessions: authoritativeRevisionSessions,
+        });
+        const service = new ServiceRecordEntryService(
+            createContextPrisma(record) as unknown as PrismaService,
+            {} as ServiceRecordTokenService,
+            {} as ServiceRecordLifecycleService,
+        );
+
+        const result = await service.getContext(context);
+
+        expect(result.totalSessions).toBe(13);
+        expect(result.plannedSessionDates).toHaveLength(13);
+        expect(result.plannedSessionDates?.at(-1)).toEqual({
+            sessionIndex: 13,
+            serviceDate: authoritativeRevisionLast.serviceDate,
+        });
+    });
+
+    it("keeps unsupported-year legacy totals viewable using the stored count", async () => {
+        const record = createRecord({
+            requiredSessionCount: 5,
+            startDate: new Date("2028-01-03T00:00:00.000Z"),
+            endDate: new Date("2028-01-05T00:00:00.000Z"),
+            plannedSessions: null,
+        });
+        const service = new ServiceRecordEntryService(
+            createContextPrisma(record) as unknown as PrismaService,
+            {} as ServiceRecordTokenService,
+            {} as ServiceRecordLifecycleService,
+        );
+
+        const result = await service.getContext(context);
+        expect(result.totalSessions).toBe(5);
+        expect(result.plannedSessionDates).toBeUndefined();
+    });
+
+    it("uses the authoritative revision N for a later provider slot after a transfer span shortens", async () => {
+        const transactionRecord = createRecord({
+            requiredSessionCount: 13,
+            startDate: new Date("2026-09-03T00:00:00.000Z"),
+            endDate: new Date("2026-09-08T00:00:00.000Z"),
+            currentRevisionId: "revision-1",
+            plannedSessions: authoritativeRevisionSessions,
+        });
+        const { service, upsert, transactionClient } = createHarness({ transactionRecord });
+        transactionClient.service_record_day.findUnique.mockImplementation(({ where }: {
+            where: { serviceRecordCaseId_caseSessionIndex?: { caseSessionIndex?: number } };
+        }) => {
+            const sessionIndex = where.serviceRecordCaseId_caseSessionIndex?.caseSessionIndex;
+            if (sessionIndex === 12) {
+                return Promise.resolve(createDay({
+                    caseSessionIndex: 12,
+                    sessionIndex: 12,
+                    serviceDate: new Date(`${authoritativeRevisionPrevious.serviceDate}T00:00:00.000Z`),
+                    locked: true,
+                }));
+            }
+            return Promise.resolve(null);
+        });
+
+        await service.upsertSession(
+            context,
+            13,
+            createDto({ serviceDate: `${authoritativeRevisionLast.serviceDate}T00:00:00.000Z` }),
+            false,
+        );
+
+        expect(upsert).toHaveBeenCalledWith(expect.objectContaining({
+            create: expect.objectContaining({ caseSessionIndex: 13 }),
+            update: expect.objectContaining({ caseSessionIndex: 13 }),
+        }));
+    });
+
+    it("fails closed when a revision pointer has no persisted planned vector", async () => {
+        const record = createRecord({ plannedSessions: null, currentRevisionId: "revision-1" });
+        const service = new ServiceRecordEntryService(
+            createContextPrisma(record) as unknown as PrismaService,
+            {} as ServiceRecordTokenService,
+            {} as ServiceRecordLifecycleService,
+        );
+
+        await expect(service.getContext(context)).rejects.toMatchObject({
+            response: { code: "SERVICE_RECORD_PLANNED_DATE_UNAVAILABLE" },
+        });
+    });
+
+    it("rejects provider dates that disagree with the canonical vector before any period write", async () => {
+        const transactionRecord = createRecord({ plannedSessions });
+        const { service, upsert, scheduleUpdate, transactionClient } = createHarness({ transactionRecord });
+
+        await expect(service.upsertSession(
+            context,
+            3,
+            createDto({ serviceDate: "2026-07-08T00:00:00.000Z" }),
+            false,
+        )).rejects.toMatchObject({ response: { code: "SERVICE_RECORD_PLANNED_DATE_STALE" } });
+
+        expect(upsert).not.toHaveBeenCalled();
+        expect(scheduleUpdate).not.toHaveBeenCalled();
+        expect(transactionClient.client.update).not.toHaveBeenCalled();
+    });
+
+    it("rejects provider writes when the persisted planned vector is malformed", async () => {
+        const transactionRecord = createRecord({ plannedSessions: plannedSessions.slice(0, -1) });
+        const { service, upsert } = createHarness({ transactionRecord });
+
+        await expect(service.upsertSession(context, 1, createDto(), false)).rejects.toMatchObject({
+            response: { code: "SERVICE_RECORD_PLANNED_DATE_UNAVAILABLE" },
+        });
+        expect(upsert).not.toHaveBeenCalled();
+    });
+
+    it("rejects provider writes when a revised case has no planned vector", async () => {
+        const transactionRecord = createRecord({ plannedSessions: null, currentRevisionId: "revision-1" });
+        const { service, upsert } = createHarness({ transactionRecord });
+
+        await expect(service.upsertSession(context, 1, createDto(), false)).rejects.toMatchObject({
+            response: { code: "SERVICE_RECORD_PLANNED_DATE_UNAVAILABLE" },
+        });
+        expect(upsert).not.toHaveBeenCalled();
+    });
+
+    it("persists a provider submission only when its date matches the canonical vector", async () => {
+        const transactionRecord = createRecord({ plannedSessions });
+        const { service, upsert } = createHarness({ transactionRecord });
+
+        await service.upsertSession(
+            context,
+            1,
+            createDto({ serviceDate: "2026-07-01T00:00:00.000Z" }),
+            false,
+        );
+
+        expect(upsert).toHaveBeenCalledWith(expect.objectContaining({
+            create: expect.objectContaining({ serviceDate: new Date("2026-07-01T00:00:00.000Z") }),
+            update: expect.objectContaining({ serviceDate: new Date("2026-07-01T00:00:00.000Z") }),
+        }));
+    });
+});
+
 describe("ServiceRecordEntryService.upsertSession", () => {
     afterEach(() => {
         jest.useRealTimers();
+    });
+
+    it("uses the common client, employee, case, schedule, assignment, day lock order for an owned assignment", async () => {
+        const schedule = {
+            id: 10,
+            clientId: 100,
+            branchId: BRANCH_ID,
+            primaryEmployeeId: 20,
+            secondaryEmployeeId: null,
+            startDate: new Date("2026-07-01T00:00:00.000Z"),
+            endDate: new Date("2026-07-31T00:00:00.000Z"),
+            replaced: false,
+            primaryEmployee: { name: "제공자" },
+        };
+        const { service, transactionClient } = createHarness({ schedule });
+
+        await service.upsertSession(context, 1, createDto(), false);
+
+        const lockTables = transactionClient.$queryRaw.mock.calls
+            .map(([query]) => (query as { strings?: string[] }).strings?.join(" ").toLowerCase() ?? "")
+            .filter((query) => query.includes("for update"))
+            .map((query) => {
+                const match = query.match(/from\s+"?([a-z_]+)"?/);
+                return match?.[1] ?? "unknown";
+            });
+        expect(lockTables.slice(0, 6)).toEqual([
+            "client",
+            "employee",
+            "service_record_case",
+            "employee_schedule",
+            "service_record_assignment",
+            "service_record_day",
+        ]);
     });
 
     it("returns four provider sessions for a legacy case with a 15-day voucher count", async () => {
@@ -351,6 +623,61 @@ describe("ServiceRecordEntryService.upsertSession", () => {
         expect(upsert).toHaveBeenCalledWith(expect.objectContaining({
             update: expect.objectContaining({ notes: "수정", locked: true }),
         }));
+    });
+
+    it("keeps the public flat-form auxiliary fields compatible with the shared answer validator", async () => {
+        const { service, upsert } = createHarness();
+
+        await service.upsertSession(context, 1, createDto({
+            answers: {
+                sitzBath: "실시",
+                sleep: "잘 잠",
+                stool: "정상변",
+                perineum: ["이상없음"],
+                meals_meal: "3",
+                temperature_temp: "36.7",
+                etcService: "flat 기타서비스",
+                notes: "flat 특이사항",
+                paymentConfirmed: true,
+            },
+            etcService: "flat 기타서비스",
+            notes: "flat 특이사항",
+            paymentConfirmed: true,
+        }), true);
+
+        expect(upsert).toHaveBeenCalledWith(expect.objectContaining({
+            create: expect.objectContaining({
+                answers: {
+                    sitzBath: "실시",
+                    sleep: "잘 잠",
+                    stool: "정상변",
+                    perineum: ["이상없음"],
+                    meals_meal: "3",
+                    temperature_temp: "36.7",
+                },
+                etcService: "flat 기타서비스",
+                notes: "flat 특이사항",
+                paymentConfirmed: true,
+            }),
+        }));
+    });
+
+    it.each([
+        ["meals_meal", "1.5"],
+        ["temperature_temp", "36.75"],
+        ["meals_meal", "NaN"],
+    ])("rejects invalid numeric answer %s=%s before opening a write transaction", async (key, value) => {
+        const { service, prisma, upsert } = createHarness();
+
+        await expect(service.upsertSession(
+            context,
+            1,
+            createDto({ answers: { [key]: value } }),
+            false,
+        )).rejects.toBeInstanceOf(BadRequestException);
+
+        expect(prisma.$transaction).not.toHaveBeenCalled();
+        expect(upsert).not.toHaveBeenCalled();
     });
 
     it.each([
@@ -988,5 +1315,61 @@ describe("UpsertSessionDto service-record text limits", () => {
         const errors = await validate(dto);
 
         expect(errors.some((error) => error.property === property)).toBe(true);
+    });
+});
+
+describe("ServiceRecordEntryService.saveHeader", () => {
+    it("revalidates the case status after the owning lock and performs no writes when finalized", async () => {
+        const aggregate = createRecord({ status: SERVICE_RECORD_CASE_STATUS.IN_PROGRESS });
+        const transactionRecord = createRecord({ status: SERVICE_RECORD_CASE_STATUS.FINALIZING });
+        const transaction = {
+            $queryRaw: jest.fn().mockResolvedValue([{ id: CASE_ID }]),
+            employee_schedule: {
+                findUnique: jest.fn().mockResolvedValue(null),
+            },
+            service_record_case: {
+                findUnique: jest.fn().mockResolvedValue(transactionRecord),
+                update: jest.fn().mockResolvedValue(transactionRecord),
+            },
+            service_record_day: {
+                count: jest.fn().mockResolvedValue(0),
+            },
+            service_record: {
+                upsert: jest.fn().mockResolvedValue({ ...transactionRecord, scheduleId: context.scheduleId }),
+            },
+        };
+        const prisma = {
+            service_record_case: {
+                findFirst: jest.fn().mockResolvedValue(aggregate),
+            },
+            service_record_day: {
+                count: jest.fn().mockResolvedValue(0),
+            },
+            $transaction: jest.fn((callback: (tx: typeof transaction) => Promise<unknown>) =>
+                callback(transaction)),
+        };
+        const lifecycle = {
+            recompute: jest.fn().mockResolvedValue(transactionRecord),
+        };
+        const service = new ServiceRecordEntryService(
+            prisma as unknown as PrismaService,
+            {} as ServiceRecordTokenService,
+            lifecycle as unknown as ServiceRecordLifecycleService,
+        );
+
+        await expect(service.saveHeader(context, {
+            momName: "산모",
+            momBirth: "900101",
+            babyName: "아기",
+            babyBirth: "260701",
+            deliveryType: "자연분만",
+            babyWeight: "3.2",
+        })).rejects.toMatchObject({
+            response: { code: "SERVICE_RECORD_FINALIZED" },
+        });
+
+        expect(transaction.service_record_case.update).not.toHaveBeenCalled();
+        expect(transaction.service_record.upsert).not.toHaveBeenCalled();
+        expect(lifecycle.recompute).not.toHaveBeenCalled();
     });
 });

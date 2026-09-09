@@ -408,6 +408,144 @@ describe("CreateAndSendContractUsecase", () => {
         expect(createDocument).not.toHaveBeenCalled();
     });
 
+    it("replays the durable acceptance after a lost caller response without a second provider create", async () => {
+        const credentialBoundary = createBoundary();
+        const createDocument = jest.fn().mockResolvedValue({
+            documentId: "remote-replay",
+            documentName: "provider-assigned-contract",
+        });
+        const persistMirror = jest.fn().mockResolvedValue({ documentId: "remote-replay" });
+        const acceptedIntent = {
+            id: "intent-replay",
+            businessKey: "provider-key-replay",
+            providerDocumentId: null,
+        };
+        let acceptedDocumentId: string | null = null;
+        const dispatchBoundary = {
+            claim: jest.fn().mockImplementation(async () => acceptedDocumentId
+                ? {
+                    disposition: "already_accepted",
+                    intent: { ...acceptedIntent, providerDocumentId: acceptedDocumentId },
+                }
+                : { disposition: "claimed", intent: acceptedIntent }),
+            markAccepted: jest.fn().mockImplementation(async (...args: unknown[]) => {
+                const providerDocumentId = args[1];
+                if (typeof providerDocumentId === "string") acceptedDocumentId = providerDocumentId;
+                return { status: "accepted" };
+            }),
+            markUncertain: jest.fn(),
+            releaseBeforeSend: jest.fn(),
+        };
+        const usecase = new CreateAndSendContractUsecase(
+            { createDocument } as never,
+            { findById: jest.fn().mockResolvedValue({
+                id: 7,
+                name: "fixture-client",
+                phone: "010-1111-2222",
+                startDate: null,
+                endDate: null,
+            }) } as never,
+            credentialBoundary as never,
+            { execute: persistMirror } as never,
+            { assertLiveAssignedClient: jest.fn().mockResolvedValue({ scheduleId: 13 }) } as never,
+            dispatchBoundary as never,
+        );
+        const request = {
+            clientId: 7,
+            templateId: "template-1",
+            templateName: "fixture-contract",
+            idempotencyKey: "same-request-key",
+            clientTargetVersion: "target-v1",
+        };
+
+        // The first result is intentionally discarded to model a caller losing its response.
+        await usecase.execute("branch-1", request, TEST_PRINCIPAL);
+        await expect(usecase.execute("branch-1", request, TEST_PRINCIPAL)).resolves.toEqual({
+            success: true,
+            documentId: "remote-replay",
+        });
+
+        expect(createDocument).toHaveBeenCalledTimes(1);
+        expect(credentialBoundary.withCredentials).toHaveBeenCalledTimes(1);
+        expect(dispatchBoundary.claim).toHaveBeenCalledTimes(2);
+        expect(dispatchBoundary.markAccepted).toHaveBeenCalledTimes(1);
+        expect(persistMirror).toHaveBeenCalledTimes(2);
+        expect(persistMirror).toHaveBeenNthCalledWith(
+            2,
+            "branch-1",
+            expect.objectContaining({
+                documentId: "remote-replay",
+                linkToClient: true,
+                clientTargetVersion: "target-v1",
+                preserveExistingMirrorProjection: true,
+            }),
+        );
+        expect(dispatchBoundary.markUncertain).not.toHaveBeenCalled();
+        expect(dispatchBoundary.releaseBeforeSend).not.toHaveBeenCalled();
+    });
+
+    it("keeps an unknown provider outcome uncertain across a same-key replay", async () => {
+        const credentialBoundary = createBoundary();
+        const createDocument = jest.fn().mockRejectedValue(new Error("provider outcome unavailable"));
+        const persistMirror = jest.fn();
+        const claimedIntent = {
+            id: "intent-unknown",
+            businessKey: "provider-key-unknown",
+            providerDocumentId: null,
+        };
+        let outcomeUnknown = false;
+        const dispatchBoundary = {
+            claim: jest.fn().mockImplementation(async () => ({
+                disposition: outcomeUnknown ? "uncertain" : "claimed",
+                intent: claimedIntent,
+            })),
+            markAccepted: jest.fn(),
+            markUncertain: jest.fn().mockImplementation(async () => {
+                outcomeUnknown = true;
+                return { status: "uncertain" };
+            }),
+            releaseBeforeSend: jest.fn(),
+        };
+        const usecase = new CreateAndSendContractUsecase(
+            { createDocument } as never,
+            { findById: jest.fn().mockResolvedValue({
+                id: 7,
+                name: "fixture-client",
+                phone: "010-1111-2222",
+                startDate: null,
+                endDate: null,
+            }) } as never,
+            credentialBoundary as never,
+            { execute: persistMirror } as never,
+            { assertLiveAssignedClient: jest.fn().mockResolvedValue({ scheduleId: 13 }) } as never,
+            dispatchBoundary as never,
+        );
+        const request = {
+            clientId: 7,
+            templateId: "template-1",
+            idempotencyKey: "same-unknown-key",
+        };
+
+        const firstResult = await usecase.execute("branch-1", request, TEST_PRINCIPAL);
+        const secondResult = await usecase.execute("branch-1", request, TEST_PRINCIPAL);
+
+        expect(firstResult).toEqual(expect.objectContaining({
+            success: false,
+            uncertain: true,
+        }));
+        expect(secondResult).toEqual({
+            success: false,
+            error: "계약서 발송 결과 확인이 필요합니다",
+            uncertain: true,
+        });
+        expect(createDocument).toHaveBeenCalledTimes(1);
+        expect(dispatchBoundary.claim).toHaveBeenCalledTimes(2);
+        expect(dispatchBoundary.markUncertain).toHaveBeenCalledTimes(1);
+        expect(dispatchBoundary.markAccepted).not.toHaveBeenCalled();
+        expect(dispatchBoundary.releaseBeforeSend).not.toHaveBeenCalled();
+        expect(persistMirror).not.toHaveBeenCalled();
+    });
+
     it("persists an accepted durable intent before local mirror persistence", async () => {
         const createDocument = jest.fn().mockResolvedValue({ documentId: "remote-1" });
         const persistDocument = jest.fn().mockResolvedValue({ documentId: "remote-1" });

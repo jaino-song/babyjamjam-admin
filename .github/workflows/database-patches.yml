@@ -387,6 +387,11 @@ jobs:
           ./scripts/run-prisma-db-execute.sh --schema prisma/schema.prisma --file prisma/migrations/20260903193000_add_message_trigger_rule_branch_override/migration.sql
           ./scripts/run-prisma-db-execute.sh --schema prisma/schema.prisma --file prisma/migrations/20260904000000_add_receipt_link_token/migration.sql
           ./scripts/run-prisma-db-execute.sh --schema prisma/schema.prisma --file prisma/migrations/20260904000100_contract_auto_finalize_grace_days_7/migration.sql
+          ./scripts/run-prisma-db-execute.sh --schema prisma/schema.prisma --file prisma/migrations/20260908000000_add_service_record_edit_persistence/migration.sql
+          ./scripts/run-prisma-db-execute.sh --schema prisma/schema.prisma --file prisma/migrations/20260908010000_repair_service_record_revision_pointers/migration.sql
+          ./scripts/run-prisma-db-execute.sh --schema prisma/schema.prisma --file prisma/migrations/20260908020000_add_service_record_edit_confirmation/migration.sql
+          ./scripts/run-prisma-db-execute.sh --schema prisma/schema.prisma --file prisma/migrations/20260908030000_add_service_record_revision_document_state/migration.sql
+          ./scripts/run-prisma-db-execute.sh --schema prisma/schema.prisma --file prisma/migrations/20260908040000_add_revision_snapshot_links/migration.sql
 
       # The hardening verify asserts client/employee phone_normalized, which the
       # post-lease patches above create — it must run after them, not before.
@@ -939,6 +944,11 @@ jobs:
           ./scripts/run-prisma-db-execute.sh --schema prisma/schema.prisma --file prisma/migrations/20260903193000_add_message_trigger_rule_branch_override/migration.sql
           ./scripts/run-prisma-db-execute.sh --schema prisma/schema.prisma --file prisma/migrations/20260904000000_add_receipt_link_token/migration.sql
           ./scripts/run-prisma-db-execute.sh --schema prisma/schema.prisma --file prisma/migrations/20260904000100_contract_auto_finalize_grace_days_7/migration.sql
+          ./scripts/run-prisma-db-execute.sh --schema prisma/schema.prisma --file prisma/migrations/20260908000000_add_service_record_edit_persistence/migration.sql
+          ./scripts/run-prisma-db-execute.sh --schema prisma/schema.prisma --file prisma/migrations/20260908010000_repair_service_record_revision_pointers/migration.sql
+          ./scripts/run-prisma-db-execute.sh --schema prisma/schema.prisma --file prisma/migrations/20260908020000_add_service_record_edit_confirmation/migration.sql
+          ./scripts/run-prisma-db-execute.sh --schema prisma/schema.prisma --file prisma/migrations/20260908030000_add_service_record_revision_document_state/migration.sql
+          ./scripts/run-prisma-db-execute.sh --schema prisma/schema.prisma --file prisma/migrations/20260908040000_add_revision_snapshot_links/migration.sql
 
       # Runs after the post-lease patches: it asserts phone_normalized columns
       # those patches create.
@@ -1469,6 +1479,11 @@ jobs:
           ./scripts/run-prisma-db-execute.sh --schema prisma/schema.prisma --file prisma/migrations/20260903193000_add_message_trigger_rule_branch_override/migration.sql
           ./scripts/run-prisma-db-execute.sh --schema prisma/schema.prisma --file prisma/migrations/20260904000000_add_receipt_link_token/migration.sql
           ./scripts/run-prisma-db-execute.sh --schema prisma/schema.prisma --file prisma/migrations/20260904000100_contract_auto_finalize_grace_days_7/migration.sql
+          ./scripts/run-prisma-db-execute.sh --schema prisma/schema.prisma --file prisma/migrations/20260908000000_add_service_record_edit_persistence/migration.sql
+          ./scripts/run-prisma-db-execute.sh --schema prisma/schema.prisma --file prisma/migrations/20260908010000_repair_service_record_revision_pointers/migration.sql
+          ./scripts/run-prisma-db-execute.sh --schema prisma/schema.prisma --file prisma/migrations/20260908020000_add_service_record_edit_confirmation/migration.sql
+          ./scripts/run-prisma-db-execute.sh --schema prisma/schema.prisma --file prisma/migrations/20260908030000_add_service_record_revision_document_state/migration.sql
+          ./scripts/run-prisma-db-execute.sh --schema prisma/schema.prisma --file prisma/migrations/20260908040000_add_revision_snapshot_links/migration.sql
 
       # Runs after the post-lease patches: it asserts phone_normalized columns
       # those patches create.

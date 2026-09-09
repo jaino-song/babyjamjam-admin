@@ -1,5 +1,6 @@
 @import "tailwindcss";
 @import "@babyjamjam/shared/tokens/skeleton.css";
+@import "@babyjamjam/service-record-ui/styles.css";
 
 /* ========================================
    Design System Color Variables (HSL)

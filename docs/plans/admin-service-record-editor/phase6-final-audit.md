@@ -1,0 +1,40 @@
+# Phase6 independent final audit
+
+Session: `01a08255-e82b-78a3-b60d-7577413638f6`
+
+Initial checkpoint: `09dc469f2`. Same-session final closure: SHIP at `1247195f6` (local Phase6 only).
+
+Model: gpt-5.6-sol | Effort: high
+
+REVISE — LOCAL Phase6
+
+1. Persisted-session expiry lacks HTTP acceptance evidence. The fixture creates `expiredSessionAdmin` ([helper:196](/Users/jaino/Development/babyjamjam-admin/admin-service-record-editor/backend/test/e2e/helpers/admin-service-record-edit-http.helper.ts:196)), but the HTTP suite only exercises token expiry, session revocation, and cross-user session mismatch ([spec:139](/Users/jaino/Development/babyjamjam-admin/admin-service-record-editor/backend/test/e2e/admin-service-record-edit-http.e2e.spec.ts:139), [spec:147](/Users/jaino/Development/babyjamjam-admin/admin-service-record-editor/backend/test/e2e/admin-service-record-edit-http.e2e.spec.ts:147), [spec:160](/Users/jaino/Development/babyjamjam-admin/admin-service-record-editor/backend/test/e2e/admin-service-record-edit-http.e2e.spec.ts:160)). Phase6 explicitly requires expired, revoked, and invalid-session coverage ([implementation-plan.md:472](/Users/jaino/Development/babyjamjam-admin/admin-service-record-editor/docs/plans/admin-service-record-editor/implementation-plan.md:472)). Add a real guarded request using `fixture.expiredSessionAdmin`, expect 401, and rerun the dedicated suite. The production expiry check exists, so this is an evidence gap—not a confirmed product defect.
+
+2. Current-HEAD lint/build evidence is missing. The recorded workspace gates are scoped to checkpoint `82c76f113` ([verification.md:88](/Users/jaino/Development/babyjamjam-admin/admin-service-record-editor/docs/plans/admin-service-record-editor/verification.md:88)), and the build is explicitly reported at that pre-Phase6 checkpoint ([verification.md:109](/Users/jaino/Development/babyjamjam-admin/admin-service-record-editor/docs/plans/admin-service-record-editor/verification.md:109)). Product changes followed in the query boundary and date renderer ([controller:39](/Users/jaino/Development/babyjamjam-admin/admin-service-record-editor/backend/interface/controllers/admin-service-record.controller.ts:39), [wizard:953](/Users/jaino/Development/babyjamjam-admin/admin-service-record-editor/frontend/src/components/app/service-record/ServiceRecordAdminWizard.tsx:953)). Run the same fenced root lint and build at current HEAD. Broad root Jest discovery remains an accepted harness limitation and is not required.
+
+3. The Phase6 acceptance map remains incomplete and contradictory. The approved plan requires every named invariant to map to an exact test, command, result, and artifact ([implementation-plan.md:474](/Users/jaino/Development/babyjamjam-admin/admin-service-record-editor/docs/plans/admin-service-record-editor/implementation-plan.md:474)); the current map covers only a subset and lacks those complete links ([verification.md:115](/Users/jaino/Development/babyjamjam-admin/admin-service-record-editor/docs/plans/admin-service-record-editor/verification.md:115)). Missing mappings include business-day/holiday/irregular-N cases, different-payload idempotency rejection, the entry/schedule/allocation/lifecycle/finalization/webhook/poller races, and partial-chunk/document-pointer CAS. The summary also still says HTTP authorization is `NOT RUN` ([verification.md:22](/Users/jaino/Development/babyjamjam-admin/admin-service-record-editor/docs/plans/admin-service-record-editor/verification.md:22)) despite the later 17/17 result ([verification.md:139](/Users/jaino/Development/babyjamjam-admin/admin-service-record-editor/docs/plans/admin-service-record-editor/verification.md:139)). Reuse the Phase1–5 SHIP evidence; do not restart those audits. Add exact mappings and run only genuinely uncovered narrow cases.
+
+No additional product defect was confirmed in the Phase6 query-boundary or date-readability changes. No tests were run during this audit. External activation, environment merge, deployment, real SMS/vendor operations, production DB proof, and Phase0 activation remain intentionally unperformed and are not grounds for this verdict.
+
+## Correction evidence before same-session closure
+
+- `1d494d857` adds a separate persisted-session expiry request while preserving the signed-token expiry request. `fbb91879a` widens the expired JWT fixture margin from1second to60seconds; production authentication code is unchanged.
+- First expanded18-case run had one JWT-expiry response403 instead of401 while build/lint ran (`/tmp/bjj-phase6-http-expiry-green.log`, despite that historical filename the run is RED). The new DB-session expiry case passed. A temporary safe status/body/expiry diagnostic returned401 and18PASS (`/tmp/bjj-phase6-http-expiry-diagnostic.log`), then was restored. The one-off403 root cause was not proven; it is not silently erased or described as confirmed clock contention.
+- With the firmly expired fixture, the unchanged401 expectation and both expiry paths passed18/18 twice sequentially: `/tmp/bjj-phase6-http-expiry-final1.log`, `/tmp/bjj-phase6-http-expiry-final2.log`. Counts overlap; this is18cases, not36distinct tests.
+- Root build and root lint passed on source `1d494d857` (`/tmp/bjj-phase6-final-head-build.log`, `/tmp/bjj-phase6-final-head-lint.log`) and were refreshed again at the final code/test checkpoint `fbb91879a` in a fresh no-env unit with cloned dependencies (`/tmp/bjj-phase6-release-check-build.log`, `/tmp/bjj-phase6-release-check-lint.log`). Backend dist/main.js and frontend/mobile BUILD_ID artifacts existed and were nonempty. Root build used loopback-only networking with synthetic API/DB values and blank Sentry credentials; lint denied all networking.
+- A supplemental build invocation was initially launched from integration instead of the no-env unit and was interrupted (exit130, `/tmp/bjj-phase6-accepted-head-build.log`). It loaded the local .env under the external-network fence; no values were printed, URLs were overridden to owned loopback targets, and no migration was run. This interrupted invocation is excluded from PASS evidence. The corrected fresh-unit run above is the accepted result.
+- Requirement-to-test map and command manifests are complete. First closure closed findings 1 and 2 and identified one provenance error: the stale-lifecycle log was linked to a rejected typo invocation. The manifest now marks its accepted exact command unavailable, removes that invocation, and explicitly withdraws exact-command provenance for that artifact. Its historical 10 PASS result and Phase5 SHIP are retained; no rerun or product change.
+
+## Final same-session closure
+
+Audited checkpoint: `1247195f6`. Final code/test checkpoint: `fbb91879a`; subsequent corrections are documentation only.
+
+Model: gpt-5.6-sol | Effort: high
+
+## SHIP — LOCAL Phase6
+
+The corrected statement at [verification.md:147](/Users/jaino/Development/babyjamjam-admin/admin-service-record-editor/docs/plans/admin-service-record-editor/verification.md:147) now accurately matches the `command: null` manifest entry and its explicit provenance limitation at [phase6-historical-pg-commands.json:70](/Users/jaino/Development/babyjamjam-admin/admin-service-record-editor/docs/plans/admin-service-record-editor/phase6-historical-pg-commands.json:70).
+
+All Phase6 audit findings are closed. No tests were run. External activation, environment merge, and deployment remain unperformed and fail-closed.
+
+Artifact: `/tmp/bjj-phase6-sol-final-result.txt`. Session: `01a08255-e82b-78a3-b60d-7577413638f6`.

@@ -108,9 +108,8 @@ export async function lockEmployeesForScheduleWrite(
 }
 
 /**
- * Reject an active schedule that shares the client or either assigned
- * employee and overlaps the proposed inclusive DATE interval. Replaced rows
- * are historical and intentionally do not participate in the conflict set.
+ * 같은 이용자에게 기간이 겹치는 활성 배정이 이중 생성되는 것만 막는다.
+ * 제공인력의 다른 이용자 배정과 교체된 과거 일정은 충돌로 처리하지 않는다.
  */
 export async function assertNoActiveEmployeeScheduleOverlap(
     transaction: EmployeeScheduleWriteTransaction,
@@ -128,30 +127,19 @@ export async function assertNoActiveEmployeeScheduleOverlap(
     // absent so domain validation can still be exercised in isolation.
     if (!transaction.employee_schedule?.findFirst) return;
 
-    const employeeIds = [...new Set(
-        [params.primaryEmployeeId, params.secondaryEmployeeId]
-            .filter((id): id is number => id !== null && id !== undefined),
-    )];
-    const overlapSubjects: Prisma.employee_scheduleWhereInput[] = [
-        ...(params.clientId === undefined ? [] : [{ clientId: params.clientId }]),
-        ...(employeeIds.length === 0 ? [] : [
-            { primaryEmployeeId: { in: employeeIds } },
-            { secondaryEmployeeId: { in: employeeIds } },
-        ]),
-    ];
-    if (overlapSubjects.length === 0) return;
+    // 제공인력은 다른 이용자의 일정과 기간이 겹쳐도 배정할 수 있다.
+    // 신규 이용자 생성 전에는 중복 검사할 기존 이용자 일정이 없다.
+    if (params.clientId === undefined) return;
 
     const conflict = await transaction.employee_schedule.findFirst({
         where: {
             branchId: params.branchId,
             replaced: false,
-            // A terminated assignment keeps its contracted end date now that
-            // termination no longer rewrites it, so it would otherwise go on
-            // blocking the employee for the rest of a period they no longer serve.
+            // 종료된 배정은 계약 종료일까지 남아 있어도 새 배정을 막지 않는다.
             terminatedAt: null,
             startDate: { lte: params.endDate },
             endDate: { gte: params.startDate },
-            OR: overlapSubjects,
+            clientId: params.clientId,
             ...(params.excludeScheduleId === undefined
                 ? {}
                 : { id: { not: params.excludeScheduleId } }),
@@ -170,7 +158,7 @@ export async function assertNoActiveEmployeeScheduleOverlap(
     if (conflict && conflict.id !== params.excludeScheduleId) {
         throw new ConflictException({
             code: EMPLOYEE_SCHEDULE_OVERLAP_CODE,
-            message: "An active employee schedule overlaps the requested interval",
+            message: "An active schedule for this client overlaps the requested interval",
             conflictScheduleId: conflict.id,
         });
     }

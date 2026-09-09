@@ -47,4 +47,18 @@ describe("ClientsPage visual conventions", () => {
 
     expect(deleteMenuItem).toContain('variant="destructive"');
   });
+
+  it("opens the read-only service-record editor from the customer menu", () => {
+    const marker = source.indexOf('data-component="desktop_clients_sections_section-content_list-section_split-layout_detail-selection_detail-panel_header_menu_view-service-record"');
+    const menuItem = source.slice(
+      source.lastIndexOf("<DropdownMenuItem", marker),
+      source.indexOf("</DropdownMenuItem>", marker),
+    );
+
+    expect(menuItem).toContain("asChild");
+    expect(menuItem).toContain("제공기록지 보기");
+    expect(menuItem).toContain('target="_blank"');
+    expect(menuItem).toContain('rel="noopener noreferrer"');
+    expect(menuItem).toContain("encodeURIComponent");
+  });
 });

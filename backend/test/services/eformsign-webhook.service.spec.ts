@@ -295,6 +295,63 @@ describe("EformsignWebhookService", () => {
         });
     });
 
+    it("stops delayed completion effects after the locked current-contract fence loses", async () => {
+        const currentContractCheck = jest.fn().mockResolvedValue(false);
+        (eformsignDocRepository as { isCurrentContractDocument?: typeof currentContractCheck })
+            .isCurrentContractDocument = currentContractCheck;
+        syncClientEndDateUsecase.execute.mockResolvedValue({
+            clientId: 9,
+            endDate: new Date("2026-07-31T00:00:00.000Z"),
+        });
+
+        try {
+            await expect(service.processWebhook(createDocumentPayload())).resolves.toBeUndefined();
+
+            expect(linkDocumentUsecase.execute).toHaveBeenCalledWith(branchId, documentId);
+            expect(currentContractCheck).toHaveBeenCalledWith(branchId, documentId);
+            expect(syncClientEndDateUsecase.execute).not.toHaveBeenCalled();
+            expect(syncClientEndDateUsecase.executeFromDocument).not.toHaveBeenCalled();
+            expect(serviceRecordLifecycle.syncEndDateFromContract).not.toHaveBeenCalled();
+        } finally {
+            delete (eformsignDocRepository as { isCurrentContractDocument?: unknown })
+                .isCurrentContractDocument;
+        }
+    });
+
+    it("uses the document-fenced lifecycle seam when the current contract is still owned", async () => {
+        const fencedSync = jest.fn().mockResolvedValue(true);
+        (serviceRecordLifecycle as {
+            syncEndDateFromCurrentContract?: typeof fencedSync;
+        }).syncEndDateFromCurrentContract = fencedSync;
+        syncClientEndDateUsecase.execute.mockResolvedValue({
+            clientId: 9,
+            endDate: new Date("2026-07-31T00:00:00.000Z"),
+        });
+
+        try {
+            await expect(service.processWebhook(createDocumentPayload())).resolves.toBeUndefined();
+
+            const options = syncClientEndDateUsecase.execute.mock.calls[0][3] as {
+                persist: (value: { clientId: number; endDate: Date }) => Promise<void>;
+            };
+            await options.persist({
+                clientId: 9,
+                endDate: new Date("2026-07-31T00:00:00.000Z"),
+            });
+            expect(fencedSync).toHaveBeenCalledWith({
+                branchId,
+                clientId: 9,
+                endDate: new Date("2026-07-31T00:00:00.000Z"),
+                documentId,
+            });
+            expect(serviceRecordLifecycle.syncEndDateFromContract).not.toHaveBeenCalled();
+        } finally {
+            delete (serviceRecordLifecycle as {
+                syncEndDateFromCurrentContract?: unknown;
+            }).syncEndDateFromCurrentContract;
+        }
+    });
+
     it.each([
         {
             label: "end-date synchronization",

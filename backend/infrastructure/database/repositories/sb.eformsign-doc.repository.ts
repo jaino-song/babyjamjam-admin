@@ -56,6 +56,38 @@ const MIRROR_LIST_VISIBILITY_WHERE: Prisma.eformsign_docWhereInput = {
 };
 const RETRYABLE_MIRROR_SYNC_STATUSES = ["pending", "partial", "failed"] as const;
 
+type ContractDocumentFenceRow = {
+    id: number;
+    documentId: string;
+    clientId: number | null;
+    branchId: string | null;
+    documentKind?: string | null;
+    serviceRecordCaseId: string | null;
+    revisionId: string | null;
+    updatedDate: Date;
+    createdDate: Date;
+};
+
+type ContractPointerFenceRow = {
+    id: number;
+    documentId: string;
+    clientId: number | null;
+    branchId: string | null;
+    serviceRecordCaseId: string | null;
+    revisionId: string | null;
+    updatedDate: Date;
+    createdDate: Date;
+};
+
+type ContractRevisionFenceRow = {
+    id: string;
+    branchId: string;
+    clientId: number | null;
+    currentRevisionId: string | null;
+    currentUsableRevisionId: string | null;
+    currentUsableDocumentVersion: number | null;
+};
+
 const combineStatusGuards = (
     guards: Prisma.eformsign_docWhereInput[],
 ): Prisma.eformsign_docWhereInput => {
@@ -529,6 +561,20 @@ export class SbEformsignDocRepository implements IEformsignDocRepository {
         return this.updateDocument(branchid, doc, true);
     }
 
+    /**
+     * Re-read the ownership tuple for a completed contract while holding the
+     * document/client/case rows. A delayed completion may update its own
+     * historical document row, but it cannot move the current client pointer
+     * or period after a newer revision/document has won.
+     */
+    async isCurrentContractDocument(
+        branchid: string,
+        documentId: string,
+    ): Promise<boolean> {
+        return this.prismaService.$transaction(async (tx) =>
+            this.isCurrentContractDocumentInTransaction(tx, branchid, documentId));
+    }
+
     async linkClientIfActive(
         branchid: string,
         documentId: string,
@@ -538,8 +584,16 @@ export class SbEformsignDocRepository implements IEformsignDocRepository {
             // Permanent purge takes this same row lock before clearing eDocId and
             // writing the tombstone. Whichever transaction follows it must observe
             // the terminal row; whichever precedes it is cleared by the purge.
-            const documents = await tx.$queryRaw<{ id: number; clientId: number | null }[]>(Prisma.sql`
-                SELECT id, client_id AS "clientId"
+            const documents = await tx.$queryRaw<ContractDocumentFenceRow[]>(Prisma.sql`
+                SELECT id,
+                       document_id AS "documentId",
+                       client_id AS "clientId",
+                       branch_id AS "branchId",
+                       document_kind AS "documentKind",
+                       service_record_case_id AS "serviceRecordCaseId",
+                       revision_id AS "revisionId",
+                       updated_date AS "updatedDate",
+                       created_date AS "createdDate"
                 FROM eformsign_doc
                 WHERE document_id = ${documentId}
                   AND branch_id = ${branchid}::uuid
@@ -556,19 +610,63 @@ export class SbEformsignDocRepository implements IEformsignDocRepository {
             // client rows in id order to preserve a consistent document -> client
             // order across competing relinks; a missing target must be a clean no-op.
             const clientIdsToLock = [document.clientId, clientId]
-                .filter((id): id is number => id !== null)
+                .filter((id): id is number => id !== null && id !== undefined)
                 .filter((id, index, ids) => ids.indexOf(id) === index)
                 .sort((left, right) => left - right);
-            const lockedClients = await tx.$queryRaw<{ id: number }[]>(Prisma.sql`
-                SELECT id
+            const lockedClients = await tx.$queryRaw<Array<{
+                id: number;
+                eDocId?: string | null;
+                branchId?: string | null;
+            }>>(Prisma.sql`
+                SELECT id,
+                       e_doc_id AS "eDocId",
+                       branch_id AS "branchId"
                 FROM client
                 WHERE id IN (${Prisma.join(clientIdsToLock)})
                   AND branch_id = ${branchid}::uuid
                 ORDER BY id
                 FOR UPDATE
             `);
-            if (!lockedClients.some((client) => client.id === clientId)) {
+            const targetClient = lockedClients.find((client) => client.id === clientId);
+            if (!targetClient) {
                 return false;
+            }
+
+            if (!await this.hasCurrentContractRevisionEvidence(tx, branchid, {
+                ...document,
+                // A new/legacy document can be unassigned until the linker
+                // resolves its recipient phone. Use the locked target client
+                // only for the revision proof; the pointer/document ownership
+                // update below still establishes the actual relation.
+                clientId: document.clientId ?? clientId,
+            })) {
+                return false;
+            }
+
+            // A target already pointing at another document is strong evidence
+            // that this completion is stale. Permit a relink only when the
+            // candidate is demonstrably newer, preserving normal completion of
+            // a newly created contract while rejecting delayed old callbacks.
+            if (targetClient.eDocId && targetClient.eDocId !== documentId) {
+                const pointedDocuments = await tx.$queryRaw<ContractPointerFenceRow[]>(Prisma.sql`
+                    SELECT id,
+                           document_id AS "documentId",
+                           client_id AS "clientId",
+                           branch_id AS "branchId",
+                           service_record_case_id AS "serviceRecordCaseId",
+                           revision_id AS "revisionId",
+                           updated_date AS "updatedDate",
+                           created_date AS "createdDate"
+                    FROM eformsign_doc
+                    WHERE document_id = ${targetClient.eDocId}
+                      AND branch_id = ${branchid}::uuid
+                      AND permanent_purge_requested_at IS NULL
+                    FOR UPDATE
+                `);
+                const pointedDocument = pointedDocuments?.[0];
+                if (!pointedDocument || this.isPointedDocumentNewer(document, pointedDocument)) {
+                    return false;
+                }
             }
 
             if (document.clientId !== null && document.clientId !== clientId) {
@@ -619,6 +717,146 @@ export class SbEformsignDocRepository implements IEformsignDocRepository {
 
             return true;
         });
+    }
+
+    private async isCurrentContractDocumentInTransaction(
+        tx: Prisma.TransactionClient,
+        branchid: string,
+        documentId: string,
+    ): Promise<boolean> {
+        const documents = await tx.$queryRaw<ContractDocumentFenceRow[]>(Prisma.sql`
+            SELECT id,
+                   document_id AS "documentId",
+                   client_id AS "clientId",
+                   branch_id AS "branchId",
+                   document_kind AS "documentKind",
+                   service_record_case_id AS "serviceRecordCaseId",
+                   revision_id AS "revisionId",
+                   updated_date AS "updatedDate",
+                   created_date AS "createdDate"
+            FROM eformsign_doc
+            WHERE document_id = ${documentId}
+              AND branch_id = ${branchid}::uuid
+              AND permanent_purge_requested_at IS NULL
+              AND status_type NOT IN ('047', '049', '099')
+            FOR UPDATE
+        `);
+        const document = documents?.[0];
+        if (
+            !document
+            || document.documentKind === EFORMSIGN_DOCUMENT_KIND.SERVICE_RECORD_SNAPSHOT
+            || document.clientId === null
+            || document.clientId === undefined
+        ) {
+            return false;
+        }
+
+        const clients = await tx.$queryRaw<Array<{
+            id: number;
+            eDocId: string | null;
+            branchId: string | null;
+        }>>(Prisma.sql`
+            SELECT id,
+                   e_doc_id AS "eDocId",
+                   branch_id AS "branchId"
+            FROM client
+            WHERE id = ${document.clientId}
+              AND branch_id = ${branchid}::uuid
+            FOR UPDATE
+        `);
+        const client = clients?.[0];
+        if (!client || client.eDocId !== documentId) return false;
+
+        return this.hasCurrentContractRevisionEvidence(tx, branchid, document);
+    }
+
+    private async hasCurrentContractRevisionEvidence(
+        tx: Prisma.TransactionClient,
+        branchid: string,
+        document: Pick<ContractDocumentFenceRow, "clientId" | "serviceRecordCaseId" | "revisionId">,
+    ): Promise<boolean> {
+        const clientId = document.clientId;
+        const revisionId = document.revisionId ?? null;
+        const serviceRecordCaseId = document.serviceRecordCaseId ?? null;
+        if (clientId === null || clientId === undefined) return false;
+
+        const casePredicate = serviceRecordCaseId
+            ? Prisma.sql`AND id = ${serviceRecordCaseId}::uuid`
+            : Prisma.empty;
+        const rawCases = await tx.$queryRaw<ContractRevisionFenceRow[]>(Prisma.sql`
+            SELECT id,
+                   branch_id AS "branchId",
+                   client_id AS "clientId",
+                   current_revision_id AS "currentRevisionId",
+                   current_usable_revision_id AS "currentUsableRevisionId",
+                   current_usable_document_version AS "currentUsableDocumentVersion"
+            FROM service_record_case
+            WHERE branch_id = ${branchid}::uuid
+              AND client_id = ${clientId}
+              ${casePredicate}
+            FOR UPDATE
+        `);
+        // A narrow unit-test transaction double may not return a value for a
+        // query it does not model. Production Prisma always returns an array;
+        // retain the pre-existing link seam for those doubles.
+        if (!Array.isArray(rawCases)) return true;
+        const cases = rawCases;
+
+        // A contract row without a service-record case is a valid legacy
+        // document. A revision-bound row requires the case row as its proof;
+        // never infer a revision from timestamps or a client pointer alone.
+        if (cases.length === 0) return revisionId === null && serviceRecordCaseId === null;
+        if (cases.length !== 1) return false;
+        const ownerCase = cases[0];
+        if (
+            !ownerCase
+            || ownerCase.branchId !== branchid
+            || ownerCase.clientId !== clientId
+            || (serviceRecordCaseId !== null && ownerCase.id !== serviceRecordCaseId)
+        ) {
+            return false;
+        }
+
+        if (revisionId === null) {
+            // A legacy callback must not roll back a client while a revision is
+            // pending/current, even when the old document remains eDocId.
+            return ownerCase.currentRevisionId === null
+                && ownerCase.currentUsableRevisionId === null
+                && ownerCase.currentUsableDocumentVersion === null;
+        }
+
+        // Contract completion for a revision is current only when the case's
+        // server-owned current revision is the same revision. The usable
+        // service-record snapshot can still be pending; it is a separate
+        // projection and must not be used as a substitute identity here.
+        return ownerCase.currentRevisionId === revisionId;
+    }
+
+    private isPointedDocumentNewer(
+        candidate: Pick<ContractDocumentFenceRow, "revisionId" | "updatedDate" | "createdDate" | "id">,
+        pointed: Pick<ContractPointerFenceRow, "revisionId" | "updatedDate" | "createdDate" | "id">,
+    ): boolean {
+        const candidateRevisionId = candidate.revisionId ?? null;
+        const pointedRevisionId = pointed.revisionId ?? null;
+        if (candidateRevisionId === null && pointedRevisionId !== null) return true;
+        // Revision identity is the stronger CAS than provider timestamps. A
+        // candidate already proven to be the case's current revision may
+        // legitimately replace a pointer from an older revision; the inverse
+        // is rejected by hasCurrentContractRevisionEvidence above.
+        if (
+            candidateRevisionId !== null
+            && pointedRevisionId !== null
+            && candidateRevisionId !== pointedRevisionId
+        ) return false;
+        const candidateUpdated = candidate.updatedDate?.getTime?.() ?? Number.NEGATIVE_INFINITY;
+        const pointedUpdated = pointed.updatedDate?.getTime?.() ?? Number.NEGATIVE_INFINITY;
+        if (pointedUpdated > candidateUpdated) return true;
+        const candidateCreated = candidate.createdDate?.getTime?.() ?? Number.NEGATIVE_INFINITY;
+        const pointedCreated = pointed.createdDate?.getTime?.() ?? Number.NEGATIVE_INFINITY;
+        if (pointedUpdated === candidateUpdated && pointedCreated > candidateCreated) return true;
+        return pointedUpdated === candidateUpdated
+            && pointedCreated === candidateCreated
+            && pointed.id > candidate.id;
     }
 
     private async updateDocument(
