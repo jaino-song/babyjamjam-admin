@@ -197,7 +197,14 @@ describe("client API routes", () => {
     const response = await getClients(createRequest("/api/clients"));
 
     expect(response.status).toBe(status);
-    await expect(response.json()).resolves.toEqual({ error: "Failed to fetch clients" });
+    const body = await response.json();
+    const expected = {
+      400: "입력 정보가 요청 조건에 맞지 않아요. 입력 내용을 확인해 주세요.",
+      409: "현재 데이터 상태와 요청이 충돌해 처리할 수 없어요.",
+      422: "입력 정보가 처리 조건에 맞지 않아요.",
+    };
+    expect(body).toEqual({ error: expected[status] });
+    expect(JSON.stringify(body)).not.toContain(message);
   });
 
   it.each([
