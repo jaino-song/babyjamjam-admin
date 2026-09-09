@@ -674,10 +674,15 @@ export const consultationInquiriesApi = {
 
 export const messageDeliveryApi = {
     sendSms: async (
-        payload: SendMessageDeliverySmsRequest
+        payload: SendMessageDeliverySmsRequest,
+        expectedBranchId?: string | null,
     ): Promise<SendMessageDeliverySmsResponse> => {
         try {
-            const { data } = await api.post("/message-deliveries/sms", payload);
+            const { data } = expectedBranchId
+                ? await api.post("/message-deliveries/sms", payload, {
+                    params: { expectedBranchId },
+                })
+                : await api.post("/message-deliveries/sms", payload);
             return data;
         } catch (error) {
             if (axios.isAxiosError<{ error?: string; message?: string }>(error)) {

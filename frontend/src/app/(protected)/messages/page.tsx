@@ -5,6 +5,8 @@ import {
   isValidElement,
   useCallback,
   useDeferredValue,
+  useEffect,
+  useRef,
   useMemo,
   useState,
   type ReactElement,
@@ -33,7 +35,10 @@ import { ROLES } from "@/lib/constants/roles";
 import { useMessageTemplates } from "@/features/message-templates/hooks/use-message-templates";
 import { useSystemTemplate, useSystemTemplates } from "@/features/system-templates/hooks";
 import type { SystemTemplate } from "@/features/system-templates/types";
-import { useActiveBranchId } from "@/features/system-templates/branch-context";
+import {
+  isBranchContextAligned,
+  useActiveBranchId,
+} from "@/features/system-templates/branch-context";
 import { SystemTemplateEditor } from "@/components/app/ui/SystemTemplateEditor";
 import {
   buildSystemTemplateCatalog,
@@ -110,6 +115,7 @@ import { matchesSearchQuery } from "@/lib/search/korean-search";
 import { findMessageHistoryClient } from "@/lib/message-history/client-match";
 import { renderTemplate } from "@/lib/template-utils";
 import { cn } from "@/lib/utils";
+import { syncMessageDraftScope } from "@/stores/message-draft-scope";
 import {
   Ban,
   Bell,
@@ -1583,14 +1589,36 @@ export default function MessagesPage() {
     return items;
   }, [selectedUserTemplate, templatePreviewMessage]);
   const handleTemplatePreviewMessageChange = useCallback((message: string) => {
+    if (!activeBranchId || !isBranchContextAligned(activeBranchId)) return;
     setTemplatePreviewOverride(message);
-  }, []);
+  }, [activeBranchId]);
+  const previousBranchIdRef = useRef<string | null>(activeBranchId);
+  useEffect(() => {
+    if (previousBranchIdRef.current === activeBranchId) return;
+
+    previousBranchIdRef.current = activeBranchId;
+    syncMessageDraftScope(activeBranchId);
+    let cancelled = false;
+    queueMicrotask(() => {
+      if (cancelled) return;
+      setSelectedValue(null);
+      setTemplateDetailTab("details");
+      setTemplatePreviewOverride(null);
+      setTemplateSendSubmitState(null);
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [activeBranchId, setSelectedValue]);
+
   const sendTemplateFormLayout: TemplateMessageFormLayout = ({
     fields,
     messageCard,
     requiresRecipientName,
     deliveryMode,
     serviceRecordLinkPreparation,
+    templateReady = true,
   }) => {
     const flattenedMessageCard = isValidElement(messageCard)
       ? cloneElement(messageCard as ReactElement<{ layout?: "flat" }>, { layout: "flat" })
@@ -1602,10 +1630,12 @@ export default function MessagesPage() {
         className="grid h-full min-h-0 items-stretch gap-4 xl:grid-cols-[minmax(14rem,0.85fr)_minmax(0,1.45fr)]"
       >
         <TemplateSendForm
-          key={activeTemplateId}
+          key={`${activeBranchId ?? "unavailable"}:${activeTemplateId}`}
           templateId={activeTemplateId ?? selectedTemplateTitle}
           templateName={selectedTemplateTitle}
           message={templatePreviewMessage}
+          branchId={activeBranchId}
+          templateReady={templateReady}
           requiresRecipientName={requiresRecipientName}
           deliveryMode={deliveryMode}
           serviceRecordLinkPreparation={serviceRecordLinkPreparation}
@@ -1668,6 +1698,7 @@ export default function MessagesPage() {
     <>
       {activeSection === "send" && SelectedBuiltinForm ? (
         <SelectedBuiltinForm
+          key={`${activeBranchId ?? "unavailable"}:${selectedSystemTemplateKey}`}
           onPreviewMessageChange={handleTemplatePreviewMessageChange}
           renderLayout={selectedTemplateRenderLayout}
           showMessageSide={false}
@@ -1676,6 +1707,7 @@ export default function MessagesPage() {
 
       {selectedUserTemplate ? (
         <CustomTemplateForm
+          key={`${activeBranchId ?? "unavailable"}:${selectedUserTemplate.id}`}
           template={selectedUserTemplate as never}
           onPreviewMessageChange={handleTemplatePreviewMessageChange}
           renderLayout={selectedTemplateRenderLayout}

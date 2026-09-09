@@ -57,7 +57,18 @@ export const ServiceRecordLinkMessageForm = ({
     setEmployeePhone,
     resetEmployeeFields,
   } = useFormStore();
-  const { data: systemTemplate } = useSystemTemplate("SERVICE_RECORD_LINK");
+  const {
+    data: systemTemplate,
+    isError: isSystemTemplateError,
+    isFetching: isSystemTemplateFetching,
+    isLoading: isSystemTemplateLoading,
+  } = useSystemTemplate("SERVICE_RECORD_LINK");
+  const templateReady = Boolean(
+    systemTemplate?.content
+    && !isSystemTemplateError
+    && !isSystemTemplateFetching
+    && !isSystemTemplateLoading,
+  );
   const [preparedServiceRecordLink, setPreparedServiceRecordLink] = useState<PreparedServiceRecordLink | null>(null);
   const [preparationErrorKey, setPreparationErrorKey] = useState<string | null>(null);
   const inFlightPreparationRef = useRef<{
@@ -158,19 +169,7 @@ export const ServiceRecordLinkMessageForm = ({
         serviceStartDate: resolvedServiceStartDate,
         serviceRecordUrl: resolvedServiceRecordUrl,
       })
-    : `[사회서비스 제공자 품질평가 A등급]
-안녕하세요, 인천 아이미래로 입니다 :)
-
-${resolvedEmployeeName} 관리사님, ${resolvedClientName} 산모님의 서비스 제공기록지 작성 링크입니다.
-서비스 시작일은 ${resolvedServiceStartDate}입니다.
-매일 서비스 제공 완료 직전에 서비스 세부사항 기록 후에, 산모님께 승인을 받으시면 됩니다.
-
-최초 접속 시에 관리사님의 전화번호 인증이 필요합니다. 링크 접속 후 휴대폰 번호로 본인확인하고, 방문일마다 기록을 남겨주세요.
-
-감사합니다.
-
-제공기록지 링크
-${resolvedServiceRecordUrl}`;
+    : "";
   const generatedMessage = templateMessage;
 
   useEffect(() => {
@@ -317,6 +316,7 @@ ${resolvedServiceRecordUrl}`;
       messageCard={messageCard}
       deliveryMode="service-feedback-link"
       serviceRecordLinkPreparation={currentPreparation}
+      templateReady={templateReady}
       renderLayout={renderLayout}
     />
   );
