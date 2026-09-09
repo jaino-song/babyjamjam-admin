@@ -471,7 +471,8 @@ describe("MessageDeliveryController", () => {
                 status: "failed",
                 errorMessage: "수신번호 형식이 올바르지 않습니다.",
                 attempts: 1,
-                nextRetryAt: new Date("2026-06-05T09:25:00.000Z"),
+                nextRetryAt: null,
+                variables: expect.objectContaining({ retrySafety: "manual-provider-rejected" }),
             }),
         });
     });
@@ -519,6 +520,8 @@ describe("MessageDeliveryController", () => {
                 recipientPhone: "01012345678,01099999999",
                 nextRetryAt: null,
                 errorMessage: expect.stringContaining("부분 발송"),
+                providerAcceptanceState: "uncertain",
+                variables: expect.objectContaining({ retrySafety: "partial" }),
             }),
         });
     });
@@ -548,7 +551,8 @@ describe("MessageDeliveryController", () => {
                 status: "failed",
                 errorMessage: "Aligo SMS API error (403): 등록되지 않은 IP 입니다.",
                 attempts: 1,
-                nextRetryAt: new Date("2026-06-05T09:25:00.000Z"),
+                nextRetryAt: null,
+                variables: expect.objectContaining({ retrySafety: "uncertain" }),
             }),
         });
     });

@@ -127,6 +127,22 @@ describe("SbMessageLogRepository", () => {
             );
             warnSpy.mockRestore();
         });
+
+        it("persists retry safety markers when updating a delivery log", async () => {
+            const log = buildEntity("branch-1");
+            log.variables = { retrySafety: "partial" };
+            messageLogModel.update.mockResolvedValue(buildRow("branch-1"));
+
+            await repository.update(log);
+
+            expect(messageLogModel.update).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    data: expect.objectContaining({
+                        variables: { retrySafety: "partial" },
+                    }),
+                }),
+            );
+        });
     });
 
     describe("startRetryAttempt", () => {

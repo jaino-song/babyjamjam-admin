@@ -9,7 +9,10 @@ import { IMessageLogRepository } from "domain/repositories/message-log.repositor
 
 describe("SmsProviderAcceptanceService", () => {
     const branchId = "11111111-1111-1111-1111-111111111111";
-    const createAttempt = (state: "prepared" | "started" | "uncertain" = "prepared") =>
+    const createAttempt = (
+        state: "prepared" | "started" | "uncertain" = "prepared",
+        retrySafety = state === "uncertain" ? "uncertain" : "pending",
+    ) =>
         MessageLogEntity.reconstitute(
             42,
             branchId,
@@ -19,7 +22,7 @@ describe("SmsProviderAcceptanceService", () => {
             "01012345678",
             null,
             "테스트 메시지",
-            { retrySafety: state === "uncertain" ? "uncertain" : "pending" },
+            { retrySafety },
             state === "uncertain" ? "failed" : "pending",
             null,
             state === "uncertain" ? "provider response unavailable" : null,
@@ -168,6 +171,30 @@ describe("SmsProviderAcceptanceService", () => {
             providerMessageId: "123",
         })).rejects.toThrow(ConflictException);
         expect(attempt.providerAcceptanceState).toBe("started");
+        expect(repository.reconcileProviderAttempt).not.toHaveBeenCalled();
+    });
+
+    it("rejects reconciliation for partial batches so the original recipient list cannot be replayed", async () => {
+        const attempt = createAttempt("uncertain", "partial");
+        const repository = {
+            findByIdInBranch: jest.fn().mockResolvedValue(attempt),
+            reconcileProviderAttempt: jest.fn(),
+        };
+        const service = new SmsProviderAcceptanceService(
+            repository as unknown as IMessageLogRepository,
+        );
+
+        await expect(service.reconcile({
+            branchId,
+            logId: attempt.id,
+            outcome: "not-delivered",
+            actor: "operator-1",
+            reason: "remaining recipients were not delivered",
+        })).rejects.toThrow(ConflictException);
+
+        expect(attempt.providerAcceptanceState).toBe("uncertain");
+        expect(attempt.nextRetryAt).toBeNull();
+        expect(attempt.variables["retrySafety"]).toBe("partial");
         expect(repository.reconcileProviderAttempt).not.toHaveBeenCalled();
     });
 
