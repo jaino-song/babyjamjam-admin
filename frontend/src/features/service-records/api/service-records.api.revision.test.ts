@@ -83,4 +83,89 @@ describe("service-record revision API", () => {
             { expectedGeneration: "generation-1" },
         );
     });
+
+    it("preserves the root authoritative schedule projection for the regular client overview", async () => {
+        mockGet.mockResolvedValue({
+            status: 200,
+            data: {
+                record: { totalSessions: 2 },
+                assignments: [],
+                scheduleProjection: {
+                    entries: [
+                        {
+                            sessionIndex: 1,
+                            serviceDate: "2026-09-08",
+                            originalDate: "2026-09-01",
+                            assignmentId: "assignment-1",
+                            scheduleId: 7,
+                            employeeId: 12,
+                            provenanceVersion: "case-7",
+                        },
+                        {
+                            sessionIndex: 2,
+                            serviceDate: "2026-09-09",
+                            originalDate: "2026-09-02",
+                            assignmentId: "assignment-1",
+                            scheduleId: 7,
+                            employeeId: 12,
+                            provenanceVersion: "case-7",
+                        },
+                    ],
+                    blockingReasons: [],
+                },
+            },
+        });
+
+        const response = await serviceRecordsApi.getClientOverview(7);
+
+        expect(mockGet).toHaveBeenCalledWith("/admin/service-records/client/7");
+        expect(response.data.scheduleProjection).toEqual({
+            entries: [
+                expect.objectContaining({
+                    sessionIndex: 1,
+                    serviceDate: "2026-09-08",
+                    originalDate: "2026-09-01",
+                }),
+                expect.objectContaining({
+                    sessionIndex: 2,
+                    serviceDate: "2026-09-09",
+                    originalDate: "2026-09-02",
+                }),
+            ],
+            blockingReasons: [],
+        });
+        expect(response.data.record).toEqual({ totalSessions: 2 });
+    });
+
+    it("turns a malformed authoritative projection into a blocker instead of legacy fallback", async () => {
+        mockGet.mockResolvedValue({
+            status: 200,
+            data: {
+                record: null,
+                assignments: [],
+                scheduleProjection: {
+                    entries: [{
+                        sessionIndex: 2,
+                        serviceDate: "2026-09-09",
+                        originalDate: "2026-09-02",
+                        assignmentId: "assignment-1",
+                        scheduleId: 7,
+                        employeeId: 12,
+                        provenanceVersion: "case-7",
+                    }],
+                    blockingReasons: [],
+                },
+            },
+        });
+
+        const response = await serviceRecordsApi.getClientOverview(7);
+
+        expect(response.data.scheduleProjection).toEqual({
+            entries: [],
+            blockingReasons: [{
+                code: "INVALID_SCHEDULE_PROJECTION",
+                message: "서비스 예정 회차 근거를 확인할 수 없습니다.",
+            }],
+        });
+    });
 });

@@ -4,6 +4,7 @@ import { ClientServiceRecordsTab } from "../ClientServiceRecordsTab";
 import type {
     ServiceRecordAssignment,
     ServiceRecordOverview,
+    ServiceRecordPlannedSession,
     ServiceRecordSession,
 } from "@/features/service-records/types";
 
@@ -68,6 +69,23 @@ function createSession(sessionIndex: number): ServiceRecordSession {
         notes: null,
         paymentConfirmed: false,
         hasMomApproval: false,
+    };
+}
+
+function createPlannedSession(
+    sessionIndex: number,
+    serviceDate: string,
+    originalDate = serviceDate,
+    scheduleId = 1,
+): ServiceRecordPlannedSession {
+    return {
+        sessionIndex,
+        serviceDate,
+        originalDate,
+        assignmentId: `assignment-${scheduleId}`,
+        scheduleId,
+        employeeId: scheduleId,
+        provenanceVersion: "case-1",
     };
 }
 
@@ -473,6 +491,103 @@ describe("ClientServiceRecordsTab", () => {
         // Regression guard: the old start-date formula collided slot 15's
         // 예정일 with session 13's own written date.
         expect(screen.queryByText("예정일 2026.08.31")).not.toBeInTheDocument();
+    });
+
+    it("uses the revised authoritative date for an unwritten slot and keeps its original date visible", () => {
+        const assignment = {
+            ...createAssignment(7, "sent"),
+            startDate: "2026-09-01T00:00:00.000Z",
+            endDate: "2026-09-09T00:00:00.000Z",
+            totalSessions: 2,
+        };
+        const overview: ServiceRecordOverview = {
+            assignments: [assignment],
+            scheduleProjection: {
+                entries: [
+                    createPlannedSession(1, "2026-09-08", "2026-09-01", 7),
+                    createPlannedSession(2, "2026-09-09", "2026-09-02", 7),
+                ],
+                blockingReasons: [],
+            },
+        };
+
+        render(
+            <ClientServiceRecordsTab data-component={TEST_COMPONENT}
+                overview={overview}
+                clientId={100}
+                isLoading={false}
+                isError={false}
+            />,
+        );
+
+        expect(screen.getAllByText("예정일 2026.09.08")).toHaveLength(1);
+        expect(screen.getByText("원본 2026.09.01")).toBeInTheDocument();
+        expect(screen.getByText("예정일 2026.09.09")).toBeInTheDocument();
+        expect(screen.queryByText("예정일 2026.09.02")).not.toBeInTheDocument();
+    });
+
+    it("uses revised projected dates for the missing-record threshold", () => {
+        jest.spyOn(Date, "now").mockReturnValue(new Date("2026-09-08T17:59:59+09:00").getTime());
+        const assignment = {
+            ...createAssignment(7, "sent"),
+            startDate: "2026-09-01T00:00:00.000Z",
+            endDate: "2026-09-09T00:00:00.000Z",
+            totalSessions: 2,
+        };
+
+        render(
+            <ClientServiceRecordsTab data-component={TEST_COMPONENT}
+                overview={{
+                    assignments: [assignment],
+                    scheduleProjection: {
+                        entries: [
+                            createPlannedSession(1, "2026-09-07", "2026-09-01", 7),
+                            createPlannedSession(2, "2026-09-08", "2026-09-02", 7),
+                        ],
+                        blockingReasons: [],
+                    },
+                }}
+                clientId={100}
+                isLoading={false}
+                isError={false}
+            />,
+        );
+
+        expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    });
+
+    it("does not infer legacy dates when the authoritative projection is blocked", () => {
+        jest.spyOn(Date, "now").mockReturnValue(new Date("2026-07-04T18:00:00+09:00").getTime());
+        const assignment = {
+            ...createAssignment(1, "sent"),
+            endDate: "2026-07-02T00:00:00.000Z",
+            totalSessions: 2,
+        };
+
+        render(
+            <ClientServiceRecordsTab data-component={TEST_COMPONENT}
+                overview={{
+                    assignments: [assignment],
+                    scheduleProjection: {
+                        // A stale response must remain fail-closed even if it
+                        // includes entries alongside its blocker.
+                        entries: [createPlannedSession(1, "2026-07-01")],
+                        blockingReasons: [{
+                            code: "INVALID_SCHEDULE_VECTOR",
+                            message: "서비스 예정 회차 근거를 확인할 수 없습니다.",
+                        }],
+                    },
+                }}
+                clientId={100}
+                isLoading={false}
+                isError={false}
+            />,
+        );
+
+        expect(screen.getByText("예정 회차를 확인할 수 없습니다.")).toBeInTheDocument();
+        expect(screen.getAllByText("예정일 -")).toHaveLength(2);
+        expect(screen.queryByText("예정일 2026.07.02")).not.toBeInTheDocument();
+        expect(screen.queryByText("제공기록지 작성 확인이 필요해요")).not.toBeInTheDocument();
     });
 
     it("shows an alert from 18:00 KST on the second service date when sessions one and two are unwritten", () => {
