@@ -902,14 +902,14 @@
     },
     "mobile/src/app/(shell)/clients/new/page.tsx": {
       "ui-architecture/no-page-local-components": [
-        "76:10-76:15|pageLocalComponent"
+        "88:10-88:15|pageLocalComponent"
       ],
       "ui-architecture/no-raw-ui-in-pages": [
-        "1192:25-1197:26|rawUiElement",
-        "1252:15-1257:16|rawUiElement",
-        "1260:15-1265:16|rawUiElement",
-        "920:13-926:14|rawUiElement",
-        "932:13-938:14|rawUiElement"
+        "1011:13-1017:14|rawUiElement",
+        "1023:13-1029:14|rawUiElement",
+        "1405:25-1412:26|rawUiElement",
+        "1478:15-1483:16|rawUiElement",
+        "1486:15-1491:16|rawUiElement"
       ]
     },
     "mobile/src/app/(shell)/clients/page.tsx": {
@@ -924,30 +924,30 @@
     },
     "mobile/src/app/(shell)/contracts/new/page.tsx": {
       "ui-architecture/no-page-local-components": [
-        "90:10-90:15|pageLocalComponent"
+        "91:10-91:15|pageLocalComponent"
       ],
       "ui-architecture/no-raw-ui-in-pages": [
-        "1044:23-1053:25|rawUiElement",
-        "1057:25-1065:27|rawUiElement",
-        "1068:25-1076:27|rawUiElement",
-        "1080:23-1086:25|rawUiElement",
-        "1093:25-1098:26|rawUiElement",
-        "1128:23-1137:25|rawUiElement",
-        "1178:27-1187:29|rawUiElement",
-        "1204:27-1209:28|rawUiElement",
-        "1219:27-1224:28|rawUiElement",
-        "1241:25-1247:26|rawUiElement",
-        "1266:25-1273:27|rawUiElement",
-        "1279:25-1286:27|rawUiElement",
-        "1292:25-1299:27|rawUiElement",
-        "1315:25-1323:27|rawUiElement",
-        "1326:25-1334:27|rawUiElement",
-        "1347:23-1355:25|rawUiElement",
-        "1398:15-1404:16|rawUiElement",
-        "1407:15-1413:16|rawUiElement",
-        "1470:13-1476:14|rawUiElement",
-        "978:13-984:14|rawUiElement",
-        "988:13-994:14|rawUiElement"
+        "1006:13-1012:14|rawUiElement",
+        "1086:23-1095:25|rawUiElement",
+        "1099:25-1107:27|rawUiElement",
+        "1110:25-1118:27|rawUiElement",
+        "1122:23-1128:25|rawUiElement",
+        "1135:25-1140:26|rawUiElement",
+        "1170:23-1179:25|rawUiElement",
+        "1220:27-1229:29|rawUiElement",
+        "1246:27-1251:28|rawUiElement",
+        "1261:27-1266:28|rawUiElement",
+        "1283:25-1289:26|rawUiElement",
+        "1308:25-1315:27|rawUiElement",
+        "1321:25-1328:27|rawUiElement",
+        "1334:25-1341:27|rawUiElement",
+        "1357:25-1365:27|rawUiElement",
+        "1368:25-1376:27|rawUiElement",
+        "1389:23-1397:25|rawUiElement",
+        "1440:15-1446:16|rawUiElement",
+        "1449:15-1455:16|rawUiElement",
+        "1512:13-1518:14|rawUiElement",
+        "996:13-1002:14|rawUiElement"
       ]
     },
     "mobile/src/app/(shell)/contracts/page.tsx": {
@@ -1031,11 +1031,11 @@
     },
     "mobile/src/app/(shell)/messages/new/page.tsx": {
       "ui-architecture/no-page-local-components": [
-        "507:10-507:24|pageLocalComponent"
+        "545:10-545:24|pageLocalComponent"
       ],
       "ui-architecture/no-raw-ui-in-pages": [
-        "1249:27-1254:28|rawUiElement",
-        "1489:23-1494:24|rawUiElement"
+        "1321:27-1326:28|rawUiElement",
+        "1561:23-1566:24|rawUiElement"
       ]
     },
     "mobile/src/app/(shell)/messages/system-templates/[templateKey]/page.tsx": {
@@ -1079,12 +1079,12 @@
     },
     "mobile/src/app/(shell)/messages/templates/page.tsx": {
       "ui-architecture/no-page-local-components": [
-        "241:10-241:25|pageLocalComponent",
-        "269:10-269:25|pageLocalComponent",
-        "308:10-308:20|pageLocalComponent"
+        "335:10-335:25|pageLocalComponent",
+        "363:10-363:25|pageLocalComponent",
+        "402:10-402:20|pageLocalComponent"
       ],
       "ui-architecture/no-raw-ui-in-pages": [
-        "186:15-192:17|rawUiElement"
+        "226:15-232:17|rawUiElement"
       ]
     },
     "mobile/src/app/(shell)/notification/page.tsx": {
