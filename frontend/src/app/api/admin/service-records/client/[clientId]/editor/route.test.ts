@@ -76,9 +76,12 @@ describe("GET /api/admin/service-records/client/[clientId]/editor", () => {
         await expect(response.json()).resolves.toEqual({ code: `EDITOR_${status}` });
     });
 
-    it("returns a generic 500 for an unavailable upstream without exposing the error", async () => {
+    it("returns a generic 500 and logs only a fixed message for an unavailable upstream", async () => {
         const consoleError = jest.spyOn(console, "error").mockImplementation(() => undefined);
-        mockGet.mockRejectedValue(new Error("private upstream details"));
+        const upstreamError = Object.assign(new Error("private upstream details"), {
+            config: { headers: { Authorization: "Bearer secret-jwt" } },
+        });
+        mockGet.mockRejectedValue(upstreamError);
 
         const response = await GET(
             createRequest("/api/admin/service-records/client/17/editor"),
@@ -88,7 +91,9 @@ describe("GET /api/admin/service-records/client/[clientId]/editor", () => {
         expect(response.status).toBe(500);
         expect(response.headers.get("cache-control")).toBe("no-store");
         await expect(response.json()).resolves.toEqual({ error: "Failed to fetch service records" });
+        expect(consoleError).toHaveBeenCalledWith("[API] Error fetching service-record editor");
         expect(JSON.stringify(consoleError.mock.calls)).not.toContain("private upstream details");
+        expect(JSON.stringify(consoleError.mock.calls)).not.toContain("secret-jwt");
         consoleError.mockRestore();
     });
 });

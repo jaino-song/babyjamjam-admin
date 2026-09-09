@@ -1351,6 +1351,30 @@ function isRevisionDocumentJobPayload(value: unknown): boolean {
         || kind === "service_record_revision_operations";
 }
 
+function isServiceRecordRevisionGenerationPayload(value: unknown): boolean {
+    let parsed = value;
+    if (typeof value === "string") {
+        try {
+            parsed = JSON.parse(value) as unknown;
+        } catch {
+            return false;
+        }
+    }
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return false;
+    return (parsed as Record<string, unknown>)["kind"] === "service_record_revision";
+}
+
+type DocumentJobSupersessionScope = "all" | "revision_generation";
+
+function documentJobSupersessionPredicate(
+    scope: DocumentJobSupersessionScope,
+): Prisma.Sql {
+    if (scope === "revision_generation") {
+        return Prisma.sql`COALESCE(job.payload->>'kind' = 'service_record_revision', false)`;
+    }
+    return Prisma.sql`TRUE`;
+}
+
 /**
  * A historical eformsign job may have lost its client_id when the provider
  * finalization path was enqueued.  Such a row is owned only when its document
@@ -3102,7 +3126,22 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
                     data: { expiresAt: getServiceRecordTokenExpiresAt(dateValue(plan.endDate)!) },
                 });
             }
-            await this.invalidateSupersededJobs(tx, input.branchId, source.caseId, source.client.id);
+            if (plan.documentJob) {
+                // The planner emits an explicit boolean.  Only an observed
+                // `false` is safe to narrow: malformed/legacy plans retain
+                // the historical broad fence rather than silently leaving
+                // unrelated work active.
+                const supersessionScope = plan.documentJob.payload["periodChanged"] === false
+                    ? "revision_generation"
+                    : "all";
+                await this.invalidateSupersededJobs(
+                    tx,
+                    input.branchId,
+                    source.caseId,
+                    source.client.id,
+                    supersessionScope,
+                );
+            }
             await this.persistReevaluationIntents(tx, input.branchId, source.client.id, plan.assignments, now);
             if (revision && plan.documentJob && plan.dispatchContext) {
                 const generation = randomUUID();
@@ -3391,6 +3430,7 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
         branchId: string,
         caseId: string,
         clientId: number,
+        scope: DocumentJobSupersessionScope = "all",
     ): Promise<void> {
         // Legacy create/finalize jobs do not carry a case id in their payload.
         // lockConfirmTargets already locked every eformsign job owned by this
@@ -3413,6 +3453,7 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
                   AND job.job_type IN ('create_document', 'finalize_document')
                   AND job.status IN ('processing', 'reconciling')
                   AND job.progress_step IN ('creating', 'sent')
+                  AND ${documentJobSupersessionPredicate(scope)}
                 FOR UPDATE OF job
             `);
             if (inFlightDocuments.length > 0) {
@@ -3453,6 +3494,7 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
                 WHERE ${eformsignDocumentJobOwnershipPredicate(branchId, clientId)}
                   AND job.job_type IN ('create_document', 'finalize_document')
                   AND job.status IN ('queued', 'processing', 'reconciling')
+                  AND ${documentJobSupersessionPredicate(scope)}
             `);
             await transaction.$queryRaw(Prisma.sql`
                 UPDATE "message_trigger_job"
@@ -3497,9 +3539,12 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
                 status: { in: ["processing", "reconciling"] },
                 progressStep: { in: ["creating", "sent"] },
             },
-            select: { id: true, status: true, progressStep: true },
+            select: { id: true, status: true, progressStep: true, payload: true },
         }) ?? [];
-        if (inFlightDocuments.length > 0) {
+        const scopedInFlightDocuments = scope === "revision_generation"
+            ? inFlightDocuments.filter((document) => isServiceRecordRevisionGenerationPayload(document.payload))
+            : inFlightDocuments;
+        if (scopedInFlightDocuments.length > 0) {
             throw new ServiceRecordEditConflictError(
                 "A service-record document dispatch is already irreversible",
             );
@@ -3516,6 +3561,7 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
         const cancellableDocuments = await fallback.eformsign_document_job?.findMany?.({
             where: {
                 OR: ownedDocumentPredicate,
+                jobType: { in: ["create_document", "finalize_document"] },
                 status: { in: ["queued", "processing", "reconciling"] },
             },
             select: { id: true, payload: true },
@@ -3523,15 +3569,19 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
         const revisionDocumentIds = cancellableDocuments
             .filter((document): document is { id: string; payload?: unknown } => (
                 typeof document.id === "string"
-                && isRevisionDocumentJobPayload(document.payload)
+                && (scope === "revision_generation"
+                    ? isServiceRecordRevisionGenerationPayload(document.payload)
+                    : isRevisionDocumentJobPayload(document.payload))
             ))
             .map((document) => document.id);
-        const legacyDocumentIds = cancellableDocuments
-            .filter((document): document is { id: string; payload?: unknown } => (
-                typeof document.id === "string"
-                && !isRevisionDocumentJobPayload(document.payload)
-            ))
-            .map((document) => document.id);
+        const legacyDocumentIds = scope === "revision_generation"
+            ? []
+            : cancellableDocuments
+                .filter((document): document is { id: string; payload?: unknown } => (
+                    typeof document.id === "string"
+                    && !isRevisionDocumentJobPayload(document.payload)
+                ))
+                .map((document) => document.id);
         const cancellationData = {
             status: "failed",
             lastErrorCode: "SERVICE_RECORD_REVISION_SUPERSEDED",

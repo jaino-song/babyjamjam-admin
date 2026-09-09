@@ -204,8 +204,11 @@ function hasExistingContentDifference(
     source: ServiceRecordEditSourceDay,
     patch: ConfirmSessionPatch,
 ): boolean {
+    const effectiveAnswers = patch.answers === undefined
+        ? source.answers
+        : mergeSparseAnswers(source.answers, patch.answers);
     return (
-        patch.answers !== undefined && !sameJsonValue(patch.answers, source.answers)
+        patch.answers !== undefined && !sameJsonValue(effectiveAnswers, source.answers)
         || patch.etcService !== undefined && !sameJsonValue(patch.etcService, source.etcService)
         || patch.notes !== undefined && !sameJsonValue(patch.notes, source.notes)
         || patch.paymentConfirmed !== undefined && !sameJsonValue(patch.paymentConfirmed, source.paymentConfirmed)
@@ -223,6 +226,29 @@ function mergeSparseAnswers(
         ...(asJsonRecord(source) ?? {}),
         ...patchRecord,
     });
+}
+
+function effectivePreviewChanges(
+    source: ServiceRecordEditSource,
+    changes: ServiceRecordEditJsonValue,
+): ServiceRecordEditJsonValue {
+    const changesRecord = asJsonRecord(changes);
+    if (!changesRecord || !Array.isArray(changesRecord["sessions"])) return changes;
+
+    const sessions = changesRecord["sessions"].map((value) => {
+        const patch = asJsonRecord(value);
+        if (!patch) return value;
+        const sessionIndex = patch["sessionIndex"];
+        if (typeof sessionIndex !== "number" || !Number.isInteger(sessionIndex)) return value;
+        const sourceDay = source.sessions.find((day) => day.sessionIndex === sessionIndex);
+        if (!sourceDay || patch["answers"] === undefined) return value;
+        return {
+            ...patch,
+            answers: mergeSparseAnswers(sourceDay.answers, patch["answers"]),
+        };
+    });
+
+    return jsonValue({ ...changesRecord, sessions });
 }
 
 function hasPlannedDateDifference(
@@ -317,6 +343,20 @@ const COMPLETE_SERVICE_RECORD_CASE_STATUSES = new Set([
     "COMPLETED",
 ]);
 
+interface RevisionCompletenessSession {
+    sourceRowId: string;
+    sessionIndex: number;
+    locked: boolean;
+    submittedAt: string | null;
+    clientSignature: string | null;
+    clientSignedAt: string | null;
+    momApproval: string | null;
+    employeeId: number | null;
+    employeeNameSnapshot: string | null;
+    scheduleId: number | null;
+    formVersion: number;
+}
+
 /**
  * A confirm may create a revision while later sessions are still unwritten.
  * Only a source that carries every submitted/signature-bearing row and an
@@ -324,7 +364,11 @@ const COMPLETE_SERVICE_RECORD_CASE_STATUSES = new Set([
  * generation worker.  The check is deliberately fail-closed: N, duration,
  * and the editor's planned vector are never inferred from one another.
  */
-function revisionCompleteness(source: ServiceRecordEditSource): "complete" | "partial" {
+function revisionCompleteness(
+    source: ServiceRecordEditSource,
+    header: ServiceRecordEditSource["header"] = source.header,
+    sessions: readonly RevisionCompletenessSession[] = source.sessions,
+): "complete" | "partial" {
     const required = source.requiredSessionCount;
     if (
         !Number.isInteger(required)
@@ -334,7 +378,7 @@ function revisionCompleteness(source: ServiceRecordEditSource): "complete" | "pa
         return "partial";
     }
     if (
-        source.sessions.length !== required
+        sessions.length !== required
         || !COMPLETE_SERVICE_RECORD_CASE_STATUSES.has(source.caseLifecycle?.status ?? "")
         || (source.signatureMetadata && source.signatureMetadata.evidence !== "observed")
     ) {
@@ -342,12 +386,14 @@ function revisionCompleteness(source: ServiceRecordEditSource): "complete" | "pa
     }
 
     const seen = new Set<number>();
-    const completeHeader = Object.values(source.header).every((value) => Boolean(value?.trim()));
+    const completeHeader = Object.values(header).every((value) => Boolean(value?.trim()));
     if (!completeHeader) return "partial";
 
-    for (const day of source.sessions) {
+    const sourceRows = new Map(source.sessions.map((day) => [day.sourceRowId, day]));
+    for (const day of sessions) {
+        const sourceDay = sourceRows.get(day.sourceRowId);
         if (
-            day.ambiguous
+            sourceDay?.ambiguous
             || !Number.isInteger(day.sessionIndex)
             || day.sessionIndex < 1
             || day.sessionIndex > required
@@ -492,7 +538,7 @@ export class AdminServiceRecordEditService {
             sourceCaseVersion: target.loaded.source.caseVersion,
             sourceFingerprint: target.loaded.fingerprint,
             source: target.loaded.source,
-            changes: target.draft.changes,
+            changes: effectivePreviewChanges(target.loaded.source, target.draft.changes),
             previewId: "pending",
         });
         const { previewId: _provisionalPreviewId, ...previewValues } = provisional;
@@ -590,7 +636,7 @@ export class AdminServiceRecordEditService {
             sourceCaseVersion: source.caseVersion,
             sourceFingerprint: fingerprint,
             source,
-            changes: draft.changes,
+            changes: effectivePreviewChanges(source, draft.changes),
             previewId: "pending",
         });
         const { previewId: _ignoredPreviewId, ...previewValues } = provisional;
@@ -715,7 +761,7 @@ export class AdminServiceRecordEditService {
         }));
         const revisionSessions = [...effectiveRows, ...futureRows]
             .sort((left, right) => left.sessionIndex - right.sessionIndex);
-        const completeness = revisionCompleteness(source);
+        const completeness = revisionCompleteness(source, header, revisionSessions);
         const revisionPayload = jsonValue({
             caseId: source.caseId,
             // A missing branch name is retained as explicit unknown evidence;

@@ -38,7 +38,7 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
         if (isAxiosError(error) && error.response) {
             return jsonResponse(error.response.data ?? { error: "Request failed" }, error.response.status);
         }
-        console.error("[API] Error fetching service-record editor:", error);
+        console.error("[API] Error fetching service-record editor");
         return jsonResponse({ error: "Failed to fetch service records" }, 500);
     }
 }

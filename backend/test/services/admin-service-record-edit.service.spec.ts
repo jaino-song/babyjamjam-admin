@@ -607,6 +607,71 @@ describe("AdminServiceRecordEditService", () => {
         }));
     });
 
+    it("treats a sparse answer patch that preserves the effective answers as a preview and confirm no-op", async () => {
+        const source = previewSourceSnapshot();
+        source.sessions[0] = {
+            ...source.sessions[0]!,
+            answers: {
+                perineum: ["이상없음"],
+                breast: ["울혈"],
+            },
+        };
+        const harness = createHarness({ source });
+        const started = await harness.service.startDraft(BRANCH_ID, CLIENT_ID, ACTOR_ID, {});
+        if (!started.draft) throw new Error("expected a draft");
+        const activeDraft = {
+            ...started.draft,
+            changes: {
+                sessions: [{
+                    sessionIndex: 1,
+                    answers: { breast: ["울혈"] },
+                }],
+            },
+        };
+        harness.repository.findDraftById.mockResolvedValue(activeDraft);
+        harness.repository.loadSource.mockResolvedValue(source);
+        const preview = await harness.service.previewDraft(BRANCH_ID, DRAFT_ID, ACTOR_ID, {
+            expectedDraftVersion: activeDraft.draftVersion,
+        });
+
+        expect(preview.contentChanges.changedSessionIndexes).toEqual([]);
+
+        harness.repository.confirmDraft.mockResolvedValue({
+            status: "no_changes" as const,
+            caseId: CASE_ID,
+            clientId: CLIENT_ID,
+            draftId: DRAFT_ID,
+            draftVersion: 1,
+            caseVersion: 7,
+            revisionId: null,
+            revisionNumber: null,
+            documentStatus: "capability_unverified" as const,
+            confirmedAt: "2026-09-08T01:02:03.000Z",
+        });
+        await harness.service.confirmDraft(BRANCH_ID, DRAFT_ID, ACTOR_ID, {
+            expectedDraftVersion: activeDraft.draftVersion,
+            previewId: preview.previewId,
+            idempotencyKey: "66666666-6666-4666-8666-666666666666",
+        });
+
+        const input = harness.repository.confirmDraft.mock.calls.at(-1)?.[0] as {
+            prepare: (snapshot: { draft: typeof activeDraft; source: ServiceRecordEditSource }) => unknown;
+        };
+        const plan = input.prepare({ draft: activeDraft, source }) as {
+            status: "confirmed" | "no_changes";
+            sessions: Array<Record<string, unknown>>;
+            revision: unknown;
+            documentJob: unknown;
+        };
+        expect(plan.status).toBe("no_changes");
+        expect(plan.sessions[0]?.["answers"]).toEqual({
+            perineum: ["이상없음"],
+            breast: ["울혈"],
+        });
+        expect(plan.revision).toBeNull();
+        expect(plan.documentJob).toBeNull();
+    });
+
     it("plans explicit future content with canonical provenance in the immutable revision", async () => {
         const source = previewSourceSnapshot();
         const harness = createHarness({ source });
@@ -1109,6 +1174,53 @@ describe("AdminServiceRecordEditService", () => {
         };
         expect(incompletePlan.documentStatus).toBe("waiting_for_completion");
         expect(incompletePlan.documentJob?.payload["completeness"]).toBe("partial");
+    });
+
+    it("marks a complete source partial when the effective edited header is incomplete", async () => {
+        const source = completeSourceSnapshot();
+        const harness = createHarness({ source });
+        const started = await harness.service.startDraft(BRANCH_ID, CLIENT_ID, ACTOR_ID, {});
+        if (!started.draft) throw new Error("expected a draft");
+        const activeDraft = {
+            ...started.draft,
+            changes: { header: { momName: "" } },
+        };
+        harness.repository.findDraftById.mockResolvedValue(activeDraft);
+        harness.repository.loadSource.mockResolvedValue(source);
+        const preview = await harness.service.previewDraft(BRANCH_ID, DRAFT_ID, ACTOR_ID, {
+            expectedDraftVersion: activeDraft.draftVersion,
+        });
+        harness.repository.confirmDraft.mockResolvedValue({
+            status: "confirmed" as const,
+            caseId: CASE_ID,
+            clientId: CLIENT_ID,
+            draftId: DRAFT_ID,
+            draftVersion: 2,
+            caseVersion: 8,
+            revisionId: "55555555-5555-4555-8555-555555555555",
+            revisionNumber: 1,
+            documentStatus: "capability_unverified" as const,
+            confirmedAt: "2026-09-08T01:02:03.000Z",
+        });
+        await harness.service.confirmDraft(BRANCH_ID, DRAFT_ID, ACTOR_ID, {
+            expectedDraftVersion: activeDraft.draftVersion,
+            previewId: preview.previewId,
+            idempotencyKey: "77777777-7777-4777-8777-777777777777",
+        });
+
+        const input = harness.repository.confirmDraft.mock.calls.at(-1)?.[0] as {
+            prepare: (snapshot: { draft: typeof activeDraft; source: ServiceRecordEditSource }) => unknown;
+        };
+        const plan = input.prepare({ draft: activeDraft, source }) as {
+            header: Record<string, unknown>;
+            documentStatus: string;
+            documentJob: { payload: Record<string, unknown> } | null;
+            revision: { payload: Record<string, unknown> } | null;
+        };
+        expect(plan.header["momName"]).toBe("");
+        expect(plan.documentStatus).toBe("waiting_for_completion");
+        expect(plan.documentJob?.payload["completeness"]).toBe("partial");
+        expect(plan.revision?.payload["completeness"]).toBe("partial");
     });
 
     it("forwards the server preview and idempotency contract to the repository", async () => {

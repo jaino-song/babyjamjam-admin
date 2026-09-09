@@ -915,6 +915,60 @@ describe("ServiceRecordEditRepository", () => {
         expect(documentUpdate).toContain("ELSE NULL");
     });
 
+    it("content-only revisions scope supersession to service-record generation jobs", async () => {
+        const tx = {
+            $queryRaw: jest.fn()
+                .mockResolvedValueOnce([])
+                .mockResolvedValueOnce([])
+                .mockResolvedValueOnce([])
+                .mockResolvedValueOnce([]),
+        };
+        const repository = new ServiceRecordEditRepository({} as never);
+
+        await expect((repository as unknown as {
+            invalidateSupersededJobs: (
+                client: unknown,
+                branch: string,
+                serviceCase: string,
+                clientId: number,
+                scope: "all" | "revision_generation",
+            ) => Promise<void>;
+        }).invalidateSupersededJobs(tx, branchId, caseId, 101, "revision_generation")).resolves.toBeUndefined();
+
+        const inFlight = sqlTextWithValues(tx.$queryRaw.mock.calls[0]?.[0]);
+        const documentUpdate = sqlTextWithValues(tx.$queryRaw.mock.calls[2]?.[0]);
+        const scopePredicate = "COALESCE(job.payload->>'kind' = 'service_record_revision', false)";
+        expect(inFlight).toContain(scopePredicate);
+        expect(documentUpdate).toContain(scopePredicate);
+        expect(documentUpdate).toContain("job_type IN ('create_document', 'finalize_document')");
+    });
+
+    it("period-changing revisions retain broad document-job invalidation", async () => {
+        const tx = {
+            $queryRaw: jest.fn()
+                .mockResolvedValueOnce([])
+                .mockResolvedValueOnce([])
+                .mockResolvedValueOnce([])
+                .mockResolvedValueOnce([]),
+        };
+        const repository = new ServiceRecordEditRepository({} as never);
+
+        await expect((repository as unknown as {
+            invalidateSupersededJobs: (
+                client: unknown,
+                branch: string,
+                serviceCase: string,
+                clientId: number,
+                scope: "all" | "revision_generation",
+            ) => Promise<void>;
+        }).invalidateSupersededJobs(tx, branchId, caseId, 101, "all")).resolves.toBeUndefined();
+
+        const documentUpdate = sqlTextWithValues(tx.$queryRaw.mock.calls[2]?.[0]);
+        expect(documentUpdate).toContain("AND TRUE");
+        expect(documentUpdate).toContain("job_type IN ('create_document', 'finalize_document')");
+        expect(documentUpdate).not.toContain("COALESCE(job.payload->>'kind' = 'service_record_revision', false)");
+    });
+
     it("uses the same-branch canonical document owner for null-client eform jobs", async () => {
         const tx = {
             $queryRaw: jest.fn()
