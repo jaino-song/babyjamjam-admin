@@ -83,6 +83,7 @@ describe("ClientFormDialog API errors", () => {
       errors: [
         { pointer: "/name", code: "REQUIRED", detail: "ignored" },
         { pointer: "/phone", code: "INVALID_FORMAT", detail: "ignored" },
+        { pointer: "/internalTenantId", code: "OUT_OF_RANGE", detail: "ignored" },
       ],
     });
     mockCreateClientMutateAsync.mockRejectedValue({
@@ -100,6 +101,8 @@ describe("ClientFormDialog API errors", () => {
     expect(await screen.findByText("이름: 필수 항목이에요.")).toBeInTheDocument();
     expect(screen.getByText("연락처: 입력 형식이 올바르지 않아요.")).toBeInTheDocument();
     expect(screen.getByText(`요청 ID: ${requestId}`)).toBeInTheDocument();
+    expect(screen.getByText("입력 항목: 허용 범위를 벗어난 값이에요.")).toBeInTheDocument();
+    expect(screen.queryByText(/internalTenantId/)).not.toBeInTheDocument();
 
     const nameInput = screen.getByLabelText(/이름/);
     const phoneInput = screen.getByLabelText(/연락처/);

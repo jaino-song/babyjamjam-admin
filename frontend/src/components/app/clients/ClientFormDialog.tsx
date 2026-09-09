@@ -6,6 +6,7 @@ import {
     findOutOfPocketPriceInfo,
     formatOutOfPocketDurationLabel,
     getUserErrorMessage,
+    resolveProblemPresentation,
     normalizeApiError,
     type ProblemError,
     type ProblemOutcome,
@@ -2083,7 +2084,7 @@ function ClientFormContent({
                                     ? t(locale, "clients.form.name")
                                     : field === "phone"
                                         ? t(locale, "clients.form.phone")
-                                        : fieldError.pointer;
+                                        : resolveProblemPresentation(locale).unmappedField;
                                 const detail = `${fieldLabel}: ${fieldError.detail}`;
 
                                 return (
@@ -2108,9 +2109,7 @@ function ClientFormContent({
                     ) : null}
                     {isUnknownOutcome ? (
                         <p>
-                            {locale === "en"
-                                ? "Check the operation status before trying again."
-                                : "다시 실행하기 전에 작업 상태를 확인해 주세요."}
+                            {resolveProblemPresentation(locale).checkStatus}
                         </p>
                     ) : null}
                     {error.requestId ? (

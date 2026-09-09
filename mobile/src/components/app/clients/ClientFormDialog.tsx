@@ -4,6 +4,7 @@ import {
     findOutOfPocketPriceInfo,
     formatOutOfPocketDurationLabel,
     getUserErrorMessage,
+    resolveProblemPresentation,
 } from "@babyjamjam/shared";
 import {
     normalizeApiError,
@@ -458,7 +459,7 @@ export function ClientFormDialog({ open, onClose, client, onSuccess }: ClientFor
             const fieldId = getKnownFieldId(problemError);
             const label = fieldId
                 ? t(locale, `clients.form.${fieldId}`)
-                : problemError.pointer || "/";
+                : resolveProblemPresentation(locale).unmappedField;
             return {
                 detail: problemError.detail,
                 fieldId,
@@ -576,14 +577,12 @@ export function ClientFormDialog({ open, onClose, client, onSuccess }: ClientFor
                                         {locale === "en" ? "Request ID" : "요청 ID"}: {errorState.normalized.problem.requestId}
                                     </p>
                                 )}
-                                {hasUnknownMutationOutcome && errorState.normalized?.problem?.outcome === "UNKNOWN" && (
+                                {hasUnknownMutationOutcome && (
                                     <p
                                         className="mt-2 text-xs"
                                         data-component={`${CLIENT_FORM_ERROR_SUMMARY_ID}_status-guidance`}
                                     >
-                                        {locale === "en"
-                                            ? "Check the operation status before trying again."
-                                            : "다시 실행하기 전에 작업 상태를 확인해 주세요."}
+                                        {resolveProblemPresentation(locale).checkStatus}
                                     </p>
                                 )}
                             </AlertDescription>

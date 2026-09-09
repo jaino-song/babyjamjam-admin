@@ -12,3 +12,5 @@ export * from "./errors/user-error-message";
 export { getSafeApiDisplayMessage, sanitizeApiDisplayMessage } from "./errors/safe-api-error-message";
 
 export * from "./errors/problem-details";
+
+export * from "./errors/problem-presentation";

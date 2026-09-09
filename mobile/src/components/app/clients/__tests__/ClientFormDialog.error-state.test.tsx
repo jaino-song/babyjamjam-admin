@@ -91,7 +91,7 @@ const validationProblem = {
     errors: [
         { pointer: "/name", code: "REQUIRED" as const, detail: "raw name value", location: "body" as const },
         { pointer: "/phone", code: "INVALID_FORMAT" as const, detail: "raw phone value", location: "body" as const },
-        { pointer: "/address", code: "OUT_OF_RANGE" as const, detail: "raw address value", location: "body" as const },
+        { pointer: "/internalTenantId", code: "OUT_OF_RANGE" as const, detail: "raw address value", location: "body" as const },
     ],
 };
 
@@ -141,10 +141,11 @@ describe("ClientFormDialog mutation error presentation", () => {
         expect(alert).toHaveTextContent("입력 내용을 확인해 주세요.");
         expect(alert).toHaveTextContent("이름: 필수 항목이에요.");
         expect(alert).toHaveTextContent("연락처: 입력 형식이 올바르지 않아요.");
-        expect(alert).toHaveTextContent("/address: 허용 범위를 벗어난 값이에요.");
+        expect(alert).toHaveTextContent("입력 항목: 허용 범위를 벗어난 값이에요.");
         expect(alert).toHaveTextContent("요청 ID: request-bjj-319-fields");
         expect(alert).not.toHaveTextContent("raw name value");
         expect(alert).not.toHaveTextContent("raw phone value");
+        expect(alert).not.toHaveTextContent("internalTenantId");
 
         expect(screen.getByRole("link", { name: "이름: 필수 항목이에요." })).toHaveAttribute("href", "#name");
         expect(screen.getByRole("link", { name: "연락처: 입력 형식이 올바르지 않아요." })).toHaveAttribute("href", "#phone");
@@ -219,6 +220,7 @@ describe("ClientFormDialog mutation error presentation", () => {
         fireEvent.click(submitButton());
         await waitFor(() => expect(submitButton()).toBeDisabled());
         expect(await screen.findByRole("alert")).toHaveTextContent("변경 결과를 확인할 수 없으니");
+        expect(screen.getByText("다시 실행하기 전에 작업 상태를 확인해 주세요.")).toBeInTheDocument();
         fireEvent.click(submitButton());
         expect(mutateAsync).toHaveBeenCalledTimes(1);
     });
