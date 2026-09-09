@@ -12,6 +12,27 @@ import { PATCH as markAllRead } from "../read-all/route";
 import { GET as getUnreadCount } from "../unread/count/route";
 import { POST as testBroadcast } from "../test-broadcast/route";
 
+async function expectCanonicalValidationResponse(
+  response: Response,
+  legacyError: string,
+): Promise<void> {
+  expect(response.status).toBe(400);
+  const requestId = response.headers.get("X-Request-Id");
+  expect(requestId).toEqual(expect.stringMatching(/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/));
+  expect(response.headers.get("Content-Type")).toBe("application/problem+json");
+  expect(response.headers.get("Content-Language")).toBe("ko-KR");
+  expect(response.headers.get("Cache-Control")).toBe("no-store, max-age=0");
+
+  const body = await response.json();
+  expect(body).toMatchObject({
+    code: "VALIDATION_FAILED",
+    outcome: "NOT_APPLIED",
+    error: legacyError,
+    requestId,
+  });
+  expect(Array.isArray(body.errors)).toBe(true);
+}
+
 jest.mock("@/lib/api/server", () => ({
   serverAPIClient: {
     get: jest.fn(),
@@ -122,10 +143,7 @@ describe("notification API routes", () => {
       }),
     );
 
-    expect(response.status).toBe(400);
-    await expect(response.json()).resolves.toEqual({
-      error: "Request body must be valid JSON",
-    });
+    await expectCanonicalValidationResponse(response, "Request body must be valid JSON");
     expect(mockPost).not.toHaveBeenCalled();
   });
 
