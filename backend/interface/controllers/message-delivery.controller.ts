@@ -22,11 +22,17 @@ import { MessageSenderApprovalService } from "application/services/message-sende
 import { parseKstSchedule } from "application/utils/kst-schedule";
 import { normalizePhone } from "application/utils/normalize-phone";
 import { PrismaService } from "infrastructure/database/prisma.service";
-import { SMS_DELIVERY_RETRY_DELAY_MS } from "domain/entities/message-log.entity";
+import {
+    SMS_MANUAL_PROVIDER_REJECTED_RETRY_SAFETY,
+    SMS_PARTIAL_RETRY_SAFETY,
+} from "domain/entities/message-log.entity";
 import {
     buildSmsProviderAcceptanceFingerprint,
     buildSmsProviderAcceptanceKey,
 } from "application/services/sms-provider-acceptance.service";
+import {
+    classifySmsProviderOutcome,
+} from "application/services/sms-provider-outcome.service";
 import type {
     ProblemCode,
     ProblemDetails,
@@ -42,6 +48,7 @@ interface SmsMessageLogRecord {
     providerAcceptanceState?: string | null;
     providerCallStartedAt?: Date | null;
     status?: string | null;
+    variables?: Prisma.JsonValue | null;
 }
 
 type SmsProblemCode = Extract<
@@ -53,8 +60,6 @@ type SmsProblemCode = Extract<
     | "MESSAGE_SEND_ALREADY_REQUESTED"
     | "MESSAGE_REQUEST_KEY_CONFLICT"
 >;
-
-type SmsProviderOutcome = "accepted" | "partial" | "rejected" | "unknown";
 
 type SmsProblemBody = Pick<
     ProblemDetails,
@@ -188,9 +193,13 @@ export class MessageDeliveryController {
                 errorMessage,
                 attempts: 1,
                 lastAttemptAt: new Date(),
-                nextRetryAt: this.nextRetryAt(),
+                nextRetryAt: null,
                 providerAcceptanceState: "uncertain",
                 providerCallStartedAt: pendingLog.row.providerCallStartedAt ?? new Date(),
+                variables: {
+                    ...this.smsRecordVariables(pendingLog.row),
+                    retrySafety: "uncertain",
+                },
             }).catch((logError) => {
                 this.logger.error(
                     `[SMS] Provider request failed and delivery record update also failed: logId=${pendingLog.id}, error=${this.formatErrorMessage(logError)}`,
@@ -214,11 +223,17 @@ export class MessageDeliveryController {
             );
         });
         const expectedRecipientCount = this.countSmsRecipients(resolvedDto.receiver);
-        const providerOutcome = this.smsProviderOutcome(result, expectedRecipientCount);
+        const providerOutcome = classifySmsProviderOutcome(result, expectedRecipientCount);
         this.logger.log(
             `[SMS] Aligo response received: branchId=${branchId || "unknown"}, resultCode=${this.smsResultCodeForLog(result)}, errorCount=${this.smsErrorCountForLog(result)}`,
         );
-        await this.updateSmsLogFromResult(pendingLog.id, result, triggerType, expectedRecipientCount).catch((error) => {
+        await this.updateSmsLogFromResult(
+            pendingLog.id,
+            result,
+            triggerType,
+            expectedRecipientCount,
+            pendingLog.row.variables,
+        ).catch((error) => {
             this.logger.error(
                 `[SMS] Provider result received but delivery record update failed: logId=${pendingLog.id}, error=${this.formatErrorMessage(error)}`,
             );
@@ -554,9 +569,10 @@ export class MessageDeliveryController {
         result: Awaited<ReturnType<AligoService["sendSms"]>>,
         triggerType: string,
         expectedRecipientCount?: number,
+        existingVariables?: Prisma.JsonValue | null,
     ): Promise<void> {
         const recipientCount = expectedRecipientCount ?? this.smsRecipientCountFromResult(result);
-        const providerOutcome = this.smsProviderOutcome(result, recipientCount);
+        const providerOutcome = classifySmsProviderOutcome(result, recipientCount);
         const isAccepted = providerOutcome === "accepted";
         const isPartial = providerOutcome === "partial";
         const isRejected = providerOutcome === "rejected";
@@ -567,6 +583,7 @@ export class MessageDeliveryController {
         const request = this.smsRequest(result);
         const successCount = response ? this.smsCounter(response["success_cnt"]) : undefined;
         const errorCount = response ? this.smsCounter(response["error_cnt"]) : undefined;
+        const priorVariables = this.isRecord(existingVariables) ? existingVariables : {};
         // Aligo's batch response does not identify failed recipients. Retrying the
         // original receiver list after a partial success would duplicate successful sends.
         const errorMessage = isAccepted
@@ -589,15 +606,25 @@ export class MessageDeliveryController {
             providerAcceptedAt: isAccepted ? new Date(Date.now()) : null,
             attempts: 1,
             lastAttemptAt: new Date(),
-            nextRetryAt: isAccepted || isPartial || providerOutcome === "unknown"
-                ? null
-                : this.nextRetryAt(),
+            // A manual delivery response is never retried automatically. A
+            // provider rejection remains eligible for a separately authorized
+            // history retry; partial and unknown outcomes are terminal until
+            // an operator can identify a safe recipient-level action.
+            nextRetryAt: null,
             variables: {
+                ...priorVariables,
                 triggerType,
                 msgType: request?.["msgType"] ?? null,
                 scheduledDate: request?.["scheduledDate"] ?? null,
                 scheduledTime: request?.["scheduledTime"] ?? null,
                 testMode: request?.["testModeYn"] === "Y" ? "true" : "false",
+                retrySafety: isAccepted
+                    ? "delivered"
+                    : isPartial
+                        ? SMS_PARTIAL_RETRY_SAFETY
+                        : isRejected
+                            ? SMS_MANUAL_PROVIDER_REJECTED_RETRY_SAFETY
+                            : "uncertain",
             },
         };
         const receiver = request?.["receiver"];
@@ -617,103 +644,6 @@ export class MessageDeliveryController {
             where: { id: logId },
             data,
         });
-    }
-
-    private isAcceptedSmsResult(
-        result: Awaited<ReturnType<AligoService["sendSms"]>>,
-        expectedRecipientCount?: number,
-    ): boolean {
-        return this.smsProviderOutcome(
-            result,
-            expectedRecipientCount ?? this.smsRecipientCountFromResult(result),
-        ) === "accepted";
-    }
-
-    private isPartialSuccessSmsResult(
-        result: Awaited<ReturnType<AligoService["sendSms"]>>,
-        expectedRecipientCount?: number,
-    ): boolean {
-        return this.smsProviderOutcome(
-            result,
-            expectedRecipientCount ?? this.smsRecipientCountFromResult(result),
-        ) === "partial";
-    }
-
-    private smsProviderOutcome(
-        result: unknown,
-        expectedRecipientCount: number,
-    ): SmsProviderOutcome {
-        if (!Number.isInteger(expectedRecipientCount) || expectedRecipientCount <= 0) {
-            return "unknown";
-        }
-        const response = this.smsResponse(result);
-        if (!response) {
-            return "unknown";
-        }
-        if (!Object.prototype.hasOwnProperty.call(response, "message")
-            || typeof response["message"] !== "string") {
-            return "unknown";
-        }
-        const request = this.smsRequest(result);
-        const responseReceiver = request?.["receiver"];
-        if (typeof responseReceiver !== "string"
-            || this.countSmsRecipients(responseReceiver) !== expectedRecipientCount) {
-            return "unknown";
-        }
-        const resultCode = this.smsInteger(response["result_code"]);
-        if (resultCode === undefined) {
-            return "unknown";
-        }
-
-        const hasSuccessCount = Object.prototype.hasOwnProperty.call(response, "success_cnt")
-            && response["success_cnt"] !== undefined;
-        const hasErrorCount = Object.prototype.hasOwnProperty.call(response, "error_cnt")
-            && response["error_cnt"] !== undefined;
-        const successCount = hasSuccessCount ? this.smsCounter(response["success_cnt"]) : undefined;
-        const errorCount = hasErrorCount ? this.smsCounter(response["error_cnt"]) : undefined;
-        if ((hasSuccessCount && successCount === undefined)
-            || (hasErrorCount && errorCount === undefined)) {
-            return "unknown";
-        }
-
-        // A successful provider result must carry both counters.  Treating a
-        // missing counter as zero would turn a malformed response into proof
-        // that a message was accepted.
-        if (resultCode === 1) {
-            if (successCount === undefined || errorCount === undefined) {
-                return "unknown";
-            }
-            if (successCount + errorCount !== expectedRecipientCount) {
-                return "unknown";
-            }
-            if (successCount > 0 && errorCount === 0) {
-                return "accepted";
-            }
-            if (successCount > 0 && errorCount > 0) {
-                return "partial";
-            }
-            // A result code of 1 with every requested recipient counted as
-            // an error is an explicit all-rejected provider response.  A zero
-            // total remains UNKNOWN because it carries no usable evidence.
-            if (successCount === 0 && errorCount === expectedRecipientCount && errorCount > 0) {
-                return "rejected";
-            }
-            return "unknown";
-        }
-
-        // Aligo documents negative result codes as failures.  Zero and other
-        // positive codes are not a registered success/rejection signal, so
-        // preserve UNKNOWN instead of guessing from a provider message.
-        if (resultCode >= 0) {
-            return "unknown";
-        }
-        const normalizedSuccessCount = successCount ?? 0;
-        const normalizedErrorCount = errorCount ?? 0;
-        if (normalizedSuccessCount !== 0
-            || (normalizedErrorCount !== 0 && normalizedErrorCount !== expectedRecipientCount)) {
-            return "unknown";
-        }
-        return "rejected";
     }
 
     private smsResponse(result: unknown): Record<string, unknown> | null {
@@ -787,6 +717,10 @@ export class MessageDeliveryController {
         return typeof value === "object" && value !== null && !Array.isArray(value);
     }
 
+    private smsRecordVariables(row: SmsMessageLogRecord): Record<string, unknown> {
+        return this.isRecord(row.variables) ? row.variables : {};
+    }
+
     private smsProblemBody(
         code: SmsProblemCode,
         outcome: ProblemOutcome,
@@ -851,7 +785,4 @@ export class MessageDeliveryController {
         return message || "문자 발송 요청이 실패했습니다.";
     }
 
-    private nextRetryAt(): Date {
-        return new Date(Date.now() + SMS_DELIVERY_RETRY_DELAY_MS);
-    }
 }
