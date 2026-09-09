@@ -783,14 +783,22 @@ function assertRevisionSnapshotRetryJob(
     if (job.progressStep !== null && typeof job.progressStep !== "string") {
         throw new ServiceRecordEditConflictError("Revision snapshot job progress is invalid");
     }
+    const payload = revisionSnapshotRetryJobPayload(job.payload);
+    if (!payload) {
+        throw new ServiceRecordEditConflictError("Revision snapshot job payload is invalid");
+    }
+    let jobPayloadFingerprint: string;
+    try {
+        jobPayloadFingerprint = jsonFingerprint(job.payload);
+    } catch {
+        throw new ServiceRecordEditConflictError("Revision snapshot job payload is invalid");
+    }
     if (typeof job.payloadFingerprint !== "string"
-        || job.payloadFingerprint.toLowerCase() !== state.inputFingerprint.toLowerCase()) {
-        throw new ServiceRecordEditConflictError("Revision snapshot job fingerprint does not match state");
+        || job.payloadFingerprint.toLowerCase() !== jobPayloadFingerprint) {
+        throw new ServiceRecordEditConflictError("Revision snapshot job fingerprint does not match payload");
     }
 
-    const payload = revisionSnapshotRetryJobPayload(job.payload);
-    if (!payload
-        || payload["revisionId"] !== state.revisionId
+    if (payload["revisionId"] !== state.revisionId
         || payload["generation"] !== state.generation
         || payload["documentStateId"] !== state.id
         || payload["documentVersion"] !== state.documentVersion

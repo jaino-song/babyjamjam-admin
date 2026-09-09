@@ -62,6 +62,16 @@ function retryableSnapshotState(overrides: Record<string, unknown> = {}) {
 }
 
 function snapshotJobRow(overrides: Record<string, unknown> = {}) {
+    const payload = {
+        kind: "service_record_revision",
+        revisionId,
+        revisionNumber: 1,
+        generation: "generation-1",
+        documentStateId: stateId,
+        documentVersion: 3,
+        immutablePayload: immutableInput,
+        payloadFingerprint: fingerprint,
+    };
     return {
         id: snapshotJobId,
         branchId,
@@ -72,17 +82,8 @@ function snapshotJobRow(overrides: Record<string, unknown> = {}) {
         status: "failed",
         requestKey: snapshotRequestKey,
         activeKey: null,
-        payload: {
-            kind: "service_record_revision",
-            revisionId,
-            revisionNumber: 1,
-            generation: "generation-1",
-            documentStateId: stateId,
-            documentVersion: 3,
-            immutablePayload: immutableInput,
-            payloadFingerprint: fingerprint,
-        },
-        payloadFingerprint: fingerprint,
+        payload,
+        payloadFingerprint: sha256CanonicalJson(payload),
         progressStep: "preparing",
         ...overrides,
     };
