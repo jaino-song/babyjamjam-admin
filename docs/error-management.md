@@ -39,6 +39,19 @@ packages/shared/src/errors/user-error-message.ts의 문자열 기반 번역은 �
 - 서명된 계약 수정, 발송 응답 유실, 등록 성공 후 발송 실패, 동시 수정, 테넌트 경계의 전체 실환경 회귀.
 - Sentry 운영 활성화/보존기간, preview 배포/롤백, production 검증.
 
+## 후속 경로 조사 목록
+
+아래는 후속 전환의 대표 진입점이며 전체 경로 전수 목록이나 결함 확정 목록이 아니다. 기존 상태·중복 방지 구조를 먼저 재사용하며 실제 실패 시나리오로 확인한다.
+
+| 경로 | 후속 확인 범위 |
+| --- | --- |
+| `mobile/src/app/(shell)/clients/new/page.tsx` | 기본 고객 등록 마법사의 구조화 오류·필드 연결·UNKNOWN 복구 |
+| `mobile/src/app/(shell)/contracts/new/page.tsx`, `mobile/src/app/(shell)/contracts/page.tsx` | 기존 headless/fallback 결과와 공통 outcome 연결; 자동 재실행 안전성은 별도 입증 |
+| `backend/interface/controllers/eformsign-doc.controller.ts` | 기존 `ok/reason/failedStep/fallbackHint` 및 작업 조회 응답의 호환 전환 |
+| `backend/interface/controllers/message-delivery.controller.ts` | 기존 부분 발송·자동 재전송 제한의 의미를 보존한 공통 모델 연결 |
+| `backend/application/services/eformsign-document-job.service.ts`, `backend/application/services/eformsign-document-job-worker.service.ts` | 기존 claim/reconcile/retry-exhausted 상태와 공개 오류·운영 관측 연결 |
+| `mobile/src/hooks/usePushNotification.ts`, `mobile/src/hooks/use-message-templates.ts`, `mobile/src/hooks/useClients.ts` | 정상 빈 결과와 조회 실패·예상치 못한 응답 형식의 구분 |
+
 ## 검증 기록
 
 - 공통 HTTP 계약: backend 집중 테스트 45개, shared problem/proxy/route 테스트 41개 및 backend 타입 검사 통과. 실제 Nest HTTP 테스트에서 검증 거절은 변경 0회, 정상 요청은 변경 1회, 부수 효과 후 오류는 UNKNOWN임을 확인했다. 실제 DB 연결이나 외부 발송을 사용한 테스트가 아니다.
