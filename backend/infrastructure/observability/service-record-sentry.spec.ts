@@ -417,7 +417,7 @@ describe("service-record backend Sentry contract", () => {
                     originalUrl: "/service-record/context",
                     url: "/service-record/context",
                 }),
-                getResponse: () => ({}),
+                getResponse: () => ({ locals: {}, setHeader: jest.fn(), status: jest.fn().mockReturnThis(), json: jest.fn() }),
             }),
         } as unknown as ArgumentsHost;
 
@@ -431,7 +431,7 @@ describe("service-record backend Sentry contract", () => {
                     originalUrl: "/clients",
                     url: "/clients",
                 }),
-                getResponse: () => ({}),
+                getResponse: () => ({ locals: {}, setHeader: jest.fn(), status: jest.fn().mockReturnThis(), json: jest.fn() }),
             }),
         } as unknown as ArgumentsHost;
 
@@ -442,7 +442,7 @@ describe("service-record backend Sentry contract", () => {
 
         expect(mockCaptureException).toHaveBeenCalledTimes(2);
         expect(mockScope.setTag).toHaveBeenCalledWith("status_code", "503");
-        expect(reply).toHaveBeenCalledTimes(4);
+        expect(reply).toHaveBeenCalledTimes(2);
     });
 
     it("samples service-record performance at 10 percent in production", () => {

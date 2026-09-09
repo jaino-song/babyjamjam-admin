@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 
+import { parseProblemDetails, normalizeApiError, type ProblemDetails } from "../errors/problem-details";
+
 import { getUserErrorMessage } from "../errors/user-error-message";
 
 export const NO_STORE_CACHE_CONTROL = "no-store, max-age=0";
@@ -273,7 +275,12 @@ export function sanitizeUpstreamClientError(
     upstreamData: unknown,
     fallbackMessage: string,
     status?: number,
-): { error: string; code?: string; field?: string; hasKakaoAccount?: boolean } {
+): ({ error: string; code?: string; field?: string; hasKakaoAccount?: boolean } & Partial<Omit<ProblemDetails, "code">>) {
+    const problem = parseProblemDetails(upstreamData, status);
+    if (problem) return { ...problem, error: problem.detail };
+    if (upstreamData && typeof upstreamData === "object" && ("type" in upstreamData || "requestId" in upstreamData)) {
+        return { error: normalizeApiError({ response: { status, data: upstreamData } }).message };
+    }
     const payload: { error: string; code?: string; field?: string; hasKakaoAccount?: boolean } = {
         error: getUserErrorMessage({ response: { status, data: upstreamData } }, fallbackMessage),
     };
@@ -381,20 +388,36 @@ export function errorResponse(error: unknown, context: string): NextResponse {
     const status = (error as UpstreamErrorLike | null)?.response?.status || 500;
 
     logUpstreamError(context, error);
-    return NextResponse.json(
-        sanitizeUpstreamClientError(upstreamData, `Failed to ${context}`, status),
-        { status },
-    );
+    const payload = sanitizeUpstreamClientError(upstreamData, `Failed to ${context}`, status);
+    return NextResponse.json(payload, {
+        status,
+        headers: {
+            "Cache-Control": NO_STORE_CACHE_CONTROL,
+            ...(payload.type && payload.requestId ? {
+                "Content-Type": "application/problem+json",
+                "Content-Language": "ko-KR",
+                "X-Request-Id": payload.requestId,
+            } : {}),
+        },
+    });
 }
 
 function createLegacyErrorResponse(error: unknown, context: string): NextResponse {
     const upstreamData = (error as UpstreamErrorLike | null)?.response?.data as UpstreamErrorPayload | undefined;
     const status = (error as UpstreamErrorLike | null)?.response?.status || 500;
     logUpstreamError(context, error);
-    return NextResponse.json(
-        sanitizeUpstreamClientError(upstreamData, `Failed to ${context}`, status),
-        { status },
-    );
+    const payload = sanitizeUpstreamClientError(upstreamData, `Failed to ${context}`, status);
+    return NextResponse.json(payload, {
+        status,
+        headers: {
+            "Cache-Control": NO_STORE_CACHE_CONTROL,
+            ...(payload.type && payload.requestId ? {
+                "Content-Type": "application/problem+json",
+                "Content-Language": "ko-KR",
+                "X-Request-Id": payload.requestId,
+            } : {}),
+        },
+    });
 }
 
 export function createRouteUtils({
