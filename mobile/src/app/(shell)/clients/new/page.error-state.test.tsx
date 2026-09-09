@@ -245,6 +245,10 @@ describe("mobile client wizard mutation error presentation", () => {
 
   it.each([
     {
+      label: "PARTIALLY_APPLIED problem",
+      cause: () => ({ response: { status: 500, data: createProblemDetails({ code: "INTERNAL_ERROR", requestId: "request-bjj-319-partial", outcome: "PARTIALLY_APPLIED" }) } }),
+    },
+    {
       label: "UNKNOWN problem",
       cause: () => ({ response: { status: 500, data: createProblemDetails({ code: "INTERNAL_ERROR", requestId: "request-bjj-319-unknown", outcome: "UNKNOWN" }) } }),
     },

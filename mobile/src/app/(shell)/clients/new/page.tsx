@@ -891,7 +891,7 @@ export default function NewClientPage() {
         operation: "mutation",
       });
       setErrorState(normalized);
-      if (normalized.outcome === "UNKNOWN") {
+      if (normalized.outcome === "UNKNOWN" || normalized.outcome === "PARTIALLY_APPLIED") {
         setHasUnknownMutationOutcome(true);
       }
     } finally {
