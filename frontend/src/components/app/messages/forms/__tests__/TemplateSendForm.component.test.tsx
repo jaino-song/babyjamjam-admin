@@ -7,7 +7,7 @@
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { createProblemDetails } from "@babyjamjam/shared";
 import { useQueryClient } from "@tanstack/react-query";
-import { StrictMode, type ReactNode } from "react";
+import { StrictMode, Suspense, startTransition, useLayoutEffect, useState, type ReactNode } from "react";
 
 import type { MessageLogRecord } from "@/features/message-triggers/types";
 import { messageTriggerKeys } from "@/features/message-triggers/hooks/keys";
@@ -998,4 +998,48 @@ describe("Phase2a SMS outcome state machine", () => {
     expect(document.querySelector('[data-component="desktop_messages_sections_template-send-form_feedback"]'))
       .toHaveTextContent("작업 상태를 확인해 주세요");
   });
+  it("keeps a definitive service result after a mode roundtrip", async () => {
+    let finish!: (value: unknown) => void;
+    mockedSendServiceRecordLink.mockReturnValue(new Promise((resolve) => { finish = resolve; }) as never);
+    useFormStore.setState({ clientId: 20, name: "김산모", phone: "01011111111", employeeId: 30, employeeName: "홍제공", employeePhone: "01011112222" });
+    const view = render(modeForm("service-feedback-link"));
+    fireEvent.click(screen.getByRole("button", { name: /즉시 발송/ }));
+    await waitFor(() => expect(mockedSendServiceRecordLink).toHaveBeenCalledTimes(1));
+    view.rerender(modeForm("sms"));
+    view.rerender(modeForm("service-feedback-link"));
+    await act(async () => finish({ data: { status: "sent" } }));
+    expect(screen.getByRole("status")).toHaveTextContent("제공기록지 링크를 바로 보냈어요");
+    expect(useFormStore.getState().clientId).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: /즉시 발송/ }));
+    expect(mockedSendServiceRecordLink).toHaveBeenCalledTimes(1);
+  });
+
+  it("ignores an abandoned mode render when completing the committed SMS", async () => {
+    let finish!: (value: unknown) => void;
+    mockedSendSms.mockReturnValue(new Promise((resolve) => { finish = resolve; }) as never);
+    let changeMode!: (mode: "sms" | "service-feedback-link") => void;
+    const suspended = jest.fn();
+    const pending = new Promise(() => {});
+    function SuspendOtherMode({ mode }: { mode: string }) {
+      if (mode !== "sms") { suspended(); throw pending; }
+      return null;
+    }
+    function ConcurrentForm() {
+      const [mode, setMode] = useState<"sms" | "service-feedback-link">("sms");
+      useLayoutEffect(() => { changeMode = setMode; }, []);
+      return <Suspense fallback={null}>{modeForm(mode)}<SuspendOtherMode mode={mode} /></Suspense>;
+    }
+    render(<ConcurrentForm />);
+    await queueRecipient("01011111111");
+    fireEvent.click(screen.getByRole("button", { name: /즉시 발송/ }));
+    await waitFor(() => expect(mockedSendSms).toHaveBeenCalledTimes(1));
+    await act(async () => startTransition(() => changeMode("service-feedback-link")));
+    expect(suspended).toHaveBeenCalled();
+    expect(screen.getByTestId("autocomplete-휴대 전화번호")).toHaveValue("01011111111");
+    await act(async () => finish(buildSendSuccess()));
+    expect(screen.getByRole("status")).toHaveTextContent("메시지 발송 요청 1건을 접수했어요");
+    expect(useFormStore.getState().phone).toBe("");
+    expect(mockedSendSms).toHaveBeenCalledTimes(1);
+  });
+
 });

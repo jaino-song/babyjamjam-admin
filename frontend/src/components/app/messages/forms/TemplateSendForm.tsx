@@ -9,7 +9,7 @@ import {
 
 import { isAxiosError } from "axios";
 import { useQueryClient } from "@tanstack/react-query";
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Calendar, Loader2, Send, X } from "lucide-react";
 
 import { ClientAutocomplete } from "@/components/app/clients/ClientAutocomplete";
@@ -290,13 +290,6 @@ export function TemplateSendForm({
   const smsLookupGenerationRef = useRef<number | null>(null);
   const smsSendIdRef = useRef(0);
   const serviceSendIdRef = useRef(0);
-  if (deliveryModeRef.current !== deliveryMode) {
-    deliveryModeRef.current = deliveryMode;
-    deliveryGenerationRef.current += 1;
-    smsLookupGenerationRef.current = null;
-    duplicateSubmissionRef.current = null;
-    if (submissionGuardRef.current !== "sending") submissionGuardRef.current = "idle";
-  }
   const { data: historyData = [], refetch: refetchHistory } = useMessageHistory();
   const {
     clientId,
@@ -427,7 +420,12 @@ export function TemplateSendForm({
     };
   }, []);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
+    if (deliveryModeRef.current === deliveryMode) return;
+    deliveryModeRef.current = deliveryMode;
+    deliveryGenerationRef.current += 1;
+    smsLookupGenerationRef.current = null;
+    setIsCheckingDuplicate(false);
     setDuplicateSendCandidates(null);
     duplicateSubmissionRef.current = null;
     if (submissionGuardRef.current !== "sending") submissionGuardRef.current = "idle";
@@ -621,7 +619,8 @@ export function TemplateSendForm({
     return [];
   };
 
-  if (!isServiceRecordLinkDelivery) {
+  useLayoutEffect(() => {
+    if (isServiceRecordLinkDelivery) return;
     latestSmsSnapshotRef.current = {
       recipients: getRecipientsForSubmit().map((recipient) => ({ ...recipient })),
       templateId,
@@ -631,7 +630,7 @@ export function TemplateSendForm({
       deliveryMode,
       deliveryGeneration: deliveryGenerationRef.current,
     };
-  }
+  });
 
   const sendMessages = async (recipients: RecipientQueueItem[]) => {
     if (smsOutcomeLockedRef.current) {
@@ -827,11 +826,6 @@ export function TemplateSendForm({
     }
 
     const sendId = ++serviceSendIdRef.current;
-    const sendGeneration = deliveryGenerationRef.current;
-    const isCurrentServiceSend = () => mountedRef.current
-      && deliveryModeRef.current === "service-feedback-link"
-      && deliveryGenerationRef.current === sendGeneration
-      && serviceSendIdRef.current === sendId;
     setIsServiceRecordLinkSending(true);
     setFeedback(null);
     const failureStage: ServiceRecordLinkFailureStage = "send";
@@ -842,7 +836,6 @@ export function TemplateSendForm({
         recipientPhone: serviceRecordLinkPreparation.recipientPhone,
       });
       const { status } = response.data;
-      if (!isCurrentServiceSend()) return;
 
       if (status === "sent") {
         setFeedback({ tone: "success", message: "제공기록지 링크를 바로 보냈어요" });
@@ -861,11 +854,9 @@ export function TemplateSendForm({
         toast({ variant: "destructive", description: getUserErrorMessage(errorMessage) });
       }
     } catch (error) {
-      if (isCurrentServiceSend()) {
-        const errorMessage = getServiceRecordLinkErrorMessage(error, failureStage);
-        setFeedback({ tone: "error", message: errorMessage });
-        toast({ variant: "destructive", description: getUserErrorMessage(errorMessage) });
-      }
+      const errorMessage = getServiceRecordLinkErrorMessage(error, failureStage);
+      setFeedback({ tone: "error", message: errorMessage });
+      toast({ variant: "destructive", description: getUserErrorMessage(errorMessage) });
     } finally {
       void queryClient.invalidateQueries({ queryKey: messageTriggerKeys.upcoming() });
       void queryClient.invalidateQueries({ queryKey: messageTriggerKeys.history() });
