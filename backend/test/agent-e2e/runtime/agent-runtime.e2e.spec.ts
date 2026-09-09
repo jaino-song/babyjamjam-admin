@@ -224,7 +224,7 @@ describeAgentE2E("Release A runtime with Postgres, Valkey, and the deterministic
         const triggerService = app.get(MessageTriggerService);
         const ruleRepository = app.get<IMessageTriggerRuleRepository>(MESSAGE_TRIGGER_RULE_REPOSITORY);
         const delivery = app.get(MessageTriggerDeliveryService);
-        const sendSpy = jest.spyOn(delivery, "sendJob").mockResolvedValue(true);
+        const sendSpy = jest.spyOn(delivery, "sendPreparedJob").mockResolvedValue(true);
         const branch = await prisma.branch.findUnique({
             where: { id: BRANCH_ID },
             select: {
@@ -364,7 +364,7 @@ describeAgentE2E("Release A runtime with Postgres, Valkey, and the deterministic
         const triggerService = app.get(MessageTriggerService);
         const ruleRepository = app.get<IMessageTriggerRuleRepository>(MESSAGE_TRIGGER_RULE_REPOSITORY);
         const delivery = app.get(MessageTriggerDeliveryService);
-        const sendSpy = jest.spyOn(delivery, "sendJob").mockResolvedValue(true);
+        const sendSpy = jest.spyOn(delivery, "sendPreparedJob").mockResolvedValue(true);
         const branch = await prisma.branch.findUnique({
             where: { id: BRANCH_ID },
             select: {
@@ -502,7 +502,7 @@ describeAgentE2E("Release A runtime with Postgres, Valkey, and the deterministic
         const oldGenerationAt = kstDay(-1);
         const triggerService = app.get(MessageTriggerService);
         const delivery = app.get(MessageTriggerDeliveryService);
-        const sendSpy = jest.spyOn(delivery, "sendJob").mockResolvedValue(true);
+        const sendSpy = jest.spyOn(delivery, "sendPreparedJob").mockResolvedValue(true);
         const branch = await prisma.branch.findUnique({
             where: { id: BRANCH_ID },
             select: {
@@ -640,7 +640,7 @@ describeAgentE2E("Release A runtime with Postgres, Valkey, and the deterministic
         const ruleRepository = app.get<IMessageTriggerRuleRepository>(MESSAGE_TRIGGER_RULE_REPOSITORY);
         const jobRepository = app.get<IMessageTriggerJobRepository>(MESSAGE_TRIGGER_JOB_REPOSITORY);
         const delivery = app.get(MessageTriggerDeliveryService);
-        const sendSpy = jest.spyOn(delivery, "sendJob").mockResolvedValue(true);
+        const sendSpy = jest.spyOn(delivery, "sendPreparedJob").mockResolvedValue(true);
         const branch = await prisma.branch.findUnique({
             where: { id: BRANCH_ID },
             select: {
