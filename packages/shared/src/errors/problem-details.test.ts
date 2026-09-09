@@ -167,6 +167,24 @@ describe("problem details public contract", () => {
         expect(resolveProblemMessage({ code: "INTERNAL_ERROR", detail: "PrismaClientKnownRequestError" }, "ko-KR")).toBe("요청 처리 결과를 확인할 수 없어요.");
         expect(resolveProblemMessage("legacy message", { locale: "en-US", operation: "read" })).toBe("We couldn’t load the requested information.");
     });
+
+    it("contains safe bilingual SMS outcome entries with empty params", () => {
+        const smsCodes: ProblemCode[] = [
+            "MESSAGE_SEND_NOT_STARTED",
+            "MESSAGE_SEND_UNCONFIRMED",
+            "MESSAGE_SEND_PARTIAL",
+            "MESSAGE_SEND_REJECTED",
+            "MESSAGE_SEND_ALREADY_REQUESTED",
+            "MESSAGE_REQUEST_KEY_CONFLICT",
+        ];
+        for (const code of smsCodes) {
+            const problem = createProblemDetails({ code, requestId: REQUEST_ID });
+            expect(problem.params).toEqual({});
+            expect(problem.detail).not.toMatch(/Aligo|error|provider|token|stack/i);
+            expect(PROBLEM_CATALOG[code].title["ko-KR"]).toEqual(expect.any(String));
+            expect(PROBLEM_CATALOG[code].title["en-US"]).toEqual(expect.any(String));
+        }
+    });
 });
 
 describe("catalog coverage", () => {
@@ -187,6 +205,12 @@ describe("catalog coverage", () => {
         "UPSTREAM_INVALID_RESPONSE",
         "UPSTREAM_TIMEOUT",
         "CONTRACT_ALREADY_SIGNED",
+        "MESSAGE_SEND_NOT_STARTED",
+        "MESSAGE_SEND_UNCONFIRMED",
+        "MESSAGE_SEND_PARTIAL",
+        "MESSAGE_SEND_REJECTED",
+        "MESSAGE_SEND_ALREADY_REQUESTED",
+        "MESSAGE_REQUEST_KEY_CONFLICT",
     ];
 
     it.each(codes)("contains a complete bilingual entry for %s", (code) => {
@@ -208,7 +232,10 @@ describe("uncertain outcome recovery invariant", () => {
         const missing = { ...problem, recovery: undefined };
         delete missing.recovery;
         expect(parseProblemDetails(missing)?.recovery).toEqual(expected);
-        expect(parseProblemDetails({ ...problem, recovery: { action: "NONE", retry: { mode: "NEVER" } } })?.recovery).toEqual(expected);
+        expect(parseProblemDetails({
+            ...problem,
+            recovery: { action: "NONE", retry: { mode: "NEVER" } },
+        })?.recovery).toEqual(expected);
         expect(normalizeApiError(missing).recovery).toEqual(expected);
     });
 });

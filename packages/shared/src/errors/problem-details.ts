@@ -25,7 +25,13 @@ export type ProblemCode =
     | "DEPENDENCY_UNAVAILABLE"
     | "UPSTREAM_INVALID_RESPONSE"
     | "UPSTREAM_TIMEOUT"
-    | "CONTRACT_ALREADY_SIGNED";
+    | "CONTRACT_ALREADY_SIGNED"
+    | "MESSAGE_SEND_NOT_STARTED"
+    | "MESSAGE_SEND_UNCONFIRMED"
+    | "MESSAGE_SEND_PARTIAL"
+    | "MESSAGE_SEND_REJECTED"
+    | "MESSAGE_SEND_ALREADY_REQUESTED"
+    | "MESSAGE_REQUEST_KEY_CONFLICT";
 
 export type ProblemOutcome =
     | "NOT_APPLIED"
@@ -160,6 +166,12 @@ const PROBLEM_CODES: readonly ProblemCode[] = [
     "UPSTREAM_INVALID_RESPONSE",
     "UPSTREAM_TIMEOUT",
     "CONTRACT_ALREADY_SIGNED",
+    "MESSAGE_SEND_NOT_STARTED",
+    "MESSAGE_SEND_UNCONFIRMED",
+    "MESSAGE_SEND_PARTIAL",
+    "MESSAGE_SEND_REJECTED",
+    "MESSAGE_SEND_ALREADY_REQUESTED",
+    "MESSAGE_REQUEST_KEY_CONFLICT",
 ];
 
 const PROBLEM_ERROR_CODES: readonly ProblemErrorCode[] = [
@@ -409,6 +421,73 @@ const PROBLEM_DEFINITIONS: Readonly<
         detail: {
             "ko-KR": "이미 서명된 계약은 다시 변경할 수 없어요.",
             "en-US": "A signed contract cannot be changed again.",
+        },
+    },
+    MESSAGE_SEND_NOT_STARTED: {
+        status: 503,
+        title: {
+            "ko-KR": "문자 발송을 시작하지 못했어요",
+            "en-US": "Message sending did not start",
+        },
+        detail: {
+            "ko-KR": "발송 기록을 만들지 못해 문자 발송을 시작하지 않았어요.",
+            "en-US": "The message could not be sent because its delivery record was not created.",
+        },
+    },
+    MESSAGE_SEND_UNCONFIRMED: {
+        status: 502,
+        statuses: [502, 503],
+        title: {
+            "ko-KR": "문자 발송 결과를 확인할 수 없어요",
+            "en-US": "Message sending is unconfirmed",
+        },
+        detail: {
+            "ko-KR": "문자 발송 결과를 확인할 수 없어 발송 기록을 먼저 확인해 주세요.",
+            "en-US": "We can’t confirm the message result, so check the delivery record before trying again.",
+        },
+    },
+    MESSAGE_SEND_PARTIAL: {
+        status: 502,
+        title: {
+            "ko-KR": "문자 일부만 발송됐어요",
+            "en-US": "Message sent partially",
+        },
+        detail: {
+            "ko-KR": "일부 문자만 접수되어 전체 재발송 전에 발송 내역을 확인해 주세요.",
+            "en-US": "Only some messages were accepted, so check the delivery history before sending again.",
+        },
+    },
+    MESSAGE_SEND_REJECTED: {
+        status: 502,
+        title: {
+            "ko-KR": "문자 발송이 거부됐어요",
+            "en-US": "Message sending was rejected",
+        },
+        detail: {
+            "ko-KR": "문자 공급자가 문자 발송 요청을 거부했어요.",
+            "en-US": "The message provider rejected the send request.",
+        },
+    },
+    MESSAGE_SEND_ALREADY_REQUESTED: {
+        status: 409,
+        title: {
+            "ko-KR": "같은 문자 발송 요청이 있어요",
+            "en-US": "Message request already exists",
+        },
+        detail: {
+            "ko-KR": "같은 문자 발송 요청이 이미 있어 발송 기록을 확인해 주세요.",
+            "en-US": "A matching message request already exists, so check its delivery status.",
+        },
+    },
+    MESSAGE_REQUEST_KEY_CONFLICT: {
+        status: 409,
+        title: {
+            "ko-KR": "문자 요청 식별자가 충돌했어요",
+            "en-US": "Message request key conflict",
+        },
+        detail: {
+            "ko-KR": "같은 요청 식별자가 다른 발송 내용에 사용됐어요.",
+            "en-US": "The request key was already used with different message content.",
         },
     },
 };
