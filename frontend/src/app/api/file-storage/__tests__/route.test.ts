@@ -257,7 +257,10 @@ describe("file-storage API routes", () => {
     );
 
     expect(response.status).toBe(400);
-    await expect(response.json()).resolves.toEqual({
+    await expect(response.json()).resolves.toMatchObject({
+      code: "VALIDATION_FAILED",
+      outcome: "NOT_APPLIED",
+      requestId: response.headers.get("X-Request-Id"),
       error: "Request body must be valid JSON",
     });
     expect(mockPut).not.toHaveBeenCalled();
