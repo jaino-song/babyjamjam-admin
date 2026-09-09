@@ -212,6 +212,19 @@ function hasExistingContentDifference(
     );
 }
 
+function mergeSparseAnswers(
+    source: ServiceRecordEditJsonValue,
+    patch: ServiceRecordEditJsonValue | undefined,
+): ServiceRecordEditJsonValue {
+    if (patch === undefined) return source;
+    const patchRecord = asJsonRecord(patch);
+    if (!patchRecord) return patch;
+    return jsonValue({
+        ...(asJsonRecord(source) ?? {}),
+        ...patchRecord,
+    });
+}
+
 function hasPlannedDateDifference(
     before: Array<{ sessionIndex: number; serviceDate: string }>,
     after: Array<{ sessionIndex: number; serviceDate: string }>,
@@ -625,7 +638,7 @@ export class AdminServiceRecordEditService {
             return {
                 sourceRowId: day.sourceRowId,
                 serviceDate: projected?.serviceDate ?? day.serviceDate,
-                answers: patch?.answers ?? day.answers,
+                answers: mergeSparseAnswers(day.answers, patch?.answers),
                 etcService: typeof patch?.etcService === "string" ? patch.etcService : day.etcService,
                 notes: typeof patch?.notes === "string" ? patch.notes : day.notes,
                 paymentConfirmed: typeof patch?.paymentConfirmed === "boolean"

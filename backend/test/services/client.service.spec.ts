@@ -1282,6 +1282,26 @@ describe("ClientService", () => {
                 expect(prismaService.employee_schedule.create).not.toHaveBeenCalled();
             });
 
+            it("initializes the service-record lifecycle when reusing a client without an assignment", async () => {
+                const existingClient = createClientEntity();
+                clientRepository.findByPhone.mockResolvedValue(existingClient);
+
+                await service.create(branchId, {
+                    name: "Existing Client",
+                    phone: "010-1234-5678",
+                    careCenter: false,
+                    voucherClient: true,
+                    breastPump: false,
+                    reuseExistingClient: true,
+                });
+
+                expect(prismaService.$transaction).toHaveBeenCalledTimes(1);
+                expect(serviceRecordLifecycleService.ensureForClient).toHaveBeenCalledWith(
+                    existingClient.id,
+                    prismaService,
+                );
+            });
+
             it("links matching contracts when reusing an existing client by phone", async () => {
                 const existingClient = createClientEntity();
                 clientRepository.findByPhone.mockResolvedValue(existingClient);

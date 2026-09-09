@@ -538,6 +538,75 @@ describe("AdminServiceRecordEditService", () => {
         expect(harness.repository.loadSource).toHaveBeenCalledTimes(1);
     });
 
+    it("merges sparse session answer patches into the immutable confirmation row", async () => {
+        const source = previewSourceSnapshot();
+        source.sessions[0] = {
+            ...source.sessions[0]!,
+            answers: {
+                perineum: ["이상없음"],
+                breast: ["울혈"],
+            },
+        };
+        const harness = createHarness({ source });
+        const started = await harness.service.startDraft(BRANCH_ID, CLIENT_ID, ACTOR_ID, {});
+        if (!started.draft) throw new Error("expected a draft");
+        const activeDraft = {
+            ...started.draft,
+            changes: {
+                sessions: [{
+                    sessionIndex: 1,
+                    answers: { breast: ["이상없음"] },
+                }],
+            },
+        };
+        harness.repository.findDraftById.mockResolvedValue(activeDraft);
+        harness.repository.loadSource.mockResolvedValue(source);
+        const preview = await harness.service.previewDraft(BRANCH_ID, DRAFT_ID, ACTOR_ID, {
+            expectedDraftVersion: activeDraft.draftVersion,
+        });
+        harness.repository.confirmDraft.mockResolvedValue({
+            status: "confirmed" as const,
+            caseId: CASE_ID,
+            clientId: CLIENT_ID,
+            draftId: DRAFT_ID,
+            draftVersion: 2,
+            caseVersion: 8,
+            revisionId: "55555555-5555-4555-8555-555555555555",
+            revisionNumber: 1,
+            documentStatus: "capability_unverified" as const,
+            confirmedAt: "2026-09-08T01:02:03.000Z",
+        });
+
+        await harness.service.confirmDraft(BRANCH_ID, DRAFT_ID, ACTOR_ID, {
+            expectedDraftVersion: activeDraft.draftVersion,
+            previewId: preview.previewId,
+            idempotencyKey: "11111111-1111-4111-8111-111111111111",
+        });
+
+        const input = harness.repository.confirmDraft.mock.calls.at(-1)?.[0] as {
+            prepare: (snapshot: { draft: typeof activeDraft; source: ServiceRecordEditSource }) => unknown;
+        };
+        const plan = input.prepare({ draft: activeDraft, source }) as {
+            sessions: Array<Record<string, unknown>>;
+            revision: { payload: Record<string, unknown> } | null;
+        };
+        expect(plan.sessions[0]?.["answers"]).toEqual({
+            perineum: ["이상없음"],
+            breast: ["이상없음"],
+        });
+        expect(plan.revision?.payload).toEqual(expect.objectContaining({
+            sessions: expect.arrayContaining([
+                expect.objectContaining({
+                    sourceRowId: "day-1",
+                    answers: {
+                        perineum: ["이상없음"],
+                        breast: ["이상없음"],
+                    },
+                }),
+            ]),
+        }));
+    });
+
     it("plans explicit future content with canonical provenance in the immutable revision", async () => {
         const source = previewSourceSnapshot();
         const harness = createHarness({ source });

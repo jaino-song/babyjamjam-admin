@@ -631,6 +631,11 @@ describe("administrator draft editing", () => {
         const fetchMock = jest.fn()
             .mockResolvedValueOnce({ ok: true, status: 200, json: async () => confirmPreviewResponse })
             .mockRejectedValueOnce(new TypeError("network unavailable"))
+            .mockResolvedValueOnce({
+                ok: false,
+                status: 409,
+                json: async () => ({ code: "DRAFT_ALREADY_CONFIRMED" }),
+            })
             .mockResolvedValueOnce({ ok: true, status: 200, json: async () => confirmResult });
         global.fetch = fetchMock;
 
@@ -646,13 +651,19 @@ describe("administrator draft editing", () => {
         fireEvent.click(screen.getByRole("button", { name: "수정 확정" }));
         await waitFor(() => expect(screen.getByText(/같은 요청으로 다시 시도해 주세요/)).toBeInTheDocument());
 
+        fireEvent.click(screen.getByRole("button", { name: "닫기" }));
+        await waitFor(() => expect(screen.queryByRole("dialog", { name: "초안 변경 미리보기" })).not.toBeInTheDocument());
+        fireEvent.click(screen.getByRole("button", { name: "변경 미리보기" }));
+        await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3));
+        await waitFor(() => expect(screen.getByText(/초안 버전이 변경되어 미리보기를 불러오지 못했습니다/)).toBeInTheDocument());
+        await waitFor(() => expect(screen.getByRole("button", { name: "수정 확정" })).toBeInTheDocument());
         fireEvent.click(screen.getByRole("button", { name: "수정 확정" }));
         await waitFor(() => expect(screen.getAllByText(/관리자 수정본이 확정되었습니다/).length).toBeGreaterThan(0));
 
-        const firstBody = JSON.parse(fetchMock.mock.calls[1][1].body as string) as { idempotencyKey: string };
-        const retryBody = JSON.parse(fetchMock.mock.calls[2][1].body as string) as { idempotencyKey: string };
+        const firstBody = JSON.parse(fetchMock.mock.calls[1][1].body as string) as Record<string, unknown>;
+        const retryBody = JSON.parse(fetchMock.mock.calls[3][1].body as string) as Record<string, unknown>;
         expect(firstBody.idempotencyKey).toMatch(/^[0-9a-f-]{36}$/);
-        expect(retryBody.idempotencyKey).toBe(firstBody.idempotencyKey);
+        expect(retryBody).toEqual(firstBody);
     });
 
     it("keeps inputs on stale confirm and requires a fresh preview before retrying", async () => {
@@ -811,6 +822,40 @@ describe("administrator draft editing", () => {
         fireEvent.click(screen.getByRole("button", { name: "최신 초안 불러오기" }));
         expect(screen.getByPlaceholderText("서비스 제공 관련 특이사항 기록 필요 시 기재")).toHaveValue("서버 최신 메모");
         expect(screen.getByText("저장됨")).toBeInTheDocument();
+    });
+
+    it("keeps a confirmed latest draft read-only after a 409 reload", async () => {
+        const latest = makeDraftState({ sessions: [{ sessionIndex: 1, notes: "확정된 메모" }] }, 3);
+        const latestDraft = { ...latest.draft, status: "CONFIRMED" as const };
+        global.fetch = jest.fn().mockResolvedValue({
+            ok: false,
+            status: 409,
+            json: async () => ({
+                code: "SERVICE_RECORD_EDIT_DRAFT_CONFLICT",
+                latestDraft,
+                sourceChanged: true,
+                sourceCaseVersion: 2,
+                sourceFingerprint: "source-2",
+            }),
+        });
+        const { container } = render(
+            <ServiceRecordAdminWizard clientId="42" overview={overview} initialDraftState={makeDraftState()} />,
+        );
+
+        fireEvent.click(container.querySelectorAll('[data-slot="day"]')[0]);
+        fireEvent.click(screen.getByRole("button", { name: "다음" }));
+        fireEvent.click(screen.getByRole("button", { name: "다음" }));
+        const notesInput = screen.getByPlaceholderText("서비스 제공 관련 특이사항 기록 필요 시 기재");
+        fireEvent.change(notesInput, { target: { value: "내 로컬 메모" } });
+        fireEvent.click(screen.getByRole("button", { name: "초안 저장" }));
+
+        await waitFor(() => expect(screen.getByText(/다른 관리자의 변경으로 저장되지 않았습니다/)).toBeInTheDocument());
+        fireEvent.click(screen.getByRole("button", { name: "최신 초안 불러오기" }));
+
+        await waitFor(() => expect(screen.getByText("초안 없음")).toBeInTheDocument());
+        expect(container.querySelector('[data-slot="provider"]')).toHaveTextContent("관리자 조회");
+        expect(screen.getByPlaceholderText("서비스 제공 관련 특이사항 기록 필요 시 기재")).toBeDisabled();
+        expect(screen.queryByRole("button", { name: "변경 미리보기" })).not.toBeInTheDocument();
     });
 
     it("keeps local input on permission failure and discards with compare-and-swap", async () => {

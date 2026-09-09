@@ -707,6 +707,113 @@ function canRetryRevisionDocumentState(row: Pick<RevisionDocumentStateRow, "stat
         && !["creating", "sent", "reconciling", "unknown"].includes(row.step);
 }
 
+type RevisionSnapshotRetryJobScope = {
+    requestKey: string;
+    activeKey: string;
+};
+
+type RevisionSnapshotRetryJobRow = {
+    id: string;
+    branchId: string;
+    clientId: number | null;
+    documentId: string | null;
+    jobType: string;
+    source: string;
+    status: string;
+    requestKey: string;
+    activeKey: string | null;
+    payload: unknown;
+    payloadFingerprint: string | null;
+    progressStep: string | null;
+};
+
+const REVISION_SNAPSHOT_RETRY_BLOCKED_PROGRESS_STEPS = [
+    "creating",
+    "sent",
+    "reconciling",
+    "unknown",
+] as const;
+
+function revisionSnapshotRetryJobScope(
+    state: ServiceRecordRevisionDocumentState,
+): RevisionSnapshotRetryJobScope | null {
+    const workflowScope = state.workflowScope;
+    if (!workflowScope || typeof workflowScope !== "object" || Array.isArray(workflowScope)) {
+        return null;
+    }
+    const requestKey = workflowScope["requestKey"];
+    const activeKey = workflowScope["activeKey"];
+    if (typeof requestKey !== "string"
+        || requestKey.trim().length === 0
+        || requestKey.length > 255
+        || typeof activeKey !== "string"
+        || activeKey.trim().length === 0
+        || activeKey.length > 255) {
+        return null;
+    }
+    return { requestKey, activeKey };
+}
+
+function revisionSnapshotRetryJobPayload(value: unknown): Record<string, unknown> | null {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+    const payload = value as Record<string, unknown>;
+    return payload["kind"] === "service_record_revision" ? payload : null;
+}
+
+function assertRevisionSnapshotRetryJob(
+    state: ServiceRecordRevisionDocumentState,
+    scope: RevisionSnapshotRetryJobScope,
+    job: RevisionSnapshotRetryJobRow,
+): void {
+    if (job.branchId !== state.branchId
+        || job.clientId !== state.clientId
+        || job.requestKey !== scope.requestKey
+        || job.jobType !== "create_document"
+        || job.source !== "staff"
+        || job.documentId !== null
+        || (job.activeKey !== null && job.activeKey !== scope.activeKey)
+        || (job.status !== "failed" && job.status !== "requires_attention")
+        || (job.progressStep !== null
+            && REVISION_SNAPSHOT_RETRY_BLOCKED_PROGRESS_STEPS.includes(
+                job.progressStep as (typeof REVISION_SNAPSHOT_RETRY_BLOCKED_PROGRESS_STEPS)[number],
+            ))) {
+        throw new ServiceRecordEditConflictError("Revision snapshot job is not safely retryable");
+    }
+
+    if (job.progressStep !== null && typeof job.progressStep !== "string") {
+        throw new ServiceRecordEditConflictError("Revision snapshot job progress is invalid");
+    }
+    if (typeof job.payloadFingerprint !== "string"
+        || job.payloadFingerprint.toLowerCase() !== state.inputFingerprint.toLowerCase()) {
+        throw new ServiceRecordEditConflictError("Revision snapshot job fingerprint does not match state");
+    }
+
+    const payload = revisionSnapshotRetryJobPayload(job.payload);
+    if (!payload
+        || payload["revisionId"] !== state.revisionId
+        || payload["generation"] !== state.generation
+        || payload["documentStateId"] !== state.id
+        || payload["documentVersion"] !== state.documentVersion
+        || typeof payload["payloadFingerprint"] !== "string"
+        || (payload["payloadFingerprint"] as string).toLowerCase() !== state.inputFingerprint.toLowerCase()) {
+        throw new ServiceRecordEditConflictError("Revision snapshot job payload does not match state");
+    }
+
+    const immutablePayload = payload["immutablePayload"];
+    if (!immutablePayload || typeof immutablePayload !== "object" || Array.isArray(immutablePayload)) {
+        throw new ServiceRecordEditConflictError("Revision snapshot job immutable payload is invalid");
+    }
+    let immutableFingerprint: string;
+    try {
+        immutableFingerprint = jsonFingerprint(immutablePayload);
+    } catch {
+        throw new ServiceRecordEditConflictError("Revision snapshot job immutable payload is invalid");
+    }
+    if (immutableFingerprint !== state.inputFingerprint.toLowerCase()) {
+        throw new ServiceRecordEditConflictError("Revision snapshot job immutable payload does not match state");
+    }
+}
+
 async function rawStateQuery<T>(
     client: Prisma.TransactionClient | PrismaService,
     query: Prisma.Sql,
@@ -2374,8 +2481,8 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
         const enqueueJob = input.enqueueJob !== false;
 
         // Discover the owning case before taking the mutable state lock.  The
-        // common writer order is case first, then document state; retrying an
-        // auxiliary operation must follow that order as well so a stale
+        // common writer order is case first, then document state; retrying a
+        // provider-bound operation must follow that order as well so a stale
         // operation cannot strand itself in `pending` while another revision
         // becomes current. Internal contract/receipt resumes set
         // `enqueueJob: false`: they continue from the already-persisted
@@ -2390,7 +2497,9 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
         if (!discoveredRow) return null;
         const isAuxiliaryOperation = discoveredRow.operation === "contract_period"
             || discoveredRow.operation === "receipt_refresh";
-        if (enqueueJob && isAuxiliaryOperation) {
+        const requiresOwnerCaseLock = enqueueJob
+            && (isAuxiliaryOperation || discoveredRow.operation === "record_snapshot");
+        if (requiresOwnerCaseLock) {
             const ownerCase = await selectRevisionGenerationCase(context.tx, {
                 branchId: input.branchId,
                 clientId: input.clientId,
@@ -2421,6 +2530,10 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
             // pending row with no job or coordinator context.
             throw new ServiceRecordEditConflictError("Revision operation dispatch context is unavailable");
         }
+
+        const snapshotRetryJob = enqueueJob && current.operation === "record_snapshot"
+            ? await this.lockAndValidateRevisionSnapshotRetryJob(context.tx, current)
+            : null;
 
         const updated = await rawStateQuery<RevisionDocumentStateRow[]>(context.tx, Prisma.sql`
             UPDATE "service_record_revision_document_state"
@@ -2460,7 +2573,73 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
                 [{ operation: retried.operation, state: retried }],
             );
         }
+        if (enqueueJob && retried && snapshotRetryJob) {
+            const requeued = await rawStateQuery<Array<{ id: string }>>(context.tx, Prisma.sql`
+                UPDATE "eformsign_document_job"
+                SET status = 'queued',
+                    active_key = ${snapshotRetryJob.scope.activeKey},
+                    progress_step = 'queued',
+                    next_attempt_at = now(),
+                    last_error_code = NULL,
+                    completed_at = NULL,
+                    heartbeat_at = NULL,
+                    lease_token = NULL,
+                    updated_at = now()
+                WHERE id = ${snapshotRetryJob.jobId}::uuid
+                  AND branch_id = ${retried.branchId}::uuid
+                  AND client_id = ${retried.clientId}
+                  AND request_key = ${snapshotRetryJob.scope.requestKey}
+                  AND document_id IS NULL
+                  AND status IN ('failed', 'requires_attention')
+                  AND COALESCE(progress_step, '') NOT IN ('creating', 'sent', 'reconciling', 'unknown')
+                RETURNING id
+            `);
+            if (requeued.length !== 1) {
+                // Keep the state and job transition atomic.  A concurrent
+                // worker or reconciliation update must not leave a pending
+                // state without its original durable snapshot job.
+                throw new ServiceRecordEditConflictError("Revision snapshot job changed before retry");
+            }
+        }
         return retried ?? current;
+    }
+
+    private async lockAndValidateRevisionSnapshotRetryJob(
+        tx: Prisma.TransactionClient,
+        state: ServiceRecordRevisionDocumentState,
+    ): Promise<{ jobId: string; scope: RevisionSnapshotRetryJobScope }> {
+        const scope = revisionSnapshotRetryJobScope(state);
+        if (!scope || state.documentVersion === null
+            || !Number.isInteger(state.documentVersion) || state.documentVersion < 1) {
+            throw new ServiceRecordEditConflictError("Revision snapshot retry scope is unavailable");
+        }
+
+        const jobs = await rawStateQuery<RevisionSnapshotRetryJobRow[]>(tx, Prisma.sql`
+            SELECT
+                job.id,
+                job.branch_id AS "branchId",
+                job.client_id AS "clientId",
+                job.document_id AS "documentId",
+                job.job_type AS "jobType",
+                job.source,
+                job.status,
+                job.request_key AS "requestKey",
+                job.active_key AS "activeKey",
+                job.payload,
+                job.payload_fingerprint AS "payloadFingerprint",
+                job.progress_step AS "progressStep"
+            FROM "eformsign_document_job" AS job
+            WHERE job.branch_id = ${state.branchId}::uuid
+              AND job.client_id = ${state.clientId}
+              AND job.request_key = ${scope.requestKey}
+            FOR UPDATE
+        `);
+        const job = jobs[0];
+        if (!job) {
+            throw new ServiceRecordEditConflictError("Revision snapshot job is unavailable for retry");
+        }
+        assertRevisionSnapshotRetryJob(state, scope, job);
+        return { jobId: job.id, scope };
     }
 
     async allocateServiceRecordRevisionDocumentVersion(

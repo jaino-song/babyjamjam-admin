@@ -3,7 +3,7 @@
  * snapshot is provenance owned by the backend and is intentionally opaque to
  * the editor; only `changes` is applied to the form.
  */
-export type AdminServiceRecordEditDraftStatus = "ACTIVE" | "DISCARDED";
+export type AdminServiceRecordEditDraftStatus = "ACTIVE" | "DISCARDED" | "CONFIRMED";
 
 export interface AdminServiceRecordEditHeaderChanges {
     momName?: string;

@@ -408,4 +408,19 @@ describe("admin service-record edit API adapter", () => {
         expect(state.draft?.changes).toEqual({ sessions: [{ sessionIndex: 1, serviceDate: "2026-07-10" }] });
         expect(state.draft?.sourceSnapshot).toEqual({ answers: { secret: true } });
     });
+
+    it("preserves a confirmed draft as closed when normalizing a latest conflict state", () => {
+        const state = normalizeAdminServiceRecordEditState({
+            draft: {
+                id: "d-1",
+                status: "CONFIRMED",
+                changes: { sessions: [{ sessionIndex: 1, notes: "확정 메모" }] },
+            },
+            sourceChanged: true,
+            sourceCaseVersion: 3,
+            sourceFingerprint: "f-3",
+        });
+
+        expect(state.draft?.status).toBe("CONFIRMED");
+    });
 });

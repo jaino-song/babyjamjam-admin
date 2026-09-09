@@ -12,6 +12,9 @@ const revisionId = "33333333-3333-4333-8333-333333333333";
 const stateId = "44444444-4444-4444-8444-444444444444";
 const immutableInput = { plannedSessions: [{ sessionIndex: 1, serviceDate: "2026-09-08" }] };
 const fingerprint = sha256CanonicalJson(immutableInput);
+const snapshotJobId = "66666666-6666-4666-8666-666666666666";
+const snapshotRequestKey = `service-record-revision:${caseId}:draft-1`;
+const snapshotActiveKey = `service-record-revision:${caseId}`;
 
 function stateRow(overrides: Record<string, unknown> = {}) {
     return {
@@ -40,6 +43,47 @@ function stateRow(overrides: Record<string, unknown> = {}) {
         version: 0,
         createdAt: new Date("2026-09-08T00:00:00.000Z"),
         updatedAt: new Date("2026-09-08T00:00:00.000Z"),
+        ...overrides,
+    };
+}
+
+function retryableSnapshotState(overrides: Record<string, unknown> = {}) {
+    return stateRow({
+        status: "manual_review",
+        step: "preflight_failed",
+        workflowScope: {
+            requestKey: snapshotRequestKey,
+            activeKey: snapshotActiveKey,
+            caseVersion: 7,
+            formVersion: 2,
+        },
+        ...overrides,
+    });
+}
+
+function snapshotJobRow(overrides: Record<string, unknown> = {}) {
+    return {
+        id: snapshotJobId,
+        branchId,
+        clientId,
+        documentId: null,
+        jobType: "create_document",
+        source: "staff",
+        status: "failed",
+        requestKey: snapshotRequestKey,
+        activeKey: null,
+        payload: {
+            kind: "service_record_revision",
+            revisionId,
+            revisionNumber: 1,
+            generation: "generation-1",
+            documentStateId: stateId,
+            documentVersion: 3,
+            immutablePayload: immutableInput,
+            payloadFingerprint: fingerprint,
+        },
+        payloadFingerprint: fingerprint,
+        progressStep: "preparing",
         ...overrides,
     };
 }
@@ -226,6 +270,64 @@ describe("ServiceRecordEditRepository revision snapshot version/promotion seams"
         expect(harness.queryRaw.mock.calls.map(([query]) => sqlText(query))
             .some((query) => query.includes('UPDATE "service_record_revision_document_state"')))
             .toBe(false);
+    });
+
+    it("requeues the existing failed snapshot job without changing its payload or chunks", async () => {
+        const retryState = retryableSnapshotState();
+        const retriedState = retryableSnapshotState({ status: "pending", step: "retry_requested", version: 1, attempts: 1 });
+        const harness = transactionHarness([
+            [retryState], // branch-scoped discovery
+            [ownerCase()], // current revision owner lock
+            [retryState], // state reread under its lock
+            [snapshotJobRow()], // exact existing snapshot job lock
+            [retriedState], // state CAS
+            [{ id: snapshotJobId }], // job CAS
+        ]);
+        const repository = new ServiceRecordEditRepository(harness.prisma as never);
+
+        await expect(repository.retryRevisionDocumentState({
+            branchId,
+            clientId,
+            revisionId,
+            stateId,
+            expectedGeneration: retryState.generation as string,
+        })).resolves.toMatchObject({ status: "pending", step: "retry_requested", version: 1 });
+
+        const sqlCalls = harness.queryRaw.mock.calls.map(([query]) => sqlText(query));
+        expect(sqlCalls.some((query) => query.includes('FROM "eformsign_document_job" AS job')
+            && query.includes("FOR UPDATE"))).toBe(true);
+        const jobUpdate = sqlCalls.find((query) => query.includes('UPDATE "eformsign_document_job"'));
+        expect(jobUpdate).toContain("status = 'queued'");
+        expect(jobUpdate).toContain("progress_step = 'queued'");
+        expect(jobUpdate).not.toContain("payload =");
+        expect(jobUpdate).not.toContain("document_id =");
+        expect(sqlCalls.some((query) => query.includes('INSERT INTO "eformsign_document_job"'))).toBe(false);
+        expect(sqlCalls.some((query) => query.includes("service_record_snapshot_chunk")
+            && query.includes("UPDATE"))).toBe(false);
+    });
+
+    it("keeps an ambiguous snapshot outcome blocked instead of replaying the provider job", async () => {
+        const retryState = retryableSnapshotState();
+        const harness = transactionHarness([
+            [retryState], // branch-scoped discovery
+            [ownerCase()], // current revision owner lock
+            [retryState], // state reread under its lock
+            [snapshotJobRow({ status: "requires_attention", progressStep: "reconciling" })],
+        ]);
+        const repository = new ServiceRecordEditRepository(harness.prisma as never);
+
+        await expect(repository.retryRevisionDocumentState({
+            branchId,
+            clientId,
+            revisionId,
+            stateId,
+            expectedGeneration: retryState.generation as string,
+        })).rejects.toThrow("Revision snapshot job is not safely retryable");
+
+        const sqlCalls = harness.queryRaw.mock.calls.map(([query]) => sqlText(query));
+        expect(sqlCalls).toHaveLength(4);
+        expect(sqlCalls.some((query) => query.includes('UPDATE "service_record_revision_document_state"'))).toBe(false);
+        expect(sqlCalls.some((query) => query.includes('UPDATE "eformsign_document_job"'))).toBe(false);
     });
 
     it("refuses pointer promotion until every persisted chunk/document is complete", async () => {

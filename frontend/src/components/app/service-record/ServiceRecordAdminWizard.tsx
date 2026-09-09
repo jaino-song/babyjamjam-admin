@@ -516,6 +516,17 @@ function hasDraftChanges(changes: AdminServiceRecordEditChanges): boolean {
     return hasHeaderChanges || hasSessionChanges;
 }
 
+function isSamePreviewAttempt(
+    left: ServiceRecordEditPreviewResponse,
+    right: ServiceRecordEditPreviewResponse,
+): boolean {
+    return left.previewId === right.previewId
+        && left.draftId === right.draftId
+        && left.draftVersion === right.draftVersion
+        && left.sourceCaseVersion === right.sourceCaseVersion
+        && left.sourceFingerprint === right.sourceFingerprint;
+}
+
 function createIdempotencyKey(): string {
     if (typeof globalThis.crypto?.randomUUID === "function") return globalThis.crypto.randomUUID();
     const bytes = new Uint8Array(16);
@@ -573,6 +584,7 @@ export function ServiceRecordAdminWizard({
     const [confirmError, setConfirmError] = useState<string | null>(null);
     const [confirmResult, setConfirmResult] = useState<ServiceRecordEditConfirmResponse | null>(null);
     const confirmIdempotencyKey = useRef<string | null>(null);
+    const lastSuccessfulPreview = useRef<ServiceRecordEditPreviewResponse | null>(null);
 
     const activeDraft = draftState?.draft?.status === "ACTIVE" ? draftState.draft : null;
     const context = useMemo(
@@ -705,6 +717,7 @@ export function ServiceRecordAdminWizard({
             setDateDialogOpen(false);
             setPreview(null);
             setPreviewError(null);
+            lastSuccessfulPreview.current = null;
         } catch (error) {
             const apiError = error instanceof AdminServiceRecordEditApiError ? error : null;
             const status = apiError?.status ?? 500;
@@ -728,34 +741,50 @@ export function ServiceRecordAdminWizard({
         if (!activeDraft || dateMoveBusy || previewBusy || confirmBusy || confirmResult) return;
         const target = dirty ? await persistDraft() : draftState;
         if (!target?.draft || target.draft.status !== "ACTIVE") return;
-        confirmIdempotencyKey.current = null;
         setConfirmResult(null);
         setConfirmError(null);
         setPreviewDialogOpen(true);
         setPreviewBusy(true);
         setPreviewError(null);
+        const previousPreview = lastSuccessfulPreview.current;
         try {
             const nextPreview = await adminServiceRecordEditApi.previewDraft(
                 target.draft.id,
                 target.draft.draftVersion,
             );
+            if (nextPreview.blockingReasons.length === 0
+                && (!previousPreview || !isSamePreviewAttempt(previousPreview, nextPreview))) {
+                // A changed successful preview represents a new logical
+                // confirmation attempt. Keep the key only when reopening an
+                // equivalent preview after an unknown confirmation outcome.
+                confirmIdempotencyKey.current = null;
+            }
+            lastSuccessfulPreview.current = nextPreview;
             setPreview(nextPreview);
         } catch (error) {
             const apiError = error instanceof AdminServiceRecordEditApiError ? error : null;
             setPreviewError(previewErrorMessage(apiError?.status ?? 500));
-            setPreview(null);
+            if (confirmIdempotencyKey.current && previousPreview) {
+                // A preview can become stale after an unknown confirmation
+                // outcome (for example, once the server has closed the
+                // draft). Keep the exact prior request available for an
+                // idempotent retry with the same key.
+                setPreview(previousPreview);
+            } else {
+                setPreview(null);
+            }
         } finally {
             setPreviewBusy(false);
         }
     }, [activeDraft, confirmBusy, confirmResult, dateMoveBusy, draftState, dirty, persistDraft, previewBusy]);
 
     const refreshPreview = useCallback(() => {
-        if (confirmBusy) return;
+        if (confirmBusy || !confirmError?.includes("오래되어")) return;
         confirmIdempotencyKey.current = null;
         setConfirmResult(null);
         setConfirmError(null);
         void openPreview();
-    }, [confirmBusy, openPreview]);
+    }, [confirmBusy, confirmError, openPreview]);
 
     const confirmPreview = useCallback(async () => {
         if (!activeDraft || !preview || preview.blockingReasons.length > 0 || confirmBusy) return;
@@ -783,6 +812,7 @@ export function ServiceRecordAdminWizard({
                 idempotencyKey,
             );
             setConfirmResult(result);
+            setPreviewError(null);
             setSaveState("saved");
             publishServiceRecordRevisionSync({
                 caseId: result.caseId,
@@ -824,6 +854,7 @@ export function ServiceRecordAdminWizard({
             setPreviewDialogOpen(false);
             setPreview(null);
             setPreviewError(null);
+            lastSuccessfulPreview.current = null;
             setConfirmError(null);
             setConfirmResult(null);
             confirmIdempotencyKey.current = null;
@@ -860,6 +891,7 @@ export function ServiceRecordAdminWizard({
         setPreviewDialogOpen(false);
         setPreview(null);
         setPreviewError(null);
+        lastSuccessfulPreview.current = null;
         setConfirmError(null);
         setConfirmResult(null);
         confirmIdempotencyKey.current = null;

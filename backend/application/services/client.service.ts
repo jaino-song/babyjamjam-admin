@@ -1082,6 +1082,14 @@ export class ClientService {
                         });
                     }
                 }
+            } else {
+                // A duplicate-phone reuse without an assignment still needs a
+                // service-record case. Keep lifecycle initialization inside its
+                // own owning transaction so the lifecycle service can lock and
+                // reread the client/schedule set before any case repair.
+                await this.prismaService.$transaction(async (transaction) => {
+                    await this.serviceRecordLifecycleService?.ensureForClient(existing.id, transaction);
+                });
             }
             await this.linkContractDocumentsByPhone(branchid, existing, normalizedPhone);
             return existing;

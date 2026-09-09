@@ -113,7 +113,11 @@ function normalizeContractStage(value: unknown): { value: ServiceRecordEditContr
 function normalizeDraft(value: unknown): AdminServiceRecordEditDraft | null {
     if (!isRecord(value) || typeof value.id !== "string") return null;
     const changes = isRecord(value.changes) ? value.changes : {};
-    const status = value.status === "DISCARDED" ? "DISCARDED" : "ACTIVE";
+    const status = value.status === "DISCARDED"
+        ? "DISCARDED"
+        : value.status === "CONFIRMED"
+            ? "CONFIRMED"
+            : "ACTIVE";
     return {
         id: value.id,
         branchId: asString(value.branchId),
