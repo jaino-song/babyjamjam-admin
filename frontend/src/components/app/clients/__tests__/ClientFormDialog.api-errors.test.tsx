@@ -163,8 +163,13 @@ describe("ClientFormDialog API errors", () => {
     expect(document.activeElement).toBe(screen.getByLabelText(/연락처/));
   });
 
-  it("keeps an unknown mutation outcome blocked after edits and step changes", async () => {
-    mockCreateClientMutateAsync.mockRejectedValue(new Error("transport failed"));
+  it.each([
+    ["transport", new Error("transport failed")],
+    ["server problem", { response: { status: 500, data: createProblemDetails({
+      code: "INTERNAL_ERROR", requestId: "req-unknown", outcome: "UNKNOWN",
+    }) } }],
+  ])("keeps an unknown %s mutation outcome blocked after edits", async (_kind, failure) => {
+    mockCreateClientMutateAsync.mockRejectedValue(failure);
 
     render(<ClientFormDialog open onClose={jest.fn()} />);
     await flushOpenEffect();
@@ -173,11 +178,11 @@ describe("ClientFormDialog API errors", () => {
     const submitButton = screen.getByRole("button", { name: "생성" });
     await waitFor(() => expect(submitButton).toBeEnabled());
     fireEvent.click(submitButton);
-    expect(await screen.findByText("변경 결과를 확인할 수 없으니 다시 실행하기 전에 작업 상태를 확인해 주세요.")).toBeInTheDocument();
+    expect(await screen.findByText("다시 실행하기 전에 작업 상태를 확인해 주세요.")).toBeInTheDocument();
     expect(submitButton).toBeDisabled();
 
     fireEvent.change(screen.getByLabelText(/이름/), { target: { value: "김길동" } });
-    expect(screen.getByText("변경 결과를 확인할 수 없으니 다시 실행하기 전에 작업 상태를 확인해 주세요.")).toBeInTheDocument();
+    expect(screen.getByText("다시 실행하기 전에 작업 상태를 확인해 주세요.")).toBeInTheDocument();
     expect(submitButton).toBeDisabled();
     fireEvent.click(submitButton);
     expect(mockCreateClientMutateAsync).toHaveBeenCalledTimes(1);

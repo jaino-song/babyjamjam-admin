@@ -2106,6 +2106,13 @@ function ClientFormContent({
                             })}
                         </ul>
                     ) : null}
+                    {isUnknownOutcome ? (
+                        <p>
+                            {locale === "en"
+                                ? "Check the operation status before trying again."
+                                : "다시 실행하기 전에 작업 상태를 확인해 주세요."}
+                        </p>
+                    ) : null}
                     {error.requestId ? (
                         <FormHelperText data-component={`${base}_error-summary_request-id`}>
                             {locale === "en" ? `Request ID: ${error.requestId}` : `요청 ID: ${error.requestId}`}
