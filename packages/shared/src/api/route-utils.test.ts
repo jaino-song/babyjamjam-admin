@@ -266,6 +266,21 @@ describe("local request-body validation", () => {
         expect(body.requestId).toBe(response?.headers.get("X-Request-Id"));
     });
 
+    it("distinguishes missing fields from supplied values with the same Zod invalid_type code", async () => {
+        const schema = z.object({ required: z.string(), wrongType: z.string() });
+        const { response } = await parseBody(
+            schema,
+            createJsonRequest(JSON.stringify({ wrongType: 42 })),
+        );
+        const body = await response!.json();
+
+        expect(body.errors).toEqual(expect.arrayContaining([
+            expect.objectContaining({ pointer: "/required", code: "REQUIRED" }),
+            expect.objectContaining({ pointer: "/wrongType", code: "INVALID_FORMAT" }),
+        ]));
+        expect(JSON.stringify(body)).not.toContain("42");
+    });
+
     it("maps unsafe or overlong issue paths to form-level errors", async () => {
         const schema = z.object({}).superRefine((_value, context) => {
             context.addIssue({ code: "custom", path: ["x".repeat(513)], message: "secret-long-path" });

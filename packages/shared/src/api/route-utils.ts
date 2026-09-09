@@ -117,12 +117,40 @@ function toJsonPointer(path: readonly unknown[]): string {
     return pointer;
 }
 
-function zodIssueCode(issue: { code?: unknown; input?: unknown; received?: unknown; origin?: unknown; minimum?: unknown }): ProblemErrorCode {
+function readBodyPath(
+    body: Record<string, unknown>,
+    path: readonly unknown[],
+): { present: boolean; value?: unknown } {
+    let current: unknown = body;
+    for (const segment of path) {
+        if ((typeof current !== "object" && typeof current !== "function") || current === null) {
+            return { present: false };
+        }
+        if (typeof segment !== "string" && typeof segment !== "number") {
+            return { present: false };
+        }
+        const key = String(segment);
+        if (!Object.prototype.hasOwnProperty.call(current, key)) {
+            return { present: false };
+        }
+        try {
+            current = (current as Record<string, unknown>)[key];
+        } catch {
+            return { present: false };
+        }
+    }
+    return { present: true, value: current };
+}
+
+function zodIssueCode(
+    issue: { code?: unknown; origin?: unknown; minimum?: unknown },
+    input: { present: boolean; value?: unknown },
+): ProblemErrorCode {
     switch (issue.code) {
         case "unrecognized_keys":
             return "UNEXPECTED_FIELD";
         case "too_small":
-            if (issue.origin === "string" && issue.minimum === 1 && issue.input === "") {
+            if (issue.origin === "string" && issue.minimum === 1 && input.value === "") {
                 return "REQUIRED";
             }
             return "OUT_OF_RANGE";
@@ -133,7 +161,7 @@ function zodIssueCode(issue: { code?: unknown; input?: unknown; received?: unkno
         case "invalid_string":
             return "INVALID_FORMAT";
         case "invalid_type":
-            return issue.input === undefined || issue.received === "undefined"
+            return !input.present || input.value === undefined
                 ? "REQUIRED"
                 : "INVALID_FORMAT";
         case "invalid_value":
@@ -146,13 +174,19 @@ function zodIssueCode(issue: { code?: unknown; input?: unknown; received?: unkno
     }
 }
 
-function toProblemErrors(issues: readonly { path?: unknown; code?: unknown; input?: unknown; received?: unknown; origin?: unknown; minimum?: unknown }[]): ProblemError[] {
-    return issues.map((issue) => ({
-        pointer: toJsonPointer(Array.isArray(issue.path) ? issue.path : []),
-        code: zodIssueCode(issue),
-        detail: "Invalid input",
-        location: "body",
-    }));
+function toProblemErrors(
+    issues: readonly { path?: unknown; code?: unknown; origin?: unknown; minimum?: unknown }[],
+    body: Record<string, unknown>,
+): ProblemError[] {
+    return issues.map((issue) => {
+        const path = Array.isArray(issue.path) ? issue.path : [];
+        return {
+            pointer: toJsonPointer(path),
+            code: zodIssueCode(issue, readBodyPath(body, path)),
+            detail: "Invalid input",
+            location: "body",
+        };
+    });
 }
 
 function localValidationResponse(
@@ -243,7 +277,7 @@ function validateBodyWithSchema<T>(
     if (!result.success) {
         return {
             data: null,
-            response: localValidationResponse("Invalid request body", toProblemErrors(result.error.issues)),
+            response: localValidationResponse("Invalid request body", toProblemErrors(result.error.issues, body)),
         };
     }
 
