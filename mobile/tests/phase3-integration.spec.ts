@@ -407,7 +407,7 @@ test.describe("Phase 3.1 functional integration matrix", () => {
     };
 
     const duplicateToast = await submitAndReadToast();
-    await expect(duplicateToast).toContainText("이미 등록된 연락처입니다. 다른 연락처를 입력해주세요.");
+    await expect(duplicateToast).toContainText("연락처 정보가 이미 등록돼 있어요.");
     responseMode = "unsafe";
     const unsafeToast = await submitAndReadToast();
     await expect(unsafeToast).not.toContainText("PrismaClientKnownRequestError");
