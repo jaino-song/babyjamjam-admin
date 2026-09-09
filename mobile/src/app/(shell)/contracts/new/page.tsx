@@ -1,5 +1,5 @@
 "use client";
-import { getUserErrorMessage } from "@babyjamjam/shared";
+import { getApiErrorMessage, getUserErrorMessage, normalizeApiError } from "@babyjamjam/shared";
 
 
 import { useState, useMemo, useEffect, useRef, type ReactNode } from "react";
@@ -8,7 +8,6 @@ import { ChevronLeft, X } from "lucide-react";
 import dayjs from "dayjs";
 import { isAxiosError } from "axios";
 import { useQueryClient } from "@tanstack/react-query";
-import { getApiErrorMessage } from "@babyjamjam/shared";
 
 import { useFormStore } from "@/stores/form-store";
 import { useEformsign } from "@/hooks/useEformsign";
@@ -44,6 +43,8 @@ import {
 import { HeadlessProgressModal } from "@/components/app/eformsign/HeadlessProgressModal";
 import { MobileTwoButtonModal } from "@/components/app/ui/MobileTwoButtonModal";
 import { Switch } from "@/components/ui/switch";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import styles from "./page.module.css";
 
@@ -183,7 +184,18 @@ export default function ContractCreationPage() {
   const deleteClientMutation = useDeleteClient();
   const updateClientMutation = useUpdateClient();
   const { isLoaded: isEformsignLoaded, openDocument } = useEformsign();
-  const { data: allClients } = useAllClients();
+  const {
+    data: allClients,
+    isError: isClientsError,
+    error: clientsError,
+    refetch: refetchClients,
+    isFetching: isClientsFetching,
+  } = useAllClients();
+  const clientsNormalizedError = clientsError
+    ? normalizeApiError(clientsError, { operation: "read", locale: "ko-KR" })
+    : null;
+  const showClientsError = isClientsError && Boolean(clientsNormalizedError) && !clientsNormalizedError?.suppress;
+  const clientsDataUnavailable = showClientsError && allClients === undefined;
   const { data: voucherYears } = useVoucherYears();
   const { data: areaTemplates } = useAreaTemplates();
   const { data: employees } = useEmployees();
@@ -588,6 +600,7 @@ export default function ContractCreationPage() {
 
 
   const isStep1Valid = Boolean(
+    !clientsDataUnavailable &&
     (clientId !== null || (isManualEntry && name.trim() && phone.trim())) && area
   );
   const isEmployee1Valid = employeeId !== null;
@@ -602,6 +615,7 @@ export default function ContractCreationPage() {
   const isCurrentStepValid = [isStep1Valid, isStep2Valid, isStep3Valid, isStep4Valid][activeStep] ?? true;
 
   const getStepValidationMessage = (step: number): string | null => {
+    if (step === 0 && clientsDataUnavailable) return "고객 목록을 불러온 뒤 다시 시도해 주세요";
     if (step === 0 && !isStep1Valid) return "고객 정보와 계약서를 선택해 주세요";
     if (step === 1 && !isStep2Valid) return "등록된 제공인력을 목록에서 선택해 주세요";
     if (step === 2 && !isStep3Valid) return "바우처 유형/기간과 금액 정보를 입력해 주세요";
@@ -610,6 +624,10 @@ export default function ContractCreationPage() {
   };
 
   const handleNext = () => {
+    if (activeStep === 0 && clientsDataUnavailable) {
+      showErrorToast("고객 목록을 불러온 뒤 다시 시도해 주세요");
+      return;
+    }
     if (!isCurrentStepValid) {
       const msg = getStepValidationMessage(activeStep);
       if (msg) showErrorToast(msg);
@@ -997,6 +1015,30 @@ export default function ContractCreationPage() {
           </header>
 
           <section className={styles.wizardContent} data-component="mobile_contracts-new_screen_root_page_root">
+            {showClientsError ? (
+              <Alert
+                variant="warning"
+                role="status"
+                aria-live="polite"
+                data-component="mobile_contracts-new_screen_clients-read-error"
+                className="mb-4"
+              >
+                <AlertTitle>고객 목록을 새로 불러오지 못했어요</AlertTitle>
+                <AlertDescription>
+                  <p>{clientsNormalizedError?.message}</p>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="mt-3"
+                    onClick={() => void refetchClients()}
+                    disabled={isClientsFetching}
+                  >
+                    다시 시도
+                  </Button>
+                </AlertDescription>
+              </Alert>
+            ) : null}
             <div className={styles.wizardHeader} data-component="mobile_contracts-new_screen_root_page_root_header">
               <div className={styles.progressRow} data-component="mobile_contracts-new_screen_root_page_root_header_progress-row">
                 <div className={styles.progressTrack} data-component="mobile_contracts-new_screen_root_page_root_header_progress-row_progress-track" aria-hidden="true">

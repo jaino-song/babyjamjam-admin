@@ -1,5 +1,5 @@
 "use client";
-import { getUserErrorMessage } from "@babyjamjam/shared";
+import { getUserErrorMessage, normalizeApiError } from "@babyjamjam/shared";
 
 
 import { type KeyboardEvent, useEffect, useMemo, useRef, useState } from "react";
@@ -23,7 +23,8 @@ import { reminderMsgTemplate } from "@/components/app/messages/templates/message
 import { serviceInfoMsgTemplate } from "@/components/app/messages/templates/messageTemplate/serviceInfoMsg";
 import { surveyMsgTemplate } from "@/components/app/messages/templates/messageTemplate/surveyMsg";
 import { thanksMsgTemplate } from "@/components/app/messages/templates/messageTemplate/thanksMsg";
-import { Alert } from "@/components/ui/alert";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Button } from "@/components/ui/button";
 import {
   Select,
   SelectContent,
@@ -487,20 +488,57 @@ export default function NewMessagePage() {
   const initialBody = searchParams.get("body") ?? "";
   const initialTemplateId = searchParams.get("template") ?? GREETING_TEMPLATE_ID;
   const initialClientId = parsePositiveIntQueryParam(searchParams.get("clientId"));
-  const { data: allClients = [] } = useAllClients();
+  const {
+    data: allClients,
+    isError: isClientsError,
+    error: clientsError,
+    refetch: refetchClients,
+    isFetching: isClientsFetching,
+  } = useAllClients();
+  const clientsNormalizedError = clientsError
+    ? normalizeApiError(clientsError, { operation: "read", locale: "ko-KR" })
+    : null;
+  const showClientsError = isClientsError && Boolean(clientsNormalizedError) && !clientsNormalizedError?.suppress;
   const initialClient = initialClientId === null
     ? null
-    : allClients.find((candidate) => candidate.id === initialClientId) ?? null;
+    : allClients?.find((candidate) => candidate.id === initialClientId) ?? null;
   const routeSeedKey = `${initialBody}\u0000${initialTemplateId}\u0000${initialClientId ?? ""}`;
 
   return (
-    <NewMessageForm
-      key={routeSeedKey}
-      initialBody={initialBody}
-      initialTemplateId={initialTemplateId}
-      initialClientId={initialClientId}
-      initialClient={initialClient}
-    />
+    <>
+      {showClientsError ? (
+        <div className="px-4 pt-4">
+          <Alert
+            variant="warning"
+            role="status"
+            aria-live="polite"
+            data-component="mobile_messages_new_page_clients-read-error"
+          >
+            <AlertTitle>고객 목록을 새로 불러오지 못했어요</AlertTitle>
+            <AlertDescription>
+              <p>{clientsNormalizedError?.message}</p>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="mt-3"
+                onClick={() => void refetchClients()}
+                disabled={isClientsFetching}
+              >
+                다시 시도
+              </Button>
+            </AlertDescription>
+          </Alert>
+        </div>
+      ) : null}
+      <NewMessageForm
+        key={routeSeedKey}
+        initialBody={initialBody}
+        initialTemplateId={initialTemplateId}
+        initialClientId={initialClientId}
+        initialClient={initialClient}
+      />
+    </>
   );
 }
 
@@ -580,7 +618,17 @@ function NewMessageForm({ initialBody, initialTemplateId, initialClientId, initi
   const { data: serviceInfoSystemTemplate } = useSystemTemplate(SERVICE_INFO_TEMPLATE_ID);
   const { data: surveySystemTemplate } = useSystemTemplate(SURVEY_TEMPLATE_ID);
   const { data: thanksSystemTemplate } = useSystemTemplate(THANKS_TEMPLATE_ID);
-  const { data: userTemplates = [] } = useMessageTemplates();
+  const {
+    data: userTemplates,
+    isError: isUserTemplatesError,
+    error: userTemplatesError,
+    refetch: refetchUserTemplates,
+    isFetching: isUserTemplatesFetching,
+  } = useMessageTemplates();
+  const userTemplatesNormalizedError = userTemplatesError
+    ? normalizeApiError(userTemplatesError, { operation: "read", locale: "ko-KR" })
+    : null;
+  const showUserTemplatesError = isUserTemplatesError && Boolean(userTemplatesNormalizedError) && !userTemplatesNormalizedError?.suppress;
   const { data: bankAccountInfos = [], isLoading: isBankAccountInfosLoading } = useBankAccountInfos();
   const { data: voucherPriceInfos = [], isLoading: isVoucherPriceInfosLoading } = useVoucherPriceInfos(
     selectedTemplateId === PRICE_INFO_TEMPLATE_ID ? templateVariableValues.type ?? "" : "",
@@ -719,7 +767,7 @@ function NewMessageForm({ initialBody, initialTemplateId, initialClientId, initi
         : surveyMsgTemplate({ name: templateVariableValues.name?.trim() ?? "" }),
       variables: surveyVariables,
     };
-    const userOptions = userTemplates.map((template) => ({
+    const userOptions = (userTemplates ?? []).map((template) => ({
       id: template.id,
       name: template.name,
       body: renderTemplateWithValues(
@@ -1123,6 +1171,30 @@ function NewMessageForm({ initialBody, initialTemplateId, initialClientId, initi
           </div>
 
           <div data-component="mobile_messages_new_page_screen_form_scroll" className={styles.msgScroll}>
+            {showUserTemplatesError ? (
+              <Alert
+                variant="warning"
+                role="status"
+                aria-live="polite"
+                data-component="mobile_messages_new_page_screen_form_scroll_user-templates-read-error"
+                className="mb-3"
+              >
+                <AlertTitle>지점 템플릿을 새로 불러오지 못했어요</AlertTitle>
+                <AlertDescription>
+                  <p>{userTemplatesNormalizedError?.message}</p>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="mt-3"
+                    onClick={() => void refetchUserTemplates()}
+                    disabled={isUserTemplatesFetching}
+                  >
+                    다시 시도
+                  </Button>
+                </AlertDescription>
+              </Alert>
+            ) : null}
             <ListCard
               data-component="mobile_messages_new_page_screen_form_scroll_list-card"
               title="새 메시지"
