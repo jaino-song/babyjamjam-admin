@@ -16,6 +16,7 @@
         "src/agent/capability-meta.ts",
         "src/agent/message-parts.ts",
         "src/utils/business-days.ts",
-        "src/utils/birthday.ts"
+        "src/utils/birthday.ts",
+        "src/errors/problem-details.ts"
     ]
 }

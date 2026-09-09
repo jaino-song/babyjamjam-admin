@@ -46,6 +46,7 @@ export interface ServiceRecordErrorContext {
     operation: ServiceRecordOperation;
     handled: boolean;
     statusCode?: number;
+    requestId?: string;
     caseId?: string;
     scheduleId?: number;
     retryCount?: number;
@@ -55,6 +56,7 @@ export interface ServiceRecordErrorContext {
 export interface BackendErrorContext {
     handled: boolean;
     statusCode?: number;
+    requestId?: string;
     operation?: string;
 }
 
@@ -524,6 +526,7 @@ export function captureBackendError(
         scope.setTag("runtime", "node");
         scope.setTag("operation", context.operation ?? "http");
         scope.setTag("handled", String(context.handled));
+        if (context.requestId) scope.setContext("requestReference", { requestId: context.requestId });
         if (context.statusCode !== undefined) {
             scope.setTag("status_code", String(context.statusCode));
         }
@@ -559,6 +562,7 @@ export function captureServiceRecordError(
         scope.setTag("runtime", "node");
         scope.setTag("operation", context.operation);
         scope.setTag("handled", String(context.handled));
+        if (context.requestId) scope.setContext("requestReference", { requestId: context.requestId });
         if (context.statusCode !== undefined) {
             scope.setTag("status_code", String(context.statusCode));
         }

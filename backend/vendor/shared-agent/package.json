@@ -17,6 +17,10 @@
     "./utils/birthday": {
       "types": "./utils/birthday.d.ts",
       "require": "./utils/birthday.js"
+    },
+    "./errors/problem-details": {
+      "types": "./errors/problem-details.d.ts",
+      "require": "./errors/problem-details.js"
     }
   },
   "dependencies": {

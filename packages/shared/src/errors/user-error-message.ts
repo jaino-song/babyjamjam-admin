@@ -1,3 +1,4 @@
+import { normalizeApiError } from "./problem-details";
 import { KOREAN_ERROR_MESSAGES } from './korean-error-messages';
 import { getSafeApiDisplayMessage, sanitizeApiDisplayMessage } from './safe-api-error-message';
 
@@ -113,6 +114,10 @@ export function getUserErrorMessage(error: unknown, fallback?: string): string {
   const outer = record(error);
   const response = record(outer?.response);
   const payload = record(response?.data) ?? record(outer?.data) ?? outer;
+  // 새 계약은 문자열 기반 이행 어댑터보다 먼저 검증해요.
+  if (payload && ('type' in payload || 'requestId' in payload)) {
+    return normalizeApiError(error, { locale: 'ko-KR' }).message;
+  }
   const statusValue = response?.status ?? outer?.status ?? payload?.statusCode;
   const status = typeof statusValue === 'number' ? statusValue : undefined;
   const code = typeof payload?.code === 'string' ? payload.code : outer?.code;
