@@ -74,7 +74,7 @@ describe("problem details public contract", () => {
             type: PROBLEM_CATALOG.REQUEST_CONFLICT.type,
             title: "요청을 완료할 수 없어요",
             status: 409,
-            detail: "현재 상태를 확인한 뒤 다시 요청해 주세요.",
+            detail: "현재 데이터 상태와 요청이 충돌해 처리할 수 없어요.",
             code: "REQUEST_CONFLICT",
             requestId: REQUEST_ID,
             operationId: "contracts.dispatch",
@@ -139,14 +139,14 @@ describe("problem details public contract", () => {
         expect(normalized.status).toBeUndefined();
         expect(normalized.problem).toBeUndefined();
         expect("requestId" in normalized).toBe(false);
-        expect(normalized.message).toBe("변경 결과를 확인하지 못했어요. 작업 상태를 확인해 주세요.");
+        expect(normalized.message).toBe("변경 결과를 확인할 수 없으니 다시 실행하기 전에 작업 상태를 확인해 주세요.");
     });
 
     it("uses safe read messages for empty, HTML, and transport responses", () => {
         expect(normalizeApiError({ response: { status: 502, data: "<html>bad gateway</html>" } }, { operation: "read" }).message)
-            .toBe("조회 결과를 확인하지 못했어요. 잠시 후 상태를 확인해 주세요.");
+            .toBe("요청한 정보를 불러오지 못했어요.");
         expect(normalizeApiError({ response: { status: 503, data: "" } }, { operation: "read", locale: "en-US" }).message)
-            .toBe("The read result could not be confirmed. Check the status again later.");
+            .toBe("We couldn’t load the requested information.");
         expect(normalizeApiError({ code: "ECONNRESET" }, { operation: "read" }).origin).toBe("transport");
     });
 
@@ -163,9 +163,9 @@ describe("problem details public contract", () => {
     });
 
     it("resolves only catalog messages and does not perform legacy translation", () => {
-        expect(resolveProblemMessage("INTERNAL_ERROR", "en-US")).toBe("The server could not complete the request.");
-        expect(resolveProblemMessage({ code: "INTERNAL_ERROR", detail: "PrismaClientKnownRequestError" }, "ko-KR")).toBe("서버 오류로 요청을 처리하지 못했어요.");
-        expect(resolveProblemMessage("legacy message", { locale: "en-US", operation: "read" })).toBe("The read result could not be confirmed. Check the status again later.");
+        expect(resolveProblemMessage("INTERNAL_ERROR", "en-US")).toBe("Something unexpected happened while processing your request.");
+        expect(resolveProblemMessage({ code: "INTERNAL_ERROR", detail: "PrismaClientKnownRequestError" }, "ko-KR")).toBe("요청 처리 결과를 확인할 수 없어요.");
+        expect(resolveProblemMessage("legacy message", { locale: "en-US", operation: "read" })).toBe("We couldn’t load the requested information.");
     });
 });
 

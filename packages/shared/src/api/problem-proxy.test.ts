@@ -1,10 +1,15 @@
-import { createProblemDetails } from "../errors/problem-details";
+import { createProblemDetails, normalizeApiError } from "../errors/problem-details";
 import { getUserErrorMessage } from "../errors/user-error-message";
 import { errorResponse, sanitizeUpstreamClientError } from "./route-utils";
 
 describe("problem proxy", () => {
     beforeEach(() => jest.spyOn(console, "error").mockImplementation(() => undefined));
     afterEach(() => jest.restoreAllMocks());
+
+    it("normalizes a direct problem object without dropping its payload", () => {
+        const problem = createProblemDetails({ code: "VALIDATION_FAILED", requestId: "request-direct" });
+        expect(normalizeApiError(problem)).toMatchObject({ verified: true, problem });
+    });
 
     it("preserves validation fields and reference through the HTTP proxy", async () => {
         const problem = createProblemDetails({

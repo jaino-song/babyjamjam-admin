@@ -23,6 +23,7 @@ type Stacktrace = NonNullable<ExceptionValue["stacktrace"]>;
 type StackFrame = NonNullable<Stacktrace["frames"]>[number];
 
 export interface PrismaSentryErrorContext {
+    requestId?: string;
     code: string;
     eligible: boolean;
     route: DatabaseConnectionMode;
@@ -587,7 +588,11 @@ export function capturePrismaError(
         reportedPrismaErrors.add(error);
     }
 
-    const capturedError = new Error("Database connectivity failure");
+    const capturedError = new Error(context.eligible || context.code === "P2024"
+        ? "Database connectivity failure" : "Database operation failure");
+    if (error instanceof Error && error.stack) {
+        capturedError.stack = [capturedError.toString(), ...error.stack.split("\n").slice(1).map(sanitizeText)].join("\n");
+    }
     capturedError.name = "Prisma database error";
 
     return Sentry.withScope((scope) => {
@@ -597,6 +602,7 @@ export function capturePrismaError(
         scope.setTag("db.route", normalizeDatabaseRoute(context.route) ?? "unknown");
         scope.setTag("db.failover_eligible", String(context.eligible));
         scope.setTag("prisma.code", normalizePrismaCode(context.code));
+        if (context.requestId) scope.setContext("requestReference", { requestId: context.requestId });
         return Sentry.captureException(capturedError);
     });
 }

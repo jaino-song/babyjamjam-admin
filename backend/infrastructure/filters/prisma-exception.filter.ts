@@ -55,6 +55,7 @@ export class PrismaExceptionFilter implements ExceptionFilter {
         try {
             capturePrismaError(exception, {
                 code: prismaCode,
+                requestId,
                 eligible: isPrismaFailoverEligible(exception),
                 route: getDatabaseConnectionMode(),
             });

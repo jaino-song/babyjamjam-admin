@@ -27,7 +27,7 @@ export function mapHttpProblem(
     const status = exception instanceof HttpException ? exception.getStatus() : 500;
     const body = exception instanceof HttpException ? exception.getResponse() : undefined;
     const record = body !== null && typeof body === "object" ? body as Record<string, unknown> : undefined;
-    const code = typeof record?.["code"] === "string" && Object.hasOwn(PROBLEM_CATALOG, record["code"])
+    const code = typeof record?.["code"] === "string" && Object.prototype.hasOwnProperty.call(PROBLEM_CATALOG, record["code"])
         ? record["code"] as ProblemCode : undefined;
     // 이전 4xx 업무 응답을 일반적인 오류로 덮어써 원인을 잃지 않아요.
     if (!code && status < 500) return null;

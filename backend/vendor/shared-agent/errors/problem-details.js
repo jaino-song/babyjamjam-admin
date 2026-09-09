@@ -1,3 +1,4 @@
+"use strict";
 /**
  * Public problem-details contract shared by browser and server code.
  *
@@ -6,144 +7,21 @@
  * backend can vendor the file without pulling the shared package's UI
  * dependencies into its runtime bundle.
  */
-
-export type ErrorLocale = "ko-KR" | "en-US";
-
-export type ProblemCode =
-    | "REQUEST_INVALID"
-    | "VALIDATION_FAILED"
-    | "AUTH_REQUIRED"
-    | "ACCESS_DENIED"
-    | "RESOURCE_NOT_FOUND"
-    | "REQUEST_CONFLICT"
-    | "METHOD_NOT_ALLOWED"
-    | "REQUEST_EXPIRED"
-    | "PAYLOAD_TOO_LARGE"
-    | "MEDIA_TYPE_UNSUPPORTED"
-    | "REQUEST_RATE_LIMITED"
-    | "INTERNAL_ERROR"
-    | "DEPENDENCY_UNAVAILABLE"
-    | "UPSTREAM_INVALID_RESPONSE"
-    | "UPSTREAM_TIMEOUT"
-    | "CONTRACT_ALREADY_SIGNED";
-
-export type ProblemOutcome =
-    | "NOT_APPLIED"
-    | "FAILED"
-    | "PARTIALLY_APPLIED"
-    | "UNKNOWN";
-
-export type RecoveryAction = "CHECK_STATUS" | "NONE";
-export type RetryMode = "NEVER";
-export type ProblemErrorCode =
-    | "REQUIRED"
-    | "INVALID_FORMAT"
-    | "OUT_OF_RANGE"
-    | "INVALID_VALUE"
-    | "UNEXPECTED_FIELD";
-export type ProblemErrorLocation = "body" | "query" | "path" | "custom";
-export type ApiErrorOrigin = "server" | "transport" | "client";
-export type ApiOperation = "read" | "mutation";
-
-export interface ProblemError {
-    pointer: string;
-    code: ProblemErrorCode;
-    detail: string;
-    location?: ProblemErrorLocation;
-}
-
-export interface ProblemRecovery {
-    action: RecoveryAction;
-    retry: {
-        mode: RetryMode;
-    };
-}
-
-/**
- * `params` is intentionally empty in version one.  It is retained as an
- * extension point, but accepting values here would make server diagnostics a
- * public data channel before a future version defines those values safely.
- */
-export interface ProblemDetails {
-    type: string;
-    title: string;
-    status: number;
-    detail: string;
-    code: ProblemCode;
-    requestId: string;
-    params?: Record<string, never>;
-    errors?: ProblemError[];
-    outcome?: ProblemOutcome;
-    operationId?: string;
-    recovery?: ProblemRecovery;
-}
-
-export interface ProblemCatalogEntry {
-    code: ProblemCode;
-    type: string;
-    /** Canonical status used when a caller does not provide one. */
-    status: number;
-    /** Every status accepted by the public contract for this code. */
-    statuses: readonly number[];
-    /** Alias kept descriptive for backend consumers that prefer this name. */
-    allowedStatuses: readonly number[];
-    title: Readonly<Record<ErrorLocale, string>>;
-    detail: Readonly<Record<ErrorLocale, string>>;
-    fieldErrors: Readonly<Record<ErrorLocale, Readonly<Record<ProblemErrorCode, string>>>>;
-}
-
-export interface CreateProblemDetailsInput {
-    code: ProblemCode;
-    requestId: string;
-    locale?: ErrorLocale;
-    status?: number;
-    params?: Record<string, never>;
-    errors?: ProblemError[];
-    outcome?: ProblemOutcome;
-    operationId?: string;
-    recovery?: ProblemRecovery;
-}
-
-export interface NormalizeApiErrorOptions {
-    operation?: ApiOperation;
-    locale?: ErrorLocale;
-}
-
-export interface NormalizedApiError {
-    origin: ApiErrorOrigin;
-    verified: boolean;
-    message: string;
-    canceled: boolean;
-    /** True only when a read cancellation should be hidden from the UI. */
-    suppress: boolean;
-    problem?: ProblemDetails;
-    status?: number;
-    originalCode?: string;
-    originalType?: string;
-    outcome?: ProblemOutcome;
-    recovery?: ProblemRecovery;
-    /** Non-enumerable compatibility aliases for UI callers. */
-    isCanceled?: boolean;
-    shouldSuppress?: boolean;
-}
-
-export interface ResolveProblemMessageOptions {
-    locale?: ErrorLocale;
-    operation?: ApiOperation;
-}
-
-export const PROBLEM_TYPE_BASE_URI =
-    "https://github.com/jaino-song/babyjamjam-admin/blob/main/docs/error-management.md#";
-
-const DEFAULT_LOCALE: ErrorLocale = "ko-KR";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.SAFE_MUTATION_FAILURE_MESSAGES = exports.SAFE_READ_FAILURE_MESSAGES = exports.SAFE_UNKNOWN_PROBLEM_MESSAGES = exports.catalog = exports.problemCatalog = exports.PROBLEM_CATALOG = exports.PROBLEM_TYPE_BASE_URI = void 0;
+exports.parseProblemDetails = parseProblemDetails;
+exports.createProblemDetails = createProblemDetails;
+exports.normalizeApiError = normalizeApiError;
+exports.resolveProblemMessage = resolveProblemMessage;
+exports.PROBLEM_TYPE_BASE_URI = "https://github.com/jaino-song/babyjamjam-admin/blob/main/docs/error-management.md#";
+const DEFAULT_LOCALE = "ko-KR";
 const MAX_IDENTIFIER_LENGTH = 128;
 const MAX_POINTER_LENGTH = 512;
 const MAX_ORIGINAL_TEXT_LENGTH = 512;
 const SAFE_IDENTIFIER_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 const CONTROL_CHARACTER_PATTERN = /[\u0000-\u001f\u007f]/;
 const RFC6901_POINTER_PATTERN = /^(?:\/(?:[^~/]|~[01])*)*$/;
-
-const PROBLEM_CODES: readonly ProblemCode[] = [
+const PROBLEM_CODES = [
     "REQUEST_INVALID",
     "VALIDATION_FAILED",
     "AUTH_REQUIRED",
@@ -161,32 +39,26 @@ const PROBLEM_CODES: readonly ProblemCode[] = [
     "UPSTREAM_TIMEOUT",
     "CONTRACT_ALREADY_SIGNED",
 ];
-
-const PROBLEM_ERROR_CODES: readonly ProblemErrorCode[] = [
+const PROBLEM_ERROR_CODES = [
     "REQUIRED",
     "INVALID_FORMAT",
     "OUT_OF_RANGE",
     "INVALID_VALUE",
     "UNEXPECTED_FIELD",
 ];
-
-const PROBLEM_OUTCOMES: readonly ProblemOutcome[] = [
+const PROBLEM_OUTCOMES = [
     "NOT_APPLIED",
     "FAILED",
     "PARTIALLY_APPLIED",
     "UNKNOWN",
 ];
-
-const PROBLEM_ERROR_LOCATIONS: readonly ProblemErrorLocation[] = [
+const PROBLEM_ERROR_LOCATIONS = [
     "body",
     "query",
     "path",
     "custom",
 ];
-
-const FIELD_ERROR_DETAILS: Readonly<
-    Record<ErrorLocale, Readonly<Record<ProblemErrorCode, string>>>
-> = Object.freeze({
+const FIELD_ERROR_DETAILS = Object.freeze({
     "ko-KR": Object.freeze({
         REQUIRED: "필수 항목이에요.",
         INVALID_FORMAT: "입력 형식이 올바르지 않아요.",
@@ -202,38 +74,23 @@ const FIELD_ERROR_DETAILS: Readonly<
         UNEXPECTED_FIELD: "This field is not expected.",
     }),
 });
-
-const UNKNOWN_MESSAGES: Readonly<Record<ErrorLocale, string>> = Object.freeze({
+const UNKNOWN_MESSAGES = Object.freeze({
     "ko-KR": "요청 처리 결과를 확인할 수 없어요.",
     "en-US": "We can’t confirm the result of this request.",
 });
-
-const READ_FAILURE_MESSAGES: Readonly<Record<ErrorLocale, string>> = Object.freeze({
+const READ_FAILURE_MESSAGES = Object.freeze({
     "ko-KR": "요청한 정보를 불러오지 못했어요.",
     "en-US": "We couldn’t load the requested information.",
 });
-
-const MUTATION_FAILURE_MESSAGES: Readonly<Record<ErrorLocale, string>> = Object.freeze({
+const MUTATION_FAILURE_MESSAGES = Object.freeze({
     "ko-KR": "변경 결과를 확인할 수 없으니 다시 실행하기 전에 작업 상태를 확인해 주세요.",
     "en-US": "We can’t confirm whether the changes were applied, so check the operation status before trying again.",
 });
-
-const READ_CANCELED_MESSAGES: Readonly<Record<ErrorLocale, string>> = Object.freeze({
+const READ_CANCELED_MESSAGES = Object.freeze({
     "ko-KR": "조회 요청을 취소했어요.",
     "en-US": "The read request was canceled.",
 });
-
-const PROBLEM_DEFINITIONS: Readonly<
-    Record<
-        ProblemCode,
-        {
-            status: number;
-            statuses?: readonly number[];
-            title: Record<ErrorLocale, string>;
-            detail: Record<ErrorLocale, string>;
-        }
-    >
-> = {
+const PROBLEM_DEFINITIONS = {
     REQUEST_INVALID: {
         status: 400,
         title: {
@@ -412,14 +269,11 @@ const PROBLEM_DEFINITIONS: Readonly<
         },
     },
 };
-
-function typeUriFor(code: ProblemCode): string {
-    return `${PROBLEM_TYPE_BASE_URI}${code.toLowerCase().replaceAll("_", "-")}`;
+function typeUriFor(code) {
+    return `${exports.PROBLEM_TYPE_BASE_URI}${code.toLowerCase().replaceAll("_", "-")}`;
 }
-
-function freezeCatalog(): Readonly<Record<ProblemCode, ProblemCatalogEntry>> {
-    const entries = {} as Record<ProblemCode, ProblemCatalogEntry>;
-
+function freezeCatalog() {
+    const entries = {};
     for (const code of PROBLEM_CODES) {
         const definition = PROBLEM_DEFINITIONS[code];
         const statuses = Object.freeze([...(definition.statuses ?? [definition.status])]);
@@ -440,82 +294,67 @@ function freezeCatalog(): Readonly<Record<ProblemCode, ProblemCatalogEntry>> {
             fieldErrors,
         });
     }
-
     return Object.freeze(entries);
 }
-
-export const PROBLEM_CATALOG = freezeCatalog();
+exports.PROBLEM_CATALOG = freezeCatalog();
 /** Lower-case alias for consumers that prefer a value-style catalog name. */
-export const problemCatalog = PROBLEM_CATALOG;
+exports.problemCatalog = exports.PROBLEM_CATALOG;
 /** Generic alias kept for callers that import the contract's “catalog”. */
-export const catalog = PROBLEM_CATALOG;
-
-function isRecord(value: unknown): value is Record<string, unknown> {
+exports.catalog = exports.PROBLEM_CATALOG;
+function isRecord(value) {
     return typeof value === "object" && value !== null && !Array.isArray(value);
 }
-
-function hasOwn(value: object, key: string): boolean {
+function hasOwn(value, key) {
     return Object.prototype.hasOwnProperty.call(value, key);
 }
-
-function readOwn(value: Record<string, unknown>, key: string): { present: boolean; value?: unknown } {
+function readOwn(value, key) {
     if (!hasOwn(value, key)) {
         return { present: false };
     }
-
     try {
         return { present: true, value: value[key] };
-    } catch {
+    }
+    catch {
         return { present: true, value: undefined };
     }
 }
-
-function isProblemCode(value: unknown): value is ProblemCode {
-    return typeof value === "string" && (PROBLEM_CODES as readonly string[]).includes(value);
+function isProblemCode(value) {
+    return typeof value === "string" && PROBLEM_CODES.includes(value);
 }
-
-function isProblemErrorCode(value: unknown): value is ProblemErrorCode {
-    return typeof value === "string" && (PROBLEM_ERROR_CODES as readonly string[]).includes(value);
+function isProblemErrorCode(value) {
+    return typeof value === "string" && PROBLEM_ERROR_CODES.includes(value);
 }
-
-function isProblemOutcome(value: unknown): value is ProblemOutcome {
-    return typeof value === "string" && (PROBLEM_OUTCOMES as readonly string[]).includes(value);
+function isProblemOutcome(value) {
+    return typeof value === "string" && PROBLEM_OUTCOMES.includes(value);
 }
-
-function isProblemErrorLocation(value: unknown): value is ProblemErrorLocation {
-    return typeof value === "string" && (PROBLEM_ERROR_LOCATIONS as readonly string[]).includes(value);
+function isProblemErrorLocation(value) {
+    return typeof value === "string" && PROBLEM_ERROR_LOCATIONS.includes(value);
 }
-
-function isErrorLocale(value: unknown): value is ErrorLocale {
+function isErrorLocale(value) {
     return value === "ko-KR" || value === "en-US";
 }
-
-function localeOrDefault(value: unknown): ErrorLocale {
+function localeOrDefault(value) {
     return isErrorLocale(value) ? value : DEFAULT_LOCALE;
 }
-
-function isSafeIdentifier(value: unknown): value is string {
+function isSafeIdentifier(value) {
     return typeof value === "string"
         && value.length > 0
         && value.length <= MAX_IDENTIFIER_LENGTH
         && !CONTROL_CHARACTER_PATTERN.test(value)
         && SAFE_IDENTIFIER_PATTERN.test(value);
 }
-
-function isSafeText(value: unknown): value is string {
+function isSafeText(value) {
     return typeof value === "string"
         && value.length > 0
         && !CONTROL_CHARACTER_PATTERN.test(value);
 }
-
-function isValidPointer(value: unknown): value is string {
+function isValidPointer(value) {
     return typeof value === "string"
         && value.length <= MAX_POINTER_LENGTH
         && !CONTROL_CHARACTER_PATTERN.test(value)
         && RFC6901_POINTER_PATTERN.test(value);
 }
-
-function hasOnlyEmptyParams(value: unknown): boolean {
+function hasOnlyEmptyParams(value) {
     if (value === undefined) {
         return true;
     }
@@ -524,34 +363,27 @@ function hasOnlyEmptyParams(value: unknown): boolean {
     }
     try {
         return Reflect.ownKeys(value).length === 0;
-    } catch {
+    }
+    catch {
         return false;
     }
 }
-
-function statusIsAllowed(code: ProblemCode, status: unknown): status is number {
+function statusIsAllowed(code, status) {
     return typeof status === "number"
         && Number.isInteger(status)
-        && PROBLEM_CATALOG[code].allowedStatuses.includes(status);
+        && exports.PROBLEM_CATALOG[code].allowedStatuses.includes(status);
 }
-
-function cloneParams(): Record<string, never> {
+function cloneParams() {
     return {};
 }
-
-function sanitizedFieldError(
-    value: unknown,
-    locale: ErrorLocale,
-): ProblemError | null {
+function sanitizedFieldError(value, locale) {
     if (!isRecord(value)) {
         return null;
     }
-
     const pointer = readOwn(value, "pointer");
     const code = readOwn(value, "code");
     const detail = readOwn(value, "detail");
     const location = readOwn(value, "location");
-
     if (!pointer.present || !isValidPointer(pointer.value)
         || !code.present || !isProblemErrorCode(code.value)
         || !detail.present || !isSafeText(detail.value)) {
@@ -560,27 +392,24 @@ function sanitizedFieldError(
     if (location.present && !isProblemErrorLocation(location.value)) {
         return null;
     }
-
-    const sanitized: ProblemError = {
+    const sanitized = {
         pointer: pointer.value,
         code: code.value,
         detail: FIELD_ERROR_DETAILS[locale][code.value],
     };
     if (location.present) {
-        sanitized.location = location.value as ProblemErrorLocation;
+        sanitized.location = location.value;
     }
     return sanitized;
 }
-
-function sanitizedErrors(value: unknown, locale: ErrorLocale): ProblemError[] | null {
+function sanitizedErrors(value, locale) {
     if (value === undefined) {
         return null;
     }
     if (!Array.isArray(value)) {
         return null;
     }
-
-    const errors: ProblemError[] = [];
+    const errors = [];
     for (const item of value) {
         const sanitized = sanitizedFieldError(item, locale);
         if (!sanitized) {
@@ -590,8 +419,7 @@ function sanitizedErrors(value: unknown, locale: ErrorLocale): ProblemError[] | 
     }
     return errors;
 }
-
-function sanitizedRecovery(value: unknown): ProblemRecovery | null {
+function sanitizedRecovery(value) {
     if (value === undefined) {
         return null;
     }
@@ -613,16 +441,10 @@ function sanitizedRecovery(value: unknown): ProblemRecovery | null {
         retry: { mode: "NEVER" },
     };
 }
-
-function parseProblemDetailsInternal(
-    value: unknown,
-    httpStatus: number | undefined,
-    locale: ErrorLocale,
-): ProblemDetails | null {
+function parseProblemDetailsInternal(value, httpStatus, locale) {
     if (!isRecord(value)) {
         return null;
     }
-
     const type = readOwn(value, "type");
     const title = readOwn(value, "title");
     const status = readOwn(value, "status");
@@ -634,30 +456,27 @@ function parseProblemDetailsInternal(
     const outcome = readOwn(value, "outcome");
     const operationId = readOwn(value, "operationId");
     const recovery = readOwn(value, "recovery");
-
     if (!type.present || typeof type.value !== "string"
         || !title.present || !isSafeText(title.value)
         || !status.present || typeof status.value !== "number" || !Number.isInteger(status.value)
         || !detail.present || !isSafeText(detail.value)
         || !code.present || !isProblemCode(code.value)
         || !requestId.present || !isSafeIdentifier(requestId.value)
-        || type.value !== PROBLEM_CATALOG[code.value].type
+        || type.value !== exports.PROBLEM_CATALOG[code.value].type
         || !statusIsAllowed(code.value, status.value)
         || (httpStatus !== undefined && (!Number.isInteger(httpStatus) || httpStatus !== status.value))
         || (params.present && !hasOnlyEmptyParams(params.value))) {
         return null;
     }
-
-    const parsed: ProblemDetails = {
-        type: PROBLEM_CATALOG[code.value].type,
-        title: PROBLEM_CATALOG[code.value].title[locale],
+    const parsed = {
+        type: exports.PROBLEM_CATALOG[code.value].type,
+        title: exports.PROBLEM_CATALOG[code.value].title[locale],
         status: status.value,
-        detail: PROBLEM_CATALOG[code.value].detail[locale],
+        detail: exports.PROBLEM_CATALOG[code.value].detail[locale],
         code: code.value,
         requestId: requestId.value,
         params: cloneParams(),
     };
-
     if (errors.present) {
         const sanitized = sanitizedErrors(errors.value, locale);
         if (!sanitized) {
@@ -684,24 +503,17 @@ function parseProblemDetailsInternal(
         }
         parsed.recovery = sanitized;
     }
-
     return parsed;
 }
-
 /**
  * Validate and sanitize a server-supplied problem-details payload.
  * Unknown extension members are ignored.  Known text fields are always
  * replaced by the catalog copy, so server internals cannot reach a UI.
  */
-export function parseProblemDetails(
-    value: unknown,
-    httpStatus?: number,
-    locale: ErrorLocale = DEFAULT_LOCALE,
-): ProblemDetails | null {
+function parseProblemDetails(value, httpStatus, locale = DEFAULT_LOCALE) {
     return parseProblemDetailsInternal(value, httpStatus, localeOrDefault(locale));
 }
-
-function assertCreateInput(value: unknown): asserts value is CreateProblemDetailsInput {
+function assertCreateInput(value) {
     if (!isRecord(value)) {
         throw new TypeError("Problem details input must be an object");
     }
@@ -714,29 +526,26 @@ function assertCreateInput(value: unknown): asserts value is CreateProblemDetail
         throw new TypeError("Problem details requestId must be a safe identifier");
     }
 }
-
-function createProblemDetailsFromInput(input: CreateProblemDetailsInput): ProblemDetails {
+function createProblemDetailsFromInput(input) {
     assertCreateInput(input);
     const locale = localeOrDefault(input.locale);
     const code = input.code;
-    const status = input.status ?? PROBLEM_CATALOG[code].status;
+    const status = input.status ?? exports.PROBLEM_CATALOG[code].status;
     if (!statusIsAllowed(code, status)) {
         throw new TypeError("Problem details status does not match its code");
     }
     if (!hasOnlyEmptyParams(input.params)) {
         throw new TypeError("Problem details params must be empty");
     }
-
-    const result: ProblemDetails = {
-        type: PROBLEM_CATALOG[code].type,
-        title: PROBLEM_CATALOG[code].title[locale],
+    const result = {
+        type: exports.PROBLEM_CATALOG[code].type,
+        title: exports.PROBLEM_CATALOG[code].title[locale],
         status,
-        detail: PROBLEM_CATALOG[code].detail[locale],
+        detail: exports.PROBLEM_CATALOG[code].detail[locale],
         code,
         requestId: input.requestId,
         params: cloneParams(),
     };
-
     if (input.errors !== undefined) {
         const errors = sanitizedErrors(input.errors, locale);
         if (!errors) {
@@ -763,44 +572,27 @@ function createProblemDetailsFromInput(input: CreateProblemDetailsInput): Proble
         }
         result.recovery = recovery;
     }
-
     return result;
 }
-
-/**
- * Build a problem from caller-owned facts.  No request id, outcome, or
- * operation id is generated here; callers must provide each value they want
- * published.
- */
-export function createProblemDetails(input: CreateProblemDetailsInput): ProblemDetails;
-export function createProblemDetails(
-    code: ProblemCode,
-    requestId: string,
-    options?: Omit<CreateProblemDetailsInput, "code" | "requestId">,
-): ProblemDetails;
-export function createProblemDetails(
-    inputOrCode: CreateProblemDetailsInput | ProblemCode,
-    requestId?: string,
-    options: Omit<CreateProblemDetailsInput, "code" | "requestId"> = {},
-): ProblemDetails {
+function createProblemDetails(inputOrCode, requestId, options = {}) {
     if (typeof inputOrCode === "string") {
-        return createProblemDetailsFromInput({ ...options, code: inputOrCode, requestId: requestId as string });
+        return createProblemDetailsFromInput({ ...options, code: inputOrCode, requestId: requestId });
     }
     return createProblemDetailsFromInput(inputOrCode);
 }
-
-function isCancellationError(error: unknown): boolean {
+function isCancellationError(error) {
     if (!isRecord(error)) {
         return false;
     }
     const code = readOwn(error, "code");
     const name = readOwn(error, "name");
-    let inheritedCode: unknown;
-    let inheritedName: unknown;
+    let inheritedCode;
+    let inheritedName;
     try {
-        inheritedCode = (error as { code?: unknown }).code;
-        inheritedName = (error as { name?: unknown }).name;
-    } catch {
+        inheritedCode = error.code;
+        inheritedName = error.name;
+    }
+    catch {
         inheritedCode = undefined;
         inheritedName = undefined;
     }
@@ -811,8 +603,7 @@ function isCancellationError(error: unknown): boolean {
         || inheritedCode === "ABORT_ERR"
         || inheritedName === "AbortError";
 }
-
-function isTransportError(error: unknown): boolean {
+function isTransportError(error) {
     if (!isRecord(error)) {
         return false;
     }
@@ -840,26 +631,16 @@ function isTransportError(error: unknown): boolean {
         || request.present
         || isAxiosError.value === true;
 }
-
-interface ResponseEnvelope {
-    hasResponse: boolean;
-    statusPresent: boolean;
-    status?: number;
-    data?: unknown;
-}
-
-function responseStatus(value: unknown): number | undefined {
+function responseStatus(value) {
     if (typeof value !== "number" || !Number.isInteger(value) || value < 100 || value > 599) {
         return undefined;
     }
     return value;
 }
-
-function responseEnvelope(error: unknown): ResponseEnvelope {
+function responseEnvelope(error) {
     if (!isRecord(error)) {
         return { hasResponse: false, statusPresent: false };
     }
-
     const response = readOwn(error, "response");
     if (response.present && isRecord(response.value)) {
         const nestedStatus = readOwn(response.value, "status");
@@ -871,7 +652,6 @@ function responseEnvelope(error: unknown): ResponseEnvelope {
             data: nestedData.value,
         };
     }
-
     const directProblem = hasOwn(error, "type")
         || hasOwn(error, "requestId")
         || (hasOwn(error, "status")
@@ -887,7 +667,6 @@ function responseEnvelope(error: unknown): ResponseEnvelope {
             data: error,
         };
     }
-
     const status = readOwn(error, "status");
     const data = readOwn(error, "data");
     if (status.present || data.present) {
@@ -898,12 +677,9 @@ function responseEnvelope(error: unknown): ResponseEnvelope {
             data: data.value,
         };
     }
-
-
     return { hasResponse: false, statusPresent: false };
 }
-
-function parseJsonObject(value: unknown): unknown {
+function parseJsonObject(value) {
     if (typeof value !== "string") {
         return value;
     }
@@ -912,20 +688,19 @@ function parseJsonObject(value: unknown): unknown {
         return value;
     }
     try {
-        return JSON.parse(trimmed) as unknown;
-    } catch {
+        return JSON.parse(trimmed);
+    }
+    catch {
         return value;
     }
 }
-
-function originalString(value: unknown): string | undefined {
+function originalString(value) {
     if (typeof value !== "string" || value.length === 0 || value.length > MAX_ORIGINAL_TEXT_LENGTH || CONTROL_CHARACTER_PATTERN.test(value)) {
         return undefined;
     }
     return value;
 }
-
-function originalCodeAndType(value: unknown): { code?: string; type?: string } {
+function originalCodeAndType(value) {
     if (!isRecord(value)) {
         return {};
     }
@@ -934,8 +709,7 @@ function originalCodeAndType(value: unknown): { code?: string; type?: string } {
         type: originalString(readOwn(value, "type").value),
     };
 }
-
-function resultWithAliases(result: NormalizedApiError): NormalizedApiError {
+function resultWithAliases(result) {
     // Keep the wire-facing result small while allowing UI code to use the
     // common `isCanceled`/`shouldSuppress` spellings without a second policy.
     Object.defineProperties(result, {
@@ -944,16 +718,12 @@ function resultWithAliases(result: NormalizedApiError): NormalizedApiError {
     });
     return result;
 }
-
 /**
  * Normalize server, transport, and local errors into one safe result.  A
  * malformed response is never promoted to a fabricated ProblemDetails object.
  */
-export function normalizeApiError(
-    error: unknown,
-    options: NormalizeApiErrorOptions = {},
-): NormalizedApiError {
-    const operation: ApiOperation = options.operation === "read" ? "read" : "mutation";
+function normalizeApiError(error, options = {}) {
+    const operation = options.operation === "read" ? "read" : "mutation";
     const locale = localeOrDefault(options.locale);
     const canceled = isCancellationError(error);
     const envelope = responseEnvelope(error);
@@ -962,12 +732,12 @@ export function normalizeApiError(
         ? parseProblemDetails(body, envelope.status, locale)
         : null;
     const aliases = originalCodeAndType(body);
-    const origin: ApiErrorOrigin = envelope.hasResponse
+    const origin = envelope.hasResponse
         ? "server"
         : isTransportError(error)
             ? "transport"
             : "client";
-    const result: NormalizedApiError = {
+    const result = {
         origin,
         verified: parsed !== null,
         message: parsed
@@ -980,7 +750,6 @@ export function normalizeApiError(
         canceled,
         suppress: canceled && operation === "read",
     };
-
     if (parsed) {
         result.problem = parsed;
         result.status = parsed.status;
@@ -990,7 +759,8 @@ export function normalizeApiError(
         if (parsed.recovery !== undefined) {
             result.recovery = parsed.recovery;
         }
-    } else {
+    }
+    else {
         if (envelope.status !== undefined) {
             result.status = envelope.status;
         }
@@ -1005,11 +775,9 @@ export function normalizeApiError(
             result.recovery = { action: "CHECK_STATUS", retry: { mode: "NEVER" } };
         }
     }
-
     return resultWithAliases(result);
 }
-
-function problemCodeFromUnknown(value: unknown): ProblemCode | undefined {
+function problemCodeFromUnknown(value) {
     if (isProblemCode(value)) {
         return value;
     }
@@ -1017,30 +785,28 @@ function problemCodeFromUnknown(value: unknown): ProblemCode | undefined {
         return undefined;
     }
     const directProblem = parseProblemDetails(value);
-    if (directProblem) return directProblem.code;
+    if (directProblem)
+        return directProblem.code;
     const nestedProblem = parseProblemDetails(readOwn(value, "problem").value);
-    if (nestedProblem) return nestedProblem.code;
+    if (nestedProblem)
+        return nestedProblem.code;
     return undefined;
 }
-
 /**
  * Resolve a message solely from the registered catalog or a centralized safe
  * fallback.  Incoming title/detail strings and legacy message translations
  * are intentionally ignored.
  */
-export function resolveProblemMessage(
-    value: unknown,
-    localeOrOptions: ErrorLocale | ResolveProblemMessageOptions = DEFAULT_LOCALE,
-): string {
-    const options: ResolveProblemMessageOptions = typeof localeOrOptions === "string"
+function resolveProblemMessage(value, localeOrOptions = DEFAULT_LOCALE) {
+    const options = typeof localeOrOptions === "string"
         ? { locale: localeOrOptions }
         : isRecord(localeOrOptions)
-            ? localeOrOptions as ResolveProblemMessageOptions
+            ? localeOrOptions
             : {};
     const locale = localeOrDefault(options.locale);
     const code = problemCodeFromUnknown(value);
     if (code) {
-        return PROBLEM_CATALOG[code].detail[locale];
+        return exports.PROBLEM_CATALOG[code].detail[locale];
     }
     if (options.operation === "read") {
         return READ_FAILURE_MESSAGES[locale];
@@ -1050,7 +816,6 @@ export function resolveProblemMessage(
     }
     return UNKNOWN_MESSAGES[locale];
 }
-
-export const SAFE_UNKNOWN_PROBLEM_MESSAGES = UNKNOWN_MESSAGES;
-export const SAFE_READ_FAILURE_MESSAGES = READ_FAILURE_MESSAGES;
-export const SAFE_MUTATION_FAILURE_MESSAGES = MUTATION_FAILURE_MESSAGES;
+exports.SAFE_UNKNOWN_PROBLEM_MESSAGES = UNKNOWN_MESSAGES;
+exports.SAFE_READ_FAILURE_MESSAGES = READ_FAILURE_MESSAGES;
+exports.SAFE_MUTATION_FAILURE_MESSAGES = MUTATION_FAILURE_MESSAGES;
