@@ -77,6 +77,23 @@ export async function installPhase3WizardFixture(
 ) {
   await installPhase3ShellFixture(page);
 
+  await page.route("**/api/clients**", async (route: Route) => {
+    // Keep the list fallback scoped to the collection endpoint. More specific
+    // client endpoints (for example check-phone) own their response below.
+    if (new URL(route.request().url()).pathname !== "/api/clients") {
+      await route.fallback();
+      return;
+    }
+
+    if (route.request().method() === "POST") {
+      const handled = await options.onCreate?.(route);
+      if (handled === true) return;
+      await route.fulfill(phase3Json({ id: 501, name: "홍테스트 고객" }, 201));
+      return;
+    }
+    await route.fulfill(phase3Json([]));
+  });
+
   await page.route("**/api/employees**", async (route: Route) => {
     if (options.onEmployees) {
       await options.onEmployees(route);
@@ -97,15 +114,6 @@ export async function installPhase3WizardFixture(
   });
   await page.route("**/api/out-of-pocket-price-infos**", async (route: Route) => {
     await route.fulfill(phase3Json(PHASE3_OUT_OF_POCKET_PRICES));
-  });
-  await page.route("**/api/clients**", async (route: Route) => {
-    if (route.request().method() === "POST") {
-      const handled = await options.onCreate?.(route);
-      if (handled === true) return;
-      await route.fulfill(phase3Json({ id: 501, name: "홍테스트 고객" }, 201));
-      return;
-    }
-    await route.fulfill(phase3Json([]));
   });
 }
 
