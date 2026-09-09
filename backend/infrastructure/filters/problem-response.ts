@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { HttpException } from "@nestjs/common";
+import { HttpException, Logger } from "@nestjs/common";
 import type { Request, Response } from "express";
 import {
     createProblemDetails,
@@ -18,6 +18,13 @@ export function getProblemRequestId(response: Response): string {
     return requestId;
 }
 
+export function getProblemLocale(request: Request, response: Response): "ko-KR" | "en-US" {
+    const language = request.acceptsLanguages?.("ko-KR", "en-US", "ko", "en");
+    const locale = language === "en-US" || language === "en" ? "en-US" : "ko-KR";
+    response.locals["errorLocale"] = locale;
+    return locale;
+}
+
 /** 기존 업무 예외는 개별 전환 전까지 유지하고, 등록된 계약만 새 응답으로 변환해요. */
 export function mapHttpProblem(
     exception: unknown,
@@ -32,15 +39,15 @@ export function mapHttpProblem(
     // 이전 4xx 업무 응답을 일반적인 오류로 덮어써 원인을 잃지 않아요.
     if (!code && status < 500) return null;
     const requestId = getProblemRequestId(response);
-    const language = request.acceptsLanguages?.("ko-KR", "en-US", "ko", "en");
-    const locale = language === "en-US" || language === "en" ? "en-US" : "ko-KR";
-    response.locals["errorLocale"] = locale;
+    const locale = getProblemLocale(request, response);
     const selectedCode: ProblemCode = code ?? ({ 502: "UPSTREAM_INVALID_RESPONSE", 503: "DEPENDENCY_UNAVAILABLE", 504: "UPSTREAM_TIMEOUT" } as const)[status as 502 | 503 | 504] ?? "INTERNAL_ERROR";
     const problem = createProblemDetails({ code: selectedCode, requestId, locale });
     if (code) {
         const candidate = {
             ...problem,
             status,
+            ...(record?.["type"] === undefined ? {} : { type: record["type"] }),
+            ...(record?.["params"] === undefined ? {} : { params: record["params"] }),
             ...(record?.["errors"] === undefined ? {} : { errors: record["errors"] }),
             ...(record?.["outcome"] === undefined ? {} : { outcome: record["outcome"] }),
             ...(record?.["operationId"] === undefined ? {} : { operationId: record["operationId"] }),
@@ -48,6 +55,7 @@ export function mapHttpProblem(
         };
         const parsed = parseProblemDetails(candidate, status, locale);
         if (parsed) return parsed;
+        new Logger("ProblemResponse").error({ code: "ERROR_CONTRACT_INVALID", requestId, status });
     }
     return createProblemDetails({
         code: code ? "INTERNAL_ERROR" : selectedCode,

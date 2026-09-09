@@ -198,3 +198,17 @@ describe("catalog coverage", () => {
         expect(entry.detail["en-US"]).toEqual(expect.any(String));
     });
 });
+
+
+describe("uncertain outcome recovery invariant", () => {
+    it("defaults and conservatively normalizes UNKNOWN recovery in every entry point", () => {
+        const expected = { action: "CHECK_STATUS", retry: { mode: "NEVER" } };
+        const problem = createProblemDetails({ code: "INTERNAL_ERROR", requestId: "request-unknown", outcome: "UNKNOWN" });
+        expect(problem.recovery).toEqual(expected);
+        const missing = { ...problem, recovery: undefined };
+        delete missing.recovery;
+        expect(parseProblemDetails(missing)?.recovery).toEqual(expected);
+        expect(parseProblemDetails({ ...problem, recovery: { action: "NONE", retry: { mode: "NEVER" } } })?.recovery).toEqual(expected);
+        expect(normalizeApiError(missing).recovery).toEqual(expected);
+    });
+});

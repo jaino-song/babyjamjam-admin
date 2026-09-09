@@ -1,6 +1,7 @@
 import { createProblemDetails, normalizeApiError } from "../errors/problem-details";
 import { getUserErrorMessage } from "../errors/user-error-message";
-import { errorResponse, sanitizeUpstreamClientError } from "./route-utils";
+import { NextRequest } from "next/server";
+import { createRouteUtils, errorResponse, sanitizeUpstreamClientError } from "./route-utils";
 
 describe("problem proxy", () => {
     beforeEach(() => jest.spyOn(console, "error").mockImplementation(() => undefined));
@@ -38,5 +39,24 @@ describe("problem proxy", () => {
         const payload = sanitizeUpstreamClientError({ ...problem, stack: "private", token: "secret" }, "fallback", 500);
         expect(payload.outcome).toBe("UNKNOWN");
         expect(JSON.stringify(payload)).not.toMatch(/private|secret/);
+    });
+});
+
+
+describe("resolved proxy error boundary", () => {
+    beforeEach(() => jest.spyOn(console, "error").mockImplementation(() => undefined));
+    afterEach(() => jest.restoreAllMocks());
+    it("uses problem transport for resolved errors and read copy for malformed reads", async () => {
+        const problem = createProblemDetails({ code: "INTERNAL_ERROR", requestId: "resolved-request" });
+        const get = jest.fn().mockResolvedValue({ status: 500, data: problem });
+        const routes = createRouteUtils({ secureCookies: false, serverAPIClient: { get, post: jest.fn(), delete: jest.fn() } });
+        const request = new NextRequest("http://localhost/api/clients", { headers: { cookie: "auth_token=test-token" } });
+        const response = await routes.proxyGetRequest(request, "/clients", "load-clients");
+        expect(response.headers.get("Content-Type")).toContain("application/problem+json");
+        expect(response.headers.get("Cache-Control")).toContain("no-store");
+        expect(response.headers.get("X-Request-Id")).toBe("resolved-request");
+        get.mockResolvedValue({ status: 500, data: { ...problem, type: "invalid" } });
+        const malformed = await routes.proxyGetRequest(request, "/clients", "load-clients");
+        expect((await malformed.json()).error).toBe("요청한 정보를 불러오지 못했어요.");
     });
 });

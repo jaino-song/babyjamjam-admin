@@ -503,6 +503,9 @@ function parseProblemDetailsInternal(value, httpStatus, locale) {
         }
         parsed.recovery = sanitized;
     }
+    if (parsed.outcome === "UNKNOWN") {
+        parsed.recovery = { action: "CHECK_STATUS", retry: { mode: "NEVER" } };
+    }
     return parsed;
 }
 /**
@@ -571,6 +574,9 @@ function createProblemDetailsFromInput(input) {
             throw new TypeError("Problem details recovery is invalid");
         }
         result.recovery = recovery;
+    }
+    if (result.outcome === "UNKNOWN") {
+        result.recovery = { action: "CHECK_STATUS", retry: { mode: "NEVER" } };
     }
     return result;
 }

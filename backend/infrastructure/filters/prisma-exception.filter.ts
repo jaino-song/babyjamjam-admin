@@ -9,7 +9,7 @@ import { Prisma } from "@prisma/client";
 import type { Response } from "express";
 import type { Request } from "express";
 import { createProblemDetails } from "@babyjamjam/shared/errors/problem-details";
-import { getProblemRequestId, sendProblemResponse } from "./problem-response";
+import { getProblemLocale, getProblemRequestId, sendProblemResponse } from "./problem-response";
 
 import { getDatabaseConnectionMode } from "infrastructure/database/prisma-url.utils";
 import {
@@ -29,6 +29,11 @@ type PrismaException =
 
 // Prisma 에러 코드별 HTTP 상태 매핑 (메시지는 프론트엔드에서 처리)
 const PRISMA_ERROR_STATUS: Record<string, HttpStatus> = {
+    P2002: HttpStatus.CONFLICT,
+    P2003: HttpStatus.BAD_REQUEST,
+    P2025: HttpStatus.NOT_FOUND,
+    P2011: HttpStatus.BAD_REQUEST,
+    P2006: HttpStatus.BAD_REQUEST,
     P1001: HttpStatus.SERVICE_UNAVAILABLE, // Database unreachable
     P1017: HttpStatus.SERVICE_UNAVAILABLE, // Connection closed by server
     P2024: HttpStatus.SERVICE_UNAVAILABLE, // Prisma pool exhausted
@@ -62,10 +67,22 @@ export class PrismaExceptionFilter implements ExceptionFilter {
         } catch {
             // 진단 수집 실패는 원래 응답을 바꾸지 않아요.
         }
+        // 기존 소비자가 의존하는 상태/코드만 유지하며 DB 필드와 제약 이름은 공개하지 않아요.
+        if (status < 500) {
+            response.setHeader("Cache-Control", "no-store");
+            response.setHeader("X-Request-Id", requestId);
+            return response.status(status).json({
+                statusCode: status,
+                code: prismaCode,
+                error: status === 409 ? "Conflict" : status === 404 ? "Not Found" : "Bad Request",
+            });
+        }
+        const locale = getProblemLocale(request, response);
         // DB 제약만으로 고객 중복이나 삭제 제한을 추측하지 않아요.
         const problem = createProblemDetails({
             code: status === HttpStatus.SERVICE_UNAVAILABLE ? "DEPENDENCY_UNAVAILABLE" : "INTERNAL_ERROR",
             requestId,
+            locale,
             ...(["GET", "HEAD", "OPTIONS"].includes(request.method) ? {} : { outcome: "UNKNOWN" as const }),
         });
         return sendProblemResponse(response, problem);

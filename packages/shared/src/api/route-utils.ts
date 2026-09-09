@@ -275,11 +275,12 @@ export function sanitizeUpstreamClientError(
     upstreamData: unknown,
     fallbackMessage: string,
     status?: number,
+    operation: "read" | "mutation" = "mutation",
 ): ({ error: string; code?: string; field?: string; hasKakaoAccount?: boolean } & Partial<Omit<ProblemDetails, "code">>) {
     const problem = parseProblemDetails(upstreamData, status);
     if (problem) return { ...problem, error: problem.detail };
     if (upstreamData && typeof upstreamData === "object" && ("type" in upstreamData || "requestId" in upstreamData)) {
-        return { error: normalizeApiError({ response: { status, data: upstreamData } }).message };
+        return { error: normalizeApiError({ response: { status, data: upstreamData } }, { operation }).message };
     }
     const payload: { error: string; code?: string; field?: string; hasKakaoAccount?: boolean } = {
         error: getUserErrorMessage({ response: { status, data: upstreamData } }, fallbackMessage),
@@ -383,12 +384,12 @@ export function unauthorizedResponse(
     return NextResponse.json({ error: message }, { status: 401 });
 }
 
-export function errorResponse(error: unknown, context: string): NextResponse {
+export function errorResponse(error: unknown, context: string, operation: "read" | "mutation" = "mutation"): NextResponse {
     const upstreamData = (error as UpstreamErrorLike | null)?.response?.data as UpstreamErrorPayload | undefined;
     const status = (error as UpstreamErrorLike | null)?.response?.status || 500;
 
     logUpstreamError(context, error);
-    const payload = sanitizeUpstreamClientError(upstreamData, `Failed to ${context}`, status);
+    const payload = sanitizeUpstreamClientError(upstreamData, `Failed to ${context}`, status, operation);
     return NextResponse.json(payload, {
         status,
         headers: {
@@ -402,22 +403,8 @@ export function errorResponse(error: unknown, context: string): NextResponse {
     });
 }
 
-function createLegacyErrorResponse(error: unknown, context: string): NextResponse {
-    const upstreamData = (error as UpstreamErrorLike | null)?.response?.data as UpstreamErrorPayload | undefined;
-    const status = (error as UpstreamErrorLike | null)?.response?.status || 500;
-    logUpstreamError(context, error);
-    const payload = sanitizeUpstreamClientError(upstreamData, `Failed to ${context}`, status);
-    return NextResponse.json(payload, {
-        status,
-        headers: {
-            "Cache-Control": NO_STORE_CACHE_CONTROL,
-            ...(payload.type && payload.requestId ? {
-                "Content-Type": "application/problem+json",
-                "Content-Language": "ko-KR",
-                "X-Request-Id": payload.requestId,
-            } : {}),
-        },
-    });
+function createLegacyErrorResponse(error: unknown, context: string, operation: "read" | "mutation" = "mutation"): NextResponse {
+    return errorResponse(error, context, operation);
 }
 
 export function createRouteUtils({
@@ -448,15 +435,12 @@ export function createRouteUtils({
             });
 
             if ((response.status ?? 200) >= 400) {
-                return NextResponse.json(
-                    sanitizeUpstreamClientError(response.data, `Failed to ${context}`, response.status),
-                    { status: response.status },
-                );
+                return boundErrorResponse({ response }, context, "read");
             }
 
             return NextResponse.json(response.data);
         } catch (error) {
-            return boundErrorResponse(error, context);
+            return boundErrorResponse(error, context, "read");
         }
     }
 
@@ -481,15 +465,12 @@ export function createRouteUtils({
             });
 
             if ((response.status ?? 200) >= 400) {
-                return NextResponse.json(
-                    sanitizeUpstreamClientError(response.data, `Failed to ${context}`, response.status),
-                    { status: response.status },
-                );
+                return boundErrorResponse({ response }, context, "read");
             }
 
             return NextResponse.json(response.data);
         } catch (error) {
-            return boundErrorResponse(error, context);
+            return boundErrorResponse(error, context, "read");
         }
     }
 
@@ -528,10 +509,7 @@ export function createRouteUtils({
             );
 
             if ((response.status ?? 200) >= 400) {
-                return NextResponse.json(
-                    sanitizeUpstreamClientError(response.data, `Failed to ${context}`, response.status),
-                    { status: response.status },
-                );
+                return boundErrorResponse({ response }, context, "mutation");
             }
 
             return NextResponse.json(response.data);
@@ -587,10 +565,7 @@ export function createRouteUtils({
             });
 
             if ((response.status ?? 200) >= 400) {
-                return NextResponse.json(
-                    sanitizeUpstreamClientError(response.data, `Failed to ${context}`, response.status),
-                    { status: response.status },
-                );
+                return boundErrorResponse({ response }, context, "mutation");
             }
 
             return NextResponse.json(response.data);

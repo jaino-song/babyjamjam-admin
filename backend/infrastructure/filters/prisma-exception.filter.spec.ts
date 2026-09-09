@@ -26,14 +26,14 @@ interface MockResponse {
     json: jest.Mock;
 }
 
-function createHost(path = "/clients"): { host: ArgumentsHost; response: MockResponse } {
+function createHost(path = "/clients", language = "ko-KR"): { host: ArgumentsHost; response: MockResponse } {
     const response: MockResponse = {
         locals: {},
         setHeader: jest.fn(),
         status: jest.fn().mockReturnThis(),
         json: jest.fn(),
     };
-    const request = { originalUrl: path, url: path, method: "POST" };
+    const request = { originalUrl: path, url: path, method: "POST", acceptsLanguages: () => language };
     const host = {
         switchToHttp: () => ({
             getResponse: () => response,
@@ -101,7 +101,7 @@ describe("PrismaExceptionFilter database failover telemetry", () => {
         expect(mockScope.setTag).toHaveBeenCalledWith("prisma.code", code);
         expect(JSON.stringify(mockScope.setTag.mock.calls)).not.toContain(rawMessage);
         expect(JSON.stringify(response.json.mock.calls)).not.toContain(rawMessage);
-        expect(response.json.mock.calls[0]?.[0].code).toBe(code === "P2024" ? "DEPENDENCY_UNAVAILABLE" : "INTERNAL_ERROR");
+        expect(response.json.mock.calls[0]?.[0].code).toBe(code === "P2024" ? "DEPENDENCY_UNAVAILABLE" : "P2002");
     });
 
     it("captures Prisma errors without a code as ineligible instead of treating them as failover signals", () => {
@@ -133,4 +133,21 @@ describe("PrismaExceptionFilter database failover telemetry", () => {
         expect(mockScope.setTag).toHaveBeenCalledWith("feature", "database-failover");
         expect(mockScope.setTag).not.toHaveBeenCalledWith("feature", "service-records");
     });
+    it.each([["P2002", 409], ["P2003", 400], ["P2025", 404], ["P2011", 400], ["P2006", 400]])("preserves legacy %s without private metadata", (code, status) => {
+        const { host, response } = createHost();
+        const exception = new Prisma.PrismaClientKnownRequestError("private value", { code: String(code), clientVersion: "6.19.1", meta: { target: ["private_constraint"] } });
+        new PrismaExceptionFilter().catch(exception, host);
+        expect(response.status).toHaveBeenCalledWith(status);
+        expect(response.json).toHaveBeenCalledWith(expect.objectContaining({ code, statusCode: status }));
+        expect(JSON.stringify(response.json.mock.calls)).not.toMatch(/private|field|UNKNOWN/);
+    });
+
+    it("negotiates English for database failures", () => {
+        const { host, response } = createHost("/clients", "en-US");
+        new PrismaExceptionFilter().catch(knownError("P1001"), host);
+        expect(response.setHeader).toHaveBeenCalledWith("Content-Language", "en-US");
+        expect(response.json.mock.calls[0]?.[0].detail).not.toMatch(/[가-힣]/);
+        expect(response.json.mock.calls[0]?.[0].recovery).toEqual({ action: "CHECK_STATUS", retry: { mode: "NEVER" } });
+    });
+
 });

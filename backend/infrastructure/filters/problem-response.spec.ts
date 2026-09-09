@@ -64,3 +64,13 @@ describe("HTTP problem boundary", () => {
         expect(mapHttpProblem(new Error(), request, response as unknown as Response)?.requestId).toBe(result.requestId);
     });
 });
+
+
+describe("invalid producer contracts", () => {
+    it.each([{ type: "https://wrong.example/type" }, { params: { private: "secret" } }])("rejects contradictory identity or params %j", (extension) => {
+        const { request, response } = context();
+        const result = mapHttpProblem(new HttpException({ code: "REQUEST_CONFLICT", ...extension }, 409), request, response as unknown as Response);
+        expect(result).toMatchObject({ status: 500, code: "INTERNAL_ERROR", outcome: "UNKNOWN", recovery: { action: "CHECK_STATUS", retry: { mode: "NEVER" } } });
+        expect(JSON.stringify(result)).not.toContain("secret");
+    });
+});
