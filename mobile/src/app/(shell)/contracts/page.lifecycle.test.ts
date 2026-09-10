@@ -84,7 +84,8 @@ describe("mobile contracts action lifecycle", () => {
     expect(source).toContain("const startDate = normalizeDateToYymmdd(");
     expect(source).toContain("const endDate = normalizeDateToYymmdd(");
     expect(source).toContain("dueDate: yymmddPrefillToIso(clientPrefill.dueDate),");
-    expect(source).toContain("setPrefillClient(buildClientPrefillFromContract(doc));");
+    expect(source).toContain("useContractClientRegistration");
+    expect(source).not.toContain("setPrefillClient(buildClientPrefillFromContract(doc));");
     expect(source).toContain(
       "prefillContractCreation(buildContractCreationPrefillFromContract(doc, metadata, employees));",
     );

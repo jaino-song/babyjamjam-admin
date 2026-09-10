@@ -125,6 +125,7 @@ import {
 import { matchesKoreanSearch } from "@/lib/search/korean-search";
 import { useClientDialogStore, type ClientWizardPrefill } from "@/stores/client-dialog-store";
 import { useFormStore, type ContractCreationPrefill } from "@/stores/form-store";
+import { useContractClientRegistration } from "@/hooks/useContractClientRegistration";
 import "@/components/app/mobile-redesign/redesign.css";
 const STAFF_COMPLETION_IFRAME_ID = "contracts_staff_completion_iframe";
 const CONTRACT_PDF_VIEWER_ARIA_LABEL = "계약서 PDF 미리보기";
@@ -1211,6 +1212,7 @@ function ContractDetailContent({
   onTabChange,
   onFinalize,
   onOpenClient,
+  isClientRegistrationPending,
   onEditSend,
   onDeleteRequest,
 }: {
@@ -1221,7 +1223,8 @@ function ContractDetailContent({
   activeTab: DetailTabId;
   onTabChange: (id: DetailTabId) => void;
   onFinalize?: (doc: EformsignDocument, metadata?: EformsignDocClientSummary) => void;
-  onOpenClient: (doc: EformsignDocument, metadata?: EformsignDocClientSummary) => void;
+  onOpenClient: (doc: EformsignDocument, metadata?: EformsignDocClientSummary) => Promise<void>;
+  isClientRegistrationPending: boolean;
   onEditSend: (doc: EformsignDocument, metadata?: EformsignDocClientSummary) => void;
   onDeleteRequest: (doc: EformsignDocument) => void;
 }) {
@@ -1371,7 +1374,10 @@ function ContractDetailContent({
               data-component="mobile_contracts_detail-sheet_stack_detail-page_content_header_menu"
             >
               <DropdownMenuItem
-                onClick={() => onOpenClient(doc, metadata)}
+                onClick={() => {
+                  void onOpenClient(doc, metadata);
+                }}
+                disabled={isClientRegistrationPending}
                 className="min-h-[44px] gap-2 rounded-md px-3 py-2 text-[0.82rem] leading-none"
                 data-component="mobile_contracts_detail-sheet_stack_detail-page_content_header_menu_client"
               >
@@ -1623,9 +1629,12 @@ export default function ContractsPage() {
   const router = useRouter();
   const { toast } = useToast();
   const { data: employees = [] } = useEmployees();
-  const setPrefillClient = useClientDialogStore((state) => state.setPrefillClient);
   const clearPrefillClient = useClientDialogStore((state) => state.clearPrefillClient);
   const prefillContractCreation = useFormStore((state) => state.prefillFromContract);
+  const {
+    handleOpenClientFromContract,
+    isClientRegistrationPending,
+  } = useContractClientRegistration();
   const [activeFilter, setActiveFilter] = useState<FilterKey>("전체");
   const [activeSection, setActiveSection] = useState<ContractSectionId>("maternal-contracts");
   const [searchQuery, setSearchQuery] = useState("");
@@ -1728,20 +1737,6 @@ export default function ContractsPage() {
 
   const closeFinalizeDialog = () => {
     setIsFinalizeDialogOpen(false);
-  };
-
-  const handleOpenClientFromContract = (
-    doc: EformsignDocument,
-    metadata?: EformsignDocClientSummary,
-  ) => {
-    if (metadata?.clientId) {
-      clearPrefillClient();
-      router.push(`/clients/new?clientId=${metadata.clientId}`);
-      return;
-    }
-
-    setPrefillClient(buildClientPrefillFromContract(doc));
-    router.push("/clients/new");
   };
 
   const handleEditSendFromContract = (
@@ -2457,6 +2452,7 @@ export default function ContractsPage() {
             onTabChange={setActiveTab}
             onFinalize={openFinalize}
             onOpenClient={handleOpenClientFromContract}
+            isClientRegistrationPending={isClientRegistrationPending}
             onEditSend={handleEditSendFromContract}
             onDeleteRequest={setDeleteTargetDoc}
           />

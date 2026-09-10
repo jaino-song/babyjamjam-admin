@@ -352,6 +352,12 @@ export default function NewClientPage() {
     if (prefillClient.dueDate !== undefined) setField("dueDate", toIsoDate(prefillClient.dueDate));
     if (prefillClient.address !== undefined) setField("address", prefillClient.address);
     if (prefillClient.phone !== undefined) setField("phone", prefillClient.phone);
+    if (prefillClient.primaryEmployeeId !== undefined) {
+      setField("primaryEmployeeId", prefillClient.primaryEmployeeId);
+    }
+    if (prefillClient.secondaryEmployeeId !== undefined) {
+      setField("secondaryEmployeeId", prefillClient.secondaryEmployeeId);
+    }
     if (prefillClient.type !== undefined) setField("type", prefillClient.type);
     if (prefillClient.duration !== undefined) setField("duration", prefillClient.duration);
     if (prefillClient.fullPrice !== undefined) setField("fullPrice", prefillClient.fullPrice);
