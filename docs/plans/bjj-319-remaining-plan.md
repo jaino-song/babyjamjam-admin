@@ -348,3 +348,13 @@ TL;DR: backend/interface·domain·prisma·packages/shared·service-record-ui 후
 - 기록: inventory `owners` 68건 + root review 2건 + source_manifest 70건 상태 갱신, `review_batches` A 요약 추가, 리뷰한 5개 root `semantic_review_status: reviewed-batch-a`. 규격 ID는 EM 카탈로그 미제공으로 `spec_mapping_status: pending`을 유지한다.
 - 배치 A만 완료다. Task 1.1 전체(배치 B~E: backend/application·infrastructure·web·mobile·backend test·마감)와 후속 전환은 계속 미완료다. 다음은 배치 B(backend/application 150 + backend/infrastructure 69)다.
 
+## Task 1.1 배치 B (서버 애플리케이션·인프라) 실행 결과 (2026-09-10)
+
+TL;DR: backend/application 150 + backend/infrastructure 69 후보를 의미 검토해 분류를 완료했다(미분류 0). 애플리케이션 서비스·유스케이스 다수가 raw 4xx를 소유하고, 인프라는 대부분 경계/내부 위임으로 no-direct이며 `problem-response.ts`·`global-validation.pipe.ts`가 계약 경계로 확인됐다.
+
+- 배치 B는 read-only scout 8회로 실행했다: application 30개씩 5회, infrastructure 23개씩 3회. basis `15fa652022085214f148d4ebec493f805e851da8`.
+- 결과: migrated 19(경계 정규화 또는 컨트롤러 변환으로 등록 코드에 도달), legacy 87(raw 4xx/비등록 코드/레거시 result shape 소유), no-direct-error-boundary 113(잡/내부 위임/리포지토리 등), unverified 0. 루트 대조: application 150/150, infrastructure 69/69.
+- 주요 판단 기록: `webhook.guard.ts`는 가드 인증 예외를 명시적으로 면제하는 문서가 없어 legacy로 유지(approved-exception 아님). `prisma-exception.filter.ts`의 Prisma 4xx raw body는 legacy 유지(전환 대상). plain Error만 있고 요청 경로에서 ≥500 정규화로만 노출되는 파일은 migrated로 분류(경계 근거 명시). agent capability provider류는 coordinator가 action 상태로 기록하므로 no-direct.
+- 기록: inventory `owners` 219건 + source_manifest 219건 갱신, `review_batches` B 요약 추가, application/infrastructure `semantic_review_status: reviewed-batch-b`. 규격 ID는 여전히 `spec_mapping_status: pending`이다.
+- 배치 B 완료. 남은 Task 1.1 범위는 frontend/src 272 + mobile/src 238(배치 C·D)과 테스트 매핑·전수 대조(배치 E)다. 배치 C·D부터는 컨텍스트 절약을 위해 launcher 기반 scout 병렬 실행과 파일 기반 보고(`opencode-task.sh --agent scout --out`)를 사용하고, main은 스크립트로 inventory에 반영한 뒤 표본 검증한다(방법 변경 기록).
+
