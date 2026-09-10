@@ -260,6 +260,7 @@ export function SystemTemplatesManager({
               ) : undefined
             }
             footer={footer}
+            footerClassName="max-md:pb-[96px]"
           >
             {detailQuery.isError && !detail ? (
               <DetailEmptyState message="선택한 템플릿 정보를 불러오지 못했습니다." />

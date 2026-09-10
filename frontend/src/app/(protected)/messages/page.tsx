@@ -1988,6 +1988,7 @@ export default function MessagesPage() {
                   }
                   trailing={selectedTemplateHeaderTrailing}
                   footer={systemTemplateFooter}
+                  footerClassName={systemTemplateFooter ? "max-md:pb-[96px]" : undefined}
                   tabs={
                     activeTemplateId ? (
                       <DetailTabs
