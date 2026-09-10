@@ -570,7 +570,7 @@ describe("NewMessagePage", () => {
     expect(screen.getByRole("button", { name: "즉시 발송" })).toBeDisabled();
   });
 
-  it("shows permission skeletons on the section nav and the send action while approval is loading", () => {
+  it("shows the section-nav skeleton and disables the send action while approval is loading", () => {
     mockUseMessagesPermissionGuard.mockReturnValue({
       isLoading: true,
       needsSenderApproval: false,
@@ -587,9 +587,9 @@ describe("NewMessagePage", () => {
     ).toHaveLength(5);
     expect(screen.queryByRole("button", { name: "전송하기" })).not.toBeInTheDocument();
 
-    // The send action is replaced by the shared permission skeleton.
-    expect(screen.getByRole("status", { name: "권한 확인 중" })).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "즉시 발송" })).not.toBeInTheDocument();
+    // The send action stays the real button (disabled). A skeleton here made
+    // the header taller and shifted the whole form once approval resolved.
+    expect(screen.getByRole("button", { name: "즉시 발송" })).toBeDisabled();
   });
 
   it("does not show the draft save action", () => {
