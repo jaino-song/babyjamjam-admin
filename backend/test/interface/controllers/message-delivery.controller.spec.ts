@@ -449,6 +449,143 @@ describe("MessageDeliveryController", () => {
         expect(aligoService.sendSms).not.toHaveBeenCalled();
     });
 
+    const smsInvalidRequestCases: Array<{
+        description: string;
+        setup: () => void;
+        tenant: { branchId?: string };
+        dto: { receiver: string; message: string; clientId?: number; employeeId?: number };
+        privateValues: string[];
+    }> = [
+        {
+            description: "a missing branch",
+            setup: () => undefined,
+            tenant: {},
+            dto: { receiver: "01012345678", message: "private message" },
+            privateValues: ["A branch is required"],
+        },
+        {
+            description: "both a client and an employee selected",
+            setup: () => undefined,
+            tenant: { branchId: "branch-a" },
+            dto: { receiver: "01012345678", message: "private message", clientId: 7, employeeId: 12 },
+            privateValues: ["both a client and an employee"],
+        },
+        {
+            description: "an empty or invalid recipient list",
+            setup: () => undefined,
+            tenant: { branchId: "branch-a" },
+            dto: { receiver: ",", message: "private message" },
+            privateValues: ["valid branch-owned"],
+        },
+        {
+            description: "two recipients with a selected client",
+            setup: () => undefined,
+            tenant: { branchId: "branch-a" },
+            dto: { receiver: "01012345678,01099999999", message: "private message", clientId: 7 },
+            privateValues: ["exactly one recipient"],
+        },
+        {
+            description: "a client phone mismatch",
+            setup: () => {
+                prismaService.client.findFirst.mockResolvedValue({ id: 7, name: "지점 고객", phone: "01033334444" });
+            },
+            tenant: { branchId: "branch-a" },
+            dto: { receiver: "01012345678", message: "private message", clientId: 7 },
+            privateValues: ["does not match the selected client"],
+        },
+        {
+            description: "two recipients with a selected employee",
+            setup: () => undefined,
+            tenant: { branchId: "branch-a" },
+            dto: { receiver: "01012345678,01099999999", message: "private message", employeeId: 12 },
+            privateValues: ["exactly one recipient"],
+        },
+        {
+            description: "an employee phone mismatch",
+            setup: () => {
+                prismaService.employee?.findFirst.mockResolvedValue({ id: 12, name: "지점 직원", phone: "01033334444" });
+            },
+            tenant: { branchId: "branch-a" },
+            dto: { receiver: "01012345678", message: "private message", employeeId: 12 },
+            privateValues: ["does not match the selected employee"],
+        },
+        {
+            description: "an ambiguous free-form recipient",
+            setup: () => {
+                prismaService.client.findFirst.mockResolvedValue({ id: 3, name: "중복 고객", phone: "01012345678" });
+                prismaService.employee?.findFirst.mockResolvedValue({ id: 5, name: "중복 직원", phone: "01012345678" });
+            },
+            tenant: { branchId: "branch-a" },
+            dto: { receiver: "01012345678", message: "private message" },
+            privateValues: ["more than one branch record"],
+        },
+    ];
+
+    it.each(smsInvalidRequestCases)(
+        "rejects $description with REQUEST_INVALID before approval, history, or provider side effects",
+        async ({ setup, tenant, dto }) => {
+            prismaService.client.findFirst.mockResolvedValue({ id: 1, name: "테스트 수신자", phone: "01012345678" });
+            setup();
+
+            await expect(controller.sendSms(tenant, dto)).rejects.toMatchObject({
+                status: 400,
+                response: { code: "REQUEST_INVALID", outcome: "NOT_APPLIED" },
+            });
+
+            expect(messageSenderApprovalService.ensureApproved).not.toHaveBeenCalled();
+            expect(prismaService.message_log.create).not.toHaveBeenCalled();
+            expect(prismaService.message_log.update).not.toHaveBeenCalled();
+            expect(aligoService.sendSms).not.toHaveBeenCalled();
+        },
+    );
+
+    // Non-null assertions are justified: indices 1/4/7 are fully populated entries of smsInvalidRequestCases.
+    const smsPublicResponseCases = [smsInvalidRequestCases[1]!, smsInvalidRequestCases[4]!, smsInvalidRequestCases[7]!];
+
+    it.each(smsPublicResponseCases)(
+        "preserves a pre-send REQUEST_INVALID rejection through the public response: %j",
+        async ({ setup, tenant, dto }) => {
+            prismaService.client.findFirst.mockResolvedValue({ id: 1, name: "테스트 수신자", phone: "01012345678" });
+            prismaService.employee?.findFirst.mockResolvedValue({ id: 12, name: "지점 직원", phone: "010-1234-5678" });
+            setup();
+
+            for (const locale of ["ko-KR", "en-US"] as const) {
+                const exception: unknown = await controller.sendSms(tenant, dto).catch((error: unknown) => error);
+                const requestId = `test-recipient-request-invalid-${locale}`;
+                const response = {
+                    locals: { errorRequestId: requestId },
+                    setHeader: jest.fn(), status: jest.fn().mockReturnThis(), json: jest.fn(),
+                };
+                const problem = mapHttpProblem(exception,
+                    { method: "POST", acceptsLanguages: () => locale } as unknown as Request,
+                    response as unknown as Response);
+                if (!problem) throw new Error("Expected a registered recipient problem");
+                sendProblemResponse(response as unknown as Response, problem);
+                const body: unknown = response.json.mock.calls[0]?.[0];
+                expect(body).toMatchObject({
+                    code: "REQUEST_INVALID", status: 400, requestId, params: {},
+                    outcome: "NOT_APPLIED", detail: PROBLEM_CATALOG.REQUEST_INVALID.detail[locale],
+                    recovery: { action: "NONE", retry: { mode: "NEVER" } },
+                });
+                expect(problem.params).toEqual({});
+                expect(response.status).toHaveBeenCalledWith(400);
+                expect(response.setHeader).toHaveBeenCalledWith("Content-Type", "application/problem+json");
+                expect(response.setHeader).toHaveBeenCalledWith("Content-Language", locale);
+                expect(response.setHeader).toHaveBeenCalledWith("Cache-Control", "no-store");
+                expect(response.setHeader).toHaveBeenCalledWith("X-Request-Id", requestId);
+                const normalized = normalizeApiError({ response: { status: 400, data: body } }, { operation: "mutation", locale });
+                expect(normalized).toMatchObject({ verified: true, outcome: "NOT_APPLIED", problem: { requestId } });
+                expect(normalized.message).toBe(PROBLEM_CATALOG.REQUEST_INVALID.detail[locale]);
+                const serialized = JSON.stringify(body);
+                expect(serialized).not.toContain("branch-a");
+                expect(serialized).not.toContain("private message");
+                for (const phone of dto.receiver.split(",")) {
+                    expect(serialized).not.toContain(phone);
+                }
+            }
+        },
+    );
+
     it("should bind an employee-associated SMS to an active employee in the selected branch", async () => {
         prismaService.client.findFirst.mockResolvedValue(null);
         prismaService.employee?.findFirst.mockResolvedValue({
