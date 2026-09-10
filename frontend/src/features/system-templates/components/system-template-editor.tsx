@@ -4,4 +4,13 @@
  * implementation beside the app UI component.
  */
 export { SystemTemplateEditor } from '@/components/app/ui/SystemTemplateEditor';
-export type { SystemTemplateEditorProps } from '@/components/app/ui/SystemTemplateEditor';
+export type {
+  SystemTemplateEditorDraft,
+  SystemTemplateEditorHandle,
+  SystemTemplateEditorProps,
+  SystemTemplateValidationState,
+} from '@/components/app/ui/SystemTemplateEditor';
+export {
+  hasMalformedVariableSyntax,
+  validateSystemTemplateContent,
+} from '@/components/app/ui/SystemTemplateEditor';

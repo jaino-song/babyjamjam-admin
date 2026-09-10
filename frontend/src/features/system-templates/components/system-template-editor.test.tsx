@@ -1,8 +1,10 @@
+import { act, createRef } from "react";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 
 import type { SystemTemplate } from "../types";
 import { useUpdateSystemTemplate } from "../hooks";
 import { SystemTemplateEditor } from "./system-template-editor";
+import type { SystemTemplateEditorHandle } from "./system-template-editor";
 
 const mockToast = jest.fn();
 const mockMutateAsync = jest.fn();
@@ -87,6 +89,13 @@ describe("SystemTemplateEditor", () => {
     expect(screen.getByRole("button", { name: "저장" })).toBeDisabled();
   });
 
+  it("accepts a detail payload without customVariables without entering a render loop", () => {
+    render(<SystemTemplateEditor template={buildTemplate({ customVariables: undefined })} />);
+
+    expect(screen.getByPlaceholderText(contentPlaceholder)).toHaveValue("안녕하세요 {{name}}");
+    expect(screen.getByRole("button", { name: "저장" })).toBeDisabled();
+  });
+
   it("preserves a dirty draft when refreshed detail props change", async () => {
     const initialTemplate = buildTemplate();
     const { rerender } = render(<SystemTemplateEditor template={initialTemplate} />);
@@ -154,5 +163,24 @@ describe("SystemTemplateEditor", () => {
         branchId: "branch-test",
       });
     });
+  });
+
+  it("resets a dirty draft to the rollback response before refetch completes", async () => {
+    const editorRef = createRef<SystemTemplateEditorHandle>();
+    render(<SystemTemplateEditor ref={editorRef} template={buildTemplate()} />);
+
+    fireEvent.change(screen.getByPlaceholderText(contentPlaceholder), {
+      target: { value: "저장 전 초안" },
+    });
+
+    await act(async () => {
+      editorRef.current?.reset({
+        content: "복원된 버전 본문",
+        customVariables: [],
+      });
+    });
+
+    expect(screen.getByPlaceholderText(contentPlaceholder)).toHaveValue("복원된 버전 본문");
+    expect(screen.getByRole("button", { name: "저장" })).toBeDisabled();
   });
 });

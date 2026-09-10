@@ -104,6 +104,7 @@ export const TemplateContentEditor = forwardRef<TemplateContentEditorHandle, Tem
                                     variables={variables}
                                     onVariableClick={handleVariableClick}
                                     placeholder={placeholder}
+                                    dataComponent={`${dataComponent}_content-input`}
                                 />
                             </div>
                         </PopoverAnchor>

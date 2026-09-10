@@ -40,6 +40,11 @@ import {
   useActiveBranchId,
 } from "@/features/system-templates/branch-context";
 import { SystemTemplateEditor } from "@/components/app/ui/SystemTemplateEditor";
+import type {
+  SystemTemplateEditorDraft,
+  SystemTemplateEditorHandle,
+} from "@/components/app/ui/SystemTemplateEditor";
+import { TemplatePreview } from "@/components/app/my-templates/template-preview";
 import {
   buildSystemTemplateCatalog,
   type LegacyBuiltinTemplateType,
@@ -115,6 +120,7 @@ import { matchesSearchQuery } from "@/lib/search/korean-search";
 import { findMessageHistoryClient } from "@/lib/message-history/client-match";
 import { renderTemplate } from "@/lib/template-utils";
 import { cn } from "@/lib/utils";
+import type { TemplateVariable as EditorTemplateVariable } from "@/lib/template/types";
 import { syncMessageDraftScope } from "@/stores/message-draft-scope";
 import {
   Ban,
@@ -157,6 +163,7 @@ import {
 } from "@/components/app/messages/MessageApprovalGate";
 import { TriggerRulesManager } from "@/components/app/messages/TriggerRulesManager";
 import { Button } from "@/components/ui/button";
+import { DETAIL_PANEL_FOOTER_ACTIONS_CLASS_NAME } from "@/components/app/v3/DetailPanel";
 import {
   APP_CONTENT_BODY_CARD_CLASS_NAME,
   AppContentCard,
@@ -1402,6 +1409,8 @@ export default function MessagesPage() {
   const [templateDetailTab, setTemplateDetailTab] = useState<TemplateDetailTab>("details");
   const [templatePreviewOverride, setTemplatePreviewOverride] = useState<string | null>(null);
   const [isSystemTemplateSaving, setIsSystemTemplateSaving] = useState(false);
+  const [systemTemplateDraft, setSystemTemplateDraft] = useState<SystemTemplateEditorDraft | null>(null);
+  const systemTemplateEditorRef = useRef<SystemTemplateEditorHandle>(null);
   const [templateSendSubmitState, setTemplateSendSubmitState] =
     useState<TemplateSendFormSubmitState | null>(null);
   const user = useInitialUser();
@@ -1469,6 +1478,7 @@ export default function MessagesPage() {
     setTemplateDetailTab("details");
     setTemplatePreviewOverride(null);
     setTemplateSendSubmitState(null);
+    setSystemTemplateDraft(null);
   }, [setSelectedValue]);
 
   const handleTemplateFilterChange = useCallback(
@@ -1479,6 +1489,7 @@ export default function MessagesPage() {
       setTemplateDetailTab("details");
       setTemplatePreviewOverride(null);
       setTemplateSendSubmitState(null);
+      setSystemTemplateDraft(null);
       setSelectedValue((current) => {
         if (current && nextItems.some((item) => item.id === current)) {
           return current;
@@ -1519,6 +1530,24 @@ export default function MessagesPage() {
   });
   const selectedSystemTemplatePreview =
     selectedSystemTemplateDetail ?? (isBuiltin ? selectedTemplateItem?.template ?? null : null);
+  const selectedSystemTemplatePreviewVariables = useMemo<EditorTemplateVariable[]>(() => {
+    if (!selectedSystemTemplatePreview) return [];
+
+    const seen = new Set<string>();
+    return [
+      ...(selectedSystemTemplatePreview.requiredVariables ?? []),
+      ...(selectedSystemTemplatePreview.customVariables ?? []),
+    ].flatMap((variable) => {
+      if (!variable?.key || seen.has(variable.key)) return [];
+      seen.add(variable.key);
+      return [{
+        key: variable.key,
+        label: variable.label,
+        type: "text" as const,
+        required: Boolean(variable.required),
+      }];
+    });
+  }, [selectedSystemTemplatePreview]);
   const selectedTemplateIcon = selectedTemplateItem?.icon ?? FileText;
   const SelectedTemplateIcon = selectedTemplateIcon;
   const selectedTemplateTitle = selectedTemplateItem?.label ?? selectedUserTemplate?.name ?? "메시지 템플릿";
@@ -1605,6 +1634,7 @@ export default function MessagesPage() {
       setTemplateDetailTab("details");
       setTemplatePreviewOverride(null);
       setTemplateSendSubmitState(null);
+      setSystemTemplateDraft(null);
     });
 
     return () => {
@@ -1718,6 +1748,7 @@ export default function MessagesPage() {
       {isBuiltin && activeSection === "templates" ? (
         selectedSystemTemplateDetail ? (
           <SystemTemplateEditor
+            ref={systemTemplateEditorRef}
             key={`${activeBranchId ?? "unavailable"}:${selectedSystemTemplateDetail.templateKey}`}
             // Registry keys can be added server-side before the shared package
             // union is updated; the editor consumes the same wire shape.
@@ -1725,7 +1756,9 @@ export default function MessagesPage() {
             scope="branch"
             branchId={activeBranchId}
             dataComponent="desktop_messages_sections_templates_split-layout_detail-panel_editor"
+            showSaveButton={false}
             onPendingChange={setIsSystemTemplateSaving}
+            onDraftChange={setSystemTemplateDraft}
             onPreviewMessageChange={handleTemplatePreviewMessageChange}
           />
         ) : isLoadingSystemTemplateDetail ? null : isSystemTemplateDetailError ? (
@@ -1755,6 +1788,28 @@ export default function MessagesPage() {
       ) : null}
     </>
   );
+  const systemTemplateFooter =
+    isBuiltin &&
+    activeSection === "templates" &&
+    selectedSystemTemplateDetail ? (
+      <div className={DETAIL_PANEL_FOOTER_ACTIONS_CLASS_NAME}>
+        <Button
+          data-component="desktop_messages_sections_templates_split-layout_detail-panel_footer_reset-button"
+          variant="outline"
+          disabled={!systemTemplateDraft?.isDirty || isSystemTemplateSaving}
+          onClick={() => systemTemplateEditorRef.current?.reset()}
+        >
+          되돌리기
+        </Button>
+        <Button
+          data-component="desktop_messages_sections_templates_split-layout_detail-panel_footer_save-button"
+          disabled={!systemTemplateDraft?.isDirty || !systemTemplateDraft.isValid || isSystemTemplateSaving}
+          onClick={() => void systemTemplateEditorRef.current?.save()}
+        >
+          {isSystemTemplateSaving ? "저장 중..." : "저장"}
+        </Button>
+      </div>
+    ) : undefined;
 
   return (
     <PageSection name="desktop_messages_sections">
@@ -1932,6 +1987,7 @@ export default function MessagesPage() {
                     ) : undefined
                   }
                   trailing={selectedTemplateHeaderTrailing}
+                  footer={systemTemplateFooter}
                   tabs={
                     activeTemplateId ? (
                       <DetailTabs
@@ -1977,7 +2033,26 @@ export default function MessagesPage() {
                         {
                           key: "preview",
                           className: "flex min-h-0 justify-center overflow-y-auto",
-                          children: (
+                          children: isBuiltin && activeSection === "templates" ? (
+                            <div
+                              data-component="desktop_messages_sections_templates_split-layout_detail-panel_template-preview-layout"
+                              className="flex min-h-0 w-full items-start justify-center"
+                            >
+                              <TemplatePreview
+                                content={templatePreviewMessage}
+                                variables={selectedSystemTemplatePreviewVariables}
+                              />
+                              {/* Keep the established detail text hook for
+                               * integrations that assert the dirty draft; the
+                               * visual preview is now owned by TemplatePreview. */}
+                              <span
+                                data-component="desktop_messages_sections_section-content_templates-section_split-layout_detail-panel_preview_preview-message-text"
+                                className="sr-only"
+                              >
+                                {templatePreviewMessage}
+                              </span>
+                            </div>
+                          ) : (
                             <div
                               data-component="desktop_messages_sections_templates_split-layout_detail-panel_template-preview-layout"
                               className="flex min-h-0 w-full flex-wrap items-start justify-center gap-4"

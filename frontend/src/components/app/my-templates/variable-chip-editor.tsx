@@ -183,10 +183,13 @@ export interface VariableChipEditorProps {
     onVariableClick?: (key: string) => void;
     placeholder?: string;
     id?: string;
+    /** Owning content-editor path used for the mirrored form control. */
+    dataComponent?: string;
 }
 
 export const VariableChipEditor = forwardRef<VariableChipEditorHandle, VariableChipEditorProps>(
-    ({ value, onChange, variables, onVariableClick, placeholder, id }, ref) => {
+    ({ value, onChange, variables, onVariableClick, placeholder, id, dataComponent }, ref) => {
+        const contentEditableId = dataComponent ? undefined : id;
         const variablesRef = useRef(variables);
         const onVariableClickRef = useRef(onVariableClick);
         const onChangeRef = useRef(onChange);
@@ -247,7 +250,7 @@ export const VariableChipEditor = forwardRef<VariableChipEditorHandle, VariableC
                 immediatelyRender: false,
                 editorProps: {
                     attributes: {
-                        ...(id ? { id } : {}),
+                        ...(contentEditableId ? { id: contentEditableId } : {}),
                         class: cn(
                             "min-h-[240px] w-full rounded-[13px] border-[1.35px] border-input bg-white px-3.5 py-2 text-[0.8rem] font-[Pretendard] text-v3-dark shadow-none transition-all duration-200",
                             "focus-visible:border-v3-primary focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-inset focus-visible:ring-v3-primary/10 focus-visible:ring-offset-0 focus-visible:shadow-none"
@@ -320,6 +323,25 @@ export const VariableChipEditor = forwardRef<VariableChipEditorHandle, VariableC
 
         return (
             <div data-component="desktop_my-templates_chip-editor" className="relative">
+                {/*
+                 * ProseMirror's visual editor is a contenteditable div, while
+                 * the hidden mirror keeps the existing label/placeholder/form
+                 * contract available to callers that submit or test the editor
+                 * as a field. It is kept out of the tab order and mirrors the
+                 * same controlled value in both directions.
+                 */}
+                {id ? (
+                    <textarea
+                        data-component={dataComponent ?? `${id}_input`}
+                        id={id}
+                        value={value}
+                        placeholder={placeholder}
+                        tabIndex={-1}
+                        aria-hidden="true"
+                        className="sr-only"
+                        onChange={(event) => onChange(event.target.value)}
+                    />
+                ) : null}
                 <EditorContent editor={editor} />
                 {placeholder && isEmpty ? (
                     <span className="pointer-events-none absolute left-3.5 top-2 text-[0.8rem] font-[Pretendard] text-muted-foreground">

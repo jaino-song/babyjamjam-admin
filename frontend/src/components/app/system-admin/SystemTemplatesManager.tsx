@@ -2,7 +2,7 @@
 
 /* eslint-disable react-hooks/set-state-in-effect -- selection follows the async server catalog */
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { FileText } from "lucide-react";
 
 import {
@@ -10,28 +10,77 @@ import {
   AnimatedSlotListItemContent,
   DetailEmptyState,
   DetailPanel,
+  DetailTabPanels,
+  DetailTabs,
   ListEmptyState,
   ListPanel,
   SplitLayout,
 } from "@/components/app/v3";
-import { MessagePhonePreview } from "@/components/app/messages/MessagePhonePreview";
 import { SystemTemplateEditor } from "@/components/app/ui/SystemTemplateEditor";
+import type {
+  SystemTemplateEditorDraft,
+  SystemTemplateEditorHandle,
+} from "@/components/app/ui/SystemTemplateEditor";
+import { TemplatePreview } from "@/components/app/my-templates/template-preview";
 import { VersionHistory } from "@/features/system-templates/components/VersionHistory";
 import {
   useSystemTemplate,
   useSystemTemplates,
 } from "@/features/system-templates/hooks";
-import type { SystemTemplate } from "@/features/system-templates/types";
+import type {
+  CustomVariable,
+  SystemTemplate,
+  TemplateVariable as RegistryTemplateVariable,
+} from "@/features/system-templates/types";
 import type { ServerSystemTemplate } from "@/features/system-templates/catalog";
+import type { TemplateVariable } from "@/lib/template/types";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Button } from "@/components/ui/button";
+import { DETAIL_PANEL_FOOTER_ACTIONS_CLASS_NAME } from "@/components/app/v3/DetailPanel";
 
 export interface SystemTemplatesManagerProps {
   dataComponent: string;
   initialTemplateKey?: string | null;
 }
 
+type DetailTab = "edit" | "preview";
+
 function normalizeTemplates(data: SystemTemplate[] | undefined): ServerSystemTemplate[] {
   return Array.isArray(data) ? (data as ServerSystemTemplate[]) : [];
+}
+
+function toEditorVariable(
+  variable: RegistryTemplateVariable | CustomVariable,
+): TemplateVariable {
+  return {
+    key: variable.key,
+    label: variable.label,
+    type: "text",
+    required: Boolean(variable.required),
+  };
+}
+
+function getPreviewVariables(template: ServerSystemTemplate, draft: SystemTemplateEditorDraft | null) {
+  const customVariables = draft?.customVariables ?? template.customVariables ?? [];
+  const seen = new Set<string>();
+  return [...(template.requiredVariables ?? []), ...customVariables].flatMap((variable) => {
+    if (!variable?.key || seen.has(variable.key)) return [];
+    seen.add(variable.key);
+    return [toEditorVariable(variable)];
+  });
+}
+
+function formatUpdatedDate(value: string | undefined) {
+  if (!value) return "최근 수정일 없음";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "최근 수정일 없음";
+  return new Intl.DateTimeFormat("ko-KR", {
+    month: "2-digit",
+    day: "2-digit",
+  })
+    .format(date)
+    .replace(/\s/g, "")
+    .replace(/\.$/, "");
 }
 
 export function SystemTemplatesManager({
@@ -47,8 +96,10 @@ export function SystemTemplatesManager({
   const [selectedTemplateKey, setSelectedTemplateKey] = useState<string | null>(
     initialTemplateKey ?? null,
   );
-  const [previewOverride, setPreviewOverride] = useState<string | null>(null);
+  const [activeTab, setActiveTab] = useState<DetailTab>("edit");
+  const [draft, setDraft] = useState<SystemTemplateEditorDraft | null>(null);
   const [isSaving, setIsSaving] = useState(false);
+  const editorRef = useRef<SystemTemplateEditorHandle>(null);
 
   useEffect(() => {
     if (templatesQuery.isLoading || templatesQuery.isError) return;
@@ -63,7 +114,9 @@ export function SystemTemplatesManager({
   }, [initialTemplateKey, templateKeys, templatesQuery.isError, templatesQuery.isLoading]);
 
   useEffect(() => {
-    setPreviewOverride(null);
+    setActiveTab("edit");
+    setDraft(null);
+    setIsSaving(false);
   }, [selectedTemplateKey]);
 
   const selectedTemplate = useMemo(
@@ -77,8 +130,53 @@ export function SystemTemplatesManager({
     : "";
   const detailQuery = useSystemTemplate(detailKey, { scope: "global" });
   const detail = detailQuery.data ?? selectedTemplate;
-  const previewMessage = previewOverride ?? detail?.content ?? "";
   const component = (suffix: string) => `${dataComponent}_${suffix}`;
+  const previewContent = draft?.content ?? detail?.content ?? "";
+  const previewVariables = detail ? getPreviewVariables(detail, draft) : [];
+
+  const handleDraftChange = useCallback((nextDraft: SystemTemplateEditorDraft) => {
+    setDraft(nextDraft);
+  }, []);
+
+  const handleSave = useCallback(() => {
+    void editorRef.current?.save();
+  }, []);
+
+  const handleReset = useCallback(() => {
+    editorRef.current?.reset();
+  }, []);
+
+  const footer = detail ? (
+    <>
+      <VersionHistory
+        templateKey={detail.templateKey}
+        onRollback={(updatedTemplate) => {
+          // Apply the mutation response immediately so a dirty editor cannot
+          // survive the rollback while its detail query is being refetched.
+          editorRef.current?.reset(updatedTemplate);
+          setDraft(null);
+          setActiveTab("edit");
+        }}
+      />
+      <div className={DETAIL_PANEL_FOOTER_ACTIONS_CLASS_NAME}>
+        <Button
+          data-component={component("footer_reset-button")}
+          variant="outline"
+          disabled={!draft?.isDirty || isSaving}
+          onClick={handleReset}
+        >
+          되돌리기
+        </Button>
+        <Button
+          data-component={component("footer_save-button")}
+          disabled={!draft?.isDirty || !draft.isValid || isSaving}
+          onClick={handleSave}
+        >
+          {isSaving ? "저장 중..." : "저장"}
+        </Button>
+      </div>
+    </>
+  ) : undefined;
 
   return (
     <section data-component={dataComponent} className="flex h-full min-h-0 flex-1 flex-col">
@@ -92,7 +190,7 @@ export function SystemTemplatesManager({
         <ListPanel
           data-component={component("list-panel")}
           title="메시지 템플릿"
-          subtitle="문구를 수정하지 않은 지점에 반영되는 기본 메시지를 관리합니다"
+          subtitle="고객에게 보내는 기본 메시지의 문구와 변수를 관리합니다"
           disabled={isSaving}
           disabledOverlay={<span className="text-sm text-v3-text-muted">저장 중에는 템플릿을 전환할 수 없습니다.</span>}
           emptyState={
@@ -108,7 +206,7 @@ export function SystemTemplatesManager({
               data-component={component("list")}
               items={templates}
               isLoading={templatesQuery.isLoading}
-              loadingCount={5}
+              loadingCount={9}
               className="space-y-2"
               getItemKey={(template) => template.templateKey}
               getSlotState={({ item, isLoading }) => ({
@@ -127,7 +225,7 @@ export function SystemTemplatesManager({
                     dataComponent={component("row")}
                     icon={FileText}
                     title={item.name || item.templateKey}
-                    subtitle={item.description || item.templateKey}
+                    subtitle={`필수 변수 ${item.requiredVariables?.length ?? 0}개 · 최근 수정 ${formatUpdatedDate(item.updatedAt)}`}
                   />
                 );
               }}
@@ -148,32 +246,60 @@ export function SystemTemplatesManager({
             isLoading={detailQuery.isLoading && !detail}
             title={detail?.name ?? selectedTemplate?.name ?? selectedTemplateKey}
             subtitle={detail?.description ?? "오너 기본 템플릿"}
-            trailing={
+            tabs={
               detail ? (
-                <VersionHistory templateKey={detail.templateKey} />
+                <DetailTabs
+                  tabs={[
+                    { key: "edit", label: "템플릿 편집" },
+                    { key: "preview", label: "미리보기" },
+                  ]}
+                  activeTab={activeTab}
+                  onTabChange={(key) => setActiveTab(key as DetailTab)}
+                  ariaLabel="템플릿 상세"
+                />
               ) : undefined
             }
+            footer={footer}
           >
             {detailQuery.isError && !detail ? (
               <DetailEmptyState message="선택한 템플릿 정보를 불러오지 못했습니다." />
             ) : detail ? (
-              <div data-component={component("detail-content")} className="grid min-h-0 gap-6">
-                <SystemTemplateEditor
-                  key={`global:${detail.templateKey}`}
-                  template={detail as SystemTemplate}
-                  scope="global"
-                  dataComponent={component("detail-content_editor")}
-                  onPendingChange={setIsSaving}
-                  onPreviewMessageChange={setPreviewOverride}
-                />
-                <MessagePhonePreview
-                  dataComponentPrefix={component("preview")}
-                  panelDataComponent={component("preview-panel")}
-                  content={previewMessage}
-                  templateName={detail.name || detail.templateKey}
-                  className="h-[520px]"
-                />
-              </div>
+              <DetailTabPanels
+                dataComponent={component("detail-tabpanes")}
+                panelDataComponent={component("detail-pane")}
+                activeTab={activeTab}
+                className="min-h-0 flex-1"
+                trackClassName="min-h-0 flex-1"
+                panelClassName="h-full min-h-0"
+                panels={[
+                  {
+                    key: "edit",
+                    children: (
+                      <SystemTemplateEditor
+                        ref={editorRef}
+                        key={`global:${detail.templateKey}`}
+                        template={detail as SystemTemplate}
+                        scope="global"
+                        dataComponent={component("detail-content_editor")}
+                        showSaveButton={false}
+                        onPendingChange={setIsSaving}
+                        onDraftChange={handleDraftChange}
+                      />
+                    ),
+                  },
+                  {
+                    key: "preview",
+                    children: (
+                      <div
+                        data-component={component("detail-content_preview")}
+                        className="min-h-0"
+                      >
+                        <TemplatePreview content={previewContent} variables={previewVariables} />
+                      </div>
+                    ),
+                  },
+                ]}
+              />
             ) : (
               <DetailEmptyState message="선택한 템플릿 정보를 불러오지 못했습니다." />
             )}
