@@ -98,12 +98,25 @@ describe("mobile contracts action lifecycle", () => {
     expect(source).toContain("const startDate = normalizeDateToYymmdd(");
     expect(source).toContain("const endDate = normalizeDateToYymmdd(");
     expect(source).toContain("dueDate: yymmddPrefillToIso(clientPrefill.dueDate),");
-    expect(source).toContain("setPrefillClient(buildClientPrefillFromContract(doc));");
+    expect(source).toContain("useContractClientRegistration");
+    expect(source).not.toContain("setPrefillClient(buildClientPrefillFromContract(doc));");
     expect(source).toContain(
       "prefillContractCreation(buildContractCreationPrefillFromContract(doc, metadata, employees));",
     );
-    expect(source).toContain("url: receiptDownloadUrl,\n      fileName: receiptFilename,");
+    expect(source).toContain("url: receiptDownloadUrl,\n        fileName: receiptFilename,");
     expect(source).toContain("fileName: receiptFilename,");
-    expect(source).toContain("onDownload: (url, fileName) => downloadReceiptPng(url, fileName),");
+    expect(source).toContain(
+      "onDownload: (url, fileName, binary) => downloadReceiptPng(url, fileName, undefined, binary),",
+    );
+  });
+
+  it("cancels stale document binary actions when the selected contract changes", () => {
+    expect(source).toContain(
+      "const downloadControllers = downloadControllersRef.current;",
+    );
+    expect(source).toContain("downloadControllers.forEach((controller) => controller.abort());");
+    expect(source).toContain("receiptShareControllerRef.current?.abort();");
+    expect(source).toContain("receiptShareInFlightRef.current = false;");
+    expect(source).toContain("}, [doc.id]);");
   });
 });
