@@ -90,6 +90,15 @@ export interface FinalizeEformsignDocumentJobRequest {
     prefillEndDate?: string;
 }
 
+export interface ReceiptLinkPreparation {
+    clientId: number;
+    clientName: string;
+    recipientPhone: string;
+    documentId: string;
+    receiptUrl: string;
+    expiresAt: string;
+}
+
 export interface LocalEformsignDocRecord {
     id?: number;
     documentId: string;
@@ -241,9 +250,22 @@ export const eformsignApi = {
     // Browser-navigable BFF URL (full /api path, used as href/download — NOT via the axios client).
     getDocumentReceiptDownloadUrl: (documentId: string): string =>
         `/api/eformsign/documents/${encodeURIComponent(documentId)}/download_files?fileType=document&format=receipt-png`,
+    // Prepares a stable receipt URL and authoritative recipient identity without queuing a send.
+    prepareReceiptLink: async (clientId: number): Promise<ReceiptLinkPreparation> => {
+        const { data } = await api.post(`/receipt-links/prepare`, { clientId });
+        return data as ReceiptLinkPreparation;
+    },
     // Queues a "서비스 종료 안내" SMS carrying a fresh receipt link for the document's client.
-    sendReceiptLink: async (documentId: string) => {
-        const { data } = await api.post(`/receipt-links/send`, { documentId });
+    // Optional identity pins let the backend reject a selection that changed after preparation.
+    sendReceiptLink: async (
+        documentId: string,
+        expected?: { clientId?: number; recipientPhone?: string },
+    ) => {
+        const { data } = await api.post(`/receipt-links/send`, {
+            documentId,
+            ...(expected?.clientId !== undefined ? { clientId: expected.clientId } : {}),
+            ...(expected?.recipientPhone !== undefined ? { recipientPhone: expected.recipientPhone } : {}),
+        });
         return data as { jobId: string; scheduledFor: string; clientName: string };
     },
     getLocalDocumentRecord: async (documentId: string) => {

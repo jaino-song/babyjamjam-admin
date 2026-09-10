@@ -12,7 +12,7 @@ import { messageTriggerKeys } from "@/features/message-triggers/hooks/keys";
 import { useMessageHistory } from "@/features/message-triggers/hooks/use-message-triggers";
 import { serviceRecordsApi } from "@/features/service-records/api/service-records.api";
 import { useToast } from "@/hooks/use-toast";
-import { messageDeliveryApi } from "@/services/api";
+import { eformsignApi, messageDeliveryApi } from "@/services/api";
 import { useFormStore } from "@/stores/form-store";
 
 import { TemplateSendForm } from "../TemplateSendForm";
@@ -102,6 +102,9 @@ jest.mock("@/services/api", () => ({
   messageDeliveryApi: {
     sendSms: jest.fn(),
   },
+  eformsignApi: {
+    sendReceiptLink: jest.fn(),
+  },
 }));
 
 jest.mock("@/features/service-records/api/service-records.api", () => ({
@@ -120,6 +123,7 @@ const mockedUseToast = jest.mocked(useToast);
 const mockedSendSms = jest.mocked(messageDeliveryApi.sendSms);
 const mockedGetClientOverview = jest.mocked(serviceRecordsApi.getClientOverview);
 const mockedSendServiceRecordLink = jest.mocked(serviceRecordsApi.sendLink);
+const mockedSendReceiptLink = jest.mocked(eformsignApi.sendReceiptLink);
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -228,6 +232,31 @@ function renderNameRequiredForm() {
       message="안내 메시지입니다."
       requiresRecipientName
     />,
+  );
+}
+
+const preparedReceiptLink = {
+  clientId: 20,
+  clientName: "김산모",
+  recipientPhone: "01012345678",
+  documentId: "doc-receipt-1",
+  receiptUrl: "https://mobile.test/receipt/efr_prepared",
+  expiresAt: "2026-09-24T00:00:00.000Z",
+};
+
+function renderReceiptForm(
+  preparation: typeof preparedReceiptLink | null = preparedReceiptLink,
+) {
+  return render(
+    <TemplateSendForm
+      templateId="builtin:system:SERVICE_END_NOTICE"
+      templateName="서비스 종료 안내"
+      message="김산모 {{receiptUrl}}"
+      deliveryMode="receipt-link"
+      receiptLinkPreparation={preparation}
+    >
+      <div data-testid="receipt-fields" />
+    </TemplateSendForm>,
   );
 }
 
@@ -462,6 +491,77 @@ describe("recipient phone input layout", () => {
       variant: "destructive",
       description: "선택한 관리사님의 전화번호가 없어 제공기록지 링크를 보내지 못했어요",
     });
+  });
+});
+
+describe("receipt-link delivery", () => {
+  beforeEach(() => {
+    useFormStore.setState({
+      clientId: 20,
+      name: "김산모",
+      phone: "010-1234-5678",
+    });
+  });
+
+  it("keeps send disabled while the receipt link is pending or cleared", async () => {
+    const { rerender } = renderReceiptForm(null);
+
+    const sendButton = screen.getByRole("button", { name: /즉시 발송/ });
+    expect(sendButton).toBeDisabled();
+    fireEvent.click(sendButton);
+    expect(mockedSendReceiptLink).not.toHaveBeenCalled();
+
+    rerender(
+      <TemplateSendForm
+        templateId="builtin:system:SERVICE_END_NOTICE"
+        templateName="서비스 종료 안내"
+        message="김산모 {{receiptUrl}}"
+        deliveryMode="receipt-link"
+        receiptLinkPreparation={null}
+      />,
+    );
+    expect(screen.getByRole("button", { name: /즉시 발송/ })).toBeDisabled();
+  });
+
+  it("sends the prepared document and pinned identity through the receipt-link endpoint", async () => {
+    mockedSendReceiptLink.mockResolvedValue({
+      jobId: "job-receipt-1",
+      scheduledFor: "2026-09-10T00:00:00.000Z",
+      clientName: "김산모",
+    });
+
+    renderReceiptForm();
+    const sendButton = screen.getByRole("button", { name: /즉시 발송/ });
+    await waitFor(() => expect(sendButton).toBeEnabled());
+    fireEvent.click(sendButton);
+
+    await waitFor(() => {
+      expect(mockedSendReceiptLink).toHaveBeenCalledWith("doc-receipt-1", {
+        clientId: 20,
+        recipientPhone: "01012345678",
+      });
+    });
+    expect(mockedSendSms).not.toHaveBeenCalled();
+    expect(document.querySelector('[data-component="desktop_messages_sections_template-send-form_feedback"]'))
+      .toHaveTextContent("서비스 종료 안내 발송 요청을 접수했어요");
+  });
+
+  it("surfaces a known receipt eligibility failure without attempting a generic SMS", async () => {
+    mockedSendReceiptLink.mockRejectedValue({
+      response: {
+        status: 400,
+        data: { reason: "not_voucher_client", message: "바우처 이용 산모가 아닙니다" },
+      },
+    });
+
+    renderReceiptForm();
+    fireEvent.click(screen.getByRole("button", { name: /즉시 발송/ }));
+
+    await waitFor(() => {
+      expect(document.querySelector('[data-component="desktop_messages_sections_template-send-form_feedback"]'))
+        .toHaveTextContent("바우처 이용 산모가 아니어서 영수증 안내를 보낼 수 없습니다.");
+    });
+    expect(mockedSendSms).not.toHaveBeenCalled();
   });
 });
 

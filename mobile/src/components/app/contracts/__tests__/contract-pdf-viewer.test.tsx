@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { TextEncoder } from "node:util";
 
 import {
   calculateRenderDpr,
@@ -43,6 +44,30 @@ const mockPdfState = {
   shouldError: false,
 };
 const mockPageRenderCallbacks = new Map<number, () => void>();
+const PDF_BYTES = Uint8Array.from([37, 80, 68, 70, 45, 49, 46, 55, 10, 37, 37, 69, 79, 70, 10]);
+const originalFetch = global.fetch;
+const originalCreateObjectUrl = URL.createObjectURL;
+const originalRevokeObjectUrl = URL.revokeObjectURL;
+let objectUrlCounter = 0;
+
+function createPdfResponse(): Response {
+  return {
+    ok: true,
+    status: 200,
+    headers: new Headers({ "content-type": "application/pdf" }),
+    arrayBuffer: async () => PDF_BYTES.buffer,
+  } as Response;
+}
+
+function createErrorResponse(contentType: string, body: string, status = 200): Response {
+  const bytes = new TextEncoder().encode(body);
+  return {
+    ok: status >= 200 && status < 300,
+    status,
+    headers: new Headers({ "content-type": contentType }),
+    arrayBuffer: async () => bytes.buffer,
+  } as Response;
+}
 
 jest.mock("@/lib/pdf-config", () => ({}));
 
@@ -183,12 +208,40 @@ beforeEach(() => {
   mockPdfState.shouldError = false;
   mockPageRenderCallbacks.clear();
   ResizeObserverMock.instances = [];
+  objectUrlCounter = 0;
+  global.fetch = jest.fn().mockImplementation(async (_url: string, init?: RequestInit) => {
+    if (init?.method === "HEAD") {
+      return {
+        ok: true,
+        status: 200,
+        headers: new Headers({ "content-type": "application/pdf" }),
+      } as Response;
+    }
+    return createPdfResponse();
+  });
+  Object.defineProperty(URL, "createObjectURL", {
+    configurable: true,
+    value: jest.fn().mockImplementation(() => `blob:contract-${++objectUrlCounter}`),
+  });
+  Object.defineProperty(URL, "revokeObjectURL", {
+    configurable: true,
+    value: jest.fn(),
+  });
 });
 
 afterAll(() => {
   global.ResizeObserver = originalResizeObserver;
   global.requestAnimationFrame = originalRequestAnimationFrame;
   global.cancelAnimationFrame = originalCancelAnimationFrame;
+  global.fetch = originalFetch;
+  Object.defineProperty(URL, "createObjectURL", {
+    configurable: true,
+    value: originalCreateObjectUrl,
+  });
+  Object.defineProperty(URL, "revokeObjectURL", {
+    configurable: true,
+    value: originalRevokeObjectUrl,
+  });
 });
 
 function renderViewer(fileUrl = "/contract.pdf") {
@@ -344,12 +397,13 @@ describe("ContractPdfViewer", () => {
     });
   });
 
-  it("shows an error message and safe fallback link when the PDF fails to load", () => {
+  it("shows an error message and safe fallback link when the PDF fails to load", async () => {
     mockPdfState.shouldError = true;
 
     renderViewer();
 
-    expect(screen.getByText("PDF 미리보기를 불러오지 못했습니다.")).toBeInTheDocument();
+    expect(await screen.findByText("PDF 미리보기를 불러오지 못했습니다.")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "다시 시도" })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "새 탭에서 열기" })).toHaveAttribute(
       "href",
       "/contract-download.pdf"
@@ -358,6 +412,90 @@ describe("ContractPdfViewer", () => {
       "rel",
       "noopener noreferrer"
     );
+  });
+
+  it("does not pass a JSON response to pdf.js and can recover on retry", async () => {
+    const fetchMock = global.fetch as jest.Mock;
+    let getAttempt = 0;
+    fetchMock.mockImplementation(async (_url: string, init?: RequestInit) => {
+      if (init?.method === "HEAD") {
+        return {
+          ok: true,
+          status: 200,
+          headers: new Headers({ "content-type": "application/pdf" }),
+        } as Response;
+      }
+
+      getAttempt += 1;
+      return getAttempt === 1
+        ? createErrorResponse("application/json", JSON.stringify({ error: "upstream" }))
+        : createPdfResponse();
+    });
+
+    renderViewer();
+
+    expect(await screen.findByText("PDF 미리보기를 불러오지 못했습니다.")).toBeInTheDocument();
+    expect(screen.queryByTestId("pdf-document")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "다시 시도" }));
+
+    expect(await screen.findByTestId("pdf-document")).toBeInTheDocument();
+    expect(getAttempt).toBe(2);
+  });
+
+  it("ignores a stale response after the document is replaced", async () => {
+    let resolveFirstGet: ((response: Response) => void) | null = null;
+    const fetchMock = global.fetch as jest.Mock;
+    fetchMock.mockImplementation((_url: string, init?: RequestInit) => {
+      if (init?.method === "HEAD") {
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          headers: new Headers({ "content-type": "application/pdf" }),
+        } as Response);
+      }
+
+      if (!resolveFirstGet) {
+        return new Promise<Response>((resolve) => {
+          resolveFirstGet = resolve;
+        });
+      }
+
+      return Promise.resolve(createPdfResponse());
+    });
+
+    const rendered = renderViewer();
+    rendered.rerender(
+      <ContractPdfViewer
+        key="replacement"
+        className="contract-preview-frame"
+        data-component="mobile_contracts_detail-sheet_stack_detail-page_content_pdf-preview_frame"
+        fileUrl="/replacement.pdf"
+        fallbackHref="/contract-download.pdf"
+        title="테스트 계약서 PDF 미리보기"
+      />
+    );
+
+    expect(await screen.findByTestId("pdf-document")).toBeInTheDocument();
+    const firstResolve = resolveFirstGet as ((response: Response) => void) | null;
+    if (firstResolve) {
+      firstResolve(createPdfResponse());
+    }
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(URL.createObjectURL).toHaveBeenCalledTimes(1);
+    expect(URL.revokeObjectURL).not.toHaveBeenCalled();
+  });
+
+  it("revokes the validated preview object URL when unmounted", async () => {
+    const rendered = renderViewer();
+
+    expect(await screen.findByTestId("pdf-document")).toBeInTheDocument();
+    rendered.unmount();
+
+    expect(URL.revokeObjectURL).toHaveBeenCalledWith("blob:contract-1");
   });
 
   it("zooms continuously without changing the canvas width", async () => {

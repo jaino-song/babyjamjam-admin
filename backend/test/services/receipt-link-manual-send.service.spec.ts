@@ -12,7 +12,7 @@ import { ReceiptLinkManualSendService } from "application/services/receipt-link-
 
 const BRANCH = "11111111-1111-1111-1111-111111111111";
 
-function makeService(overrides: { doc?: Record<string, unknown> | null; preflight?: () => Promise<unknown> } = {}) {
+function makeService(overrides: { doc?: Record<string, unknown> | null; preflight?: () => Promise<unknown>; issue?: () => Promise<unknown> } = {}) {
     const docRepository = {
         findByDocumentId: jest
             .fn()
@@ -21,6 +21,7 @@ function makeService(overrides: { doc?: Record<string, unknown> | null; prefligh
     const ruleRepository = { ensureSystemRule: jest.fn().mockResolvedValue(undefined) };
     const issueService = {
         preflight: jest.fn(overrides.preflight ?? (async () => ({ client: { id: 7, name: "김산모", phone: "010-1234-5678", birthday: "940315" }, doc: { id: 42, documentId: "doc-ext-1" }, pdf: Buffer.alloc(1) }))),
+        issue: jest.fn(overrides.issue ?? (async () => ({ url: "https://m.admin.babyjamjam.com/receipt/efr_abc", expiresAt: new Date("2026-09-24T00:00:00.000Z") }))),
     };
     const jobRepository = { upsertPending: jest.fn(async (job: any) => Object.assign(job, { id: "job-1" })) };
     const approval = { ensureApproved: jest.fn().mockResolvedValue(undefined) };
@@ -119,5 +120,75 @@ describe("ReceiptLinkManualSendService", () => {
     it("400s when the client has no phone", async () => {
         const { service } = makeService({ preflight: async () => ({ client: { id: 7, name: "김산모", phone: null, birthday: "940315" }, doc: { id: 42, documentId: "d" }, pdf: Buffer.alloc(1) }) });
         await expect(service.send({ branchId: BRANCH, documentId: "doc-ext-1", userId: null })).rejects.toMatchObject({ response: { reason: "missing_phone", message: "산모 연락처가 없거나 형식이 올바르지 않습니다" } });
+    });
+
+    it("rejects a prepared send when the authoritative client identity no longer matches", async () => {
+        const { service, issueService, jobRepository } = makeService();
+
+        await expect(service.send({
+            branchId: BRANCH,
+            documentId: "doc-ext-1",
+            userId: "user-1",
+            expectedClientId: 8,
+            expectedRecipientPhone: "010-1234-5678",
+        })).rejects.toMatchObject({ response: { reason: "recipient_mismatch" } });
+        expect(issueService.preflight).toHaveBeenCalledTimes(1);
+        expect(jobRepository.upsertPending).not.toHaveBeenCalled();
+    });
+
+    it("rejects a prepared send when the authoritative phone no longer matches", async () => {
+        const { service, jobRepository } = makeService();
+
+        await expect(service.send({
+            branchId: BRANCH,
+            documentId: "doc-ext-1",
+            userId: "user-1",
+            expectedClientId: 7,
+            expectedRecipientPhone: "010-9999-8888",
+        })).rejects.toMatchObject({ response: { reason: "recipient_mismatch" } });
+        expect(jobRepository.upsertPending).not.toHaveBeenCalled();
+    });
+
+    it("prepares an authoritative receipt URL without enqueueing a job", async () => {
+        const { service, approval, issueService, ruleRepository, jobRepository } = makeService();
+
+        const result = await service.prepare({ branchId: BRANCH, clientId: 7, userId: "user-1" });
+
+        expect(approval.ensureApproved).toHaveBeenCalledWith(BRANCH);
+        expect(issueService.preflight).toHaveBeenCalledWith({ branchId: BRANCH, clientId: 7 });
+        expect(issueService.issue).toHaveBeenCalledWith({
+            branchId: BRANCH,
+            clientId: 7,
+            eformsignDocId: 42,
+            source: "manual",
+            createdBy: "user-1",
+        });
+        expect(result).toEqual({
+            clientId: 7,
+            clientName: "김산모",
+            recipientPhone: "01012345678",
+            documentId: "doc-ext-1",
+            receiptUrl: "https://m.admin.babyjamjam.com/receipt/efr_abc",
+            expiresAt: "2026-09-24T00:00:00.000Z",
+        });
+        expect(ruleRepository.ensureSystemRule).not.toHaveBeenCalled();
+        expect(jobRepository.upsertPending).not.toHaveBeenCalled();
+    });
+
+    it("maps receipt eligibility failures during preparation and does not issue", async () => {
+        const { service, issueService } = makeService({ preflight: async () => { throw new ReceiptLinkSkipError("service_period_expired"); } });
+
+        await expect(service.prepare({ branchId: BRANCH, clientId: 7, userId: null }))
+            .rejects.toMatchObject({ response: { reason: "service_period_expired", message: "영수증 링크 유효기간(서비스 종료 후 14일)이 지났습니다" } });
+        expect(issueService.issue).not.toHaveBeenCalled();
+    });
+
+    it("maps eligibility failures raised while issuing the prepared URL", async () => {
+        const { service } = makeService({
+            issue: async () => { throw new ReceiptLinkSkipError("pdf_unavailable"); },
+        });
+
+        await expect(service.prepare({ branchId: BRANCH, clientId: 7, userId: null }))
+            .rejects.toMatchObject({ response: { reason: "pdf_unavailable", message: "계약서 PDF를 아직 불러올 수 없습니다" } });
     });
 });
