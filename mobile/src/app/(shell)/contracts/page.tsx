@@ -39,6 +39,7 @@ import { useEformsign } from "@/hooks/useEformsign";
 import { useEmployees, type Employee } from "@/hooks/useEmployees";
 import { useListInfiniteScroll } from "@/hooks/useListInfiniteScroll";
 import { useToast } from "@/hooks/use-toast";
+import { useAllVoucherPriceInfos } from "@/hooks/useVoucherData";
 import { fetchAllMessageLogs } from "@/lib/messages/logs";
 import { formatDateForDisplay } from "@/lib/date/format-date-for-display";
 import { EformsignDocument } from "@/lib/eformsign/types";
@@ -116,6 +117,10 @@ import {
   buildContractClientPrefill,
   buildContractCreationPrefillFromClient,
 } from "@/lib/contracts/contract-client-prefill";
+import {
+  buildContractServiceInfo,
+  resolveContractVoucherYear,
+} from "@/lib/contracts/contract-service-info";
 import {
   RECEIPT_SHARE_ERROR_MESSAGE,
   downloadReceiptPng,
@@ -1267,6 +1272,9 @@ function ContractDetailContent({
     documentFieldValue(doc, ["연락처", "휴대폰", "전화번호", "customerContact", "customerPhone"]) ||
     null;
   const resolvedProviderName = metadata?.providerName?.trim() || providerName(doc);
+  const voucherPriceYear = resolveContractVoucherYear(doc);
+  const { data: voucherPriceInfos } = useAllVoucherPriceInfos(voucherPriceYear);
+  const serviceInfo = buildContractServiceInfo(doc, voucherPriceInfos);
   const downloadUrl = eformsignApi.getDocumentDownloadUrl(doc.id);
   const receiptDownloadUrl = eformsignApi.getDocumentReceiptDownloadUrl(doc.id);
   const previewUrl = eformsignApi.getDocumentPreviewUrl(doc.id);
@@ -1626,6 +1634,20 @@ function ContractDetailContent({
                 label="문서 ID"
                 value={<span style={{ fontFamily: "'SF Mono', monospace", wordBreak: "break-all" }}>{doc.id || "-"}</span>}
               />
+            </InfoCard>
+            <InfoCard data-component="mobile_contracts_detail-panel_info-card-5" title="서비스 정보" delay={120}>
+              <InfoRow label="계약 기간" value={serviceInfo.contractPeriod} />
+              <InfoRow label="서비스 일수" value={serviceInfo.serviceDays} />
+              <InfoRow label="계약 시작일" value={serviceInfo.contractStartDate} />
+              <InfoRow label="계약 종료일" value={serviceInfo.contractEndDate} />
+              <InfoRow label="본인부담금 수령일" value={serviceInfo.paymentReceiptDate} />
+              <InfoRow label="영수증 발행일" value={serviceInfo.receiptIssueDate} />
+            </InfoCard>
+            <InfoCard data-component="mobile_contracts_detail-panel_info-card-6" title="서비스 비용" delay={180}>
+              <InfoRow label="서비스 비용" value={serviceInfo.servicePrice} />
+              <InfoRow label="정부지원금" value={serviceInfo.governmentGrant} />
+              <InfoRow label="본인부담금" value={serviceInfo.outOfPocket} />
+              <InfoRow label="바우처 가격표 연도" value={serviceInfo.voucherPriceYearLabel} />
             </InfoCard>
           </MobileDetailTabPanel>
 
