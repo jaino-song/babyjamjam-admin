@@ -367,3 +367,12 @@ TL;DR: frontend/src 후보 272개를 scout 10청크(launcher 실행, 파일 보�
 - 기록: `owners` 272건 + source_manifest 272건, frontend/src `semantic_review_status: reviewed-batch-c`, `review_batches` C 요약. 규격 ID는 계속 pending이다.
 - 표본 검증: `ClientFormDialog` migrated, `services/api.ts` no-direct, `auth/login` route legacy를 코드와 대조 확인. 배치 D(모바일)와 배치 E(테스트 매핑·전수 대조)만 남았다.
 
+## Task 1.1 배치 D (모바일) 실행 결과 (2026-09-10)
+
+TL;DR: mobile/src 후보 238개를 scout 9청크로 검토해 분류를 완료했고, 이로써 `owners` 후보 797개 전부가 분류됐다(미분류 0).
+
+- 결과: legacy 152, no-direct-error-boundary 67, migrated 18(고객 등록 마법사·메시지 작성·고객/템플릿 조회 훅 등 기존 전환분), approved-exception 1(`mobile/src/lib/api/receipt-auth.ts` — no-login 영수증 토큰 흐름의 문서화된 예외). `usePushNotification`은 raw English 문자열 노출로 legacy다.
+- 방법: 배치 C와 동일한 launcher scout 9청크(2파) + 파일 기반 보고 + 스크립트 반영.
+- 기록: `owners` 238건 + source_manifest 238건, mobile/src `semantic_review_status: reviewed-batch-d`. 이제 `owners` 797/797 = A 68 + B 219 + C 272 + D 238로 미분류 0이다.
+- 남은 Task 1.1 범위는 배치 E(백엔드/웹/모바일 테스트 매핑, root 대조, 완료 기록)다.
+
