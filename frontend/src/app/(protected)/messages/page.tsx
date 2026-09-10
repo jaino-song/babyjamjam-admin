@@ -5,6 +5,8 @@ import {
   isValidElement,
   useCallback,
   useDeferredValue,
+  useEffect,
+  useRef,
   useMemo,
   useState,
   type ReactElement,
@@ -33,7 +35,16 @@ import { ROLES } from "@/lib/constants/roles";
 import { useMessageTemplates } from "@/features/message-templates/hooks/use-message-templates";
 import { useSystemTemplate, useSystemTemplates } from "@/features/system-templates/hooks";
 import type { SystemTemplate } from "@/features/system-templates/types";
+import {
+  isBranchContextAligned,
+  useActiveBranchId,
+} from "@/features/system-templates/branch-context";
 import { SystemTemplateEditor } from "@/components/app/ui/SystemTemplateEditor";
+import type {
+  SystemTemplateEditorDraft,
+  SystemTemplateEditorHandle,
+} from "@/components/app/ui/SystemTemplateEditor";
+import { TemplatePreview } from "@/components/app/my-templates/template-preview";
 import {
   buildSystemTemplateCatalog,
   type LegacyBuiltinTemplateType,
@@ -109,6 +120,8 @@ import { matchesSearchQuery } from "@/lib/search/korean-search";
 import { findMessageHistoryClient } from "@/lib/message-history/client-match";
 import { renderTemplate } from "@/lib/template-utils";
 import { cn } from "@/lib/utils";
+import type { TemplateVariable as EditorTemplateVariable } from "@/lib/template/types";
+import { syncMessageDraftScope } from "@/stores/message-draft-scope";
 import {
   Ban,
   Bell,
@@ -150,6 +163,7 @@ import {
 } from "@/components/app/messages/MessageApprovalGate";
 import { TriggerRulesManager } from "@/components/app/messages/TriggerRulesManager";
 import { Button } from "@/components/ui/button";
+import { DETAIL_PANEL_FOOTER_ACTIONS_CLASS_NAME } from "@/components/app/v3/DetailPanel";
 import {
   APP_CONTENT_BODY_CARD_CLASS_NAME,
   AppContentCard,
@@ -241,15 +255,13 @@ type MessageSectionId = SharedMessageSectionId;
 type PlaceholderSectionId = Exclude<MessageSectionId, "send" | "templates" | "triggers" | "history" | "scheduled">;
 
 // Sections that are still 출시 예정. The owner gets early access to them; everyone
-// else sees them disabled until the features ship. "scheduled" and "history" are
-// merged into one always-available section once SMS sending is approved for the
-// branch (see SENDER_APPROVAL_EXEMPT_SECTION_IDS below), so neither is unreleased
-// anymore.
+// else sees them disabled until the features ship. Branch users can edit their
+// own system-template copies regardless of ownership; only trigger rules remain
+// owner-only here.
 const UNRELEASED_SECTION_IDS = new Set<MessageSectionId>([
-  "templates",
   "triggers",
 ]);
-const SENDER_APPROVAL_EXEMPT_SECTION_IDS = new Set<MessageSectionId>(["send", "settings"]);
+const SENDER_APPROVAL_EXEMPT_SECTION_IDS = new Set<MessageSectionId>(["send", "settings", "templates"]);
 
 const TEMPLATE_SEND_FORM_ID = "messages-template-send-form-active";
 
@@ -847,7 +859,11 @@ function MessageHistorySection() {
   const selectedJobPhone = selectedJob?.recipientPhone ?? selectedJob?.payload.recipientPhone ?? "-";
   const selectedJobVariables = selectedJob ? Object.entries(selectedJob.payload.templateVariables) : [];
   const selectedJobSystemTemplateKey = selectedJob ? SMS_TRIGGER_TO_SYSTEM_TEMPLATE[selectedJob.templateKey] ?? "" : "";
-  const { data: selectedJobSystemTemplate } = useSystemTemplate(selectedJobSystemTemplateKey);
+  const activeBranchId = useActiveBranchId();
+  const { data: selectedJobSystemTemplate } = useSystemTemplate(selectedJobSystemTemplateKey, {
+    scope: "branch",
+    branchId: activeBranchId,
+  });
   const selectedJobMessageBody = buildScheduledJobMessageBody(selectedJob, selectedJobSystemTemplate?.content);
   const handleScheduledDetailTabChange = useCallback((key: string) => {
     if (key === "info" || key === "message") {
@@ -1400,10 +1416,14 @@ export default function MessagesPage() {
   const [templateFilter, setTemplateFilter] = useState<TemplateFilter>("builtin");
   const [templateDetailTab, setTemplateDetailTab] = useState<TemplateDetailTab>("details");
   const [templatePreviewOverride, setTemplatePreviewOverride] = useState<string | null>(null);
+  const [isSystemTemplateSaving, setIsSystemTemplateSaving] = useState(false);
+  const [systemTemplateDraft, setSystemTemplateDraft] = useState<SystemTemplateEditorDraft | null>(null);
+  const systemTemplateEditorRef = useRef<SystemTemplateEditorHandle>(null);
   const [templateSendSubmitState, setTemplateSendSubmitState] =
     useState<TemplateSendFormSubmitState | null>(null);
   const user = useInitialUser();
   const isOwner = user?.role === ROLES.owner;
+  const activeBranchId = useActiveBranchId();
   const { data: senderApproval } = useMessageSenderApproval();
   const isSenderApprovalRequired = senderApproval?.isApproved === false;
   const messageSections = useMemo(
@@ -1421,7 +1441,7 @@ export default function MessagesPage() {
     data: systemTemplatesData,
     isLoading: isLoadingSystemTemplates,
     isError: isSystemTemplatesError,
-  } = useSystemTemplates();
+  } = useSystemTemplates({ scope: "branch", branchId: activeBranchId });
   const userTemplates = useMemo(() => userTemplatesData ?? [], [userTemplatesData]);
 
   const systemTemplateItems = useMemo<TemplateListItem[]>(() => {
@@ -1466,6 +1486,7 @@ export default function MessagesPage() {
     setTemplateDetailTab("details");
     setTemplatePreviewOverride(null);
     setTemplateSendSubmitState(null);
+    setSystemTemplateDraft(null);
   }, [setSelectedValue]);
 
   const handleTemplateFilterChange = useCallback(
@@ -1476,6 +1497,7 @@ export default function MessagesPage() {
       setTemplateDetailTab("details");
       setTemplatePreviewOverride(null);
       setTemplateSendSubmitState(null);
+      setSystemTemplateDraft(null);
       setSelectedValue((current) => {
         if (current && nextItems.some((item) => item.id === current)) {
           return current;
@@ -1510,9 +1532,30 @@ export default function MessagesPage() {
     data: selectedSystemTemplateDetail,
     isLoading: isLoadingSystemTemplateDetail,
     isError: isSystemTemplateDetailError,
-  } = useSystemTemplate(selectedSystemTemplateKey);
+  } = useSystemTemplate(selectedSystemTemplateKey, {
+    scope: "branch",
+    branchId: activeBranchId,
+  });
   const selectedSystemTemplatePreview =
     selectedSystemTemplateDetail ?? (isBuiltin ? selectedTemplateItem?.template ?? null : null);
+  const selectedSystemTemplatePreviewVariables = useMemo<EditorTemplateVariable[]>(() => {
+    if (!selectedSystemTemplatePreview) return [];
+
+    const seen = new Set<string>();
+    return [
+      ...(selectedSystemTemplatePreview.requiredVariables ?? []),
+      ...(selectedSystemTemplatePreview.customVariables ?? []),
+    ].flatMap((variable) => {
+      if (!variable?.key || seen.has(variable.key)) return [];
+      seen.add(variable.key);
+      return [{
+        key: variable.key,
+        label: variable.label,
+        type: "text" as const,
+        required: Boolean(variable.required),
+      }];
+    });
+  }, [selectedSystemTemplatePreview]);
   const selectedTemplateIcon = selectedTemplateItem?.icon ?? FileText;
   const SelectedTemplateIcon = selectedTemplateIcon;
   const selectedTemplateTitle = selectedTemplateItem?.label ?? selectedUserTemplate?.name ?? "메시지 템플릿";
@@ -1520,9 +1563,11 @@ export default function MessagesPage() {
     ? selectedUserTemplate
       ? `지점 템플릿 · ${selectedUserTemplate.variables.length}개 변수`
       : "지점 템플릿 · 정보를 불러오지 못했습니다."
+    : activeSection === "templates"
+      ? "지점 기본 템플릿 · 이 지점에서 사용할 내용을 편집합니다."
     : selectedTemplateItem?.manualSendAvailability === "disabled"
       ? "기본 템플릿 · 이 화면에서는 직접 발송할 수 없습니다."
-      : "기본 템플릿은 오너 관리자 페이지에서 관리됩니다.";
+    : "현재 지점에 적용되는 기본 메시지입니다. 메시지 템플릿 메뉴에서 문구를 수정할 수 있습니다.";
   const builtinPreviewMeta = builtinType ? BUILTIN_TEMPLATE_PREVIEW_META[builtinType] : null;
   const templatePreviewMessage =
     templatePreviewOverride ??
@@ -1581,8 +1626,30 @@ export default function MessagesPage() {
     return items;
   }, [selectedUserTemplate, templatePreviewMessage]);
   const handleTemplatePreviewMessageChange = useCallback((message: string) => {
+    if (!activeBranchId || !isBranchContextAligned(activeBranchId)) return;
     setTemplatePreviewOverride(message);
-  }, []);
+  }, [activeBranchId]);
+  const previousBranchIdRef = useRef<string | null>(activeBranchId);
+  useEffect(() => {
+    if (previousBranchIdRef.current === activeBranchId) return;
+
+    previousBranchIdRef.current = activeBranchId;
+    syncMessageDraftScope(activeBranchId);
+    let cancelled = false;
+    queueMicrotask(() => {
+      if (cancelled) return;
+      setSelectedValue(null);
+      setTemplateDetailTab("details");
+      setTemplatePreviewOverride(null);
+      setTemplateSendSubmitState(null);
+      setSystemTemplateDraft(null);
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [activeBranchId, setSelectedValue]);
+
   const sendTemplateFormLayout: TemplateMessageFormLayout = ({
     fields,
     messageCard,
@@ -1590,6 +1657,7 @@ export default function MessagesPage() {
     deliveryMode,
     serviceRecordLinkPreparation,
     receiptLinkPreparation,
+    templateReady = true,
   }) => {
     const flattenedMessageCard = isValidElement(messageCard)
       ? cloneElement(messageCard as ReactElement<{ layout?: "flat" }>, { layout: "flat" })
@@ -1601,10 +1669,12 @@ export default function MessagesPage() {
         className="grid h-full min-h-0 items-stretch gap-4 xl:grid-cols-[minmax(14rem,0.85fr)_minmax(0,1.45fr)]"
       >
         <TemplateSendForm
-          key={activeTemplateId}
+          key={`${activeBranchId ?? "unavailable"}:${activeTemplateId}`}
           templateId={activeTemplateId ?? selectedTemplateTitle}
           templateName={selectedTemplateTitle}
           message={templatePreviewMessage}
+          branchId={activeBranchId}
+          templateReady={templateReady}
           requiresRecipientName={requiresRecipientName}
           deliveryMode={deliveryMode}
           serviceRecordLinkPreparation={serviceRecordLinkPreparation}
@@ -1666,8 +1736,9 @@ export default function MessagesPage() {
   ) : undefined;
   const selectedTemplateFormContent = (
     <>
-      {SelectedBuiltinForm ? (
+      {activeSection === "send" && SelectedBuiltinForm ? (
         <SelectedBuiltinForm
+          key={`${activeBranchId ?? "unavailable"}:${selectedSystemTemplateKey}`}
           onPreviewMessageChange={handleTemplatePreviewMessageChange}
           renderLayout={selectedTemplateRenderLayout}
           showMessageSide={false}
@@ -1677,6 +1748,7 @@ export default function MessagesPage() {
 
       {selectedUserTemplate ? (
         <CustomTemplateForm
+          key={`${activeBranchId ?? "unavailable"}:${selectedUserTemplate.id}`}
           template={selectedUserTemplate as never}
           onPreviewMessageChange={handleTemplatePreviewMessageChange}
           renderLayout={selectedTemplateRenderLayout}
@@ -1684,42 +1756,71 @@ export default function MessagesPage() {
         />
       ) : null}
 
-      {isBuiltin && !SelectedBuiltinForm ? (
-        activeSection === "templates" ? (
-          selectedSystemTemplateDetail ? (
-            <SystemTemplateEditor
-              key={selectedSystemTemplateDetail.templateKey}
-              // Registry keys can be added server-side before the shared package
-              // union is updated; the editor consumes the same wire shape.
-              template={selectedSystemTemplateDetail as SystemTemplate}
-              onPreviewMessageChange={handleTemplatePreviewMessageChange}
-            />
-          ) : isLoadingSystemTemplateDetail ? null : isSystemTemplateDetailError ? (
-            <DetailEmptyState message="선택한 템플릿 정보를 불러오지 못했습니다." />
-          ) : null
-        ) : (
-          selectedSystemTemplatePreview ? (
-            <AppContentCard
-              data-component="desktop_messages_sections_template-detail-readonly-content"
-              title="템플릿 내용"
-              description="선택한 템플릿의 내용을 확인하세요."
-              contentClassName="min-h-0"
-            >
-              <MsgField label="템플릿 내용" value={templatePreviewMessage} />
-            </AppContentCard>
-          ) : isLoadingSystemTemplateDetail ? null : isSystemTemplateDetailError ? (
-            <DetailEmptyState message="선택한 템플릿 정보를 불러오지 못했습니다." />
-          ) : null
-        )
+      {isBuiltin && activeSection === "templates" ? (
+        selectedSystemTemplateDetail ? (
+          <SystemTemplateEditor
+            ref={systemTemplateEditorRef}
+            key={`${activeBranchId ?? "unavailable"}:${selectedSystemTemplateDetail.templateKey}`}
+            // Registry keys can be added server-side before the shared package
+            // union is updated; the editor consumes the same wire shape.
+            template={selectedSystemTemplateDetail as SystemTemplate}
+            scope="branch"
+            branchId={activeBranchId}
+            dataComponent="desktop_messages_sections_templates_split-layout_detail-panel_editor"
+            showSaveButton={false}
+            onPendingChange={setIsSystemTemplateSaving}
+            onDraftChange={setSystemTemplateDraft}
+            onPreviewMessageChange={handleTemplatePreviewMessageChange}
+          />
+        ) : isLoadingSystemTemplateDetail ? null : isSystemTemplateDetailError ? (
+          <DetailEmptyState message="선택한 템플릿 정보를 불러오지 못했습니다." />
+        ) : null
+        ) : null}
+
+      {isBuiltin && activeSection === "send" && !SelectedBuiltinForm ? (
+        selectedSystemTemplatePreview ? (
+          <AppContentCard
+            data-component="desktop_messages_sections_template-detail-readonly-content"
+            title="템플릿 내용"
+            description="선택한 템플릿의 내용을 확인하세요."
+            contentClassName="min-h-0"
+          >
+            <MsgField label="템플릿 내용" value={templatePreviewMessage} />
+          </AppContentCard>
+        ) : isLoadingSystemTemplateDetail ? null : isSystemTemplateDetailError ? (
+          <DetailEmptyState message="선택한 템플릿 정보를 불러오지 못했습니다." />
+        ) : null
       ) : null}
 
-      {!isBuiltin && !SelectedBuiltinForm && !selectedUserTemplate ? (
+      {!isBuiltin && !selectedUserTemplate ? (
         <DetailEmptyState
           message="선택한 템플릿 정보를 불러오지 못했습니다."
         />
       ) : null}
     </>
   );
+  const systemTemplateFooter =
+    isBuiltin &&
+    activeSection === "templates" &&
+    selectedSystemTemplateDetail ? (
+      <div className={DETAIL_PANEL_FOOTER_ACTIONS_CLASS_NAME}>
+        <Button
+          data-component="desktop_messages_sections_templates_split-layout_detail-panel_footer_reset-button"
+          variant="outline"
+          disabled={!systemTemplateDraft?.isDirty || isSystemTemplateSaving}
+          onClick={() => systemTemplateEditorRef.current?.reset()}
+        >
+          되돌리기
+        </Button>
+        <Button
+          data-component="desktop_messages_sections_templates_split-layout_detail-panel_footer_save-button"
+          disabled={!systemTemplateDraft?.isDirty || !systemTemplateDraft.isValid || isSystemTemplateSaving}
+          onClick={() => void systemTemplateEditorRef.current?.save()}
+        >
+          {isSystemTemplateSaving ? "저장 중..." : "저장"}
+        </Button>
+      </div>
+    ) : undefined;
 
   return (
     <PageSection name="desktop_messages_sections">
@@ -1746,7 +1847,10 @@ export default function MessagesPage() {
             now that PlaceholderSectionId itself excludes "scheduled".
           */}
           {activeSection === "scheduled" ? null : activeSection === "send" || activeSection === "templates" ? (
-            <MessageApprovalGate dataComponent="desktop_messages_sections_section-content_templates-section_approval-gate">
+            <MessageApprovalGate
+              enabled={activeSection === "send"}
+              dataComponent="desktop_messages_sections_section-content_templates-section_approval-gate"
+            >
             <section
               data-component={
                 activeSection === "send"
@@ -1759,6 +1863,7 @@ export default function MessagesPage() {
                 hasSelection={!!activeTemplateId}
                 onModeChange={setTemplateSplitLayoutMode}
                 onBack={() => {
+                  if (isSystemTemplateSaving) return;
                   setSelectedValue(null);
                   setTemplateDetailTab("details");
                   setTemplatePreviewOverride(null);
@@ -1767,6 +1872,12 @@ export default function MessagesPage() {
               >
                 <ListPanel data-component="desktop_messages_sections_split-layout_list-panel-4"
                   title="메시지 템플릿"
+                  disabled={activeSection === "templates" && isSystemTemplateSaving}
+                  disabledOverlay={
+                    <StatusBadge variant="neutral" size="sm">
+                      저장 중에는 템플릿을 전환할 수 없습니다.
+                    </StatusBadge>
+                  }
                   tabs={TEMPLATE_FILTERS}
                   activeTab={templateFilter}
                   onTabChange={(value) => handleTemplateFilterChange(value as TemplateFilter)}
@@ -1858,7 +1969,7 @@ export default function MessagesPage() {
 
                 <DetailPanel
                   data-component="desktop_messages_sections_templates_split-layout_detail-panel"
-                  isLoading={isBuiltin && !SelectedBuiltinForm && isLoadingSystemTemplateDetail}
+                  isLoading={isBuiltin && activeSection === "templates" && isLoadingSystemTemplateDetail}
                   avatar={
                     activeTemplateId ? (
                       <div
@@ -1887,6 +1998,8 @@ export default function MessagesPage() {
                     ) : undefined
                   }
                   trailing={selectedTemplateHeaderTrailing}
+                  footer={systemTemplateFooter}
+                  footerClassName={systemTemplateFooter ? "max-md:pb-[96px]" : undefined}
                   tabs={
                     activeTemplateId ? (
                       <DetailTabs
@@ -1932,7 +2045,26 @@ export default function MessagesPage() {
                         {
                           key: "preview",
                           className: "flex min-h-0 justify-center overflow-y-auto",
-                          children: (
+                          children: isBuiltin && activeSection === "templates" ? (
+                            <div
+                              data-component="desktop_messages_sections_templates_split-layout_detail-panel_template-preview-layout"
+                              className="flex min-h-0 w-full items-start justify-center"
+                            >
+                              <TemplatePreview
+                                content={templatePreviewMessage}
+                                variables={selectedSystemTemplatePreviewVariables}
+                              />
+                              {/* Keep the established detail text hook for
+                               * integrations that assert the dirty draft; the
+                               * visual preview is now owned by TemplatePreview. */}
+                              <span
+                                data-component="desktop_messages_sections_section-content_templates-section_split-layout_detail-panel_preview_preview-message-text"
+                                className="sr-only"
+                              >
+                                {templatePreviewMessage}
+                              </span>
+                            </div>
+                          ) : (
                             <div
                               data-component="desktop_messages_sections_templates_split-layout_detail-panel_template-preview-layout"
                               className="flex min-h-0 w-full flex-wrap items-start justify-center gap-4"

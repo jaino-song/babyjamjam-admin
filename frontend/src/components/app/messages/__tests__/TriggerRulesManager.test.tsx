@@ -138,6 +138,9 @@ function mockSettingsQueries({
 
 beforeEach(() => {
   jest.clearAllMocks();
+  // useSystemTemplate은 지점 컨텍스트가 정렬돼야 데이터를 내려주므로(브랜치 스코프 기본값),
+  // 지점 규칙 화면 테스트에 선택된 지점 쿠키를 심는다.
+  document.cookie = "selected_branch_id=branch-test; path=/";
   Object.defineProperty(window, "innerWidth", {
     configurable: true,
     value: 1200,
