@@ -67,11 +67,12 @@ describe("mobile contracts action lifecycle", () => {
 
   // Textual pin (audit-b fix round 1, I1): ContractDetailContent is shared with the
   // 제공기록지 (service-record) detail — isServiceRecord only gated the sheet title, so
-  // "영수증 문자" still rendered there even though a service record has no receipt to send.
-  // Mutant that must fail: removing the isServiceRecord gate around the action entry.
-  it("gates the 영수증 문자 action out of the 제공기록지 (service-record) detail (I1)", () => {
+  // the receipt-send action still rendered there even though a service record has no
+  // receipt to send. Mutant that must fail: removing the isServiceRecord gate around
+  // the action entry.
+  it("gates the receipt-send action out of the 제공기록지 (service-record) detail (I1)", () => {
     expect(source).toContain(
-      "...(isServiceRecord\n                    ? []\n                    : [\n                        {\n                          label: \"영수증 문자\",",
+      "...(isServiceRecord\n                    ? []\n                    : [\n                        {\n                          label: \"영수증 문자 발송\",",
     );
   });
 

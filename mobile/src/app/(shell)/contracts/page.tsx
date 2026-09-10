@@ -1507,8 +1507,8 @@ function ContractDetailContent({
                     ? []
                     : [
                         {
-                          label: "영수증 문자",
-                          variant: "secondary" as const,
+                          label: "영수증 문자 발송",
+                          variant: "primary" as const,
                           onClick: () => setIsReceiptSendConfirmOpen(true),
                           disabled: isSendingReceiptLink,
                           dataComponent: "mobile_contracts_detail-sheet_stack_detail-page_actions_receipt-send",
