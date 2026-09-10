@@ -563,6 +563,32 @@ describe("receipt-link delivery", () => {
     });
     expect(mockedSendSms).not.toHaveBeenCalled();
   });
+
+  it("rejects a prepared receipt send after the active branch changes before submit", async () => {
+    mockedSendReceiptLink.mockResolvedValue({
+      jobId: "job-receipt-branch",
+      scheduledFor: "2026-09-10T00:00:00.000Z",
+      clientName: "김산모",
+    });
+    renderReceiptForm();
+
+    const sendButton = screen.getByRole("button", { name: /즉시 발송/ });
+    await waitFor(() => expect(sendButton).toBeEnabled());
+
+    document.cookie = "selected_branch_id=branch-b; path=/";
+    const form = document.querySelector(
+      '[data-component="desktop_messages_sections_template-send-form"]',
+    );
+    expect(form).toBeInstanceOf(HTMLFormElement);
+    fireEvent.submit(form as HTMLFormElement);
+
+    await waitFor(() => {
+      expect(mockedSendReceiptLink).not.toHaveBeenCalled();
+      expect(mockedSendSms).not.toHaveBeenCalled();
+      expect(sendButton).toBeDisabled();
+      expect(form).toHaveTextContent("지점 정보를 확인하는 중이라 수신자 입력을 잠시 사용할 수 없습니다.");
+    });
+  });
 });
 
 // ---------------------------------------------------------------------------
