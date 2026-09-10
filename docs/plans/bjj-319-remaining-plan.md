@@ -376,3 +376,14 @@ TL;DR: mobile/src 후보 238개를 scout 9청크로 검토해 분류를 완료�
 - 기록: `owners` 238건 + source_manifest 238건, mobile/src `semantic_review_status: reviewed-batch-d`. 이제 `owners` 797/797 = A 68 + B 219 + C 272 + D 238로 미분류 0이다.
 - 남은 Task 1.1 범위는 배치 E(백엔드/웹/모바일 테스트 매핑, root 대조, 완료 기록)다.
 
+## Task 1.1 배치 E (테스트 매핑·전수 대조) 실행 결과 (2026-09-10)
+
+TL;DR: 후보 797개 전부의 분류가 끝났고(미분류 0), 테스트 788개 중 521개를 후보 owner에 매핑했으며(483/797 owner가 테스트 증거 확보), zero-regex 공유 후보 6개를 검토해 2 migrated·4 legacy로 마감했다.
+
+- 전수 분류: migrated 45, legacy 460, no-direct-error-boundary 290, approved-exception 2. 루트별: application 150, domain 16, infrastructure 69, interface 41, prisma 4, frontend/src 272, mobile/src 238, shared 7. 배치 A 70 + B 219 + C 272 + D 238 + zero-regex 6 = 805 검토 항목(owner 797 + 비후보 6 + 수동 2).
+- 테스트 매핑: backend/frontend/mobile 테스트 788개 중 521개를 owner 483곳에 연결했다. 나머지는 후보 밖 파일(application utils/domain 헬퍼 등)·e2e·공유 스위트이거나 모호한 basename이다. 각 owner 행의 `test_evidence`에 반영했고, 커버리지 공백은 그대로 기록했다.
+- zero-regex: `problem-presentation.ts`·`safe-api-error-message.ts`는 migrated, `auth/register.ts`·`auth/reset-password-errors.ts`·`korean-error-messages.ts`·`file-storage/capabilities.ts`는 legacy로 분류해 `shared_source_review.reviewed_zero_regex_candidates`에 기록했다.
+- 상태 갱신: `status: candidate-review-complete; spec-mapping-pending`, `semantic_inventory_complete: false`(EM 규격 ID 매핑 전), test root 3곳 `mapped-batch-e`, backend/module `reviewed-no-direct-error-boundary`, `review_batches` E 요약.
+- Task 1.1 판정: 후보 의미 검토·분류·테스트 매핑은 완료했지만, 계획의 완료 조건에 포함된 규격 ID 매핑이 EM 카탈로그 미제공으로 남아 있어 **Task 1.1 전체를 완료로 표시하지 않는다**. 카탈로그가 제공되면 규격 매핑을 마감한다.
+- 이 결과로 후속 규모가 확정됐다: legacy 460개 owner가 실제 전환 대상이고, 그중 BFF 라우트(웹 184·모바일 152 legacy 다수 포함)와 서버 컨트롤러/서비스가 주요 덩어리다. 이슈 계획의 Phase 3~7 분해는 이 분류를 근거로 정확한 Paths·task를 바인딩해야 한다.
+
