@@ -176,27 +176,42 @@
     },
     {
       "id": "sms-recipient-presend-legacy",
-      "status": "legacy",
+      "status": "migrated",
+      "implementation_task_id": "2.1b",
       "path": "backend/interface/controllers/message-delivery.controller.ts",
       "symbol": "resolveSmsRecipients",
       "lines": [
-        448,
-        509
+        450,
+        508
       ],
-      "caller": {
-        "path": "backend/interface/controllers/message-delivery.controller.ts",
-        "symbol": "sendSms",
-        "line": 88
+      "spec_ids": [
+        "EM-API-01",
+        "EM-STATE-01",
+        "EM-SEC-03"
+      ],
+      "public_codes": [
+        "REQUEST_INVALID"
+      ],
+      "implementation_sha": "f91fabdba6b38e376460da174aca4c0e697e163a",
+      "unit_sha": "5c6632133f699061348249daa0e5ae1b4d511087",
+      "basis_sha": "5f87f8a32910dcdd201ca28d71def6f2297a7388",
+      "review_scope": "Eight pre-send recipient business branches only (missing branch context, client+employee both set, empty/invalid recipients, client/employee single-recipient rule, client/employee phone mismatch, ambiguous free-form record). Scheduled-datetime and sender-approval errors remain legacy.",
+      "test_paths": [
+        "backend/test/interface/controllers/message-delivery.controller.spec.ts"
+      ],
+      "test_evidence": {
+        "suites": 2,
+        "tests": 54,
+        "result": "passed",
+        "red_failures": 11,
+        "checks": [
+          "backend types",
+          "targeted eslint",
+          "diff check"
+        ],
+        "audit": "auditor FINAL SHIP/HIGH at f91fabdba, base 5f87f8a32"
       },
-      "observation": "Recipient business checks throw raw Nest 4xx exceptions before sender approval, pending-log creation and provider invocation. No generic status-to-outcome inference is authorized.",
-      "outcome_evidence": "sendSms awaits resolveSmsRecipients before ensureApproved, createPendingSmsLog and aligoService.sendSms.",
-      "spec_ids": [],
-      "spec_mapping_status": "pending source-spec reconciliation",
-      "public_codes": [],
-      "consumer_paths": [],
-      "test_evidence": [],
-      "implementation_task_id": "2.1",
-      "dispatch_ready": false
+      "outcome_evidence": "All eight branches reject with 400 REQUEST_INVALID/NOT_APPLIED, empty params and NONE/NEVER before approval, log writes, or provider invocation. Branch-scoped reads only; tenant/customer/provider values are not exposed."
     },
     {
       "id": "web-sms-unknown-replay",
@@ -430,7 +445,7 @@
     ]
   },
   "presend_review_evidence": {
-    "basis_sha": "091e6a38753e27a54aa5783c06c00263f4395d4a",
+    "basis_sha": "5f87f8a32910dcdd201ca28d71def6f2297a7388",
     "path": "backend/interface/controllers/message-delivery.controller.ts",
     "symbol": "resolveSmsRecipients",
     "evidence": "Main verified exact controller lines80-110 and444-515 in integration. Recipient checks run before sender approval and pending-log/provider sequence; recipient lookup DOES perform DB reads. Do not describe this as before any DB action.",
@@ -444,8 +459,9 @@
       "ambiguous freeform entity",
       "freeform recipient absent"
     ],
-    "status": "legacy; exact public-code mapping and complete regression mapping pending",
+    "status": "three absence branches and five reachable business branches migrated to public codes; scheduled-datetime and ensureApproved approval errors remain legacy; Task 2.1 not complete",
     "task_id": "2.1",
+    "migration_sha": "f91fabdba6b38e376460da174aca4c0e697e163a",
     "dispatch_ready": false
   },
   "shared_source_review": {

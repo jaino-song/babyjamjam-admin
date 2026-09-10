@@ -326,3 +326,15 @@ TL;DR: 최신 dev를 통합 브랜치에 병합해 충돌 5개를 해소하고, 
 - 검증: frontend 전체 220 suites/1,429 tests, mobile 전체 230 suites/1,477 tests 통과. frontend·mobile·backend 타입 검사 통과. 대상 lint는 양쪽 부모에 있던 기존 `MAX_LMS_TITLE_BYTES` unused 경고 1건과 기존 baseline 경고만 남았다. push CI에서 Backend CI·Backend Full Flow·Frontend CI·Mobile CI·Mobile Unit·Shared Contracts·Frontend Playwright Auth Lifecycle가 모두 success였다(이전 실패는 Playwright 설치 mirror flake였음이 확인됨). Security Review/OSV는 기존 취약점으로 계속 실패하며 Phase 8 조건부 범위다.
 - 감사: read-only `auditor` FINAL SHIP/HIGH at `5f96f4ba8`, bases `091e02df9`/`41e5420e7`. blocking 없음. nonblocking 관찰: (N1) 선언한 충돌 5개 외 테스트 문구 정렬 1건 추가 — 병합 제품 문자열과 일치 확인, (N2) `receipt-links/send` route test의 500 응답 단언이 기존 브랜치 내용대로 regex — 병합이 완화한 것 아님, (N3/N4) 링크 모드 동일 tick 중복 클릭과 늦은 link-mode feedback의 기존 저위험 패턴 — 모두 병합 도입 아님.
 - Phase 0 완료. Phase 1(구 2b-2)의 시작 commit은 `5f96f4ba82a5d911ed0c1b52c9443f1cfe152e19`로 결속한다. Task 1.1, 나머지 400/승인/예약 경로, 실환경 검증, dev 병합, 배포는 계속 미완료다.
+
+## Phase 1 — 문자 사전 거절 8분기 전환 (구 2b-2) 실행 결과 (2026-09-10)
+
+TL;DR: 수신자 8개 원시 400 분기를 `REQUEST_INVALID`/`NOT_APPLIED`로 전환·검증·감사했고, 예약 일시·발신 승인 오류는 명시적으로 남겨 Task 2.1 전체는 계속 미완료다.
+
+- Task 1.1 (DELEGATE, Audit SOL): unit branch `unit/bjj319-sms-presend-400`(worktree `unit-bjj319-sms-presend-400`)를 시작 commit `5f87f8a32`에서 분기해 `worker`(opencode-go/glm-5.3-flash)로 실행했다. unit commit `5c6632133f699061348249daa0e5ae1b4d511087`: controller의 8개 분기를 `BadRequestException(smsProblemBody("REQUEST_INVALID","NOT_APPLIED"))`로 바꾸고 로컬 `SmsProblemCode`에 `REQUEST_INVALID`를 추가했다. 정확한 두 파일, 146 insertions.
+- 회귀: red-first 11 failures(8 rejection + 3 public-response) → 구현 후 46/46 통과. 승인·message_log create/update·공급자 호출 0회, 양 로케일 공개 응답(application/problem+json, request id, 빈 params, NONE/NEVER), normalizer verified/NOT_APPLIED, 민감정보 비노출을 검증했다. 공유 카탈로그·vendor·예약/승인 경로는 변경하지 않았다. worker는 worktree 환경 준비를 위해 `prisma generate`만 실행했다(저장소 파일 변경 없음).
+- 통합: `git merge --no-ff`로 통합 worktree에 병합해 `f91fabdba6b38e376460da174aca4c0e697e163a`(base `5f87f8a3`). 통합 검증: controller + problem-response 2 suites/54 tests, backend 타입, 대상 lint, diff check 통과.
+- 감사: read-only `auditor` FINAL SHIP/HIGH at `f91fabdba`, base `5f87f8a32`(second parent `5c6632133`). blocking 없음. nonblocking: (N1) spec의 `privateValues` fixture 필드는 선언만 되고 사용되지 않음(실제 누출 단언은 공개 응답 테스트에 있음), (N2) 8개 중 3개만 전체 공개 응답 경로를 타지만 모두 같은 helper를 호출, (N3) non-null assertion은 근거 주석 있음. 잔여 리스크로 예약 일시·`ensureApproved` 레거시 경로 유지가 기록됐다.
+- 기록: `docs/error-management-inventory.json`의 `sms-recipient-presend-legacy`를 migrated로 갱신(규격 ID·테스트·감사 증거 포함)하고 `presend_review_evidence` 상태를 현행화했으며 `docs/error-management.md`에 전환 요약을 추가했다. clean unit worktree와 branch는 병합·감사 후 정리한다.
+- Phase 1 완료(2.1b 범위). Task 2.1 전체(예약 일시·승인 오류, 템플릿 조건), Task 1.1 전수 인벤토리, 실환경 검증, dev 병합, 배포는 계속 미완료다. 다음 단계는 계획의 Phase 2(Task 1.1 배치 A)이다.
+

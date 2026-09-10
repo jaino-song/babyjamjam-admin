@@ -159,3 +159,9 @@ packages/shared/src/errors/user-error-message.ts의 문자열 기반 번역은 �
 제품 SHA `8cc87adf33553f9cdb86e494391eb8da00a7b2db`: 관련29 tests/3 suites·타입·대상lint·UI gate 통과. fresh Sol correction SHIP/HIGH가 이전 지적을 모두 닫았다. 검토 순서/정확한 base/제한은 `docs/plans/bjj-319-remaining-plan.md`에 기록했다. 기존 unused-import 경고1개는 유지된다.
 
 잠금 수명은 mounted 웹 SMS 화면이며 새로고침/재접속의 영속 멱등성을 대신하지 않는다. Task1.1은 추적 소스3,111개/검색 후보797개를 조사 중이다. 후보는 결함 수가 아니며 `docs/error-management-inventory.json`의 미확인 항목은 완료로 승격하지 않았다. dev 병합·배포·실제 발송은 하지 않았다.
+
+## 2026-09-10 문자 사전 거절 8분기 전환
+
+`resolveSmsRecipients`의 남은 원시 400 분기 8개(지점 컨텍스트 누락, client+employee 동시 지정, 빈/무효 수신자, client/employee 1건 규칙, client·employee 연락처 불일치, 무료 수신자 중복 일치)를 `REQUEST_INVALID` + `NOT_APPLIED`로 전환했다. 발송 전 거절이며 승인·로그 쓰기·공급자 호출 0회, 빈 params, 민감정보 비노출은 그대로다. 공유 카탈로그와 vendor는 변경하지 않았고 신규 공개 코드도 만들지 않았다.
+
+통합 `f91fabdba`(base `5f87f8a3`, unit `5c6632133`): controller 46 + problem-response 8 = 54 tests, backend 타입·대상 lint·diff check 통과, red-first 11 failures 확인. read-only auditor FINAL SHIP/HIGH. 매핑·증거는 `docs/error-management-inventory.json`의 `sms-recipient-presend-legacy`(migrated)에 기록했다. 예약 일시 검증과 `ensureApproved` 승인 오류는 아직 레거시이며 Task 2.1 전체·Task 1.1·전체 이슈는 미완료다.
