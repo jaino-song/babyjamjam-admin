@@ -572,7 +572,7 @@ export default function ContractsPage() {
   const {
     documents: infiniteDocuments,
     isLoading: isLoadingInfinite,
-    isFetchingNextPage,
+    isFetching: isFetchingDocuments,
     hasNextPage,
     fetchNextPage,
     error,
@@ -842,8 +842,8 @@ export default function ContractsPage() {
                 }}
                 // Load more props
                 hasMore={hasNextPage}
-                onLoadMore={() => fetchNextPage()}
-                isFetchingMore={isFetchingNextPage}
+                onLoadMore={fetchNextPage}
+                isFetchingMore={isFetchingDocuments}
                 render={({ item: doc, isLoading }) => {
                   const customerName = resolveCustomerName(doc);
 
@@ -970,8 +970,8 @@ export default function ContractsPage() {
                     }}
                     onSlotClick={(doc) => setSelectedServiceRecordDocId(doc.id)}
                     hasMore={hasNextPage}
-                    onLoadMore={() => fetchNextPage()}
-                    isFetchingMore={isFetchingNextPage}
+                    onLoadMore={fetchNextPage}
+                    isFetchingMore={isFetchingDocuments}
                     render={({ item: doc, isLoading }) => (
                       <ContractsListItem
                         data-component="desktop_contracts_sections_section-content_service-records-section_split-layout_list-panel_item"

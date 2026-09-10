@@ -1,11 +1,19 @@
 import fs from "node:fs";
 
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { createContext, useContext, type ReactNode } from "react";
+import { fireEvent, render as renderView, screen, waitFor, within } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { createContext, useContext, type ReactElement, type ReactNode } from "react";
 
 import MessagesPage from "./page";
 
 const source = fs.readFileSync(require.resolve("./page"), "utf8");
+
+function render(ui: ReactElement) {
+  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  return renderView(ui, {
+    wrapper: ({ children }) => <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>,
+  });
+}
 
 describe("MessagesPage template type labels", () => {
   it("keeps branch template semantics when the selected detail is unavailable", () => {
@@ -63,6 +71,10 @@ const mockRetryMutateAsync = jest.fn();
 // the render-level gate itself reacts, not just the nav's disabled flag.
 const mockUseMessageSenderApproval = jest.fn();
 const mockUseAllClients = jest.fn();
+const mockUseSystemTemplates = jest.fn();
+const mockUseSystemTemplate = jest.fn();
+const mockUseInitialUser = jest.fn();
+const mockUpdateSystemTemplate = jest.fn();
 
 jest.mock("@/providers/LocaleProvider", () => ({
   useLocale: () => "ko",
@@ -71,7 +83,7 @@ jest.mock("@/providers/LocaleProvider", () => ({
 jest.mock("@/providers/UserProvider", () => ({
   // Non-owner role on purpose: history must be reachable for anyone once SMS
   // sending is approved, not just the branch owner.
-  useInitialUser: () => ({ id: "user-1", role: "manager" }),
+  useInitialUser: () => mockUseInitialUser(),
 }));
 
 jest.mock("@/components/app/messages/MessageApprovalGate", () => ({
@@ -103,8 +115,14 @@ jest.mock("@/features/clients/hooks/use-clients", () => ({
   useAllClients: () => mockUseAllClients(),
 }));
 
+jest.mock("@/hooks/useClients", () => ({
+  useAllClients: () => mockUseAllClients(),
+}));
+
 jest.mock("@/features/system-templates/hooks", () => ({
-  useSystemTemplate: () => ({ data: undefined, isLoading: false }),
+  useSystemTemplate: (key: string) => mockUseSystemTemplate(key),
+  useSystemTemplates: () => mockUseSystemTemplates(),
+  useUpdateSystemTemplate: () => ({ mutateAsync: mockUpdateSystemTemplate, isPending: false }),
 }));
 
 jest.mock("@/hooks/use-toast", () => ({
@@ -313,6 +331,21 @@ function buildHistoryRecord(overrides: Partial<MessageLogRecord> = {}): MessageL
   };
 }
 
+function buildSystemTemplate(overrides: Record<string, unknown> = {}) {
+  return {
+    id: "system-template-1",
+    templateKey: "GREETING",
+    name: "인사(소개)",
+    description: "초기 문의 안내",
+    content: "안녕하세요 {{name}}",
+    requiredVariables: [],
+    customVariables: [],
+    createdAt: "2026-09-01T00:00:00.000Z",
+    updatedAt: "2026-09-01T00:00:00.000Z",
+    ...overrides,
+  };
+}
+
 function mockData({
   upcoming = [],
   history = [],
@@ -365,6 +398,8 @@ function getDetailPanel() {
 }
 
 beforeEach(() => {
+  mockUseInitialUser.mockReturnValue({ id: "user-1", role: "manager" });
+  mockUpdateSystemTemplate.mockResolvedValue(undefined);
   mockToast.mockReset();
   mockCancelMutateAsync.mockReset();
   mockCancelMutateAsync.mockResolvedValue({ id: "job-1", status: "canceled" });
@@ -382,6 +417,8 @@ beforeEach(() => {
     isLoading: false,
   });
   mockUseAllClients.mockReturnValue({ data: [], isLoading: false });
+  mockUseSystemTemplates.mockReturnValue({ data: [], isLoading: false, isError: false });
+  mockUseSystemTemplate.mockReturnValue({ data: undefined, isLoading: false, isError: false });
 
   mockedUseRetryMessageHistory.mockReturnValue({
     mutateAsync: mockRetryMutateAsync,
@@ -393,6 +430,241 @@ beforeEach(() => {
   } as unknown as ReturnType<typeof useCancelUpcomingMessageTriggerJob>);
 
   mockData();
+});
+
+describe("messages page — server system-template catalog", () => {
+  it("saves only the newly selected template's content and variables after switching editors", async () => {
+    mockUseInitialUser.mockReturnValue({ id: "owner-1", role: "owner" });
+    const secondVariables = [{ key: "second", label: "두 번째 변수", required: true }];
+    const templates = [
+      buildSystemTemplate({ templateKey: "FUTURE_TEMPLATE_A", name: "첫 서버 템플릿", content: "첫 번째 본문" }),
+      buildSystemTemplate({ templateKey: "FUTURE_TEMPLATE", name: "새 서버 템플릿", content: "두 번째 본문", customVariables: secondVariables }),
+    ];
+    mockUseSystemTemplates.mockReturnValue({
+      data: templates,
+      isLoading: false,
+      isError: false,
+    });
+    mockUseSystemTemplate.mockImplementation((key: string) => ({
+      data: templates.find((template) => template.templateKey === key),
+      isLoading: false,
+      isError: false,
+    }));
+    render(<MessagesPage />);
+    fireEvent.click(screen.getAllByRole("button", { name: "템플릿" })[0]);
+    fireEvent.click(screen.getByText("첫 서버 템플릿"));
+    const placeholder = "템플릿 내용을 입력하세요. 변수는 {{변수명}} 형식으로 사용합니다.";
+    fireEvent.change(screen.getByPlaceholderText(placeholder), { target: { value: "첫 번째 미저장 수정" } });
+    fireEvent.click(screen.getByText("새 서버 템플릿"));
+    expect(screen.getByPlaceholderText(placeholder)).toHaveValue("두 번째 본문");
+    fireEvent.change(screen.getByPlaceholderText(placeholder), { target: { value: "두 번째 수정" } });
+    fireEvent.click(screen.getByRole("button", { name: "저장" }));
+    await waitFor(() => expect(mockUpdateSystemTemplate).toHaveBeenCalledWith({
+      key: "FUTURE_TEMPLATE", content: "두 번째 수정", customVariables: secondVariables,
+    }));
+  });
+
+  it("renders server-added keys and routes SERVICE_END_NOTICE through the receipt-link form", () => {
+    mockUseSystemTemplates.mockReturnValue({
+      data: [
+        buildSystemTemplate({
+          templateKey: "SERVICE_END_NOTICE",
+          name: "서비스 종료 안내",
+          content: "영수증 링크: {{receiptUrl}}",
+        }),
+        buildSystemTemplate({
+          templateKey: "FUTURE_TEMPLATE",
+          name: "새 서버 템플릿",
+          content: "미래 템플릿 본문",
+        }),
+      ],
+      isLoading: false,
+      isError: false,
+    });
+    mockUseSystemTemplate.mockReturnValue({
+      data: buildSystemTemplate({
+        templateKey: "SERVICE_END_NOTICE",
+        name: "서비스 종료 안내",
+        content: "영수증 링크: {{receiptUrl}}",
+      }),
+      isLoading: false,
+      isError: false,
+    });
+
+    render(<MessagesPage />);
+
+    expect(screen.getAllByText("서비스 종료 안내").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("새 서버 템플릿").length).toBeGreaterThan(0);
+    expect(screen.queryByText("인사(소개)")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /서비스 종료 안내/ }));
+
+    expect(screen.queryByText("이 화면에서는 직접 발송할 수 없습니다.")).not.toBeInTheDocument();
+    expect(screen.getByText("산모님 성함")).toBeInTheDocument();
+    expect(screen.getByText("산모님 전화번호")).toBeInTheDocument();
+    expect(screen.getAllByText("서비스 종료 안내").length).toBeGreaterThan(0);
+    expect(screen.queryByText("제공기록지 작성 링크")).not.toBeInTheDocument();
+  });
+
+  it("keeps cached rows and the editor draft visible when the catalog refetch fails", () => {
+    mockUseInitialUser.mockReturnValue({ id: "owner-1", role: "owner" });
+    const template = buildSystemTemplate({
+      templateKey: "FUTURE_TEMPLATE",
+      name: "새 서버 템플릿",
+      content: "서버 본문",
+    });
+    mockUseSystemTemplates.mockReturnValue({
+      data: [template],
+      isLoading: false,
+      isError: false,
+    });
+    mockUseSystemTemplate.mockReturnValue({ data: template, isLoading: false, isError: false });
+
+    const { rerender } = render(<MessagesPage />);
+    fireEvent.click(screen.getAllByRole("button", { name: "템플릿" })[0]);
+    fireEvent.click(screen.getByText("새 서버 템플릿"));
+
+    const placeholder = "템플릿 내용을 입력하세요. 변수는 {{변수명}} 형식으로 사용합니다.";
+    fireEvent.change(screen.getByPlaceholderText(placeholder), {
+      target: { value: "임시로 수정한 본문" },
+    });
+
+    mockUseSystemTemplates.mockReturnValue({
+      data: [template],
+      isLoading: false,
+      isError: true,
+    });
+    rerender(<MessagesPage />);
+
+    expect(screen.getAllByText("새 서버 템플릿").length).toBeGreaterThan(0);
+    expect(screen.getByPlaceholderText(placeholder)).toHaveValue("임시로 수정한 본문");
+    expect(screen.queryByText("기본 템플릿을 불러오지 못했습니다.")).not.toBeInTheDocument();
+  });
+
+  it("waits for fresh detail data before mounting an editable unknown template", () => {
+    mockUseInitialUser.mockReturnValue({ id: "owner-1", role: "owner" });
+    const listTemplate = buildSystemTemplate({
+      templateKey: "FUTURE_TEMPLATE",
+      name: "새 서버 템플릿",
+      content: "목록의 오래된 본문",
+    });
+    const detailTemplate = buildSystemTemplate({
+      templateKey: "FUTURE_TEMPLATE",
+      name: "새 서버 템플릿",
+      content: "상세의 최신 본문",
+    });
+    mockUseSystemTemplates.mockReturnValue({
+      data: [listTemplate],
+      isLoading: false,
+      isError: false,
+    });
+    mockUseSystemTemplate.mockReturnValue({ data: undefined, isLoading: true, isError: false });
+
+    const { rerender } = render(<MessagesPage />);
+    fireEvent.click(screen.getAllByRole("button", { name: "템플릿" })[0]);
+    fireEvent.click(screen.getByText("새 서버 템플릿"));
+
+    const placeholder = "템플릿 내용을 입력하세요. 변수는 {{변수명}} 형식으로 사용합니다.";
+    expect(screen.queryByPlaceholderText(placeholder)).not.toBeInTheDocument();
+    expect(screen.queryByText("선택한 템플릿 정보를 불러오지 못했습니다.")).not.toBeInTheDocument();
+    expect(
+      document.querySelector(
+        '[data-component="desktop_messages_sections_templates_split-layout_detail-panel_header_title-group_title-row_title-skeleton"]',
+      ),
+    ).toBeInTheDocument();
+
+    mockUseSystemTemplate.mockReturnValue({ data: detailTemplate, isLoading: false, isError: false });
+    rerender(<MessagesPage />);
+
+    expect(screen.getByPlaceholderText(placeholder)).toHaveValue("상세의 최신 본문");
+    expect(screen.getByRole("button", { name: "저장" })).toBeDisabled();
+  });
+
+  it("preserves a dirty draft when fresher detail data arrives and previews that draft", () => {
+    mockUseInitialUser.mockReturnValue({ id: "owner-1", role: "owner" });
+    const initialTemplate = buildSystemTemplate({
+      templateKey: "FUTURE_TEMPLATE",
+      name: "새 서버 템플릿",
+      content: "처음 본문",
+    });
+    const refreshedTemplate = buildSystemTemplate({
+      templateKey: "FUTURE_TEMPLATE",
+      name: "새 서버 템플릿",
+      content: "새로 받은 본문",
+    });
+    mockUseSystemTemplates.mockReturnValue({
+      data: [initialTemplate],
+      isLoading: false,
+      isError: false,
+    });
+    mockUseSystemTemplate.mockReturnValue({ data: initialTemplate, isLoading: false, isError: false });
+
+    const { rerender } = render(<MessagesPage />);
+    fireEvent.click(screen.getAllByRole("button", { name: "템플릿" })[0]);
+    fireEvent.click(screen.getByText("새 서버 템플릿"));
+
+    const placeholder = "템플릿 내용을 입력하세요. 변수는 {{변수명}} 형식으로 사용합니다.";
+    fireEvent.change(screen.getByPlaceholderText(placeholder), {
+      target: { value: "저장하지 않은 본문" },
+    });
+
+    mockUseSystemTemplate.mockReturnValue({ data: refreshedTemplate, isLoading: false, isError: false });
+    rerender(<MessagesPage />);
+
+    expect(screen.getByPlaceholderText(placeholder)).toHaveValue("저장하지 않은 본문");
+    fireEvent.click(screen.getByRole("tab", { name: "미리보기" }));
+    expect(
+      document.querySelector(
+        '[data-component="desktop_messages_sections_section-content_templates-section_split-layout_detail-panel_preview_preview-message-text"]',
+      ),
+    ).toHaveTextContent("저장하지 않은 본문");
+  });
+
+  it("instruments the unsupported manual-send badge under the template item owner path", () => {
+    const template = buildSystemTemplate({
+      templateKey: "FUTURE_TEMPLATE",
+      name: "새 서버 템플릿",
+    });
+    mockUseSystemTemplates.mockReturnValue({
+      data: [template],
+      isLoading: false,
+      isError: false,
+    });
+
+    const { container } = render(<MessagesPage />);
+    const badge = container.querySelector(
+      '[data-component="desktop_messages_sections_template-item_status_badge"]',
+    );
+
+    expect(badge).toHaveTextContent("직접 발송 불가");
+  });
+
+  it.each([
+    ["loading", { data: undefined, isLoading: true, isError: false }],
+    ["error", { data: undefined, isLoading: false, isError: true }],
+    ["missing", { data: undefined, isLoading: false, isError: false }],
+  ])("does not silently fall back to legacy rows on %s", (_state, result) => {
+    mockUseSystemTemplates.mockReturnValue(result);
+
+    render(<MessagesPage />);
+
+    expect(screen.queryByText("인사(소개)")).not.toBeInTheDocument();
+    expect(screen.queryByPlaceholderText("템플릿 내용을 입력하세요. 변수는 {{변수명}} 형식으로 사용합니다.")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "즉시 발송" })).not.toBeInTheDocument();
+  });
+
+  it("does not silently select the first server row while the compact list is shown", () => {
+    mockUseSystemTemplates.mockReturnValue({
+      data: [buildSystemTemplate({ templateKey: "FUTURE_TEMPLATE", name: "새 서버 템플릿" })],
+      isLoading: false,
+      isError: false,
+    });
+
+    render(<MessagesPage />);
+
+    expect(screen.getByTestId("split-layout")).toHaveAttribute("data-has-selection", "false");
+    expect(screen.queryByPlaceholderText("템플릿 내용을 입력하세요. 변수는 {{변수명}} 형식으로 사용합니다.")).not.toBeInTheDocument();
+  });
 });
 
 describe("messages page — merged 발송 기록 section", () => {

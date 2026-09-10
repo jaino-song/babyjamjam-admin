@@ -1,6 +1,6 @@
 "use client";
 
-import type { ComponentType, ReactNode } from "react";
+import type { ComponentType, MouseEvent, ReactNode } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowLeft,
@@ -122,9 +122,14 @@ import {
   getReceiptFileName,
   shareReceiptPng,
 } from "@/lib/contracts/receipt-share";
+import {
+  downloadValidatedBinary,
+  type DownloadBinaryKind,
+} from "@/lib/contracts/document-download";
 import { matchesKoreanSearch } from "@/lib/search/korean-search";
 import { useClientDialogStore, type ClientWizardPrefill } from "@/stores/client-dialog-store";
 import { useFormStore, type ContractCreationPrefill } from "@/stores/form-store";
+import { useContractClientRegistration } from "@/hooks/useContractClientRegistration";
 import "@/components/app/mobile-redesign/redesign.css";
 const STAFF_COMPLETION_IFRAME_ID = "contracts_staff_completion_iframe";
 const CONTRACT_PDF_VIEWER_ARIA_LABEL = "계약서 PDF 미리보기";
@@ -187,6 +192,10 @@ const CONTRACT_LIST_INITIAL_VISIBLE_COUNT = 9;
 const DROPDOWN_DIALOG_HANDOFF_DELAY_MS = 100;
 const CONTRACT_OPEN_CODES = new Set(["034", "064", "074", "076"]);
 const CONTRACT_OPEN_KEYWORDS = ["doc_open", "open_participant", "open_outsider", "open_reviewer", "open_reader", "열람"];
+
+function isAbortErrorLike(error: unknown): boolean {
+  return typeof error === "object" && error !== null && "name" in error && error.name === "AbortError";
+}
 const CONTRACT_SIGNATURE_CODES = new Set(["032", "062", "092"]);
 const CONTRACT_SIGNATURE_KEYWORDS = [
   "doc_accept_outsider",
@@ -1211,6 +1220,7 @@ function ContractDetailContent({
   onTabChange,
   onFinalize,
   onOpenClient,
+  isClientRegistrationPending,
   onEditSend,
   onDeleteRequest,
 }: {
@@ -1221,7 +1231,8 @@ function ContractDetailContent({
   activeTab: DetailTabId;
   onTabChange: (id: DetailTabId) => void;
   onFinalize?: (doc: EformsignDocument, metadata?: EformsignDocClientSummary) => void;
-  onOpenClient: (doc: EformsignDocument, metadata?: EformsignDocClientSummary) => void;
+  onOpenClient: (doc: EformsignDocument, metadata?: EformsignDocClientSummary) => Promise<void>;
+  isClientRegistrationPending: boolean;
   onEditSend: (doc: EformsignDocument, metadata?: EformsignDocClientSummary) => void;
   onDeleteRequest: (doc: EformsignDocument) => void;
 }) {
@@ -1232,6 +1243,9 @@ function ContractDetailContent({
   const [isReceiptSendConfirmOpen, setIsReceiptSendConfirmOpen] = useState(false);
   const [isSendingReceiptLink, setIsSendingReceiptLink] = useState(false);
   const [detailMenuKey, setDetailMenuKey] = useState(0);
+  const downloadControllersRef = useRef(new Map<DownloadBinaryKind, AbortController>());
+  const receiptShareInFlightRef = useRef(false);
+  const receiptShareControllerRef = useRef<AbortController | null>(null);
   const category = categorize(doc);
   const tones = categoryTones(category);
   const reviewNeeded = isReviewNeeded(doc);
@@ -1262,6 +1276,16 @@ function ContractDetailContent({
   const receiptCustomerName =
     resolvedCustomerName === UNKNOWN_CUSTOMER_NAME ? "" : resolvedCustomerName.trim();
   const receiptFilename = getReceiptFileName(receiptCustomerName);
+  useEffect(() => {
+    const downloadControllers = downloadControllersRef.current;
+    return () => {
+      downloadControllers.forEach((controller) => controller.abort());
+      downloadControllers.clear();
+      receiptShareControllerRef.current?.abort();
+      receiptShareControllerRef.current = null;
+      receiptShareInFlightRef.current = false;
+    };
+  }, [doc.id]);
   const notificationRows = useMemo(
     () =>
       notificationLogs
@@ -1328,20 +1352,70 @@ function ContractDetailContent({
       setIsSendingReceiptLink(false);
     }
   };
-  const handleReceiptShare = async () => {
-    await shareReceiptPng({
-      url: receiptDownloadUrl,
-      fileName: receiptFilename,
-      navigatorObject: typeof navigator === "undefined" ? undefined : navigator,
-      fileConstructor: typeof File === "undefined" ? undefined : File,
-      onDownload: (url, fileName) => downloadReceiptPng(url, fileName),
-      onError: (message) =>
+  const runValidatedDownload = useCallback(async (
+    url: string,
+    fileName: string,
+    kind: DownloadBinaryKind,
+  ) => {
+    if (downloadControllersRef.current.has(kind)) {
+      return;
+    }
+
+    const controller = new AbortController();
+    downloadControllersRef.current.set(kind, controller);
+    try {
+      await downloadValidatedBinary(url, fileName, kind, { signal: controller.signal });
+    } catch (error) {
+      if (!isAbortErrorLike(error)) {
         toast({
           variant: "destructive",
-          title: "영수증 공유 실패",
-          description: message || RECEIPT_SHARE_ERROR_MESSAGE,
-        }),
-    });
+          title: kind === "png" ? "영수증 다운로드 실패" : "PDF 다운로드 실패",
+          description: "파일을 불러오지 못했습니다. 잠시 후 다시 시도해 주세요.",
+        });
+      }
+    } finally {
+      if (downloadControllersRef.current.get(kind) === controller) {
+        downloadControllersRef.current.delete(kind);
+      }
+    }
+  }, [toast]);
+  const handleReceiptDownload = (event: MouseEvent<HTMLAnchorElement>) => {
+    event.preventDefault();
+    void runValidatedDownload(receiptDownloadUrl, receiptFilename, "png");
+  };
+  const handlePdfDownload = (event: MouseEvent<HTMLAnchorElement>) => {
+    event.preventDefault();
+    void runValidatedDownload(downloadUrl, `${name}.pdf`, "pdf");
+  };
+  const handleReceiptShare = async () => {
+    if (receiptShareInFlightRef.current) {
+      return;
+    }
+
+    receiptShareInFlightRef.current = true;
+    const controller = new AbortController();
+    receiptShareControllerRef.current = controller;
+    try {
+      await shareReceiptPng({
+        url: receiptDownloadUrl,
+        fileName: receiptFilename,
+        navigatorObject: typeof navigator === "undefined" ? undefined : navigator,
+        fileConstructor: typeof File === "undefined" ? undefined : File,
+        signal: controller.signal,
+        onDownload: (url, fileName, binary) => downloadReceiptPng(url, fileName, undefined, binary),
+        onError: (message) =>
+          toast({
+            variant: "destructive",
+            title: "영수증 공유 실패",
+            description: message || RECEIPT_SHARE_ERROR_MESSAGE,
+          }),
+      });
+    } finally {
+      if (receiptShareControllerRef.current === controller) {
+        receiptShareControllerRef.current = null;
+        receiptShareInFlightRef.current = false;
+      }
+    }
   };
 
   return (
@@ -1371,7 +1445,10 @@ function ContractDetailContent({
               data-component="mobile_contracts_detail-sheet_stack_detail-page_content_header_menu"
             >
               <DropdownMenuItem
-                onClick={() => onOpenClient(doc, metadata)}
+                onClick={() => {
+                  void onOpenClient(doc, metadata);
+                }}
+                disabled={isClientRegistrationPending}
                 className="min-h-[44px] gap-2 rounded-md px-3 py-2 text-[0.82rem] leading-none"
                 data-component="mobile_contracts_detail-sheet_stack_detail-page_content_header_menu_client"
               >
@@ -1489,6 +1566,7 @@ function ContractDetailContent({
                 href={receiptDownloadUrl}
                 download={receiptFilename}
                 aria-label={`${receiptFilename} 다운로드`}
+                onClick={handleReceiptDownload}
               >
                 <Download size={16} strokeWidth={2.5} />
                 <span>영수증</span>
@@ -1499,6 +1577,7 @@ function ContractDetailContent({
                 href={downloadUrl}
                 download={`${name}.pdf`}
                 aria-label={`${name} PDF 다운로드`}
+                onClick={handlePdfDownload}
               >
                 <Download size={16} strokeWidth={2.5} />
                 <span>다운로드</span>
@@ -1623,9 +1702,12 @@ export default function ContractsPage() {
   const router = useRouter();
   const { toast } = useToast();
   const { data: employees = [] } = useEmployees();
-  const setPrefillClient = useClientDialogStore((state) => state.setPrefillClient);
   const clearPrefillClient = useClientDialogStore((state) => state.clearPrefillClient);
   const prefillContractCreation = useFormStore((state) => state.prefillFromContract);
+  const {
+    handleOpenClientFromContract,
+    isClientRegistrationPending,
+  } = useContractClientRegistration();
   const [activeFilter, setActiveFilter] = useState<FilterKey>("전체");
   const [activeSection, setActiveSection] = useState<ContractSectionId>("maternal-contracts");
   const [searchQuery, setSearchQuery] = useState("");
@@ -1728,20 +1810,6 @@ export default function ContractsPage() {
 
   const closeFinalizeDialog = () => {
     setIsFinalizeDialogOpen(false);
-  };
-
-  const handleOpenClientFromContract = (
-    doc: EformsignDocument,
-    metadata?: EformsignDocClientSummary,
-  ) => {
-    if (metadata?.clientId) {
-      clearPrefillClient();
-      router.push(`/clients/new?clientId=${metadata.clientId}`);
-      return;
-    }
-
-    setPrefillClient(buildClientPrefillFromContract(doc));
-    router.push("/clients/new");
   };
 
   const handleEditSendFromContract = (
@@ -2457,6 +2525,7 @@ export default function ContractsPage() {
             onTabChange={setActiveTab}
             onFinalize={openFinalize}
             onOpenClient={handleOpenClientFromContract}
+            isClientRegistrationPending={isClientRegistrationPending}
             onEditSend={handleEditSendFromContract}
             onDeleteRequest={setDeleteTargetDoc}
           />

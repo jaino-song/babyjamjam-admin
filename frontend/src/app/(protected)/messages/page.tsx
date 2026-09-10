@@ -23,7 +23,6 @@ import {
   MESSAGE_SECTION_DEFINITIONS,
   formatMessageDateTimeCompact,
   formatMessageDateTimeDetail,
-  getMessageTemplateLabel,
   type MessageRecordStatusFilter,
   type MessageSectionId as SharedMessageSectionId,
 } from "@babyjamjam/shared";
@@ -32,8 +31,15 @@ import { useLocale } from "@/providers/LocaleProvider";
 import { useInitialUser } from "@/providers/UserProvider";
 import { ROLES } from "@/lib/constants/roles";
 import { useMessageTemplates } from "@/features/message-templates/hooks/use-message-templates";
-import { useSystemTemplate } from "@/features/system-templates/hooks";
-import type { SystemTemplateKey } from "@/features/system-templates/types";
+import { useSystemTemplate, useSystemTemplates } from "@/features/system-templates/hooks";
+import type { SystemTemplate } from "@/features/system-templates/types";
+import { SystemTemplateEditor } from "@/components/app/ui/SystemTemplateEditor";
+import {
+  buildSystemTemplateCatalog,
+  type LegacyBuiltinTemplateType,
+  type ServerSystemTemplate,
+  type SystemTemplateCatalogItem,
+} from "@/features/system-templates/catalog";
 import {
   useCancelUpcomingMessageTriggerJob,
   useMessageHistory,
@@ -149,21 +155,22 @@ import {
   AppContentCard,
 } from "@/components/ui/app-surface";
 
-type BuiltinTemplateType =
-  | "greeting"
-  | "service-info"
-  | "service-feedback-link"
-  | "price-info"
-  | "reminder"
-  | "thanks"
-  | "survey"
-  | "info";
+type BuiltinTemplateType = LegacyBuiltinTemplateType;
 type TemplateFilter = "builtin" | "branch";
 
 interface TemplateListItem {
   id: string;
   label: string;
   icon: typeof MessageCircle;
+  source: "system" | "branch";
+  templateKey?: string;
+  description?: string;
+  content?: string;
+  customVariables?: SystemTemplateCatalogItem["customVariables"];
+  requiredVariables?: SystemTemplateCatalogItem["requiredVariables"];
+  legacyType?: BuiltinTemplateType | null;
+  manualSendAvailability?: SystemTemplateCatalogItem["manualSendAvailability"];
+  template?: ServerSystemTemplate;
 }
 
 interface PlaceholderPreviewItem {
@@ -187,21 +194,30 @@ interface PlaceholderPreviewItem {
   }>;
 }
 
-const BUILTIN_TEMPLATES: TemplateListItem[] = [
-  { id: "builtin:greeting", label: getMessageTemplateLabel("GREETING"), icon: MessageCircle },
-  { id: "builtin:service-info", label: getMessageTemplateLabel("SERVICE_INFO"), icon: Briefcase },
-  { id: "builtin:service-feedback-link", label: getMessageTemplateLabel("SERVICE_RECORD_LINK"), icon: FileText },
-  { id: "builtin:price-info", label: getMessageTemplateLabel("PRICE_INFO"), icon: CreditCard },
-  { id: "builtin:reminder", label: getMessageTemplateLabel("REMINDER"), icon: Bell },
-  { id: "builtin:thanks", label: getMessageTemplateLabel("THANKS"), icon: Heart },
-  { id: "builtin:survey", label: getMessageTemplateLabel("SURVEY"), icon: ClipboardList },
-  { id: "builtin:info", label: getMessageTemplateLabel("INFO"), icon: Info },
-];
-
 const TEMPLATE_FILTERS: Array<{ value: TemplateFilter; label: string }> = [
   { value: "builtin", label: "기본 템플릿" },
   { value: "branch", label: "지점 템플릿" },
 ];
+
+// Icons are presentation only. Catalog membership and ordering come from the
+// server response, including keys introduced after this frontend ships.
+const SYSTEM_TEMPLATE_ICON_BY_KEY: Record<string, typeof MessageCircle> = {
+  GREETING: MessageCircle,
+  SERVICE_INFO: Briefcase,
+  SERVICE_RECORD_LINK: FileText,
+  PRICE_INFO: CreditCard,
+  REMINDER: Bell,
+  THANKS: Heart,
+  SURVEY: ClipboardList,
+  INFO: Info,
+  SERVICE_END_NOTICE: FileText,
+};
+
+function getSystemTemplateIcon(templateKey: string) {
+  return Object.prototype.hasOwnProperty.call(SYSTEM_TEMPLATE_ICON_BY_KEY, templateKey)
+    ? SYSTEM_TEMPLATE_ICON_BY_KEY[templateKey]
+    : FileText;
+}
 
 const ICON_BY_SECTION_ID: Record<SharedMessageSectionId, typeof Send> = {
   send: Send,
@@ -353,17 +369,6 @@ const TEMPLATE_DETAIL_TABS = [
   { key: "preview", label: "미리보기" },
 ];
 
-const BUILTIN_TEMPLATE_SYSTEM_KEYS: Record<BuiltinTemplateType, SystemTemplateKey> = {
-  greeting: "GREETING",
-  "service-info": "SERVICE_INFO",
-  "service-feedback-link": "SERVICE_RECORD_LINK",
-  "price-info": "PRICE_INFO",
-  reminder: "REMINDER",
-  thanks: "THANKS",
-  survey: "SURVEY",
-  info: "INFO",
-};
-
 const BUILTIN_TEMPLATE_PREVIEW_META: Record<
   BuiltinTemplateType,
   { headline: string; subtitle: string; buttons: string[] }
@@ -407,6 +412,11 @@ const BUILTIN_TEMPLATE_PREVIEW_META: Record<
     headline: "운영 안내를 확인해 주세요",
     subtitle: "기본 안내 메시지",
     buttons: ["안내 확인"],
+  },
+  "service-end-notice": {
+    headline: "서비스 종료 안내를 확인해 주세요",
+    subtitle: "영수증 링크 안내",
+    buttons: ["영수증 확인"],
   },
 };
 
@@ -500,6 +510,7 @@ const FormComponents: Record<
     onPreviewMessageChange?: (message: string) => void;
     renderLayout?: TemplateMessageFormLayout;
     showMessageSide?: boolean;
+    mode?: "service-feedback-link" | "receipt-link";
   }>
 > = {
   greeting: GreetingMessageForm,
@@ -510,6 +521,7 @@ const FormComponents: Record<
   thanks: ThanksMessageForm,
   survey: SurveyMessageForm,
   info: InfoMessageForm,
+  "service-end-notice": ServiceRecordLinkMessageForm,
 };
 
 // The only reachable PlaceholderSectionId today is "settings" (see the render
@@ -1405,19 +1417,37 @@ export default function MessagesPage() {
   );
 
   const { data: userTemplatesData, isLoading: isLoadingUserTemplates } = useMessageTemplates(1, 100);
+  const {
+    data: systemTemplatesData,
+    isLoading: isLoadingSystemTemplates,
+    isError: isSystemTemplatesError,
+  } = useSystemTemplates();
   const userTemplates = useMemo(() => userTemplatesData ?? [], [userTemplatesData]);
+
+  const systemTemplateItems = useMemo<TemplateListItem[]>(() => {
+    if (isSystemTemplatesError && !systemTemplatesData) return [];
+
+    return buildSystemTemplateCatalog(systemTemplatesData as ServerSystemTemplate[] | undefined).map(
+      (item) => ({
+        ...item,
+        source: "system" as const,
+        icon: getSystemTemplateIcon(item.templateKey),
+      }),
+    );
+  }, [isSystemTemplatesError, systemTemplatesData]);
 
   const userTemplateItems = useMemo<TemplateListItem[]>(() => {
     return userTemplates.map((template) => ({
       id: `user:${template.id}`,
       label: template.name,
       icon: FileText,
+      source: "branch" as const,
     }));
   }, [userTemplates]);
 
   const visibleItems = useMemo(
-    () => (templateFilter === "builtin" ? BUILTIN_TEMPLATES : userTemplateItems),
-    [templateFilter, userTemplateItems]
+    () => (templateFilter === "builtin" ? systemTemplateItems : userTemplateItems),
+    [systemTemplateItems, templateFilter, userTemplateItems]
   );
   const templateItemIds = useMemo(() => visibleItems.map((item) => item.id), [visibleItems]);
   const {
@@ -1425,21 +1455,27 @@ export default function MessagesPage() {
     setSelectedId: setSelectedValue,
     setSplitLayoutMode: setTemplateSplitLayoutMode,
   } = useSplitLayoutSelection(templateItemIds);
-  const isTemplateListLoading = templateFilter === "branch" && isLoadingUserTemplates;
+  const isTemplateListLoading = templateFilter === "builtin"
+    ? isLoadingSystemTemplates
+    : isLoadingUserTemplates;
+  const isTemplateListError =
+    templateFilter === "builtin" && isSystemTemplatesError && !systemTemplatesData;
 
   const handleTemplateSelect = useCallback((id: string) => {
     setSelectedValue(id);
     setTemplateDetailTab("details");
     setTemplatePreviewOverride(null);
+    setTemplateSendSubmitState(null);
   }, [setSelectedValue]);
 
   const handleTemplateFilterChange = useCallback(
     (nextFilter: TemplateFilter) => {
-      const nextItems = nextFilter === "builtin" ? BUILTIN_TEMPLATES : userTemplateItems;
+      const nextItems = nextFilter === "builtin" ? systemTemplateItems : userTemplateItems;
 
       setTemplateFilter(nextFilter);
       setTemplateDetailTab("details");
       setTemplatePreviewOverride(null);
+      setTemplateSendSubmitState(null);
       setSelectedValue((current) => {
         if (current && nextItems.some((item) => item.id === current)) {
           return current;
@@ -1448,7 +1484,7 @@ export default function MessagesPage() {
         return null;
       });
     },
-    [setSelectedValue, userTemplateItems]
+    [setSelectedValue, systemTemplateItems, userTemplateItems]
   );
 
   const activeTemplateId = useMemo(() => {
@@ -1456,16 +1492,27 @@ export default function MessagesPage() {
     return visibleItems.find((item) => item.id === selectedValue)?.id ?? null;
   }, [selectedValue, visibleItems]);
 
-  const isBuiltin = activeTemplateId?.startsWith("builtin:") ?? false;
-  const builtinType = isBuiltin && activeTemplateId ? (activeTemplateId.replace("builtin:", "") as BuiltinTemplateType) : null;
-  const userTemplateId = !isBuiltin && activeTemplateId?.startsWith("user:") ? activeTemplateId.replace("user:", "") : null;
-  const isBranchTemplate = userTemplateId !== null;
-  const selectedUserTemplate = userTemplateId ? userTemplates.find((template) => template.id === userTemplateId) : null;
-  const SelectedBuiltinForm = builtinType ? FormComponents[builtinType] : null;
   const selectedTemplateItem = useMemo(
     () => visibleItems.find((item) => item.id === activeTemplateId) ?? null,
     [activeTemplateId, visibleItems]
   );
+  const isBuiltin = selectedTemplateItem?.source === "system";
+  const builtinType = isBuiltin ? selectedTemplateItem?.legacyType ?? null : null;
+  const userTemplateId =
+    selectedTemplateItem?.source === "branch" && activeTemplateId?.startsWith("user:")
+      ? activeTemplateId.replace("user:", "")
+      : null;
+  const isBranchTemplate = userTemplateId !== null;
+  const selectedUserTemplate = userTemplateId ? userTemplates.find((template) => template.id === userTemplateId) : null;
+  const SelectedBuiltinForm = builtinType ? FormComponents[builtinType] : null;
+  const selectedSystemTemplateKey = isBuiltin ? selectedTemplateItem?.templateKey ?? "" : "";
+  const {
+    data: selectedSystemTemplateDetail,
+    isLoading: isLoadingSystemTemplateDetail,
+    isError: isSystemTemplateDetailError,
+  } = useSystemTemplate(selectedSystemTemplateKey);
+  const selectedSystemTemplatePreview =
+    selectedSystemTemplateDetail ?? (isBuiltin ? selectedTemplateItem?.template ?? null : null);
   const selectedTemplateIcon = selectedTemplateItem?.icon ?? FileText;
   const SelectedTemplateIcon = selectedTemplateIcon;
   const selectedTemplateTitle = selectedTemplateItem?.label ?? selectedUserTemplate?.name ?? "메시지 템플릿";
@@ -1473,17 +1520,21 @@ export default function MessagesPage() {
     ? selectedUserTemplate
       ? `지점 템플릿 · ${selectedUserTemplate.variables.length}개 변수`
       : "지점 템플릿 · 정보를 불러오지 못했습니다."
-    : "기본 템플릿은 오너 관리자 페이지에서 관리됩니다.";
-  const selectedBuiltinSystemKey = builtinType ? BUILTIN_TEMPLATE_SYSTEM_KEYS[builtinType] : "";
-  const { data: selectedBuiltinSystemTemplate } = useSystemTemplate(selectedBuiltinSystemKey);
+    : selectedTemplateItem?.manualSendAvailability === "disabled"
+      ? "기본 템플릿 · 이 화면에서는 직접 발송할 수 없습니다."
+      : "기본 템플릿은 오너 관리자 페이지에서 관리됩니다.";
   const builtinPreviewMeta = builtinType ? BUILTIN_TEMPLATE_PREVIEW_META[builtinType] : null;
   const templatePreviewMessage =
     templatePreviewOverride ??
     selectedUserTemplate?.content ??
-    selectedBuiltinSystemTemplate?.content ??
+    selectedSystemTemplatePreview?.content ??
     "";
-  const templatePreviewHeadline = isBranchTemplate ? selectedTemplateTitle : builtinPreviewMeta?.headline;
-  const templatePreviewSubtitle = isBranchTemplate ? "지점 템플릿" : builtinPreviewMeta?.subtitle;
+  const templatePreviewHeadline = isBranchTemplate
+    ? selectedTemplateTitle
+    : builtinPreviewMeta?.headline ?? selectedTemplateTitle;
+  const templatePreviewSubtitle = isBranchTemplate
+    ? "지점 템플릿"
+    : builtinPreviewMeta?.subtitle ?? selectedTemplateSubtitle;
   const templatePreviewGeneratedTitle = t(locale, "common.generated-message-title");
   const templatePreviewMetaItems = useMemo(
     () => [
@@ -1529,12 +1580,16 @@ export default function MessagesPage() {
 
     return items;
   }, [selectedUserTemplate, templatePreviewMessage]);
+  const handleTemplatePreviewMessageChange = useCallback((message: string) => {
+    setTemplatePreviewOverride(message);
+  }, []);
   const sendTemplateFormLayout: TemplateMessageFormLayout = ({
     fields,
     messageCard,
     requiresRecipientName,
     deliveryMode,
     serviceRecordLinkPreparation,
+    receiptLinkPreparation,
   }) => {
     const flattenedMessageCard = isValidElement(messageCard)
       ? cloneElement(messageCard as ReactElement<{ layout?: "flat" }>, { layout: "flat" })
@@ -1553,6 +1608,7 @@ export default function MessagesPage() {
           requiresRecipientName={requiresRecipientName}
           deliveryMode={deliveryMode}
           serviceRecordLinkPreparation={serviceRecordLinkPreparation}
+          receiptLinkPreparation={receiptLinkPreparation}
           className="h-full"
           formId={TEMPLATE_SEND_FORM_ID}
           showSubmitButton={false}
@@ -1578,7 +1634,20 @@ export default function MessagesPage() {
         </div>
       ) : null}
 
-      {activeSection === "send" ? (
+      {isBuiltin ? (
+        <StatusBadge
+          variant={selectedTemplateItem?.manualSendAvailability === "available" ? "success" : "neutral"}
+          size="sm"
+          data-component="desktop_messages_sections_template-detail-send-availability"
+        >
+          {selectedTemplateItem?.manualSendAvailability === "available"
+            ? "직접 발송 지원"
+            : "이 화면에서는 직접 발송할 수 없습니다."}
+        </StatusBadge>
+      ) : null}
+
+      {activeSection === "send" &&
+      (!isBuiltin || selectedTemplateItem?.manualSendAvailability === "available") ? (
         <Button
           type="submit"
           form={templateSendSubmitState?.formId ?? TEMPLATE_SEND_FORM_ID}
@@ -1599,22 +1668,52 @@ export default function MessagesPage() {
     <>
       {SelectedBuiltinForm ? (
         <SelectedBuiltinForm
-          onPreviewMessageChange={(message) => setTemplatePreviewOverride(message)}
+          onPreviewMessageChange={handleTemplatePreviewMessageChange}
           renderLayout={selectedTemplateRenderLayout}
           showMessageSide={false}
+          mode={builtinType === "service-end-notice" ? "receipt-link" : undefined}
         />
       ) : null}
 
       {selectedUserTemplate ? (
         <CustomTemplateForm
           template={selectedUserTemplate as never}
-          onPreviewMessageChange={(message) => setTemplatePreviewOverride(message)}
+          onPreviewMessageChange={handleTemplatePreviewMessageChange}
           renderLayout={selectedTemplateRenderLayout}
           showMessageSide={false}
         />
       ) : null}
 
-      {!SelectedBuiltinForm && !selectedUserTemplate ? (
+      {isBuiltin && !SelectedBuiltinForm ? (
+        activeSection === "templates" ? (
+          selectedSystemTemplateDetail ? (
+            <SystemTemplateEditor
+              key={selectedSystemTemplateDetail.templateKey}
+              // Registry keys can be added server-side before the shared package
+              // union is updated; the editor consumes the same wire shape.
+              template={selectedSystemTemplateDetail as SystemTemplate}
+              onPreviewMessageChange={handleTemplatePreviewMessageChange}
+            />
+          ) : isLoadingSystemTemplateDetail ? null : isSystemTemplateDetailError ? (
+            <DetailEmptyState message="선택한 템플릿 정보를 불러오지 못했습니다." />
+          ) : null
+        ) : (
+          selectedSystemTemplatePreview ? (
+            <AppContentCard
+              data-component="desktop_messages_sections_template-detail-readonly-content"
+              title="템플릿 내용"
+              description="선택한 템플릿의 내용을 확인하세요."
+              contentClassName="min-h-0"
+            >
+              <MsgField label="템플릿 내용" value={templatePreviewMessage} />
+            </AppContentCard>
+          ) : isLoadingSystemTemplateDetail ? null : isSystemTemplateDetailError ? (
+            <DetailEmptyState message="선택한 템플릿 정보를 불러오지 못했습니다." />
+          ) : null
+        )
+      ) : null}
+
+      {!isBuiltin && !SelectedBuiltinForm && !selectedUserTemplate ? (
         <DetailEmptyState
           message="선택한 템플릿 정보를 불러오지 못했습니다."
         />
@@ -1663,6 +1762,7 @@ export default function MessagesPage() {
                   setSelectedValue(null);
                   setTemplateDetailTab("details");
                   setTemplatePreviewOverride(null);
+                  setTemplateSendSubmitState(null);
                 }}
               >
                 <ListPanel data-component="desktop_messages_sections_split-layout_list-panel-4"
@@ -1687,9 +1787,19 @@ export default function MessagesPage() {
                       </div>
                     ) : undefined
                   }
-                  emptyState={!(isTemplateListLoading || visibleItems.length > 0) && templateFilter === "branch" && !isLoadingUserTemplates ? (
-                    <ListEmptyState message="등록된 지점 템플릿이 없습니다." />
-                  ) : undefined}
+                  emptyState={
+                    isTemplateListError ? (
+                      <ListEmptyState message="기본 템플릿을 불러오지 못했습니다." />
+                    ) : !isTemplateListLoading && visibleItems.length === 0 ? (
+                      <ListEmptyState
+                        message={
+                          templateFilter === "branch"
+                            ? "등록된 지점 템플릿이 없습니다."
+                            : "등록된 기본 템플릿이 없습니다."
+                        }
+                      />
+                    ) : undefined
+                  }
                 >
                   {isTemplateListLoading || visibleItems.length > 0 ? (
                     <div data-component="desktop_messages_sections_split-layout_list-panel-4_templates-list" className="space-y-2 pb-2">
@@ -1726,6 +1836,18 @@ export default function MessagesPage() {
                               dataComponent="desktop_messages_sections_template-item"
                               icon={item.icon}
                               title={item.label}
+                              subtitle={item.source === "system" ? item.description : undefined}
+                              status={
+                                item.source === "system" && item.manualSendAvailability === "disabled" ? (
+                                  <StatusBadge
+                                    data-component="desktop_messages_sections_template-item_status_badge"
+                                    variant="neutral"
+                                    size="sm"
+                                  >
+                                    직접 발송 불가
+                                  </StatusBadge>
+                                ) : undefined
+                              }
                             />
                           );
                         }}
@@ -1734,7 +1856,9 @@ export default function MessagesPage() {
                   ) : null}
                 </ListPanel>
 
-                <DetailPanel data-component="desktop_messages_sections_templates_split-layout_detail-panel"
+                <DetailPanel
+                  data-component="desktop_messages_sections_templates_split-layout_detail-panel"
+                  isLoading={isBuiltin && !SelectedBuiltinForm && isLoadingSystemTemplateDetail}
                   avatar={
                     activeTemplateId ? (
                       <div

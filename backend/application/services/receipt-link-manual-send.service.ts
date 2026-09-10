@@ -24,12 +24,30 @@ export interface ManualReceiptLinkSendParams {
     branchId: string;
     documentId: string;
     userId: string | null;
+    /** Optional identity pins supplied by the prepared manual-send form. */
+    expectedClientId?: number;
+    expectedRecipientPhone?: string;
 }
 
 export interface ManualReceiptLinkSendResult {
     jobId: string;
     scheduledFor: Date;
     clientName: string;
+}
+
+export interface ManualReceiptLinkPrepareParams {
+    branchId: string;
+    clientId: number;
+    userId: string | null;
+}
+
+export interface ManualReceiptLinkPrepareResult {
+    clientId: number;
+    clientName: string;
+    recipientPhone: string;
+    documentId: string;
+    receiptUrl: string;
+    expiresAt: string;
 }
 
 @Injectable()
@@ -77,6 +95,22 @@ export class ReceiptLinkManualSendService {
         const phone = normalizePhone(preflight.client.phone) ?? "";
         if (!phone) throw new BadRequestException({ reason: "missing_phone", message: "산모 연락처가 없거나 형식이 올바르지 않습니다" });
 
+        if (params.expectedClientId !== undefined && params.expectedClientId !== preflight.client.id) {
+            throw new BadRequestException({
+                reason: "recipient_mismatch",
+                message: "산모 정보가 변경되었습니다. 산모를 다시 선택해 주세요",
+            });
+        }
+        if (params.expectedRecipientPhone !== undefined) {
+            const expectedPhone = normalizePhone(params.expectedRecipientPhone);
+            if (!expectedPhone || expectedPhone !== phone) {
+                throw new BadRequestException({
+                    reason: "recipient_mismatch",
+                    message: "산모 정보가 변경되었습니다. 산모를 다시 선택해 주세요",
+                });
+            }
+        }
+
         await this.ensureSystemRule();
 
         const now = new Date();
@@ -105,6 +139,60 @@ export class ReceiptLinkManualSendService {
         const saved = await this.jobRepository.upsertPending(job);
 
         return { jobId: saved.id, scheduledFor: now, clientName };
+    }
+
+    /**
+     * Performs the receipt-link eligibility checks and issues the deterministic URL used by the
+     * manual-send preview. It deliberately does not create a trigger rule or enqueue a job.
+     */
+    async prepare(params: ManualReceiptLinkPrepareParams): Promise<ManualReceiptLinkPrepareResult> {
+        await this.senderApproval.ensureApproved(params.branchId);
+        if (!Number.isInteger(params.clientId) || params.clientId <= 0) {
+            throw new BadRequestException({ reason: "invalid_client_id", message: "산모 선택 정보가 올바르지 않습니다" });
+        }
+
+        let preflight;
+        try {
+            preflight = await this.issueService.preflight({
+                branchId: params.branchId,
+                clientId: params.clientId,
+            });
+        } catch (error) {
+            if (error instanceof ReceiptLinkSkipError) {
+                throw new BadRequestException({ reason: error.skipReason, message: error.message });
+            }
+            throw error;
+        }
+
+        const phone = normalizePhone(preflight.client.phone) ?? "";
+        if (!phone) {
+            throw new BadRequestException({ reason: "missing_phone", message: "산모 연락처가 없거나 형식이 올바르지 않습니다" });
+        }
+
+        let issued;
+        try {
+            issued = await this.issueService.issue({
+                branchId: params.branchId,
+                clientId: preflight.client.id,
+                eformsignDocId: preflight.doc.id,
+                source: "manual",
+                createdBy: params.userId,
+            });
+        } catch (error) {
+            if (error instanceof ReceiptLinkSkipError) {
+                throw new BadRequestException({ reason: error.skipReason, message: error.message });
+            }
+            throw error;
+        }
+
+        return {
+            clientId: preflight.client.id,
+            clientName: preflight.client.name,
+            recipientPhone: phone,
+            documentId: preflight.doc.documentId,
+            receiptUrl: issued.url,
+            expiresAt: issued.expiresAt.toISOString(),
+        };
     }
 
     /**

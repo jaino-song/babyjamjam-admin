@@ -42,10 +42,31 @@ export async function POST(request: NextRequest) {
     );
   }
 
+  const hasClientId = body.clientId !== undefined;
+  if (hasClientId && (!Number.isInteger(body.clientId) || Number(body.clientId) <= 0)) {
+    return NextResponse.json(
+      { reason: "invalid_request", message: "산모 선택 정보가 올바르지 않습니다." },
+      { status: 400 },
+    );
+  }
+  const hasRecipientPhone = body.recipientPhone !== undefined;
+  if (hasRecipientPhone && (typeof body.recipientPhone !== "string" || !body.recipientPhone.trim())) {
+    return NextResponse.json(
+      { reason: "invalid_request", message: "산모 연락처 정보가 올바르지 않습니다." },
+      { status: 400 },
+    );
+  }
+
+  const payload = {
+    documentId,
+    ...(hasClientId ? { clientId: body.clientId } : {}),
+    ...(hasRecipientPhone ? { recipientPhone: body.recipientPhone } : {}),
+  };
+
   try {
     const response = await serverAPIClient.post(
       "/receipt-links/send",
-      { documentId },
+      payload,
       { headers: getAuthHeaders(token) },
     );
     return NextResponse.json(response.data, { status: response.status });
