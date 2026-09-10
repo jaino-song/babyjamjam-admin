@@ -23,7 +23,7 @@ async function mockAuthUser(page: Page) {
 test.describe("Mobile new-message permission skeletons", () => {
   test.use({ viewport: { width: 390, height: 844 } });
 
-  test("keeps the form up and skeletons the permission-dependent controls while approval loads", async ({
+  test("keeps the form and the real send action in place while approval loads", async ({
     page,
   }) => {
     test.setTimeout(180_000);
