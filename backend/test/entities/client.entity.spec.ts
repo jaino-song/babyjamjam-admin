@@ -23,6 +23,37 @@ function createClient(phone: string | null = "010-1234-5678"): ClientEntity {
     });
 }
 
+describe("ClientEntity legacy persisted prices", () => {
+    function restore(prices: [string | null, string | null, string | null]) {
+        return ClientEntity.reconstitute(
+            1, "레거시 고객", null, null, null, null,
+            ...prices,
+            null, null, false, false, null, null, null, false, null,
+        );
+    }
+
+    it.each(["", "  ", "\t\n", null])("reads blank persisted prices as absent: %p", (blank) => {
+        const client = restore([blank, blank, blank]);
+        expect([client.fullPrice, client.grant, client.actualPrice]).toEqual([null, null, null]);
+    });
+
+    it("preserves zero and normalizes formatted amounts alongside a blank field", () => {
+        const client = restore(["0", " 1,000원 ", ""]);
+        expect([client.fullPrice, client.grant, client.actualPrice]).toEqual(["0", "1000", null]);
+    });
+
+    it.each([0, 1, 2])("still rejects nonblank malformed persisted price at position %i", (index) => {
+        const prices: [string, string, string] = ["1000", "0", "1000"];
+        prices[index] = "1.5";
+        expect(() => restore(prices)).toThrow("Invalid Korean won amount");
+    });
+
+    it.each(["fullPrice", "grant", "actualPrice"] as const)("keeps blank %s invalid for new writes", (field) => {
+        expect(() => ClientEntity.create({ ...createClient(), [field]: "" })).toThrow("Invalid Korean won amount");
+        expect(() => createClient().update({ [field]: " " })).toThrow("Invalid Korean won amount");
+    });
+});
+
 describe("ClientEntity canonical phone identity", () => {
     it("keeps the display phone while deriving a canonical key", () => {
         const client = createClient();

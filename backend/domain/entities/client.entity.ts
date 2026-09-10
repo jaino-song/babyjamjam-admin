@@ -315,10 +315,11 @@ export class ClientEntity {
             duration,
             // Normalize legacy rows on read so a previously formatted value
             // remains usable while all subsequent writes use the canonical
-            // ungrouped representation.
-            normalizeKoreanWon(fullPrice),
-            normalizeKoreanWon(grant),
-            normalizeKoreanWon(actualPrice),
+            // ungrouped representation. Legacy blank fields mean an amount
+            // was not entered; preserve that absence instead of inventing zero.
+            normalizeKoreanWon(fullPrice?.trim() || null),
+            normalizeKoreanWon(grant?.trim() || null),
+            normalizeKoreanWon(actualPrice?.trim() || null),
             startDate,
             endDate,
             careCenter,
