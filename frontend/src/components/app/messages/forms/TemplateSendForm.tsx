@@ -26,7 +26,6 @@ import {
   getLmsTitle,
   getTextByteLength,
   MAX_BODY_LENGTH,
-  MAX_LMS_TITLE_BYTES,
   SMS_BYTE_LIMIT,
 } from "@/lib/message/byte-length";
 import { cn } from "@/lib/utils";
@@ -717,6 +716,10 @@ export function TemplateSendForm({
   };
 
   const sendReceiptLink = async () => {
+    if (rejectBranchContextChange() || !templateReady) {
+      return;
+    }
+
     if (clientId === null || !receiptLinkPreparation) {
       const errorMessage =
         receiptLinkValidationMessage
