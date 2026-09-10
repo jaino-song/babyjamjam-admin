@@ -62,6 +62,18 @@ Claude의 기존 개인 템플릿 편집기 회귀 테스트와 `TemplateContent
 
 증거: `/tmp/bjj-editor-integrated-tests.log`, `/tmp/bjj-editor-integrated-typecheck.log`, `/tmp/bjj-editor-journey-results.json`, `/tmp/bjj-editor-switch-check.log`, `/tmp/bjj-editor-chip-roundtrip.log`, `/tmp/bjj-editor-layout-results.json`, `/tmp/bjj-editor-mobile-actions.log`(실패), `/tmp/bjj-editor-mobile-actions-green.log`(보완 후 통과). 이 결과는 공식 실제 Chrome 최종 검수나 CI 통과를 의미하지 않는다.
 
+## 공통 편집기 독립 검토 후 보완
+
+`076cf4136`에 대한 독립 검토는 저장 중 입력 잠금과 실제 편집 영역의 라벨 연결 두 항목을 보완 대상으로 판정했다.
+
+- 저장 중 상태를 공통 편집기까지 전달해 Tiptap 자체를 비편집 상태로 전환한다. 변수 삽입도 비활성화하고, 직접 삽입 명령과 붙여넣기 경로에서 비편집 상태를 확인한다. 빠른 삽입은 기존 Badge 모양을 유지한 실제 버튼으로 구성했다.
+- 숨겨진 textarea 미러를 제거했다. 실제 contenteditable에 고유 id, textbox 역할, 여러 줄 입력 속성, 라벨 관계를 연결하고 라벨 클릭 시 이 편집기로 포커스를 보낸다.
+- 시스템 편집기와 메시지 페이지 테스트는 실제 이름 붙은 contenteditable에 전체 선택·붙여넣기를 수행한다. 이전 미러 입력 칸을 조작하는 경로는 제거했다. 저장 중 붙여넣기/삽입 차단 및 저장 후 편집 재개, 라벨 포커스 회귀 검사를 추가했다. 개인 템플릿의 고정된 기존 5개 테스트는 수정 없이 통과한다.
+
+실제 브라우저에서 저장 응답을 보류한 상태로 재현한 수정 전 결과는 `editable: true`, 화면과 저장 초안 불일치, 숨겨진 미러 1개, 이름 붙은 실제 편집기 0개였다. 보완 후 관리자와 지점 화면 모두 `editable: false`, 불일치 없음, 미러 0개, 이름 붙은 편집기 1개를 확인했다. 라벨 클릭 포커스와 변수 버튼 비활성화도 통과했다. 이 보류 검사는 저장 응답을 가로채므로 외부 문자를 발송하지 않는다. 별도로 실제 테스트 API 저장을 통해 토큰·줄바꿈·커스텀 변수 보존 및 저장 후 정상 편집 상태 복귀를 다시 확인했다.
+
+최종 보완 검증: 13개 묶음 88개 테스트, 타입 검사, 변경 파일 ESLint(오류·경고 0), UI 규칙 검사, diff 검사가 통과했다. 기존 React/Tiptap 테스트의 `act` 경고는 남아 있다. 증거는 `/tmp/bjj-editor-correction-all-tests.log`, `/tmp/bjj-editor-correction-typecheck.log`, `/tmp/bjj-editor-correction-lint.log`, `/tmp/bjj-editor-correction-ui-gate.log`, `/tmp/bjj-editor-pending-red.log`, `/tmp/bjj-editor-pending-green.log`, `/tmp/bjj-editor-branch-pending-green.log`, `/tmp/bjj-editor-final-chip-roundtrip.log`에 있다.
+
 ## 남은 승인 및 제한
 
 `dev` 병합과 운영 배포는 별도 단계다. 최종 실제 Chrome 화면 검수에 요구된 `chrome:control-chrome` 도구/스킬은 이 세션에서 사용할 수 없었다. 위 Playwright 검사는 기능·레이아웃 보조 증거이며, 해당 스킬이 요구하는 최종 실제 Chrome 검수 통과로 간주하지 않는다. 최종 검수와 독립 검토 상태는 작업 완료 보고에서 구분한다.

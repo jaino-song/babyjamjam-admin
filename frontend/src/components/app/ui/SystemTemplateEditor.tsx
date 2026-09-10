@@ -463,11 +463,13 @@ export const SystemTemplateEditor = forwardRef<
         id={`${dataComponent}_content-input`}
         dataComponent={dataComponent}
         label="템플릿 내용"
+        disabled={updateMutation.isPending}
         quickInsert={
           <VariableInserter
             dataComponent={`${dataComponent}_quick-insert`}
             variables={quickInsertVariables}
             allowCustom={false}
+            disabled={updateMutation.isPending}
             onInsert={(key) => contentEditorRef.current?.insertVariable(key)}
           />
         }

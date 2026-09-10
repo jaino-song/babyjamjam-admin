@@ -1,9 +1,33 @@
 import fs from "node:fs";
 
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { createContext, useContext, type ReactNode } from "react";
+import { act, createContext, useContext, type ReactNode } from "react";
 
 import MessagesPage from "./page";
+
+function getContentField() {
+  return screen.getByRole("textbox", { name: "템플릿 내용" });
+}
+
+function readContent() {
+  const clone = getContentField().cloneNode(true) as HTMLElement;
+  clone.querySelectorAll("[data-variable-key]").forEach((node) => {
+    node.replaceWith(document.createTextNode(`{{${node.getAttribute("data-variable-key")}}}`));
+  });
+  clone.querySelectorAll("br").forEach((node) => {
+    node.replaceWith(document.createTextNode(node.classList.contains("ProseMirror-trailingBreak") ? "" : "\n"));
+  });
+  return clone.textContent;
+}
+
+function replaceContent(value: string) {
+  const field = getContentField();
+  act(() => {
+    field.focus();
+    fireEvent.keyDown(field, { key: "a", code: "KeyA", ctrlKey: true });
+    fireEvent.paste(field, { clipboardData: { getData: () => value } });
+  });
+}
 
 const source = fs.readFileSync(require.resolve("./page"), "utf8");
 
@@ -446,11 +470,10 @@ describe("messages page — server system-template catalog", () => {
     render(<MessagesPage />);
     fireEvent.click(screen.getAllByRole("button", { name: "템플릿" })[0]);
     fireEvent.click(screen.getByText("서비스 종료 안내"));
-    const placeholder = "템플릿 내용을 입력하세요. 변수는 {{변수명}} 형식으로 사용합니다.";
-    fireEvent.change(screen.getByPlaceholderText(placeholder), { target: { value: "첫 번째 미저장 수정" } });
+    replaceContent("첫 번째 미저장 수정");
     fireEvent.click(screen.getByText("새 서버 템플릿"));
-    expect(screen.getByPlaceholderText(placeholder)).toHaveValue("두 번째 본문");
-    fireEvent.change(screen.getByPlaceholderText(placeholder), { target: { value: "두 번째 수정" } });
+    expect(readContent()).toBe("두 번째 본문");
+    replaceContent("두 번째 수정");
     fireEvent.click(screen.getByRole("button", { name: "저장" }));
     await waitFor(() => expect(mockUpdateSystemTemplate).toHaveBeenCalledWith({
       key: "FUTURE_TEMPLATE",
@@ -461,7 +484,7 @@ describe("messages page — server system-template catalog", () => {
     }));
   });
 
-  it("renders server-added keys and selects SERVICE_END_NOTICE detail content without service-record routing", () => {
+  it("renders server-added keys and selects SERVICE_END_NOTICE detail content without service-record routing", async () => {
     mockUseSystemTemplates.mockReturnValue({
       data: [
         buildSystemTemplate({
@@ -496,7 +519,7 @@ describe("messages page — server system-template catalog", () => {
 
     fireEvent.click(screen.getByText("서비스 종료 안내"));
 
-    expect(screen.getByLabelText("템플릿 내용")).toHaveValue("영수증 링크: {{receiptUrl}}");
+    await waitFor(() => expect(readContent()).toBe("영수증 링크: {{receiptUrl}}"));
     expect(screen.getByText("이 화면에서는 직접 발송할 수 없습니다.")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "즉시 발송" })).not.toBeInTheDocument();
     expect(screen.queryByText("제공기록지 작성 링크")).not.toBeInTheDocument();
@@ -520,10 +543,7 @@ describe("messages page — server system-template catalog", () => {
     fireEvent.click(screen.getAllByRole("button", { name: "템플릿" })[0]);
     fireEvent.click(screen.getByText("새 서버 템플릿"));
 
-    const placeholder = "템플릿 내용을 입력하세요. 변수는 {{변수명}} 형식으로 사용합니다.";
-    fireEvent.change(screen.getByPlaceholderText(placeholder), {
-      target: { value: "임시로 수정한 본문" },
-    });
+    replaceContent("임시로 수정한 본문");
 
     mockUseSystemTemplates.mockReturnValue({
       data: [template],
@@ -533,7 +553,7 @@ describe("messages page — server system-template catalog", () => {
     rerender(<MessagesPage />);
 
     expect(screen.getAllByText("새 서버 템플릿").length).toBeGreaterThan(0);
-    expect(screen.getByPlaceholderText(placeholder)).toHaveValue("임시로 수정한 본문");
+    expect(readContent()).toBe("임시로 수정한 본문");
     expect(screen.queryByText("기본 템플릿을 불러오지 못했습니다.")).not.toBeInTheDocument();
   });
 
@@ -560,8 +580,7 @@ describe("messages page — server system-template catalog", () => {
     fireEvent.click(screen.getAllByRole("button", { name: "템플릿" })[0]);
     fireEvent.click(screen.getByText("새 서버 템플릿"));
 
-    const placeholder = "템플릿 내용을 입력하세요. 변수는 {{변수명}} 형식으로 사용합니다.";
-    expect(screen.queryByPlaceholderText(placeholder)).not.toBeInTheDocument();
+    expect(screen.queryByRole("textbox", { name: "템플릿 내용" })).not.toBeInTheDocument();
     expect(screen.queryByText("선택한 템플릿 정보를 불러오지 못했습니다.")).not.toBeInTheDocument();
     expect(
       document.querySelector(
@@ -572,7 +591,7 @@ describe("messages page — server system-template catalog", () => {
     mockUseSystemTemplate.mockReturnValue({ data: detailTemplate, isLoading: false, isError: false });
     rerender(<MessagesPage />);
 
-    expect(screen.getByPlaceholderText(placeholder)).toHaveValue("상세의 최신 본문");
+    expect(readContent()).toBe("상세의 최신 본문");
     expect(screen.getByRole("button", { name: "저장" })).toBeDisabled();
   });
 
@@ -599,15 +618,12 @@ describe("messages page — server system-template catalog", () => {
     fireEvent.click(screen.getAllByRole("button", { name: "템플릿" })[0]);
     fireEvent.click(screen.getByText("새 서버 템플릿"));
 
-    const placeholder = "템플릿 내용을 입력하세요. 변수는 {{변수명}} 형식으로 사용합니다.";
-    fireEvent.change(screen.getByPlaceholderText(placeholder), {
-      target: { value: "저장하지 않은 본문" },
-    });
+    replaceContent("저장하지 않은 본문");
 
     mockUseSystemTemplate.mockReturnValue({ data: refreshedTemplate, isLoading: false, isError: false });
     rerender(<MessagesPage />);
 
-    expect(screen.getByPlaceholderText(placeholder)).toHaveValue("저장하지 않은 본문");
+    expect(readContent()).toBe("저장하지 않은 본문");
     fireEvent.click(screen.getByRole("tab", { name: "미리보기" }));
     expect(
       document.querySelector(
@@ -645,7 +661,7 @@ describe("messages page — server system-template catalog", () => {
     render(<MessagesPage />);
 
     expect(screen.queryByText("인사(소개)")).not.toBeInTheDocument();
-    expect(screen.queryByPlaceholderText("템플릿 내용을 입력하세요. 변수는 {{변수명}} 형식으로 사용합니다.")).not.toBeInTheDocument();
+    expect(screen.queryByRole("textbox", { name: "템플릿 내용" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "즉시 발송" })).not.toBeInTheDocument();
   });
 
@@ -659,7 +675,7 @@ describe("messages page — server system-template catalog", () => {
     render(<MessagesPage />);
 
     expect(screen.getByTestId("split-layout")).toHaveAttribute("data-has-selection", "false");
-    expect(screen.queryByPlaceholderText("템플릿 내용을 입력하세요. 변수는 {{변수명}} 형식으로 사용합니다.")).not.toBeInTheDocument();
+    expect(screen.queryByRole("textbox", { name: "템플릿 내용" })).not.toBeInTheDocument();
   });
 });
 
@@ -967,7 +983,7 @@ describe("messages page — merged 발송 기록 section", () => {
     fireEvent.click(screen.getAllByRole("button", { name: "템플릿" })[0]);
     fireEvent.click(screen.getByText("서비스 안내"));
 
-    expect(screen.getByPlaceholderText("템플릿 내용을 입력하세요. 변수는 {{변수명}} 형식으로 사용합니다.")).toHaveValue(
+    expect(readContent()).toBe(
       "지점 기본 본문",
     );
     expect(screen.getByText(/지점의 모든 템플릿이 현재 기본값으로 고정됩니다/)).toBeInTheDocument();

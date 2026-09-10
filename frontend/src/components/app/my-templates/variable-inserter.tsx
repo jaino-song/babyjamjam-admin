@@ -11,6 +11,7 @@ interface VariableInserterProps {
     allowCustom?: boolean;
     /** Full data-component path supplied by the owning organism. */
     dataComponent?: string;
+    disabled?: boolean;
 }
 
 export interface VariableInserterVariable {
@@ -36,8 +37,10 @@ export const VariableInserter = ({
     variables = PRESET_VARIABLES,
     allowCustom = true,
     dataComponent = "desktop_my-templates_variable-inserter",
+    disabled = false,
 }: VariableInserterProps) => {
     const handleAddCustom = () => {
+        if (disabled) return;
         const key = prompt("변수 키를 입력하세요 (영문 권장):");
         if (key) {
             onInsert(key.trim());
@@ -49,21 +52,25 @@ export const VariableInserter = ({
             {variables.map((v) => (
                 <Badge
                     key={v.key}
+                    asChild
                     variant="outline"
-                    className="cursor-pointer hover:bg-primary hover:text-primary-foreground transition-colors"
-                    onClick={() => onInsert(v.key)}
+                    className="cursor-pointer enabled:hover:bg-primary enabled:hover:text-primary-foreground disabled:cursor-not-allowed disabled:opacity-50 transition-colors"
                 >
-                    {v.label}
+                    <button type="button" disabled={disabled} onClick={() => onInsert(v.key)} data-component={`${dataComponent}_variable-button`}>
+                        {v.label}
+                    </button>
                 </Badge>
             ))}
             {allowCustom ? (
                 <Badge
+                    asChild
                     variant="outline"
-                    className="cursor-pointer hover:bg-secondary hover:text-secondary-foreground transition-colors"
-                    onClick={handleAddCustom}
+                    className="cursor-pointer enabled:hover:bg-secondary enabled:hover:text-secondary-foreground disabled:cursor-not-allowed disabled:opacity-50 transition-colors"
                 >
-                    <Plus className="h-3 w-3 mr-1" />
-                    커스텀 변수
+                    <button type="button" disabled={disabled} onClick={handleAddCustom} data-component={`${dataComponent}_custom-button`}>
+                        <Plus className="h-3 w-3 mr-1" />
+                        커스텀 변수
+                    </button>
                 </Badge>
             ) : null}
         </div>

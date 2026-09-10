@@ -1,6 +1,6 @@
 "use client";
 
-import { forwardRef, useImperativeHandle, useRef, useState, type ReactNode } from "react";
+import { forwardRef, useId, useImperativeHandle, useRef, useState, type ReactNode } from "react";
 import { Label } from "@/components/ui/label";
 import { Popover, PopoverAnchor, PopoverContent } from "@/components/ui/popover";
 import { useLocale } from "@/providers/LocaleProvider";
@@ -29,6 +29,7 @@ export interface TemplateContentEditorProps {
     onVariableChange?: (variable: TemplateVariable) => void;
     placeholder?: string;
     hint?: ReactNode;
+    disabled?: boolean;
 }
 
 export const TemplateContentEditor = forwardRef<TemplateContentEditorHandle, TemplateContentEditorProps>(
@@ -45,10 +46,14 @@ export const TemplateContentEditor = forwardRef<TemplateContentEditorHandle, Tem
             onVariableChange,
             placeholder,
             hint,
+            disabled = false,
         },
         ref
     ) => {
         const locale = useLocale();
+        const generatedId = useId();
+        const editorId = id ?? `${generatedId}-content`;
+        const labelId = `${editorId}-label`;
         const [activeVariableKey, setActiveVariableKey] = useState<string | null>(null);
         const chipEditorRef = useRef<VariableChipEditorHandle>(null);
 
@@ -87,7 +92,11 @@ export const TemplateContentEditor = forwardRef<TemplateContentEditorHandle, Tem
                 ) : null}
 
                 <div className="flex flex-col gap-2">
-                    {label ? <Label htmlFor={id}>{label}</Label> : null}
+                    {label ? (
+                        <Label id={labelId} htmlFor={editorId} onClick={() => chipEditorRef.current?.focus()}>
+                            {label}
+                        </Label>
+                    ) : null}
                     <Popover
                         open={Boolean(activeVariable)}
                         onOpenChange={(open) => {
@@ -98,7 +107,9 @@ export const TemplateContentEditor = forwardRef<TemplateContentEditorHandle, Tem
                             <div data-component={`${dataComponent}_content-anchor`}>
                                 <VariableChipEditor
                                     ref={chipEditorRef}
-                                    id={id}
+                                    id={editorId}
+                                    ariaLabelledBy={label ? labelId : undefined}
+                                    disabled={disabled}
                                     value={content}
                                     onChange={onContentChange}
                                     variables={variables}
