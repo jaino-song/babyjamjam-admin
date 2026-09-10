@@ -74,6 +74,21 @@ Claude의 기존 개인 템플릿 편집기 회귀 테스트와 `TemplateContent
 
 최종 보완 검증: 13개 묶음 88개 테스트, 타입 검사, 변경 파일 ESLint(오류·경고 0), UI 규칙 검사, diff 검사가 통과했다. 기존 React/Tiptap 테스트의 `act` 경고는 남아 있다. 증거는 `/tmp/bjj-editor-correction-all-tests.log`, `/tmp/bjj-editor-correction-typecheck.log`, `/tmp/bjj-editor-correction-lint.log`, `/tmp/bjj-editor-correction-ui-gate.log`, `/tmp/bjj-editor-pending-red.log`, `/tmp/bjj-editor-pending-green.log`, `/tmp/bjj-editor-branch-pending-green.log`, `/tmp/bjj-editor-final-chip-roundtrip.log`에 있다.
 
+## 병합 정리 세션 — suggestion-lock 통합과 dev 재동기화 (2026-09-10)
+
+중단됐던 suggestion-lock 작업 단위의 미커밋 변경을 검증·커밋해 이 브랜치에 통합했다(`392e16077`). 저장 중 편집 잠금 상태에서 두 변수 자동완성 플러그인을 종료하고, 비편집 상태의 suggestion 삽입 명령을 거부하며, 플러그인 키를 모듈 수준으로 안정화했다. 신규 단위 테스트와 저장 잠금 팝업 소멸 통합 테스트가 이 동작을 고정한다. 독립 감사는 `exitSuggestion` → `onExit` 언마운트 경로와 렌더·삽입 전면 가드를 라이브러리 구현까지 대조해 확인했고 blocker 없이 통과했다(제안 3건은 비차단: 테스트의 Enter 키 핀 중복성, 재활성화 후 dismissedRange 동작, 기존 `act` 경고).
+
+이어서 `origin/dev` 14커밋을 이 브랜치로 머지했다(`21cf8c528`). 충돌 해소 원칙은 양쪽 의지의 보존이었다.
+
+- 발송 폼 레이아웃은 브랜치의 `templateReady`(지점 템플릿 로딩·실패 시 발송 차단)와 dev의 `receiptLinkPreparation`(영수증 링크 준비물)을 모두 유지한다.
+- `ServiceRecordLinkMessageForm`은 dev의 영수증 모드(템플릿 키 분기 `SERVICE_END_NOTICE`/`SERVICE_RECORD_LINK`)를 취하되, 양쪽 모드 모두 하드코딩 폴백 문구를 제거하고 `systemTemplate?.content`만 렌더링한다. 조회 실패 시 본문은 빈 값이고 `templateReady`가 발송을 막는다(브랜치의 fail-closed 계약).
+- `TemplateSendForm`은 브랜치의 지점 컨텍스트·템플릿 게이트(`!branchContextReady || !templateReady`)와 dev의 준비링크 일반화(`isPreparedLinkDelivery`, 영수증 준비물 게이트)를 하나의 검증·제출 체인으로 합친다. 지점 컨텍스트 미정렬 시 수신자 입력은 상태 배지로 대체된다.
+- 메시지 페이지의 `SERVICE_END_NOTICE`는 병합된 동작대로 영수증 링크 발송 폼으로 라우팅되며, 테스트도 이를 따른다. dev가 되살린 `messages/system-templates/[templateKey]` UI 부채 항목은 이 브랜치가 해당 페이지를 리다이렉트로 교체했으므로 다시 제외했다.
+
+자동 머지가 놓친 시맨틱 갭 두 건을 전체 게이트에서 잡아 수정했다(`ab1000e75`). 첫째, `sms-trigger-payload-enricher.spec.ts`는 구 `getByKey` mock과 소실된 registry 폴백 의미론을 유지하고 있었는데, 서비스의 `getByKeyForBranch` fail-closed 계약에 맞춰 기본 지점 템플릿을 resolve하도록 고쳤다. 둘째, `TriggerRulesManager` 테스트는 브랜치 스코프가 기본값이 된 `useSystemTemplate`이 요구하는 선택 지점 쿠키가 없어 데이터가 강제로 undefined였는데, 지점 쿠키를 심어 정렬했다. UI 부채 기준선은 게이트가 보고한 35 제거/35 추가(전부 위치 이동, 종류·개수 불변)를 확인한 뒤 병합 위치로 재고정했다(`a1d06a851`).
+
+최종 게이트: 백엔드 350개 묶음 4921개 테스트 0 실패(1 묶음 skip), 프론트 227개 묶음 1435개 테스트 0 실패, 양쪽 타입 검사 통과, UI 규칙 검사 통과, `env-check` 경고만 있고 exit 0. 증거는 `/tmp/bjj-320-final-backend2.log`, `/tmp/bjj-320-final-backend2-typecheck.log`, `/tmp/bjj-320-final-frontend2.log`, `/tmp/bjj-320-final-frontend2-typecheck.log`, `/tmp/bjj-320-final-envcheck.log`, `/tmp/bjj-320-ui-gate-green.log`에 있다. 병합 해소에 대한 독립 감사도 blocker·must-fix 없이 통과했으며, 비차단 제안으로 `sendReceiptLink`의 방어적 게이트 보강, 모바일 `useSystemTemplate`의 전역 조회 이행(기존 과제, PR #57 이후), 테스트 헬퍼의 `updatedAt` 포함 세 가지가 기록됐다.
+
 ## 남은 승인 및 제한
 
-`dev` 병합과 운영 배포는 별도 단계다. 최종 실제 Chrome 화면 검수에 요구된 `chrome:control-chrome` 도구/스킬은 이 세션에서 사용할 수 없었다. 위 Playwright 검사는 기능·레이아웃 보조 증거이며, 해당 스킬이 요구하는 최종 실제 Chrome 검수 통과로 간주하지 않는다. 최종 검수와 독립 검토 상태는 작업 완료 보고에서 구분한다.
+`dev` 병합과 운영 배포는 별도 단계다. 최종 실제 Chrome 화면 검수에 요구된 `chrome:control-chrome` 도구/스킬은 이 세션에서도 사용할 수 없었다(검증 세션과 동일 제약). 위 Playwright 검사와 자동 게이트는 기능·레이아웃 보조 증거이며, 해당 스킬이 요구하는 최종 실제 Chrome 검수 통과로 간주하지 않는다. 최종 검수는 `chrome-ui-verification` 스킬을 보유한 별도 세션에서 수행해야 하며, 독립 검토 상태는 작업 완료 보고에서 구분한다.
