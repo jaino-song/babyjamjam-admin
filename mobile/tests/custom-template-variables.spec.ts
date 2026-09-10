@@ -99,6 +99,35 @@ async function mockComposeDependencies(
     });
   });
 
+  // 템플릿 조회는 지점 유효 경로로 전환됐다(expectedBranchId 쿼리 포함).
+  await page.route('**/api/branch-system-templates/*', async (route: Route, request: Request) => {
+    if (request.method() !== 'GET') {
+      await route.fallback();
+      return;
+    }
+
+    const key = ((request.url().split('/').pop() ?? 'UNKNOWN').split('?')[0]);
+    const branchResponse =
+      key === 'SERVICE_INFO'
+        ? template
+        : {
+            id: `tpl-${key.toLowerCase()}`,
+            templateKey: key,
+            name: key,
+            description: `${key} template`,
+            content: `${key} 본문`,
+            requiredVariables: [],
+            customVariables: [],
+            updatedAt: new Date('2026-01-01T00:00:00.000Z').toISOString(),
+          };
+
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify(branchResponse),
+    });
+  });
+
   await page.route('**/api/message-templates', async (route: Route, request: Request) => {
     if (request.method() !== 'GET') {
       await route.fallback();
