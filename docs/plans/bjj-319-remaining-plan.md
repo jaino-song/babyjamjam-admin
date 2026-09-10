@@ -358,3 +358,12 @@ TL;DR: backend/application 150 + backend/infrastructure 69 후보를 의미 검�
 - 기록: inventory `owners` 219건 + source_manifest 219건 갱신, `review_batches` B 요약 추가, application/infrastructure `semantic_review_status: reviewed-batch-b`. 규격 ID는 여전히 `spec_mapping_status: pending`이다.
 - 배치 B 완료. 남은 Task 1.1 범위는 frontend/src 272 + mobile/src 238(배치 C·D)과 테스트 매핑·전수 대조(배치 E)다. 배치 C·D부터는 컨텍스트 절약을 위해 launcher 기반 scout 병렬 실행과 파일 기반 보고(`opencode-task.sh --agent scout --out`)를 사용하고, main은 스크립트로 inventory에 반영한 뒤 표본 검증한다(방법 변경 기록).
 
+## Task 1.1 배치 C (웹) 실행 결과 (2026-09-10)
+
+TL;DR: frontend/src 후보 272개를 scout 10청크(launcher 실행, 파일 보고)로 검토해 분류를 완료했다(미분류 0). BFF app/api 라우트 다수가 raw `{error}` 본문을 직접 작성하는 legacy로 확인됐다.
+
+- 결과: legacy 184, no-direct-error-boundary 82, migrated 6. migrated는 `ClientFormDialog.tsx`(정식 계약 표시)와 공통 `errorResponse`만 사용하는 BFF 라우트 일부다. `TemplateSendForm.tsx`는 SMS 경로가 계약 위에 있으나 receipt-link 등 잔여 경로 때문에 legacy로 유지된다.
+- 방법: 10개 brief(`fe01`~`fe10`)를 스크립트로 생성하고 `opencode-task.sh --agent scout`로 병렬 실행(2파), `<label>.final.txt`를 스크립트로 파싱해 inventory에 반영. scout 형식 오류 8건(JS `||` 스니펫 충돌)은 파서를 구조적 분할로 보강해 해결했다.
+- 기록: `owners` 272건 + source_manifest 272건, frontend/src `semantic_review_status: reviewed-batch-c`, `review_batches` C 요약. 규격 ID는 계속 pending이다.
+- 표본 검증: `ClientFormDialog` migrated, `services/api.ts` no-direct, `auth/login` route legacy를 코드와 대조 확인. 배치 D(모바일)와 배치 E(테스트 매핑·전수 대조)만 남았다.
+
