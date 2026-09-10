@@ -469,6 +469,7 @@ export function MobileSectionNav<TId extends string>({
   activeId,
   onSelect,
   ariaLabel = "페이지 섹션",
+  isLoading = false,
 }: {
   "data-component": string;
   /** @internal Zero-DOM wrapper identity; route callers must not override this. */
@@ -477,10 +478,18 @@ export function MobileSectionNav<TId extends string>({
   activeId: TId;
   onSelect: (id: TId) => void;
   ariaLabel?: string;
+  /**
+   * True while the owner is still resolving which sections are enabled. The
+   * pills keep their real labels' footprint (hidden content) but pulse as
+   * skeletons and stay non-interactive, so a not-yet-known disabled state is
+   * never presented as enabled.
+   */
+  isLoading?: boolean;
 }) {
   return (
     <nav
       aria-label={ariaLabel}
+      aria-busy={isLoading ? true : undefined}
       data-component={dataComponent}
       data-source-component={sourceComponent}
       data-mode="compact"
@@ -489,6 +498,28 @@ export function MobileSectionNav<TId extends string>({
       <div className="flex gap-[calc(8px*var(--glint-ui-scale,1))] pb-[calc(8px*var(--glint-ui-scale,1))]">
         {items.map((item) => {
           const Icon = item.icon;
+
+          if (isLoading) {
+            return (
+              <button
+                key={item.id}
+                type="button"
+                aria-hidden="true"
+                data-component={`${dataComponent}_item-skeleton`}
+                data-loading="true"
+                disabled
+                tabIndex={-1}
+                className="flex h-[calc(28px*var(--glint-ui-scale,1))] items-center gap-[calc(6px*var(--glint-ui-scale,1))] whitespace-nowrap rounded-full border border-[hsl(var(--v3-border))] px-[calc(12px*var(--glint-ui-scale,1))] py-0 text-[calc(0.72rem*var(--glint-ui-scale,1))] font-semibold skeleton-base disabled:pointer-events-none disabled:cursor-default"
+              >
+                <Icon
+                  aria-hidden="true"
+                  className="invisible h-[calc(14px*var(--glint-ui-scale,1))] w-[calc(14px*var(--glint-ui-scale,1))]"
+                />
+                <span className="invisible">{item.label}</span>
+              </button>
+            );
+          }
+
           const isDisabled = item.disabled === true;
           const isActive = !isDisabled && item.id === activeId;
 

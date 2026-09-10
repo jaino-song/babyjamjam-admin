@@ -570,6 +570,28 @@ describe("NewMessagePage", () => {
     expect(screen.getByRole("button", { name: "즉시 발송" })).toBeDisabled();
   });
 
+  it("shows permission skeletons on the section nav and the send action while approval is loading", () => {
+    mockUseMessagesPermissionGuard.mockReturnValue({
+      isLoading: true,
+      needsSenderApproval: false,
+    });
+
+    const { container } = renderPage();
+
+    // The section nav renders placeholder pills (real labels kept for width,
+    // hidden from the a11y tree) instead of interactive sections.
+    expect(
+      container.querySelectorAll(
+        '[data-component="mobile_messages_new_page_screen_form_section-nav_nav_item-skeleton"]',
+      ),
+    ).toHaveLength(5);
+    expect(screen.queryByRole("button", { name: "전송하기" })).not.toBeInTheDocument();
+
+    // The send action is replaced by the shared permission skeleton.
+    expect(screen.getByRole("status", { name: "권한 확인 중" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "즉시 발송" })).not.toBeInTheDocument();
+  });
+
   it("does not show the draft save action", () => {
     renderPage();
 

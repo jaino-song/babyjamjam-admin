@@ -1125,6 +1125,7 @@ function NewMessageForm({ initialBody, initialTemplateId, initialClientId, initi
               data-component="mobile_messages_new_page_screen_form_scroll_list-card"
               title="새 메시지"
               actionLabel="즉시 발송"
+              actionLoading={isSenderApprovalLoading}
               actionIcon={null}
               actionType="submit"
               actionDisabled={isSubmitDisabled}
