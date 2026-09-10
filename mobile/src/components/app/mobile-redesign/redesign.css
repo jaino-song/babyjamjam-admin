@@ -4459,7 +4459,7 @@ body.mobile-contracts-route .client-detail-badges .badge-mini {
 
 body.mobile-contracts-route .detail-body .detail-actions {
   margin-top: 0;
-  padding: 14px 16px;
+  padding: 14px 0;
 }
 
 body.mobile-contracts-route .detail-body {
