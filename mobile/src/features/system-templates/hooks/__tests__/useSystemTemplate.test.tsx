@@ -3,7 +3,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactNode } from "react";
 
 import { useSystemTemplate } from "../useSystemTemplate";
-import { systemTemplateKeys } from "../useSystemTemplates";
+import { systemTemplateKeys, useSystemTemplates } from "../useSystemTemplates";
 import { systemTemplateService } from "@/services/system-template.service";
 import { useGetAuthUser } from "@/hooks/useGetAuthUser";
 
@@ -13,6 +13,8 @@ jest.mock("@/hooks/useGetAuthUser", () => ({
 
 jest.mock("@/services/system-template.service", () => ({
     systemTemplateService: {
+        getAll: jest.fn(),
+        getAllForBranch: jest.fn(),
         getByKey: jest.fn(),
         getBranchByKey: jest.fn(),
     },
@@ -21,6 +23,8 @@ jest.mock("@/services/system-template.service", () => ({
 const mockedUseGetAuthUser = jest.mocked(useGetAuthUser);
 const mockedGetBranchByKey = jest.mocked(systemTemplateService.getBranchByKey);
 const mockedGetByKey = jest.mocked(systemTemplateService.getByKey);
+const mockedGetAllForBranch = jest.mocked(systemTemplateService.getAllForBranch);
+const mockedGetAll = jest.mocked(systemTemplateService.getAll);
 
 const branchTemplate = {
     id: "tpl-greeting-branch-a",
@@ -125,5 +129,37 @@ describe("useSystemTemplate (branch scope)", () => {
             .toEqual(branchTemplate);
         expect(queryClient.getQueryData(systemTemplateKeys.branchDetail("branch-b", "GREETING")))
             ?.toHaveProperty("content", "B지점 인사");
+    });
+});
+
+describe("useSystemTemplates (branch scope)", () => {
+    it("resolves the catalog through the authenticated session's branch", async () => {
+        mockedGetAllForBranch.mockResolvedValue({ data: [branchTemplate] } as never);
+        const queryClient = createQueryClient();
+
+        const { result } = renderHook(() => useSystemTemplates(), {
+            wrapper: createWrapper(queryClient),
+        });
+
+        await waitFor(() => expect(result.current.data).toEqual([branchTemplate]));
+        expect(mockedGetAllForBranch).toHaveBeenCalledWith("branch-a");
+        expect(mockedGetAll).not.toHaveBeenCalled();
+    });
+
+    it("stays idle without fetching when the session has no branch", async () => {
+        mockedUseGetAuthUser.mockReturnValue({
+            data: { id: "user-1", name: "테스트", branchId: null },
+            isLoading: false,
+        } as never);
+        const queryClient = createQueryClient();
+
+        const { result } = renderHook(() => useSystemTemplates(), {
+            wrapper: createWrapper(queryClient),
+        });
+
+        await waitFor(() => expect(result.current.isLoading).toBe(false));
+        expect(result.current.data).toBeUndefined();
+        expect(mockedGetAllForBranch).not.toHaveBeenCalled();
+        expect(mockedGetAll).not.toHaveBeenCalled();
     });
 });
