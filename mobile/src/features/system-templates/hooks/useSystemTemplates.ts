@@ -26,6 +26,10 @@ export const systemTemplateKeys = {
     list: () => [...systemTemplateKeys.lists()] as const,
     details: () => [...systemTemplateKeys.all, 'detail'] as const,
     detail: (key: string) => [...systemTemplateKeys.details(), key] as const,
+    branchDetails: (branchId: string | null) =>
+        [...systemTemplateKeys.all, 'branch', branchId ?? 'unavailable', 'detail'] as const,
+    branchDetail: (branchId: string | null, key: string) =>
+        [...systemTemplateKeys.branchDetails(branchId), key] as const,
     versions: (key: string) => [...systemTemplateKeys.detail(key), 'versions'] as const,
     versionDetail: (key: string, versionNumber: number) =>
         [...systemTemplateKeys.versions(key), versionNumber] as const,

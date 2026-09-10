@@ -17,6 +17,11 @@ export const systemTemplateService = {
 
     getByKey: (key: string) => api.get<SystemTemplate>(`/system-templates/${key}`),
 
+    getBranchByKey: (key: string, expectedBranchId: string) =>
+        api.get<SystemTemplate>(`/branch-system-templates/${key}`, {
+            params: { expectedBranchId },
+        }),
+
     update: (key: string, content: string, customVariables?: CustomVariable[]) => {
         const payload: UpdateSystemTemplateRequest = customVariables
             ? { content, customVariables }
