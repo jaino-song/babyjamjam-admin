@@ -23,7 +23,7 @@ function receiptLinkUnusableError(): SmsTriggerDeliverySkipError {
     );
 }
 
-/** Refreshes the contract receipt link at delivery time using its service-end-based expiry. */
+/** Refreshes the contract receipt link at delivery time to a new 30-day expiry counted from this send. */
 @Injectable()
 export class ReceiptLinkDeliveryEnricher implements SmsTriggerPayloadEnricher, OnModuleInit {
     constructor(

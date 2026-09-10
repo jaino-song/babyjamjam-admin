@@ -62,7 +62,7 @@ test("mother verifies her birthday and reaches the receipt image", async ({ page
         "href",
         `/api/receipt/${TOKEN}/image?download=1`,
     );
-    await expect(page.getByText("이 링크는 서비스 종료일 이후 14일까지 유효합니다.")).toBeVisible();
+    await expect(page.getByText("이 링크는 발송일로부터 30일간 유효합니다.")).toBeVisible();
 });
 
 test("an 8-digit birthday entry is sent to the verify BFF exactly as typed", async ({ page }) => {

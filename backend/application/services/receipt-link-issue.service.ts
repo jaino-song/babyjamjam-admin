@@ -2,7 +2,10 @@ import { Inject, Injectable, Logger } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { createHash, randomUUID } from "node:crypto";
 import { ClientEntity } from "domain/entities/client.entity";
-import { EFORMSIGN_COMPLETED_STATUS_CODES } from "domain/constants/eformsign-doc-status.constants";
+import {
+    EFORMSIGN_COMPLETED_STATUS_CODES,
+    TERMINAL_STATUS_CODES,
+} from "domain/constants/eformsign-doc-status.constants";
 import { normalizeEformsignStatusCode, isProviderReviewWorkflowStep } from "domain/utils/eformsign-status-code";
 import {
     FILE_STORAGE_PORT,
@@ -165,20 +168,25 @@ export class ReceiptLinkIssueService {
 
     /**
      * The customer must have finished signing before a receipt link may be
-     * minted. True either when the current workflow step is the provider's
-     * review/confirmation step (only current after the client signature) or
-     * when the mirrored status is a completed code — e.g. the partial mirror
-     * at step 070 is sendable. Anything earlier (drafting, participant
-     * request), any unprovable state, and rejected/expired/terminal codes
-     * fall closed to `contract_not_signed`.
+     * minted. True either when the mirrored status is a completed code or
+     * when the current workflow step is the provider's review/confirmation
+     * step (only current after the client signature). Terminal codes are
+     * excluded BEFORE the step check: a rejected/expired document keeps the
+     * provider-review step as its last step, so the step alone cannot prove
+     * a live signature. Anything earlier (drafting, participant request),
+     * any unprovable state, and terminal codes fall closed to
+     * `contract_not_signed`.
      */
     private async assertContractSigned(documentId: string): Promise<void> {
         const state = await this.resolveMirrorState(documentId);
         const currentStatus = state?.detailPayload?.current_status ?? null;
         const statusType = normalizeEformsignStatusCode(currentStatus?.status_type);
+        if (EFORMSIGN_COMPLETED_STATUS_CODES.has(statusType)) return;
+        // Terminal-but-not-completed here means rejected/revoked/deleted/expired.
+        if (TERMINAL_STATUS_CODES.has(statusType)) throw new ReceiptLinkSkipError("contract_not_signed");
         const signedOrLater = isProviderReviewWorkflowStep(
             currentStatus ? { stepType: currentStatus.step_type, stepName: currentStatus.step_name } : null,
-        ) || EFORMSIGN_COMPLETED_STATUS_CODES.has(statusType);
+        );
         if (!signedOrLater) throw new ReceiptLinkSkipError("contract_not_signed");
     }
 

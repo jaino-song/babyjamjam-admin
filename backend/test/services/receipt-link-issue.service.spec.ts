@@ -319,6 +319,33 @@ describe("ReceiptLinkIssueService", () => {
         expect(tokenService.issue).not.toHaveBeenCalled();
     });
 
+    const terminalWithProviderReviewStepCases = [
+        ["071", "검토 반려"],
+        ["080", "만료"],
+    ] as const;
+    it.each(terminalWithProviderReviewStepCases)(
+        "skips with contract_not_signed for terminal status %s even though the last step is still the provider review step",
+        async (statusType, stepName) => {
+            const { service, tokenService } = makeService({
+                mirrorState: {
+                    detailPayload: {
+                        ...SIGNED_MIRROR_STATE.detailPayload,
+                        current_status: {
+                            ...SIGNED_MIRROR_STATE.detailPayload!.current_status,
+                            status_type: statusType,
+                            step_type: "06",
+                            step_name: stepName,
+                        },
+                    } as EformsignDocumentMirrorState["detailPayload"],
+                },
+            });
+
+            await expect(service.preflight({ branchId: BRANCH, clientId: 7 }))
+                .rejects.toMatchObject({ skipReason: "contract_not_signed" });
+            expect(tokenService.issue).not.toHaveBeenCalled();
+        },
+    );
+
     it("allows sending once the document completed (status 072)", async () => {
         const { service } = makeService({
             mirrorState: {
