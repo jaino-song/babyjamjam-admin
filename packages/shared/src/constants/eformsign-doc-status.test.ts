@@ -1,6 +1,7 @@
 import {
     CONTRACT_DOC_DISPLAY_STATUS_LABELS,
     isContractDocDisplayStatus,
+    isContractReceiptSendable,
     isContractReviewWindowOpen,
     resolveContractDocDisplayStatus,
     resolveContractDocStatusLabel,
@@ -117,6 +118,83 @@ describe("resolveContractDocStatusLabel", () => {
             contractEndDate: "2026-08-07",
             now: kstNoon("2026-08-06"),
         })).toBe("서명 대기");
+    });
+});
+
+/**
+ * The receipt-send gate: only customer-signed documents may send the receipt link.
+ */
+describe("isContractReceiptSendable", () => {
+    const providerReviewParams = {
+        category: "in-progress" as const,
+        currentStatus: PROVIDER_REVIEW_STATUS,
+        contractEndDate: "2026-08-07",
+        now: kstNoon("2026-08-06"),
+    };
+
+    it("allows signed, review, and completed display statuses", () => {
+        for (const displayStatus of ["signed", "review", "completed", "unassigned", "pending", "expired", "unknown"] as const) {
+            expect(isContractReceiptSendable({ ...providerReviewParams, displayStatus }))
+                .toBe(displayStatus === "signed" || displayStatus === "review" || displayStatus === "completed");
+        }
+    });
+
+    it("allows a review-step document (customer signed) before the wire field existed", () => {
+        // End date not yet reached (and even missing/malformed) → the resolver
+        // says 서명 완료 or 그 이후, so sending is allowed.
+        expect(isContractReceiptSendable({ ...providerReviewParams, displayStatus: null })).toBe(true);
+        expect(isContractReceiptSendable({
+            ...providerReviewParams,
+            displayStatus: null,
+            contractEndDate: null,
+        })).toBe(true);
+    });
+
+    it("forbids a document still in the customer-signature step (e.g. status 060)", () => {
+        expect(isContractReceiptSendable({
+            ...providerReviewParams,
+            displayStatus: null,
+            currentStatus: CUSTOMER_STEP_STATUS,
+        })).toBe(false);
+    });
+
+    it("forbids unprovided payloads entirely (no category signal → unknown → in-progress with no step)", () => {
+        expect(isContractReceiptSendable({
+            category: "unknown",
+            currentStatus: null,
+            contractEndDate: null,
+            displayStatus: null,
+        })).toBe(false);
+    });
+
+    it("allows completed and forbids expired categories without a display status", () => {
+        expect(isContractReceiptSendable({
+            ...providerReviewParams,
+            displayStatus: null,
+            category: "completed",
+        })).toBe(true);
+        expect(isContractReceiptSendable({
+            ...providerReviewParams,
+            displayStatus: null,
+            category: "expired",
+        })).toBe(false);
+    });
+
+    it("never lets an unknown category fall out of the signed document path", () => {
+        // unknown category normalizes to in-progress; the provider-review step
+        // still carries a customer signature, so it stays sendable.
+        expect(isContractReceiptSendable({
+            ...providerReviewParams,
+            displayStatus: null,
+            category: "unknown",
+        })).toBe(true);
+        // But a customer-step document with an unknown category is not signed.
+        expect(isContractReceiptSendable({
+            ...providerReviewParams,
+            displayStatus: null,
+            category: "unknown",
+            currentStatus: CUSTOMER_STEP_STATUS,
+        })).toBe(false);
     });
 });
 

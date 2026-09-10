@@ -176,10 +176,10 @@ describe("ReceiptLinkManualSendService", () => {
     });
 
     it("maps receipt eligibility failures during preparation and does not issue", async () => {
-        const { service, issueService } = makeService({ preflight: async () => { throw new ReceiptLinkSkipError("service_period_expired"); } });
+        const { service, issueService } = makeService({ preflight: async () => { throw new ReceiptLinkSkipError("contract_not_signed"); } });
 
         await expect(service.prepare({ branchId: BRANCH, clientId: 7, userId: null }))
-            .rejects.toMatchObject({ response: { reason: "service_period_expired", message: "영수증 링크 유효기간(서비스 종료 후 14일)이 지났습니다" } });
+            .rejects.toMatchObject({ response: { reason: "contract_not_signed", message: "계약서 서명이 완료된 후 발송할 수 있습니다." } });
         expect(issueService.issue).not.toHaveBeenCalled();
     });
 

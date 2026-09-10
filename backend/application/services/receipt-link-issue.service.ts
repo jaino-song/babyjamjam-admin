@@ -1,8 +1,9 @@
-import { getReceiptLinkExpiresAt } from "domain/constants/receipt-link-expiry";
 import { Inject, Injectable, Logger } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { createHash, randomUUID } from "node:crypto";
 import { ClientEntity } from "domain/entities/client.entity";
+import { EFORMSIGN_COMPLETED_STATUS_CODES } from "domain/constants/eformsign-doc-status.constants";
+import { normalizeEformsignStatusCode, isProviderReviewWorkflowStep } from "domain/utils/eformsign-status-code";
 import {
     FILE_STORAGE_PORT,
     FileStoragePort,
@@ -10,12 +11,12 @@ import {
 import { CLIENT_REPOSITORY, IClientRepository } from "domain/repositories/client.repository.interface";
 import { EFORMSIGN_DOC_REPOSITORY, IEformsignDocRepository } from "domain/repositories/eformsign-doc.repository.interface";
 import {
+    EformsignDocumentMirrorState,
+    EformsignStoredDocumentFile,
     EFORMSIGN_DOCUMENT_MIRROR_REPOSITORY,
     IEformsignDocumentMirrorRepository,
 } from "domain/repositories/eformsign-document-mirror.repository.interface";
-import {
-    IReceiptLinkTokenIssuanceRepository,
-} from "domain/repositories/receipt-link-token.repository.interface";
+import { IReceiptLinkTokenIssuanceRepository } from "domain/repositories/receipt-link-token.repository.interface";
 import { PdfPageRasterizerService } from "infrastructure/pdf/pdf-page-rasterizer.service";
 import { sanitizeEformsignErrorMessage } from "application/utils/eformsign-error-message";
 import { EformsignDocumentMirrorService } from "./eformsign-document-mirror.service";
@@ -29,8 +30,7 @@ const DEFAULT_RECEIPT_BASE_URL = "https://m.admin.babyjamjam.com";
 export type ReceiptLinkSkipReason =
     | "not_voucher_client"
     | "missing_birthday"
-    | "missing_end_date"
-    | "service_period_expired"
+    | "contract_not_signed"
     | "no_contract_document"
     | "pdf_unavailable"
     | "render_failed"
@@ -39,8 +39,7 @@ export type ReceiptLinkSkipReason =
 export const RECEIPT_LINK_SKIP_MESSAGES: Record<ReceiptLinkSkipReason, string> = {
     not_voucher_client: "바우처 이용 산모가 아닙니다",
     missing_birthday: "산모 생년월일이 등록되지 않았습니다",
-    missing_end_date: "서비스 종료일이 등록되지 않았습니다",
-    service_period_expired: "영수증 링크 유효기간(서비스 종료 후 14일)이 지났습니다",
+    contract_not_signed: "계약서 서명이 완료된 후 발송할 수 있습니다.",
     no_contract_document: "연결된 계약서가 없습니다",
     pdf_unavailable: "계약서 PDF를 아직 불러올 수 없습니다",
     render_failed: "영수증 이미지 생성에 실패했습니다",
@@ -62,7 +61,7 @@ export class ReceiptLinkIssuanceConflictError extends Error {
 }
 
 export interface ReceiptLinkPreflight {
-    client: { id: number; name: string; phone: string | null; birthday: string; endDate: Date };
+    client: { id: number; name: string; phone: string | null; birthday: string };
     doc: { id: number; documentId: string };
     pdf: Buffer;
 }
@@ -132,36 +131,67 @@ export class ReceiptLinkIssueService {
         // birthday that would fail there must be caught here instead, not just an empty one.
         const birthday = normalizeBirthdayInput(client.birthday ?? "");
         if (!birthday) throw new ReceiptLinkSkipError("missing_birthday");
-        if (!client.endDate || !Number.isFinite(client.endDate.getTime())) throw new ReceiptLinkSkipError("missing_end_date");
-
-        if (getReceiptLinkExpiresAt(client.endDate) <= new Date()) throw new ReceiptLinkSkipError("service_period_expired");
 
         const doc = params.eformsignDocId !== undefined
             ? await this.findExplicitContractDocument(params.branchId, params.eformsignDocId, client.id)
             : await this.findContractDocument(params.branchId, client);
         if (!doc) throw new ReceiptLinkSkipError("no_contract_document");
 
-        // A stored PDF is publishable only when the mirror generation that
-        // produced it is locally ready. Review-stage documents may be readable
-        // from a partial mirror for operational inspection, but receipt links
-        // must fail closed until the complete synchronized generation exists.
-        await this.assertDocumentSyncReady(doc.documentId);
+        // The receipt link may only be minted once the customer has finished
+        // signing: from the provider-review step onward, or any completed
+        // status. Fail closed when the mirror cannot prove either.
+        await this.assertContractSigned(doc.documentId);
+
+        // Load (and if needed re-sync) the contract PDF. findFile itself fences
+        // superseded generations, so a partial/ready mirror whose current-version
+        // document file is unreadable still fails closed here. The sync-ready
+        // gate is re-run at the delivery boundary (prepare()/assertDocumentSyncReady).
         const pdf = await this.loadContractPdf(params.branchId, doc);
         if (!pdf) throw new ReceiptLinkSkipError("pdf_unavailable");
 
-        return { client: { id: client.id, name: client.name, phone: client.phone, birthday, endDate: client.endDate }, doc, pdf };
+        return { client: { id: client.id, name: client.name, phone: client.phone, birthday }, doc, pdf };
+    }
+
+    /** Fail closed: a mirror state the caller cannot read must never pass the signing gate. */
+    private async resolveMirrorState(documentId: string): Promise<EformsignDocumentMirrorState | null> {
+        const findState = this.mirrorRepository.findState;
+        if (typeof findState !== "function") return null;
+        try {
+            return await findState.call(this.mirrorRepository, documentId);
+        } catch {
+            return null;
+        }
     }
 
     /**
-     * Recheck mirror readiness without rendering or issuing a token. Delivery
-     * callers use this immediately before an SMS authorization boundary so a
-     * sync that superseded the preflight cannot publish its old image.
+     * The customer must have finished signing before a receipt link may be
+     * minted. True either when the current workflow step is the provider's
+     * review/confirmation step (only current after the client signature) or
+     * when the mirrored status is a completed code — e.g. the partial mirror
+     * at step 070 is sendable. Anything earlier (drafting, participant
+     * request), any unprovable state, and rejected/expired/terminal codes
+     * fall closed to `contract_not_signed`.
+     */
+    private async assertContractSigned(documentId: string): Promise<void> {
+        const state = await this.resolveMirrorState(documentId);
+        const currentStatus = state?.detailPayload?.current_status ?? null;
+        const statusType = normalizeEformsignStatusCode(currentStatus?.status_type);
+        const signedOrLater = isProviderReviewWorkflowStep(
+            currentStatus ? { stepType: currentStatus.step_type, stepName: currentStatus.step_name } : null,
+        ) || EFORMSIGN_COMPLETED_STATUS_CODES.has(statusType);
+        if (!signedOrLater) throw new ReceiptLinkSkipError("contract_not_signed");
+    }
+
+    /**
+     * Recheck the CURRENT mirror generation's contract document file without
+     * rendering or issuing a token. Delivery callers use this immediately
+     * before an SMS authorization boundary so a sync that superseded the
+     * preflight cannot publish its old image: `findFile` answers only when the
+     * locally stored file still matches the mirror's live detail version.
      */
     async assertDocumentSyncReady(
         target: string | { branchId: string; clientId: number; eformsignDocId?: number },
     ): Promise<void> {
-        const findState = this.mirrorRepository.findState;
-        if (typeof findState !== "function") return;
         try {
             let documentId: string | null = typeof target === "string" ? target : null;
             if (typeof target !== "string") {
@@ -174,10 +204,9 @@ export class ReceiptLinkIssueService {
                 documentId = doc?.documentId ?? null;
             }
             if (!documentId) throw new ReceiptLinkSkipError("no_contract_document");
-            const state = await findState.call(this.mirrorRepository, documentId);
-            if (!state || state.syncStatus !== "ready") {
-                throw new ReceiptLinkSkipError("pdf_unavailable");
-            }
+            const file: EformsignStoredDocumentFile | null =
+                await this.mirrorRepository.findFile(documentId, "document");
+            if (!file) throw new ReceiptLinkSkipError("pdf_unavailable");
         } catch (error) {
             if (error instanceof ReceiptLinkSkipError) throw error;
             throw new ReceiptLinkSkipError("pdf_unavailable");
@@ -250,7 +279,6 @@ export class ReceiptLinkIssueService {
             eformsignDocId: doc.id,
             jobId: params.jobId ?? null,
             birthday: client.birthday,
-            serviceEndDate: client.endDate,
             storagePath,
             contentSha256,
             byteSize: png.length,
