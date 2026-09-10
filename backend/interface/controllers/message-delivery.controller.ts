@@ -59,6 +59,7 @@ type SmsProblemCode = Extract<
     | "MESSAGE_SEND_REJECTED"
     | "MESSAGE_SEND_ALREADY_REQUESTED"
     | "MESSAGE_REQUEST_KEY_CONFLICT"
+    | "REQUEST_INVALID"
     | "RESOURCE_NOT_FOUND"
 >;
 
@@ -447,10 +448,10 @@ export class MessageDeliveryController {
         dto: SendSmsMessageDto,
     ): Promise<SendSmsMessageDto> {
         if (!branchId) {
-            throw new BadRequestException("A branch is required before sending SMS");
+            throw new BadRequestException(this.smsProblemBody("REQUEST_INVALID", "NOT_APPLIED"));
         }
         if (dto.clientId != null && dto.employeeId != null) {
-            throw new BadRequestException("SMS recipient cannot be both a client and an employee");
+            throw new BadRequestException(this.smsProblemBody("REQUEST_INVALID", "NOT_APPLIED"));
         }
 
         const rawReceivers = dto.receiver
@@ -459,7 +460,7 @@ export class MessageDeliveryController {
             .filter(Boolean);
         const normalizedRawReceivers = rawReceivers.map((value) => normalizePhone(value));
         if (normalizedRawReceivers.length === 0 || normalizedRawReceivers.some((value) => !value)) {
-            throw new BadRequestException("SMS recipients must be valid branch-owned client or employee phone numbers");
+            throw new BadRequestException(this.smsProblemBody("REQUEST_INVALID", "NOT_APPLIED"));
         }
         const normalizedReceivers = Array.from(new Set(normalizedRawReceivers.filter((value): value is string => Boolean(value))));
 
@@ -468,7 +469,7 @@ export class MessageDeliveryController {
 
         if (dto.clientId != null) {
             if (normalizedReceivers.length !== 1) {
-                throw new BadRequestException("A client-associated SMS must contain exactly one recipient");
+                throw new BadRequestException(this.smsProblemBody("REQUEST_INVALID", "NOT_APPLIED"));
             }
             const client = await this.prisma.client.findFirst({
                 where: { id: dto.clientId, branchId },
@@ -479,12 +480,12 @@ export class MessageDeliveryController {
             }
             const phone = normalizePhone(client.phone);
             if (!phone || phone !== normalizedReceivers[0]) {
-                throw new BadRequestException("SMS recipient does not match the selected client");
+                throw new BadRequestException(this.smsProblemBody("REQUEST_INVALID", "NOT_APPLIED"));
             }
             recipients.push({ id: client.id, name: client.name, phone, kind: "client" });
         } else if (dto.employeeId != null) {
             if (normalizedReceivers.length !== 1) {
-                throw new BadRequestException("An employee-associated SMS must contain exactly one recipient");
+                throw new BadRequestException(this.smsProblemBody("REQUEST_INVALID", "NOT_APPLIED"));
             }
             const employeeModel = (this.prisma as PrismaService & { employee?: PrismaService["employee"] }).employee;
             const employee = employeeModel && await employeeModel.findFirst({
@@ -496,7 +497,7 @@ export class MessageDeliveryController {
             }
             const phone = normalizePhone(employee.phone);
             if (!phone || phone !== normalizedReceivers[0]) {
-                throw new BadRequestException("SMS recipient does not match the selected employee");
+                throw new BadRequestException(this.smsProblemBody("REQUEST_INVALID", "NOT_APPLIED"));
             }
             recipients.push({ id: employee.id, name: employee.name, phone, kind: "employee" });
         } else {
@@ -504,7 +505,7 @@ export class MessageDeliveryController {
                 const client = await this.findClientByPhone(branchId, phone);
                 const employee = await this.findEmployeeByPhone(branchId, phone);
                 if (client && employee) {
-                    throw new BadRequestException("SMS recipient matches more than one branch record");
+                    throw new BadRequestException(this.smsProblemBody("REQUEST_INVALID", "NOT_APPLIED"));
                 }
                 if (!client && !employee) {
                     throw new NotFoundException(this.smsProblemBody("RESOURCE_NOT_FOUND", "NOT_APPLIED"));
