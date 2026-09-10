@@ -99,12 +99,12 @@ export function ContractDocumentPreviewModal({
       receiptSendAction={onSendReceiptLink ? (
         <Button
           key="receipt-send"
-          variant="positive-outline"
+          variant="positive"
           size="sm"
           data-component={`${dataComponent}_footer_file-actions_receipt-send`}
           onClick={onSendReceiptLink}
           disabled={isSendingReceiptLink}
-          className="min-w-[88px] border-v3-primary"
+          className="min-w-[88px]"
         >
           {isSendingReceiptLink ? <Spinner className="mr-2 h-4 w-4" /> : <Send className="mr-2 h-4 w-4" />}
           영수증 문자 발송
