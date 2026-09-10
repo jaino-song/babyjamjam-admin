@@ -90,6 +90,20 @@ beforeEach(() => {
 });
 
 describe("SystemTemplateEditor", () => {
+  it.each(["/", "{"])("dismisses an open %s suggestion when saving locks the editor", async (trigger) => {
+    const template = buildTemplate({ customVariables: [{ key: "name", label: "이름", required: false }] });
+    const { rerender } = render(<SystemTemplateEditor template={template} />);
+    replaceContent(trigger);
+    const candidate = await screen.findByRole("button", { name: "이름 {{name}}" });
+    jest.mocked(useUpdateSystemTemplate).mockReturnValue({ mutateAsync: mockMutateAsync, isPending: true } as never);
+    rerender(<SystemTemplateEditor template={template} />);
+    expect(getContentField()).toHaveAttribute("contenteditable", "false");
+    await waitFor(() => expect(candidate).not.toBeInTheDocument());
+    fireEvent.click(candidate);
+    fireEvent.keyDown(getContentField(), { key: "Enter" });
+    expect(readContent()).toBe(trigger);
+  });
+
   it("reports unsaved content changes through the optional preview callback", () => {
     const onPreviewMessageChange = jest.fn();
 

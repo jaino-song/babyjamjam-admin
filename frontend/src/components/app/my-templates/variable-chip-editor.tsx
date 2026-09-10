@@ -23,12 +23,15 @@ import { Paragraph } from "@tiptap/extension-paragraph";
 import { Text } from "@tiptap/extension-text";
 import { History } from "@tiptap/extension-history";
 import { HardBreak } from "@tiptap/extension-hard-break";
-import { Suggestion } from "@tiptap/suggestion";
+import { exitSuggestion, Suggestion } from "@tiptap/suggestion";
 import { PluginKey } from "@tiptap/pm/state";
 import { Fragment, Slice } from "@tiptap/pm/model";
 import type { MessageTemplateVariable } from "@babyjamjam/shared/types/message";
 import { cn } from "@/lib/utils";
 import { createVariableSuggestion } from "./variable-suggestion";
+
+const braceSuggestionKey = new PluginKey("variableSuggestionBrace");
+const slashSuggestionKey = new PluginKey("variableSuggestionSlash");
 
 const VARIABLE_PATTERN = /\{\{([^}]+)\}\}/g;
 
@@ -226,7 +229,7 @@ export const VariableChipEditor = forwardRef<VariableChipEditorHandle, VariableC
                                 editor: this.editor,
                                 ...createVariableSuggestion({
                                     char: "{",
-                                    pluginKey: new PluginKey("variableSuggestionBrace"),
+                                    pluginKey: braceSuggestionKey,
                                     variablesRef,
                                 }),
                             }),
@@ -234,7 +237,7 @@ export const VariableChipEditor = forwardRef<VariableChipEditorHandle, VariableC
                                 editor: this.editor,
                                 ...createVariableSuggestion({
                                     char: "/",
-                                    pluginKey: new PluginKey("variableSuggestionSlash"),
+                                    pluginKey: slashSuggestionKey,
                                     variablesRef,
                                 }),
                             }),
@@ -298,7 +301,12 @@ export const VariableChipEditor = forwardRef<VariableChipEditorHandle, VariableC
         );
 
         useEffect(() => {
-            editor?.setEditable(!disabled, false);
+            if (!editor) return;
+            editor.setEditable(!disabled, false);
+            if (disabled) {
+                exitSuggestion(editor.view, braceSuggestionKey);
+                exitSuggestion(editor.view, slashSuggestionKey);
+            }
         }, [disabled, editor]);
 
         // Controlled sync: only push external `value` changes into the doc when
