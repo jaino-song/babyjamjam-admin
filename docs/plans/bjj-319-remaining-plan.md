@@ -338,3 +338,13 @@ TL;DR: 수신자 8개 원시 400 분기를 `REQUEST_INVALID`/`NOT_APPLIED`로 �
 - 기록: `docs/error-management-inventory.json`의 `sms-recipient-presend-legacy`를 migrated로 갱신(규격 ID·테스트·감사 증거 포함)하고 `presend_review_evidence` 상태를 현행화했으며 `docs/error-management.md`에 전환 요약을 추가했다. clean unit worktree와 branch는 병합·감사 후 정리한다.
 - Phase 1 완료(2.1b 범위). Task 2.1 전체(예약 일시·승인 오류, 템플릿 조건), Task 1.1 전수 인벤토리, 실환경 검증, dev 병합, 배포는 계속 미완료다. 다음 단계는 계획의 Phase 2(Task 1.1 배치 A)이다.
 
+## Task 1.1 배치 A (서버 인터페이스·도메인·공유) 실행 결과 (2026-09-10)
+
+TL;DR: backend/interface·domain·prisma·packages/shared·service-record-ui 후보 70개를 의미 검토해 분류를 완료했고(미분류 0), 대부분의 컨트롤러 4xx가 아직 raw 예외이며 `parse-integer`/`parse-boolean` 공용 helper가 다수 라우트의 raw 400 소유자임을 확인했다.
+
+- Phase 2(배치 A)는 read-only scout 4회로 실행했다: backend/interface 41(2회), backend/domain+prisma 20(1회), packages/shared+service-record-ui 9(1회). basis `84f3d8fbf69d08edc192c9ae2c0bbda992d5b5b6`, 전부 쓰기 없음.
+- 결과: migrated 2(`money.vo`는 consumer-boundary, `problem-details.ts`는 캐노니컬 계약), legacy 38, approved-exception 1(`eformsign-webhook.controller.ts`, docs/error-management.md L13·pipe exemption), no-direct-error-boundary 29, unverified 0. 루트 대조: interface 41/41, domain 16/16, prisma 4/4, shared 7/7, service-record-ui 수동 2/2.
+- 주요 확인: `mapHttpProblem`은 미등록 4xx에 `null`을 반환해 raw Nest message가 그대로 나가고, ≥500만 등록 코드로 재매핑된다(`problem-response.ts:37-43`). `backend/interface/parse-integer.ts`·`parse-boolean.ts`가 여러 컨트롤러 raw 400의 공용 소유자다. `route-utils.ts`는 BFF 정규화 경로는 계약을 쓰지만 `upstreamJsonErrorResponse`(비등록 `UPSTREAM_ERROR`)·`unauthorizedResponse`(raw English `{error}`)는 레거시로 남아 있다. `message-delivery.controller.ts`는 예약·승인 경로 때문에 legacy로 유지된다(Task 2.1).
+- 기록: inventory `owners` 68건 + root review 2건 + source_manifest 70건 상태 갱신, `review_batches` A 요약 추가, 리뷰한 5개 root `semantic_review_status: reviewed-batch-a`. 규격 ID는 EM 카탈로그 미제공으로 `spec_mapping_status: pending`을 유지한다.
+- 배치 A만 완료다. Task 1.1 전체(배치 B~E: backend/application·infrastructure·web·mobile·backend test·마감)와 후속 전환은 계속 미완료다. 다음은 배치 B(backend/application 150 + backend/infrastructure 69)다.
+
