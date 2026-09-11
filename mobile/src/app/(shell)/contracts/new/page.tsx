@@ -815,12 +815,15 @@ export default function ContractCreationPage() {
         try {
           newClient = await createClientMutation.mutateAsync(autoRegistrationPayload);
         } catch (error) {
-          if (!isAxiosError<{ message?: string; error?: string; clientId?: number }>(error) || error.response?.status !== 409) {
+          if (!isAxiosError<{ message?: string; error?: string; clientId?: number; code?: string }>(error) || error.response?.status !== 409) {
             showSubmissionFailure(error, "UNKNOWN");
             return;
           }
           const conflict = error.response.data;
-          if (!conflict.clientId) {
+          // 중복 판별은 공개 계약 코드로 하고, 배포 전환 구간에는 레거시
+          // clientId 페이로드도 받아든다.
+          const isDuplicatePhone = conflict.code === "CLIENT_PHONE_ALREADY_REGISTERED" || Boolean(conflict.clientId);
+          if (!isDuplicatePhone) {
             showSubmissionFailure(error, "NOT_APPLIED");
             return;
           }

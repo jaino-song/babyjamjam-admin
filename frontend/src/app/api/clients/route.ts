@@ -8,6 +8,16 @@ function getAuthToken(request: NextRequest): string | null {
     return request.cookies.get("auth_token")?.value || null;
 }
 
+// A converted problem body must keep its public `code`; the legacy conflict
+// bridge only carries message/clientId, so registered problems fall through
+// to the contract-preserving errorResponse passthrough instead.
+function hasUpstreamProblemCode(error: unknown): boolean {
+    if (!error || typeof error !== "object") return false;
+    const payload = (error as { response?: { data?: unknown } }).response?.data;
+    if (!payload || typeof payload !== "object" || Array.isArray(payload)) return false;
+    return typeof (payload as { code?: unknown }).code === "string";
+}
+
 // Helper to create authorization headers
 function getAuthHeaders(token: string | null): Record<string, string> {
     return token ? { Authorization: `Bearer ${token}` } : {};
@@ -61,9 +71,11 @@ export async function POST(request: NextRequest) {
         });
         return NextResponse.json(response.data, { status: 201 });
     } catch (error) {
-        const conflict = getClientConflictPayload(error);
-        if (conflict) {
-            return NextResponse.json(conflict, { status: 409 });
+        if (!hasUpstreamProblemCode(error)) {
+            const conflict = getClientConflictPayload(error);
+            if (conflict) {
+                return NextResponse.json(conflict, { status: 409 });
+            }
         }
         return errorResponse(error, "create client");
     }

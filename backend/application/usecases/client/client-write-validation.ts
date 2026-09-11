@@ -48,6 +48,25 @@ export function clientProblemBody(
     };
 }
 
+/**
+ * Shape a client rejection that carries only its public code — no field
+ * errors (resource-not-found, delete retention). Same contract members as
+ * `clientProblemBody` minus `errors`; `message` stays the in-process
+ * compatibility alias and never reaches clients through the HTTP boundary.
+ */
+export function clientCodeOnlyProblemBody(
+    code: ProblemCode,
+    message: string,
+): Pick<ProblemDetails, "code" | "params" | "outcome" | "recovery"> & { message: string } {
+    return {
+        code,
+        params: {},
+        outcome: "NOT_APPLIED",
+        recovery: { action: "NONE", retry: { mode: "NEVER" } },
+        message,
+    };
+}
+
 export interface ClientDateUpdate {
     startDate?: Date | null;
     endDate?: Date | null;
@@ -287,13 +306,12 @@ export async function assertPhoneAvailable(
         ? await repository.findByPhone(branchId, normalizedPhone)
         : null;
     if (existingClient && existingClient.id !== currentClientId) {
-        throw new ConflictException({
-            statusCode: 409,
-            code: "P2002",
-            error: "Conflict",
-            message: "이미 같은 전화번호의 고객이 있습니다.",
-            field: "phone",
-        });
+        throw new ConflictException(clientProblemBody("CLIENT_PHONE_ALREADY_REGISTERED", {
+            pointer: "/phone",
+            code: "INVALID_VALUE",
+            detail: "같은 전화번호의 고객이 이미 등록되어 있습니다.",
+            location: "body",
+        }));
     }
     return normalizedPhone;
 }

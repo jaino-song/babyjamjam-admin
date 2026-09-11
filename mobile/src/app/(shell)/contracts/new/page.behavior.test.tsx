@@ -95,7 +95,25 @@ jest.mock("@/components/app/eformsign/HeadlessProgressModal", () => ({
 }));
 
 jest.mock("@/components/app/ui/MobileTwoButtonModal", () => ({
-  MobileTwoButtonModal: () => null,
+  MobileTwoButtonModal: (props: Record<string, unknown>) => {
+    const React = jest.requireActual("react") as typeof import("react");
+    if (!props.open) return null;
+    return React.createElement(
+      "div",
+      { "data-testid": "mobile-two-button-modal" },
+      React.createElement("p", null, props.description as ReactNode),
+      React.createElement(
+        "button",
+        { type: "button", onClick: props.onCancel as () => void },
+        (props.cancelLabel as ReactNode) ?? "취소",
+      ),
+      React.createElement(
+        "button",
+        { type: "button", onClick: props.onConfirm as () => void },
+        (props.confirmLabel as ReactNode) ?? "확인",
+      ),
+    );
+  },
 }));
 
 jest.mock("@/components/ui/switch", () => ({ Switch: () => null }));
@@ -146,7 +164,7 @@ function installEventSourceStub() {
   });
 }
 
-function installFormState() {
+function installFormState(overrides: Record<string, unknown> = {}) {
   const setter = () => jest.fn();
   mockUseFormStore.mockReturnValue({
     clientId: 7,
@@ -201,6 +219,7 @@ function installFormState() {
     setVoucherYear: setter(),
     setArea: setter(),
     setPreservePrefilledPrices: setter(),
+    ...overrides,
   });
 }
 
@@ -313,5 +332,88 @@ describe("contract creation mutation lifecycle", () => {
     expect(mockPush).not.toHaveBeenCalled();
     act(() => jest.advanceTimersByTime(3_000));
     expect(mockPush).toHaveBeenCalledWith("/contracts");
+  });
+});
+
+describe("duplicate-phone conflict handling", () => {
+  const CONFLICT_TEXT = "이미 같은 전화번호의 고객이 있습니다. 기존 고객으로 계약을 진행할까요?";
+
+  /** Axios-like 409 rejection the BFF produces for a duplicate-phone conflict. */
+  function conflictError(data: Record<string, unknown>) {
+    return Object.assign(new Error("Request failed with status code 409"), {
+      isAxiosError: true,
+      response: { status: 409, data },
+    });
+  }
+
+  beforeEach(() => {
+    // clearAllMocks leaves mock*Once queues intact; a stale queued rejection
+    // would leak into the next test's first create call.
+    mockCreateClient.mockReset();
+    mockCreateClient.mockResolvedValue({ id: 8 });
+    // Manual entry without a selected client: submitting runs the
+    // auto-registration create path. The name/phone must not match the
+    // mocked client list, or the page would reuse a stored client instead.
+    installFormState({
+      clientId: null,
+      isManualEntry: true,
+      name: "새로운 고객",
+      phone: "010-6621-1878",
+    });
+  });
+
+  it("offers the reuse retry when the 409 carries the public duplicate-phone code", async () => {
+    mockCreateClient
+      .mockRejectedValueOnce(conflictError({
+        code: "CLIENT_PHONE_ALREADY_REGISTERED",
+        message: "같은 전화번호의 고객이 이미 등록되어 있어요.",
+      }))
+      .mockResolvedValueOnce({ id: 73 });
+    mockDispatchHeadless.mockResolvedValue({ ok: true });
+
+    const submit = await renderReadyPage();
+    fireEvent.click(submit);
+
+    await waitFor(() => expect(screen.getByText(CONFLICT_TEXT)).toBeInTheDocument());
+    fireEvent.click(screen.getByRole("button", { name: "확인" }));
+
+    await waitFor(() => expect(mockCreateClient).toHaveBeenCalledTimes(2));
+    expect(mockCreateClient).toHaveBeenLastCalledWith(
+      expect.objectContaining({ reuseExistingClient: true }),
+    );
+  });
+
+  it("still offers the reuse retry for the legacy clientId conflict payload", async () => {
+    mockCreateClient
+      .mockRejectedValueOnce(conflictError({
+        message: "이미 같은 전화번호의 고객이 있습니다.",
+        clientId: 73,
+      }))
+      .mockResolvedValueOnce({ id: 73 });
+    mockDispatchHeadless.mockResolvedValue({ ok: true });
+
+    const submit = await renderReadyPage();
+    fireEvent.click(submit);
+
+    await waitFor(() => expect(screen.getByText(CONFLICT_TEXT)).toBeInTheDocument());
+    fireEvent.click(screen.getByRole("button", { name: "확인" }));
+
+    await waitFor(() => expect(mockCreateClient).toHaveBeenCalledTimes(2));
+    expect(mockCreateClient).toHaveBeenLastCalledWith(
+      expect.objectContaining({ reuseExistingClient: true }),
+    );
+  });
+
+  it("fails the submission without a reuse offer for any other 409", async () => {
+    mockCreateClient.mockRejectedValueOnce(conflictError({
+      message: "자동 고객 등록이 꺼져 있습니다. 고객을 먼저 등록한 뒤 계약서를 생성해 주세요.",
+    }));
+
+    const submit = await renderReadyPage();
+    fireEvent.click(submit);
+
+    await waitFor(() => expect(screen.getByRole("alert")).toBeInTheDocument());
+    expect(screen.queryByText(CONFLICT_TEXT)).not.toBeInTheDocument();
+    expect(mockCreateClient).toHaveBeenCalledTimes(1);
   });
 });

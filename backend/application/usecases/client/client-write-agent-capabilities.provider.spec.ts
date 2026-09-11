@@ -813,7 +813,7 @@ describe("ClientWriteAgentCapabilitiesProvider", () => {
         clientRepository.findByPhone.mockResolvedValueOnce(existingClient);
         await expect(createCapability.execute(context, {
             name: "신규", phone: "010-1234-5678",
-        })).rejects.toThrow("이미 같은 전화번호의 고객이 있습니다.");
+        })).rejects.toThrow("같은 전화번호의 고객이 이미 등록되어 있습니다.");
         expect(clientRepository.findByPhone).toHaveBeenLastCalledWith("branch-a", "01012345678");
         expect(createClient.execute).not.toHaveBeenCalled();
 
@@ -822,7 +822,7 @@ describe("ClientWriteAgentCapabilitiesProvider", () => {
         expect(updateClient.execute).toHaveBeenCalledWith("branch-a", 1, expect.objectContaining({ phone: "010-1234-5678" }));
 
         clientRepository.findByPhone.mockResolvedValueOnce({ ...existingClient, id: 2 });
-        await expect(updateCapability.execute(context, { id: 1, phone: "010 1234 5678" })).rejects.toThrow("이미 같은 전화번호의 고객이 있습니다.");
+        await expect(updateCapability.execute(context, { id: 1, phone: "010 1234 5678" })).rejects.toThrow("같은 전화번호의 고객이 이미 등록되어 있습니다.");
         expect(updateClient.execute).toHaveBeenCalledTimes(1);
     });
 

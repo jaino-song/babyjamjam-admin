@@ -782,9 +782,12 @@ export const ContractCreationForm = ({
           try {
             newClient = await createClientMutation.mutateAsync(autoRegistrationPayload);
           } catch (error) {
-            if (!isAxiosError<{ message?: string; error?: string; clientId?: number }>(error) || error.response?.status !== 409) throw error;
+            if (!isAxiosError<{ message?: string; error?: string; clientId?: number; code?: string }>(error) || error.response?.status !== 409) throw error;
             const conflict = error.response.data;
-            if (!conflict.clientId) throw new Error(getApiErrorMessage(error, "고객 자동 등록에 실패했어요."));
+            // 중복 판별은 공개 계약 코드로 하고, 배포 전환 구간에는 레거시
+            // clientId 페이로드도 받아든다.
+            const isDuplicatePhone = conflict.code === "CLIENT_PHONE_ALREADY_REGISTERED" || Boolean(conflict.clientId);
+            if (!isDuplicatePhone) throw new Error(getApiErrorMessage(error, "고객 자동 등록에 실패했어요."));
             const shouldReuse = await requestConfirmation("이미 같은 전화번호의 고객이 있습니다. 기존 고객으로 계약을 진행할까요?");
             if (!shouldReuse) return;
             reusedExistingClient = true;
