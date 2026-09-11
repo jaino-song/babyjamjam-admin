@@ -23,6 +23,7 @@ import {
     assertAllowedServiceStatus,
     assertClientDurationMatchesDates,
     assertClientPhoneInput,
+    clientProblemBody,
     deriveClientDuration,
     findClientByNormalizedPhone,
     mergeAndValidateClientServicePeriod,
@@ -1010,10 +1011,10 @@ export class ClientService {
         // Reject malformed identity input before settings lookups, duplicate
         // checks, automation, or any other write/provider side effect.
         assertClientPhoneInput(params.phone);
-        const startDate = parseClientDate(params.startDate) ?? null;
-        const endDate = parseClientDate(params.endDate) ?? null;
-        const dueDate = parseClientDate(params.dueDate) ?? null;
-        const birthDate = parseClientDate(params.birthDate) ?? null;
+        const startDate = parseClientDate(params.startDate, "startDate") ?? null;
+        const endDate = parseClientDate(params.endDate, "endDate") ?? null;
+        const dueDate = parseClientDate(params.dueDate, "dueDate") ?? null;
+        const birthDate = parseClientDate(params.birthDate, "birthDate") ?? null;
         mergeAndValidateClientServicePeriod(null, { startDate, endDate });
         const derivedDuration = deriveClientDuration(startDate, endDate);
         // On create there is no prior duration to clear, so an explicit null
@@ -1592,7 +1593,12 @@ export class ClientService {
 
         for (const field of ["name", "voucherClient", "breastPump"] as const) {
             if (Object.prototype.hasOwnProperty.call(params, field) && params[field] === null) {
-                throw new BadRequestException(`${field} 항목은 비울 수 없습니다.`);
+                throw new BadRequestException(clientProblemBody("VALIDATION_FAILED", {
+                    pointer: `/${field}`,
+                    code: "REQUIRED",
+                    detail: `${field} 항목은 비울 수 없습니다.`,
+                    location: "body",
+                }));
             }
         }
 
@@ -1622,14 +1628,14 @@ export class ClientService {
             : null;
         assertAllowedServiceStatus(params.serviceStatus);
         await assertAllowedClientArea(this.prismaService, branchid, params.areaId);
-        const startDateUpdate = params.startDate === undefined ? undefined : parseClientDate(params.startDate);
-        const endDateUpdate = params.endDate === undefined ? undefined : parseClientDate(params.endDate);
+        const startDateUpdate = params.startDate === undefined ? undefined : parseClientDate(params.startDate, "startDate");
+        const endDateUpdate = params.endDate === undefined ? undefined : parseClientDate(params.endDate, "endDate");
         // Parsed the same way as the service period above and as create() does,
         // rather than with a raw `new Date`: that reads "2026-08" as 1 August
         // and hands anything it cannot parse to Prisma as an Invalid Date. Both
         // become a 400 here instead, and before the transaction opens.
-        const dueDateUpdate = params.dueDate === undefined ? undefined : parseClientDate(params.dueDate);
-        const birthDateUpdate = params.birthDate === undefined ? undefined : parseClientDate(params.birthDate);
+        const dueDateUpdate = params.dueDate === undefined ? undefined : parseClientDate(params.dueDate, "dueDate");
+        const birthDateUpdate = params.birthDate === undefined ? undefined : parseClientDate(params.birthDate, "birthDate");
         const { existingClient: clientWithPhone } = await findClientByNormalizedPhone(
             this.clientRepository,
             branchid,
@@ -1656,10 +1662,20 @@ export class ClientService {
         );
         assertClientDurationMatchesDates(params.duration, derivedDuration, params.allowBusinessDayMismatch);
         if (hasDateUpdate && params.duration === null && derivedDuration !== null) {
-            throw new BadRequestException(clientDurationOutOfRangeMessage(derivedDuration));
+            throw new BadRequestException(clientProblemBody("CLIENT_DURATION_OUT_OF_RANGE", {
+                pointer: "/duration",
+                code: "OUT_OF_RANGE",
+                detail: clientDurationOutOfRangeMessage(derivedDuration),
+                location: "body",
+            }));
         }
         if (hasDateUpdate && derivedDuration === null && params.duration !== undefined && params.duration !== null) {
-            throw new BadRequestException(CLIENT_DURATION_NEEDS_SERVICE_PERIOD_MESSAGE);
+            throw new BadRequestException(clientProblemBody("CLIENT_DURATION_NEEDS_SERVICE_PERIOD", {
+                pointer: "/duration",
+                code: "REQUIRED",
+                detail: CLIENT_DURATION_NEEDS_SERVICE_PERIOD_MESSAGE,
+                location: "body",
+            }));
         }
         // duration is the contracted session count and is authoritative once
         // set: a supplied value always wins and is never overwritten by the
@@ -1748,7 +1764,12 @@ export class ClientService {
                 params.allowBusinessDayMismatch,
             );
             if (lockedHasDateUpdate && params.duration === null && lockedDerivedDuration !== null) {
-                throw new BadRequestException(clientDurationOutOfRangeMessage(lockedDerivedDuration));
+                throw new BadRequestException(clientProblemBody("CLIENT_DURATION_OUT_OF_RANGE", {
+                    pointer: "/duration",
+                    code: "OUT_OF_RANGE",
+                    detail: clientDurationOutOfRangeMessage(lockedDerivedDuration),
+                    location: "body",
+                }));
             }
             if (
                 lockedHasDateUpdate
@@ -1756,7 +1777,12 @@ export class ClientService {
                 && params.duration !== undefined
                 && params.duration !== null
             ) {
-                throw new BadRequestException(CLIENT_DURATION_NEEDS_SERVICE_PERIOD_MESSAGE);
+                throw new BadRequestException(clientProblemBody("CLIENT_DURATION_NEEDS_SERVICE_PERIOD", {
+                    pointer: "/duration",
+                    code: "REQUIRED",
+                    detail: CLIENT_DURATION_NEEDS_SERVICE_PERIOD_MESSAGE,
+                    location: "body",
+                }));
             }
             const duration = params.duration !== undefined
                 ? params.duration
