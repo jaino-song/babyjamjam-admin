@@ -723,12 +723,22 @@ main[data-slot="main-content"]:has([data-slot="dashboard-page"]) > [data-slot="d
   visibility: hidden;
 }
 .filter-pill-skeleton-count {
+  /* Both states reserve the same 2-digit slot so the placeholder ("00") and a
+     loaded 1-digit count produce identical pill widths; the pills do not
+     slide horizontally when the data lands. `border-box` sizing means the
+     12px horizontal padding has to be added to the 2ch digit slot. */
+  min-width: calc(2ch + 12px);
+  text-align: center;
   padding: 1px 6px;
   border-radius: 999px;
   font-size: 0.62rem;
   font-weight: 800;
 }
 .filter-pill .count {
+  /* Same slot as `.filter-pill-skeleton-count`: changing this introduces a
+     horizontal jump between the loading and loaded pill rows. */
+  min-width: calc(2ch + 12px);
+  text-align: center;
   background: rgba(0, 0, 0, 0.08);
   padding: 1px 6px;
   border-radius: 999px;
