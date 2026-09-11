@@ -449,3 +449,11 @@ TL;DR: 남은 고객 실패 조건 3종(중복 연락처 409, 연결 데이터�
 - 3.1b-2 필수 추가 발견: 웹/모바일 계약 폼의 409 중복 분기가 `clientId`가 아니라 `code === "CLIENT_PHONE_ALREADY_REGISTERED"`로 동작하려면, 공유 `getClientConflictPayload` 경로가 `code`를 버리는 문제(`frontend/src/app/api/clients/route.ts`, `mobile/.../clients/route.ts`, `packages/shared/src/errors/api-error-message.ts`)를 함께 처리해야 한다(문제 본문 passthrough로 자연 해결되는지 검증 포함).
 - 기록: inventory `problem-details.ts` public_codes 2개 추가, `vendor_parity` 갱신(자동 전환 관찰 포함). unit worktree/branch 정리.
 
+**Task 3.1b-2 실행 결과 (2026-09-11):** worker unit `1250c28dd` → 통합 `03646f8d5`(15 files, +695/−68 — 제품 코드 약 90줄, 나머지는 지시된 테스트 매트릭스라 450줄 가이드를 초과 보고). backend 전체 354 suites/5,020 passed/44 skipped/0 failed, frontend 231/1,473, mobile 232/1,499, 타입 검사 통과. auditor FINAL **SHIP/HIGH**(base `48d7a73d6`).
+- 전환: 중복 연락처 3곳 → `CLIENT_PHONE_ALREADY_REGISTERED`(+`/phone` errors, `clientId` 페이로드 제거, 서버 reuse 분기 불변), 삭제 제한 2곳 → `CLIENT_RETENTION_BLOCKED`에 outcome/recovery 보강(상수·웹 BFF allowlist 유지), 열거한 404 2곳 + delete usecase 2곳 → `RESOURCE_NOT_FOUND`/NOT_APPLIED(id 노출 제거). 웹·모바일 계약 폼은 `code`로 중복 식별(구버전 `clientId` fallback 유지).
+- worker 발견: `sendProblemResponse`가 legacy `message` 별칭을 내보내므로 기존 `getClientConflictPayload` 브리지가 problem 본문을 가로채 `code`를 버렸다. 두 BFF 라우트에 좁은 게이트를 추가해 problem `code` 보유 페이로드는 계약 보존 passthrough로 보냈다(구형 본문은 기존 브리지 유지). audit이 소비자 전수 확인 후 blocking 없음으로 판정.
+- **deferred 404 목록(명시 기록):** `client.service.ts`의 나머지 client-target NotFound 8곳(~L1940/1943/1953/2005/2101/2192/2237/2250: update 트랜잭션·최종 재조회, terminateService, requestReplacement ×3, completeReplacement precheck)과 `update-client.usecase.ts:53`. 현재는 Nest 기본 404 + `(id: N)` 노출이며 Task 3.1 종료 전 추적 잔여다.
+- carried nonblocking(auditor): (N1) 웹 BFF의 legacy P2002 shape 변경에 대한 전용 라우트 테스트 부재(모바일은 있음), (N2) 모바일 `hasPrismaErrorCode` 분기 도달 불가(무해), (N3) `hasUpstreamProblemCode` 헬퍼 중복(공유화 제안), (N4) retention 경계 테스트 ko만, (N5) 본 기록으로 해소.
+- 환경 교훈(재확인): vendor 변경(3.1b-1) 머지 후 통합 worktree에서 `pnpm install`로 `file:` 의존 복사본을 갱신하지 않으면 spec 로드가 실패한다.
+- Task 3.1 진행 상태: 3.1a(사전 검증), 3.1b(중복·삭제 제한·열거 404) 완료. deferred 404·BFF 로컬 라우트·잔여 legacy는 후속 단위다. EM 규격 매핑은 계속 pending.
+
