@@ -457,3 +457,5 @@ TL;DR: 남은 고객 실패 조건 3종(중복 연락처 409, 연결 데이터�
 - 환경 교훈(재확인): vendor 변경(3.1b-1) 머지 후 통합 worktree에서 `pnpm install`로 `file:` 의존 복사본을 갱신하지 않으면 spec 로드가 실패한다.
 - Task 3.1 진행 상태: 3.1a(사전 검증), 3.1b(중복·삭제 제한·열거 404) 완료. deferred 404·BFF 로컬 라우트·잔여 legacy는 후속 단위다. EM 규격 매핑은 계속 pending.
 
+**3.1b-2 마감 보정 (2026-09-11):** Mobile CI가 UI architecture gate에서 실패해(모바일 계약 폼 변경으로 기존 위반 앵커가 이동, 21 growth/21 shrink, net 0) `ui-debt-baseline.json`을 재앵커링했다(`0aeba3c3e`, 92 groups/822 records 수량 보존). 이어 Shared Contracts CI가 기존 flaky 테스트(`route-utils.test.ts`의 body-leak 단언이 random requestId에 "42"가 포함되면 실패)로 실패해, requestId를 제외한 뒤 단언하도록 결정적으로 수정했다(`3bbde7fb5`; shared 280 jest + 76 node green). 최종 SHA `3bbde7fb5`에서 **전 워크플로 success**, PR #657은 `MERGEABLE/CLEAN`이다.
+
