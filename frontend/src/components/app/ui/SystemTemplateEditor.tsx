@@ -32,7 +32,6 @@ import { getActiveBranchId } from '@/features/system-templates/branch-context';
 import { extractVariables } from '@/lib/template/variable-parser';
 import type { TemplateVariable } from '@/lib/template/types';
 import { MAX_BODY_LENGTH } from '@/lib/message/byte-length';
-import { getApiErrorMessage } from '@babyjamjam/shared';
 
 const CONTENT_PLACEHOLDER =
   '템플릿 내용을 입력하세요. 변수는 {{변수명}} 형식으로 사용합니다.';

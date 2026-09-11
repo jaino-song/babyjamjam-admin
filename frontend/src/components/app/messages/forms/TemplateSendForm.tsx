@@ -729,11 +729,13 @@ export function TemplateSendForm({
       return;
     }
     if (rejectBranchContextChange()) {
+      submissionGuardRef.current = "idle";
       setDuplicateSendCandidates(null);
       return;
     }
 
     if (!templateReady) {
+      submissionGuardRef.current = "idle";
       setDuplicateSendCandidates(null);
       setFeedback({
         tone: "error",
