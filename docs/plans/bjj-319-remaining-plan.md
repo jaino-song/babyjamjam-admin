@@ -413,3 +413,19 @@ TL;DR: 공개 계약은 detail/field-error 문구를 카탈로그 정적 문구�
 - 기록: inventory `verified_findings`에 `client-presend-validation-contract`(partial scope 명시) 추가, 관련 owner 3행 evidence 갱신. clean unit worktree/branch 정리.
 - 제외·잔여: 중복 연락처(3.1b), 수정 충돌·삭제 제한, update 404, 자동 등록 409, BFF/UI는 다음 단위다.
 
+## dev 동기화 병합 실행 결과 (2026-09-11)
+
+TL;DR: dev가 전진해 PR #657이 CONFLICTING이 되면서 pull_request CI 실행이 멈췄다. dev(스켈레톤·영수증 서명 게이트 등)를 병합해 충돌 5개를 해소하고, dev의 브랜치 컨텍스트 가드와 우리 오류 처리 안전장치를 결합했으며, 최종 SHA에서 전 워크플로가 green이다.
+
+- 배경: GitHub Actions의 pull_request 실행은 병합 가능한 head에만 생성되므로, 충돌 상태는 "CI 없음"으로 나타난다. 병합으로 해소했다.
+- dev 병합 `d28b43651`(first parent `322e01374`, second parent dev `a4730c192`), 충돌 해소:
+  - `TemplateSendForm.tsx`: 우리 SMS outcome 잠금/수락 수신자 제외/모드별 sending/스냅샷 + dev의 `capturedBranchId`·`rejectBranchContextChange`·`templateReady`/`branchContextReady` 게이트 결합, `sendSms`에 `expectedBranchId` 전달.
+  - `services/api.ts`: 원본 Axios/problem 오류 보존(plain Error 래핑 제거) + `expectedBranchId` 지원.
+  - `receipt-link.ts`(웹·모바일 동형): dev가 제거한 만료 키(`missing_end_date`/`service_period_expired`) 삭제, `contract_not_signed` 유지, 기존 전환 문구 유지.
+  - `SystemTemplateEditor.tsx`: dev의 forwardRef 구조 + 우리 전환 오류 문구. `ui-debt-baseline.json`은 gate 재앵커링(92 groups/822 records 수량 보존).
+  - dev가 추가한 BFF 테스트 2건은 전환된 안전 한국어 응답(상태·코드 보존)에 맞춰 갱신.
+- 검증: frontend 229 suites/1,468, mobile 232 suites/1,495, backend 타입·대상 suites, UI gate exit 0. backend 전체의 2 실패는 ① `eformsign-document-job.controller`(병렬 flake, 단독 통과) ② `receipt-pdf-verifier` pdfjs 추출 케이스(dev worktree `a4730c192`에서도 동일 실패 = 로컬 환경 한정; CI rasterizer 단계 통과)로 판정했다.
+- CI: `d28b43651`에서 Backend CI만 `agent-manifest.json` digest stale로 실패 → `5eb65c4a3`에서 생성기로 재생성(2줄). 이후 `b313c25fe`에서 전 워크플로 success(Backend/Frontend/Mobile/Mobile Unit/Full Flow/Shared Contracts/Auth Lifecycle/Security Review/AI capability impact).
+- 감사: dev-sync merge auditor **SHIP/HIGH at `5eb65c4a3`**(base `322e01374`/dev `a4730c192`), nonblocking 2건. `submissionGuardRef` 미해제(브랜치/템플릿 거절 경로)는 `b313c25fe`에서 보정(guard reset 2곳 + dead import 제거) 후 fresh correction audit **SHIP/HIGH**. 복구 회귀 테스트 부재는 carried nonblocking으로 기록한다.
+- 참고: Phase 3a-2의 구현 SHA `282065ab3`는 이 병합 이전 커밋이며, 병합 이후의 최종 검증 기준은 `b313c25fe`다. dev 병합·배포·실제 발송은 여전히 별도 승인이다.
+
