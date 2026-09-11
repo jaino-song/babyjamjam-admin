@@ -1764,7 +1764,12 @@ export class ClientService {
                 params.allowBusinessDayMismatch,
             );
             if (lockedHasDateUpdate && params.duration === null && lockedDerivedDuration !== null) {
-                throw new BadRequestException(clientDurationOutOfRangeMessage(lockedDerivedDuration));
+                throw new BadRequestException(clientProblemBody("CLIENT_DURATION_OUT_OF_RANGE", {
+                    pointer: "/duration",
+                    code: "OUT_OF_RANGE",
+                    detail: clientDurationOutOfRangeMessage(lockedDerivedDuration),
+                    location: "body",
+                }));
             }
             if (
                 lockedHasDateUpdate
@@ -1772,7 +1777,12 @@ export class ClientService {
                 && params.duration !== undefined
                 && params.duration !== null
             ) {
-                throw new BadRequestException(CLIENT_DURATION_NEEDS_SERVICE_PERIOD_MESSAGE);
+                throw new BadRequestException(clientProblemBody("CLIENT_DURATION_NEEDS_SERVICE_PERIOD", {
+                    pointer: "/duration",
+                    code: "REQUIRED",
+                    detail: CLIENT_DURATION_NEEDS_SERVICE_PERIOD_MESSAGE,
+                    location: "body",
+                }));
             }
             const duration = params.duration !== undefined
                 ? params.duration
