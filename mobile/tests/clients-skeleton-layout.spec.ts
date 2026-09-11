@@ -6,6 +6,7 @@ const BODY = "mobile_clients_detail-sheet_stack_list-page_content_list-card_body
 const SKELETON_ROW = `[data-component="${BODY}_rows-skeleton_row"]`;
 const LOADED_ROW = `[data-component="${BODY}_section_row"]`;
 const ROW = `[data-component="${BODY}"] .list-item`;
+const FILTER_PILL = '[data-component="mobile_clients_detail-sheet_stack_list-page_content_list-card_filters"] button';
 
 const CLIENTS = Array.from({ length: 6 }, (_, i) => ({
   id: i + 1,
@@ -61,6 +62,18 @@ async function measureRows(page: Page) {
   }, ROW);
 }
 
+async function measureFilterPills(page: Page) {
+  await settle(page);
+  return page.evaluate((selector) => {
+    return Array.from(document.querySelectorAll(selector))
+      .slice(0, 4)
+      .map((pill) => {
+        const rect = pill.getBoundingClientRect();
+        return { x: Math.round(rect.x), width: Math.round(rect.width) };
+      });
+  }, FILTER_PILL);
+}
+
 test.describe("Mobile client list skeleton geometry", () => {
   test.use({ viewport: { width: 390, height: 844 } });
 
@@ -99,6 +112,7 @@ test.describe("Mobile client list skeleton geometry", () => {
 
     const skeletonRows = await measureRows(page);
     expect(skeletonRows).toHaveLength(3);
+    const skeletonPills = await measureFilterPills(page);
 
     releaseClients();
 
@@ -107,6 +121,7 @@ test.describe("Mobile client list skeleton geometry", () => {
 
     const loadedRows = await measureRows(page);
     expect(loadedRows).toHaveLength(3);
+    const loadedPills = await measureFilterPills(page);
 
     // Each row keeps its exact line: a 2px pitch drift accumulates into a
     // visible jump by the bottom of the viewport.
@@ -118,6 +133,21 @@ test.describe("Mobile client list skeleton geometry", () => {
       expect(
         Math.abs(loadedRows[index].height - skeletonRows[index].height),
         `row ${index} height`,
+      ).toBeLessThanOrEqual(1);
+    }
+
+    // The filter pills reserve the same 2-digit count slot while loading, so a
+    // single-digit loaded count must not slide the pill row horizontally.
+    expect(skeletonPills.length).toBeGreaterThan(0);
+    expect(loadedPills).toHaveLength(skeletonPills.length);
+    for (let index = 0; index < skeletonPills.length; index += 1) {
+      expect(
+        Math.abs(loadedPills[index].x - skeletonPills[index].x),
+        `pill ${index} x`,
+      ).toBeLessThanOrEqual(1);
+      expect(
+        Math.abs(loadedPills[index].width - skeletonPills[index].width),
+        `pill ${index} width`,
       ).toBeLessThanOrEqual(1);
     }
   });

@@ -33,6 +33,9 @@ async function rowRects(page: Page, selector: string, count = 2) {
 }
 
 function expectSameHeight(loading: Array<{ y: number; height: number }>, loaded: Array<{ y: number; height: number }>) {
+  // Guards against a vacuous pass if a selector stops matching: an empty pair
+  // would satisfy the length equality below without measuring anything.
+  expect(loading.length).toBeGreaterThan(0);
   expect(loaded).toHaveLength(loading.length);
   for (let index = 0; index < loading.length; index += 1) {
     expect(
