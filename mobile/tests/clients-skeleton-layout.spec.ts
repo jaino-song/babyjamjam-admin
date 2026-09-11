@@ -138,6 +138,7 @@ test.describe("Mobile client list skeleton geometry", () => {
 
     // The filter pills reserve the same 2-digit count slot while loading, so a
     // single-digit loaded count must not slide the pill row horizontally.
+    expect(skeletonPills.length).toBeGreaterThan(0);
     expect(loadedPills).toHaveLength(skeletonPills.length);
     for (let index = 0; index < skeletonPills.length; index += 1) {
       expect(
