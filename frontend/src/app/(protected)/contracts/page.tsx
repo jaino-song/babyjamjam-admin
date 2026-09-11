@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { EformsignDocClientSummary } from "@babyjamjam/shared/types/eformsign";
+import { isContractReceiptSendable } from "@babyjamjam/shared/constants/eformsign-doc-status";
 import dynamic from "next/dynamic";
 import { useRouter, useSearchParams } from "next/navigation";
 import { formatClientBirthdayAsYYMMDD } from "@/lib/date/format-client-birthday";
@@ -2330,8 +2331,17 @@ export function ContractDetail({
         // 영수증 문자 발송 is a maternity-contract action ("서비스 종료 안내" — the
         // contract's receipt link). ContractDetail is also instantiated for the
         // 제공기록지 preview surface (reviewAction="preview"), which must not offer it.
+        // A document the customer has not signed yet must not offer it either — the
+        // backend rejects such sends with contract_not_signed, so hide the button
+        // instead of surfacing the error (shared isContractReceiptSendable rule).
         onSendReceiptLink={
-          reviewAction === "preview"
+          reviewAction === "preview" ||
+          !isContractReceiptSendable({
+            displayStatus: detailedDocument.display_status,
+            category,
+            currentStatus: detailedDocument.current_status,
+            contractEndDate: detailedDocument.contract_end_date,
+          })
             ? undefined
             : () =>
                 setReceiptSendTarget({

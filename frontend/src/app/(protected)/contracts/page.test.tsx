@@ -76,6 +76,27 @@ describe("ContractsPage headless finalization fallback", () => {
   });
 });
 
+function pendingDetailDocumentFixture(): EformsignDocument {
+  // status_type "060" (customer signature step: step_type "05", step_name "이용자")
+  // — the customer has NOT signed yet, so the receipt-send gate must withhold
+  // the button (backend would reject the send with contract_not_signed).
+  return {
+    ...receiptDetailDocumentFixture(),
+    current_status: {
+      status_type: "060",
+      status_doc_type: "",
+      status_doc_detail: "",
+      step_type: "05",
+      step_index: "1",
+      step_name: "이용자",
+      step_recipients: [],
+      step_group: 0,
+      expired_date: 0,
+      _expired: false,
+    },
+  } as unknown as EformsignDocument;
+}
+
 // ---------------------------------------------------------------------------
 // F2: behavioral coverage of the manual receipt-send interaction (trigger ->
 // confirm dialog -> mutation), rendering ContractDetail directly rather than
@@ -307,6 +328,27 @@ describe("ContractDetail manual receipt-send interaction", () => {
     render(
       <QueryClientProvider client={queryClient}>
         <ContractDetail data-component="desktop_contracts_detail" document={doc} reviewAction="preview" />
+      </QueryClientProvider>,
+    );
+
+    fireEvent.click(await screen.findByRole("button", { name: "문서 보기" }));
+    await screen.findByTestId("pdf-document");
+
+    expect(screen.queryByRole("button", { name: "영수증 문자 발송" })).toBeNull();
+  });
+
+  // Signed gate: the receipt-send button must be withheld while the document is
+  // still awaiting the customer's signature (status 060, 이용자 step) — the backend
+  // rejects such sends with contract_not_signed. The completed (003) fixtures
+  // above pin the button's presence once the document is signed/completed.
+  it("does not offer the receipt-send button while the customer has not signed yet (status 060)", async () => {
+    jest.spyOn(eformsignApi, "getDocument").mockResolvedValue(pendingDetailDocumentFixture() as never);
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const doc = pendingDetailDocumentFixture();
+
+    render(
+      <QueryClientProvider client={queryClient}>
+        <ContractDetail data-component="desktop_contracts_detail" document={doc} />
       </QueryClientProvider>,
     );
 

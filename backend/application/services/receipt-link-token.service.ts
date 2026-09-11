@@ -23,7 +23,6 @@ export interface IssueReceiptLinkTokenParams {
     /** 산모 생년월일 — 6자리(YYMMDD) 또는 8자리(YYYYMMDD). normalizeBirthdayInput으로 정규화 후 해시된다;
      *  정규화에 실패하면 issue()가 던진다. */
     birthday: string;
-    serviceEndDate: Date;
     storagePath: string;
     contentSha256: string;
     byteSize: number;
@@ -131,8 +130,9 @@ export class ReceiptLinkTokenService {
         const linkToken = `efr_${createHmac("sha256", this.requireSalt())
             .update(JSON.stringify(["receipt-contract-link:v1", params.branchId, params.clientId, params.eformsignDocId]))
             .digest("base64url")}`;
-        const expiresAt = getReceiptLinkExpiresAt(params.serviceEndDate);
-        if (expiresAt <= now) throw new Error("Receipt link has expired for this service period");
+        // Link validity runs from the send/issue moment, not from the contract's
+        // endDate — matching the copy shown to the client ("링크는 30일간 유효하며").
+        const expiresAt = getReceiptLinkExpiresAt(now);
 
         const row = await issuanceRepository.createOrRefreshContractLink(
             {
@@ -152,11 +152,12 @@ export class ReceiptLinkTokenService {
             },
             now,
             (client) => {
+                // Re-hash the birthday from the latest profile while its row is
+                // locked; expiry no longer derives from the contract's endDate,
+                // so every refresh simply extends to the newest now + 30 days.
                 const latestBirthday = normalizeBirthdayInput(client.birthday ?? "");
-                if (!latestBirthday || !client.endDate) throw new Error("Receipt client profile is incomplete");
-                const latestExpiry = getReceiptLinkExpiresAt(client.endDate);
-                if (latestExpiry <= new Date()) throw new Error("Receipt link has expired for this service period");
-                return { expectedBirthdayHash: this.hashBirthday(latestBirthday), expiresAt: latestExpiry };
+                if (!latestBirthday) throw new Error("Receipt client profile is incomplete");
+                return { expectedBirthdayHash: this.hashBirthday(latestBirthday), expiresAt };
             },
         );
 
