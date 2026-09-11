@@ -1,4 +1,4 @@
-import { getReceiptLinkExpiresAt, RECEIPT_LINK_GRACE_DAYS } from "domain/constants/receipt-link-expiry";
+import { getReceiptLinkExpiresAt, RECEIPT_LINK_VALIDITY_DAYS } from "domain/constants/receipt-link-expiry";
 import { createHash } from "node:crypto";
 import {
     ReceiptLinkTokenService,
@@ -150,9 +150,9 @@ class FakeReceiptLinkTokenRepository implements IReceiptLinkTokenRepository {
 }
 
 const config = { get: (key: string, fallback?: string) => (key === "RECEIPT_LINK_HASH_SALT" ? "test-salt" : fallback) };
-const SERVICE_END = new Date("2026-09-10T00:00:00Z");
-const EXPIRES = new Date("2026-09-24T15:00:00Z");
 const NOW = new Date("2026-09-03T09:00:00+09:00");
+// Link validity is send-time based: issuance (NOW) + 30 days.
+const EXPIRES = new Date(NOW.getTime() + 30 * 24 * 60 * 60 * 1000);
 
 function makeService() {
     const repository = new FakeReceiptLinkTokenRepository();
@@ -167,7 +167,6 @@ async function issue(service: ReceiptLinkTokenService, overrides: Partial<Parame
         eformsignDocId: 42,
         jobId: "job-1",
         birthday: "940315",
-        serviceEndDate: SERVICE_END,
         storagePath: "receipts/b/42/abc.png",
         contentSha256: "a".repeat(64),
         byteSize: 1000,
@@ -193,8 +192,8 @@ describe("ReceiptLinkTokenService", () => {
     // values would pass every other test in this file silently.
     it("pins the failed-attempt limit, link TTL and lock duration to their contracted literal values", () => {
         expect(RECEIPT_LINK_MAX_FAILED_ATTEMPTS).toBe(5);
-        expect(RECEIPT_LINK_GRACE_DAYS).toBe(14);
-        expect(getReceiptLinkExpiresAt(SERVICE_END)).toEqual(EXPIRES);
+        expect(RECEIPT_LINK_VALIDITY_DAYS).toBe(30);
+        expect(getReceiptLinkExpiresAt(new Date("2026-09-03T09:00:00+09:00"))).toEqual(new Date("2026-10-03T09:00:00+09:00"));
         expect(RECEIPT_LINK_LOCK_MS).toBe(30 * 60 * 1000);
     });
 
@@ -212,7 +211,6 @@ describe("ReceiptLinkTokenService", () => {
             eformsignDocId: 42,
             jobId: "job-locked",
             birthday: "940315",
-        serviceEndDate: SERVICE_END,
             storagePath: "receipts/b/42/tx.png",
             contentSha256: "b".repeat(64),
             byteSize: 1000,
@@ -242,15 +240,21 @@ describe("ReceiptLinkTokenService", () => {
         expect((await issue(a, { branchId: "22222222-2222-2222-2222-222222222222" })).linkToken).not.toBe(first.linkToken);
     });
 
-    it("retains the URL after a service-date change and expires at midnight after the fourteenth KST day", async () => {
+    it("reissues the same URL and extends expiry to the latest issuance + 30 days", async () => {
         const { service } = makeService();
         const first = await issue(service);
-        const second = await issue(service, { serviceEndDate: new Date("2026-09-12T00:00:00Z") });
+        // A later dispatch refreshes the same contract: the URL stays stable and
+        // the validity window restarts from the newest issuance moment.
+        const later = new Date("2026-09-12T00:00:00Z");
+        const second = await issue(service, { now: later });
         expect(second.linkToken).toBe(first.linkToken);
-        expect(second.expiresAt.toISOString()).toBe("2026-09-26T15:00:00.000Z");
-        expect(await service.getStatus(first.linkToken, new Date("2026-09-26T14:59:59.999Z"))).toMatchObject({ ok: true });
+        expect(second.expiresAt.toISOString()).toBe("2026-10-12T00:00:00.000Z");
+        expect(await service.getStatus(first.linkToken, new Date("2026-10-11T23:59:59.999Z"))).toMatchObject({ ok: true });
         expect(await service.getStatus(first.linkToken, second.expiresAt)).toEqual({ ok: false, reason: "expired" });
-        await expect(issue(service, { now: EXPIRES })).rejects.toThrow("expired");
+        // A future issuance moment is fine — validity always runs forward from it.
+        const future = new Date("2027-01-01T00:00:00Z");
+        const refresh = await issue(service, { now: future });
+        expect(refresh.expiresAt.toISOString()).toBe("2027-01-31T00:00:00.000Z");
     });
 
     // M1: issue() accepts a jobId and the repository must be able to look the row back up by
@@ -262,7 +266,7 @@ describe("ReceiptLinkTokenService", () => {
         expect(await repository.findActiveByJobId("job-9")).not.toBeNull();
     });
 
-    it("reuses one contract token across jobs, stores only hashes and expires after service end plus 14 days", async () => {
+    it("reuses one contract token across jobs, stores only hashes, and expires 30 days after issuance", async () => {
         const { repository, service } = makeService();
         const first = await issue(service);
         const second = await issue(service, { jobId: "job-2" });
@@ -616,8 +620,8 @@ describe("ReceiptLinkTokenService", () => {
 
     it("collects expired tokens and only the storage paths no live token still references", async () => {
         const { repository, service } = makeService();
-        await issue(service, { eformsignDocId: 1, storagePath: "receipts/b/1/old.png", serviceEndDate: new Date("2026-07-01T00:00:00Z"), now: new Date("2026-07-01T00:00:00Z") });
-        await issue(service, { eformsignDocId: 2, storagePath: "receipts/b/2/shared.png", serviceEndDate: new Date("2026-07-01T00:00:00Z"), now: new Date("2026-07-01T00:00:00Z") });
+        await issue(service, { eformsignDocId: 1, storagePath: "receipts/b/1/old.png", now: new Date("2026-07-01T00:00:00Z") });
+        await issue(service, { eformsignDocId: 2, storagePath: "receipts/b/2/shared.png", now: new Date("2026-07-01T00:00:00Z") });
         await issue(service, { eformsignDocId: 3, storagePath: "receipts/b/2/shared.png", now: NOW });
 
         const cutoff = new Date(NOW.getTime() - 24 * 60 * 60 * 1000);

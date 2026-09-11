@@ -2,7 +2,7 @@
 
 import { isAxiosError } from "axios";
 import { useQueryClient } from "@tanstack/react-query";
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Calendar, Loader2, Send, X } from "lucide-react";
 
 import { ClientAutocomplete } from "@/components/app/clients/ClientAutocomplete";
@@ -26,11 +26,12 @@ import {
   getLmsTitle,
   getTextByteLength,
   MAX_BODY_LENGTH,
-  MAX_LMS_TITLE_BYTES,
   SMS_BYTE_LIMIT,
 } from "@/lib/message/byte-length";
 import { cn } from "@/lib/utils";
 import { useFormStore } from "@/stores/form-store";
+import { syncMessageDraftScope } from "@/stores/message-draft-scope";
+import { useActiveBranchId, isBranchContextAligned } from "@/features/system-templates/branch-context";
 import { describeReceiptLinkError } from "@/lib/receipt-link";
 import { ContactInput } from "./form-components/ContactInput";
 import { TemplateFieldGrid, TemplateFieldGridItem } from "./form-components/TemplateFieldGrid";
@@ -84,6 +85,10 @@ interface TemplateSendFormProps {
   serviceRecordLinkPreparation?: ServiceRecordLinkPreparation | null;
   receiptLinkPreparation?: ReceiptLinkPreparation | null;
   onSubmitStateChange?: (state: TemplateSendFormSubmitState | null) => void;
+  /** Branch identity captured by the page for draft partitioning and send fencing. */
+  branchId?: string | null;
+  /** Branch-effective system template must be available before sending. */
+  templateReady?: boolean;
 }
 
 function getClientDurationInDays(client: Client) {
@@ -193,9 +198,17 @@ export function TemplateSendForm({
   serviceRecordLinkPreparation,
   receiptLinkPreparation,
   onSubmitStateChange,
+  branchId,
+  templateReady = true,
 }: TemplateSendFormProps) {
   const queryClient = useQueryClient();
   const { toast } = useToast();
+  const activeBranchId = useActiveBranchId();
+  const resolvedBranchId = branchId === undefined ? activeBranchId : branchId;
+  const capturedBranchIdRef = useRef<string | null>(resolvedBranchId);
+  const capturedBranchId = capturedBranchIdRef.current;
+  const draftScopeRef = useRef<string | null | undefined>(undefined);
+  const [isDraftScopeReady, setIsDraftScopeReady] = useState(false);
   const [selectedClientId, setSelectedClientId] = useState<number | null>(null);
   const [isSending, setIsSending] = useState(false);
   const [isCheckingDuplicate, setIsCheckingDuplicate] = useState(false);
@@ -231,6 +244,29 @@ export function TemplateSendForm({
     resetClientFields,
     resetEmployeeFields,
   } = useFormStore();
+
+  const branchContextReady = Boolean(
+    isDraftScopeReady
+    && draftScopeRef.current === resolvedBranchId
+    && capturedBranchId === resolvedBranchId
+    && capturedBranchId
+    && isBranchContextAligned(capturedBranchId),
+  );
+
+  useEffect(() => {
+    syncMessageDraftScope(resolvedBranchId);
+    if (draftScopeRef.current === resolvedBranchId) {
+      setIsDraftScopeReady(true);
+      return;
+    }
+
+    draftScopeRef.current = resolvedBranchId;
+    setIsDraftScopeReady(true);
+    setSelectedClientId(null);
+    setFeedback(null);
+    setDuplicateSendCandidates(null);
+    setRecipientQueue([]);
+  }, [resolvedBranchId]);
 
   const isServiceRecordLinkDelivery = deliveryMode === "service-feedback-link";
   const isReceiptLinkDelivery = deliveryMode === "receipt-link";
@@ -292,8 +328,11 @@ export function TemplateSendForm({
     : isBodyTooLong
       ? `본문은 최대 ${MAX_BODY_LENGTH}자까지 입력할 수 있어요`
       : null;
+  const templateValidationMessage = !templateReady
+    ? "지점 기본 템플릿을 불러오는 중이라 발송할 수 없습니다."
+    : null;
   const currentQueueItem = useMemo<RecipientQueueItem | null>(() => {
-    if (isPreparedLinkDelivery) return null;
+    if (isPreparedLinkDelivery || !templateReady || !branchContextReady) return null;
 
     if (recipientValidationMessage || templateFieldValidationMessage || messageValidationMessage) {
       return null;
@@ -310,23 +349,30 @@ export function TemplateSendForm({
   }, [
     formattedRecipientPhone,
     isPreparedLinkDelivery,
+    branchContextReady,
     messageValidationMessage,
     recipientName,
     recipientPhone,
     recipientValidationMessage,
     selectedClientId,
     templateFieldValidationMessage,
+    templateReady,
     trimmedMessage,
   ]);
   const hasQueuedRecipients = recipientQueue.length > 0;
-  const validationMessage = isServiceRecordLinkDelivery
-    ? serviceRecordValidationMessage
-    : isReceiptLinkDelivery
-      ? receiptLinkValidationMessage
-    : hasQueuedRecipients
-      ? null
-      : recipientValidationMessage ?? templateFieldValidationMessage ?? messageValidationMessage;
-  const isSubmitDisabled = Boolean(validationMessage)
+  const validationMessage = templateValidationMessage
+    ?? (!branchContextReady
+      ? "지점이 변경되어 발송할 수 없습니다. 현재 지점에서 수신자를 다시 입력해 주세요."
+      : isServiceRecordLinkDelivery
+        ? serviceRecordValidationMessage
+        : isReceiptLinkDelivery
+          ? receiptLinkValidationMessage
+        : hasQueuedRecipients
+          ? null
+          : recipientValidationMessage ?? templateFieldValidationMessage ?? messageValidationMessage);
+  const isSubmitDisabled = !branchContextReady
+    || !templateReady
+    || Boolean(validationMessage)
     || (isServiceRecordLinkDelivery && !serviceRecordLinkPreparation)
     || (isReceiptLinkDelivery && !receiptLinkPreparation)
     || isSending
@@ -488,7 +534,41 @@ export function TemplateSendForm({
     return [];
   };
 
+  const getBranchContextError = () => {
+    if (!capturedBranchIdRef.current) {
+      return "지점을 선택한 뒤 발송해 주세요.";
+    }
+
+    if (!isBranchContextAligned(capturedBranchIdRef.current)) {
+      return "지점이 변경되어 발송을 취소했어요. 현재 지점에서 수신자를 다시 입력해 주세요.";
+    }
+
+    return null;
+  };
+
+  const rejectBranchContextChange = () => {
+    const errorMessage = getBranchContextError();
+    if (!errorMessage) return false;
+
+    setFeedback({ tone: "error", message: errorMessage });
+    return true;
+  };
+
   const sendMessages = async (recipients: RecipientQueueItem[]) => {
+    if (rejectBranchContextChange()) {
+      setDuplicateSendCandidates(null);
+      return;
+    }
+
+    if (!templateReady) {
+      setDuplicateSendCandidates(null);
+      setFeedback({
+        tone: "error",
+        message: templateValidationMessage ?? "지점 기본 템플릿을 불러오는 중이라 발송할 수 없습니다.",
+      });
+      return;
+    }
+
     if (recipients.length === 0 || validationMessage) {
       setFeedback({ tone: "error", message: validationMessage ?? "발송할 수신자 정보를 입력해 주세요." });
       return;
@@ -508,7 +588,7 @@ export function TemplateSendForm({
           ...(recipient.clientId ? { clientId: recipient.clientId } : {}),
           ...(requiresRecipientName && recipient.name ? { recipientName: recipient.name } : {}),
           ...(getTextByteLength(recipient.message) > SMS_BYTE_LIMIT ? { title: getLmsTitle(templateName) } : {}),
-        })
+        }, capturedBranchId ?? undefined)
       )),
     );
 
@@ -584,6 +664,10 @@ export function TemplateSendForm({
   };
 
   const sendServiceRecordLink = async () => {
+    if (rejectBranchContextChange() || !templateReady) {
+      return;
+    }
+
     if (clientId === null || employeeId === null || !serviceRecordLinkPreparation) {
       const errorMessage =
         serviceRecordValidationMessage ??
@@ -632,6 +716,10 @@ export function TemplateSendForm({
   };
 
   const sendReceiptLink = async () => {
+    if (rejectBranchContextChange() || !templateReady) {
+      return;
+    }
+
     if (clientId === null || !receiptLinkPreparation) {
       const errorMessage =
         receiptLinkValidationMessage
@@ -666,6 +754,8 @@ export function TemplateSendForm({
 
   const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
+
+    if (rejectBranchContextChange()) return;
 
     if (validationMessage) {
       setFeedback({ tone: "error", message: validationMessage });
@@ -735,44 +825,16 @@ export function TemplateSendForm({
         ) : null}
       </div>
 
-      {isPreparedLinkDelivery ? (
-        children ? <TemplateFieldGrid layout="stack">{children}</TemplateFieldGrid> : null
-      ) : shouldUseInlinePhoneRecipient ? (
-        <>
-          <div
-            data-component="desktop_messages_sections_template-send-form_phone-field"
-            className="min-w-0 w-full"
-          >
-            {templateId === "builtin:greeting" ? (
-              <ContactInput
-                phone={phone}
-                setPhone={handlePhoneChange}
-                label="휴대 전화번호"
-                placeholder="010-0000-0000"
-                required
-              />
-            ) : phoneAutocompleteField}
-          </div>
-          {children ? <TemplateFieldGrid layout="stack">{children}</TemplateFieldGrid> : null}
-        </>
-      ) : (
-        <TemplateFieldGrid layout="stack">
-          {requiresRecipientName ? (
-            <>
-              <TemplateFieldGridItem dataComponent="desktop_messages_sections_template-send-form_recipient-field">
-                <ClientAutocomplete
-                  data-component="desktop_messages_sections_template-send-form_recipient-field_autocomplete"
-                  value={selectedClientId}
-                  onChange={handleRecipientChange}
-                  label="산모님 성함"
-                  required
-                  placeholder="새로 입력 또는 기존 고객 선택"
-                  manualValue={name}
-                  onManualValueChange={handleManualRecipientNameChange}
-                />
-              </TemplateFieldGridItem>
-
-              <TemplateFieldGridItem dataComponent="desktop_messages_sections_template-send-form_phone-field">
+      {branchContextReady ? (
+        isPreparedLinkDelivery ? (
+          children ? <TemplateFieldGrid layout="stack">{children}</TemplateFieldGrid> : null
+        ) : shouldUseInlinePhoneRecipient ? (
+          <>
+            <div
+              data-component="desktop_messages_sections_template-send-form_phone-field"
+              className="min-w-0 w-full"
+            >
+              {templateId === "builtin:greeting" ? (
                 <ContactInput
                   phone={phone}
                   setPhone={handlePhoneChange}
@@ -780,19 +842,53 @@ export function TemplateSendForm({
                   placeholder="010-0000-0000"
                   required
                 />
-              </TemplateFieldGridItem>
-            </>
-          ) : (
-            <TemplateFieldGridItem dataComponent="desktop_messages_sections_template-send-form_phone-field">
-              {phoneAutocompleteField}
-            </TemplateFieldGridItem>
-          )}
+              ) : phoneAutocompleteField}
+            </div>
+            {children ? <TemplateFieldGrid layout="stack">{children}</TemplateFieldGrid> : null}
+          </>
+        ) : (
+          <TemplateFieldGrid layout="stack">
+            {requiresRecipientName ? (
+              <>
+                <TemplateFieldGridItem dataComponent="desktop_messages_sections_template-send-form_recipient-field">
+                  <ClientAutocomplete
+                    data-component="desktop_messages_sections_template-send-form_recipient-field_autocomplete"
+                    value={selectedClientId}
+                    onChange={handleRecipientChange}
+                    label="산모님 성함"
+                    required
+                    placeholder="새로 입력 또는 기존 고객 선택"
+                    manualValue={name}
+                    onManualValueChange={handleManualRecipientNameChange}
+                  />
+                </TemplateFieldGridItem>
 
-          {children}
-        </TemplateFieldGrid>
+                <TemplateFieldGridItem dataComponent="desktop_messages_sections_template-send-form_phone-field">
+                  <ContactInput
+                    phone={phone}
+                    setPhone={handlePhoneChange}
+                    label="휴대 전화번호"
+                    placeholder="010-0000-0000"
+                    required
+                  />
+                </TemplateFieldGridItem>
+              </>
+            ) : (
+              <TemplateFieldGridItem dataComponent="desktop_messages_sections_template-send-form_phone-field">
+                {phoneAutocompleteField}
+              </TemplateFieldGridItem>
+            )}
+
+            {children}
+          </TemplateFieldGrid>
+        )
+      ) : (
+        <StatusBadge variant="neutral" size="sm">
+          지점 정보를 확인하는 중이라 수신자 입력을 잠시 사용할 수 없습니다.
+        </StatusBadge>
       )}
 
-      {isPreparedLinkDelivery ? null : recipientPills}
+      {branchContextReady && !isPreparedLinkDelivery ? recipientPills : null}
 
       {feedback ? (
         <div

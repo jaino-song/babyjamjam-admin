@@ -19,6 +19,7 @@ import {
     SaveEformsignDocumentFileParams,
 } from "domain/repositories/eformsign-document-mirror.repository.interface";
 import { EformsignApiDocumentResponse } from "domain/repositories/eformsign.client.interface";
+import { normalizeEformsignStatusCode } from "domain/utils/eformsign-status-code";
 import { isPendingEformsignDocColumnError } from "infrastructure/database/eformsign-doc-compat";
 import { PrismaService } from "infrastructure/database/prisma.service";
 
@@ -99,14 +100,21 @@ implements IEformsignDocumentMirrorRepository {
             },
         });
         const row = document?.files[0];
-        const canReadReviewStageDocument = fileType === "document"
-            && isReviewStageDocumentPdfReadable(
-                (document?.detailPayload as EformsignApiDocumentResponse | null)
-                    ?.current_status?.status_type,
+        // Mirror getStoredFileMetadata's gate exactly: a document PDF whose body
+        // is already stored at the current version stays readable while status
+        // 060 (participant request) is still syncing its audit trail.
+        const normalizedStatus = normalizeEformsignStatusCode(
+            (document?.detailPayload as EformsignApiDocumentResponse | null)
+                ?.current_status?.status_type,
+        );
+        const canReadActivePartialDocument = fileType === "document"
+            && (
+                normalizedStatus === "060"
+                || isReviewStageDocumentPdfReadable(normalizedStatus)
             );
         if (!document?.detailPayload
             || !document.detailSourceUpdatedDate
-            || (document.syncStatus !== "ready" && !canReadReviewStageDocument)
+            || (document.syncStatus !== "ready" && !canReadActivePartialDocument)
             || Boolean(document.permanentPurgeRequestedAt)
             || !row
             || row.sourceUpdatedDate.getTime() !== document.detailSourceUpdatedDate.getTime()) {

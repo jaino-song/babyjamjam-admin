@@ -570,6 +570,28 @@ describe("NewMessagePage", () => {
     expect(screen.getByRole("button", { name: "즉시 발송" })).toBeDisabled();
   });
 
+  it("shows the section-nav skeleton and disables the send action while approval is loading", () => {
+    mockUseMessagesPermissionGuard.mockReturnValue({
+      isLoading: true,
+      needsSenderApproval: false,
+    });
+
+    const { container } = renderPage();
+
+    // The section nav renders placeholder pills (real labels kept for width,
+    // hidden from the a11y tree) instead of interactive sections.
+    expect(
+      container.querySelectorAll(
+        '[data-component="mobile_messages_new_page_screen_form_section-nav_nav_item-skeleton"]',
+      ),
+    ).toHaveLength(5);
+    expect(screen.queryByRole("button", { name: "전송하기" })).not.toBeInTheDocument();
+
+    // The send action stays the real button (disabled). A skeleton here made
+    // the header taller and shifted the whole form once approval resolved.
+    expect(screen.getByRole("button", { name: "즉시 발송" })).toBeDisabled();
+  });
+
   it("does not show the draft save action", () => {
     renderPage();
 

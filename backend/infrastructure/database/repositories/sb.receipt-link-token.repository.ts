@@ -1,4 +1,3 @@
-import { getReceiptLinkExpiresAt, RECEIPT_LINK_GRACE_DAYS } from "domain/constants/receipt-link-expiry";
 import { randomBytes } from "node:crypto";
 import { Injectable } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
@@ -17,7 +16,7 @@ import {
     UpdateReceiptLinkTokenData,
 } from "domain/repositories/receipt-link-token.repository.interface";
 
-const INCLUDE_NAMES = { branch: { select: { name: true } }, client: { select: { name: true, endDate: true } } } as const;
+const INCLUDE_NAMES = { branch: { select: { name: true } }, client: { select: { name: true } } } as const;
 const JOB_ISSUANCE_LOCK_NAMESPACE = "babyjamjam:receipt-link-job-issuance:v1";
 const RECEIPT_REVISION_PROMOTION_LOCK_NAMESPACE = "babyjamjam:receipt-link-revision-promotion:v1";
 
@@ -33,7 +32,7 @@ interface RawRow {
     active: boolean;
     storagePath: string;
     branch?: { name: string } | null;
-    client?: { name: string; endDate?: Date | null } | null;
+    client?: { name: string } | null;
 }
 
 interface RevisionProtectionLookup {
@@ -229,15 +228,12 @@ export class SbReceiptLinkTokenRepository implements IReceiptLinkTokenRepository
             if (revisionProtection === true || revisionProtection === null) {
                 return toRecord(row);
             }
-            // Missing legacy end dates keep their original expiry, but do not prevent
-            // restoration of URLs revoked by the former reissuance policy.
-            const expiresAt = row.client?.endDate ? getReceiptLinkExpiresAt(row.client.endDate) : row.expiresAt;
+            // The stored expiry is authoritative (issuedAt + 30 days); nothing to
+            // reconcile from the client's endDate. Only restore URLs revoked by
+            // the former reissuance policy.
             const restoreLegacyLink = !row.active && row.revokedAt !== null;
-            if (expiresAt.getTime() !== row.expiresAt.getTime() || restoreLegacyLink) {
-                const data = {
-                    expiresAt,
-                    ...(restoreLegacyLink ? { active: true, revokedAt: null, accessTokenHash: null, verifiedAt: null } : {}),
-                };
+            if (restoreLegacyLink) {
+                const data = { active: true, revokedAt: null, accessTokenHash: null, verifiedAt: null };
                 await this.prisma.receipt_link_token.update({ where: { id: row.id }, data });
                 Object.assign(row, data);
             }
@@ -263,8 +259,8 @@ export class SbReceiptLinkTokenRepository implements IReceiptLinkTokenRepository
         if (refreshClient) {
             // Rendering happens before this transaction. Read the latest profile while
             // holding its row lock so a concurrent correction cannot be overwritten.
-            const rows = await client.$queryRaw<Array<{ birthday: string | null; endDate: Date | null }>>(Prisma.sql`
-                SELECT birthday, end_date AS "endDate" FROM client
+            const rows = await client.$queryRaw<Array<{ birthday: string | null }>>(Prisma.sql`
+                SELECT birthday FROM client
                 WHERE id = ${data.clientId} AND branch_id = ${data.branchId}::uuid
                 FOR UPDATE
             `);
@@ -399,18 +395,9 @@ export class SbReceiptLinkTokenRepository implements IReceiptLinkTokenRepository
     }
 
     private expiredWhere(cutoff: Date): Prisma.receipt_link_tokenWhereInput {
-        // DATE endDate maps to midnight KST after the grace period. Invert that
-        // boundary so corrected earlier dates are candidates even with a stale expiry.
-        const endDateBoundary = cutoff.getTime() - (RECEIPT_LINK_GRACE_DAYS + 1) * 86_400_000 + 9 * 3_600_000;
-        // Prisma binds this as a DATE: round up so a partial day does not lose
-        // already-expired end dates when PostgreSQL drops the time component.
-        const endDateCutoff = new Date(Math.ceil(endDateBoundary / 86_400_000) * 86_400_000);
-        return {
-            OR: [
-                { client: { endDate: { lt: endDateCutoff } } },
-                { client: { endDate: null }, expiresAt: { lt: cutoff } },
-            ],
-        };
+        // Expiry is send-time based (issuedAt + 30 days) and persisted on the
+        // row, so cleanup selection needs no client-endDate boundary.
+        return { expiresAt: { lt: cutoff } };
     }
 
     async findExpired(cutoff: Date): Promise<ExpiredReceiptLinkToken[]> {
@@ -421,11 +408,8 @@ export class SbReceiptLinkTokenRepository implements IReceiptLinkTokenRepository
         });
         const expired: ExpiredReceiptLinkToken[] = [];
         for (const row of rows) {
-            const expiresAt = row.client?.endDate ? getReceiptLinkExpiresAt(row.client.endDate) : row.expiresAt;
-            if (expiresAt.getTime() !== row.expiresAt.getTime()) {
-                await this.prisma.receipt_link_token.update({ where: { id: row.id }, data: { expiresAt } });
-            }
-            if (expiresAt < cutoff) expired.push({ id: row.id, storagePath: row.storagePath, eformsignDocId: row.eformsignDocId });
+            // The row's persisted expiry is authoritative; no endDate re-derivation.
+            if (row.expiresAt < cutoff) expired.push({ id: row.id, storagePath: row.storagePath, eformsignDocId: row.eformsignDocId });
         }
         return expired;
     }
@@ -434,7 +418,7 @@ export class SbReceiptLinkTokenRepository implements IReceiptLinkTokenRepository
         if (ids.length === 0) return 0;
         const now = new Date();
         const result = await this.prisma.receipt_link_token.deleteMany({
-            where: { id: { in: ids }, expiresAt: { lt: now }, ...this.expiredWhere(now) },
+            where: { id: { in: ids }, expiresAt: { lt: now } },
         });
         return result.count;
     }

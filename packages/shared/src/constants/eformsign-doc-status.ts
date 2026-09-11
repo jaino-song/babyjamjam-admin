@@ -151,6 +151,53 @@ export function resolveContractDocDisplayStatus(params: {
     return isContractReviewWindowOpen(params.contractEndDate, params.now) ? "review" : "signed";
 }
 
+/**
+ * Display statuses that allow the "영수증 문자 발송" (service-end receipt link)
+ * action. Customer must have signed — pending/expired documents and rows the
+ * backend cannot classify must not offer the send. Shared by the desktop and
+ * mobile contracts UIs; the backend enforces the same gate with
+ * `contract_not_signed` (ReceiptLinkSkipError).
+ */
+const RECEIPT_SENDABLE_DISPLAY_STATUSES: ReadonlySet<ContractDocDisplayStatus> = new Set([
+    "signed",
+    "review",
+    "completed",
+]);
+
+/**
+ * Gate for the receipt-link send action, shared by mobile and desktop.
+ *
+ * The backend's serve-time `display_status` is authoritative when present:
+ * only a customer-signed document (서명 완료 / 검토 필요 / 계약 완료) may send.
+ * For payloads predating the field, fall back to the shared resolver —
+ * in-progress/unknown categories resolve like an in-progress document, so the
+ * gate matches the status label the UI already renders (parity with the
+ * backend's contract_not_signed gate).
+ */
+export function isContractReceiptSendable(params: {
+    displayStatus?: string | null;
+    category: ContractDocStatusCategory | "unknown";
+    currentStatus?: { step_type?: string | null; step_name?: string | null } | null;
+    contractEndDate?: string | null;
+    now?: Date;
+}): boolean {
+    if (isContractDocDisplayStatus(params.displayStatus)) {
+        return RECEIPT_SENDABLE_DISPLAY_STATUSES.has(params.displayStatus);
+    }
+    const fallbackCategory: ContractDocStatusCategory = params.category === "completed"
+        || params.category === "expired"
+        ? params.category
+        : "in-progress";
+    return RECEIPT_SENDABLE_DISPLAY_STATUSES.has(
+        resolveContractDocDisplayStatus({
+            category: fallbackCategory,
+            currentStatus: params.currentStatus ?? null,
+            contractEndDate: params.contractEndDate ?? null,
+            now: params.now,
+        }),
+    );
+}
+
 /** Resolve the display label for a contract document from its category, workflow step, and end date. */
 export function resolveContractDocStatusLabel(params: {
     category: ContractDocStatusCategory;

@@ -294,6 +294,26 @@ describe("MessageDeliveryController", () => {
         });
     });
 
+    it("rejects a stale branch before recipient lookup, approval, history, or provider", async () => {
+        await expect(controller.sendSms(
+            { branchId: "branch-b" },
+            { receiver: "01012345678", message: "Branch A draft", clientId: 7 },
+            undefined,
+            "branch-a",
+        )).rejects.toMatchObject({
+            response: {
+                code: "BRANCH_CONTEXT_CHANGED",
+                message: "지점이 변경됐어요. 화면을 새로고침한 뒤 다시 시도해 주세요.",
+            },
+            status: 409,
+        });
+        expect(prismaService.client.findFirst).not.toHaveBeenCalled();
+        expect(messageSenderApprovalService.ensureApproved).not.toHaveBeenCalled();
+        expect(prismaService.message_log.create).not.toHaveBeenCalled();
+        expect(prismaService.message_log.update).not.toHaveBeenCalled();
+        expect(aligoService.sendSms).not.toHaveBeenCalled();
+    });
+
     it("should reject a client from another branch before approval, history, or provider side effects", async () => {
         prismaService.client.findFirst.mockResolvedValue(null);
 
@@ -318,7 +338,7 @@ describe("MessageDeliveryController", () => {
         expect(aligoService.sendSms).not.toHaveBeenCalled();
     });
 
-    it("should preserve the client association for a same-branch manual SMS", async () => {
+    it.each([undefined, "branch-a"])("preserves same-branch manual SMS with expected branch %s", async (expectedBranchId) => {
         prismaService.client.findFirst.mockResolvedValue({ id: 7, name: "지점 고객", phone: "01012345678" });
         aligoService.sendSms.mockResolvedValue({
             request: {
@@ -345,6 +365,8 @@ describe("MessageDeliveryController", () => {
                     message: "같은 지점 고객 안내",
                     clientId: 7,
                 },
+                undefined,
+                expectedBranchId,
             ),
         ).resolves.toMatchObject({ provider: "aligo_sms" });
 
