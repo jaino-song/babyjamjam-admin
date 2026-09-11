@@ -996,9 +996,7 @@
         "135:27-135:163|visualTailwindInPage",
         "145:25-145:70|visualTailwindInPage",
         "150:27-150:96|visualTailwindInPage",
-        "159:27-159:96|visualTailwindInPage",
-        "218:35-218:59|visualTailwindInPage",
-        "219:35-219:59|visualTailwindInPage"
+        "159:27-159:96|visualTailwindInPage"
       ]
     },
     "mobile/src/app/(shell)/logout/page.tsx": {
@@ -1085,8 +1083,8 @@
     },
     "mobile/src/app/(shell)/prices/page.tsx": {
       "ui-architecture/no-page-local-components": [
-        "361:10-361:28|pageLocalComponent",
-        "400:10-400:28|pageLocalComponent"
+        "363:10-363:28|pageLocalComponent",
+        "402:10-402:28|pageLocalComponent"
       ],
       "ui-architecture/no-page-style-constants": [
         "30:7-30:30|pageStyleConstant"

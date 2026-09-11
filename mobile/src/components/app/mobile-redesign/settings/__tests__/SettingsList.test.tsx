@@ -91,11 +91,10 @@ describe("SettingsList", () => {
   it("shows four skeleton rows instead of item rows while loading", () => {
     const { container } = renderList({ isLoading: true });
 
-    const skeleton = container.querySelector(
-      '[data-source-component="ListRowsSkeleton"]',
+    const skeletonRows = container.querySelectorAll(
+      '[data-source-component="SettingsRowsSkeleton"]',
     );
-    expect(skeleton).toBeInTheDocument();
-    expect(skeleton?.querySelectorAll('[aria-hidden="true"]')).toHaveLength(4);
+    expect(skeletonRows).toHaveLength(4);
     expect(screen.queryByText(ITEMS[0].title)).not.toBeInTheDocument();
   });
 

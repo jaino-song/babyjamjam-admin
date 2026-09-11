@@ -114,6 +114,8 @@ export function ListRowsSkeleton({
   "data-component": dataComponent,
   rowCount = 6,
   rightLines = 1,
+  left,
+  metaClassName,
 }: {
   "data-component": string;
   rowCount?: number;
@@ -124,6 +126,18 @@ export function ListRowsSkeleton({
    * pass 2 where a badge sits above a timestamp.
    */
   rightLines?: 1 | 2;
+  /**
+   * Mirrors a page-specific leading column (e.g. prices' 42px duration
+   * badge). It drives the row height on those rows, so it has to match the
+   * loaded element or the list reflows when the data lands. Defaults to the
+   * 34px list avatar.
+   */
+  left?: ReactNode;
+  /**
+   * Extra class for the meta placeholder line, mirroring page-specific meta
+   * rules (e.g. `price-row-meta`'s margin) that change the info column height.
+   */
+  metaClassName?: string;
 }) {
   return (
     <div
@@ -139,7 +153,9 @@ export function ListRowsSkeleton({
           aria-hidden="true"
           style={{ animationDelay: `${Math.min(index, 4) * 40}ms` }}
         >
-          <Skeleton className="list-avatar rounded-full bg-v3-dim-white animate-pulse" />
+          {left ?? (
+            <Skeleton className="list-avatar rounded-full bg-v3-dim-white animate-pulse" />
+          )}
           <div
             className="list-info flex flex-col"
             data-component={`${dataComponent}_row_info`}
@@ -153,7 +169,7 @@ export function ListRowsSkeleton({
               <span className="invisible">이름</span>
               <Skeleton className="inline-block h-[0.8em] w-20 bg-v3-dim-white animate-pulse" />
             </div>
-            <div className="list-meta">
+            <div className={metaClassName ? `list-meta ${metaClassName}` : "list-meta"}>
               <span className="invisible">정보</span>
               <Skeleton className="inline-block h-[0.65em] w-32 bg-v3-dim-white animate-pulse" />
             </div>

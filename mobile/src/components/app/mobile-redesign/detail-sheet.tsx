@@ -767,6 +767,58 @@ export function DocRow({
   );
 }
 
+export function DocRowsSkeleton({
+  "data-component": dataComponent,
+  rowCount = 2,
+  wrapped = false,
+}: {
+  "data-component": string;
+  rowCount?: number;
+  /**
+   * Wrap each row in a plain div, mirroring loaded rows that are wrapped for
+   * their data-component. The wrapper decides which row matches
+   * `:first-of-type`/`:last-child` — `.doc-row`'s padding and border rules key
+   * off those — so a direct-child skeleton would get different insets than the
+   * loaded list.
+   */
+  wrapped?: boolean;
+}) {
+  return (
+    <>
+      {Array.from({ length: rowCount }).map((_, index) => {
+        const row = (
+          <div
+            key={`${dataComponent}-${index}`}
+            className="doc-row"
+            data-component={`${dataComponent}_row`}
+            aria-hidden="true"
+          >
+            {/* The placeholders reuse the real `.doc-icon/.doc-title/.doc-meta`
+                boxes with invisible copy so the row keeps the loaded height and
+                rhythm; only the paint is replaced. */}
+            <div className="doc-icon skeleton-base" />
+            <div className="doc-info">
+              <div className="doc-title">
+                <span className="invisible">이름</span>
+                <span className="skeleton-base ml-1 inline-block h-[0.75em] w-20 rounded-[4px] align-middle" />
+              </div>
+              <div className="doc-meta">
+                <span className="invisible">기간</span>
+                <span className="skeleton-base ml-1 inline-block h-[0.75em] w-28 rounded-[4px] align-middle" />
+              </div>
+            </div>
+            <span className="badge-mini skeleton-base">
+              <span className="invisible">주담당</span>
+            </span>
+          </div>
+        );
+        if (!wrapped) return row;
+        return <div key={`${dataComponent}-${index}-wrap`}>{row}</div>;
+      })}
+    </>
+  );
+}
+
 export function MobileSearchBar({
   "data-component": dataComponent,
   placeholder,
