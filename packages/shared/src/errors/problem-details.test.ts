@@ -211,6 +211,12 @@ describe("catalog coverage", () => {
         "MESSAGE_SEND_REJECTED",
         "MESSAGE_SEND_ALREADY_REQUESTED",
         "MESSAGE_REQUEST_KEY_CONFLICT",
+        "CLIENT_SERVICE_PERIOD_INVALID",
+        "CLIENT_SERVICE_PERIOD_UNCOMPUTABLE",
+        "CLIENT_DURATION_OUT_OF_RANGE",
+        "CLIENT_DURATION_NEEDS_SERVICE_PERIOD",
+        "CLIENT_SERVICE_STATUS_INVALID",
+        "CLIENT_AREA_UNAVAILABLE",
     ];
 
     it.each(codes)("contains a complete bilingual entry for %s", (code) => {
@@ -220,6 +226,22 @@ describe("catalog coverage", () => {
         expect(entry.title["en-US"]).toEqual(expect.any(String));
         expect(entry.detail["ko-KR"]).toMatch(/요\.$/);
         expect(entry.detail["en-US"]).toEqual(expect.any(String));
+    });
+
+    const CLIENT_STATUS_400_CODES: Array<[ProblemCode, string]> = [
+        ["CLIENT_SERVICE_PERIOD_INVALID", "client-service-period-invalid"],
+        ["CLIENT_SERVICE_PERIOD_UNCOMPUTABLE", "client-service-period-uncomputable"],
+        ["CLIENT_DURATION_OUT_OF_RANGE", "client-duration-out-of-range"],
+        ["CLIENT_DURATION_NEEDS_SERVICE_PERIOD", "client-duration-needs-service-period"],
+        ["CLIENT_SERVICE_STATUS_INVALID", "client-service-status-invalid"],
+        ["CLIENT_AREA_UNAVAILABLE", "client-area-unavailable"],
+    ];
+
+    it.each(CLIENT_STATUS_400_CODES)("registers %s as status 400 with kebab-case type anchor", (code, anchor) => {
+        const entry = PROBLEM_CATALOG[code];
+        expect(entry.status).toBe(400);
+        expect(entry.statuses).toEqual([400]);
+        expect(entry.type).toBe(`https://github.com/jaino-song/babyjamjam-admin/blob/main/docs/error-management.md#${anchor}`);
     });
 });
 
