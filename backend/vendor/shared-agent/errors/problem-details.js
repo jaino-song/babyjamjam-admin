@@ -51,6 +51,8 @@ const PROBLEM_CODES = [
     "CLIENT_DURATION_NEEDS_SERVICE_PERIOD",
     "CLIENT_SERVICE_STATUS_INVALID",
     "CLIENT_AREA_UNAVAILABLE",
+    "CLIENT_RETENTION_BLOCKED",
+    "CLIENT_PHONE_ALREADY_REGISTERED",
 ];
 const PROBLEM_ERROR_CODES = [
     "REQUIRED",
@@ -413,6 +415,28 @@ const PROBLEM_DEFINITIONS = {
         detail: {
             "ko-KR": "선택한 관할 지역을 사용할 수 없어요.",
             "en-US": "The selected area is not available.",
+        },
+    },
+    CLIENT_RETENTION_BLOCKED: {
+        status: 409,
+        title: {
+            "ko-KR": "고객을 삭제할 수 없어요",
+            "en-US": "Cannot delete the customer",
+        },
+        detail: {
+            "ko-KR": "연결된 운영 또는 이력 데이터가 있어 고객을 삭제할 수 없어요.",
+            "en-US": "This customer has linked operational or history data and cannot be deleted.",
+        },
+    },
+    CLIENT_PHONE_ALREADY_REGISTERED: {
+        status: 409,
+        title: {
+            "ko-KR": "이미 등록된 연락처예요",
+            "en-US": "Phone number already registered",
+        },
+        detail: {
+            "ko-KR": "같은 전화번호의 고객이 이미 등록되어 있어요.",
+            "en-US": "A customer with the same phone number is already registered.",
         },
     },
 };

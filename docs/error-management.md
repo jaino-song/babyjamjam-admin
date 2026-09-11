@@ -176,6 +176,14 @@ packages/shared/src/errors/user-error-message.ts의 문자열 기반 번역은 �
 
 `CLIENT_AREA_UNAVAILABLE`
 
+### client-retention-blocked
+
+`CLIENT_RETENTION_BLOCKED`
+
+### client-phone-already-registered
+
+`CLIENT_PHONE_ALREADY_REGISTERED`
+
 ## 2026-09-10 웹 직접 문자 후속 검증
 
 웹 `sendSms`가 원본 오류를 보존하며, TemplateSendForm은 검증된 NOT_APPLIED와 UNKNOWN/PARTIALLY_APPLIED를 구분한다. 불확실한 요청의 동일 화면 재발송 차단, 확정 접수 수신자 제외, 새 입력 보존, 중복 확인/발송 중 방식 전환 격리와 commit 이후 상태 갱신을 적용했다. 제공기록지의 외부 API와 발송 정책은 기존 동작을 유지한다.

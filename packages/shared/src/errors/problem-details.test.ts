@@ -217,6 +217,8 @@ describe("catalog coverage", () => {
         "CLIENT_DURATION_NEEDS_SERVICE_PERIOD",
         "CLIENT_SERVICE_STATUS_INVALID",
         "CLIENT_AREA_UNAVAILABLE",
+        "CLIENT_RETENTION_BLOCKED",
+        "CLIENT_PHONE_ALREADY_REGISTERED",
     ];
 
     it.each(codes)("contains a complete bilingual entry for %s", (code) => {
@@ -241,6 +243,18 @@ describe("catalog coverage", () => {
         const entry = PROBLEM_CATALOG[code];
         expect(entry.status).toBe(400);
         expect(entry.statuses).toEqual([400]);
+        expect(entry.type).toBe(`https://github.com/jaino-song/babyjamjam-admin/blob/main/docs/error-management.md#${anchor}`);
+    });
+
+    const CLIENT_STATUS_409_CODES: Array<[ProblemCode, string]> = [
+        ["CLIENT_RETENTION_BLOCKED", "client-retention-blocked"],
+        ["CLIENT_PHONE_ALREADY_REGISTERED", "client-phone-already-registered"],
+    ];
+
+    it.each(CLIENT_STATUS_409_CODES)("registers %s as status 409 with kebab-case type anchor", (code, anchor) => {
+        const entry = PROBLEM_CATALOG[code];
+        expect(entry.status).toBe(409);
+        expect(entry.statuses).toEqual([409]);
         expect(entry.type).toBe(`https://github.com/jaino-song/babyjamjam-admin/blob/main/docs/error-management.md#${anchor}`);
     });
 });
