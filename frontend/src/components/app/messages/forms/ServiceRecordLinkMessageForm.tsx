@@ -69,8 +69,19 @@ export const ServiceRecordLinkMessageForm = ({
     setEmployeePhone,
     resetEmployeeFields,
   } = useFormStore();
-  const { data: systemTemplate } = useSystemTemplate(
+  const {
+    data: systemTemplate,
+    isError: isSystemTemplateError,
+    isFetching: isSystemTemplateFetching,
+    isLoading: isSystemTemplateLoading,
+  } = useSystemTemplate(
     mode === "receipt-link" ? "SERVICE_END_NOTICE" : "SERVICE_RECORD_LINK",
+  );
+  const templateReady = Boolean(
+    systemTemplate?.content
+    && !isSystemTemplateError
+    && !isSystemTemplateFetching
+    && !isSystemTemplateLoading,
   );
   const [preparedServiceRecordLink, setPreparedServiceRecordLink] = useState<PreparedServiceRecordLink | null>(null);
   const [preparedReceiptLink, setPreparedReceiptLink] = useState<PreparedReceiptLink | null>(null);
@@ -286,19 +297,7 @@ export const ServiceRecordLinkMessageForm = ({
         serviceStartDate: resolvedServiceStartDate,
         serviceRecordUrl: resolvedServiceRecordUrl,
       })
-    : `[사회서비스 제공자 품질평가 A등급]
-안녕하세요, 인천 아이미래로 입니다 :)
-
-${resolvedEmployeeName} 관리사님, ${resolvedClientName} 산모님의 서비스 제공기록지 작성 링크입니다.
-서비스 시작일은 ${resolvedServiceStartDate}입니다.
-매일 서비스 제공 완료 직전에 서비스 세부사항 기록 후에, 산모님께 승인을 받으시면 됩니다.
-
-최초 접속 시에 관리사님의 전화번호 인증이 필요합니다. 링크 접속 후 휴대폰 번호로 본인확인하고, 방문일마다 기록을 남겨주세요.
-
-감사합니다.
-
-제공기록지 링크
-${resolvedServiceRecordUrl}`;
+    : "";
   const receiptTemplateMessage = systemTemplate?.content
     ? renderTemplate(systemTemplate.content, {
         name: resolvedReceiptClientName,
@@ -306,20 +305,7 @@ ${resolvedServiceRecordUrl}`;
         phone: resolvedReceiptPhone,
         receiptUrl: resolvedReceiptUrl,
       })
-    : `[사회서비스 제공자 품질평가 A등급]
-안녕하세요, 인천 아이미래로 입니다 :)
-
-${resolvedReceiptClientName}산모님~♡
-
-본인부담금 환급신청을 위한 영수증 다운로드 방법 안내 드립니다 :)
-
-아래의 URL로 접속하시면 본인부담금 영수증 다운로드가 가능하십니다. 환급 신청은 관할지 보건소 방문 또는 인터넷 정부24에서 가능하시고, 다운로드 받으신 영수증 이미지를 첨부하시면 환급 신청 가능 하십니다^^
-
-${resolvedReceiptUrl}
-
-추가 문의사항이 있으시면 상세히 답변 드리도록 하겠습니다.
-
-감사합니다 :)`;
+    : "";
   const generatedMessage = mode === "receipt-link" ? receiptTemplateMessage : serviceRecordTemplateMessage;
 
   useEffect(() => {
@@ -549,6 +535,7 @@ ${resolvedReceiptUrl}
       deliveryMode={mode}
       serviceRecordLinkPreparation={mode === "service-feedback-link" ? currentPreparation : undefined}
       receiptLinkPreparation={mode === "receipt-link" ? currentReceiptPreparation : undefined}
+      templateReady={templateReady}
       renderLayout={renderLayout}
     />
   );

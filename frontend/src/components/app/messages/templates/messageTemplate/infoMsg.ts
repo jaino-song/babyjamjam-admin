@@ -3,7 +3,7 @@
  * This file is kept as fallback only.
  * See: /system-templates API and useSystemTemplate hook
  * 
- * To edit this template, go to: /messages/system-templates
+ * To edit this template, go to: 관리자 > 메시지 템플릿 (/system-admin?section=templates)
  */
 
 export const infoMsgTemplate = (): string => 

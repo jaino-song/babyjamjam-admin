@@ -695,9 +695,14 @@ export const consultationInquiriesApi = {
 
 export const messageDeliveryApi = {
     sendSms: async (
-        payload: SendMessageDeliverySmsRequest
+        payload: SendMessageDeliverySmsRequest,
+        expectedBranchId?: string | null,
     ): Promise<SendMessageDeliverySmsResponse> => {
-        const { data } = await api.post("/message-deliveries/sms", payload);
+        const { data } = expectedBranchId
+            ? await api.post("/message-deliveries/sms", payload, {
+                params: { expectedBranchId },
+            })
+            : await api.post("/message-deliveries/sms", payload);
         return data;
     },
 };

@@ -8,6 +8,7 @@ import {
     RenderTemplateUseCase,
     ResetToDefaultUseCase,
     RollbackToVersionUseCase,
+    UpdateBranchSystemTemplateUseCase,
     UpdateSystemTemplateUseCase,
     ValidateTemplateContentUseCase,
 } from "application/usecases/system-template";
@@ -21,6 +22,7 @@ export class SystemTemplateService {
         private readonly getAllUseCase: GetAllSystemTemplatesUseCase,
         private readonly getByKeyUseCase: GetSystemTemplateUseCase,
         private readonly updateUseCase: UpdateSystemTemplateUseCase,
+        private readonly updateBranchUseCase: UpdateBranchSystemTemplateUseCase,
         private readonly validateUseCase: ValidateTemplateContentUseCase,
         private readonly renderUseCase: RenderTemplateUseCase,
         private readonly getVersionHistoryUseCase: GetVersionHistoryUseCase,
@@ -39,8 +41,35 @@ export class SystemTemplateService {
         return this.enrichFromRegistry(entity);
     }
 
+    async getAllForBranch(branchId: string): Promise<SystemTemplateWithRegistryDto[]> {
+        const entities = await this.getAllUseCase.executeForBranch(branchId);
+        return entities.map((entity) => this.enrichFromRegistry(entity));
+    }
+
+    async getByKeyForBranch(branchId: string, key: string): Promise<SystemTemplateWithRegistryDto> {
+        const entity = await this.getByKeyUseCase.executeForBranch(branchId, this.toKey(key));
+        return this.enrichFromRegistry(entity);
+    }
+
     update(key: string, content: string, userId: string, customVariables?: CustomVariable[]): Promise<SystemTemplateEntity> {
         return this.updateUseCase.execute(this.toKey(key), content, userId, customVariables);
+    }
+
+    async updateForBranch(
+        branchId: string,
+        key: string,
+        content: string,
+        userId: string,
+        customVariables?: CustomVariable[],
+    ): Promise<SystemTemplateEntity> {
+        const result = await this.updateBranchUseCase.execute(
+            branchId,
+            this.toKey(key),
+            content,
+            userId,
+            customVariables,
+        );
+        return result.template;
     }
 
     validate(key: string, content: string): Promise<VariableValidationResult> {

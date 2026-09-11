@@ -1,6 +1,7 @@
 export const RECEIPT_LINK_REASON_MESSAGES: Record<string, string> = {
   not_voucher_client: "바우처 이용 산모가 아니어서 영수증 안내를 보낼 수 없어요.",
   missing_birthday: "산모 생년월일이 등록되지 않았습니다. 산모 정보를 먼저 수정해 주세요.",
+  contract_not_signed: "계약서 서명이 완료된 후 발송할 수 있습니다.",
   no_contract_document: "연결된 계약서를 찾지 못했습니다.",
   document_not_linked: "계약서에 연결된 산모가 없습니다.",
   document_not_found: "계약서를 찾지 못했습니다.",

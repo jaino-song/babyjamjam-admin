@@ -10,6 +10,7 @@ import {
   CheckCircle2,
   KeyRound,
   MessageCircle,
+  FileText,
   Pencil,
   Plus,
   ShieldCheck,
@@ -21,6 +22,7 @@ import {
 import { NotificationTestSection } from "@/components/app/settings/NotificationTestSection";
 import { SystemAdminAccountEditDialog } from "@/components/app/ui/SystemAdminAccountEditDialog";
 import { SystemAdminBranchForm } from "@/components/app/system-admin/SystemAdminBranchForm";
+import { SystemTemplatesManager } from "@/components/app/system-admin/SystemTemplatesManager";
 import { FormNativeSelect } from "@/components/app/ui/form-section";
 import { TagPill } from "@/components/app/ui/tag-pill";
 import {
@@ -62,7 +64,7 @@ import { REGISTERABLE_ROLE_OPTIONS, ROLES } from "@/lib/constants/roles";
 import { cn } from "@/lib/utils";
 import { matchesSearchQuery } from "@/lib/search/korean-search";
 
-type AdminSectionId = "branches" | "accounts" | "notifications";
+type AdminSectionId = "branches" | "accounts" | "notifications" | "templates";
 type BranchFormMode = "create" | "edit";
 type StatusVariant = "warning" | "info" | "success" | "destructive";
 type AdminTagPillVariant = "amber" | "emerald" | "sky" | "indigo" | "neutral";
@@ -233,12 +235,24 @@ const OWNER_ADMIN_SECTIONS = [
       },
     ],
   },
+  {
+    id: "templates",
+    label: "메시지 템플릿",
+    icon: FileText,
+    listTitle: "메시지 템플릿",
+    listSubtitle: "문구를 수정하지 않은 지점에 반영되는 기본 메시지를 관리합니다",
+    stats: [],
+    emptyMessage: "등록된 시스템 템플릿이 없습니다.",
+    detailEmptyMessage: "템플릿을 선택하면 기본 메시지 내용을 편집할 수 있습니다.",
+    records: [],
+  },
 ] as const satisfies readonly AdminSection[];
 
 const SECTION_ICON_CLASSNAMES: Record<AdminSectionId, string> = {
   branches: "bg-v3-green-light text-v3-green",
   accounts: "bg-v3-orange-light text-v3-orange",
   notifications: "bg-v3-primary-light text-v3-primary",
+  templates: "bg-v3-primary-light text-v3-primary",
 };
 
 const CATEGORY_BADGE_STYLE: Record<string, { icon: string }> = {
@@ -717,13 +731,26 @@ function resolveSelectedRecordId(
   return shouldAutoSelectFirst ? (visibleRecords[0]?.id ?? null) : null;
 }
 
-export function OwnerAdminConsole() {
-  const [activeSectionId, setActiveSectionId] = useState<AdminSectionId>("branches");
+export interface OwnerAdminConsoleProps {
+  initialSectionId?: AdminSectionId;
+  initialTemplateKey?: string | null;
+}
+
+export function OwnerAdminConsole({
+  initialSectionId = "branches",
+  initialTemplateKey = null,
+}: OwnerAdminConsoleProps = {}) {
+  const [activeSectionId, setActiveSectionId] = useState<AdminSectionId>(
+    () => initialSectionId,
+  );
   const [splitLayoutMode, setSplitLayoutMode] = useState<SplitLayoutMode | null>(null);
   const [viewStateBySection, setViewStateBySection] = useState(createInitialViewState);
   const [branchFormMode, setBranchFormMode] = useState<BranchFormMode | null>(null);
   const [autoSelectionSuppressedSectionId, setAutoSelectionSuppressedSectionId] =
     useState<AdminSectionId | null>(null);
+  const [deepLinkedTemplateKey] = useState<string | null>(
+    () => initialTemplateKey,
+  );
   const queryClient = useQueryClient();
 
   const {
@@ -966,6 +993,12 @@ export function OwnerAdminConsole() {
         />
 
         <div className="min-h-0 flex-1">
+          {activeSection.id === "templates" ? (
+            <SystemTemplatesManager
+              dataComponent="desktop_system-admin_sections_templates-manager"
+              initialTemplateKey={deepLinkedTemplateKey}
+            />
+          ) : (
           <SplitLayout data-component="desktop_system-admin_sections_split-layout"
             hasSelection={Boolean(selectedRecord || branchFormMode)}
             onModeChange={setSplitLayoutMode}
@@ -1538,6 +1571,7 @@ export function OwnerAdminConsole() {
               </DetailPanel>
             )}
           </SplitLayout>
+          )}
         </div>
       </div>
 

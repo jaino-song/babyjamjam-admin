@@ -4,21 +4,30 @@ import {
   describeReceiptLinkError,
 } from "@/lib/receipt-link";
 
-// M4: pins the exact seven reason keys — copied from
+// M4: pins the exact reason keys — copied from
 // frontend/src/lib/__tests__/receipt-link.test.ts so the mobile twin can't silently drift
-// out of sync with the desktop constant (same keys, same strings).
+// out of sync with the desktop constant. The 15-day expiry gate is gone (missing_end_date /
+// service_period_expired are no longer emitted), replaced by the backend's
+// contract_not_signed gate enforced until the customer signs.
 describe("RECEIPT_LINK_REASON_MESSAGES", () => {
-  it("declares exactly the seven backend reason codes, no more, no less", () => {
+  it("declares exactly the backend reason codes, no more, no less", () => {
     expect(Object.keys(RECEIPT_LINK_REASON_MESSAGES).sort()).toEqual(
       [
         "not_voucher_client",
         "missing_birthday",
+        "contract_not_signed",
         "no_contract_document",
         "document_not_linked",
         "document_not_found",
         "pdf_unavailable",
         "missing_phone",
       ].sort(),
+    );
+  });
+
+  it("uses the contract_not_signed copy shared with the desktop twin", () => {
+    expect(RECEIPT_LINK_REASON_MESSAGES.contract_not_signed).toBe(
+      "계약서 서명이 완료된 후 발송할 수 있습니다.",
     );
   });
 

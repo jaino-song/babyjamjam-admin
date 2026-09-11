@@ -707,7 +707,7 @@ export class MessageTriggerService {
             await this.ruleRepository.markJobsStale(branchId, rule.id, writeTransaction);
             return rule;
         };
-        const rule = await this.runRuleTemplateMutation(params, persistRule, transaction);
+        const rule = await this.runRuleTemplateMutation(branchId, params, persistRule, transaction);
         // Agent capability creates may still be inside their caller-owned
         // transaction, so the global repositories cannot safely observe that
         // row until commit. HTTP/admin creates have no transaction and can
@@ -735,7 +735,7 @@ export class MessageTriggerService {
         };
 
         this.validateRule(nextState, rule.templateKey);
-        const updated = await this.runRuleTemplateMutation(nextState, async (transaction) => {
+        const updated = await this.runRuleTemplateMutation(branchId, nextState, async (transaction) => {
             rule.update({
                 ...nextState,
                 offsetDays: this.normalizeOffsetDays(nextState.offsetType, nextState.offsetDays),
@@ -804,6 +804,7 @@ export class MessageTriggerService {
         });
 
         const updated = await this.runRuleTemplateMutation(
+            branchId,
             nextState,
             (transaction) => this.ruleRepository.updateIfTargetMatchesAndFenceJobs(
                 branchId,
@@ -1318,6 +1319,7 @@ export class MessageTriggerService {
         let created: MessageTriggerRuleEntity;
         try {
             created = await this.runRuleTemplateMutation(
+                branchId,
                 defaults,
                 (transaction) => this.ruleRepository.create(
                     branchId,
@@ -1888,6 +1890,7 @@ export class MessageTriggerService {
     }
 
     private async ensureActiveRuleTemplateVariablesSupported(
+        branchId: string,
         params: UpsertRuleParams,
     ): Promise<void> {
         if (params.isActive === false) return;
@@ -1896,7 +1899,7 @@ export class MessageTriggerService {
             .providers.sms?.templateKey;
         if (!systemTemplateKey) return;
 
-        const template = await this.systemTemplateService.getByKey(systemTemplateKey);
+        const template = await this.systemTemplateService.getByKeyForBranch(branchId, systemTemplateKey);
         const unsupportedVariables = findUnsupportedRequiredMessageTriggerVariables(
             params.templateKey,
             template.customVariables ?? [],
@@ -1918,6 +1921,7 @@ export class MessageTriggerService {
     }
 
     private async runRuleTemplateMutation<T>(
+        branchId: string,
         params: UpsertRuleParams,
         work: (transaction: Prisma.TransactionClient) => Promise<T>,
         transaction?: Prisma.TransactionClient,
@@ -1935,7 +1939,7 @@ export class MessageTriggerService {
         return this.templateAutomationLock.runExclusive(
             systemTemplateKey,
             async (writeTransaction) => {
-                await this.ensureActiveRuleTemplateVariablesSupported(params);
+                await this.ensureActiveRuleTemplateVariablesSupported(branchId, params);
                 return work(writeTransaction);
             },
             transaction,
@@ -2996,7 +3000,7 @@ export class MessageTriggerService {
                     recipientType: rule.recipientType,
                     templateKey: rule.templateKey,
                 };
-                await this.runRuleTemplateMutation(nextState, async (transaction) => {
+                await this.runRuleTemplateMutation(rule.branchId!, nextState, async (transaction) => {
                     rule.update({ isActive: true });
                     await this.ruleRepository.update(rule.branchId!, rule, transaction);
                     await this.ruleRepository.markJobsStale(rule.branchId!, rule.id, transaction);

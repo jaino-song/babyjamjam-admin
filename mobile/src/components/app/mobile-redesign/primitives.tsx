@@ -114,6 +114,8 @@ export function ListRowsSkeleton({
   "data-component": dataComponent,
   rowCount = 6,
   rightLines = 1,
+  left,
+  metaClassName,
 }: {
   "data-component": string;
   rowCount?: number;
@@ -124,6 +126,18 @@ export function ListRowsSkeleton({
    * pass 2 where a badge sits above a timestamp.
    */
   rightLines?: 1 | 2;
+  /**
+   * Mirrors a page-specific leading column (e.g. prices' 42px duration
+   * badge). It drives the row height on those rows, so it has to match the
+   * loaded element or the list reflows when the data lands. Defaults to the
+   * 34px list avatar.
+   */
+  left?: ReactNode;
+  /**
+   * Extra class for the meta placeholder line, mirroring page-specific meta
+   * rules (e.g. `price-row-meta`'s margin) that change the info column height.
+   */
+  metaClassName?: string;
 }) {
   return (
     <div
@@ -139,13 +153,26 @@ export function ListRowsSkeleton({
           aria-hidden="true"
           style={{ animationDelay: `${Math.min(index, 4) * 40}ms` }}
         >
-          <Skeleton className="list-avatar rounded-full bg-v3-dim-white animate-pulse" />
+          {left ?? (
+            <Skeleton className="list-avatar rounded-full bg-v3-dim-white animate-pulse" />
+          )}
           <div
             className="list-info flex flex-col"
             data-component={`${dataComponent}_row_info`}
           >
-            <Skeleton className="h-4 w-20 bg-v3-dim-white animate-pulse" />
-            <Skeleton className="mt-1.5 h-3 w-32 bg-v3-dim-white animate-pulse" />
+            {/* The placeholders reuse the real text elements (`.list-name`,
+                `.list-meta`) with invisible copy so the line boxes — and the
+                row height — match the loaded row on every page; only the
+                paint is replaced. Fixed bar heights would drift with each
+                page's font-size/line-height overrides. */}
+            <div className="list-name">
+              <span className="invisible">이름</span>
+              <Skeleton className="inline-block h-[0.8em] w-20 bg-v3-dim-white animate-pulse" />
+            </div>
+            <div className={metaClassName ? `list-meta ${metaClassName}` : "list-meta"}>
+              <span className="invisible">정보</span>
+              <Skeleton className="inline-block h-[0.65em] w-32 bg-v3-dim-white animate-pulse" />
+            </div>
           </div>
           <div
             className="list-right"
@@ -469,6 +496,7 @@ export function MobileSectionNav<TId extends string>({
   activeId,
   onSelect,
   ariaLabel = "페이지 섹션",
+  isLoading = false,
 }: {
   "data-component": string;
   /** @internal Zero-DOM wrapper identity; route callers must not override this. */
@@ -477,10 +505,18 @@ export function MobileSectionNav<TId extends string>({
   activeId: TId;
   onSelect: (id: TId) => void;
   ariaLabel?: string;
+  /**
+   * True while the owner is still resolving which sections are enabled. The
+   * pills keep their real labels' footprint (hidden content) but pulse as
+   * skeletons and stay non-interactive, so a not-yet-known disabled state is
+   * never presented as enabled.
+   */
+  isLoading?: boolean;
 }) {
   return (
     <nav
       aria-label={ariaLabel}
+      aria-busy={isLoading ? true : undefined}
       data-component={dataComponent}
       data-source-component={sourceComponent}
       data-mode="compact"
@@ -489,6 +525,28 @@ export function MobileSectionNav<TId extends string>({
       <div className="flex gap-[calc(8px*var(--glint-ui-scale,1))] pb-[calc(8px*var(--glint-ui-scale,1))]">
         {items.map((item) => {
           const Icon = item.icon;
+
+          if (isLoading) {
+            return (
+              <button
+                key={item.id}
+                type="button"
+                aria-hidden="true"
+                data-component={`${dataComponent}_item-skeleton`}
+                data-loading="true"
+                disabled
+                tabIndex={-1}
+                className="flex h-[calc(28px*var(--glint-ui-scale,1))] items-center gap-[calc(6px*var(--glint-ui-scale,1))] whitespace-nowrap rounded-full border border-[hsl(var(--v3-border))] px-[calc(12px*var(--glint-ui-scale,1))] py-0 text-[calc(0.72rem*var(--glint-ui-scale,1))] font-semibold skeleton-base disabled:pointer-events-none disabled:cursor-default"
+              >
+                <Icon
+                  aria-hidden="true"
+                  className="invisible h-[calc(14px*var(--glint-ui-scale,1))] w-[calc(14px*var(--glint-ui-scale,1))]"
+                />
+                <span className="invisible">{item.label}</span>
+              </button>
+            );
+          }
+
           const isDisabled = item.disabled === true;
           const isActive = !isDisabled && item.id === activeId;
 

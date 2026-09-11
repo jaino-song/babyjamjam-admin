@@ -3,7 +3,6 @@
 import type { ReactElement } from "react";
 import { ChevronRight } from "lucide-react";
 
-import { ListRowsSkeleton } from "@/components/app/mobile-redesign/primitives";
 import { StatusPill } from "@/components/app/ui/status-badge";
 import { Switch } from "@/components/ui/switch";
 import { cn } from "@/lib/utils";
@@ -12,6 +11,43 @@ import type { SettingsListItem } from "./settings-items";
 
 const SOURCE_COMPONENT = "SettingsList";
 const SKELETON_ROW_COUNT = 4;
+const SETTINGS_ROWS_SKELETON_SOURCE_COMPONENT = "SettingsRowsSkeleton";
+
+/**
+ * Mobile settings rows are not `ListRowsSkeleton`-shaped (min-h 66px, 42px
+ * icon tile, absolute switch), so the generic list skeleton made the list
+ * taller while loading. This mirrors the loaded row's own geometry classes
+ * instead — if the row changes, change both.
+ */
+function SettingsRowsSkeleton({
+  "data-component": dataComponent,
+}: {
+  "data-component": string;
+}) {
+  return (
+    <>
+      {Array.from({ length: SKELETON_ROW_COUNT }).map((_, index) => (
+        <div key={`${dataComponent}-${index}`} className="relative" aria-hidden="true">
+          <div
+            data-component={`${dataComponent}_row`}
+            data-source-component={SETTINGS_ROWS_SKELETON_SOURCE_COMPONENT}
+            className="flex min-h-[calc(66px*var(--glint-ui-scale,1))] w-full items-center gap-[calc(11px*var(--glint-ui-scale,1))] rounded-[calc(15px*var(--glint-ui-scale,1))] border-[calc(1px*var(--glint-ui-scale,1))] border-transparent px-[calc(10px*var(--glint-ui-scale,1))] py-[calc(9px*var(--glint-ui-scale,1))]"
+          >
+            <span className="skeleton-base h-[calc(42px*var(--glint-ui-scale,1))] w-[calc(42px*var(--glint-ui-scale,1))] shrink-0 rounded-[calc(13px*var(--glint-ui-scale,1))]" />
+            <span className="flex min-w-0 flex-1 flex-col gap-[calc(3px*var(--glint-ui-scale,1))]">
+              <span className="skeleton-base h-[calc(1.1rem*var(--glint-ui-scale,1))] w-[calc(118px*var(--glint-ui-scale,1))] rounded-[calc(4px*var(--glint-ui-scale,1))]" />
+              <span className="skeleton-base h-[calc(0.95rem*var(--glint-ui-scale,1))] w-[calc(150px*var(--glint-ui-scale,1))] rounded-[calc(4px*var(--glint-ui-scale,1))]" />
+            </span>
+            <span className="flex shrink-0 items-center gap-[calc(8px*var(--glint-ui-scale,1))]">
+              <span className="skeleton-base h-[calc(23.4px*var(--glint-ui-scale,1))] w-[calc(41.4px*var(--glint-ui-scale,1))] rounded-full" />
+              <span className="skeleton-base h-[calc(16px*var(--glint-ui-scale,1))] w-[calc(16px*var(--glint-ui-scale,1))] rounded-[calc(4px*var(--glint-ui-scale,1))]" />
+            </span>
+          </div>
+        </div>
+      ))}
+    </>
+  );
+}
 
 export interface SettingsListProps {
   "data-component": string;
@@ -80,10 +116,7 @@ export function SettingsList({
         className="scrollbar-hide flex min-h-0 flex-1 flex-col gap-[calc(6px*var(--glint-ui-scale,1))] overflow-y-auto overscroll-contain"
       >
         {isLoading ? (
-          <ListRowsSkeleton
-            data-component={sub("items_loading")}
-            rowCount={SKELETON_ROW_COUNT}
-          />
+          <SettingsRowsSkeleton data-component={sub("items_loading")} />
         ) : (
           <>
             {items.map((item) => {

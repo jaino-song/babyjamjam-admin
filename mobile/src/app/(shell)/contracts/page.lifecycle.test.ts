@@ -79,14 +79,20 @@ describe("mobile contracts action lifecycle", () => {
     );
   });
 
-  // Textual pin (audit-b fix round 1, I1): ContractDetailContent is shared with the
-  // 제공기록지 (service-record) detail — isServiceRecord only gated the sheet title, so
-  // "영수증 문자" still rendered there even though a service record has no receipt to send.
-  // Mutant that must fail: removing the isServiceRecord gate around the action entry.
-  it("gates the 영수증 문자 action out of the 제공기록지 (service-record) detail (I1)", () => {
+  // Textual pin (audit-b fix round 1, I1 + signed-gate): ContractDetailContent is
+  // shared with the 제공기록지 (service-record) detail — isServiceRecord gates the
+  // service-record case out, and the shared signed gate hides the action for
+  // documents the backend would still reject with contract_not_signed. Mutants that
+  // must fail: removing the isServiceRecord gate or the isContractReceiptSendable
+  // gate around the action entry.
+  it("gates the receipt-send action out of the 제공기록지 detail and unsigned documents (I1 + signed gate)", () => {
     expect(source).toContain(
-      "...(isServiceRecord\n                    ? []\n                    : [\n                        {\n                          label: \"영수증 문자\",",
+      "...(isServiceRecord ||\n                  !isContractReceiptSendable({\n                    displayStatus: doc.display_status,",
     );
+    expect(source).toContain(
+      "contractEndDate: doc.contract_end_date,\n                  })\n                    ? []\n                    : [",
+    );
+    expect(source).toContain('label: "영수증 문자 발송",');
   });
 
   it("routes both prefill flows through the shared contract transformer and keeps service dates on the existing normalizer", () => {

@@ -6,6 +6,7 @@ import { IClientRepository } from "domain/repositories/client.repository.interfa
 import { EformsignDocEntity } from "domain/entities/eformsign-doc.entity";
 import { IEformsignDocRepository } from "domain/repositories/eformsign-doc.repository.interface";
 import {
+    EformsignDocumentMirrorState,
     EformsignStoredDocumentFile,
     IEformsignDocumentMirrorRepository,
 } from "domain/repositories/eformsign-document-mirror.repository.interface";
@@ -50,6 +51,8 @@ interface MakeServiceOverrides {
     /** The row `eformsignDocRepository.findById` resolves to — the explicit-selection path. */
     docById?: DocFixture | null;
     file?: { content: Buffer } | null;
+    /** eformsign detail payload mirrored locally — defaults to a signed, provider-review-stage document. */
+    mirrorState?: Partial<EformsignDocumentMirrorState> | null;
     activeTokenForJob?: { id: string; expiresAt: Date } | null;
     jobLockContended?: boolean;
     storedPath?: boolean;
@@ -57,6 +60,30 @@ interface MakeServiceOverrides {
     baseUrl?: string;
     serviceRecordBaseUrl?: string;
 }
+
+/** A provider-review-stage mirrored document: the customer has signed (status 070). */
+const SIGNED_MIRROR_STATE: Partial<EformsignDocumentMirrorState> = {
+    syncStatus: "ready",
+    detailPayload: {
+        id: "doc-ext-1",
+        document_number: "C-0001",
+        template: { id: "t", name: "계약서" },
+        document_name: "계약서",
+        creator: { recipient_type: "01", id: "c", name: "branch" },
+        created_date: 0,
+        updated_date: 0,
+        current_status: {
+            status_type: "070",
+            status_doc_type: "",
+            status_doc_detail: "",
+            step_type: "06",
+            step_index: "1",
+            step_name: "제공기관 확인",
+            step_recipients: [],
+            step_group: 1,
+        },
+    } as EformsignDocumentMirrorState["detailPayload"],
+};
 
 function makeService(overrides: MakeServiceOverrides = {}) {
     const client: ClientFixture | null =
@@ -88,6 +115,13 @@ function makeService(overrides: MakeServiceOverrides = {}) {
             .mockResolvedValue(
                 (overrides.file === undefined ? { content: PDF } : overrides.file) as unknown as EformsignStoredDocumentFile | null,
             ),
+        findState: jest.fn().mockResolvedValue(
+            overrides.mirrorState === undefined
+                ? { documentId: "doc-ext-1", ...SIGNED_MIRROR_STATE }
+                : overrides.mirrorState === null
+                    ? null
+                    : { documentId: "doc-ext-1", ...SIGNED_MIRROR_STATE, ...overrides.mirrorState },
+        ),
     } as unknown as IEformsignDocumentMirrorRepository;
 
     const documentMirrorService = {
@@ -250,6 +284,104 @@ describe("ReceiptLinkIssueService", () => {
         expect(mirrorRepository.findFile).toHaveBeenCalledTimes(2);
     });
 
+    it("skips with contract_not_signed while the document is still awaiting the customer signature", async () => {
+        const { service, tokenService } = makeService({
+            mirrorState: {
+                detailPayload: {
+                    ...SIGNED_MIRROR_STATE.detailPayload,
+                    current_status: {
+                        ...SIGNED_MIRROR_STATE.detailPayload!.current_status,
+                        status_type: "060",
+                        step_type: "05",
+                        step_name: "이용자 서명",
+                    },
+                } as EformsignDocumentMirrorState["detailPayload"],
+            },
+        });
+
+        await expect(service.preflight({ branchId: BRANCH, clientId: 7 }))
+            .rejects.toMatchObject({ skipReason: "contract_not_signed", message: "계약서 서명이 완료된 후 발송할 수 있습니다." });
+        expect(tokenService.issue).not.toHaveBeenCalled();
+    });
+
+    it("skips with contract_not_signed when the mirror cannot prove a signature at all", async () => {
+        const { service } = makeService({ mirrorState: null });
+        await expect(service.preflight({ branchId: BRANCH, clientId: 7 }))
+            .rejects.toMatchObject({ skipReason: "contract_not_signed" });
+    });
+
+    it("allows sending at the provider review stage (status 070) with a partial mirror, once the current-version document file exists", async () => {
+        const { service, tokenService } = makeService({ mirrorState: { syncStatus: "partial" } });
+
+        const preflight = await service.preflight({ branchId: BRANCH, clientId: 7 });
+
+        expect(preflight.pdf.equals(PDF)).toBe(true);
+        expect(tokenService.issue).not.toHaveBeenCalled();
+    });
+
+    const terminalWithProviderReviewStepCases = [
+        ["071", "검토 반려"],
+        ["080", "만료"],
+    ] as const;
+    it.each(terminalWithProviderReviewStepCases)(
+        "skips with contract_not_signed for terminal status %s even though the last step is still the provider review step",
+        async (statusType, stepName) => {
+            const { service, tokenService } = makeService({
+                mirrorState: {
+                    detailPayload: {
+                        ...SIGNED_MIRROR_STATE.detailPayload,
+                        current_status: {
+                            ...SIGNED_MIRROR_STATE.detailPayload!.current_status,
+                            status_type: statusType,
+                            step_type: "06",
+                            step_name: stepName,
+                        },
+                    } as EformsignDocumentMirrorState["detailPayload"],
+                },
+            });
+
+            await expect(service.preflight({ branchId: BRANCH, clientId: 7 }))
+                .rejects.toMatchObject({ skipReason: "contract_not_signed" });
+            expect(tokenService.issue).not.toHaveBeenCalled();
+        },
+    );
+
+    it("allows sending once the document completed (status 072)", async () => {
+        const { service } = makeService({
+            mirrorState: {
+                detailPayload: {
+                    ...SIGNED_MIRROR_STATE.detailPayload,
+                    current_status: {
+                        ...SIGNED_MIRROR_STATE.detailPayload!.current_status,
+                        status_type: "072",
+                        step_type: "06",
+                        step_name: "제공기관 확인",
+                    },
+                } as EformsignDocumentMirrorState["detailPayload"],
+            },
+        });
+
+        await expect(service.preflight({ branchId: BRANCH, clientId: 7 })).resolves.toBeDefined();
+    });
+
+    it("allows sending once the document completed (status 003)", async () => {
+        const { service } = makeService({
+            mirrorState: {
+                detailPayload: {
+                    ...SIGNED_MIRROR_STATE.detailPayload,
+                    current_status: {
+                        ...SIGNED_MIRROR_STATE.detailPayload!.current_status,
+                        status_type: "003",
+                        step_type: "07",
+                        step_name: "완료",
+                    },
+                } as EformsignDocumentMirrorState["detailPayload"],
+            },
+        });
+
+        await expect(service.preflight({ branchId: BRANCH, clientId: 7 })).resolves.toBeDefined();
+    });
+
     it("uses the pdf that the re-sync brought in", async () => {
         const { service, mirrorRepository } = makeService({ file: null });
         (mirrorRepository.findFile as jest.Mock)
@@ -383,11 +515,12 @@ describe("ReceiptLinkIssueService", () => {
         expect(error).toBeInstanceOf(SmsTriggerDeliverySkipError);
     });
 
-    it("refreshes contract expiry even when a staged job already carries a URL", async () => {
+    it("refreshes the contract token expiry even when a staged job already carries a URL", async () => {
         const { service, tokenService } = makeService();
         await service.issue({ branchId: BRANCH, clientId: 7, source: "auto_trigger", jobId: "job-1", existingUrl: "https://m.admin.example/receipt/efr_existing" });
         expect(tokenService.issue).toHaveBeenCalledWith(expect.objectContaining({
-            eformsignDocId: 42, serviceEndDate: new Date("2026-09-20"),
+            eformsignDocId: 42,
+            birthday: "940315",
         }));
     });
 
@@ -478,6 +611,35 @@ describe("ReceiptLinkIssueService", () => {
         const second = await service.issue({ branchId: BRANCH, clientId: 7, source: "manual", jobId: "job-2" });
         expect(second.url).toBe(first.url);
         expect(tokenService.issue).toHaveBeenCalledTimes(2);
+    });
+
+    describe("assertDocumentSyncReady", () => {
+        it("passes when the mirror holds the current-version document file (even at a partial sync status)", async () => {
+            const { service, mirrorRepository } = makeService({ mirrorState: { syncStatus: "partial" } });
+            (mirrorRepository.findFile as jest.Mock).mockResolvedValue({ content: PDF });
+            await expect(service.assertDocumentSyncReady("doc-ext-1")).resolves.toBeUndefined();
+        });
+
+        it("fails with pdf_unavailable when no current-version document file exists", async () => {
+            const { service, mirrorRepository } = makeService({ mirrorState: { syncStatus: "partial" } });
+            (mirrorRepository.findFile as jest.Mock).mockResolvedValue(null);
+            await expect(service.assertDocumentSyncReady("doc-ext-1"))
+                .rejects.toMatchObject({ skipReason: "pdf_unavailable" });
+        });
+
+        it("does not depend on the mirror's syncStatus flag alone", async () => {
+            // A "ready" row whose document file is gone must still fail closed.
+            const { service, mirrorRepository } = makeService({ mirrorState: { syncStatus: "ready" } });
+            (mirrorRepository.findFile as jest.Mock).mockResolvedValue(null);
+            await expect(service.assertDocumentSyncReady("doc-ext-1"))
+                .rejects.toMatchObject({ skipReason: "pdf_unavailable" });
+        });
+
+        it("resolves no contract document when the branch/client targets resolve to nothing", async () => {
+            const { service } = makeService({ client: null });
+            await expect(service.assertDocumentSyncReady({ branchId: BRANCH, clientId: 7 }))
+                .rejects.toMatchObject({ skipReason: "no_contract_document" });
+        });
     });
 });
 
