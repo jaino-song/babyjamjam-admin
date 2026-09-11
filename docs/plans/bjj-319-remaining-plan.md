@@ -407,3 +407,9 @@ TL;DR: 공개 계약은 detail/field-error 문구를 카탈로그 정적 문구�
 
 **Task 3.1a-1 실행 결과 (2026-09-10):** worker(launcher) unit `11459dbf3`(branch `unit/bjj319-client-codes`) → 통합 `e81091cf253ff820d494384f781a58ab87d20ded`, 5 files/203 insertions. red-first 12 failures → problem-details 47/47 통과, 통합에서 `build:backend-runtime` 재실행 시 vendor 무변경(커밋된 생성물이 fresh tsc 출력과 동일), backend 타입 통과. lint는 `packages/shared`에 eslint 설정이 없어 실행 불가(기존 상태, 기록). auditor FINAL SHIP/HIGH at `e81091cf2`, base `8a7556138`; blocking 없음. nonblocking: 인벤토리 증거 갱신(이 기록에서 처리: `problem-details.ts` public_codes 6개 추가, `vendor_parity` product_sha/comparison 갱신), CLIENT_* 이름·문구는 EM 카탈로그 도착 시 재정렬 필요, 문서 앵커 자동 검사 없음, unit worktree 정리. 3.1a-2(백엔드 전환)는 다음 단계다.
 
+**Task 3.1a-2 실행 결과 (2026-09-10):** worker(launcher) unit `2a5c30255` + main DIRECT 보정 `33c20c5f4`(잠금 경로 duration throw 2곳) → 통합 `5f1d100e5`, 5 files/371 changed lines(≤450). 고객 create/update 사전 검증을 `VALIDATION_FAILED`/`CLIENT_*` 문제 본문으로 전환했고, provider 오류 리더도 errors[0].detail을 읽도록 갱신했다. 통합 검증: 영향 5 suites 302 tests, backend 타입·eslint·diff check 통과.
+- **감사 FIX_REQUIRED → 보정:** 1차 auditor가 ①`client-invariants.spec.ts`의 기존 `.message` 단언 파손(전체 suite red) ②AI-chat 도구 실패 텍스트가 "Bad Request Exception"으로 후퇴하는 문제를 blocking으로 지적했다. `clientProblemBody`에 in-process 호환 `message` 키(HTTP 매퍼가 전송하지 않음)를 추가하고, 기존 테스트를 구조화 단언으로 갱신하며, AI-chat 리더 체인 회귀 테스트를 추가했다. **전체 backend unit suite 353 suites / 4,992 passed / 37 skipped / 0 failed** 후 fresh correction audit **SHIP/HIGH at `282065ab3`** (base `5f1d100e5`).
+- **환경 교훈(기록):** pnpm은 `file:vendor/shared-agent`를 설치 시점에 복사하므로, vendor 변경을 머지한 뒤 통합 worktree에서 `pnpm install`로 설치본을 갱신하지 않으면 stale 타입으로 검증이 실패한다(저장소 결함 아님, CI는 fresh install이라 무관).
+- 기록: inventory `verified_findings`에 `client-presend-validation-contract`(partial scope 명시) 추가, 관련 owner 3행 evidence 갱신. clean unit worktree/branch 정리.
+- 제외·잔여: 중복 연락처(3.1b), 수정 충돌·삭제 제한, update 404, 자동 등록 409, BFF/UI는 다음 단위다.
+

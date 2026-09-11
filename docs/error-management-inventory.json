@@ -135,137 +135,177 @@
   "semantic_inventory_complete": false,
   "execution_base_sha": "09cfd40a60f244e5bc6d34dc7ab392af7cefa7d9",
   "verified_findings": [
-    {
-      "id": "sms-recipient-404-contract",
-      "status": "migrated",
-      "implementation_task_id": "2.1a",
-      "path": "backend/interface/controllers/message-delivery.controller.ts",
-      "symbol": "resolveSmsRecipients",
-      "lines": [
-        478,
-        495,
-        510
-      ],
-      "spec_ids": [
-        "EM-API-01",
-        "EM-STATE-01",
-        "EM-SEC-03"
-      ],
-      "public_codes": [
-        "RESOURCE_NOT_FOUND"
-      ],
-      "implementation_sha": "78f6e3bddf53fa878fcd78c72b9bbe7730440e2b",
-      "basis_sha": "035afa078cf15e89bdf57e68032fae322931f6ad",
-      "review_scope": "Only selected client absence, active employee absence, and free-form recipient absence. Other 400/auth/provider paths and full inventory remain open.",
-      "test_paths": [
-        "backend/test/interface/controllers/message-delivery.controller.spec.ts"
-      ],
-      "test_evidence": {
-        "suites": 3,
-        "tests": 45,
-        "result": "passed",
-        "red_failures": 5,
-        "checks": [
-          "backend types",
-          "targeted eslint",
-          "diff check"
+      {
+        "id": "sms-recipient-404-contract",
+        "status": "migrated",
+        "implementation_task_id": "2.1a",
+        "path": "backend/interface/controllers/message-delivery.controller.ts",
+        "symbol": "resolveSmsRecipients",
+        "lines": [
+          478,
+          495,
+          510
         ],
-        "audit": "Sol FINAL SHIP/HIGH"
-      },
-      "outcome_evidence": "Branch-scoped lookup reads precede approval, log writes, and provider invocation; three explicit absence branches return NOT_APPLIED with empty params and NONE/NEVER. Unexpected lookup failures propagate unchanged."
-    },
-    {
-      "id": "sms-recipient-presend-legacy",
-      "status": "migrated",
-      "implementation_task_id": "2.1b",
-      "path": "backend/interface/controllers/message-delivery.controller.ts",
-      "symbol": "resolveSmsRecipients",
-      "lines": [
-        450,
-        508
-      ],
-      "spec_ids": [
-        "EM-API-01",
-        "EM-STATE-01",
-        "EM-SEC-03"
-      ],
-      "public_codes": [
-        "REQUEST_INVALID"
-      ],
-      "implementation_sha": "f91fabdba6b38e376460da174aca4c0e697e163a",
-      "unit_sha": "5c6632133f699061348249daa0e5ae1b4d511087",
-      "basis_sha": "5f87f8a32910dcdd201ca28d71def6f2297a7388",
-      "review_scope": "Eight pre-send recipient business branches only (missing branch context, client+employee both set, empty/invalid recipients, client/employee single-recipient rule, client/employee phone mismatch, ambiguous free-form record). Scheduled-datetime and sender-approval errors remain legacy.",
-      "test_paths": [
-        "backend/test/interface/controllers/message-delivery.controller.spec.ts"
-      ],
-      "test_evidence": {
-        "suites": 2,
-        "tests": 54,
-        "result": "passed",
-        "red_failures": 11,
-        "checks": [
-          "backend types",
-          "targeted eslint",
-          "diff check"
+        "spec_ids": [
+          "EM-API-01",
+          "EM-STATE-01",
+          "EM-SEC-03"
         ],
-        "audit": "auditor FINAL SHIP/HIGH at f91fabdba, base 5f87f8a32"
-      },
-      "outcome_evidence": "All eight branches reject with 400 REQUEST_INVALID/NOT_APPLIED, empty params and NONE/NEVER before approval, log writes, or provider invocation. Branch-scoped reads only; tenant/customer/provider values are not exposed."
-    },
-    {
-      "id": "web-sms-unknown-replay",
-      "status": "migrated",
-      "path": "frontend/src/components/app/messages/forms/TemplateSendForm.tsx",
-      "symbol": "sendMessages",
-      "outcome_evidence_at_base": "Promise.allSettled rejection does not establish provider nonacceptance. Current feedback treats it as failure and retains retryable recipients.",
-      "spec_ids": [
-        "EM-RETRY-05"
-      ],
-      "public_codes": [],
-      "consumer_paths": [
-        "frontend/src/services/api.ts",
-        "frontend/src/app/api/message-deliveries/sms/route.ts"
-      ],
-      "test_paths": [
-        "frontend/src/components/app/messages/forms/__tests__/TemplateSendForm.component.test.tsx",
-        "frontend/src/services/__tests__/api.test.ts"
-      ],
-      "owned_paths": [
-        "frontend/src/components/app/messages/forms/TemplateSendForm.tsx",
-        "frontend/src/components/app/messages/forms/__tests__/TemplateSendForm.component.test.tsx",
-        "frontend/src/services/api.ts",
-        "frontend/src/services/__tests__/api.test.ts"
-      ],
-      "dispatch_gate": "Task2.0 completed through reviewed Phase2a corrections; no downstream broad task authorized by this record",
-      "test_evidence": [
-        {
-          "type": "local-integrated",
-          "sha": "8cc87adf33553f9cdb86e494391eb8da00a7b2db",
+        "public_codes": [
+          "RESOURCE_NOT_FOUND"
+        ],
+        "implementation_sha": "78f6e3bddf53fa878fcd78c72b9bbe7730440e2b",
+        "basis_sha": "035afa078cf15e89bdf57e68032fae322931f6ad",
+        "review_scope": "Only selected client absence, active employee absence, and free-form recipient absence. Other 400/auth/provider paths and full inventory remain open.",
+        "test_paths": [
+          "backend/test/interface/controllers/message-delivery.controller.spec.ts"
+        ],
+        "test_evidence": {
           "suites": 3,
-          "tests": 29,
+          "tests": 45,
           "result": "passed",
+          "red_failures": 5,
           "checks": [
-            "types",
-            "targeted eslint:0 errors/1 existing warning",
-            "UI architecture",
+            "backend types",
+            "targeted eslint",
             "diff check"
-          ]
-        }
-      ],
-      "implementation_task_id": "2.0",
-      "dispatch_ready": false,
-      "observation_at_base": "Rejected requests and malformed successes are grouped as failed recipients and the UI invites retry without establishing NOT_APPLIED. handleSubmit also lacks a synchronous in-flight guard across duplicate-history lookup.",
-      "lines_at_base": [
-        474,
-        535
-      ],
-      "basis_sha": "bab6abaa45032fc8454bb1bb2336bfe05827aa2a",
-      "resolved_api_boundary_gap": "sendSms currently replaces Axios errors with plain Error and loses Problem Details. Preserve original error in this method and verify the actual boundary.",
-      "implementation_sha": "8cc87adf33553f9cdb86e494391eb8da00a7b2db",
-      "review_scope": "Mounted web SMS only; prior four-file review plus mode and committed-render correction reviews close all reported blockers."
-    }
-  ],
+          ],
+          "audit": "Sol FINAL SHIP/HIGH"
+        },
+        "outcome_evidence": "Branch-scoped lookup reads precede approval, log writes, and provider invocation; three explicit absence branches return NOT_APPLIED with empty params and NONE/NEVER. Unexpected lookup failures propagate unchanged."
+      },
+      {
+        "id": "sms-recipient-presend-legacy",
+        "status": "migrated",
+        "implementation_task_id": "2.1b",
+        "path": "backend/interface/controllers/message-delivery.controller.ts",
+        "symbol": "resolveSmsRecipients",
+        "lines": [
+          450,
+          508
+        ],
+        "spec_ids": [
+          "EM-API-01",
+          "EM-STATE-01",
+          "EM-SEC-03"
+        ],
+        "public_codes": [
+          "REQUEST_INVALID"
+        ],
+        "implementation_sha": "f91fabdba6b38e376460da174aca4c0e697e163a",
+        "unit_sha": "5c6632133f699061348249daa0e5ae1b4d511087",
+        "basis_sha": "5f87f8a32910dcdd201ca28d71def6f2297a7388",
+        "review_scope": "Eight pre-send recipient business branches only (missing branch context, client+employee both set, empty/invalid recipients, client/employee single-recipient rule, client/employee phone mismatch, ambiguous free-form record). Scheduled-datetime and sender-approval errors remain legacy.",
+        "test_paths": [
+          "backend/test/interface/controllers/message-delivery.controller.spec.ts"
+        ],
+        "test_evidence": {
+          "suites": 2,
+          "tests": 54,
+          "result": "passed",
+          "red_failures": 11,
+          "checks": [
+            "backend types",
+            "targeted eslint",
+            "diff check"
+          ],
+          "audit": "auditor FINAL SHIP/HIGH at f91fabdba, base 5f87f8a32"
+        },
+        "outcome_evidence": "All eight branches reject with 400 REQUEST_INVALID/NOT_APPLIED, empty params and NONE/NEVER before approval, log writes, or provider invocation. Branch-scoped reads only; tenant/customer/provider values are not exposed."
+      },
+      {
+        "id": "web-sms-unknown-replay",
+        "status": "migrated",
+        "path": "frontend/src/components/app/messages/forms/TemplateSendForm.tsx",
+        "symbol": "sendMessages",
+        "outcome_evidence_at_base": "Promise.allSettled rejection does not establish provider nonacceptance. Current feedback treats it as failure and retains retryable recipients.",
+        "spec_ids": [
+          "EM-RETRY-05"
+        ],
+        "public_codes": [],
+        "consumer_paths": [
+          "frontend/src/services/api.ts",
+          "frontend/src/app/api/message-deliveries/sms/route.ts"
+        ],
+        "test_paths": [
+          "frontend/src/components/app/messages/forms/__tests__/TemplateSendForm.component.test.tsx",
+          "frontend/src/services/__tests__/api.test.ts"
+        ],
+        "owned_paths": [
+          "frontend/src/components/app/messages/forms/TemplateSendForm.tsx",
+          "frontend/src/components/app/messages/forms/__tests__/TemplateSendForm.component.test.tsx",
+          "frontend/src/services/api.ts",
+          "frontend/src/services/__tests__/api.test.ts"
+        ],
+        "dispatch_gate": "Task2.0 completed through reviewed Phase2a corrections; no downstream broad task authorized by this record",
+        "test_evidence": [
+          {
+            "type": "local-integrated",
+            "sha": "8cc87adf33553f9cdb86e494391eb8da00a7b2db",
+            "suites": 3,
+            "tests": 29,
+            "result": "passed",
+            "checks": [
+              "types",
+              "targeted eslint:0 errors/1 existing warning",
+              "UI architecture",
+              "diff check"
+            ]
+          }
+        ],
+        "implementation_task_id": "2.0",
+        "dispatch_ready": false,
+        "observation_at_base": "Rejected requests and malformed successes are grouped as failed recipients and the UI invites retry without establishing NOT_APPLIED. handleSubmit also lacks a synchronous in-flight guard across duplicate-history lookup.",
+        "lines_at_base": [
+          474,
+          535
+        ],
+        "basis_sha": "bab6abaa45032fc8454bb1bb2336bfe05827aa2a",
+        "resolved_api_boundary_gap": "sendSms currently replaces Axios errors with plain Error and loses Problem Details. Preserve original error in this method and verify the actual boundary.",
+        "implementation_sha": "8cc87adf33553f9cdb86e494391eb8da00a7b2db",
+        "review_scope": "Mounted web SMS only; prior four-file review plus mode and committed-render correction reviews close all reported blockers."
+      },
+      {
+        "id": "client-presend-validation-contract",
+        "status": "migrated",
+        "implementation_task_id": "3.1a",
+        "path": "backend/application/usecases/client/client-write-validation.ts",
+        "symbol": "clientProblemBody",
+        "spec_ids": [],
+        "public_codes": [
+          "VALIDATION_FAILED",
+          "CLIENT_SERVICE_PERIOD_INVALID",
+          "CLIENT_SERVICE_PERIOD_UNCOMPUTABLE",
+          "CLIENT_DURATION_OUT_OF_RANGE",
+          "CLIENT_DURATION_NEEDS_SERVICE_PERIOD",
+          "CLIENT_SERVICE_STATUS_INVALID",
+          "CLIENT_AREA_UNAVAILABLE"
+        ],
+        "implementation_sha": "282065ab3fbd89f8e511962146dcd3773c34acfb",
+        "basis_sha": "ffe9c63600b854bfec88415fd6b34e0a38f23f2a",
+        "review_scope": "Client create/update pre-write validation only. Duplicate-phone conflicts (clientId payload, P2002), auto-registration-disabled 409, update not-found, and all other client.service throw sites remain legacy.",
+        "test_paths": [
+          "backend/application/usecases/client/client-write-validation.spec.ts",
+          "backend/test/services/client.service.spec.ts",
+          "backend/test/domain/client-invariants.spec.ts",
+          "backend/application/ai-chat/__tests__/tool-executor.service.spec.ts"
+        ],
+        "test_evidence": {
+          "suites": 353,
+          "passed": 4992,
+          "skipped": 37,
+          "result": "full backend unit suite passed",
+          "checks": [
+            "backend types",
+            "targeted eslint",
+            "full backend suite",
+            "diff check"
+          ],
+          "audit": "FIX_REQUIRED at 5f1d100e5 (B1/B2); fresh correction audit SHIP/HIGH at 282065ab3"
+        },
+        "outcome_evidence": "Converted paths reject with 400 problems (VALIDATION_FAILED/CLIENT_*) carrying pointer/cause before any write; in-process readers keep the Korean detail via a non-transmitted message compatibility member. Remaining raw paths unchanged."
+      }
+    ],
   "root_review_evidence": [
     {
       "root": "backend/module/",
@@ -3846,7 +3886,7 @@
     {"id":"owner-f6de6e072bb2","path":"backend/application/services/call-processing.service.ts","root":"backend/application/","classification":"no-direct-error-boundary","reason":"sanitizeProposals raw BadRequest caught L199-210 into markClaimFailed; ClaimLost caught L273-275.","seams":[{"line":1,"kinds":["raw_http_exception"]},{"line":132,"kinds":["catch_boundary"]},{"line":174,"kinds":["catch_boundary"]},{"line":188,"kinds":["catch_boundary"]},{"line":201,"kinds":["catch_boundary"]},{"line":236,"kinds":["throw_or_reject"]},{"line":273,"kinds":["catch_boundary"]},{"line":321,"kinds":["catch_boundary"]},{"line":358,"kinds":["raw_http_exception","throw_or_reject"]},{"line":363,"kinds":["raw_http_exception","throw_or_reject"]}],"discovery_task_id":"1.1.01","spec_ids":[],"public_codes":[],"outcome_evidence":null,"consumer_paths":["job: call ingestion/retry","call_record status"],"test_evidence":["backend/test/services/call-processing.service.spec.ts","backend/test/services/call-processing.claim.spec.ts"],"followup_task":null,"review_task":"1.1-batch-b","spec_mapping_status":"pending (EM catalog not yet provided)"},
     {"id":"owner-d4845fa85109","path":"backend/application/services/client-due-date-scheduler.service.ts","root":"backend/application/","classification":"no-direct-error-boundary","reason":"Cron; all failures caught L62-168 logged/cooldown.","seams":[{"line":46,"kinds":["job_boundary"]},{"line":62,"kinds":["catch_boundary"]},{"line":163,"kinds":["catch_boundary"]}],"discovery_task_id":"1.1.01","spec_ids":[],"public_codes":[],"outcome_evidence":null,"consumer_paths":["cron job logs"],"test_evidence":["backend/test/services/client-due-date-scheduler.service.spec.ts"],"followup_task":null,"review_task":"1.1-batch-b","spec_mapping_status":"pending (EM catalog not yet provided)"},
     {"id":"owner-9274439fe79a","path":"backend/application/services/client-message-automation-intent-fulfiller.ts","root":"backend/application/","classification":"no-direct-error-boundary","reason":"Releases claim and rethrows L110-117; no HTTP exception or registered code; caller requeues.","seams":[{"line":110,"kinds":["catch_boundary"]},{"line":113,"kinds":["catch_boundary"]},{"line":116,"kinds":["throw_or_reject"]}],"discovery_task_id":"1.1.01","spec_ids":[],"public_codes":[],"outcome_evidence":null,"consumer_paths":["internal intent fulfillment"],"test_evidence":[],"followup_task":null,"review_task":"1.1-batch-b","spec_mapping_status":"pending (EM catalog not yet provided)"},
-    {"id":"owner-3572d865314f","path":"backend/application/services/client.service.ts","root":"backend/application/","classification":"legacy","reason":"Many raw 4xx messages L885-L2268 (BadRequest/Conflict/NotFound) none with a catalog code.","seams":[{"line":1,"kinds":["raw_http_exception"]},{"line":238,"kinds":["catch_boundary"]},{"line":390,"kinds":["throw_or_reject"]},{"line":434,"kinds":["throw_or_reject"]},{"line":458,"kinds":["throw_or_reject"]},{"line":471,"kinds":["throw_or_reject"]},{"line":491,"kinds":["catch_boundary"]},{"line":581,"kinds":["catch_boundary"]},{"line":587,"kinds":["catch_boundary"]},{"line":885,"kinds":["raw_http_exception","throw_or_reject"]},{"line":1036,"kinds":["raw_http_exception","throw_or_reject"]},{"line":1050,"kinds":["raw_http_exception","throw_or_reject"]},{"line":1080,"kinds":["catch_boundary"]},{"line":1216,"kinds":["catch_boundary"]},{"line":1225,"kinds":["catch_boundary"]},{"line":1496,"kinds":["catch_boundary"]},{"line":1500,"kinds":["catch_boundary"]},{"line":1538,"kinds":["catch_boundary"]},{"line":1590,"kinds":["raw_http_exception","throw_or_reject"]},{"line":1595,"kinds":["raw_http_exception","throw_or_reject"]},{"line":1639,"kinds":["raw_http_exception","throw_or_reject"]},{"line":1659,"kinds":["raw_http_exception","throw_or_reject"]},{"line":1662,"kinds":["raw_http_exception","throw_or_reject"]},{"line":1729,"kinds":["raw_http_exception","throw_or_reject"]},{"line":1751,"kinds":["raw_http_exception","throw_or_reject"]},{"line":1759,"kinds":["raw_http_exception","throw_or_reject"]},{"line":1801,"kinds":["raw_http_exception","throw_or_reject"]},{"line":1906,"kinds":["raw_http_exception","throw_or_reject"]},{"line":1909,"kinds":["raw_http_exception","throw_or_reject"]},{"line":1919,"kinds":["raw_http_exception","throw_or_reject"]},{"line":1926,"kinds":["catch_boundary"]},{"line":1935,"kinds":["catch_boundary"]},{"line":1945,"kinds":["catch_boundary"]},{"line":1951,"kinds":["catch_boundary"]},{"line":1971,"kinds":["raw_http_exception","throw_or_reject"]},{"line":2031,"kinds":["catch_boundary"]},{"line":2067,"kinds":["raw_http_exception","throw_or_reject"]},{"line":2115,"kinds":["raw_http_exception","throw_or_reject"]},{"line":2158,"kinds":["raw_http_exception","throw_or_reject"]},{"line":2192,"kinds":["catch_boundary"]},{"line":2197,"kinds":["catch_boundary"]},{"line":2203,"kinds":["raw_http_exception","throw_or_reject"]},{"line":2216,"kinds":["raw_http_exception","throw_or_reject"]},{"line":2268,"kinds":["raw_http_exception","throw_or_reject"]}],"discovery_task_id":"1.1.01","spec_ids":[],"public_codes":[],"outcome_evidence":null,"consumer_paths":["HTTP client.controller"],"test_evidence":["backend/test/services/client.service.spec.ts","backend/test/e2e/full-flow.e2e.spec.ts","backend/test/e2e/multi-tenancy.spec.ts","backend/test/e2e/service-record-write-lock-races-lifecycle-client.e2e.spec.ts","backend/test/integration/client.controller.integration.spec.ts","backend/test/services/client-status-cas.spec.ts"],"followup_task":"3.1","review_task":"1.1-batch-b","spec_mapping_status":"pending (EM catalog not yet provided)"},
+    {"id":"owner-3572d865314f","path":"backend/application/services/client.service.ts","root":"backend/application/","classification":"legacy","reason":"Many raw 4xx messages L885-L2268 (BadRequest/Conflict/NotFound) none with a catalog code. Validation throws converted at 282065ab3 (required-null, duration, locked-path rechecks); remaining legacy includes create/update duplicate-phone conflicts, auto-registration-disabled 409, and update NotFound.","seams":[{"line":1,"kinds":["raw_http_exception"]},{"line":238,"kinds":["catch_boundary"]},{"line":390,"kinds":["throw_or_reject"]},{"line":434,"kinds":["throw_or_reject"]},{"line":458,"kinds":["throw_or_reject"]},{"line":471,"kinds":["throw_or_reject"]},{"line":491,"kinds":["catch_boundary"]},{"line":581,"kinds":["catch_boundary"]},{"line":587,"kinds":["catch_boundary"]},{"line":885,"kinds":["raw_http_exception","throw_or_reject"]},{"line":1036,"kinds":["raw_http_exception","throw_or_reject"]},{"line":1050,"kinds":["raw_http_exception","throw_or_reject"]},{"line":1080,"kinds":["catch_boundary"]},{"line":1216,"kinds":["catch_boundary"]},{"line":1225,"kinds":["catch_boundary"]},{"line":1496,"kinds":["catch_boundary"]},{"line":1500,"kinds":["catch_boundary"]},{"line":1538,"kinds":["catch_boundary"]},{"line":1590,"kinds":["raw_http_exception","throw_or_reject"]},{"line":1595,"kinds":["raw_http_exception","throw_or_reject"]},{"line":1639,"kinds":["raw_http_exception","throw_or_reject"]},{"line":1659,"kinds":["raw_http_exception","throw_or_reject"]},{"line":1662,"kinds":["raw_http_exception","throw_or_reject"]},{"line":1729,"kinds":["raw_http_exception","throw_or_reject"]},{"line":1751,"kinds":["raw_http_exception","throw_or_reject"]},{"line":1759,"kinds":["raw_http_exception","throw_or_reject"]},{"line":1801,"kinds":["raw_http_exception","throw_or_reject"]},{"line":1906,"kinds":["raw_http_exception","throw_or_reject"]},{"line":1909,"kinds":["raw_http_exception","throw_or_reject"]},{"line":1919,"kinds":["raw_http_exception","throw_or_reject"]},{"line":1926,"kinds":["catch_boundary"]},{"line":1935,"kinds":["catch_boundary"]},{"line":1945,"kinds":["catch_boundary"]},{"line":1951,"kinds":["catch_boundary"]},{"line":1971,"kinds":["raw_http_exception","throw_or_reject"]},{"line":2031,"kinds":["catch_boundary"]},{"line":2067,"kinds":["raw_http_exception","throw_or_reject"]},{"line":2115,"kinds":["raw_http_exception","throw_or_reject"]},{"line":2158,"kinds":["raw_http_exception","throw_or_reject"]},{"line":2192,"kinds":["catch_boundary"]},{"line":2197,"kinds":["catch_boundary"]},{"line":2203,"kinds":["raw_http_exception","throw_or_reject"]},{"line":2216,"kinds":["raw_http_exception","throw_or_reject"]},{"line":2268,"kinds":["raw_http_exception","throw_or_reject"]}],"discovery_task_id":"1.1.01","spec_ids":[],"public_codes":[],"outcome_evidence":null,"consumer_paths":["HTTP client.controller"],"test_evidence":["backend/test/services/client.service.spec.ts","backend/test/e2e/full-flow.e2e.spec.ts","backend/test/e2e/multi-tenancy.spec.ts","backend/test/e2e/service-record-write-lock-races-lifecycle-client.e2e.spec.ts","backend/test/integration/client.controller.integration.spec.ts","backend/test/services/client-status-cas.spec.ts"],"followup_task":"3.1","review_task":"1.1-batch-b","spec_mapping_status":"pending (EM catalog not yet provided)"},
     {"id":"owner-b5b343b2babf","path":"backend/application/services/consultation-inquiry.service.ts","root":"backend/application/","classification":"legacy","reason":"Raw BadRequest L57-L97; NotFound L104.","seams":[{"line":1,"kinds":["raw_http_exception"]},{"line":57,"kinds":["raw_http_exception","throw_or_reject"]},{"line":70,"kinds":["raw_http_exception","throw_or_reject"]},{"line":97,"kinds":["raw_http_exception","throw_or_reject"]},{"line":104,"kinds":["raw_http_exception","throw_or_reject"]},{"line":128,"kinds":["catch_boundary"]}],"discovery_task_id":"1.1.01","spec_ids":[],"public_codes":[],"outcome_evidence":null,"consumer_paths":["HTTP consultation-inquiry.controller"],"test_evidence":["backend/test/services/consultation-inquiry.service.spec.ts"],"followup_task":"6.1","review_task":"1.1-batch-b","spec_mapping_status":"pending (EM catalog not yet provided)"},
     {"id":"owner-9f0bfbe7cfcf","path":"backend/application/services/contract-auto-finalize-scheduler.service.ts","root":"backend/application/","classification":"no-direct-error-boundary","reason":"Cron; catches log/notify L96-227.","seams":[{"line":65,"kinds":["job_boundary"]},{"line":96,"kinds":["catch_boundary"]},{"line":187,"kinds":["catch_boundary"]},{"line":222,"kinds":["catch_boundary"]}],"discovery_task_id":"1.1.01","spec_ids":[],"public_codes":[],"outcome_evidence":null,"consumer_paths":["nightly cron + branch notification"],"test_evidence":["backend/test/services/contract-auto-finalize-scheduler.service.spec.ts"],"followup_task":null,"review_task":"1.1-batch-b","spec_mapping_status":"pending (EM catalog not yet provided)"},
     {"id":"owner-7821b0039bf7","path":"backend/application/services/contract-client-assignment-guard.service.ts","root":"backend/application/","classification":"legacy","reason":"Raw BadRequest L79-L118.","seams":[{"line":1,"kinds":["raw_http_exception"]},{"line":79,"kinds":["raw_http_exception","throw_or_reject"]},{"line":91,"kinds":["raw_http_exception","throw_or_reject"]},{"line":107,"kinds":["raw_http_exception","throw_or_reject"]},{"line":118,"kinds":["raw_http_exception","throw_or_reject"]}],"discovery_task_id":"1.1.01","spec_ids":[],"public_codes":[],"outcome_evidence":null,"consumer_paths":["HTTP send/finalize contract paths"],"test_evidence":["backend/test/services/contract-client-assignment-guard.service.spec.ts","backend/test/integration/eformsign.controller.integration.spec.ts"],"followup_task":"5.1","review_task":"1.1-batch-b","spec_mapping_status":"pending (EM catalog not yet provided)"},
@@ -3912,8 +3952,8 @@
     {"id":"owner-8d91a31097f7","path":"backend/application/usecases/bank-account-info/delete-bank-account-info.usecase.ts","root":"backend/application/","classification":"legacy","reason":"Raw NotFound L18.","seams":[{"line":1,"kinds":["raw_http_exception"]},{"line":18,"kinds":["raw_http_exception","throw_or_reject"]}],"discovery_task_id":"1.1.01","spec_ids":[],"public_codes":[],"outcome_evidence":null,"consumer_paths":["HTTP /bank-account-infos via controller"],"test_evidence":["backend/test/usecases/bank-account-info/bank-account-info-branch-scope.usecase.spec.ts"],"followup_task":"6.1","review_task":"1.1-batch-b","spec_mapping_status":"pending (EM catalog not yet provided)"},
     {"id":"owner-85f17a307709","path":"backend/application/usecases/bank-account-info/update-bank-account-info.usecase.ts","root":"backend/application/","classification":"legacy","reason":"Raw NotFound L20/L35.","seams":[{"line":1,"kinds":["raw_http_exception"]},{"line":20,"kinds":["raw_http_exception","throw_or_reject"]},{"line":35,"kinds":["raw_http_exception","throw_or_reject"]}],"discovery_task_id":"1.1.01","spec_ids":[],"public_codes":[],"outcome_evidence":null,"consumer_paths":["HTTP /bank-account-infos via controller"],"test_evidence":["backend/test/usecases/bank-account-info/bank-account-info-branch-scope.usecase.spec.ts"],"followup_task":"6.1","review_task":"1.1-batch-b","spec_mapping_status":"pending (EM catalog not yet provided)"},
     {"id":"owner-abeb5ecd686d","path":"backend/application/usecases/client/client-agent-capabilities.provider.ts","root":"backend/application/","classification":"migrated","reason":"Only plain Error L95; normalizes to INTERNAL_ERROR through the agent runtime.","seams":[{"line":95,"kinds":["throw_or_reject"]}],"discovery_task_id":"1.1.01","spec_ids":[],"public_codes":[],"outcome_evidence":"Unexpected failure normalizes to registered INTERNAL_ERROR.","consumer_paths":["agent chat capability execution"],"test_evidence":["backend/application/usecases/client/client-agent-capabilities.provider.spec.ts"],"followup_task":null,"review_task":"1.1-batch-b","spec_mapping_status":"pending (EM catalog not yet provided)"},
-    {"id":"owner-b91509d5d064","path":"backend/application/usecases/client/client-write-agent-capabilities.provider.ts","root":"backend/application/","classification":"legacy","reason":"Raw 4xx converted to AgentActionCertainFailure; coordinator rethrows raw ConflictException(\"Action execution failed\") L475.","seams":[{"line":1,"kinds":["raw_http_exception"]},{"line":142,"kinds":["catch_boundary"]},{"line":143,"kinds":["raw_http_exception"]},{"line":144,"kinds":["throw_or_reject"]},{"line":146,"kinds":["throw_or_reject"]},{"line":155,"kinds":["raw_http_exception"]},{"line":220,"kinds":["catch_boundary"]},{"line":221,"kinds":["raw_http_exception"]},{"line":222,"kinds":["throw_or_reject"]},{"line":224,"kinds":["throw_or_reject"]},{"line":275,"kinds":["raw_http_exception","throw_or_reject"]},{"line":278,"kinds":["raw_http_exception","throw_or_reject"]},{"line":281,"kinds":["catch_boundary"]},{"line":282,"kinds":["raw_http_exception"]},{"line":283,"kinds":["throw_or_reject"]},{"line":285,"kinds":["throw_or_reject"]},{"line":333,"kinds":["throw_or_reject"]},{"line":336,"kinds":["throw_or_reject"]},{"line":414,"kinds":["catch_boundary"]},{"line":415,"kinds":["throw_or_reject"]},{"line":416,"kinds":["throw_or_reject"]},{"line":435,"kinds":["throw_or_reject"]},{"line":449,"kinds":["throw_or_reject"]},{"line":488,"kinds":["throw_or_reject"]},{"line":519,"kinds":["catch_boundary"]},{"line":520,"kinds":["throw_or_reject"]},{"line":521,"kinds":["throw_or_reject"]},{"line":528,"kinds":["throw_or_reject"]},{"line":570,"kinds":["catch_boundary"]},{"line":572,"kinds":["throw_or_reject"]},{"line":574,"kinds":["throw_or_reject"]},{"line":575,"kinds":["throw_or_reject"]},{"line":611,"kinds":["catch_boundary"]},{"line":660,"kinds":["catch_boundary"]}],"discovery_task_id":"1.1.01","spec_ids":[],"public_codes":[],"outcome_evidence":null,"consumer_paths":["agent action approval HTTP /ai/actions/:id/approve","chat"],"test_evidence":["backend/application/usecases/client/client-write-agent-capabilities.provider.spec.ts"],"followup_task":"6.1","review_task":"1.1-batch-b","spec_mapping_status":"pending (EM catalog not yet provided)"},
-    {"id":"owner-f40c6d46c00e","path":"backend/application/usecases/client/client-write-validation.ts","root":"backend/application/","classification":"legacy","reason":"Raw BadRequest L45-L184; Conflict {code:P2002} L217-223 non-catalog.","seams":[{"line":1,"kinds":["raw_http_exception"]},{"line":43,"kinds":["catch_boundary"]},{"line":45,"kinds":["raw_http_exception","throw_or_reject"]},{"line":47,"kinds":["throw_or_reject"]},{"line":59,"kinds":["raw_http_exception","throw_or_reject"]},{"line":65,"kinds":["raw_http_exception","throw_or_reject"]},{"line":86,"kinds":["raw_http_exception","throw_or_reject"]},{"line":95,"kinds":["raw_http_exception","throw_or_reject"]},{"line":98,"kinds":["catch_boundary"]},{"line":100,"kinds":["raw_http_exception","throw_or_reject"]},{"line":102,"kinds":["throw_or_reject"]},{"line":126,"kinds":["raw_http_exception","throw_or_reject"]},{"line":148,"kinds":["raw_http_exception","throw_or_reject"]},{"line":158,"kinds":["raw_http_exception","throw_or_reject"]},{"line":184,"kinds":["raw_http_exception","throw_or_reject"]},{"line":217,"kinds":["raw_http_exception","throw_or_reject"]}],"discovery_task_id":"1.1.01","spec_ids":[],"public_codes":[],"outcome_evidence":null,"consumer_paths":["HTTP client create/update","agent provider"],"test_evidence":["backend/application/usecases/client/client-write-validation.spec.ts","backend/test/domain/client-invariants.spec.ts"],"followup_task":"6.1","review_task":"1.1-batch-b","spec_mapping_status":"pending (EM catalog not yet provided)"},
+    {"id":"owner-b91509d5d064","path":"backend/application/usecases/client/client-write-agent-capabilities.provider.ts","root":"backend/application/","classification":"legacy","reason":"Raw 4xx converted to AgentActionCertainFailure; coordinator rethrows raw ConflictException(\"Action execution failed\") L475. Error readers updated at 282065ab3 to read structured errors[0].detail; agent-side duration raw throws and duplicate conflicts remain legacy.","seams":[{"line":1,"kinds":["raw_http_exception"]},{"line":142,"kinds":["catch_boundary"]},{"line":143,"kinds":["raw_http_exception"]},{"line":144,"kinds":["throw_or_reject"]},{"line":146,"kinds":["throw_or_reject"]},{"line":155,"kinds":["raw_http_exception"]},{"line":220,"kinds":["catch_boundary"]},{"line":221,"kinds":["raw_http_exception"]},{"line":222,"kinds":["throw_or_reject"]},{"line":224,"kinds":["throw_or_reject"]},{"line":275,"kinds":["raw_http_exception","throw_or_reject"]},{"line":278,"kinds":["raw_http_exception","throw_or_reject"]},{"line":281,"kinds":["catch_boundary"]},{"line":282,"kinds":["raw_http_exception"]},{"line":283,"kinds":["throw_or_reject"]},{"line":285,"kinds":["throw_or_reject"]},{"line":333,"kinds":["throw_or_reject"]},{"line":336,"kinds":["throw_or_reject"]},{"line":414,"kinds":["catch_boundary"]},{"line":415,"kinds":["throw_or_reject"]},{"line":416,"kinds":["throw_or_reject"]},{"line":435,"kinds":["throw_or_reject"]},{"line":449,"kinds":["throw_or_reject"]},{"line":488,"kinds":["throw_or_reject"]},{"line":519,"kinds":["catch_boundary"]},{"line":520,"kinds":["throw_or_reject"]},{"line":521,"kinds":["throw_or_reject"]},{"line":528,"kinds":["throw_or_reject"]},{"line":570,"kinds":["catch_boundary"]},{"line":572,"kinds":["throw_or_reject"]},{"line":574,"kinds":["throw_or_reject"]},{"line":575,"kinds":["throw_or_reject"]},{"line":611,"kinds":["catch_boundary"]},{"line":660,"kinds":["catch_boundary"]}],"discovery_task_id":"1.1.01","spec_ids":[],"public_codes":[],"outcome_evidence":null,"consumer_paths":["agent action approval HTTP /ai/actions/:id/approve","chat"],"test_evidence":["backend/application/usecases/client/client-write-agent-capabilities.provider.spec.ts"],"followup_task":"6.1","review_task":"1.1-batch-b","spec_mapping_status":"pending (EM catalog not yet provided)"},
+    {"id":"owner-f40c6d46c00e","path":"backend/application/usecases/client/client-write-validation.ts","root":"backend/application/","classification":"legacy","reason":"Raw BadRequest L45-L184; Conflict {code:P2002} L217-223 non-catalog. Partial migration at 282065ab3: pre-write checks converted to structured problems (VALIDATION_FAILED + CLIENT_*); assertPhoneAvailable duplicate conflict and agent-side raw throws remain legacy.","seams":[{"line":1,"kinds":["raw_http_exception"]},{"line":43,"kinds":["catch_boundary"]},{"line":45,"kinds":["raw_http_exception","throw_or_reject"]},{"line":47,"kinds":["throw_or_reject"]},{"line":59,"kinds":["raw_http_exception","throw_or_reject"]},{"line":65,"kinds":["raw_http_exception","throw_or_reject"]},{"line":86,"kinds":["raw_http_exception","throw_or_reject"]},{"line":95,"kinds":["raw_http_exception","throw_or_reject"]},{"line":98,"kinds":["catch_boundary"]},{"line":100,"kinds":["raw_http_exception","throw_or_reject"]},{"line":102,"kinds":["throw_or_reject"]},{"line":126,"kinds":["raw_http_exception","throw_or_reject"]},{"line":148,"kinds":["raw_http_exception","throw_or_reject"]},{"line":158,"kinds":["raw_http_exception","throw_or_reject"]},{"line":184,"kinds":["raw_http_exception","throw_or_reject"]},{"line":217,"kinds":["raw_http_exception","throw_or_reject"]}],"discovery_task_id":"1.1.01","spec_ids":[],"public_codes":["VALIDATION_FAILED","CLIENT_SERVICE_PERIOD_INVALID","CLIENT_SERVICE_PERIOD_UNCOMPUTABLE","CLIENT_DURATION_OUT_OF_RANGE","CLIENT_DURATION_NEEDS_SERVICE_PERIOD","CLIENT_SERVICE_STATUS_INVALID","CLIENT_AREA_UNAVAILABLE"],"outcome_evidence":null,"consumer_paths":["HTTP client create/update","agent provider"],"test_evidence":["backend/application/usecases/client/client-write-validation.spec.ts","backend/test/domain/client-invariants.spec.ts"],"followup_task":"6.1","review_task":"1.1-batch-b","spec_mapping_status":"pending (EM catalog not yet provided)"},
     {"id":"owner-7f73351a8287","path":"backend/application/usecases/client/delete-client.usecase.ts","root":"backend/application/","classification":"legacy","reason":"Raw NotFound L30/L37; Conflict {code:CLIENT_RETENTION_BLOCKED} L41-54 non-catalog.","seams":[{"line":1,"kinds":["raw_http_exception"]},{"line":30,"kinds":["raw_http_exception","throw_or_reject"]},{"line":35,"kinds":["catch_boundary"]},{"line":37,"kinds":["raw_http_exception","throw_or_reject"]},{"line":41,"kinds":["raw_http_exception","throw_or_reject"]},{"line":51,"kinds":["raw_http_exception","throw_or_reject"]},{"line":56,"kinds":["throw_or_reject"]}],"discovery_task_id":"1.1.01","spec_ids":[],"public_codes":[],"outcome_evidence":null,"consumer_paths":["HTTP client delete via service"],"test_evidence":["backend/test/usecases/client/delete-client.usecase.spec.ts","backend/test/e2e/retention-delete-guards.e2e.spec.ts"],"followup_task":"6.1","review_task":"1.1-batch-b","spec_mapping_status":"pending (EM catalog not yet provided)"},
     {"id":"owner-9b3617c20527","path":"backend/application/usecases/client/update-client.usecase.ts","root":"backend/application/","classification":"legacy","reason":"Raw NotFound L53; BadRequest L91; typed ClientTargetVersionMismatch for the agent path.","seams":[{"line":1,"kinds":["raw_http_exception"]},{"line":53,"kinds":["raw_http_exception","throw_or_reject"]},{"line":84,"kinds":["throw_or_reject"]},{"line":91,"kinds":["raw_http_exception","throw_or_reject"]}],"discovery_task_id":"1.1.01","spec_ids":[],"public_codes":[],"outcome_evidence":null,"consumer_paths":["HTTP client update","agent provider"],"test_evidence":["backend/test/usecases/client/update-client.usecase.spec.ts"],"followup_task":"6.1","review_task":"1.1-batch-b","spec_mapping_status":"pending (EM catalog not yet provided)"},
     {"id":"owner-d0aec312e7c8","path":"backend/application/usecases/eformsign-doc/adopt-eformsign-doc.usecase.ts","root":"backend/application/","classification":"migrated","reason":"Plain Error L53 normalizes to INTERNAL_ERROR.","seams":[{"line":53,"kinds":["throw_or_reject"]},{"line":94,"kinds":["catch_boundary"]}],"discovery_task_id":"1.1.01","spec_ids":[],"public_codes":[],"outcome_evidence":"Unexpected failure reaches the client as registered INTERNAL_ERROR.","consumer_paths":["HTTP adopt route","job reconciliation"],"test_evidence":["backend/test/usecases/eformsign-doc/adopt-eformsign-doc.usecase.spec.ts","backend/test/integration/eformsign-doc-finalize-headless-denial.spec.ts","backend/test/integration/eformsign-document-job.controller.spec.ts"],"followup_task":null,"review_task":"1.1-batch-b","spec_mapping_status":"pending (EM catalog not yet provided)"},
