@@ -144,8 +144,19 @@ export function ListRowsSkeleton({
             className="list-info flex flex-col"
             data-component={`${dataComponent}_row_info`}
           >
-            <Skeleton className="h-4 w-20 bg-v3-dim-white animate-pulse" />
-            <Skeleton className="mt-1.5 h-3 w-32 bg-v3-dim-white animate-pulse" />
+            {/* The placeholders reuse the real text elements (`.list-name`,
+                `.list-meta`) with invisible copy so the line boxes — and the
+                row height — match the loaded row on every page; only the
+                paint is replaced. Fixed bar heights would drift with each
+                page's font-size/line-height overrides. */}
+            <div className="list-name">
+              <span className="invisible">이름</span>
+              <Skeleton className="inline-block h-[0.8em] w-20 bg-v3-dim-white animate-pulse" />
+            </div>
+            <div className="list-meta">
+              <span className="invisible">정보</span>
+              <Skeleton className="inline-block h-[0.65em] w-32 bg-v3-dim-white animate-pulse" />
+            </div>
           </div>
           <div
             className="list-right"
