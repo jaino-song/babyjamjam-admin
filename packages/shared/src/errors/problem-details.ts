@@ -31,7 +31,14 @@ export type ProblemCode =
     | "MESSAGE_SEND_PARTIAL"
     | "MESSAGE_SEND_REJECTED"
     | "MESSAGE_SEND_ALREADY_REQUESTED"
-    | "MESSAGE_REQUEST_KEY_CONFLICT";
+    | "MESSAGE_REQUEST_KEY_CONFLICT"
+    // Provisional client codes pending EM spec reconciliation (BJJ-319).
+    | "CLIENT_SERVICE_PERIOD_INVALID"
+    | "CLIENT_SERVICE_PERIOD_UNCOMPUTABLE"
+    | "CLIENT_DURATION_OUT_OF_RANGE"
+    | "CLIENT_DURATION_NEEDS_SERVICE_PERIOD"
+    | "CLIENT_SERVICE_STATUS_INVALID"
+    | "CLIENT_AREA_UNAVAILABLE";
 
 export type ProblemOutcome =
     | "NOT_APPLIED"
@@ -172,6 +179,13 @@ const PROBLEM_CODES: readonly ProblemCode[] = [
     "MESSAGE_SEND_REJECTED",
     "MESSAGE_SEND_ALREADY_REQUESTED",
     "MESSAGE_REQUEST_KEY_CONFLICT",
+    // Provisional client codes pending EM spec reconciliation (BJJ-319).
+    "CLIENT_SERVICE_PERIOD_INVALID",
+    "CLIENT_SERVICE_PERIOD_UNCOMPUTABLE",
+    "CLIENT_DURATION_OUT_OF_RANGE",
+    "CLIENT_DURATION_NEEDS_SERVICE_PERIOD",
+    "CLIENT_SERVICE_STATUS_INVALID",
+    "CLIENT_AREA_UNAVAILABLE",
 ];
 
 const PROBLEM_ERROR_CODES: readonly ProblemErrorCode[] = [
@@ -488,6 +502,73 @@ const PROBLEM_DEFINITIONS: Readonly<
         detail: {
             "ko-KR": "같은 요청 식별자가 다른 발송 내용에 사용됐어요.",
             "en-US": "The request key was already used with different message content.",
+        },
+    },
+    // Provisional client codes pending EM spec reconciliation (BJJ-319).
+    CLIENT_SERVICE_PERIOD_INVALID: {
+        status: 400,
+        title: {
+            "ko-KR": "서비스 기간을 확인해 주세요",
+            "en-US": "Check the service period",
+        },
+        detail: {
+            "ko-KR": "서비스 시작일은 종료일보다 늦을 수 없어요.",
+            "en-US": "The service start date cannot be later than the end date.",
+        },
+    },
+    CLIENT_SERVICE_PERIOD_UNCOMPUTABLE: {
+        status: 400,
+        title: {
+            "ko-KR": "서비스 기간을 계산할 수 없어요",
+            "en-US": "Service period could not be calculated",
+        },
+        detail: {
+            "ko-KR": "서비스 기간을 계산할 수 없어요. 시작일과 종료일을 확인해 주세요.",
+            "en-US": "The service period could not be calculated. Check the start and end dates.",
+        },
+    },
+    CLIENT_DURATION_OUT_OF_RANGE: {
+        status: 400,
+        title: {
+            "ko-KR": "서비스 기간(횟수)을 확인해 주세요",
+            "en-US": "Check the session count",
+        },
+        detail: {
+            "ko-KR": "서비스 횟수가 시작일과 종료일 사이의 영업일 수를 벗어났어요.",
+            "en-US": "The session count is outside the business days between the start and end dates.",
+        },
+    },
+    CLIENT_DURATION_NEEDS_SERVICE_PERIOD: {
+        status: 400,
+        title: {
+            "ko-KR": "시작일과 종료일이 필요해요",
+            "en-US": "Start and end dates are required",
+        },
+        detail: {
+            "ko-KR": "서비스 기간을 지정하려면 시작일과 종료일이 모두 필요해요.",
+            "en-US": "Both the start and end dates are required to set the service period.",
+        },
+    },
+    CLIENT_SERVICE_STATUS_INVALID: {
+        status: 400,
+        title: {
+            "ko-KR": "계약 상태를 확인해 주세요",
+            "en-US": "Check the service status",
+        },
+        detail: {
+            "ko-KR": "허용되지 않는 계약 상태예요.",
+            "en-US": "The service status is not allowed.",
+        },
+    },
+    CLIENT_AREA_UNAVAILABLE: {
+        status: 400,
+        title: {
+            "ko-KR": "관할 지역을 사용할 수 없어요",
+            "en-US": "Area unavailable",
+        },
+        detail: {
+            "ko-KR": "선택한 관할 지역을 사용할 수 없어요.",
+            "en-US": "The selected area is not available.",
         },
     },
 };
