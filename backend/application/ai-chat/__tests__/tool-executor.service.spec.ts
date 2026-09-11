@@ -1,3 +1,7 @@
+import { BadRequestException } from "@nestjs/common";
+
+import { sanitizeEformsignErrorMessage } from "../../../domain/utils/eformsign-error-message";
+import { clientProblemBody } from "../../usecases/client/client-write-validation";
 import { ToolExecutorService, type ToolExecutionResult } from "../tool-executor.service";
 
 const TEST_PRINCIPAL = { branchId: "branch-1", globalRole: "owner" };
@@ -239,6 +243,17 @@ describe("ToolExecutorService", () => {
             breastPump: false,
         })).resolves.toMatchObject({ success: true });
         expect(mocks.clientService.create).not.toHaveBeenCalled();
+    });
+
+    it("should keep the structured client validation detail readable in tool failure text", () => {
+        const error = new BadRequestException(clientProblemBody("CLIENT_SERVICE_PERIOD_INVALID", {
+            pointer: "/endDate",
+            code: "INVALID_VALUE",
+            detail: "서비스 시작일은 종료일보다 늦을 수 없습니다.",
+            location: "body",
+        }));
+
+        expect(sanitizeEformsignErrorMessage(error)).toContain("서비스 시작일은 종료일보다 늦을 수 없습니다.");
     });
 
     it("should reject non-boolean employee availability values", async () => {

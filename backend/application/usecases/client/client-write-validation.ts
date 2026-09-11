@@ -29,14 +29,22 @@ type ClientDateField = "startDate" | "endDate" | "dueDate" | "birthDate";
  * Shape a client pre-write rejection as a public problem contract body.
  * The HTTP boundary replaces the texts with locale catalog copies, so the
  * codes and pointers here only have to identify the cause.
+ *
+ * `message` is an in-process compatibility alias for callers that read
+ * `HttpException.message` (Nest derives it from a string `message` member);
+ * the HTTP mapper copies only contract members, so it never reaches clients.
  */
-export function clientProblemBody(code: ProblemCode, error: ProblemError): Pick<ProblemDetails, "code" | "params" | "outcome" | "recovery" | "errors"> {
+export function clientProblemBody(
+    code: ProblemCode,
+    error: ProblemError,
+): Pick<ProblemDetails, "code" | "params" | "outcome" | "recovery" | "errors"> & { message: string } {
     return {
         code,
         params: {},
         outcome: "NOT_APPLIED",
         recovery: { action: "NONE", retry: { mode: "NEVER" } },
         errors: [error],
+        message: error.detail,
     };
 }
 
