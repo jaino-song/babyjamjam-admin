@@ -296,7 +296,9 @@ describe("local request-body validation", () => {
             expect.objectContaining({ pointer: "/required", code: "REQUIRED" }),
             expect.objectContaining({ pointer: "/wrongType", code: "INVALID_FORMAT" }),
         ]));
-        expect(JSON.stringify(body)).not.toContain("42");
+        // The requestId is a random UUID that may itself contain "42"; exclude it
+        // so the assertion checks only for a leak of the supplied value.
+        expect(JSON.stringify({ ...body, requestId: undefined })).not.toContain("42");
     });
 
     it("maps unsafe or overlong issue paths to form-level errors", async () => {
