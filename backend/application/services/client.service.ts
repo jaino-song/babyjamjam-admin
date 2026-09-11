@@ -23,6 +23,7 @@ import {
     assertAllowedServiceStatus,
     assertClientDurationMatchesDates,
     assertClientPhoneInput,
+    clientCodeOnlyProblemBody,
     clientProblemBody,
     deriveClientDuration,
     findClientByNormalizedPhone,
@@ -1048,12 +1049,14 @@ export class ClientService {
         );
         if (existing && normalizedPhone) {
             if (params.reuseExistingClient !== true) {
-                throw new ConflictException({
-                    statusCode: 409,
-                    error: "Conflict",
-                    message: "이미 같은 전화번호의 고객이 있습니다.",
-                    clientId: existing.id,
-                });
+                // 소비자는 공개 코드로 중복을 식별한다. 재사용 대상 id 페이로드는
+                // 의도적으로 제거된다(서버 재사용 분기는 그대로 유지).
+                throw new ConflictException(clientProblemBody("CLIENT_PHONE_ALREADY_REGISTERED", {
+                    pointer: "/phone",
+                    code: "INVALID_VALUE",
+                    detail: "같은 전화번호의 고객이 이미 등록되어 있습니다.",
+                    location: "body",
+                }));
             }
             this.logger.log(`[Client] Reusing existing client ${existing.id} for duplicate phone in branch ${branchid}`);
             if (params.primaryEmployeeId !== undefined || params.secondaryEmployeeId !== undefined) {
@@ -1588,7 +1591,7 @@ export class ClientService {
         // Get existing client
         const existingClient = await this.findClientByIdUsecase.execute(branchid, id);
         if (!existingClient) {
-            throw new NotFoundException(`고객을 찾을 수 없습니다. (id: ${id})`);
+            throw new NotFoundException(clientCodeOnlyProblemBody("RESOURCE_NOT_FOUND", "고객을 찾을 수 없습니다."));
         }
 
         for (const field of ["name", "voucherClient", "breastPump"] as const) {
@@ -1642,7 +1645,12 @@ export class ClientService {
             params.phone,
         );
         if (clientWithPhone && clientWithPhone.id !== id) {
-            throw new ConflictException({ statusCode: 409, code: "P2002", error: "Conflict", field: "phone" });
+            throw new ConflictException(clientProblemBody("CLIENT_PHONE_ALREADY_REGISTERED", {
+                pointer: "/phone",
+                code: "INVALID_VALUE",
+                detail: "같은 전화번호의 고객이 이미 등록되어 있습니다.",
+                location: "body",
+            }));
         }
 
         // Keep the display value untouched while persisting the canonical
@@ -2291,7 +2299,7 @@ export class ClientService {
                 transaction,
             );
             if (!lockedClient) {
-                throw new NotFoundException(`고객을 찾을 수 없습니다. (id: ${clientId})`);
+                throw new NotFoundException(clientCodeOnlyProblemBody("RESOURCE_NOT_FOUND", "고객을 찾을 수 없습니다."));
             }
             const computedStatus = computeServiceStatus(
                 null,

@@ -43,6 +43,22 @@ function hasPrismaErrorCode(error: unknown): boolean {
     return typeof code === "string" && /^P\d{4}$/.test(code);
 }
 
+// A converted problem body must keep its public `code`; the legacy conflict
+// bridge only carries message/clientId, so registered problems fall through
+// to the contract-preserving errorResponse passthrough instead.
+function hasUpstreamProblemCode(error: unknown): boolean {
+    if (!error || typeof error !== "object") {
+        return false;
+    }
+
+    const payload = (error as { response?: { data?: unknown } }).response?.data;
+    if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+        return false;
+    }
+
+    return typeof (payload as { code?: unknown }).code === "string";
+}
+
 // GET /api/clients - Get all clients (with optional pagination)
 export async function GET(request: NextRequest) {
     try {
@@ -89,19 +105,21 @@ export async function POST(request: NextRequest) {
         });
         return backendJsonResponse(backendResponse);
     } catch (error) {
-        const conflict = hasPrismaErrorCode(error)
-            ? null
-            : getClientConflictPayload(error);
-        if (conflict) {
-            const safeMessage = getSafeApiDisplayMessage(error);
-            if (safeMessage) {
-                return NextResponse.json(
-                    {
-                        message: sanitizeApiDisplayMessage(safeMessage),
-                        ...(conflict.clientId === undefined ? {} : { clientId: conflict.clientId }),
-                    },
-                    { status: 409 },
-                );
+        if (!hasUpstreamProblemCode(error)) {
+            const conflict = hasPrismaErrorCode(error)
+                ? null
+                : getClientConflictPayload(error);
+            if (conflict) {
+                const safeMessage = getSafeApiDisplayMessage(error);
+                if (safeMessage) {
+                    return NextResponse.json(
+                        {
+                            message: sanitizeApiDisplayMessage(safeMessage),
+                            ...(conflict.clientId === undefined ? {} : { clientId: conflict.clientId }),
+                        },
+                        { status: 409 },
+                    );
+                }
             }
         }
         return errorResponse(error, "create client");

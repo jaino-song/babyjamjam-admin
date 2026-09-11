@@ -3,6 +3,7 @@
  */
 import { NextRequest } from "next/server";
 
+import { createProblemDetails } from "@babyjamjam/shared";
 import { serverAPIClient } from "@/lib/api/server";
 import { getErrorMessage } from "@/lib/errors/api-error-mapper";
 import { GET as getClients, POST as createClient } from "../route";
@@ -193,6 +194,49 @@ describe("client API routes", () => {
       message: "이미 같은 전화번호의 고객이 있습니다.",
       clientId: 73,
     });
+  });
+
+  it("passes a converted duplicate-phone problem body through with its code intact", async () => {
+    const problem = createProblemDetails({
+      code: "CLIENT_PHONE_ALREADY_REGISTERED",
+      requestId: "req-duplicate-phone",
+      outcome: "NOT_APPLIED",
+      errors: [{
+        pointer: "/phone",
+        code: "INVALID_VALUE",
+        detail: "같은 전화번호의 고객이 이미 등록되어 있습니다.",
+        location: "body",
+      }],
+    });
+    // 백엔드 경계는 구버전 호환으로 message/error를 실어 보낸다.
+    mockPost.mockRejectedValue({
+      response: {
+        status: 409,
+        data: { ...problem, statusCode: problem.status, message: problem.detail, error: problem.detail },
+      },
+    });
+
+    const response = await createClient(
+      createRequest("/api/clients", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: "Baby Kim",
+          careCenter: false,
+          voucherClient: true,
+          breastPump: false,
+        }),
+      }),
+    );
+
+    expect(response.status).toBe(409);
+    const body = await response.json();
+    expect(body).toEqual(expect.objectContaining({
+      code: "CLIENT_PHONE_ALREADY_REGISTERED",
+      status: 409,
+      requestId: "req-duplicate-phone",
+      outcome: "NOT_APPLIED",
+    }));
   });
 
   it.each([

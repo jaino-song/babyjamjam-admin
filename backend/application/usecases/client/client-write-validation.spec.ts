@@ -76,7 +76,11 @@ describe("client write validation", () => {
         expect(repository.findByPhone).toHaveBeenLastCalledWith("branch-a", "01012345678");
 
         repository.findByPhone.mockResolvedValueOnce(otherClient);
-        await expect(assertPhoneAvailable(repository, "branch-a", "010 1234 5678", 10)).rejects.toBeInstanceOf(ConflictException);
+        const conflict: unknown = await assertPhoneAvailable(repository, "branch-a", "010 1234 5678", 10)
+            .catch((caught) => caught);
+        expect(conflict).toBeInstanceOf(ConflictException);
+        expect((conflict as { getResponse: () => unknown }).getResponse())
+            .toMatchObject(problemResponse("CLIENT_PHONE_ALREADY_REGISTERED", "/phone", "INVALID_VALUE", "같은 전화번호의 고객이 이미 등록되어 있습니다."));
         expect(repository.findByPhone).toHaveBeenLastCalledWith("branch-a", "01012345678");
 
         repository.findByPhone.mockResolvedValueOnce(null);

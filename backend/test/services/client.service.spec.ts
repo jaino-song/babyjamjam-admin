@@ -1134,7 +1134,7 @@ describe("ClientService", () => {
                 breastPump: false,
             })).rejects.toMatchObject({
                 status: 409,
-                response: expect.objectContaining({ clientId: 1 }),
+                response: clientProblemResponse("CLIENT_PHONE_ALREADY_REGISTERED", "/phone", "INVALID_VALUE", "같은 전화번호의 고객이 이미 등록되어 있습니다."),
             });
         });
 
@@ -1262,23 +1262,23 @@ describe("ClientService", () => {
         });
 
         describe("phone deduplication (reuse-existing)", () => {
-            it("returns 409 with the existing client id when reuse is not confirmed", async () => {
+            it("rejects unconfirmed duplicate-phone creation with the public conflict code and no clientId payload", async () => {
                 const existingClient = createClientEntity();
                 clientRepository.findByPhone.mockResolvedValue(existingClient);
 
-                await expect(service.create(branchId, {
+                const error: unknown = await service.create(branchId, {
                     name: "New Client",
                     phone: "010-1234-5678",
                     careCenter: false,
                     voucherClient: true,
                     breastPump: false,
-                })).rejects.toMatchObject({
+                }).catch((caught: unknown) => caught);
+                expect(error).toMatchObject({
                     status: 409,
-                    response: expect.objectContaining({
-                        message: "이미 같은 전화번호의 고객이 있습니다.",
-                        clientId: existingClient.id,
-                    }),
+                    response: clientProblemResponse("CLIENT_PHONE_ALREADY_REGISTERED", "/phone", "INVALID_VALUE", "같은 전화번호의 고객이 이미 등록되어 있습니다."),
                 });
+                // 소비자는 코드로 중복을 식별한다: 레거시 clientId 페이로드는 일부러 제거된다.
+                expect((error as { response: Record<string, unknown> }).response["clientId"]).toBeUndefined();
             });
 
             it("reuses the existing client when a client with the same normalized phone already exists in the branch", async () => {
@@ -2057,6 +2057,51 @@ describe("ClientService", () => {
                 }
             });
 
+            it("routes the duplicate-phone conflict through the public problem response", async () => {
+                clientRepository.findByPhone.mockResolvedValue(createClientEntity());
+                const exception: unknown = await service.create(branchId, {
+                    name: "Duplicate Phone",
+                    phone: "010-1234-5678",
+                    careCenter: false,
+                    voucherClient: true,
+                    breastPump: false,
+                }).catch((error: unknown) => error);
+
+                for (const locale of ["ko-KR", "en-US"] as const) {
+                    const requestId = `test-client-conflict-${locale}`;
+                    const responseStub = {
+                        locals: { errorRequestId: requestId },
+                        setHeader: jest.fn(),
+                        status: jest.fn().mockReturnThis(),
+                        json: jest.fn(),
+                    };
+                    const problem = mapHttpProblem(exception,
+                        { method: "POST", acceptsLanguages: () => locale } as unknown as Request,
+                        responseStub as unknown as Response);
+                    if (!problem) throw new Error("Expected a registered client conflict");
+                    sendProblemResponse(responseStub as unknown as Response, problem);
+                    expect(responseStub.status).toHaveBeenCalledWith(409);
+                    expect(responseStub.setHeader).toHaveBeenCalledWith("Content-Type", "application/problem+json");
+                    expect(problem).toMatchObject({
+                        code: "CLIENT_PHONE_ALREADY_REGISTERED", status: 409, requestId, params: {},
+                        outcome: "NOT_APPLIED",
+                        detail: PROBLEM_CATALOG.CLIENT_PHONE_ALREADY_REGISTERED.detail[locale],
+                        recovery: { action: "NONE", retry: { mode: "NEVER" } },
+                        errors: [expect.objectContaining({ pointer: "/phone", code: "INVALID_VALUE", location: "body" })],
+                    });
+
+                    const body = responseStub.json.mock.calls[0]?.[0];
+                    const normalized = normalizeApiError(
+                        { response: { status: 409, data: body } },
+                        { operation: "mutation", locale },
+                    );
+                    expect(normalized).toMatchObject({ verified: true, outcome: "NOT_APPLIED", problem: { requestId } });
+                    expect(normalized.message).toBe(PROBLEM_CATALOG.CLIENT_PHONE_ALREADY_REGISTERED.detail[locale]);
+                    // 재사용 대상 고객 id는 공개 페이로드에 남지 않는다.
+                    expect(JSON.stringify(body)).not.toContain("clientId");
+                }
+            });
+
             it("links matching contracts by the effective phone after client information is updated", async () => {
                 const existingClient = createClientEntity();
                 findClientByIdUsecase.execute.mockResolvedValue(existingClient);
@@ -2425,14 +2470,21 @@ describe("ClientService", () => {
         });
 
         describe("given non-existent client", () => {
-            it("should throw error", async () => {
+            it("should reject with the public RESOURCE_NOT_FOUND problem body", async () => {
                 // Arrange
                 findClientByIdUsecase.execute.mockResolvedValue(null);
 
                 // Act & Assert
-                await expect(service.update(branchId, 999, { name: "New Name" }))
-                    .rejects
-                    .toThrow("고객을 찾을 수 없습니다. (id: 999)");
+                const error: unknown = await service.update(branchId, 999, { name: "New Name" })
+                    .catch((caught: unknown) => caught);
+                expect(error).toBeInstanceOf(NotFoundException);
+                expect((error as NotFoundException).getResponse()).toEqual({
+                    code: "RESOURCE_NOT_FOUND",
+                    params: {},
+                    outcome: "NOT_APPLIED",
+                    recovery: { action: "NONE", retry: { mode: "NEVER" } },
+                    message: "고객을 찾을 수 없습니다.",
+                });
             });
         });
 
@@ -2520,7 +2572,10 @@ describe("ClientService", () => {
                 // Act & Assert
                 await expect(
                     service.update(branchId, 1, { phone: "010-1234-5678" }),
-                ).rejects.toThrow(expect.objectContaining({ status: 409 }));
+                ).rejects.toMatchObject({
+                    status: 409,
+                    response: clientProblemResponse("CLIENT_PHONE_ALREADY_REGISTERED", "/phone", "INVALID_VALUE", "같은 전화번호의 고객이 이미 등록되어 있습니다."),
+                });
 
                 // No DB writes should have occurred
                 expect(updateClientUsecase.execute).not.toHaveBeenCalled();
