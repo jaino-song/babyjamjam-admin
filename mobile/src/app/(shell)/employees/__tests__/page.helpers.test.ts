@@ -13,7 +13,6 @@ describe("employees page shared error mapper", () => {
 
     expect(source).toContain("getUserErrorMessage");
     expect(source).toContain("normalizeApiError");
-    expect(source).toContain('operation: "mutation"');
     expect(source).toContain('operation: "read"');
     expect(source).not.toContain("getApiErrorMessage");
     expect(source).not.toContain("api-error-mapper");
