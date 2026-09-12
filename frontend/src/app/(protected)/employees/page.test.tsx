@@ -10,7 +10,9 @@ describe("EmployeesPage deletion conflicts", () => {
     );
 
     expect(handler).toContain("setDeleteTargetEmployeeId(null)");
-    expect(handler).toContain("getApiErrorMessage");
+    expect(handler).toContain('operation: "mutation"');
+    expect(handler).toContain("normalizeApiError");
+    expect(handler).not.toContain("getApiErrorMessage");
     expect(source).toContain('dataComponent="desktop_employees_delete-error-notification"');
   });
 

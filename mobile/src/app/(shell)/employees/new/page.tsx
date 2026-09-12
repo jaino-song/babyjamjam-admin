@@ -10,7 +10,6 @@ import { formatWorkAreaLabel, GRADES, WORK_AREAS } from "@/components/app/employ
 import { useCreateEmployee } from "@/hooks/useEmployees";
 import { useNavigationPending } from "@/hooks/use-navigation-pending";
 import { api } from "@/lib/api/client";
-import { getErrorMessage } from "@/lib/errors/api-error-mapper";
 import { t } from "@/lib/i18n/translations";
 import { cn } from "@/lib/utils";
 import { useLocale } from "@/providers/LocaleProvider";
@@ -325,7 +324,7 @@ export default function NewEmployeePage() {
       startNavigation();
       router.push(`/employees?id=${newEmployee.id}`);
     } catch (err: unknown) {
-      setError(getErrorMessage(err, locale, "employees.form.error-create-failed"));
+      setError(getUserErrorMessage(err, t(locale, "employees.form.error-create-failed")));
     }
   };
 

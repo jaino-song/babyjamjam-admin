@@ -65,6 +65,11 @@ export async function POST(request: NextRequest) {
 // PATCH /api/employees?id=X - Update an employee
 export async function PATCH(request: NextRequest) {
     try {
+        const token = getAuthToken(request);
+        if (!token) {
+            return unauthorizedResponse("Unauthorized");
+        }
+
         const searchParams = request.nextUrl.searchParams;
         const id = searchParams.get("id");
 
@@ -77,11 +82,6 @@ export async function PATCH(request: NextRequest) {
 
         if (!isValidEmployeeId(id)) {
             return invalidEmployeeIdResponse();
-        }
-
-        const token = getAuthToken(request);
-        if (!token) {
-            return unauthorizedResponse("Unauthorized");
         }
 
         const body = await request.json();
@@ -105,6 +105,11 @@ export async function PATCH(request: NextRequest) {
 // DELETE /api/employees?id=X - Delete an employee
 export async function DELETE(request: NextRequest) {
     try {
+        const token = getAuthToken(request);
+        if (!token) {
+            return unauthorizedResponse("Unauthorized");
+        }
+
         const searchParams = request.nextUrl.searchParams;
         const id = searchParams.get("id");
 
@@ -117,11 +122,6 @@ export async function DELETE(request: NextRequest) {
 
         if (!isValidEmployeeId(id)) {
             return invalidEmployeeIdResponse();
-        }
-
-        const token = getAuthToken(request);
-        if (!token) {
-            return unauthorizedResponse("Unauthorized");
         }
 
         const response = await serverAPIClient.delete("/employees", {

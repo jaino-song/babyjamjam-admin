@@ -5,7 +5,7 @@ import {
     EMPLOYEE_STATUS_LABELS,
     OPEN_TO_NEXT_WORK_LABELS,
 } from "@babyjamjam/shared/constants/employee-status";
-import { getApiErrorMessage } from "@babyjamjam/shared";
+import { normalizeApiError } from "@babyjamjam/shared";
 import { cn } from "@/lib/utils";
 import {
     Users,
@@ -126,6 +126,7 @@ export default function EmployeesPage() {
         refetch,
     } = useInfiniteEmployees({ filter, search });
     const deleteEmployee = useDeleteEmployee();
+    const locale = useLocale();
 
     const stats = useMemo(() => {
         return {
@@ -172,10 +173,10 @@ export default function EmployeesPage() {
         } catch (err) {
             console.error("Failed to delete employee:", err);
             setDeleteTargetEmployeeId(null);
-            setDeleteErrorMessage(getApiErrorMessage(
-                err,
-                "제공인력 삭제에 실패했어요. 다시 시도해 주세요.",
-            ));
+            setDeleteErrorMessage(normalizeApiError(err, {
+                locale: locale === "en" ? "en-US" : "ko-KR",
+                operation: "mutation",
+            }).message);
         }
     };
 
