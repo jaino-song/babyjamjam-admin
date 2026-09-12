@@ -474,3 +474,8 @@ TL;DR: 직원 도메인의 남은 서버 실패 조건(전화 형식, 중복 연
 - nonblocking(auditor): (1) `employee.service`의 서버측 전화 충돌 detail이 카탈로그 해요체와 달리 "…있습니다." — HTTP 경계는 안전하나 AI-chat 등 in-process 리더는 비카탈로그 문구를 본다(선택적 정합화), (2) "Provisional client codes" 주석이 EMPLOYEE_*까지 포함(문구 정리), (3) red-first 로그 미보존(카운트 불일치 아님, 기계적 타당), (4) 경계 테스트의 404 normalize 단언 비대칭, (5) **4a-2(BFF/UI)가 land하기 전에는 dev/preview/main으로 릴리스 금지**(과도기 wire shape 불일치).
 - 기록: inventory `problem-details` public_codes 2개 추가, employee 파일 6행 migrated 갱신, `employee-validation-conflict-not-found-contract` verified finding 추가, `vendor_parity` 갱신. unit worktree/branch 정리. 다음은 4a-2다.
 
+**Task 4a-2 실행 결과 (2026-09-11):** worker unit `83efd84d2` → 통합 `a0cb5921e`(16 files, +472/−71 — 초과분은 테스트). 직원 BFF 8개 라우트를 공유 helper 패턴으로 정렬하고, **check-phone이 upstream 실패를 `{exists:false}`로 마스킹하던 문제를 제거**(모바일 폼의 `hasPhoneDuplicateCheckFailed` 경로가 이제 동작), `useEmployees`가 비정상 응답을 `[]`로 강제 변환하던 것을 reject로 수정. frontend 232 suites/1,481, mobile 233 suites/1,508, 양쪽 타입 통과. auditor FINAL **SHIP/HIGH**(base `6ead21283`).
+- worker 편차(승인 유지): 웹 PATCH/DELETE에 malformed id 로컬 400 게이트 추가(클라이언트 패턴과 동일, 백엔드 `min:1`과 일치 — audit이 유효 흐름 회귀 없음 확인).
+- nonblocking(auditor): (1) 웹 invalid-id 게이트 전용 테스트 부재(모바일은 있음), (2) 웹 PATCH/DELETE가 id 검사를 auth보다 먼저 수행(모바일 clients 패턴과 순서 상이, 4a-3에서 정렬 검토), (3) check-phone의 200-비정상-shape는 여전히 exists:false(4a-3 하드닝), (4) check-phone `errorResponse`가 GET인데 기본 operation "mutation"(메타데이터 cosmetic), (5) 라인 예산 초과(테스트).
+- 기록: inventory 직원 BFF 8행 migrated·훅 1행 reason 갱신, `employee-bff-alignment` verified finding 추가. worktree/branch 정리. 다음은 4a-3(직원 UI 어댑터: employees 페이지/폼/테이블의 legacy getErrorMessage·getApiErrorMessage → normalizeApiError/문제 표시, check-phone shape 하드닝, 릴리스 게이트 유지)다.
+
