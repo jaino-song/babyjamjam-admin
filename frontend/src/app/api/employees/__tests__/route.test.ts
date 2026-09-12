@@ -4,7 +4,12 @@
 import { NextRequest } from "next/server";
 
 import { serverAPIClient } from "@/lib/api/server";
-import { GET as listEmployees, POST as createEmployee } from "../route";
+import {
+    DELETE as deleteEmployeeProxy,
+    GET as listEmployees,
+    PATCH as updateEmployeeProxy,
+    POST as createEmployee,
+} from "../route";
 import { GET as checkEmployeePhone } from "../check-phone/route";
 import { PATCH as updateOpenStatus } from "../open-status/route";
 
@@ -20,6 +25,7 @@ jest.mock("@/lib/api/server", () => ({
 const mockGet = serverAPIClient.get as jest.Mock;
 const mockPost = serverAPIClient.post as jest.Mock;
 const mockPatch = serverAPIClient.patch as jest.Mock;
+const mockDelete = serverAPIClient.delete as jest.Mock;
 
 // 승인된 계약: 업스트림 실패는 공유 sanitizer를 통과하며 실패가
 // `exists: false`(200) 같은 성공 응답으로 위장되지 않는다.
@@ -149,6 +155,53 @@ describe("GET /api/employees/check-phone", () => {
         );
 
         await expectSanitizedUpstreamFailure(response, 500);
+    });
+});
+
+describe("PATCH/DELETE /api/employees", () => {
+    beforeEach(() => {
+        mockPatch.mockReset();
+        mockDelete.mockReset();
+    });
+
+    // 인증 토큰 게이트가 id 검증보다 앞선다 — 인증 없는 요청은 id가
+    // 유효하지 않아도 401로 먼저 잘라낸다.
+    it("checks the auth token before the id-validation gate", async () => {
+        const response = await updateEmployeeProxy(
+            createRequest("/api/employees?id=0", {
+                method: "PATCH",
+                cookie: "",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ name: "김관리" }),
+            }),
+        );
+
+        expect(response.status).toBe(401);
+        await expect(response.json()).resolves.toEqual({ error: "Unauthorized" });
+        expect(mockPatch).not.toHaveBeenCalled();
+    });
+
+    it("rejects invalid employee ids before proxying", async () => {
+        for (const id of ["0", "abc"]) {
+            const patchResponse = await updateEmployeeProxy(
+                createRequest(`/api/employees?id=${id}`, {
+                    method: "PATCH",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ name: "김관리" }),
+                }),
+            );
+            expect(patchResponse.status).toBe(400);
+            await expect(patchResponse.json()).resolves.toEqual({ error: "Invalid employee id" });
+
+            const deleteResponse = await deleteEmployeeProxy(
+                createRequest(`/api/employees?id=${id}`, { method: "DELETE" }),
+            );
+            expect(deleteResponse.status).toBe(400);
+            await expect(deleteResponse.json()).resolves.toEqual({ error: "Invalid employee id" });
+        }
+
+        expect(mockPatch).not.toHaveBeenCalled();
+        expect(mockDelete).not.toHaveBeenCalled();
     });
 });
 
