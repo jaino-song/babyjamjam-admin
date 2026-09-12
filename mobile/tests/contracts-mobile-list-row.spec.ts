@@ -1181,7 +1181,7 @@ test.describe("Mobile contracts list rows", () => {
       '[data-component="mobile_contracts_detail-panel_info-card-3_activity-timeline"]',
     );
     const failedStage = timeline.locator(".relative.flex.gap-3", {
-      hasText: "이용자에게 문서 전송에 실패했습니다.",
+      hasText: "이용자에게 문서 전송에 실패했어요.",
     });
     await expect(failedStage).toBeVisible();
     await expect(failedStage.locator(".bg-v3-burgundy-light.text-v3-burgundy")).toHaveCount(1);

@@ -1,4 +1,6 @@
 "use client";
+import { getUserErrorMessage } from "@babyjamjam/shared";
+
 
 import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
@@ -51,7 +53,7 @@ export default function SelectBranchPage() {
       await resetAuthorityState();
       const result = await setCurrentBranch(branchId);
       if (!result.success) {
-        setError(result.error || "지점 선택에 실패했습니다.");
+        setError(getUserErrorMessage(result.error || "지점 선택에 실패했어요."));
         setSubmitting(false);
         return false;
       }
@@ -64,7 +66,7 @@ export default function SelectBranchPage() {
       return true;
     } catch (err) {
       console.error("[Select Branch] Error selecting branch:", err);
-      setError("지점 선택에 실패했습니다.");
+      setError(getUserErrorMessage(err, "지점 선택에 실패했어요."));
       setSubmitting(false);
       return false;
     }
@@ -77,7 +79,7 @@ export default function SelectBranchPage() {
         const result = await getUserBranches();
 
         if (!result.success) {
-          setError(result.error || "지점 목록을 불러오는데 실패했습니다.");
+          setError(getUserErrorMessage(result.error || "지점 목록을 불러오는데 실패했어요."));
           return;
         }
 
@@ -93,7 +95,7 @@ export default function SelectBranchPage() {
         setSelectedId((current) => current ?? fetched[0]?.id ?? null);
       } catch (err) {
         console.error("[Select Branch] Error fetching branches:", err);
-        setError("지점 목록을 불러오는데 실패했습니다.");
+        setError(getUserErrorMessage(err, "지점 목록을 불러오는데 실패했어요."));
       } finally {
         if (!keepLoadingForNavigation) {
           setLoading(false);
@@ -114,14 +116,14 @@ export default function SelectBranchPage() {
       await resetAuthorityState();
       const result = await logout(pushEndpoint);
       if (!result.success) {
-        setError(result.error || "로그아웃에 실패했습니다.");
+        setError(getUserErrorMessage(result.error || "로그아웃에 실패했어요."));
         setLoggingOut(false);
         return;
       }
       window.location.replace("/login");
     } catch (err) {
       console.error("[Select Branch] Error logging out:", err);
-      setError("로그아웃에 실패했습니다.");
+      setError(getUserErrorMessage(err, "로그아웃에 실패했어요."));
       setLoggingOut(false);
     }
   };
@@ -161,7 +163,7 @@ export default function SelectBranchPage() {
           <div className="branch-title" data-component={`${SELECT_BRANCH_BASE}_header_title`}>지점 선택</div>
         </div>
         <div className="auth-server-error" role="alert" data-component={`${SELECT_BRANCH_BASE}_error`}>
-          {error}
+          {error && getUserErrorMessage(error)}
         </div>
         <button
           type="button"

@@ -1,5 +1,6 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { createProblemDetails } from "@babyjamjam/shared";
 
 import NewMessagePage from "../page";
 import { api } from "@/lib/api/client";
@@ -140,7 +141,7 @@ async function addManualRecipient(value: string) {
   fireEvent.keyDown(receiverInput, { key: "Enter" });
 
   await waitFor(() => {
-    expect(screen.getByRole("button", { name: /수신자 제거/ })).toBeInTheDocument();
+    expect(screen.getAllByRole("button", { name: /수신자 제거/ }).length).toBeGreaterThan(0);
   });
 }
 
@@ -148,6 +149,43 @@ async function openTemplateSelect() {
   const trigger = screen.getByRole("combobox", { name: /템플릿 선택/ });
   fireEvent.keyDown(trigger, { key: "ArrowDown" });
   await screen.findByRole("option", { name: "인사 메시지" });
+}
+
+function validSmsResponse(receiver = "010-1234-5678", resultOverrides: Record<string, unknown> = {}) {
+  return {
+    data: {
+      provider: "aligo_sms",
+      triggerType: "immediate",
+      request: {
+        receiver,
+        msgType: "SMS",
+        testMode: false,
+      },
+      result: {
+        resultCode: 1,
+        message: "accepted",
+        successCount: 1,
+        errorCount: 0,
+        msgType: "SMS",
+        ...resultOverrides,
+      },
+    },
+  };
+}
+
+type SmsProblemCode =
+  | "MESSAGE_SEND_NOT_STARTED"
+  | "MESSAGE_SEND_UNCONFIRMED"
+  | "MESSAGE_SEND_REJECTED"
+  | "MESSAGE_SEND_PARTIAL";
+
+function smsProblem(code: SmsProblemCode, outcome: "NOT_APPLIED" | "FAILED" | "PARTIALLY_APPLIED" | "UNKNOWN") {
+  const problem = createProblemDetails({
+    code,
+    requestId: "sms-request-123",
+    outcome,
+  });
+  return { response: { status: problem.status, data: problem } };
 }
 
 describe("NewMessagePage", () => {
@@ -248,7 +286,24 @@ describe("NewMessagePage", () => {
       return { data: null };
     });
     (api.post as jest.Mock).mockReset();
-    (api.post as jest.Mock).mockResolvedValue({ data: { result: { resultCode: 1, errorCount: 0 } } });
+    (api.post as jest.Mock).mockResolvedValue({
+      data: {
+        provider: "aligo_sms",
+        triggerType: "immediate",
+        request: {
+          receiver: "010-1234-5678",
+          msgType: "SMS",
+          testMode: false,
+        },
+        result: {
+          resultCode: 1,
+          message: "accepted",
+          successCount: 1,
+          errorCount: 0,
+          msgType: "SMS",
+        },
+      },
+    });
     mockClipboardWriteText.mockReset();
     mockClipboardWriteText.mockResolvedValue(undefined);
     mockSearchParams = new URLSearchParams();
@@ -350,6 +405,205 @@ describe("NewMessagePage", () => {
     });
   });
 
+  it("uses one idempotency key for a synchronous double submit", async () => {
+    let resolveRequest: ((value: ReturnType<typeof validSmsResponse>) => void) | undefined;
+    (api.post as jest.Mock).mockImplementationOnce(
+      () => new Promise((resolve) => {
+        resolveRequest = resolve;
+      }),
+    );
+
+    renderPage();
+    await addManualRecipient("010-1234-5678");
+    fireEvent.change(screen.getByLabelText("메시지 본문"), { target: { value: "중복 방지 테스트" } });
+
+    const sendButton = screen.getByRole("button", { name: "즉시 발송" });
+    fireEvent.click(sendButton);
+    fireEvent.click(sendButton);
+
+    await waitFor(() => expect(api.post).toHaveBeenCalledTimes(1));
+    const submittedPayload = (api.post as jest.Mock).mock.calls[0]?.[1] as Record<string, unknown>;
+    expect(submittedPayload.idempotencyKey).toEqual(expect.any(String));
+
+    resolveRequest?.(validSmsResponse());
+    await waitFor(() => {
+      expect(screen.getByText("메시지 발송 요청이 접수되었습니다.")).toBeInTheDocument();
+    });
+  });
+
+  it.each([
+    ["unknown", "MESSAGE_SEND_UNCONFIRMED", "UNKNOWN"],
+    ["partial", "MESSAGE_SEND_PARTIAL", "PARTIALLY_APPLIED"],
+  ] as const)("keeps the draft and blocks edits after a %s result", async (_label, code, outcome) => {
+    (api.post as jest.Mock).mockRejectedValueOnce(smsProblem(code, outcome));
+
+    const { container } = renderPage();
+    await addManualRecipient("010-1234-5678");
+    const bodyInput = screen.getByLabelText("메시지 본문");
+    fireEvent.change(bodyInput, { target: { value: "확인 전까지 보존할 본문" } });
+    fireEvent.click(screen.getByRole("button", { name: "즉시 발송" }));
+
+    const expectedError = code === "MESSAGE_SEND_UNCONFIRMED"
+      ? "문자 발송 결과를 확인할 수 없어 발송 기록을 먼저 확인해 주세요."
+      : "일부 문자만 접수되어 전체 재발송 전에 발송 내역을 확인해 주세요.";
+    expect(await screen.findByText(expectedError)).toBeInTheDocument();
+    fireEvent.change(bodyInput, { target: { value: "수정한 본문" } });
+    fireEvent.submit(container.querySelector("form") as HTMLFormElement);
+
+    expect(api.post).toHaveBeenCalledTimes(1);
+    expect(bodyInput).toHaveValue("수정한 본문");
+    expect(screen.getByRole("link", { name: "발송 상태·내역 확인" })).toHaveAttribute(
+      "href",
+      "/messages/history",
+    );
+    expect(screen.getByText("sms-request-123")).toBeInTheDocument();
+  });
+
+  it("treats a malformed successful payload as unknown and preserves the draft", async () => {
+    (api.post as jest.Mock).mockResolvedValueOnce({ data: {} });
+
+    const { container } = renderPage();
+    await addManualRecipient("010-1234-5678");
+    const bodyInput = screen.getByLabelText("메시지 본문");
+    fireEvent.change(bodyInput, { target: { value: "형식 확인 본문" } });
+    fireEvent.click(screen.getByRole("button", { name: "즉시 발송" }));
+
+    await waitFor(() => {
+      expect(screen.getByText("변경 결과를 확인할 수 없으니 다시 실행하기 전에 작업 상태를 확인해 주세요.")).toBeInTheDocument();
+    });
+    expect(screen.queryByText("메시지 발송 요청이 접수되었습니다.")).not.toBeInTheDocument();
+    fireEvent.change(bodyInput, { target: { value: "형식 확인 수정 본문" } });
+    fireEvent.submit(container.querySelector("form") as HTMLFormElement);
+
+    expect(api.post).toHaveBeenCalledTimes(1);
+    expect(bodyInput).toHaveValue("형식 확인 수정 본문");
+  });
+
+  it.each([
+    ["missing success count", { successCount: undefined }],
+    ["negative success count", { successCount: -1 }],
+    ["fractional success count", { successCount: 0.5 }],
+    ["missing error count", { errorCount: undefined }],
+    ["negative error count", { errorCount: -1 }],
+    ["fractional error count", { errorCount: 0.5 }],
+  ] as Array<[string, Record<string, unknown>]>)
+  ("treats a %s as unknown and blocks another send", async (_label, resultOverrides) => {
+    (api.post as jest.Mock).mockResolvedValueOnce(validSmsResponse(undefined, resultOverrides));
+
+    renderPage();
+    await addManualRecipient("010-1234-5678");
+    fireEvent.change(screen.getByLabelText("메시지 본문"), { target: { value: "카운터 검증 본문" } });
+    const sendButton = screen.getByRole("button", { name: "즉시 발송" });
+    fireEvent.click(sendButton);
+
+    await waitFor(() => {
+      expect(screen.getByText("변경 결과를 확인할 수 없으니 다시 실행하기 전에 작업 상태를 확인해 주세요.")).toBeInTheDocument();
+    });
+    expect(sendButton).toBeDisabled();
+    expect(screen.queryByText("메시지 발송 요청이 접수되었습니다.")).not.toBeInTheDocument();
+  });
+
+  it("requires accepted counters to cover every submitted recipient", async () => {
+    (api.post as jest.Mock).mockResolvedValueOnce(
+      validSmsResponse("010-1234-5678,010-9999-0000", { successCount: 1, errorCount: 0 }),
+    );
+
+    renderPage();
+    await addManualRecipient("010-1234-5678,010-9999-0000");
+    fireEvent.change(screen.getByLabelText("메시지 본문"), { target: { value: "다중 수신자 카운터 검증" } });
+    const sendButton = screen.getByRole("button", { name: "즉시 발송" });
+    fireEvent.click(sendButton);
+
+    await waitFor(() => {
+      expect(screen.getByText("변경 결과를 확인할 수 없으니 다시 실행하기 전에 작업 상태를 확인해 주세요.")).toBeInTheDocument();
+    });
+    expect(sendButton).toBeDisabled();
+    expect(screen.queryByText("메시지 발송 요청이 접수되었습니다.")).not.toBeInTheDocument();
+  });
+
+  it("requires the provider response recipient count to match the submission", async () => {
+    (api.post as jest.Mock).mockResolvedValueOnce(
+      validSmsResponse("010-1234-5678", { successCount: 2, errorCount: 0 }),
+    );
+
+    renderPage();
+    await addManualRecipient("010-1234-5678,010-9999-0000");
+    fireEvent.change(screen.getByLabelText("메시지 본문"), { target: { value: "응답 수신자 검증" } });
+    const sendButton = screen.getByRole("button", { name: "즉시 발송" });
+    fireEvent.click(sendButton);
+
+    await waitFor(() => {
+      expect(screen.getByText("변경 결과를 확인할 수 없으니 다시 실행하기 전에 작업 상태를 확인해 주세요.")).toBeInTheDocument();
+    });
+    expect(sendButton).toBeDisabled();
+    expect(screen.queryByText("메시지 발송 요청이 접수되었습니다.")).not.toBeInTheDocument();
+  });
+
+  it("accepts a successful response when counters and response recipient count match the submission", async () => {
+    (api.post as jest.Mock).mockResolvedValueOnce(
+      validSmsResponse("01012345678,01099990000", { successCount: 2, errorCount: 0 }),
+    );
+
+    renderPage();
+    await addManualRecipient("010-1234-5678,010-9999-0000");
+    fireEvent.change(screen.getByLabelText("메시지 본문"), { target: { value: "다중 수신자 정상 발송" } });
+    fireEvent.click(screen.getByRole("button", { name: "즉시 발송" }));
+
+    await waitFor(() => {
+      expect(screen.getByText("메시지 발송 요청이 접수되었습니다.")).toBeInTheDocument();
+    });
+    expect(api.post).toHaveBeenCalledTimes(1);
+  });
+
+  it("rotates the idempotency key after a not-started correction", async () => {
+    (api.post as jest.Mock)
+      .mockRejectedValueOnce(smsProblem("MESSAGE_SEND_NOT_STARTED", "NOT_APPLIED"))
+      .mockResolvedValueOnce(validSmsResponse());
+
+    renderPage();
+    await addManualRecipient("010-1234-5678");
+    const bodyInput = screen.getByLabelText("메시지 본문");
+    fireEvent.change(bodyInput, { target: { value: "첫 시도" } });
+    fireEvent.click(screen.getByRole("button", { name: "즉시 발송" }));
+
+    await waitFor(() => expect(api.post).toHaveBeenCalledTimes(1));
+    const firstKey = ((api.post as jest.Mock).mock.calls[0]?.[1] as Record<string, unknown>).idempotencyKey;
+    expect(screen.getByRole("button", { name: "즉시 발송" })).toBeDisabled();
+
+    fireEvent.change(bodyInput, { target: { value: "보정 후 새 시도" } });
+    expect(screen.getByRole("button", { name: "즉시 발송" })).toBeEnabled();
+    fireEvent.click(screen.getByRole("button", { name: "즉시 발송" }));
+
+    await waitFor(() => {
+      expect(screen.getByText("메시지 발송 요청이 접수되었습니다.")).toBeInTheDocument();
+    });
+    const secondKey = ((api.post as jest.Mock).mock.calls[1]?.[1] as Record<string, unknown>).idempotencyKey;
+    expect(secondKey).toEqual(expect.any(String));
+    expect(secondKey).not.toBe(firstKey);
+  });
+
+  it("requires a correction before retrying a rejected request", async () => {
+    (api.post as jest.Mock)
+      .mockRejectedValueOnce(smsProblem("MESSAGE_SEND_REJECTED", "FAILED"))
+      .mockResolvedValueOnce(validSmsResponse());
+
+    renderPage();
+    await addManualRecipient("010-1234-5678");
+    const bodyInput = screen.getByLabelText("메시지 본문");
+    fireEvent.change(bodyInput, { target: { value: "거부된 본문" } });
+    fireEvent.click(screen.getByRole("button", { name: "즉시 발송" }));
+
+    await waitFor(() => expect(api.post).toHaveBeenCalledTimes(1));
+    expect(screen.getByRole("button", { name: "즉시 발송" })).toBeDisabled();
+    fireEvent.submit(document.querySelector("form") as HTMLFormElement);
+    expect(api.post).toHaveBeenCalledTimes(1);
+
+    fireEvent.change(bodyInput, { target: { value: "수정 후 재시도" } });
+    fireEvent.click(screen.getByRole("button", { name: "즉시 발송" }));
+    await waitFor(() => expect(screen.getByText("메시지 발송 요청이 접수되었습니다.")).toBeInTheDocument());
+    expect(api.post).toHaveBeenCalledTimes(2);
+  });
+
   it("restores the selected template body with empty variables after sending", async () => {
     renderPage();
 
@@ -444,7 +698,7 @@ describe("NewMessagePage", () => {
 
     const { rerender } = renderPage();
 
-    expect(screen.queryByText("선택한 고객에 등록된 연락처가 없습니다.")).not.toBeInTheDocument();
+    expect(screen.queryByText("선택한 고객에 등록된 연락처가 없어요.")).not.toBeInTheDocument();
 
     mockUseAllClients.mockReturnValue({
       data: [{ ...mockClients[0], phone: "" }],
@@ -456,7 +710,7 @@ describe("NewMessagePage", () => {
       </QueryClientProvider>,
     );
 
-    expect(await screen.findByText("선택한 고객에 등록된 연락처가 없습니다.")).toBeInTheDocument();
+    expect(await screen.findByText("선택한 고객에 등록된 연락처가 없어요.")).toBeInTheDocument();
   });
 
   it("does not re-add a deep-linked recipient the user removed when the client list refetches", async () => {
@@ -495,7 +749,7 @@ describe("NewMessagePage", () => {
     fireEvent.change(receiverInput, { target: { value: tooManyRecipients } });
     fireEvent.keyDown(receiverInput, { key: "Enter" });
 
-    expect(await screen.findByText("수신자는 한 번에 최대 50명까지 선택할 수 있습니다.")).toBeInTheDocument();
+    expect(await screen.findByText("수신자는 한 번에 최대 50명까지 선택할 수 있어요.")).toBeInTheDocument();
     expect(api.post).not.toHaveBeenCalled();
   });
 

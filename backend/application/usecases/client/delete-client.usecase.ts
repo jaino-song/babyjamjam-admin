@@ -1,5 +1,6 @@
 import { ConflictException, Inject, Injectable, NotFoundException } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
+import { clientCodeOnlyProblemBody } from "application/usecases/client/client-write-validation";
 import { CLIENT_REPOSITORY, IClientRepository } from "domain/repositories/client.repository.interface";
 import {
     CLIENT_RETENTION_BLOCKED,
@@ -27,31 +28,31 @@ export class DeleteClientUsecase {
     async execute(branchid: string, id: number): Promise<void> {
         const client = await this.clientRepository.findById(branchid, id);
         if (!client) {
-            throw new NotFoundException(`고객을 찾을 수 없습니다. (id: ${id})`);
+            throw new NotFoundException(clientCodeOnlyProblemBody("RESOURCE_NOT_FOUND", "고객을 찾을 수 없습니다."));
         }
 
         try {
             await this.clientRepository.delete(branchid, id);
         } catch (error) {
             if (error instanceof ScopedDeleteNotFoundError) {
-                throw new NotFoundException(`고객을 찾을 수 없습니다. (id: ${id})`);
+                throw new NotFoundException(clientCodeOnlyProblemBody("RESOURCE_NOT_FOUND", "고객을 찾을 수 없습니다."));
             }
 
             if (error instanceof RetentionDeleteBlockedError) {
-                throw new ConflictException({
-                    code: CLIENT_RETENTION_BLOCKED,
-                    message: CLIENT_RETENTION_BLOCKED_MESSAGE,
-                });
+                throw new ConflictException(clientCodeOnlyProblemBody(
+                    CLIENT_RETENTION_BLOCKED,
+                    CLIENT_RETENTION_BLOCKED_MESSAGE,
+                ));
             }
 
             // Defense-in-depth for any relation not covered by the document-
             // preservation migration. The API route only exposes this coded,
             // allowlisted message and never forwards raw database details.
             if (isForeignKeyViolation(error)) {
-                throw new ConflictException({
-                    code: CLIENT_RETENTION_BLOCKED,
-                    message: CLIENT_RETENTION_BLOCKED_MESSAGE,
-                });
+                throw new ConflictException(clientCodeOnlyProblemBody(
+                    CLIENT_RETENTION_BLOCKED,
+                    CLIENT_RETENTION_BLOCKED_MESSAGE,
+                ));
             }
             throw error;
         }

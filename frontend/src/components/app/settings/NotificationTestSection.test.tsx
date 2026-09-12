@@ -35,7 +35,7 @@ describe("NotificationTestSection", () => {
 
     await waitFor(() => {
       expect(
-        screen.getByText("알림 전송에 실패했습니다. 구독 상태와 서버 설정을 확인해 주세요."),
+        screen.getByText("알림 전송에 실패했어요. 구독 상태와 서버 설정을 확인해 주세요."),
       ).toBeInTheDocument();
     });
   });

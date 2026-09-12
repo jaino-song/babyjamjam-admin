@@ -1,5 +1,7 @@
 'use client';
 
+import { getUserErrorMessage } from '@babyjamjam/shared';
+
 import {
   forwardRef,
   useEffect,
@@ -10,7 +12,6 @@ import {
   type ReactNode,
 } from 'react';
 import { Loader2 } from 'lucide-react';
-
 import { Button } from '@/components/ui/button';
 import { useToast } from '@/hooks/use-toast';
 import {
@@ -31,7 +32,6 @@ import { getActiveBranchId } from '@/features/system-templates/branch-context';
 import { extractVariables } from '@/lib/template/variable-parser';
 import type { TemplateVariable } from '@/lib/template/types';
 import { MAX_BODY_LENGTH } from '@/lib/message/byte-length';
-import { getApiErrorMessage } from '@babyjamjam/shared';
 
 const CONTENT_PLACEHOLDER =
   '템플릿 내용을 입력하세요. 변수는 {{변수명}} 형식으로 사용합니다.';
@@ -393,8 +393,7 @@ export const SystemTemplateEditor = forwardRef<
     } catch (error) {
       toast({
         variant: 'destructive',
-        description: getApiErrorMessage(
-          error,
+        description: getUserErrorMessage(
           error instanceof Error ? error.message : '템플릿을 저장하지 못했어요',
         ),
       });

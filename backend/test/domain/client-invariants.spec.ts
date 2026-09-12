@@ -157,12 +157,29 @@ describe("client pricing and service-period invariants", () => {
         // A supplied duration only needs to fit within the derived count,
         // not equal it.
         expect(() => assertClientDurationMatchesDates(5, 6)).not.toThrow();
-        expect(() => assertClientDurationMatchesDates(7, 6))
-            .toThrow("서비스 기간은 1일 이상 6일 이하여야 합니다.");
+        const outOfRange = (() => {
+            try {
+                assertClientDurationMatchesDates(7, 6);
+                return null;
+            } catch (error) {
+                return error;
+            }
+        })();
+        expect(outOfRange).toBeInstanceOf(BadRequestException);
+        expect((outOfRange as BadRequestException).getResponse()).toMatchObject({
+            code: "CLIENT_DURATION_OUT_OF_RANGE",
+            outcome: "NOT_APPLIED",
+            errors: [expect.objectContaining({ pointer: "/duration", code: "OUT_OF_RANGE" })],
+            message: "서비스 기간은 1일 이상 6일 이하여야 합니다. (시작일~종료일 영업일 기준)",
+        });
         expect(() => deriveClientDuration(
             new Date("2028-01-03T00:00:00.000Z"),
             new Date("2028-01-04T00:00:00.000Z"),
         )).toThrow(BadRequestException);
+        expect(() => deriveClientDuration(
+            new Date("2028-01-03T00:00:00.000Z"),
+            new Date("2028-01-04T00:00:00.000Z"),
+        )).toThrow("서비스 기간을 계산할 수 없습니다. 시작일과 종료일을 확인해 주세요.");
         expect(() => deriveClientDuration(end, start)).toThrow(BadRequestException);
     });
 

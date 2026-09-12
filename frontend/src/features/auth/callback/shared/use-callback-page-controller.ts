@@ -1,4 +1,6 @@
 "use client";
+import { getUserErrorMessage } from "@babyjamjam/shared";
+
 
 import { useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
@@ -40,7 +42,7 @@ export function useCallbackPageController() {
     const exchangeCodeForTokens = async () => {
       const callbackError = searchParams.get("error");
       if (callbackError) {
-        setError(getSafeCallbackError(callbackError));
+        setError(getUserErrorMessage(getSafeCallbackError(callbackError)));
         return;
       }
 
@@ -49,7 +51,7 @@ export function useCallbackPageController() {
       if (!code) {
         console.error("[Auth Callback] No code in URL");
         if (!cancelled) {
-          setError("Authorization Code Required");
+          setError(getUserErrorMessage("Authorization Code Required"));
         }
         return;
       }
@@ -71,7 +73,7 @@ export function useCallbackPageController() {
 
         if (!result.success) {
             console.error("[Auth Callback] Token exchange failed:", result.error);
-            setError(result.error || "Authentication Failed");
+            setError(getUserErrorMessage(result.error || "Authentication Failed"));
             return;
         }
 
@@ -95,7 +97,7 @@ export function useCallbackPageController() {
           "[Auth Callback] Error message:",
           requestError instanceof Error ? requestError.message : String(requestError),
         );
-        setError("네트워크 오류가 발생했습니다. 다시 시도해 주세요.");
+        setError(getUserErrorMessage(requestError, "네트워크 오류가 발생했어요. 다시 시도해 주세요."));
       }
     };
 

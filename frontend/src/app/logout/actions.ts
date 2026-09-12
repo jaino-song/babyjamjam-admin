@@ -23,7 +23,7 @@ export async function logout(pushEndpoint?: string): Promise<{ success: boolean;
       } catch {
         // Local cookies are still cleared below, but report the server failure
         // so callers do not claim that the session was fully revoked.
-        serverLogoutError = "서버 로그아웃에 실패했습니다. 다시 시도해 주세요.";
+        serverLogoutError = "서버 로그아웃에 실패했어요. 다시 시도해 주세요.";
       }
     }
 
@@ -36,6 +36,6 @@ export async function logout(pushEndpoint?: string): Promise<{ success: boolean;
       : { success: true };
   } catch (error) {
     console.error("[Logout] Error:", error);
-    return { success: false, error: "로그아웃 중 오류가 발생했습니다." };
+    return { success: false, error: "로그아웃 중 오류가 발생했어요." };
   }
 }

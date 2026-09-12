@@ -138,7 +138,7 @@ export async function POST() {
             const response = NextResponse.json(
                 sanitizeUpstreamClientError(
                     axiosError.response?.data,
-                    "Failed to refresh authentication"
+                    "Failed to refresh authentication", status
                 ),
                 { status }
             );

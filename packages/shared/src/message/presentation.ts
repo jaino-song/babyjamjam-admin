@@ -123,7 +123,7 @@ export const MESSAGE_JOB_CANCEL_COPY = {
   confirmAction: "발송 취소",
   dismiss: "닫기",
   success: "예정된 발송을 취소했습니다.",
-  failure: "이미 발송되었거나 취소할 수 없는 상태입니다.",
+  failure: "이미 발송되었거나 취소할 수 없는 상태예요.",
 } as const;
 
 export const MESSAGE_RECORD_REASON_LABEL = "사유";

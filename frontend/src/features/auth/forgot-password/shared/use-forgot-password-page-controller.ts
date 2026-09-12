@@ -1,4 +1,6 @@
 "use client";
+import { getUserErrorMessage } from "@babyjamjam/shared";
+
 
 import { useRouter } from "next/navigation";
 import { useState } from "react";
@@ -27,7 +29,7 @@ export function useForgotPasswordPageController() {
 
     const result = forgotPasswordSchema.safeParse({ email });
     if (!result.success) {
-      setError(result.error.issues[0]?.message || "유효한 이메일을 입력해주세요.");
+      setError(getUserErrorMessage(result.error.issues[0]?.message || "유효한 이메일을 입력해주세요."));
       return;
     }
 
@@ -39,11 +41,11 @@ export function useForgotPasswordPageController() {
       if (response.success) {
         setIsSuccess(true);
       } else {
-        setError(response.message || "요청 처리에 실패했습니다. 다시 시도해 주세요.");
+        setError(getUserErrorMessage(response.message || "요청 처리에 실패했어요. 다시 시도해 주세요."));
       }
     } catch (requestError) {
       console.error("Forgot password error:", requestError);
-      setError("네트워크 오류가 발생했습니다. 다시 시도해 주세요.");
+      setError(getUserErrorMessage(requestError, "네트워크 오류가 발생했어요. 다시 시도해 주세요."));
     } finally {
       setIsLoading(false);
     }

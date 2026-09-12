@@ -1,4 +1,6 @@
 "use client";
+import { getUserErrorMessage } from "@babyjamjam/shared";
+
 
 import { useState, type KeyboardEvent, type ReactNode } from "react";
 import { CalendarDays, CircleAlert, FileCheck2, MessageCircle, MoreVertical, RotateCcw, SquarePen, Trash2, User } from "lucide-react";
@@ -642,7 +644,7 @@ export function ClientDetailContent({
         ?? null;
       if (!activeAssignment) {
         toast({
-          description: "관리사 배정이 없어 링크를 재설정할 수 없어요",
+          description: getUserErrorMessage("관리사 배정이 없어 링크를 재설정할 수 없어요"),
           variant: "destructive",
         });
         return;
@@ -653,7 +655,7 @@ export function ClientDetailContent({
       setResetServiceRecordUrl(reset.serviceRecordUrl);
     } catch {
       toast({
-        description: "제공기록지 링크를 재설정하지 못했어요. 잠시 후 다시 시도해 주세요",
+        description: getUserErrorMessage("제공기록지 링크를 재설정하지 못했어요. 잠시 후 다시 시도해 주세요"),
         variant: "destructive",
       });
     } finally {
@@ -671,7 +673,7 @@ export function ClientDetailContent({
         ?? null;
       if (!activeAssignment) {
         toast({
-          description: "관리사 배정이 없어 서비스 일정을 변경할 수 없어요",
+          description: getUserErrorMessage("관리사 배정이 없어 서비스 일정을 변경할 수 없어요"),
           variant: "destructive",
         });
         return;
@@ -689,7 +691,7 @@ export function ClientDetailContent({
       });
     } catch {
       toast({
-        description: "변경할 수 있는 다음 서비스 일정을 불러오지 못했어요",
+        description: getUserErrorMessage("변경할 수 있는 다음 서비스 일정을 불러오지 못했어요"),
         variant: "destructive",
       });
     } finally {
@@ -715,7 +717,7 @@ export function ClientDetailContent({
       toast({ variant: "success", description: `서비스 일정과 종료일(${changed.newEndDate})을 변경했어요` });
     } catch (error) {
       toast({
-        description: getScheduleChangeErrorMessage(error),
+        description: getUserErrorMessage(getScheduleChangeErrorMessage(error)),
         variant: "destructive",
       });
     } finally {
@@ -729,7 +731,7 @@ export function ClientDetailContent({
       toast({ variant: "success", description: "제공기록지 링크를 복사했어요" });
     } catch {
       toast({
-        description: "링크를 복사하지 못했어요. 링크를 직접 선택해 복사해 주세요",
+        description: getUserErrorMessage("링크를 복사하지 못했어요. 링크를 직접 선택해 복사해 주세요"),
         variant: "destructive",
       });
     }
@@ -760,7 +762,7 @@ export function ClientDetailContent({
       });
     } catch (error) {
       toast({
-        description: getScheduleChangeErrorMessage(error),
+        description: getUserErrorMessage(getScheduleChangeErrorMessage(error)),
         variant: "destructive",
       });
     } finally {
@@ -1112,7 +1114,7 @@ export function ClientDetailContent({
         }}
         data-component={`${dataComponent}_reset-link-approval-modal`}
                 title="제공기록지 링크를 재설정하시겠습니까?"
-                description="기존 링크는 만료되고 새 링크가 생성됩니다. 메시지는 발송되지 않습니다."
+                description="기존 링크는 만료되고 새 링크가 생성돼요. 메시지는 발송되지 않아요."
                 isDescriptionVisuallyHidden={false}
                 approvalLabel="링크 재설정"
         pendingLabel="재설정 중..."

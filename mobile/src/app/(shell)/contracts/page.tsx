@@ -1,4 +1,6 @@
 "use client";
+import { getUserErrorMessage, resolveProblemPresentation } from "@babyjamjam/shared";
+
 
 import type { ComponentType, MouseEvent, ReactNode } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -79,7 +81,6 @@ import { HeadlessProgressModal } from "@/components/app/eformsign/HeadlessProgre
 import { ContractPdfViewerPlaceholder } from "@/components/app/contracts/contract-pdf-viewer-placeholder";
 import { MobileTwoButtonModal } from "@/components/app/ui/MobileTwoButtonModal";
 import { ApprovalTwoButtonModal } from "@/components/app/ui/ApprovalTwoButtonModal";
-import { describeReceiptLinkError } from "@/lib/receipt-link";
 import type { EformsignDocClientSummary } from "@babyjamjam/shared/types/eformsign";
 import {
   eformsignApi,
@@ -137,6 +138,29 @@ import {
 import { matchesKoreanSearch } from "@/lib/search/korean-search";
 import { useClientDialogStore, type ClientWizardPrefill } from "@/stores/client-dialog-store";
 import { useFormStore, type ContractCreationPrefill } from "@/stores/form-store";
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Button } from "@/components/ui/button";
+import {
+  beginContractOperation,
+  cancelContractOperation,
+  completeContractOperation,
+  CONTRACT_FINALIZE_END_DATE_INPUT_ID,
+  createUnknownContractMutationPresentation,
+  getContractMutationFieldId,
+  getContractOperationRecord,
+  isContractDeleteResponseConfirmed,
+  isEformsignStaffDocumentOption,
+  normalizeContractMutationError,
+  parseFinalizeHeadlessResult,
+  parseReceiptLinkResult,
+  refreshContractMutationStatus,
+  resolveFinalizeDateInput,
+  settleContractOperation,
+  type ContractMutationOperation,
+  type ContractMutationPresentation,
+  type ContractOperationGuardState,
+  type ContractOperationRecord,
+} from "./contract-operation-guard";
 import { useContractClientRegistration } from "@/hooks/useContractClientRegistration";
 import "@/components/app/mobile-redesign/redesign.css";
 const STAFF_COMPLETION_IFRAME_ID = "contracts_staff_completion_iframe";
@@ -190,6 +214,11 @@ type ContractStageItem = {
 };
 
 const CONTRACT_ROUTE_BODY_CLASS = "mobile-contracts-route";
+const CONTRACT_MUTATION_OPERATION_LABELS: Record<ContractMutationOperation, string> = {
+  delete: "삭제",
+  finalize: "최종 확인",
+  receipt: "영수증 문자",
+};
 const FILTER_LABELS: FilterKey[] = ["전체", "서명 대기", "서명 완료", "검토 필요", "계약 완료", "기간 만료", "알 수 없음"];
 const CONTRACT_SECTIONS = [
   { id: "maternal-contracts", label: "산모 계약서", icon: FileSignature },
@@ -1124,7 +1153,7 @@ function contractStageItems(
       icon: sendFailed ? X : Send,
       iconVariant: sendFailed ? "danger" : "info",
       text: sendFailed
-        ? "이용자에게 문서 전송에 실패했습니다."
+        ? "이용자에게 문서 전송에 실패했어요."
         : "이용자에게 문서가 발송되었습니다.",
       time: createdAt,
     },
@@ -1172,7 +1201,7 @@ function contractStageItems(
     items.push({
       icon: AlertTriangle,
       iconVariant: "danger",
-      text: "문서 기간이 만료되었습니다",
+      text: "문서 기간이 만료됐어요",
       time: updatedAt,
     });
     return items;
@@ -1231,6 +1260,10 @@ function ContractDetailContent({
   isClientRegistrationPending,
   onEditSend,
   onDeleteRequest,
+  mutationOutcomes,
+  onRefreshMutationOutcome,
+  onSendReceiptLink: sendReceiptLink,
+  onFocusFinalizeDate,
 }: {
   doc: EformsignDocument;
   metadata?: EformsignDocClientSummary;
@@ -1243,6 +1276,10 @@ function ContractDetailContent({
   isClientRegistrationPending: boolean;
   onEditSend: (doc: EformsignDocument, metadata?: EformsignDocClientSummary) => void;
   onDeleteRequest: (doc: EformsignDocument) => void;
+  mutationOutcomes: readonly ContractOperationRecord[];
+  onRefreshMutationOutcome: (documentId: string) => void;
+  onSendReceiptLink: (doc: EformsignDocument) => void | Promise<void>;
+  onFocusFinalizeDate: (documentId: string) => void;
 }) {
   const queryClient = useQueryClient();
   const { toast } = useToast();
@@ -1287,6 +1324,10 @@ function ContractDetailContent({
   const receiptCustomerName =
     resolvedCustomerName === UNKNOWN_CUSTOMER_NAME ? "" : resolvedCustomerName.trim();
   const receiptFilename = getReceiptFileName(receiptCustomerName);
+  const receiptOperation = mutationOutcomes.find((record) => record.operation === "receipt");
+  const isReceiptSendBlocked = receiptOperation?.state === "blocked"
+    || receiptOperation?.state === "in-flight";
+  const mutationOutcomeBase = "mobile_contracts_detail-sheet_stack_detail-page_content_mutation-outcome";
   useEffect(() => {
     const downloadControllers = downloadControllersRef.current;
     return () => {
@@ -1311,7 +1352,7 @@ function ContractDetailContent({
     if (!stepSeq || stepType !== "05") {
       toast({
         variant: "destructive",
-        description: "지금 단계에서는 재알림을 보낼 수 없어요",
+        description: getUserErrorMessage("지금 단계에서는 재알림을 보낼 수 없어요"),
       });
       return;
     }
@@ -1337,28 +1378,18 @@ function ContractDetailContent({
     } catch (error) {
       toast({
         variant: "destructive",
-        description: requestErrorMessage(error, "재알림을 보내지 못했어요"),
+        description: getUserErrorMessage(error, requestErrorMessage(error, "재알림을 보내지 못했어요")),
       });
     } finally {
       setIsReRequesting(false);
     }
   };
   const handleSendReceiptLink = async () => {
+    if (isReceiptSendBlocked) return;
     setIsSendingReceiptLink(true);
     try {
-      const result = await eformsignApi.sendReceiptLink(doc.id);
+      await sendReceiptLink(doc);
       setIsReceiptSendConfirmOpen(false);
-      toast({
-        variant: "success",
-        title: "서비스 종료 안내 발송 예약",
-        description: `${result.clientName} 산모님께 1분 내 발송됩니다. 링크는 30일간 유효합니다.`,
-      });
-    } catch (error) {
-      toast({
-        variant: "destructive",
-        title: "영수증 문자를 보내지 못했습니다",
-        description: describeReceiptLinkError(error),
-      });
     } finally {
       setIsSendingReceiptLink(false);
     }
@@ -1418,7 +1449,7 @@ function ContractDetailContent({
           toast({
             variant: "destructive",
             title: "영수증 공유 실패",
-            description: message || RECEIPT_SHARE_ERROR_MESSAGE,
+            description: getUserErrorMessage(message, message || RECEIPT_SHARE_ERROR_MESSAGE),
           }),
       });
     } finally {
@@ -1522,7 +1553,7 @@ function ContractDetailContent({
                           label: "영수증 문자 발송",
                           variant: "primary" as const,
                           onClick: () => setIsReceiptSendConfirmOpen(true),
-                          disabled: isSendingReceiptLink,
+                          disabled: isSendingReceiptLink || isReceiptSendBlocked,
                           dataComponent: "mobile_contracts_detail-sheet_stack_detail-page_actions_receipt-send",
                         },
                       ]),
@@ -1559,6 +1590,83 @@ function ContractDetailContent({
           ]}
         />
       ) : null}
+      {mutationOutcomes.map((record) => {
+        const presentation = record.presentation;
+        if (!presentation) return null;
+        const outcomeBase = `${mutationOutcomeBase}_${record.operation}`;
+        const isUncertain = presentation.outcome === "UNKNOWN"
+          || presentation.outcome === "PARTIALLY_APPLIED";
+        const fieldErrors = presentation.errors ?? [];
+        return (
+          <Alert
+            key={`${record.operation}-${record.resourceId}`}
+            data-component={outcomeBase}
+            dataComponents={{
+              root: outcomeBase,
+              icon: `${outcomeBase}_icon`,
+              content: `${outcomeBase}_content`,
+            }}
+            variant={presentation.retryAllowed ? "warning" : "destructive"}
+          >
+            <AlertDescription data-component={`${outcomeBase}_description`}>
+              <p data-component={`${outcomeBase}_message`}>
+                {CONTRACT_MUTATION_OPERATION_LABELS[record.operation]}: {presentation.message}
+              </p>
+              {fieldErrors.length > 0 ? (
+                <ul className="mt-2 space-y-1" data-component={`${outcomeBase}_errors`}>
+                  {fieldErrors.map((problemError, index) => {
+                    const fieldId = getContractMutationFieldId(record.operation, problemError);
+                    const label = fieldId ? "서비스 종료일" : resolveProblemPresentation("ko-KR").unmappedField;
+                    const message = `${label}: ${problemError.detail}`;
+                    return (
+                      <li key={`${outcomeBase}-error-${index}`} data-component={`${outcomeBase}_errors_item-${index}`}>
+                        {fieldId ? (
+                          <Button
+                            asChild
+                            variant="link"
+                            size="sm"
+                            data-component={`${outcomeBase}_errors_item-${index}_link`}
+                          >
+                            <a
+                              href={`#${fieldId}`}
+                              onClick={(event) => {
+                                event.preventDefault();
+                                onFocusFinalizeDate(doc.id);
+                              }}
+                            >
+                              {message}
+                            </a>
+                          </Button>
+                        ) : message}
+                      </li>
+                    );
+                  })}
+                </ul>
+              ) : null}
+              {presentation.requestId ? (
+                <p className="mt-2" data-component={`${outcomeBase}_request-id`}>
+                  요청 ID: {presentation.requestId}
+                </p>
+              ) : null}
+              {isUncertain ? (
+                <p className="mt-2" data-component={`${outcomeBase}_status-guidance`}>
+                  {resolveProblemPresentation("ko-KR").checkStatus}
+                </p>
+              ) : null}
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="mt-3"
+                data-component={`${outcomeBase}_refresh`}
+                onClick={() => onRefreshMutationOutcome(doc.id)}
+              >
+                상태 새로 확인하기
+              </Button>
+            </AlertDescription>
+          </Alert>
+        );
+      })}
       {isPreviewOpen ? (
         <section
           className="contract-preview-panel"
@@ -1766,12 +1874,67 @@ export default function ContractsPage() {
   const [isStaffIframeOpen, setIsStaffIframeOpen] = useState(false);
   const [staffDocumentOption, setStaffDocumentOption] = useState<EformsignDocumentOption | null>(null);
   const finalizeProgressSourceRef = useRef<EventSource | null>(null);
+  const staffDocumentIdRef = useRef<string | null>(null);
+  const contractOperationStateRef = useRef<ContractOperationGuardState>(new Map());
+  const [, setContractOperationVersion] = useState(0);
   const isDeleteDocumentBusy = isDeletingDocument || deleteDocument.isPending;
 
+  const beginContractMutation = useCallback(
+    (operation: ContractMutationOperation, resourceId: string): boolean => {
+      const result = beginContractOperation(contractOperationStateRef.current, operation, resourceId);
+      if (!result.accepted) return false;
+      contractOperationStateRef.current = result.state;
+      setContractOperationVersion((version) => version + 1);
+      return true;
+    },
+    [],
+  );
+
+  const settleContractMutation = useCallback((presentation: ContractMutationPresentation) => {
+    contractOperationStateRef.current = settleContractOperation(
+      contractOperationStateRef.current,
+      presentation,
+    );
+    setContractOperationVersion((version) => version + 1);
+  }, []);
+
+  const completeContractMutation = useCallback(
+    (operation: ContractMutationOperation, resourceId: string) => {
+      const next = completeContractOperation(
+        contractOperationStateRef.current,
+        operation,
+        resourceId,
+      );
+      if (next === contractOperationStateRef.current) return;
+      contractOperationStateRef.current = next;
+      setContractOperationVersion((version) => version + 1);
+    },
+    [],
+  );
+
+  const cancelContractMutation = useCallback(
+    (operation: ContractMutationOperation, resourceId: string) => {
+      const next = cancelContractOperation(
+        contractOperationStateRef.current,
+        operation,
+        resourceId,
+      );
+      if (next === contractOperationStateRef.current) return;
+      contractOperationStateRef.current = next;
+      setContractOperationVersion((version) => version + 1);
+    },
+    [],
+  );
+
   const closeStaffIframe = useCallback(() => {
+    const documentId = staffDocumentIdRef.current;
     setIsStaffIframeOpen(false);
     setIsFinalizeSubmitting(false);
-  }, []);
+    if (documentId) {
+      cancelContractMutation("finalize", documentId);
+      staffDocumentIdRef.current = null;
+    }
+  }, [cancelContractMutation]);
 
   useEffect(() => () => {
     finalizeProgressSourceRef.current?.close();
@@ -1781,37 +1944,47 @@ export default function ContractsPage() {
   useEffect(() => {
     if (!isStaffIframeOpen || !staffDocumentOption || !isEformsignLoaded) return;
     const handle = setTimeout(() => {
-      openDocument(staffDocumentOption, STAFF_COMPLETION_IFRAME_ID, {
-        onSuccess: () => {
-          closeStaffIframe();
-          setStaffDocumentOption(null);
-          setFinalizeDoc(null);
-          setFinalizeEndDateInput("");
-          toast({ variant: "success", description: "계약서를 완료 처리했어요" });
-          queryClient.invalidateQueries({ queryKey: eformsignQueryKeys.documents() });
-          [2000, 5000].forEach((delay) => {
-            setTimeout(() => {
-              queryClient.invalidateQueries({ queryKey: eformsignQueryKeys.documents() });
-            }, delay);
-          });
-        },
-        onError: (response) => {
-          closeStaffIframe();
-          setStaffDocumentOption(null);
-          toast({
-            variant: "destructive",
-            title: "최종 확인을 마치지 못했어요",
-            description: response.message ?? "알 수 없는 오류예요",
-          });
-        },
-        onAction: (response) => {
-          const t = response.type?.toLowerCase() ?? "";
-          if (t.includes("cancel") || t.includes("close")) {
+      const iframeDocumentId = staffDocumentIdRef.current;
+      try {
+        openDocument(staffDocumentOption, STAFF_COMPLETION_IFRAME_ID, {
+          onSuccess: () => {
+            if (!iframeDocumentId || staffDocumentIdRef.current !== iframeDocumentId) return;
+            const documentId = iframeDocumentId;
             closeStaffIframe();
             setStaffDocumentOption(null);
-          }
-        },
-      });
+            setFinalizeDoc(null);
+            setFinalizeEndDateInput("");
+            completeContractMutation("finalize", documentId);
+            toast({ variant: "success", description: "계약서를 완료 처리했어요" });
+            queryClient.invalidateQueries({ queryKey: eformsignQueryKeys.documents() });
+            [2000, 5000].forEach((delay) => {
+              setTimeout(() => {
+                queryClient.invalidateQueries({ queryKey: eformsignQueryKeys.documents() });
+              }, delay);
+            });
+          },
+          onError: (response) => {
+            if (!iframeDocumentId || staffDocumentIdRef.current !== iframeDocumentId) return;
+            const presentation = normalizeContractMutationError(response, "finalize", iframeDocumentId);
+            closeStaffIframe();
+            setStaffDocumentOption(null);
+            settleContractMutation(presentation);
+          },
+          onAction: (response) => {
+            if (!iframeDocumentId || staffDocumentIdRef.current !== iframeDocumentId) return;
+            const t = response.type?.toLowerCase() ?? "";
+            if (t.includes("cancel") || t.includes("close")) {
+              closeStaffIframe();
+              setStaffDocumentOption(null);
+            }
+          },
+        });
+      } catch (error) {
+        if (!iframeDocumentId || staffDocumentIdRef.current !== iframeDocumentId) return;
+        closeStaffIframe();
+        setStaffDocumentOption(null);
+        settleContractMutation(normalizeContractMutationError(error, "finalize", iframeDocumentId));
+      }
     }, 300);
     return () => clearTimeout(handle);
   }, [
@@ -1821,11 +1994,22 @@ export default function ContractsPage() {
     isEformsignLoaded,
     openDocument,
     queryClient,
+    completeContractMutation,
+    settleContractMutation,
+    toast,
   ]);
 
   const openFinalize = (
     doc: EformsignDocument,
   ) => {
+    const existingOperation = getContractOperationRecord(
+      contractOperationStateRef.current,
+      "finalize",
+      doc.id,
+    );
+    if (existingOperation?.state === "in-flight" || existingOperation?.state === "blocked") {
+      return;
+    }
     setFinalizeDoc(doc);
     setFinalizeErrorHint(null);
     setFinalizeProgress(INITIAL_HEADLESS_PROGRESS);
@@ -1837,7 +2021,12 @@ export default function ContractsPage() {
       return;
     }
 
-    setFinalizeEndDateInput(contractEndDateInputValue(doc));
+    setFinalizeEndDateInput(resolveFinalizeDateInput(
+      finalizeDoc?.id,
+      doc.id,
+      finalizeEndDateInput,
+      contractEndDateInputValue(doc),
+    ));
     setIsServiceRecordFinalizeConfirmOpen(false);
     setIsFinalizeDialogOpen(true);
   };
@@ -1857,27 +2046,56 @@ export default function ContractsPage() {
 
   const handleDeleteDocumentConfirm = async () => {
     if (!deleteTargetDoc || isDeleteDocumentBusy) return;
+    const target = deleteTargetDoc;
+    if (!beginContractMutation("delete", target.id)) return;
     setIsDeletingDocument(true);
     try {
-      await deleteDocument.mutateAsync(deleteTargetDoc.id);
-      await queryClient.invalidateQueries({ queryKey: ["eformsign-doc-client-names"] });
+      const response = await deleteDocument.mutateAsync(target.id);
+      if (!isContractDeleteResponseConfirmed(response, target.id)) {
+        settleContractMutation(createUnknownContractMutationPresentation("delete", target.id));
+        setDeleteTargetDoc(null);
+        return;
+      }
+      completeContractMutation("delete", target.id);
       setSelectedDoc(null);
       setDeleteTargetDoc(null);
+      try {
+        await queryClient.invalidateQueries({ queryKey: ["eformsign-doc-client-names"] });
+      } catch {
+        // A confirmed delete is not made uncertain by a follow-up read refresh failure.
+      }
       toast({
         variant: "success",
         description: `${contractDisplayName(
-          deleteTargetDoc,
-          documentClientSummaryById.get(deleteTargetDoc.id),
+          target,
+          documentClientSummaryById.get(target.id),
           true,
         )}를 삭제했어요`,
       });
     } catch (error) {
-      toast({
-        variant: "destructive",
-        description: requestErrorMessage(error, "계약서를 삭제하지 못했어요"),
-      });
+      settleContractMutation(normalizeContractMutationError(error, "delete", target.id));
+      setDeleteTargetDoc(null);
     } finally {
       setIsDeletingDocument(false);
+    }
+  };
+
+  const handleReceiptLinkSend = async (doc: EformsignDocument) => {
+    if (!beginContractMutation("receipt", doc.id)) return;
+    try {
+      const result = parseReceiptLinkResult(await eformsignApi.sendReceiptLink(doc.id));
+      if (result.kind !== "success") {
+        settleContractMutation(createUnknownContractMutationPresentation("receipt", doc.id));
+        return;
+      }
+      completeContractMutation("receipt", doc.id);
+      toast({
+        variant: "success",
+        title: "서비스 종료 안내 발송 예약",
+        description: `${result.clientName} 산모님께 1분 내 발송됩니다. 링크는 30일간 유효합니다.`,
+      });
+    } catch (error) {
+      settleContractMutation(normalizeContractMutationError(error, "receipt", doc.id));
     }
   };
 
@@ -1898,6 +2116,8 @@ export default function ContractsPage() {
       return;
     }
 
+    const documentId = finalizeDoc.id;
+    if (!beginContractMutation("finalize", documentId)) return;
     setIsFinalizeSubmitting(true);
     setFinalizeErrorHint(null);
     setIsFinalizeDialogOpen(false);
@@ -1905,13 +2125,12 @@ export default function ContractsPage() {
     setFinalizeProgress({ step: "client-started", completed: false, failed: false });
     setIsFinalizeProgressOpen(true);
 
-    const documentId = finalizeDoc.id;
     const progressId = createHeadlessProgressId("finalize");
     let progressSource: EventSource | null = null;
-    let headlessOk = false;
     let fallbackHint: "iframe" | "manual_check" | undefined;
     let transportOutcomeUnknown = false;
     let keepFinalizeSubmittingUntilIframeCloses = false;
+    let operationSettled = false;
 
     try {
       progressSource = new EventSource(
@@ -1945,9 +2164,11 @@ export default function ContractsPage() {
       });
 
       const headless = await eformsignApi.finalizeHeadless(documentId, endDateIso, progressId);
+      const headlessResult = parseFinalizeHeadlessResult(headless);
 
-      if (headless.ok) {
-        headlessOk = true;
+      if (headlessResult.kind === "success") {
+        operationSettled = true;
+        completeContractMutation("finalize", documentId);
         setFinalizeProgress({ step: "sent", completed: true, failed: false });
         queryClient.invalidateQueries({ queryKey: eformsignQueryKeys.documents() });
         [2000, 5000].forEach((delay) => {
@@ -1968,9 +2189,21 @@ export default function ContractsPage() {
         return;
       }
 
-      console.warn("[finalize] headless ok=false", headless.reason);
-      fallbackHint = headless.fallbackHint;
-      const errorHint = getSafeHeadlessFailureMessage(headless.reason);
+      fallbackHint = headlessResult.kind === "iframe" ? "iframe" : undefined;
+      const unknownPresentation = headlessResult.kind === "unknown"
+        ? createUnknownContractMutationPresentation("finalize", documentId)
+        : undefined;
+      if (unknownPresentation) {
+        transportOutcomeUnknown = true;
+        operationSettled = true;
+        settleContractMutation(unknownPresentation);
+        setIsFinalizeProgressOpen(false);
+      }
+      const errorHint = unknownPresentation?.message
+        // The provider reason is copy-only; parser output above controls outcome and replay.
+        ?? getSafeHeadlessFailureMessage(
+          "reason" in headless && typeof headless.reason === "string" ? headless.reason : undefined,
+        );
       setFinalizeProgress((current) => {
         const next = resolveFailedHeadlessProgress(
           current,
@@ -1984,8 +2217,10 @@ export default function ContractsPage() {
       });
     } catch (err) {
       transportOutcomeUnknown = true;
-      console.warn("[finalize] headless threw", err);
-      const errorHint = getSafeHeadlessFailureMessage(err instanceof Error ? err.message : undefined);
+      operationSettled = true;
+      const presentation = normalizeContractMutationError(err, "finalize", documentId);
+      settleContractMutation(presentation);
+      setIsFinalizeProgressOpen(false);
       setFinalizeProgress((current) => {
         const next = resolveFailedHeadlessProgress(
           current,
@@ -1993,7 +2228,7 @@ export default function ContractsPage() {
           progressSteps,
         );
         if (next !== current) {
-          setFinalizeErrorHint(errorHint);
+          setFinalizeErrorHint(presentation.message);
         }
         return next;
       });
@@ -2002,23 +2237,34 @@ export default function ContractsPage() {
       finalizeProgressSourceRef.current = null;
     }
 
-    if (!headlessOk && shouldOpenFinalizeIframe(fallbackHint, transportOutcomeUnknown)) {
+    if (!operationSettled && shouldOpenFinalizeIframe(fallbackHint, transportOutcomeUnknown)) {
       // Fallback to iframe via generateStaffDocument
       setIsFinalizeProgressOpen(false);
       try {
         // Provider credentials stay server-side; this request returns only render options.
         // Finalization fallback runs through the trusted server boundary.
         const option = await eformsignApi.generateStaffDocument(documentId, endDateIso);
-        setStaffDocumentOption(option as EformsignDocumentOption);
-        setIsStaffIframeOpen(true);
-        keepFinalizeSubmittingUntilIframeCloses = true;
+        if (!isEformsignStaffDocumentOption(option)) {
+          operationSettled = true;
+          settleContractMutation(createUnknownContractMutationPresentation("finalize", documentId));
+          setIsFinalizeProgressOpen(false);
+        } else {
+          staffDocumentIdRef.current = documentId;
+          setStaffDocumentOption(option);
+          setIsStaffIframeOpen(true);
+          keepFinalizeSubmittingUntilIframeCloses = true;
+        }
       } catch (fallbackErr) {
-        const msg = fallbackErr instanceof Error ? fallbackErr.message : "최종 확인을 준비하지 못했어요";
-        toast({ variant: "destructive", description: msg });
+        operationSettled = true;
+        settleContractMutation(normalizeContractMutationError(fallbackErr, "finalize", documentId));
       }
     }
 
     if (!keepFinalizeSubmittingUntilIframeCloses) {
+      if (!operationSettled) {
+        operationSettled = true;
+        settleContractMutation(createUnknownContractMutationPresentation("finalize", documentId));
+      }
       setIsFinalizeSubmitting(false);
     }
   };
@@ -2247,6 +2493,53 @@ export default function ContractsPage() {
     }
     return undefined;
   }, [documentClientSummaryById, selectedDetailDoc?.id, selectedDoc?.id, selectedListDoc?.id]);
+
+  const selectedMutationOutcomes: ContractOperationRecord[] = selectedDetailDoc?.id
+    ? (["delete", "finalize", "receipt"] as ContractMutationOperation[]).flatMap((operation) => {
+        const record = getContractOperationRecord(
+          contractOperationStateRef.current,
+          operation,
+          selectedDetailDoc.id,
+        );
+        return record ? [record] : [];
+      })
+    : [];
+
+  const refreshMutationOutcome = useCallback(
+    (documentId: string) => {
+      refreshContractMutationStatus([
+        () => queryClient.invalidateQueries({ queryKey: eformsignQueryKeys.documents() }),
+        () => queryClient.invalidateQueries({ queryKey: ["eformsign-doc-client-names"] }),
+        () => queryClient.invalidateQueries({ queryKey: ["eformsign-document-detail", documentId] }),
+        () => queryClient.invalidateQueries({ queryKey: ["messages", "logs", "all"] }),
+      ]);
+    },
+    [queryClient],
+  );
+
+  const focusFinalizeDate = useCallback(
+    (documentId: string) => {
+      const targetDocument = selectedDetailDoc?.id === documentId
+        ? selectedDetailDoc
+        : displayDocuments.find((item) => item.id === documentId);
+      if (!targetDocument || isServiceRecordDocument(targetDocument, serviceRecordTemplateIds)) return;
+      setFinalizeDoc(targetDocument);
+      setFinalizeEndDateInput(resolveFinalizeDateInput(
+        finalizeDoc?.id,
+        documentId,
+        finalizeEndDateInput,
+        contractEndDateInputValue(targetDocument),
+      ));
+      setFinalizeErrorHint(null);
+      setIsServiceRecordFinalizeConfirmOpen(false);
+      setIsFinalizeDialogOpen(true);
+      setTimeout(() => {
+        const input = document.getElementById(CONTRACT_FINALIZE_END_DATE_INPUT_ID);
+        if (input instanceof HTMLElement) input.focus();
+      }, 0);
+    },
+    [displayDocuments, finalizeDoc?.id, finalizeEndDateInput, selectedDetailDoc, serviceRecordTemplateIds],
+  );
 
   // 섹션·검색·삭제 필터는 서버가 페이지 slice 이전에 적용한다.
   //
@@ -2561,7 +2854,19 @@ export default function ContractsPage() {
             onOpenClient={handleOpenClientFromContract}
             isClientRegistrationPending={isClientRegistrationPending}
             onEditSend={handleEditSendFromContract}
-            onDeleteRequest={setDeleteTargetDoc}
+            onDeleteRequest={(doc) => {
+              const operation = getContractOperationRecord(
+                contractOperationStateRef.current,
+                "delete",
+                doc.id,
+              );
+              if (operation?.state === "in-flight" || operation?.state === "blocked") return;
+              setDeleteTargetDoc(doc);
+            }}
+            mutationOutcomes={selectedMutationOutcomes}
+            onRefreshMutationOutcome={refreshMutationOutcome}
+            onSendReceiptLink={handleReceiptLinkSend}
+            onFocusFinalizeDate={focusFinalizeDate}
           />
         ) : (
           <div className="detail-body" />
@@ -2578,7 +2883,7 @@ export default function ContractsPage() {
         data-component="mobile_contracts_delete-confirmation_modal"
         open={deleteTargetDoc !== null}
         title="계약서 삭제"
-        description="전자문서가 취소되어 수신자가 더 이상 서명할 수 없습니다. 복구할 수 없습니다."
+        description="전자문서가 취소되어 수신자가 더 이상 서명할 수 없어요. 복구할 수 없어요."
         cancelLabel="취소"
         confirmLabel="삭제"
         loading={isDeleteDocumentBusy}
@@ -2628,6 +2933,8 @@ export default function ContractsPage() {
               서비스 종료일
             </label>
             <input
+              id={CONTRACT_FINALIZE_END_DATE_INPUT_ID}
+              data-component={CONTRACT_FINALIZE_END_DATE_INPUT_ID}
               className="box-border w-full rounded-xl border-[1.5px] border-v3-border bg-white px-3.5 py-3 text-[0.9rem] text-v3-dark outline-none focus:border-v3-primary"
               value={finalizeEndDateInput}
               onChange={(e) => setFinalizeEndDateInput(e.target.value.replace(/\D/g, "").slice(0, 6))}

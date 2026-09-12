@@ -13,6 +13,27 @@ import {
 } from "../route";
 import { GET as checkEmployeePhone } from "../check-phone/route";
 
+async function expectCanonicalValidationResponse(
+  response: Response,
+  legacyError: string,
+): Promise<void> {
+  expect(response.status).toBe(400);
+  const requestId = response.headers.get("X-Request-Id");
+  expect(requestId).toEqual(expect.stringMatching(/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/));
+  expect(response.headers.get("Content-Type")).toBe("application/problem+json");
+  expect(response.headers.get("Content-Language")).toBe("ko-KR");
+  expect(response.headers.get("Cache-Control")).toBe("no-store, max-age=0");
+
+  const body = await response.json();
+  expect(body).toMatchObject({
+    code: "VALIDATION_FAILED",
+    outcome: "NOT_APPLIED",
+    error: legacyError,
+    requestId,
+  });
+  expect(Array.isArray(body.errors)).toBe(true);
+}
+
 jest.mock("@/lib/api/server", () => ({
   serverAPIClient: {
     delete: jest.fn(),
@@ -64,7 +85,7 @@ describe("employee API routes", () => {
     const response = await listEmployees(createRequest("/api/employees"));
 
     expect(response.status).toBe(403);
-    await expect(response.json()).resolves.toEqual({ error: "Failed to fetch employees" });
+    await expect(response.json()).resolves.toEqual({ error: expect.stringMatching(/[가-힣].*요[.!]?$/) });
   });
 
   const validCreatePayload = {
@@ -117,8 +138,8 @@ describe("employee API routes", () => {
 
     expect(response.status).toBe(400);
     const body = await response.json();
-    expect(body).toEqual({ error: message });
-    expect(getErrorMessage({ response: { status: 400, data: body } }, "ko")).toBe(message);
+    expect(body).toEqual({ error: "전화번호 형식이 올바르지 않아요." });
+    expect(getErrorMessage({ response: { status: 400, data: body } }, "ko")).toBe(body.error);
   });
 
   it("preserves message-less Prisma metadata for localized phone conflicts", async () => {
@@ -144,12 +165,12 @@ describe("employee API routes", () => {
     expect(response.status).toBe(409);
     const body = await response.json();
     expect(body).toEqual({
-      error: "Failed to create employee",
+      error: expect.stringMatching(/[가-힣].*요[.!]?$/),
       code: "P2002",
       field: "phone",
     });
     expect(getErrorMessage({ response: { status: 409, data: body } }, "ko")).toBe(
-      "이미 등록된 연락처입니다. 다른 연락처를 입력해주세요.",
+      "연락처 정보가 이미 등록돼 있어요.",
     );
   });
 
@@ -211,10 +232,7 @@ describe("employee API routes", () => {
       }),
     );
 
-    expect(response.status).toBe(400);
-    await expect(response.json()).resolves.toEqual({
-      error: "Request body must be valid JSON",
-    });
+    await expectCanonicalValidationResponse(response, "Request body must be valid JSON");
     expect(mockPost).not.toHaveBeenCalled();
   });
 
@@ -241,10 +259,7 @@ describe("employee API routes", () => {
       }),
     );
 
-    expect(response.status).toBe(400);
-    await expect(response.json()).resolves.toEqual({
-      error: "Request body must be valid JSON",
-    });
+    await expectCanonicalValidationResponse(response, "Request body must be valid JSON");
     expect(mockPatch).not.toHaveBeenCalled();
   });
 
@@ -277,7 +292,7 @@ describe("employee API routes", () => {
       response: {
         status: 409,
         data: {
-          message: "진행 중인 배정이 있는 직원은 삭제할 수 없습니다.",
+          message: "진행 중인 배정이 있는 직원은 삭제할 수 없어요.",
           error: "Conflict",
         },
       },
@@ -289,16 +304,83 @@ describe("employee API routes", () => {
 
     expect(response.status).toBe(409);
     await expect(response.json()).resolves.toEqual({
-      message: "진행 중인 배정이 있는 직원은 삭제할 수 없습니다.",
+      message: "진행 중인 배정이 있는 직원은 삭제할 수 없어요.",
     });
   });
 
-  describe("auth rejection", () => {
+  it("preserves a converted problem body for delete conflicts instead of flattening it", async () => {
+    mockDelete.mockRejectedValue({
+      response: {
+        status: 409,
+        data: {
+          type: "https://github.com/jaino-song/babyjamjam-admin/blob/main/docs/error-management.md#employee-active-assignment-blocked",
+          title: "진행 중인 배정이 있어요",
+          status: 409,
+          detail: "진행 중인 배정이 있는 관리사는 삭제할 수 없어요. 배정 종료 또는 교체 후 다시 시도해 주세요.",
+          code: "EMPLOYEE_ACTIVE_ASSIGNMENT_BLOCKED",
+          requestId: "req-emp-409",
+          params: {},
+          outcome: "NOT_APPLIED",
+          recovery: { action: "NONE", retry: { mode: "NEVER" } },
+          // sendProblemResponse always adds the legacy aliases; the old
+          // conflict bridge keyed off them and flattened the problem.
+          statusCode: 409,
+          message: "진행 중인 배정이 있는 관리사는 삭제할 수 없어요. 배정 종료 또는 교체 후 다시 시도해 주세요.",
+          error: "진행 중인 배정이 있는 관리사는 삭제할 수 없어요. 배정 종료 또는 교체 후 다시 시도해 주세요.",
+        },
+      },
+    });
+
+    const response = await deleteEmployee(
+      createRequest("/api/employees?id=10", { method: "DELETE" }),
+    );
+
+    expect(response.status).toBe(409);
+    const body = await response.json();
+    expect(body.code).toBe("EMPLOYEE_ACTIVE_ASSIGNMENT_BLOCKED");
+    expect(body.requestId).toBe("req-emp-409");
+  });
+
+  describe("check-phone", () => {
     it("rejects check-phone without auth_token", async () => {
       const request = new NextRequest("http://localhost/api/employees/check-phone?phone=01000000000");
       const response = await checkEmployeePhone(request);
       expect(response.status).toBe(401);
       expect(mockGet).not.toHaveBeenCalled();
+    });
+
+    it("keeps a missing phone a valid negative answer", async () => {
+      const response = await checkEmployeePhone(
+        new NextRequest("http://localhost/api/employees/check-phone", {
+          headers: { cookie: "auth_token=auth-token" },
+        }),
+      );
+
+      expect(response.status).toBe(200);
+      await expect(response.json()).resolves.toEqual({ exists: false });
+      expect(mockGet).not.toHaveBeenCalled();
+    });
+
+    // 업스트림 실패는 `exists: false`로 위장되지 않고 공유 sanitizer로
+    // 전달되어 폼의 재시도 UI(hasPhoneDuplicateCheckFailed)가 동작한다.
+    it("must NOT mask an upstream failure as a negative answer", async () => {
+      mockGet.mockRejectedValue({
+        response: {
+          status: 500,
+          data: { error: "upstream boom" },
+        },
+      });
+
+      const response = await checkEmployeePhone(
+        new NextRequest("http://localhost/api/employees/check-phone?phone=01096411878", {
+          headers: { cookie: "auth_token=auth-token" },
+        }),
+      );
+
+      expect(response.status).toBe(500);
+      const body = await response.json();
+      expect(body).not.toEqual({ exists: false });
+      expect(body.error).toBeTruthy();
     });
   });
 });

@@ -1,4 +1,6 @@
 "use client";
+import { getUserErrorMessage } from "@babyjamjam/shared";
+
 
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
@@ -110,14 +112,14 @@ export function useLoginPageController() {
         return;
       }
 
-      setServerError(response.error || "로그인에 실패했습니다.");
+      setServerError(getUserErrorMessage(response.error || "로그인에 실패했어요."));
       if (response.emailVerificationRequired) {
         safeStorageSetItem("local", "auth:verificationEmail", result.data.email);
         setEmailVerificationRequired(true);
       }
     } catch (error) {
       console.error("Login error:", error);
-      setServerError("네트워크 오류가 발생했습니다. 다시 시도해 주세요.");
+      setServerError(getUserErrorMessage(error, "네트워크 오류가 발생했어요. 다시 시도해 주세요."));
     } finally {
       setIsLoading(false);
     }
@@ -130,7 +132,7 @@ export function useLoginPageController() {
 
     if (!targetEmail || isResendingVerification) {
       if (!targetEmail) {
-        setServerError("인증 메일을 보낼 이메일을 먼저 입력해 주세요.");
+        setServerError(getUserErrorMessage("인증 메일을 보낼 이메일을 먼저 입력해 주세요."));
       }
       return;
     }
@@ -142,12 +144,12 @@ export function useLoginPageController() {
         safeStorageSetItem("local", "auth:verificationEmail", targetEmail);
       }
       setServerError(
-        response.message || (response.success
+        getUserErrorMessage(response.message || (response.success
           ? "인증 이메일을 재발송했습니다. 메일함을 확인해 주세요."
-          : "인증 이메일 재발송에 실패했습니다."),
+          : "인증 이메일 재발송에 실패했어요.")),
       );
     } catch {
-      setServerError("네트워크 오류가 발생했습니다. 다시 시도해 주세요.");
+      setServerError(getUserErrorMessage("네트워크 오류가 발생했어요. 다시 시도해 주세요."));
     } finally {
       setIsResendingVerification(false);
     }

@@ -1,9 +1,23 @@
+import fs from "node:fs";
+import path from "node:path";
 import type { Employee } from "@/hooks/useEmployees";
 
 import {
   buildAllEmployeeRowsForList,
   groupForEmployee,
 } from "@/lib/employee/list-helpers";
+
+describe("employees page shared error mapper", () => {
+  it("routes delete failures and read errors through the shared problem-aware mapper", () => {
+    const source = fs.readFileSync(path.join(__dirname, "..", "page.tsx"), "utf8");
+
+    expect(source).toContain("getUserErrorMessage");
+    expect(source).toContain("normalizeApiError");
+    expect(source).toContain('operation: "read"');
+    expect(source).not.toContain("getApiErrorMessage");
+    expect(source).not.toContain("api-error-mapper");
+  });
+});
 
 function createEmployee(id: number, status: Employee["status"]): Employee {
   return {

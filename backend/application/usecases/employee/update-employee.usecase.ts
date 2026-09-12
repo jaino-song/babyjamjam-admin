@@ -1,5 +1,6 @@
 import { Inject, Injectable, NotFoundException } from "@nestjs/common";
 import type { Prisma } from "@prisma/client";
+import { codeOnlyProblemBody } from "application/utils/problem-bodies";
 import { EmployeeEntity } from "domain/entities/employee.entity";
 import { EMPLOYEE_REPOSITORY, IEmployeeRepository } from "domain/repositories/employee.repository.interface";
 
@@ -33,7 +34,7 @@ export class UpdateEmployeeUsecase {
     ): Promise<EmployeeEntity> {
         const employee = await this.employeeRepository.findById(branchid, id);
         if (!employee) {
-            throw new NotFoundException(`Employee with id ${id} not found`);
+            throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
         }
 
         employee.updateProfile(

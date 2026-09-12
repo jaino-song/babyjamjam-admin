@@ -1,5 +1,7 @@
 import { BadRequestException, ConflictException } from "@nestjs/common";
 
+import type { ProblemCode, ProblemDetails, ProblemError } from "@babyjamjam/shared/errors/problem-details";
+
 import { assertValidPhone, INVALID_PHONE_MESSAGE, normalizePhone } from "application/utils/normalize-phone";
 import { ClientEntity, clientDurationOutOfRangeMessage } from "domain/entities/client.entity";
 import { IClientRepository } from "domain/repositories/client.repository.interface";
@@ -18,6 +20,50 @@ interface AreaLookup {
             };
             select: { id: true };
         }): Promise<{ id: string } | null>;
+    };
+}
+
+type ClientDateField = "startDate" | "endDate" | "dueDate" | "birthDate";
+
+/**
+ * Shape a client pre-write rejection as a public problem contract body.
+ * The HTTP boundary replaces the texts with locale catalog copies, so the
+ * codes and pointers here only have to identify the cause.
+ *
+ * `message` is an in-process compatibility alias for callers that read
+ * `HttpException.message` (Nest derives it from a string `message` member);
+ * the HTTP mapper copies only contract members, so it never reaches clients.
+ */
+export function clientProblemBody(
+    code: ProblemCode,
+    error: ProblemError,
+): Pick<ProblemDetails, "code" | "params" | "outcome" | "recovery" | "errors"> & { message: string } {
+    return {
+        code,
+        params: {},
+        outcome: "NOT_APPLIED",
+        recovery: { action: "NONE", retry: { mode: "NEVER" } },
+        errors: [error],
+        message: error.detail,
+    };
+}
+
+/**
+ * Shape a client rejection that carries only its public code — no field
+ * errors (resource-not-found, delete retention). Same contract members as
+ * `clientProblemBody` minus `errors`; `message` stays the in-process
+ * compatibility alias and never reaches clients through the HTTP boundary.
+ */
+export function clientCodeOnlyProblemBody(
+    code: ProblemCode,
+    message: string,
+): Pick<ProblemDetails, "code" | "params" | "outcome" | "recovery"> & { message: string } {
+    return {
+        code,
+        params: {},
+        outcome: "NOT_APPLIED",
+        recovery: { action: "NONE", retry: { mode: "NEVER" } },
+        message,
     };
 }
 
@@ -42,7 +88,12 @@ export function assertClientPhoneInput(phone: string | null | undefined): string
         return assertValidPhone(phone);
     } catch (error) {
         if (error instanceof Error && error.name === "InvalidPhoneError") {
-            throw new BadRequestException(INVALID_PHONE_MESSAGE);
+            throw new BadRequestException(clientProblemBody("VALIDATION_FAILED", {
+                pointer: "/phone",
+                code: "INVALID_FORMAT",
+                detail: INVALID_PHONE_MESSAGE,
+                location: "body",
+            }));
         }
         throw error;
     }
@@ -52,17 +103,24 @@ export function assertClientPhoneInput(phone: string | null | undefined): string
  * Parse a client calendar date without allowing timezone offsets to change
  * the submitted day. Client date columns are calendar dates, not instants.
  */
-export function parseClientDate(value: string | null | undefined): Date | null | undefined {
+export function parseClientDate(value: string | null | undefined, field: ClientDateField): Date | null | undefined {
     if (value === undefined || value === null) return value;
 
+    const dateProblem = (): BadRequestException => new BadRequestException(clientProblemBody("VALIDATION_FAILED", {
+        pointer: `/${field}`,
+        code: "INVALID_FORMAT",
+        detail: "날짜 형식이 올바르지 않습니다. (YYYY-MM-DD)",
+        location: "body",
+    }));
+
     if (!/^\d{4}-\d{2}-\d{2}(?:$|T)/.test(value)) {
-        throw new BadRequestException("날짜 형식이 올바르지 않습니다. (YYYY-MM-DD)");
+        throw dateProblem();
     }
 
     const calendarDate = value.slice(0, 10);
     const parsed = new Date(`${calendarDate}T00:00:00.000Z`);
     if (Number.isNaN(parsed.getTime()) || parsed.toISOString().slice(0, 10) !== calendarDate) {
-        throw new BadRequestException("날짜 형식이 올바르지 않습니다. (YYYY-MM-DD)");
+        throw dateProblem();
     }
     return parsed;
 }
@@ -83,7 +141,12 @@ export function deriveClientDuration(
         || Number.isNaN(endDate.getTime())
         || startDate.getTime() > endDate.getTime()
     ) {
-        throw new BadRequestException("서비스 시작일은 종료일보다 늦을 수 없습니다.");
+        throw new BadRequestException(clientProblemBody("CLIENT_SERVICE_PERIOD_INVALID", {
+            pointer: "/endDate",
+            code: "INVALID_VALUE",
+            detail: "서비스 시작일은 종료일보다 늦을 수 없습니다.",
+            location: "body",
+        }));
     }
 
     try {
@@ -92,12 +155,23 @@ export function deriveClientDuration(
             endDate.toISOString().slice(0, 10),
         );
         if (duration === null) {
-            throw new BadRequestException("서비스 기간을 계산할 수 없습니다.");
+            throw new BadRequestException(clientProblemBody("CLIENT_SERVICE_PERIOD_UNCOMPUTABLE", {
+                pointer: "/endDate",
+                code: "INVALID_VALUE",
+                detail: "서비스 기간을 계산할 수 없습니다.",
+                location: "body",
+            }));
         }
         return duration;
     } catch (error) {
         if (error instanceof UnsupportedKoreanHolidayYearError) {
-            throw new BadRequestException(error.message);
+            // 기술 영문 메시지(지원 연도 범위)는 공개 계약으로 노출하지 않는다.
+            throw new BadRequestException(clientProblemBody("CLIENT_SERVICE_PERIOD_UNCOMPUTABLE", {
+                pointer: "/endDate",
+                code: "INVALID_VALUE",
+                detail: "서비스 기간을 계산할 수 없습니다. 시작일과 종료일을 확인해 주세요.",
+                location: "body",
+            }));
         }
         throw error;
     }
@@ -123,7 +197,12 @@ export function assertClientDurationMatchesDates(
     // are present, every supplied value must fit within the derived count.
     if (suppliedDuration === undefined || derivedDuration === null) return;
     if (suppliedDuration === null || !Number.isSafeInteger(suppliedDuration) || suppliedDuration < 1 || (suppliedDuration > derivedDuration && allowBusinessDayMismatch !== true)) {
-        throw new BadRequestException(clientDurationOutOfRangeMessage(derivedDuration));
+        throw new BadRequestException(clientProblemBody("CLIENT_DURATION_OUT_OF_RANGE", {
+            pointer: "/duration",
+            code: "OUT_OF_RANGE",
+            detail: clientDurationOutOfRangeMessage(derivedDuration),
+            location: "body",
+        }));
     }
 }
 
@@ -145,7 +224,12 @@ export function mergeAndValidateClientServicePeriod(
         : update.endDate;
 
     if (startDate && endDate && startDate > endDate) {
-        throw new BadRequestException("서비스 시작일은 종료일보다 늦을 수 없습니다.");
+        throw new BadRequestException(clientProblemBody("CLIENT_SERVICE_PERIOD_INVALID", {
+            pointer: "/endDate",
+            code: "INVALID_VALUE",
+            detail: "서비스 시작일은 종료일보다 늦을 수 없습니다.",
+            location: "body",
+        }));
     }
 
     return { startDate, endDate };
@@ -155,9 +239,12 @@ export function assertAllowedServiceStatus(status: string | null | undefined): v
     if (status == null) return;
 
     if (!isServiceStatus(status)) {
-        throw new BadRequestException(
-            `계약 상태가 올바르지 않습니다. 허용 값: ${SERVICE_STATUS_VALUES.join(", ")}`,
-        );
+        throw new BadRequestException(clientProblemBody("CLIENT_SERVICE_STATUS_INVALID", {
+            pointer: "/serviceStatus",
+            code: "INVALID_VALUE",
+            detail: `계약 상태가 올바르지 않습니다. 허용 값: ${SERVICE_STATUS_VALUES.join(", ")}`,
+            location: "body",
+        }));
     }
 }
 
@@ -181,7 +268,12 @@ export async function assertAllowedClientArea(
     });
 
     if (!area) {
-        throw new BadRequestException("선택한 관할 지역을 사용할 수 없습니다.");
+        throw new BadRequestException(clientProblemBody("CLIENT_AREA_UNAVAILABLE", {
+            pointer: "/areaId",
+            code: "INVALID_VALUE",
+            detail: "선택한 관할 지역을 사용할 수 없습니다.",
+            location: "body",
+        }));
     }
 }
 
@@ -214,13 +306,12 @@ export async function assertPhoneAvailable(
         ? await repository.findByPhone(branchId, normalizedPhone)
         : null;
     if (existingClient && existingClient.id !== currentClientId) {
-        throw new ConflictException({
-            statusCode: 409,
-            code: "P2002",
-            error: "Conflict",
-            message: "이미 같은 전화번호의 고객이 있습니다.",
-            field: "phone",
-        });
+        throw new ConflictException(clientProblemBody("CLIENT_PHONE_ALREADY_REGISTERED", {
+            pointer: "/phone",
+            code: "INVALID_VALUE",
+            detail: "같은 전화번호의 고객이 이미 등록되어 있습니다.",
+            location: "body",
+        }));
     }
     return normalizedPhone;
 }

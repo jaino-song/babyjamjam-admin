@@ -1,4 +1,6 @@
 "use client";
+import { getUserErrorMessage } from "@babyjamjam/shared";
+
 
 import {
   useCallback,
@@ -206,7 +208,7 @@ export function PastTriggerPolicyDetail({
       queuedRef.current = false;
       toast({
         variant: "destructive",
-        description: "지난 자동 전송 설정을 저장하지 못했어요",
+        description: getUserErrorMessage(_error, "지난 자동 전송 설정을 저장하지 못했어요"),
       });
     },
     onSuccess: (nextConfig) => {

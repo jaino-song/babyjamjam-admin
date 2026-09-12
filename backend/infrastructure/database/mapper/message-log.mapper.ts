@@ -108,6 +108,7 @@ export class MessageLogMapper {
             nextRetryAt: entity.nextRetryAt,
             recipientName: entity.recipientName,
             recipientPhone: entity.recipientPhone,
+            variables: entity.variables as Prisma.InputJsonValue,
             providerAcceptanceFingerprint: entity.providerAcceptanceFingerprint,
             providerAcceptanceState: entity.providerAcceptanceState,
             providerCallStartedAt: entity.providerCallStartedAt,

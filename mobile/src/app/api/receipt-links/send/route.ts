@@ -24,13 +24,13 @@ export async function POST(request: NextRequest) {
     // helper would sanitize it away.
     const upstream = (error as { response?: { status?: number; data?: unknown } })?.response;
     if (upstream && upstream.status && upstream.status >= 400 && upstream.status < 500) {
-      return NextResponse.json(upstream.data ?? { error: "Failed to send receipt link" }, {
+      return NextResponse.json(upstream.data ?? { error: "서버 내부 오류로 영수증 링크를 보내지 못했어요." }, {
         status: getUpstreamErrorStatus(error),
       });
     }
     // Only log unexpected failures (no upstream response, or a 5xx) — expected business
     // rejections (not_voucher_client, missing_birthday, etc.) are routine and forwarded above.
     logUpstreamError("API send receipt link", error);
-    return NextResponse.json({ error: "Failed to send receipt link" }, { status: 500 });
+    return NextResponse.json({ error: "서버 내부 오류로 영수증 링크를 보내지 못했어요." }, { status: 500 });
   }
 }

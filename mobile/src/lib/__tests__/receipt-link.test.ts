@@ -33,7 +33,7 @@ describe("RECEIPT_LINK_REASON_MESSAGES", () => {
 
   it("uses the literal Korean copy for missing_phone", () => {
     expect(RECEIPT_LINK_REASON_MESSAGES.missing_phone).toBe(
-      "산모 연락처가 없거나 형식이 올바르지 않습니다.",
+      "산모 연락처가 없거나 형식이 올바르지 않아요.",
     );
   });
 });
@@ -63,7 +63,7 @@ describe("describeReceiptLinkError", () => {
   });
 
   it("keeps the missing_phone reason copy stable", () => {
-    expect(RECEIPT_LINK_REASON_MESSAGES.missing_phone).toBe("산모 연락처가 없거나 형식이 올바르지 않습니다.");
+    expect(RECEIPT_LINK_REASON_MESSAGES.missing_phone).toBe("산모 연락처가 없거나 형식이 올바르지 않아요.");
   });
 
   it("does not resolve Object.prototype keys as reason messages", () => {

@@ -31,7 +31,7 @@ export async function POST(request: NextRequest) {
       return invalidJson;
     }
     logUpstreamError("send receipt link", error);
-    return NextResponse.json({ error: "Failed to send receipt link" }, { status: 500 });
+    return NextResponse.json({ error: "서버 내부 오류로 영수증 링크를 보내지 못했어요." }, { status: 500 });
   }
 
   const documentId = body.documentId;
@@ -87,6 +87,6 @@ export async function POST(request: NextRequest) {
     // upstreamData.message verbatim (minus token/email scrubbing), which can leak file paths,
     // DB hosts, or other internal diagnostics from a 5xx body into the client response.
     logUpstreamError("send receipt link", error);
-    return NextResponse.json({ error: "Failed to send receipt link" }, { status: 500 });
+    return NextResponse.json({ error: "서버 내부 오류로 영수증 링크를 보내지 못했어요." }, { status: 500 });
   }
 }

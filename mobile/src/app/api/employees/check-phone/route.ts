@@ -1,6 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { serverAPIClient } from "@/lib/api/server";
-import { getAuthToken, getAuthHeaders } from "@/lib/api/route-utils";
+import {
+    errorResponse,
+    getAuthHeaders,
+    getAuthToken,
+    unauthorizedResponse,
+} from "@/lib/api/route-utils";
 
 interface EmployeePhone {
   phone?: string | null;
@@ -18,7 +23,7 @@ export async function GET(request: NextRequest) {
   try {
     const token = getAuthToken(request);
     if (!token) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+      return unauthorizedResponse("Unauthorized");
     }
 
     const phone = request.nextUrl.searchParams.get("phone");
@@ -48,7 +53,8 @@ export async function GET(request: NextRequest) {
 
     return NextResponse.json({ exists });
   } catch (error) {
-    console.error("[API] Error checking employee phone:", error);
-    return NextResponse.json({ exists: false });
+    // 업스트림 실패는 `exists: false`로 위장하지 않는다 — 폼의
+    // 중복 확인 실패/재시도 UI가 동작하도록 sanitizer로 전달한다.
+    return errorResponse(error, "check employee phone");
   }
 }

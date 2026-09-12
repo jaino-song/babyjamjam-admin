@@ -14,8 +14,14 @@ jest.mock('../FilteredClientsDialog', () => ({
 
 const mockMarkAsReadMutate = jest.fn();
 const mockMarkAllAsReadMutate = jest.fn();
-let mockNotifications: Notification[] = [];
-let mockUnreadCount = 3;
+let mockNotifications: Notification[] | undefined = [];
+let mockNotificationsIsError = false;
+let mockNotificationsError: unknown = null;
+const mockNotificationsRefetch = jest.fn();
+let mockUnreadCount: number | undefined = 3;
+let mockUnreadCountIsError = false;
+let mockUnreadCountError: unknown = null;
+const mockUnreadCountRefetch = jest.fn();
 
 const mockUnreadNotificationWithUrl: Notification = {
   id: 1,
@@ -80,8 +86,21 @@ const mockIndividualClientNotification: Notification = {
 jest.mock('@/hooks/usePushNotification', () => ({
   useMarkAsRead: () => ({ mutate: mockMarkAsReadMutate }),
   useMarkAllAsRead: () => ({ mutate: mockMarkAllAsReadMutate, isPending: false }),
-  useUnreadCount: () => ({ data: mockUnreadCount }),
-  useNotifications: () => ({ data: mockNotifications, isLoading: false }),
+  useUnreadCount: () => ({
+    data: mockUnreadCount,
+    isError: mockUnreadCountIsError,
+    error: mockUnreadCountError,
+    refetch: mockUnreadCountRefetch,
+    isFetching: false,
+  }),
+  useNotifications: () => ({
+    data: mockNotifications,
+    isLoading: false,
+    isError: mockNotificationsIsError,
+    error: mockNotificationsError,
+    refetch: mockNotificationsRefetch,
+    isFetching: false,
+  }),
   usePushNotification: () => ({
     isSupported: true,
     isSubscribed: true,
@@ -95,7 +114,11 @@ jest.mock('@/hooks/usePushNotification', () => ({
 beforeEach(() => {
   jest.clearAllMocks();
   mockNotifications = [mockUnreadNotificationWithUrl];
+  mockNotificationsIsError = false;
+  mockNotificationsError = null;
   mockUnreadCount = 3;
+  mockUnreadCountIsError = false;
+  mockUnreadCountError = null;
 });
 
 describe('NotificationBell', () => {
@@ -261,5 +284,58 @@ describe('NotificationBell', () => {
     fireEvent.click(screen.getByTestId('notification-item-unread'));
 
     expect(mockPush).not.toHaveBeenCalled();
+  });
+
+  it('shows an initial notification read failure with an explicit retry', async () => {
+    mockNotifications = undefined;
+    mockNotificationsIsError = true;
+    mockNotificationsError = new Error('server detail must not be shown');
+
+    render(<NotificationBell />);
+
+    fireEvent.click(screen.getByTestId('notification-bell'));
+
+    await waitFor(() => {
+      expect(screen.getByText('알림을 불러오지 못했어요')).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: '다시 시도' }));
+
+    expect(mockNotificationsRefetch).toHaveBeenCalledTimes(1);
+    expect(screen.queryByText('server detail must not be shown')).not.toBeInTheDocument();
+  });
+
+  it('keeps stale notifications visible while showing a refresh warning', async () => {
+    mockNotificationsIsError = true;
+    mockNotificationsError = new Error('server detail must not be shown');
+
+    render(<NotificationBell />);
+
+    fireEvent.click(screen.getByTestId('notification-bell'));
+
+    await waitFor(() => {
+      expect(screen.getByTestId('notification-item-unread')).toBeInTheDocument();
+      expect(screen.getByText('알림 목록을 새로 불러오지 못했어요')).toBeInTheDocument();
+    });
+  });
+
+  it('does not show an unread badge when the count read fails', async () => {
+    mockUnreadCount = undefined;
+    mockUnreadCountIsError = true;
+    mockUnreadCountError = new Error('server detail must not be shown');
+
+    render(<NotificationBell />);
+
+    expect(screen.queryByTestId('notification-badge')).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId('notification-bell'));
+
+    await waitFor(() => {
+      expect(screen.getByText('읽지 않은 알림 수를 새로 불러오지 못했어요')).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: '다시 시도' }));
+
+    expect(mockUnreadCountRefetch).toHaveBeenCalledTimes(1);
   });
 });

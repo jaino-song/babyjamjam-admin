@@ -1,4 +1,3 @@
-import axios from "axios";
 import { api } from "@/lib/api/client";
 /**
  * Headless dispatch/finalize run a real browser against eformsign, so they blow
@@ -699,23 +698,11 @@ export const messageDeliveryApi = {
         payload: SendMessageDeliverySmsRequest,
         expectedBranchId?: string | null,
     ): Promise<SendMessageDeliverySmsResponse> => {
-        try {
-            const { data } = expectedBranchId
-                ? await api.post("/message-deliveries/sms", payload, {
-                    params: { expectedBranchId },
-                })
-                : await api.post("/message-deliveries/sms", payload);
-            return data;
-        } catch (error) {
-            if (axios.isAxiosError<{ error?: string; message?: string }>(error)) {
-                const message =
-                    error.response?.data?.error
-                    || error.response?.data?.message
-                    || error.message;
-                throw new Error(message);
-            }
-
-            throw error;
-        }
+        const { data } = expectedBranchId
+            ? await api.post("/message-deliveries/sms", payload, {
+                params: { expectedBranchId },
+            })
+            : await api.post("/message-deliveries/sms", payload);
+        return data;
     },
 };

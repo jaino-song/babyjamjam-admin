@@ -66,7 +66,7 @@ export async function GET(request: NextRequest) {
 
         if (response.status >= 400) {
             return NextResponse.json(
-                sanitizeUpstreamClientError(response.data, "Failed to fetch all eformsign documents"),
+                sanitizeUpstreamClientError(response.data, "Failed to fetch all eformsign documents", response.status),
                 { status: response.status },
             );
         }
@@ -97,7 +97,7 @@ export async function DELETE(request: NextRequest) {
 
         if (response.status >= 400) {
             return NextResponse.json(
-                sanitizeUpstreamClientError(response.data, "Failed to delete eformsign documents"),
+                sanitizeUpstreamClientError(response.data, "Failed to delete eformsign documents", response.status),
                 { status: response.status },
             );
         }

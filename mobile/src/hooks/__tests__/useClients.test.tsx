@@ -3,7 +3,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactNode } from "react";
 
 import { api } from "@/lib/api/client";
-import { useClient } from "../useClients";
+import { useAllClients, useClient } from "../useClients";
 
 jest.mock("@/lib/api/client", () => ({
   api: {
@@ -55,5 +55,63 @@ describe("useClient", () => {
     await waitFor(() => expect(result.current.data?.id).toBe(7));
 
     expect(mockedApiGet).toHaveBeenCalledWith("/clients/7");
+  });
+});
+
+describe("useAllClients", () => {
+  beforeEach(() => {
+    mockedApiGet.mockReset();
+  });
+
+  it.each([
+    [{ id: 1, name: "Array client" }],
+    { data: [{ id: 2, name: "Data client" }] },
+    { items: [{ id: 3, name: "Items client" }] },
+  ])("accepts the supported client list response shape", async (payload) => {
+    mockedApiGet.mockResolvedValue({ data: payload });
+
+    const { result } = renderHook(() => useAllClients(), {
+      wrapper: createWrapper(),
+    });
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+
+    expect(result.current.data).toHaveLength(1);
+  });
+
+  it("keeps a valid empty client list as a successful read", async () => {
+    mockedApiGet.mockResolvedValue({ data: [] });
+
+    const { result } = renderHook(() => useAllClients(), {
+      wrapper: createWrapper(),
+    });
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+
+    expect(result.current.data).toEqual([]);
+  });
+
+  it("surfaces malformed client list responses as query errors", async () => {
+    mockedApiGet.mockResolvedValue({ data: { clients: [] } });
+
+    const { result } = renderHook(() => useAllClients(), {
+      wrapper: createWrapper(),
+    });
+
+    await waitFor(() => expect(result.current.isError).toBe(true));
+
+    expect(result.current.data).toBeUndefined();
+  });
+
+  it("surfaces failed client list requests as query errors", async () => {
+    mockedApiGet.mockRejectedValue(new Error("network failure"));
+
+    const { result } = renderHook(() => useAllClients(), {
+      wrapper: createWrapper(),
+    });
+
+    await waitFor(() => expect(result.current.isError).toBe(true));
+
+    expect(result.current.data).toBeUndefined();
   });
 });

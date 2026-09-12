@@ -1,4 +1,5 @@
 "use client";
+import { getUserErrorMessage } from "@babyjamjam/shared";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useParams } from "next/navigation";
@@ -379,7 +380,7 @@ export default function ServiceRecordPage() {
             if (data?.ok) {
                 await loadContext("push");
             } else {
-                setPhoneError("휴대폰 번호가 일치하지 않습니다.");
+                setPhoneError("휴대폰 번호가 일치하지 않아요.");
             }
         } catch {
             setPhoneError("확인 중 오류가 발생했습니다. 잠시 후 다시 시도해 주세요.");
@@ -410,7 +411,7 @@ export default function ServiceRecordPage() {
             const response = await api("/header", { method: "PUT", body: JSON.stringify(header) });
             if (!response.ok) {
                 const error = await response.json().catch(() => ({}));
-                setErrorNotificationMessage(error?.message ?? "기본정보 저장에 실패했습니다.");
+                setErrorNotificationMessage(error?.message ?? "기본정보 저장에 실패했어요.");
                 return;
             }
             clearStoredFormState(token);
@@ -469,9 +470,9 @@ export default function ServiceRecordPage() {
                 if (e?.code === "CLIENT_SIGNATURE_REQUIRED") {
                     setErrorNotificationMessage("산모 서명이 필요합니다.");
                 } else if (e?.code === "SERVICE_DATE_IMMUTABLE") {
-                    setErrorNotificationMessage(e?.message ?? "제공일자는 변경할 수 없습니다.");
+                    setErrorNotificationMessage(e?.message ?? "제공일자는 변경할 수 없어요.");
                 } else {
-                    setErrorNotificationMessage(e?.message ?? "제출에 실패했습니다.");
+                    setErrorNotificationMessage(e?.message ?? "제출에 실패했어요.");
                 }
                 return;
             }
@@ -521,7 +522,7 @@ export default function ServiceRecordPage() {
                 await loadContext();
                 return;
             }
-            setErrorNotificationMessage(data?.error ?? data?.message ?? "일정 변경 요청에 실패했습니다.");
+            setErrorNotificationMessage(data?.error ?? data?.message ?? "일정 변경 요청에 실패했어요.");
         } finally {
             setScheduleChangeBusy(false);
         }
@@ -578,7 +579,7 @@ export default function ServiceRecordPage() {
             data-component="mobile_service-record_wizard"
             screen={screen}
             phone={phone}
-            phoneError={phoneError}
+            phoneError={phoneError ? getUserErrorMessage(phoneError) : null}
             context={ctx}
             header={header}
             day={day}

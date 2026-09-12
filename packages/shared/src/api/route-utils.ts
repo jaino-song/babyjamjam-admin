@@ -1,6 +1,18 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 
+import {
+    createProblemDetails,
+    normalizeApiError,
+    parseProblemDetails,
+    type ProblemDetails,
+    type ProblemError,
+    type ProblemErrorCode,
+} from "../errors/problem-details";
+
+import { sanitizeApiDisplayMessage } from "../errors/safe-api-error-message";
+import { getUserErrorMessage } from "../errors/user-error-message";
+
 export const NO_STORE_CACHE_CONTROL = "no-store, max-age=0";
 
 class InvalidJsonBodyError extends Error {
@@ -57,6 +69,151 @@ export interface ProxyBodyOptions {
     bodySchema?: z.ZodType<unknown>;
 }
 
+const RFC6901_POINTER_MAX_LENGTH = 512;
+const CONTROL_CHARACTER_PATTERN = /[\u0000-\u001f\u007f]/;
+const SAFE_REQUEST_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
+
+function createLocalRequestId(): string {
+    try {
+        const cryptoObject = globalThis.crypto as { randomUUID?: () => string } | undefined;
+        if (cryptoObject && typeof cryptoObject.randomUUID === "function") {
+            const requestId = cryptoObject.randomUUID();
+            if (SAFE_REQUEST_ID_PATTERN.test(requestId)) {
+                return requestId;
+            }
+        }
+    } catch {
+        // Runtime crypto can be unavailable in older Next.js test environments.
+    }
+
+    return `local-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 14)}`;
+}
+
+function toJsonPointer(path: readonly unknown[]): string {
+    if (!Array.isArray(path)) {
+        return "";
+    }
+
+    let pointer = "";
+    for (const segment of path) {
+        if (typeof segment !== "string" && typeof segment !== "number") {
+            return "";
+        }
+        if (typeof segment === "number" && !Number.isInteger(segment)) {
+            return "";
+        }
+
+        const rawToken = String(segment);
+        if (CONTROL_CHARACTER_PATTERN.test(rawToken)) {
+            return "";
+        }
+        const token = rawToken.replaceAll("~", "~0").replaceAll("/", "~1");
+        pointer += `/${token}`;
+        if (pointer.length > RFC6901_POINTER_MAX_LENGTH) {
+            return "";
+        }
+    }
+
+    return pointer;
+}
+
+function readBodyPath(
+    body: Record<string, unknown>,
+    path: readonly unknown[],
+): { present: boolean; value?: unknown } {
+    let current: unknown = body;
+    for (const segment of path) {
+        if ((typeof current !== "object" && typeof current !== "function") || current === null) {
+            return { present: false };
+        }
+        if (typeof segment !== "string" && typeof segment !== "number") {
+            return { present: false };
+        }
+        const key = String(segment);
+        if (!Object.prototype.hasOwnProperty.call(current, key)) {
+            return { present: false };
+        }
+        try {
+            current = (current as Record<string, unknown>)[key];
+        } catch {
+            return { present: false };
+        }
+    }
+    return { present: true, value: current };
+}
+
+function zodIssueCode(
+    issue: { code?: unknown; origin?: unknown; minimum?: unknown },
+    input: { present: boolean; value?: unknown },
+): ProblemErrorCode {
+    switch (issue.code) {
+        case "unrecognized_keys":
+            return "UNEXPECTED_FIELD";
+        case "too_small":
+            if (issue.origin === "string" && issue.minimum === 1 && input.value === "") {
+                return "REQUIRED";
+            }
+            return "OUT_OF_RANGE";
+        case "too_big":
+        case "not_multiple_of":
+            return "OUT_OF_RANGE";
+        case "invalid_format":
+        case "invalid_string":
+            return "INVALID_FORMAT";
+        case "invalid_type":
+            return !input.present || input.value === undefined
+                ? "REQUIRED"
+                : "INVALID_FORMAT";
+        case "invalid_value":
+        case "invalid_union":
+            return !input.present || input.value === undefined
+                ? "REQUIRED"
+                : "INVALID_VALUE";
+        case "invalid_key":
+        case "invalid_element":
+        case "custom":
+        default:
+            return "INVALID_VALUE";
+    }
+}
+
+function toProblemErrors(
+    issues: readonly { path?: unknown; code?: unknown; origin?: unknown; minimum?: unknown }[],
+    body: Record<string, unknown>,
+): ProblemError[] {
+    return issues.map((issue) => {
+        const path = Array.isArray(issue.path) ? issue.path : [];
+        return {
+            pointer: toJsonPointer(path),
+            code: zodIssueCode(issue, readBodyPath(body, path)),
+            detail: "Invalid input",
+            location: "body",
+        };
+    });
+}
+
+function localValidationResponse(
+    legacyError: "Request body must be valid JSON" | "Invalid request body",
+    errors: ProblemError[],
+): NextResponse {
+    const problem = createProblemDetails({
+        code: "VALIDATION_FAILED",
+        requestId: createLocalRequestId(),
+        outcome: "NOT_APPLIED",
+        errors,
+    });
+    const issues = problem.errors?.map(({ pointer, detail }) => `${pointer || "body"}: ${detail}`) ?? [];
+    const response = NextResponse.json(
+        { ...problem, error: legacyError, issues },
+        { status: problem.status },
+    );
+    response.headers.set("Cache-Control", NO_STORE_CACHE_CONTROL);
+    response.headers.set("Content-Type", "application/problem+json");
+    response.headers.set("Content-Language", "ko-KR");
+    response.headers.set("X-Request-Id", problem.requestId);
+    return response;
+}
+
 export async function readJsonObjectBody(request: NextRequest): Promise<Record<string, unknown>> {
     const text = await request.text();
 
@@ -78,7 +235,10 @@ export async function readJsonObjectBody(request: NextRequest): Promise<Record<s
 
 export function invalidJsonResponse(error: unknown): NextResponse | null {
     if (error instanceof InvalidJsonBodyError) {
-        return NextResponse.json({ error: error.message }, { status: 400 });
+        return localValidationResponse(
+            "Request body must be valid JSON",
+            [{ pointer: "", code: "INVALID_FORMAT", detail: "Invalid input", location: "body" }],
+        );
     }
 
     return null;
@@ -97,7 +257,10 @@ export async function parseBody<T>(
             data: null,
             response:
                 invalidJson ??
-                NextResponse.json({ error: "Request body must be valid JSON" }, { status: 400 }),
+                localValidationResponse(
+                    "Request body must be valid JSON",
+                    [{ pointer: "", code: "INVALID_FORMAT", detail: "Invalid input", location: "body" }],
+                ),
         };
     }
 
@@ -115,15 +278,9 @@ function validateBodyWithSchema<T>(
 ): { data: T; response: null } | { data: null; response: NextResponse } {
     const result = schema.safeParse(body);
     if (!result.success) {
-        const issues = result.error.issues
-            .slice(0, 5)
-            .map((issue) => `${issue.path.join(".") || "body"}: ${issue.message}`);
         return {
             data: null,
-            response: NextResponse.json(
-                { error: "Invalid request body", issues },
-                { status: 400 },
-            ),
+            response: localValidationResponse("Invalid request body", toProblemErrors(result.error.issues, body)),
         };
     }
 
@@ -216,7 +373,7 @@ export function withNoStore(response: NextResponse): NextResponse {
 
 export function getUpstreamErrorStatus(error: unknown, fallbackStatus = 500): number {
     if (error && typeof error === "object" && "response" in error) {
-        const status = (error as UpstreamErrorLike).response?.status;
+        const status = (error as UpstreamErrorLike | null)?.response?.status;
         if (typeof status === "number" && status >= 400 && status <= 599) {
             return status;
         }
@@ -227,7 +384,7 @@ export function getUpstreamErrorStatus(error: unknown, fallbackStatus = 500): nu
 
 function getUpstreamErrorData(error: unknown): unknown {
     if (error && typeof error === "object" && "response" in error) {
-        return (error as UpstreamErrorLike).response?.data;
+        return (error as UpstreamErrorLike | null)?.response?.data;
     }
 
     return undefined;
@@ -241,45 +398,29 @@ function safeErrorCode(value: unknown): string | undefined {
     return /^[A-Z][A-Z0-9_:-]{0,63}$/.test(value) ? value : undefined;
 }
 
-/**
- * Keep operator-visible proxy diagnostics useful without copying provider
- * credentials or caller identity into logs/responses. This is intentionally
- * local to the shared route layer so every frontend/mobile proxy gets the same
- * redaction even when an upstream adapter throws a plain Error.
- */
-function sanitizeSensitiveText(value: unknown): string {
-    const text = typeof value === "string" ? value : String(value);
-    return text
-        .replace(/Bearer\s+\S+/gi, "Bearer [REDACTED]")
-        .replace(
-            /([?&](?:access[_-]?token|refresh[_-]?token|oauth[_-]?token|external[_-]?token|api[_-]?key|authorization|member[_-]?email|member[_-]?id)=)[^&\s]+/gi,
-            "$1[REDACTED]",
-        )
-        .replace(
-            /(["']?(?:access[_-]?token|refresh[_-]?token|oauth[_-]?token|external[_-]?token|api[_-]?key|authorization|member[_-]?(?:email|id)|client[_-]?secret|password|secret)["']?\s*[:=]\s*)["']?[^"'\s,;}&]+["']?/gi,
-            "$1[REDACTED]",
-        )
-        .replace(
-            /\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi,
-            "[REDACTED_EMAIL]",
-        )
-        .replace(/\s+/g, " ")
-        .trim();
-}
-
 export function sanitizeUpstreamClientError(
     upstreamData: unknown,
     fallbackMessage: string,
-): { error: string; code?: string; hasKakaoAccount?: boolean } {
-    const payload: { error: string; code?: string; hasKakaoAccount?: boolean } = {
-        error: fallbackMessage,
+    status?: number,
+    operation: "read" | "mutation" = "mutation",
+): ({ error: string; code?: string; field?: string; hasKakaoAccount?: boolean } & Partial<Omit<ProblemDetails, "code">>) {
+    const problem = parseProblemDetails(upstreamData, status);
+    if (problem) return { ...problem, error: problem.detail };
+    if (upstreamData && typeof upstreamData === "object" && ("type" in upstreamData || "requestId" in upstreamData)) {
+        return { error: normalizeApiError({ response: { status, data: upstreamData } }, { operation }).message };
+    }
+    const payload: { error: string; code?: string; field?: string; hasKakaoAccount?: boolean } = {
+        error: getUserErrorMessage({ response: { status, data: upstreamData } }, fallbackMessage),
     };
 
     if (upstreamData && typeof upstreamData === "object") {
-        const data = upstreamData as { code?: unknown; hasKakaoAccount?: unknown };
+        const data = upstreamData as { code?: unknown; field?: unknown; hasKakaoAccount?: unknown };
         const code = safeErrorCode(data.code);
         if (code) {
             payload.code = code;
+            if (/^P\d{4}$/.test(code) && typeof data.field === "string" && /^[A-Za-z][\w.-]{0,63}$/.test(data.field)) {
+                payload.field = data.field;
+            }
         }
         if (typeof data.hasKakaoAccount === "boolean") {
             payload.hasKakaoAccount = data.hasKakaoAccount;
@@ -297,7 +438,7 @@ export function logUpstreamError(
     const maxUpstreamBodyLength = 2_000;
     const sanitizedUpstreamBody = upstreamBody === undefined
         ? undefined
-        : sanitizeSensitiveText(upstreamBody);
+        : sanitizeApiDisplayMessage(upstreamBody);
     const loggedUpstreamBody = sanitizedUpstreamBody !== undefined && sanitizedUpstreamBody.length > maxUpstreamBodyLength
         ? `${sanitizedUpstreamBody.slice(0, maxUpstreamBodyLength)}…(truncated)`
         : sanitizedUpstreamBody;
@@ -370,44 +511,27 @@ export function unauthorizedResponse(
     return NextResponse.json({ error: message }, { status: 401 });
 }
 
-export function errorResponse(error: unknown, context: string): NextResponse {
-    const upstreamData = (error as UpstreamErrorLike).response?.data as UpstreamErrorPayload | undefined;
-    const status = (error as UpstreamErrorLike).response?.status || 500;
+export function errorResponse(error: unknown, context: string, operation: "read" | "mutation" = "mutation"): NextResponse {
+    const upstreamData = (error as UpstreamErrorLike | null)?.response?.data as UpstreamErrorPayload | undefined;
+    const status = (error as UpstreamErrorLike | null)?.response?.status || 500;
 
     logUpstreamError(context, error);
-    return NextResponse.json(
-        sanitizeUpstreamClientError(upstreamData, `Failed to ${context}`),
-        { status },
-    );
+    const payload = sanitizeUpstreamClientError(upstreamData, `Failed to ${context}`, status, operation);
+    return NextResponse.json(payload, {
+        status,
+        headers: {
+            "Cache-Control": NO_STORE_CACHE_CONTROL,
+            ...(payload.type && payload.requestId ? {
+                "Content-Type": "application/problem+json",
+                "Content-Language": "ko-KR",
+                "X-Request-Id": payload.requestId,
+            } : {}),
+        },
+    });
 }
 
-/**
- * Pick the actionable half of a Nest error body. Nest puts the explanation in
- * `message` and the bare HTTP status name ("Bad Request", "Conflict") in
- * `error`, so reading `error` first masks every reason with a status label.
- */
-function upstreamDisplayMessage(payload: UpstreamErrorPayload | undefined): string | undefined {
-    if (!payload) return undefined;
-
-    const message = Array.isArray(payload.message)
-        ? payload.message
-            .filter((entry): entry is string => typeof entry === "string" && entry.trim().length > 0)
-            .join(", ")
-        : payload.message;
-    if (typeof message === "string" && message.trim()) return message;
-    if (typeof payload.error === "string" && payload.error.trim()) return payload.error;
-
-    return undefined;
-}
-
-function createLegacyErrorResponse(error: unknown, context: string): NextResponse {
-    const upstreamData = (error as UpstreamErrorLike).response?.data as UpstreamErrorPayload | undefined;
-    const status = (error as UpstreamErrorLike).response?.status || 500;
-    const message = sanitizeSensitiveText(upstreamDisplayMessage(upstreamData)
-        || (error instanceof Error ? error.message : `Failed to ${context}`));
-
-    console.error(`[${context}] Error:`, message);
-    return NextResponse.json({ error: message }, { status });
+function createLegacyErrorResponse(error: unknown, context: string, operation: "read" | "mutation" = "mutation"): NextResponse {
+    return errorResponse(error, context, operation);
 }
 
 export function createRouteUtils({
@@ -438,15 +562,12 @@ export function createRouteUtils({
             });
 
             if ((response.status ?? 200) >= 400) {
-                return NextResponse.json(
-                    sanitizeUpstreamClientError(response.data, `Failed to ${context}`),
-                    { status: response.status },
-                );
+                return boundErrorResponse({ response }, context, "read");
             }
 
             return NextResponse.json(response.data);
         } catch (error) {
-            return boundErrorResponse(error, context);
+            return boundErrorResponse(error, context, "read");
         }
     }
 
@@ -471,15 +592,12 @@ export function createRouteUtils({
             });
 
             if ((response.status ?? 200) >= 400) {
-                return NextResponse.json(
-                    sanitizeUpstreamClientError(response.data, `Failed to ${context}`),
-                    { status: response.status },
-                );
+                return boundErrorResponse({ response }, context, "read");
             }
 
             return NextResponse.json(response.data);
         } catch (error) {
-            return boundErrorResponse(error, context);
+            return boundErrorResponse(error, context, "read");
         }
     }
 
@@ -518,10 +636,7 @@ export function createRouteUtils({
             );
 
             if ((response.status ?? 200) >= 400) {
-                return NextResponse.json(
-                    sanitizeUpstreamClientError(response.data, `Failed to ${context}`),
-                    { status: response.status },
-                );
+                return boundErrorResponse({ response }, context, "mutation");
             }
 
             return NextResponse.json(response.data);
@@ -577,10 +692,7 @@ export function createRouteUtils({
             });
 
             if ((response.status ?? 200) >= 400) {
-                return NextResponse.json(
-                    sanitizeUpstreamClientError(response.data, `Failed to ${context}`),
-                    { status: response.status },
-                );
+                return boundErrorResponse({ response }, context, "mutation");
             }
 
             return NextResponse.json(response.data);

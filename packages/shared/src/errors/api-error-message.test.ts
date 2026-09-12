@@ -19,7 +19,7 @@ describe("getApiErrorMessage", () => {
 
   it("should use the fallback for unsafe payloads", () => {
     expect(getApiErrorMessage({
-      response: { data: { message: ["내부", "상세"] } },
+      response: { data: { message: ["Prisma SQL query", "password: secret"] } },
     }, "기본 안내")).toBe("기본 안내");
   });
 
@@ -34,7 +34,7 @@ describe("getApiErrorMessage", () => {
         },
       },
     })).toEqual({
-      message: "같은 전화번호의 고객이 있습니다.",
+      message: "같은 전화번호의 고객이 있어요.",
       clientId: 73,
     });
   });
@@ -49,7 +49,7 @@ describe("getApiErrorMessage", () => {
         },
       },
     })).toEqual({
-      message: "진행 중인 배정이 있는 직원은 삭제할 수 없습니다.",
+      message: "진행 중인 배정이 있는 직원은 삭제할 수 없어요.",
     });
   });
 });

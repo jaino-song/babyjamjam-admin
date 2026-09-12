@@ -34,7 +34,8 @@
         "./utils/business-days": "./src/utils/business-days.ts",
         "./utils/service-record-schedule": "./src/utils/service-record-schedule.ts",
         "./utils/birthday": "./src/utils/birthday.ts",
-        "./eslint-plugin": "./eslint-plugin/index.mjs"
+        "./eslint-plugin": "./eslint-plugin/index.mjs",
+        "./errors/problem-details": "./src/errors/problem-details.ts"
     },
     "scripts": {
         "build:backend-runtime": "tsc -p tsconfig.backend-runtime.json",

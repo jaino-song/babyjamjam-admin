@@ -1,4 +1,6 @@
 "use client";
+import { getUserErrorMessage } from "@babyjamjam/shared";
+
 
 import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 import {
@@ -161,7 +163,7 @@ function ClientServiceRecordsTabContent({
             if (!result.ok || result.status !== "sent") {
                 toast({
                     variant: "destructive",
-                    description: SEND_LINK_FAILURE_DESCRIPTION,
+                    description: getUserErrorMessage(SEND_LINK_FAILURE_DESCRIPTION),
                 });
                 return false;
             }
@@ -169,7 +171,7 @@ function ClientServiceRecordsTabContent({
             return true;
         } catch (error) {
             toast({
-                description: getErrorDescription(error),
+                description: getUserErrorMessage(getErrorDescription(error)),
                 variant: "destructive",
             });
             return false;
@@ -200,7 +202,7 @@ function ClientServiceRecordsTabContent({
     if (clientId === null) {
         return (
             <DetailEmptyState
-                message="고객 정보가 없어 제공기록지를 조회할 수 없습니다"
+                message="고객 정보가 없어 제공기록지를 조회할 수 없어요"
             />
         );
     }
@@ -1054,7 +1056,7 @@ function OutOfPeriodSessionsCard({
         <InfoCard
             data-component={dataComponent}
             title="기간 외 기록"
-            description="변경된 서비스 기간 밖에 저장된 기록입니다. 삭제되지 않습니다."
+            description="변경된 서비스 기간 밖에 저장된 기록이에요. 삭제되지 않아요."
         >
             <div data-component={`${dataComponent}_list`} className="mt-[calc(8px*var(--glint-ui-scale,1))]">
                 {sessions.map((record, index) => (

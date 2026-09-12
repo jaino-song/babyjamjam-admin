@@ -50,7 +50,7 @@ import "@/components/app/mobile-redesign/redesign.css";
 import { getOpenToNextWorkLabel } from "@babyjamjam/shared/constants/employee-status";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
-import { getApiErrorMessage } from "@babyjamjam/shared";
+import { getUserErrorMessage, normalizeApiError } from "@babyjamjam/shared";
 import {
   buildAllEmployeeRowsForList,
   GROUPS,
@@ -114,7 +114,23 @@ function EmployeeDetailContent({
   const availabilityTone = employee.openToNextWork ? "green" : "muted";
   const unknownDateLabel = t(locale, "employees.form.registered-date-unknown");
   const { data: activeClients = [], isLoading: isActiveClientsLoading } =
-    useEmployeeActiveClients(employee.id); const { history: workHistory, isLoading: isWorkHistoryLoading, isError: isWorkHistoryError, refetch: refetchWorkHistory, hasNextPage: hasMoreWorkHistory, fetchNextPage: fetchMoreWorkHistory, isFetchingNextPage: isFetchingMoreWorkHistory } = useEmployeeWorkHistory(employee.id);
+    useEmployeeActiveClients(employee.id);
+  const {
+    history: workHistory,
+    isLoading: isWorkHistoryLoading,
+    isError: isWorkHistoryError,
+    error: workHistoryError,
+    refetch: refetchWorkHistory,
+    hasNextPage: hasMoreWorkHistory,
+    fetchNextPage: fetchMoreWorkHistory,
+    isFetchingNextPage: isFetchingMoreWorkHistory,
+  } = useEmployeeWorkHistory(employee.id);
+  const normalizedWorkHistoryError = workHistoryError
+    ? normalizeApiError(workHistoryError, { locale: locale === "en" ? "en-US" : "ko-KR", operation: "read" })
+    : null;
+  const workHistoryErrorDescription = normalizedWorkHistoryError?.verified
+    ? normalizedWorkHistoryError.message
+    : "잠시 후 다시 시도해 주세요.";
 
   return (
     <MobileDetailPage data-component="mobile_employees_detail-sheet_stack_detail-page_body" name="employees">
@@ -257,7 +273,7 @@ function EmployeeDetailContent({
           ) : isWorkHistoryError && workHistory.length === 0 ? (
             <ErrorFallback
               title="근무 내역을 불러오지 못했어요"
-              description="잠시 후 다시 시도해 주세요."
+              description={workHistoryErrorDescription}
               onReset={() => void refetchWorkHistory()}
               resetLabel="다시 시도"
               className="min-h-0 px-0 py-4"
@@ -274,7 +290,7 @@ function EmployeeDetailContent({
                 >
                   <AlertTitle>근무 내역을 새로 불러오지 못했어요</AlertTitle>
                   <AlertDescription>
-                    <p>현재 저장된 근무 내역을 표시하고 있습니다. 잠시 후 다시 시도해 주세요.</p>
+                    <p>현재 저장된 근무 내역을 표시하고 있습니다. {workHistoryErrorDescription}</p>
                     <Button
                       type="button"
                       variant="outline"
@@ -379,7 +395,7 @@ export default function EmployeesPage() {
       setDeleteTarget(null);
       toast({
         title: t(locale, "employees.delete-fail"),
-        description: getApiErrorMessage(
+        description: getUserErrorMessage(
           error,
           t(locale, "employees.delete-fail-description"),
         ),

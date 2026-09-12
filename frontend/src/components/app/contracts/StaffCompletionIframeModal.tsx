@@ -73,7 +73,7 @@ export function StaffCompletionIframeModal({
           onSuccess,
           onError: (response: EformsignErrorResponse) => {
             hasOpenedRef.current = false;
-            onError(response.message || "최종 확인 중 오류가 발생했습니다.");
+            onError(response.message || "최종 확인 중 오류가 발생했어요.");
           },
           onAction: (response: EformsignActionResponse) => {
             const actionType = response.type.toLowerCase();

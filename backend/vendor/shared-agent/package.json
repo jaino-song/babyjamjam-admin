@@ -29,6 +29,10 @@
     "./constants/service-record-form-layout": {
       "types": "./constants/service-record-form-layout.d.ts",
       "require": "./constants/service-record-form-layout.js"
+    },
+    "./errors/problem-details": {
+      "types": "./errors/problem-details.d.ts",
+      "require": "./errors/problem-details.js"
     }
   },
   "dependencies": {

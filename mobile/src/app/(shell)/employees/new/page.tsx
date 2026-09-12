@@ -1,4 +1,6 @@
 "use client";
+import { getUserErrorMessage } from "@babyjamjam/shared";
+
 
 import { useEffect, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
@@ -8,7 +10,6 @@ import { formatWorkAreaLabel, GRADES, WORK_AREAS } from "@/components/app/employ
 import { useCreateEmployee } from "@/hooks/useEmployees";
 import { useNavigationPending } from "@/hooks/use-navigation-pending";
 import { api } from "@/lib/api/client";
-import { getErrorMessage } from "@/lib/errors/api-error-mapper";
 import { t } from "@/lib/i18n/translations";
 import { cn } from "@/lib/utils";
 import { useLocale } from "@/providers/LocaleProvider";
@@ -218,36 +219,36 @@ export default function NewEmployeePage() {
       case 0:
         if (!store.name.trim()) {
           setError(
-            locale === "ko"
+            getUserErrorMessage(locale === "ko"
               ? `${t(locale, "employees.form.name")}을 입력해주세요.`
-              : `Please enter ${t(locale, "employees.form.name").toLowerCase()}.`
+              : `Please enter ${t(locale, "employees.form.name").toLowerCase()}.`)
           );
           return false;
         }
         if (!store.phone.trim()) {
-          setError(t(locale, "employees.form.phone-required"));
+          setError(getUserErrorMessage(t(locale, "employees.form.phone-required")));
           return false;
         }
         if (phoneDigits.length !== 11) {
-          setError(t(locale, "employees.form.phone-required"));
+          setError(getUserErrorMessage(t(locale, "employees.form.phone-required")));
           return false;
         }
         if (isCheckingPhoneDuplicate || lastCheckedPhoneDigits !== phoneDigits) {
-          setError(getPhoneDuplicateCheckPendingMessage(locale));
+          setError(getUserErrorMessage(getPhoneDuplicateCheckPendingMessage(locale)));
           return false;
         }
         if (hasPhoneDuplicateCheckFailed) {
-          setError(getPhoneDuplicateCheckFailedMessage(locale));
+          setError(getUserErrorMessage(getPhoneDuplicateCheckFailedMessage(locale)));
           return false;
         }
         if (isPhoneDuplicate) {
-          setError(t(locale, "employees.form.error-phone-duplicate"));
+          setError(getUserErrorMessage(t(locale, "employees.form.error-phone-duplicate")));
           return false;
         }
         return true;
       case 1:
         if (store.workArea.length === 0) {
-          setError(t(locale, "employees.form.work-area-required"));
+          setError(getUserErrorMessage(t(locale, "employees.form.work-area-required")));
           return false;
         }
         return true;
@@ -323,7 +324,7 @@ export default function NewEmployeePage() {
       startNavigation();
       router.push(`/employees?id=${newEmployee.id}`);
     } catch (err: unknown) {
-      setError(getErrorMessage(err, locale, "employees.form.error-create-failed"));
+      setError(getUserErrorMessage(err, t(locale, "employees.form.error-create-failed")));
     }
   };
 
@@ -492,7 +493,7 @@ export default function NewEmployeePage() {
 
           {error && activeStep === 0 && (
             <div className={styles.errorBox} data-component="mobile_employees-new_screen_root_wizard_basic-step_error">
-              {error}
+              {error && getUserErrorMessage(error)}
             </div>
           )}
         </div>
@@ -580,7 +581,7 @@ export default function NewEmployeePage() {
 
           {error && activeStep === 1 && (
             <div className={styles.errorBox} data-component="mobile_employees-new_screen_root_wizard_work-step_error">
-              {error}
+              {error && getUserErrorMessage(error)}
             </div>
           )}
         </div>

@@ -26,7 +26,7 @@ export async function GET() {
             return NextResponse.json(
                 sanitizeUpstreamClientError(
                     (error as AxiosError<BranchesErrorResponse>).response?.data,
-                    "Failed to load branches",
+                    "Failed to load branches", getUpstreamErrorStatus(error),
                 ),
                 { status: getUpstreamErrorStatus(error) },
             );

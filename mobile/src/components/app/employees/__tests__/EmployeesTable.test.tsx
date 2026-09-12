@@ -1,5 +1,6 @@
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { createProblemDetails } from '@babyjamjam/shared';
 import { EmployeesTable } from '../EmployeesTable';
 import { useEmployees, useDeleteEmployee, Employee } from '@/hooks/useEmployees';
 import { useLocale } from '@/providers/LocaleProvider';
@@ -14,11 +15,20 @@ jest.mock('../EmployeeDetailModal', () => ({
   EmployeeDetailModal: ({
     open,
     employee,
+    onDelete,
   }: {
     open: boolean;
-    employee: { name?: string } | null;
+    employee: { name?: string; id?: number } | null;
+    onDelete?: (id: number) => void;
   }) =>
-    open ? <div data-testid="employee-detail-modal" role="dialog">{employee?.name}</div> : null,
+    open ? (
+      <div data-testid="employee-detail-modal" role="dialog">
+        {employee?.name}
+        <button type="button" onClick={() => onDelete?.(employee?.id ?? 0)}>
+          삭제 요청
+        </button>
+      </div>
+    ) : null,
 }));
 
 const mockUseEmployees = useEmployees as jest.MockedFunction<typeof useEmployees>;
@@ -344,6 +354,42 @@ describe('EmployeesTable', () => {
       render(<EmployeesTable />);
 
       expect(screen.getByTestId('ContentPaper')).toBeInTheDocument();
+    });
+  });
+
+  describe('Delete failure', () => {
+    beforeEach(() => {
+      mockUseEmployees.mockReturnValue({
+        data: mockEmployees,
+        isLoading: false,
+        error: null,
+      } as unknown as ReturnType<typeof useEmployees>);
+    });
+
+    it('routes a delete failure through the shared problem-aware mapper', async () => {
+      const user = userEvent.setup();
+      mockDeleteMutation.mutateAsync.mockRejectedValue({
+        response: {
+          status: 409,
+          data: createProblemDetails({
+            code: 'EMPLOYEE_ACTIVE_ASSIGNMENT_BLOCKED',
+            requestId: 'req-bjj-319-del',
+          }),
+        },
+      });
+
+      render(<EmployeesTable />);
+      await user.click(screen.getByText('김철수').closest('tr')!);
+      await user.click(screen.getByTestId('employee-detail-modal'));
+      const deleteButton = await screen.findByRole('button', { name: '삭제 요청' });
+      await user.click(deleteButton);
+      await user.click(await screen.findByRole('button', { name: '삭제' }));
+
+      expect(
+        await screen.findByText(
+          '진행 중인 배정이 있는 관리사는 삭제할 수 없어요. 배정 종료 또는 교체 후 다시 시도해 주세요.',
+        ),
+      ).toBeInTheDocument();
     });
   });
 

@@ -57,7 +57,7 @@ export async function POST(request: NextRequest) {
     console.error("[API] Error parsing voucher image:", { status });
 
     return NextResponse.json(
-      { error: "바우처 이미지 파싱에 실패했습니다" },
+      { error: "바우처 이미지 파싱에 실패했어요" },
       { status },
     );
   }

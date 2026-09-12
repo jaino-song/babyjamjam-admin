@@ -139,7 +139,21 @@ describe("EmployeeService", () => {
                 phone: "not-a-phone",
                 grade: "베스트",
                 openToNextWork: true,
-            })).rejects.toThrow("올바른 국내 전화번호 형식이 아닙니다.");
+            })).rejects.toMatchObject({
+                status: 400,
+                response: {
+                    code: "VALIDATION_FAILED",
+                    params: {},
+                    outcome: "NOT_APPLIED",
+                    recovery: { action: "NONE", retry: { mode: "NEVER" } },
+                    errors: [{
+                        pointer: "/phone",
+                        code: "INVALID_FORMAT",
+                        detail: "연락처가 올바른 국내 전화번호 형식이 아닙니다.",
+                        location: "body",
+                    }],
+                },
+            });
 
             expect(createUsecase.execute).not.toHaveBeenCalled();
         });
@@ -160,7 +174,18 @@ describe("EmployeeService", () => {
                 openToNextWork: true,
             })).rejects.toMatchObject({
                 status: 409,
-                response: { statusCode: 409, code: "P2002", error: "Conflict", field: "phone" },
+                response: {
+                    code: "EMPLOYEE_PHONE_ALREADY_REGISTERED",
+                    params: {},
+                    outcome: "NOT_APPLIED",
+                    recovery: { action: "NONE", retry: { mode: "NEVER" } },
+                    errors: [{
+                        pointer: "/phone",
+                        code: "INVALID_VALUE",
+                        detail: "같은 전화번호의 관리사가 이미 등록되어 있습니다.",
+                        location: "body",
+                    }],
+                },
             });
         });
         it("should map the canonical phone constraint name to 409", async () => {
@@ -179,7 +204,9 @@ describe("EmployeeService", () => {
                 openToNextWork: true,
             })).rejects.toMatchObject({
                 status: 409,
-                response: { statusCode: 409, code: "P2002", error: "Conflict", field: "phone" },
+                response: {
+                    code: "EMPLOYEE_PHONE_ALREADY_REGISTERED",
+                },
             });
         });
         it("should delegate to CreateEmployeeUsecase with all parameters", async () => {
@@ -304,7 +331,21 @@ describe("EmployeeService", () => {
     describe("update", () => {
         it("rejects malformed phone before invoking the update usecase or refresh", async () => {
             await expect(service.update(branchId, 1, { phone: "not-a-phone" }))
-                .rejects.toThrow("올바른 국내 전화번호 형식이 아닙니다.");
+                .rejects.toMatchObject({
+                    status: 400,
+                    response: {
+                        code: "VALIDATION_FAILED",
+                        params: {},
+                        outcome: "NOT_APPLIED",
+                        recovery: { action: "NONE", retry: { mode: "NEVER" } },
+                        errors: [{
+                            pointer: "/phone",
+                            code: "INVALID_FORMAT",
+                            detail: "연락처가 올바른 국내 전화번호 형식이 아닙니다.",
+                            location: "body",
+                        }],
+                    },
+                });
 
             expect(updateUsecase.execute).not.toHaveBeenCalled();
             expect(triggerService.syncEmployeeAssignmentRulesForEmployee).not.toHaveBeenCalled();
@@ -320,7 +361,9 @@ describe("EmployeeService", () => {
 
             await expect(service.update(branchId, 3, { phone: "010-1234-5678" })).rejects.toMatchObject({
                 status: 409,
-                response: { statusCode: 409, code: "P2002", error: "Conflict", field: "phone" },
+                response: {
+                    code: "EMPLOYEE_PHONE_ALREADY_REGISTERED",
+                },
             });
         });
         it("should map a canonical phone field conflict to 409", async () => {
@@ -333,7 +376,9 @@ describe("EmployeeService", () => {
 
             await expect(service.update(branchId, 3, { phone: "010-1234-5678" })).rejects.toMatchObject({
                 status: 409,
-                response: { statusCode: 409, code: "P2002", error: "Conflict", field: "phone" },
+                response: {
+                    code: "EMPLOYEE_PHONE_ALREADY_REGISTERED",
+                },
             });
         });
         it("should delegate to UpdateEmployeeUsecase with id and params", async () => {

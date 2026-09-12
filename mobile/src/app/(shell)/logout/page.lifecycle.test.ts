@@ -9,7 +9,7 @@ describe("mobile logout navigation lifecycle", () => {
 
     expect(resultIndex).toBeGreaterThanOrEqual(0);
     expect(redirectIndex).toBeGreaterThan(resultIndex);
-    expect(source).toContain("setError(result.error ||");
+    expect(source).toContain("setError(getUserErrorMessage(result.error ||");
     expect(source).toContain("setTimeout(() => {");
   });
 });

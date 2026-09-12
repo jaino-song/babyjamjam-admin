@@ -1,4 +1,6 @@
 "use client";
+import { getUserErrorMessage } from "@babyjamjam/shared";
+
 
 import { useState, useMemo, useEffect } from "react";
 import { useRouter } from "next/navigation";
@@ -300,24 +302,24 @@ export default function NewClientPage() {
     switch (step) {
       case 0:
         if (!store.name.trim()) {
-          setError(t(locale, "clients.form.error-name-required"));
+          setError(getUserErrorMessage(t(locale, "clients.form.error-name-required")));
           return false;
         }
         if (phoneDigits.length !== 11) {
-          setError(t(locale, "clients.form.error-phone-required"));
+          setError(getUserErrorMessage(t(locale, "clients.form.error-phone-required")));
           return false;
         }
         if (phoneDigits.length === 11) {
           if (isCheckingPhoneDuplicate || lastCheckedPhoneDigits !== phoneDigits) {
-            setError(getPhoneDuplicateCheckPendingMessage(locale));
+            setError(getUserErrorMessage(getPhoneDuplicateCheckPendingMessage(locale)));
             return false;
           }
           if (hasPhoneDuplicateCheckFailed) {
-            setError(getPhoneDuplicateCheckFailedMessage(locale));
+            setError(getUserErrorMessage(getPhoneDuplicateCheckFailedMessage(locale)));
             return false;
           }
           if (isPhoneDuplicate) {
-            setError(t(locale, "clients.form.error-phone-duplicate"));
+            setError(getUserErrorMessage(t(locale, "clients.form.error-phone-duplicate")));
             return false;
           }
         }
@@ -455,7 +457,7 @@ export default function NewClientPage() {
           </div>
           {error && (
             <div data-component="desktop_clients-new_basic_step_error" className="md:col-span-2 text-[0.8rem] text-v3-burgundy font-semibold bg-v3-burgundy-light rounded-[14px] px-4 py-3">
-              {error}
+              {error && getUserErrorMessage(error)}
             </div>
           )}
         </div>
@@ -648,7 +650,7 @@ export default function NewClientPage() {
 
           {error && (
             <div data-component="desktop_clients-new_service_step_error" className="text-[0.8rem] text-v3-burgundy font-semibold bg-v3-burgundy-light rounded-[14px] px-4 py-3">
-              {error}
+              {error && getUserErrorMessage(error)}
             </div>
           )}
         </div>
@@ -713,7 +715,7 @@ export default function NewClientPage() {
 
           {error && (
             <div data-component="desktop_clients-new_contract_step_error" className="text-[0.8rem] text-v3-burgundy font-semibold bg-v3-burgundy-light rounded-[14px] px-4 py-3">
-              {error}
+              {error && getUserErrorMessage(error)}
             </div>
           )}
         </div>

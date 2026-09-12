@@ -10,6 +10,27 @@ import { POST as persistChat } from "../persist/route";
 import { GET as getChatSession, DELETE as deleteChatSession } from "../sessions/[id]/route";
 import { POST as streamChat } from "../stream/route";
 
+async function expectCanonicalValidationResponse(
+  response: Response,
+  legacyError: string,
+): Promise<void> {
+  expect(response.status).toBe(400);
+  const requestId = response.headers.get("X-Request-Id");
+  expect(requestId).toEqual(expect.stringMatching(/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/));
+  expect(response.headers.get("Content-Type")).toBe("application/problem+json");
+  expect(response.headers.get("Content-Language")).toBe("ko-KR");
+  expect(response.headers.get("Cache-Control")).toBe("no-store, max-age=0");
+
+  const body = await response.json();
+  expect(body).toMatchObject({
+    code: "VALIDATION_FAILED",
+    outcome: "NOT_APPLIED",
+    error: legacyError,
+    requestId,
+  });
+  expect(Array.isArray(body.errors)).toBe(true);
+}
+
 jest.mock("next/headers", () => ({
   cookies: jest.fn(),
 }));
@@ -123,10 +144,7 @@ describe("AI chat API routes", () => {
 
     const response = await persistChat(createRequest("/api/ai/chat/persist", "{bad-json"));
 
-    expect(response.status).toBe(400);
-    await expect(response.json()).resolves.toEqual({
-      error: "Request body must be valid JSON",
-    });
+    await expectCanonicalValidationResponse(response, "Request body must be valid JSON");
     expect(mockFetch).not.toHaveBeenCalled();
   });
 
@@ -191,10 +209,7 @@ describe("AI chat API routes", () => {
 
     const response = await streamChat(createRequest("/api/ai/chat/stream", "{bad-json"));
 
-    expect(response.status).toBe(400);
-    await expect(response.json()).resolves.toEqual({
-      error: "Request body must be valid JSON",
-    });
+    await expectCanonicalValidationResponse(response, "Request body must be valid JSON");
     expect(mockFetch).not.toHaveBeenCalled();
   });
 
@@ -448,10 +463,7 @@ describe("AI chat API routes", () => {
 
     const response = await submitFeedback(createRequest("/api/ai/chat/feedback", "{bad-json"));
 
-    expect(response.status).toBe(400);
-    await expect(response.json()).resolves.toEqual({
-      error: "Request body must be valid JSON",
-    });
+    await expectCanonicalValidationResponse(response, "Request body must be valid JSON");
     expect(mockFetch).not.toHaveBeenCalled();
   });
 

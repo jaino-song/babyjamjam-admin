@@ -423,7 +423,7 @@ describe("ServiceRecordLinkMessageForm", () => {
     render(<ServiceRecordLinkMessageForm mode="receipt-link" showMessageSide={false} />);
     fireEvent.click(screen.getByRole("combobox", { name: "산모님 성함" }));
     expect(await screen.findByRole("alert")).toHaveTextContent(
-      "계약서 PDF를 아직 불러올 수 없습니다. 잠시 후 다시 시도해 주세요.",
+      "계약서 PDF를 아직 불러올 수 없어요. 잠시 후 다시 시도해 주세요.",
     );
     fireEvent.click(screen.getByRole("button", { name: "링크 다시 준비" }));
     await waitFor(() => {

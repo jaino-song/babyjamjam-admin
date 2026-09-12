@@ -23,6 +23,8 @@ import {
     assertAllowedServiceStatus,
     assertClientDurationMatchesDates,
     assertClientPhoneInput,
+    clientCodeOnlyProblemBody,
+    clientProblemBody,
     deriveClientDuration,
     findClientByNormalizedPhone,
     mergeAndValidateClientServicePeriod,
@@ -1010,10 +1012,10 @@ export class ClientService {
         // Reject malformed identity input before settings lookups, duplicate
         // checks, automation, or any other write/provider side effect.
         assertClientPhoneInput(params.phone);
-        const startDate = parseClientDate(params.startDate) ?? null;
-        const endDate = parseClientDate(params.endDate) ?? null;
-        const dueDate = parseClientDate(params.dueDate) ?? null;
-        const birthDate = parseClientDate(params.birthDate) ?? null;
+        const startDate = parseClientDate(params.startDate, "startDate") ?? null;
+        const endDate = parseClientDate(params.endDate, "endDate") ?? null;
+        const dueDate = parseClientDate(params.dueDate, "dueDate") ?? null;
+        const birthDate = parseClientDate(params.birthDate, "birthDate") ?? null;
         mergeAndValidateClientServicePeriod(null, { startDate, endDate });
         const derivedDuration = deriveClientDuration(startDate, endDate);
         // On create there is no prior duration to clear, so an explicit null
@@ -1047,12 +1049,14 @@ export class ClientService {
         );
         if (existing && normalizedPhone) {
             if (params.reuseExistingClient !== true) {
-                throw new ConflictException({
-                    statusCode: 409,
-                    error: "Conflict",
-                    message: "이미 같은 전화번호의 고객이 있습니다.",
-                    clientId: existing.id,
-                });
+                // 소비자는 공개 코드로 중복을 식별한다. 재사용 대상 id 페이로드는
+                // 의도적으로 제거된다(서버 재사용 분기는 그대로 유지).
+                throw new ConflictException(clientProblemBody("CLIENT_PHONE_ALREADY_REGISTERED", {
+                    pointer: "/phone",
+                    code: "INVALID_VALUE",
+                    detail: "같은 전화번호의 고객이 이미 등록되어 있습니다.",
+                    location: "body",
+                }));
             }
             this.logger.log(`[Client] Reusing existing client ${existing.id} for duplicate phone in branch ${branchid}`);
             if (params.primaryEmployeeId !== undefined || params.secondaryEmployeeId !== undefined) {
@@ -1587,12 +1591,17 @@ export class ClientService {
         // Get existing client
         const existingClient = await this.findClientByIdUsecase.execute(branchid, id);
         if (!existingClient) {
-            throw new NotFoundException(`고객을 찾을 수 없습니다. (id: ${id})`);
+            throw new NotFoundException(clientCodeOnlyProblemBody("RESOURCE_NOT_FOUND", "고객을 찾을 수 없습니다."));
         }
 
         for (const field of ["name", "voucherClient", "breastPump"] as const) {
             if (Object.prototype.hasOwnProperty.call(params, field) && params[field] === null) {
-                throw new BadRequestException(`${field} 항목은 비울 수 없습니다.`);
+                throw new BadRequestException(clientProblemBody("VALIDATION_FAILED", {
+                    pointer: `/${field}`,
+                    code: "REQUIRED",
+                    detail: `${field} 항목은 비울 수 없습니다.`,
+                    location: "body",
+                }));
             }
         }
 
@@ -1622,21 +1631,26 @@ export class ClientService {
             : null;
         assertAllowedServiceStatus(params.serviceStatus);
         await assertAllowedClientArea(this.prismaService, branchid, params.areaId);
-        const startDateUpdate = params.startDate === undefined ? undefined : parseClientDate(params.startDate);
-        const endDateUpdate = params.endDate === undefined ? undefined : parseClientDate(params.endDate);
+        const startDateUpdate = params.startDate === undefined ? undefined : parseClientDate(params.startDate, "startDate");
+        const endDateUpdate = params.endDate === undefined ? undefined : parseClientDate(params.endDate, "endDate");
         // Parsed the same way as the service period above and as create() does,
         // rather than with a raw `new Date`: that reads "2026-08" as 1 August
         // and hands anything it cannot parse to Prisma as an Invalid Date. Both
         // become a 400 here instead, and before the transaction opens.
-        const dueDateUpdate = params.dueDate === undefined ? undefined : parseClientDate(params.dueDate);
-        const birthDateUpdate = params.birthDate === undefined ? undefined : parseClientDate(params.birthDate);
+        const dueDateUpdate = params.dueDate === undefined ? undefined : parseClientDate(params.dueDate, "dueDate");
+        const birthDateUpdate = params.birthDate === undefined ? undefined : parseClientDate(params.birthDate, "birthDate");
         const { existingClient: clientWithPhone } = await findClientByNormalizedPhone(
             this.clientRepository,
             branchid,
             params.phone,
         );
         if (clientWithPhone && clientWithPhone.id !== id) {
-            throw new ConflictException({ statusCode: 409, code: "P2002", error: "Conflict", field: "phone" });
+            throw new ConflictException(clientProblemBody("CLIENT_PHONE_ALREADY_REGISTERED", {
+                pointer: "/phone",
+                code: "INVALID_VALUE",
+                detail: "같은 전화번호의 고객이 이미 등록되어 있습니다.",
+                location: "body",
+            }));
         }
 
         // Keep the display value untouched while persisting the canonical
@@ -1656,10 +1670,20 @@ export class ClientService {
         );
         assertClientDurationMatchesDates(params.duration, derivedDuration, params.allowBusinessDayMismatch);
         if (hasDateUpdate && params.duration === null && derivedDuration !== null) {
-            throw new BadRequestException(clientDurationOutOfRangeMessage(derivedDuration));
+            throw new BadRequestException(clientProblemBody("CLIENT_DURATION_OUT_OF_RANGE", {
+                pointer: "/duration",
+                code: "OUT_OF_RANGE",
+                detail: clientDurationOutOfRangeMessage(derivedDuration),
+                location: "body",
+            }));
         }
         if (hasDateUpdate && derivedDuration === null && params.duration !== undefined && params.duration !== null) {
-            throw new BadRequestException(CLIENT_DURATION_NEEDS_SERVICE_PERIOD_MESSAGE);
+            throw new BadRequestException(clientProblemBody("CLIENT_DURATION_NEEDS_SERVICE_PERIOD", {
+                pointer: "/duration",
+                code: "REQUIRED",
+                detail: CLIENT_DURATION_NEEDS_SERVICE_PERIOD_MESSAGE,
+                location: "body",
+            }));
         }
         // duration is the contracted session count and is authoritative once
         // set: a supplied value always wins and is never overwritten by the
@@ -1748,7 +1772,12 @@ export class ClientService {
                 params.allowBusinessDayMismatch,
             );
             if (lockedHasDateUpdate && params.duration === null && lockedDerivedDuration !== null) {
-                throw new BadRequestException(clientDurationOutOfRangeMessage(lockedDerivedDuration));
+                throw new BadRequestException(clientProblemBody("CLIENT_DURATION_OUT_OF_RANGE", {
+                    pointer: "/duration",
+                    code: "OUT_OF_RANGE",
+                    detail: clientDurationOutOfRangeMessage(lockedDerivedDuration),
+                    location: "body",
+                }));
             }
             if (
                 lockedHasDateUpdate
@@ -1756,7 +1785,12 @@ export class ClientService {
                 && params.duration !== undefined
                 && params.duration !== null
             ) {
-                throw new BadRequestException(CLIENT_DURATION_NEEDS_SERVICE_PERIOD_MESSAGE);
+                throw new BadRequestException(clientProblemBody("CLIENT_DURATION_NEEDS_SERVICE_PERIOD", {
+                    pointer: "/duration",
+                    code: "REQUIRED",
+                    detail: CLIENT_DURATION_NEEDS_SERVICE_PERIOD_MESSAGE,
+                    location: "body",
+                }));
             }
             const duration = params.duration !== undefined
                 ? params.duration
@@ -2265,7 +2299,7 @@ export class ClientService {
                 transaction,
             );
             if (!lockedClient) {
-                throw new NotFoundException(`고객을 찾을 수 없습니다. (id: ${clientId})`);
+                throw new NotFoundException(clientCodeOnlyProblemBody("RESOURCE_NOT_FOUND", "고객을 찾을 수 없습니다."));
             }
             const computedStatus = computeServiceStatus(
                 null,

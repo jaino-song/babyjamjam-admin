@@ -1,4 +1,6 @@
 "use client";
+import { getUserErrorMessage } from "@babyjamjam/shared";
+
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -327,7 +329,7 @@ export default function ClientsPage() {
     } catch {
       toast({
         title: t(locale, "clients.delete-fail"),
-        description: t(locale, "clients.delete-fail-description"),
+        description: getUserErrorMessage(t(locale, "clients.delete-fail-description")),
         variant: "destructive",
       });
     }

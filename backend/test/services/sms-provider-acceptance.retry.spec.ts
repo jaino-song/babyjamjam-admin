@@ -10,7 +10,7 @@ import { IMessageLogRepository } from "domain/repositories/message-log.repositor
 
 describe("SMS provider acceptance and retry boundary", () => {
     const branchId = "11111111-1111-1111-1111-111111111111";
-    const createSource = () =>
+    const createSource = (retrySafety = "uncertain") =>
         MessageLogEntity.reconstitute(
             77,
             branchId,
@@ -25,7 +25,7 @@ describe("SMS provider acceptance and retry boundary", () => {
                 recipientName: "고객",
                 title: "인사 메시지",
                 msgType: "AUTO",
-                retrySafety: "uncertain",
+                retrySafety,
             },
             "failed",
             null,
@@ -180,6 +180,38 @@ describe("SMS provider acceptance and retry boundary", () => {
         await expect(retryService.retryById(branchId, source.id)).rejects.toThrow(ConflictException);
         expect(source.providerAcceptanceState).toBe("reconciled_delivered");
         expect(source.status).toBe("sent");
+        expect(provider.sendSms).not.toHaveBeenCalled();
+        expect(repository.startRetryAttempt).not.toHaveBeenCalled();
+    });
+
+    it("blocks partial batches from reconciliation and whole-list manual retry", async () => {
+        const source = createSource("partial");
+        source.nextRetryAt = null;
+        const repository = createRepository(source);
+        const acceptance = new SmsProviderAcceptanceService(
+            repository as unknown as IMessageLogRepository,
+        );
+        const provider = createProvider();
+        const retryService = new SmsRetryService(
+            repository as unknown as IMessageLogRepository,
+            provider as unknown as AligoService,
+            { ensureApproved: jest.fn().mockResolvedValue(undefined) } as unknown as MessageSenderApprovalService,
+            acceptance,
+        );
+
+        await expect(acceptance.reconcile({
+            branchId,
+            logId: source.id,
+            outcome: "not-delivered",
+            actor: "operator-1",
+            reason: "failed recipient cannot be isolated",
+        })).rejects.toThrow(ConflictException);
+
+        await expect(retryService.retryById(branchId, source.id)).rejects.toThrow(ConflictException);
+
+        expect(source.providerAcceptanceState).toBe("uncertain");
+        expect(source.nextRetryAt).toBeNull();
+        expect(source.variables["retrySafety"]).toBe("partial");
         expect(provider.sendSms).not.toHaveBeenCalled();
         expect(repository.startRetryAttempt).not.toHaveBeenCalled();
     });

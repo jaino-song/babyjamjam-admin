@@ -44,7 +44,7 @@ describe("SystemAdminAccountEditDialog", () => {
         ]}
         ownedBranchIds={[]}
         isPending
-        errorMessage="서버에서 계정 수정을 거절했습니다."
+        errorMessage="서버에서 계정 수정을 거절했어요."
         onOpenChange={onOpenChange}
         onSubmit={jest.fn()}
       />,
@@ -54,7 +54,7 @@ describe("SystemAdminAccountEditDialog", () => {
     expect(screen.getByRole("button", { name: "강남점 지점 선택 해제" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "취소" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "저장 중…" })).toBeDisabled();
-    expect(screen.getByRole("alert")).toHaveTextContent("서버에서 계정 수정을 거절했습니다.");
+    expect(screen.getByRole("alert")).toHaveTextContent("서버에서 계정 수정을 거절했어요.");
 
     fireEvent.click(screen.getByRole("button", { name: "Close" }));
     expect(onOpenChange).not.toHaveBeenCalled();
@@ -125,7 +125,7 @@ describe("SystemAdminAccountEditDialog", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "저장" }));
     expect(await screen.findByRole("alert")).toHaveTextContent(
-      "현재 계정 권한을 확인할 수 없습니다. 목록을 새로고침해 주세요.",
+      "현재 계정 권한을 확인할 수 없어요. 목록을 새로고침해 주세요.",
     );
 
     fireEvent.change(screen.getByRole("combobox", { name: /^권한/ }), {
@@ -135,7 +135,7 @@ describe("SystemAdminAccountEditDialog", () => {
 
     await waitFor(() =>
       expect(screen.getByRole("alert")).toHaveTextContent(
-        "현재 계정 권한을 확인할 수 없습니다. 목록을 새로고침해 주세요.",
+        "현재 계정 권한을 확인할 수 없어요. 목록을 새로고침해 주세요.",
       ),
     );
     expect(onSubmit).not.toHaveBeenCalled();
