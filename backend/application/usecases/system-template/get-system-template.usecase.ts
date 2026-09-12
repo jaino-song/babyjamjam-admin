@@ -17,4 +17,12 @@ export class GetSystemTemplateUseCase {
     const contract = SYSTEM_TEMPLATE_REGISTRY[key];
     return SystemTemplateEntity.create(key, contract.defaultContent);
   }
+
+  async executeForBranch(branchId: string, key: SystemTemplateKey): Promise<SystemTemplateEntity> {
+    const template = await this.repository.findByBranchKey(branchId, key);
+    if (template) return template;
+
+    const contract = SYSTEM_TEMPLATE_REGISTRY[key];
+    return SystemTemplateEntity.create(key, contract.defaultContent);
+  }
 }

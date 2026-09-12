@@ -6,7 +6,6 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { Popover, PopoverAnchor, PopoverContent } from "@/components/ui/popover";
 import { ContentPaper } from "../root/content-paper";
 import { useCreateMessageTemplate, useUpdateMessageTemplate } from "@/hooks/use-message-templates";
 import { useLocale } from "@/providers/LocaleProvider";
@@ -14,10 +13,10 @@ import { t } from "@/lib/i18n/translations";
 import { useNavigationPending } from "@/lib/hooks/use-navigation-pending";
 import { MessageTemplate, TemplateVariable } from "@/lib/template/types";
 import { extractVariables } from "@/lib/template/variable-parser";
-import { getTextByteLength, MAX_BODY_LENGTH, SMS_BYTE_LIMIT } from "@/lib/message/byte-length";
+import { MAX_BODY_LENGTH } from "@/lib/message/byte-length";
 import { VariableConfigurator } from "./variable-configurator";
 import { VariableInserter, PRESET_VARIABLES } from "./variable-inserter";
-import { VariableChipEditor, type VariableChipEditorHandle } from "./variable-chip-editor";
+import { TemplateContentEditor, type TemplateContentEditorHandle } from "./template-content-editor";
 import { TemplatePreview } from "./template-preview";
 
 interface TemplateEditorProps {
@@ -35,8 +34,7 @@ export const TemplateEditor = ({ initialData }: TemplateEditorProps) => {
     const [content, setContent] = useState(initialData?.content || "");
     const [variables, setVariables] = useState<TemplateVariable[]>(initialData?.variables || []);
     const [detectedKeys, setDetectedKeys] = useState<string[]>([]);
-    const [activeVariableKey, setActiveVariableKey] = useState<string | null>(null);
-    const chipEditorRef = useRef<VariableChipEditorHandle>(null);
+    const chipEditorRef = useRef<TemplateContentEditorHandle>(null);
 
     useEffect(() => {
         const keys = extractVariables(content);
@@ -87,10 +85,6 @@ export const TemplateEditor = ({ initialData }: TemplateEditorProps) => {
         chipEditorRef.current?.insertVariable(key);
     };
 
-    const handleVariableClick = (key: string) => {
-        setActiveVariableKey(key);
-    };
-
     // Suggestion picker offers presets alongside variables already used in the
     // content, without duplicating keys that are already tracked in state.
     const chipVariables = useMemo<TemplateVariable[]>(() => {
@@ -106,10 +100,6 @@ export const TemplateEditor = ({ initialData }: TemplateEditorProps) => {
         return [...variables, ...presetOnly];
     }, [variables]);
 
-    const activeVariable = variables.find(v => v.key === activeVariableKey) ?? null;
-
-    const contentByteLength = getTextByteLength(content);
-    const isOverSmsLimit = contentByteLength > SMS_BYTE_LIMIT;
     const isOverBodyLimit = content.length > MAX_BODY_LENGTH;
 
     return (
@@ -129,74 +119,19 @@ export const TemplateEditor = ({ initialData }: TemplateEditorProps) => {
                         />
                     </div>
 
-                    <div>
-                        <p className="text-sm font-medium mb-2">
-                            {t(locale, "template-editor.quick-insert")}
-                        </p>
-                        <VariableInserter onInsert={handleInsertVariable} />
-                    </div>
-
-                    <div className="flex flex-col gap-2">
-                        <Label htmlFor="template-content">
-                            {t(locale, "template-editor.content-label")}
-                            <span className="text-destructive ml-1">*</span>
-                        </Label>
-                        <Popover
-                            open={Boolean(activeVariable)}
-                            onOpenChange={(open) => {
-                                if (!open) setActiveVariableKey(null);
-                            }}
-                        >
-                            <PopoverAnchor asChild>
-                                <div data-component="desktop_my-templates_editor_content-anchor">
-                                    <VariableChipEditor
-                                        ref={chipEditorRef}
-                                        id="template-content"
-                                        value={content}
-                                        onChange={setContent}
-                                        variables={chipVariables}
-                                        onVariableClick={handleVariableClick}
-                                        placeholder={t(locale, "template-editor.content-placeholder")}
-                                    />
-                                </div>
-                            </PopoverAnchor>
-                            {activeVariable ? (
-                                <PopoverContent
-                                    data-component="desktop_my-templates_editor_variable-popover"
-                                    side="bottom"
-                                    align="start"
-                                    sideOffset={8}
-                                    avoidCollisions
-                                    className="w-80"
-                                    onOpenAutoFocus={(e) => e.preventDefault()}
-                                    onFocusOutside={(e) => e.preventDefault()}
-                                >
-                                    <VariableConfigurator
-                                        variant="popover"
-                                        variable={activeVariable}
-                                        onChange={handleVariableChange}
-                                    />
-                                </PopoverContent>
-                            ) : null}
-                        </Popover>
-                        <div
-                            data-component="desktop_my-templates_editor_content-footer"
-                            className="flex justify-end text-xs text-muted-foreground"
-                        >
-                            {isOverBodyLimit ? (
-                                <span className="text-destructive">
-                                    {t(locale, "template-editor.body-too-long")}
-                                </span>
-                            ) : (
-                                <span>
-                                    {contentByteLength} bytes ·{" "}
-                                    {isOverSmsLimit
-                                        ? t(locale, "template-editor.byte-count-lms")
-                                        : t(locale, "template-editor.byte-count-sms")}
-                                </span>
-                            )}
-                        </div>
-                    </div>
+                    <TemplateContentEditor
+                        ref={chipEditorRef}
+                        id="template-content"
+                        dataComponent="desktop_my-templates_editor"
+                        label={<>{t(locale, "template-editor.content-label")}<span className="text-destructive ml-1">*</span></>}
+                        quickInsert={<VariableInserter onInsert={handleInsertVariable} />}
+                        content={content}
+                        onContentChange={setContent}
+                        variables={chipVariables}
+                        popoverVariables={variables}
+                        onVariableChange={handleVariableChange}
+                        placeholder={t(locale, "template-editor.content-placeholder")}
+                    />
                 </div>
             </ContentPaper>
 

@@ -1,7 +1,7 @@
 import "./redesign.css";
 
 import type { DashboardAnalytic, SectionRows } from "./mockup-data";
-import { ListCard, SectionedList } from "./primitives";
+import { ListCard, ListRowsSkeleton, SectionedList } from "./primitives";
 import { Skeleton } from "@/components/ui/skeleton";
 
 const DASHBOARD_SOURCE_COMPONENT = "DashboardRedesign";
@@ -62,32 +62,6 @@ function DashboardAnalyticsSkeleton() {
   );
 }
 
-function DashboardListSkeleton() {
-  return (
-    <div className="section-block" data-component={DASHBOARD_LIST_SKELETON_BASE}>
-      {Array.from({ length: 4 }).map((_, index) => (
-        <div
-          key={`dashboard-skeleton-${index}`}
-          className="list-item"
-          data-component={`${DASHBOARD_LIST_SKELETON_BASE}_row`}
-          aria-hidden="true"
-          style={{ animationDelay: `${index * 40}ms` }}
-        >
-          <Skeleton className="list-avatar rounded-full bg-v3-dim-white animate-pulse" />
-          <div className="list-info flex flex-col" data-component={`${DASHBOARD_LIST_SKELETON_BASE}_row_info`}>
-            <Skeleton className="h-4 w-24 bg-v3-dim-white animate-pulse" />
-            <Skeleton className="mt-1.5 h-3 w-32 bg-v3-dim-white animate-pulse" />
-          </div>
-          <div className="list-right" data-component={`${DASHBOARD_LIST_SKELETON_BASE}_row_right`}>
-            <Skeleton className="h-4 w-14 bg-v3-dim-white animate-pulse" />
-            <Skeleton className="h-3 w-10 bg-v3-dim-white animate-pulse" />
-          </div>
-        </div>
-      ))}
-    </div>
-  );
-}
-
 export function DashboardRedesign({
   analytics,
   sections,
@@ -139,7 +113,10 @@ export function DashboardRedesign({
           onFilterChange={onFilterChange}
         >
           {loading ? (
-            <DashboardListSkeleton />
+            <ListRowsSkeleton
+              data-component={DASHBOARD_LIST_SKELETON_BASE}
+              rowCount={4}
+            />
           ) : (
             <SectionedList
               data-component={DASHBOARD_LIST_BODY_BASE}

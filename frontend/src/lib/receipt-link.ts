@@ -4,7 +4,10 @@ export const RECEIPT_LINK_REASON_MESSAGES: Record<string, string> = {
   no_contract_document: "연결된 계약서를 찾지 못했습니다.",
   document_not_linked: "계약서에 연결된 산모가 없습니다.",
   document_not_found: "계약서를 찾지 못했습니다.",
+  contract_not_signed: "계약서 서명이 완료된 후 발송할 수 있습니다.",
   pdf_unavailable: "계약서 PDF를 아직 불러올 수 없습니다. 잠시 후 다시 시도해 주세요.",
+  render_failed: "영수증 이미지 생성에 실패했습니다. 잠시 후 다시 시도해 주세요.",
+  upload_failed: "영수증 이미지 저장에 실패했습니다. 잠시 후 다시 시도해 주세요.",
   missing_phone: "산모 연락처가 없거나 형식이 올바르지 않습니다.",
 };
 export const RECEIPT_LINK_SEND_FALLBACK_MESSAGE = "영수증 문자 발송에 실패했습니다. 잠시 후 다시 시도해 주세요.";

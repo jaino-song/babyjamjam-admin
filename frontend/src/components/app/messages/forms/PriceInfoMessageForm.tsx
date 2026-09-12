@@ -3,7 +3,6 @@ import { useState, useEffect, useRef, type ReactNode } from "react";
 import voucherOptions from "../templates/json/voucher.json";
 import { AutoFillMsgCard } from "../templates/AutoFillMsgCard";
 import bankAccountJSON from "../templates/json/bank-account.json";
-import { priceInfoMsgTemplate } from "../templates/messageTemplate/priceInfoMsg";
 import { t } from "@/lib/i18n/translations";
 import { useFormStore } from "@/stores/form-store";
 import { useLocale } from "@/providers/LocaleProvider";
@@ -106,7 +105,18 @@ export const PriceInfoMessageForm = ({
       if (tooltipTimerRef.current) clearTimeout(tooltipTimerRef.current);
     };
   }, []);
-  const { data: systemTemplate } = useSystemTemplate("PRICE_INFO");
+  const {
+    data: systemTemplate,
+    isError: isSystemTemplateError,
+    isFetching: isSystemTemplateFetching,
+    isLoading: isSystemTemplateLoading,
+  } = useSystemTemplate("PRICE_INFO");
+  const templateReady = Boolean(
+    systemTemplate?.content
+    && !isSystemTemplateError
+    && !isSystemTemplateFetching
+    && !isSystemTemplateLoading,
+  );
  
   // Subscribe to Zustand store
   const {
@@ -290,17 +300,7 @@ export const PriceInfoMessageForm = ({
         bankName: formData.bankName,
         accNum: formData.accNum,
       })
-    : priceInfoMsgTemplate({
-        name: normalizedName || "{{name}}",
-        weeks: formData.weeks || "{{weeks}}",
-        duration: formData.duration || "{{duration}}",
-        type: formData.type || "{{type}}",
-        fullPrice: formData.fullPrice ? formatPrice(formData.fullPrice) : "{{fullPrice}}",
-        grant: formData.grant ? formatPrice(formData.grant) : "{{grant}}",
-        actualPrice: formData.actualPrice ? formatPrice(formData.actualPrice) : "{{actualPrice}}",
-        bankName: formData.bankName || "{{bankName}}",
-        accNum: formData.accNum || "{{accNum}}",
-      });
+    : "";
   const generatedMessage = messageOverride ?? templateMessage;
 
   const handleCopy = () => {
@@ -328,9 +328,7 @@ export const PriceInfoMessageForm = ({
   ];
 
   useEffect(() => {
-    if (generatedMessage) {
-      onPreviewMessageChange?.(generatedMessage);
-    }
+    onPreviewMessageChange?.(generatedMessage);
   }, [generatedMessage, onPreviewMessageChange]);
 
   const fields = (
@@ -491,6 +489,7 @@ export const PriceInfoMessageForm = ({
       fields={fields}
       messageCard={messageCard}
       requiresRecipientName
+      templateReady={templateReady}
       renderLayout={renderLayout}
     />
   );

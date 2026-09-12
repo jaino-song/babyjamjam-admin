@@ -5,6 +5,18 @@ import { Badge } from "@/components/ui/badge";
 
 interface VariableInserterProps {
     onInsert: (key: string) => void;
+    /** Candidate variables supplied by the owning editor. */
+    variables?: readonly VariableInserterVariable[];
+    /** System templates expose registry variables only; custom definition UI stays off. */
+    allowCustom?: boolean;
+    /** Full data-component path supplied by the owning organism. */
+    dataComponent?: string;
+    disabled?: boolean;
+}
+
+export interface VariableInserterVariable {
+    key: string;
+    label: string;
 }
 
 export const PRESET_VARIABLES = [
@@ -20,8 +32,15 @@ export const PRESET_VARIABLES = [
     { key: "employeeName", label: "직원명" },
 ];
 
-export const VariableInserter = ({ onInsert }: VariableInserterProps) => {
+export const VariableInserter = ({
+    onInsert,
+    variables = PRESET_VARIABLES,
+    allowCustom = true,
+    dataComponent = "desktop_my-templates_variable-inserter",
+    disabled = false,
+}: VariableInserterProps) => {
     const handleAddCustom = () => {
+        if (disabled) return;
         const key = prompt("변수 키를 입력하세요 (영문 권장):");
         if (key) {
             onInsert(key.trim());
@@ -29,25 +48,31 @@ export const VariableInserter = ({ onInsert }: VariableInserterProps) => {
     };
 
     return (
-        <div data-component="desktop_my-templates_variable-inserter" className="flex flex-row flex-wrap gap-2">
-            {PRESET_VARIABLES.map((v) => (
+        <div data-component={dataComponent} className="flex flex-row flex-wrap gap-2">
+            {variables.map((v) => (
                 <Badge
                     key={v.key}
+                    asChild
                     variant="outline"
-                    className="cursor-pointer hover:bg-primary hover:text-primary-foreground transition-colors"
-                    onClick={() => onInsert(v.key)}
+                    className="cursor-pointer enabled:hover:bg-primary enabled:hover:text-primary-foreground disabled:cursor-not-allowed disabled:opacity-50 transition-colors"
                 >
-                    {v.label}
+                    <button type="button" disabled={disabled} onClick={() => onInsert(v.key)} data-component={`${dataComponent}_variable-button`}>
+                        {v.label}
+                    </button>
                 </Badge>
             ))}
-            <Badge
-                variant="outline"
-                className="cursor-pointer hover:bg-secondary hover:text-secondary-foreground transition-colors"
-                onClick={handleAddCustom}
-            >
-                <Plus className="h-3 w-3 mr-1" />
-                커스텀 변수
-            </Badge>
+            {allowCustom ? (
+                <Badge
+                    asChild
+                    variant="outline"
+                    className="cursor-pointer enabled:hover:bg-secondary enabled:hover:text-secondary-foreground disabled:cursor-not-allowed disabled:opacity-50 transition-colors"
+                >
+                    <button type="button" disabled={disabled} onClick={handleAddCustom} data-component={`${dataComponent}_custom-button`}>
+                        <Plus className="h-3 w-3 mr-1" />
+                        커스텀 변수
+                    </button>
+                </Badge>
+            ) : null}
         </div>
     );
 };

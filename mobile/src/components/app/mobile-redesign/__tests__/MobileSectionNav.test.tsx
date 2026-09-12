@@ -75,4 +75,41 @@ describe("MobileSectionNav", () => {
     fireEvent.click(disabledButton);
     expect(onSelect).not.toHaveBeenCalled();
   });
+
+  it("renders non-interactive skeleton pills with the real labels' footprint while loading", () => {
+    const onSelect = jest.fn();
+    const { container } = render(
+      <MobileSectionNav
+        data-component="mobile_tests_section-nav_tertiary"
+        ariaLabel="메시지 섹션"
+        items={[
+          { id: "list", label: "발송 기록", icon: Users },
+          { id: "automation", label: "자동 전송", icon: Workflow },
+        ]}
+        activeId="list"
+        onSelect={onSelect}
+        isLoading
+      />,
+    );
+
+    const nav = screen.getByRole("navigation", { name: "메시지 섹션" });
+    expect(nav).toHaveAttribute("aria-busy", "true");
+    expect(screen.queryByRole("button", { name: "발송 기록" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "자동 전송" })).not.toBeInTheDocument();
+
+    const skeletons = container.querySelectorAll('[data-loading="true"]');
+    expect(skeletons).toHaveLength(2);
+    skeletons.forEach((skeleton) => {
+      expect(skeleton).toBeDisabled();
+      expect(skeleton).toHaveClass("skeleton-base");
+      expect(skeleton).toHaveAttribute("aria-hidden", "true");
+      expect(skeleton).toHaveAttribute(
+        "data-component",
+        "mobile_tests_section-nav_tertiary_item-skeleton",
+      );
+    });
+
+    fireEvent.click(skeletons[0]);
+    expect(onSelect).not.toHaveBeenCalled();
+  });
 });

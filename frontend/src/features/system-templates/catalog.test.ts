@@ -47,7 +47,8 @@ describe("system template catalog", () => {
       id: "builtin:system:SERVICE_END_NOTICE",
       label: "서비스 종료 안내",
       content: "영수증 {{receiptUrl}}",
-      manualSendAvailability: "disabled",
+      legacyType: "service-end-notice",
+      manualSendAvailability: "available",
     });
     expect(items[2]).toMatchObject({
       id: "builtin:greeting",
@@ -83,6 +84,33 @@ describe("system template catalog", () => {
       "service-feedback-link",
     );
     expect(items.find((item) => item.id === "builtin:system:SERVICE_END_NOTICE")).toBeUndefined();
+  });
+
+  it("omits retired automation-only rows while preserving SERVICE_END_NOTICE and unknown rows", () => {
+    const items = buildSystemTemplateCatalog([
+      template({ templateKey: "CLIENT_WELCOME" }),
+      template({ templateKey: "SERVICE_START_REMINDER" }),
+      template({ templateKey: "SERVICE_END_REMINDER" }),
+      template({ templateKey: "EMPLOYEE_ASSIGNED" }),
+      template({ templateKey: "SERVICE_END_NOTICE" }),
+      template({ templateKey: "FUTURE_TEMPLATE" }),
+    ]);
+
+    expect(items.map((item) => item.templateKey)).toEqual([
+      "SERVICE_END_NOTICE",
+      "FUTURE_TEMPLATE",
+    ]);
+  });
+
+  it("does not treat prototype keys as manual template types", () => {
+    const items = buildSystemTemplateCatalog([
+      template({ templateKey: "toString" }),
+      template({ templateKey: "__proto__" }),
+    ]);
+
+    expect(items).toHaveLength(2);
+    expect(items.every((item) => item.manualSendAvailability === "disabled")).toBe(true);
+    expect(items.every((item) => item.legacyType === null)).toBe(true);
   });
 
   it("skips malformed records without falling back to a different template", () => {

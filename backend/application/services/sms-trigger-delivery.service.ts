@@ -622,6 +622,10 @@ export class SmsTriggerDeliveryService {
         job: MessageTriggerJobEntity,
         config: SmsTemplateDeliveryConfig,
     ): Promise<Readonly<SmsTriggerDeliverySnapshot>> {
+        const branchId = job.branchId;
+        if (!branchId) {
+            throw new Error(`SMS trigger job ${job.id} is missing branchId`);
+        }
         const payload = job.payload;
         const baseVariables: Record<string, string> = {
             name: payload.recipientName,
@@ -634,7 +638,7 @@ export class SmsTriggerDeliveryService {
         const usesPayloadMessage = config.usePayloadMessage || payload.templateVariables["triggerType"] === "agent_scheduled";
         const template = usesPayloadMessage
             ? this.resolvePayloadTemplate(job)
-            : await this.resolveSystemTemplate(config.systemTemplateKey);
+            : await this.resolveSystemTemplate(config.systemTemplateKey, branchId);
         const missingVariableKeys = template.requiredVariableKeys.filter(
             (key) => !baseVariables[key]?.trim(),
         );
@@ -691,12 +695,13 @@ export class SmsTriggerDeliveryService {
 
     private async resolveSystemTemplate(
         systemTemplateKey: SystemTemplateKey | undefined,
+        branchId: string,
     ): Promise<ResolvedSmsTemplate> {
         if (!systemTemplateKey) {
             throw new Error("systemTemplateKey is required for templated SMS delivery");
         }
         try {
-            const template = await this.systemTemplateService.getByKey(systemTemplateKey);
+            const template = await this.systemTemplateService.getByKeyForBranch(branchId, systemTemplateKey);
             const content = template.content;
             const hash = this.hash(content);
             const updatedAt = template.updatedAt instanceof Date && !Number.isNaN(template.updatedAt.getTime())
@@ -727,21 +732,9 @@ export class SmsTriggerDeliveryService {
                 );
             }
 
-            this.logger.warn(
-                `[SMS Automation] Failed to load system template ${systemTemplateKey}, using registry default: ${
-                    error instanceof Error ? error.message : String(error)
-                }`,
-            );
-            const content = SYSTEM_TEMPLATE_REGISTRY[systemTemplateKey].defaultContent;
-            const hash = this.hash(content);
-            return {
-                content,
-                version: `registry-default:${systemTemplateKey}`,
-                hash,
-                requiredVariableKeys: SYSTEM_TEMPLATE_REGISTRY[systemTemplateKey].requiredVariables
-                    .filter((variable) => variable.required)
-                    .map((variable) => variable.key),
-            };
+            // Missing rows are normalized by the branch resolver. Any failure
+            // here means the effective content is unknown and must not be sent.
+            throw error;
         }
     }
 

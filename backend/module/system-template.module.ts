@@ -8,6 +8,7 @@ import {
     ResetToDefaultUseCase,
     RollbackToVersionUseCase,
     UpdateSystemTemplateUseCase,
+    UpdateBranchSystemTemplateUseCase,
     ValidateTemplateContentUseCase,
 } from "application/usecases/system-template";
 import { SystemTemplateService } from "application/services/system-template.service";
@@ -20,6 +21,7 @@ import { DatabaseModule } from "infrastructure/database/database.module";
 import { SbMessageTriggerRuleRepository } from "infrastructure/database/repositories/sb.message-trigger-rule.repository";
 import { SbSystemTemplateRepository } from "infrastructure/database/repositories/sb.system-template.repository";
 import { SystemTemplateController } from "interface/controllers/system-template.controller";
+import { BranchSystemTemplateController } from "interface/controllers/branch-system-template.controller";
 
 @Module({
     imports: [DatabaseModule],
@@ -38,6 +40,7 @@ import { SystemTemplateController } from "interface/controllers/system-template.
         GetAllSystemTemplatesUseCase,
         GetSystemTemplateUseCase,
         UpdateSystemTemplateUseCase,
+        UpdateBranchSystemTemplateUseCase,
         ValidateTemplateContentUseCase,
         RenderTemplateUseCase,
         GetVersionHistoryUseCase,
@@ -46,7 +49,7 @@ import { SystemTemplateController } from "interface/controllers/system-template.
         ResetToDefaultUseCase,
         SystemTemplateBootstrapService,
     ],
-    controllers: [SystemTemplateController],
+    controllers: [SystemTemplateController, BranchSystemTemplateController],
     exports: [SystemTemplateService, MessageTemplateAutomationLockService],
 })
 export class SystemTemplateModule {}
