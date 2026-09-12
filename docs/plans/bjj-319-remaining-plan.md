@@ -479,3 +479,9 @@ TL;DR: 직원 도메인의 남은 서버 실패 조건(전화 형식, 중복 연
 - nonblocking(auditor): (1) 웹 invalid-id 게이트 전용 테스트 부재(모바일은 있음), (2) 웹 PATCH/DELETE가 id 검사를 auth보다 먼저 수행(모바일 clients 패턴과 순서 상이, 4a-3에서 정렬 검토), (3) check-phone의 200-비정상-shape는 여전히 exists:false(4a-3 하드닝), (4) check-phone `errorResponse`가 GET인데 기본 operation "mutation"(메타데이터 cosmetic), (5) 라인 예산 초과(테스트).
 - 기록: inventory 직원 BFF 8행 migrated·훅 1행 reason 갱신, `employee-bff-alignment` verified finding 추가. worktree/branch 정리. 다음은 4a-3(직원 UI 어댑터: employees 페이지/폼/테이블의 legacy getErrorMessage·getApiErrorMessage → normalizeApiError/문제 표시, check-phone shape 하드닝, 릴리스 게이트 유지)다.
 
+**Task 4a-3 실행 결과 (2026-09-11):** worker 2회(첫 실행 단계 소진 → continuation) unit `81f6e1ee3` → 통합 `f6bcd50b8`, 이후 보정 2건: `c2e41ee81`(mobile source-test 기대 정렬), `9543d88b3`(직원 DELETE BFF의 문제 본문 보존 게이트 + 라우트 테스트), `10bf810fa`(테스트 mock을 실제 wire body 별칭 포함으로 수정). 최종 `10bf810fa`에서 frontend 233/1,487, mobile 234/1,514, 양쪽 타입 통과.
+- 내용: 웹/모바일 직원 폼이 구조화 오류 상태(`{message, fieldErrors, requestId, outcome}`)와 `normalizeApiError`+legacy fallback, `/name`·`/phone` 필드 연결(웹은 aria-describedby/aria-invalid, 모바일은 요약+클릭 포커스 — EmployeeFormCard가 범위 밖이라 선언된 편차), 페이지/테이블은 공유 problem-aware 매퍼로 정렬. 웹 PATCH/DELETE 인증-선행 순서 정렬 + invalid-id 테스트.
+- **B1 보정 이력:** 1차 4a-3 감사 FIX_REQUIRED — 웹 삭제 409가 legacy conflict 브리지에서 problem 본문을 잃어 일반 문구 표시. 클라이언트 패턴의 `hasUpstreamProblemCode` 게이트를 양 플랫폼 DELETE에 적용. 2차 감사 FIX_REQUIRED — 새 테스트 mock이 실제 wire body(`message`/`error` 별칭)를 누락해 base에서도 통과(가짜 통과). 별칭 포함으로 수정 + base-red/head-green counterfactual 실행 증거 확보. 3차 감사 **SHIP/HIGH**.
+- carried nonblocking: mobile 필드 연결 요약 수준, `hasUpstreamProblemCode` 4중 복사(공유화 제안), 웹 legacy 브리지 전용 라우트 테스트 부재, 페이지-레벨 삭제 문구 행동 테스트 부재, 라인 예산 초과(4a-3 전체 17 files +1005/−82, 대부분 테스트), 테스트 fixture가 카탈로그 문구를 수동 복사.
+- 기록: inventory 직원 UI 7행 migrated, `employee-ui-problem-alignment` verified finding 추가. unit worktree/branch 정리. 이로써 Phase 4a(직원 오류 전환) 완료다 — 단, 위 carried 항목과 mobile 필드 연결 편차는 후속 정비로 남는다.
+
