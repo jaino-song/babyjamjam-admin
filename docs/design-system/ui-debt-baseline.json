@@ -990,13 +990,13 @@
         "98:10-98:31|pageLocalComponent"
       ],
       "ui-architecture/no-raw-ui-in-pages": [
-        "136:15-141:16|rawUiElement"
+        "149:15-154:16|rawUiElement"
       ],
       "ui-architecture/no-visual-tailwind-in-pages": [
-        "138:27-138:163|visualTailwindInPage",
-        "148:25-148:70|visualTailwindInPage",
-        "153:27-153:96|visualTailwindInPage",
-        "162:27-162:96|visualTailwindInPage"
+        "151:27-151:163|visualTailwindInPage",
+        "161:25-161:70|visualTailwindInPage",
+        "166:27-166:96|visualTailwindInPage",
+        "175:27-175:96|visualTailwindInPage"
       ]
     },
     "mobile/src/app/(shell)/logout/page.tsx": {

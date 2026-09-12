@@ -226,6 +226,7 @@ describe("EmployeesPage work history query states", () => {
     renderPage();
 
     expect(screen.getByText("근무 내역을 불러오지 못했어요")).toBeInTheDocument();
+    expect(screen.getByText("잠시 후 다시 시도해 주세요.")).toBeInTheDocument();
     expect(screen.getByRole("alert")).toBeInTheDocument();
     expect(screen.queryByRole("status")).not.toBeInTheDocument();
   });
