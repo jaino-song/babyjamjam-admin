@@ -30,6 +30,48 @@ describe("mobile redesign list skeletons", () => {
     expect(container.querySelectorAll('[data-slot="skeleton"]')).toHaveLength(4);
   });
 
+  it("reserves the grouped headers the loaded prices list renders", () => {
+    const { container } = render(
+      <ListRowsSkeleton
+        data-component="mobile_tests_list-skeletons_grouped"
+        rowCount={2}
+        metaClassName="price-row-meta"
+        groupHeader
+        variantHeader
+      />
+    );
+
+    expect(container.querySelector('[data-component="mobile_tests_list-skeletons_grouped"]')).toHaveClass("variant-block");
+    expect(
+      container.querySelector('[data-component="mobile_tests_list-skeletons_grouped_variant_header"]')
+    ).toHaveClass("section-header-variant");
+    expect(container.querySelector('[data-component="mobile_tests_list-skeletons_grouped_section"]')).toHaveClass("section-block");
+    expect(
+      container.querySelector('[data-component="mobile_tests_list-skeletons_grouped_section_header"]')
+    ).toHaveClass("section-header");
+    expect(container.querySelectorAll('[data-component="mobile_tests_list-skeletons_grouped_row"]')).toHaveLength(2);
+
+    // The meta placeholder replaces `.list-meta` exactly like the loaded row,
+    // so both states are styled from the same class set.
+    const metas = container.querySelectorAll(".price-row-meta");
+    expect(metas).toHaveLength(2);
+    expect(metas[0]).toHaveClass("price-row-meta");
+    expect(metas[0]?.className).toBe("price-row-meta");
+  });
+
+  it("omits the variant header placeholder while a type filter is active", () => {
+    const { container } = render(
+      <ListRowsSkeleton data-component="mobile_tests_list-skeletons_filtered" rowCount={1} groupHeader />
+    );
+
+    expect(
+      container.querySelector('[data-component="mobile_tests_list-skeletons_filtered_variant_header"]')
+    ).not.toBeInTheDocument();
+    expect(
+      container.querySelector('[data-component="mobile_tests_list-skeletons_filtered_section_header"]')
+    ).toBeInTheDocument();
+  });
+
   it("compacts multiple client row badges to the frontend status pattern", () => {
     const { container } = render(
       <ClientLikeRow

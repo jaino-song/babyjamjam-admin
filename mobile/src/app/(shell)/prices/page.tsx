@@ -275,6 +275,8 @@ export default function PricesPage() {
                   rowCount={5}
                   left={<span className="duration-badge skeleton-base" />}
                   metaClassName="price-row-meta"
+                  groupHeader
+                  variantHeader={typeFilter === "전체"}
                 />
               ) : isError ? (
                 <div
