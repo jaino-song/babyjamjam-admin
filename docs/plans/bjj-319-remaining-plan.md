@@ -459,3 +459,14 @@ TL;DR: 남은 고객 실패 조건 3종(중복 연락처 409, 연결 데이터�
 
 **3.1b-2 마감 보정 (2026-09-11):** Mobile CI가 UI architecture gate에서 실패해(모바일 계약 폼 변경으로 기존 위반 앵커가 이동, 21 growth/21 shrink, net 0) `ui-debt-baseline.json`을 재앵커링했다(`0aeba3c3e`, 92 groups/822 records 수량 보존). 이어 Shared Contracts CI가 기존 flaky 테스트(`route-utils.test.ts`의 body-leak 단언이 random requestId에 "42"가 포함되면 실패)로 실패해, requestId를 제외한 뒤 단언하도록 결정적으로 수정했다(`3bbde7fb5`; shared 280 jest + 76 node green). 최종 SHA `3bbde7fb5`에서 **전 워크플로 success**, PR #657은 `MERGEABLE/CLEAN`이다.
 
+## Phase 4a — 직원 오류 전환 (바인딩, 2026-09-11)
+
+TL;DR: 직원 도메인의 남은 서버 실패 조건(전화 형식, 중복 연락처, 진행 중 배정으로 인한 삭제 제한, 직원 404 5곳)을 공개 계약으로 전환한다. 3.1과 동일한 잠정 코드 패턴을 사용하고, BFF/UI는 후속 단위(4a-2)로 분리한다.
+
+- **Task 4a-1: 직원 검증·충돌·404 전환** (feature, high)
+  - 카탈로그에 잠정 코드 2개를 추가한다: `EMPLOYEE_PHONE_ALREADY_REGISTERED`(409, "같은 전화번호의 관리사가 이미 등록되어 있어요."), `EMPLOYEE_ACTIVE_ASSIGNMENT_BLOCKED`(409, "진행 중인 배정이 있는 관리사는 삭제할 수 없어요. 배정 종료 또는 교체 후 다시 시도해 주세요."). ko/en·테스트·문서 앵커·vendor 재생성은 기존 절차와 동일하다.
+  - `backend/application/utils/problem-bodies.ts`에 `problemBody(code, errors?)` 헬퍼를 추가하고(기존 `clientProblemBody`는 변경하지 않는다), `employee.service.ts`의 전화 형식(`VALIDATION_FAILED` `/phone` INVALID_FORMAT)과 `rethrowPhoneConflict`의 P2002 2곳(`EMPLOYEE_PHONE_ALREADY_REGISTERED` `/phone`), 직원 usecase 5곳의 NotFound(`RESOURCE_NOT_FOUND`/NOT_APPLIED, id 노출 제거), `delete-employee.usecase.ts`의 활성 배정 충돌(`EMPLOYEE_ACTIVE_ASSIGNMENT_BLOCKED`)을 전환한다.
+  - 검증: `employee.service.spec`, employee usecase spec들, delete spec, 대표 오류의 `mapHttpProblem→normalizeApiError` 왕복, red-first. 대소문자/조건/권한·업무 규칙은 불변이며 다른 도메인은 건드리지 않는다.
+  - Dispatch metadata: `Phase: 4a-1` · `Parallel group: none` · `Execution: DELEGATE` · `Audit: SOL` · `Decision reason: 공개 코드 2개 추가 + 직원 백엔드 다중 지점 전환, 공유 계약 영향` · `Tier: standard` · `Sandbox: local` · `Agent: worker` · `Model: opencode-go/glm-5.3-flash` · `Effort: default` · `Phase starting integration commit: bind after 3.1b close, before dispatch` · `Integration worktree: /Users/jaino/Development/babyjamjam-admin/korean-error-messages` · `Branch: unit/bjj319-employee-errors` · `Worktree: /Users/jaino/Development/babyjamjam-admin/unit-bjj319-employee-errors` · `Service tier: default` · `Paths: packages/shared/src/errors/problem-details.ts, packages/shared/src/errors/problem-details.test.ts, docs/error-management.md, backend/vendor/shared-agent/errors/**, backend/application/utils/problem-bodies.ts [신규], backend/application/services/employee.service.ts [전화·P2002 throw만], backend/application/usecases/employee/{change-employee-open-status,delete-employee,list-active-clients-by-employee,list-work-history-by-employee,update-employee}.usecase.ts [NotFound·충돌 throw만], 관련 owner tests` · `Depends: Task 3.1b`
+  - **Phase close gate:** unit 검증 → 통합(`pnpm install` 후) → 영향 통합 검증(전체 backend suite + shared) → exact SHA/base `auditor` FINAL SHIP → inventory·계획 기록 → clean unit worktree/branch 정리. 4a-2(BFF·UI·check-phone 마스킹·useEmployees 빈 성공)는 후속 단위다.
+
