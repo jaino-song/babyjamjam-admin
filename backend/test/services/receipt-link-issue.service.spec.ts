@@ -85,6 +85,22 @@ const SIGNED_MIRROR_STATE: Partial<EformsignDocumentMirrorState> = {
     } as EformsignDocumentMirrorState["detailPayload"],
 };
 
+function mirrorStateForStatus(statusType: string, stepName: string): Partial<EformsignDocumentMirrorState> {
+    return {
+        documentId: "doc-ext-1",
+        ...SIGNED_MIRROR_STATE,
+        detailPayload: {
+            ...SIGNED_MIRROR_STATE.detailPayload,
+            current_status: {
+                ...SIGNED_MIRROR_STATE.detailPayload!.current_status,
+                status_type: statusType,
+                step_type: "06",
+                step_name: stepName,
+            },
+        } as EformsignDocumentMirrorState["detailPayload"],
+    };
+}
+
 function makeService(overrides: MakeServiceOverrides = {}) {
     const client: ClientFixture | null =
         overrides.client === undefined
@@ -390,6 +406,62 @@ describe("ReceiptLinkIssueService", () => {
         const preflight = await service.preflight({ branchId: BRANCH, clientId: 7 });
         expect(preflight.pdf.equals(PDF)).toBe(true);
     });
+
+    it.each([
+        ["071", "검토 반려"],
+        ["080", "만료"],
+    ] as const)(
+        "rejects a terminal status %s introduced by the PDF re-sync before issuance",
+        async (statusType, stepName) => {
+            const { service, mirrorRepository, documentMirrorService, rasterizer, storage, tokenService } = makeService({ file: null });
+            let currentMirrorState = mirrorStateForStatus("070", "제공기관 확인");
+            (mirrorRepository.findState as jest.Mock).mockImplementation(async () => currentMirrorState);
+            (documentMirrorService.syncDocument as jest.Mock).mockImplementation(async () => {
+                currentMirrorState = mirrorStateForStatus(statusType, stepName);
+                return {};
+            });
+            (mirrorRepository.findFile as jest.Mock)
+                .mockResolvedValueOnce(null)
+                .mockResolvedValue({ content: PDF });
+
+            const issuance = service.issue({ branchId: BRANCH, clientId: 7, source: "manual" });
+            await expect(issuance).rejects.toBeInstanceOf(ReceiptLinkSkipError);
+            await expect(issuance).rejects.toMatchObject({ skipReason: "contract_not_signed" });
+
+            expect(documentMirrorService.syncDocument).toHaveBeenCalledWith(
+                "doc-ext-1",
+                { branchId: BRANCH, source: "worker" },
+                expect.objectContaining({ suppressOutboundAutomation: true }),
+            );
+            expect(rasterizer.renderPageToPng).not.toHaveBeenCalled();
+            expect(storage.upload).not.toHaveBeenCalled();
+            expect(tokenService.issue).not.toHaveBeenCalled();
+        },
+    );
+
+    it.each([
+        ["071", "검토 반려"],
+        ["080", "만료"],
+    ] as const)(
+        "rejects a terminal status %s observed at the delivery-readiness boundary",
+        async (statusType, stepName) => {
+            const { service, mirrorRepository, rasterizer, storage, tokenService } = makeService();
+            let currentMirrorState = mirrorStateForStatus("070", "제공기관 확인");
+            (mirrorRepository.findState as jest.Mock).mockImplementation(async () => currentMirrorState);
+
+            await expect(service.preflight({ branchId: BRANCH, clientId: 7 })).resolves.toBeDefined();
+            currentMirrorState = mirrorStateForStatus(statusType, stepName);
+
+            const readiness = service.assertDocumentSyncReady("doc-ext-1");
+            await expect(readiness).rejects.toBeInstanceOf(ReceiptLinkSkipError);
+            await expect(readiness).rejects.toMatchObject({ skipReason: "contract_not_signed" });
+
+            expect(mirrorRepository.findFile).toHaveBeenCalledWith("doc-ext-1", "document");
+            expect(rasterizer.renderPageToPng).not.toHaveBeenCalled();
+            expect(storage.upload).not.toHaveBeenCalled();
+            expect(tokenService.issue).not.toHaveBeenCalled();
+        },
+    );
 
     it("skips with pdf_unavailable when the mirror re-sync itself throws", async () => {
         const { service, documentMirrorService } = makeService({ file: null });
