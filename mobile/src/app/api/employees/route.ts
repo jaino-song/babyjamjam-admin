@@ -13,6 +13,22 @@ import {
     unauthorizedResponse,
 } from "@/lib/api/route-utils";
 
+// A converted problem body must keep its public `code`; the legacy conflict
+// bridge only carries message/clientId, so registered problems fall through
+// to the contract-preserving errorResponse passthrough instead.
+function hasUpstreamProblemCode(error: unknown): boolean {
+    if (!error || typeof error !== "object") {
+        return false;
+    }
+
+    const payload = (error as { response?: { data?: unknown } }).response?.data;
+    if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+        return false;
+    }
+
+    return typeof (payload as { code?: unknown }).code === "string";
+}
+
 // Mirrors backend CreateEmployeeDto: name (@IsString), workArea (@IsArray
 // @IsString each), phone (@IsString), grade (@IsString — backend normalizes
 // then @IsIn EMPLOYEE_GRADES, so we accept any string here), openToNextWork
@@ -148,9 +164,11 @@ export async function DELETE(request: NextRequest) {
 
         return backendJsonResponse(response);
     } catch (error) {
-        const conflict = getConflictPayload(error);
-        if (conflict) {
-            return NextResponse.json(conflict, { status: 409 });
+        if (!hasUpstreamProblemCode(error)) {
+            const conflict = getConflictPayload(error);
+            if (conflict) {
+                return NextResponse.json(conflict, { status: 409 });
+            }
         }
         return errorResponse(error, "delete employee");
     }

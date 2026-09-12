@@ -203,6 +203,34 @@ describe("PATCH/DELETE /api/employees", () => {
         expect(mockPatch).not.toHaveBeenCalled();
         expect(mockDelete).not.toHaveBeenCalled();
     });
+
+    it("preserves a converted problem body for delete conflicts instead of flattening it", async () => {
+        mockDelete.mockRejectedValue({
+            response: {
+                status: 409,
+                data: {
+                    type: "https://github.com/jaino-song/babyjamjam-admin/blob/main/docs/error-management.md#employee-active-assignment-blocked",
+                    title: "진행 중인 배정이 있어요",
+                    status: 409,
+                    detail: "진행 중인 배정이 있는 관리사는 삭제할 수 없어요. 배정 종료 또는 교체 후 다시 시도해 주세요.",
+                    code: "EMPLOYEE_ACTIVE_ASSIGNMENT_BLOCKED",
+                    requestId: "req-emp-409",
+                    params: {},
+                    outcome: "NOT_APPLIED",
+                    recovery: { action: "NONE", retry: { mode: "NEVER" } },
+                },
+            },
+        });
+
+        const response = await deleteEmployeeProxy(
+            createRequest("/api/employees?id=42", { method: "DELETE" }),
+        );
+
+        expect(response.status).toBe(409);
+        const body = await response.json();
+        expect(body.code).toBe("EMPLOYEE_ACTIVE_ASSIGNMENT_BLOCKED");
+        expect(body.requestId).toBe("req-emp-409");
+    });
 });
 
 describe("PATCH /api/employees/open-status", () => {
