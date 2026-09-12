@@ -40,7 +40,9 @@ export type ProblemCode =
     | "CLIENT_SERVICE_STATUS_INVALID"
     | "CLIENT_AREA_UNAVAILABLE"
     | "CLIENT_RETENTION_BLOCKED"
-    | "CLIENT_PHONE_ALREADY_REGISTERED";
+    | "CLIENT_PHONE_ALREADY_REGISTERED"
+    | "EMPLOYEE_PHONE_ALREADY_REGISTERED"
+    | "EMPLOYEE_ACTIVE_ASSIGNMENT_BLOCKED";
 
 export type ProblemOutcome =
     | "NOT_APPLIED"
@@ -190,6 +192,8 @@ const PROBLEM_CODES: readonly ProblemCode[] = [
     "CLIENT_AREA_UNAVAILABLE",
     "CLIENT_RETENTION_BLOCKED",
     "CLIENT_PHONE_ALREADY_REGISTERED",
+    "EMPLOYEE_PHONE_ALREADY_REGISTERED",
+    "EMPLOYEE_ACTIVE_ASSIGNMENT_BLOCKED",
 ];
 
 const PROBLEM_ERROR_CODES: readonly ProblemErrorCode[] = [
@@ -595,6 +599,28 @@ const PROBLEM_DEFINITIONS: Readonly<
         detail: {
             "ko-KR": "같은 전화번호의 고객이 이미 등록되어 있어요.",
             "en-US": "A customer with the same phone number is already registered.",
+        },
+    },
+    EMPLOYEE_PHONE_ALREADY_REGISTERED: {
+        status: 409,
+        title: {
+            "ko-KR": "이미 등록된 연락처예요",
+            "en-US": "Phone number already registered",
+        },
+        detail: {
+            "ko-KR": "같은 전화번호의 관리사가 이미 등록되어 있어요.",
+            "en-US": "An employee with the same phone number is already registered.",
+        },
+    },
+    EMPLOYEE_ACTIVE_ASSIGNMENT_BLOCKED: {
+        status: 409,
+        title: {
+            "ko-KR": "진행 중인 배정이 있어요",
+            "en-US": "Active assignments exist",
+        },
+        detail: {
+            "ko-KR": "진행 중인 배정이 있는 관리사는 삭제할 수 없어요. 배정 종료 또는 교체 후 다시 시도해 주세요.",
+            "en-US": "This employee has active assignments and cannot be deleted. End or replace the assignments and try again.",
         },
     },
 };

@@ -219,6 +219,8 @@ describe("catalog coverage", () => {
         "CLIENT_AREA_UNAVAILABLE",
         "CLIENT_RETENTION_BLOCKED",
         "CLIENT_PHONE_ALREADY_REGISTERED",
+        "EMPLOYEE_PHONE_ALREADY_REGISTERED",
+        "EMPLOYEE_ACTIVE_ASSIGNMENT_BLOCKED",
     ];
 
     it.each(codes)("contains a complete bilingual entry for %s", (code) => {
@@ -252,6 +254,18 @@ describe("catalog coverage", () => {
     ];
 
     it.each(CLIENT_STATUS_409_CODES)("registers %s as status 409 with kebab-case type anchor", (code, anchor) => {
+        const entry = PROBLEM_CATALOG[code];
+        expect(entry.status).toBe(409);
+        expect(entry.statuses).toEqual([409]);
+        expect(entry.type).toBe(`https://github.com/jaino-song/babyjamjam-admin/blob/main/docs/error-management.md#${anchor}`);
+    });
+
+    const EMPLOYEE_STATUS_409_CODES: Array<[ProblemCode, string]> = [
+        ["EMPLOYEE_PHONE_ALREADY_REGISTERED", "employee-phone-already-registered"],
+        ["EMPLOYEE_ACTIVE_ASSIGNMENT_BLOCKED", "employee-active-assignment-blocked"],
+    ];
+
+    it.each(EMPLOYEE_STATUS_409_CODES)("registers %s as status 409 with kebab-case type anchor", (code, anchor) => {
         const entry = PROBLEM_CATALOG[code];
         expect(entry.status).toBe(409);
         expect(entry.statuses).toEqual([409]);

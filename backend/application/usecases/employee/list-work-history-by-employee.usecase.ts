@@ -1,4 +1,5 @@
 import { Inject, Injectable, NotFoundException } from "@nestjs/common";
+import { codeOnlyProblemBody } from "application/utils/problem-bodies";
 import {
     EMPLOYEE_REPOSITORY,
     IEmployeeRepository,
@@ -20,7 +21,7 @@ export class ListWorkHistoryByEmployeeUsecase {
     ): Promise<PaginatedEmployeeWorkHistory> {
         const employee = await this.employeeRepository.findById(branchid, employeeId);
         if (!employee) {
-            throw new NotFoundException("직원을 찾을 수 없습니다.");
+            throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
         }
         if (employee.deletedAt) {
             return { data: [], total: 0, page, limit, totalPages: 0 };
