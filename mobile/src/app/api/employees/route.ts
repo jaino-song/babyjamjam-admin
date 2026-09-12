@@ -3,6 +3,7 @@ import { z } from "zod";
 import { getConflictPayload } from "@babyjamjam/shared";
 
 import { serverAPIClient } from "@/lib/api/server";
+import { invalidEmployeeIdResponse, isValidEmployeeId } from "./employee-route-utils";
 import {
     backendJsonResponse,
     errorResponse,
@@ -38,14 +39,6 @@ const updateEmployeeSchema = z
         openToNextWork: z.boolean().optional(),
     })
     .passthrough();
-
-function isValidEmployeeId(id: string | null): id is string {
-    return Boolean(id && /^[1-9]\d*$/.test(id));
-}
-
-function invalidEmployeeIdResponse(): NextResponse {
-    return NextResponse.json({ error: "Invalid employee id" }, { status: 400 });
-}
 
 // GET /api/employees - Get all employees
 export async function GET(request: NextRequest) {

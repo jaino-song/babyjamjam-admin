@@ -133,4 +133,26 @@ describe("employee open-status API route", () => {
     await expectCanonicalValidationResponse(response, "Request body must be valid JSON");
     expect(mockPatch).not.toHaveBeenCalled();
   });
+
+  it("maps an upstream failure through the shared sanitizer with the status preserved", async () => {
+    mockPatch.mockRejectedValue({
+      response: {
+        status: 403,
+        data: { error: "employee access denied" },
+      },
+    });
+
+    const response = await updateOpenStatus(
+      createRequest("/api/employees/open-status?id=10", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ openToNextWork: true }),
+      }),
+    );
+
+    expect(response.status).toBe(403);
+    const body = await response.json();
+    expect(body.error).toBeTruthy();
+    expect(body).not.toEqual({ error: "employee access denied" });
+  });
 });

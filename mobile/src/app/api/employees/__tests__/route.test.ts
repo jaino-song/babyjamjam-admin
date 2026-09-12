@@ -308,12 +308,46 @@ describe("employee API routes", () => {
     });
   });
 
-  describe("auth rejection", () => {
+  describe("check-phone", () => {
     it("rejects check-phone without auth_token", async () => {
       const request = new NextRequest("http://localhost/api/employees/check-phone?phone=01000000000");
       const response = await checkEmployeePhone(request);
       expect(response.status).toBe(401);
       expect(mockGet).not.toHaveBeenCalled();
+    });
+
+    it("keeps a missing phone a valid negative answer", async () => {
+      const response = await checkEmployeePhone(
+        new NextRequest("http://localhost/api/employees/check-phone", {
+          headers: { cookie: "auth_token=auth-token" },
+        }),
+      );
+
+      expect(response.status).toBe(200);
+      await expect(response.json()).resolves.toEqual({ exists: false });
+      expect(mockGet).not.toHaveBeenCalled();
+    });
+
+    // 업스트림 실패는 `exists: false`로 위장되지 않고 공유 sanitizer로
+    // 전달되어 폼의 재시도 UI(hasPhoneDuplicateCheckFailed)가 동작한다.
+    it("must NOT mask an upstream failure as a negative answer", async () => {
+      mockGet.mockRejectedValue({
+        response: {
+          status: 500,
+          data: { error: "upstream boom" },
+        },
+      });
+
+      const response = await checkEmployeePhone(
+        new NextRequest("http://localhost/api/employees/check-phone?phone=01096411878", {
+          headers: { cookie: "auth_token=auth-token" },
+        }),
+      );
+
+      expect(response.status).toBe(500);
+      const body = await response.json();
+      expect(body).not.toEqual({ exists: false });
+      expect(body.error).toBeTruthy();
     });
   });
 });

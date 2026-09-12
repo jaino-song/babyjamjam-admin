@@ -1,34 +1,20 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getConflictPayload } from "@babyjamjam/shared";
 import { serverAPIClient } from "@/lib/api/server";
-import { AxiosError } from "axios";
-import { errorResponse, getAuthHeaders, getAuthToken } from "@/lib/api/route-utils";
-
-type BackendErrorPayload = {
-    message?: string;
-    error?: string;
-} & Record<string, unknown>;
-
-function employeeMutationErrorResponse(error: unknown, fallbackMessage: string) {
-    const axiosError = error as AxiosError<BackendErrorPayload>;
-    console.error("[API] Employee mutation error:", axiosError.response?.data || axiosError.message);
-
-    if (axiosError.response?.data) {
-        return NextResponse.json(axiosError.response.data, { status: axiosError.response.status || 500 });
-    }
-
-    return NextResponse.json(
-        { message: axiosError.message || fallbackMessage, error: "Internal Server Error" },
-        { status: 500 }
-    );
-}
+import {
+    errorResponse,
+    getAuthHeaders,
+    getAuthToken,
+    unauthorizedResponse,
+} from "@/lib/api/route-utils";
+import { invalidEmployeeIdResponse, isValidEmployeeId } from "./employee-route-utils";
 
 // GET /api/employees - Get all employees
 export async function GET(request: NextRequest) {
     try {
         const token = getAuthToken(request);
         if (!token) {
-            return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+            return unauthorizedResponse("Unauthorized");
         }
 
         const response = await serverAPIClient.get("/employees", {
@@ -55,7 +41,7 @@ export async function POST(request: NextRequest) {
     try {
         const token = getAuthToken(request);
         if (!token) {
-            return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+            return unauthorizedResponse("Unauthorized");
         }
 
         const body = await request.json();
@@ -72,7 +58,7 @@ export async function POST(request: NextRequest) {
 
         return NextResponse.json(response.data, { status: 201 });
     } catch (error) {
-        return employeeMutationErrorResponse(error, "Failed to create employee");
+        return errorResponse(error, "create employee");
     }
 }
 
@@ -89,9 +75,13 @@ export async function PATCH(request: NextRequest) {
             );
         }
 
+        if (!isValidEmployeeId(id)) {
+            return invalidEmployeeIdResponse();
+        }
+
         const token = getAuthToken(request);
         if (!token) {
-            return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+            return unauthorizedResponse("Unauthorized");
         }
 
         const body = await request.json();
@@ -108,7 +98,7 @@ export async function PATCH(request: NextRequest) {
 
         return NextResponse.json(response.data);
     } catch (error) {
-        return employeeMutationErrorResponse(error, "Failed to update employee");
+        return errorResponse(error, "update employee");
     }
 }
 
@@ -125,9 +115,13 @@ export async function DELETE(request: NextRequest) {
             );
         }
 
+        if (!isValidEmployeeId(id)) {
+            return invalidEmployeeIdResponse();
+        }
+
         const token = getAuthToken(request);
         if (!token) {
-            return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+            return unauthorizedResponse("Unauthorized");
         }
 
         const response = await serverAPIClient.delete("/employees", {
