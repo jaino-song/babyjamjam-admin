@@ -53,6 +53,9 @@ function expectSameFootprint(loading: Array<{ y: number; height: number }>, load
 }
 
 function expectSamePitch(loading: Array<{ y: number; height: number }>, loaded: Array<{ y: number; height: number }>) {
+  // A single row makes pitch meaningless. The call site follows
+  // expectSameHeight, which already asserts a non-empty set.
+  expect(loading.length).toBeGreaterThan(1);
   for (let index = 1; index < loading.length; index += 1) {
     expect(
       Math.abs(
@@ -76,7 +79,7 @@ async function mockAuthUser(page: Page) {
 test.describe("list skeleton parity", () => {
   test.use({ viewport: { width: 390, height: 844 } });
 
-  test("prices rows keep their height and pitch", async ({ page }) => {
+  test("prices rows keep their height, pitch, and first line", async ({ page }) => {
     test.setTimeout(180_000);
     let releaseYears: () => void = () => {};
     let releaseRows: () => void = () => {};
@@ -119,9 +122,11 @@ test.describe("list skeleton parity", () => {
     await expect(page.locator(`[data-component="${body}_rows-skeleton_row"]`)).toHaveCount(0);
     const loaded = await rowRects(page, `[data-component="${body}"] .list-item`);
 
-    // Group headers appear above the rows, so absolute y is not comparable;
-    // what must not change is the row box and the distance between rows.
+    // The skeleton reserves the variant/group header slots, so the first row
+    // must land on its placeholder's line; deeper rows still move because the
+    // loaded groups interleave headers between them.
     expectSameHeight(loading, loaded);
+    expect(Math.abs(loaded[0].y - loading[0].y), "row 0 y").toBeLessThanOrEqual(1);
     expectSamePitch(loading, loaded);
   });
 
