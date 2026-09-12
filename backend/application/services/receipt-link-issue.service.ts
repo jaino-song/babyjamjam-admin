@@ -152,6 +152,11 @@ export class ReceiptLinkIssueService {
         const pdf = await this.loadContractPdf(params.branchId, doc);
         if (!pdf) throw new ReceiptLinkSkipError("pdf_unavailable");
 
+        // A re-sync may have refreshed the mirror to a terminal status while
+        // still returning a readable PDF. Recheck before the preflight can
+        // authorize rendering and publication.
+        await this.assertContractSigned(doc.documentId);
+
         return { client: { id: client.id, name: client.name, phone: client.phone, birthday }, doc, pdf };
     }
 
@@ -215,6 +220,7 @@ export class ReceiptLinkIssueService {
             const file: EformsignStoredDocumentFile | null =
                 await this.mirrorRepository.findFile(documentId, "document");
             if (!file) throw new ReceiptLinkSkipError("pdf_unavailable");
+            await this.assertContractSigned(documentId);
         } catch (error) {
             if (error instanceof ReceiptLinkSkipError) throw error;
             throw new ReceiptLinkSkipError("pdf_unavailable");
