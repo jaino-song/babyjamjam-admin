@@ -65,13 +65,19 @@ describe("ChangeEmployeeOpenStatusUsecase", () => {
             );
         });
 
-        it("should throw NotFoundException with correct message", async () => {
+        it("should throw the not-found problem body with correct code", async () => {
             // Arrange - empty repository
 
             // Act & Assert
-            await expect(usecase.execute(branchId, 42, false)).rejects.toThrow(
-                "Employee with id 42 not found",
-            );
+            await expect(usecase.execute(branchId, 42, false)).rejects.toMatchObject({
+                status: 404,
+                response: {
+                    code: "RESOURCE_NOT_FOUND",
+                    params: {},
+                    outcome: "NOT_APPLIED",
+                    recovery: { action: "NONE", retry: { mode: "NEVER" } },
+                },
+            });
         });
 
         it("should not affect other employee fields", async () => {
