@@ -322,6 +322,11 @@ describe("employee API routes", () => {
           params: {},
           outcome: "NOT_APPLIED",
           recovery: { action: "NONE", retry: { mode: "NEVER" } },
+          // sendProblemResponse always adds the legacy aliases; the old
+          // conflict bridge keyed off them and flattened the problem.
+          statusCode: 409,
+          message: "진행 중인 배정이 있는 관리사는 삭제할 수 없어요. 배정 종료 또는 교체 후 다시 시도해 주세요.",
+          error: "진행 중인 배정이 있는 관리사는 삭제할 수 없어요. 배정 종료 또는 교체 후 다시 시도해 주세요.",
         },
       },
     });
