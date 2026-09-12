@@ -485,3 +485,5 @@ TL;DR: 직원 도메인의 남은 서버 실패 조건(전화 형식, 중복 연
 - carried nonblocking: mobile 필드 연결 요약 수준, `hasUpstreamProblemCode` 4중 복사(공유화 제안), 웹 legacy 브리지 전용 라우트 테스트 부재, 페이지-레벨 삭제 문구 행동 테스트 부재, 라인 예산 초과(4a-3 전체 17 files +1005/−82, 대부분 테스트), 테스트 fixture가 카탈로그 문구를 수동 복사.
 - 기록: inventory 직원 UI 7행 migrated, `employee-ui-problem-alignment` verified finding 추가. unit worktree/branch 정리. 이로써 Phase 4a(직원 오류 전환) 완료다 — 단, 위 carried 항목과 mobile 필드 연결 편차는 후속 정비로 남는다.
 
+**advisory e2e 보정 (2026-09-11, `a2b967715`):** Mobile CI의 advisory Playwright(`employees-detail-layout.spec.ts`의 work-history 500 시나리오)가 4a-3의 무조건 `normalizeApiError` 문구 적용으로 깨졌다. work-history 안내를 `verified`일 때만 문제 카탈로그 문구로 쓰고, 그 외(legacy/일반 실패)에는 기존 "잠시 후 다시 시도해 주세요."를 유지하도록 게이팅했으며, 캐시 데이터 경고의 "현재 저장된 근무 내역을 표시하고 있습니다." 문맥도 복원했다. UI baseline은 순수 재앵커(5/5, 92 groups/822 records 보존). 최종 SHA `a2b967715`에서 **전 워크플로 success**, PR #657 `MERGEABLE/CLEAN`.
+
