@@ -178,7 +178,7 @@ describe("SbMessageTriggerRuleRepository", () => {
 
         expect(messageTriggerRuleModel.findMany).toHaveBeenCalledWith({
             where: {
-                branchId: "branch-1",
+                OR: [{ branchId: "branch-1" }, { branchId: null }],
                 isActive: true,
                 templateKey: { in: [MessageTriggerTemplateKey.SERVICE_INFO] },
             },

@@ -9,7 +9,7 @@ describe("UpdateBranchSystemTemplateUseCase automation variable safety", () => {
     const templateContent = "{{name}} 예약 번호: {{reservationCode}}";
     const customVariables = [{ key: "reservationCode", label: "예약 코드", required: true }];
 
-    const createHarness = (activeRuleBranches: string[]) => {
+    const createHarness = (activeRuleBranches: Array<string | null>) => {
         const repository = {
             updateBranchTemplate: jest.fn().mockImplementation(async (
                 branchId: string,
@@ -48,7 +48,7 @@ describe("UpdateBranchSystemTemplateUseCase automation variable safety", () => {
             ) => {
                 expect(templateKeys).toEqual([MessageTriggerTemplateKey.SERVICE_INFO]);
                 expect(writeTransaction).toBe(transaction);
-                return activeRuleBranches.includes(branchId)
+                return activeRuleBranches.includes(branchId) || activeRuleBranches.includes(null)
                     ? [MessageTriggerTemplateKey.SERVICE_INFO]
                     : [];
             }),
@@ -112,6 +112,29 @@ describe("UpdateBranchSystemTemplateUseCase automation variable safety", () => {
             }),
         });
 
+        expect(repository.updateBranchTemplate).toHaveBeenCalledTimes(1);
+    });
+
+    it("rejects an edit when an applicable branchless global rule is active", async () => {
+        const { useCase, repository, messageTriggerRuleRepository } = createHarness([null]);
+
+        await expect(useCase.execute(
+            "branch-a",
+            SystemTemplateKey.SERVICE_INFO,
+            templateContent,
+            "user-a",
+            customVariables,
+        )).rejects.toMatchObject({
+            response: expect.objectContaining({
+                unsupportedVariables: ["reservationCode"],
+            }),
+        });
+
+        expect(messageTriggerRuleRepository.findActiveTemplateKeys).toHaveBeenCalledWith(
+            [MessageTriggerTemplateKey.SERVICE_INFO],
+            "branch-a",
+            transaction,
+        );
         expect(repository.updateBranchTemplate).toHaveBeenCalledTimes(1);
     });
 });

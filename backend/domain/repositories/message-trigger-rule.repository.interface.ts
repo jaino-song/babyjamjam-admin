@@ -13,7 +13,8 @@ export interface IMessageTriggerRuleRepository {
     /**
      * Read active rules that use one of the supplied templates. Without a
      * branch scope this preserves the global-template guard semantics; when a
-     * branch is supplied, only that branch's rules are considered.
+     * branch is supplied, that branch and applicable branchless global rules
+     * are considered while unrelated branch rules are excluded.
      */
     findActiveTemplateKeys(
         templateKeys: MessageTriggerTemplateKey[],

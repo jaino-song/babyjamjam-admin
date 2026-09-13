@@ -81,7 +81,7 @@ export class SbMessageTriggerRuleRepository implements IMessageTriggerRuleReposi
                 templateKey: { in: templateKeys },
             }
             : {
-                branchId,
+                OR: [{ branchId }, { branchId: null }],
                 isActive: true,
                 templateKey: { in: templateKeys },
             };
