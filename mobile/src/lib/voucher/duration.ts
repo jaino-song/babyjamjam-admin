@@ -49,10 +49,12 @@ export function inferVoucherDurationFromAmounts(
       (candidate) => normalizeNumericString(candidate[target.key]) === target.value
     );
 
-    if (matched.length > 0) {
-      candidates = matched;
-      matchedAny = true;
+    if (matched.length === 0) {
+      return null;
     }
+
+    candidates = matched;
+    matchedAny = true;
   }
 
   if (!matchedAny) {
