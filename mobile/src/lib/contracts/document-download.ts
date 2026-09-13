@@ -186,7 +186,11 @@ export async function fetchValidatedBinary(
       signal,
     });
   } catch (error) {
-    if (isAbortError(error) || signal?.aborted) {
+    if (isAbortError(error)) {
+      throw error;
+    }
+
+    if (signal?.aborted) {
       const abortError = error instanceof Error ? error : new Error("The request was aborted.");
       abortError.name = "AbortError";
       throw abortError;
