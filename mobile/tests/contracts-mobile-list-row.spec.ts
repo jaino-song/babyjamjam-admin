@@ -854,6 +854,44 @@ test.describe("Mobile contracts list rows", () => {
     await expect(page.locator('[data-component="mobile_contracts_detail-sheet_stack_detail-page_actions_receipt-share"]')).toHaveCount(0);
   });
 
+  test("shows the customer registration state as the second detail header badge", async ({ page }) => {
+    await page.route("**/api/access-token", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ success: true }),
+      });
+    });
+
+    await routeContractsList(page, STAGE_DOCUMENTS);
+    await routeDocumentClientSummaries(
+      page,
+      DOCUMENT_CLIENT_SUMMARIES.map((summary) =>
+        summary.documentId === "doc-opened" ? { ...summary, clientId: null } : summary,
+      ),
+    );
+    await routeNotificationLogs(page);
+
+    await page.goto("/contracts");
+    const rows = page.locator(
+      '[data-component="mobile_contracts_detail-sheet_stack_list-page_content_list-card_body_row"]',
+    );
+    await expect(rows.first()).toBeVisible({ timeout: 15000 });
+
+    const badgeGroup = page.locator(
+      '[data-component="mobile_contracts_detail-sheet_stack_detail-page_content_header_title-group_badges"]',
+    );
+
+    await rows.filter({ hasText: "대기고객" }).click();
+    await expect(badgeGroup.locator(".badge-mini").nth(1)).toHaveText("고객 등록 완료");
+    await expect(badgeGroup.locator(".badge-mini").nth(1)).toHaveClass(/(^|\s)green(\s|$)/);
+
+    await page.locator(".sheet-close").click();
+    await rows.filter({ hasText: "열람고객" }).click();
+    await expect(badgeGroup.locator(".badge-mini").nth(1)).toHaveText("고객 등록 필요");
+    await expect(badgeGroup.locator(".badge-mini").nth(1)).toHaveClass(/(^|\s)burgundy(\s|$)/);
+  });
+
   test("confirms a service record review without requesting an end date", async ({ page }) => {
     await page.route("**/api/access-token", async (route) => {
       await route.fulfill({
