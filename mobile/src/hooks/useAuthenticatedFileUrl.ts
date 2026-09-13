@@ -26,11 +26,18 @@ export function useAuthenticatedFileUrl(
   sourceUrl: string,
   enabled: boolean,
 ): AuthenticatedFileUrlState {
+  const activeKey = enabled && sourceUrl ? sourceUrl : "";
+  const [previousActiveKey, setPreviousActiveKey] = useState(activeKey);
   const [loadedState, setLoadedState] = useState<LoadedAuthenticatedFileUrlState>({
     sourceUrl: "",
     url: null,
     error: false,
   });
+
+  if (activeKey !== previousActiveKey) {
+    setPreviousActiveKey(activeKey);
+    setLoadedState({ sourceUrl: "", url: null, error: false });
+  }
 
   useEffect(() => {
     if (!enabled || !sourceUrl) return;
@@ -56,7 +63,7 @@ export function useAuthenticatedFileUrl(
     };
   }, [enabled, sourceUrl]);
 
-  if (!enabled || !sourceUrl) return IDLE_STATE;
+  if (!activeKey) return IDLE_STATE;
   if (loadedState.sourceUrl !== sourceUrl) {
     return { url: null, loading: true, error: false };
   }

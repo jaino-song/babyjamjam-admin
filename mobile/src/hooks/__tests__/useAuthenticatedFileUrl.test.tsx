@@ -1,4 +1,4 @@
-import { act, renderHook, waitFor } from "@testing-library/react";
+import { act, cleanup, renderHook, waitFor } from "@testing-library/react";
 
 import { fetchAuthenticatedFileBlob } from "@/lib/files/authenticated-file";
 
@@ -26,6 +26,7 @@ describe("useAuthenticatedFileUrl", () => {
   });
 
   afterEach(() => {
+    cleanup();
     mockFetchAuthenticatedFileBlob.mockReset();
     Object.defineProperty(URL, "createObjectURL", {
       configurable: true,
@@ -52,5 +53,36 @@ describe("useAuthenticatedFileUrl", () => {
 
     act(() => unmount());
     expect(URL.revokeObjectURL).toHaveBeenCalledWith("blob:preview");
+  });
+
+  it("never re-exposes a revoked URL when reopening the same source", async () => {
+    let resolveReopen: ((blob: Blob) => void) | undefined;
+    mockFetchAuthenticatedFileBlob
+      .mockResolvedValueOnce(new Blob(["first"]))
+      .mockImplementationOnce(() => new Promise<Blob>((resolve) => {
+        resolveReopen = resolve;
+      }));
+    jest.mocked(URL.createObjectURL)
+      .mockReturnValueOnce("blob:first")
+      .mockReturnValueOnce("blob:second");
+
+    const { result, rerender } = renderHook(
+      ({ enabled }) => useAuthenticatedFileUrl("/api/file-storage/files/42/download", enabled),
+      { initialProps: { enabled: true } },
+    );
+    await waitFor(() => expect(result.current.url).toBe("blob:first"));
+
+    rerender({ enabled: false });
+    expect(result.current).toEqual({ url: null, loading: false, error: false });
+    expect(URL.revokeObjectURL).toHaveBeenCalledWith("blob:first");
+
+    rerender({ enabled: true });
+    expect(result.current).toEqual({ url: null, loading: true, error: false });
+    expect(result.current.url).not.toBe("blob:first");
+
+    await act(async () => {
+      resolveReopen?.(new Blob(["second"]));
+    });
+    await waitFor(() => expect(result.current.url).toBe("blob:second"));
   });
 });
