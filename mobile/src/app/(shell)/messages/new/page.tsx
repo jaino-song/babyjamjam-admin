@@ -844,13 +844,13 @@ function NewMessageForm({ initialBody, initialTemplateId, initialClientId, initi
       ...systemTemplatesQuery,
       data: serviceEndNoticeSystemTemplate,
     },
-  }[selectedTemplate.id];
+  }[selectedTemplateId];
   const templateReadinessError = selectedSystemTemplateQuery && !isBranchTemplateReady(selectedSystemTemplateQuery)
     ? BRANCH_TEMPLATE_READINESS_MESSAGE
     : null;
   const selectedTemplateVariables = selectedTemplate.variables;
   const recipientNameVariable = selectedTemplateVariables.find((variable) => variable.key === "name");
-  const isServiceEndNoticeSelected = selectedTemplate.id === SERVICE_END_NOTICE_TEMPLATE_ID;
+  const isServiceEndNoticeSelected = selectedTemplateId === SERVICE_END_NOTICE_TEMPLATE_ID;
   const renderedTemplateVariables = useMemo(() => {
     if (selectedTemplate.id === SERVICE_END_NOTICE_TEMPLATE_ID) {
       return selectedTemplateVariables.filter(
@@ -900,7 +900,12 @@ function NewMessageForm({ initialBody, initialTemplateId, initialClientId, initi
     : null;
 
   useEffect(() => {
-    if (!isServiceEndNoticeSelected || serviceEndSelectionKey === null || serviceEndClientId === null) {
+    if (
+      !isServiceEndNoticeSelected
+      || templateReadinessError
+      || serviceEndSelectionKey === null
+      || serviceEndClientId === null
+    ) {
       return;
     }
 
@@ -967,6 +972,7 @@ function NewMessageForm({ initialBody, initialTemplateId, initialClientId, initi
     serviceEndClientId,
     serviceEndRecipientPhone,
     serviceEndSelectionKey,
+    templateReadinessError,
   ]);
 
   const showVariableHint = useMemo(() => hasUnreplacedVariables(body), [body]);

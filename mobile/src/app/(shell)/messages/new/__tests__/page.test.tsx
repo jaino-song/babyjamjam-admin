@@ -727,6 +727,46 @@ describe("NewMessagePage", () => {
     expect(screen.getByRole("option", { name: "서비스 종료 안내" })).toBeInTheDocument();
   });
 
+  it.each([
+    {
+      name: "the system template catalog is still loading",
+      query: {
+        data: undefined,
+        isError: false,
+        isFetching: true,
+        isLoading: true,
+        isSuccess: false,
+      },
+    },
+    {
+      name: "the resolved catalog is missing the requested template",
+      query: {
+        data: [],
+        isError: false,
+        isFetching: false,
+        isLoading: false,
+        isSuccess: true,
+      },
+    },
+  ])("fails closed for a service end deep link when $name", async ({ query }) => {
+    mockSearchParams = new URLSearchParams({
+      template: "SERVICE_END_NOTICE",
+      body: "박서연 산모님 영수증 안내",
+      clientId: "7",
+    });
+    mockUseSystemTemplates.mockReturnValue(query);
+
+    const { container } = renderPage();
+    const submitButton = screen.getByRole("button", { name: "즉시 발송" });
+
+    expect(submitButton).toBeDisabled();
+    fireEvent.submit(container.querySelector("form")!);
+
+    expect(await screen.findByText("지점 기본 템플릿을 불러오는 중이라 발송할 수 없습니다.")).toBeInTheDocument();
+    expect(api.post).not.toHaveBeenCalledWith("/receipt-links/prepare", expect.anything());
+    expect(api.post).not.toHaveBeenCalledWith("/message-deliveries/sms", expect.anything());
+  });
+
   it("prepares and sends the service end notice with the selected client identity", async () => {
     (api.post as jest.Mock).mockImplementation((url: string) => {
       if (url === "/receipt-links/prepare") {

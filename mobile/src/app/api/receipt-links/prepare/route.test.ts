@@ -58,6 +58,13 @@ describe("POST /api/receipt-links/prepare", () => {
     expect(mockPost).not.toHaveBeenCalled();
   });
 
+  it("rejects unauthenticated requests before forwarding", async () => {
+    const response = await POST(createRequest({ clientId: 7 }, false));
+
+    expect(response.status).toBe(401);
+    expect(mockPost).not.toHaveBeenCalled();
+  });
+
   it("passes a known business rejection through untouched", async () => {
     mockPost.mockRejectedValue(
       new AxiosError("Bad Request", "ERR_BAD_REQUEST", undefined, undefined, {

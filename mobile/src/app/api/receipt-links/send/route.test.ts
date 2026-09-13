@@ -15,10 +15,10 @@ jest.mock("@/lib/api/server", () => ({
 
 const mockPost = serverAPIClient.post as jest.Mock;
 
-function createRequest(body: unknown) {
+function createRequest(body: unknown, authenticated = true) {
   return new NextRequest("http://localhost/api/receipt-links/send", {
     method: "POST",
-    headers: { cookie: "auth_token=token-1" },
+    headers: authenticated ? { cookie: "auth_token=token-1" } : {},
     body: JSON.stringify(body),
   });
 }
@@ -50,5 +50,23 @@ describe("POST /api/receipt-links/send", () => {
       },
       { headers: { Authorization: "Bearer token-1" } },
     );
+  });
+
+  it("rejects unauthenticated requests before forwarding", async () => {
+    const response = await POST(createRequest({ documentId: "doc-1" }, false));
+
+    expect(response.status).toBe(401);
+    expect(mockPost).not.toHaveBeenCalled();
+  });
+
+  it("rejects invalid identity pins before forwarding", async () => {
+    const response = await POST(createRequest({
+      documentId: "doc-1",
+      clientId: 0,
+      recipientPhone: "",
+    }));
+
+    expect(response.status).toBe(400);
+    expect(mockPost).not.toHaveBeenCalled();
   });
 });
