@@ -22,7 +22,11 @@ export { ActivityTimeline } from './ActivityTimeline';
 export { StatusBadge } from './StatusBadge';
 export type { StatusType } from './StatusBadge';
 export { ListPanel } from './ListPanel';
-export { DetailPanel } from './DetailPanel';
+export {
+  DetailPanel,
+  DetailPanelFooterActions,
+} from './DetailPanel';
+export type { DetailPanelFooterActionsProps } from './DetailPanel';
 export { DetailEmptyState } from './DetailEmptyState';
 export { SplitLayout, useSplitLayoutNav, useSplitLayoutSelection } from './SplitLayout';
 export type { SplitLayoutMode } from './SplitLayout';

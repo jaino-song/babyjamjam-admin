@@ -2,7 +2,7 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import { Users } from "lucide-react";
 import { DetailTabs } from "../DetailTabs";
 import { DetailEmptyState } from "../DetailEmptyState";
-import { DetailPanel } from "../DetailPanel";
+import { DetailPanel, DetailPanelFooterActions } from "../DetailPanel";
 import { SplitLayoutContext } from "../SplitLayoutContext";
 
 describe("DetailPanel", () => {
@@ -25,6 +25,22 @@ describe("DetailPanel", () => {
     expect(container.querySelector('main[data-slot="detail-panel-main"]')).not.toBeInTheDocument();
     expect(container.querySelector('div[data-slot="detail-panel-main"]')).toBeInTheDocument();
     expect(container.querySelector('footer[data-slot="detail-panel-footer"]')).toBeInTheDocument();
+  });
+
+  it("owns the shared footer action layout", () => {
+    render(
+      <DetailPanelFooterActions data-component="desktop_v3_tests_detail-panel_footer-actions">
+        <button type="button">저장</button>
+      </DetailPanelFooterActions>,
+    );
+
+    const actions = document.querySelector(
+      '[data-component="desktop_v3_tests_detail-panel_footer-actions"]',
+    );
+    expect(actions).toHaveAttribute("data-slot", "detail-panel-footer-actions");
+    expect(actions).toHaveAttribute("data-source-component", "DetailPanelFooterActions");
+    expect(actions).toHaveClass("ml-auto", "flex", "shrink-0", "flex-wrap", "justify-end");
+    expect(screen.getByRole("button", { name: "저장" })).toBeInTheDocument();
   });
 
   it("keeps the bottom spacer below the scroll region without overlaying content", () => {
