@@ -120,6 +120,78 @@ describe("SystemTemplateEditor", () => {
     expect(onPreviewMessageChange).toHaveBeenLastCalledWith("미리보기에 표시할 본문");
   });
 
+  it("keeps the editor invalid when a required custom variable token is missing", async () => {
+    const onDraftChange = jest.fn();
+
+    render(
+      <SystemTemplateEditor
+        template={buildTemplate({
+          content: "안녕하세요",
+          customVariables: [{ key: "client", label: "고객명", required: true }],
+        })}
+        onDraftChange={onDraftChange}
+      />,
+    );
+
+    replaceContent("변경된 본문");
+
+    await waitFor(() => {
+      expect(onDraftChange).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          isValid: false,
+          missingVariables: ["client"],
+        }),
+      );
+    });
+    expect(screen.getByRole("button", { name: "저장" })).toBeDisabled();
+  });
+
+  it("restores validity when a required custom variable token is added", async () => {
+    const template = buildTemplate({
+      content: "안녕하세요",
+      customVariables: [{ key: "client", label: "고객명", required: true }],
+    });
+
+    render(<SystemTemplateEditor template={template} />);
+
+    replaceContent("변경된 본문");
+    await waitFor(() => expect(screen.getByRole("button", { name: "저장" })).toBeDisabled());
+
+    replaceContent("변경된 본문 {{client}}");
+
+    await waitFor(() => expect(screen.getByRole("button", { name: "저장" })).toBeEnabled());
+    fireEvent.click(screen.getByRole("button", { name: "저장" }));
+
+    await waitFor(() => {
+      expect(mockMutateAsync).toHaveBeenCalledWith({
+        key: "GREETING",
+        content: "변경된 본문 {{client}}",
+        customVariables: [{ key: "client", label: "고객명", required: true }],
+      });
+    });
+  });
+
+  it("allows a dirty editor to save when an optional custom variable token is missing", async () => {
+    const template = buildTemplate({
+      content: "안녕하세요",
+      customVariables: [{ key: "client", label: "고객명", required: false }],
+    });
+
+    render(<SystemTemplateEditor template={template} />);
+    replaceContent("변경된 본문");
+
+    await waitFor(() => expect(screen.getByRole("button", { name: "저장" })).toBeEnabled());
+    fireEvent.click(screen.getByRole("button", { name: "저장" }));
+
+    await waitFor(() => {
+      expect(mockMutateAsync).toHaveBeenCalledWith({
+        key: "GREETING",
+        content: "변경된 본문",
+        customVariables: [{ key: "client", label: "고객명", required: false }],
+      });
+    });
+  });
+
   it("syncs pristine editor state from refreshed detail props and disables Save", async () => {
     const onPreviewMessageChange = jest.fn();
     const { rerender } = render(
@@ -157,7 +229,7 @@ describe("SystemTemplateEditor", () => {
     const initialTemplate = buildTemplate();
     const { rerender } = render(<SystemTemplateEditor template={initialTemplate} />);
 
-    replaceContent("사용자가 계속 편집 중인 본문");
+    replaceContent("사용자가 계속 편집 중인 본문 {{client}}");
 
     rerender(
       <SystemTemplateEditor
@@ -169,14 +241,14 @@ describe("SystemTemplateEditor", () => {
     );
 
     await waitFor(() => {
-      expect(readContent()).toBe("사용자가 계속 편집 중인 본문");
+      expect(readContent()).toBe("사용자가 계속 편집 중인 본문 {{client}}");
     });
     fireEvent.click(screen.getByRole("button", { name: "저장" }));
 
     await waitFor(() => {
       expect(mockMutateAsync).toHaveBeenCalledWith({
         key: "GREETING",
-        content: "사용자가 계속 편집 중인 본문",
+        content: "사용자가 계속 편집 중인 본문 {{client}}",
         customVariables: [{ key: "client", label: "고객명", required: true }],
       });
     });
