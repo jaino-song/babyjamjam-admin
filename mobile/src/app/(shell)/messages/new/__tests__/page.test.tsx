@@ -11,6 +11,7 @@ const FORM_CARD_CONTENT =
 const mockPush = jest.fn();
 const mockUseAllClients = jest.fn();
 const mockUseSystemTemplate = jest.fn();
+const mockUseSystemTemplates = jest.fn();
 const mockGetMessageSenderApproval = jest.fn();
 const mockUseBankAccountInfos = jest.fn();
 const mockUseVoucherPriceInfos = jest.fn();
@@ -83,12 +84,7 @@ jest.mock("@/hooks/use-message-templates", () => ({
 
 jest.mock("@/features/system-templates/hooks", () => ({
   useSystemTemplate: (key: string) => mockUseSystemTemplate(key),
-  useSystemTemplates: () => ({
-    data: ["GREETING", "INFO", "PRICE_INFO", "REMINDER", "SERVICE_INFO", "SURVEY", "THANKS"]
-      .map((k) => mockUseSystemTemplate(k)?.data)
-      .filter(Boolean),
-    isLoading: false,
-  }),
+  useSystemTemplates: () => mockUseSystemTemplates(),
 }));
 
 jest.mock("@/hooks/useClients", () => ({
@@ -246,6 +242,30 @@ describe("NewMessagePage", () => {
       }
 
       return { data: null };
+    });
+    mockUseSystemTemplates.mockReset();
+    mockUseSystemTemplates.mockReturnValue({
+      data: [
+        mockUseSystemTemplate("GREETING").data,
+        mockUseSystemTemplate("SERVICE_INFO").data,
+        {
+          id: "system-service-end-notice",
+          templateKey: "SERVICE_END_NOTICE",
+          name: "서비스 종료 안내",
+          description: "영수증 링크 안내",
+          content: "{{name}} 산모님 영수증: {{receiptUrl}}",
+          requiredVariables: [
+            { key: "name", label: "산모명", type: "string", required: true },
+            { key: "receiptUrl", label: "영수증 링크", type: "string", required: true },
+          ],
+          customVariables: [],
+          updatedAt: "2026-06-04T00:00:00.000Z",
+        },
+      ].filter(Boolean),
+      isError: false,
+      isFetching: false,
+      isLoading: false,
+      isSuccess: true,
     });
     (api.post as jest.Mock).mockReset();
     (api.post as jest.Mock).mockResolvedValue({ data: { result: { resultCode: 1, errorCount: 0 } } });
@@ -686,6 +706,65 @@ describe("NewMessagePage", () => {
     expect(screen.getByRole("option", { name: "상담 후 리마인더" })).toBeInTheDocument();
     expect(screen.getByRole("option", { name: "예약 완료" })).toBeInTheDocument();
     expect(screen.getByRole("option", { name: "모니터링 설문" })).toBeInTheDocument();
+  });
+
+  it("includes the server-provided service end notice in the template dropdown", async () => {
+    renderPage();
+
+    await openTemplateSelect();
+
+    expect(screen.getByRole("option", { name: "서비스 종료 안내" })).toBeInTheDocument();
+  });
+
+  it("prepares and sends the service end notice with the selected client identity", async () => {
+    (api.post as jest.Mock).mockImplementation((url: string) => {
+      if (url === "/receipt-links/prepare") {
+        return Promise.resolve({
+          data: {
+            clientId: 7,
+            clientName: "박서연",
+            recipientPhone: "01077778888",
+            documentId: "doc-7",
+            receiptUrl: "https://m.admin.babyjamjam.com/receipt/receipt-7",
+            expiresAt: "2026-09-24T00:00:00.000Z",
+          },
+        });
+      }
+      if (url === "/receipt-links/send") {
+        return Promise.resolve({ data: { jobId: "job-7", clientName: "박서연" } });
+      }
+      return Promise.resolve({ data: { result: { resultCode: 1, errorCount: 0 } } });
+    });
+    renderPage();
+
+    await openTemplateSelect();
+    fireEvent.click(screen.getByRole("option", { name: "서비스 종료 안내" }));
+
+    const recipientNameInput = screen.getByLabelText(/산모님 성함/);
+    fireEvent.focus(recipientNameInput);
+    fireEvent.change(recipientNameInput, { target: { value: "박서연" } });
+    fireEvent.click(await screen.findByText("박서연"));
+
+    await waitFor(() => {
+      expect(screen.getByLabelText("메시지 본문")).toHaveValue(
+        "박서연 산모님 영수증: https://m.admin.babyjamjam.com/receipt/receipt-7",
+      );
+      expect(screen.getByRole("button", { name: "즉시 발송" })).toBeEnabled();
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "즉시 발송" }));
+
+    await waitFor(() => {
+      expect(api.post).toHaveBeenCalledWith("/receipt-links/send", {
+        documentId: "doc-7",
+        clientId: 7,
+        recipientPhone: "01077778888",
+      });
+    });
+    expect(api.post).not.toHaveBeenCalledWith(
+      "/message-deliveries/sms",
+      expect.anything(),
+    );
   });
 
   it("loads a frontend fallback template that requires the client name variable", async () => {

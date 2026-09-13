@@ -3,7 +3,11 @@ import { z } from "zod";
 import { serverAPIClient } from "@/lib/api/server";
 import { getAuthHeaders, getAuthToken, getUpstreamErrorStatus, logUpstreamError, parseBody } from "@/lib/api/route-utils";
 
-const sendReceiptLinkSchema = z.object({ documentId: z.string().min(1) });
+const sendReceiptLinkSchema = z.object({
+  documentId: z.string().min(1),
+  clientId: z.number().int().positive().optional(),
+  recipientPhone: z.string().min(1).optional(),
+});
 
 export async function POST(request: NextRequest) {
   const token = getAuthToken(request);
