@@ -13,6 +13,12 @@ import {
 import { useDocumentCategories } from "@/hooks/use-document-categories";
 import { ListCard, ListItemRow, ListLoadMoreButton, ListLoadMoreSentinel } from "@/components/app/mobile-redesign/primitives";
 import { useListInfiniteScroll } from "@/hooks/useListInfiniteScroll";
+import { useAuthenticatedFileUrl } from "@/hooks/useAuthenticatedFileUrl";
+import {
+  downloadAuthenticatedFile,
+  fetchAuthenticatedFileBlob,
+  saveBlobAsFile,
+} from "@/lib/files/authenticated-file";
 import {
   DetailTabPills,
   InfoCard,
@@ -104,13 +110,22 @@ function FileKindIcon({ kind }: { kind: FileKind }) {
 
 function FilePreview({ doc }: { doc: Document }) {
   const kind = fileKindFromMime(doc.mimeType);
-  const url = getDownloadUrl(doc.id);
+  const sourceUrl = getDownloadUrl(doc.id);
+  const canPreview = kind === "pdf" || kind === "img";
+  const preview = useAuthenticatedFileUrl(sourceUrl, canPreview);
 
-  if (kind === "pdf") {
+  if (canPreview && preview.loading) {
+    return <InfoCard data-component="mobile_files_detail-panel_preview-loading" title="미리보기" padded>파일을 불러오는 중입니다.</InfoCard>;
+  }
+  if (canPreview && (preview.error || !preview.url)) {
+    return <InfoCard data-component="mobile_files_detail-panel_preview-error" title="미리보기" padded>파일 미리보기를 불러오지 못했습니다.</InfoCard>;
+  }
+
+  if (kind === "pdf" && preview.url) {
     return (
       <div className="info-card pdf-preview-card pop-up" data-component="mobile_files_detail-panel_preview-pdf">
         <iframe
-          src={url}
+          src={preview.url}
           title={`${doc.name} PDF 미리보기`}
           style={{
             display: "block",
@@ -124,12 +139,12 @@ function FilePreview({ doc }: { doc: Document }) {
       </div>
     );
   }
-  if (kind === "img") {
+  if (kind === "img" && preview.url) {
     return (
       <div className="info-card pdf-preview-card pop-up" data-component="mobile_files_detail-panel_preview-image">
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img
-          src={url}
+          src={preview.url}
           alt={doc.name}
           style={{
             width: "100%",
@@ -186,17 +201,34 @@ function FileDetailContent({
     misc: "muted",
   };
 
-  const handleDownload = () => {
-    window.open(getDownloadUrl(doc.id, true), "_blank");
-    setActionStatus(`${doc.name} 다운로드를 시작했습니다.`);
+  const handleDownload = async () => {
+    try {
+      await downloadAuthenticatedFile(getDownloadUrl(doc.id), doc.name);
+      setActionStatus(`${doc.name} 다운로드를 시작했습니다.`);
+    } catch {
+      setActionStatus("파일 다운로드에 실패했습니다.");
+    }
   };
   const handleShare = async () => {
-    const url = `${window.location.origin}${getDownloadUrl(doc.id)}`;
     try {
-      await navigator.clipboard.writeText(url);
-      setActionStatus("공유 링크를 복사했습니다.");
+      if (!navigator.share || !navigator.canShare || typeof File === "undefined") {
+        await downloadAuthenticatedFile(getDownloadUrl(doc.id), doc.name);
+        setActionStatus("공유를 지원하지 않아 파일을 다운로드했습니다.");
+        return;
+      }
+
+      const blob = await fetchAuthenticatedFileBlob(getDownloadUrl(doc.id));
+      const file = new File([blob], doc.name, { type: doc.mimeType });
+      if (!navigator.canShare({ files: [file] })) {
+        saveBlobAsFile(blob, doc.name);
+        setActionStatus("공유를 지원하지 않아 파일을 다운로드했습니다.");
+        return;
+      }
+
+      await navigator.share({ files: [file], title: doc.name });
+      setActionStatus("파일을 공유했습니다.");
     } catch {
-      setActionStatus("공유 링크 복사에 실패했습니다.");
+      setActionStatus("파일 공유에 실패했습니다.");
     }
   };
 
