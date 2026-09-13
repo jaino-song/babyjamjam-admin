@@ -1437,7 +1437,12 @@ function ContractDetailContent({
         avatar={<FileCheck2 size={24} strokeWidth={2.5} />}
         avatarTone="primary"
         title={isServiceRecord ? "제공기록지" : name}
-        badges={[{ label: tones.badge, tone: tones.badgeMini as BadgeTone }]}
+        badges={[
+          { label: tones.badge, tone: tones.badgeMini as BadgeTone },
+          metadata?.clientId
+            ? { label: "고객 등록 완료", tone: "green" }
+            : { label: "고객 등록 필요", tone: "burgundy" },
+        ]}
         menu={
           <DropdownMenu key={detailMenuKey} modal={false}>
             <DropdownMenuTrigger asChild>
