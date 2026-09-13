@@ -1,6 +1,8 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 
 import {
+  InfoCard,
+  InfoRow,
   MobileDetailActions,
   MobileDetailSheet,
   MobileDetailStack,
@@ -491,4 +493,43 @@ describe("MobileDetailActions", () => {
       ),
     ).toBeDisabled();
   });
+});
+
+describe("InfoRow", () => {
+  it("keeps the row mounted while only the value area shows a skeleton", () => {
+    const { container } = render(
+      <InfoCard data-component="mobile_contracts_detail-panel_info-card" title="이용자 정보">
+        <InfoRow label="연락처" value={null} isLoading />
+      </InfoCard>,
+    );
+
+    const row = container.querySelector(
+      '[data-component="mobile_contracts_detail-panel_info-card_row"]',
+    );
+    const value = container.querySelector(
+      '[data-component="mobile_contracts_detail-panel_info-card_row_value"]',
+    );
+
+    expect(row).toBeInTheDocument();
+    expect(screen.getByText("연락처")).toBeInTheDocument();
+    expect(value).toHaveAttribute("aria-busy", "true");
+    expect(
+      value?.querySelector(
+        '[data-component="mobile_contracts_detail-panel_info-card_row_value_skeleton"]',
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it.each([null, undefined, "", "   "])(
+    "renders a dash when the loaded value is empty (%s)",
+    (value) => {
+      render(
+        <InfoCard data-component="mobile_contracts_detail-panel_info-card" title="이용자 정보">
+          <InfoRow label="연락처" value={value} />
+        </InfoCard>,
+      );
+
+      expect(screen.getByText("-")).toBeInTheDocument();
+    },
+  );
 });

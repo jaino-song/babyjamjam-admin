@@ -105,6 +105,54 @@ async function routeSharedContractDependencies(page: Page): Promise<void> {
 test.use({ viewport: { width: 390, height: 844 } });
 
 test.describe('Contracts Page Skeleton Loading', () => {
+  test('keeps every detail info row mounted while its value is loading', async ({ page }) => {
+    let releaseDetail!: () => void;
+    const detailReady = new Promise<void>((resolve) => {
+      releaseDetail = resolve;
+    });
+
+    await page.route('**/api/access-token', async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ success: true }),
+      });
+    });
+    await page.route('**/api/eformsign/documents/doc-1', async (route) => {
+      await detailReady;
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify(MOCK_DOCUMENTS.documents[0]),
+      });
+    });
+    await routeContractsApi(page, {
+      getDocuments: () => MOCK_DOCUMENTS.documents,
+    });
+    await routeSharedContractDependencies(page);
+
+    await page.goto('/contracts');
+    const listRows = page.locator(
+      '[data-component="mobile_contracts_detail-sheet_stack_list-page_content_list-card_body_row"]',
+    );
+    await expect(listRows).toHaveCount(2, { timeout: 15000 });
+    await listRows.first().click();
+
+    const infoRows = page.locator(
+      '[data-component^="mobile_contracts_detail-panel_info-card"][data-source-component="InfoRow"]',
+    );
+    const valueSkeletons = page.locator(
+      '[data-component^="mobile_contracts_detail-panel_info-card"][data-component$="_value_skeleton"]',
+    );
+    await expect(infoRows).toHaveCount(18);
+    await expect(valueSkeletons).toHaveCount(18);
+
+    releaseDetail();
+
+    await expect(valueSkeletons).toHaveCount(0);
+    await expect(infoRows).toHaveCount(18);
+  });
+
   test('shows the current mobile loading shell while documents are pending', async ({ page }) => {
     let releaseAuth!: () => void;
     let releaseDocuments!: () => void;

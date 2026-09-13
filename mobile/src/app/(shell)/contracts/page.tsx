@@ -1229,6 +1229,7 @@ function ContractDetailContent({
   onFinalize,
   onOpenClient,
   isClientRegistrationPending,
+  isDetailLoading,
   onEditSend,
   onDeleteRequest,
 }: {
@@ -1241,6 +1242,7 @@ function ContractDetailContent({
   onFinalize?: (doc: EformsignDocument, metadata?: EformsignDocClientSummary) => void;
   onOpenClient: (doc: EformsignDocument, metadata?: EformsignDocClientSummary) => Promise<void>;
   isClientRegistrationPending: boolean;
+  isDetailLoading: boolean;
   onEditSend: (doc: EformsignDocument, metadata?: EformsignDocClientSummary) => void;
   onDeleteRequest: (doc: EformsignDocument) => void;
 }) {
@@ -1628,38 +1630,42 @@ function ContractDetailContent({
 
           <MobileDetailTabPanel data-component="mobile_contracts_detail-sheet_stack_detail-page_tab-panel" name="contracts" tabId="basic" activeTab={activeTab}>
             <InfoCard data-component="mobile_contracts_detail-panel_info-card" title="이용자 정보">
-              <InfoRow label="이용자" value={resolvedCustomerName} />
-              {customerPhone ? (
-                <InfoRow label="연락처" value={formatClientPhone(customerPhone) ?? customerPhone} />
-              ) : null}
-              <InfoRow label="제공인력" value={resolvedProviderName} />
+              <InfoRow label="이용자" value={resolvedCustomerName} isLoading={isDetailLoading} />
+              <InfoRow
+                label="연락처"
+                value={customerPhone ? formatClientPhone(customerPhone) ?? customerPhone : null}
+                isLoading={isDetailLoading}
+              />
+              <InfoRow label="제공인력" value={resolvedProviderName} isLoading={isDetailLoading} />
             </InfoCard>
             <InfoCard data-component="mobile_contracts_detail-panel_info-card-2" title="계약 정보" delay={60}>
               <InfoRow
                 label="계약서 종류"
                 value={<span style={{ fontFamily: "'SF Mono', monospace" }}>{contractNum}</span>}
+                isLoading={isDetailLoading}
               />
-              <InfoRow label="현재 단계" value={statusLabel} tone={tones.infoTone} />
-              <InfoRow label="생성일" value={formatDate(doc.created_date)} />
-              <InfoRow label="작성자" value={doc.creator?.name ?? "-"} />
+              <InfoRow label="현재 단계" value={statusLabel} tone={tones.infoTone} isLoading={isDetailLoading} />
+              <InfoRow label="생성일" value={formatDate(doc.created_date)} isLoading={isDetailLoading} />
+              <InfoRow label="작성자" value={doc.creator?.name} isLoading={isDetailLoading} />
               <InfoRow
                 label="문서 ID"
-                value={<span style={{ fontFamily: "'SF Mono', monospace", wordBreak: "break-all" }}>{doc.id || "-"}</span>}
+                value={doc.id ? <span style={{ fontFamily: "'SF Mono', monospace", wordBreak: "break-all" }}>{doc.id}</span> : null}
+                isLoading={isDetailLoading}
               />
             </InfoCard>
             <InfoCard data-component="mobile_contracts_detail-panel_info-card-5" title="서비스 정보" delay={120}>
-              <InfoRow label="계약 기간" value={serviceInfo.contractPeriod} />
-              <InfoRow label="서비스 일수" value={serviceInfo.serviceDays} />
-              <InfoRow label="계약 시작일" value={serviceInfo.contractStartDate} />
-              <InfoRow label="계약 종료일" value={serviceInfo.contractEndDate} />
-              <InfoRow label="본인부담금 수령일" value={serviceInfo.paymentReceiptDate} />
-              <InfoRow label="영수증 발행일" value={serviceInfo.receiptIssueDate} />
+              <InfoRow label="계약 기간" value={serviceInfo.contractPeriod} isLoading={isDetailLoading} />
+              <InfoRow label="서비스 일수" value={serviceInfo.serviceDays} isLoading={isDetailLoading} />
+              <InfoRow label="계약 시작일" value={serviceInfo.contractStartDate} isLoading={isDetailLoading} />
+              <InfoRow label="계약 종료일" value={serviceInfo.contractEndDate} isLoading={isDetailLoading} />
+              <InfoRow label="본인부담금 수령일" value={serviceInfo.paymentReceiptDate} isLoading={isDetailLoading} />
+              <InfoRow label="영수증 발행일" value={serviceInfo.receiptIssueDate} isLoading={isDetailLoading} />
             </InfoCard>
             <InfoCard data-component="mobile_contracts_detail-panel_info-card-6" title="서비스 비용" delay={180}>
-              <InfoRow label="서비스 비용" value={serviceInfo.servicePrice} />
-              <InfoRow label="정부지원금" value={serviceInfo.governmentGrant} />
-              <InfoRow label="본인부담금" value={serviceInfo.outOfPocket} />
-              <InfoRow label="바우처 가격표 연도" value={serviceInfo.voucherPriceYearLabel} />
+              <InfoRow label="서비스 비용" value={serviceInfo.servicePrice} isLoading={isDetailLoading} />
+              <InfoRow label="정부지원금" value={serviceInfo.governmentGrant} isLoading={isDetailLoading} />
+              <InfoRow label="본인부담금" value={serviceInfo.outOfPocket} isLoading={isDetailLoading} />
+              <InfoRow label="바우처 가격표 연도" value={serviceInfo.voucherPriceYearLabel} isLoading={isDetailLoading} />
             </InfoCard>
           </MobileDetailTabPanel>
 
@@ -2166,7 +2172,7 @@ export default function ContractsPage() {
     () => (Array.isArray(notificationLogsData) ? notificationLogsData : []),
     [notificationLogsData],
   );
-  const { data: selectedDocDetail } = useQuery({
+  const { data: selectedDocDetail, isPending: isSelectedDocDetailLoading } = useQuery({
     queryKey: ["eformsign-document-detail", selectedDoc?.id],
     queryFn: () => eformsignApi.getDocument(selectedDoc!.id),
     enabled: isAuthenticated && Boolean(selectedDoc?.id),
@@ -2560,6 +2566,7 @@ export default function ContractsPage() {
             onFinalize={openFinalize}
             onOpenClient={handleOpenClientFromContract}
             isClientRegistrationPending={isClientRegistrationPending}
+            isDetailLoading={isSelectedDocDetailLoading}
             onEditSend={handleEditSendFromContract}
             onDeleteRequest={setDeleteTargetDoc}
           />

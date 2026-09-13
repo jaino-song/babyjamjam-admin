@@ -3,6 +3,22 @@ import fs from "node:fs";
 const source = fs.readFileSync(require.resolve("./page"), "utf8");
 
 describe("mobile contracts action lifecycle", () => {
+  it("keeps every basic-detail info row mounted and skeletonizes its value during the initial detail request", () => {
+    const basicPanelStart = source.indexOf(
+      '<MobileDetailTabPanel data-component="mobile_contracts_detail-sheet_stack_detail-page_tab-panel"',
+    );
+    const signersPanelStart = source.indexOf(
+      '<MobileDetailTabPanel data-component="mobile_contracts_detail-sheet_stack_detail-page_tab-panel-2"',
+    );
+    const basicPanelSource = source.slice(basicPanelStart, signersPanelStart);
+
+    expect(source).toContain("isPending: isSelectedDocDetailLoading");
+    expect(source).toContain("isDetailLoading={isSelectedDocDetailLoading}");
+    expect(basicPanelSource.match(/<InfoRow/g)).toHaveLength(18);
+    expect(basicPanelSource.match(/isLoading=\{isDetailLoading\}/g)).toHaveLength(18);
+    expect(basicPanelSource).not.toContain("{customerPhone ? (");
+  });
+
   it("locks document deletion through the required cache refresh", () => {
     expect(source).toContain("const [isDeletingDocument, setIsDeletingDocument] = useState(false)");
     expect(source).toContain(
