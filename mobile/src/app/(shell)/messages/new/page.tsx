@@ -1234,29 +1234,19 @@ function NewMessageForm({ initialBody, initialTemplateId, initialClientId, initi
                         산모님 성함
                         {recipientNameVariable.required ? <span className={styles.required}>*</span> : null}
                       </label>
-                      {isPriceInfoTemplateSelected ? (
-                        <ClientAutocomplete
-                          data-component="mobile_messages_new_page_screen_form_scroll_list-card_body_form-card_content_recipient_name-row_autocomplete"
-                          inputId="recipient-name"
-                          value={null}
-                          onChange={handleClientRecipientSelect}
-                          inputValue={recipientNameInputValue}
-                          onInputValueChange={(value) => {
-                            setRecipientNameInputValue(value);
-                            handleTemplateVariableChange("name", value);
-                          }}
-                          placeholder="산모님 성함"
-                          label=""
-                        />
-                      ) : (
-                        <Input
-                          id="recipient-name"
-                          data-component="mobile_messages_new_page_screen_form_scroll_list-card_body_form-card_content_recipient_name-row_input"
-                          value={templateVariableValues.name ?? ""}
-                          placeholder="산모님 성함"
-                          onChange={(event) => handleTemplateVariableChange("name", event.target.value)}
-                        />
-                      )}
+                      <ClientAutocomplete
+                        data-component="mobile_messages_new_page_screen_form_scroll_list-card_body_form-card_content_recipient_name-row_autocomplete"
+                        inputId="recipient-name"
+                        value={null}
+                        onChange={handleClientRecipientSelect}
+                        inputValue={recipientNameInputValue}
+                        onInputValueChange={(value) => {
+                          setRecipientNameInputValue(value);
+                          handleTemplateVariableChange("name", value);
+                        }}
+                        placeholder="산모님 성함"
+                        label=""
+                      />
                     </div>
                   ) : null}
 
@@ -1268,7 +1258,7 @@ function NewMessageForm({ initialBody, initialTemplateId, initialClientId, initi
                     <label htmlFor="receiver" className={styles.formLabel}>
                       휴대 전화번호 <span className={styles.required}>*</span>
                     </label>
-                    {isPriceInfoTemplateSelected ? (
+                    {recipientNameVariable ? (
                       <Input
                         id="receiver"
                         type="tel"
