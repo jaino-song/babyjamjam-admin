@@ -29,13 +29,13 @@ function responseFor(
   } as Response;
 }
 
-function authRequiredResponse(): Response {
+function genericUnauthorizedResponse(): Response {
   return {
     ok: false,
     status: 401,
     headers: new Headers({ "content-type": "application/json" }),
-    clone: () => authRequiredResponse(),
-    json: async () => ({ code: "AUTH_REFRESH_REQUIRED" }),
+    clone: () => genericUnauthorizedResponse(),
+    json: async () => ({ code: "UPSTREAM_ERROR" }),
     arrayBuffer: async () => new ArrayBuffer(0),
   } as Response;
 }
@@ -145,7 +145,7 @@ describe("document binary validation", () => {
 
       binaryAttempts += 1;
       return binaryAttempts === 1
-        ? authRequiredResponse()
+        ? genericUnauthorizedResponse()
         : responseFor(PDF_BYTES, "application/pdf");
     });
     global.fetch = fetchMock;
@@ -173,7 +173,7 @@ describe("document binary validation", () => {
       }
 
       binaryAttempts += 1;
-      return authRequiredResponse();
+      return genericUnauthorizedResponse();
     });
 
     try {

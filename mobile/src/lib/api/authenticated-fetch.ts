@@ -3,13 +3,8 @@ import { refreshApplicationSession } from "@/lib/auth/session-refresh";
 type FetchInput = Parameters<typeof fetch>[0];
 type FetchInit = Parameters<typeof fetch>[1];
 
-async function requiresApplicationSessionRefresh(response: Response): Promise<boolean> {
-    if (response.status !== 401) return false;
-
-    const body = await response.clone().json().catch(() => null) as {
-        code?: string;
-    } | null;
-    return body?.code === "AUTH_REFRESH_REQUIRED";
+function requiresApplicationSessionRefresh(response: Response): boolean {
+    return response.status === 401;
 }
 
 function requestSignal(input: FetchInput, init?: FetchInit): AbortSignal | undefined {
@@ -33,7 +28,7 @@ export async function authenticatedFetch(
     const signal = requestSignal(input, init);
     const response = await fetch(input, init);
 
-    if (!await requiresApplicationSessionRefresh(response)) return response;
+    if (!requiresApplicationSessionRefresh(response)) return response;
 
     throwIfAborted(signal);
     await refreshApplicationSession();

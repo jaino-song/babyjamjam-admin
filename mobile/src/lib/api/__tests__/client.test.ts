@@ -3,10 +3,7 @@ import { AxiosError } from "axios";
 import { resetAuthorityState } from "@/lib/auth/authority-state";
 import { captureServiceRecordError } from "@/lib/observability/capture-service-record-error";
 
-import {
-    api,
-    isEformsignTokenEndpoint,
-} from "../client";
+import { api } from "../client";
 import { authenticatedFetch } from "../authenticated-fetch";
 
 jest.mock("@/lib/observability/capture-service-record-error", () => ({
@@ -19,36 +16,6 @@ jest.mock("@/lib/auth/authority-state", () => ({
 
 const mockCaptureServiceRecordError = jest.mocked(captureServiceRecordError);
 const mockResetAuthorityState = jest.mocked(resetAuthorityState);
-
-describe("isEformsignTokenEndpoint", () => {
-    it.each([
-        "/eformsign/documents",
-        "/eformsign/documents/doc-1",
-        "/eformsign/documents/doc-1/re-request",
-        "/eformsign-docs",
-        "/eformsign-docs/client-names",
-        "/eformsign-docs/dispatch-headless",
-        "/eformsign-docs/finalize-headless",
-        "/generate-document",
-        "/generate-staff-document",
-        "/generate-signature",
-        "/access-token",
-        "/refresh-access-token",
-    ])("classifies %s as eformsign token-backed", (url) => {
-        expect(isEformsignTokenEndpoint(url)).toBe(true);
-    });
-
-    it.each([
-        "/auth/login",
-        "/auth/refresh",
-        "/employees",
-        "/file-storage/files",
-        "/document-categories",
-        undefined,
-    ])("does not classify %s as eformsign token-backed", (url) => {
-        expect(isEformsignTokenEndpoint(url)).toBe(false);
-    });
-});
 
 describe("service-record API error monitoring", () => {
     const originalAdapter = api.defaults.adapter;
@@ -289,7 +256,7 @@ describe("application-session 401 recovery", () => {
         }
     });
 
-    it("recovers the application session and eformsign credential independently", async () => {
+    it("treats a generic eformsign BFF 401 as application auth without calling retired provider refresh", async () => {
         let eformsignRequestAttempts = 0;
         global.fetch = jest.fn(async () => ({
             ok: true,
@@ -299,20 +266,10 @@ describe("application-session 401 recovery", () => {
         } as unknown as Response));
 
         const adapter = jest.fn(async (config) => {
-            if (config.url === "/refresh-access-token") {
-                return {
-                    config,
-                    data: { success: true },
-                    headers: {},
-                    status: 200,
-                    statusText: "OK",
-                };
-            }
-
             eformsignRequestAttempts += 1;
             if (eformsignRequestAttempts === 1) {
                 throw new AxiosError(
-                    "Application session expired",
+                    "Revoked application session",
                     "ERR_BAD_RESPONSE",
                     config,
                     undefined,
@@ -321,22 +278,7 @@ describe("application-session 401 recovery", () => {
                         statusText: "Unauthorized",
                         headers: {},
                         config,
-                        data: { code: "AUTH_REFRESH_REQUIRED" },
-                    },
-                );
-            }
-            if (eformsignRequestAttempts === 2) {
-                throw new AxiosError(
-                    "Eformsign credential expired",
-                    "ERR_BAD_RESPONSE",
-                    config,
-                    undefined,
-                    {
-                        status: 401,
-                        statusText: "Unauthorized",
-                        headers: {},
-                        config,
-                        data: { code: "EFORMSIGN_TOKEN_EXPIRED" },
+                        data: { code: "UPSTREAM_ERROR" },
                     },
                 );
             }
@@ -356,8 +298,8 @@ describe("application-session 401 recovery", () => {
         });
 
         expect(global.fetch).toHaveBeenCalledTimes(1);
-        expect(eformsignRequestAttempts).toBe(3);
-        expect(adapter).toHaveBeenCalledWith(expect.objectContaining({
+        expect(eformsignRequestAttempts).toBe(2);
+        expect(adapter).not.toHaveBeenCalledWith(expect.objectContaining({
             url: "/refresh-access-token",
         }));
     });

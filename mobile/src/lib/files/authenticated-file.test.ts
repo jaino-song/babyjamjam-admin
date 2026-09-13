@@ -13,10 +13,7 @@ describe("authenticated file transport", () => {
 
   it("refreshes once before returning a protected file blob", async () => {
     const fetchMock = jest.spyOn(global, "fetch")
-      .mockResolvedValueOnce(Response.json(
-        { code: "AUTH_REFRESH_REQUIRED" },
-        { status: 401 },
-      ))
+      .mockResolvedValueOnce(Response.json({ code: "UPSTREAM_ERROR" }, { status: 401 }))
       .mockResolvedValueOnce(new Response(null, { status: 204 }))
       .mockResolvedValueOnce(new Response("file-bytes", {
         headers: { "content-type": "application/pdf" },

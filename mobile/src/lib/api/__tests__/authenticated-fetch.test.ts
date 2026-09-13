@@ -20,13 +20,7 @@ describe("authenticatedFetch", () => {
             const attempt = (attempts.get(url) ?? 0) + 1;
             attempts.set(url, attempt);
             if (attempt === 1) {
-                return Response.json(
-                    {
-                        code: "AUTH_REFRESH_REQUIRED",
-                        error: "Session refresh required",
-                    },
-                    { status: 401 },
-                );
+                return Response.json({ code: "UPSTREAM_ERROR" }, { status: 401 });
             }
             return Response.json({ success: true });
         });
@@ -49,10 +43,7 @@ describe("authenticatedFetch", () => {
     it("preserves the request abort signal when retrying a streaming response", async () => {
         const controller = new AbortController();
         const fetchMock = jest.spyOn(global, "fetch")
-            .mockResolvedValueOnce(Response.json(
-                { code: "AUTH_REFRESH_REQUIRED" },
-                { status: 401 },
-            ))
+            .mockResolvedValueOnce(Response.json({ code: "UPSTREAM_ERROR" }, { status: 401 }))
             .mockResolvedValueOnce(new Response(null, { status: 204 }))
             .mockResolvedValueOnce(new Response("data: streamed"));
 
@@ -69,10 +60,7 @@ describe("authenticatedFetch", () => {
         const controller = new AbortController();
         jest.spyOn(global, "fetch").mockImplementationOnce(async () => {
             controller.abort();
-            return Response.json(
-                { code: "AUTH_REFRESH_REQUIRED" },
-                { status: 401 },
-            );
+            return Response.json({ code: "UPSTREAM_ERROR" }, { status: 401 });
         });
 
         await expect(authenticatedFetch("/api/ai/chat/stream", {
@@ -93,10 +81,7 @@ describe("authenticatedFetch", () => {
         global.EventSource = TestEventSource as unknown as typeof EventSource;
 
         const fetchMock = jest.spyOn(global, "fetch")
-            .mockResolvedValueOnce(Response.json(
-                { code: "AUTH_REFRESH_REQUIRED" },
-                { status: 401 },
-            ))
+            .mockResolvedValueOnce(Response.json({ code: "UPSTREAM_ERROR" }, { status: 401 }))
             .mockResolvedValueOnce(new Response(null, { status: 204 }))
             .mockResolvedValueOnce(Response.json({ id: 42 }));
 
