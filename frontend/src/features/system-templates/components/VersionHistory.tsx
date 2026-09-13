@@ -30,11 +30,15 @@ import {
   useRollbackTemplate,
   useResetTemplate,
 } from '../hooks';
-import type { VersionDetail, VersionHistoryItem } from '../types';
+import type {
+  RollbackSystemTemplateResponse,
+  VersionDetail,
+  VersionHistoryItem,
+} from '../types';
 
 interface Props {
   templateKey: string;
-  onRollback?: () => void;
+  onRollback?: (template?: RollbackSystemTemplateResponse) => void;
 }
 
 export function VersionHistory({ templateKey, onRollback }: Props) {
@@ -51,7 +55,7 @@ export function VersionHistory({ templateKey, onRollback }: Props) {
   const { data: previewDetail, isLoading: isPreviewLoading } = useQuery<VersionDetail>({
     queryKey:
       previewVersion && templateKey
-        ? systemTemplateKeys.versionDetail(templateKey, previewVersion.versionNumber)
+        ? systemTemplateKeys.global.versionDetail(templateKey, previewVersion.versionNumber)
         : ['system-templates', 'version-detail', templateKey, 'disabled'],
     queryFn: async () => {
       if (!previewVersion) {
@@ -68,17 +72,17 @@ export function VersionHistory({ templateKey, onRollback }: Props) {
   });
 
   const handleRollback = async (versionNumber: number) => {
-    await rollbackMutation.mutateAsync({ key: templateKey, versionNumber });
+    const updatedTemplate = await rollbackMutation.mutateAsync({ key: templateKey, versionNumber });
     setConfirmDialog(null);
     setOpen(false);
-    onRollback?.();
+    onRollback?.(updatedTemplate);
   };
 
   const handleReset = async () => {
-    await resetMutation.mutateAsync(templateKey);
+    const updatedTemplate = await resetMutation.mutateAsync(templateKey);
     setConfirmDialog(null);
     setOpen(false);
-    onRollback?.();
+    onRollback?.(updatedTemplate);
   };
 
   return (

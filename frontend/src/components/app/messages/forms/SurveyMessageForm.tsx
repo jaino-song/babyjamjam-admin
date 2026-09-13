@@ -1,6 +1,5 @@
 "use client";
 import { useEffect, useState } from "react";
-import { surveyMsgTemplate } from "../templates/messageTemplate/surveyMsg";
 import { t } from "@/lib/i18n/translations";
 import { useFormStore } from "@/stores/form-store";
 import { useLocale } from "@/providers/LocaleProvider";
@@ -28,11 +27,22 @@ export const SurveyMessageForm = ({
   const locale = useLocale();
   const [messageOverride, setMessageOverride] = useState<string | null>(null);
   const { name, setName } = useFormStore();
-  const { data: systemTemplate } = useSystemTemplate("SURVEY");
+  const {
+    data: systemTemplate,
+    isError: isSystemTemplateError,
+    isFetching: isSystemTemplateFetching,
+    isLoading: isSystemTemplateLoading,
+  } = useSystemTemplate("SURVEY");
+  const templateReady = Boolean(
+    systemTemplate?.content
+    && !isSystemTemplateError
+    && !isSystemTemplateFetching
+    && !isSystemTemplateLoading,
+  );
   const normalizedName = name.trim();
   const templateMessage = systemTemplate?.content
     ? renderTemplate(systemTemplate.content, { name: normalizedName })
-    : surveyMsgTemplate({ name: normalizedName || "{{name}}" });
+    : "";
   const generatedMessage = messageOverride ?? templateMessage;
 
   const handleCopy = () => {
@@ -44,9 +54,7 @@ export const SurveyMessageForm = ({
   ];
 
   useEffect(() => {
-    if (generatedMessage) {
-      onPreviewMessageChange?.(generatedMessage);
-    }
+    onPreviewMessageChange?.(generatedMessage);
   }, [generatedMessage, onPreviewMessageChange]);
 
   const fields = renderLayout ? null : (
@@ -87,6 +95,7 @@ export const SurveyMessageForm = ({
       fields={fields}
       messageCard={messageCard}
       requiresRecipientName
+      templateReady={templateReady}
       renderLayout={renderLayout}
     />
   );

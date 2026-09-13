@@ -1,6 +1,5 @@
 "use client";
 import { useEffect, useState } from "react";
-import { reminderMsgTemplate } from "../templates/messageTemplate/reminderMsg";
 import { t } from "@/lib/i18n/translations";
 import { useFormStore } from "@/stores/form-store";
 import { useLocale } from "@/providers/LocaleProvider";
@@ -28,11 +27,22 @@ export const ReminderMessageForm = ({
   const locale = useLocale();
   const [messageOverride, setMessageOverride] = useState<string | null>(null);
   const { name, setName } = useFormStore();
-  const { data: systemTemplate } = useSystemTemplate("REMINDER");
+  const {
+    data: systemTemplate,
+    isError: isSystemTemplateError,
+    isFetching: isSystemTemplateFetching,
+    isLoading: isSystemTemplateLoading,
+  } = useSystemTemplate("REMINDER");
+  const templateReady = Boolean(
+    systemTemplate?.content
+    && !isSystemTemplateError
+    && !isSystemTemplateFetching
+    && !isSystemTemplateLoading,
+  );
   const normalizedName = name.trim();
   const templateMessage = systemTemplate?.content
     ? renderTemplate(systemTemplate.content, { name: normalizedName })
-    : reminderMsgTemplate({ name: normalizedName || "{{name}}" });
+    : "";
   const generatedMessage = messageOverride ?? templateMessage;
 
   const handleCopy = () => {
@@ -44,9 +54,7 @@ export const ReminderMessageForm = ({
   ];
 
   useEffect(() => {
-    if (generatedMessage) {
-      onPreviewMessageChange?.(generatedMessage);
-    }
+    onPreviewMessageChange?.(generatedMessage);
   }, [generatedMessage, onPreviewMessageChange]);
 
   const fields = renderLayout ? null : (
@@ -87,6 +95,7 @@ export const ReminderMessageForm = ({
       fields={fields}
       messageCard={messageCard}
       requiresRecipientName
+      templateReady={templateReady}
       renderLayout={renderLayout}
     />
   );

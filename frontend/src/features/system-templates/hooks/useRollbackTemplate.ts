@@ -11,8 +11,12 @@ export function useRollbackTemplate() {
     return useMutation({
         mutationFn: ({ key, versionNumber }: { key: string; versionNumber: number }) =>
             systemTemplateService.rollback(key, versionNumber).then((r) => r.data),
-        onSuccess: async () => {
-            await queryClient.invalidateQueries({ queryKey: systemTemplateKeys.all });
+        onSuccess: async (_, { key }) => {
+            await Promise.all([
+                queryClient.invalidateQueries({ queryKey: systemTemplateKeys.global.all }),
+                queryClient.invalidateQueries({ queryKey: systemTemplateKeys.global.detail(key) }),
+                queryClient.invalidateQueries({ queryKey: systemTemplateKeys.branchAll }),
+            ]);
         },
     });
 }

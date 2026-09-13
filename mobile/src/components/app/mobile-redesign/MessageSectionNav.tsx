@@ -67,7 +67,7 @@ export function MessageSectionNav({
   const router = useRouter();
   const user = useInitialUser();
   const isOwner = user?.role === "owner";
-  const { needsSenderApproval } = useMessagesPermissionGuard();
+  const { isLoading, needsSenderApproval } = useMessagesPermissionGuard();
 
   const sectionNavItems = useMemo(
     () =>
@@ -95,6 +95,7 @@ export function MessageSectionNav({
       items={sectionNavItems}
       activeId={activeId}
       onSelect={handleSectionSelect}
+      isLoading={isLoading}
     />
   );
 }

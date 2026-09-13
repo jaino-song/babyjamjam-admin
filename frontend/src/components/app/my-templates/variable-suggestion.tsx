@@ -111,6 +111,7 @@ export function createVariableSuggestion({
             );
         },
         command: ({ editor, range, props }) => {
+            if (!editor.isEditable) return;
             editor
                 .chain()
                 .focus()
@@ -123,6 +124,7 @@ export function createVariableSuggestion({
 
             return {
                 onStart: (props) => {
+                    if (!props.editor.isEditable) return;
                     component = new ReactRenderer(VariableSuggestionList, {
                         props: { items: props.items, command: props.command },
                         editor: props.editor,

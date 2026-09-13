@@ -65,25 +65,32 @@ function valueFromFieldRecord(record: UnknownRecord): string | null {
   return null;
 }
 
+function normalizeFieldId(value: string): string {
+  return value.replace(/[\s_\-:/.()[\]{}]+/g, "").toLowerCase();
+}
+
+function fieldIdTokens(record: UnknownRecord): string[] {
+  return [
+    stringFromUnknown(record.id),
+    stringFromUnknown(record.field_id),
+    stringFromUnknown(record.fieldId),
+    stringFromUnknown(record.name),
+    stringFromUnknown(record.label),
+    stringFromUnknown(record.field_name),
+    stringFromUnknown(record.fieldName),
+    stringFromUnknown(record.display_name),
+    stringFromUnknown(record.displayName),
+    stringFromUnknown(record.input_id),
+    stringFromUnknown(record.inputId),
+  ].filter((value): value is string => Boolean(value));
+}
+
 function documentFieldValue(doc: EformsignDocument, fieldIds: readonly string[]): string | null {
-  const normalizeFieldId = (value: string) => value.replace(/[\s_\-:/.()[\]{}]+/g, "").toLowerCase();
   const canUseReverseContains = (value: string) => /^[a-z0-9]+$/.test(value) && value.length >= 5;
   const normalizedIds = fieldIds.map(normalizeFieldId);
 
   for (const record of collectRecords(doc.fields)) {
-    const idTokens = [
-      stringFromUnknown(record.id),
-      stringFromUnknown(record.field_id),
-      stringFromUnknown(record.fieldId),
-      stringFromUnknown(record.name),
-      stringFromUnknown(record.label),
-      stringFromUnknown(record.field_name),
-      stringFromUnknown(record.fieldName),
-      stringFromUnknown(record.display_name),
-      stringFromUnknown(record.displayName),
-      stringFromUnknown(record.input_id),
-      stringFromUnknown(record.inputId),
-    ].filter((value): value is string => Boolean(value));
+    const idTokens = fieldIdTokens(record);
 
     if (idTokens.some((token) => {
       const normalizedToken = normalizeFieldId(token);
@@ -95,6 +102,56 @@ function documentFieldValue(doc: EformsignDocument, fieldIds: readonly string[])
       );
     })) {
       const value = valueFromFieldRecord(record);
+      if (value) return value;
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Exact-match variant of {@link documentFieldValue} that mirrors the desktop
+ * detail-card extraction: an identifier must equal an alias after
+ * normalization, and `detail_template_info` is searched as well. The loose
+ * matcher can pick a sibling field first (e.g. "본인부담금" hitting
+ * "본인부담금 수령일"), so display-only cards use this instead.
+ */
+export function documentFieldValueExact(
+  doc: Pick<EformsignDocument, "fields" | "detail_template_info">,
+  fieldIds: readonly string[],
+): string | null {
+  const normalizedIds = new Set(fieldIds.map(normalizeFieldId));
+  const nonInlineKeys = new Set([
+    "value",
+    "field_value",
+    "fieldValue",
+    "data",
+    "text",
+    "id",
+    "field_id",
+    "fieldId",
+    "name",
+    "label",
+    "field_name",
+    "fieldName",
+    "display_name",
+    "displayName",
+    "input_id",
+    "inputId",
+  ]);
+
+  for (const record of [
+    ...collectRecords(doc.fields),
+    ...collectRecords(doc.detail_template_info),
+  ]) {
+    if (fieldIdTokens(record).some((token) => normalizedIds.has(normalizeFieldId(token)))) {
+      const value = valueFromFieldRecord(record);
+      if (value) return value;
+    }
+
+    for (const [key, entryValue] of Object.entries(record)) {
+      if (nonInlineKeys.has(key) || !normalizedIds.has(normalizeFieldId(key))) continue;
+      const value = stringFromUnknown(entryValue);
       if (value) return value;
     }
   }

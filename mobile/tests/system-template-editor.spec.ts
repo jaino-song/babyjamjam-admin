@@ -39,6 +39,20 @@ async function mockTemplateApi(page: Page): Promise<void> {
       body: JSON.stringify(templateFixture),
     });
   });
+
+  // 템플릿 조회는 지점 유효 경로로 전환됐다(expectedBranchId 쿼리 포함).
+  await page.route('**/api/branch-system-templates/THANKS*', async (route: Route, request: Request) => {
+    if (request.method() !== 'GET') {
+      await route.fallback();
+      return;
+    }
+
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify(templateFixture),
+    });
+  });
 }
 
 test.describe('System Template Detail', () => {

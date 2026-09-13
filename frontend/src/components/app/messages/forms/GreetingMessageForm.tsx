@@ -1,6 +1,5 @@
 "use client";
 import { useEffect, useState } from "react";
-import { greetingMsgTemplate } from "../templates/messageTemplate/greetingMsg";
 import { t } from "@/lib/i18n/translations";
 import { useLocale } from "@/providers/LocaleProvider";
 import { useSystemTemplate } from "@/features/system-templates/hooks";
@@ -26,11 +25,20 @@ export const GreetingMessageForm = ({
   const locale = useLocale();
   const [generatedMessage, setGeneratedMessage] = useState("");
   const [isDirty, setIsDirty] = useState(false);
-  const { data: systemTemplate } = useSystemTemplate("GREETING");
+  const {
+    data: systemTemplate,
+    isError: isSystemTemplateError,
+    isFetching: isSystemTemplateFetching,
+    isLoading: isSystemTemplateLoading,
+  } = useSystemTemplate("GREETING");
+  const templateReady = Boolean(
+    systemTemplate?.content
+    && !isSystemTemplateError
+    && !isSystemTemplateFetching
+    && !isSystemTemplateLoading,
+  );
 
-  const initialMessage = systemTemplate?.content
-    ? renderTemplate(systemTemplate.content, {})
-    : greetingMsgTemplate();
+  const initialMessage = systemTemplate?.content ? renderTemplate(systemTemplate.content, {}) : "";
 
   const displayMessage = isDirty ? generatedMessage : initialMessage;
 
@@ -65,6 +73,7 @@ export const GreetingMessageForm = ({
       fields={null}
       messageCard={messageCard}
       requiresRecipientName={false}
+      templateReady={templateReady}
       renderLayout={renderLayout}
     />
   );

@@ -11,7 +11,7 @@ const BRANCH = "11111111-1111-1111-1111-111111111111";
 
 describe("ReceiptLinkAdminController", () => {
     let app: INestApplication;
-    const manualSendService = { send: jest.fn() };
+    const manualSendService = { send: jest.fn(), prepare: jest.fn() };
 
     beforeAll(async () => {
         // Stands in for both JwtGuard and TenantGuard: populates exactly what each real guard
@@ -72,6 +72,36 @@ describe("ReceiptLinkAdminController", () => {
         expect(manualSendService.send).toHaveBeenCalledWith({ branchId: BRANCH, documentId: "doc-ext-1", userId: "user-1" });
     });
 
+    it("POST /receipt-links/prepare returns the authoritative prepared payload", async () => {
+        manualSendService.prepare.mockResolvedValue({
+            clientId: 7,
+            clientName: "김산모",
+            recipientPhone: "01012345678",
+            documentId: "doc-ext-1",
+            receiptUrl: "https://m.admin.babyjamjam.com/receipt/efr_abc",
+            expiresAt: "2026-09-24T00:00:00.000Z",
+        });
+
+        const res = await request(app.getHttpServer())
+            .post("/receipt-links/prepare")
+            .send({ clientId: 7 })
+            .expect(200);
+
+        expect(res.body).toEqual({
+            clientId: 7,
+            clientName: "김산모",
+            recipientPhone: "01012345678",
+            documentId: "doc-ext-1",
+            receiptUrl: "https://m.admin.babyjamjam.com/receipt/efr_abc",
+            expiresAt: "2026-09-24T00:00:00.000Z",
+        });
+        expect(manualSendService.prepare).toHaveBeenCalledWith({
+            branchId: BRANCH,
+            clientId: 7,
+            userId: "user-1",
+        });
+    });
+
     it("maps NotFoundException({ reason }) from the service to 404 with that body", async () => {
         manualSendService.send.mockRejectedValue(new NotFoundException({ reason: "document_not_found" }));
         await request(app.getHttpServer())
@@ -93,5 +123,34 @@ describe("ReceiptLinkAdminController", () => {
     it("rejects an empty body with 400 under the production validation pipe (documentId is required)", async () => {
         await request(app.getHttpServer()).post("/receipt-links/send").send({}).expect(400);
         expect(manualSendService.send).not.toHaveBeenCalled();
+    });
+
+    it("rejects a non-positive client id before calling preparation", async () => {
+        await request(app.getHttpServer())
+            .post("/receipt-links/prepare")
+            .send({ clientId: 0 })
+            .expect(400);
+        expect(manualSendService.prepare).not.toHaveBeenCalled();
+    });
+
+    it("passes optional prepared identity pins to the send service", async () => {
+        manualSendService.send.mockResolvedValue({
+            jobId: "job-1",
+            scheduledFor: new Date("2026-09-03T00:00:00.000Z"),
+            clientName: "김산모",
+        });
+
+        await request(app.getHttpServer())
+            .post("/receipt-links/send")
+            .send({ documentId: "doc-ext-1", clientId: 7, recipientPhone: "01012345678" })
+            .expect(200);
+
+        expect(manualSendService.send).toHaveBeenCalledWith({
+            branchId: BRANCH,
+            documentId: "doc-ext-1",
+            userId: "user-1",
+            expectedClientId: 7,
+            expectedRecipientPhone: "01012345678",
+        });
     });
 });

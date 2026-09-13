@@ -218,3 +218,16 @@ describe("eformsignApi document download URLs", () => {
         );
     });
 });
+
+describe("eformsignApi.getDocumentClientCandidate", () => {
+    it("requests the mobile candidate proxy with an encoded document ID", async () => {
+        const { apiModule, mockGet } = await loadApiModule();
+        mockGet.mockResolvedValue({ data: { documentId: "doc/1" } });
+
+        await expect(apiModule.eformsignApi.getDocumentClientCandidate("doc/1"))
+            .resolves.toEqual({ documentId: "doc/1" });
+        expect(mockGet).toHaveBeenCalledWith(
+            "/eformsign/documents/doc%2F1/client-candidate",
+        );
+    });
+});

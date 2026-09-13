@@ -699,6 +699,12 @@ main[data-slot="main-content"]:has([data-slot="dashboard-page"]) > [data-slot="d
   display: flex;
   align-items: center;
   gap: 6px;
+  /* Both states reserve the same up-to-3-digit slot so the placeholder ("00")
+     and the loaded count produce identical pill widths; the pills do not
+     slide horizontally when the data lands. `border-box` sizing means the
+     12px horizontal padding has to be added to the 3ch digit slot. Counts of
+     1000+ are not reserved (their pill widens, by design). */
+  --filter-pill-count-slot: calc(3ch + 12px);
 }
 .filter-pill.active {
   background: hsl(var(--v3-primary));
@@ -723,12 +729,18 @@ main[data-slot="main-content"]:has([data-slot="dashboard-page"]) > [data-slot="d
   visibility: hidden;
 }
 .filter-pill-skeleton-count {
+  min-width: var(--filter-pill-count-slot);
+  text-align: center;
   padding: 1px 6px;
   border-radius: 999px;
   font-size: 0.62rem;
   font-weight: 800;
 }
 .filter-pill .count {
+  /* Same slot as `.filter-pill-skeleton-count`: changing this introduces a
+     horizontal jump between the loading and loaded pill rows. */
+  min-width: var(--filter-pill-count-slot);
+  text-align: center;
   background: rgba(0, 0, 0, 0.08);
   padding: 1px 6px;
   border-radius: 999px;
@@ -4459,7 +4471,7 @@ body.mobile-contracts-route .client-detail-badges .badge-mini {
 
 body.mobile-contracts-route .detail-body .detail-actions {
   margin-top: 0;
-  padding: 14px 16px;
+  padding: 14px 0;
 }
 
 body.mobile-contracts-route .detail-body {

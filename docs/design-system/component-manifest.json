@@ -757,13 +757,32 @@
         "file": "frontend/src/components/app/ui/SystemTemplateEditor.tsx",
         "exports": [
           "SystemTemplateEditor",
-          "SystemTemplateEditorProps"
+          "SystemTemplateEditorProps",
+          "SystemTemplateEditorDraft",
+          "SystemTemplateEditorHandle"
         ],
         "replaces": [
           "feature-local system template editor in pages"
         ],
         "requiredFor": [
           "system template editing"
+        ]
+      },
+      {
+        "name": "TemplateContentEditor",
+        "layer": "organism",
+        "import": "@/components/app/my-templates/template-content-editor",
+        "file": "frontend/src/components/app/my-templates/template-content-editor.tsx",
+        "exports": [
+          "TemplateContentEditor",
+          "TemplateContentEditorProps",
+          "TemplateContentEditorHandle"
+        ],
+        "replaces": [
+          "duplicated template body editors"
+        ],
+        "requiredFor": [
+          "system and user template content editing"
         ]
       },
       {
@@ -871,7 +890,8 @@
           "DETAIL_PANEL_FOOTER_CLASS_NAME",
           "DETAIL_PANEL_FOOTER_PROGRESS_CLASS_NAME",
           "DETAIL_PANEL_FOOTER_ACTIONS_CLASS_NAME",
-          "DetailPanel"
+          "DetailPanel",
+          "DetailPanelFooterActions"
         ],
         "replaces": [
           "custom detail containers"

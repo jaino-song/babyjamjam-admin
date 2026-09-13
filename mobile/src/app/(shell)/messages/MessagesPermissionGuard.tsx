@@ -67,7 +67,12 @@ export function MessagesPermissionGuard({ children }: { children: ReactNode }) {
     router.push("/messages/settings");
   };
 
-  if (isPermissionCheckLoading) {
+  // /messages/new renders immediately: its section nav and send action show
+  // skeletons until the sender approval resolves, so the full-screen launch
+  // screen only covers the other protected routes. Those still stay hidden
+  // while checking because unapproved users must never see content they
+  // cannot act on.
+  if (isPermissionCheckLoading && !isNewMessageRoute) {
     return <PwaLaunchScreen data-component="mobile_messages_permission-guard_loading" />;
   }
 

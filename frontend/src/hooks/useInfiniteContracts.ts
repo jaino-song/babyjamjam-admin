@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef } from "react";
+import { useCallback, useEffect, useMemo, useRef } from "react";
 import {
   type InfiniteData,
   useInfiniteQuery,
@@ -238,13 +238,23 @@ export function useInfiniteContracts({
   // for the 전체 tab (it is the first page's deduped batch size).
   const totalCount = query.data?.pages[0]?.total_rows ?? 0;
 
+  // A sentinel may fire while SSE invalidation or a snapshot restart is
+  // refreshing page 1. Keep that refresh alive instead of replacing it with
+  // a next-page request based on the stale offset/snapshot.
+  const { fetchNextPage: fetchQueryNextPage } = query;
+  const fetchNextPage = useCallback(
+    () => fetchQueryNextPage({ cancelRefetch: false }),
+    [fetchQueryNextPage],
+  );
+
   return {
     documents,
     allDocuments: documents,
     isLoading: query.isLoading,
     isFetchingNextPage: query.isFetchingNextPage,
+    isFetching: query.isFetching,
     hasNextPage: !!query.hasNextPage,
-    fetchNextPage: query.fetchNextPage,
+    fetchNextPage,
     totalCount,
     error: query.error,
     refetch: query.refetch,

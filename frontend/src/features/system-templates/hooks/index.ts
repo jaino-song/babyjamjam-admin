@@ -1,4 +1,9 @@
-export { useSystemTemplates, systemTemplateKeys } from './useSystemTemplates';
+export {
+  useSystemTemplates,
+  systemTemplateKeys,
+  type SystemTemplateScope,
+  type UseSystemTemplatesOptions,
+} from './useSystemTemplates';
 export { useSystemTemplate } from './useSystemTemplate';
 export { useUpdateSystemTemplate, type ApiErrorResponse } from './use-update-system-template';
 export { useTemplateVersions } from './useTemplateVersions';

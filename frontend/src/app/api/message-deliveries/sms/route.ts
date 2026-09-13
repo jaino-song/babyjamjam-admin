@@ -15,8 +15,10 @@ export async function POST(request: NextRequest) {
     }
 
     const body = await request.json();
+    const expectedBranchId = request.nextUrl.searchParams.get("expectedBranchId")?.trim();
     const response = await serverAPIClient.post("/message-deliveries/sms", body, {
       headers: getAuthHeaders(token),
+      ...(expectedBranchId ? { params: { expectedBranchId } } : {}),
     });
 
     if (response.status >= 400) {

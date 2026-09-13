@@ -27,4 +27,8 @@ export class GetAllSystemTemplatesUseCase {
 
     return allKeys.map(key => templatesByKey.get(key)!).filter(Boolean);
   }
+
+  async executeForBranch(branchId: string): Promise<SystemTemplateEntity[]> {
+    return this.repository.findAllByBranch(branchId);
+  }
 }

@@ -4,6 +4,7 @@ import {
     CreateEformsignDocRecordRequest,
     EformsignApiListResponse,
     EformsignAuthStatusResponse,
+    EformsignContractClientCandidateResponse,
     EformsignDeleteDocumentsResponse,
     EformsignDocClientSummary,
     EformsignDocumentsResponse,
@@ -445,6 +446,14 @@ export const eformsignApi = {
     },
     getDocument: async (documentId: string): Promise<EformsignDocumentsResponse["documents"][number]> => {
         const { data } = await api.get(`/eformsign/documents/${documentId}`);
+        return data;
+    },
+    getDocumentClientCandidate: async (
+        documentId: string,
+    ): Promise<EformsignContractClientCandidateResponse> => {
+        const { data } = await api.get(
+            `/eformsign/documents/${encodeURIComponent(documentId)}/client-candidate`,
+        );
         return data;
     },
     getDocumentDownloadUrl: (documentId: string): string =>

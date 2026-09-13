@@ -1,3 +1,9 @@
+import {
+  downloadValidatedBinary,
+  fetchValidatedBinary,
+  type ValidatedBinary,
+} from "@/lib/contracts/document-download";
+
 const RECEIPT_PNG_MIME_TYPE = "image/png";
 
 export const RECEIPT_SHARE_ERROR_MESSAGE =
@@ -24,7 +30,11 @@ export type ReceiptFileConstructor = new (
 ) => File;
 
 export type ReceiptShareOutcome = "shared" | "downloaded" | "cancelled" | "failed";
-export type ReceiptDownloadHandler = (url: string, fileName: string) => void;
+export type ReceiptDownloadHandler = (
+  url: string,
+  fileName: string,
+  binary?: ValidatedBinary,
+) => Promise<void> | void;
 
 interface ShareReceiptPngOptions {
   url: string;
@@ -32,6 +42,7 @@ interface ShareReceiptPngOptions {
   navigatorObject?: ReceiptShareNavigator;
   fileConstructor?: ReceiptFileConstructor;
   fetchImpl?: typeof fetch;
+  signal?: AbortSignal;
   onDownload: ReceiptDownloadHandler;
   onError: (message: string) => void;
 }
@@ -40,24 +51,20 @@ function isAbortError(error: unknown): boolean {
   return typeof error === "object" && error !== null && "name" in error && error.name === "AbortError";
 }
 
-/** Downloads a receipt with the customer-specific filename when file sharing is unavailable. */
-export function downloadReceiptPng(
+/** Downloads a validated receipt with the customer-specific filename. */
+export async function downloadReceiptPng(
   url: string,
   fileName: string,
   documentObject: Pick<Document, "createElement" | "body"> | undefined =
     typeof document === "undefined" ? undefined : document,
-): void {
-  if (!documentObject) {
-    if (typeof window !== "undefined") window.location.assign(url);
-    return;
-  }
-
-  const anchor = documentObject.createElement("a");
-  anchor.href = url;
-  anchor.download = fileName;
-  documentObject.body?.appendChild(anchor);
-  anchor.click();
-  anchor.remove();
+  binary?: ValidatedBinary,
+  fetchImpl?: typeof fetch,
+): Promise<void> {
+  await downloadValidatedBinary(url, fileName, "png", {
+    binary,
+    documentObject,
+    fetchImpl,
+  });
 }
 
 /**
@@ -71,16 +78,32 @@ export async function shareReceiptPng({
   navigatorObject,
   fileConstructor,
   fetchImpl = globalThis.fetch,
+  signal,
   onDownload,
   onError,
 }: ShareReceiptPngOptions): Promise<ReceiptShareOutcome> {
-  if (
-    !navigatorObject?.share ||
-    !navigatorObject.canShare ||
-    !fileConstructor
-  ) {
-    onDownload(url, fileName);
-    return "downloaded";
+  const downloadValidatedReceipt = async (binary?: ValidatedBinary): Promise<ReceiptShareOutcome> => {
+    try {
+      if (signal?.aborted) {
+        return "cancelled";
+      }
+      const validatedBinary = binary ?? await fetchValidatedBinary(url, "png", { fetchImpl, signal });
+      if (signal?.aborted) {
+        return "cancelled";
+      }
+      await onDownload(url, fileName, validatedBinary);
+      return "downloaded";
+    } catch (error) {
+      if (signal?.aborted || isAbortError(error)) {
+        return "cancelled";
+      }
+      onError(RECEIPT_SHARE_ERROR_MESSAGE);
+      return "failed";
+    }
+  };
+
+  if (!navigatorObject?.share || !navigatorObject.canShare || !fileConstructor) {
+    return downloadValidatedReceipt();
   }
 
   let canShareReceiptFile = false;
@@ -89,35 +112,33 @@ export async function shareReceiptPng({
       files: [new fileConstructor([""], fileName, { type: RECEIPT_PNG_MIME_TYPE })],
     });
   } catch {
-    onDownload(url, fileName);
-    return "downloaded";
+    return downloadValidatedReceipt();
   }
 
   if (!canShareReceiptFile) {
-    onDownload(url, fileName);
-    return "downloaded";
+    return downloadValidatedReceipt();
   }
 
   try {
-    const response = await fetchImpl(url, { credentials: "include" });
-    if (!response.ok) {
-      throw new Error(`Receipt PNG request failed with ${response.status}`);
+    const receiptBinary = await fetchValidatedBinary(url, "png", { fetchImpl, signal });
+    if (signal?.aborted) {
+      return "cancelled";
     }
-
-    const receiptBlob = await response.blob();
-    const receiptFile = new fileConstructor([receiptBlob], fileName, {
+    const receiptFile = new fileConstructor([receiptBinary.blob], fileName, {
       type: RECEIPT_PNG_MIME_TYPE,
     });
 
     if (!navigatorObject.canShare({ files: [receiptFile] })) {
-      onDownload(url, fileName);
-      return "downloaded";
+      return downloadValidatedReceipt(receiptBinary);
     }
 
+    if (signal?.aborted) {
+      return "cancelled";
+    }
     await navigatorObject.share({ files: [receiptFile] });
     return "shared";
   } catch (error) {
-    if (isAbortError(error)) {
+    if (signal?.aborted || isAbortError(error)) {
       return "cancelled";
     }
 

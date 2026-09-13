@@ -8,6 +8,8 @@ export type ClientWizardPrefill = Partial<{
   dueDate: string;
   address: string;
   phone: string;
+  primaryEmployeeId: number | null;
+  secondaryEmployeeId: number | null;
   type: string;
   duration: number | null;
   fullPrice: string;

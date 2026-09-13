@@ -6,4 +6,5 @@ export * from "./render-template.usecase";
 export * from "./reset-to-default.usecase";
 export * from "./rollback-to-version.usecase";
 export * from "./update-system-template.usecase";
+export * from "./update-branch-system-template.usecase";
 export * from "./validate-template-content.usecase";

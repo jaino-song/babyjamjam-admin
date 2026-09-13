@@ -6,8 +6,14 @@ import {
     errorResponse,
     getAuthHeaders,
     getAuthToken,
+    getUpstreamErrorStatus,
     unauthorizedResponse,
 } from "@/lib/api/route-utils";
+import {
+    BinaryDownloadError,
+    toBinaryBytes,
+    validateBinaryBytes,
+} from "@/lib/contracts/document-download";
 
 type EformsignFileType = "document" | "audit_trail";
 
@@ -28,6 +34,59 @@ function parsePageNumber(value: string | null): number | null {
     }
 
     return pageNumber;
+}
+
+function getResponseHeader(
+    headers: Record<string, unknown> | undefined,
+    name: string,
+): string | undefined {
+    if (!headers) {
+        return undefined;
+    }
+
+    const lowerName = name.toLowerCase();
+    const value = headers[lowerName] ?? headers[name] ?? headers[name.toUpperCase()];
+    return typeof value === "string" || typeof value === "number" ? String(value) : undefined;
+}
+
+function noStoreHeaders(contentType?: string): Headers {
+    const headers = new Headers({ "Cache-Control": "private, no-store" });
+    if (contentType) {
+        headers.set("Content-Type", contentType);
+    }
+    return headers;
+}
+
+function safeBinaryErrorResponse(message: string, status = 502): NextResponse {
+    return NextResponse.json(
+        { error: message },
+        {
+            status,
+            headers: { "Cache-Control": "private, no-store" },
+        },
+    );
+}
+
+function headErrorResponse(error: unknown): NextResponse {
+    const upstreamHeaders = (
+        error && typeof error === "object"
+            ? (error as { response?: { headers?: Record<string, unknown> } }).response?.headers
+            : undefined
+    );
+    const headers = noStoreHeaders(getResponseHeader(upstreamHeaders, "content-type"));
+    const retryAfter = getResponseHeader(upstreamHeaders, "retry-after");
+    const wwwAuthenticate = getResponseHeader(upstreamHeaders, "www-authenticate");
+    if (retryAfter) {
+        headers.set("Retry-After", retryAfter);
+    }
+    if (wwwAuthenticate) {
+        headers.set("WWW-Authenticate", wwwAuthenticate);
+    }
+
+    return new NextResponse(null, {
+        status: getUpstreamErrorStatus(error, 502),
+        headers,
+    });
 }
 
 async function extractSinglePdfPage(sourcePdf: Uint8Array, pageNumber: number): Promise<Uint8Array> {
@@ -53,7 +112,9 @@ export async function GET(
     const authToken = getAuthToken(request);
 
     if (!authToken) {
-        return unauthorizedResponse("Authentication required. Please log in.");
+        const response = unauthorizedResponse("Authentication required. Please log in.");
+        response.headers.set("Cache-Control", "private, no-store");
+        return response;
     }
 
     const { documentId } = await params;
@@ -74,21 +135,32 @@ export async function GET(
         );
 
         if (response.status >= 400) {
-            return NextResponse.json(
-                { error: `Failed to fetch eformsign document PDF (${response.status})` },
-                { status: response.status },
+            return safeBinaryErrorResponse(
+                "계약서 파일을 불러오지 못했습니다. 잠시 후 다시 시도해 주세요.",
+                response.status,
             );
         }
 
-        const contentType = String(response.headers["content-type"] || "application/pdf");
-        const responseBody = response.data instanceof ArrayBuffer
-            ? new Uint8Array(response.data)
-            : new Uint8Array(response.data as ArrayLike<number>);
+        const contentType = getResponseHeader(response.headers, "content-type") ?? "";
+        const responseBody = toBinaryBytes(response.data);
+        if (!responseBody) {
+            throw new BinaryDownloadError();
+        }
         if (isReceiptPng) {
-            if (!contentType.startsWith("image/png")) {
-                return NextResponse.json({ error: "영수증 이미지 생성에 실패했습니다." }, { status: 502 });
+            try {
+                validateBinaryBytes(responseBody, "png", contentType, {
+                    allowMissingContentType: false,
+                });
+            } catch (error) {
+                if (error instanceof BinaryDownloadError) {
+                    return safeBinaryErrorResponse("영수증 이미지 생성에 실패했습니다.");
+                }
+                throw error;
             }
-            return new NextResponse(responseBody, {
+            return new NextResponse(responseBody.buffer.slice(
+                responseBody.byteOffset,
+                responseBody.byteOffset + responseBody.byteLength,
+            ) as ArrayBuffer, {
                 status: response.status,
                 headers: {
                     "Content-Type": "image/png",
@@ -98,6 +170,7 @@ export async function GET(
             });
         }
 
+        validateBinaryBytes(responseBody, "pdf", contentType);
         const outputBody = requestedPage
             ? await extractSinglePdfPage(responseBody, requestedPage)
             : responseBody;
@@ -111,16 +184,77 @@ export async function GET(
         return new NextResponse(outputArrayBuffer, {
             status: response.status,
             headers: {
-                "Content-Type": requestedPage ? "application/pdf" : contentType,
+                "Content-Type": "application/pdf",
                 "Content-Disposition": `${dispositionType}; filename="${safeFilenamePart(documentId)}-${filenameSuffix}.pdf"`,
                 "Cache-Control": "private, no-store",
             },
         });
     } catch (error) {
         if (error instanceof RangeError) {
-            return NextResponse.json({ error: error.message }, { status: 400 });
+            return safeBinaryErrorResponse(error.message, 400);
         }
 
-        return errorResponse(error, "fetch eformsign document PDF");
+        if (error instanceof BinaryDownloadError) {
+            return safeBinaryErrorResponse("계약서 PDF를 불러오지 못했습니다.");
+        }
+
+        const response = errorResponse(error, "fetch eformsign document PDF");
+        response.headers.set("Cache-Control", "private, no-store");
+        return response;
+    }
+}
+
+/**
+ * Authenticated, bodyless availability probe used by the embedded mobile
+ * viewer. Receipt PNG URLs intentionally do not share this PDF HEAD path.
+ */
+export async function HEAD(
+    request: NextRequest,
+    { params }: { params: Promise<{ documentId: string }> },
+) {
+    const authToken = getAuthToken(request);
+
+    if (!authToken) {
+        return new NextResponse(null, {
+            status: 401,
+            headers: { "Cache-Control": "private, no-store" },
+        });
+    }
+
+    const { documentId } = await params;
+    const { searchParams } = new URL(request.url);
+    if (searchParams.get("format") === "receipt-png") {
+        return new NextResponse(null, {
+            status: 405,
+            headers: {
+                "Allow": "GET",
+                "Cache-Control": "private, no-store",
+            },
+        });
+    }
+
+    const fileType = normalizeFileType(searchParams.get("fileType"));
+
+    try {
+        const response = await serverAPIClient.head(
+            `/api/documents/${encodeURIComponent(documentId)}/download_files`,
+            {
+                params: { fileType },
+                headers: getAuthHeaders(authToken),
+            },
+        );
+        const contentType = getResponseHeader(response.headers, "content-type");
+        const headers = noStoreHeaders(contentType);
+        const contentLength = getResponseHeader(response.headers, "content-length");
+        if (contentLength) {
+            headers.set("Content-Length", contentLength);
+        }
+
+        return new NextResponse(null, {
+            status: response.status,
+            headers,
+        });
+    } catch (error) {
+        return headErrorResponse(error);
     }
 }

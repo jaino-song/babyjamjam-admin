@@ -108,6 +108,39 @@ describe("MessagesPermissionGuard", () => {
     expect(screen.queryByText("메시지 전송 권한이 필요합니다.")).not.toBeInTheDocument();
   });
 
+  it("renders /messages/new immediately instead of the launch screen while checking approval", async () => {
+    mockPathname = "/messages/new";
+    const pendingApproval = {
+      approvalStatus: "not_requested" as const,
+      isApproved: false,
+      canRequest: true,
+      requestedAt: null,
+      approvedAt: null,
+    };
+    let resolveApproval: (value: typeof pendingApproval) => void = () => undefined;
+    mockGetMessageSenderApproval.mockReturnValue(
+      new Promise<typeof pendingApproval>((resolve) => {
+        resolveApproval = resolve;
+      }),
+    );
+
+    renderGuard();
+
+    // The form shell (and its per-area skeletons) must be visible right away;
+    // the old full-screen logo loader is reserved for the other routes.
+    expect(screen.getByTestId("messages-route-child")).toBeInTheDocument();
+    expect(
+      screen.queryByRole("status", { name: "아가잼잼을 불러오는 중" }),
+    ).not.toBeInTheDocument();
+
+    resolveApproval(pendingApproval);
+
+    await waitFor(() => {
+      expect(screen.queryByText("메시지 전송 권한이 필요합니다.")).not.toBeInTheDocument();
+    });
+    expect(screen.getByTestId("messages-route-child")).toBeInTheDocument();
+  });
+
   it("routes to /all when the approval modal cancel button is clicked", async () => {
     renderGuard();
 

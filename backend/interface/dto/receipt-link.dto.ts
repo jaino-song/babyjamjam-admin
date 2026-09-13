@@ -1,4 +1,4 @@
-import { IsNotEmpty, IsOptional, IsString, MaxLength } from "class-validator";
+import { IsInt, IsNotEmpty, IsOptional, IsPositive, IsString, MaxLength } from "class-validator";
 
 export class VerifyReceiptBirthdayDto {
     // Optional, not required: an absent/empty birthday must reach the service's
@@ -19,4 +19,21 @@ export class SendReceiptLinkDto {
     @IsString()
     @IsNotEmpty()
     documentId!: string;
+
+    /** Optional identity pins used by the manual message form. */
+    @IsOptional()
+    @IsInt()
+    @IsPositive()
+    clientId?: number;
+
+    @IsOptional()
+    @IsString()
+    @MaxLength(32)
+    recipientPhone?: string;
+}
+
+export class PrepareReceiptLinkDto {
+    @IsInt()
+    @IsPositive()
+    clientId!: number;
 }

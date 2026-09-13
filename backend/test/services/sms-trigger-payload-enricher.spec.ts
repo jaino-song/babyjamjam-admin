@@ -1,4 +1,5 @@
 import { MessageTriggerRecipientType, MessageTriggerTemplateKey } from "domain/constants/message-trigger-catalog";
+import { SERVICE_END_NOTICE_DEFAULT_CONTENT } from "domain/constants/service-end-notice-message";
 import { MessageTriggerJobEntity } from "domain/entities/message-trigger-job.entity";
 import { FileStorageObjectNotFoundError } from "domain/ports/file-storage.port";
 import {
@@ -30,9 +31,23 @@ function makeJob(): MessageTriggerJobEntity {
 
 type SendSmsJobSpy = { sendSmsJob: (job: MessageTriggerJobEntity, config?: unknown) => Promise<boolean> };
 
+// resolveSystemTemplate reads the branch-effective template through
+// getByKeyForBranch and is fail-closed: there is no registry-default fallback
+// anymore. Tests that do not care about a specific override resolve the
+// registry default content so the effective template behaves like a branch
+// snapshot seeded from defaults.
+function defaultBranchTemplate() {
+    return {
+        id: "tpl_service_end_notice_default",
+        content: SERVICE_END_NOTICE_DEFAULT_CONTENT,
+        requiredVariables: [],
+        customVariables: [],
+    };
+}
+
 function makeService(registry: SmsTriggerPayloadEnricherRegistry) {
     const aligo = { sendSms: jest.fn() };
-    const templates = { getByKey: jest.fn() };
+    const templates = { getByKeyForBranch: jest.fn().mockResolvedValue(defaultBranchTemplate()) };
     const logRepository = { create: jest.fn(), update: jest.fn() };
     const service = new SmsTriggerDeliveryService(aligo as never, templates as never, logRepository as never, undefined, registry);
     const sendSmsJob = jest.spyOn(service as unknown as SendSmsJobSpy, "sendSmsJob").mockResolvedValue(true);
@@ -231,7 +246,7 @@ describe("SmsTriggerDeliveryService prepared delivery boundary", () => {
 
         const aligo = { sendSms: jest.fn() };
         const templates = {
-            getByKey: jest.fn().mockRejectedValue(new Error("no template override in this test")),
+            getByKeyForBranch: jest.fn().mockResolvedValue(defaultBranchTemplate()),
         };
         const logRepository = { save: jest.fn(), update: jest.fn() };
         const service = new SmsTriggerDeliveryService(
@@ -278,7 +293,7 @@ describe("SmsTriggerDeliveryService prepared delivery boundary", () => {
         });
         const service = new SmsTriggerDeliveryService(
             { sendSms: jest.fn() } as never,
-            { getByKey: jest.fn() } as never,
+            { getByKeyForBranch: jest.fn().mockResolvedValue(defaultBranchTemplate()) } as never,
             { save: jest.fn(), update: jest.fn() } as never,
             undefined,
             registry,
@@ -301,7 +316,7 @@ describe("SmsTriggerDeliveryService prepared delivery boundary", () => {
         });
         const service = new SmsTriggerDeliveryService(
             { sendSms: jest.fn() } as never,
-            { getByKey: jest.fn().mockRejectedValue(new Error("no template override in this test")) } as never,
+            { getByKeyForBranch: jest.fn().mockResolvedValue(defaultBranchTemplate()) } as never,
             { save: jest.fn(), update: jest.fn() } as never,
             undefined,
             registry,
@@ -327,7 +342,7 @@ describe("SmsTriggerDeliveryService prepared delivery boundary", () => {
 
         const service = new SmsTriggerDeliveryService(
             { sendSms: jest.fn() } as never,
-            { getByKey: jest.fn().mockRejectedValue(new Error("no template override in this test")) } as never,
+            { getByKeyForBranch: jest.fn().mockResolvedValue(defaultBranchTemplate()) } as never,
             { save: jest.fn(), update: jest.fn() } as never,
             undefined,
             registry,
@@ -379,9 +394,10 @@ describe("SmsTriggerDeliveryService.sendJob enricher vs duplicate-dispatch conve
         registry.register(MessageTriggerTemplateKey.SERVICE_END_NOTICE, { enrich });
 
         const aligo = { sendSms: jest.fn() };
-        // No override configured: resolveSystemTemplate falls back to the registry default
-        // content/required-variable set for SERVICE_END_NOTICE (name, receiptUrl).
-        const templates = { getByKey: jest.fn().mockRejectedValue(new Error("no template override in this test")) };
+        // No branch-specific override configured: the branch resolver returns the
+        // registry-default content/required-variable set for SERVICE_END_NOTICE
+        // (name, receiptUrl), which is exactly what the mock resolves.
+        const templates = { getByKeyForBranch: jest.fn().mockResolvedValue(defaultBranchTemplate()) };
         const logRepository = {
             // Simulates a concurrent dispatch that already converged: the persisted row comes
             // back as a different object (already "accepted") rather than the same pendingAttempt

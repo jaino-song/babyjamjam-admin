@@ -58,6 +58,33 @@ describe("POST /api/receipt-links/send", () => {
     );
   });
 
+  it("forwards optional identity pins for a prepared recipient", async () => {
+    mockPost.mockResolvedValue({
+      status: 200,
+      data: { jobId: "job-1", scheduledFor: "2026-09-03T00:00:00.000Z", clientName: "김산모" },
+    });
+
+    const response = await POST(createRequest({
+      documentId: "doc-1",
+      clientId: 7,
+      recipientPhone: "01012345678",
+    }));
+
+    expect(response.status).toBe(200);
+    expect(mockPost).toHaveBeenCalledWith(
+      "/receipt-links/send",
+      { documentId: "doc-1", clientId: 7, recipientPhone: "01012345678" },
+      { headers: { Authorization: "Bearer token-1" } },
+    );
+  });
+
+  it("rejects an invalid optional identity pin before forwarding", async () => {
+    const response = await POST(createRequest({ documentId: "doc-1", clientId: 0 }));
+
+    expect(response.status).toBe(400);
+    expect(mockPost).not.toHaveBeenCalled();
+  });
+
   it("requires authentication before forwarding", async () => {
     const response = await POST(createRequest({ documentId: "doc-1" }, false));
 

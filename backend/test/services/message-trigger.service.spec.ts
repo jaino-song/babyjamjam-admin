@@ -195,13 +195,20 @@ describe("MessageTriggerService", () => {
             ),
     });
 
-    const createSystemTemplateService = () => ({
-        getByKey: jest.fn().mockImplementation(async (templateKey: string) => ({
+    const createSystemTemplateService = () => {
+        const getTemplate = async (templateKey: string) => ({
             id: `template-${templateKey}`,
             templateKey,
             customVariables: [],
-        })),
-    });
+        });
+
+        return {
+            getByKey: jest.fn().mockImplementation(getTemplate),
+            getByKeyForBranch: jest.fn().mockImplementation(
+                async (_branchId: string, templateKey: string) => getTemplate(templateKey),
+            ),
+        };
+    };
 
     const createTemplateAutomationLock = (prisma?: unknown) => ({
         runExclusive: jest.fn().mockImplementation(async (
@@ -1080,7 +1087,7 @@ describe("MessageTriggerService", () => {
 
     it("rejects an active rule before persistence when its required custom variable has no automatic source", async () => {
         const { service, ruleRepository, systemTemplateService } = createService();
-        systemTemplateService.getByKey.mockResolvedValue({
+        systemTemplateService.getByKeyForBranch.mockResolvedValue({
             id: "template-service-info",
             templateKey: "SERVICE_INFO",
             customVariables: [
@@ -1114,7 +1121,7 @@ describe("MessageTriggerService", () => {
             templateKey: MessageTriggerTemplateKey.SERVICE_INFO,
         });
         ruleRepository.findById.mockResolvedValue(inactiveRule);
-        systemTemplateService.getByKey.mockResolvedValue({
+        systemTemplateService.getByKeyForBranch.mockResolvedValue({
             id: "template-service-info",
             templateKey: "SERVICE_INFO",
             customVariables: [
@@ -1396,7 +1403,7 @@ describe("MessageTriggerService", () => {
         });
         ruleRepository.findInactiveDefaultRules.mockResolvedValue([inactiveDefault]);
         messageSenderApprovalService.getApprovedBranches.mockResolvedValue(new Map([[branchId, approvedAt]]));
-        systemTemplateService.getByKey.mockResolvedValue({
+        systemTemplateService.getByKeyForBranch.mockResolvedValue({
             id: "template-service-info",
             templateKey: "SERVICE_INFO",
             customVariables: [

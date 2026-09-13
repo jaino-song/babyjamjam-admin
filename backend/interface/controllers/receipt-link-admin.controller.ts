@@ -2,7 +2,7 @@ import { Body, Controller, ForbiddenException, HttpCode, Post, Req, UseGuards } 
 import { JwtGuard } from "infrastructure/auth/jwt.guard";
 import { CurrentTenant, TenantGuard } from "infrastructure/tenant";
 import { ReceiptLinkManualSendService } from "application/services/receipt-link-manual-send.service";
-import { SendReceiptLinkDto } from "interface/dto/receipt-link.dto";
+import { PrepareReceiptLinkDto, SendReceiptLinkDto } from "interface/dto/receipt-link.dto";
 
 @Controller("receipt-links")
 @UseGuards(JwtGuard, TenantGuard)
@@ -23,6 +23,26 @@ export class ReceiptLinkAdminController {
         return this.manualSendService.send({
             branchId: tenant.branchId,
             documentId: dto.documentId,
+            userId: request.user?.userId ?? null,
+            ...(dto.clientId !== undefined ? { expectedClientId: dto.clientId } : {}),
+            ...(dto.recipientPhone !== undefined ? { expectedRecipientPhone: dto.recipientPhone } : {}),
+        });
+    }
+
+    /** Staff action: prepare the authoritative receipt URL and recipient identity without enqueueing a job. */
+    @Post("prepare")
+    @HttpCode(200)
+    async prepare(
+        @Body() dto: PrepareReceiptLinkDto,
+        @CurrentTenant() tenant: { branchId?: string },
+        @Req() request: { user?: { userId?: string } },
+    ) {
+        if (!tenant.branchId) {
+            throw new ForbiddenException({ reason: "branch_required" });
+        }
+        return this.manualSendService.prepare({
+            branchId: tenant.branchId,
+            clientId: dto.clientId,
             userId: request.user?.userId ?? null,
         });
     }

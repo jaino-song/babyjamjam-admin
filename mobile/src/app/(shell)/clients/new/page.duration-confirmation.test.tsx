@@ -2,6 +2,7 @@ import { act, fireEvent, render, screen, waitFor, within } from "@testing-librar
 
 import type { Client } from "@/lib/client/types";
 import { calcEndDateBusinessDays } from "@/lib/date/business-days";
+import { useClientDialogStore } from "@/stores/client-dialog-store";
 import { useClientWizardStore } from "@/stores/client-wizard-store";
 
 import NewClientPage from "./page";
@@ -13,6 +14,7 @@ let mockSearchParams = new URLSearchParams();
 let mockEditingClient: Client | undefined;
 let mockEditingContractDocument: object | undefined;
 let mockLatePrefill: Record<string, unknown> = {};
+let mockEmployees: Array<{ id: number; name: string; phone: string }> = [];
 const mockOutOfPocketPrices = [{ id: 1, duration: 15, fullPrice: "1" }];
 const mockEmptyPrices: never[] = [];
 
@@ -32,7 +34,7 @@ jest.mock("@/hooks/useClients", () => ({
 }));
 
 jest.mock("@/hooks/useEmployees", () => ({
-  useEmployees: () => ({ data: [], isLoading: false, refetch: jest.fn() }),
+  useEmployees: () => ({ data: mockEmployees, isLoading: false, refetch: jest.fn() }),
 }));
 
 jest.mock("@/hooks/useVoucherData", () => ({
@@ -163,6 +165,8 @@ describe("mobile client service date confirmation", () => {
     mockEditingClient = undefined;
     mockEditingContractDocument = undefined;
     mockLatePrefill = {};
+    mockEmployees = [];
+    act(() => useClientDialogStore.getState().reset());
     useClientWizardStore.getState().reset();
   });
 
@@ -322,5 +326,32 @@ describe("mobile client service date confirmation", () => {
     await act(async () => {
       finish({ id: 7 });
     });
+  });
+
+  it("hydrates employee IDs from a contract prefill and preserves a later user edit", async () => {
+    mockEmployees = [
+      { id: 17, name: "김관리", phone: "010-1111-2222" },
+      { id: 23, name: "이관리", phone: "010-3333-4444" },
+    ];
+    act(() => {
+      useClientDialogStore.getState().setPrefillClient({
+        name: "후보 고객",
+        primaryEmployeeId: 17,
+        secondaryEmployeeId: 23,
+      });
+    });
+
+    render(<NewClientPage />);
+
+    await waitFor(() => {
+      expect(useClientWizardStore.getState().primaryEmployeeId).toBe(17);
+      expect(useClientWizardStore.getState().secondaryEmployeeId).toBe(23);
+    });
+
+    act(() => {
+      useClientWizardStore.getState().setField("primaryEmployeeId", 23);
+    });
+    expect(useClientWizardStore.getState().primaryEmployeeId).toBe(23);
+    expect(useClientWizardStore.getState().secondaryEmployeeId).toBe(23);
   });
 });

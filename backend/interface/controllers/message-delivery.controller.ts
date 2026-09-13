@@ -8,6 +8,7 @@ import {
     Logger,
     NotFoundException,
     Post,
+    Query,
     ServiceUnavailableException,
     UseGuards,
 } from "@nestjs/common";
@@ -55,9 +56,16 @@ export class MessageDeliveryController {
         @CurrentTenant() tenant: { branchId?: string },
         @Body() dto: SendSmsMessageDto,
         @Headers("idempotency-key") requestId?: string,
+        @Query("expectedBranchId") expectedBranchId?: string,
     ) {
         const triggerType = dto.triggerType ?? "immediate";
         const branchId = tenant.branchId ?? "";
+        if (expectedBranchId !== undefined && expectedBranchId !== branchId) {
+            throw new ConflictException({
+                code: "BRANCH_CONTEXT_CHANGED",
+                message: "지점이 변경됐어요. 화면을 새로고침한 뒤 다시 시도해 주세요.",
+            });
+        }
         const resolvedDto = await this.resolveSmsRecipients(branchId, dto);
         this.logger.log(
             `[SMS] Request received: branchId=${branchId || "unknown"}, triggerType=${triggerType}, recipientCount=${this.countSmsRecipients(resolvedDto.receiver)}`,

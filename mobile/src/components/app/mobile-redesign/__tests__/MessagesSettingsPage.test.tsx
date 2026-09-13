@@ -310,7 +310,7 @@ describe("MessagesSettingsPage", () => {
     const { container } = renderPage();
 
     expect(
-      container.querySelector('[data-source-component="ListRowsSkeleton"]'),
+      container.querySelector('[data-source-component="SettingsRowsSkeleton"]'),
     ).toBeInTheDocument();
     const detailPane = container.querySelector('[data-slot="detail-pane"]');
     expect(detailPane).toHaveAttribute("aria-hidden", "true");

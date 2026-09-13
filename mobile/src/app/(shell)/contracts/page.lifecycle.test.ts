@@ -65,14 +65,20 @@ describe("mobile contracts action lifecycle", () => {
     );
   });
 
-  // Textual pin (audit-b fix round 1, I1): ContractDetailContent is shared with the
-  // 제공기록지 (service-record) detail — isServiceRecord only gated the sheet title, so
-  // "영수증 문자" still rendered there even though a service record has no receipt to send.
-  // Mutant that must fail: removing the isServiceRecord gate around the action entry.
-  it("gates the 영수증 문자 action out of the 제공기록지 (service-record) detail (I1)", () => {
+  // Textual pin (audit-b fix round 1, I1 + signed-gate): ContractDetailContent is
+  // shared with the 제공기록지 (service-record) detail — isServiceRecord gates the
+  // service-record case out, and the shared signed gate hides the action for
+  // documents the backend would still reject with contract_not_signed. Mutants that
+  // must fail: removing the isServiceRecord gate or the isContractReceiptSendable
+  // gate around the action entry.
+  it("gates the receipt-send action out of the 제공기록지 detail and unsigned documents (I1 + signed gate)", () => {
     expect(source).toContain(
-      "...(isServiceRecord\n                    ? []\n                    : [\n                        {\n                          label: \"영수증 문자\",",
+      "...(isServiceRecord ||\n                  !isContractReceiptSendable({\n                    displayStatus: doc.display_status,",
     );
+    expect(source).toContain(
+      "contractEndDate: doc.contract_end_date,\n                  })\n                    ? []\n                    : [",
+    );
+    expect(source).toContain('label: "영수증 문자 발송",');
   });
 
   it("routes both prefill flows through the shared contract transformer and keeps service dates on the existing normalizer", () => {
@@ -84,12 +90,25 @@ describe("mobile contracts action lifecycle", () => {
     expect(source).toContain("const startDate = normalizeDateToYymmdd(");
     expect(source).toContain("const endDate = normalizeDateToYymmdd(");
     expect(source).toContain("dueDate: yymmddPrefillToIso(clientPrefill.dueDate),");
-    expect(source).toContain("setPrefillClient(buildClientPrefillFromContract(doc));");
+    expect(source).toContain("useContractClientRegistration");
+    expect(source).not.toContain("setPrefillClient(buildClientPrefillFromContract(doc));");
     expect(source).toContain(
       "prefillContractCreation(buildContractCreationPrefillFromContract(doc, metadata, employees));",
     );
-    expect(source).toContain("url: receiptDownloadUrl,\n      fileName: receiptFilename,");
+    expect(source).toContain("url: receiptDownloadUrl,\n        fileName: receiptFilename,");
     expect(source).toContain("fileName: receiptFilename,");
-    expect(source).toContain("onDownload: (url, fileName) => downloadReceiptPng(url, fileName),");
+    expect(source).toContain(
+      "onDownload: (url, fileName, binary) => downloadReceiptPng(url, fileName, undefined, binary),",
+    );
+  });
+
+  it("cancels stale document binary actions when the selected contract changes", () => {
+    expect(source).toContain(
+      "const downloadControllers = downloadControllersRef.current;",
+    );
+    expect(source).toContain("downloadControllers.forEach((controller) => controller.abort());");
+    expect(source).toContain("receiptShareControllerRef.current?.abort();");
+    expect(source).toContain("receiptShareInFlightRef.current = false;");
+    expect(source).toContain("}, [doc.id]);");
   });
 });

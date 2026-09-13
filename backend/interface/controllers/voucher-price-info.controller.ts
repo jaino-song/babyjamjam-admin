@@ -15,8 +15,10 @@ import { FileInterceptor } from "@nestjs/platform-express";
 import { VoucherPriceInfoService } from "application/services/voucher-price-info.service";
 import { JwtGuard } from "infrastructure/auth/jwt.guard";
 import { OwnerOrAdminGuard } from "infrastructure/auth/owner-or-admin.guard";
+import { TenantGuard } from "infrastructure/tenant";
 import {
   BulkUpdateVoucherPriceInfoDto,
+  ContractVoucherPriceInfoDto,
   CreateVoucherPriceInfoDto,
   UpdateVoucherPriceInfoDto,
 } from "interface/dto/voucher-price-info.dto";
@@ -43,6 +45,29 @@ export class VoucherPriceInfoController {
     @UseGuards(JwtGuard, OwnerOrAdminGuard)
     list() {
         return this.voucherService.list();
+    }
+
+    /**
+     * Return the non-sensitive price fields used by contract detail cards.
+     * Contract viewers need a read-only, branch-authenticated view; mutation
+     * routes below remain owner/admin-only.
+     */
+    @Get("contract-view")
+    @UseGuards(JwtGuard, TenantGuard)
+    async contractView(@Query("year") year?: string): Promise<ContractVoucherPriceInfoDto[]> {
+        const parsedYear = parseOptionalInteger(year, "year", { min: 1900, max: 2200 });
+        const rows = await this.voucherService.list();
+
+        return rows
+            .filter((row) => parsedYear === undefined || row.year === parsedYear)
+            .map((row) => ({
+                type: row.type,
+                duration: row.duration?.toString() ?? null,
+                fullPrice: row.fullPrice,
+                grant: row.grant,
+                actualPrice: row.actualPrice,
+                year: row.year,
+            }));
     }
 
     @Get("type")

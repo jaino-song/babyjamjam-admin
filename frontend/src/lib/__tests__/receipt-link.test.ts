@@ -8,8 +8,11 @@ function errorWithData(data: unknown) {
   return { response: { data } };
 }
 
+// The 15-day expiry gate is gone (missing_end_date / service_period_expired are no
+// longer emitted), replaced by the backend's contract_not_signed gate enforced until
+// the customer signs.
 describe("RECEIPT_LINK_REASON_MESSAGES", () => {
-  it("declares exactly the seven backend reason codes, no more, no less", () => {
+  it("declares the backend receipt eligibility reason codes", () => {
     expect(Object.keys(RECEIPT_LINK_REASON_MESSAGES).sort()).toEqual(
       [
         "not_voucher_client",
@@ -17,9 +20,18 @@ describe("RECEIPT_LINK_REASON_MESSAGES", () => {
         "no_contract_document",
         "document_not_linked",
         "document_not_found",
+        "contract_not_signed",
         "pdf_unavailable",
+        "render_failed",
+        "upload_failed",
         "missing_phone",
       ].sort(),
+    );
+  });
+
+  it("uses the contract_not_signed copy shared with the mobile twin", () => {
+    expect(RECEIPT_LINK_REASON_MESSAGES.contract_not_signed).toBe(
+      "계약서 서명이 완료된 후 발송할 수 있습니다.",
     );
   });
 

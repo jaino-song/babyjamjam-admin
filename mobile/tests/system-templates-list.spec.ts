@@ -49,7 +49,19 @@ function mockSystemTemplatesApi(page: Page): Promise<void> {
       contentType: 'application/json',
       body: JSON.stringify(templatesFixture),
     });
-  });
+  }).then(() => page.route('**/api/branch-system-templates*', async (route: Route, request: Request) => {
+    // 목록 조회는 지점 유효 카탈로그 경로로 전환됐다(expectedBranchId 쿼리 포함).
+    if (request.method() !== 'GET') {
+      await route.fallback();
+      return;
+    }
+
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify(templatesFixture),
+    });
+  }));
 }
 
 test.describe('Templates List', () => {
@@ -102,6 +114,18 @@ test.describe('Templates List', () => {
         body: JSON.stringify([]),
       });
     });
+    await page.route('**/api/branch-system-templates*', async (route: Route, request: Request) => {
+      if (request.method() !== 'GET') {
+        await route.fallback();
+        return;
+      }
+
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify([]),
+      });
+    });
     await page.route('**/api/message-templates', async (route: Route, request: Request) => {
       if (request.method() !== 'GET') {
         await route.fallback();
@@ -140,6 +164,18 @@ test.describe('Templates List', () => {
       });
     });
     await page.route('**/api/system-templates/PRICE_INFO', async (route: Route, request: Request) => {
+      if (request.method() !== 'GET') {
+        await route.fallback();
+        return;
+      }
+
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify(templatesFixture[0]),
+      });
+    });
+    await page.route('**/api/branch-system-templates/PRICE_INFO*', async (route: Route, request: Request) => {
       if (request.method() !== 'GET') {
         await route.fallback();
         return;

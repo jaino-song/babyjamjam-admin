@@ -123,7 +123,7 @@ export type ReserveVerificationAttemptResult =
  * Infrastructure supplies a transaction-bound implementation, keeping Prisma out of the
  * domain and application contracts.
  */
-export type RefreshReceiptClientFields = (client: { birthday: string | null; endDate: Date | null }) =>
+export type RefreshReceiptClientFields = (client: { birthday: string | null }) =>
     Pick<CreateReceiptLinkTokenData, "expectedBirthdayHash" | "expiresAt">;
 
 export interface IReceiptLinkTokenIssuanceRepository {

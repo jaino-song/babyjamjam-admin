@@ -3,9 +3,15 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Document as PdfDocument, Page } from "react-pdf";
 
+import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
 
 import "@/lib/pdf-config";
+import {
+  BinaryDownloadError,
+  fetchValidatedBinary,
+  revokeObjectUrl,
+} from "@/lib/contracts/document-download";
 import { cn } from "@/lib/utils";
 
 interface ContractPdfViewerProps {
@@ -45,6 +51,13 @@ interface PendingScroll {
   top: number;
 }
 
+interface FallbackAttempt {
+  controller: AbortController;
+  placeholder: Window;
+  objectUrl: string | null;
+  handedOff: boolean;
+}
+
 const MIN_ZOOM = 1;
 const MAX_ZOOM = 4;
 const MAX_RENDER_DPR = 3;
@@ -57,6 +70,7 @@ const DOCUMENT_PIXEL_BUDGET = 24_000_000;
 const PAGE_GAP_PX = 16;
 const PAGE_VERTICAL_PADDING_PX = 40;
 const WHEEL_ZOOM_SENSITIVITY = 0.002;
+const FALLBACK_OBJECT_URL_REVOKE_DELAY_MS = 30_000;
 
 interface CalculateRenderDprOptions {
   baseWidth: number;
@@ -93,6 +107,34 @@ function getTouchDistance(firstTouch: Touch, secondTouch: Touch): number {
     secondTouch.clientX - firstTouch.clientX,
     secondTouch.clientY - firstTouch.clientY
   );
+}
+
+function openFallbackPlaceholder(): Window | null {
+  if (typeof window === "undefined" || typeof window.open !== "function") {
+    return null;
+  }
+
+  // Safari blocks a popup opened after an async fetch, so create the tab in
+  // the click handler and remove its opener before navigating it later.
+  let placeholder: Window | null = null;
+  try {
+    placeholder = window.open("about:blank", "_blank");
+    if (!placeholder) {
+      return null;
+    }
+
+    placeholder.opener = null;
+    if (placeholder.opener !== null) {
+      throw new BinaryDownloadError();
+    }
+
+    return placeholder;
+  } catch {
+    if (placeholder && !placeholder.closed) {
+      placeholder.close();
+    }
+    return null;
+  }
 }
 
 export function calculateRenderDpr({
@@ -148,12 +190,18 @@ export function ContractPdfViewer({
   const documentLoadIdRef = useRef(0);
   const pendingScrollRef = useRef<PendingScroll | null>(null);
   const scrollFrameRef = useRef<number | null>(null);
+  const previewRequestIdRef = useRef(0);
+  const previewObjectUrlRef = useRef<string | null>(null);
+  const fallbackAttemptRef = useRef<FallbackAttempt | null>(null);
   const [numPages, setNumPages] = useState(0);
   const [baseWidth, setBaseWidth] = useState(0);
   const [pageAspectRatios, setPageAspectRatios] = useState<number[]>([]);
   const [contentHeight, setContentHeight] = useState(0);
   const [renderedPageCount, setRenderedPageCount] = useState(0);
   const [zoom, setZoom] = useState(MIN_ZOOM);
+  const [validatedFileUrl, setValidatedFileUrl] = useState<string | null>(null);
+  const [previewStatus, setPreviewStatus] = useState<"loading" | "ready" | "error">("loading");
+  const [retryAttempt, setRetryAttempt] = useState(0);
   const pageAspectRatioSummary = useMemo(() => {
     const hasEveryPageRatio =
       numPages > 0 && pageAspectRatios.length === numPages;
@@ -201,6 +249,106 @@ export function ContractPdfViewer({
       setRenderedPageCount(renderedPagesRef.current.size);
     }
   }, []);
+
+  const retryPreview = useCallback(() => {
+    setRetryAttempt((attempt) => attempt + 1);
+  }, []);
+
+  const cleanupFallbackAttempt = useCallback((attempt: FallbackAttempt) => {
+    const objectUrl = attempt.objectUrl;
+    attempt.objectUrl = null;
+    if (objectUrl) {
+      revokeObjectUrl(objectUrl);
+    }
+
+    if (!attempt.handedOff && !attempt.placeholder.closed) {
+      attempt.placeholder.close();
+    }
+
+    if (fallbackAttemptRef.current === attempt) {
+      fallbackAttemptRef.current = null;
+    }
+  }, []);
+
+  useEffect(() => {
+    const requestId = previewRequestIdRef.current + 1;
+    previewRequestIdRef.current = requestId;
+    const controller = new AbortController();
+    let createdObjectUrl: string | null = null;
+    const previousObjectUrl = previewObjectUrlRef.current;
+    previewObjectUrlRef.current = null;
+    if (previousObjectUrl) {
+      revokeObjectUrl(previousObjectUrl);
+    }
+
+    setValidatedFileUrl(null);
+    setPreviewStatus("loading");
+    renderedPagesRef.current.clear();
+    setNumPages(0);
+    setPageAspectRatios([]);
+    setRenderedPageCount(0);
+    setContentHeight(0);
+    pinchGestureRef.current = null;
+    zoomRef.current = MIN_ZOOM;
+    setZoom(MIN_ZOOM);
+
+    void (async () => {
+      try {
+        const headResponse = await fetch(fileUrl, {
+          method: "HEAD",
+          credentials: "include",
+          cache: "no-store",
+          signal: controller.signal,
+        });
+        if (!headResponse.ok) {
+          throw new BinaryDownloadError();
+        }
+
+        const binary = await fetchValidatedBinary(fileUrl, "pdf", {
+          signal: controller.signal,
+        });
+        if (
+          controller.signal.aborted ||
+          previewRequestIdRef.current !== requestId
+        ) {
+          return;
+        }
+
+        if (typeof URL === "undefined" || typeof URL.createObjectURL !== "function") {
+          throw new BinaryDownloadError();
+        }
+
+        createdObjectUrl = URL.createObjectURL(binary.blob);
+        previewObjectUrlRef.current = createdObjectUrl;
+        setValidatedFileUrl(createdObjectUrl);
+        setPreviewStatus("ready");
+      } catch (error) {
+        if (
+          controller.signal.aborted ||
+          previewRequestIdRef.current !== requestId ||
+          (typeof error === "object" && error !== null && "name" in error && error.name === "AbortError")
+        ) {
+          return;
+        }
+
+        setValidatedFileUrl(null);
+        setPreviewStatus("error");
+      }
+    })();
+
+    return () => {
+      controller.abort();
+      const fallbackAttempt = fallbackAttemptRef.current;
+      fallbackAttempt?.controller.abort();
+      if (fallbackAttempt) {
+        cleanupFallbackAttempt(fallbackAttempt);
+      }
+      if (createdObjectUrl && previewObjectUrlRef.current === createdObjectUrl) {
+        previewObjectUrlRef.current = null;
+        revokeObjectUrl(createdObjectUrl);
+      }
+    };
+  }, [cleanupFallbackAttempt, fileUrl, retryAttempt]);
 
   useEffect(() => {
     return () => {
@@ -479,6 +627,119 @@ export function ContractPdfViewer({
       });
   }, []);
 
+  const handleFallbackOpen = useCallback((event: React.MouseEvent<HTMLAnchorElement>) => {
+    event.preventDefault();
+    if (fallbackAttemptRef.current) {
+      return;
+    }
+
+    const placeholder = openFallbackPlaceholder();
+    if (!placeholder) {
+      setPreviewStatus("error");
+      return;
+    }
+
+    const controller = new AbortController();
+    const requestId = previewRequestIdRef.current;
+    const attempt: FallbackAttempt = {
+      controller,
+      placeholder,
+      objectUrl: null,
+      handedOff: false,
+    };
+    fallbackAttemptRef.current = attempt;
+    void fetchValidatedBinary(fallbackHref, "pdf", { signal: controller.signal })
+      .then((binary) => {
+        if (
+          controller.signal.aborted ||
+          previewRequestIdRef.current !== requestId ||
+          fallbackAttemptRef.current !== attempt
+        ) {
+          cleanupFallbackAttempt(attempt);
+          return;
+        }
+
+        if (typeof URL === "undefined" || typeof URL.createObjectURL !== "function") {
+          throw new BinaryDownloadError();
+        }
+
+        if (attempt.placeholder.closed) {
+          throw new BinaryDownloadError();
+        }
+
+        const objectUrl = URL.createObjectURL(binary.blob);
+        attempt.objectUrl = objectUrl;
+        try {
+          attempt.placeholder.location.replace(objectUrl);
+        } catch {
+          throw new BinaryDownloadError();
+        }
+
+        attempt.handedOff = true;
+        attempt.objectUrl = null;
+        if (fallbackAttemptRef.current === attempt) {
+          fallbackAttemptRef.current = null;
+        }
+        setTimeout(() => {
+          revokeObjectUrl(objectUrl);
+        }, FALLBACK_OBJECT_URL_REVOKE_DELAY_MS);
+      })
+      .catch((error: unknown) => {
+        cleanupFallbackAttempt(attempt);
+        if (
+          controller.signal.aborted ||
+          previewRequestIdRef.current !== requestId ||
+          (typeof error === "object" && error !== null && "name" in error && error.name === "AbortError")
+        ) {
+          return;
+        }
+        setPreviewStatus("error");
+      })
+      .finally(() => {
+        if (fallbackAttemptRef.current === attempt) {
+          fallbackAttemptRef.current = null;
+        }
+      });
+  }, [cleanupFallbackAttempt, fallbackHref]);
+
+  const renderPdfError = (
+    <div
+      className="contract-pdf-status contract-pdf-status-error"
+      data-slot="contract-pdf-status"
+      role="alert"
+    >
+      <span>PDF 미리보기를 불러오지 못했습니다.</span>
+      <Button
+        type="button"
+        variant="outline"
+        size="sm"
+        data-component={`${dataComponent}_retry`}
+        onClick={retryPreview}
+      >
+        다시 시도
+      </Button>
+      <a
+        href={fallbackHref}
+        target="_blank"
+        rel="noopener noreferrer"
+        onClick={handleFallbackOpen}
+      >
+        새 탭에서 열기
+      </a>
+    </div>
+  );
+
+  const renderPdfLoading = (
+    <div
+      className="contract-pdf-status"
+      data-slot="contract-pdf-status"
+      role="status"
+      aria-label="PDF를 불러오는 중입니다"
+    >
+      <Spinner size="lg" className="contract-pdf-spinner" />
+    </div>
+  );
+
   return (
     <div
       ref={containerRef}
@@ -495,83 +756,67 @@ export function ContractPdfViewer({
         role="region"
         tabIndex={0}
       >
-        <PdfDocument
-          className="contract-pdf-document"
-          data-slot="contract-pdf-document"
-          file={fileUrl}
-          loading={
-            <div
-              className="contract-pdf-status"
-              data-slot="contract-pdf-status"
-              role="status"
-              aria-label="PDF를 불러오는 중입니다"
-            >
-              <Spinner size="lg" className="contract-pdf-spinner" />
-            </div>
-          }
-          error={
-            <div
-              className="contract-pdf-status contract-pdf-status-error"
-              data-slot="contract-pdf-status"
-              role="alert"
-            >
-              <span>PDF 미리보기를 불러오지 못했습니다.</span>
-              <a href={fallbackHref} target="_blank" rel="noopener noreferrer">
-                새 탭에서 열기
-              </a>
-            </div>
-          }
-          onLoadSuccess={handleLoadSuccess}
-        >
-          <div
-            className="contract-pdf-sizer"
-            data-slot="contract-pdf-sizer"
-            style={{
-              width: baseWidth * zoom,
-              height: baseContentHeight * zoom,
-            }}
+        {previewStatus === "error" || !validatedFileUrl ? (
+          previewStatus === "error" ? renderPdfError : renderPdfLoading
+        ) : (
+          <PdfDocument
+            className="contract-pdf-document"
+            data-slot="contract-pdf-document"
+            file={validatedFileUrl}
+            loading={renderPdfLoading}
+            error={renderPdfError}
+            onLoadSuccess={handleLoadSuccess}
           >
             <div
-              ref={pagesRef}
-              className="contract-pdf-pages"
-              data-slot="contract-pdf-pages"
+              className="contract-pdf-sizer"
+              data-slot="contract-pdf-sizer"
               style={{
-                width: baseWidth,
-                transform: `scale(${zoom})`,
+                width: baseWidth * zoom,
+                height: baseContentHeight * zoom,
               }}
             >
-              {baseWidth > 0
-                ? Array.from({ length: numPages }, (_, index) => (
-                    <div
-                      className="contract-pdf-page"
-                      data-slot="contract-pdf-page"
-                      key={`${fileUrl}-page-${index + 1}`}
-                    >
-                      <Page
-                        pageNumber={index + 1}
-                        width={baseWidth}
-                        devicePixelRatio={renderDpr}
-                        loading={
-                          <div
-                            className="contract-pdf-status"
-                            data-slot="contract-pdf-status"
-                            role="status"
-                            aria-label="PDF 페이지를 불러오는 중입니다"
-                          >
-                            <Spinner size="lg" className="contract-pdf-spinner" />
-                          </div>
-                        }
-                        error="PDF 페이지를 불러오지 못했습니다."
-                        renderTextLayer={false}
-                        renderAnnotationLayer={false}
-                        onRenderSuccess={() => measureContent(index + 1)}
-                      />
-                    </div>
-                  ))
-                : null}
+              <div
+                ref={pagesRef}
+                className="contract-pdf-pages"
+                data-slot="contract-pdf-pages"
+                style={{
+                  width: baseWidth,
+                  transform: `scale(${zoom})`,
+                }}
+              >
+                {baseWidth > 0
+                  ? Array.from({ length: numPages }, (_, index) => (
+                      <div
+                        className="contract-pdf-page"
+                        data-slot="contract-pdf-page"
+                        key={`${fileUrl}-page-${index + 1}`}
+                      >
+                        <Page
+                          pageNumber={index + 1}
+                          width={baseWidth}
+                          devicePixelRatio={renderDpr}
+                          loading={
+                            <div
+                              className="contract-pdf-status"
+                              data-slot="contract-pdf-status"
+                              role="status"
+                              aria-label="PDF 페이지를 불러오는 중입니다"
+                            >
+                              <Spinner size="lg" className="contract-pdf-spinner" />
+                            </div>
+                          }
+                          error="PDF 페이지를 불러오지 못했습니다."
+                          renderTextLayer={false}
+                          renderAnnotationLayer={false}
+                          onRenderSuccess={() => measureContent(index + 1)}
+                        />
+                      </div>
+                    ))
+                  : null}
+              </div>
             </div>
-          </div>
-        </PdfDocument>
+          </PdfDocument>
+        )}
       </div>
     </div>
   );

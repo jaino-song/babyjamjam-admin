@@ -23,12 +23,15 @@ import { Paragraph } from "@tiptap/extension-paragraph";
 import { Text } from "@tiptap/extension-text";
 import { History } from "@tiptap/extension-history";
 import { HardBreak } from "@tiptap/extension-hard-break";
-import { Suggestion } from "@tiptap/suggestion";
+import { exitSuggestion, Suggestion } from "@tiptap/suggestion";
 import { PluginKey } from "@tiptap/pm/state";
 import { Fragment, Slice } from "@tiptap/pm/model";
 import type { MessageTemplateVariable } from "@babyjamjam/shared/types/message";
 import { cn } from "@/lib/utils";
 import { createVariableSuggestion } from "./variable-suggestion";
+
+const braceSuggestionKey = new PluginKey("variableSuggestionBrace");
+const slashSuggestionKey = new PluginKey("variableSuggestionSlash");
 
 const VARIABLE_PATTERN = /\{\{([^}]+)\}\}/g;
 
@@ -174,6 +177,7 @@ const VariableNode = Node.create<VariableNodeOptions>({
 
 export interface VariableChipEditorHandle {
     insertVariable: (key: string) => void;
+    focus: () => void;
 }
 
 export interface VariableChipEditorProps {
@@ -183,10 +187,14 @@ export interface VariableChipEditorProps {
     onVariableClick?: (key: string) => void;
     placeholder?: string;
     id?: string;
+    /** Owning content-editor path for the visible field. */
+    dataComponent?: string;
+    ariaLabelledBy?: string;
+    disabled?: boolean;
 }
 
 export const VariableChipEditor = forwardRef<VariableChipEditorHandle, VariableChipEditorProps>(
-    ({ value, onChange, variables, onVariableClick, placeholder, id }, ref) => {
+    ({ value, onChange, variables, onVariableClick, placeholder, id, dataComponent, ariaLabelledBy, disabled = false }, ref) => {
         const variablesRef = useRef(variables);
         const onVariableClickRef = useRef(onVariableClick);
         const onChangeRef = useRef(onChange);
@@ -221,7 +229,7 @@ export const VariableChipEditor = forwardRef<VariableChipEditorHandle, VariableC
                                 editor: this.editor,
                                 ...createVariableSuggestion({
                                     char: "{",
-                                    pluginKey: new PluginKey("variableSuggestionBrace"),
+                                    pluginKey: braceSuggestionKey,
                                     variablesRef,
                                 }),
                             }),
@@ -229,7 +237,7 @@ export const VariableChipEditor = forwardRef<VariableChipEditorHandle, VariableC
                                 editor: this.editor,
                                 ...createVariableSuggestion({
                                     char: "/",
-                                    pluginKey: new PluginKey("variableSuggestionSlash"),
+                                    pluginKey: slashSuggestionKey,
                                     variablesRef,
                                 }),
                             }),
@@ -245,9 +253,16 @@ export const VariableChipEditor = forwardRef<VariableChipEditorHandle, VariableC
                 extensions,
                 content: valueToDocJSON(value) as unknown as Record<string, unknown>,
                 immediatelyRender: false,
+                editable: !disabled,
                 editorProps: {
                     attributes: {
                         ...(id ? { id } : {}),
+                        role: "textbox",
+                        "aria-multiline": "true",
+                        ...(ariaLabelledBy
+                            ? { "aria-labelledby": ariaLabelledBy }
+                            : { "aria-label": placeholder ?? "메시지 본문" }),
+                        ...(dataComponent ? { "data-component": `${dataComponent}_control` } : {}),
                         class: cn(
                             "min-h-[240px] w-full rounded-[13px] border-[1.35px] border-input bg-white px-3.5 py-2 text-[0.8rem] font-[Pretendard] text-v3-dark shadow-none transition-all duration-200",
                             "focus-visible:border-v3-primary focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-inset focus-visible:ring-v3-primary/10 focus-visible:ring-offset-0 focus-visible:shadow-none"
@@ -265,6 +280,7 @@ export const VariableChipEditor = forwardRef<VariableChipEditorHandle, VariableC
                         return false;
                     },
                     handlePaste: (view, event) => {
+                        if (!view.editable) return true;
                         const text = event.clipboardData?.getData("text/plain");
                         if (!text) return false;
 
@@ -284,6 +300,15 @@ export const VariableChipEditor = forwardRef<VariableChipEditorHandle, VariableC
             []
         );
 
+        useEffect(() => {
+            if (!editor) return;
+            editor.setEditable(!disabled, false);
+            if (disabled) {
+                exitSuggestion(editor.view, braceSuggestionKey);
+                exitSuggestion(editor.view, slashSuggestionKey);
+            }
+        }, [disabled, editor]);
+
         // Controlled sync: only push external `value` changes into the doc when
         // they differ from the last string we ourselves produced, so our own
         // onUpdate -> parent onChange -> value prop round trip doesn't loop.
@@ -299,8 +324,9 @@ export const VariableChipEditor = forwardRef<VariableChipEditorHandle, VariableC
         useImperativeHandle(
             ref,
             () => ({
+                focus: () => { editor?.commands.focus(); },
                 insertVariable: (key: string) => {
-                    if (!editor) return;
+                    if (!editor?.isEditable) return;
                     const { $from } = editor.state.selection;
                     const before = $from.nodeBefore;
                     const needsLeadingSpace = Boolean(before?.isText && before.text && !/\s$/.test(before.text));
@@ -319,7 +345,7 @@ export const VariableChipEditor = forwardRef<VariableChipEditorHandle, VariableC
         const isEmpty = editor ? editor.isEmpty : value.length === 0;
 
         return (
-            <div data-component="desktop_my-templates_chip-editor" className="relative">
+            <div data-component={dataComponent ?? "desktop_my-templates_chip-editor"} className="relative">
                 <EditorContent editor={editor} />
                 {placeholder && isEmpty ? (
                     <span className="pointer-events-none absolute left-3.5 top-2 text-[0.8rem] font-[Pretendard] text-muted-foreground">

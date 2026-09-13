@@ -1,6 +1,5 @@
 "use client";
 import { useEffect, useState } from "react";
-import { serviceInfoMsgTemplate } from "../templates/messageTemplate/serviceInfoMsg";
 import { t } from "@/lib/i18n/translations";
 import { useLocale } from "@/providers/LocaleProvider";
 import { useSystemTemplate } from "@/features/system-templates/hooks";
@@ -28,7 +27,18 @@ export const ServiceInfoMessageForm = ({
   const locale = useLocale();
   const [messageOverride, setMessageOverride] = useState<string | null>(null);
   const { name, setName } = useFormStore();
-  const { data: systemTemplate } = useSystemTemplate("SERVICE_INFO");
+  const {
+    data: systemTemplate,
+    isError: isSystemTemplateError,
+    isFetching: isSystemTemplateFetching,
+    isLoading: isSystemTemplateLoading,
+  } = useSystemTemplate("SERVICE_INFO");
+  const templateReady = Boolean(
+    systemTemplate?.content
+    && !isSystemTemplateError
+    && !isSystemTemplateFetching
+    && !isSystemTemplateLoading,
+  );
 
   const handleCopy = () => {
     return navigator.clipboard.writeText(generatedMessage);
@@ -41,14 +51,12 @@ export const ServiceInfoMessageForm = ({
   const normalizedName = name.trim();
   const templateMessage = systemTemplate?.content
     ? renderTemplate(systemTemplate.content, { name: normalizedName })
-    : serviceInfoMsgTemplate({ name: normalizedName || "{{name}}" });
+    : "";
 
   const generatedMessage = messageOverride ?? templateMessage;
 
   useEffect(() => {
-    if (generatedMessage) {
-      onPreviewMessageChange?.(generatedMessage);
-    }
+    onPreviewMessageChange?.(generatedMessage);
   }, [generatedMessage, onPreviewMessageChange]);
 
   const fields = renderLayout ? null : (
@@ -91,6 +99,7 @@ export const ServiceInfoMessageForm = ({
       fields={fields}
       messageCard={messageCard}
       requiresRecipientName
+      templateReady={templateReady}
       renderLayout={renderLayout}
     />
   );

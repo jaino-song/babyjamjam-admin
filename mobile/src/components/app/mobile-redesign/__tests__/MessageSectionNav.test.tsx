@@ -1,6 +1,6 @@
 import { render, screen } from "@testing-library/react";
 
-import { MessageSectionNav } from "../MessageSectionNav";
+import { MESSAGE_NAVIGATION_ITEMS, MessageSectionNav } from "../MessageSectionNav";
 import { useMessagesPermissionGuard } from "@/app/(shell)/messages/MessagesPermissionGuard";
 import { useInitialUser } from "@/providers/UserProvider";
 
@@ -28,7 +28,7 @@ const RELEASED_LABELS = ["전송하기", "설정"];
 const APPROVAL_GATED_LABEL = "발송 기록";
 
 function renderNav() {
-  render(<MessageSectionNav data-component="mobile_tests_message-section-nav" activeId="send" />);
+  return render(<MessageSectionNav data-component="mobile_tests_message-section-nav" activeId="send" />);
 }
 
 describe("MessageSectionNav", () => {
@@ -95,5 +95,28 @@ describe("MessageSectionNav", () => {
     for (const label of RELEASED_LABELS) {
       expect(screen.getByRole("button", { name: label })).toBeEnabled();
     }
+  });
+
+  it("shows non-interactive section skeletons while the permission check is loading", () => {
+    mockUseInitialUser.mockReturnValue({ role: "owner" });
+    mockUseMessagesPermissionGuard.mockReturnValue({
+      isLoading: true,
+      needsSenderApproval: false,
+    });
+
+    const { container } = renderNav();
+
+    const nav = screen.getByRole("navigation", { name: "메시지 기능" });
+    expect(nav).toHaveAttribute("aria-busy", "true");
+    expect(screen.queryByRole("button", { name: "전송하기" })).not.toBeInTheDocument();
+
+    const skeletons = container.querySelectorAll('[data-loading="true"]');
+    expect(skeletons).toHaveLength(MESSAGE_NAVIGATION_ITEMS.length);
+    skeletons.forEach((skeleton) => {
+      expect(skeleton).toBeDisabled();
+      expect(skeleton).toHaveAttribute("data-component", "mobile_tests_message-section-nav_item-skeleton");
+      expect(skeleton).toHaveClass("skeleton-base");
+      expect(skeleton).toHaveAttribute("aria-hidden", "true");
+    });
   });
 });

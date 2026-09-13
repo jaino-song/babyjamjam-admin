@@ -37,6 +37,7 @@ import {
 import {
   DetailTabPills,
   DocRow,
+  DocRowsSkeleton,
   InfoCard,
   InfoRow,
   MobileDetailHeader,
@@ -49,7 +50,6 @@ import "@/components/app/mobile-redesign/redesign.css";
 import { getOpenToNextWorkLabel } from "@babyjamjam/shared/constants/employee-status";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
-import { Skeleton } from "@/components/ui/skeleton";
 import { getApiErrorMessage } from "@babyjamjam/shared";
 import {
   buildAllEmployeeRowsForList,
@@ -214,10 +214,10 @@ function EmployeeDetailContent({
       >
         <InfoCard data-component="mobile_employees_detail-panel_info-card-3" title="현재 담당">
           {isActiveClientsLoading ? (
-            <div className="space-y-3" data-component="mobile_employees_detail-panel_info-card-3_clients-loading">
-              <Skeleton className="h-14 w-full rounded-xl" />
-              <Skeleton className="h-14 w-full rounded-xl" />
-            </div>
+            <DocRowsSkeleton
+              data-component="mobile_employees_detail-panel_info-card-3_clients-loading"
+              rowCount={2}
+            />
           ) : activeClients.length > 0 ? (
             activeClients.map((client) => (
               <DocRow
@@ -249,10 +249,10 @@ function EmployeeDetailContent({
       >
         <InfoCard data-component="mobile_employees_detail-panel_info-card-4" title="이전 담당">
           {isWorkHistoryLoading && workHistory.length === 0 ? (
-            <ListRowsSkeleton
+            <DocRowsSkeleton
               data-component="mobile_employees_detail-panel_info-card-4_loading"
               rowCount={2}
-              rightLines={1}
+              wrapped
             />
           ) : isWorkHistoryError && workHistory.length === 0 ? (
             <ErrorFallback

@@ -273,6 +273,10 @@ export default function PricesPage() {
                 <ListRowsSkeleton
                   data-component="mobile_prices_page_detail-sheet_stack_list-page_content_list-card_body_rows-skeleton"
                   rowCount={5}
+                  left={<span className="duration-badge skeleton-base" />}
+                  metaClassName="price-row-meta"
+                  groupHeader
+                  variantHeader={typeFilter === "전체"}
                 />
               ) : isError ? (
                 <div

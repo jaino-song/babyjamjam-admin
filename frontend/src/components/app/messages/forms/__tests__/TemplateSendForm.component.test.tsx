@@ -12,7 +12,7 @@ import { messageTriggerKeys } from "@/features/message-triggers/hooks/keys";
 import { useMessageHistory } from "@/features/message-triggers/hooks/use-message-triggers";
 import { serviceRecordsApi } from "@/features/service-records/api/service-records.api";
 import { useToast } from "@/hooks/use-toast";
-import { messageDeliveryApi } from "@/services/api";
+import { eformsignApi, messageDeliveryApi } from "@/services/api";
 import { useFormStore } from "@/stores/form-store";
 
 import { TemplateSendForm } from "../TemplateSendForm";
@@ -102,6 +102,9 @@ jest.mock("@/services/api", () => ({
   messageDeliveryApi: {
     sendSms: jest.fn(),
   },
+  eformsignApi: {
+    sendReceiptLink: jest.fn(),
+  },
 }));
 
 jest.mock("@/features/service-records/api/service-records.api", () => ({
@@ -120,6 +123,7 @@ const mockedUseToast = jest.mocked(useToast);
 const mockedSendSms = jest.mocked(messageDeliveryApi.sendSms);
 const mockedGetClientOverview = jest.mocked(serviceRecordsApi.getClientOverview);
 const mockedSendServiceRecordLink = jest.mocked(serviceRecordsApi.sendLink);
+const mockedSendReceiptLink = jest.mocked(eformsignApi.sendReceiptLink);
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -231,6 +235,31 @@ function renderNameRequiredForm() {
   );
 }
 
+const preparedReceiptLink = {
+  clientId: 20,
+  clientName: "김산모",
+  recipientPhone: "01012345678",
+  documentId: "doc-receipt-1",
+  receiptUrl: "https://mobile.test/receipt/efr_prepared",
+  expiresAt: "2026-09-24T00:00:00.000Z",
+};
+
+function renderReceiptForm(
+  preparation: typeof preparedReceiptLink | null = preparedReceiptLink,
+) {
+  return render(
+    <TemplateSendForm
+      templateId="builtin:system:SERVICE_END_NOTICE"
+      templateName="서비스 종료 안내"
+      message="김산모 {{receiptUrl}}"
+      deliveryMode="receipt-link"
+      receiptLinkPreparation={preparation}
+    >
+      <div data-testid="receipt-fields" />
+    </TemplateSendForm>,
+  );
+}
+
 /**
  * Queue a recipient by directly manipulating the Zustand store.
  * The component's useEffect auto-queues when currentQueueItem changes.
@@ -247,6 +276,7 @@ async function queueRecipient(phone: string, name = "") {
 
 beforeEach(() => {
   jest.clearAllMocks();
+  document.cookie = "selected_branch_id=branch-a; path=/";
   mockedUseQueryClient.mockReturnValue({
     invalidateQueries: jest.fn().mockResolvedValue(undefined),
   } as unknown as ReturnType<typeof useQueryClient>);
@@ -274,6 +304,10 @@ beforeEach(() => {
     area: "",
   });
   mockEmptyHistory();
+});
+
+afterEach(() => {
+  document.cookie = "selected_branch_id=; Max-Age=0; path=/";
 });
 
 // ---------------------------------------------------------------------------
@@ -460,6 +494,103 @@ describe("recipient phone input layout", () => {
   });
 });
 
+describe("receipt-link delivery", () => {
+  beforeEach(() => {
+    useFormStore.setState({
+      clientId: 20,
+      name: "김산모",
+      phone: "010-1234-5678",
+    });
+  });
+
+  it("keeps send disabled while the receipt link is pending or cleared", async () => {
+    const { rerender } = renderReceiptForm(null);
+
+    const sendButton = screen.getByRole("button", { name: /즉시 발송/ });
+    expect(sendButton).toBeDisabled();
+    fireEvent.click(sendButton);
+    expect(mockedSendReceiptLink).not.toHaveBeenCalled();
+
+    rerender(
+      <TemplateSendForm
+        templateId="builtin:system:SERVICE_END_NOTICE"
+        templateName="서비스 종료 안내"
+        message="김산모 {{receiptUrl}}"
+        deliveryMode="receipt-link"
+        receiptLinkPreparation={null}
+      />,
+    );
+    expect(screen.getByRole("button", { name: /즉시 발송/ })).toBeDisabled();
+  });
+
+  it("sends the prepared document and pinned identity through the receipt-link endpoint", async () => {
+    mockedSendReceiptLink.mockResolvedValue({
+      jobId: "job-receipt-1",
+      scheduledFor: "2026-09-10T00:00:00.000Z",
+      clientName: "김산모",
+    });
+
+    renderReceiptForm();
+    const sendButton = screen.getByRole("button", { name: /즉시 발송/ });
+    await waitFor(() => expect(sendButton).toBeEnabled());
+    fireEvent.click(sendButton);
+
+    await waitFor(() => {
+      expect(mockedSendReceiptLink).toHaveBeenCalledWith("doc-receipt-1", {
+        clientId: 20,
+        recipientPhone: "01012345678",
+      });
+    });
+    expect(mockedSendSms).not.toHaveBeenCalled();
+    expect(document.querySelector('[data-component="desktop_messages_sections_template-send-form_feedback"]'))
+      .toHaveTextContent("서비스 종료 안내 발송 요청을 접수했어요");
+  });
+
+  it("surfaces a known receipt eligibility failure without attempting a generic SMS", async () => {
+    mockedSendReceiptLink.mockRejectedValue({
+      response: {
+        status: 400,
+        data: { reason: "not_voucher_client", message: "바우처 이용 산모가 아닙니다" },
+      },
+    });
+
+    renderReceiptForm();
+    fireEvent.click(screen.getByRole("button", { name: /즉시 발송/ }));
+
+    await waitFor(() => {
+      expect(document.querySelector('[data-component="desktop_messages_sections_template-send-form_feedback"]'))
+        .toHaveTextContent("바우처 이용 산모가 아니어서 영수증 안내를 보낼 수 없습니다.");
+    });
+    expect(mockedSendSms).not.toHaveBeenCalled();
+  });
+
+  it("rejects a prepared receipt send after the active branch changes before submit", async () => {
+    mockedSendReceiptLink.mockResolvedValue({
+      jobId: "job-receipt-branch",
+      scheduledFor: "2026-09-10T00:00:00.000Z",
+      clientName: "김산모",
+    });
+    renderReceiptForm();
+
+    const sendButton = screen.getByRole("button", { name: /즉시 발송/ });
+    await waitFor(() => expect(sendButton).toBeEnabled());
+
+    document.cookie = "selected_branch_id=branch-b; path=/";
+    const form = document.querySelector(
+      '[data-component="desktop_messages_sections_template-send-form"]',
+    );
+    expect(form).toBeInstanceOf(HTMLFormElement);
+    fireEvent.submit(form as HTMLFormElement);
+
+    await waitFor(() => {
+      expect(mockedSendReceiptLink).not.toHaveBeenCalled();
+      expect(mockedSendSms).not.toHaveBeenCalled();
+      expect(sendButton).toBeDisabled();
+      expect(form).toHaveTextContent("지점 정보를 확인하는 중이라 수신자 입력을 잠시 사용할 수 없습니다.");
+    });
+  });
+});
+
 // ---------------------------------------------------------------------------
 // BUG FIX A — Partial-failure send must NOT re-queue already-sent recipients.
 //
@@ -520,6 +651,10 @@ describe("A: partial-failure send keeps only failed recipients in queue", () => 
     expect(remainingPills).toHaveLength(1);
     expect(remainingPills[0].textContent).toContain("010-2222-2222");
     expect(remainingPills[0].textContent).not.toContain("010-1111-1111");
+    expect(mockedSendSms.mock.calls.map(([, expectedBranchId]) => expectedBranchId)).toEqual([
+      "branch-a",
+      "branch-a",
+    ]);
   });
 
   it("removes succeeded recipients even when sendSms resolves with a non-1 resultCode for another", async () => {
@@ -563,6 +698,85 @@ describe("A: partial-failure send keeps only failed recipients in queue", () => 
     );
     expect(remainingPills).toHaveLength(1);
     expect(remainingPills[0].textContent).toContain("010-2222-2222");
+  });
+
+  it("rejects a queued recipient after the active branch changes before submit", async () => {
+    renderInfoForm();
+    await queueRecipient("01011111111");
+
+    await waitFor(() => {
+      expect(
+        document.querySelector('[data-component="desktop_messages_sections_template-send-form-recipient"]'),
+      ).toBeInTheDocument();
+    });
+
+    document.cookie = "selected_branch_id=branch-b; path=/";
+    const form = document.querySelector(
+      '[data-component="desktop_messages_sections_template-send-form"]',
+    );
+    expect(form).toBeInstanceOf(HTMLFormElement);
+    fireEvent.submit(form as HTMLFormElement);
+
+    await waitFor(() => {
+      expect(mockedSendSms).not.toHaveBeenCalled();
+      expect(screen.getByRole("button", { name: /즉시 발송/ })).toBeDisabled();
+      expect(form).toHaveTextContent("지점 정보를 확인하는 중이라 수신자 입력을 잠시 사용할 수 없습니다.");
+    });
+  });
+
+  it("keeps send disabled while the branch-effective template is unavailable", async () => {
+    render(
+      <TemplateSendForm
+        templateId="builtin:info"
+        templateName="서비스 안내"
+        message="기본 문구"
+        templateReady={false}
+      />,
+    );
+
+    const sendButton = screen.getByRole("button", { name: /즉시 발송/ });
+    await waitFor(() => expect(sendButton).toBeDisabled());
+
+    fireEvent.submit(screen.getByTestId("autocomplete-휴대 전화번호").closest("form") as HTMLFormElement);
+
+    await waitFor(() => {
+      expect(mockedSendSms).not.toHaveBeenCalled();
+      expect(
+        document.querySelector('[data-component="desktop_messages_sections_template-send-form_feedback"]'),
+      ).toHaveTextContent("지점 기본 템플릿을 불러오는 중이라 발송할 수 없습니다.");
+    });
+  });
+
+  it("fences an async duplicate lookup from sending after a branch switch", async () => {
+    let resolveHistory!: (value: { data: MessageLogRecord[] }) => void;
+    const refetch = jest.fn().mockImplementation(
+      () => new Promise<{ data: MessageLogRecord[] }>((resolve) => {
+        resolveHistory = resolve;
+      }),
+    );
+    mockedUseMessageHistory.mockReturnValue({
+      data: [],
+      refetch,
+    } as unknown as ReturnType<typeof useMessageHistory>);
+
+    renderInfoForm();
+    await queueRecipient("01011111111");
+    await waitFor(() => {
+      expect(
+        document.querySelector('[data-component="desktop_messages_sections_template-send-form-recipient"]'),
+      ).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: /즉시 발송/ }));
+    await waitFor(() => expect(screen.getByRole("button", { name: /확인 중/ })).toBeDisabled());
+
+    document.cookie = "selected_branch_id=branch-b; path=/";
+    resolveHistory({ data: [] });
+
+    await waitFor(() => {
+      expect(mockedSendSms).not.toHaveBeenCalled();
+      expect(screen.getByRole("button", { name: /즉시 발송/ })).toBeDisabled();
+    });
   });
 });
 
