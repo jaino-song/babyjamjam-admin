@@ -890,14 +890,23 @@ function NewMessageForm({ initialBody, initialTemplateId, initialClientId, initi
     return recipients.map((recipient) => recipient.phone).join(",");
   }, [recipients]);
   const recipientCount = recipients.length;
+  const serviceEndRecipient = isServiceEndNoticeSelected && recipients.length === 1
+    ? recipients[0] ?? null
+    : null;
+  const serviceEndClientId = serviceEndRecipient?.clientId ?? null;
+  const serviceEndRecipientPhone = normalizeKoreanPhoneDigits(serviceEndRecipient?.phone);
+  const serviceEndSelectionKey = serviceEndClientId !== null && serviceEndRecipientPhone
+    ? `${serviceEndClientId}:${serviceEndRecipientPhone}`
+    : null;
 
   useEffect(() => {
-    if (!isServiceEndNoticeSelected || payloadClientId === null || recipients.length !== 1) {
+    if (!isServiceEndNoticeSelected || serviceEndSelectionKey === null || serviceEndClientId === null) {
       return;
     }
 
     let cancelled = false;
-    const selectedClientId = payloadClientId;
+    const selectedClientId = serviceEndClientId;
+    const selectedRecipientPhone = serviceEndRecipientPhone;
     queueMicrotask(() => {
       if (cancelled) return;
       setReceiptLinkPreparation(null);
@@ -913,6 +922,7 @@ function NewMessageForm({ initialBody, initialTemplateId, initialClientId, initi
           || data.clientId !== selectedClientId
           || !data.clientName.trim()
           || !recipientPhone
+          || recipientPhone !== selectedRecipientPhone
           || !data.documentId
           || !data.receiptUrl
         ) {
@@ -952,7 +962,12 @@ function NewMessageForm({ initialBody, initialTemplateId, initialClientId, initi
     return () => {
       cancelled = true;
     };
-  }, [isServiceEndNoticeSelected, payloadClientId, recipients.length]);
+  }, [
+    isServiceEndNoticeSelected,
+    serviceEndClientId,
+    serviceEndRecipientPhone,
+    serviceEndSelectionKey,
+  ]);
 
   const showVariableHint = useMemo(() => hasUnreplacedVariables(body), [body]);
   const isPriceInfoTemplateSelected = selectedTemplate.id === PRICE_INFO_TEMPLATE_ID;
@@ -982,7 +997,7 @@ function NewMessageForm({ initialBody, initialTemplateId, initialClientId, initi
       return "수신자 연락처 형식이 올바르지 않습니다. (숫자, '-', ',' 만 허용)";
     }
     if (recipientCount > MAX_RECIPIENTS) return `수신자는 한 번에 최대 ${MAX_RECIPIENTS}명까지 선택할 수 있습니다.`;
-    if (isServiceEndNoticeSelected && (recipientCount !== 1 || payloadClientId === null)) {
+    if (isServiceEndNoticeSelected && serviceEndSelectionKey === null) {
       return "서비스 종료 안내를 보낼 산모님 한 명을 선택해 주세요.";
     }
     if (isServiceEndNoticeSelected && receiptLinkPreparationError) return receiptLinkPreparationError;
@@ -991,7 +1006,8 @@ function NewMessageForm({ initialBody, initialTemplateId, initialClientId, initi
       && (
         isReceiptLinkPreparing
         || !receiptLinkPreparation
-        || receiptLinkPreparation.clientId !== payloadClientId
+        || receiptLinkPreparation.clientId !== serviceEndClientId
+        || receiptLinkPreparation.recipientPhone !== serviceEndRecipientPhone
       )
     ) {
       return "영수증 링크를 준비하고 있어요. 잠시 후 다시 시도해 주세요.";
@@ -1007,12 +1023,14 @@ function NewMessageForm({ initialBody, initialTemplateId, initialClientId, initi
     body,
     isReceiptLinkPreparing,
     isServiceEndNoticeSelected,
-    payloadClientId,
     receiptLinkPreparation,
     receiptLinkPreparationError,
     receiverPayload,
     recipientCount,
     selectedTemplateVariables,
+    serviceEndClientId,
+    serviceEndRecipientPhone,
+    serviceEndSelectionKey,
     templateReadinessError,
     templateVariableValues,
   ]);
@@ -1024,7 +1042,11 @@ function NewMessageForm({ initialBody, initialTemplateId, initialClientId, initi
       }
 
       if (isServiceEndNoticeSelected) {
-        if (!receiptLinkPreparation || receiptLinkPreparation.clientId !== payloadClientId) {
+        if (
+          !receiptLinkPreparation
+          || receiptLinkPreparation.clientId !== serviceEndClientId
+          || receiptLinkPreparation.recipientPhone !== serviceEndRecipientPhone
+        ) {
           throw new Error("영수증 링크를 준비하고 있어요. 잠시 후 다시 시도해 주세요.");
         }
         return api.post("/receipt-links/send", {
@@ -1137,6 +1159,9 @@ function NewMessageForm({ initialBody, initialTemplateId, initialClientId, initi
     };
     let wasAdded: boolean;
     if (isServiceEndNoticeSelected) {
+      setReceiptLinkPreparation(null);
+      setReceiptLinkPreparationError(null);
+      setIsReceiptLinkPreparing(true);
       setRecipients([selectedRecipient]);
       setReceiver("");
       setErrorMessage(null);
@@ -1216,6 +1241,15 @@ function NewMessageForm({ initialBody, initialTemplateId, initialClientId, initi
     setBodyOverride(null);
     setReceiptLinkPreparation(null);
     setReceiptLinkPreparationError(null);
+  };
+
+  const handleRecipientRemove = (recipientId: string) => {
+    if (isServiceEndNoticeSelected) {
+      setReceiptLinkPreparation(null);
+      setReceiptLinkPreparationError(null);
+      setIsReceiptLinkPreparing(false);
+    }
+    setRecipients((current) => current.filter((item) => item.id !== recipientId));
   };
 
   const handleTemplateVariableChange = (key: string, value: string) => {
@@ -1488,7 +1522,7 @@ function NewMessageForm({ initialBody, initialTemplateId, initialClientId, initi
                             type="button"
                             aria-label={`${recipient.name} 수신자 제거`}
                             className={styles.recipientChipX}
-                            onClick={() => setRecipients((current) => current.filter((item) => item.id !== recipient.id))}
+                            onClick={() => handleRecipientRemove(recipient.id)}
                           >
                             <X aria-hidden="true" size={10} strokeWidth={3} />
                           </button>

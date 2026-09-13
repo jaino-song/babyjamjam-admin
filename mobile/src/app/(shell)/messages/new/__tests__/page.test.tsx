@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 import NewMessagePage from "../page";
@@ -765,6 +765,96 @@ describe("NewMessagePage", () => {
       "/message-deliveries/sms",
       expect.anything(),
     );
+  });
+
+  it("keeps the latest client when service end preparations resolve out of order", async () => {
+    const replacementClient: Client = {
+      ...mockClients[0]!,
+      id: 8,
+      name: "이수빈",
+      phone: "01099998888",
+    };
+    mockUseAllClients.mockReturnValue({
+      data: [...mockClients, replacementClient],
+      isLoading: false,
+    });
+    mockSearchParams = new URLSearchParams({
+      template: "SERVICE_END_NOTICE",
+      clientId: "7",
+    });
+
+    let resolveFirstPreparation: (value: unknown) => void = () => undefined;
+    let resolveSecondPreparation: (value: unknown) => void = () => undefined;
+    (api.post as jest.Mock).mockImplementation((url: string, payload: { clientId?: number }) => {
+      if (url !== "/receipt-links/prepare") {
+        return Promise.resolve({ data: { jobId: "job-8", clientName: "이수빈" } });
+      }
+      return new Promise((resolve) => {
+        if (payload.clientId === 7) {
+          resolveFirstPreparation = resolve;
+        } else {
+          resolveSecondPreparation = resolve;
+        }
+      });
+    });
+    renderPage();
+
+    await waitFor(() => {
+      expect(api.post).toHaveBeenCalledWith("/receipt-links/prepare", { clientId: 7 });
+    });
+
+    const recipientNameInput = screen.getByLabelText(/산모님 성함/);
+    fireEvent.focus(recipientNameInput);
+    fireEvent.change(recipientNameInput, { target: { value: "이수빈" } });
+    fireEvent.click(await screen.findByText("이수빈"));
+
+    await waitFor(() => {
+      expect(api.post).toHaveBeenCalledWith("/receipt-links/prepare", { clientId: 8 });
+    });
+
+    await act(async () => {
+      resolveSecondPreparation({
+        data: {
+          clientId: 8,
+          clientName: "이수빈",
+          recipientPhone: "01099998888",
+          documentId: "doc-8",
+          receiptUrl: "https://m.admin.babyjamjam.com/receipt/receipt-8",
+          expiresAt: "2026-09-24T00:00:00.000Z",
+        },
+      });
+    });
+    await waitFor(() => {
+      expect(screen.getByLabelText("메시지 본문")).toHaveValue(
+        "이수빈 산모님 영수증: https://m.admin.babyjamjam.com/receipt/receipt-8",
+      );
+    });
+
+    await act(async () => {
+      resolveFirstPreparation({
+        data: {
+          clientId: 7,
+          clientName: "박서연",
+          recipientPhone: "01077778888",
+          documentId: "doc-7",
+          receiptUrl: "https://m.admin.babyjamjam.com/receipt/receipt-7",
+          expiresAt: "2026-09-24T00:00:00.000Z",
+        },
+      });
+    });
+
+    expect(screen.getByLabelText("메시지 본문")).toHaveValue(
+      "이수빈 산모님 영수증: https://m.admin.babyjamjam.com/receipt/receipt-8",
+    );
+    fireEvent.click(screen.getByRole("button", { name: "즉시 발송" }));
+
+    await waitFor(() => {
+      expect(api.post).toHaveBeenCalledWith("/receipt-links/send", {
+        documentId: "doc-8",
+        clientId: 8,
+        recipientPhone: "01099998888",
+      });
+    });
   });
 
   it("loads a frontend fallback template that requires the client name variable", async () => {
