@@ -116,6 +116,8 @@ export function ListRowsSkeleton({
   rightLines = 1,
   left,
   metaClassName,
+  groupHeader = false,
+  variantHeader = false,
 }: {
   "data-component": string;
   rowCount?: number;
@@ -136,59 +138,113 @@ export function ListRowsSkeleton({
   /**
    * Extra class for the meta placeholder line, mirroring page-specific meta
    * rules (e.g. `price-row-meta`'s margin) that change the info column height.
+   * It replaces `.list-meta` exactly like the loaded row does, so both states
+   * are styled from the same class set.
    */
   metaClassName?: string;
+  /**
+   * Prices-style grouped body: wraps the rows in the same
+   * `.variant-block > .section-block` pair the loaded page renders and
+   * reserves the group header slot (`.section-header`) above the first row.
+   * Without it the loaded group headers push the whole list down ~74px.
+   */
+  groupHeader?: boolean;
+  /**
+   * Reserves the sticky variant header (`.section-header-variant`) as well;
+   * implies `groupHeader`. The loaded prices page omits the variant header
+   * while a type filter is active, so callers pass the current filter state.
+   */
+  variantHeader?: boolean;
 }) {
+  const rows = Array.from({ length: rowCount }).map((_, index) => (
+    <div
+      key={`${dataComponent}-skeleton-${index}`}
+      className="list-item"
+      data-component={`${dataComponent}_row`}
+      aria-hidden="true"
+      style={{ animationDelay: `${Math.min(index, 4) * 40}ms` }}
+    >
+      {left ?? (
+        <Skeleton className="list-avatar rounded-full bg-v3-dim-white animate-pulse" />
+      )}
+      <div
+        className="list-info flex flex-col"
+        data-component={`${dataComponent}_row_info`}
+      >
+        {/* The placeholders reuse the real text elements (`.list-name`,
+            `.list-meta`) with invisible copy so the line boxes — and the
+            row height — match the loaded row on every page; only the
+            paint is replaced. Fixed bar heights would drift with each
+            page's font-size/line-height overrides. */}
+        <div className="list-name">
+          <span className="invisible">이름</span>
+          <Skeleton className="inline-block h-[0.8em] w-20 bg-v3-dim-white animate-pulse" />
+        </div>
+        <div className={metaClassName ?? "list-meta"}>
+          <span className="invisible">정보</span>
+          <Skeleton className="inline-block h-[0.65em] w-32 bg-v3-dim-white animate-pulse" />
+        </div>
+      </div>
+      <div
+        className="list-right"
+        data-component={`${dataComponent}_row_right`}
+      >
+        <Skeleton className="h-6 w-14 rounded-full bg-v3-dim-white animate-pulse" />
+        {/* 16px, not the 14px the timestamp actually renders at: the badge
+            placeholder above is 24px against a real badge's 26px, so this
+            makes the column add up to the same 43px and the rows stay put
+            when the data arrives. */}
+        {rightLines > 1 && (
+          <Skeleton className="h-4 w-12 bg-v3-dim-white animate-pulse" />
+        )}
+      </div>
+    </div>
+  ));
+
+  if (groupHeader || variantHeader) {
+    // The header placeholders reuse the loaded headers' own classes with a
+    // 1.5em-tall bar standing in for the label. In a flex header the bar is a
+    // flex item exactly as tall as the loaded line box; in the block header it
+    // is a block child, so the line-box strut cannot grow the box either way.
+    return (
+      <div
+        className="variant-block"
+        data-component={dataComponent}
+        data-source-component={LIST_ROWS_SKELETON_SOURCE_COMPONENT}
+      >
+        {variantHeader && (
+          <div
+            className="section-header-variant"
+            data-component={`${dataComponent}_variant_header`}
+            aria-hidden="true"
+          >
+            <Skeleton className="h-[1.5em] w-12 bg-v3-dim-white animate-pulse" />
+          </div>
+        )}
+        <div
+          className="section-block"
+          data-component={`${dataComponent}_section`}
+        >
+          <div
+            className="section-header"
+            data-component={`${dataComponent}_section_header`}
+            aria-hidden="true"
+          >
+            <Skeleton className="h-[1.5em] w-10 bg-v3-dim-white animate-pulse" />
+          </div>
+          {rows}
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div
       className="section-block"
       data-component={dataComponent}
       data-source-component={LIST_ROWS_SKELETON_SOURCE_COMPONENT}
     >
-      {Array.from({ length: rowCount }).map((_, index) => (
-        <div
-          key={`${dataComponent}-skeleton-${index}`}
-          className="list-item"
-          data-component={`${dataComponent}_row`}
-          aria-hidden="true"
-          style={{ animationDelay: `${Math.min(index, 4) * 40}ms` }}
-        >
-          {left ?? (
-            <Skeleton className="list-avatar rounded-full bg-v3-dim-white animate-pulse" />
-          )}
-          <div
-            className="list-info flex flex-col"
-            data-component={`${dataComponent}_row_info`}
-          >
-            {/* The placeholders reuse the real text elements (`.list-name`,
-                `.list-meta`) with invisible copy so the line boxes — and the
-                row height — match the loaded row on every page; only the
-                paint is replaced. Fixed bar heights would drift with each
-                page's font-size/line-height overrides. */}
-            <div className="list-name">
-              <span className="invisible">이름</span>
-              <Skeleton className="inline-block h-[0.8em] w-20 bg-v3-dim-white animate-pulse" />
-            </div>
-            <div className={metaClassName ? `list-meta ${metaClassName}` : "list-meta"}>
-              <span className="invisible">정보</span>
-              <Skeleton className="inline-block h-[0.65em] w-32 bg-v3-dim-white animate-pulse" />
-            </div>
-          </div>
-          <div
-            className="list-right"
-            data-component={`${dataComponent}_row_right`}
-          >
-            <Skeleton className="h-6 w-14 rounded-full bg-v3-dim-white animate-pulse" />
-            {/* 16px, not the 14px the timestamp actually renders at: the badge
-                placeholder above is 24px against a real badge's 26px, so this
-                makes the column add up to the same 43px and the rows stay put
-                when the data arrives. */}
-            {rightLines > 1 && (
-              <Skeleton className="h-4 w-12 bg-v3-dim-white animate-pulse" />
-            )}
-          </div>
-        </div>
-      ))}
+      {rows}
     </div>
   );
 }

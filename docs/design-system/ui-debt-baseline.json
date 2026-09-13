@@ -1083,8 +1083,8 @@
     },
     "mobile/src/app/(shell)/prices/page.tsx": {
       "ui-architecture/no-page-local-components": [
-        "363:10-363:28|pageLocalComponent",
-        "402:10-402:28|pageLocalComponent"
+        "365:10-365:28|pageLocalComponent",
+        "404:10-404:28|pageLocalComponent"
       ],
       "ui-architecture/no-page-style-constants": [
         "30:7-30:30|pageStyleConstant"

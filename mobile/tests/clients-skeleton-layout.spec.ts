@@ -99,7 +99,9 @@ test.describe("Mobile client list skeleton geometry", () => {
         contentType: "application/json",
         body: JSON.stringify({
           data: CLIENTS,
-          total: CLIENTS.length,
+          // A 3-digit total exercises the reserved count slot end to end: the
+          // "전체" pill must render "123" without moving or stretching the row.
+          total: 123,
           page: 1,
           limit: 50,
           totalPages: 1,
@@ -123,6 +125,10 @@ test.describe("Mobile client list skeleton geometry", () => {
     expect(loadedRows).toHaveLength(3);
     const loadedPills = await measureFilterPills(page);
 
+    // Pin the exercised count: the geometry check below only means something
+    // if the loaded "전체" pill really shows the 3-digit total.
+    await expect(page.locator(FILTER_PILL).first().locator(".count")).toHaveText("123");
+
     // Each row keeps its exact line: a 2px pitch drift accumulates into a
     // visible jump by the bottom of the viewport.
     for (let index = 0; index < 3; index += 1) {
@@ -136,8 +142,8 @@ test.describe("Mobile client list skeleton geometry", () => {
       ).toBeLessThanOrEqual(1);
     }
 
-    // The filter pills reserve the same 2-digit count slot while loading, so a
-    // single-digit loaded count must not slide the pill row horizontally.
+    // The filter pills reserve the same up-to-3-digit count slot while
+    // loading, so the loaded "전체 123" must not slide or stretch the pill row.
     expect(skeletonPills.length).toBeGreaterThan(0);
     expect(loadedPills).toHaveLength(skeletonPills.length);
     for (let index = 0; index < skeletonPills.length; index += 1) {

@@ -552,10 +552,16 @@ describe("NewMessagePage", () => {
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
 
-  it("disables immediate send until a recipient is selected", () => {
+  it("disables immediate send until a recipient is selected", async () => {
     renderPage();
 
+    // The disabled direction alone would also pass for an unconditionally
+    // disabled button, so pin the enabled state once a recipient exists.
     expect(screen.getByRole("button", { name: "즉시 발송" })).toBeDisabled();
+
+    await addManualRecipient("010-1234-5678");
+
+    expect(screen.getByRole("button", { name: "즉시 발송" })).toBeEnabled();
   });
 
   it("keeps the send page accessible but disables immediate send without approval", () => {
@@ -570,7 +576,7 @@ describe("NewMessagePage", () => {
     expect(screen.getByRole("button", { name: "즉시 발송" })).toBeDisabled();
   });
 
-  it("shows the section-nav skeleton and disables the send action while approval is loading", () => {
+  it("shows the section-nav skeleton and disables the send action while approval is loading", async () => {
     mockUseMessagesPermissionGuard.mockReturnValue({
       isLoading: true,
       needsSenderApproval: false,
@@ -586,6 +592,10 @@ describe("NewMessagePage", () => {
       ),
     ).toHaveLength(5);
     expect(screen.queryByRole("button", { name: "전송하기" })).not.toBeInTheDocument();
+
+    // Select a recipient first: the disabled flag has to come from the
+    // pending approval, not from the missing-recipient validation.
+    await addManualRecipient("010-1234-5678");
 
     // The send action stays the real button (disabled). A skeleton here made
     // the header taller and shifted the whole form once approval resolved.
