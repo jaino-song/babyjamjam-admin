@@ -31,6 +31,15 @@ export interface VoucherPriceInfo {
   actualPrice: string | null;
 }
 
+export interface ContractVoucherPriceInfo {
+  type: string | null;
+  duration: string | null;
+  fullPrice: string | null;
+  grant: string | null;
+  actualPrice: string | null;
+  year: number;
+}
+
 export interface AreaTemplate {
   id: string;
   areaId: string;
@@ -78,13 +87,13 @@ export function useVoucherPriceInfos(type: string, year?: number) {
 }
 
 export function useAllVoucherPriceInfos(year?: number) {
-  return useQuery<VoucherPriceInfo[]>({
+  return useQuery<ContractVoucherPriceInfo[]>({
     queryKey: voucherQueryKeys.allVoucherPriceInfos(year),
     queryFn: async () => {
-      const { data } = await api.get("/voucher-price-infos/type", {
+      const { data } = await api.get("/voucher-price-infos/contract-view", {
         params: { year },
       });
-      return data as VoucherPriceInfo[];
+      return data as ContractVoucherPriceInfo[];
     },
     enabled: year !== undefined,
     staleTime: Infinity,

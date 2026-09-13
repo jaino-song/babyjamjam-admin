@@ -55,6 +55,19 @@ export class UpdateVoucherPriceInfoDto {
     year?: number | null;
 }
 
+/**
+ * Contract detail viewers only need the fields required to display prices and
+ * match a document's persisted amounts to a voucher duration.
+ */
+export class ContractVoucherPriceInfoDto {
+    type!: string | null;
+    duration!: string | null;
+    fullPrice!: string | null;
+    grant!: string | null;
+    actualPrice!: string | null;
+    year!: number;
+}
+
 // 파싱된 바우처 가격 항목 DTO
 export class ParsedVoucherPriceItemDto {
   @IsString()
@@ -117,4 +130,3 @@ export class BulkUpdateResultDto {
   @IsString({ each: true })
   errors!: string[];
 }
-

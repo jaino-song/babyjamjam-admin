@@ -103,6 +103,7 @@ const CUSTOM_TEMPLATE_OPTION: TemplateOption = {
   body: "",
   variables: [],
 };
+const BRANCH_TEMPLATE_READINESS_MESSAGE = "지점 기본 템플릿을 불러오는 중이라 발송할 수 없습니다.";
 const NAME_FALLBACK_VARIABLES: TemplateInputVariable[] = [
   { key: "name", label: "산모명", required: true, type: "string" },
 ];
@@ -480,6 +481,34 @@ function renderTemplateWithValues(
   return rendered;
 }
 
+function isBranchTemplateReady(
+  query:
+    | {
+        branchId?: string | null;
+        data?: { content?: string } | null;
+        isError?: boolean;
+        isFetching?: boolean;
+        isLoading?: boolean;
+        isSuccess?: boolean;
+      }
+    | undefined,
+) {
+  if (!query) return true;
+
+  const hasCurrentBranch = query.branchId === undefined || Boolean(query.branchId);
+  const hasResolvedTemplate = Boolean(query.data?.content);
+  const statusIsSuccessful = query.isSuccess === undefined || query.isSuccess;
+
+  return Boolean(
+    hasCurrentBranch
+    && hasResolvedTemplate
+    && statusIsSuccessful
+    && !query.isError
+    && !query.isFetching
+    && !query.isLoading,
+  );
+}
+
 export default function NewMessagePage() {
   const searchParams = useSearchParams();
   const initialBody = searchParams.get("body") ?? "";
@@ -571,13 +600,20 @@ function NewMessageForm({ initialBody, initialTemplateId, initialClientId, initi
     needsSenderApproval,
   } = useMessagesPermissionGuard();
 
-  const { data: greetingSystemTemplate } = useSystemTemplate(GREETING_TEMPLATE_ID);
-  const { data: infoSystemTemplate } = useSystemTemplate(INFO_TEMPLATE_ID);
-  const { data: priceInfoSystemTemplate } = useSystemTemplate(PRICE_INFO_TEMPLATE_ID);
-  const { data: reminderSystemTemplate } = useSystemTemplate(REMINDER_TEMPLATE_ID);
-  const { data: serviceInfoSystemTemplate } = useSystemTemplate(SERVICE_INFO_TEMPLATE_ID);
-  const { data: surveySystemTemplate } = useSystemTemplate(SURVEY_TEMPLATE_ID);
-  const { data: thanksSystemTemplate } = useSystemTemplate(THANKS_TEMPLATE_ID);
+  const greetingTemplateQuery = useSystemTemplate(GREETING_TEMPLATE_ID);
+  const infoTemplateQuery = useSystemTemplate(INFO_TEMPLATE_ID);
+  const priceInfoTemplateQuery = useSystemTemplate(PRICE_INFO_TEMPLATE_ID);
+  const reminderTemplateQuery = useSystemTemplate(REMINDER_TEMPLATE_ID);
+  const serviceInfoTemplateQuery = useSystemTemplate(SERVICE_INFO_TEMPLATE_ID);
+  const surveyTemplateQuery = useSystemTemplate(SURVEY_TEMPLATE_ID);
+  const thanksTemplateQuery = useSystemTemplate(THANKS_TEMPLATE_ID);
+  const greetingSystemTemplate = greetingTemplateQuery.data;
+  const infoSystemTemplate = infoTemplateQuery.data;
+  const priceInfoSystemTemplate = priceInfoTemplateQuery.data;
+  const reminderSystemTemplate = reminderTemplateQuery.data;
+  const serviceInfoSystemTemplate = serviceInfoTemplateQuery.data;
+  const surveySystemTemplate = surveyTemplateQuery.data;
+  const thanksSystemTemplate = thanksTemplateQuery.data;
   const { data: userTemplates = [] } = useMessageTemplates();
   const { data: bankAccountInfos = [], isLoading: isBankAccountInfosLoading } = useBankAccountInfos();
   const { data: voucherPriceInfos = [], isLoading: isVoucherPriceInfosLoading } = useVoucherPriceInfos(
@@ -755,6 +791,18 @@ function NewMessageForm({ initialBody, initialTemplateId, initialClientId, initi
     () => templateOptions.find((template) => template.id === selectedTemplateId) ?? CUSTOM_TEMPLATE_OPTION,
     [selectedTemplateId, templateOptions],
   );
+  const selectedSystemTemplateQuery = {
+    [GREETING_TEMPLATE_ID]: greetingTemplateQuery,
+    [INFO_TEMPLATE_ID]: infoTemplateQuery,
+    [PRICE_INFO_TEMPLATE_ID]: priceInfoTemplateQuery,
+    [REMINDER_TEMPLATE_ID]: reminderTemplateQuery,
+    [SERVICE_INFO_TEMPLATE_ID]: serviceInfoTemplateQuery,
+    [SURVEY_TEMPLATE_ID]: surveyTemplateQuery,
+    [THANKS_TEMPLATE_ID]: thanksTemplateQuery,
+  }[selectedTemplate.id];
+  const templateReadinessError = selectedSystemTemplateQuery && !isBranchTemplateReady(selectedSystemTemplateQuery)
+    ? BRANCH_TEMPLATE_READINESS_MESSAGE
+    : null;
   const selectedTemplateVariables = selectedTemplate.variables;
   const recipientNameVariable = selectedTemplateVariables.find((variable) => variable.key === "name");
   const renderedTemplateVariables = useMemo(() => {
@@ -812,6 +860,7 @@ function NewMessageForm({ initialBody, initialTemplateId, initialClientId, initi
   }, [isPriceInfoTemplateSelected, templateVariableValues]);
 
   const validationError = useMemo(() => {
+    if (templateReadinessError) return templateReadinessError;
     if (!receiverPayload) return RECIPIENT_REQUIRED_MESSAGE;
     if (!PHONE_REGEX.test(receiverPayload)) return "수신자 연락처 형식이 올바르지 않습니다. (숫자, '-', ',' 만 허용)";
     if (splitRecipientPhones(receiverPayload).some((phone) => !SINGLE_PHONE_REGEX.test(phone))) {
@@ -825,10 +874,14 @@ function NewMessageForm({ initialBody, initialTemplateId, initialClientId, initi
     if (!body.trim()) return "메시지 본문을 입력해 주세요.";
     if (body.length > MAX_BODY) return `본문은 최대 ${MAX_BODY}자까지 입력할 수 있습니다.`;
     return null;
-  }, [receiverPayload, recipientCount, selectedTemplateVariables, templateVariableValues, body]);
+  }, [receiverPayload, recipientCount, selectedTemplateVariables, templateVariableValues, body, templateReadinessError]);
 
   const sendMutation = useMutation<SendResponse, unknown, void>({
     mutationFn: async () => {
+      if (templateReadinessError) {
+        throw new Error(templateReadinessError);
+      }
+
       const message = body.trim();
       const payload: Record<string, unknown> = {
         receiver: receiverPayload,
@@ -1085,6 +1138,11 @@ function NewMessageForm({ initialBody, initialTemplateId, initialClientId, initi
     e.preventDefault();
     if (needsSenderApproval || isSenderApprovalLoading) {
       setErrorMessage("메시지 전송 권한이 필요합니다.");
+      return;
+    }
+
+    if (templateReadinessError) {
+      setErrorMessage(templateReadinessError);
       return;
     }
 
