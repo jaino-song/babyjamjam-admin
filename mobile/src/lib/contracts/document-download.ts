@@ -1,3 +1,5 @@
+import { authenticatedFetch } from "@/lib/api/authenticated-fetch";
+
 export type DownloadBinaryKind = "pdf" | "png";
 
 export interface ValidatedBinary {
@@ -172,7 +174,7 @@ export interface FetchValidatedBinaryOptions extends ValidateBinaryOptions {
 export async function fetchValidatedBinary(
   url: string,
   kind: DownloadBinaryKind,
-  { fetchImpl = globalThis.fetch, signal, ...validationOptions }: FetchValidatedBinaryOptions = {},
+  { fetchImpl = authenticatedFetch, signal, ...validationOptions }: FetchValidatedBinaryOptions = {},
 ): Promise<ValidatedBinary> {
   if (typeof fetchImpl !== "function") {
     throw new BinaryDownloadError();

@@ -5,6 +5,7 @@ import { Document as PdfDocument, Page } from "react-pdf";
 
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
+import { authenticatedFetch } from "@/lib/api/authenticated-fetch";
 
 import "@/lib/pdf-config";
 import {
@@ -294,7 +295,7 @@ export function ContractPdfViewer({
 
     void (async () => {
       try {
-        const headResponse = await fetch(fileUrl, {
+        const headResponse = await authenticatedFetch(fileUrl, {
           method: "HEAD",
           credentials: "include",
           cache: "no-store",

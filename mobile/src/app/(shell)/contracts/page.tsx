@@ -39,6 +39,7 @@ import { useEformsign } from "@/hooks/useEformsign";
 import { useEmployees, type Employee } from "@/hooks/useEmployees";
 import { useListInfiniteScroll } from "@/hooks/useListInfiniteScroll";
 import { useToast } from "@/hooks/use-toast";
+import { openAuthenticatedEventSource } from "@/lib/api/authenticated-fetch";
 import { useAllVoucherPriceInfos } from "@/hooks/useVoucherData";
 import { fetchAllMessageLogs } from "@/lib/messages/logs";
 import { formatDateForDisplay } from "@/lib/date/format-date-for-display";
@@ -1914,7 +1915,7 @@ export default function ContractsPage() {
     let keepFinalizeSubmittingUntilIframeCloses = false;
 
     try {
-      progressSource = new EventSource(
+      progressSource = await openAuthenticatedEventSource(
         `/api/eformsign-docs/finalize-headless/progress?progressId=${encodeURIComponent(progressId)}`,
       );
       finalizeProgressSourceRef.current = progressSource;

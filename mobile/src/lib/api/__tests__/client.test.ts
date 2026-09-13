@@ -5,9 +5,9 @@ import { captureServiceRecordError } from "@/lib/observability/capture-service-r
 
 import {
     api,
-    isConcurrentAuthRefreshError,
     isEformsignTokenEndpoint,
 } from "../client";
+import { authenticatedFetch } from "../authenticated-fetch";
 
 jest.mock("@/lib/observability/capture-service-record-error", () => ({
     captureServiceRecordError: jest.fn(),
@@ -47,26 +47,6 @@ describe("isEformsignTokenEndpoint", () => {
         undefined,
     ])("does not classify %s as eformsign token-backed", (url) => {
         expect(isEformsignTokenEndpoint(url)).toBe(false);
-    });
-});
-
-describe("isConcurrentAuthRefreshError", () => {
-    it("recognizes the retryable BFF refresh response", () => {
-        const error = new AxiosError(
-            "refresh already in progress",
-            "ERR_BAD_RESPONSE",
-            {} as never,
-            undefined,
-            {
-                status: 409,
-                statusText: "Conflict",
-                headers: {},
-                config: {} as never,
-                data: { code: "AUTH_REFRESH_REPLAY_CONCURRENT" },
-            } as never,
-        );
-
-        expect(isConcurrentAuthRefreshError(error)).toBe(true);
     });
 });
 
@@ -147,34 +127,111 @@ describe("service-record API error monitoring", () => {
 describe("application-session 401 recovery", () => {
     const originalAdapter = api.defaults.adapter;
     const originalLocation = Object.getOwnPropertyDescriptor(window, "location");
+    const originalFetch = global.fetch;
 
     afterEach(() => {
         api.defaults.adapter = originalAdapter;
+        global.fetch = originalFetch;
         mockResetAuthorityState.mockReset();
         if (originalLocation) {
             Object.defineProperty(window, "location", originalLocation);
         }
     });
 
+    it("shares one application refresh across concurrent Axios, eformsign, and native fetch requests", async () => {
+        let sessionRefreshed = false;
+        let nativeFetchAttempts = 0;
+        const response = (status: number, data: unknown): Response => ({
+            ok: status >= 200 && status < 300,
+            status,
+            headers: { get: () => null },
+            clone() {
+                return response(status, data);
+            },
+            json: async () => data,
+        } as unknown as Response);
+        const fetchMock = jest.fn(async (input: RequestInfo | URL) => {
+            if (input === "/api/auth/refresh") {
+                await new Promise((resolve) => setTimeout(resolve, 10));
+                sessionRefreshed = true;
+                return response(204, null);
+            }
+
+            nativeFetchAttempts += 1;
+            return sessionRefreshed
+                ? response(200, { success: true })
+                : response(401, { code: "AUTH_REFRESH_REQUIRED" });
+        });
+        global.fetch = fetchMock;
+        const adapter = jest.fn(async (config) => {
+            if (config.url === "/refresh-access-token") {
+                throw new Error("application session recovery must not refresh eformsign credentials");
+            }
+
+            if (!sessionRefreshed) {
+                throw new AxiosError(
+                    "Request failed with status code 401",
+                    "ERR_BAD_RESPONSE",
+                    config,
+                    undefined,
+                    {
+                        status: 401,
+                        statusText: "Unauthorized",
+                        headers: {},
+                        config,
+                        data: {
+                            code: "AUTH_REFRESH_REQUIRED",
+                            error: "Session refresh required",
+                        },
+                    },
+                );
+            }
+
+            return {
+                config,
+                data: { success: true },
+                headers: {},
+                status: 200,
+                statusText: "OK",
+            };
+        });
+        api.defaults.adapter = adapter;
+
+        const results = await Promise.allSettled([
+            api.get("/clients"),
+            api.get("/eformsign-docs/client-names"),
+            authenticatedFetch("/api/notifications"),
+        ]);
+
+        expect(results.map((result) => result.status)).toEqual([
+            "fulfilled",
+            "fulfilled",
+            "fulfilled",
+        ]);
+
+        expect(fetchMock.mock.calls.filter(([input]) => (
+            input === "/api/auth/refresh"
+        ))).toHaveLength(1);
+        expect(fetchMock).toHaveBeenCalledWith("/api/auth/refresh", {
+            method: "POST",
+            cache: "no-store",
+            credentials: "same-origin",
+        });
+        expect(nativeFetchAttempts).toBe(2);
+        expect(adapter).not.toHaveBeenCalledWith(
+            expect.objectContaining({ url: "/refresh-access-token" }),
+        );
+    });
+
     it("settles the initiating 401 before redirect when reset cannot await its cancellation", async () => {
         let resolveReset: (() => void) | undefined;
-        const refreshError = new AxiosError(
-            "Request failed with status code 401",
-            "ERR_BAD_RESPONSE",
-            { method: "post", url: "/auth/refresh" } as never,
-            undefined,
-            {
-                status: 401,
-                statusText: "Unauthorized",
-                headers: {},
-                config: { method: "post", url: "/auth/refresh" } as never,
-                data: { error: "Unauthorized" },
-            } as never,
-        );
+        global.fetch = jest.fn(async () => ({
+            ok: false,
+            status: 401,
+            headers: { get: () => null },
+            json: async () => ({ error: "Unauthorized" }),
+        } as unknown as Response));
         const adapter = jest.fn(async (config) => {
-            if (config.url === "/auth/refresh") {
-                throw refreshError;
-            }
             throw new AxiosError(
                 "Request failed with status code 401",
                 "ERR_BAD_RESPONSE",
@@ -185,7 +242,10 @@ describe("application-session 401 recovery", () => {
                     statusText: "Unauthorized",
                     headers: {},
                     config,
-                    data: { error: "Unauthorized" },
+                    data: {
+                        code: "AUTH_REFRESH_REQUIRED",
+                        error: "Session refresh required",
+                    },
                 },
             );
         });
@@ -214,7 +274,7 @@ describe("application-session 401 recovery", () => {
             ]);
 
             expect(pendingOutcome).toBe("timed out");
-            expect(adapter).toHaveBeenCalledTimes(2);
+            expect(adapter).toHaveBeenCalledTimes(1);
             expect(mockResetAuthorityState).toHaveBeenCalledWith(
                 undefined,
                 { waitForCancellation: false },
@@ -222,10 +282,86 @@ describe("application-session 401 recovery", () => {
             expect(location.href).toBe("http://localhost/dashboard");
 
             resolveReset?.();
-            await expect(request).rejects.toBe(refreshError);
+            await expect(request).rejects.toMatchObject({
+                name: "ApplicationSessionRefreshError",
+                status: 401,
+            });
             expect(location.href).toBe("/login");
         } finally {
             resolveReset?.();
         }
+    });
+
+    it("recovers the application session and eformsign credential independently", async () => {
+        let eformsignRequestAttempts = 0;
+        global.fetch = jest.fn(async () => ({
+            ok: true,
+            status: 204,
+            headers: { get: () => null },
+            json: async () => null,
+        } as unknown as Response));
+
+        const adapter = jest.fn(async (config) => {
+            if (config.url === "/refresh-access-token") {
+                return {
+                    config,
+                    data: { success: true },
+                    headers: {},
+                    status: 200,
+                    statusText: "OK",
+                };
+            }
+
+            eformsignRequestAttempts += 1;
+            if (eformsignRequestAttempts === 1) {
+                throw new AxiosError(
+                    "Application session expired",
+                    "ERR_BAD_RESPONSE",
+                    config,
+                    undefined,
+                    {
+                        status: 401,
+                        statusText: "Unauthorized",
+                        headers: {},
+                        config,
+                        data: { code: "AUTH_REFRESH_REQUIRED" },
+                    },
+                );
+            }
+            if (eformsignRequestAttempts === 2) {
+                throw new AxiosError(
+                    "Eformsign credential expired",
+                    "ERR_BAD_RESPONSE",
+                    config,
+                    undefined,
+                    {
+                        status: 401,
+                        statusText: "Unauthorized",
+                        headers: {},
+                        config,
+                        data: { code: "EFORMSIGN_TOKEN_EXPIRED" },
+                    },
+                );
+            }
+
+            return {
+                config,
+                data: { success: true },
+                headers: {},
+                status: 200,
+                statusText: "OK",
+            };
+        });
+        api.defaults.adapter = adapter;
+
+        await expect(api.get("/eformsign-docs/client-names")).resolves.toMatchObject({
+            data: { success: true },
+        });
+
+        expect(global.fetch).toHaveBeenCalledTimes(1);
+        expect(eformsignRequestAttempts).toBe(3);
+        expect(adapter).toHaveBeenCalledWith(expect.objectContaining({
+            url: "/refresh-access-token",
+        }));
     });
 });
