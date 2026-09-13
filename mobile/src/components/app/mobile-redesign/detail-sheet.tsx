@@ -576,6 +576,7 @@ export function MobileDetailTabPanel({
 }
 
 const InfoCardDataComponentContext = createContext<string | null>(null);
+const InfoCardLoadingContext = createContext(false);
 
 export function InfoCard({
   "data-component": dataComponent,
@@ -583,24 +584,28 @@ export function InfoCard({
   children,
   delay,
   padded = false,
+  isLoading = false,
 }: {
   "data-component": string;
   title: string;
   children: ReactNode;
   delay?: number;
   padded?: boolean;
+  isLoading?: boolean;
 }) {
   return (
     <InfoCardDataComponentContext.Provider value={dataComponent}>
-      <div
-        data-component={dataComponent}
-        data-source-component={INFO_CARD_SOURCE_COMPONENT}
-        className={cn("info-card pop-up", padded && "info-card-padded")}
-        style={delay ? { animationDelay: `${delay}ms` } : undefined}
-      >
-        <div data-component={`${dataComponent}_title`} className="info-card-title">{title}</div>
-        {children}
-      </div>
+      <InfoCardLoadingContext.Provider value={isLoading}>
+        <div
+          data-component={dataComponent}
+          data-source-component={INFO_CARD_SOURCE_COMPONENT}
+          className={cn("info-card pop-up", padded && "info-card-padded")}
+          style={delay ? { animationDelay: `${delay}ms` } : undefined}
+        >
+          <div data-component={`${dataComponent}_title`} className="info-card-title">{title}</div>
+          {children}
+        </div>
+      </InfoCardLoadingContext.Provider>
     </InfoCardDataComponentContext.Provider>
   );
 }
@@ -610,7 +615,7 @@ export function InfoRow({
   label,
   value,
   tone,
-  isLoading = false,
+  isLoading,
 }: {
   "data-component"?: string;
   label?: string;
@@ -619,6 +624,8 @@ export function InfoRow({
   isLoading?: boolean;
 }) {
   const ownerDataComponent = useContext(InfoCardDataComponentContext);
+  const cardIsLoading = useContext(InfoCardLoadingContext);
+  const effectiveIsLoading = isLoading ?? cardIsLoading;
   const dataComponent =
     explicitDataComponent ?? (ownerDataComponent ? `${ownerDataComponent}_row` : undefined);
   const displayedValue =
@@ -635,9 +642,9 @@ export function InfoRow({
       <span
         data-component={dataComponent ? `${dataComponent}_value` : undefined}
         className={cn("info-row-value", tone && `info-row-value-${tone}`)}
-        aria-busy={isLoading}
+        aria-busy={effectiveIsLoading}
       >
-        {isLoading ? (
+        {effectiveIsLoading ? (
           <Skeleton
             data-component={dataComponent ? `${dataComponent}_value_skeleton` : undefined}
             className="h-3 w-20"

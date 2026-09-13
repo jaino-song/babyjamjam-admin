@@ -941,10 +941,10 @@
       "ui-architecture/no-raw-ui-in-pages": [
         "1445:15-1450:16|rawUiElement",
         "1571:13-1577:14|rawUiElement",
-        "2637:13-2645:15|rawUiElement",
-        "2652:15-2657:16|rawUiElement",
-        "2660:15-2665:16|rawUiElement",
-        "2690:13-2695:14|rawUiElement"
+        "2634:13-2642:15|rawUiElement",
+        "2649:15-2654:16|rawUiElement",
+        "2657:15-2662:16|rawUiElement",
+        "2687:13-2692:14|rawUiElement"
       ],
       "ui-architecture/no-visual-tailwind-in-pages": [
         "1447:27-1447:191|visualTailwindInPage",
@@ -952,19 +952,19 @@
         "1465:27-1465:96|visualTailwindInPage",
         "1473:27-1473:96|visualTailwindInPage",
         "1485:27-1485:96|visualTailwindInPage",
-        "2628:24-2628:96|visualTailwindInPage",
-        "2629:26-2629:111|visualTailwindInPage",
-        "2630:27-2630:71|visualTailwindInPage",
-        "2631:26-2631:66|visualTailwindInPage",
-        "2634:30-2634:111|visualTailwindInPage",
-        "2638:25-2638:172|visualTailwindInPage",
-        "2647:30-2647:82|visualTailwindInPage",
-        "2654:27-2654:111|visualTailwindInPage",
-        "2662:27-2662:164|visualTailwindInPage",
-        "2687:24-2687:91|visualTailwindInPage",
-        "2688:26-2688:139|visualTailwindInPage",
-        "2693:25-2693:101|visualTailwindInPage",
-        "2701:23-2701:56|visualTailwindInPage"
+        "2625:24-2625:96|visualTailwindInPage",
+        "2626:26-2626:111|visualTailwindInPage",
+        "2627:27-2627:71|visualTailwindInPage",
+        "2628:26-2628:66|visualTailwindInPage",
+        "2631:30-2631:111|visualTailwindInPage",
+        "2635:25-2635:172|visualTailwindInPage",
+        "2644:30-2644:82|visualTailwindInPage",
+        "2651:27-2651:111|visualTailwindInPage",
+        "2659:27-2659:164|visualTailwindInPage",
+        "2684:24-2684:91|visualTailwindInPage",
+        "2685:26-2685:139|visualTailwindInPage",
+        "2690:25-2690:101|visualTailwindInPage",
+        "2698:23-2698:56|visualTailwindInPage"
       ]
     },
     "mobile/src/app/(shell)/dashboard/page.tsx": {

@@ -15,7 +15,8 @@ describe("mobile contracts action lifecycle", () => {
     expect(source).toContain("isPending: isSelectedDocDetailLoading");
     expect(source).toContain("isDetailLoading={isSelectedDocDetailLoading}");
     expect(basicPanelSource.match(/<InfoRow/g)).toHaveLength(18);
-    expect(basicPanelSource.match(/isLoading=\{isDetailLoading\}/g)).toHaveLength(18);
+    expect(basicPanelSource.match(/<InfoCard[^>]*isLoading=\{isDetailLoading\}/g)).toHaveLength(4);
+    expect(basicPanelSource).not.toMatch(/<InfoRow[^>]*isLoading=/);
     expect(basicPanelSource).not.toContain("{customerPhone ? (");
   });
 

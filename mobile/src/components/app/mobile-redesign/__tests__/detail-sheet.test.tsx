@@ -496,10 +496,10 @@ describe("MobileDetailActions", () => {
 });
 
 describe("InfoRow", () => {
-  it("keeps the row mounted while only the value area shows a skeleton", () => {
+  it("inherits loading from its InfoCard and keeps only the value area skeletonized", () => {
     const { container } = render(
-      <InfoCard data-component="mobile_contracts_detail-panel_info-card" title="이용자 정보">
-        <InfoRow label="연락처" value={null} isLoading />
+      <InfoCard data-component="mobile_contracts_detail-panel_info-card" title="이용자 정보" isLoading>
+        <InfoRow label="연락처" value={null} />
       </InfoCard>,
     );
 
@@ -518,6 +518,21 @@ describe("InfoRow", () => {
         '[data-component="mobile_contracts_detail-panel_info-card_row_value_skeleton"]',
       ),
     ).toBeInTheDocument();
+  });
+
+  it("lets an InfoRow override its card loading state", () => {
+    const { container } = render(
+      <InfoCard data-component="mobile_contracts_detail-panel_info-card" title="이용자 정보" isLoading>
+        <InfoRow label="연락처" value="010-1234-5678" isLoading={false} />
+      </InfoCard>,
+    );
+
+    expect(screen.getByText("010-1234-5678")).toBeInTheDocument();
+    expect(
+      container.querySelector(
+        '[data-component="mobile_contracts_detail-panel_info-card_row_value_skeleton"]',
+      ),
+    ).not.toBeInTheDocument();
   });
 
   it.each([null, undefined, "", "   "])(
