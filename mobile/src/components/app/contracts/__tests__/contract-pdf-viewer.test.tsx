@@ -542,6 +542,82 @@ describe("ContractPdfViewer", () => {
     expect(placeholder.location.replace).not.toHaveBeenCalled();
   });
 
+  it("keeps a newer fallback tab alive when an aborted attempt settles later", async () => {
+    mockPdfState.shouldError = true;
+    renderViewer();
+
+    expect(await screen.findByText("PDF 미리보기를 불러오지 못했습니다.")).toBeInTheDocument();
+
+    const firstPlaceholder = createPlaceholderWindow();
+    const secondPlaceholder = createPlaceholderWindow();
+    const openMock = jest
+      .spyOn(window, "open")
+      .mockReturnValueOnce(firstPlaceholder)
+      .mockReturnValueOnce(secondPlaceholder);
+    const openCallCountBeforeAttempt = openMock.mock.calls.length;
+    const fetchMock = global.fetch as jest.Mock;
+    let fallbackRequestCount = 0;
+    let retryPreviewGetCount = 0;
+    let resolveFirstFallback: ((response: Response) => void) | null = null;
+    let resolveSecondFallback: ((response: Response) => void) | null = null;
+    fetchMock.mockImplementation((url: string, init?: RequestInit) => {
+      if (init?.method === "HEAD") {
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          headers: new Headers({ "content-type": "application/pdf" }),
+        } as Response);
+      }
+
+      if (url === "/contract-download.pdf") {
+        fallbackRequestCount += 1;
+        return new Promise<Response>((resolve) => {
+          if (fallbackRequestCount === 1) {
+            resolveFirstFallback = resolve;
+          } else {
+            resolveSecondFallback = resolve;
+          }
+        });
+      }
+
+      retryPreviewGetCount += 1;
+      return Promise.resolve(createPdfResponse());
+    });
+
+    fireEvent.click(screen.getByRole("link", { name: "새 탭에서 열기" }));
+    expect(resolveFirstFallback).not.toBeNull();
+    expect(firstPlaceholder.opener).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "다시 시도" }));
+    await waitFor(() => {
+      expect(retryPreviewGetCount).toBe(1);
+    });
+
+    fireEvent.click(screen.getByRole("link", { name: "새 탭에서 열기" }));
+    expect(resolveSecondFallback).not.toBeNull();
+    expect(openMock.mock.calls.length - openCallCountBeforeAttempt).toBe(2);
+    expect(firstPlaceholder.close).toHaveBeenCalledTimes(1);
+
+    const resolvePendingFirstFallback = resolveFirstFallback as ((response: Response) => void) | null;
+    resolvePendingFirstFallback?.(createPdfResponse());
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(secondPlaceholder.close).not.toHaveBeenCalled();
+    expect(secondPlaceholder.location.replace).not.toHaveBeenCalled();
+
+    const resolvePendingSecondFallback = resolveSecondFallback as ((response: Response) => void) | null;
+    resolvePendingSecondFallback?.(createPdfResponse());
+    await waitFor(() => {
+      expect(secondPlaceholder.location.replace).toHaveBeenCalledWith("blob:contract-3");
+    });
+    expect(secondPlaceholder.opener).toBeNull();
+    expect(secondPlaceholder.close).not.toHaveBeenCalled();
+  });
+
   it("does not pass a JSON response to pdf.js and can recover on retry", async () => {
     const fetchMock = global.fetch as jest.Mock;
     let getAttempt = 0;

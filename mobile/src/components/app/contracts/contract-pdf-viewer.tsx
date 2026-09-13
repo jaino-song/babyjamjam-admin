@@ -51,6 +51,13 @@ interface PendingScroll {
   top: number;
 }
 
+interface FallbackAttempt {
+  controller: AbortController;
+  placeholder: Window;
+  objectUrl: string | null;
+  handedOff: boolean;
+}
+
 const MIN_ZOOM = 1;
 const MAX_ZOOM = 4;
 const MAX_RENDER_DPR = 3;
@@ -185,9 +192,7 @@ export function ContractPdfViewer({
   const scrollFrameRef = useRef<number | null>(null);
   const previewRequestIdRef = useRef(0);
   const previewObjectUrlRef = useRef<string | null>(null);
-  const fallbackControllerRef = useRef<AbortController | null>(null);
-  const fallbackWindowRef = useRef<Window | null>(null);
-  const fallbackObjectUrlRef = useRef<string | null>(null);
+  const fallbackAttemptRef = useRef<FallbackAttempt | null>(null);
   const [numPages, setNumPages] = useState(0);
   const [baseWidth, setBaseWidth] = useState(0);
   const [pageAspectRatios, setPageAspectRatios] = useState<number[]>([]);
@@ -249,17 +254,19 @@ export function ContractPdfViewer({
     setRetryAttempt((attempt) => attempt + 1);
   }, []);
 
-  const cleanupFallbackAttempt = useCallback(() => {
-    const objectUrl = fallbackObjectUrlRef.current;
-    fallbackObjectUrlRef.current = null;
+  const cleanupFallbackAttempt = useCallback((attempt: FallbackAttempt) => {
+    const objectUrl = attempt.objectUrl;
+    attempt.objectUrl = null;
     if (objectUrl) {
       revokeObjectUrl(objectUrl);
     }
 
-    const placeholder = fallbackWindowRef.current;
-    fallbackWindowRef.current = null;
-    if (placeholder && !placeholder.closed) {
-      placeholder.close();
+    if (!attempt.handedOff && !attempt.placeholder.closed) {
+      attempt.placeholder.close();
+    }
+
+    if (fallbackAttemptRef.current === attempt) {
+      fallbackAttemptRef.current = null;
     }
   }, []);
 
@@ -331,12 +338,11 @@ export function ContractPdfViewer({
 
     return () => {
       controller.abort();
-      const fallbackController = fallbackControllerRef.current;
-      fallbackController?.abort();
-      if (fallbackControllerRef.current === fallbackController) {
-        fallbackControllerRef.current = null;
+      const fallbackAttempt = fallbackAttemptRef.current;
+      fallbackAttempt?.controller.abort();
+      if (fallbackAttempt) {
+        cleanupFallbackAttempt(fallbackAttempt);
       }
-      cleanupFallbackAttempt();
       if (createdObjectUrl && previewObjectUrlRef.current === createdObjectUrl) {
         previewObjectUrlRef.current = null;
         revokeObjectUrl(createdObjectUrl);
@@ -623,7 +629,7 @@ export function ContractPdfViewer({
 
   const handleFallbackOpen = useCallback((event: React.MouseEvent<HTMLAnchorElement>) => {
     event.preventDefault();
-    if (fallbackControllerRef.current) {
+    if (fallbackAttemptRef.current) {
       return;
     }
 
@@ -635,15 +641,21 @@ export function ContractPdfViewer({
 
     const controller = new AbortController();
     const requestId = previewRequestIdRef.current;
-    fallbackWindowRef.current = placeholder;
-    fallbackControllerRef.current = controller;
+    const attempt: FallbackAttempt = {
+      controller,
+      placeholder,
+      objectUrl: null,
+      handedOff: false,
+    };
+    fallbackAttemptRef.current = attempt;
     void fetchValidatedBinary(fallbackHref, "pdf", { signal: controller.signal })
       .then((binary) => {
         if (
           controller.signal.aborted ||
-          previewRequestIdRef.current !== requestId
+          previewRequestIdRef.current !== requestId ||
+          fallbackAttemptRef.current !== attempt
         ) {
-          cleanupFallbackAttempt();
+          cleanupFallbackAttempt(attempt);
           return;
         }
 
@@ -651,27 +663,29 @@ export function ContractPdfViewer({
           throw new BinaryDownloadError();
         }
 
-        const activePlaceholder = fallbackWindowRef.current;
-        if (!activePlaceholder || activePlaceholder.closed) {
+        if (attempt.placeholder.closed) {
           throw new BinaryDownloadError();
         }
 
         const objectUrl = URL.createObjectURL(binary.blob);
-        fallbackObjectUrlRef.current = objectUrl;
+        attempt.objectUrl = objectUrl;
         try {
-          activePlaceholder.location.replace(objectUrl);
+          attempt.placeholder.location.replace(objectUrl);
         } catch {
           throw new BinaryDownloadError();
         }
 
-        fallbackWindowRef.current = null;
-        fallbackObjectUrlRef.current = null;
+        attempt.handedOff = true;
+        attempt.objectUrl = null;
+        if (fallbackAttemptRef.current === attempt) {
+          fallbackAttemptRef.current = null;
+        }
         setTimeout(() => {
           revokeObjectUrl(objectUrl);
         }, FALLBACK_OBJECT_URL_REVOKE_DELAY_MS);
       })
       .catch((error: unknown) => {
-        cleanupFallbackAttempt();
+        cleanupFallbackAttempt(attempt);
         if (
           controller.signal.aborted ||
           previewRequestIdRef.current !== requestId ||
@@ -682,8 +696,8 @@ export function ContractPdfViewer({
         setPreviewStatus("error");
       })
       .finally(() => {
-        if (fallbackControllerRef.current === controller) {
-          fallbackControllerRef.current = null;
+        if (fallbackAttemptRef.current === attempt) {
+          fallbackAttemptRef.current = null;
         }
       });
   }, [cleanupFallbackAttempt, fallbackHref]);
