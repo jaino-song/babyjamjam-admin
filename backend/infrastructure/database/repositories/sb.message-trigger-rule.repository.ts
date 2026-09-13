@@ -65,14 +65,28 @@ export class SbMessageTriggerRuleRepository implements IMessageTriggerRuleReposi
 
     async findActiveTemplateKeys(
         templateKeys: MessageTriggerTemplateKey[],
+        branchIdOrTransaction?: string | Prisma.TransactionClient,
         transaction?: Prisma.TransactionClient,
     ): Promise<MessageTriggerTemplateKey[]> {
         if (templateKeys.length === 0) return [];
-        const rows = await (transaction ?? this.prisma).message_trigger_rule.findMany({
-            where: {
+        const branchId = typeof branchIdOrTransaction === "string"
+            ? branchIdOrTransaction
+            : undefined;
+        const client = typeof branchIdOrTransaction === "string"
+            ? transaction ?? this.prisma
+            : branchIdOrTransaction ?? transaction ?? this.prisma;
+        const where = branchId === undefined
+            ? {
                 isActive: true,
                 templateKey: { in: templateKeys },
-            },
+            }
+            : {
+                branchId,
+                isActive: true,
+                templateKey: { in: templateKeys },
+            };
+        const rows = await client.message_trigger_rule.findMany({
+            where,
             select: { templateKey: true },
             distinct: ["templateKey"],
         });

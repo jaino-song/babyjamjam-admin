@@ -162,6 +162,32 @@ describe("SbMessageTriggerRuleRepository", () => {
         expect(result).toEqual([MessageTriggerTemplateKey.SERVICE_INFO]);
     });
 
+    it("findActiveTemplateKeys scopes active-template reads to the edited branch when provided", async () => {
+        messageTriggerRuleModel.findMany.mockResolvedValue([
+            { templateKey: MessageTriggerTemplateKey.SERVICE_INFO },
+        ]);
+        const transaction = {
+            message_trigger_rule: messageTriggerRuleModel,
+        };
+
+        const result = await repository.findActiveTemplateKeys(
+            [MessageTriggerTemplateKey.SERVICE_INFO],
+            "branch-1",
+            transaction as never,
+        );
+
+        expect(messageTriggerRuleModel.findMany).toHaveBeenCalledWith({
+            where: {
+                branchId: "branch-1",
+                isActive: true,
+                templateKey: { in: [MessageTriggerTemplateKey.SERVICE_INFO] },
+            },
+            select: { templateKey: true },
+            distinct: ["templateKey"],
+        });
+        expect(result).toEqual([MessageTriggerTemplateKey.SERVICE_INFO]);
+    });
+
     it("update pins the where clause to the branch-scoped rule id", async () => {
         const rule = MessageTriggerRuleEntity.reconstitute(
             "rule-1",
