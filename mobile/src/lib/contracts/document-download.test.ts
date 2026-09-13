@@ -98,6 +98,22 @@ describe("document binary validation", () => {
     ).rejects.toMatchObject({ name: "AbortError", message: "request interrupted" });
   });
 
+  it("normalizes a non-abort DOMException when the signal aborts", async () => {
+    const controller = new AbortController();
+    const networkError = new DOMException("request interrupted", "NetworkError");
+    const fetchImpl = jest.fn().mockImplementation(async () => {
+      controller.abort();
+      throw networkError;
+    });
+    const request = fetchValidatedBinary("/document", "pdf", {
+      fetchImpl,
+      signal: controller.signal,
+    });
+
+    await expect(request).rejects.toMatchObject({ name: "AbortError", message: "request interrupted" });
+    await expect(request).rejects.not.toBe(networkError);
+  });
+
   it("wraps an ordinary fetch failure as a BinaryDownloadError", async () => {
     const fetchImpl = jest.fn().mockRejectedValue(new Error("network failure"));
 
