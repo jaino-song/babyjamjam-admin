@@ -485,11 +485,11 @@ describe("messages page — server system-template catalog", () => {
     replaceContent("첫 번째 미저장 수정");
     fireEvent.click(screen.getByText("새 서버 템플릿"));
     expect(readContent()).toBe("두 번째 본문");
-    replaceContent("두 번째 수정");
+    replaceContent("두 번째 수정 {{second}}");
     fireEvent.click(screen.getByRole("button", { name: "저장" }));
     await waitFor(() => expect(mockUpdateSystemTemplate).toHaveBeenCalledWith({
       key: "FUTURE_TEMPLATE",
-      content: "두 번째 수정",
+      content: "두 번째 수정 {{second}}",
       customVariables: secondVariables,
       scope: "branch",
       branchId: "branch-test",
