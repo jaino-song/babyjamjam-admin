@@ -3,7 +3,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactNode } from "react";
 
 import { api } from "@/lib/api/client";
-import { useAllVoucherPriceInfos } from "../useVoucherData";
+import { useAllVoucherPriceInfos, type ContractVoucherPriceInfo } from "../useVoucherData";
 
 jest.mock("@/lib/api/client", () => ({
   api: {
@@ -36,28 +36,29 @@ describe("useVoucherData contract price reads", () => {
   });
 
   it("uses the year-scoped contract-view read endpoint", async () => {
+    const contractPrice: ContractVoucherPriceInfo = {
+      type: "A통합1형",
+      duration: null,
+      fullPrice: "2196000",
+      grant: null,
+      actualPrice: "2196000",
+      year: 2026,
+    };
+
     mockedApiGet.mockResolvedValue({
-      data: [
-        {
-          type: "A통합1형",
-          duration: "15",
-          fullPrice: "2196000",
-          grant: "1303000",
-          actualPrice: "893000",
-          year: 2026,
-        },
-      ],
+      data: [contractPrice],
     });
 
     const { result } = renderHook(() => useAllVoucherPriceInfos(2026), {
       wrapper: createWrapper(queryClient),
     });
 
-    await waitFor(() => expect(result.current.data).toHaveLength(1));
+    await waitFor(() => expect(result.current.data).toEqual([contractPrice]));
 
     expect(mockedApiGet).toHaveBeenCalledWith("/voucher-price-infos/contract-view", {
       params: { year: 2026 },
     });
+    expect(result.current.data?.[0]).not.toHaveProperty("id");
   });
 
   it("does not request a contract price table without a resolved year", () => {
