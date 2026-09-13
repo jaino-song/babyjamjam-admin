@@ -33,6 +33,7 @@ describe("authenticated file transport", () => {
   });
 
   it("downloads through a temporary object URL and revokes it", async () => {
+    jest.useFakeTimers();
     const anchor = { href: "", download: "", click: jest.fn(), remove: jest.fn() };
     const documentObject = {
       createElement: jest.fn().mockReturnValue(anchor),
@@ -44,15 +45,23 @@ describe("authenticated file transport", () => {
     };
     const fetchImpl = jest.fn().mockResolvedValue(new Response("file-bytes"));
 
-    await downloadAuthenticatedFile("/api/file-storage/files/42/download", "guide.pdf", {
-      documentObject: documentObject as unknown as Pick<Document, "createElement" | "body">,
-      urlObject,
-      fetchImpl,
-    });
+    try {
+      await downloadAuthenticatedFile("/api/file-storage/files/42/download", "guide.pdf", {
+        documentObject: documentObject as unknown as Pick<Document, "createElement" | "body">,
+        urlObject,
+        fetchImpl,
+      });
 
-    expect(anchor).toMatchObject({ href: "blob:protected-file", download: "guide.pdf" });
-    expect(anchor.click).toHaveBeenCalledTimes(1);
-    expect(anchor.remove).toHaveBeenCalledTimes(1);
-    expect(urlObject.revokeObjectURL).toHaveBeenCalledWith("blob:protected-file");
+      expect(anchor).toMatchObject({ href: "blob:protected-file", download: "guide.pdf" });
+      expect(anchor.click).toHaveBeenCalledTimes(1);
+      expect(anchor.remove).toHaveBeenCalledTimes(1);
+      expect(urlObject.revokeObjectURL).not.toHaveBeenCalled();
+      jest.advanceTimersByTime(999);
+      expect(urlObject.revokeObjectURL).not.toHaveBeenCalled();
+      jest.advanceTimersByTime(1);
+      expect(urlObject.revokeObjectURL).toHaveBeenCalledWith("blob:protected-file");
+    } finally {
+      jest.useRealTimers();
+    }
   });
 });

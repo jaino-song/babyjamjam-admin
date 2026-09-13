@@ -25,7 +25,11 @@ interface DownloadAuthenticatedFileOptions extends AuthenticatedFileFetchOptions
   urlObject?: Pick<typeof URL, "createObjectURL" | "revokeObjectURL">;
 }
 
-type FileSaveOptions = Pick<DownloadAuthenticatedFileOptions, "documentObject" | "urlObject">;
+export const AUTHENTICATED_FILE_OBJECT_URL_REVOKE_DELAY_MS = 1_000;
+
+type FileSaveOptions = Pick<DownloadAuthenticatedFileOptions, "documentObject" | "urlObject"> & {
+  revokeDelayMs?: number;
+};
 
 export function saveBlobAsFile(
   blob: Blob,
@@ -33,6 +37,7 @@ export function saveBlobAsFile(
   {
     documentObject = document,
     urlObject = URL,
+    revokeDelayMs = AUTHENTICATED_FILE_OBJECT_URL_REVOKE_DELAY_MS,
   }: FileSaveOptions = {},
 ): void {
   const objectUrl = urlObject.createObjectURL(blob);
@@ -45,7 +50,9 @@ export function saveBlobAsFile(
     anchor.click();
   } finally {
     anchor.remove();
-    urlObject.revokeObjectURL(objectUrl);
+    setTimeout(() => {
+      urlObject.revokeObjectURL(objectUrl);
+    }, Math.max(0, revokeDelayMs));
   }
 }
 

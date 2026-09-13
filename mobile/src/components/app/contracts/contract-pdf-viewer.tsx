@@ -628,8 +628,7 @@ export function ContractPdfViewer({
       });
   }, []);
 
-  const handleFallbackOpen = useCallback((event: React.MouseEvent<HTMLAnchorElement>) => {
-    event.preventDefault();
+  const handleFallbackOpen = useCallback(() => {
     if (fallbackAttemptRef.current) {
       return;
     }
@@ -719,14 +718,13 @@ export function ContractPdfViewer({
       >
         다시 시도
       </Button>
-      <a
-        href={fallbackHref}
-        target="_blank"
-        rel="noopener noreferrer"
+      <Button
+        type="button"
+        variant="link"
         onClick={handleFallbackOpen}
       >
         새 탭에서 열기
-      </a>
+      </Button>
     </div>
   );
 

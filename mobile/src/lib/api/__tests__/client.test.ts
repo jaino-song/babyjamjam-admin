@@ -223,7 +223,7 @@ describe("application-session 401 recovery", () => {
         );
     });
 
-    it("settles the initiating 401 before redirect when reset cannot await its cancellation", async () => {
+    it("refreshes a revoked unexpired session and settles authority reset before redirect", async () => {
         let resolveReset: (() => void) | undefined;
         global.fetch = jest.fn(async () => ({
             ok: false,
@@ -242,10 +242,7 @@ describe("application-session 401 recovery", () => {
                     statusText: "Unauthorized",
                     headers: {},
                     config,
-                    data: {
-                        code: "AUTH_REFRESH_REQUIRED",
-                        error: "Session refresh required",
-                    },
+                    data: { error: "Unauthorized" },
                 },
             );
         });

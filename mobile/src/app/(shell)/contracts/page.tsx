@@ -1,6 +1,6 @@
 "use client";
 
-import type { ComponentType, MouseEvent, ReactNode } from "react";
+import type { ComponentType, ReactNode } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowLeft,
@@ -80,6 +80,7 @@ import { HeadlessProgressModal } from "@/components/app/eformsign/HeadlessProgre
 import { ContractPdfViewerPlaceholder } from "@/components/app/contracts/contract-pdf-viewer-placeholder";
 import { MobileTwoButtonModal } from "@/components/app/ui/MobileTwoButtonModal";
 import { ApprovalTwoButtonModal } from "@/components/app/ui/ApprovalTwoButtonModal";
+import { Button } from "@/components/ui/button";
 import { describeReceiptLinkError } from "@/lib/receipt-link";
 import type { EformsignDocClientSummary } from "@babyjamjam/shared/types/eformsign";
 import {
@@ -1391,12 +1392,10 @@ function ContractDetailContent({
       }
     }
   }, [toast]);
-  const handleReceiptDownload = (event: MouseEvent<HTMLAnchorElement>) => {
-    event.preventDefault();
+  const handleReceiptDownload = () => {
     void runValidatedDownload(receiptDownloadUrl, receiptFilename, "png");
   };
-  const handlePdfDownload = (event: MouseEvent<HTMLAnchorElement>) => {
-    event.preventDefault();
+  const handlePdfDownload = () => {
     void runValidatedDownload(downloadUrl, `${name}.pdf`, "pdf");
   };
   const handleReceiptShare = async () => {
@@ -1586,28 +1585,28 @@ function ContractDetailContent({
               className="contract-preview-header-actions"
               data-slot="contract-preview-header-actions"
             >
-              <a
+              <Button
+                type="button"
+                variant="ghost"
                 className="contract-preview-receipt"
                 data-component="mobile_contracts_detail-sheet_stack_detail-page_content_pdf-preview_header_receipt-download"
-                href={receiptDownloadUrl}
-                download={receiptFilename}
                 aria-label={`${receiptFilename} 다운로드`}
                 onClick={handleReceiptDownload}
               >
                 <Download size={16} strokeWidth={2.5} />
                 <span>영수증</span>
-              </a>
-              <a
+              </Button>
+              <Button
+                type="button"
+                variant="ghost"
                 className="contract-preview-download"
                 data-component="mobile_contracts_detail-sheet_stack_detail-page_content_pdf-preview_header_pdf-download"
-                href={downloadUrl}
-                download={`${name}.pdf`}
                 aria-label={`${name} PDF 다운로드`}
                 onClick={handlePdfDownload}
               >
                 <Download size={16} strokeWidth={2.5} />
                 <span>다운로드</span>
-              </a>
+              </Button>
             </div>
           </div>
           <ContractPdfViewer

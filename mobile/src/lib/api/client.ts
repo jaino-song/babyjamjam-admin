@@ -152,7 +152,8 @@ api.interceptors.response.use(
                 return Promise.reject(err);
             }
 
-            if (!isAppAuthFailure || originalRequest._appAuthRetry) {
+            const shouldAttemptAppRefresh = isAppAuthFailure || !isEformsignTokenEndpoint(url);
+            if (!shouldAttemptAppRefresh || originalRequest._appAuthRetry) {
                 return Promise.reject(err);
             }
 
