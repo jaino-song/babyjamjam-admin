@@ -81,7 +81,7 @@ export function useAllVoucherPriceInfos(year?: number) {
   return useQuery<VoucherPriceInfo[]>({
     queryKey: voucherQueryKeys.allVoucherPriceInfos(year),
     queryFn: async () => {
-      const { data } = await api.get("/voucher-price-infos/type", {
+      const { data } = await api.get("/voucher-price-infos/contract-view", {
         params: { year },
       });
       return data as VoucherPriceInfo[];
