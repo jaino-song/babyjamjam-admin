@@ -63,6 +63,7 @@ export class SystemTemplateMutationGuardService {
         content: string,
         customVariables: CustomVariable[] = [],
         transaction?: Prisma.TransactionClient,
+        branchId?: string,
     ): Promise<void> {
         const validation = validateSystemTemplateCandidate(key, content, customVariables);
         if (!validation.valid) {
@@ -95,10 +96,16 @@ export class SystemTemplateMutationGuardService {
         );
         if (unsupportedByTriggerTemplate.size === 0) return;
 
-        const activeTemplateKeys = await this.messageTriggerRuleRepository.findActiveTemplateKeys(
-            [...unsupportedByTriggerTemplate.keys()],
-            transaction,
-        );
+        const activeTemplateKeys = branchId === undefined
+            ? await this.messageTriggerRuleRepository.findActiveTemplateKeys(
+                [...unsupportedByTriggerTemplate.keys()],
+                transaction,
+            )
+            : await this.messageTriggerRuleRepository.findActiveTemplateKeys(
+                [...unsupportedByTriggerTemplate.keys()],
+                branchId,
+                transaction,
+            );
         const unsupportedActiveVariables = [...new Set(
             activeTemplateKeys.flatMap(
                 (templateKey) => unsupportedByTriggerTemplate.get(templateKey) ?? [],

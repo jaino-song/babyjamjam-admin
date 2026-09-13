@@ -6,6 +6,7 @@ import { VoucherPriceInfoController } from "interface/controllers/voucher-price-
 import { VoucherPriceInfoService } from "application/services/voucher-price-info.service";
 import { JwtGuard } from "infrastructure/auth/jwt.guard";
 import { OwnerOrAdminGuard } from "infrastructure/auth/owner-or-admin.guard";
+import { TenantGuard } from "infrastructure/tenant";
 
 describe("VoucherPriceInfoController (Integration)", () => {
     // ============================================
@@ -37,7 +38,7 @@ describe("VoucherPriceInfoController (Integration)", () => {
     });
 
     const getMethodGuards = (
-        methodName: "list" | "findByType" | "getDistinctYears" | "findById",
+        methodName: "list" | "findByType" | "getDistinctYears" | "findById" | "contractView",
     ) => {
         return Reflect.getMetadata(
             GUARDS_METADATA,
@@ -76,6 +77,8 @@ describe("VoucherPriceInfoController (Integration)", () => {
             })
             .overrideGuard(OwnerOrAdminGuard)
             .useValue({ canActivate: () => true })
+            .overrideGuard(TenantGuard)
+            .useValue({ canActivate: () => true })
             .compile();
 
         app = moduleFixture.createNestApplication();
@@ -100,6 +103,72 @@ describe("VoucherPriceInfoController (Integration)", () => {
 
             expect(guards).toContain(JwtGuard);
             expect(guards).toContain(OwnerOrAdminGuard);
+        });
+
+        it("protects contract-view reads with JWT and tenant membership only", () => {
+            const guards = getMethodGuards("contractView");
+
+            expect(guards).toContain(JwtGuard);
+            expect(guards).toContain(TenantGuard);
+            expect(guards).not.toContain(OwnerOrAdminGuard);
+        });
+
+        it.each(["create", "update", "delete", "parseImage", "bulkUpdate"] as const)(
+            "keeps %s protected by owner/admin guards",
+            (methodName) => {
+                const guards = Reflect.getMetadata(
+                    GUARDS_METADATA,
+                    VoucherPriceInfoController.prototype[methodName],
+                ) ?? [];
+
+                expect(guards).toContain(JwtGuard);
+                expect(guards).toContain(OwnerOrAdminGuard);
+                expect(guards).not.toContain(TenantGuard);
+            },
+        );
+    });
+
+    describe("GET /voucher-price-infos/contract-view", () => {
+        it("returns only year-matched fields needed by contract service cards", async () => {
+            voucherService.list.mockResolvedValue([
+                createMockVoucherPriceInfoResponse({
+                    id: 1,
+                    type: "A통합1형",
+                    duration: 15,
+                    fullPrice: "2196000",
+                    grant: "1303000",
+                    actualPrice: "893000",
+                    year: 2026,
+                }),
+                createMockVoucherPriceInfoResponse({ id: 2, year: 2025 }),
+            ] as any);
+
+            const response = await request(app.getHttpServer())
+                .get("/voucher-price-infos/contract-view")
+                .query({ year: "2026" });
+
+            expect(response.status).toBe(200);
+            expect(response.body).toEqual([
+                {
+                    type: "A통합1형",
+                    duration: "15",
+                    fullPrice: "2196000",
+                    grant: "1303000",
+                    actualPrice: "893000",
+                    year: 2026,
+                },
+            ]);
+            expect(response.body[0]).not.toHaveProperty("id");
+            expect(voucherService.list).toHaveBeenCalled();
+        });
+
+        it("rejects an invalid year before reading the price table", async () => {
+            const response = await request(app.getHttpServer())
+                .get("/voucher-price-infos/contract-view")
+                .query({ year: "1899" });
+
+            expect(response.status).toBe(400);
+            expect(voucherService.list).not.toHaveBeenCalled();
         });
     });
 

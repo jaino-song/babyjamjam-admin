@@ -79,6 +79,49 @@ describe("document binary validation", () => {
     );
   });
 
+  it("rethrows a native AbortError without changing its identity", async () => {
+    const abortError = new DOMException("The request was aborted.", "AbortError");
+    const fetchImpl = jest.fn().mockRejectedValue(abortError);
+
+    await expect(fetchValidatedBinary("/document", "pdf", { fetchImpl })).rejects.toBe(abortError);
+  });
+
+  it("returns a named abort error when the signal aborts during a non-abort rejection", async () => {
+    const controller = new AbortController();
+    const fetchImpl = jest.fn().mockImplementation(async () => {
+      controller.abort();
+      throw new Error("request interrupted");
+    });
+
+    await expect(
+      fetchValidatedBinary("/document", "pdf", { fetchImpl, signal: controller.signal }),
+    ).rejects.toMatchObject({ name: "AbortError", message: "request interrupted" });
+  });
+
+  it("normalizes a non-abort DOMException when the signal aborts", async () => {
+    const controller = new AbortController();
+    const networkError = new DOMException("request interrupted", "NetworkError");
+    const fetchImpl = jest.fn().mockImplementation(async () => {
+      controller.abort();
+      throw networkError;
+    });
+    const request = fetchValidatedBinary("/document", "pdf", {
+      fetchImpl,
+      signal: controller.signal,
+    });
+
+    await expect(request).rejects.toMatchObject({ name: "AbortError", message: "request interrupted" });
+    await expect(request).rejects.not.toBe(networkError);
+  });
+
+  it("wraps an ordinary fetch failure as a BinaryDownloadError", async () => {
+    const fetchImpl = jest.fn().mockRejectedValue(new Error("network failure"));
+
+    await expect(fetchValidatedBinary("/document", "pdf", { fetchImpl })).rejects.toBeInstanceOf(
+      BinaryDownloadError,
+    );
+  });
+
   it("creates a download object URL only after validation and revokes it after the click", async () => {
     const click = jest.fn();
     const remove = jest.fn();

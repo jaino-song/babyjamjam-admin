@@ -196,10 +196,6 @@ export const SystemTemplateEditor = forwardRef<
     () => buildEditorVariables(template.requiredVariables, templateCustomVariables),
     [template.requiredVariables, templateCustomVariables],
   );
-  const registryVariables = useMemo(
-    () => (template.requiredVariables ?? []).map(toEditorVariable),
-    [template.requiredVariables],
-  );
   const quickInsertVariables = useMemo(
     () =>
       editorVariables.map((variable) => {
@@ -285,8 +281,8 @@ export const SystemTemplateEditor = forwardRef<
   ]);
 
   const validation = useMemo(
-    () => validateSystemTemplateContent(content, editorVariables, registryVariables),
-    [content, editorVariables, registryVariables],
+    () => validateSystemTemplateContent(content, editorVariables),
+    [content, editorVariables],
   );
   const hasChanges = getDraftDirty(content, customVariables, baselineRef.current);
   const isValid =

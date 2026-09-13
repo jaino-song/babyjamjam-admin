@@ -34,5 +34,9 @@ export function useSystemTemplate(key: string, options: UseSystemTemplateOptions
     // 인증 세션이 로드되는 동안에는 쿼리가 아직 활성화되지 않았어도
     // 로딩으로 보여준다. 그렇지 않으면 지점을 알기 전에 상세 화면이
     // "템플릿을 찾을 수 없습니다"를 번쩍이게 된다.
-    return { ...query, isLoading: isAuthUserLoading || query.isLoading };
+    return {
+        ...query,
+        branchId,
+        isLoading: isAuthUserLoading || query.isLoading,
+    };
 }

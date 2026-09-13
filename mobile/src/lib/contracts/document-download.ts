@@ -186,18 +186,18 @@ export async function fetchValidatedBinary(
       signal,
     });
   } catch (error) {
-    if (isAbortError(error) || signal?.aborted) {
-      const abortError = error instanceof Error ? error : new Error("The request was aborted.");
-      abortError.name = "AbortError";
-      throw abortError;
+    if (isAbortError(error)) {
+      throw error;
+    }
+
+    if (signal?.aborted) {
+      throw createAbortError(error);
     }
     throw new BinaryDownloadError();
   }
 
   if (signal?.aborted) {
-    const abortError = new Error("The request was aborted.");
-    abortError.name = "AbortError";
-    throw abortError;
+    throw createAbortError();
   }
 
   return readValidatedResponse(response, kind, validationOptions);
@@ -207,14 +207,21 @@ function isAbortError(error: unknown): boolean {
   return typeof error === "object" && error !== null && "name" in error && error.name === "AbortError";
 }
 
+function createAbortError(error?: unknown): Error {
+  const abortError = new Error(
+    error instanceof Error ? error.message : "The request was aborted.",
+    error === undefined ? undefined : { cause: error },
+  );
+  abortError.name = "AbortError";
+  return abortError;
+}
+
 function throwIfAborted(signal?: AbortSignal): void {
   if (!signal?.aborted) {
     return;
   }
 
-  const abortError = new Error("The request was aborted.");
-  abortError.name = "AbortError";
-  throw abortError;
+  throw createAbortError();
 }
 
 type DocumentLike = Pick<Document, "createElement"> & {

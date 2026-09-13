@@ -10,9 +10,15 @@ export interface IMessageTriggerRuleRepository {
         branchId: string,
         eventTypes: MessageTriggerEventType[],
     ): Promise<MessageTriggerRuleEntity[]>;
-    /** Minimal global read used to prevent a shared template edit from breaking active tenant rules. */
+    /**
+     * Read active rules that use one of the supplied templates. Without a
+     * branch scope this preserves the global-template guard semantics; when a
+     * branch is supplied, that branch and applicable branchless global rules
+     * are considered while unrelated branch rules are excluded.
+     */
     findActiveTemplateKeys(
         templateKeys: MessageTriggerTemplateKey[],
+        branchIdOrTransaction?: string | Prisma.TransactionClient,
         transaction?: Prisma.TransactionClient,
     ): Promise<MessageTriggerTemplateKey[]>;
     findInactiveDefaultRules(limit?: number): Promise<MessageTriggerRuleEntity[]>;
