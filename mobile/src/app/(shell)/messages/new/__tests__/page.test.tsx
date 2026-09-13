@@ -328,6 +328,10 @@ describe("NewMessagePage", () => {
       `${FORM_CARD_CONTENT}_message-body`,
     ]);
     expect(screen.getByLabelText(/휴대 전화번호/)).toHaveAttribute("placeholder", "010-0000-0000");
+    expect(screen.getByLabelText(/휴대 전화번호/)).toHaveAttribute(
+      "data-component",
+      `${FORM_CARD_CONTENT}_recipient_row_autocomplete_input`,
+    );
     expect(screen.queryByLabelText(/산모님 성함/)).not.toBeInTheDocument();
   });
 
@@ -356,9 +360,9 @@ describe("NewMessagePage", () => {
     await openTemplateSelect();
     fireEvent.click(screen.getByRole("option", { name: "서비스 안내" }));
 
-    const receiverInput = screen.getByLabelText(/휴대 전화번호/);
-    fireEvent.focus(receiverInput);
-    fireEvent.change(receiverInput, { target: { value: "박서연" } });
+    const recipientNameInput = screen.getByLabelText(/산모님 성함/);
+    fireEvent.focus(recipientNameInput);
+    fireEvent.change(recipientNameInput, { target: { value: "박서연" } });
     fireEvent.click(await screen.findByText("박서연"));
     fireEvent.click(screen.getByRole("button", { name: "즉시 발송" }));
 
@@ -632,7 +636,14 @@ describe("NewMessagePage", () => {
     fireEvent.click(screen.getByRole("option", { name: "서비스 안내" }));
 
     expect(screen.getByRole("combobox", { name: /템플릿 선택/ })).toHaveTextContent("서비스 안내");
-    expect(screen.getByLabelText(/산모님 성함/)).toBeInTheDocument();
+    expect(screen.getByLabelText(/산모님 성함/)).toHaveAttribute(
+      "data-component",
+      `${FORM_CARD_CONTENT}_recipient_name-row_autocomplete_input`,
+    );
+    expect(screen.getByLabelText(/휴대 전화번호/)).toHaveAttribute(
+      "data-component",
+      `${FORM_CARD_CONTENT}_recipient_row_input`,
+    );
     expect(screen.getByLabelText(/서비스 시작일/)).toBeInTheDocument();
     expect(
       Array.from(
@@ -799,12 +810,13 @@ describe("NewMessagePage", () => {
     await openTemplateSelect();
     fireEvent.click(screen.getByRole("option", { name: "서비스 안내" }));
 
-    const receiverInput = screen.getByLabelText(/휴대 전화번호/);
-    fireEvent.focus(receiverInput);
-    fireEvent.change(receiverInput, { target: { value: "박서연" } });
+    const recipientNameInput = screen.getByLabelText(/산모님 성함/);
+    fireEvent.focus(recipientNameInput);
+    fireEvent.change(recipientNameInput, { target: { value: "박서연" } });
     fireEvent.click(await screen.findByText("박서연"));
 
-    expect(screen.getByLabelText(/산모님 성함/)).toHaveValue("박서연");
+    expect(recipientNameInput).toHaveValue("");
+    expect(screen.getByRole("button", { name: "박서연 수신자 제거" })).toBeInTheDocument();
     expect(screen.getByLabelText(/서비스 시작일/)).toHaveValue("2026. 06. 10.");
     expect(screen.getByLabelText("메시지 본문")).toHaveValue(
       "박서연 산모님~♡\n서비스 시작일: 2026. 06. 10.\n산후관리서비스 관련 안내사항을 보내드립니다 :)",
