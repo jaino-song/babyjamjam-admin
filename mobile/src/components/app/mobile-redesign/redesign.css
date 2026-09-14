@@ -594,9 +594,6 @@ main[data-slot="main-content"]:has([data-slot="dashboard-page"]) > [data-slot="d
 .mobile-detail-sheet:has([data-slot="consultations-content"]) {
   margin: 0;
 }
-[data-slot="consultations-content"] {
-  padding-inline: 0;
-}
 .shell-content .list-card {
   flex: 1;
   display: flex;
