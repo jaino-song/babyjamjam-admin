@@ -2441,7 +2441,8 @@ body.mobile-all-route .menu-row {
 }
 
 body.mobile-clients-route [data-slot="mobile-bottom-nav"],
-body:has([data-slot="calls-content"]) [data-slot="mobile-bottom-nav"] {
+body:has([data-slot="calls-content"]) [data-slot="mobile-bottom-nav"],
+body:has([data-slot="consultations-content"]) [data-slot="mobile-bottom-nav"] {
   position: absolute !important;
   left: 14px !important;
   right: 14px !important;
@@ -2459,12 +2460,14 @@ body:has([data-slot="calls-content"]) [data-slot="mobile-bottom-nav"] {
 }
 
 body.mobile-clients-route [data-slot="mobile-bottom-nav"] > div[aria-hidden="true"],
-body:has([data-slot="calls-content"]) [data-slot="mobile-bottom-nav"] > div[aria-hidden="true"] {
+body:has([data-slot="calls-content"]) [data-slot="mobile-bottom-nav"] > div[aria-hidden="true"],
+body:has([data-slot="consultations-content"]) [data-slot="mobile-bottom-nav"] > div[aria-hidden="true"] {
   display: none;
 }
 
 body.mobile-clients-route [data-slot="mobile-bottom-nav"] a,
-body:has([data-slot="calls-content"]) [data-slot="mobile-bottom-nav"] a {
+body:has([data-slot="calls-content"]) [data-slot="mobile-bottom-nav"] a,
+body:has([data-slot="consultations-content"]) [data-slot="mobile-bottom-nav"] a {
   gap: 2px;
   padding: 5px 4px;
   border-radius: 14px;
@@ -2472,13 +2475,15 @@ body:has([data-slot="calls-content"]) [data-slot="mobile-bottom-nav"] a {
 }
 
 body.mobile-clients-route [data-slot="mobile-bottom-nav"] svg,
-body:has([data-slot="calls-content"]) [data-slot="mobile-bottom-nav"] svg {
+body:has([data-slot="calls-content"]) [data-slot="mobile-bottom-nav"] svg,
+body:has([data-slot="consultations-content"]) [data-slot="mobile-bottom-nav"] svg {
   width: 18px;
   height: 18px;
 }
 
 body.mobile-clients-route [data-slot="mobile-bottom-nav"] span,
-body:has([data-slot="calls-content"]) [data-slot="mobile-bottom-nav"] span {
+body:has([data-slot="calls-content"]) [data-slot="mobile-bottom-nav"] span,
+body:has([data-slot="consultations-content"]) [data-slot="mobile-bottom-nav"] span {
   font-size: 10px;
   font-weight: 500;
   line-height: 1;
