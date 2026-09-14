@@ -511,3 +511,16 @@ TL;DR: dev가 63커밋 전진(계약·메시지·시스템 템플릿·single-fli
 
 **advisory e2e 2건 기록 (2026-09-14):** Mobile CI의 advisory `playwright e2e`에서 2건이 실패한다: ① `system-template-preview.spec.ts:140` — `buildSystemTemplateSendHref`가 `template=` 파라미터를 추가한 dev 변경으로 실제 URL이 `/messages/new?template=THANKS&body=…`가 되어 `/messages\/new\?body=/` 정규식이 불일치. ② `contracts-mobile-list-row.spec.ts:1068` — dev의 `be3dc1db1`(인증 파일 소비자)로 영수증 다운로드가 `<a href>`에서 `<button aria-label="…다운로드">`(인증 fetch 다운로드)로 바뀌어 href 속성 단언이 불일치. **둘 다 dev 기존 실패다** — dev의 spec 파일 원문이 동일한 stale 기대값을 갖고 있고, dev CI(`Mobile CI`)는 최근 머지 커밋 4건(160983ca9, 9da26712c, 3ea495975, 074586547)에서 이미 failure다(160983ca9의 실패는 UI gate 드리프트 1줄; advisory는 skip). 우리 병합이 만든 회귀가 아니므로 우리 브랜치에서 dev의 stale 스펙을 임의 수정하지 않고 carried로 기록한다. 단, 우리 병합의 ui-debt 재앵커가 dev의 게이트 드리프트도 함께 해소한다. advisory는 non-blocking이며 required checks는 전부 pass다.
 
+## dev 동기화·PR #657 병합 실행 결과 (2026-09-14)
+
+TL;DR: dev가 두 번 더 전진해 sync-2(`ab23fe2af`)·sync-3(`9ec166edc`)로 해소하고, 동결 트리 재감사 **SHIP/HIGH**를 받은 뒤 PR #657을 dev에 병합했다(`2d01ecd9d`). 통합 브랜치는 dev tip으로 fast-forward했다.
+
+- **sync-2 `ab23fe2af`** (`62ef50356` + `895f15169`, dev 30커밋/91파일 — system-template BFF 계약 통일·frontend-mobile parity 게이트·delivery mode 등): 충돌 10파일. shared `package.json`/`tsconfig.backend-runtime.json`/`route-utils`(+) import union, system-template/message-trigger BFF 테스트는 dev parity 계약(`{error:"Failed to <context>", code:"UPSTREAM_ERROR"}`) 채택(구 한글 포워딩 supersede), ClientAutocomplete는 우리 refresh 오류 알림 + dev 공유 검색(`matchesSearchQuery`) 통합, messages/new는 dev의 `selectedTemplateDeliveryMode` 가드 + `service-feedback-link` 차단 + 우리 제출 멱등/잠금/정규화 병합, bff-parity malformed-JSON은 공유 `parseBody`의 EM 문제 본문(VALIDATION_FAILED/NOT_APPLIED)에 맞춰 양 플랫폼 동일하게 갱신. vendor는 병합 소스에서 `build:backend-runtime` 재생성 + `pnpm install`, 재실행 무변경(결정적).
+- **sync-2 감사: FIX_REQUIRED(절차 B1)** — 감사 중 같은 worktree에서 sync-3를 준비해 트리가 감사 도중 변함. 내용 결함은 0(9개 검증 항목 전부 통과: 마커 0·삭제 0·manifest union·BFF 구현-테스트 일치·vendor closure disjoint 등). 교훈: 감사 동안 worktree 동결이 필수.
+- **sync-3 `9ec166edc`** (`ab23fe2af` + `c00b2305b`, dev phone unification 7커밋/14파일): 충돌 3파일 — `ui-debt-baseline` 재앵커(그룹 27/28, kind 수량 dev와 동일, anchors-only 검증), 직원 2파일 import(우리 `normalizeApiError`/`getUserErrorMessage` 유지 + dev `formatKoreanPhoneNumber` 채택, `getApiErrorMessage`는 사용처가 우리 전환으로 대체되어 제거).
+- **재감사(동결 트리) SHIP/HIGH**: `9ec166edc` 14파일 전량 정적 검증 — dev 변경 드랍 0, 양 부모 대비 삭제 0, 마커 0, baseline 정규화 dev 동일성 + 앵커 스팟체크 4건, phone 파일 보존.
+- **검증(tip `9ec166edc`)**: mobile 249/1626, frontend 235/1543, shared 27/345 + 86 node, backend 355/5037(2연속; 1회 비재현 flake 기록), mobile/frontend/shared/backend 타입체크, UI gate fe/mo pass, 해소 파일 eslint 0 errors, `scripts/ci` 31 pass.
+- **PR #657 병합 완료: `2d01ecd9d`** (2026-09-14T14:08Z). merge 시점 dev head `b6fbd28b5`(message-history-badge-alignment, 7파일)와 GitHub이 충돌 없이 자동 병합. 통합 브랜치 `korean-error-messages`는 `2d01ecd9d`로 fast-forward 완료.
+- **carried:** advisory Playwright 2건(dev 기존 stale 스펙 — 우리 회귀 아님, 위 기록), 백엔드 flake 1회(비재현), cosmetic import 여백(직원 3파일 선행), `objectContaining` parity 단언 완화(양 플랫폼 동일).
+- **다음:** 잠정 코드 정렬(EM-CAT-01 예시 대비 개명 vs 유지+문서화) → Phase 4b(배정)·4c(일정). 이후 모든 task는 dev tip `2d01ecd9d`에서 분기한다.
+
