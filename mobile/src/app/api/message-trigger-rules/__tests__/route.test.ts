@@ -83,19 +83,31 @@ describe("Message trigger rule API routes", () => {
     });
   });
 
-  it("preserves backend error status and sanitizes payload when listing rules", async () => {
-    mockGet.mockRejectedValue({
-      response: {
-        status: 403,
-        data: { error: "trigger access denied" },
-      },
-    });
+  it.each([400, 403, 409, 422])(
+    "preserves upstream %s status with one sanitized trigger error contract",
+    async (status) => {
+      mockGet.mockRejectedValue({
+        response: {
+          status,
+          data: {
+            error: "Bearer upstream-secret",
+            message: "internal db host and member@example.com",
+          },
+        },
+      });
 
-    const response = await listRules(createRequest("/api/message-trigger-rules"));
+      const response = await listRules(createRequest("/api/message-trigger-rules"));
 
-    expect(response.status).toBe(403);
-    await expect(response.json()).resolves.toEqual({ error: "Failed to fetch message trigger rules" });
-  });
+      expect(response.status).toBe(status);
+      const body = await response.json();
+      expect(body).toEqual({
+        error: "Failed to fetch message trigger rules",
+        code: "UPSTREAM_ERROR",
+      });
+      expect(JSON.stringify(body)).not.toContain("upstream-secret");
+      expect(JSON.stringify(body)).not.toContain("member@example.com");
+    },
+  );
 
   const validRulePayload = {
     name: "Reminder",

@@ -328,6 +328,29 @@ export function upstreamJsonErrorResponse(
     );
 }
 
+/**
+ * Canonical error boundary for the message-trigger BFF routes.
+ *
+ * Trigger-rule endpoints are consumed by both the desktop and mobile apps.
+ * Their upstream status is useful to callers (for example 403 versus 422),
+ * but the provider response body is not an application contract and may carry
+ * internal details or credentials. Keep the response deliberately boring and
+ * identical on both platforms while retaining the status for retry/permission
+ * handling.
+ */
+export function messageTriggerUpstreamErrorResponse(
+    error: unknown,
+    context: string,
+): NextResponse {
+    const status = getUpstreamErrorStatus(error);
+    logUpstreamError(context, error);
+
+    return NextResponse.json(
+        { error: `Failed to ${context}`, code: "UPSTREAM_ERROR" },
+        { status },
+    );
+}
+
 export function upstreamSseErrorResponse(
     status = 502,
     fallbackMessage = "Streaming unavailable",

@@ -2,9 +2,9 @@ import { NextRequest, NextResponse } from "next/server";
 import { serverAPIClient } from "@/lib/api/server";
 import {
   backendJsonResponse,
-  errorResponse,
   getAuthHeaders,
   getAuthToken,
+  messageTriggerUpstreamErrorResponse,
   parseBody,
   unauthorizedResponse,
 } from "@babyjamjam/shared/api";
@@ -43,7 +43,7 @@ export async function GET(request: NextRequest, context: RouteContext) {
     });
     return backendJsonResponse(response);
   } catch (error) {
-    return errorResponse(error, "fetch message trigger rule");
+    return messageTriggerUpstreamErrorResponse(error, "fetch message trigger rule");
   }
 }
 
@@ -72,7 +72,7 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
     });
     return backendJsonResponse(response);
   } catch (error) {
-    return errorResponse(error, "update message trigger rule");
+    return messageTriggerUpstreamErrorResponse(error, "update message trigger rule");
   }
 }
 
@@ -93,6 +93,6 @@ export async function DELETE(request: NextRequest, context: RouteContext) {
     });
     return backendJsonResponse(response);
   } catch (error) {
-    return errorResponse(error, "delete message trigger rule");
+    return messageTriggerUpstreamErrorResponse(error, "delete message trigger rule");
   }
 }

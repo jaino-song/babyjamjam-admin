@@ -8,7 +8,7 @@ import { useLocale } from "@/providers/LocaleProvider";
 import { t } from "@/lib/i18n/translations";
 import type { Client } from "@/lib/client/types";
 import { useClientDialogStore } from "@/stores/client-dialog-store";
-import { matchesKoreanSearch } from "@/lib/search/korean-search";
+import { matchesSearchQuery } from "@/lib/search/korean-search";
 
 import { Autocomplete } from "@/components/app/ui/Autocomplete";
 import { StatusBadge } from "@/components/app/ui/status-badge";
@@ -91,13 +91,7 @@ export function ClientAutocomplete({
                     </StatusBadge>
                 ) : null
             }
-            filter={(c, q) =>
-                matchesKoreanSearch(c.name, q) ||
-                (c.phone ? c.phone.includes(q) : false) ||
-                (c.address
-                    ? c.address.toLowerCase().includes(q.toLowerCase())
-                    : false)
-            }
+            filter={(c, q) => matchesSearchQuery(q, [c.name, c.phone, c.address])}
             placeholder={placeholder ?? t(locale, "contract-msg.client-search-placeholder")}
             label={label}
             required={required}

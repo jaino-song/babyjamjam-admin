@@ -37,7 +37,11 @@ import { useMessageTemplates } from "@/hooks/use-message-templates";
 import type { Client } from "@/lib/client/types";
 import { api } from "@/lib/api/client";
 import { normalizeIsoDate, yymmddToIso } from "@/lib/contracts/date-input";
-import { formatKoreanPhoneNumber, normalizeKoreanPhoneDigits } from "@/lib/phone";
+import {
+  formatKoreanPhoneNumber,
+  isValidKoreanPhoneNumber,
+  normalizeKoreanPhoneDigits,
+} from "@/lib/phone";
 import { describeReceiptLinkError } from "@/lib/receipt-link";
 import "@/components/app/mobile-redesign/redesign.css";
 import { parsePositiveIntQueryParam } from "@/lib/query-params";
@@ -95,7 +99,7 @@ interface NewMessageFormProps {
 }
 
 const PHONE_REGEX = /^[0-9,\-\s]+$/;
-const SINGLE_PHONE_REGEX = /^[0-9-]+$/;
+const SINGLE_PHONE_REGEX = /^\+?[0-9][0-9\s().-]*$/;
 const MAX_BODY = 2000;
 const SMS_BYTE_LIMIT = 90;
 const MAX_LMS_TITLE_BYTES = 44;
@@ -1246,7 +1250,15 @@ function NewMessageForm({ initialBody, initialTemplateId, initialClientId, initi
   const addManualRecipient = (rawQuery: string) => {
     const normalizedPhones = splitRecipientPhones(rawQuery);
 
-    if (normalizedPhones.length === 0 || normalizedPhones.some((phone) => !SINGLE_PHONE_REGEX.test(phone))) {
+    const rawPhones = rawQuery
+      .split(",")
+      .map((phone) => phone.trim())
+      .filter(Boolean);
+
+    if (
+      rawPhones.length === 0
+      || rawPhones.some((phone) => !SINGLE_PHONE_REGEX.test(phone) || !isValidKoreanPhoneNumber(phone))
+    ) {
       setErrorMessage(INVALID_PHONE_ENTRY_MESSAGE);
       return;
     }
