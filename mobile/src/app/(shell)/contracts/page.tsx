@@ -1625,7 +1625,7 @@ function ContractDetailContent({
             data-component="mobile_contracts_detail-sheet_stack_detail-page_content_tabs"
             tabs={[
               { id: "basic", label: "기본 정보" },
-              { id: "signers", label: "서명 진행" },
+              { id: "signers", label: "계약서 정보" },
               { id: "messages", label: "알림 발송" },
             ]}
             activeTab={activeTab}
@@ -1641,7 +1641,24 @@ function ContractDetailContent({
               />
               <InfoRow label="제공인력" value={resolvedProviderName} />
             </InfoCard>
-            <InfoCard data-component="mobile_contracts_detail-panel_info-card-2" title="계약 정보" delay={60} isLoading={isDetailLoading}>
+            <InfoCard data-component="mobile_contracts_detail-panel_info-card-5" title="서비스 정보" delay={60} isLoading={isDetailLoading}>
+              <InfoRow label="계약 기간" value={serviceInfo.contractPeriod} />
+              <InfoRow label="서비스 일수" value={serviceInfo.serviceDays} />
+              <InfoRow label="계약 시작일" value={serviceInfo.contractStartDate} />
+              <InfoRow label="계약 종료일" value={serviceInfo.contractEndDate} />
+              <InfoRow label="본인부담금 수령일" value={serviceInfo.paymentReceiptDate} />
+              <InfoRow label="영수증 발행일" value={serviceInfo.receiptIssueDate} />
+            </InfoCard>
+            <InfoCard data-component="mobile_contracts_detail-panel_info-card-6" title="서비스 비용" delay={120} isLoading={isDetailLoading}>
+              <InfoRow label="서비스 비용" value={serviceInfo.servicePrice} />
+              <InfoRow label="정부지원금" value={serviceInfo.governmentGrant} />
+              <InfoRow label="본인부담금" value={serviceInfo.outOfPocket} />
+              <InfoRow label="바우처 가격표 연도" value={serviceInfo.voucherPriceYearLabel} />
+            </InfoCard>
+          </MobileDetailTabPanel>
+
+          <MobileDetailTabPanel data-component="mobile_contracts_detail-sheet_stack_detail-page_tab-panel-2" name="contracts" tabId="signers" activeTab={activeTab}>
+            <InfoCard data-component="mobile_contracts_detail-panel_info-card-2" title="계약 정보" isLoading={isDetailLoading}>
               <InfoRow
                 label="계약서 종류"
                 value={<span style={{ fontFamily: "'SF Mono', monospace" }}>{contractNum}</span>}
@@ -1654,24 +1671,7 @@ function ContractDetailContent({
                 value={doc.id ? <span style={{ fontFamily: "'SF Mono', monospace", wordBreak: "break-all" }}>{doc.id}</span> : null}
               />
             </InfoCard>
-            <InfoCard data-component="mobile_contracts_detail-panel_info-card-5" title="서비스 정보" delay={120} isLoading={isDetailLoading}>
-              <InfoRow label="계약 기간" value={serviceInfo.contractPeriod} />
-              <InfoRow label="서비스 일수" value={serviceInfo.serviceDays} />
-              <InfoRow label="계약 시작일" value={serviceInfo.contractStartDate} />
-              <InfoRow label="계약 종료일" value={serviceInfo.contractEndDate} />
-              <InfoRow label="본인부담금 수령일" value={serviceInfo.paymentReceiptDate} />
-              <InfoRow label="영수증 발행일" value={serviceInfo.receiptIssueDate} />
-            </InfoCard>
-            <InfoCard data-component="mobile_contracts_detail-panel_info-card-6" title="서비스 비용" delay={180} isLoading={isDetailLoading}>
-              <InfoRow label="서비스 비용" value={serviceInfo.servicePrice} />
-              <InfoRow label="정부지원금" value={serviceInfo.governmentGrant} />
-              <InfoRow label="본인부담금" value={serviceInfo.outOfPocket} />
-              <InfoRow label="바우처 가격표 연도" value={serviceInfo.voucherPriceYearLabel} />
-            </InfoCard>
-          </MobileDetailTabPanel>
-
-          <MobileDetailTabPanel data-component="mobile_contracts_detail-sheet_stack_detail-page_tab-panel-2" name="contracts" tabId="signers" activeTab={activeTab}>
-            <InfoCard data-component="mobile_contracts_detail-panel_info-card-3" title="계약서 단계">
+            <InfoCard data-component="mobile_contracts_detail-panel_info-card-3" title="계약서 단계" delay={60}>
               <ActivityTimeline
                 data-component="mobile_contracts_detail-panel_info-card-3_activity-timeline"
                 items={stageItems}
