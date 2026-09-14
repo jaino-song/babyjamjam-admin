@@ -560,7 +560,7 @@ export const settingsApi = {
         return data;
     },
     requestMessageSenderApproval: async (): Promise<MessageSenderApprovalResponse> => {
-        const { data } = await api.post("/settings/message-sender-approval", {});
+        const { data } = await api.post("/settings/message-sender-approval/request", {});
         return data;
     },
     getNotificationPreferences: async (): Promise<NotificationPreferencesResponse> => {

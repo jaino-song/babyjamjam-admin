@@ -1,36 +1,49 @@
 import { NextRequest, NextResponse } from "next/server";
 import { serverAPIClient } from "@/lib/api/server";
-
-function getAuthToken(request: NextRequest): string | null {
-  return request.cookies.get("auth_token")?.value || null;
-}
-
-function getAuthHeaders(token: string | null): Record<string, string> {
-  return token ? { Authorization: `Bearer ${token}` } : {};
-}
+import {
+  backendJsonResponse,
+  getAuthHeaders,
+  getAuthToken,
+  messageTriggerUpstreamErrorResponse,
+  parseBody,
+  unauthorizedResponse,
+} from "@babyjamjam/shared/api";
+import { updateMessageTriggerRuleSchema } from "@babyjamjam/shared/types/message";
 
 type RouteContext = {
   params: Promise<{ triggerId: string }>;
 };
 
+function isValidTriggerId(triggerId: string): boolean {
+  return /^[A-Za-z0-9_-]+(?::[A-Za-z0-9_-]+)*$/.test(triggerId);
+}
+
+function invalidTriggerIdResponse(): NextResponse {
+  return NextResponse.json({ error: "Invalid trigger id" }, { status: 400 });
+}
+
+function triggerRulePath(triggerId: string): string {
+  return `/message-trigger-rules/${encodeURIComponent(triggerId)}`;
+}
+
 export async function GET(request: NextRequest, context: RouteContext) {
   try {
     const token = getAuthToken(request);
     if (!token) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+      return unauthorizedResponse("Unauthorized");
     }
 
     const { triggerId } = await context.params;
-    const response = await serverAPIClient.get(`/message-trigger-rules/${triggerId}`, {
+    if (!isValidTriggerId(triggerId)) {
+      return invalidTriggerIdResponse();
+    }
+
+    const response = await serverAPIClient.get(triggerRulePath(triggerId), {
       headers: getAuthHeaders(token),
     });
-    return NextResponse.json(response.data);
+    return backendJsonResponse(response);
   } catch (error) {
-    console.error("[API] Error fetching message trigger rule:", error);
-    return NextResponse.json(
-      { error: "Failed to fetch message trigger rule" },
-      { status: 500 },
-    );
+    return messageTriggerUpstreamErrorResponse(error, "fetch message trigger rule");
   }
 }
 
@@ -38,21 +51,28 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
   try {
     const token = getAuthToken(request);
     if (!token) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+      return unauthorizedResponse("Unauthorized");
     }
 
-    const body = await request.json();
     const { triggerId } = await context.params;
-    const response = await serverAPIClient.patch(`/message-trigger-rules/${triggerId}`, body, {
+    if (!isValidTriggerId(triggerId)) {
+      return invalidTriggerIdResponse();
+    }
+
+    const { data, response: invalidBody } = await parseBody(
+      updateMessageTriggerRuleSchema,
+      request,
+    );
+    if (invalidBody) {
+      return invalidBody;
+    }
+
+    const response = await serverAPIClient.patch(triggerRulePath(triggerId), data, {
       headers: getAuthHeaders(token),
     });
-    return NextResponse.json(response.data);
+    return backendJsonResponse(response);
   } catch (error) {
-    console.error("[API] Error updating message trigger rule:", error);
-    return NextResponse.json(
-      { error: "Failed to update message trigger rule" },
-      { status: 500 },
-    );
+    return messageTriggerUpstreamErrorResponse(error, "update message trigger rule");
   }
 }
 
@@ -60,19 +80,19 @@ export async function DELETE(request: NextRequest, context: RouteContext) {
   try {
     const token = getAuthToken(request);
     if (!token) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+      return unauthorizedResponse("Unauthorized");
     }
 
     const { triggerId } = await context.params;
-    await serverAPIClient.delete(`/message-trigger-rules/${triggerId}`, {
+    if (!isValidTriggerId(triggerId)) {
+      return invalidTriggerIdResponse();
+    }
+
+    const response = await serverAPIClient.delete(triggerRulePath(triggerId), {
       headers: getAuthHeaders(token),
     });
-    return NextResponse.json({ success: true });
+    return backendJsonResponse(response);
   } catch (error) {
-    console.error("[API] Error deleting message trigger rule:", error);
-    return NextResponse.json(
-      { error: "Failed to delete message trigger rule" },
-      { status: 500 },
-    );
+    return messageTriggerUpstreamErrorResponse(error, "delete message trigger rule");
   }
 }

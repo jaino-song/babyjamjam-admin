@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 
+import { systemTemplateKeySchema } from "../types/system-template";
+
 export const NO_STORE_CACHE_CONTROL = "no-store, max-age=0";
 
 class InvalidJsonBodyError extends Error {
@@ -326,6 +328,83 @@ export function upstreamJsonErrorResponse(
         { error: fallbackMessage, code: "UPSTREAM_ERROR" },
         { status },
     );
+}
+
+/**
+ * Canonical error boundary for the message-trigger BFF routes.
+ *
+ * Trigger-rule endpoints are consumed by both the desktop and mobile apps.
+ * Their upstream status is useful to callers (for example 403 versus 422),
+ * but the provider response body is not an application contract and may carry
+ * internal details or credentials. Keep the response deliberately boring and
+ * identical on both platforms while retaining the status for retry/permission
+ * handling.
+ */
+export function messageTriggerUpstreamErrorResponse(
+    error: unknown,
+    context: string,
+): NextResponse {
+    const status = getUpstreamErrorStatus(error);
+    logUpstreamError(context, error);
+
+    return NextResponse.json(
+        { error: `Failed to ${context}`, code: "UPSTREAM_ERROR" },
+        { status },
+    );
+}
+
+/**
+ * Canonical error boundary for system-template BFF routes.
+ *
+ * System-template bodies can contain operator-authored copy and arbitrary
+ * preview values. Never reflect an upstream payload back to the browser; keep
+ * only the status and a stable context/code pair for both frontend and mobile.
+ */
+export function systemTemplateUpstreamErrorResponse(
+    error: unknown,
+    context: string,
+): NextResponse {
+    const status = getUpstreamErrorStatus(error);
+    logUpstreamError(context, error);
+
+    return NextResponse.json(
+        { error: `Failed to ${context}`, code: "UPSTREAM_ERROR" },
+        { status },
+    );
+}
+
+/** Convert a resolved axios response into the same success/error contract. */
+export function systemTemplateBackendJsonResponse(
+    response: UpstreamResponseLike,
+    context: string,
+): NextResponse {
+    const status = response.status ?? 200;
+    if (status >= 400) {
+        return systemTemplateUpstreamErrorResponse({ response }, context);
+    }
+
+    return backendJsonResponse(response);
+}
+
+/**
+ * Validate a dynamic system-template route key and return its encoded backend
+ * path. Returning null keeps the route layer responsible for the 400 response
+ * while ensuring every platform encodes the exact same single path segment.
+ */
+export function buildSystemTemplatePath(
+    key: unknown,
+    suffix = "",
+): string | null {
+    const parsedKey = systemTemplateKeySchema.safeParse(key);
+    if (!parsedKey.success || (suffix.length > 0 && !suffix.startsWith("/"))) {
+        return null;
+    }
+
+    return `/system-templates/${encodeURIComponent(parsedKey.data)}${suffix}`;
+}
+
+export function invalidSystemTemplateKeyResponse(): NextResponse {
+    return NextResponse.json({ error: "Invalid system template key" }, { status: 400 });
 }
 
 export function upstreamSseErrorResponse(

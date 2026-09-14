@@ -31,9 +31,10 @@ describe("eformsign status code helpers", () => {
     expect(isDeletedStatusCode("047")).toBe(true);
     expect(isDeletedStatusCode("049")).toBe(true);
     expect(isDeletedStatusCode("099")).toBe(true);
-    expect(getStatusCategory("049")).toBe("unknown");
+    expect(getStatusCategory("047")).toBe("expired");
+    expect(getStatusCategory("049")).toBe("expired");
     expect(getStatusCategory("099")).toBe("unknown");
-    expect(mapStatusToLabel("049")).toBe("알 수 없음");
+    expect(mapStatusToLabel("049")).toBe("기간 만료");
   });
 
   it("classifies unsupported, blank, and missing status codes as unknown", () => {

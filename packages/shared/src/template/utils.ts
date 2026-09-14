@@ -1,21 +1,44 @@
-export function renderTemplate(content: string, data: Record<string, unknown>): string {
-  return content.replace(/\{\{\s*(\w+)\s*\}\}/g, (match, key: string) => {
-    const value = data[key];
+import type { MessageTemplateVariable } from "../types/message";
 
-    if (value == null) {
-      return match;
-    }
+const TEMPLATE_VARIABLE_PATTERN = /\{\{([^}]+)\}\}/g;
 
-    if (typeof value === "string" && value.trim().length === 0) {
-      return match;
-    }
+function isPresentTemplateValue(value: unknown): boolean {
+  if (value == null) return false;
+  return typeof value !== "string" || value.trim().length > 0;
+}
 
-    return String(value);
+export function renderTemplate(
+  content: string,
+  data: Record<string, unknown>,
+  fallbacks: readonly MessageTemplateVariable[] = [],
+): string {
+  const fallbackByKey = new Map(
+    fallbacks.map((variable) => [variable.key, variable.fallback]),
+  );
+
+  return content.replace(TEMPLATE_VARIABLE_PATTERN, (match, rawKey: string) => {
+    const key = rawKey.trim();
+    const hasOwnValue = Object.prototype.hasOwnProperty.call(data, key);
+    const value = hasOwnValue ? data[key] : undefined;
+
+    if (isPresentTemplateValue(value)) return String(value);
+
+    const fallback = fallbackByKey.get(key);
+    if (isPresentTemplateValue(fallback)) return String(fallback);
+
+    return match;
   });
 }
 
 export function extractVariables(content: string): string[] {
-  const regex = /\{\{\s*(\w+)\s*\}\}/g;
-  const matches = Array.from(content.matchAll(regex));
+  const matches = Array.from(content.matchAll(TEMPLATE_VARIABLE_PATTERN));
   return [...new Set(matches.map((match) => match[1]?.trim() ?? "").filter(Boolean))];
+}
+
+export function getUnresolvedKeys(
+  content: string,
+  data: Record<string, unknown> = {},
+  fallbacks: readonly MessageTemplateVariable[] = [],
+): string[] {
+  return extractVariables(renderTemplate(content, data, fallbacks));
 }

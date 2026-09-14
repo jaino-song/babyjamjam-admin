@@ -1,4 +1,9 @@
-import { getStatusCategory, mapDocStatusLabel, normalizeStatusCode } from "@/lib/eformsign/status-codes";
+import {
+  getStatusCategory,
+  mapDocStatusLabel,
+  mapStatusToLabel,
+  normalizeStatusCode,
+} from "@/lib/eformsign/status-codes";
 
 describe("status code aliases", () => {
   it("normalizes named eformsign statuses to numeric codes", () => {
@@ -12,6 +17,23 @@ describe("status code aliases", () => {
     expect(getStatusCategory("doc_request_participant")).toBe("in-progress");
     expect(getStatusCategory("doc_expired")).toBe("expired");
     expect(getStatusCategory("090")).toBe("expired");
+  });
+
+  it.each([
+    ["003", "completed", "계약 완료"],
+    ["090", "expired", "기간 만료"],
+    ["047", "expired", "기간 만료"],
+    ["049", "expired", "기간 만료"],
+    ["099", "unknown", "알 수 없음"],
+    ["999", "unknown", "알 수 없음"],
+    ["", "unknown", "알 수 없음"],
+  ] as const)("uses the shared semantics for %s", (code, category, label) => {
+    expect(getStatusCategory(code)).toBe(category);
+    expect(mapStatusToLabel(code)).toBe(label);
+  });
+
+  it("keeps an empty document workflow status visibly unknown", () => {
+    expect(mapDocStatusLabel({ status_type: "" })).toBe("알 수 없음");
   });
 });
 
