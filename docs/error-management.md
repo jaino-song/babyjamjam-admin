@@ -65,6 +65,14 @@ packages/shared/src/errors/user-error-message.ts의 문자열 기반 번역은 �
 
 위 미완료 목록은 전체 규격 준수 선언과 구분한다.
 
+## 2026-09-14 EM v1.0 규격 매핑 마감
+
+Notion MCP(OpenCode)로 EM v1.0 규격 원문을 수집해 `docs/error-management-spec-catalog.md`로 기록했다(`bd8ddf4c9`; 97 ID / 20 그룹 GOV…CHANGE, 강도 라벨 보존). 이 파일은 매핑 기준 사본이며 준수 주장이 아니다 — EM-GOV-04에 따라 준수는 코드·테스트 증거로만 판정한다. 이어 read-only scout 11배치(backend 294 / frontend 272 / mobile 238 / 부속)로 inventory 797개 owner 행과 부속 10건을 EM ID에 매핑했다: `mapped 761 / exempt 36`, `docs/error-management-inventory.json`의 `spec_mapping` 블록과 행별 `spec_ids`·`spec_mapping_note`·`spec_mapping_status`로 기록했다.
+
+검증: 배치별 행 커버리지 61/61·75/75·75/75·83/83·68×4·80×2·78/78 = 797/797, 매핑 ID 전량이 97-set에 포함됨을 대조했고 중복 출력 1건을 길이 기준으로 정리했다. Task1.1의 dispatch 계약(Audit: SELF)에 따라 main이 대조·검증으로 마감했다. `status: inventory-complete; spec-mapped-em-v1`, `semantic_inventory_complete: true`이며 `source_manifest`·`review_batches`·`verified_findings`·기존 mixed-format은 불변이다.
+
+잠정 공개 코드 정렬은 후속 단위다: EM-CAT-01의 예시(`CUSTOMER_PHONE_DUPLICATE`, `ASSIGNMENT_OVERLAP`, `CONTRACT_ALREADY_SIGNED`)와 `CLIENT_*`/`EMPLOYEE_*` 잠정 코드명을 대조해 필요 시 개명한다(공개 식별자 변경이므로 별도 감사 대상). 위 미완료 목록의 후속 phase(4b/4c/5~11)·실환경 검증·dev 병합·배포는 계속 열려 있다.
+
 ## 외부 문자 결과 해석 근거
 
 [알리고 공식 SMS API 문서](https://smartsms.aligo.in/smsapi.html)의 `result_code`는 API 수신 결과이고 `success_cnt`/`error_cnt`는 요청 성공/실패 건수다. 따라서 접수 결과를 최종 배달 완료라고 표현하지 않는다. 음수 결과 코드의 실패 응답은 건수 필드가 없을 수 있으며, 성공 응답의 건수 모순·형식 오류는 미처리로 단정하지 않는다.
@@ -198,7 +206,7 @@ packages/shared/src/errors/user-error-message.ts의 문자열 기반 번역은 �
 
 제품 SHA `8cc87adf33553f9cdb86e494391eb8da00a7b2db`: 관련29 tests/3 suites·타입·대상lint·UI gate 통과. fresh Sol correction SHIP/HIGH가 이전 지적을 모두 닫았다. 검토 순서/정확한 base/제한은 `docs/plans/bjj-319-remaining-plan.md`에 기록했다. 기존 unused-import 경고1개는 유지된다.
 
-잠금 수명은 mounted 웹 SMS 화면이며 새로고침/재접속의 영속 멱등성을 대신하지 않는다. Task1.1은 추적 소스 3,111개/후보 797개의 의미 검토·분류와 테스트 매핑을 완료했다(미분류 0; migrated 45 / legacy 460 / no-direct-error-boundary 290 / approved-exception 2; 테스트 521/788 매핑). 규격 ID 매핑은 EM 카탈로그 제공 후 마감하며, 그 전에는 Task1.1 전체를 완료로 표시하지 않는다. 후보는 결함 수가 아니며 `docs/error-management-inventory.json`의 미확인 항목은 완료로 승격하지 않았다. dev 병합·배포·실제 발송은 하지 않았다.
+잠금 수명은 mounted 웹 SMS 화면이며 새로고침/재접속의 영속 멱등성을 대신하지 않는다. Task1.1은 추적 소스 3,111개/후보 797개의 의미 검토·분류와 테스트 매핑을 완료했고(미분류 0; migrated 45 / legacy 460 / no-direct-error-boundary 290 / approved-exception 2; 테스트 521/788 매핑), EM v1.0 규격 카탈로그(97 ID) 확보 후 797행 전수 매핑도 마감했다(2026-09-14; 761 mapped / 36 exempt). 이로써 Task1.1(목록·분류·테스트 매핑·규격 매핑)을 완료로 표시한다. 후보는 결함 수가 아니며 `docs/error-management-inventory.json`의 미확인 항목은 완료로 승격하지 않았다. dev 병합·배포·실제 발송은 하지 않았다.
 
 ## 2026-09-10 문자 사전 거절 8분기 전환
 

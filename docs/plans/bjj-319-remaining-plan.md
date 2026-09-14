@@ -44,6 +44,7 @@ TL;DR: 미분류 범위를 실제 파일과 실패 조건으로 바꾸고 현재
   - HTTP/조회/변경/job/webhook와 웹·모바일 소비자를 연결하고 migrated / legacy / unverified / approved-exception으로 구분한다. endpoint·소비자·비HTTP 작업 및 각 source root의 소유자 수를 대조하고 미분류 0을 확인한다.
   - 각 행에 규격 ID·공개 코드·실제 outcome 근거·파일·기존/추가 테스트·작업 ID를 기록한다. domain·provider adapter·persistence·automation·module·Prisma·공유 runtime 패키지(service-record-ui 포함)까지 source root별 발견 수와 분류 수를 대조한다. dependency/build/generated 트리는 소유 코드 목록에서 제외하고 vendor는 원본 동일성만 확인한다. main이 산출물을 inventory JSON과 본 계획의 정확한 Paths에 반영한다.
   Dispatch metadata: `Phase: 1` · `Parallel group: phase-1-evidence` · `Execution: DELEGATE` · `Audit: SELF` · `Decision reason: 독립적인 전수 읽기 조사, 쓰기 없음` · `Tier: standard` · `Sandbox: local` · `Agent: explorer` · `Model: gpt-5.3-codex-spark` · `Effort: high` · `Phase starting integration commit: fc3b2633a5f0f346c5cc6d04cc2ecf256784551b` · `Integration worktree: /Users/jaino/Development/babyjamjam-admin/korean-error-messages` · `Branch: korean-error-messages (read-only)` · `Worktree: /Users/jaino/Development/babyjamjam-admin/korean-error-messages` · `Service tier: priority` · `Paths: backend/application/**, backend/domain/**, backend/infrastructure/**, backend/interface/**, backend/module/**, backend/prisma/**, backend/test/**, backend/vendor/shared-agent/** [동일성 확인], packages/*/src/** [runtime owner], frontend/src/**, frontend/tests/**, mobile/src/**, mobile/tests/**, docs/error-management.md` · `Depends: none`
+  - **상태: 완료 (2026-09-14)** — 분류(배치 A~E) + 테스트 매핑에 이어 EM v1.0 규격 매핑 마감. 아래 "Task 1.1 규격 매핑 마감 실행 결과" 참조. 준수 선언이 아니며(EM-GOV-04) 후속 phase와 잠정 코드 정렬은 열려 있다.
 
 - **Task 1.2: 모바일 중복 연락처 오류 회귀 재현** (test, med)
   - 실패 trace와 실제 오류 요약을 대조해 테스트 drift와 제품 결함을 구분한다. 토스트를 억지로 되살리거나 timeout 증가/skip으로 통과시키지 않는다.
@@ -486,4 +487,14 @@ TL;DR: 직원 도메인의 남은 서버 실패 조건(전화 형식, 중복 연
 - 기록: inventory 직원 UI 7행 migrated, `employee-ui-problem-alignment` verified finding 추가. unit worktree/branch 정리. 이로써 Phase 4a(직원 오류 전환) 완료다 — 단, 위 carried 항목과 mobile 필드 연결 편차는 후속 정비로 남는다.
 
 **advisory e2e 보정 (2026-09-11, `a2b967715`):** Mobile CI의 advisory Playwright(`employees-detail-layout.spec.ts`의 work-history 500 시나리오)가 4a-3의 무조건 `normalizeApiError` 문구 적용으로 깨졌다. work-history 안내를 `verified`일 때만 문제 카탈로그 문구로 쓰고, 그 외(legacy/일반 실패)에는 기존 "잠시 후 다시 시도해 주세요."를 유지하도록 게이팅했으며, 캐시 데이터 경고의 "현재 저장된 근무 내역을 표시하고 있습니다." 문맥도 복원했다. UI baseline은 순수 재앵커(5/5, 92 groups/822 records 보존). 최종 SHA `a2b967715`에서 **전 워크플로 success**, PR #657 `MERGEABLE/CLEAN`.
+
+## Task 1.1 규격 매핑 마감 실행 결과 (2026-09-14, OpenCode 세션)
+
+TL;DR: Notion MCP로 EM v1.0 카탈로그(97 ID)를 확보해 `docs/error-management-spec-catalog.md`로 기록하고, read-only scout 11배치로 inventory 797행 + 부속 10건을 전수 매핑해 Task 1.1(목록·분류·테스트 매핑·규격 매핑)을 마감했다. 실행 계약(Audit: SELF)에 따라 main이 커버리지·ID 유효성·중복을 대조했으며 준수 선언이 아니다.
+
+- 카탈로그 기록 `bd8ddf4c9`: https://app.notion.com/p/3d60b049243480e388e3d2e409245e45 원문을 OpenCode Notion MCP(OAuth)로 수집. 97 ID / 20 그룹(GOV…CHANGE), 강도 라벨 보존, EM-GOV-04(문서만으로 준수 주장 금지) 명시. MCP 설정은 `~/.agents/opencode/opencode.jsonc`(agents 리포 `dbee72b`)에 추가했고 OAuth 연결 완료.
+- 실행: `opencode-task.sh --agent scout`(opencode-go/deepseek-flash) 11배치 — map-01 backend 61 / map-02·03 application 75+75 / map-04 infrastructure+shared+부속 83 / map-05~08 frontend 272 / map-09~11 mobile 238. 브리프 rubric: EM 그룹별 후보 ID + 근거는 classification/reason, 코드 재열람은 모호 시에만, 출력 계약 `path || ids || note`.
+- 결과: owners **797/797** (mapped 761 / exempt 36 — 주로 no-direct 경계·엔티티·개발 CLI), zero-regex 6 + service-record-ui 4 = 부속 10건 필드 추가. inventory `status: inventory-complete; spec-mapped-em-v1`, `semantic_inventory_complete: true`, top-level `spec_mapping` 블록, 행별 `spec_ids`·`spec_mapping_note`·`spec_mapping_status`.
+- 검증(자체 감사): 배치별 행 커버리지 100%(61·75·75·83·68×4·80×2·78), 매핑 ID 전량 97-set 포함, 중복 출력 1건 dedupe, 스팟체크 10행(대표 문제 helper·클라이언트/직원 전환 파일·공유 오류 모듈). inventory는 기존 mixed-format(pretty + owners/source_manifest compact one-line)을 정밀 라인 수술로 보존했고 `source_manifest`·`review_batches`·`verified_findings`는 불변이다.
+- 후속: EM-CAT-01 예시 코드(`CUSTOMER_PHONE_DUPLICATE`, `ASSIGNMENT_OVERLAP`)와 잠정 `CLIENT_*`/`EMPLOYEE_*` 코드명 정렬은 공개 식별자 변경 단위로 분리한다. Phase 4b/4c/5~11·실환경 검증·dev 병합·배포는 계속 열려 있다.
 
