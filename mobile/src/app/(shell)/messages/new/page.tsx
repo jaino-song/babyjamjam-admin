@@ -44,6 +44,12 @@ import { parsePositiveIntQueryParam } from "@/lib/query-params";
 import { extractVariables, renderTemplate } from "@/lib/template-utils";
 import { cn } from "@/lib/utils";
 import type { SendMessageDeliverySmsResponse } from "@babyjamjam/shared/types/message";
+import {
+  SYSTEM_TEMPLATE_KEYS,
+  resolveSystemTemplateDeliveryMode,
+  type SystemTemplateDeliveryMode,
+  type SystemTemplateKey,
+} from "@babyjamjam/shared/types/system-template";
 
 import styles from "./page.module.css";
 
@@ -140,6 +146,14 @@ const PRICE_INFO_SELECT_CONTROLLED_KEYS = new Set([
   "accNum",
 ]);
 const DEFAULT_PRICE_INFO_YEAR = new Date().getFullYear();
+
+function resolveSelectedTemplateDeliveryMode(templateId: string): SystemTemplateDeliveryMode {
+  if (!(SYSTEM_TEMPLATE_KEYS as readonly string[]).includes(templateId)) {
+    return "sms";
+  }
+
+  return resolveSystemTemplateDeliveryMode(templateId as SystemTemplateKey);
+}
 
 function normalizePhone(raw: string) {
   return raw.replace(/[^0-9\-,]/g, "");
@@ -850,7 +864,11 @@ function NewMessageForm({ initialBody, initialTemplateId, initialClientId, initi
     : null;
   const selectedTemplateVariables = selectedTemplate.variables;
   const recipientNameVariable = selectedTemplateVariables.find((variable) => variable.key === "name");
-  const isServiceEndNoticeSelected = selectedTemplateId === SERVICE_END_NOTICE_TEMPLATE_ID;
+  // Delivery is derived from the shared system-template contract. In
+  // particular, SERVICE_END_NOTICE can never fall through to generic SMS if
+  // its UI option is renamed or another system-template key is introduced.
+  const selectedTemplateDeliveryMode = resolveSelectedTemplateDeliveryMode(selectedTemplateId);
+  const isServiceEndNoticeSelected = selectedTemplateDeliveryMode === "receipt-link";
   const renderedTemplateVariables = useMemo(() => {
     if (selectedTemplate.id === SERVICE_END_NOTICE_TEMPLATE_ID) {
       return selectedTemplateVariables.filter(
@@ -1006,6 +1024,9 @@ function NewMessageForm({ initialBody, initialTemplateId, initialClientId, initi
     if (isServiceEndNoticeSelected && serviceEndSelectionKey === null) {
       return "서비스 종료 안내를 보낼 산모님 한 명을 선택해 주세요.";
     }
+    if (selectedTemplateDeliveryMode === "service-feedback-link") {
+      return "제공기록지 링크는 서비스 기록지 화면에서 준비한 뒤 발송해 주세요.";
+    }
     if (isServiceEndNoticeSelected && receiptLinkPreparationError) return receiptLinkPreparationError;
     if (
       isServiceEndNoticeSelected
@@ -1034,6 +1055,7 @@ function NewMessageForm({ initialBody, initialTemplateId, initialClientId, initi
     receiverPayload,
     recipientCount,
     selectedTemplateVariables,
+    selectedTemplateDeliveryMode,
     serviceEndClientId,
     serviceEndRecipientPhone,
     serviceEndSelectionKey,
@@ -1060,6 +1082,10 @@ function NewMessageForm({ initialBody, initialTemplateId, initialClientId, initi
           clientId: receiptLinkPreparation.clientId,
           recipientPhone: receiptLinkPreparation.recipientPhone,
         }).then((response) => response.data as SendResponse);
+      }
+
+      if (selectedTemplateDeliveryMode !== "sms") {
+        throw new Error("지원되지 않는 메시지 발송 경로입니다.");
       }
 
       const message = body.trim();
