@@ -41,6 +41,7 @@ import { useClientDialogStore } from "@/stores/client-dialog-store";
 import { useClientWizardStore } from "@/stores/client-wizard-store";
 import { useLocale } from "@/providers/LocaleProvider";
 import { t } from "@/lib/i18n/translations";
+import { formatKoreanPhoneNumber, normalizeKoreanPhoneDigits } from "@/lib/phone";
 import voucherOptions from "@/components/app/messages/templates/json/voucher.json";
 import { calcEndDateBusinessDays } from "@/lib/date/business-days";
 import {
@@ -132,13 +133,6 @@ function Field({
   );
 }
 
-const formatPhoneNumber = (value: string): string => {
-  const digits = value.replace(/\D/g, "");
-  if (digits.length <= 3) return digits;
-  if (digits.length <= 7) return `${digits.slice(0, 3)}-${digits.slice(3)}`;
-  return `${digits.slice(0, 3)}-${digits.slice(3, 7)}-${digits.slice(7, 11)}`;
-};
-
 const formatPrice = (price: number | string): string => {
   if (!price && price !== 0) return "";
   const cleaned = typeof price === "string" ? price.replace(/,/g, "") : String(price);
@@ -171,8 +165,6 @@ const resolveVoucherTypeValue = (value: string | null | undefined): string | und
   ))?.value;
 };
 
-const normalizePhoneDigits = (value: string | null | undefined): string => (value ?? "").replace(/\D/g, "");
-
 const findEmployeeByContractPrefill = (
   employees: readonly Employee[],
   name: string | undefined,
@@ -180,11 +172,11 @@ const findEmployeeByContractPrefill = (
 ): Employee | undefined => {
   if (!name) return undefined;
   const trimmedName = name.trim();
-  const phoneDigits = normalizePhoneDigits(phone);
+  const phoneDigits = normalizeKoreanPhoneDigits(phone);
 
   return employees.find((employee) => {
     if (employee.name.trim() !== trimmedName) return false;
-    return !phoneDigits || normalizePhoneDigits(employee.phone) === phoneDigits;
+    return !phoneDigits || normalizeKoreanPhoneDigits(employee.phone) === phoneDigits;
   }) ?? employees.find((employee) => employee.name.trim() === trimmedName);
 };
 
@@ -1132,10 +1124,10 @@ export default function NewClientPage() {
                         id="phone"
                         data-component="mobile_clients-new_screen_root_page_wizard_form-scroll_basic-contact-card_phone-field_phone-input"
                         value={store.phone}
-                        onChange={(e) => setField("phone", formatPhoneNumber(e.target.value))}
+                        onChange={(e) => setField("phone", formatKoreanPhoneNumber(e.target.value))}
                         type="tel"
                         inputMode="numeric"
-                        maxLength={13}
+                        maxLength={20}
                         placeholder="010-1234-5678"
                         error={fieldErrorMessageIds.phone.length > 0}
                         aria-invalid={fieldErrorMessageIds.phone.length > 0}
