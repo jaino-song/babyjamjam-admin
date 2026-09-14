@@ -121,7 +121,7 @@ function EmployeeDetailContent({
           ...(employee.grade ? [{ label: employee.grade, tone: "primary" as const }] : []),
         ]}
         menu={
-          <DropdownMenu>
+          <DropdownMenu modal={false}>
             <DropdownMenuTrigger asChild>
               <button
                 type="button"
