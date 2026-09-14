@@ -1,5 +1,7 @@
 import { BadRequestException } from "@nestjs/common";
 
+import { codeOnlyProblemBody, problemBody } from "application/utils/problem-bodies";
+
 export type EmployeeAssignmentCandidate = {
     id: number;
     branchId: string | null;
@@ -7,8 +9,6 @@ export type EmployeeAssignmentCandidate = {
     openToNextWork: boolean;
 };
 
-const INVALID_EMPLOYEE_ASSIGNMENT_MESSAGE =
-    "선택한 제공인력이 해당 지점 소속이 아니거나 배정 가능한 상태가 아닙니다.";
 const EMPTY_RETAINED_EMPLOYEE_IDS: ReadonlySet<number> = new Set();
 
 /**
@@ -22,13 +22,23 @@ export function assertEmployeeAssignmentShape(
 ): void {
     if (primaryEmployeeId === null) {
         if (secondaryEmployeeId !== null) {
-            throw new BadRequestException("보조 담당 인력을 선택하려면 주 담당 인력이 먼저 필요합니다.");
+            throw new BadRequestException(problemBody("VALIDATION_FAILED", {
+                pointer: "/secondaryEmployeeId",
+                code: "INVALID_FORMAT",
+                detail: "보조 담당 인력을 선택하려면 주 담당 인력이 먼저 필요해요.",
+                location: "body",
+            }));
         }
         return;
     }
 
     if (primaryEmployeeId === secondaryEmployeeId) {
-        throw new BadRequestException("주담당과 부담당은 같은 직원일 수 없습니다.");
+        throw new BadRequestException(problemBody("VALIDATION_FAILED", {
+            pointer: "/secondaryEmployeeId",
+            code: "INVALID_FORMAT",
+            detail: "주담당과 부담당은 같은 직원일 수 없어요.",
+            location: "body",
+        }));
     }
 }
 
@@ -68,6 +78,6 @@ export function assertEmployeeAssignmentEligibility(
         const employee = byId.get(employeeId);
         return employee === undefined || !isEmployeeAssignmentEligible(employee, branchId, retainedEmployeeIds);
     })) {
-        throw new BadRequestException(INVALID_EMPLOYEE_ASSIGNMENT_MESSAGE);
+        throw new BadRequestException(codeOnlyProblemBody("EMPLOYEE_ASSIGNMENT_NOT_ELIGIBLE"));
     }
 }

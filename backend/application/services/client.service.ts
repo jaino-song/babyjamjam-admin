@@ -35,6 +35,7 @@ import {
     assertEmployeeAssignmentShape,
     type EmployeeAssignmentCandidate,
 } from "application/policies/employee-assignment-eligibility.policy";
+import { codeOnlyProblemBody, problemBody } from "application/utils/problem-bodies";
 import {
     assertNoActiveEmployeeScheduleOverlap,
     employeeScheduleHandoverPeriod,
@@ -884,7 +885,12 @@ export class ClientService {
 
             assertEmployeeAssignmentShape(newPrimaryEmployeeId, newSecondaryEmployeeId);
             if (newPrimaryEmployeeId === null) {
-                throw new BadRequestException("배정을 만들려면 주 담당 인력이 필요합니다.");
+                throw new BadRequestException(problemBody("VALIDATION_FAILED", {
+                    pointer: "/primaryEmployeeId",
+                    code: "REQUIRED",
+                    detail: "배정을 만들려면 주 담당 인력이 필요해요.",
+                    location: "body",
+                }));
             }
 
             const retainedEmployeeIds = new Set(
@@ -1750,7 +1756,7 @@ export class ClientService {
                     && lockedClient.branchId !== branchid
                 ))
             ) {
-                throw new ConflictException({ code: "SERVICE_RECORD_WRITE_TARGET_CHANGED" });
+                throw new ConflictException(codeOnlyProblemBody("SERVICE_RECORD_WRITE_TARGET_CHANGED"));
             }
             // Narrow unit doubles do not expose the complete service-record
             // delegates. Production always takes the locked reread above;
@@ -1832,7 +1838,12 @@ export class ClientService {
                     || secondaryEmployeeId !== currentSecondaryEmployeeId;
                 if (assignmentChanged) {
                     if (primaryEmployeeId === null) {
-                        throw new BadRequestException("배정을 만들려면 주 담당 인력이 필요합니다.");
+                        throw new BadRequestException(problemBody("VALIDATION_FAILED", {
+                            pointer: "/primaryEmployeeId",
+                            code: "REQUIRED",
+                            detail: "배정을 만들려면 주 담당 인력이 필요해요.",
+                            location: "body",
+                        }));
                     }
                     const retainedEmployeeIds = new Set(
                         [currentPrimaryEmployeeId, currentSecondaryEmployeeId]
@@ -2146,7 +2157,7 @@ export class ClientService {
                     && lockedClient.branchId !== branchid
                 ))
             ) {
-                throw new ConflictException({ code: "SERVICE_RECORD_WRITE_TARGET_CHANGED" });
+                throw new ConflictException(codeOnlyProblemBody("SERVICE_RECORD_WRITE_TARGET_CHANGED"));
             }
             const currentClient = lockedClient ?? client;
             mergeAndValidateClientServicePeriod(currentClient, {});
