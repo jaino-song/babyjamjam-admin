@@ -21,16 +21,9 @@ import { ApprovalTwoButtonModal } from "@/components/app/ui/ApprovalTwoButtonMod
 import { NotificationOneButtonModal } from "@/components/app/ui/NotificationOneButtonModal";
 import { EMPLOYEE_STATUS_LABELS } from "@babyjamjam/shared/constants/employee-status";
 import { getApiErrorMessage } from "@babyjamjam/shared";
+import { formatKoreanPhoneNumber } from "@/lib/phone";
 
 const EMPLOYEES_TABLE_BASE = "mobile_employees_table";
-
-const formatPhoneNumber = (phone: string | null | undefined): string => {
-    if (!phone) return "-";
-    const numbers = phone.replace(/[^\d]/g, "");
-    if (numbers.length <= 3) return numbers || "-";
-    if (numbers.length <= 7) return `${numbers.slice(0, 3)}-${numbers.slice(3)}`;
-    return `${numbers.slice(0, 3)}-${numbers.slice(3, 7)}-${numbers.slice(7, 11)}`;
-};
 
 const getStatusBadge = (status: EmployeeStatus | undefined) => {
     switch (status) {
@@ -149,7 +142,7 @@ export function EmployeesTable() {
             header: t(locale, "employees.table.contact"),
             width: "40%",
             align: "center",
-            render: (employee) => formatPhoneNumber(employee.phone as string | null | undefined),
+            render: (employee) => formatKoreanPhoneNumber(employee.phone as string | null | undefined) || "-",
         },
     ];
 
