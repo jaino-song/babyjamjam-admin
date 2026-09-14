@@ -109,7 +109,10 @@ describe("system-template nested API routes", () => {
 
         expect(response.status).toBe(409);
         const body = await response.json();
-        expect(body).toEqual({ error: "Version is already current" });
+        expect(body).toEqual({
+            error: "Failed to rollback system template",
+            code: "UPSTREAM_ERROR",
+        });
         expect(JSON.stringify(body)).not.toContain("upstream-secret");
         expect(JSON.stringify(body)).not.toContain("SELECT * FROM Template");
         expect(mockPost).toHaveBeenCalledWith(
@@ -137,7 +140,10 @@ describe("system-template nested API routes", () => {
 
         expect(response.status).toBe(status);
         const body = await response.json();
-        expect(body).toEqual({ error: "Failed to rollback system template" });
+        expect(body).toEqual({
+            error: "Failed to rollback system template",
+            code: "UPSTREAM_ERROR",
+        });
         expect(JSON.stringify(body)).not.toContain(message);
         expect(JSON.stringify(body)).not.toContain("upstream-secret");
     });

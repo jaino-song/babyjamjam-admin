@@ -86,7 +86,10 @@ describe("system-template nested API routes", () => {
         );
 
         expect(response.status).toBe(409);
-        await expect(response.json()).resolves.toEqual({ error: "Version is already current" });
+        await expect(response.json()).resolves.toEqual({
+            error: "Failed to rollback system template",
+            code: "UPSTREAM_ERROR",
+        });
         expect(mockPost).toHaveBeenCalledWith(
             "/system-templates/GREETING/rollback/2",
             {},
