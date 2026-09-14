@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 import NewMessagePage from "../page";
@@ -11,6 +11,7 @@ const FORM_CARD_CONTENT =
 const mockPush = jest.fn();
 const mockUseAllClients = jest.fn();
 const mockUseSystemTemplate = jest.fn();
+const mockUseSystemTemplates = jest.fn();
 const mockGetMessageSenderApproval = jest.fn();
 const mockUseBankAccountInfos = jest.fn();
 const mockUseVoucherPriceInfos = jest.fn();
@@ -83,12 +84,7 @@ jest.mock("@/hooks/use-message-templates", () => ({
 
 jest.mock("@/features/system-templates/hooks", () => ({
   useSystemTemplate: (key: string) => mockUseSystemTemplate(key),
-  useSystemTemplates: () => ({
-    data: ["GREETING", "INFO", "PRICE_INFO", "REMINDER", "SERVICE_INFO", "SURVEY", "THANKS"]
-      .map((k) => mockUseSystemTemplate(k)?.data)
-      .filter(Boolean),
-    isLoading: false,
-  }),
+  useSystemTemplates: () => mockUseSystemTemplates(),
 }));
 
 jest.mock("@/hooks/useClients", () => ({
@@ -246,6 +242,30 @@ describe("NewMessagePage", () => {
       }
 
       return { data: null };
+    });
+    mockUseSystemTemplates.mockReset();
+    mockUseSystemTemplates.mockReturnValue({
+      data: [
+        mockUseSystemTemplate("GREETING").data,
+        mockUseSystemTemplate("SERVICE_INFO").data,
+        {
+          id: "system-service-end-notice",
+          templateKey: "SERVICE_END_NOTICE",
+          name: "서비스 종료 안내",
+          description: "영수증 링크 안내",
+          content: "{{name}} 산모님 영수증: {{receiptUrl}}",
+          requiredVariables: [
+            { key: "name", label: "산모명", type: "string", required: true },
+            { key: "receiptUrl", label: "영수증 링크", type: "string", required: true },
+          ],
+          customVariables: [],
+          updatedAt: "2026-06-04T00:00:00.000Z",
+        },
+      ].filter(Boolean),
+      isError: false,
+      isFetching: false,
+      isLoading: false,
+      isSuccess: true,
     });
     (api.post as jest.Mock).mockReset();
     (api.post as jest.Mock).mockResolvedValue({ data: { result: { resultCode: 1, errorCount: 0 } } });
@@ -697,6 +717,195 @@ describe("NewMessagePage", () => {
     expect(screen.getByRole("option", { name: "상담 후 리마인더" })).toBeInTheDocument();
     expect(screen.getByRole("option", { name: "예약 완료" })).toBeInTheDocument();
     expect(screen.getByRole("option", { name: "모니터링 설문" })).toBeInTheDocument();
+  });
+
+  it("includes the server-provided service end notice in the template dropdown", async () => {
+    renderPage();
+
+    await openTemplateSelect();
+
+    expect(screen.getByRole("option", { name: "서비스 종료 안내" })).toBeInTheDocument();
+  });
+
+  it.each([
+    {
+      name: "the system template catalog is still loading",
+      query: {
+        data: undefined,
+        isError: false,
+        isFetching: true,
+        isLoading: true,
+        isSuccess: false,
+      },
+    },
+    {
+      name: "the resolved catalog is missing the requested template",
+      query: {
+        data: [],
+        isError: false,
+        isFetching: false,
+        isLoading: false,
+        isSuccess: true,
+      },
+    },
+  ])("fails closed for a service end deep link when $name", async ({ query }) => {
+    mockSearchParams = new URLSearchParams({
+      template: "SERVICE_END_NOTICE",
+      body: "박서연 산모님 영수증 안내",
+      clientId: "7",
+    });
+    mockUseSystemTemplates.mockReturnValue(query);
+
+    const { container } = renderPage();
+    const submitButton = screen.getByRole("button", { name: "즉시 발송" });
+
+    expect(submitButton).toBeDisabled();
+    fireEvent.submit(container.querySelector("form")!);
+
+    expect(await screen.findByText("지점 기본 템플릿을 불러오는 중이라 발송할 수 없습니다.")).toBeInTheDocument();
+    expect(api.post).not.toHaveBeenCalledWith("/receipt-links/prepare", expect.anything());
+    expect(api.post).not.toHaveBeenCalledWith("/message-deliveries/sms", expect.anything());
+  });
+
+  it("prepares and sends the service end notice with the selected client identity", async () => {
+    (api.post as jest.Mock).mockImplementation((url: string) => {
+      if (url === "/receipt-links/prepare") {
+        return Promise.resolve({
+          data: {
+            clientId: 7,
+            clientName: "박서연",
+            recipientPhone: "01077778888",
+            documentId: "doc-7",
+            receiptUrl: "https://m.admin.babyjamjam.com/receipt/receipt-7",
+            expiresAt: "2026-09-24T00:00:00.000Z",
+          },
+        });
+      }
+      if (url === "/receipt-links/send") {
+        return Promise.resolve({ data: { jobId: "job-7", clientName: "박서연" } });
+      }
+      return Promise.resolve({ data: { result: { resultCode: 1, errorCount: 0 } } });
+    });
+    renderPage();
+
+    await openTemplateSelect();
+    fireEvent.click(screen.getByRole("option", { name: "서비스 종료 안내" }));
+
+    const recipientNameInput = screen.getByLabelText(/산모님 성함/);
+    fireEvent.focus(recipientNameInput);
+    fireEvent.change(recipientNameInput, { target: { value: "박서연" } });
+    fireEvent.click(await screen.findByText("박서연"));
+
+    await waitFor(() => {
+      expect(screen.getByLabelText("메시지 본문")).toHaveValue(
+        "박서연 산모님 영수증: https://m.admin.babyjamjam.com/receipt/receipt-7",
+      );
+      expect(screen.getByRole("button", { name: "즉시 발송" })).toBeEnabled();
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "즉시 발송" }));
+
+    await waitFor(() => {
+      expect(api.post).toHaveBeenCalledWith("/receipt-links/send", {
+        documentId: "doc-7",
+        clientId: 7,
+        recipientPhone: "01077778888",
+      });
+    });
+    expect(api.post).not.toHaveBeenCalledWith(
+      "/message-deliveries/sms",
+      expect.anything(),
+    );
+  });
+
+  it("keeps the latest client when service end preparations resolve out of order", async () => {
+    const replacementClient: Client = {
+      ...mockClients[0]!,
+      id: 8,
+      name: "이수빈",
+      phone: "01099998888",
+    };
+    mockUseAllClients.mockReturnValue({
+      data: [...mockClients, replacementClient],
+      isLoading: false,
+    });
+    mockSearchParams = new URLSearchParams({
+      template: "SERVICE_END_NOTICE",
+      clientId: "7",
+    });
+
+    let resolveFirstPreparation: (value: unknown) => void = () => undefined;
+    let resolveSecondPreparation: (value: unknown) => void = () => undefined;
+    (api.post as jest.Mock).mockImplementation((url: string, payload: { clientId?: number }) => {
+      if (url !== "/receipt-links/prepare") {
+        return Promise.resolve({ data: { jobId: "job-8", clientName: "이수빈" } });
+      }
+      return new Promise((resolve) => {
+        if (payload.clientId === 7) {
+          resolveFirstPreparation = resolve;
+        } else {
+          resolveSecondPreparation = resolve;
+        }
+      });
+    });
+    renderPage();
+
+    await waitFor(() => {
+      expect(api.post).toHaveBeenCalledWith("/receipt-links/prepare", { clientId: 7 });
+    });
+
+    const recipientNameInput = screen.getByLabelText(/산모님 성함/);
+    fireEvent.focus(recipientNameInput);
+    fireEvent.change(recipientNameInput, { target: { value: "이수빈" } });
+    fireEvent.click(await screen.findByText("이수빈"));
+
+    await waitFor(() => {
+      expect(api.post).toHaveBeenCalledWith("/receipt-links/prepare", { clientId: 8 });
+    });
+
+    await act(async () => {
+      resolveSecondPreparation({
+        data: {
+          clientId: 8,
+          clientName: "이수빈",
+          recipientPhone: "01099998888",
+          documentId: "doc-8",
+          receiptUrl: "https://m.admin.babyjamjam.com/receipt/receipt-8",
+          expiresAt: "2026-09-24T00:00:00.000Z",
+        },
+      });
+    });
+    await waitFor(() => {
+      expect(screen.getByLabelText("메시지 본문")).toHaveValue(
+        "이수빈 산모님 영수증: https://m.admin.babyjamjam.com/receipt/receipt-8",
+      );
+    });
+
+    await act(async () => {
+      resolveFirstPreparation({
+        data: {
+          clientId: 7,
+          clientName: "박서연",
+          recipientPhone: "01077778888",
+          documentId: "doc-7",
+          receiptUrl: "https://m.admin.babyjamjam.com/receipt/receipt-7",
+          expiresAt: "2026-09-24T00:00:00.000Z",
+        },
+      });
+    });
+
+    expect(screen.getByLabelText("메시지 본문")).toHaveValue(
+      "이수빈 산모님 영수증: https://m.admin.babyjamjam.com/receipt/receipt-8",
+    );
+    fireEvent.click(screen.getByRole("button", { name: "즉시 발송" }));
+
+    await waitFor(() => {
+      expect(api.post).toHaveBeenCalledWith("/receipt-links/send", {
+        documentId: "doc-8",
+        clientId: 8,
+        recipientPhone: "01099998888",
+      });
+    });
   });
 
   it("loads a frontend fallback template that requires the client name variable", async () => {

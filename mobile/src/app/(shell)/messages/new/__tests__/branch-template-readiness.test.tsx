@@ -104,6 +104,13 @@ jest.mock("next/navigation", () => ({
 
 jest.mock("@/features/system-templates/hooks", () => ({
   useSystemTemplate: (key: string) => mockUseSystemTemplate(key),
+  useSystemTemplates: () => ({
+    data: [],
+    isError: false,
+    isFetching: false,
+    isLoading: false,
+    isSuccess: true,
+  }),
 }));
 
 jest.mock("@/hooks/use-message-templates", () => ({
