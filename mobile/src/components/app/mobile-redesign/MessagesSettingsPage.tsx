@@ -388,7 +388,9 @@ export function MessagesSettingsPage(): ReactElement {
                 onSelect={handleSelect}
                 onToggle={handleToggle}
                 togglingItemId={
-                  policyActivationMutation.variables?.policyId ??
+                  (policyActivationMutation.isPending
+                    ? policyActivationMutation.variables?.policyId ?? null
+                    : null) ??
                   (serviceRecordLinkMutation.isPending
                     ? "service-feedback-link"
                     : null) ??

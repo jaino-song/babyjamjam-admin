@@ -255,14 +255,16 @@ describe("MessagesSettingsPage", () => {
   it("updates the real policy when a list switch is toggled", async () => {
     renderPage();
 
-    fireEvent.click(
-      await screen.findByRole("switch", { name: "자동 전송 실행 활성화" }),
-    );
+    const triggerDispatchSwitch = await screen.findByRole("switch", {
+      name: "자동 전송 실행 활성화",
+    });
+    fireEvent.click(triggerDispatchSwitch);
 
     await waitFor(() => {
       expect(mockedSettingsApi.updateMessageSettingsPolicyActivation)
         .toHaveBeenCalledWith("trigger-dispatch", false);
     });
+    await waitFor(() => expect(triggerDispatchSwitch).toBeEnabled());
   });
 
   it("reuses the client registration setting when its list switch is toggled", async () => {
