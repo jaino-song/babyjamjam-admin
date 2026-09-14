@@ -225,13 +225,23 @@ describe("ReceiptLinkPage", () => {
             throw new Error(`unexpected fetch: ${href}`);
         }) as unknown as typeof fetch;
 
-        render(<ReceiptLinkPage />);
+        const { container } = render(<ReceiptLinkPage />);
 
         const input = await screen.findByLabelText("산모님 생년월일");
         fireEvent.change(input, { target: { value: "940315" } });
         fireEvent.click(screen.getByRole("button", { name: "확인하기" }));
 
         const saveLink = await screen.findByRole("link", { name: "이미지 저장" });
+        const image = screen.getByRole("img", { name: "김산모 산모님 본인부담금 영수증" });
+        const imageFrame = container.querySelector('[data-slot="image-frame"]');
+        expect(screen.queryByText("확인 완료")).not.toBeInTheDocument();
+        expect(imageFrame).toHaveAttribute("aria-busy", "true");
+        expect(screen.getByRole("status", { name: "영수증 이미지를 불러오는 중" })).toBeInTheDocument();
+
+        fireEvent.load(image);
+
+        expect(imageFrame).toHaveAttribute("aria-busy", "false");
+        expect(screen.queryByRole("status", { name: "영수증 이미지를 불러오는 중" })).not.toBeInTheDocument();
         const icon = saveLink.querySelector("svg.rcpt-icon");
         expect(icon).not.toBeNull();
         expect(icon).toHaveAttribute("aria-hidden", "true");

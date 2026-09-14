@@ -42,6 +42,7 @@ export function ReceiptLinkScreen({ token }: ReceiptLinkScreenProps) {
     const [screen, setScreen] = useState<Screen>({ kind: "loading" });
     const [birthday, setBirthday] = useState("");
     const [isSubmitting, setIsSubmitting] = useState(false);
+    const [isImageLoaded, setIsImageLoaded] = useState(false);
     const lockedUntil = screen.kind === "locked" ? screen.lockedUntil : null;
     // Cache-busting suffix for the receipt <img> src, set once (and only once — see
     // handleImageError) after a transient image load failure to trigger a single retry.
@@ -78,6 +79,7 @@ export function ReceiptLinkScreen({ token }: ReceiptLinkScreenProps) {
                 const accessResponse = await fetch(api("/access"), { cache: "no-store" });
                 if (!mountedRef.current) return;
                 if (accessResponse.ok) {
+                    setIsImageLoaded(false);
                     setScreen({ kind: "image", branchName, clientName: null });
                     return;
                 }
@@ -151,7 +153,9 @@ export function ReceiptLinkScreen({ token }: ReceiptLinkScreenProps) {
     // retried load also failing) does not fetch or retry again — there is no copy for a
     // broken-image state yet, so the image is simply left alone after that.
     const handleImageError = useCallback(async () => {
-        if (screen.kind !== "image" || imageRetryParam) return;
+        if (screen.kind !== "image") return;
+        setIsImageLoaded(false);
+        if (imageRetryParam) return;
         try {
             // imageRetryParam is always "" here — the early return above already excludes the
             // one case where it's set — so the probe URL is plainly the bare image path (M2).
@@ -195,6 +199,7 @@ export function ReceiptLinkScreen({ token }: ReceiptLinkScreenProps) {
             };
             if (!mountedRef.current) return;
             if (response.ok) {
+                setIsImageLoaded(false);
                 setScreen({ kind: "image", branchName: screen.branchName, clientName: body.clientName || null });
                 return;
             }
@@ -349,16 +354,32 @@ export function ReceiptLinkScreen({ token }: ReceiptLinkScreenProps) {
 
                 {screen.kind === "image" ? (
                     <section className="rcpt-card" data-component="mobile_receipt_public-page_body_image">
-                        <div className="rcpt-titlerow">
-                            <h2>{receiptOwnerLabel} 영수증</h2>
-                            <span className="rcpt-chip">확인 완료</span>
+                        <h2>{receiptOwnerLabel} 영수증</h2>
+                        <div
+                            className="rcpt-img-frame"
+                            data-component="mobile_receipt_public-page_body_image_frame"
+                            data-slot="image-frame"
+                            aria-busy={!isImageLoaded}
+                        >
+                            {!isImageLoaded ? (
+                                <div
+                                    className="rcpt-img-loading"
+                                    data-component="mobile_receipt_public-page_body_image_frame_loading"
+                                    data-slot="image-loading"
+                                    role="status"
+                                    aria-label="영수증 이미지를 불러오는 중"
+                                >
+                                    <span className="rcpt-spinner" aria-hidden="true" />
+                                </div>
+                            ) : null}
+                            <img
+                                className={`rcpt-img${isImageLoaded ? " is-loaded" : ""}`}
+                                src={`${api("/image")}${imageRetryParam}`}
+                                alt={`${receiptOwnerLabel} 본인부담금 영수증`}
+                                onLoad={() => setIsImageLoaded(true)}
+                                onError={() => void handleImageError()}
+                            />
                         </div>
-                        <img
-                            className="rcpt-img"
-                            src={`${api("/image")}${imageRetryParam}`}
-                            alt={`${receiptOwnerLabel} 본인부담금 영수증`}
-                            onError={() => void handleImageError()}
-                        />
                         <a
                             className="rcpt-btn rcpt-btn-icon"
                             href={api("/image?download=1")}
@@ -434,10 +455,14 @@ function Styles() {
 .srec .rcpt-icon{width:18px;height:18px;flex-shrink:0}
 .srec .rcpt-icon-clock{width:28px;height:28px;color:var(--muted);margin-bottom:8px}
 .srec .rcpt-warn{margin:14px 0 0;padding:12px 14px;border-radius:12px;background:#fdf1f5;color:#c2456e;font-size:13px}
-.srec .rcpt-titlerow{display:flex;align-items:center;justify-content:space-between;gap:8px}
-.srec .rcpt-chip{padding:4px 10px;border-radius:999px;background:#e6f4ea;color:#1f7a3f;font-size:12px;font-weight:700}
-.srec .rcpt-img{display:block;width:100%;margin-top:12px;border:1px solid var(--line);border-radius:12px}
+.srec .rcpt-img-frame{position:relative;width:100%;min-width:100%;min-height:min(568px,calc((100vw - 76px)*297/210));aspect-ratio:210/297;margin-top:12px;overflow:hidden;border:1px solid var(--line);border-radius:12px;background:#f7f8fa}
+.srec .rcpt-img-loading{position:absolute;inset:0;z-index:1;display:grid;place-items:center}
+.srec .rcpt-spinner{width:30px;height:30px;border:3px solid #d7deea;border-top-color:var(--primary);border-radius:50%;animation:rcpt-spin .8s linear infinite}
+.srec .rcpt-img{position:absolute;inset:0;display:block;width:100%;height:100%;object-fit:contain;opacity:0}
+.srec .rcpt-img.is-loaded{opacity:1}
 .srec .rcpt-foot{margin-top:24px;color:var(--muted);font-size:12px;text-align:center}
+@keyframes rcpt-spin{to{transform:rotate(360deg)}}
+@media (prefers-reduced-motion:reduce){.srec .rcpt-spinner{animation:none}}
 `}</style>
     );
 }
