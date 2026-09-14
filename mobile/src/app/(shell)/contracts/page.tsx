@@ -43,6 +43,7 @@ import { openAuthenticatedEventSource } from "@/lib/api/authenticated-fetch";
 import { useAllVoucherPriceInfos } from "@/hooks/useVoucherData";
 import { fetchAllMessageLogs } from "@/lib/messages/logs";
 import { formatDateForDisplay } from "@/lib/date/format-date-for-display";
+import { formatKoreanPhoneNumber } from "@/lib/phone";
 import { EformsignDocument } from "@/lib/eformsign/types";
 import type { EformsignDocumentOption } from "@/lib/eformsign/types";
 import {
@@ -674,12 +675,11 @@ function normalizePhone(value: string | null | undefined): string {
   return (value ?? "").replace(/\D/g, "");
 }
 
+// 국가번호가 붙은 값(+82/0082/82)도 국내 표기(010-…)로 정규화한다.
 function formatClientPhone(value: string | null | undefined): string | undefined {
-  const digits = normalizePhone(value);
-  if (digits.length <= 0) return undefined;
-  if (digits.length <= 3) return digits;
-  if (digits.length <= 7) return `${digits.slice(0, 3)}-${digits.slice(3)}`;
-  return `${digits.slice(0, 3)}-${digits.slice(3, 7)}-${digits.slice(7, 11)}`;
+  const formatted = formatKoreanPhoneNumber(value);
+  if (!formatted) return undefined;
+  return formatted;
 }
 
 function normalizeDateToYymmdd(value: string | null | undefined): string | undefined {
