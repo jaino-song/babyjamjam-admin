@@ -1739,9 +1739,15 @@ body.mobile-all-route .menu-row {
 
 /* ===== Detail body wrapper (vertical stack inside detail sheet) ===== */
 .detail-body {
+  /* The sheet header is a sibling outside this scrollport, so the padding
+     below it belongs to the scroll container. Sticky children measure against
+     the scrollport edge and need this same offset as a negative top — see
+     .detail-tabs. Shared so every detail sheet keeps the same seam-free
+     header/tabs stack. */
+  --detail-body-pad-top: 16px;
   flex: 1;
   overflow-y: auto;
-  padding: 16px;
+  padding: var(--detail-body-pad-top) 16px 16px;
   scrollbar-width: none;
   display: flex;
   flex-direction: column;
@@ -1990,17 +1996,17 @@ body.mobile-all-route .menu-row {
 
 /* ===== Detail tabs (pill row + sliding underline indicator) ===== */
 .detail-tabs {
-  position: relative;
+  /* Shared sticky contract for every detail sheet: the tab row pins flush
+     under the sheet header while the body scrolls. top: 0 would leave the
+     scrollport's own --detail-body-pad-top of scrolled content showing
+     through as a seam, so the offset cancels that padding. */
+  position: sticky;
+  top: calc(-1 * var(--detail-body-pad-top, 0px));
+  z-index: 2;
   padding: 0;
   border-bottom: 1px solid hsl(var(--v3-border));
   /* Matches .sheet-header: opaque for the sticky case, in the sheet's colour. */
   background: hsl(var(--v3-dim-white));
-}
-body.mobile-clients-route .detail-tabs,
-body:has([data-slot="calls-content"]) .detail-tabs {
-  position: sticky;
-  top: 0;
-  z-index: 2;
 }
 .detail-tabs .filter-pill {
   flex: 1 1 0;

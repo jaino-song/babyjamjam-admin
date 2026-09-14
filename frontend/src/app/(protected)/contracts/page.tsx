@@ -42,6 +42,7 @@ import type { EformsignDocument, EformsignDocumentOption } from "@/lib/eformsign
 import { useDebounce } from "use-debounce";
 import {
   DocumentFilterType,
+  type DocumentStatusCategory,
   contractStatusBadgeType,
   mapDocStatusLabel,
   getStatusCategory,
@@ -255,7 +256,7 @@ function formatDateTime(timestamp: number): string {
 }
 
 function getSignatureProgress(
-  category: "completed" | "expired" | "in-progress",
+  category: DocumentStatusCategory,
   hasOpenedDocument: boolean,
   isCustomerSigned: boolean
 ) {

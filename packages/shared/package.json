@@ -22,6 +22,7 @@
         "./types/message": "./src/types/message.ts",
         "./types/service-record": "./src/types/service-record.ts",
         "./types/system-template": "./src/types/system-template.ts",
+        "./client/voucher-duration": "./src/client/voucher-duration.ts",
         "./constants/service-record-form-layout": "./src/constants/service-record-form-layout.ts",
         "./constants/eformsign-status-codes": "./src/constants/eformsign-status-codes.ts",
         "./constants/eformsign-doc-status": "./src/constants/eformsign-doc-status.ts",
@@ -34,6 +35,8 @@
         "./utils/business-days": "./src/utils/business-days.ts",
         "./utils/service-record-schedule": "./src/utils/service-record-schedule.ts",
         "./utils/birthday": "./src/utils/birthday.ts",
+        "./utils/phone": "./src/utils/phone.ts",
+        "./utils/korean-search": "./src/utils/korean-search.ts",
         "./eslint-plugin": "./eslint-plugin/index.mjs",
         "./errors/problem-details": "./src/errors/problem-details.ts"
     },

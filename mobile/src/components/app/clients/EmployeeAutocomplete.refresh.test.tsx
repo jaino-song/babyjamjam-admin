@@ -90,6 +90,17 @@ function AssignmentFields() {
   );
 }
 
+function SingleEmployeeAutocomplete() {
+  return (
+    <EmployeeAutocomplete
+      data-component="mobile_clients_employee_search"
+      value={null}
+      onChange={() => undefined}
+      label="관리사"
+    />
+  );
+}
+
 describe("EmployeeAutocomplete refresh behavior", () => {
   beforeEach(() => {
     mockEmployees = [employeeOne, employeeTwo];
@@ -129,5 +140,21 @@ describe("EmployeeAutocomplete refresh behavior", () => {
     expect(within(secondaryDropdown).getByText("둘")).toBeInTheDocument();
     expect(within(secondaryDropdown).getByText("셋")).toBeInTheDocument();
     expect(within(secondaryDropdown).queryByText("하나")).not.toBeInTheDocument();
+  });
+
+  it.each([
+    ["+82 10 1111", "하나"],
+    ["010-1111", "하나"],
+    ["ㅎㄴ", "하나"],
+    ["남동", "둘"],
+  ])("uses shared phone, chosung, and multi-field search for %s", (query, expectedName) => {
+    render(<SingleEmployeeAutocomplete />);
+
+    const input = within(screen.getByTestId("mobile_clients_employee_search")).getByRole("textbox");
+    fireEvent.focus(input);
+    fireEvent.change(input, { target: { value: query } });
+
+    const dropdown = screen.getByTestId("mobile_clients_employee_search_dropdown");
+    expect(within(dropdown).getByText(expectedName)).toBeInTheDocument();
   });
 });

@@ -1,36 +1,21 @@
 import { NextRequest, NextResponse } from "next/server";
-import { z } from "zod";
 import { serverAPIClient } from "@/lib/api/server";
 import {
   backendJsonResponse,
-  errorResponse,
   getAuthHeaders,
   getAuthToken,
+  messageTriggerUpstreamErrorResponse,
   parseBody,
   unauthorizedResponse,
 } from "@/lib/api/route-utils";
-
-// Mirrors backend UpdateMessageTriggerRuleDto: every field is @IsOptional,
-// so a passthrough object that type-checks known fields is sufficient. The
-// backend's authoritative ValidationPipe owns the enum/@Min constraints.
-const updateTriggerRuleSchema = z
-  .object({
-    name: z.string().optional(),
-    isActive: z.boolean().optional(),
-    eventType: z.string().optional(),
-    offsetType: z.string().optional(),
-    offsetDays: z.number().optional(),
-    recipientType: z.string().optional(),
-    templateKey: z.string().optional(),
-  })
-  .passthrough();
+import { updateMessageTriggerRuleSchema } from "@babyjamjam/shared/types/message";
 
 type RouteContext = {
   params: Promise<{ triggerId: string }>;
 };
 
 function isValidTriggerId(triggerId: string): boolean {
-  return /^[A-Za-z0-9_-]+$/.test(triggerId);
+  return /^[A-Za-z0-9_-]+(?::[A-Za-z0-9_-]+)*$/.test(triggerId);
 }
 
 function invalidTriggerIdResponse(): NextResponse {
@@ -58,7 +43,7 @@ export async function GET(request: NextRequest, context: RouteContext) {
     });
     return backendJsonResponse(response);
   } catch (error) {
-    return errorResponse(error, "fetch message trigger rule");
+    return messageTriggerUpstreamErrorResponse(error, "fetch message trigger rule");
   }
 }
 
@@ -73,7 +58,7 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
     return invalidTriggerIdResponse();
   }
 
-  const { data, response: invalid } = await parseBody(updateTriggerRuleSchema, request);
+  const { data, response: invalid } = await parseBody(updateMessageTriggerRuleSchema, request);
   if (invalid) {
     return invalid;
   }
@@ -84,7 +69,7 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
     });
     return backendJsonResponse(response);
   } catch (error) {
-    return errorResponse(error, "update message trigger rule");
+    return messageTriggerUpstreamErrorResponse(error, "update message trigger rule");
   }
 }
 
@@ -105,6 +90,6 @@ export async function DELETE(request: NextRequest, context: RouteContext) {
     });
     return backendJsonResponse(response);
   } catch (error) {
-    return errorResponse(error, "delete message trigger rule");
+    return messageTriggerUpstreamErrorResponse(error, "delete message trigger rule");
   }
 }
