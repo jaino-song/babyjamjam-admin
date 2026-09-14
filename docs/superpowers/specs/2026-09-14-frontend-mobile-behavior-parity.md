@@ -1,7 +1,7 @@
 # Frontend–Mobile 행동 규칙 파리티 게이트
 
-**Date:** 2026-09-14  
-**Status:** Implemented in `packages/shared/scripts/frontend-mobile-parity-gate.mjs`  
+**Date:** 2026-09-14
+**Status:** Implemented in `packages/shared/scripts/frontend-mobile-parity-gate.mjs`
 **Scope:** Frontend/mobile shared-contract ownership and message-trigger BFF validation
 
 ## 목적
