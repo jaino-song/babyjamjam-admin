@@ -884,11 +884,11 @@
         "88:10-88:15|pageLocalComponent"
       ],
       "ui-architecture/no-raw-ui-in-pages": [
-        "1017:13-1023:14|rawUiElement",
-        "1029:13-1035:14|rawUiElement",
-        "1411:25-1418:26|rawUiElement",
-        "1484:15-1489:16|rawUiElement",
-        "1492:15-1497:16|rawUiElement"
+        "1014:13-1020:14|rawUiElement",
+        "1026:13-1032:14|rawUiElement",
+        "1408:25-1415:26|rawUiElement",
+        "1481:15-1486:16|rawUiElement",
+        "1489:15-1494:16|rawUiElement"
       ]
     },
     "mobile/src/app/(shell)/clients/page.tsx": {
@@ -898,7 +898,7 @@
     },
     "mobile/src/app/(shell)/consultations/page.tsx": {
       "ui-architecture/no-page-local-components": [
-        "175:10-175:28|pageLocalComponent"
+        "180:10-180:28|pageLocalComponent"
       ]
     },
     "mobile/src/app/(shell)/contracts/new/page.tsx": {
