@@ -20,6 +20,14 @@ describe("mobile contracts action lifecycle", () => {
     expect(basicPanelSource).not.toContain("{customerPhone ? (");
   });
 
+  it("normalizes contract phone values through the shared Korean phone formatter", () => {
+    expect(source).toContain('import { formatKoreanPhoneNumber } from "@/lib/phone";');
+    expect(source).toContain("formatKoreanPhoneNumber(value)");
+    // Mutant that must fail: restoring the old local digit slicer, which rendered
+    // a raw 82 country-code prefix (821-0454-7742) instead of the 010 form.
+    expect(source).not.toContain("digits.slice(7, 11)");
+  });
+
   it("locks document deletion through the required cache refresh", () => {
     expect(source).toContain("const [isDeletingDocument, setIsDeletingDocument] = useState(false)");
     expect(source).toContain(
