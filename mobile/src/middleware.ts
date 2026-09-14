@@ -7,6 +7,7 @@ import {
   ACCESS_TOKEN_MAX_AGE_SECONDS,
   getRefreshSessionMaxAgeSeconds,
 } from "@/lib/auth/session-policy";
+import { tryLocalAutoLogin } from "@/lib/auth/local-auto-login";
 
 interface TokenPayload {
   sub: string;
@@ -251,6 +252,30 @@ export async function middleware(request: NextRequest) {
 
   if (PUBLIC_API_ROUTES.some((route) => isRouteMatch(pathname, route))) {
     return NextResponse.next();
+  }
+
+  const isLocalLoginNavigation = !isApiRoute(pathname)
+    && (
+      pathname === "/"
+      || isRouteMatch(pathname, LOGIN_ROUTE)
+      || !PUBLIC_ROUTES.some((route) => isRouteMatch(pathname, route))
+    );
+  if (isLocalLoginNavigation) {
+    const session = await tryLocalAutoLogin(request, API_URL);
+    if (session && !isTokenExpired(session.accessToken)) {
+      const target = isRouteMatch(pathname, LOGIN_ROUTE)
+        ? new URL("/", request.url)
+        : request.nextUrl;
+      const response = NextResponse.redirect(target);
+      setSessionCookies(response, {
+        accessToken: session.accessToken,
+        refreshToken: session.refreshToken,
+        role: decodeRole(session.accessToken),
+        autoLogin: true,
+      });
+      response.headers.set("Cache-Control", "no-store");
+      return response;
+    }
   }
 
   // Prevent authenticated users from seeing the login screen.

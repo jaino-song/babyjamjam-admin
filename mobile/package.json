@@ -9,7 +9,9 @@
   "scripts": {
     "prepare:pdf-worker": "node scripts/copy-pdf-worker.mjs",
     "predev": "pnpm prepare:pdf-worker",
+    "predev:qa": "pnpm prepare:pdf-worker",
     "dev": "next dev",
+    "dev:qa": "node ../scripts/start-local-qa.mjs mobile",
     "prebuild": "pnpm prepare:pdf-worker",
     "build": "next build",
     "start": "next start",
