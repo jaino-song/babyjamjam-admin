@@ -525,3 +525,16 @@ TL;DR: dev가 두 번 더 전진해 sync-2(`ab23fe2af`)·sync-3(`9ec166edc`)로 
 - **다음:** 잠정 코드 정렬(EM-CAT-01 예시 대비 개명 vs 유지+문서화) → Phase 4b(배정)·4c(일정). 이후 모든 task는 dev tip `2d01ecd9d`에서 분기한다.
 - **잠정 코드 정렬 검토 완료(2026-09-14):** 현행 `CLIENT_*`/`EMPLOYEE_*` 10개 코드 유지(EM-CAT-01 등록 식별자 충족, 예시는 illustrative; EM-CAT-03 공개 안정성 우선). `problem-details.ts`의 "Provisional" 주석 해제 + em 문서에 근거·예시 매핑 기록. Phase 4b 신규 배정 충돌 코드는 `ASSIGNMENT_OVERLAP` 우선 검토. 공개 식별자 변경이 없으므로 별도 감사 없이(trivial) 마감한다.
 
+
+## Phase 4b — 배정 오류 전환 (바인딩·실행, 2026-09-15)
+
+TL;DR: 배정(4b-1 백엔드: 역할·자격·동시 변경 코드 전환 / 4b-2 UI: 필드 매핑·BFF passthrough)로 분리한다. 4b-1을 dev tip `23f835e61` 기준 유닛으로 dispatch한다.
+
+**조사 결과(정찰 `em-4b-scout`, 2026-09-15):** 배정 소유 오류 경로는 `employee-assignment-eligibility.policy.ts`(역할 2 + 자격 1), `client.service.ts`(missing-primary 2곳 L887/L1835, 동시 변경 2곳 L1753/L2149 `SERVICE_RECORD_WRITE_TARGET_CHANGED`), schedule 유스케이스(같은 policy 재사용, 필드명 동일). `contract-client-assignment-guard`는 계약 도메인(5.1), `EMPLOYEE_SCHEDULE_OVERLAP`은 4c로 분리. `employee-assignment-eligibility.policy.spec.ts`는 현재 없음(inventory test_evidence []).
+
+- **Task 4b-1: 배정 거절·동시 변경 코드 전환** (feature, high)
+  - 카탈로그 추가 2개: `EMPLOYEE_ASSIGNMENT_NOT_ELIGIBLE`(400, 자격 미달 — 지점 불일치/미오픈/삭제) · `SERVICE_RECORD_WRITE_TARGET_CHANGED`(409, 기존 배포 식별자 등록 — EM-CAT-03에 따라 개명 없이 등록만).
+  - 전환: policy 역할 오류 2곳 → `VALIDATION_FAILED` `/secondaryEmployeeId` INVALID_FORMAT(다른 상세 2종), 자격 오류 → 신규 코드(codeOnly), client.service missing-primary 2곳 → `VALIDATION_FAILED` `/primaryEmployeeId` REQUIRED, 동시 변경 2곳 → 신규 등록 코드(codeOnly). 상태 코드는 유지(400/409)하고 문구는 해요체로 정리한다.
+  - 검증: red-first, policy 신규 spec(역할·자격 각 케이스), client.service spec 갱신(L1445/L3518 raw 단언), 전체 backend suite + shared + 양측 typecheck + vendor 재생성 결정성. 등록으로 HTTP shape가 바뀌는 동일 코드의 타 사이트(service-record lock 등)는 전체 suite에서 드러나면 최소 기계적 표준화만 하고 확장 내역을 보고한다.
+  - Dispatch metadata: `Phase: 4b-1` · `Parallel group: none` · `Execution: DELEGATE` · `Audit: SOL` · `Decision reason: 공개 코드 2개 추가·등록 + 다중 사이트 전환, 공유 계약 영향` · `Tier: standard` · `Sandbox: local` · `Agent: worker` · `Model: opencode-go/glm-5.3-flash` · `Effort: default` · `Phase starting integration commit: 23f835e61` · `Integration worktree: /Users/jaino/Development/babyjamjam-admin/korean-error-messages` · `Branch: unit/bjj319-assignment-errors` · `Worktree: /Users/jaino/Development/babyjamjam-admin/unit-bjj319-assignment-errors` · `Paths: packages/shared/src/errors/problem-details.ts(+test), backend/application/policies/employee-assignment-eligibility.policy.ts, backend/application/services/client.service.ts [해당 throw만], backend/test/policies/employee-assignment-eligibility.policy.spec.ts [신규], backend/test/services/client.service.spec.ts [해당 단언만], docs/error-management.md [공개 코드], backend/vendor/shared-agent/** [재생성]` · `Depends: Task 4.1(4a 완료)`
+  - **4b-2(후속):** UI 단위 — `ClientFormDialog` `/primaryEmployeeId`·`/secondaryEmployeeId` 필드 매핑, 웹 request-replacement 프록시 오류 passthrough(현재 500으로 삼킴), 모바일 error-presentation 확인. 4b-1 close 후 바인딩.
