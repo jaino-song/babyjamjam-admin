@@ -128,14 +128,31 @@ describe("frontend message trigger rule API routes", () => {
     expect(mockPatch).not.toHaveBeenCalled();
   });
 
-  it("preserves upstream 4xx status with a sanitized error", async () => {
-    mockGet.mockRejectedValue({ response: { status: 403, data: { error: "secret detail" } } });
+  it.each([400, 403, 409, 422])(
+    "preserves upstream %s status with one sanitized trigger error contract",
+    async (status) => {
+      mockGet.mockRejectedValue({
+        response: {
+          status,
+          data: {
+            error: "Bearer upstream-secret",
+            message: "internal db host and member@example.com",
+          },
+        },
+      });
 
-    const response = await listRules(createRequest("/api/message-trigger-rules"));
+      const response = await listRules(createRequest("/api/message-trigger-rules"));
 
-    expect(response.status).toBe(403);
-    await expect(response.json()).resolves.toEqual({ error: "Failed to fetch message trigger rules" });
-  });
+      expect(response.status).toBe(status);
+      const body = await response.json();
+      expect(body).toEqual({
+        error: "Failed to fetch message trigger rules",
+        code: "UPSTREAM_ERROR",
+      });
+      expect(JSON.stringify(body)).not.toContain("upstream-secret");
+      expect(JSON.stringify(body)).not.toContain("member@example.com");
+    },
+  );
 
   it("encodes system trigger IDs before proxying", async () => {
     mockGet.mockResolvedValue({ status: 200, data: { id: "rule_123" } });

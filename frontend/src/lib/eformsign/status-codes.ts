@@ -57,13 +57,11 @@ export type DocumentStatusCategory = EformsignStatusCategory;
 export const normalizeStatusCode = normalizeEformsignStatusCode;
 export const isDeletedStatusCode = isDeletedEformsignStatusCode;
 
-// Existing frontend callers use this helper as a filter for the three tabs and
-// therefore still narrow its legacy type. The implementation is the canonical
-// shared classifier; callers that render unknown states use the canonical
-// `getEformsignStatusCategory` export directly below.
-type LegacyDocumentStatusCategory = Exclude<EformsignStatusCategory, "unknown">;
-export function getStatusCategory(statusCode: EformsignStatusInput): LegacyDocumentStatusCategory {
-  return getEformsignStatusCategory(statusCode) as LegacyDocumentStatusCategory;
+// Keep the legacy import name, but expose the complete shared category. An
+// unknown provider status must remain visible to callers instead of being
+// unsafely narrowed into one of the three known tabs.
+export function getStatusCategory(statusCode: EformsignStatusInput): EformsignStatusCategory {
+  return getEformsignStatusCategory(statusCode);
 }
 
 export function mapStatusToLabel(statusCode: EformsignStatusInput): DocumentStatusLabel {

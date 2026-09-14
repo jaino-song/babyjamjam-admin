@@ -2,9 +2,9 @@ import { NextRequest } from "next/server";
 import { serverAPIClient } from "@/lib/api/server";
 import {
   backendJsonResponse,
-  errorResponse,
   getAuthHeaders,
   getAuthToken,
+  messageTriggerUpstreamErrorResponse,
   parseBody,
   unauthorizedResponse,
 } from "@/lib/api/route-utils";
@@ -22,7 +22,7 @@ export async function GET(request: NextRequest) {
     });
     return backendJsonResponse(response);
   } catch (error) {
-    return errorResponse(error, "fetch message trigger rules");
+    return messageTriggerUpstreamErrorResponse(error, "fetch message trigger rules");
   }
 }
 
@@ -46,6 +46,6 @@ export async function POST(request: NextRequest) {
     });
     return backendJsonResponse(response);
   } catch (error) {
-    return errorResponse(error, "create message trigger rule");
+    return messageTriggerUpstreamErrorResponse(error, "create message trigger rule");
   }
 }

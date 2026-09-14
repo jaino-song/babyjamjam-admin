@@ -11,6 +11,7 @@ export {
     getUpstreamErrorStatus,
     invalidJsonResponse,
     logUpstreamError,
+    messageTriggerUpstreamErrorResponse,
     parseBody,
     readJsonObjectBody,
     sanitizeUpstreamClientError,
