@@ -12,6 +12,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { ChevronDown } from "lucide-react";
 import { useLocale } from "@/providers/LocaleProvider";
 import { t } from "@/lib/i18n/translations";
+import { formatKoreanPhoneNumber, normalizeKoreanPhoneDigits } from "@/lib/phone";
 import { getErrorMessage } from "@/lib/errors/prisma-error-mapper";
 import { cn } from "@/lib/utils";
 import {
@@ -353,17 +354,6 @@ function WorkAreaMultiSelect({
     );
 }
 
-function formatPhoneNumber(value: string): string {
-    const numbers = value.replace(/[^\d]/g, "");
-    if (numbers.length <= 3) return numbers;
-    if (numbers.length <= 7) return `${numbers.slice(0, 3)}-${numbers.slice(3)}`;
-    return `${numbers.slice(0, 3)}-${numbers.slice(3, 7)}-${numbers.slice(7, 11)}`;
-}
-
-function parsePhoneNumber(value: string): string {
-    return value.replace(/[^\d]/g, "");
-}
-
 const getPhoneDuplicateCheckFailedMessage = (locale: "ko" | "en"): string =>
     locale === "ko"
         ? "문제가 발생했어요. 새로고침 해주세요."
@@ -558,7 +548,7 @@ function EmployeeFormContent({
                 const dto: UpdateEmployeeDto = {
                     name: formData.name,
                     workArea: formData.workArea,
-                    phone: parsePhoneNumber(formData.phone),
+                    phone: normalizeKoreanPhoneDigits(formData.phone),
                     grade: formData.grade,
                     openToNextWork: formData.openToNextWork,
                     birthday: formData.birthday,
@@ -577,7 +567,7 @@ function EmployeeFormContent({
                 const dto: CreateEmployeeDto = {
                     name: formData.name,
                     workArea: formData.workArea,
-                    phone: parsePhoneNumber(formData.phone),
+                    phone: normalizeKoreanPhoneDigits(formData.phone),
                     grade: formData.grade,
                     openToNextWork: formData.openToNextWork,
                     birthday: formData.birthday,
@@ -798,10 +788,10 @@ function EmployeeFormContent({
                             type="tel"
                             inputMode="numeric"
                             placeholder="010-1234-5678"
-                            value={formatPhoneNumber(formData.phone)}
-                            onChange={(e) => handleChange("phone", parsePhoneNumber(e.target.value))}
+                            value={formatKoreanPhoneNumber(formData.phone)}
+                            onChange={(e) => handleChange("phone", normalizeKoreanPhoneDigits(e.target.value))}
                             onBlur={() => setTouched((prev) => ({ ...prev, phone: true }))}
-                            maxLength={13}
+                            maxLength={20}
                             error={(touched.phone && !isPhoneFormatValid)
                                 || hasPhoneStatusError
                                 || phoneErrorIds.length > 0}
@@ -971,10 +961,10 @@ function EmployeeFormContent({
                 id="employee-panel-phone"
                 type="tel"
                 inputMode="numeric"
-                value={formatPhoneNumber(formData.phone)}
-                onChange={(event) => handleChange("phone", parsePhoneNumber(event.target.value))}
+                value={formatKoreanPhoneNumber(formData.phone)}
+                onChange={(event) => handleChange("phone", normalizeKoreanPhoneDigits(event.target.value))}
                 onBlur={() => setTouched((prev) => ({ ...prev, phone: true }))}
-                maxLength={13}
+                maxLength={20}
                 placeholder="010-1234-5678"
                 error={(touched.phone && !isPhoneFormatValid)
                     || hasPhoneStatusError
