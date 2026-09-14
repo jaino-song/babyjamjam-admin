@@ -3518,7 +3518,7 @@ describe("ClientService", () => {
                 .rejects.toMatchObject({
                     response: {
                         code: "VALIDATION_FAILED",
-                        errors: [{ pointer: "/secondaryEmployeeId", code: "INVALID_FORMAT" }],
+                        errors: [{ pointer: "/newSecondaryEmployeeId", code: "INVALID_FORMAT" }],
                     },
                 });
         });

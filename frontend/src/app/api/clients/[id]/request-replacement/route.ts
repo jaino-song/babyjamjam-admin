@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { serverAPIClient } from "@/lib/api/server";
+import { errorResponse } from "@/lib/api/route-utils";
 
 type RouteParams = { params: Promise<{ id: string }> };
 
@@ -26,10 +27,9 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
         });
         return NextResponse.json(response.data);
     } catch (error) {
-        console.error("[API] Error requesting replacement:", error);
-        return NextResponse.json(
-            { error: "Failed to request employee replacement" },
-            { status: 500 }
-        );
+        // Assignment rejections now arrive as registered problem bodies; the
+        // clients-route passthrough keeps their status and code intact while
+        // legacy payloads still fall back to the sanitized error response.
+        return errorResponse(error, "request employee replacement");
     }
 }

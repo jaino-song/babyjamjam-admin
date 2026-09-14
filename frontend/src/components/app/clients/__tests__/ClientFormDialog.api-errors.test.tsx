@@ -38,7 +38,29 @@ jest.mock("@/providers/LocaleProvider", () => ({
 }));
 
 jest.mock("../EmployeeAutocomplete", () => ({
-  EmployeeAutocomplete: () => <div data-testid="employee-autocomplete" />,
+  EmployeeAutocomplete: ({
+    label,
+    error,
+    describedBy,
+    triggerButtonRef,
+  }: {
+    label: string;
+    error?: boolean;
+    describedBy?: string;
+    triggerButtonRef?: { current: HTMLButtonElement | null };
+  }) => (
+    <button
+      ref={triggerButtonRef}
+      type="button"
+      role="combobox"
+      aria-expanded={false}
+      aria-controls="employee-autocomplete-options"
+      data-testid="employee-autocomplete"
+      aria-label={label}
+      aria-invalid={error || undefined}
+      aria-describedby={describedBy}
+    />
+  ),
 }));
 
 jest.mock("@/components/app/employees/EmployeeFormDialog", () => ({
@@ -119,8 +141,7 @@ describe("ClientFormDialog API errors", () => {
     expect(document.activeElement).toBe(phoneInput);
   });
 
-  it("moves panel field errors to step zero and focuses linked inputs", async () => {
-    const requestId = "req-bjj-319-panel";
+  it("moves panel field errors to step zero and focuses linked inputs", async () => {    const requestId = "req-bjj-319-panel";
     const problem = createProblemDetails({
       code: "VALIDATION_FAILED",
       requestId,
@@ -164,6 +185,108 @@ describe("ClientFormDialog API errors", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "연락처: 입력 형식이 올바르지 않아요." }));
     expect(document.activeElement).toBe(screen.getByLabelText(/연락처/));
+  });
+
+  it("surfaces a primary-employee pointer error on the employee field and focuses it from the summary", async () => {
+    const problem = createProblemDetails({
+      code: "VALIDATION_FAILED",
+      requestId: "req-bjj-319-employee-field",
+      status: 422,
+      errors: [{ pointer: "/primaryEmployeeId", code: "REQUIRED", detail: "ignored" }],
+    });
+    mockCreateClientMutateAsync.mockRejectedValue({
+      response: { status: 422, data: problem },
+    });
+
+    render(<ClientFormDialog open onClose={jest.fn()} />);
+    await flushOpenEffect();
+    fillRequiredFields();
+
+    const submitButton = screen.getByRole("button", { name: "생성" });
+    await waitFor(() => expect(submitButton).toBeEnabled());
+    fireEvent.click(submitButton);
+
+    expect(await screen.findByText("주 담당 인력: 필수 항목이에요.")).toBeInTheDocument();
+    const [primaryTrigger, secondaryTrigger] = screen.getAllByTestId("employee-autocomplete");
+    expect(primaryTrigger).toHaveAttribute("aria-invalid", "true");
+    expect(secondaryTrigger).not.toHaveAttribute("aria-invalid");
+    expect(primaryTrigger.getAttribute("aria-describedby")).toContain("desktop_clients_form-dialog_error_0");
+
+    fireEvent.click(screen.getByRole("button", { name: "주 담당 인력: 필수 항목이에요." }));
+    expect(document.activeElement).toBe(primaryTrigger);
+  });
+
+  it("shows the assignment eligibility catalog detail at form level without field linkage", async () => {
+    const problem = createProblemDetails({
+      code: "EMPLOYEE_ASSIGNMENT_NOT_ELIGIBLE",
+      requestId: "req-bjj-319-not-eligible",
+      outcome: "NOT_APPLIED",
+      recovery: { action: "NONE", retry: { mode: "NEVER" } },
+    });
+    mockCreateClientMutateAsync.mockRejectedValue({
+      response: { status: 400, data: problem },
+    });
+
+    render(<ClientFormDialog open onClose={jest.fn()} />);
+    await flushOpenEffect();
+    fillRequiredFields();
+
+    const submitButton = screen.getByRole("button", { name: "생성" });
+    await waitFor(() => expect(submitButton).toBeEnabled());
+    fireEvent.click(submitButton);
+
+    expect(
+      await screen.findByText("선택한 제공인력이 해당 지점 소속이 아니거나 배정 가능한 상태가 아니에요."),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/주 담당 인력:/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/보조 담당 인력:/)).not.toBeInTheDocument();
+    for (const trigger of screen.getAllByTestId("employee-autocomplete")) {
+      expect(trigger).not.toHaveAttribute("aria-invalid");
+      expect(trigger).not.toHaveAttribute("aria-describedby");
+    }
+  });
+
+  it("moves panel employee-field errors to the assignment step and focuses the primary trigger", async () => {
+    const problem = createProblemDetails({
+      code: "VALIDATION_FAILED",
+      requestId: "req-bjj-319-panel-employee",
+      status: 422,
+      errors: [{ pointer: "/primaryEmployeeId", code: "REQUIRED", detail: "ignored" }],
+    });
+    mockCreateClientMutateAsync.mockRejectedValue({
+      response: { status: 422, data: problem },
+    });
+
+    function PanelHarness() {
+      const [step, setStep] = useState(3);
+      return (
+        <ClientFormPanel
+          open
+          activeStep={step}
+          onActiveStepChange={setStep}
+          onClose={jest.fn()}
+          prefill={{
+            name: "홍길동",
+            birthday: "900101",
+            address: "서울시 강남구",
+            phone: "01012345678",
+          }}
+        />
+      );
+    }
+
+    render(<PanelHarness />);
+    await flushOpenEffect();
+    const submitButton = screen.getByRole("button", { name: "생성" });
+    await waitFor(() => expect(submitButton).toBeEnabled());
+    fireEvent.click(submitButton);
+
+    expect(await screen.findByText("주 담당 인력: 필수 항목이에요.")).toBeInTheDocument();
+    const [primaryTrigger] = screen.getAllByTestId("employee-autocomplete");
+    expect(primaryTrigger).toHaveAttribute("aria-invalid", "true");
+
+    fireEvent.click(screen.getByRole("button", { name: "주 담당 인력: 필수 항목이에요." }));
+    await waitFor(() => expect(document.activeElement).toBe(primaryTrigger));
   });
 
   it.each([
