@@ -21,6 +21,7 @@ export function V3MainContent({
   const excluded = isLayoutExcluded(pathname);
   const isClientsNewRoute = pathname.startsWith("/clients/new");
   const isContractsNewRoute = pathname.startsWith("/contracts/new");
+  const isConsultationsRoute = pathname === "/consultations";
   const isForgotPasswordRoute = pathname === "/forgot-password";
   const isLoginRoute = pathname === "/login";
   const isPublicAuthRoute = isAuthPath(pathname);
@@ -38,6 +39,8 @@ export function V3MainContent({
           ? "h-[100dvh] overflow-hidden p-0"
           : isClientsNewRoute
           ? "h-[100dvh] overflow-hidden p-4 pt-20 pb-4"
+          : isConsultationsRoute
+            ? "min-h-[100dvh] flex flex-col p-0 pt-20"
           : isForgotPasswordRoute
             ? "h-[100dvh] p-4"
             : isPublicAuthRoute
@@ -46,6 +49,7 @@ export function V3MainContent({
         !isLoginRoute &&
           !isContractsNewRoute &&
           !isClientsNewRoute &&
+          !isConsultationsRoute &&
           !isForgotPasswordRoute &&
           !isPublicAuthRoute &&
           (excluded ? "pt-4" : "pt-20")

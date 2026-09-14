@@ -589,6 +589,11 @@ main[data-slot="main-content"]:has([data-slot="dashboard-page"]) > [data-slot="d
   min-height: 0;
   display: flex;
 }
+/* The consultations route removes V3MainContent's outer padding, so the
+   shared sheet must not keep the negative margins that normally cancel it. */
+.mobile-detail-sheet:has([data-slot="consultations-content"]) {
+  margin: 0;
+}
 [data-slot="consultations-content"] {
   padding-inline: 0;
 }
