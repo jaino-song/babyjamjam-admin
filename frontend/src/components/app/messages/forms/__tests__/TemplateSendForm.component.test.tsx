@@ -6,7 +6,7 @@
  */
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { createProblemDetails } from "@babyjamjam/shared";
-import { useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { StrictMode, Suspense, startTransition, useLayoutEffect, useState, type ReactNode } from "react";
 
 import type { MessageLogRecord } from "@/features/message-triggers/types";
@@ -45,6 +45,7 @@ jest.mock("@/components/app/clients/ClientAutocomplete", () => ({
 }));
 
 jest.mock("@tanstack/react-query", () => ({
+  useQuery: jest.fn(),
   useQueryClient: jest.fn(),
 }));
 
@@ -107,6 +108,9 @@ jest.mock("@/services/api", () => ({
   eformsignApi: {
     sendReceiptLink: jest.fn(),
   },
+  settingsApi: {
+    getMessageAutomationPolicies: jest.fn(),
+  },
 }));
 
 jest.mock("@/features/service-records/api/service-records.api", () => ({
@@ -120,6 +124,7 @@ jest.mock("@/features/service-records/api/service-records.api", () => ({
 // Typed references to mocks
 // ---------------------------------------------------------------------------
 const mockedUseMessageHistory = jest.mocked(useMessageHistory);
+const mockedUseQuery = jest.mocked(useQuery);
 const mockedUseQueryClient = jest.mocked(useQueryClient);
 const mockedUseToast = jest.mocked(useToast);
 const mockedSendSms = jest.mocked(messageDeliveryApi.sendSms);
@@ -307,6 +312,9 @@ beforeEach(() => {
   mockedUseQueryClient.mockReturnValue({
     invalidateQueries: jest.fn().mockResolvedValue(undefined),
   } as unknown as ReturnType<typeof useQueryClient>);
+  mockedUseQuery.mockReturnValue({
+    data: { policyActivations: { "duplicate-send-confirmation": true } },
+  } as unknown as ReturnType<typeof useQuery>);
   mockedUseToast.mockReturnValue({
     toast: jest.fn(),
   } as unknown as ReturnType<typeof useToast>);
@@ -817,6 +825,25 @@ describe("A: partial-failure send keeps only failed recipients in queue", () => 
 // record appears in the confirm dialog list.
 // ---------------------------------------------------------------------------
 describe("C: duplicate-send confirm dialog lists all duplicates (not just the first)", () => {
+  it("sends immediately without a history lookup when duplicate confirmation is disabled", async () => {
+    const refetch = jest.fn().mockResolvedValue({ data: [buildHistoryRecord()] });
+    mockedUseMessageHistory.mockReturnValue({ data: [buildHistoryRecord()], refetch } as never);
+    mockedUseQuery.mockReturnValue({
+      data: { policyActivations: { "duplicate-send-confirmation": false } },
+    } as unknown as ReturnType<typeof useQuery>);
+    mockedSendSms.mockResolvedValue(buildSendSuccess());
+    renderInfoForm();
+    await queueRecipient("01011111111");
+
+    fireEvent.click(screen.getByRole("button", { name: /즉시 발송/ }));
+
+    await waitFor(() => expect(mockedSendSms).toHaveBeenCalledTimes(1));
+    expect(refetch).not.toHaveBeenCalled();
+    expect(
+      document.querySelector('[data-component="desktop_messages_sections_duplicate-send-confirm-dialog"]'),
+    ).not.toBeInTheDocument();
+  });
+
   it("shows one confirm-recent entry per duplicate recipient and pluralizes the description", async () => {
     const message = "안내 메시지입니다.";
 

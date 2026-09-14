@@ -11,6 +11,7 @@ import {
 import { POST as requestMessageSenderApprovalCanonical } from "../message-sender-approval/request/route";
 import { GET as getMessageAutomationPolicies } from "../message-automation-policies/route";
 import { PUT as updateMessageAutomationPastTriggerConfig } from "../message-automation-policies/past-trigger/route";
+import { PUT as updateMessagePolicyActivation } from "../message-policy-activations/[policyId]/route";
 import {
   GET as getNotificationPreferences,
   PUT as updateNotificationPreferences,
@@ -275,6 +276,61 @@ describe("settings API routes", () => {
     const responseBody = await response.json();
     expect(responseBody.error).toBe("Invalid request body");
     expect(Array.isArray(responseBody.issues)).toBe(true);
+    expect(mockPut).not.toHaveBeenCalled();
+  });
+
+  it("requires auth before updating a message policy activation", async () => {
+    const response = await updateMessagePolicyActivation(
+      noCookieRequest(
+        "/api/settings/message-policy-activations/trigger-dispatch",
+        "PUT",
+      ),
+      { params: Promise.resolve({ policyId: "trigger-dispatch" }) },
+    );
+
+    expect(response.status).toBe(401);
+    expect(mockPut).not.toHaveBeenCalled();
+  });
+
+  it("proxies a validated message policy activation update", async () => {
+    const payload = { policyId: "trigger-dispatch", enabled: false };
+    mockPut.mockResolvedValue({ status: 200, data: payload });
+
+    const response = await updateMessagePolicyActivation(
+      createRequest(
+        "/api/settings/message-policy-activations/trigger-dispatch",
+        {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ enabled: false }),
+        },
+      ),
+      { params: Promise.resolve({ policyId: "trigger-dispatch" }) },
+    );
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual(payload);
+    expect(mockPut).toHaveBeenCalledWith(
+      "/settings/message-policy-activations/trigger-dispatch",
+      { enabled: false },
+      { headers: { Authorization: "Bearer auth-token" } },
+    );
+  });
+
+  it.each([
+    ["an unknown policy id", "unknown-policy", { enabled: false }],
+    ["a non-boolean enabled value", "sms-retry", { enabled: "false" }],
+  ])("rejects %s before proxying", async (_caseName, policyId, body) => {
+    const response = await updateMessagePolicyActivation(
+      createRequest(`/api/settings/message-policy-activations/${policyId}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      }),
+      { params: Promise.resolve({ policyId }) },
+    );
+
+    expect(response.status).toBe(400);
     expect(mockPut).not.toHaveBeenCalled();
   });
 

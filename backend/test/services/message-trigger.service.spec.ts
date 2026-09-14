@@ -61,6 +61,11 @@ describe("MessageTriggerService", () => {
             rule: MessageTriggerRuleEntity,
             includePast: boolean,
         ) => Promise<void>;
+        applyRetroactiveSendConfig: (
+            branchId: string,
+            candidates: Array<{ rule: MessageTriggerRuleEntity; job: MessageTriggerJobEntity }>,
+            stableBatchAt?: Date,
+        ) => Promise<Array<{ rule: MessageTriggerRuleEntity; job: MessageTriggerJobEntity }>>;
         recoverApprovedBranches: () => Promise<void>;
         processStaleRuleRebuilds: () => Promise<void>;
         buildClientTemplateVariables: (
@@ -225,7 +230,9 @@ describe("MessageTriggerService", () => {
         }),
     });
 
-    const createService = () => {
+    const createService = (systemSettingService?: {
+        getMessageSettingsPolicyEnabled: jest.Mock;
+    }) => {
         const ruleRepository = {
             findAll: jest.fn(),
             findById: jest.fn(),
@@ -303,7 +310,7 @@ describe("MessageTriggerService", () => {
             messageLogRepository as never,
             systemTemplateService as never,
             templateAutomationLock as never,
-            undefined,
+            systemSettingService as never,
             overrideRepository as never,
         );
 
@@ -324,7 +331,9 @@ describe("MessageTriggerService", () => {
         };
     };
 
-    const createDispatchService = () => {
+    const createDispatchService = (systemSettingService?: {
+        getMessageSettingsPolicyEnabled: jest.Mock;
+    }) => {
         const deliveryService = {
             sendJob: jest.fn().mockResolvedValue(true),
         };
@@ -398,6 +407,7 @@ describe("MessageTriggerService", () => {
             messageLogRepository as never,
             createSystemTemplateService() as never,
             createTemplateAutomationLock(prisma) as never,
+            systemSettingService as never,
         );
 
         jest.spyOn(service as unknown as ServiceInternals, "hasTriggerSchema").mockResolvedValue(true);
@@ -1587,6 +1597,60 @@ describe("MessageTriggerService", () => {
         expect(deliveryService.sendJob).toHaveBeenCalledWith(job);
         expect(job.status).toBe("sent");
         expect(jobRepository.update).toHaveBeenCalledWith(job);
+    });
+
+    it("leaves initial pending jobs untouched while branch dispatch is disabled", async () => {
+        const systemSettingService = {
+            getMessageSettingsPolicyEnabled: jest.fn().mockResolvedValue(false),
+        };
+        const { service, deliveryService, jobRepository } = createDispatchService(systemSettingService);
+        const job = createJob();
+        jobRepository.findDuePendingSystemScope.mockResolvedValue([job]);
+
+        await service.dispatchDueJobs();
+
+        expect(systemSettingService.getMessageSettingsPolicyEnabled).toHaveBeenCalledWith(
+            branchId,
+            "trigger-dispatch",
+        );
+        expect(jobRepository.claimPendingWithRuleFence).not.toHaveBeenCalled();
+        expect(deliveryService.sendJob).not.toHaveBeenCalled();
+        expect(job.status).toBe("pending");
+    });
+
+    it("leaves retry jobs pending while only trigger retry is disabled", async () => {
+        const systemSettingService = {
+            getMessageSettingsPolicyEnabled: jest.fn(async (
+                _branchId: string,
+                policyId: string,
+            ) => policyId !== "trigger-job-retry"),
+        };
+        const { service, deliveryService, jobRepository } = createDispatchService(systemSettingService);
+        const job = createJob({ attempts: 1, nextAttemptAt: new Date() });
+        jobRepository.findDuePendingSystemScope.mockResolvedValue([job]);
+
+        await service.dispatchDueJobs();
+
+        expect(jobRepository.claimPendingWithRuleFence).not.toHaveBeenCalled();
+        expect(deliveryService.sendJob).not.toHaveBeenCalled();
+        expect(job.status).toBe("pending");
+    });
+
+    it("drops past-due catch-up candidates while past-trigger handling is disabled", async () => {
+        const systemSettingService = {
+            getMessageSettingsPolicyEnabled: jest.fn().mockResolvedValue(false),
+        };
+        const { internals } = createService(systemSettingService);
+        const past = { rule: createRule(), job: createJob({ scheduledFor: new Date(Date.now() - 1_000) }) };
+        const future = { rule: createRule({ id: "rule-2" }), job: createJob({ id: "job-2", scheduledFor: new Date(Date.now() + 60_000) }) };
+
+        await expect(
+            internals.applyRetroactiveSendConfig(branchId, [past, future]),
+        ).resolves.toEqual([future]);
+        expect(systemSettingService.getMessageSettingsPolicyEnabled).toHaveBeenCalledWith(
+            branchId,
+            "past-trigger",
+        );
     });
 
     it("persists preparation before authorization and sends only the frozen snapshot", async () => {

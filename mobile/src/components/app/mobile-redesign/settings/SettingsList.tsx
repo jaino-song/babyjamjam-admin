@@ -60,12 +60,13 @@ export interface SettingsListProps {
   items: SettingsListItem[];
   selectedId: string | null;
   onSelect: (id: string) => void;
+  onToggle: (id: string, active: boolean) => void;
+  togglingItemId?: string | null;
   isLoading: boolean;
   policiesError?: boolean;
   onRetryPolicies?: () => void;
   approvalError?: boolean;
   onRetryApproval?: () => void;
-  isApproved: boolean;
 }
 
 export function SettingsList({
@@ -73,12 +74,13 @@ export function SettingsList({
   items,
   selectedId,
   onSelect,
+  onToggle,
+  togglingItemId = null,
   isLoading,
   policiesError = false,
   onRetryPolicies,
   approvalError = false,
   onRetryApproval,
-  isApproved,
 }: SettingsListProps): ReactElement {
   const sub = (suffix: string) => `${dataComponent}_${suffix}`;
 
@@ -130,9 +132,7 @@ export function SettingsList({
               const ItemIcon = item.icon;
               const isSelected = selectedId === item.id;
               const isTenantApplication = item.kind === "tenant-application";
-              const isSwitchChecked = item.requiresApproval
-                ? isApproved && item.active
-                : item.active;
+              const isSwitchChecked = item.active;
 
               return (
                 <div key={item.id} className="relative">
@@ -209,8 +209,9 @@ export function SettingsList({
                       thumbDataComponent={`${itemBase}_trailing_switch_thumb`}
                       aria-label={`${item.title} 활성화`}
                       checked={isSwitchChecked}
-                      disabled
-                      className="pointer-events-none absolute right-[calc(34px*var(--glint-ui-scale,1))] top-1/2 -translate-y-1/2 [--v3-ui-scale:var(--glint-ui-scale,1)]"
+                      disabled={togglingItemId !== null}
+                      onCheckedChange={(active) => onToggle(item.id, active)}
+                      className="absolute right-[calc(34px*var(--glint-ui-scale,1))] top-1/2 -translate-y-1/2 [--v3-ui-scale:var(--glint-ui-scale,1)]"
                     />
                   ) : null}
                 </div>

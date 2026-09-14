@@ -1,27 +1,43 @@
 "use client";
 
 import {
+  getUserErrorMessage,
+  MESSAGE_SETTINGS_POLICY_IDS,
+  SERVICE_RECORD_LINK_RULE_ID,
+  STORED_MESSAGE_SETTINGS_POLICY_IDS,
+  type MessageAutomationPoliciesResponse,
+  type MessageSettingsPolicyId,
+  type StoredMessageSettingsPolicyId,
+} from "@babyjamjam/shared";
+import {
   useEffect,
   useMemo,
   useRef,
   type ReactElement,
   type ReactNode,
 } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useRouter, useSearchParams } from "next/navigation";
 
 import { MessageSectionNav } from "@/components/app/mobile-redesign/MessageSectionNav";
 import { SlidingCard } from "@/components/app/mobile-redesign/sliding-card";
 import { ClientRegistrationPolicyDetail } from "@/components/app/mobile-redesign/settings/ClientRegistrationPolicyDetail";
+import { useClientRegistrationPolicy } from "@/components/app/mobile-redesign/settings/use-client-registration-policy";
 import { PastTriggerPolicyDetail } from "@/components/app/mobile-redesign/settings/PastTriggerPolicyDetail";
 import { PolicyInfoRows } from "@/components/app/mobile-redesign/settings/PolicyInfoRows";
 import { SenderApprovalDetail } from "@/components/app/mobile-redesign/settings/SenderApprovalDetail";
 import { SettingsList } from "@/components/app/mobile-redesign/settings/SettingsList";
 import {
   buildSettingsListItems,
+  CLIENT_REGISTRATION_POLICY_ITEM_ID,
   type SettingsListItem,
 } from "@/components/app/mobile-redesign/settings/settings-items";
 import { StatusPill } from "@/components/app/ui/status-badge";
+import {
+  useMessageTriggerRules,
+  useUpdateMessageTriggerRuleBranchActivation,
+} from "@/features/message-triggers/hooks/use-message-triggers";
+import { useToast } from "@/hooks/use-toast";
 import { settingsApi } from "@/services/api";
 
 import "@/components/app/mobile-redesign/redesign.css";
@@ -43,6 +59,37 @@ const MESSAGE_AUTOMATION_POLICIES_QUERY_KEY = [
 interface DetailContentProps {
   "data-component": string;
   item: SettingsListItem;
+}
+
+interface PolicyActivationMutationContext {
+  previous: MessageAutomationPoliciesResponse | undefined;
+}
+
+function isMessageSettingsPolicyId(id: string): id is MessageSettingsPolicyId {
+  return (MESSAGE_SETTINGS_POLICY_IDS as readonly string[]).includes(id);
+}
+
+function isStoredMessageSettingsPolicyId(id: string): id is StoredMessageSettingsPolicyId {
+  return (STORED_MESSAGE_SETTINGS_POLICY_IDS as readonly string[]).includes(id);
+}
+
+function withPolicyActivation(
+  current: MessageAutomationPoliciesResponse | undefined,
+  policyId: MessageSettingsPolicyId,
+  enabled: boolean,
+): MessageAutomationPoliciesResponse | undefined {
+  if (!current) return current;
+
+  return {
+    ...current,
+    policies: current.policies.map((policy) =>
+      policy.id === policyId ? { ...policy, active: enabled } : policy,
+    ),
+    policyActivations: {
+      ...current.policyActivations,
+      [policyId]: enabled,
+    } as Partial<Record<MessageSettingsPolicyId, boolean>>,
+  };
 }
 
 function DetailContent({
@@ -100,6 +147,8 @@ function DetailContent({
 
 export function MessagesSettingsPage(): ReactElement {
   const router = useRouter();
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
   const selectedItemId = useSearchParams().get("item");
   const didPushDetailRef = useRef(false);
   const approvalQuery = useQuery({
@@ -110,20 +159,109 @@ export function MessagesSettingsPage(): ReactElement {
     queryKey: MESSAGE_AUTOMATION_POLICIES_QUERY_KEY,
     queryFn: settingsApi.getMessageAutomationPolicies,
   });
+  const clientRegistration = useClientRegistrationPolicy();
+  const triggerRulesQuery = useMessageTriggerRules();
+  const serviceRecordLinkMutation = useUpdateMessageTriggerRuleBranchActivation();
+  const policyActivationMutation = useMutation<
+    { policyId: StoredMessageSettingsPolicyId; enabled: boolean },
+    Error,
+    { policyId: StoredMessageSettingsPolicyId; enabled: boolean },
+    PolicyActivationMutationContext
+  >({
+    mutationFn: ({ policyId, enabled }) =>
+      settingsApi.updateMessageSettingsPolicyActivation(policyId, enabled),
+    onMutate: async ({ policyId, enabled }) => {
+      await queryClient.cancelQueries({
+        queryKey: MESSAGE_AUTOMATION_POLICIES_QUERY_KEY,
+      });
+      const previous = queryClient.getQueryData<MessageAutomationPoliciesResponse>(
+        MESSAGE_AUTOMATION_POLICIES_QUERY_KEY,
+      );
+      queryClient.setQueryData<MessageAutomationPoliciesResponse>(
+        MESSAGE_AUTOMATION_POLICIES_QUERY_KEY,
+        (current) => withPolicyActivation(current, policyId, enabled),
+      );
+      return { previous };
+    },
+    onError: (error, _variables, context) => {
+      queryClient.setQueryData(
+        MESSAGE_AUTOMATION_POLICIES_QUERY_KEY,
+        context?.previous,
+      );
+      toast({
+        variant: "destructive",
+        description: getUserErrorMessage(error, "메시지 설정을 저장하지 못했어요"),
+      });
+    },
+    onSuccess: ({ policyId, enabled }) => {
+      queryClient.setQueryData<MessageAutomationPoliciesResponse>(
+        MESSAGE_AUTOMATION_POLICIES_QUERY_KEY,
+        (current) => withPolicyActivation(current, policyId, enabled),
+      );
+    },
+    onSettled: () => void queryClient.invalidateQueries({
+      queryKey: MESSAGE_AUTOMATION_POLICIES_QUERY_KEY,
+    }),
+  });
   const items = useMemo(
     () =>
       buildSettingsListItems({
         approval: approvalQuery.data,
-        policies: policiesQuery.data?.policies,
+        policies: policiesQuery.data?.policies.map((policy) =>
+          policy.id === "service-feedback-link"
+            ? {
+                ...policy,
+                active: triggerRulesQuery.data?.find(
+                  (rule) => rule.id === SERVICE_RECORD_LINK_RULE_ID,
+                )?.isActive ?? policy.active,
+              }
+            : policy,
+        ),
+        clientAutoRegistration:
+          clientRegistration.policy?.clientAutoRegistration ?? false,
+        policyActivations: policiesQuery.data?.policyActivations,
       }),
-    [approvalQuery.data, policiesQuery.data?.policies],
+    [
+      approvalQuery.data,
+      clientRegistration.policy?.clientAutoRegistration,
+      policiesQuery.data?.policies,
+      policiesQuery.data?.policyActivations,
+      triggerRulesQuery.data,
+    ],
   );
   const selectedItem = useMemo(
     () => items.find((item) => item.id === selectedItemId),
     [items, selectedItemId],
   );
   const isInitialLoading =
-    approvalQuery.isLoading || policiesQuery.isLoading;
+    approvalQuery.isLoading ||
+    policiesQuery.isLoading ||
+    clientRegistration.isLoading;
+
+  const handleToggle = (id: string, enabled: boolean) => {
+    if (id === CLIENT_REGISTRATION_POLICY_ITEM_ID) {
+      clientRegistration.updatePolicy.mutate({
+        clientAutoRegistration: enabled,
+      });
+      return;
+    }
+
+    if (id === "service-feedback-link") {
+      serviceRecordLinkMutation.mutate(
+        { id: SERVICE_RECORD_LINK_RULE_ID, dto: { isActive: enabled } },
+        {
+          onError: (error) => toast({
+            variant: "destructive",
+            description: getUserErrorMessage(error, "메시지 설정을 저장하지 못했어요"),
+          }),
+        },
+      );
+      return;
+    }
+
+    if (!isMessageSettingsPolicyId(id) || !isStoredMessageSettingsPolicyId(id)) return;
+    policyActivationMutation.mutate({ policyId: id, enabled });
+  };
 
   useEffect(() => {
     if (selectedItemId === null) {
@@ -248,12 +386,21 @@ export function MessagesSettingsPage(): ReactElement {
                 items={items}
                 selectedId={selectedItemId}
                 onSelect={handleSelect}
+                onToggle={handleToggle}
+                togglingItemId={
+                  policyActivationMutation.variables?.policyId ??
+                  (serviceRecordLinkMutation.isPending
+                    ? "service-feedback-link"
+                    : null) ??
+                  (clientRegistration.updatePolicy.isPending
+                    ? CLIENT_REGISTRATION_POLICY_ITEM_ID
+                    : null)
+                }
                 isLoading={isInitialLoading}
                 policiesError={policiesQuery.isError}
                 onRetryPolicies={() => policiesQuery.refetch()}
                 approvalError={approvalQuery.isError}
                 onRetryApproval={() => approvalQuery.refetch()}
-                isApproved={approvalQuery.data?.isApproved ?? false}
               />
             )}
             detail={detail}
