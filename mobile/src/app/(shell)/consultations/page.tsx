@@ -392,7 +392,11 @@ export default function ConsultationsPage() {
       isOpen={selectedRow !== null}
       onClose={() => setSelectedId(null)}
       list={
-        <div className="shell-content" data-component="mobile_consultations_detail-sheet_stack_list-page_content">
+        <div
+          className="shell-content"
+          data-component="mobile_consultations_detail-sheet_stack_list-page_content"
+          data-slot="consultations-content"
+        >
           <ListCard
             data-component="mobile_consultations_detail-sheet_stack_list-page_content_list-card"
             title="상담 조회"

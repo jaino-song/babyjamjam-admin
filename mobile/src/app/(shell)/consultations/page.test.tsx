@@ -75,6 +75,12 @@ jest.mock("@/components/app/mobile-redesign/detail-sheet", () => ({
 }));
 
 describe("mobile consultations page", () => {
+  it("renders the list content with the consultations spacing hook", () => {
+    const { container } = render(<ConsultationsPage />);
+
+    expect(container.querySelector('[data-slot="consultations-content"]')).toBeInTheDocument();
+  });
+
   it("supports the desktop search behavior", () => {
     render(<ConsultationsPage />);
 
