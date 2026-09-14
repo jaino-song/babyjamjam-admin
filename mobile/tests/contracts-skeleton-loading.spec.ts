@@ -232,6 +232,51 @@ test.describe('Contracts Page Skeleton Loading', () => {
     await expect(page.locator('[data-component="mobile_contracts_detail-sheet_stack_list-page_content_list-card_header"]')).toContainText('2건');
   });
 
+  test('keeps resolved filter pills visible while a selected filter reloads the list body', async ({ page }) => {
+    let listRequestCount = 0;
+    let releaseFilteredList!: () => void;
+    const filteredListReady = new Promise<void>((resolve) => {
+      releaseFilteredList = resolve;
+    });
+
+    await page.route('**/api/access-token', async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ success: true }),
+      });
+    });
+
+    await routeContractsApi(page, {
+      getDocuments: () => MOCK_DOCUMENTS.documents,
+      beforeListResponse: async () => {
+        listRequestCount += 1;
+        if (listRequestCount > 1) await filteredListReady;
+      },
+    });
+    await routeSharedContractDependencies(page);
+
+    await page.goto('/contracts');
+    await expect(page.locator('[data-component="mobile_contracts_detail-sheet_stack_list-page_content_list-card_body_row"]')).toHaveCount(2, {
+      timeout: 15000,
+    });
+
+    const completedFilter = page
+      .locator('[data-component="mobile_contracts_detail-sheet_stack_list-page_content_list-card_filters_pill"]')
+      .filter({ hasText: '계약 완료' });
+    await expect(completedFilter.locator('.count')).toHaveText('1');
+    await completedFilter.click();
+
+    await expect(completedFilter).toHaveAttribute('aria-pressed', 'true');
+    await expect(page.locator('[data-component="mobile_contracts_detail-sheet_stack_list-page_content_list-card_filters_pill"][data-loading="true"]')).toHaveCount(0);
+    await expect(page.locator('[data-component="mobile_contracts_detail-sheet_stack_list-page_content_list-card_body_loading-row"]')).toHaveCount(
+      LOADING_ROW_COUNT,
+    );
+
+    releaseFilteredList();
+    await expect(page.locator('[data-component="mobile_contracts_detail-sheet_stack_list-page_content_list-card_body_loading-row"]')).toHaveCount(0);
+  });
+
   test('renders documents when status counts fail instead of keeping the skeleton', async ({ page }) => {
     await page.route('**/api/access-token', async (route) => {
       await route.fulfill({
