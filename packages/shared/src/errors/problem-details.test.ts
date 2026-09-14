@@ -221,6 +221,8 @@ describe("catalog coverage", () => {
         "CLIENT_PHONE_ALREADY_REGISTERED",
         "EMPLOYEE_PHONE_ALREADY_REGISTERED",
         "EMPLOYEE_ACTIVE_ASSIGNMENT_BLOCKED",
+        "EMPLOYEE_ASSIGNMENT_NOT_ELIGIBLE",
+        "SERVICE_RECORD_WRITE_TARGET_CHANGED",
     ];
 
     it.each(codes)("contains a complete bilingual entry for %s", (code) => {
@@ -269,6 +271,18 @@ describe("catalog coverage", () => {
         const entry = PROBLEM_CATALOG[code];
         expect(entry.status).toBe(409);
         expect(entry.statuses).toEqual([409]);
+        expect(entry.type).toBe(`https://github.com/jaino-song/babyjamjam-admin/blob/main/docs/error-management.md#${anchor}`);
+    });
+
+    const ASSIGNMENT_STATUS_CODES: Array<[ProblemCode, number, string]> = [
+        ["EMPLOYEE_ASSIGNMENT_NOT_ELIGIBLE", 400, "employee-assignment-not-eligible"],
+        ["SERVICE_RECORD_WRITE_TARGET_CHANGED", 409, "service-record-write-target-changed"],
+    ];
+
+    it.each(ASSIGNMENT_STATUS_CODES)("registers %s as status %s with kebab-case type anchor", (code, status, anchor) => {
+        const entry = PROBLEM_CATALOG[code];
+        expect(entry.status).toBe(status);
+        expect(entry.statuses).toEqual([status]);
         expect(entry.type).toBe(`https://github.com/jaino-song/babyjamjam-admin/blob/main/docs/error-management.md#${anchor}`);
     });
 });

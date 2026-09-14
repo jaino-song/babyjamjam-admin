@@ -1442,7 +1442,7 @@ describe("ClientService", () => {
                     careCenter: false,
                     voucherClient: true,
                     breastPump: false,
-                })).rejects.toThrow("선택한 제공인력이 해당 지점 소속이 아니거나 배정 가능한 상태가 아닙니다.");
+                })).rejects.toMatchObject({ response: { code: "EMPLOYEE_ASSIGNMENT_NOT_ELIGIBLE" } });
 
                 expect(createClientUsecase.execute).not.toHaveBeenCalled();
                 expect(createClientUsecase.executeWithInitialSchedule).not.toHaveBeenCalled();
@@ -3515,7 +3515,12 @@ describe("ClientService", () => {
             findClientByIdUsecase.execute.mockResolvedValue(createClientEntity());
 
             await expect(service.requestReplacement(branchId, 1, 7, 7))
-                .rejects.toThrow("주담당과 부담당은 같은 직원일 수 없습니다.");
+                .rejects.toMatchObject({
+                    response: {
+                        code: "VALIDATION_FAILED",
+                        errors: [{ pointer: "/secondaryEmployeeId", code: "INVALID_FORMAT" }],
+                    },
+                });
         });
 
         it("keeps status and existing schedule unchanged when replacement schedule creation fails", async () => {

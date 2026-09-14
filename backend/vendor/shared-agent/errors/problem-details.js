@@ -55,6 +55,9 @@ const PROBLEM_CODES = [
     "CLIENT_PHONE_ALREADY_REGISTERED",
     "EMPLOYEE_PHONE_ALREADY_REGISTERED",
     "EMPLOYEE_ACTIVE_ASSIGNMENT_BLOCKED",
+    // Registered assignment codes (EM-CAT-01; SERVICE_RECORD_WRITE_TARGET_CHANGED keeps its shipped identifier per EM-CAT-03). BJJ-319 phase 4b.
+    "EMPLOYEE_ASSIGNMENT_NOT_ELIGIBLE",
+    "SERVICE_RECORD_WRITE_TARGET_CHANGED",
 ];
 const PROBLEM_ERROR_CODES = [
     "REQUIRED",
@@ -461,6 +464,28 @@ const PROBLEM_DEFINITIONS = {
         detail: {
             "ko-KR": "진행 중인 배정이 있는 관리사는 삭제할 수 없어요. 배정 종료 또는 교체 후 다시 시도해 주세요.",
             "en-US": "This employee has active assignments and cannot be deleted. End or replace the assignments and try again.",
+        },
+    },
+    EMPLOYEE_ASSIGNMENT_NOT_ELIGIBLE: {
+        status: 400,
+        title: {
+            "ko-KR": "배정할 수 없는 제공인력이에요",
+            "en-US": "This employee cannot be assigned",
+        },
+        detail: {
+            "ko-KR": "선택한 제공인력이 해당 지점 소속이 아니거나 배정 가능한 상태가 아니에요.",
+            "en-US": "The selected employee does not belong to the branch or is not available for assignment.",
+        },
+    },
+    SERVICE_RECORD_WRITE_TARGET_CHANGED: {
+        status: 409,
+        title: {
+            "ko-KR": "작업 대상이 변경됐어요",
+            "en-US": "The write target changed",
+        },
+        detail: {
+            "ko-KR": "작업 도중 대상 정보가 바뀌어 요청을 적용하지 않았어요. 최신 상태를 확인한 뒤 다시 시도해 주세요.",
+            "en-US": "The target changed while the request was in progress, so it was not applied. Check the latest state and try again.",
         },
     },
 };
