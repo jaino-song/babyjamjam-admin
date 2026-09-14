@@ -5,7 +5,7 @@ const source = fs.readFileSync(require.resolve("./ContractCreationForm"), "utf8"
 describe("ContractCreationForm compensation flows", () => {
   it("should show the conflict error and stop before document creation when automatic registration is off", () => {
     expect(source).toContain('error.response?.status !== 409');
-    expect(source).toContain('throw new Error(getApiErrorMessage(error, "고객 자동 등록에 실패했습니다."))');
+    expect(source).toContain('throw new Error(getApiErrorMessage(error, "고객 자동 등록에 실패했어요."))');
     // Provider authentication now runs exclusively inside the backend credential
     // boundary; the browser must not call the provider directly.
     expect(source).not.toContain("eformsignApi.authenticate");

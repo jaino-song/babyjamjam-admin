@@ -1,4 +1,6 @@
 "use client";
+import { getUserErrorMessage } from "@babyjamjam/shared";
+
 
 import { zodResolver } from "@hookform/resolvers/zod";
 import { Check } from "lucide-react";
@@ -82,7 +84,7 @@ function createAccountEditFormSchema({
       if (!initialAccountRole) {
         context.addIssue({
           code: "custom",
-          message: "현재 계정 권한을 확인할 수 없습니다. 목록을 새로고침해 주세요.",
+          message: "현재 계정 권한을 확인할 수 없어요. 목록을 새로고침해 주세요.",
           path: ["role"],
         });
       } else if (!values.role) {
@@ -411,7 +413,7 @@ export function SystemAdminAccountEditDialog({
               tone="error"
               role="alert"
             >
-              {errorMessage}
+              {errorMessage && getUserErrorMessage(errorMessage)}
             </FormHelperText>
           ) : null}
         </form>

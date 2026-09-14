@@ -26,9 +26,17 @@
       "types": "./types/service-record.d.ts",
       "require": "./types/service-record.js"
     },
+    "./types/system-template": {
+      "types": "./types/system-template.d.ts",
+      "require": "./types/system-template.js"
+    },
     "./constants/service-record-form-layout": {
       "types": "./constants/service-record-form-layout.d.ts",
       "require": "./constants/service-record-form-layout.js"
+    },
+    "./errors/problem-details": {
+      "types": "./errors/problem-details.d.ts",
+      "require": "./errors/problem-details.js"
     }
   },
   "dependencies": {

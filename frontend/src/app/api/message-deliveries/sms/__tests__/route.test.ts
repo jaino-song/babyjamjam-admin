@@ -76,7 +76,8 @@ describe("message-deliveries SMS proxy", () => {
 
     expect(response.status).toBe(409);
     await expect(response.json()).resolves.toEqual({
-      error: "Branch context changed while processing the request",
+      code: "BRANCH_CONTEXT_CHANGED",
+      error: "현재 데이터 상태와 요청이 충돌해 처리할 수 없어요.",
     });
   });
 });

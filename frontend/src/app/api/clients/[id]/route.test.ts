@@ -78,7 +78,7 @@ describe("PATCH /api/clients/[id]", () => {
 
         expect(response.status).toBe(404);
         await expect(response.json()).resolves.toEqual({
-            error: "Failed to update client",
+            error: expect.stringMatching(/[가-힣].*요[.!]?$/),
             code: "CLIENT_NOT_FOUND",
         });
         const logged = JSON.stringify(consoleError.mock.calls);
@@ -118,7 +118,7 @@ describe("GET /api/clients/[id]", () => {
 
         expect(response.status).toBe(404);
         await expect(response.json()).resolves.toEqual({
-            error: "Failed to fetch client",
+            error: expect.stringMatching(/[가-힣].*요[.!]?$/),
             code: "CLIENT_NOT_FOUND",
         });
         expect(JSON.stringify(consoleError.mock.calls)).not.toContain(privateMessage);

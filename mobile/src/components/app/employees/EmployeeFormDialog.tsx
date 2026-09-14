@@ -1,8 +1,17 @@
 "use client";
+import {
+    getUserErrorMessage,
+    normalizeApiError,
+    resolveProblemPresentation,
+    type ProblemError,
+    type ProblemOutcome,
+} from "@babyjamjam/shared";
+
 
 import { useState, useEffect, useMemo } from "react";
 import { useLocale } from "@/providers/LocaleProvider";
 import { t } from "@/lib/i18n/translations";
+import { Button } from "@/components/ui/button";
 import { getErrorMessage } from "@/lib/errors/api-error-mapper";
 import {
     Employee,
@@ -37,6 +46,70 @@ const PHONE_DUPLICATE_CHECK_MAX_RETRIES = 3;
 const PHONE_DUPLICATE_CHECK_RETRY_DELAY_MS = 1000;
 
 const EMPLOYEE_FORM_DIALOG_BASE = "mobile_employees_form-dialog";
+const EMPLOYEE_FORM_DIALOG_ERROR_ID_PREFIX = "mobile_employees_form-dialog_error";
+
+type EmployeeFormField = "name" | "phone";
+
+interface EmployeeFormErrorState {
+    message: string;
+    fieldErrors: readonly ProblemError[];
+    requestId?: string;
+    outcome?: ProblemOutcome;
+}
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+    typeof value === "object" && value !== null;
+
+const getErrorResponseStatus = (error: unknown): number | undefined => {
+    if (!isRecord(error)) return undefined;
+
+    const response = isRecord(error.response) ? error.response : undefined;
+    const responseStatus = response?.status;
+    if (typeof responseStatus === "number" && Number.isInteger(responseStatus)) {
+        return responseStatus;
+    }
+
+    const directStatus = error.status;
+    if (typeof directStatus === "number" && Number.isInteger(directStatus)) {
+        return directStatus;
+    }
+
+    const responseData = response?.data;
+    const data = isRecord(responseData)
+        ? responseData
+        : isRecord(error.data)
+            ? error.data
+            : error;
+    const statusCode = data.statusCode;
+    return typeof statusCode === "number" && Number.isInteger(statusCode) ? statusCode : undefined;
+};
+
+const getErrorResponsePayload = (error: unknown): unknown => {
+    if (!isRecord(error)) return undefined;
+    const response = isRecord(error.response) ? error.response : undefined;
+    if (response && "data" in response) return response.data;
+    if ("data" in error) return error.data;
+    return error;
+};
+
+const isUnstructuredLegacyEmployeeError = (
+    error: unknown,
+    normalized: ReturnType<typeof normalizeApiError>,
+): boolean => {
+    if (normalized.verified) return false;
+    const status = getErrorResponseStatus(error);
+    if (status === undefined || status < 400 || status >= 500) return false;
+
+    const payload = getErrorResponsePayload(error);
+    return !isRecord(payload) || (!("type" in payload) && !("requestId" in payload));
+};
+
+const fieldForProblemError = (problemError: ProblemError): EmployeeFormField | undefined => {
+    if (problemError.location !== undefined && problemError.location !== "body") return undefined;
+    if (problemError.pointer === "/name") return "name";
+    if (problemError.pointer === "/phone") return "phone";
+    return undefined;
+};
 
 const normalizePhoneNumber = (value: string): string => value.replace(/[^\d]/g, "");
 
@@ -78,7 +151,7 @@ export function EmployeeFormDialog({
     });
 
     // Error state for displaying API errors
-    const [error, setError] = useState<string | null>(null);
+    const [error, setError] = useState<EmployeeFormErrorState | null>(null);
     const [isCheckingPhoneDuplicate, setIsCheckingPhoneDuplicate] = useState(false);
     const [isPhoneDuplicate, setIsPhoneDuplicate] = useState(false);
     const [hasPhoneDuplicateCheckFailed, setHasPhoneDuplicateCheckFailed] = useState(false);
@@ -286,15 +359,15 @@ export function EmployeeFormDialog({
             return;
         }
         if (hasPhoneDuplicateCheckFailed) {
-            setError(getPhoneDuplicateCheckFailedMessage(locale));
+            setError({ message: getUserErrorMessage(getPhoneDuplicateCheckFailedMessage(locale)), fieldErrors: [] });
             return;
         }
         if (isPhoneDuplicate) {
-            setError(t(locale, "employees.form.error-phone-duplicate"));
+            setError({ message: getUserErrorMessage(t(locale, "employees.form.error-phone-duplicate")), fieldErrors: [] });
             return;
         }
         if (!isPhoneDuplicateCheckReady) {
-            setError(getPhoneDuplicateCheckPendingMessage(locale));
+            setError({ message: getUserErrorMessage(getPhoneDuplicateCheckPendingMessage(locale)), fieldErrors: [] });
             return;
         }
 
@@ -314,7 +387,7 @@ export function EmployeeFormDialog({
                 // Check if the response is an error (has statusCode or code property)
                 if (updatedEmployee && ('code' in updatedEmployee || 'statusCode' in updatedEmployee)) {
                     console.error("[EmployeeFormDialog] Update returned error:", updatedEmployee);
-                    setError(getErrorMessage(updatedEmployee, locale, "employees.form.error-update-failed"));
+                    setMutationError(updatedEmployee);
                     return;
                 }
 
@@ -335,7 +408,7 @@ export function EmployeeFormDialog({
                 // Check if the response is an error (has statusCode or code property)
                 if (newEmployee && ('code' in newEmployee || 'statusCode' in newEmployee)) {
                     console.error("[EmployeeFormDialog] Create returned error:", newEmployee);
-                    setError(getErrorMessage(newEmployee, locale, "employees.form.error-create-failed"));
+                    setMutationError(newEmployee);
                     return;
                 }
 
@@ -346,16 +419,49 @@ export function EmployeeFormDialog({
             handleClose();
         } catch (error: unknown) {
             console.error("[EmployeeFormDialog] Failed to save employee:", error);
-            setError(getErrorMessage(error, locale, "employees.form.error-save-failed"));
+            setMutationError(error);
         } finally {
             setIsSubmitting(false);
         }
+    };
+
+    const setMutationError = (cause: unknown) => {
+        const normalized = normalizeApiError(cause, {
+            locale: locale === "en" ? "en-US" : "ko-KR",
+            operation: "mutation",
+        });
+
+        if (isUnstructuredLegacyEmployeeError(cause, normalized)) {
+            setError({
+                message: getErrorMessage(cause, locale, "employees.form.error-save-failed"),
+                fieldErrors: [],
+            });
+            return;
+        }
+
+        setError({
+            message: normalized.message,
+            fieldErrors: normalized.problem?.errors ?? [],
+            requestId: normalized.problem?.requestId,
+            outcome: normalized.outcome,
+        });
     };
 
     const dialogTitle = isEditMode
         ? t(locale, "employees.form.edit-title")
         : t(locale, "employees.form.create-title");
     const submitLabel = isEditMode ? t(locale, "common.save") : "등록";
+
+    const problemPresentation = resolveProblemPresentation(locale);
+    const formErrorEntries = (error?.fieldErrors ?? []).map((fieldError, index) => ({
+        fieldError,
+        field: fieldForProblemError(fieldError),
+        id: `${EMPLOYEE_FORM_DIALOG_ERROR_ID_PREFIX}_${index}`,
+    }));
+
+    const focusFormField = (field: EmployeeFormField) => {
+        document.getElementById(`employee-form-${field}`)?.focus();
+    };
 
     return (
         <MobileDetailSlideUp
@@ -385,7 +491,50 @@ export function EmployeeFormDialog({
                     data-component={`${EMPLOYEE_FORM_DIALOG_BASE}_error`}
                     className={styles.error}
                 >
-                    <AlertDescription>{error}</AlertDescription>
+                    <AlertDescription>
+                        <div className="flex flex-col gap-2">
+                            <p>{error.message}</p>
+                            {formErrorEntries.length > 0 ? (
+                                <ul className="flex flex-col gap-1">
+                                    {formErrorEntries.map(({ fieldError, field, id }) => {
+                                        const fieldLabel = field === "name"
+                                            ? t(locale, "employees.form.name")
+                                            : field === "phone"
+                                                ? t(locale, "employees.form.phone")
+                                                : problemPresentation.unmappedField;
+                                        const detail = `${fieldLabel}: ${fieldError.detail}`;
+
+                                        return (
+                                            <li key={id} id={id}>
+                                                {field ? (
+                                                    <Button
+                                                        type="button"
+                                                        variant="ghost"
+                                                        size="sm"
+                                                        className="whitespace-normal p-0 text-left"
+                                                        onClick={() => focusFormField(field)}
+                                                        data-component={`${EMPLOYEE_FORM_DIALOG_ERROR_ID_PREFIX}_entry_${field}`}
+                                                    >
+                                                        {detail}
+                                                    </Button>
+                                                ) : (
+                                                    <span>{detail}</span>
+                                                )}
+                                            </li>
+                                        );
+                                    })}
+                                </ul>
+                            ) : null}
+                            {error.outcome === "UNKNOWN" ? (
+                                <p>{problemPresentation.checkStatus}</p>
+                            ) : null}
+                            {error.requestId ? (
+                                <p className="text-xs opacity-80">
+                                    {locale === "en" ? `Request ID: ${error.requestId}` : `요청 ID: ${error.requestId}`}
+                                </p>
+                            ) : null}
+                        </div>
+                    </AlertDescription>
                 </Alert>
             )}
 

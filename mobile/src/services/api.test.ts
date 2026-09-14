@@ -79,6 +79,18 @@ describe("settingsApi notification preferences", () => {
     });
 });
 
+describe("settingsApi message sender approval", () => {
+    it("uses the canonical request endpoint", async () => {
+        const { apiModule, mockPost } = await loadApiModule();
+        mockPost.mockResolvedValue({ data: { approvalStatus: "pending" } });
+
+        await expect(apiModule.settingsApi.requestMessageSenderApproval()).resolves.toEqual({
+            approvalStatus: "pending",
+        });
+        expect(mockPost).toHaveBeenCalledWith("/settings/message-sender-approval/request", {});
+    });
+});
+
 describe("eformsignApi.authenticate", () => {
     beforeEach(() => {
         jest.useFakeTimers();

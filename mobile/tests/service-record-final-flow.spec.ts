@@ -190,7 +190,7 @@ test("기본정보 저장 실패 시 입력값을 보존하고 다음 단계로 
   }));
   await page.route(`**/api/service-record/${token}/header`, (route) => route.fulfill({
     status: 500,
-    json: { message: "기본정보 저장에 실패했습니다." },
+    json: { message: "기본정보 저장에 실패했어요." },
   }));
   await page.route(`**/api/service-record/${token}/context`, (route) => route.fulfill({
     json: {
@@ -213,7 +213,7 @@ test("기본정보 저장 실패 시 입력값을 보존하고 다음 단계로 
   await page.getByPlaceholder("예) 3.2").fill(header.babyWeight);
   await page.getByRole("button", { name: "다음", exact: true }).click();
 
-  await expect(page.getByText("기본정보 저장에 실패했습니다.", { exact: true })).toBeVisible();
+  await expect(page.getByText("기본정보 저장에 실패했어요.", { exact: true })).toBeVisible();
   await expect(page.locator('[data-component="mobile_service-record_wizard_body_service-title"]')).toHaveText("서비스 기본정보");
 
   await page.reload();

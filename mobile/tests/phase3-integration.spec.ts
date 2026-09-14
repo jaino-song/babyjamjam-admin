@@ -374,11 +374,13 @@ test.describe("Phase 3.1 functional integration matrix", () => {
     expect(attempts).toEqual({ unauthorized: 2, forbidden: 1, network: 4, server: 2 });
   });
 
-  test("6. shows localized duplicate-phone validation and hides unsafe server details", async ({ page }) => {
-    let responseMode: "duplicate" | "unsafe" = "duplicate";
+  test("6. keeps legacy and unsafe mutation failures safe and prevents replay", async ({ page }) => {
+    let responseMode: "legacy-conflict" | "unsafe" = "legacy-conflict";
+    let createCalls = 0;
     await installPhase3WizardFixture(page, {
       onCreate: async (route) => {
-        if (responseMode === "duplicate") {
+        createCalls += 1;
+        if (responseMode === "legacy-conflict") {
           await route.fulfill(
             phase3Json({ code: "P2002", field: "phone", message: "duplicate phone number" }, 409),
           );
@@ -391,7 +393,7 @@ test.describe("Phase 3.1 functional integration matrix", () => {
       },
     });
 
-    const submitAndReadToast = async () => {
+    const submitAndReadErrorSummary = async () => {
       await page.goto("/clients/new");
       await expectWizard(page);
       await goToPhase3ContractStep(page, "15");
@@ -401,18 +403,56 @@ test.describe("Phase 3.1 functional integration matrix", () => {
       if (await confirmation.count()) {
         await confirmation.locator(selector("mobile_clients-new_screen_root_duration-confirmation_confirm-button")).click();
       }
-      const toast = page.locator(selector("mobile_shell_toaster_toast")).last();
-      await expect(toast).toBeVisible({ timeout: 10_000 });
-      return toast;
+      const errorSummary = page.locator(selector("mobile_clients-new_screen_root_error-summary"));
+      await expect(errorSummary).toBeVisible({ timeout: 10_000 });
+      return errorSummary;
     };
 
-    const duplicateToast = await submitAndReadToast();
-    await expect(duplicateToast).toContainText("이미 등록된 연락처입니다. 다른 연락처를 입력해주세요.");
+    const legacyConflictSummary = await submitAndReadErrorSummary();
+    await expect(legacyConflictSummary).toContainText(
+      "변경 결과를 확인할 수 없으니 다시 실행하기 전에 작업 상태를 확인해 주세요.",
+    );
+    await expect(
+      legacyConflictSummary.locator(
+        selector("mobile_clients-new_screen_root_error-summary_status-guidance"),
+      ),
+    ).toContainText("다시 실행하기 전에 작업 상태를 확인해 주세요.");
+    await expect(legacyConflictSummary).not.toContainText("P2002");
+    await expect(legacyConflictSummary).not.toContainText("duplicate phone number");
+    await expect(legacyConflictSummary).not.toContainText("PrismaClientKnownRequestError");
+    await expect(legacyConflictSummary).not.toContainText("SELECT");
+    await expect(legacyConflictSummary).not.toContainText("Bearer");
+
+    const primaryAction = page.locator(phase3Selectors.actions).nth(1);
+    await expect(primaryAction).toBeDisabled();
+    await primaryAction.click({ force: true });
+    await expect.poll(() => createCalls).toBe(1);
+
+    await page.locator(phase3Selectors.actions).nth(0).click();
+    await page.locator(phase3Selectors.actions).nth(0).click();
+    const phoneInput = page.locator(phase3Selectors.phone);
+    await expect(phoneInput).toHaveValue("010-1111-2222");
+    await phoneInput.fill("01099998888");
+    await expect(phoneInput).toHaveValue("010-9999-8888");
+    await expect(legacyConflictSummary).toBeVisible();
+    await expect(page.locator(phase3Selectors.actions).nth(1)).toBeDisabled();
+    await page.locator(phase3Selectors.actions).nth(1).click({ force: true });
+    await expect.poll(() => createCalls).toBe(1);
+
     responseMode = "unsafe";
-    const unsafeToast = await submitAndReadToast();
-    await expect(unsafeToast).not.toContainText("PrismaClientKnownRequestError");
-    await expect(unsafeToast).not.toContainText("SELECT");
-    await expect(unsafeToast).not.toContainText("Bearer");
+    const unsafeSummary = await submitAndReadErrorSummary();
+    await expect(unsafeSummary).toContainText(
+      "변경 결과를 확인할 수 없으니 다시 실행하기 전에 작업 상태를 확인해 주세요.",
+    );
+    await expect(unsafeSummary).not.toContainText("PrismaClientKnownRequestError");
+    await expect(unsafeSummary).not.toContainText("SELECT");
+    await expect(unsafeSummary).not.toContainText("Bearer");
+    await expect(unsafeSummary).not.toContainText("secret");
+    await expect(page.locator("body")).not.toContainText("PrismaClientKnownRequestError");
+    await expect(page.locator("body")).not.toContainText("SELECT");
+    await expect(page.locator("body")).not.toContainText("Bearer");
+    await expect(page.locator("body")).not.toContainText("secret");
+    expect(createCalls).toBe(2);
   });
 
   test("7. keeps message panel skeletons, zero headers, and partial-error unavailable counts distinct", async ({ page }) => {

@@ -233,6 +233,7 @@ export default function PricesPage() {
               filters={typeFilterItems}
               activeFilter={typeFilter}
               onFilterChange={(label) => setTypeFilter(label as TypeFilter)}
+              loadMore={false}
               beforeFilters={
                 <div
                   className="filter-row"

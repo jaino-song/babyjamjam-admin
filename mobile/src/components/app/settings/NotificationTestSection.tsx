@@ -1,4 +1,6 @@
 "use client";
+import { getUserErrorMessage } from "@babyjamjam/shared";
+
 
 import { useState } from "react";
 import { Bell } from "lucide-react";
@@ -26,7 +28,7 @@ export function NotificationTestSection() {
       const { data } = await api.post<BroadcastResult>('/notifications/test-broadcast');
       setResult(data);
     } catch {
-      setError('알림 전송에 실패했습니다.');
+      setError(getUserErrorMessage("알림 전송에 실패했어요."));
     } finally {
       setLoading(false);
     }
@@ -73,7 +75,7 @@ export function NotificationTestSection() {
 
       {error && (
         <Alert variant="destructive" className="mt-4">
-          <AlertDescription>{error}</AlertDescription>
+          <AlertDescription>{error && getUserErrorMessage(error)}</AlertDescription>
         </Alert>
       )}
     </div>

@@ -1,4 +1,6 @@
 "use client";
+import { getUserErrorMessage } from "@babyjamjam/shared";
+
 
 import { useState, useMemo, useEffect } from "react";
 import { useRouter } from "next/navigation";
@@ -22,6 +24,7 @@ import { useClientDialogStore } from "@/stores/client-dialog-store";
 import { useClientWizardStore } from "@/stores/client-wizard-store";
 import { useLocale } from "@/providers/LocaleProvider";
 import { t } from "@/lib/i18n/translations";
+import { formatKoreanPhoneNumber } from "@/lib/phone";
 import { getErrorMessage } from "@/lib/errors/prisma-error-mapper";
 import { useNavigationPending } from "@/lib/hooks/use-navigation-pending";
 import voucherOptions from "@/components/app/messages/templates/json/voucher.json";
@@ -44,13 +47,6 @@ const COMPLETED_PILL =
 
 const PHONE_DUPLICATE_CHECK_MAX_RETRIES = 3;
 const PHONE_DUPLICATE_CHECK_RETRY_DELAY_MS = 1000;
-
-const formatPhoneNumber = (value: string): string => {
-  const digits = value.replace(/\D/g, "");
-  if (digits.length <= 3) return digits;
-  if (digits.length <= 7) return `${digits.slice(0, 3)}-${digits.slice(3)}`;
-  return `${digits.slice(0, 3)}-${digits.slice(3, 7)}-${digits.slice(7, 11)}`;
-};
 
 const formatPrice = (price: number | string): string => {
   if (!price && price !== 0) return "";
@@ -300,24 +296,24 @@ export default function NewClientPage() {
     switch (step) {
       case 0:
         if (!store.name.trim()) {
-          setError(t(locale, "clients.form.error-name-required"));
+          setError(getUserErrorMessage(t(locale, "clients.form.error-name-required")));
           return false;
         }
         if (phoneDigits.length !== 11) {
-          setError(t(locale, "clients.form.error-phone-required"));
+          setError(getUserErrorMessage(t(locale, "clients.form.error-phone-required")));
           return false;
         }
         if (phoneDigits.length === 11) {
           if (isCheckingPhoneDuplicate || lastCheckedPhoneDigits !== phoneDigits) {
-            setError(getPhoneDuplicateCheckPendingMessage(locale));
+            setError(getUserErrorMessage(getPhoneDuplicateCheckPendingMessage(locale)));
             return false;
           }
           if (hasPhoneDuplicateCheckFailed) {
-            setError(getPhoneDuplicateCheckFailedMessage(locale));
+            setError(getUserErrorMessage(getPhoneDuplicateCheckFailedMessage(locale)));
             return false;
           }
           if (isPhoneDuplicate) {
-            setError(t(locale, "clients.form.error-phone-duplicate"));
+            setError(getUserErrorMessage(t(locale, "clients.form.error-phone-duplicate")));
             return false;
           }
         }
@@ -434,12 +430,12 @@ export default function NewClientPage() {
               type="tel"
               value={store.phone}
               onChange={(e) => {
-                setField("phone", formatPhoneNumber(e.target.value));
+                setField("phone", formatKoreanPhoneNumber(e.target.value));
                 setError(null);
               }}
               inputMode="numeric"
               placeholder="010-1234-5678"
-              maxLength={13}
+              maxLength={20}
               error={phoneInlineMessage ?? undefined}
               errorDisplay="inline"
             />
@@ -455,7 +451,7 @@ export default function NewClientPage() {
           </div>
           {error && (
             <div data-component="desktop_clients-new_basic_step_error" className="md:col-span-2 text-[0.8rem] text-v3-burgundy font-semibold bg-v3-burgundy-light rounded-[14px] px-4 py-3">
-              {error}
+              {error && getUserErrorMessage(error)}
             </div>
           )}
         </div>
@@ -648,7 +644,7 @@ export default function NewClientPage() {
 
           {error && (
             <div data-component="desktop_clients-new_service_step_error" className="text-[0.8rem] text-v3-burgundy font-semibold bg-v3-burgundy-light rounded-[14px] px-4 py-3">
-              {error}
+              {error && getUserErrorMessage(error)}
             </div>
           )}
         </div>
@@ -713,7 +709,7 @@ export default function NewClientPage() {
 
           {error && (
             <div data-component="desktop_clients-new_contract_step_error" className="text-[0.8rem] text-v3-burgundy font-semibold bg-v3-burgundy-light rounded-[14px] px-4 py-3">
-              {error}
+              {error && getUserErrorMessage(error)}
             </div>
           )}
         </div>

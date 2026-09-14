@@ -1,4 +1,6 @@
 "use client";
+import { getUserErrorMessage } from "@babyjamjam/shared";
+
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
@@ -8,6 +10,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useFormStore } from "@/stores/form-store";
 import { useEformsign } from "@/hooks/useEformsign";
 import { useToast } from "@/hooks/use-toast";
+import { openAuthenticatedEventSource } from "@/lib/api/authenticated-fetch";
 import {
   useAllVoucherPrices,
   useAreaTemplates,
@@ -579,7 +582,7 @@ export function useContractCreationFlow(): ContractCreationFlow {
   }, [startDate, voucherDuration, setEndDate]);
 
   const showErrorToast = (message: string) => {
-    toast({ variant: "destructive", description: message });
+    toast({ variant: "destructive", description: getUserErrorMessage(message) });
   };
 
   useEffect(() => () => {
@@ -883,7 +886,7 @@ export function useContractCreationFlow(): ContractCreationFlow {
       setIsProgressModalOpen(true);
 
       try {
-        progressSource = new EventSource(
+        progressSource = await openAuthenticatedEventSource(
           `/api/eformsign-docs/dispatch-headless/progress?progressId=${encodeURIComponent(progressId)}`,
         );
         progressSourceRef.current = progressSource;

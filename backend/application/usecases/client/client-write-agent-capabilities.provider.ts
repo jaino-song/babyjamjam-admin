@@ -141,14 +141,17 @@ function assertAgentClientPhone(phone: string | null | undefined): void {
         assertClientPhoneInput(phone);
     } catch (error) {
         if (error instanceof BadRequestException) {
-            throw new AgentActionCertainFailureError(error.message);
+            throw new AgentActionCertainFailureError(validationErrorMessage(error));
         }
         throw error;
     }
 }
 
 function sameClientValue(actual: unknown, expected: unknown): boolean {
-    if (actual instanceof Date && typeof expected === "string") return actual.toISOString() === parseClientDate(expected)?.toISOString();
+    if (actual instanceof Date && typeof expected === "string") {
+        // 이 비교 경로에서 포인터는 사용자에게 노출되지 않는다: 파싱만 재사용한다.
+        return actual.toISOString() === parseClientDate(expected, "startDate")?.toISOString();
+    }
     return JSON.stringify(actual) === JSON.stringify(expected);
 }
 
@@ -156,7 +159,12 @@ function validationErrorMessage(error: BadRequestException | ConflictException):
     const response = error.getResponse();
     if (typeof response === "string") return response;
     if (response && typeof response === "object") {
-        const responseObject = response as { message?: unknown; code?: unknown };
+        const responseObject = response as { message?: unknown; code?: unknown; errors?: unknown };
+        // 공개 문제 계약(BadRequest + errors[])에서는 첫 파트너 오류의 정본 문구를 읽는다.
+        const firstError = Array.isArray(responseObject.errors) ? responseObject.errors[0] : undefined;
+        if (firstError && typeof firstError === "object" && typeof (firstError as { detail?: unknown }).detail === "string") {
+            return (firstError as { detail: string }).detail;
+        }
         const message = responseObject.message;
         if (Array.isArray(message)) return message.join(", ");
         if (typeof message === "string") return message;
@@ -367,8 +375,8 @@ export class ClientWriteAgentCapabilitiesProvider implements AgentCapabilityProv
                     const input = CreateClientSchema.parse(rawInput);
                     assertAgentClientPhone(input.phone);
                     const dates = {
-                        startDate: parseClientDate(input.startDate) ?? null,
-                        endDate: parseClientDate(input.endDate) ?? null,
+                        startDate: parseClientDate(input.startDate, "startDate") ?? null,
+                        endDate: parseClientDate(input.endDate, "endDate") ?? null,
                     };
                     const derivedDuration = await validateClientWrite(this.prisma, this.clientRepository, context.principal.branchId, null, {
                         ...dates,
@@ -400,8 +408,8 @@ export class ClientWriteAgentCapabilitiesProvider implements AgentCapabilityProv
                                 careCenter: input.careCenter ?? null,
                                 voucherClient: input.voucherClient ?? false,
                                 birthday: input.birthday ?? null,
-                                dueDate: parseClientDate(input.dueDate) ?? null,
-                                birthDate: parseClientDate(input.birthDate) ?? null,
+                                dueDate: parseClientDate(input.dueDate, "dueDate") ?? null,
+                                birthDate: parseClientDate(input.birthDate, "birthDate") ?? null,
                                 serviceStatus: input.serviceStatus ?? null,
                                 breastPump: input.breastPump ?? false,
                                 areaId: input.areaId ?? null,
@@ -450,8 +458,8 @@ export class ClientWriteAgentCapabilitiesProvider implements AgentCapabilityProv
                     const updates = input;
                     const parsedUpdates = {
                         ...updates,
-                        startDate: parseClientDate(updates.startDate),
-                        endDate: parseClientDate(updates.endDate),
+                        startDate: parseClientDate(updates.startDate, "startDate"),
+                        endDate: parseClientDate(updates.endDate, "endDate"),
                     };
                     const normalizedPricing = normalizeMergedClientPricing(existing, updates);
                     const derivedDuration = await validateClientWrite(this.prisma, this.clientRepository, context.principal.branchId, existing, {
@@ -491,10 +499,10 @@ export class ClientWriteAgentCapabilitiesProvider implements AgentCapabilityProv
                     const parsedUpdates = {
                         ...updates,
                         ...normalizeMergedClientPricing(existing, updates),
-                        startDate: parseClientDate(updates.startDate),
-                        endDate: parseClientDate(updates.endDate),
-                        dueDate: parseClientDate(updates.dueDate),
-                        birthDate: parseClientDate(updates.birthDate),
+                        startDate: parseClientDate(updates.startDate, "startDate"),
+                        endDate: parseClientDate(updates.endDate, "endDate"),
+                        dueDate: parseClientDate(updates.dueDate, "dueDate"),
+                        birthDate: parseClientDate(updates.birthDate, "birthDate"),
                     };
                     const derivedDuration = await validateClientWrite(this.prisma, this.clientRepository, context.principal.branchId, existing, parsedUpdates);
                     const duration = resolveClientDuration(existing.duration, parsedUpdates.duration, derivedDuration);
@@ -531,10 +539,10 @@ export class ClientWriteAgentCapabilitiesProvider implements AgentCapabilityProv
                     const parsedUpdates = {
                         ...updates,
                         ...normalizeMergedClientPricing(existing, updates),
-                        startDate: parseClientDate(updates.startDate),
-                        endDate: parseClientDate(updates.endDate),
-                        dueDate: parseClientDate(updates.dueDate),
-                        birthDate: parseClientDate(updates.birthDate),
+                        startDate: parseClientDate(updates.startDate, "startDate"),
+                        endDate: parseClientDate(updates.endDate, "endDate"),
+                        dueDate: parseClientDate(updates.dueDate, "dueDate"),
+                        birthDate: parseClientDate(updates.birthDate, "birthDate"),
                     };
                     const derivedDuration = await validateClientWrite(this.prisma, this.clientRepository, context.principal.branchId, existing, parsedUpdates);
                     const duration = resolveClientDuration(existing.duration, parsedUpdates.duration, derivedDuration);

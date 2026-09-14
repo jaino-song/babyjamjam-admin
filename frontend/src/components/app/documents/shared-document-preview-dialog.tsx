@@ -571,7 +571,7 @@ export function SharedDocumentPreviewDialog({
       previewAvailabilityStatus === "idle" || previewAvailabilityStatus === "checking";
     const message =
       previewAvailabilityStatus === "missing"
-        ? "원본 파일을 찾을 수 없습니다. 파일을 다시 업로드해 주세요."
+        ? "원본 파일을 찾을 수 없어요. 파일을 다시 업로드해 주세요."
         : previewAvailabilityStatus === "error"
           ? "미리보기를 불러오지 못했습니다. 잠시 후 다시 시도해 주세요."
           : "미리보기 파일을 확인하는 중입니다";

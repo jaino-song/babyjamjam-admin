@@ -1,4 +1,3 @@
-import { NotFoundException } from "@nestjs/common";
 import {
     EmployeeWorkHistoryByEmployee,
     IEmployeeRepository,
@@ -58,10 +57,16 @@ describe("ListWorkHistoryByEmployeeUsecase", () => {
         expect(repository.findWorkHistoryByEmployee).toHaveBeenCalledWith(branchId, 7, page, limit);
     });
 
-    it("does not query history for an employee outside the selected branch", async () => {
-        await expect(usecase.execute(branchId, 999, 1, limit)).rejects.toEqual(
-            new NotFoundException("직원을 찾을 수 없습니다."),
-        );
+    it("throws the not-found problem body for an employee outside the selected branch", async () => {
+        await expect(usecase.execute(branchId, 999, 1, limit)).rejects.toMatchObject({
+            status: 404,
+            response: {
+                code: "RESOURCE_NOT_FOUND",
+                params: {},
+                outcome: "NOT_APPLIED",
+                recovery: { action: "NONE", retry: { mode: "NEVER" } },
+            },
+        });
         expect(repository.findWorkHistoryByEmployee).not.toHaveBeenCalled();
     });
 

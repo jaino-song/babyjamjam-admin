@@ -328,10 +328,6 @@ export const eformsignApi = {
         const { data } = await api.get('/eformsign/auth-status');
         return data;
     },
-    refreshAccessToken: async (executionTime: number) => {
-        const { data } = await api.post('/refresh-access-token', { executionTime });
-        return data;
-    },
     reRequestDocument: async (
         documentId: string,
         params: EformsignReRequestDocumentRequest
@@ -564,7 +560,7 @@ export const settingsApi = {
         return data;
     },
     requestMessageSenderApproval: async (): Promise<MessageSenderApprovalResponse> => {
-        const { data } = await api.post("/settings/message-sender-approval", {});
+        const { data } = await api.post("/settings/message-sender-approval/request", {});
         return data;
     },
     getNotificationPreferences: async (): Promise<NotificationPreferencesResponse> => {

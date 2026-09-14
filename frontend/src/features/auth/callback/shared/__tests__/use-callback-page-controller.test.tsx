@@ -71,7 +71,7 @@ describe("useCallbackPageController", () => {
 
     render(<CallbackProbe />);
 
-    expect(await screen.findByText("로그인 중 오류가 발생했습니다.")).toBeInTheDocument();
+    expect(await screen.findByText("로그인 중 오류가 발생했어요.")).toBeInTheDocument();
     expect(screen.queryByText("provider stack trace")).not.toBeInTheDocument();
     expect(exchangeTokenMock).not.toHaveBeenCalled();
   });

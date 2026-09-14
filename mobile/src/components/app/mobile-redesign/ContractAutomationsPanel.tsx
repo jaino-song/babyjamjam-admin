@@ -1,4 +1,6 @@
 "use client";
+import { getUserErrorMessage } from "@babyjamjam/shared";
+
 
 import { useCallback } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -31,7 +33,7 @@ export function ContractAutomationsPanel({
       await queryClient.invalidateQueries({ queryKey: QUERY_KEY });
       toast({ variant: "success", description: "자동화 설정을 저장했어요" });
     },
-    onError: (error) => toast({ variant: "destructive", description: errorMessage(error) }),
+    onError: (error) => toast({ variant: "destructive", description: getUserErrorMessage(error, errorMessage(error)) }),
   });
   const saved = query.data?.autoFinalize;
   const summary = saved

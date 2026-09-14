@@ -194,13 +194,13 @@ export function getMessageHistoryEmptyStateCopy(filter: MessageHistoryFilter, ha
       title: "재시도 대기 기록이 없습니다.",
       description: hasSearchQuery
         ? "검색어를 바꾸거나 다른 탭을 선택해 주세요."
-        : "실패 후 재시도 대기 중인 메시지가 없습니다.",
+        : "실패 후 재시도 대기 중인 메시지가 없어요.",
     },
     failed: {
-      title: "실패 발송 기록이 없습니다.",
+      title: "실패 발송 기록이 없어요.",
       description: hasSearchQuery
         ? "검색어를 바꾸거나 다른 탭을 선택해 주세요."
-        : "발송 실패로 남아 있는 메시지가 없습니다.",
+        : "발송 실패로 남아 있는 메시지가 없어요.",
     },
     canceled: {
       title: "취소된 발송 기록이 없습니다.",

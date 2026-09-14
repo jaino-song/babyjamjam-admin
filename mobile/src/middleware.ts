@@ -5,8 +5,10 @@ import { jwtDecode } from "jwt-decode";
 import { getServerRuntimeConfig } from "@/lib/env";
 import {
   ACCESS_TOKEN_MAX_AGE_SECONDS,
+  decodeAccessBranchId,
   getRefreshSessionMaxAgeSeconds,
 } from "@/lib/auth/session-policy";
+import { tryLocalAutoLogin } from "@/lib/auth/local-auto-login";
 
 interface TokenPayload {
   sub: string;
@@ -135,6 +137,24 @@ function setSessionCookies(
   response.cookies.set("auto_login", "0", baseCookieOptions);
 }
 
+function setSelectedBranchCookie(
+  response: NextResponse,
+  branchId: string | null,
+): void {
+  if (branchId) {
+    response.cookies.set("selected_branch_id", branchId, {
+      httpOnly: false,
+      secure: isProductionLike,
+      sameSite: "lax",
+      path: "/",
+      maxAge: 30 * 24 * 60 * 60,
+    });
+  } else {
+    response.cookies.delete("selected_branch_id");
+  }
+
+}
+
 async function tryRefreshAuthSession(refreshToken: string): Promise<RefreshAttempt> {
   try {
     const refreshResponse = await fetch(`${API_URL}/auth/refresh-token`, {
@@ -253,10 +273,42 @@ export async function middleware(request: NextRequest) {
     return NextResponse.next();
   }
 
+  const isLocalLoginNavigation = !isApiRoute(pathname)
+    && (
+      pathname === "/"
+      || isRouteMatch(pathname, LOGIN_ROUTE)
+      || !PUBLIC_ROUTES.some((route) => isRouteMatch(pathname, route))
+    );
+  if (isLocalLoginNavigation) {
+    const session = await tryLocalAutoLogin(request, API_URL);
+    if (session && !isTokenExpired(session.accessToken)) {
+      const branchId = session.requiresBranchSelection
+        ? null
+        : decodeAccessBranchId(session.accessToken);
+      const target = !branchId
+        ? new URL("/select-branch", request.url)
+        : isRouteMatch(pathname, LOGIN_ROUTE)
+          ? new URL("/", request.url)
+          : request.nextUrl;
+      const response = NextResponse.redirect(target);
+      setSessionCookies(response, {
+        accessToken: session.accessToken,
+        refreshToken: session.refreshToken,
+        role: decodeRole(session.accessToken),
+        autoLogin: true,
+      });
+      setSelectedBranchCookie(response, branchId);
+      response.headers.set("Cache-Control", "no-store");
+      return response;
+    }
+  }
+
   // Prevent authenticated users from seeing the login screen.
   let authToken = request.cookies.get("auth_token")?.value;
+  const isLoginNavigation = request.method === "GET" || request.method === "HEAD";
   if (
     isRouteMatch(pathname, LOGIN_ROUTE)
+    && isLoginNavigation
     && authToken
     && !isTokenExpired(authToken)
   ) {
@@ -264,6 +316,7 @@ export async function middleware(request: NextRequest) {
   }
   if (
     isRouteMatch(pathname, LOGIN_ROUTE)
+    && isLoginNavigation
     && authToken
     && isTokenExpired(authToken)
   ) {
@@ -309,6 +362,16 @@ export async function middleware(request: NextRequest) {
   } | null = null;
 
   const needsRefresh = !authToken || isTokenExpired(authToken);
+
+  if (needsRefresh && refreshToken && isApiRoute(pathname)) {
+    return NextResponse.json(
+      {
+        code: "AUTH_REFRESH_REQUIRED",
+        error: "Session refresh required",
+      },
+      { status: 401 },
+    );
+  }
 
   if (needsRefresh && refreshToken) {
     const refreshAttempt = await tryRefreshAuthSession(refreshToken);

@@ -1,6 +1,9 @@
 import { ConflictException, NotFoundException } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
+import type { Request, Response } from "express";
+import { normalizeApiError, PROBLEM_CATALOG } from "@babyjamjam/shared/errors/problem-details";
 import { DeleteClientUsecase } from "application/usecases/client/delete-client.usecase";
+import { mapHttpProblem, sendProblemResponse } from "infrastructure/filters/problem-response";
 import { PrismaService } from "infrastructure/database/prisma.service";
 import { SbClientRepository } from "infrastructure/database/repositories/sb.client.repository";
 import { clearSchemaCapabilityCache } from "infrastructure/database/schema-capabilities";
@@ -38,10 +41,16 @@ describe("DeleteClientUsecase", () => {
             await expect(usecase.execute(branchId, 999)).rejects.toThrow(NotFoundException);
         });
 
-        it("should throw NotFoundException with correct message", async () => {
-            await expect(usecase.execute(branchId, 42)).rejects.toThrow(
-                "고객을 찾을 수 없습니다. (id: 42)",
-            );
+        it("should throw NotFoundException with the public RESOURCE_NOT_FOUND problem body", async () => {
+            const error: unknown = await usecase.execute(branchId, 42).catch((caught) => caught);
+            expect(error).toBeInstanceOf(NotFoundException);
+            expect((error as NotFoundException).getResponse()).toEqual({
+                code: "RESOURCE_NOT_FOUND",
+                params: {},
+                outcome: "NOT_APPLIED",
+                recovery: { action: "NONE", retry: { mode: "NEVER" } },
+                message: "고객을 찾을 수 없습니다.",
+            });
         });
 
         it("should not affect other clients when deleting", async () => {
@@ -167,7 +176,49 @@ describe("DeleteClientUsecase", () => {
             expect((error as ConflictException).getResponse()).toEqual({
                 code: "CLIENT_RETENTION_BLOCKED",
                 message: "연결된 운영 또는 이력 데이터가 있어 고객을 삭제할 수 없습니다.",
+                params: {},
+                outcome: "NOT_APPLIED",
+                recovery: { action: "NONE", retry: { mode: "NEVER" } },
             });
+        });
+
+        it("routes the retention conflict through the public problem response", async () => {
+            clientModel.deleteMany.mockRejectedValue(
+                new Prisma.PrismaClientKnownRequestError("Foreign key constraint failed", {
+                    code: "P2003",
+                    clientVersion: "test",
+                }),
+            );
+            const exception: unknown = await usecase.execute(branchId, clientId).catch((caught) => caught);
+
+            const requestId = "test-retention-conflict";
+            const responseStub = {
+                locals: { errorRequestId: requestId },
+                setHeader: jest.fn(),
+                status: jest.fn().mockReturnThis(),
+                json: jest.fn(),
+            };
+            const problem = mapHttpProblem(exception,
+                { method: "DELETE", acceptsLanguages: () => "ko-KR" } as unknown as Request,
+                responseStub as unknown as Response);
+            if (!problem) throw new Error("Expected a registered retention conflict");
+            sendProblemResponse(responseStub as unknown as Response, problem);
+            expect(responseStub.status).toHaveBeenCalledWith(409);
+            expect(responseStub.setHeader).toHaveBeenCalledWith("Content-Type", "application/problem+json");
+            expect(problem).toMatchObject({
+                code: "CLIENT_RETENTION_BLOCKED", status: 409, requestId, params: {},
+                outcome: "NOT_APPLIED",
+                detail: PROBLEM_CATALOG.CLIENT_RETENTION_BLOCKED.detail["ko-KR"],
+                recovery: { action: "NONE", retry: { mode: "NEVER" } },
+            });
+
+            const body = responseStub.json.mock.calls[0]?.[0];
+            const normalized = normalizeApiError(
+                { response: { status: 409, data: body } },
+                { operation: "mutation", locale: "ko-KR" },
+            );
+            expect(normalized).toMatchObject({ verified: true, outcome: "NOT_APPLIED", problem: { requestId } });
+            expect(normalized.message).toBe(PROBLEM_CATALOG.CLIENT_RETENTION_BLOCKED.detail["ko-KR"]);
         });
 
         it("rethrows unrelated errors untouched", async () => {

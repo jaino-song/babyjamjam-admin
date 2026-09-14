@@ -70,7 +70,7 @@ export default function AgentDiagnosticsPage() {
     }
   };
 
-  if (error) return <PageSection name="agent-diagnostics"><InfoCard data-component="desktop_admin_agent-diagnostics_error" title="진단을 불러올 수 없습니다"><p>owner 권한과 에이전트 백엔드 연결을 확인해 주세요.</p></InfoCard></PageSection>;
+  if (error) return <PageSection name="agent-diagnostics"><InfoCard data-component="desktop_admin_agent-diagnostics_error" title="진단을 불러올 수 없어요"><p>owner 권한과 에이전트 백엔드 연결을 확인해 주세요.</p></InfoCard></PageSection>;
   return <PageSection name="agent-diagnostics">
     <StatsBar name="agent-diagnostics" isLoading={isLoading} items={[{ icon: Activity, value: data?.capabilityCount ?? 0, label: 'Capabilities', counter: '개' }, { icon: ListTodo, value: data?.actions.pending ?? 0, label: 'Pending actions', counter: '건', colorIndex: 1 }, { icon: AlertTriangle, value: data?.actions.uncertain ?? 0, label: 'Uncertain', counter: '건', colorIndex: 2 }, { icon: CheckCircle2, value: data?.actions.succeeded ?? 0, label: 'Succeeded', counter: '건', colorIndex: 3 }]} />
     <InfoCard data-component="desktop_admin_agent-diagnostics_overview" title="에이전트 런타임">

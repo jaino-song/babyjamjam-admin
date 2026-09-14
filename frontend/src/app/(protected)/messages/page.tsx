@@ -1,4 +1,6 @@
 "use client";
+import { getUserErrorMessage } from "@babyjamjam/shared";
+
 
 import {
   cloneElement,
@@ -28,6 +30,12 @@ import {
   type MessageRecordStatusFilter,
   type MessageSectionId as SharedMessageSectionId,
 } from "@babyjamjam/shared";
+import {
+  SYSTEM_TEMPLATE_KEYS,
+  resolveSystemTemplateDeliveryMode,
+  type SystemTemplateDeliveryMode,
+  type SystemTemplateKey,
+} from "@babyjamjam/shared/types/system-template";
 import { t } from "@/lib/i18n/translations";
 import { useLocale } from "@/providers/LocaleProvider";
 import { useInitialUser } from "@/providers/UserProvider";
@@ -233,6 +241,14 @@ function getSystemTemplateIcon(templateKey: string) {
     : FileText;
 }
 
+function resolveKnownSystemTemplateDeliveryMode(templateKey: string | undefined): SystemTemplateDeliveryMode {
+  if (!templateKey || !(SYSTEM_TEMPLATE_KEYS as readonly string[]).includes(templateKey)) {
+    return "sms";
+  }
+
+  return resolveSystemTemplateDeliveryMode(templateKey as SystemTemplateKey);
+}
+
 const ICON_BY_SECTION_ID: Record<SharedMessageSectionId, typeof Send> = {
   send: Send,
   scheduled: Clock3,
@@ -335,7 +351,7 @@ const PLACEHOLDER_COPY: Record<
       {
         id: "settings-alert",
         label: "알림 및 감사",
-        summary: "오류 알림, 감사 로그, 운영자 확인 항목을 모아둔 영역입니다.",
+        summary: "오류 알림, 감사 로그, 운영자 확인 항목을 모아둔 영역이에요.",
         badge: "감사",
         detailTitle: "알림 및 감사 상세",
         detailDescription: "운영자 알림과 설정 변경 기록을 함께 관리하는 상세 영역입니다.",
@@ -499,7 +515,7 @@ function getScheduledJobFallbackMessage(job: UpcomingMessageTriggerJob, variable
     return serviceInfoMsgTemplate({ name: variables.name?.trim() || "{{name}}" });
   }
 
-  return "예약 발송 메시지 본문을 불러올 수 없습니다.";
+  return "예약 발송 메시지 본문을 불러올 수 없어요.";
 }
 
 function buildScheduledJobMessageBody(job: UpcomingMessageTriggerJob | null, systemTemplateContent?: string) {
@@ -889,7 +905,7 @@ function MessageHistorySection() {
     } catch (error) {
       toast({
         variant: "destructive",
-        description: error instanceof Error ? error.message : "재발송을 요청하지 못했어요",
+        description: getUserErrorMessage(error, error instanceof Error ? error.message : "재발송을 요청하지 못했어요"),
       });
     }
   }, [retryHistory, selectedRecord, toast]);
@@ -914,7 +930,7 @@ function MessageHistorySection() {
       // this dialog would just 409 again — the failure toast is the feedback,
       // the modal has nothing left to offer, so close it here too instead of
       // trapping the user behind a confirm button that can only fail.
-      toast({ variant: "destructive", description: MESSAGE_JOB_CANCEL_COPY.failure });
+      toast({ variant: "destructive", description: getUserErrorMessage(MESSAGE_JOB_CANCEL_COPY.failure) });
     } finally {
       setCancelDialogOpen(false);
     }
@@ -1559,6 +1575,7 @@ export default function MessagesPage() {
   const selectedTemplateIcon = selectedTemplateItem?.icon ?? FileText;
   const SelectedTemplateIcon = selectedTemplateIcon;
   const selectedTemplateTitle = selectedTemplateItem?.label ?? selectedUserTemplate?.name ?? "메시지 템플릿";
+  const selectedBuiltinDeliveryMode = resolveKnownSystemTemplateDeliveryMode(selectedTemplateItem?.templateKey);
   const selectedTemplateSubtitle = isBranchTemplate
     ? selectedUserTemplate
       ? `지점 템플릿 · ${selectedUserTemplate.variables.length}개 변수`
@@ -1742,7 +1759,11 @@ export default function MessagesPage() {
           onPreviewMessageChange={handleTemplatePreviewMessageChange}
           renderLayout={selectedTemplateRenderLayout}
           showMessageSide={false}
-          mode={builtinType === "service-end-notice" ? "receipt-link" : undefined}
+          mode={selectedBuiltinDeliveryMode === "receipt-link"
+            ? "receipt-link"
+            : selectedBuiltinDeliveryMode === "service-feedback-link"
+              ? "service-feedback-link"
+              : undefined}
         />
       ) : null}
 

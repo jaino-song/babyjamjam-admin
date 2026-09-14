@@ -1,3 +1,5 @@
+import { z } from "zod";
+
 import type { SystemTemplateKey } from "./system-template";
 
 // Shared message contracts used by both frontend and mobile.
@@ -24,37 +26,55 @@ import type { SystemTemplateKey } from "./system-template";
 // ISO strings on the wire, so the client-facing response types below use string
 // while Raw* variants retain Date for backend-reference parity.
 
-export type MessageTriggerEventType =
-  | "CLIENT_CREATED"
-  | "SERVICE_START"
-  | "SERVICE_END"
-  | "EMPLOYEE_ASSIGNED";
+/** Canonical values shared by the trigger API, forms, and scheduler. */
+export const MESSAGE_TRIGGER_EVENT_TYPES = [
+  "CLIENT_CREATED",
+  "SERVICE_START",
+  "SERVICE_END",
+  "EMPLOYEE_ASSIGNED",
+] as const;
 
-export type MessageTriggerOffsetType =
-  | "IMMEDIATE"
-  | "SAME_DAY"
-  | "BEFORE_DAYS"
-  | "AFTER_DAYS";
+export type MessageTriggerEventType = (typeof MESSAGE_TRIGGER_EVENT_TYPES)[number];
 
-export type MessageTriggerRecipientType =
-  | "CLIENT"
-  | "PRIMARY_EMPLOYEE"
-  | "SECONDARY_EMPLOYEE";
+export const MESSAGE_TRIGGER_OFFSET_TYPES = [
+  "IMMEDIATE",
+  "SAME_DAY",
+  "BEFORE_DAYS",
+  "AFTER_DAYS",
+] as const;
 
-export type MessageTriggerTemplateKey =
-  | "CLIENT_WELCOME"
-  | "SERVICE_START_REMINDER"
-  | "SERVICE_INFO"
-  | "SERVICE_END_REMINDER"
-  | "EMPLOYEE_ASSIGNED"
-  | "SERVICE_RECORD_LINK"
-  | "CLIENT_GREETING"
-  | "PRICE_INFO"
-  | "REMINDER"
-  | "THANKS"
-  | "SURVEY"
-  | "INFO"
-  | "SERVICE_END_NOTICE";
+export type MessageTriggerOffsetType = (typeof MESSAGE_TRIGGER_OFFSET_TYPES)[number];
+
+export const MESSAGE_TRIGGER_RECIPIENT_TYPES = [
+  "CLIENT",
+  "PRIMARY_EMPLOYEE",
+  "SECONDARY_EMPLOYEE",
+] as const;
+
+export type MessageTriggerRecipientType = (typeof MESSAGE_TRIGGER_RECIPIENT_TYPES)[number];
+
+export const MESSAGE_TRIGGER_TEMPLATE_KEYS = [
+  "CLIENT_WELCOME",
+  "SERVICE_START_REMINDER",
+  "SERVICE_INFO",
+  "SERVICE_END_REMINDER",
+  "EMPLOYEE_ASSIGNED",
+  "SERVICE_RECORD_LINK",
+  "CLIENT_GREETING",
+  "PRICE_INFO",
+  "REMINDER",
+  "THANKS",
+  "SURVEY",
+  "INFO",
+  "SERVICE_END_NOTICE",
+] as const;
+
+export type MessageTriggerTemplateKey = (typeof MESSAGE_TRIGGER_TEMPLATE_KEYS)[number];
+
+export const messageTriggerEventTypeSchema = z.enum(MESSAGE_TRIGGER_EVENT_TYPES);
+export const messageTriggerOffsetTypeSchema = z.enum(MESSAGE_TRIGGER_OFFSET_TYPES);
+export const messageTriggerRecipientTypeSchema = z.enum(MESSAGE_TRIGGER_RECIPIENT_TYPES);
+export const messageTriggerTemplateKeySchema = z.enum(MESSAGE_TRIGGER_TEMPLATE_KEYS);
 
 /**
  * Variables each scheduler can derive without operator input.
@@ -192,18 +212,40 @@ export interface MessageTriggerRule {
   updatedAt: string;
 }
 
-export interface CreateMessageTriggerRuleDto {
-  name: string;
-  isActive?: boolean;
-  eventType: MessageTriggerEventType;
-  offsetType: MessageTriggerOffsetType;
-  offsetDays?: number;
-  recipientType: MessageTriggerRecipientType;
-  templateKey: MessageTriggerTemplateKey;
-}
+/**
+ * Runtime validation for `POST /message-trigger-rules`.
+ *
+ * Backend-owned fields are intentionally preserved instead of stripped. This
+ * lets a client validate the shared fields while forwarding fields added by a
+ * newer backend without silently losing them.
+ */
+export const createMessageTriggerRuleSchema = z
+  .object({
+    name: z.string().min(1),
+    isActive: z.boolean().optional(),
+    eventType: messageTriggerEventTypeSchema,
+    offsetType: messageTriggerOffsetTypeSchema,
+    offsetDays: z.number().int().min(0).optional(),
+    recipientType: messageTriggerRecipientTypeSchema,
+    templateKey: messageTriggerTemplateKeySchema,
+  })
+  .passthrough();
 
-export type UpdateMessageTriggerRuleDto =
-  Partial<CreateMessageTriggerRuleDto>;
+/** Runtime validation for `PATCH/PUT /message-trigger-rules/:id`. */
+export const updateMessageTriggerRuleSchema = createMessageTriggerRuleSchema
+  .partial()
+  .passthrough();
+
+// Pascal-case aliases make the schema names discoverable beside the DTO types
+// while the lower camel-case names match the existing shared auth schemas.
+export const CreateMessageTriggerRuleSchema = createMessageTriggerRuleSchema;
+export const UpdateMessageTriggerRuleSchema = updateMessageTriggerRuleSchema;
+export const createMessageTriggerRuleDtoSchema = createMessageTriggerRuleSchema;
+export const updateMessageTriggerRuleDtoSchema = updateMessageTriggerRuleSchema;
+
+export type CreateMessageTriggerRuleDto = z.infer<typeof createMessageTriggerRuleSchema>;
+
+export type UpdateMessageTriggerRuleDto = z.infer<typeof updateMessageTriggerRuleSchema>;
 
 /**
  * Body of `PUT /message-trigger-rules/:id/branch-activation`, the only way a

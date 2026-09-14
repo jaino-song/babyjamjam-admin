@@ -1,4 +1,6 @@
 "use client";
+import { getUserErrorMessage } from "@babyjamjam/shared";
+
 
 import { Suspense, useEffect, useState } from "react";
 import Image from "next/image";
@@ -110,7 +112,7 @@ const LoginPage = () => {
           router.replace(`/login?authError=${encodeURIComponent(response.authErrorCode)}`);
           return;
         }
-        setServerError(response.error || "로그인에 실패했습니다.");
+        setServerError(getUserErrorMessage(response.error || "로그인에 실패했어요."));
         if (response.emailVerificationRequired) {
           if (result.data.email) {
             safeStorageSetItem("local", "auth:verificationEmail", result.data.email);
@@ -120,7 +122,7 @@ const LoginPage = () => {
       }
     } catch (err) {
       console.error("Login error:", err);
-      setServerError("네트워크 오류가 발생했습니다. 다시 시도해 주세요.");
+      setServerError(getUserErrorMessage(err, "네트워크 오류가 발생했어요. 다시 시도해 주세요."));
     } finally {
       setIsLoading(false);
     }
@@ -132,7 +134,7 @@ const LoginPage = () => {
     const targetEmail = inputEmail || savedEmail;
 
     if (!targetEmail || isResendingVerification) {
-      if (!targetEmail) setServerError("인증 메일을 보낼 이메일을 먼저 입력해 주세요.");
+      if (!targetEmail) setServerError(getUserErrorMessage("인증 메일을 보낼 이메일을 먼저 입력해 주세요."));
       return;
     }
 
@@ -141,12 +143,12 @@ const LoginPage = () => {
       const response = await authApi.resendVerification(targetEmail);
       if (response.success) {
         safeStorageSetItem("local", "auth:verificationEmail", targetEmail);
-        setServerError(response.message || "인증 이메일을 재발송했습니다. 메일함을 확인해 주세요.");
+        setServerError(getUserErrorMessage(response.message || "인증 이메일을 재발송했습니다. 메일함을 확인해 주세요."));
       } else {
-        setServerError(response.message || "인증 이메일 재발송에 실패했습니다.");
+        setServerError(getUserErrorMessage(response.message || "인증 이메일 재발송에 실패했어요."));
       }
     } catch {
-      setServerError("네트워크 오류가 발생했습니다. 다시 시도해 주세요.");
+      setServerError(getUserErrorMessage("네트워크 오류가 발생했어요. 다시 시도해 주세요."));
     } finally {
       setIsResendingVerification(false);
     }
@@ -173,7 +175,7 @@ const LoginPage = () => {
 
       {serverError && (
         <div className="auth-server-error" role="alert" data-component={`${LOGIN_BASE}_server-error`}>
-          {serverError}
+          {serverError && getUserErrorMessage(serverError)}
           {emailVerificationRequired && (
             <button
               type="button"

@@ -630,7 +630,7 @@ describe("mobile useAgentShellEnabled capability discovery", () => {
         else process.env.NEXT_PUBLIC_AGENT_SHELL_ENABLED = originalFlag;
     });
 
-    it.each([401, 503])("fails closed for an HTTP %s capability response", async (status) => {
+    it.each([403, 503])("fails closed for an HTTP %s capability response", async (status) => {
         global.fetch = jest.fn().mockResolvedValue({ ok: false, status } as Response);
 
         const { result } = renderHook(() => useAgentShellEnabled());

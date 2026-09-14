@@ -5,7 +5,8 @@ import {
     EMPLOYEE_STATUS_LABELS,
     OPEN_TO_NEXT_WORK_LABELS,
 } from "@babyjamjam/shared/constants/employee-status";
-import { getApiErrorMessage } from "@babyjamjam/shared";
+import { normalizeApiError } from "@babyjamjam/shared";
+import { formatKoreanPhoneNumber } from "@/lib/phone";
 import { cn } from "@/lib/utils";
 import {
     Users,
@@ -95,16 +96,6 @@ function formatDate(dateStr: string | null | undefined, fallback: string): strin
     return formatDateForDisplay(dateStr, fallback);
 }
 
-function formatPhoneNumber(phone: string | null | undefined): string {
-    if (!phone) return "-";
-
-    const numbers = phone.replace(/[^\d]/g, "");
-    if (numbers.length <= 3) return numbers;
-    if (numbers.length <= 7) return `${numbers.slice(0, 3)}-${numbers.slice(3)}`;
-
-    return `${numbers.slice(0, 3)}-${numbers.slice(3, 7)}-${numbers.slice(7, 11)}`;
-}
-
 export default function EmployeesPage() {
     const [search, setSearch] = useState("");
     const [filter, setFilter] = useState("all");
@@ -126,6 +117,7 @@ export default function EmployeesPage() {
         refetch,
     } = useInfiniteEmployees({ filter, search });
     const deleteEmployee = useDeleteEmployee();
+    const locale = useLocale();
 
     const stats = useMemo(() => {
         return {
@@ -172,10 +164,10 @@ export default function EmployeesPage() {
         } catch (err) {
             console.error("Failed to delete employee:", err);
             setDeleteTargetEmployeeId(null);
-            setDeleteErrorMessage(getApiErrorMessage(
-                err,
-                "제공인력 삭제에 실패했습니다. 다시 시도해 주세요.",
-            ));
+            setDeleteErrorMessage(normalizeApiError(err, {
+                locale: locale === "en" ? "en-US" : "ko-KR",
+                operation: "mutation",
+            }).message);
         }
     };
 
@@ -307,7 +299,7 @@ export default function EmployeesPage() {
                                         subtitle={
                                             <span className="flex items-center gap-1 truncate">
                                                 <Phone className="h-[calc(12px*var(--glint-ui-scale,1))] w-[calc(12px*var(--glint-ui-scale,1))]" />
-                                                {formatPhoneNumber(employee.phone)}
+                                                {formatKoreanPhoneNumber(employee.phone) || "-"}
                                             </span>
                                         }
                                         status={getOpenToNextWorkBadge(employee.openToNextWork)}
@@ -365,7 +357,7 @@ export default function EmployeesPage() {
                 }}
                 dataComponent="desktop_employees_delete-approval"
                 title="직원을 삭제하시겠습니까?"
-                description="삭제한 직원 정보는 복구할 수 없습니다."
+                description="삭제한 직원 정보는 복구할 수 없어요."
                 approvalLabel="삭제"
                 pendingLabel="삭제 중..."
                 approvalVariant="destructive"
@@ -448,7 +440,7 @@ function EmployeeDetail({ employee, onEdit, onDelete }: EmployeeDetailProps) {
             <div data-component="desktop_employees_split-layout_detail-panel_employees-detail" className="space-y-5">
                 <InfoCard data-component="desktop_employees_detail-panel_info-card" title="기본 정보">
                     <InfoRow label="이름" value={employee.name} />
-                    <InfoRow label="연락처" value={formatPhoneNumber(employee.phone)} />
+                    <InfoRow label="연락처" value={formatKoreanPhoneNumber(employee.phone) || "-"} />
                     <InfoRow label="근무 상태" value={EMPLOYEE_STATUS_LABELS[employee.status]} />
                 </InfoCard>
 

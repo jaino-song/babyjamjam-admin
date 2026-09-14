@@ -1,4 +1,6 @@
 "use client";
+import { getUserErrorMessage } from "@babyjamjam/shared";
+
 
 import { useState } from "react";
 import Image from "next/image";
@@ -38,11 +40,11 @@ export default function ForgotPasswordPage() {
       if (response.success) {
         setIsSuccess(true);
       } else {
-        setError(response.message || "요청 처리에 실패했습니다. 다시 시도해 주세요.");
+        setError(getUserErrorMessage(response.message || "요청 처리에 실패했어요. 다시 시도해 주세요."));
       }
     } catch (err) {
       console.error("Forgot password error:", err);
-      setError("네트워크 오류가 발생했습니다. 다시 시도해 주세요.");
+      setError(getUserErrorMessage(err, "네트워크 오류가 발생했어요. 다시 시도해 주세요."));
     } finally {
       setIsLoading(false);
     }
@@ -122,7 +124,7 @@ export default function ForgotPasswordPage() {
 
       {error && (
         <div className="auth-server-error" role="alert" data-component={`${FORGOT_PASSWORD_BASE}_server-error`}>
-          {error}
+          {error && getUserErrorMessage(error)}
         </div>
       )}
 

@@ -1,38 +1,51 @@
 import { NextRequest, NextResponse } from "next/server";
+import { z } from "zod";
 import { serverAPIClient } from "@/lib/api/server";
+import {
+  backendJsonResponse,
+  getAuthHeaders,
+  getAuthToken,
+  messageTriggerUpstreamErrorResponse,
+  parseBody,
+  unauthorizedResponse,
+} from "@babyjamjam/shared/api";
 
-function getAuthToken(request: NextRequest): string | null {
-  return request.cookies.get("auth_token")?.value || null;
-}
-
-function getAuthHeaders(token: string | null): Record<string, string> {
-  return token ? { Authorization: `Bearer ${token}` } : {};
-}
+const branchActivationSchema = z.object({
+  isActive: z.boolean(),
+});
 
 type RouteContext = {
   params: Promise<{ triggerId: string }>;
 };
 
+function isValidTriggerId(triggerId: string): boolean {
+  return /^[A-Za-z0-9_-]+(?::[A-Za-z0-9_-]+)*$/.test(triggerId);
+}
+
 export async function PUT(request: NextRequest, context: RouteContext) {
   try {
     const token = getAuthToken(request);
     if (!token) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+      return unauthorizedResponse("Unauthorized");
     }
 
-    const body = await request.json();
     const { triggerId } = await context.params;
+    if (!isValidTriggerId(triggerId)) {
+      return NextResponse.json({ error: "Invalid trigger id" }, { status: 400 });
+    }
+
+    const { data, response: invalidBody } = await parseBody(branchActivationSchema, request);
+    if (invalidBody) {
+      return invalidBody;
+    }
+
     const response = await serverAPIClient.put(
-      `/message-trigger-rules/${triggerId}/branch-activation`,
-      body,
+      `/message-trigger-rules/${encodeURIComponent(triggerId)}/branch-activation`,
+      data,
       { headers: getAuthHeaders(token) },
     );
-    return NextResponse.json(response.data);
+    return backendJsonResponse(response);
   } catch (error) {
-    console.error("[API] Error updating message trigger rule branch activation:", error);
-    return NextResponse.json(
-      { error: "Failed to update message trigger rule branch activation" },
-      { status: 500 },
-    );
+    return messageTriggerUpstreamErrorResponse(error, "update message trigger branch activation");
   }
 }

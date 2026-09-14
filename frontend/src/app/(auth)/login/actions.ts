@@ -78,7 +78,7 @@ export async function loginWithEmail(email: string, password: string, autoLogin 
                 : undefined;
             return {
                 success: false,
-                error: message || "이메일 또는 비밀번호가 올바르지 않습니다.",
+                error: message || "이메일 또는 비밀번호가 올바르지 않아요.",
                 authErrorCode: "code" in data && typeof data.code === "string" ? data.code : undefined,
                 emailVerificationRequired: message?.includes("이메일 인증"),
             };
@@ -136,13 +136,13 @@ export async function loginWithEmail(email: string, password: string, autoLogin 
             });
 
             if (isBackendConnectionError(axiosError)) {
-                return { success: false, error: "로그인 서버에 연결할 수 없습니다. 백엔드 서버를 확인해 주세요." };
+                return { success: false, error: "로그인 서버에 연결할 수 없어요. 백엔드 서버를 확인해 주세요." };
             }
 
             const apiMessage = axiosError.response?.data?.message;
             return {
                 success: false,
-                error: apiMessage || "로그인에 실패했습니다.",
+                error: apiMessage || "로그인에 실패했어요.",
                 authErrorCode: axiosError.response?.data?.code,
                 emailVerificationRequired: apiMessage?.includes("이메일 인증"),
             };
@@ -150,7 +150,7 @@ export async function loginWithEmail(email: string, password: string, autoLogin 
 
         return {
             success: false,
-            error: error instanceof Error ? error.message : "알 수 없는 오류가 발생했습니다."
+            error: error instanceof Error ? error.message : "알 수 없는 오류가 발생했어요."
         };
     }
 }

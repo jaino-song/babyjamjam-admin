@@ -1,4 +1,6 @@
 "use client";
+import { getUserErrorMessage } from "@babyjamjam/shared";
+
 
 import { useCallback, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
@@ -205,7 +207,7 @@ export function FileUploadScreen() {
       startNavigation();
       router.push("/files");
     } catch {
-      toast({ description: "문서를 업로드하지 못했어요", variant: "destructive" });
+      toast({ description: getUserErrorMessage("문서를 업로드하지 못했어요"), variant: "destructive" });
     }
   };
 

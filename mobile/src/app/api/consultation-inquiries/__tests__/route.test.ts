@@ -50,7 +50,7 @@ describe("consultation inquiry API routes", () => {
     );
 
     expect(response.status).toBe(403);
-    await expect(response.json()).resolves.toEqual({ error: "Failed to fetch consultation inquiries" });
+    await expect(response.json()).resolves.toEqual({ error: expect.stringMatching(/[가-힣].*요[.!]?$/) });
   });
 
   it("rejects unsafe inquiry IDs before proxying read updates", async () => {
@@ -78,7 +78,7 @@ describe("consultation inquiry API routes", () => {
     );
 
     expect(response.status).toBe(404);
-    await expect(response.json()).resolves.toEqual({ error: "Failed to mark consultation inquiry as read" });
+    await expect(response.json()).resolves.toEqual({ error: expect.stringMatching(/[가-힣].*요[.!]?$/) });
   });
 
   describe("auth rejection", () => {

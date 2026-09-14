@@ -1,5 +1,6 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { createProblemDetails } from "@babyjamjam/shared";
 
 import NewMessagePage from "../page";
 import { api } from "@/lib/api/client";
@@ -11,6 +12,7 @@ const FORM_CARD_CONTENT =
 const mockPush = jest.fn();
 const mockUseAllClients = jest.fn();
 const mockUseSystemTemplate = jest.fn();
+const mockUseSystemTemplates = jest.fn();
 const mockGetMessageSenderApproval = jest.fn();
 const mockUseBankAccountInfos = jest.fn();
 const mockUseVoucherPriceInfos = jest.fn();
@@ -83,12 +85,7 @@ jest.mock("@/hooks/use-message-templates", () => ({
 
 jest.mock("@/features/system-templates/hooks", () => ({
   useSystemTemplate: (key: string) => mockUseSystemTemplate(key),
-  useSystemTemplates: () => ({
-    data: ["GREETING", "INFO", "PRICE_INFO", "REMINDER", "SERVICE_INFO", "SURVEY", "THANKS"]
-      .map((k) => mockUseSystemTemplate(k)?.data)
-      .filter(Boolean),
-    isLoading: false,
-  }),
+  useSystemTemplates: () => mockUseSystemTemplates(),
 }));
 
 jest.mock("@/hooks/useClients", () => ({
@@ -140,7 +137,7 @@ async function addManualRecipient(value: string) {
   fireEvent.keyDown(receiverInput, { key: "Enter" });
 
   await waitFor(() => {
-    expect(screen.getByRole("button", { name: /수신자 제거/ })).toBeInTheDocument();
+    expect(screen.getAllByRole("button", { name: /수신자 제거/ }).length).toBeGreaterThan(0);
   });
 }
 
@@ -148,6 +145,43 @@ async function openTemplateSelect() {
   const trigger = screen.getByRole("combobox", { name: /템플릿 선택/ });
   fireEvent.keyDown(trigger, { key: "ArrowDown" });
   await screen.findByRole("option", { name: "인사 메시지" });
+}
+
+function validSmsResponse(receiver = "010-1234-5678", resultOverrides: Record<string, unknown> = {}) {
+  return {
+    data: {
+      provider: "aligo_sms",
+      triggerType: "immediate",
+      request: {
+        receiver,
+        msgType: "SMS",
+        testMode: false,
+      },
+      result: {
+        resultCode: 1,
+        message: "accepted",
+        successCount: 1,
+        errorCount: 0,
+        msgType: "SMS",
+        ...resultOverrides,
+      },
+    },
+  };
+}
+
+type SmsProblemCode =
+  | "MESSAGE_SEND_NOT_STARTED"
+  | "MESSAGE_SEND_UNCONFIRMED"
+  | "MESSAGE_SEND_REJECTED"
+  | "MESSAGE_SEND_PARTIAL";
+
+function smsProblem(code: SmsProblemCode, outcome: "NOT_APPLIED" | "FAILED" | "PARTIALLY_APPLIED" | "UNKNOWN") {
+  const problem = createProblemDetails({
+    code,
+    requestId: "sms-request-123",
+    outcome,
+  });
+  return { response: { status: problem.status, data: problem } };
 }
 
 describe("NewMessagePage", () => {
@@ -247,8 +281,49 @@ describe("NewMessagePage", () => {
 
       return { data: null };
     });
+    mockUseSystemTemplates.mockReset();
+    mockUseSystemTemplates.mockReturnValue({
+      data: [
+        mockUseSystemTemplate("GREETING").data,
+        mockUseSystemTemplate("SERVICE_INFO").data,
+        {
+          id: "system-service-end-notice",
+          templateKey: "SERVICE_END_NOTICE",
+          name: "서비스 종료 안내",
+          description: "영수증 링크 안내",
+          content: "{{name}} 산모님 영수증: {{receiptUrl}}",
+          requiredVariables: [
+            { key: "name", label: "산모명", type: "string", required: true },
+            { key: "receiptUrl", label: "영수증 링크", type: "string", required: true },
+          ],
+          customVariables: [],
+          updatedAt: "2026-06-04T00:00:00.000Z",
+        },
+      ].filter(Boolean),
+      isError: false,
+      isFetching: false,
+      isLoading: false,
+      isSuccess: true,
+    });
     (api.post as jest.Mock).mockReset();
-    (api.post as jest.Mock).mockResolvedValue({ data: { result: { resultCode: 1, errorCount: 0 } } });
+    (api.post as jest.Mock).mockResolvedValue({
+      data: {
+        provider: "aligo_sms",
+        triggerType: "immediate",
+        request: {
+          receiver: "010-1234-5678",
+          msgType: "SMS",
+          testMode: false,
+        },
+        result: {
+          resultCode: 1,
+          message: "accepted",
+          successCount: 1,
+          errorCount: 0,
+          msgType: "SMS",
+        },
+      },
+    });
     mockClipboardWriteText.mockReset();
     mockClipboardWriteText.mockResolvedValue(undefined);
     mockSearchParams = new URLSearchParams();
@@ -328,6 +403,10 @@ describe("NewMessagePage", () => {
       `${FORM_CARD_CONTENT}_message-body`,
     ]);
     expect(screen.getByLabelText(/휴대 전화번호/)).toHaveAttribute("placeholder", "010-0000-0000");
+    expect(screen.getByLabelText(/휴대 전화번호/)).toHaveAttribute(
+      "data-component",
+      `${FORM_CARD_CONTENT}_recipient_row_autocomplete_input`,
+    );
     expect(screen.queryByLabelText(/산모님 성함/)).not.toBeInTheDocument();
   });
 
@@ -350,15 +429,214 @@ describe("NewMessagePage", () => {
     });
   });
 
+  it("uses one idempotency key for a synchronous double submit", async () => {
+    let resolveRequest: ((value: ReturnType<typeof validSmsResponse>) => void) | undefined;
+    (api.post as jest.Mock).mockImplementationOnce(
+      () => new Promise((resolve) => {
+        resolveRequest = resolve;
+      }),
+    );
+
+    renderPage();
+    await addManualRecipient("010-1234-5678");
+    fireEvent.change(screen.getByLabelText("메시지 본문"), { target: { value: "중복 방지 테스트" } });
+
+    const sendButton = screen.getByRole("button", { name: "즉시 발송" });
+    fireEvent.click(sendButton);
+    fireEvent.click(sendButton);
+
+    await waitFor(() => expect(api.post).toHaveBeenCalledTimes(1));
+    const submittedPayload = (api.post as jest.Mock).mock.calls[0]?.[1] as Record<string, unknown>;
+    expect(submittedPayload.idempotencyKey).toEqual(expect.any(String));
+
+    resolveRequest?.(validSmsResponse());
+    await waitFor(() => {
+      expect(screen.getByText("메시지 발송 요청이 접수되었습니다.")).toBeInTheDocument();
+    });
+  });
+
+  it.each([
+    ["unknown", "MESSAGE_SEND_UNCONFIRMED", "UNKNOWN"],
+    ["partial", "MESSAGE_SEND_PARTIAL", "PARTIALLY_APPLIED"],
+  ] as const)("keeps the draft and blocks edits after a %s result", async (_label, code, outcome) => {
+    (api.post as jest.Mock).mockRejectedValueOnce(smsProblem(code, outcome));
+
+    const { container } = renderPage();
+    await addManualRecipient("010-1234-5678");
+    const bodyInput = screen.getByLabelText("메시지 본문");
+    fireEvent.change(bodyInput, { target: { value: "확인 전까지 보존할 본문" } });
+    fireEvent.click(screen.getByRole("button", { name: "즉시 발송" }));
+
+    const expectedError = code === "MESSAGE_SEND_UNCONFIRMED"
+      ? "문자 발송 결과를 확인할 수 없어 발송 기록을 먼저 확인해 주세요."
+      : "일부 문자만 접수되어 전체 재발송 전에 발송 내역을 확인해 주세요.";
+    expect(await screen.findByText(expectedError)).toBeInTheDocument();
+    fireEvent.change(bodyInput, { target: { value: "수정한 본문" } });
+    fireEvent.submit(container.querySelector("form") as HTMLFormElement);
+
+    expect(api.post).toHaveBeenCalledTimes(1);
+    expect(bodyInput).toHaveValue("수정한 본문");
+    expect(screen.getByRole("link", { name: "발송 상태·내역 확인" })).toHaveAttribute(
+      "href",
+      "/messages/history",
+    );
+    expect(screen.getByText("sms-request-123")).toBeInTheDocument();
+  });
+
+  it("treats a malformed successful payload as unknown and preserves the draft", async () => {
+    (api.post as jest.Mock).mockResolvedValueOnce({ data: {} });
+
+    const { container } = renderPage();
+    await addManualRecipient("010-1234-5678");
+    const bodyInput = screen.getByLabelText("메시지 본문");
+    fireEvent.change(bodyInput, { target: { value: "형식 확인 본문" } });
+    fireEvent.click(screen.getByRole("button", { name: "즉시 발송" }));
+
+    await waitFor(() => {
+      expect(screen.getByText("변경 결과를 확인할 수 없으니 다시 실행하기 전에 작업 상태를 확인해 주세요.")).toBeInTheDocument();
+    });
+    expect(screen.queryByText("메시지 발송 요청이 접수되었습니다.")).not.toBeInTheDocument();
+    fireEvent.change(bodyInput, { target: { value: "형식 확인 수정 본문" } });
+    fireEvent.submit(container.querySelector("form") as HTMLFormElement);
+
+    expect(api.post).toHaveBeenCalledTimes(1);
+    expect(bodyInput).toHaveValue("형식 확인 수정 본문");
+  });
+
+  it.each([
+    ["missing success count", { successCount: undefined }],
+    ["negative success count", { successCount: -1 }],
+    ["fractional success count", { successCount: 0.5 }],
+    ["missing error count", { errorCount: undefined }],
+    ["negative error count", { errorCount: -1 }],
+    ["fractional error count", { errorCount: 0.5 }],
+  ] as Array<[string, Record<string, unknown>]>)
+  ("treats a %s as unknown and blocks another send", async (_label, resultOverrides) => {
+    (api.post as jest.Mock).mockResolvedValueOnce(validSmsResponse(undefined, resultOverrides));
+
+    renderPage();
+    await addManualRecipient("010-1234-5678");
+    fireEvent.change(screen.getByLabelText("메시지 본문"), { target: { value: "카운터 검증 본문" } });
+    const sendButton = screen.getByRole("button", { name: "즉시 발송" });
+    fireEvent.click(sendButton);
+
+    await waitFor(() => {
+      expect(screen.getByText("변경 결과를 확인할 수 없으니 다시 실행하기 전에 작업 상태를 확인해 주세요.")).toBeInTheDocument();
+    });
+    expect(sendButton).toBeDisabled();
+    expect(screen.queryByText("메시지 발송 요청이 접수되었습니다.")).not.toBeInTheDocument();
+  });
+
+  it("requires accepted counters to cover every submitted recipient", async () => {
+    (api.post as jest.Mock).mockResolvedValueOnce(
+      validSmsResponse("010-1234-5678,010-9999-0000", { successCount: 1, errorCount: 0 }),
+    );
+
+    renderPage();
+    await addManualRecipient("010-1234-5678,010-9999-0000");
+    fireEvent.change(screen.getByLabelText("메시지 본문"), { target: { value: "다중 수신자 카운터 검증" } });
+    const sendButton = screen.getByRole("button", { name: "즉시 발송" });
+    fireEvent.click(sendButton);
+
+    await waitFor(() => {
+      expect(screen.getByText("변경 결과를 확인할 수 없으니 다시 실행하기 전에 작업 상태를 확인해 주세요.")).toBeInTheDocument();
+    });
+    expect(sendButton).toBeDisabled();
+    expect(screen.queryByText("메시지 발송 요청이 접수되었습니다.")).not.toBeInTheDocument();
+  });
+
+  it("requires the provider response recipient count to match the submission", async () => {
+    (api.post as jest.Mock).mockResolvedValueOnce(
+      validSmsResponse("010-1234-5678", { successCount: 2, errorCount: 0 }),
+    );
+
+    renderPage();
+    await addManualRecipient("010-1234-5678,010-9999-0000");
+    fireEvent.change(screen.getByLabelText("메시지 본문"), { target: { value: "응답 수신자 검증" } });
+    const sendButton = screen.getByRole("button", { name: "즉시 발송" });
+    fireEvent.click(sendButton);
+
+    await waitFor(() => {
+      expect(screen.getByText("변경 결과를 확인할 수 없으니 다시 실행하기 전에 작업 상태를 확인해 주세요.")).toBeInTheDocument();
+    });
+    expect(sendButton).toBeDisabled();
+    expect(screen.queryByText("메시지 발송 요청이 접수되었습니다.")).not.toBeInTheDocument();
+  });
+
+  it("accepts a successful response when counters and response recipient count match the submission", async () => {
+    (api.post as jest.Mock).mockResolvedValueOnce(
+      validSmsResponse("01012345678,01099990000", { successCount: 2, errorCount: 0 }),
+    );
+
+    renderPage();
+    await addManualRecipient("010-1234-5678,010-9999-0000");
+    fireEvent.change(screen.getByLabelText("메시지 본문"), { target: { value: "다중 수신자 정상 발송" } });
+    fireEvent.click(screen.getByRole("button", { name: "즉시 발송" }));
+
+    await waitFor(() => {
+      expect(screen.getByText("메시지 발송 요청이 접수되었습니다.")).toBeInTheDocument();
+    });
+    expect(api.post).toHaveBeenCalledTimes(1);
+  });
+
+  it("rotates the idempotency key after a not-started correction", async () => {
+    (api.post as jest.Mock)
+      .mockRejectedValueOnce(smsProblem("MESSAGE_SEND_NOT_STARTED", "NOT_APPLIED"))
+      .mockResolvedValueOnce(validSmsResponse());
+
+    renderPage();
+    await addManualRecipient("010-1234-5678");
+    const bodyInput = screen.getByLabelText("메시지 본문");
+    fireEvent.change(bodyInput, { target: { value: "첫 시도" } });
+    fireEvent.click(screen.getByRole("button", { name: "즉시 발송" }));
+
+    await waitFor(() => expect(api.post).toHaveBeenCalledTimes(1));
+    const firstKey = ((api.post as jest.Mock).mock.calls[0]?.[1] as Record<string, unknown>).idempotencyKey;
+    expect(screen.getByRole("button", { name: "즉시 발송" })).toBeDisabled();
+
+    fireEvent.change(bodyInput, { target: { value: "보정 후 새 시도" } });
+    expect(screen.getByRole("button", { name: "즉시 발송" })).toBeEnabled();
+    fireEvent.click(screen.getByRole("button", { name: "즉시 발송" }));
+
+    await waitFor(() => {
+      expect(screen.getByText("메시지 발송 요청이 접수되었습니다.")).toBeInTheDocument();
+    });
+    const secondKey = ((api.post as jest.Mock).mock.calls[1]?.[1] as Record<string, unknown>).idempotencyKey;
+    expect(secondKey).toEqual(expect.any(String));
+    expect(secondKey).not.toBe(firstKey);
+  });
+
+  it("requires a correction before retrying a rejected request", async () => {
+    (api.post as jest.Mock)
+      .mockRejectedValueOnce(smsProblem("MESSAGE_SEND_REJECTED", "FAILED"))
+      .mockResolvedValueOnce(validSmsResponse());
+
+    renderPage();
+    await addManualRecipient("010-1234-5678");
+    const bodyInput = screen.getByLabelText("메시지 본문");
+    fireEvent.change(bodyInput, { target: { value: "거부된 본문" } });
+    fireEvent.click(screen.getByRole("button", { name: "즉시 발송" }));
+
+    await waitFor(() => expect(api.post).toHaveBeenCalledTimes(1));
+    expect(screen.getByRole("button", { name: "즉시 발송" })).toBeDisabled();
+    fireEvent.submit(document.querySelector("form") as HTMLFormElement);
+    expect(api.post).toHaveBeenCalledTimes(1);
+
+    fireEvent.change(bodyInput, { target: { value: "수정 후 재시도" } });
+    fireEvent.click(screen.getByRole("button", { name: "즉시 발송" }));
+    await waitFor(() => expect(screen.getByText("메시지 발송 요청이 접수되었습니다.")).toBeInTheDocument());
+    expect(api.post).toHaveBeenCalledTimes(2);
+  });
+
   it("restores the selected template body with empty variables after sending", async () => {
     renderPage();
 
     await openTemplateSelect();
     fireEvent.click(screen.getByRole("option", { name: "서비스 안내" }));
 
-    const receiverInput = screen.getByLabelText(/휴대 전화번호/);
-    fireEvent.focus(receiverInput);
-    fireEvent.change(receiverInput, { target: { value: "박서연" } });
+    const recipientNameInput = screen.getByLabelText(/산모님 성함/);
+    fireEvent.focus(recipientNameInput);
+    fireEvent.change(recipientNameInput, { target: { value: "박서연" } });
     fireEvent.click(await screen.findByText("박서연"));
     fireEvent.click(screen.getByRole("button", { name: "즉시 발송" }));
 
@@ -444,7 +722,7 @@ describe("NewMessagePage", () => {
 
     const { rerender } = renderPage();
 
-    expect(screen.queryByText("선택한 고객에 등록된 연락처가 없습니다.")).not.toBeInTheDocument();
+    expect(screen.queryByText("선택한 고객에 등록된 연락처가 없어요.")).not.toBeInTheDocument();
 
     mockUseAllClients.mockReturnValue({
       data: [{ ...mockClients[0], phone: "" }],
@@ -456,7 +734,7 @@ describe("NewMessagePage", () => {
       </QueryClientProvider>,
     );
 
-    expect(await screen.findByText("선택한 고객에 등록된 연락처가 없습니다.")).toBeInTheDocument();
+    expect(await screen.findByText("선택한 고객에 등록된 연락처가 없어요.")).toBeInTheDocument();
   });
 
   it("does not re-add a deep-linked recipient the user removed when the client list refetches", async () => {
@@ -495,7 +773,32 @@ describe("NewMessagePage", () => {
     fireEvent.change(receiverInput, { target: { value: tooManyRecipients } });
     fireEvent.keyDown(receiverInput, { key: "Enter" });
 
-    expect(await screen.findByText("수신자는 한 번에 최대 50명까지 선택할 수 있습니다.")).toBeInTheDocument();
+    expect(await screen.findByText("수신자는 한 번에 최대 50명까지 선택할 수 있어요.")).toBeInTheDocument();
+    expect(api.post).not.toHaveBeenCalled();
+  });
+
+  it.each(["010-1234-56789", "010-1234-567", "010-1234-5678x"])(
+    "rejects an invalid manual recipient before formatting or sending (%s)",
+    async (value) => {
+      renderPage();
+
+      const receiverInput = screen.getByLabelText(/휴대 전화번호/);
+      fireEvent.focus(receiverInput);
+      fireEvent.change(receiverInput, { target: { value } });
+      fireEvent.keyDown(receiverInput, { key: "Enter" });
+
+      expect(await screen.findByText("기존 고객이 없으면 올바른 전화번호를 입력한 뒤 Enter를 눌러 추가해 주세요.")).toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: /수신자 제거/ })).not.toBeInTheDocument();
+      expect(api.post).not.toHaveBeenCalled();
+    },
+  );
+
+  it("validates a country-code manual recipient before storing the formatted chip", async () => {
+    renderPage();
+
+    await addManualRecipient("+82 10 1234 5678");
+
+    expect(screen.getByRole("button", { name: "010-1234-5678 수신자 제거" })).toBeInTheDocument();
     expect(api.post).not.toHaveBeenCalled();
   });
 
@@ -632,7 +935,14 @@ describe("NewMessagePage", () => {
     fireEvent.click(screen.getByRole("option", { name: "서비스 안내" }));
 
     expect(screen.getByRole("combobox", { name: /템플릿 선택/ })).toHaveTextContent("서비스 안내");
-    expect(screen.getByLabelText(/산모님 성함/)).toBeInTheDocument();
+    expect(screen.getByLabelText(/산모님 성함/)).toHaveAttribute(
+      "data-component",
+      `${FORM_CARD_CONTENT}_recipient_name-row_autocomplete_input`,
+    );
+    expect(screen.getByLabelText(/휴대 전화번호/)).toHaveAttribute(
+      "data-component",
+      `${FORM_CARD_CONTENT}_recipient_row_input`,
+    );
     expect(screen.getByLabelText(/서비스 시작일/)).toBeInTheDocument();
     expect(
       Array.from(
@@ -686,6 +996,195 @@ describe("NewMessagePage", () => {
     expect(screen.getByRole("option", { name: "상담 후 리마인더" })).toBeInTheDocument();
     expect(screen.getByRole("option", { name: "예약 완료" })).toBeInTheDocument();
     expect(screen.getByRole("option", { name: "모니터링 설문" })).toBeInTheDocument();
+  });
+
+  it("includes the server-provided service end notice in the template dropdown", async () => {
+    renderPage();
+
+    await openTemplateSelect();
+
+    expect(screen.getByRole("option", { name: "서비스 종료 안내" })).toBeInTheDocument();
+  });
+
+  it.each([
+    {
+      name: "the system template catalog is still loading",
+      query: {
+        data: undefined,
+        isError: false,
+        isFetching: true,
+        isLoading: true,
+        isSuccess: false,
+      },
+    },
+    {
+      name: "the resolved catalog is missing the requested template",
+      query: {
+        data: [],
+        isError: false,
+        isFetching: false,
+        isLoading: false,
+        isSuccess: true,
+      },
+    },
+  ])("fails closed for a service end deep link when $name", async ({ query }) => {
+    mockSearchParams = new URLSearchParams({
+      template: "SERVICE_END_NOTICE",
+      body: "박서연 산모님 영수증 안내",
+      clientId: "7",
+    });
+    mockUseSystemTemplates.mockReturnValue(query);
+
+    const { container } = renderPage();
+    const submitButton = screen.getByRole("button", { name: "즉시 발송" });
+
+    expect(submitButton).toBeDisabled();
+    fireEvent.submit(container.querySelector("form")!);
+
+    expect(await screen.findByText("지점 기본 템플릿을 불러오는 중이라 발송할 수 없어요.")).toBeInTheDocument();
+    expect(api.post).not.toHaveBeenCalledWith("/receipt-links/prepare", expect.anything());
+    expect(api.post).not.toHaveBeenCalledWith("/message-deliveries/sms", expect.anything());
+  });
+
+  it("prepares and sends the service end notice with the selected client identity", async () => {
+    (api.post as jest.Mock).mockImplementation((url: string) => {
+      if (url === "/receipt-links/prepare") {
+        return Promise.resolve({
+          data: {
+            clientId: 7,
+            clientName: "박서연",
+            recipientPhone: "01077778888",
+            documentId: "doc-7",
+            receiptUrl: "https://m.admin.babyjamjam.com/receipt/receipt-7",
+            expiresAt: "2026-09-24T00:00:00.000Z",
+          },
+        });
+      }
+      if (url === "/receipt-links/send") {
+        return Promise.resolve({ data: { jobId: "job-7", clientName: "박서연" } });
+      }
+      return Promise.resolve({ data: { result: { resultCode: 1, errorCount: 0 } } });
+    });
+    renderPage();
+
+    await openTemplateSelect();
+    fireEvent.click(screen.getByRole("option", { name: "서비스 종료 안내" }));
+
+    const recipientNameInput = screen.getByLabelText(/산모님 성함/);
+    fireEvent.focus(recipientNameInput);
+    fireEvent.change(recipientNameInput, { target: { value: "박서연" } });
+    fireEvent.click(await screen.findByText("박서연"));
+
+    await waitFor(() => {
+      expect(screen.getByLabelText("메시지 본문")).toHaveValue(
+        "박서연 산모님 영수증: https://m.admin.babyjamjam.com/receipt/receipt-7",
+      );
+      expect(screen.getByRole("button", { name: "즉시 발송" })).toBeEnabled();
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "즉시 발송" }));
+
+    await waitFor(() => {
+      expect(api.post).toHaveBeenCalledWith("/receipt-links/send", {
+        documentId: "doc-7",
+        clientId: 7,
+        recipientPhone: "01077778888",
+      });
+    });
+    expect(api.post).not.toHaveBeenCalledWith(
+      "/message-deliveries/sms",
+      expect.anything(),
+    );
+  });
+
+  it("keeps the latest client when service end preparations resolve out of order", async () => {
+    const replacementClient: Client = {
+      ...mockClients[0]!,
+      id: 8,
+      name: "이수빈",
+      phone: "01099998888",
+    };
+    mockUseAllClients.mockReturnValue({
+      data: [...mockClients, replacementClient],
+      isLoading: false,
+    });
+    mockSearchParams = new URLSearchParams({
+      template: "SERVICE_END_NOTICE",
+      clientId: "7",
+    });
+
+    let resolveFirstPreparation: (value: unknown) => void = () => undefined;
+    let resolveSecondPreparation: (value: unknown) => void = () => undefined;
+    (api.post as jest.Mock).mockImplementation((url: string, payload: { clientId?: number }) => {
+      if (url !== "/receipt-links/prepare") {
+        return Promise.resolve({ data: { jobId: "job-8", clientName: "이수빈" } });
+      }
+      return new Promise((resolve) => {
+        if (payload.clientId === 7) {
+          resolveFirstPreparation = resolve;
+        } else {
+          resolveSecondPreparation = resolve;
+        }
+      });
+    });
+    renderPage();
+
+    await waitFor(() => {
+      expect(api.post).toHaveBeenCalledWith("/receipt-links/prepare", { clientId: 7 });
+    });
+
+    const recipientNameInput = screen.getByLabelText(/산모님 성함/);
+    fireEvent.focus(recipientNameInput);
+    fireEvent.change(recipientNameInput, { target: { value: "이수빈" } });
+    fireEvent.click(await screen.findByText("이수빈"));
+
+    await waitFor(() => {
+      expect(api.post).toHaveBeenCalledWith("/receipt-links/prepare", { clientId: 8 });
+    });
+
+    await act(async () => {
+      resolveSecondPreparation({
+        data: {
+          clientId: 8,
+          clientName: "이수빈",
+          recipientPhone: "01099998888",
+          documentId: "doc-8",
+          receiptUrl: "https://m.admin.babyjamjam.com/receipt/receipt-8",
+          expiresAt: "2026-09-24T00:00:00.000Z",
+        },
+      });
+    });
+    await waitFor(() => {
+      expect(screen.getByLabelText("메시지 본문")).toHaveValue(
+        "이수빈 산모님 영수증: https://m.admin.babyjamjam.com/receipt/receipt-8",
+      );
+    });
+
+    await act(async () => {
+      resolveFirstPreparation({
+        data: {
+          clientId: 7,
+          clientName: "박서연",
+          recipientPhone: "01077778888",
+          documentId: "doc-7",
+          receiptUrl: "https://m.admin.babyjamjam.com/receipt/receipt-7",
+          expiresAt: "2026-09-24T00:00:00.000Z",
+        },
+      });
+    });
+
+    expect(screen.getByLabelText("메시지 본문")).toHaveValue(
+      "이수빈 산모님 영수증: https://m.admin.babyjamjam.com/receipt/receipt-8",
+    );
+    fireEvent.click(screen.getByRole("button", { name: "즉시 발송" }));
+
+    await waitFor(() => {
+      expect(api.post).toHaveBeenCalledWith("/receipt-links/send", {
+        documentId: "doc-8",
+        clientId: 8,
+        recipientPhone: "01099998888",
+      });
+    });
   });
 
   it("loads a frontend fallback template that requires the client name variable", async () => {
@@ -799,12 +1298,13 @@ describe("NewMessagePage", () => {
     await openTemplateSelect();
     fireEvent.click(screen.getByRole("option", { name: "서비스 안내" }));
 
-    const receiverInput = screen.getByLabelText(/휴대 전화번호/);
-    fireEvent.focus(receiverInput);
-    fireEvent.change(receiverInput, { target: { value: "박서연" } });
+    const recipientNameInput = screen.getByLabelText(/산모님 성함/);
+    fireEvent.focus(recipientNameInput);
+    fireEvent.change(recipientNameInput, { target: { value: "박서연" } });
     fireEvent.click(await screen.findByText("박서연"));
 
-    expect(screen.getByLabelText(/산모님 성함/)).toHaveValue("박서연");
+    expect(recipientNameInput).toHaveValue("");
+    expect(screen.getByRole("button", { name: "박서연 수신자 제거" })).toBeInTheDocument();
     expect(screen.getByLabelText(/서비스 시작일/)).toHaveValue("2026. 06. 10.");
     expect(screen.getByLabelText("메시지 본문")).toHaveValue(
       "박서연 산모님~♡\n서비스 시작일: 2026. 06. 10.\n산후관리서비스 관련 안내사항을 보내드립니다 :)",

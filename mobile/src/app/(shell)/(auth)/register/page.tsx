@@ -1,4 +1,6 @@
 "use client";
+import { getUserErrorMessage } from "@babyjamjam/shared";
+
 
 import { useEffect, useState } from "react";
 import Image from "next/image";
@@ -292,7 +294,7 @@ export default function RegisterPage() {
         if (response.code === "ACCOUNTS_LINKED") setAccountsLinked(true);
         setIsSuccess(true);
       } else {
-        setServerError(response.message || "회원가입에 실패했습니다.");
+        setServerError(getUserErrorMessage(response.message || "회원가입에 실패했어요."));
       }
     } catch (err: unknown) {
       console.error("Registration error:", err);
@@ -300,9 +302,9 @@ export default function RegisterPage() {
         typeof err === "object" && err !== null && "response" in err
           ? (err as AxiosLikeError).response?.data
           : undefined;
-      if (errorData?.errors) setServerError(errorData.errors.join("\n"));
-      else if (errorData?.message) setServerError(errorData.message);
-      else setServerError("네트워크 오류가 발생했습니다. 다시 시도해 주세요.");
+      if (errorData?.errors) setServerError(getUserErrorMessage(err, errorData.errors.join("\n")));
+      else if (errorData?.message) setServerError(getUserErrorMessage(err, errorData.message));
+      else setServerError(getUserErrorMessage(err, "네트워크 오류가 발생했어요. 다시 시도해 주세요."));
     } finally {
       setIsLoading(false);
     }
@@ -391,7 +393,7 @@ export default function RegisterPage() {
 
       {serverError && (
         <div className="auth-server-error" role="alert" data-component={`${REGISTER_BASE}_server-error`}>
-          {serverError}
+          {serverError && getUserErrorMessage(serverError)}
         </div>
       )}
 

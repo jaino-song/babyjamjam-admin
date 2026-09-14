@@ -1,16 +1,19 @@
 import { NextRequest, NextResponse } from "next/server";
+import type { ZodType } from "zod";
 
 import { serverAPIClient } from "@/lib/api/server";
 import {
-    errorResponse,
+    buildSystemTemplatePath,
     getAuthHeaders,
     getAuthToken,
+    invalidJsonResponse,
+    invalidSystemTemplateKeyResponse,
+    parseBody,
+    readJsonObjectBody,
+    systemTemplateBackendJsonResponse,
+    systemTemplateUpstreamErrorResponse,
     unauthorizedResponse,
 } from "@/lib/api/route-utils";
-
-function buildSystemTemplatePath(key: string, suffix = ""): string {
-    return `/system-templates/${encodeURIComponent(key)}${suffix}`;
-}
 
 async function requireAuthToken(request: NextRequest): Promise<string | NextResponse> {
     const token = getAuthToken(request);
@@ -18,6 +21,11 @@ async function requireAuthToken(request: NextRequest): Promise<string | NextResp
         return unauthorizedResponse("Authentication required. Please log in.");
     }
     return token;
+}
+
+function resolveSystemTemplatePath(key: string, suffix = ""): string | NextResponse {
+    const path = buildSystemTemplatePath(key, suffix);
+    return path ?? invalidSystemTemplateKeyResponse();
 }
 
 export async function proxySystemTemplateGet(
@@ -31,14 +39,19 @@ export async function proxySystemTemplateGet(
         return token;
     }
 
+    const backendPath = resolveSystemTemplatePath(key, suffix);
+    if (backendPath instanceof NextResponse) {
+        return backendPath;
+    }
+
     try {
-        const response = await serverAPIClient.get(buildSystemTemplatePath(key, suffix), {
+        const response = await serverAPIClient.get(backendPath, {
             headers: getAuthHeaders(token),
         });
 
-        return NextResponse.json(response.data, { status: response.status });
+        return systemTemplateBackendJsonResponse(response, context);
     } catch (error) {
-        return errorResponse(error, context);
+        return systemTemplateUpstreamErrorResponse(error, context);
     }
 }
 
@@ -47,20 +60,73 @@ export async function proxySystemTemplatePost(
     key: string,
     suffix: string,
     context: string,
+    bodySchema?: ZodType<unknown>,
 ): Promise<NextResponse> {
     const token = await requireAuthToken(request);
     if (typeof token !== "string") {
         return token;
     }
 
+    const backendPath = resolveSystemTemplatePath(key, suffix);
+    if (backendPath instanceof NextResponse) {
+        return backendPath;
+    }
+
     try {
-        const body = await request.json().catch(() => ({}));
-        const response = await serverAPIClient.post(buildSystemTemplatePath(key, suffix), body, {
+        let body: unknown = {};
+        if (bodySchema) {
+            const parsed = await parseBody(bodySchema, request);
+            if (parsed.response) {
+                return parsed.response;
+            }
+            body = parsed.data;
+        } else {
+            body = await readJsonObjectBody(request);
+        }
+
+        const response = await serverAPIClient.post(backendPath, body, {
             headers: getAuthHeaders(token),
         });
 
-        return NextResponse.json(response.data, { status: response.status });
+        return systemTemplateBackendJsonResponse(response, context);
     } catch (error) {
-        return errorResponse(error, context);
+        const invalidJson = invalidJsonResponse(error);
+        if (invalidJson) {
+            return invalidJson;
+        }
+
+        return systemTemplateUpstreamErrorResponse(error, context);
+    }
+}
+
+export async function proxySystemTemplatePut(
+    request: NextRequest,
+    key: string,
+    context: string,
+    bodySchema: ZodType<unknown>,
+): Promise<NextResponse> {
+    const token = await requireAuthToken(request);
+    if (typeof token !== "string") {
+        return token;
+    }
+
+    const backendPath = resolveSystemTemplatePath(key);
+    if (backendPath instanceof NextResponse) {
+        return backendPath;
+    }
+
+    try {
+        const parsed = await parseBody(bodySchema, request);
+        if (parsed.response) {
+            return parsed.response;
+        }
+
+        const response = await serverAPIClient.put(backendPath, parsed.data, {
+            headers: getAuthHeaders(token),
+        });
+
+        return systemTemplateBackendJsonResponse(response, context);
+    } catch (error) {
+        return systemTemplateUpstreamErrorResponse(error, context);
     }
 }

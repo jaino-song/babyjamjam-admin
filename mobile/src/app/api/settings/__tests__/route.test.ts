@@ -8,6 +8,7 @@ import {
   GET as getMessageSenderApproval,
   POST as requestMessageSenderApproval,
 } from "../message-sender-approval/route";
+import { POST as requestMessageSenderApprovalCanonical } from "../message-sender-approval/request/route";
 import { GET as getMessageAutomationPolicies } from "../message-automation-policies/route";
 import { PUT as updateMessageAutomationPastTriggerConfig } from "../message-automation-policies/past-trigger/route";
 import {
@@ -18,6 +19,27 @@ import {
   GET as getClientRegistrationPolicy,
   PUT as updateClientRegistrationPolicy,
 } from "../client-registration-policy/route";
+
+async function expectCanonicalValidationResponse(
+  response: Response,
+  legacyError: string,
+): Promise<void> {
+  expect(response.status).toBe(400);
+  const requestId = response.headers.get("X-Request-Id");
+  expect(requestId).toEqual(expect.stringMatching(/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/));
+  expect(response.headers.get("Content-Type")).toBe("application/problem+json");
+  expect(response.headers.get("Content-Language")).toBe("ko-KR");
+  expect(response.headers.get("Cache-Control")).toBe("no-store, max-age=0");
+
+  const body = await response.json();
+  expect(body).toMatchObject({
+    code: "VALIDATION_FAILED",
+    outcome: "NOT_APPLIED",
+    error: legacyError,
+    requestId,
+  });
+  expect(Array.isArray(body.errors)).toBe(true);
+}
 
 jest.mock("@/lib/api/server", () => ({
   serverAPIClient: {
@@ -81,10 +103,7 @@ describe("settings API routes", () => {
       }),
     );
 
-    expect(response.status).toBe(400);
-    await expect(response.json()).resolves.toEqual({
-      error: "Request body must be valid JSON",
-    });
+    await expectCanonicalValidationResponse(response, "Request body must be valid JSON");
     expect(mockPost).not.toHaveBeenCalled();
   });
 
@@ -125,6 +144,40 @@ describe("settings API routes", () => {
     expect(mockPost).toHaveBeenCalledWith(
       "/settings/message-sender-approval/request",
       approvalBody,
+      { headers: { Authorization: "Bearer auth-token" } },
+    );
+  });
+
+  it("keeps the canonical /request route and base POST alias on the same handler contract", async () => {
+    mockPost.mockResolvedValue({ status: 202, data: { approvalStatus: "pending" } });
+
+    const canonicalResponse = await requestMessageSenderApprovalCanonical(
+      createRequest("/api/settings/message-sender-approval/request", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({}),
+      }),
+    );
+    const aliasResponse = await requestMessageSenderApproval(
+      createRequest("/api/settings/message-sender-approval", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({}),
+      }),
+    );
+
+    expect(canonicalResponse.status).toBe(202);
+    expect(aliasResponse.status).toBe(202);
+    expect(mockPost).toHaveBeenNthCalledWith(
+      1,
+      "/settings/message-sender-approval/request",
+      {},
+      { headers: { Authorization: "Bearer auth-token" } },
+    );
+    expect(mockPost).toHaveBeenNthCalledWith(
+      2,
+      "/settings/message-sender-approval/request",
+      {},
       { headers: { Authorization: "Bearer auth-token" } },
     );
   });

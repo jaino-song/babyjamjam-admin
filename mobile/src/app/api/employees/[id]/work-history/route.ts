@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 
 import { serverAPIClient } from "@/lib/api/server";
+import { invalidEmployeeIdResponse } from "../../employee-route-utils";
 import {
     backendJsonResponse,
     errorResponse,
@@ -28,7 +29,7 @@ export async function GET(request: NextRequest, context: RouteContext) {
 
     const { id } = await context.params;
     if (!isPositiveSafeInteger(id)) {
-        return NextResponse.json({ error: "Invalid employee id" }, { status: 400 });
+        return invalidEmployeeIdResponse();
     }
 
     const page = request.nextUrl.searchParams.get("page") ?? "1";

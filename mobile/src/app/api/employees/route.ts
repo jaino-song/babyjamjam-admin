@@ -3,6 +3,7 @@ import { z } from "zod";
 import { getConflictPayload } from "@babyjamjam/shared";
 
 import { serverAPIClient } from "@/lib/api/server";
+import { invalidEmployeeIdResponse, isValidEmployeeId } from "./employee-route-utils";
 import {
     backendJsonResponse,
     errorResponse,
@@ -11,6 +12,22 @@ import {
     parseBody,
     unauthorizedResponse,
 } from "@/lib/api/route-utils";
+
+// A converted problem body must keep its public `code`; the legacy conflict
+// bridge only carries message/clientId, so registered problems fall through
+// to the contract-preserving errorResponse passthrough instead.
+function hasUpstreamProblemCode(error: unknown): boolean {
+    if (!error || typeof error !== "object") {
+        return false;
+    }
+
+    const payload = (error as { response?: { data?: unknown } }).response?.data;
+    if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+        return false;
+    }
+
+    return typeof (payload as { code?: unknown }).code === "string";
+}
 
 // Mirrors backend CreateEmployeeDto: name (@IsString), workArea (@IsArray
 // @IsString each), phone (@IsString), grade (@IsString — backend normalizes
@@ -38,14 +55,6 @@ const updateEmployeeSchema = z
         openToNextWork: z.boolean().optional(),
     })
     .passthrough();
-
-function isValidEmployeeId(id: string | null): id is string {
-    return Boolean(id && /^[1-9]\d*$/.test(id));
-}
-
-function invalidEmployeeIdResponse(): NextResponse {
-    return NextResponse.json({ error: "Invalid employee id" }, { status: 400 });
-}
 
 // GET /api/employees - Get all employees
 export async function GET(request: NextRequest) {
@@ -155,9 +164,11 @@ export async function DELETE(request: NextRequest) {
 
         return backendJsonResponse(response);
     } catch (error) {
-        const conflict = getConflictPayload(error);
-        if (conflict) {
-            return NextResponse.json(conflict, { status: 409 });
+        if (!hasUpstreamProblemCode(error)) {
+            const conflict = getConflictPayload(error);
+            if (conflict) {
+                return NextResponse.json(conflict, { status: 409 });
+            }
         }
         return errorResponse(error, "delete employee");
     }

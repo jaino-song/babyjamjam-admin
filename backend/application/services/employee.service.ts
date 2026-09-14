@@ -25,6 +25,7 @@ import {
     PaginatedEmployeeWorkHistory,
 } from "domain/repositories/employee.repository.interface";
 import { assertRequiredPhone, INVALID_PHONE_MESSAGE, InvalidPhoneError, normalizePhone } from "application/utils/normalize-phone";
+import { problemBody } from "application/utils/problem-bodies";
 import { MessageAutomationIntentService } from "./message-automation-intent.service";
 import { MessageTriggerService } from "./message-trigger.service";
 
@@ -35,7 +36,12 @@ function assertEmployeePhoneInput(phone: string | null | undefined): string {
         return assertRequiredPhone(phone);
     } catch (error) {
         if (error instanceof InvalidPhoneError) {
-            throw new BadRequestException(INVALID_PHONE_MESSAGE);
+            throw new BadRequestException(problemBody("VALIDATION_FAILED", {
+                pointer: "/phone",
+                code: "INVALID_FORMAT",
+                detail: INVALID_PHONE_MESSAGE,
+                location: "body",
+            }));
         }
         throw error;
     }
@@ -181,7 +187,12 @@ export class EmployeeService {
         if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
             const metaTarget = error.meta?.["target"];
             if (metaTarget === EMPLOYEE_BRANCH_PHONE_UNIQUE_CONSTRAINT) {
-                throw new ConflictException({ statusCode: 409, code: "P2002", error: "Conflict", field: "phone" });
+                throw new ConflictException(problemBody("EMPLOYEE_PHONE_ALREADY_REGISTERED", {
+                    pointer: "/phone",
+                    code: "INVALID_VALUE",
+                    detail: "같은 전화번호의 관리사가 이미 등록되어 있습니다.",
+                    location: "body",
+                }));
             }
             const target = Array.isArray(metaTarget) ? metaTarget.map(String) : [];
             const hasPhone = target.includes("phone")
@@ -189,7 +200,12 @@ export class EmployeeService {
                 || target.includes("phone_normalized");
             const hasBranch = target.includes("branch_id") || target.includes("branchId");
             if (hasPhone && hasBranch) {
-                throw new ConflictException({ statusCode: 409, code: "P2002", error: "Conflict", field: "phone" });
+                throw new ConflictException(problemBody("EMPLOYEE_PHONE_ALREADY_REGISTERED", {
+                    pointer: "/phone",
+                    code: "INVALID_VALUE",
+                    detail: "같은 전화번호의 관리사가 이미 등록되어 있습니다.",
+                    location: "body",
+                }));
             }
         }
         throw error;

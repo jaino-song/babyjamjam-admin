@@ -3,6 +3,7 @@ import {
   fetchValidatedBinary,
   type ValidatedBinary,
 } from "@/lib/contracts/document-download";
+import { authenticatedFetch } from "@/lib/api/authenticated-fetch";
 
 const RECEIPT_PNG_MIME_TYPE = "image/png";
 
@@ -77,7 +78,7 @@ export async function shareReceiptPng({
   fileName,
   navigatorObject,
   fileConstructor,
-  fetchImpl = globalThis.fetch,
+  fetchImpl = authenticatedFetch,
   signal,
   onDownload,
   onError,

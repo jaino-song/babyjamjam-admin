@@ -1,4 +1,6 @@
 "use client";
+import { getUserErrorMessage } from "@babyjamjam/shared";
+
 
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -90,7 +92,7 @@ export default function WebsiteAdminPage() {
       toast({ description: "리본 배너 설정을 저장했어요", variant: "success" });
     },
     onError: () => {
-      toast({ description: "리본 배너 설정을 저장하지 못했어요", variant: "destructive" });
+      toast({ description: getUserErrorMessage("리본 배너 설정을 저장하지 못했어요"), variant: "destructive" });
     },
   });
 

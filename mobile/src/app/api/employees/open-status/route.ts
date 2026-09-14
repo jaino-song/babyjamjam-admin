@@ -2,7 +2,13 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 
 import { serverAPIClient } from "@/lib/api/server";
-import { errorResponse, parseBody } from "@/lib/api/route-utils";
+import {
+    errorResponse,
+    getAuthHeaders,
+    getAuthToken,
+    parseBody,
+    unauthorizedResponse,
+} from "@/lib/api/route-utils";
 
 // Mirrors backend ChangeEmployeeOpenStatusDto: openToNextWork (@IsBoolean,
 // no @IsOptional) is required. Passthrough preserves any forward-compatible
@@ -13,18 +19,10 @@ const changeOpenStatusSchema = z
     })
     .passthrough();
 
-function getAuthToken(request: NextRequest): string | null {
-    return request.cookies.get("auth_token")?.value || null;
-}
-
-function getAuthHeaders(token: string | null): Record<string, string> {
-    return token ? { Authorization: `Bearer ${token}` } : {};
-}
-
 export async function PATCH(request: NextRequest) {
     const token = getAuthToken(request);
     if (!token) {
-        return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+        return unauthorizedResponse("Unauthorized");
     }
 
     const searchParams = request.nextUrl.searchParams;

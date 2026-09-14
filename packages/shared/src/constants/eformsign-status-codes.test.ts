@@ -1,6 +1,12 @@
 import {
     COMPLETED_STATUS_CODES,
+    DELETED_STATUS_CODES,
     EXPIRED_STATUS_CODES,
+    EFORMSIGN_STATUS_CATEGORY_LABELS,
+    getEformsignStatusCategory,
+    getEformsignStatusLabel,
+    isDeletedEformsignStatusCode,
+    normalizeEformsignStatusCode,
     REJECTED_STATUS_CODES,
 } from "./eformsign-status-codes";
 
@@ -37,5 +43,48 @@ describe("EXPIRED_STATUS_CODES", () => {
 
     it("exposes REJECTED_STATUS_CODES as the same set under backend's naming", () => {
         expect(REJECTED_STATUS_CODES).toBe(EXPIRED_STATUS_CODES);
+    });
+});
+
+describe("canonical eformsign status semantics", () => {
+    it.each([
+        ["doc_complete", "003"],
+        ["3", "003"],
+        ["doc_request_delete", "047"],
+        ["090", "090"],
+        [" 070 ", "070"],
+    ])("normalizes %s to %s", (input, expected) => {
+        expect(normalizeEformsignStatusCode(input)).toBe(expected);
+    });
+
+    it.each([
+        ["003", "completed"],
+        ["047", "expired"],
+        ["049", "expired"],
+        ["090", "expired"],
+        ["001", "in-progress"],
+        ["099", "unknown"],
+        ["", "unknown"],
+        [null, "unknown"],
+        ["not-a-provider-code", "unknown"],
+    ] as const)("categorizes %s as %s", (input, expected) => {
+        expect(getEformsignStatusCategory(input)).toBe(expected);
+    });
+
+    it("keeps deleted visibility separate from semantic category", () => {
+        expect(DELETED_STATUS_CODES).toEqual(["047", "049", "099"]);
+        expect(isDeletedEformsignStatusCode("047")).toBe(true);
+        expect(isDeletedEformsignStatusCode("049")).toBe(true);
+        expect(isDeletedEformsignStatusCode("099")).toBe(true);
+        expect(isDeletedEformsignStatusCode("090")).toBe(false);
+        expect(getEformsignStatusCategory("047")).toBe("expired");
+        expect(getEformsignStatusCategory("099")).toBe("unknown");
+    });
+
+    it("maps every category to the shared Korean label", () => {
+        expect(getEformsignStatusLabel("003")).toBe(EFORMSIGN_STATUS_CATEGORY_LABELS.completed);
+        expect(getEformsignStatusLabel("047")).toBe(EFORMSIGN_STATUS_CATEGORY_LABELS.expired);
+        expect(getEformsignStatusLabel("001")).toBe(EFORMSIGN_STATUS_CATEGORY_LABELS["in-progress"]);
+        expect(getEformsignStatusLabel(null)).toBe(EFORMSIGN_STATUS_CATEGORY_LABELS.unknown);
     });
 });

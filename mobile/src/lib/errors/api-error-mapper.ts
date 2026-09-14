@@ -1,3 +1,5 @@
+import { getUserErrorMessage } from '@babyjamjam/shared';
+
 import { t, Locale } from '@/lib/i18n/translations';
 
 import { getSafeApiDisplayMessage } from './safe-api-error-message';
@@ -146,8 +148,5 @@ export function getErrorMessage(
     locale: Locale,
     fallbackKey: string = 'errors.generic'
 ): string {
-    const apiError = extractApiError(error);
-    return mapPrismaError(apiError, locale)
-        || getApiDisplayMessage(error)
-        || t(locale, fallbackKey);
+    return getUserErrorMessage(error, t('ko', fallbackKey));
 }

@@ -124,7 +124,7 @@ describe("EmployeeFormPanel work area multi-select", () => {
     expect(openStatusSwitchThumb).not.toBeNull();
 
     const label = within(field!).getByText(/근무 지역/, { selector: "label" });
-    const error = within(field!).getByText("근무 지역을 선택해주세요");
+    const error = within(field!).getByText("근무 지역을 선택해 주세요");
 
     expect(label.parentElement).toContainElement(error);
     expect(label.parentElement).toHaveAttribute("data-component", "desktop_employees_form-panel_work-area-field_label-row",
@@ -167,7 +167,7 @@ describe("EmployeeFormPanel work area multi-select", () => {
     expect(field).not.toBeNull();
 
     const label = within(field!).getByText(/근무 지역/, { selector: "label" });
-    const error = within(field!).getByText("근무 지역을 선택해주세요");
+    const error = within(field!).getByText("근무 지역을 선택해 주세요");
 
     expect(label.parentElement).toContainElement(error);
     expect(label.parentElement).toHaveAttribute("data-component", "desktop_employees_form-dialog_section-work_grid_field-work-area_label-row",
@@ -216,7 +216,7 @@ describe("EmployeeFormPanel work area multi-select", () => {
     fireEvent.change(phoneInput, { target: { value: "01066211878" } });
 
     const duplicateMessage = await screen.findByText(
-      "이미 등록된 연락처입니다. 제공인력 목록에서 연락처로 검색해 주세요.",
+      "이미 등록된 연락처예요. 제공인력 목록에서 연락처로 검색해 주세요.",
     );
     const phoneLabel = screen.getByText("연락처", { selector: "label" });
 

@@ -77,7 +77,7 @@ export async function POST(request: NextRequest) {
     console.error("[API] Error bulk updating voucher prices:", { status });
 
     return NextResponse.json(
-      { error: "바우처 가격 정보 업데이트에 실패했습니다" },
+      { error: "바우처 가격 정보 업데이트에 실패했어요" },
       { status },
     );
   }
