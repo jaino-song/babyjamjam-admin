@@ -1,5 +1,22 @@
+import { z } from "zod";
 export declare const SYSTEM_TEMPLATE_KEYS: readonly ["CLIENT_WELCOME", "SERVICE_START_REMINDER", "SERVICE_END_REMINDER", "EMPLOYEE_ASSIGNED", "PRICE_INFO", "GREETING", "THANKS", "SURVEY", "SERVICE_INFO", "SERVICE_RECORD_LINK", "SERVICE_END_NOTICE", "REMINDER", "INFO"];
 export type SystemTemplateKey = (typeof SYSTEM_TEMPLATE_KEYS)[number];
+/** Runtime key validation for system-template BFF route parameters. */
+export declare const systemTemplateKeySchema: z.ZodEnum<{
+    CLIENT_WELCOME: "CLIENT_WELCOME";
+    SERVICE_START_REMINDER: "SERVICE_START_REMINDER";
+    SERVICE_END_REMINDER: "SERVICE_END_REMINDER";
+    EMPLOYEE_ASSIGNED: "EMPLOYEE_ASSIGNED";
+    PRICE_INFO: "PRICE_INFO";
+    GREETING: "GREETING";
+    THANKS: "THANKS";
+    SURVEY: "SURVEY";
+    SERVICE_INFO: "SERVICE_INFO";
+    SERVICE_RECORD_LINK: "SERVICE_RECORD_LINK";
+    SERVICE_END_NOTICE: "SERVICE_END_NOTICE";
+    REMINDER: "REMINDER";
+    INFO: "INFO";
+}>;
 export declare const SYSTEM_TEMPLATE_DELIVERY_MODES: readonly ["sms", "service-feedback-link", "receipt-link"];
 export type SystemTemplateDeliveryMode = (typeof SYSTEM_TEMPLATE_DELIVERY_MODES)[number];
 /**
@@ -89,6 +106,37 @@ export interface PreviewSystemTemplateRequest {
     content?: string;
     data: Record<string, unknown>;
 }
+/**
+ * Backend DTO-compatible request schemas.
+ *
+ * The production backend uses `forbidNonWhitelisted`, so these schemas reject
+ * unknown top-level and nested fields instead of silently forwarding a body
+ * that the backend will reject later. `data` remains an open record because
+ * preview variables are intentionally caller-defined.
+ */
+export declare const customVariableSchema: z.ZodObject<{
+    key: z.ZodString;
+    label: z.ZodString;
+    required: z.ZodBoolean;
+}, z.core.$strict>;
+export declare const updateSystemTemplateSchema: z.ZodObject<{
+    content: z.ZodString;
+    customVariables: z.ZodOptional<z.ZodArray<z.ZodObject<{
+        key: z.ZodString;
+        label: z.ZodString;
+        required: z.ZodBoolean;
+    }, z.core.$strict>>>;
+}, z.core.$strict>;
+export declare const validateSystemTemplateSchema: z.ZodObject<{
+    content: z.ZodString;
+}, z.core.$strict>;
+export declare const previewSystemTemplateSchema: z.ZodObject<{
+    content: z.ZodOptional<z.ZodString>;
+    data: z.ZodRecord<z.ZodString, z.ZodUnknown>;
+}, z.core.$strict>;
+export type UpdateSystemTemplateInput = z.infer<typeof updateSystemTemplateSchema>;
+export type ValidateSystemTemplateInput = z.infer<typeof validateSystemTemplateSchema>;
+export type PreviewSystemTemplateInput = z.infer<typeof previewSystemTemplateSchema>;
 export interface SystemTemplateValidationResult {
     valid: boolean;
     missingVariables: string[];

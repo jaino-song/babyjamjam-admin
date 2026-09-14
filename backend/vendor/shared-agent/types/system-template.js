@@ -1,5 +1,9 @@
 "use strict";
 // Shared system-template contracts used by both frontend and mobile.
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.previewSystemTemplateSchema = exports.validateSystemTemplateSchema = exports.updateSystemTemplateSchema = exports.customVariableSchema = exports.resolveSystemTemplateDelivery = exports.getSystemTemplateDeliveryMode = exports.SYSTEM_TEMPLATE_DELIVERY_MODES_BY_KEY = exports.SYSTEM_TEMPLATE_DELIVERY_MODES = exports.systemTemplateKeySchema = exports.SYSTEM_TEMPLATE_KEYS = void 0;
+exports.resolveSystemTemplateDeliveryMode = resolveSystemTemplateDeliveryMode;
+const zod_1 = require("zod");
 //
 // The source of truth for these shapes is the backend contract surface:
 // - backend/interface/dto/system-template.dto.ts
@@ -14,9 +18,6 @@
 // endpoints return the raw SystemTemplateEntity. Date-backed values serialize
 // to ISO strings on the wire, so the client-facing response types below use
 // string while Raw* variants retain Date for backend-reference parity.
-Object.defineProperty(exports, "__esModule", { value: true });
-exports.resolveSystemTemplateDelivery = exports.getSystemTemplateDeliveryMode = exports.SYSTEM_TEMPLATE_DELIVERY_MODES_BY_KEY = exports.SYSTEM_TEMPLATE_DELIVERY_MODES = exports.SYSTEM_TEMPLATE_KEYS = void 0;
-exports.resolveSystemTemplateDeliveryMode = resolveSystemTemplateDeliveryMode;
 exports.SYSTEM_TEMPLATE_KEYS = [
     'CLIENT_WELCOME',
     'SERVICE_START_REMINDER',
@@ -32,6 +33,8 @@ exports.SYSTEM_TEMPLATE_KEYS = [
     'REMINDER',
     'INFO',
 ];
+/** Runtime key validation for system-template BFF route parameters. */
+exports.systemTemplateKeySchema = zod_1.z.enum(exports.SYSTEM_TEMPLATE_KEYS);
 exports.SYSTEM_TEMPLATE_DELIVERY_MODES = [
     "sms",
     "service-feedback-link",
@@ -69,3 +72,27 @@ function resolveSystemTemplateDeliveryMode(templateKey) {
 }
 exports.getSystemTemplateDeliveryMode = resolveSystemTemplateDeliveryMode;
 exports.resolveSystemTemplateDelivery = resolveSystemTemplateDeliveryMode;
+/**
+ * Backend DTO-compatible request schemas.
+ *
+ * The production backend uses `forbidNonWhitelisted`, so these schemas reject
+ * unknown top-level and nested fields instead of silently forwarding a body
+ * that the backend will reject later. `data` remains an open record because
+ * preview variables are intentionally caller-defined.
+ */
+exports.customVariableSchema = zod_1.z.object({
+    key: zod_1.z.string().min(1),
+    label: zod_1.z.string().min(1),
+    required: zod_1.z.boolean(),
+}).strict();
+exports.updateSystemTemplateSchema = zod_1.z.object({
+    content: zod_1.z.string().min(1),
+    customVariables: zod_1.z.array(exports.customVariableSchema).optional(),
+}).strict();
+exports.validateSystemTemplateSchema = zod_1.z.object({
+    content: zod_1.z.string().min(1),
+}).strict();
+exports.previewSystemTemplateSchema = zod_1.z.object({
+    content: zod_1.z.string().optional(),
+    data: zod_1.z.record(zod_1.z.string(), zod_1.z.unknown()),
+}).strict();

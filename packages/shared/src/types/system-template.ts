@@ -1,4 +1,6 @@
 // Shared system-template contracts used by both frontend and mobile.
+
+import { z } from "zod";
 //
 // The source of truth for these shapes is the backend contract surface:
 // - backend/interface/dto/system-template.dto.ts
@@ -31,6 +33,9 @@ export const SYSTEM_TEMPLATE_KEYS = [
 ] as const;
 
 export type SystemTemplateKey = (typeof SYSTEM_TEMPLATE_KEYS)[number];
+
+/** Runtime key validation for system-template BFF route parameters. */
+export const systemTemplateKeySchema = z.enum(SYSTEM_TEMPLATE_KEYS);
 
 export const SYSTEM_TEMPLATE_DELIVERY_MODES = [
   "sms",
@@ -144,6 +149,38 @@ export interface PreviewSystemTemplateRequest {
   content?: string;
   data: Record<string, unknown>;
 }
+
+/**
+ * Backend DTO-compatible request schemas.
+ *
+ * The production backend uses `forbidNonWhitelisted`, so these schemas reject
+ * unknown top-level and nested fields instead of silently forwarding a body
+ * that the backend will reject later. `data` remains an open record because
+ * preview variables are intentionally caller-defined.
+ */
+export const customVariableSchema = z.object({
+  key: z.string().min(1),
+  label: z.string().min(1),
+  required: z.boolean(),
+}).strict();
+
+export const updateSystemTemplateSchema = z.object({
+  content: z.string().min(1),
+  customVariables: z.array(customVariableSchema).optional(),
+}).strict();
+
+export const validateSystemTemplateSchema = z.object({
+  content: z.string().min(1),
+}).strict();
+
+export const previewSystemTemplateSchema = z.object({
+  content: z.string().optional(),
+  data: z.record(z.string(), z.unknown()),
+}).strict();
+
+export type UpdateSystemTemplateInput = z.infer<typeof updateSystemTemplateSchema>;
+export type ValidateSystemTemplateInput = z.infer<typeof validateSystemTemplateSchema>;
+export type PreviewSystemTemplateInput = z.infer<typeof previewSystemTemplateSchema>;
 
 export interface SystemTemplateValidationResult {
   valid: boolean;

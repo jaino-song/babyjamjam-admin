@@ -125,3 +125,45 @@ test("rejects a message trigger BFF that aliases a local schema", () => {
     ),
   );
 });
+
+test("rejects a system-template BFF that stops using the shared request schema", () => {
+  const mutatedSources = withSource(
+    "mobile/src/app/api/system-templates/[key]/preview/route.ts",
+    (source) => source.replaceAll("previewSystemTemplateSchema", "localPreviewSchema"),
+  );
+
+  const errors = validateFrontendMobileParity({ sources: mutatedSources });
+  assert.ok(
+    errors.some((error) =>
+      error.includes("mobile/src/app/api/system-templates/[key]/preview/route.ts must parse input with shared previewSystemTemplateSchema"),
+    ),
+  );
+});
+
+test("rejects a system-template route helper that concatenates an unsafe key", () => {
+  const mutatedSources = withSource(
+    "frontend/src/lib/api/system-template-routes.ts",
+    (source) => source.replaceAll("buildSystemTemplatePath", "buildLocalSystemTemplatePath"),
+  );
+
+  const errors = validateFrontendMobileParity({ sources: mutatedSources });
+  assert.ok(
+    errors.some((error) =>
+      error.includes("frontend/src/lib/api/system-template-routes.ts must use shared buildSystemTemplatePath"),
+    ),
+  );
+});
+
+test("rejects a system-template route helper that replaces the sanitized error policy", () => {
+  const mutatedSources = withSource(
+    "mobile/src/lib/api/system-template-routes.ts",
+    (source) => source.replaceAll("systemTemplateUpstreamErrorResponse", "localSystemTemplateErrorResponse"),
+  );
+
+  const errors = validateFrontendMobileParity({ sources: mutatedSources });
+  assert.ok(
+    errors.some((error) =>
+      error.includes("mobile/src/lib/api/system-template-routes.ts must use shared systemTemplateUpstreamErrorResponse policy"),
+    ),
+  );
+});

@@ -3,7 +3,12 @@ import { SYSTEM_TEMPLATE_REGISTRY } from "../../../../backend/domain/constants/s
 import {
   SYSTEM_TEMPLATE_DELIVERY_MODES_BY_KEY,
   SYSTEM_TEMPLATE_KEYS,
+  customVariableSchema,
+  previewSystemTemplateSchema,
   resolveSystemTemplateDeliveryMode,
+  systemTemplateKeySchema,
+  updateSystemTemplateSchema,
+  validateSystemTemplateSchema,
   type SystemTemplateDeliveryMode,
 } from "./system-template";
 
@@ -55,5 +60,35 @@ describe("resolveSystemTemplateDeliveryMode", () => {
   it("keeps the link templates out of generic SMS delivery", () => {
     expect(resolveSystemTemplateDeliveryMode("SERVICE_RECORD_LINK")).toBe("service-feedback-link");
     expect(resolveSystemTemplateDeliveryMode("SERVICE_END_NOTICE")).toBe("receipt-link");
+  });
+
+  it("mirrors the backend DTO validation for update, validate, and preview", () => {
+    expect(systemTemplateKeySchema.safeParse("GREETING").success).toBe(true);
+    expect(systemTemplateKeySchema.safeParse("GREETING/preview").success).toBe(false);
+    expect(systemTemplateKeySchema.safeParse("NOT_A_TEMPLATE").success).toBe(false);
+
+    expect(updateSystemTemplateSchema.safeParse({ content: "hello" }).success).toBe(true);
+    expect(updateSystemTemplateSchema.safeParse({ content: "hello", customVariables: [
+      { key: "clientName", label: "Client", required: true },
+    ] }).success).toBe(true);
+    expect(updateSystemTemplateSchema.safeParse({ content: "hello", extra: true }).success).toBe(false);
+    expect(updateSystemTemplateSchema.safeParse({ content: "hello", customVariables: [
+      { key: "clientName", label: "Client", required: true, extra: "nope" },
+    ] }).success).toBe(false);
+    expect(updateSystemTemplateSchema.safeParse({ content: "" }).success).toBe(false);
+
+    expect(validateSystemTemplateSchema.safeParse({ content: "hello" }).success).toBe(true);
+    expect(validateSystemTemplateSchema.safeParse({ content: "" }).success).toBe(false);
+    expect(validateSystemTemplateSchema.safeParse({ content: "hello", data: {} }).success).toBe(false);
+
+    expect(previewSystemTemplateSchema.safeParse({ data: { clientName: 7 } }).success).toBe(true);
+    expect(previewSystemTemplateSchema.safeParse({ content: "", data: {} }).success).toBe(true);
+    expect(previewSystemTemplateSchema.safeParse({ data: [] }).success).toBe(false);
+    expect(previewSystemTemplateSchema.safeParse({ data: null }).success).toBe(false);
+  });
+
+  it("validates custom variables as the backend nested DTO", () => {
+    expect(customVariableSchema.safeParse({ key: "x", label: "X", required: false }).success).toBe(true);
+    expect(customVariableSchema.safeParse({ key: "", label: "X", required: false }).success).toBe(false);
   });
 });

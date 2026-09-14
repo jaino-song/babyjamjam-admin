@@ -64,6 +64,38 @@ export const MESSAGE_TRIGGER_BFF_ROUTES = Object.freeze([
   }),
 ]);
 
+export const SYSTEM_TEMPLATE_BFF_ROUTES = Object.freeze([
+  Object.freeze({
+    path: "frontend/src/app/api/system-templates/[key]/route.ts",
+    schema: "updateSystemTemplateSchema",
+  }),
+  Object.freeze({
+    path: "frontend/src/app/api/system-templates/[key]/validate/route.ts",
+    schema: "validateSystemTemplateSchema",
+  }),
+  Object.freeze({
+    path: "frontend/src/app/api/system-templates/[key]/preview/route.ts",
+    schema: "previewSystemTemplateSchema",
+  }),
+  Object.freeze({
+    path: "mobile/src/app/api/system-templates/[key]/route.ts",
+    schema: "updateSystemTemplateSchema",
+  }),
+  Object.freeze({
+    path: "mobile/src/app/api/system-templates/[key]/validate/route.ts",
+    schema: "validateSystemTemplateSchema",
+  }),
+  Object.freeze({
+    path: "mobile/src/app/api/system-templates/[key]/preview/route.ts",
+    schema: "previewSystemTemplateSchema",
+  }),
+]);
+
+export const SYSTEM_TEMPLATE_ROUTE_HELPERS = Object.freeze([
+  "frontend/src/lib/api/system-template-routes.ts",
+  "mobile/src/lib/api/system-template-routes.ts",
+]);
+
 export const CANONICAL_HELPERS = Object.freeze([
   "formatKoreanPhoneNumber",
   "isValidKoreanPhoneNumber",
@@ -451,6 +483,47 @@ function validateMessageTriggerBffs(sources) {
   return errors;
 }
 
+function validateSystemTemplateBffs(sources) {
+  const errors = [];
+  for (const route of SYSTEM_TEMPLATE_BFF_ROUTES) {
+    const source = sourceText(sources, route.path);
+    if (typeof source !== "string") {
+      errors.push(`Missing system-template BFF route ${route.path}.`);
+      continue;
+    }
+
+    if (!source.includes(route.schema)) {
+      errors.push(`${route.path} must parse input with shared ${route.schema}.`);
+    }
+    if (!hasSharedImport(source, "types/system-template")) {
+      errors.push(`${route.path} must import ${route.schema} from @babyjamjam/shared/types/system-template.`);
+    }
+  }
+
+  for (const helper of SYSTEM_TEMPLATE_ROUTE_HELPERS) {
+    const source = sourceText(sources, helper);
+    if (typeof source !== "string") {
+      errors.push(`Missing system-template route helper ${helper}.`);
+      continue;
+    }
+
+    if (!source.includes("buildSystemTemplatePath")) {
+      errors.push(`${helper} must use shared buildSystemTemplatePath for encoded key segments.`);
+    }
+    if (!source.includes("systemTemplateBackendJsonResponse")) {
+      errors.push(`${helper} must use shared systemTemplateBackendJsonResponse policy.`);
+    }
+    if (!source.includes("systemTemplateUpstreamErrorResponse")) {
+      errors.push(`${helper} must use shared systemTemplateUpstreamErrorResponse policy.`);
+    }
+    if (!source.includes('from "@/lib/api/route-utils"')) {
+      errors.push(`${helper} must consume the platform route-utils adapter for shared system-template policy.`);
+    }
+  }
+
+  return errors;
+}
+
 export function validateFrontendMobileParity({ sources }) {
   const errors = [
     ...validateSharedSeams(sources),
@@ -460,6 +533,7 @@ export function validateFrontendMobileParity({ sources }) {
     ...validateTemplateKeyMaps(sources),
     ...validateNoLocalSharedImplementations(sources),
     ...validateMessageTriggerBffs(sources),
+    ...validateSystemTemplateBffs(sources),
   ];
   return [...new Set(errors)];
 }

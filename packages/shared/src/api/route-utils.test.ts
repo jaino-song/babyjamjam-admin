@@ -1,4 +1,11 @@
-import { createRouteUtils, logUpstreamError } from "./route-utils";
+import {
+    buildSystemTemplatePath,
+    createRouteUtils,
+    invalidSystemTemplateKeyResponse,
+    logUpstreamError,
+    systemTemplateBackendJsonResponse,
+    systemTemplateUpstreamErrorResponse,
+} from "./route-utils";
 
 describe("logUpstreamError", () => {
     afterEach(() => {
@@ -130,5 +137,54 @@ describe("createRouteUtils legacy-message errorResponse", () => {
         const body = await response.json();
         expect(body.error).toContain("[REDACTED]");
         expect(body.error).not.toContain("abc.def.ghi");
+    });
+});
+
+describe("system-template route policy", () => {
+    beforeEach(() => {
+        jest.spyOn(console, "error").mockImplementation(() => undefined);
+    });
+
+    afterEach(() => {
+        jest.restoreAllMocks();
+    });
+
+    it("encodes valid keys and rejects unknown or multi-segment keys", () => {
+        expect(buildSystemTemplatePath("GREETING", "/preview")).toBe("/system-templates/GREETING/preview");
+        expect(buildSystemTemplatePath("SERVICE_END_NOTICE", "")).toBe("/system-templates/SERVICE_END_NOTICE");
+        expect(buildSystemTemplatePath("GREETING/preview", "/preview")).toBeNull();
+        expect(buildSystemTemplatePath("NOT_A_TEMPLATE", "/preview")).toBeNull();
+    });
+
+    it.each([400, 403, 409, 422, 500])("sanitizes upstream %i errors while preserving status", async (status) => {
+        const response = systemTemplateUpstreamErrorResponse(
+            { response: { status, data: { message: "Bearer secret-token", diagnostics: "SELECT * FROM templates" } } },
+            "preview system template",
+        );
+
+        expect(response.status).toBe(status);
+        const body = await response.json();
+        expect(body).toEqual({ error: "Failed to preview system template", code: "UPSTREAM_ERROR" });
+        expect(JSON.stringify(body)).not.toContain("secret-token");
+        expect(JSON.stringify(body)).not.toContain("SELECT");
+    });
+
+    it("applies the same policy to resolved upstream responses", async () => {
+        const response = systemTemplateBackendJsonResponse(
+            { status: 422, data: { message: "unsafe" } },
+            "validate system template",
+        );
+
+        expect(response.status).toBe(422);
+        await expect(response.json()).resolves.toEqual({
+            error: "Failed to validate system template",
+            code: "UPSTREAM_ERROR",
+        });
+    });
+
+    it("returns a stable key validation error without reflecting input", async () => {
+        const response = invalidSystemTemplateKeyResponse();
+        expect(response.status).toBe(400);
+        await expect(response.json()).resolves.toEqual({ error: "Invalid system template key" });
     });
 });

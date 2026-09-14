@@ -45,7 +45,7 @@ describe("system-template root API routes", () => {
     return new NextRequest(`http://localhost${path}`, { method });
   }
 
-  const keyParams = { params: Promise.resolve({ key: "INTRO" }) };
+  const keyParams = { params: Promise.resolve({ key: "GREETING" }) };
 
   it("requires auth before listing system templates", async () => {
     const response = await listSystemTemplates(noCookieRequest("/api/system-templates"));
@@ -55,13 +55,13 @@ describe("system-template root API routes", () => {
   });
 
   it("requires auth before fetching a system template", async () => {
-    const response = await getSystemTemplate(noCookieRequest("/api/system-templates/INTRO"), keyParams);
+    const response = await getSystemTemplate(noCookieRequest("/api/system-templates/GREETING"), keyParams);
     expect(response.status).toBe(401);
     expect(mockGet).not.toHaveBeenCalled();
   });
 
   it("requires auth before updating a system template", async () => {
-    const response = await updateSystemTemplate(noCookieRequest("/api/system-templates/INTRO", "PUT"), keyParams);
+    const response = await updateSystemTemplate(noCookieRequest("/api/system-templates/GREETING", "PUT"), keyParams);
     expect(response.status).toBe(401);
     expect(mockPut).not.toHaveBeenCalled();
   });
@@ -85,33 +85,36 @@ describe("system-template root API routes", () => {
     });
 
     const response = await getSystemTemplate(
-      createRequest("/api/system-templates/INTRO"),
-      { params: Promise.resolve({ key: "INTRO" }) },
+      createRequest("/api/system-templates/GREETING"),
+      { params: Promise.resolve({ key: "GREETING" }) },
     );
 
     expect(response.status).toBe(404);
-    await expect(response.json()).resolves.toEqual({ error: "template not found" });
+    await expect(response.json()).resolves.toEqual({
+      error: "Failed to fetch system template",
+      code: "UPSTREAM_ERROR",
+    });
   });
 
   it("forwards a validated template update to the backend path", async () => {
     mockPut.mockResolvedValue({
       status: 200,
-      data: { key: "INTRO", content: "Hello" },
+      data: { key: "GREETING", content: "Hello" },
     });
 
     const response = await updateSystemTemplate(
-      createRequest("/api/system-templates/INTRO", {
+      createRequest("/api/system-templates/GREETING", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ content: "Hello" }),
       }),
-      { params: Promise.resolve({ key: "INTRO" }) },
+      { params: Promise.resolve({ key: "GREETING" }) },
     );
 
     expect(response.status).toBe(200);
-    await expect(response.json()).resolves.toEqual({ key: "INTRO", content: "Hello" });
+    await expect(response.json()).resolves.toEqual({ key: "GREETING", content: "Hello" });
     expect(mockPut).toHaveBeenCalledWith(
-      "/system-templates/INTRO",
+      "/system-templates/GREETING",
       { content: "Hello" },
       { headers: { Authorization: "Bearer auth-token" } },
     );
@@ -119,12 +122,12 @@ describe("system-template root API routes", () => {
 
   it("rejects an update body missing content before proxying", async () => {
     const response = await updateSystemTemplate(
-      createRequest("/api/system-templates/INTRO", {
+      createRequest("/api/system-templates/GREETING", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ customVariables: [] }),
       }),
-      { params: Promise.resolve({ key: "INTRO" }) },
+      { params: Promise.resolve({ key: "GREETING" }) },
     );
 
     expect(response.status).toBe(400);
@@ -133,12 +136,12 @@ describe("system-template root API routes", () => {
 
   it("rejects malformed update JSON before proxying", async () => {
     const response = await updateSystemTemplate(
-      createRequest("/api/system-templates/INTRO", {
+      createRequest("/api/system-templates/GREETING", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: "{bad-json",
       }),
-      { params: Promise.resolve({ key: "INTRO" }) },
+      { params: Promise.resolve({ key: "GREETING" }) },
     );
 
     expect(response.status).toBe(400);
