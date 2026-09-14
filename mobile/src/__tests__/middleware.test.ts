@@ -48,6 +48,7 @@ describe("middleware API route protection", () => {
       sub: "user-1",
       sid: "session-1",
       role: "manager",
+      branchId: "branch-1",
       type: "access",
       exp: Math.floor(Date.now() / 1000) + 60,
     });
@@ -55,6 +56,7 @@ describe("middleware API route protection", () => {
       success: true,
       accessToken: "local-access-token",
       refreshToken: "local-refresh-token",
+      requiresBranchSelection: false,
     }), {
       status: 200,
       headers: { "Content-Type": "application/json" },
@@ -73,6 +75,76 @@ describe("middleware API route protection", () => {
       httpOnly: true,
     });
     expect(response.cookies.get("auto_login")?.value).toBe("1");
+    expect(response.cookies.get("selected_branch_id")?.value).toBe("branch-1");
+  });
+
+  it("replaces a stale branch cookie with the branch authorized by the local session", async () => {
+    Object.defineProperty(process.env, "NODE_ENV", {
+      value: "development",
+      configurable: true,
+    });
+    process.env.LOCAL_AUTO_LOGIN_EMAIL = "developer@example.test";
+    process.env.LOCAL_AUTO_LOGIN_PASSWORD = "test-fixture";
+    mockJwtDecode.mockReturnValue({
+      sub: "user-1",
+      sid: "session-1",
+      role: "manager",
+      branchId: "branch-new",
+      type: "access",
+      exp: Math.floor(Date.now() / 1000) + 60,
+    });
+    jest.spyOn(global, "fetch").mockResolvedValue(new Response(JSON.stringify({
+      success: true,
+      accessToken: "local-access-token",
+      refreshToken: "local-refresh-token",
+      requiresBranchSelection: false,
+    }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    }));
+
+    const response = await middleware(createRequest(
+      "/login",
+      "selected_branch_id=branch-stale",
+    ));
+
+    expect(response.status).toBe(307);
+    expect(response.headers.get("location")).toBe("http://localhost/");
+    expect(response.cookies.get("selected_branch_id")?.value).toBe("branch-new");
+  });
+
+  it("clears a stale branch cookie when the local session requires branch selection", async () => {
+    Object.defineProperty(process.env, "NODE_ENV", {
+      value: "development",
+      configurable: true,
+    });
+    process.env.LOCAL_AUTO_LOGIN_EMAIL = "developer@example.test";
+    process.env.LOCAL_AUTO_LOGIN_PASSWORD = "test-fixture";
+    mockJwtDecode.mockReturnValue({
+      sub: "user-1",
+      sid: "session-1",
+      role: "manager",
+      type: "access",
+      exp: Math.floor(Date.now() / 1000) + 60,
+    });
+    jest.spyOn(global, "fetch").mockResolvedValue(new Response(JSON.stringify({
+      success: true,
+      accessToken: "local-access-token",
+      refreshToken: "local-refresh-token",
+      requiresBranchSelection: true,
+    }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    }));
+
+    const response = await middleware(createRequest(
+      "/clients",
+      "selected_branch_id=branch-stale",
+    ));
+
+    expect(response.status).toBe(307);
+    expect(response.headers.get("location")).toBe("http://localhost/select-branch");
+    expect(response.cookies.get("selected_branch_id")?.value).toBe("");
   });
 
   it("never creates a local session for protected API requests", async () => {

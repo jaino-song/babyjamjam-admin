@@ -5,6 +5,7 @@ import { jwtDecode } from "jwt-decode";
 import { getServerRuntimeConfig } from "@/lib/env";
 import {
   ACCESS_TOKEN_MAX_AGE_SECONDS,
+  decodeAccessBranchId,
   getRefreshSessionMaxAgeSeconds,
 } from "@/lib/auth/session-policy";
 import { tryLocalAutoLogin } from "@/lib/auth/local-auto-login";
@@ -136,6 +137,24 @@ function setSessionCookies(
   response.cookies.set("auto_login", "0", baseCookieOptions);
 }
 
+function setSelectedBranchCookie(
+  response: NextResponse,
+  branchId: string | null,
+): void {
+  if (branchId) {
+    response.cookies.set("selected_branch_id", branchId, {
+      httpOnly: false,
+      secure: isProductionLike,
+      sameSite: "lax",
+      path: "/",
+      maxAge: 30 * 24 * 60 * 60,
+    });
+  } else {
+    response.cookies.delete("selected_branch_id");
+  }
+
+}
+
 async function tryRefreshAuthSession(refreshToken: string): Promise<RefreshAttempt> {
   try {
     const refreshResponse = await fetch(`${API_URL}/auth/refresh-token`, {
@@ -263,9 +282,14 @@ export async function middleware(request: NextRequest) {
   if (isLocalLoginNavigation) {
     const session = await tryLocalAutoLogin(request, API_URL);
     if (session && !isTokenExpired(session.accessToken)) {
-      const target = isRouteMatch(pathname, LOGIN_ROUTE)
-        ? new URL("/", request.url)
-        : request.nextUrl;
+      const branchId = session.requiresBranchSelection
+        ? null
+        : decodeAccessBranchId(session.accessToken);
+      const target = !branchId
+        ? new URL("/select-branch", request.url)
+        : isRouteMatch(pathname, LOGIN_ROUTE)
+          ? new URL("/", request.url)
+          : request.nextUrl;
       const response = NextResponse.redirect(target);
       setSessionCookies(response, {
         accessToken: session.accessToken,
@@ -273,6 +297,7 @@ export async function middleware(request: NextRequest) {
         role: decodeRole(session.accessToken),
         autoLogin: true,
       });
+      setSelectedBranchCookie(response, branchId);
       response.headers.set("Cache-Control", "no-store");
       return response;
     }

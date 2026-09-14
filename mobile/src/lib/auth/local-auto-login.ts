@@ -5,6 +5,7 @@ const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"]);
 interface LocalAutoLoginSession {
     accessToken: string;
     refreshToken: string;
+    requiresBranchSelection: boolean;
 }
 
 // Credentials stay in the server environment; this module is only used by middleware.ts.
@@ -76,6 +77,7 @@ export async function tryLocalAutoLogin(
             success?: boolean;
             accessToken?: string;
             refreshToken?: string;
+            requiresBranchSelection?: boolean;
         };
         if (
             session.success !== true
@@ -90,6 +92,7 @@ export async function tryLocalAutoLogin(
         return {
             accessToken: session.accessToken,
             refreshToken: session.refreshToken,
+            requiresBranchSelection: session.requiresBranchSelection === true,
         };
     } catch {
         // Do not log fetch errors: they can contain the credential-bearing request.

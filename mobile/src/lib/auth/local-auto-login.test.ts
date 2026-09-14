@@ -41,7 +41,11 @@ afterAll(() => {
 it("creates a normal session through the configured loopback backend", async () => {
     await expect(
         tryLocalAutoLogin(request(), "http://localhost:3001"),
-    ).resolves.toEqual({ accessToken: "access", refreshToken: "refresh" });
+    ).resolves.toEqual({
+        accessToken: "access",
+        refreshToken: "refresh",
+        requiresBranchSelection: false,
+    });
     expect(fetchMock).toHaveBeenCalledWith(
         new URL("http://localhost:3001/auth/login"),
         expect.objectContaining({
