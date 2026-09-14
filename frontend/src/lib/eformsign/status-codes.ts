@@ -7,15 +7,29 @@
  */
 
 export {
-  COMPLETED_STATUS_CODES as COMPLETED_CODES,
-  EXPIRED_STATUS_CODES as EXPIRED_CODES,
+  DELETED_STATUS_CODES,
+  COMPLETED_STATUS_CODES,
+  EXPIRED_STATUS_CODES,
+  IN_PROGRESS_STATUS_CODES,
+  getEformsignStatusCategory,
+  getEformsignStatusLabel,
+  isDeletedEformsignStatusCode,
   isProviderReviewWorkflowStep,
+  normalizeEformsignStatusCode,
 } from "@babyjamjam/shared/constants/eformsign-status-codes";
 
 import {
-  COMPLETED_STATUS_CODES as COMPLETED_CODES,
-  EXPIRED_STATUS_CODES as EXPIRED_CODES,
+  DELETED_STATUS_CODES,
+  COMPLETED_STATUS_CODES,
+  EXPIRED_STATUS_CODES,
+  IN_PROGRESS_STATUS_CODES,
+  getEformsignStatusCategory,
+  getEformsignStatusLabel,
+  isDeletedEformsignStatusCode,
   isProviderReviewWorkflowStep,
+  normalizeEformsignStatusCode,
+  type EformsignStatusCategory,
+  type EformsignStatusInput,
 } from "@babyjamjam/shared/constants/eformsign-status-codes";
 import {
   CONTRACT_DOC_DISPLAY_STATUS_LABELS,
@@ -25,23 +39,36 @@ import {
   type ContractDocDisplayStatusLabel,
 } from "@babyjamjam/shared/constants/eformsign-doc-status";
 
-// 대기/진행 중 (In-progress) codes - for reference
-export const IN_PROGRESS_CODES = [
-  "001", // doc_tempsave: 초안
-  "002", // doc_create: 문서 작성
-  "010", // doc_request_approval: 문서 결재 요청
-  "020", // doc_request_reception: 문서 내부자 요청
-  "030", // doc_request_outsider: 문서 외부자 요청
-  "043", // doc_update: 문서 수정
-  "060", // doc_request_participant: 참여자 요청
-  "063", // doc_rerequest_participant: 참여자 재요청(외부 수신자)
-  "064", // doc_open_participant: 참여자 문서 열람(외부 수신자)
-  "070", // doc_request_reviewer: 검토자 요청
-] as const;
+export const COMPLETED_CODES = COMPLETED_STATUS_CODES;
+export const EXPIRED_CODES = EXPIRED_STATUS_CODES;
+export const IN_PROGRESS_CODES = IN_PROGRESS_STATUS_CODES;
+
+// The frontend does not hide documents by status, but the canonical deleted
+// set remains available for callers that need to distinguish visibility from
+// semantic classification.
+export const DELETED_CODES = DELETED_STATUS_CODES;
 
 // Korean status labels. Derived from the shared label map rather than listed
 // again here, so a status added on the backend cannot quietly go unlabelled.
 export type DocumentStatusLabel = ContractDocDisplayStatusLabel;
+export type DocumentStatusCategory = EformsignStatusCategory;
+
+/** Compatibility aliases for the canonical shared status contract. */
+export const normalizeStatusCode = normalizeEformsignStatusCode;
+export const isDeletedStatusCode = isDeletedEformsignStatusCode;
+
+// Existing frontend callers use this helper as a filter for the three tabs and
+// therefore still narrow its legacy type. The implementation is the canonical
+// shared classifier; callers that render unknown states use the canonical
+// `getEformsignStatusCategory` export directly below.
+type LegacyDocumentStatusCategory = Exclude<EformsignStatusCategory, "unknown">;
+export function getStatusCategory(statusCode: EformsignStatusInput): LegacyDocumentStatusCategory {
+  return getEformsignStatusCategory(statusCode) as LegacyDocumentStatusCategory;
+}
+
+export function mapStatusToLabel(statusCode: EformsignStatusInput): DocumentStatusLabel {
+  return getEformsignStatusLabel(statusCode) as DocumentStatusLabel;
+}
 
 type EformsignWorkflowStatus = {
   status_type?: string | null;
@@ -67,8 +94,10 @@ export function mapDocStatusLabel(
   if (isContractDocDisplayStatus(displayStatus)) {
     return CONTRACT_DOC_DISPLAY_STATUS_LABELS[displayStatus];
   }
+  const category = getEformsignStatusCategory(currentStatus?.status_type);
+  if (category === "unknown") return CONTRACT_DOC_DISPLAY_STATUS_LABELS.unknown;
   return resolveContractDocStatusLabel({
-    category: getStatusCategory(currentStatus?.status_type),
+    category,
     currentStatus,
     contractEndDate: contractEndDate ?? null,
   });
@@ -99,81 +128,6 @@ export function contractStatusBadgeType(
 
 // Filter types for API calls
 export type DocumentFilterType = "in-progress" | "completed" | "expired" | null;
-
-const STATUS_NAME_TO_CODE: Record<string, string> = {
-  doc_tempsave: "001",
-  doc_create: "002",
-  doc_complete: "003",
-  doc_request_approval: "010",
-  doc_reject_approval: "011",
-  doc_accept_approval: "012",
-  doc_request_reception: "020",
-  doc_reject_reception: "021",
-  doc_accept_reception: "022",
-  doc_request_outsider: "030",
-  doc_reject_outsider: "031",
-  doc_accept_outsider: "032",
-  doc_request_revoke: "040",
-  doc_revoke: "042",
-  doc_update: "043",
-  doc_request_reject: "045",
-  doc_request_delete: "047",
-  doc_delete: "049",
-  doc_request_participant: "060",
-  doc_reject_participant: "061",
-  doc_accept_participant: "062",
-  doc_rerequest_participant: "063",
-  doc_open_participant: "064",
-  doc_request_reviewer: "070",
-  doc_reject_reviewer: "071",
-  doc_accept_reviewer: "072",
-  doc_expired: "080",
-  face_signature_complete: "092",
-};
-
-/**
- * Normalize status code to 3-digit format
- */
-export function normalizeStatusCode(code: string | undefined | null): string {
-  const normalized = code?.trim().toLowerCase();
-
-  if (!normalized) {
-    return "000";
-  }
-
-  return STATUS_NAME_TO_CODE[normalized] ?? normalized.padStart(3, "0");
-}
-
-/**
- * Get document status category from status code
- */
-export function getStatusCategory(statusCode: string | undefined | null): "completed" | "expired" | "in-progress" {
-  const normalized = normalizeStatusCode(statusCode);
-  
-  if (COMPLETED_CODES.includes(normalized as typeof COMPLETED_CODES[number])) {
-    return "completed";
-  }
-  if (EXPIRED_CODES.includes(normalized as typeof EXPIRED_CODES[number])) {
-    return "expired";
-  }
-  return "in-progress";
-}
-
-/**
- * Map status code to Korean label
- */
-export function mapStatusToLabel(statusCode: string | undefined | null): DocumentStatusLabel {
-  const category = getStatusCategory(statusCode);
-  
-  switch (category) {
-    case "completed":
-      return "계약 완료";
-    case "expired":
-      return "기간 만료";
-    default:
-      return "서명 대기";
-  }
-}
 
 /**
  * Badge variant type for shadcn Badge component
@@ -240,9 +194,10 @@ export function foldContractStats(
   const buckets: ContractStatsBuckets = { reviewNeeded: 0, signed: 0, sendRequired: 0, drafting: 0, expired: 0 };
   for (const doc of docs) {
     const normalized = normalizeStatusCode(doc.status_type);
-    const category = getStatusCategory(doc.status_type);
+    const category = getEformsignStatusCategory(doc.status_type);
 
     if (category === "completed") continue;
+    if (category === "unknown") continue;
     if (category === "expired") {
       if (normalized === "080") buckets.expired++;
       continue;
