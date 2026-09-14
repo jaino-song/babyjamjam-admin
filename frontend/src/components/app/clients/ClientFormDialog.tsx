@@ -98,7 +98,7 @@ export const CLIENT_FORM_STEPPER_STEPS = [
 
 const CLIENT_FORM_LAST_STEP_INDEX = CLIENT_FORM_STEPPER_STEPS.length - 1;
 
-type ClientFormField = "name" | "phone";
+type ClientFormField = "name" | "phone" | "primaryEmployeeId" | "secondaryEmployeeId";
 
 interface ClientFormErrorState {
     message: string;
@@ -156,9 +156,28 @@ const isUnstructuredLegacyClientError = (
 
 const fieldForProblemError = (problemError: ProblemError): ClientFormField | undefined => {
     if (problemError.location !== undefined && problemError.location !== "body") return undefined;
-    if (problemError.pointer === "/name") return "name";
-    if (problemError.pointer === "/phone") return "phone";
-    return undefined;
+    switch (problemError.pointer) {
+        case "/name":
+            return "name";
+        case "/phone":
+            return "phone";
+        case "/primaryEmployeeId":
+        case "/newPrimaryEmployeeId": // replacement request-body spelling; same autocomplete
+            return "primaryEmployeeId";
+        case "/secondaryEmployeeId":
+        case "/newSecondaryEmployeeId":
+            return "secondaryEmployeeId";
+        default:
+            return undefined;
+    }
+};
+
+/** Panel step that renders each error-mapped field (basic info, then employee assignment). */
+const PANEL_STEP_OF_FIELD: Record<ClientFormField, number> = {
+    name: 0,
+    phone: 0,
+    primaryEmployeeId: 1,
+    secondaryEmployeeId: 1,
 };
 
 const combineAriaDescribedBy = (...ids: Array<string | undefined>): string | undefined => {
@@ -452,6 +471,8 @@ function ClientFormContent({
     const summaryRef = useRef<HTMLDivElement>(null);
     const nameInputRef = useRef<HTMLInputElement>(null);
     const phoneInputRef = useRef<HTMLInputElement>(null);
+    const primaryEmployeeTriggerRef = useRef<HTMLButtonElement>(null);
+    const secondaryEmployeeTriggerRef = useRef<HTMLButtonElement>(null);
     const pendingFieldFocusRef = useRef<ClientFormField | null>(null);
     const [isEmployeeDialogOpen, setIsEmployeeDialogOpen] = useState(false);
     const [employeeDialogTarget, setEmployeeDialogTarget] = useState<"primary" | "secondary" | null>(null);
@@ -472,25 +493,37 @@ function ClientFormContent({
         [controlledActiveStep, onActiveStepChange]
     );
 
+    const fieldFocusTargetRef = useCallback((field: ClientFormField) => {
+        switch (field) {
+            case "name":
+                return nameInputRef;
+            case "phone":
+                return phoneInputRef;
+            case "primaryEmployeeId":
+                return primaryEmployeeTriggerRef;
+            case "secondaryEmployeeId":
+                return secondaryEmployeeTriggerRef;
+        }
+    }, []);
+
     const focusField = useCallback((field: ClientFormField) => {
-        if (surface === "panel" && activeStep !== 0) {
+        const fieldStep = PANEL_STEP_OF_FIELD[field];
+        if (surface === "panel" && activeStep !== fieldStep) {
             pendingFieldFocusRef.current = field;
-            setActiveStep(0);
+            setActiveStep(fieldStep);
             return;
         }
 
-        const inputRef = field === "name" ? nameInputRef : phoneInputRef;
-        inputRef.current?.focus();
-    }, [activeStep, setActiveStep, surface]);
+        fieldFocusTargetRef(field).current?.focus();
+    }, [activeStep, fieldFocusTargetRef, setActiveStep, surface]);
 
     useEffect(() => {
         const field = pendingFieldFocusRef.current;
-        if (field === null || (surface === "panel" && activeStep !== 0)) return;
+        if (field === null || (surface === "panel" && activeStep !== PANEL_STEP_OF_FIELD[field])) return;
 
         pendingFieldFocusRef.current = null;
-        const inputRef = field === "name" ? nameInputRef : phoneInputRef;
-        inputRef.current?.focus();
-    }, [activeStep, surface]);
+        fieldFocusTargetRef(field).current?.focus();
+    }, [activeStep, fieldFocusTargetRef, surface]);
 
     // Track if prices were manually edited
     const [pricesManuallyEdited, setPricesManuallyEdited] = useState(false);
@@ -907,8 +940,13 @@ function ClientFormContent({
         }
 
         const fieldErrors = normalized.problem?.errors ?? [];
-        if (surface === "panel" && fieldErrors.some((fieldError) => fieldForProblemError(fieldError))) {
-            setActiveStep(0);
+        const mappedFields = fieldErrors
+            .map((fieldError) => fieldForProblemError(fieldError))
+            .filter((field): field is ClientFormField => field !== undefined);
+        if (surface === "panel" && mappedFields.length > 0) {
+            // Land on the earliest step that renders a field-linked error so
+            // the user can fix fields in order (basic info before assignment).
+            setActiveStep(Math.min(...mappedFields.map((field) => PANEL_STEP_OF_FIELD[field])));
         }
         setError({
             message: normalized.message,
@@ -1128,6 +1166,8 @@ function ClientFormContent({
             .map((entry) => entry.id);
     const nameErrorIds = getFieldErrorIds("name");
     const phoneErrorIds = getFieldErrorIds("phone");
+    const primaryEmployeeErrorIds = getFieldErrorIds("primaryEmployeeId");
+    const secondaryEmployeeErrorIds = getFieldErrorIds("secondaryEmployeeId");
     const isUnknownOutcome = error?.outcome === "UNKNOWN";
 
     const handleDialogClose = () => {
@@ -1398,6 +1438,9 @@ function ClientFormContent({
                     onManualEntry={() => {
                         openEmployeeDialog("primary");
                     }}
+                    error={primaryEmployeeErrorIds.length > 0}
+                    describedBy={combineAriaDescribedBy(...primaryEmployeeErrorIds)}
+                    triggerButtonRef={primaryEmployeeTriggerRef}
                 />
                 <EmployeeAutocomplete
                     data-component={`${base}_employee-grid_secondary-employee-autocomplete`}
@@ -1410,6 +1453,9 @@ function ClientFormContent({
                     onManualEntry={() => {
                         openEmployeeDialog("secondary");
                     }}
+                    error={secondaryEmployeeErrorIds.length > 0}
+                    describedBy={combineAriaDescribedBy(...secondaryEmployeeErrorIds)}
+                    triggerButtonRef={secondaryEmployeeTriggerRef}
                 />
             </FormGrid>
         </ClientDialogSection>
@@ -1823,6 +1869,9 @@ function ClientFormContent({
                 onManualEntry={() => {
                     openEmployeeDialog("primary");
                 }}
+                error={primaryEmployeeErrorIds.length > 0}
+                describedBy={combineAriaDescribedBy(...primaryEmployeeErrorIds)}
+                triggerButtonRef={primaryEmployeeTriggerRef}
             />
             <EmployeeAutocomplete
                 data-component={`${base}_employee-step_secondary-employee-autocomplete`}
@@ -1834,6 +1883,9 @@ function ClientFormContent({
                 onManualEntry={() => {
                     openEmployeeDialog("secondary");
                 }}
+                error={secondaryEmployeeErrorIds.length > 0}
+                describedBy={combineAriaDescribedBy(...secondaryEmployeeErrorIds)}
+                triggerButtonRef={secondaryEmployeeTriggerRef}
             />
         </>
     );
@@ -2084,7 +2136,11 @@ function ClientFormContent({
                                     ? t(locale, "clients.form.name")
                                     : field === "phone"
                                         ? t(locale, "clients.form.phone")
-                                        : resolveProblemPresentation(locale).unmappedField;
+                                        : field === "primaryEmployeeId"
+                                            ? t(locale, "clients.form.primary-employee")
+                                            : field === "secondaryEmployeeId"
+                                                ? t(locale, "clients.form.secondary-employee")
+                                                : resolveProblemPresentation(locale).unmappedField;
                                 const detail = `${fieldLabel}: ${fieldError.detail}`;
 
                                 return (

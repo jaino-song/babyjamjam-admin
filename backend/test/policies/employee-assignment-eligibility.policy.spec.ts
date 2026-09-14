@@ -70,6 +70,29 @@ describe("assertEmployeeAssignmentShape", () => {
             }],
         });
     });
+
+    it("carries caller-provided pointers so replacement problems name their own body fields", () => {
+        const pointers = {
+            primary: "/newPrimaryEmployeeId",
+            secondary: "/newSecondaryEmployeeId",
+        };
+
+        const missingPrimary = catchException(
+            () => assertEmployeeAssignmentShape(null, 9, pointers),
+        ) as BadRequestException;
+        const sameEmployee = catchException(
+            () => assertEmployeeAssignmentShape(7, 7, pointers),
+        ) as BadRequestException;
+
+        expect(missingPrimary.getResponse()).toMatchObject({
+            code: "VALIDATION_FAILED",
+            errors: [{ pointer: "/newSecondaryEmployeeId", code: "INVALID_FORMAT" }],
+        });
+        expect(sameEmployee.getResponse()).toMatchObject({
+            code: "VALIDATION_FAILED",
+            errors: [{ pointer: "/newSecondaryEmployeeId", code: "INVALID_FORMAT" }],
+        });
+    });
 });
 
 describe("isEmployeeAssignmentEligible", () => {

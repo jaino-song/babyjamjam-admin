@@ -2111,7 +2111,12 @@ export class ClientService {
         if (!client) {
             throw new NotFoundException(`고객을 찾을 수 없습니다. (id: ${clientId})`);
         }
-        assertEmployeeAssignmentShape(newPrimaryEmployeeId, newSecondaryEmployeeId ?? null);
+        // The replacement DTO spells its request-body fields with the `new`
+        // prefix, so the shape problems must carry those pointers for UIs.
+        assertEmployeeAssignmentShape(newPrimaryEmployeeId, newSecondaryEmployeeId ?? null, {
+            primary: "/newPrimaryEmployeeId",
+            secondary: "/newSecondaryEmployeeId",
+        });
 
         // This preflight only validates the caller's snapshot. The actual
         // replacement period is derived again from the locked client below.
