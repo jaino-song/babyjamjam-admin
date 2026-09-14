@@ -1110,7 +1110,7 @@ test.describe("Mobile contracts list rows", () => {
     await page.goto("/contracts");
 
     await page.locator('[data-component="mobile_contracts_detail-sheet_stack_list-page_content_list-card_body_row"]', { hasText: "구문서" }).click();
-    await page.getByRole("button", { name: "서명 진행" }).click();
+    await page.getByRole("button", { name: "계약서 정보" }).click();
 
     const timeline = page.locator(
       '[data-component="mobile_contracts_detail-panel_info-card-3_activity-timeline"]',
@@ -1213,7 +1213,7 @@ test.describe("Mobile contracts list rows", () => {
     await page.goto("/contracts");
 
     await page.locator('[data-component="mobile_contracts_detail-sheet_stack_list-page_content_list-card_body_row"]', { hasText: "전송실패" }).click();
-    await page.getByRole("button", { name: "서명 진행" }).click();
+    await page.getByRole("button", { name: "계약서 정보" }).click();
 
     const timeline = page.locator(
       '[data-component="mobile_contracts_detail-panel_info-card-3_activity-timeline"]',
@@ -1245,6 +1245,7 @@ test.describe("Mobile contracts list rows", () => {
     await expect(page.locator('[data-component="mobile_contracts_detail-sheet_stack_list-page_content_list-card_body_row"]').first()).toBeVisible({ timeout: 15000 });
 
     await page.locator('[data-component="mobile_contracts_detail-sheet_stack_list-page_content_list-card_body_row"]', { hasText: "대기고객" }).click();
+    await page.getByRole("button", { name: "계약서 정보" }).click();
 
     const contractInfo = page.locator(".info-card", { hasText: "계약 정보" });
     await expect(contractInfo).toContainText("계약서 종류");
@@ -1256,7 +1257,7 @@ test.describe("Mobile contracts list rows", () => {
     await expect(page.locator(".client-detail-badges")).not.toContainText("DOC-WAITING");
 
     // The former combined "관련 정보" card no longer exists; document id
-    // renders in the 계약 정보 card.
+    // renders in the 계약 정보 card inside the 계약서 정보 tab.
     await expect(contractInfo).toContainText("문서 ID");
     await expect(contractInfo).toContainText("doc-waiting");
     await expect(contractInfo).not.toContainText("eformsign 코드");
