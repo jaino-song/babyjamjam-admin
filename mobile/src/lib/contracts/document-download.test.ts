@@ -23,7 +23,20 @@ function responseFor(
     ok,
     status,
     headers: new Headers({ "content-type": contentType }),
+    clone: () => responseFor(bytes, contentType, ok, status),
+    json: async () => null,
     arrayBuffer: async () => copy.buffer,
+  } as Response;
+}
+
+function genericUnauthorizedResponse(): Response {
+  return {
+    ok: false,
+    status: 401,
+    headers: new Headers({ "content-type": "application/json" }),
+    clone: () => genericUnauthorizedResponse(),
+    json: async () => ({ code: "UPSTREAM_ERROR" }),
+    arrayBuffer: async () => new ArrayBuffer(0),
   } as Response;
 }
 
@@ -77,6 +90,102 @@ describe("document binary validation", () => {
       "/document",
       expect.objectContaining({ credentials: "include", cache: "no-store" }),
     );
+  });
+
+  it("rethrows a native AbortError without changing its identity", async () => {
+    const abortError = new DOMException("The request was aborted.", "AbortError");
+    const fetchImpl = jest.fn().mockRejectedValue(abortError);
+
+    await expect(fetchValidatedBinary("/document", "pdf", { fetchImpl })).rejects.toBe(abortError);
+  });
+
+  it("returns a named abort error when the signal aborts during a non-abort rejection", async () => {
+    const controller = new AbortController();
+    const fetchImpl = jest.fn().mockImplementation(async () => {
+      controller.abort();
+      throw new Error("request interrupted");
+    });
+
+    await expect(
+      fetchValidatedBinary("/document", "pdf", { fetchImpl, signal: controller.signal }),
+    ).rejects.toMatchObject({ name: "AbortError", message: "request interrupted" });
+  });
+
+  it("normalizes a non-abort DOMException when the signal aborts", async () => {
+    const controller = new AbortController();
+    const networkError = new DOMException("request interrupted", "NetworkError");
+    const fetchImpl = jest.fn().mockImplementation(async () => {
+      controller.abort();
+      throw networkError;
+    });
+    const request = fetchValidatedBinary("/document", "pdf", {
+      fetchImpl,
+      signal: controller.signal,
+    });
+
+    await expect(request).rejects.toMatchObject({ name: "AbortError", message: "request interrupted" });
+    await expect(request).rejects.not.toBe(networkError);
+  });
+
+  it("wraps an ordinary fetch failure as a BinaryDownloadError", async () => {
+    const fetchImpl = jest.fn().mockRejectedValue(new Error("network failure"));
+
+    await expect(fetchValidatedBinary("/document", "pdf", { fetchImpl })).rejects.toBeInstanceOf(
+      BinaryDownloadError,
+    );
+  });
+
+  it("refreshes an expired application session before reading a protected binary", async () => {
+    const originalFetch = global.fetch;
+    let binaryAttempts = 0;
+    const fetchMock = jest.fn(async (input: RequestInfo | URL) => {
+      if (input === "/api/auth/refresh") {
+        return responseFor(new Uint8Array(), "application/json", true, 204);
+      }
+
+      binaryAttempts += 1;
+      return binaryAttempts === 1
+        ? genericUnauthorizedResponse()
+        : responseFor(PDF_BYTES, "application/pdf");
+    });
+    global.fetch = fetchMock;
+
+    try {
+      await expect(
+        fetchValidatedBinary("/api/eformsign/documents/doc-1/download", "pdf"),
+      ).resolves.toMatchObject({ kind: "pdf", contentType: "application/pdf" });
+
+      expect(binaryAttempts).toBe(2);
+      expect(fetchMock.mock.calls.filter(([input]) => input === "/api/auth/refresh")).toHaveLength(1);
+    } finally {
+      global.fetch = originalFetch;
+    }
+  });
+
+  it("does not replay a protected binary when it is aborted during session refresh", async () => {
+    const originalFetch = global.fetch;
+    const controller = new AbortController();
+    let binaryAttempts = 0;
+    global.fetch = jest.fn(async (input: RequestInfo | URL) => {
+      if (input === "/api/auth/refresh") {
+        controller.abort(new DOMException("cancelled", "AbortError"));
+        return responseFor(new Uint8Array(), "application/json", true, 204);
+      }
+
+      binaryAttempts += 1;
+      return genericUnauthorizedResponse();
+    });
+
+    try {
+      await expect(
+        fetchValidatedBinary("/api/eformsign/documents/doc-1/download", "pdf", {
+          signal: controller.signal,
+        }),
+      ).rejects.toMatchObject({ name: "AbortError" });
+      expect(binaryAttempts).toBe(1);
+    } finally {
+      global.fetch = originalFetch;
+    }
   });
 
   it("creates a download object URL only after validation and revokes it after the click", async () => {

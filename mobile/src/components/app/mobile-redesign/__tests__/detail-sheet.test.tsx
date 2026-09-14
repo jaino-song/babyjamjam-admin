@@ -1,6 +1,8 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 
 import {
+  InfoCard,
+  InfoRow,
   MobileDetailActions,
   MobileDetailSheet,
   MobileDetailStack,
@@ -491,4 +493,58 @@ describe("MobileDetailActions", () => {
       ),
     ).toBeDisabled();
   });
+});
+
+describe("InfoRow", () => {
+  it("inherits loading from its InfoCard and keeps only the value area skeletonized", () => {
+    const { container } = render(
+      <InfoCard data-component="mobile_contracts_detail-panel_info-card" title="이용자 정보" isLoading>
+        <InfoRow label="연락처" value={null} />
+      </InfoCard>,
+    );
+
+    const row = container.querySelector(
+      '[data-component="mobile_contracts_detail-panel_info-card_row"]',
+    );
+    const value = container.querySelector(
+      '[data-component="mobile_contracts_detail-panel_info-card_row_value"]',
+    );
+
+    expect(row).toBeInTheDocument();
+    expect(screen.getByText("연락처")).toBeInTheDocument();
+    expect(value).toHaveAttribute("aria-busy", "true");
+    expect(
+      value?.querySelector(
+        '[data-component="mobile_contracts_detail-panel_info-card_row_value_skeleton"]',
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("lets an InfoRow override its card loading state", () => {
+    const { container } = render(
+      <InfoCard data-component="mobile_contracts_detail-panel_info-card" title="이용자 정보" isLoading>
+        <InfoRow label="연락처" value="010-1234-5678" isLoading={false} />
+      </InfoCard>,
+    );
+
+    expect(screen.getByText("010-1234-5678")).toBeInTheDocument();
+    expect(
+      container.querySelector(
+        '[data-component="mobile_contracts_detail-panel_info-card_row_value_skeleton"]',
+      ),
+    ).not.toBeInTheDocument();
+  });
+
+  it.each([null, undefined, "", "   "])(
+    "renders a dash when the loaded value is empty (%s)",
+    (value) => {
+      render(
+        <InfoCard data-component="mobile_contracts_detail-panel_info-card" title="이용자 정보">
+          <InfoRow label="연락처" value={value} />
+        </InfoCard>,
+      );
+
+      expect(screen.getByText("-")).toBeInTheDocument();
+    },
+  );
 });

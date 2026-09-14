@@ -5,7 +5,6 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import {
   FilterPills,
   ListCard,
-  ListLoadMoreButton,
   ListLoadMoreSentinel,
   ListRowsSkeleton,
 } from "@/components/app/mobile-redesign/primitives";
@@ -204,15 +203,9 @@ export default function CallsPage() {
               )
             }
             scrollRef={scrollContainerRef}
-            loadMore={
-              isInitialLoad && hasMore ? (
-                <ListLoadMoreButton
-                  data-component={`${LIST_CARD_BASE}_load-more_button`}
-                  onLoadMore={loadMore}
-                  isLoading={isFetchingNextPage}
-                />
-              ) : null
-            }
+            loadMore={isInitialLoad && hasMore}
+            onLoadMore={loadMore}
+            isLoadingMore={isFetchingNextPage}
           >
             {isLoadingActive ? (
               <ListRowsSkeleton

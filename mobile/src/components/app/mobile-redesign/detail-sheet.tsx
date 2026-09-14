@@ -17,6 +17,7 @@ import type {
 import { Search, X } from "lucide-react";
 import Link from "next/link";
 
+import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 
 export type AvatarTone = "primary" | "green" | "burgundy" | "orange" | "purple" | "muted";
@@ -575,6 +576,7 @@ export function MobileDetailTabPanel({
 }
 
 const InfoCardDataComponentContext = createContext<string | null>(null);
+const InfoCardLoadingContext = createContext(false);
 
 export function InfoCard({
   "data-component": dataComponent,
@@ -582,24 +584,28 @@ export function InfoCard({
   children,
   delay,
   padded = false,
+  isLoading = false,
 }: {
   "data-component": string;
   title: string;
   children: ReactNode;
   delay?: number;
   padded?: boolean;
+  isLoading?: boolean;
 }) {
   return (
     <InfoCardDataComponentContext.Provider value={dataComponent}>
-      <div
-        data-component={dataComponent}
-        data-source-component={INFO_CARD_SOURCE_COMPONENT}
-        className={cn("info-card pop-up", padded && "info-card-padded")}
-        style={delay ? { animationDelay: `${delay}ms` } : undefined}
-      >
-        <div data-component={`${dataComponent}_title`} className="info-card-title">{title}</div>
-        {children}
-      </div>
+      <InfoCardLoadingContext.Provider value={isLoading}>
+        <div
+          data-component={dataComponent}
+          data-source-component={INFO_CARD_SOURCE_COMPONENT}
+          className={cn("info-card pop-up", padded && "info-card-padded")}
+          style={delay ? { animationDelay: `${delay}ms` } : undefined}
+        >
+          <div data-component={`${dataComponent}_title`} className="info-card-title">{title}</div>
+          {children}
+        </div>
+      </InfoCardLoadingContext.Provider>
     </InfoCardDataComponentContext.Provider>
   );
 }
@@ -609,15 +615,23 @@ export function InfoRow({
   label,
   value,
   tone,
+  isLoading,
 }: {
   "data-component"?: string;
   label?: string;
   value: ReactNode;
   tone?: InfoTone;
+  isLoading?: boolean;
 }) {
   const ownerDataComponent = useContext(InfoCardDataComponentContext);
+  const cardIsLoading = useContext(InfoCardLoadingContext);
+  const effectiveIsLoading = isLoading ?? cardIsLoading;
   const dataComponent =
     explicitDataComponent ?? (ownerDataComponent ? `${ownerDataComponent}_row` : undefined);
+  const displayedValue =
+    value === null || value === undefined || (typeof value === "string" && value.trim() === "")
+      ? "-"
+      : value;
   return (
     <div
       data-component={dataComponent}
@@ -625,7 +639,19 @@ export function InfoRow({
       className={cn("info-row", !label && "info-row-no-label")}
     >
       {label ? <span data-component={dataComponent ? `${dataComponent}_label` : undefined} className="info-row-label">{label}</span> : null}
-      <span data-component={dataComponent ? `${dataComponent}_value` : undefined} className={cn("info-row-value", tone && `info-row-value-${tone}`)}>{value}</span>
+      <span
+        data-component={dataComponent ? `${dataComponent}_value` : undefined}
+        className={cn("info-row-value", tone && `info-row-value-${tone}`)}
+        aria-busy={effectiveIsLoading}
+      >
+        {effectiveIsLoading ? (
+          <Skeleton
+            data-component={dataComponent ? `${dataComponent}_value_skeleton` : undefined}
+            className="h-3 w-20"
+            aria-hidden="true"
+          />
+        ) : displayedValue}
+      </span>
     </div>
   );
 }

@@ -89,6 +89,7 @@ import {
   CompactDateSelect,
   DetailEmptyState,
   DetailPanel,
+  DetailPanelFooterActions,
   DetailTabPanels,
   DetailTabs,
   HeaderActionButton,
@@ -165,7 +166,6 @@ import {
 } from "@/components/app/messages/MessageApprovalGate";
 import { TriggerRulesManager } from "@/components/app/messages/TriggerRulesManager";
 import { Button } from "@/components/ui/button";
-import { DETAIL_PANEL_FOOTER_ACTIONS_CLASS_NAME } from "@/components/app/v3/DetailPanel";
 import {
   APP_CONTENT_BODY_CARD_CLASS_NAME,
   AppContentCard,
@@ -1805,7 +1805,7 @@ export default function MessagesPage() {
     isBuiltin &&
     activeSection === "templates" &&
     selectedSystemTemplateDetail ? (
-      <div className={DETAIL_PANEL_FOOTER_ACTIONS_CLASS_NAME}>
+      <DetailPanelFooterActions data-component="desktop_messages_sections_templates_split-layout_detail-panel_footer_actions">
         <Button
           data-component="desktop_messages_sections_templates_split-layout_detail-panel_footer_reset-button"
           variant="outline"
@@ -1821,7 +1821,7 @@ export default function MessagesPage() {
         >
           {isSystemTemplateSaving ? "저장 중..." : "저장"}
         </Button>
-      </div>
+      </DetailPanelFooterActions>
     ) : undefined;
 
   return (

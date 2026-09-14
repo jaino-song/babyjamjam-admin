@@ -139,6 +139,18 @@ jest.mock("lucide-react", () => ({
   X: () => null,
 }));
 
+// 단일 비행 인증 스트림: 실제 fetch 없이 스텁 EventSource를 돌려준다.
+jest.mock("@/lib/api/authenticated-fetch", () => {
+  const actual = jest.requireActual<typeof import("@/lib/api/authenticated-fetch")>(
+    "@/lib/api/authenticated-fetch",
+  );
+  return {
+    ...actual,
+    openAuthenticatedEventSource: jest.fn((url: string | URL) =>
+      Promise.resolve(new globalThis.EventSource(url))),
+  };
+});
+
 type Deferred<T> = {
   promise: Promise<T>;
   resolve: (value: T) => void;

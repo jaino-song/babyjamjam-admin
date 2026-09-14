@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from "react";
 
-import { ListCard, ListItemRow, ListLoadMoreButton, ListLoadMoreSentinel } from "@/components/app/mobile-redesign/primitives";
+import { ListCard, ListItemRow, ListLoadMoreSentinel } from "@/components/app/mobile-redesign/primitives";
 import {
   DetailTabPills,
   InfoCard,
@@ -410,14 +410,8 @@ export default function ConsultationsPage() {
               />
             )}
             scrollRef={scrollContainerRef}
-            loadMore={
-              isInitialLoad && hasMore ? (
-                <ListLoadMoreButton
-                  data-component="mobile_consultations_detail-sheet_stack_list-page_content_list-card_load-more_button"
-                  onLoadMore={loadMore}
-                />
-              ) : null
-            }
+            loadMore={isInitialLoad && hasMore}
+            onLoadMore={loadMore}
           >
             {isLoading ? (
               <div

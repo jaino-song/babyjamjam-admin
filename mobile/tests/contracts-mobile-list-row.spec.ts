@@ -854,6 +854,44 @@ test.describe("Mobile contracts list rows", () => {
     await expect(page.locator('[data-component="mobile_contracts_detail-sheet_stack_detail-page_actions_receipt-share"]')).toHaveCount(0);
   });
 
+  test("shows the customer registration state as the second detail header badge", async ({ page }) => {
+    await page.route("**/api/access-token", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ success: true }),
+      });
+    });
+
+    await routeContractsList(page, STAGE_DOCUMENTS);
+    await routeDocumentClientSummaries(
+      page,
+      DOCUMENT_CLIENT_SUMMARIES.map((summary) =>
+        summary.documentId === "doc-opened" ? { ...summary, clientId: null } : summary,
+      ),
+    );
+    await routeNotificationLogs(page);
+
+    await page.goto("/contracts");
+    const rows = page.locator(
+      '[data-component="mobile_contracts_detail-sheet_stack_list-page_content_list-card_body_row"]',
+    );
+    await expect(rows.first()).toBeVisible({ timeout: 15000 });
+
+    const badgeGroup = page.locator(
+      '[data-component="mobile_contracts_detail-sheet_stack_detail-page_content_header_title-group_badges"]',
+    );
+
+    await rows.filter({ hasText: "대기고객" }).click();
+    await expect(badgeGroup.locator(".badge-mini").nth(1)).toHaveText("고객 등록 완료");
+    await expect(badgeGroup.locator(".badge-mini").nth(1)).toHaveClass(/(^|\s)green(\s|$)/);
+
+    await page.locator(".sheet-close").click();
+    await rows.filter({ hasText: "열람고객" }).click();
+    await expect(badgeGroup.locator(".badge-mini").nth(1)).toHaveText("고객 등록 필요");
+    await expect(badgeGroup.locator(".badge-mini").nth(1)).toHaveClass(/(^|\s)burgundy(\s|$)/);
+  });
+
   test("confirms a service record review without requesting an end date", async ({ page }) => {
     await page.route("**/api/access-token", async (route) => {
       await route.fulfill({
@@ -1072,7 +1110,7 @@ test.describe("Mobile contracts list rows", () => {
     await page.goto("/contracts");
 
     await page.locator('[data-component="mobile_contracts_detail-sheet_stack_list-page_content_list-card_body_row"]', { hasText: "구문서" }).click();
-    await page.getByRole("button", { name: "서명 진행" }).click();
+    await page.getByRole("button", { name: "계약서 정보" }).click();
 
     const timeline = page.locator(
       '[data-component="mobile_contracts_detail-panel_info-card-3_activity-timeline"]',
@@ -1175,7 +1213,7 @@ test.describe("Mobile contracts list rows", () => {
     await page.goto("/contracts");
 
     await page.locator('[data-component="mobile_contracts_detail-sheet_stack_list-page_content_list-card_body_row"]', { hasText: "전송실패" }).click();
-    await page.getByRole("button", { name: "서명 진행" }).click();
+    await page.getByRole("button", { name: "계약서 정보" }).click();
 
     const timeline = page.locator(
       '[data-component="mobile_contracts_detail-panel_info-card-3_activity-timeline"]',
@@ -1207,6 +1245,7 @@ test.describe("Mobile contracts list rows", () => {
     await expect(page.locator('[data-component="mobile_contracts_detail-sheet_stack_list-page_content_list-card_body_row"]').first()).toBeVisible({ timeout: 15000 });
 
     await page.locator('[data-component="mobile_contracts_detail-sheet_stack_list-page_content_list-card_body_row"]', { hasText: "대기고객" }).click();
+    await page.getByRole("button", { name: "계약서 정보" }).click();
 
     const contractInfo = page.locator(".info-card", { hasText: "계약 정보" });
     await expect(contractInfo).toContainText("계약서 종류");
@@ -1218,7 +1257,7 @@ test.describe("Mobile contracts list rows", () => {
     await expect(page.locator(".client-detail-badges")).not.toContainText("DOC-WAITING");
 
     // The former combined "관련 정보" card no longer exists; document id
-    // renders in the 계약 정보 card.
+    // renders in the 계약 정보 card inside the 계약서 정보 tab.
     await expect(contractInfo).toContainText("문서 ID");
     await expect(contractInfo).toContainText("doc-waiting");
     await expect(contractInfo).not.toContainText("eformsign 코드");

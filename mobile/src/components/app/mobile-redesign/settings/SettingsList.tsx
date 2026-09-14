@@ -13,6 +13,12 @@ const SOURCE_COMPONENT = "SettingsList";
 const SKELETON_ROW_COUNT = 4;
 const SETTINGS_ROWS_SKELETON_SOURCE_COMPONENT = "SettingsRowsSkeleton";
 
+// Shared by the loaded row button and SettingsRowsSkeleton: both have to keep
+// the same box (min-height, padding, border width) or the list reflows when
+// the data lands.
+const SETTINGS_ROW_GEOMETRY_CLASS =
+  "flex min-h-[calc(66px*var(--glint-ui-scale,1))] w-full items-center gap-[calc(11px*var(--glint-ui-scale,1))] rounded-[calc(15px*var(--glint-ui-scale,1))] border-[calc(1px*var(--glint-ui-scale,1))] px-[calc(10px*var(--glint-ui-scale,1))] py-[calc(9px*var(--glint-ui-scale,1))]";
+
 /**
  * Mobile settings rows are not `ListRowsSkeleton`-shaped (min-h 66px, 42px
  * icon tile, absolute switch), so the generic list skeleton made the list
@@ -31,7 +37,7 @@ function SettingsRowsSkeleton({
           <div
             data-component={`${dataComponent}_row`}
             data-source-component={SETTINGS_ROWS_SKELETON_SOURCE_COMPONENT}
-            className="flex min-h-[calc(66px*var(--glint-ui-scale,1))] w-full items-center gap-[calc(11px*var(--glint-ui-scale,1))] rounded-[calc(15px*var(--glint-ui-scale,1))] border-[calc(1px*var(--glint-ui-scale,1))] border-transparent px-[calc(10px*var(--glint-ui-scale,1))] py-[calc(9px*var(--glint-ui-scale,1))]"
+            className={cn(SETTINGS_ROW_GEOMETRY_CLASS, "border-transparent")}
           >
             <span className="skeleton-base h-[calc(42px*var(--glint-ui-scale,1))] w-[calc(42px*var(--glint-ui-scale,1))] shrink-0 rounded-[calc(13px*var(--glint-ui-scale,1))]" />
             <span className="flex min-w-0 flex-1 flex-col gap-[calc(3px*var(--glint-ui-scale,1))]">
@@ -134,7 +140,8 @@ export function SettingsList({
                     data-component={itemBase}
                     type="button"
                     className={cn(
-                      "flex min-h-[calc(66px*var(--glint-ui-scale,1))] w-full cursor-pointer items-center gap-[calc(11px*var(--glint-ui-scale,1))] rounded-[calc(15px*var(--glint-ui-scale,1))] border-[calc(1px*var(--glint-ui-scale,1))] px-[calc(10px*var(--glint-ui-scale,1))] py-[calc(9px*var(--glint-ui-scale,1))] text-left outline-none transition-colors active:bg-v3-primary-light/65 focus-visible:border-v3-primary/45 focus-visible:ring-[calc(3px*var(--glint-ui-scale,1))] focus-visible:ring-v3-primary/10",
+                      SETTINGS_ROW_GEOMETRY_CLASS,
+                      "cursor-pointer text-left outline-none transition-colors active:bg-v3-primary-light/65 focus-visible:border-v3-primary/45 focus-visible:ring-[calc(3px*var(--glint-ui-scale,1))] focus-visible:ring-v3-primary/10",
                       isSelected
                         ? "border-v3-primary/20 bg-v3-primary-light/45"
                         : "border-transparent bg-transparent hover:bg-v3-primary-light/30",

@@ -36,7 +36,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { useSystemTemplate } from "@/features/system-templates/hooks";
+import { useSystemTemplate, useSystemTemplates } from "@/features/system-templates/hooks";
 import type { CustomVariable, TemplateVariable } from "@/features/system-templates/types";
 import { useBankAccountInfos, useVoucherPriceInfos, type BankAccountInfo } from "@/hooks";
 import { useAllClients } from "@/hooks/useClients";
@@ -45,6 +45,7 @@ import type { Client } from "@/lib/client/types";
 import { api } from "@/lib/api/client";
 import { normalizeIsoDate, yymmddToIso } from "@/lib/contracts/date-input";
 import { formatKoreanPhoneNumber, normalizeKoreanPhoneDigits } from "@/lib/phone";
+import { describeReceiptLinkError } from "@/lib/receipt-link";
 import "@/components/app/mobile-redesign/redesign.css";
 import { parsePositiveIntQueryParam } from "@/lib/query-params";
 import { extractVariables, renderTemplate } from "@/lib/template-utils";
@@ -78,6 +79,15 @@ interface TemplateInputVariable {
   type?: TemplateVariable["type"];
 }
 
+interface ReceiptLinkPreparation {
+  clientId: number;
+  clientName: string;
+  recipientPhone: string;
+  documentId: string;
+  receiptUrl: string;
+  expiresAt: string;
+}
+
 interface NewMessageFormProps {
   initialBody: string;
   initialTemplateId: string;
@@ -105,6 +115,7 @@ const REMINDER_TEMPLATE_ID = "REMINDER";
 const SERVICE_INFO_TEMPLATE_ID = "SERVICE_INFO";
 const SURVEY_TEMPLATE_ID = "SURVEY";
 const THANKS_TEMPLATE_ID = "THANKS";
+const SERVICE_END_NOTICE_TEMPLATE_ID = "SERVICE_END_NOTICE";
 const CUSTOM_TEMPLATE_ID = "__custom__";
 const CUSTOM_TEMPLATE_OPTION: TemplateOption = {
   id: CUSTOM_TEMPLATE_ID,
@@ -210,6 +221,8 @@ function createIdempotencyKey(): string {
 
   return `sms-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
 }
+
+const BRANCH_TEMPLATE_READINESS_MESSAGE = "지점 기본 템플릿을 불러오는 중이라 발송할 수 없습니다.";
 
 const NAME_FALLBACK_VARIABLES: TemplateInputVariable[] = [
   { key: "name", label: "산모명", required: true, type: "string" },
@@ -588,6 +601,34 @@ function renderTemplateWithValues(
   return rendered;
 }
 
+function isBranchTemplateReady(
+  query:
+    | {
+        branchId?: string | null;
+        data?: { content?: string } | null;
+        isError?: boolean;
+        isFetching?: boolean;
+        isLoading?: boolean;
+        isSuccess?: boolean;
+      }
+    | undefined,
+) {
+  if (!query) return true;
+
+  const hasCurrentBranch = query.branchId === undefined || Boolean(query.branchId);
+  const hasResolvedTemplate = Boolean(query.data?.content);
+  const statusIsSuccessful = query.isSuccess === undefined || query.isSuccess;
+
+  return Boolean(
+    hasCurrentBranch
+    && hasResolvedTemplate
+    && statusIsSuccessful
+    && !query.isError
+    && !query.isFetching
+    && !query.isLoading,
+  );
+}
+
 export default function NewMessagePage() {
   const searchParams = useSearchParams();
   const initialBody = searchParams.get("body") ?? "";
@@ -714,6 +755,9 @@ function NewMessageForm({ initialBody, initialTemplateId, initialClientId, initi
   }, [initialClient]);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const [selectedTemplateId, setSelectedTemplateId] = useState<string>(initialTemplateId);
+  const [receiptLinkPreparation, setReceiptLinkPreparation] = useState<ReceiptLinkPreparation | null>(null);
+  const [isReceiptLinkPreparing, setIsReceiptLinkPreparing] = useState(false);
+  const [receiptLinkPreparationError, setReceiptLinkPreparationError] = useState<string | null>(null);
   const ignoreNextPriceInfoSelectChangeRef = useRef(false);
 
   const {
@@ -721,13 +765,24 @@ function NewMessageForm({ initialBody, initialTemplateId, initialClientId, initi
     needsSenderApproval,
   } = useMessagesPermissionGuard();
 
-  const { data: greetingSystemTemplate } = useSystemTemplate(GREETING_TEMPLATE_ID);
-  const { data: infoSystemTemplate } = useSystemTemplate(INFO_TEMPLATE_ID);
-  const { data: priceInfoSystemTemplate } = useSystemTemplate(PRICE_INFO_TEMPLATE_ID);
-  const { data: reminderSystemTemplate } = useSystemTemplate(REMINDER_TEMPLATE_ID);
-  const { data: serviceInfoSystemTemplate } = useSystemTemplate(SERVICE_INFO_TEMPLATE_ID);
-  const { data: surveySystemTemplate } = useSystemTemplate(SURVEY_TEMPLATE_ID);
-  const { data: thanksSystemTemplate } = useSystemTemplate(THANKS_TEMPLATE_ID);
+  const greetingTemplateQuery = useSystemTemplate(GREETING_TEMPLATE_ID);
+  const infoTemplateQuery = useSystemTemplate(INFO_TEMPLATE_ID);
+  const priceInfoTemplateQuery = useSystemTemplate(PRICE_INFO_TEMPLATE_ID);
+  const reminderTemplateQuery = useSystemTemplate(REMINDER_TEMPLATE_ID);
+  const serviceInfoTemplateQuery = useSystemTemplate(SERVICE_INFO_TEMPLATE_ID);
+  const surveyTemplateQuery = useSystemTemplate(SURVEY_TEMPLATE_ID);
+  const thanksTemplateQuery = useSystemTemplate(THANKS_TEMPLATE_ID);
+  const systemTemplatesQuery = useSystemTemplates();
+  const greetingSystemTemplate = greetingTemplateQuery.data;
+  const infoSystemTemplate = infoTemplateQuery.data;
+  const priceInfoSystemTemplate = priceInfoTemplateQuery.data;
+  const reminderSystemTemplate = reminderTemplateQuery.data;
+  const serviceInfoSystemTemplate = serviceInfoTemplateQuery.data;
+  const surveySystemTemplate = surveyTemplateQuery.data;
+  const thanksSystemTemplate = thanksTemplateQuery.data;
+  const serviceEndNoticeSystemTemplate = systemTemplatesQuery.data?.find(
+    (template) => template.templateKey === SERVICE_END_NOTICE_TEMPLATE_ID,
+  );
   const {
     data: userTemplates,
     isError: isUserTemplatesError,
@@ -739,6 +794,7 @@ function NewMessageForm({ initialBody, initialTemplateId, initialClientId, initi
     ? normalizeApiError(userTemplatesError, { operation: "read", locale: "ko-KR" })
     : null;
   const showUserTemplatesError = isUserTemplatesError && Boolean(userTemplatesNormalizedError) && !userTemplatesNormalizedError?.suppress;
+
   const { data: bankAccountInfos = [], isLoading: isBankAccountInfosLoading } = useBankAccountInfos();
   const { data: voucherPriceInfos = [], isLoading: isVoucherPriceInfosLoading } = useVoucherPriceInfos(
     selectedTemplateId === PRICE_INFO_TEMPLATE_ID ? templateVariableValues.type ?? "" : "",
@@ -877,7 +933,29 @@ function NewMessageForm({ initialBody, initialTemplateId, initialClientId, initi
         : surveyMsgTemplate({ name: templateVariableValues.name?.trim() ?? "" }),
       variables: surveyVariables,
     };
+    const serviceEndNoticeOption: TemplateOption | null = serviceEndNoticeSystemTemplate
+      ? {
+          id: SERVICE_END_NOTICE_TEMPLATE_ID,
+          name: serviceEndNoticeSystemTemplate.name,
+          body: renderTemplateWithValues(
+            serviceEndNoticeSystemTemplate.content,
+            normalizeTemplateVariables(
+              serviceEndNoticeSystemTemplate.requiredVariables,
+              serviceEndNoticeSystemTemplate.customVariables,
+              serviceEndNoticeSystemTemplate.content,
+            ),
+            templateVariableValues,
+            SERVICE_END_NOTICE_TEMPLATE_ID,
+          ),
+          variables: normalizeTemplateVariables(
+            serviceEndNoticeSystemTemplate.requiredVariables,
+            serviceEndNoticeSystemTemplate.customVariables,
+            serviceEndNoticeSystemTemplate.content,
+          ),
+        }
+      : null;
     const userOptions = (userTemplates ?? []).map((template) => ({
+
       id: template.id,
       name: template.name,
       body: renderTemplateWithValues(
@@ -897,6 +975,7 @@ function NewMessageForm({ initialBody, initialTemplateId, initialClientId, initi
       reminderOption,
       thanksOption,
       surveyOption,
+      ...(serviceEndNoticeOption ? [serviceEndNoticeOption] : []),
       ...userOptions,
       CUSTOM_TEMPLATE_OPTION,
     ];
@@ -906,6 +985,7 @@ function NewMessageForm({ initialBody, initialTemplateId, initialClientId, initi
     priceInfoSystemTemplate,
     reminderSystemTemplate,
     serviceInfoSystemTemplate,
+    serviceEndNoticeSystemTemplate,
     surveySystemTemplate,
     templateVariableValues,
     thanksSystemTemplate,
@@ -915,9 +995,32 @@ function NewMessageForm({ initialBody, initialTemplateId, initialClientId, initi
     () => templateOptions.find((template) => template.id === selectedTemplateId) ?? CUSTOM_TEMPLATE_OPTION,
     [selectedTemplateId, templateOptions],
   );
+  const selectedSystemTemplateQuery = {
+    [GREETING_TEMPLATE_ID]: greetingTemplateQuery,
+    [INFO_TEMPLATE_ID]: infoTemplateQuery,
+    [PRICE_INFO_TEMPLATE_ID]: priceInfoTemplateQuery,
+    [REMINDER_TEMPLATE_ID]: reminderTemplateQuery,
+    [SERVICE_INFO_TEMPLATE_ID]: serviceInfoTemplateQuery,
+    [SURVEY_TEMPLATE_ID]: surveyTemplateQuery,
+    [THANKS_TEMPLATE_ID]: thanksTemplateQuery,
+    [SERVICE_END_NOTICE_TEMPLATE_ID]: {
+      ...systemTemplatesQuery,
+      data: serviceEndNoticeSystemTemplate,
+    },
+  }[selectedTemplateId];
+  const templateReadinessError = selectedSystemTemplateQuery && !isBranchTemplateReady(selectedSystemTemplateQuery)
+    ? BRANCH_TEMPLATE_READINESS_MESSAGE
+    : null;
   const selectedTemplateVariables = selectedTemplate.variables;
   const recipientNameVariable = selectedTemplateVariables.find((variable) => variable.key === "name");
+  const isServiceEndNoticeSelected = selectedTemplateId === SERVICE_END_NOTICE_TEMPLATE_ID;
   const renderedTemplateVariables = useMemo(() => {
+    if (selectedTemplate.id === SERVICE_END_NOTICE_TEMPLATE_ID) {
+      return selectedTemplateVariables.filter(
+        (variable) => !["name", "clientName", "phone", "receiptUrl"].includes(variable.key),
+      );
+    }
+
     if (selectedTemplate.id !== PRICE_INFO_TEMPLATE_ID) {
       return selectedTemplateVariables.filter((variable) => variable.key !== "name");
     }
@@ -950,6 +1053,90 @@ function NewMessageForm({ initialBody, initialTemplateId, initialClientId, initi
     return recipients.map((recipient) => recipient.phone).join(",");
   }, [recipients]);
   const recipientCount = recipients.length;
+  const serviceEndRecipient = isServiceEndNoticeSelected && recipients.length === 1
+    ? recipients[0] ?? null
+    : null;
+  const serviceEndClientId = serviceEndRecipient?.clientId ?? null;
+  const serviceEndRecipientPhone = normalizeKoreanPhoneDigits(serviceEndRecipient?.phone);
+  const serviceEndSelectionKey = serviceEndClientId !== null && serviceEndRecipientPhone
+    ? `${serviceEndClientId}:${serviceEndRecipientPhone}`
+    : null;
+
+  useEffect(() => {
+    if (
+      !isServiceEndNoticeSelected
+      || templateReadinessError
+      || serviceEndSelectionKey === null
+      || serviceEndClientId === null
+    ) {
+      return;
+    }
+
+    let cancelled = false;
+    const selectedClientId = serviceEndClientId;
+    const selectedRecipientPhone = serviceEndRecipientPhone;
+    queueMicrotask(() => {
+      if (cancelled) return;
+      setReceiptLinkPreparation(null);
+      setReceiptLinkPreparationError(null);
+      setIsReceiptLinkPreparing(true);
+    });
+
+    void api.post<ReceiptLinkPreparation>("/receipt-links/prepare", { clientId: selectedClientId })
+      .then(({ data }) => {
+        const recipientPhone = normalizeKoreanPhoneDigits(data.recipientPhone);
+        if (
+          cancelled
+          || data.clientId !== selectedClientId
+          || !data.clientName.trim()
+          || !recipientPhone
+          || recipientPhone !== selectedRecipientPhone
+          || !data.documentId
+          || !data.receiptUrl
+        ) {
+          if (!cancelled) {
+            throw new Error("영수증 링크 준비 정보가 선택한 산모와 일치하지 않습니다.");
+          }
+          return;
+        }
+
+        setReceiptLinkPreparation({ ...data, recipientPhone });
+        setRecipients((current) => current.map((recipient) => ({
+          ...recipient,
+          name: data.clientName,
+          phone: formatRecipientPhone(recipientPhone),
+          initial: getRecipientInitial(data.clientName),
+        })));
+        setTemplateVariableValues((current) => ({
+          ...current,
+          name: data.clientName,
+          clientName: data.clientName,
+          phone: recipientPhone,
+          receiptUrl: data.receiptUrl,
+        }));
+        setBodyOverride(null);
+      })
+      .catch((error) => {
+        if (!cancelled) {
+          setReceiptLinkPreparationError(describeReceiptLinkError(error));
+        }
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setIsReceiptLinkPreparing(false);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    isServiceEndNoticeSelected,
+    serviceEndClientId,
+    serviceEndRecipientPhone,
+    serviceEndSelectionKey,
+    templateReadinessError,
+  ]);
 
   const sendPayload = useMemo<Record<string, unknown>>(() => {
     const message = body.trim();
@@ -990,12 +1177,28 @@ function NewMessageForm({ initialBody, initialTemplateId, initialClientId, initi
   }, [isPriceInfoTemplateSelected, templateVariableValues]);
 
   const validationError = useMemo(() => {
+    if (templateReadinessError) return templateReadinessError;
     if (!receiverPayload) return RECIPIENT_REQUIRED_MESSAGE;
     if (!PHONE_REGEX.test(receiverPayload)) return "수신자 연락처 형식이 올바르지 않아요. (숫자, '-', ',' 만 허용)";
     if (splitRecipientPhones(receiverPayload).some((phone) => !SINGLE_PHONE_REGEX.test(phone))) {
       return "수신자 연락처 형식이 올바르지 않아요. (숫자, '-', ',' 만 허용)";
     }
     if (recipientCount > MAX_RECIPIENTS) return `수신자는 한 번에 최대 ${MAX_RECIPIENTS}명까지 선택할 수 있습니다.`;
+    if (isServiceEndNoticeSelected && serviceEndSelectionKey === null) {
+      return "서비스 종료 안내를 보낼 산모님 한 명을 선택해 주세요.";
+    }
+    if (isServiceEndNoticeSelected && receiptLinkPreparationError) return receiptLinkPreparationError;
+    if (
+      isServiceEndNoticeSelected
+      && (
+        isReceiptLinkPreparing
+        || !receiptLinkPreparation
+        || receiptLinkPreparation.clientId !== serviceEndClientId
+        || receiptLinkPreparation.recipientPhone !== serviceEndRecipientPhone
+      )
+    ) {
+      return "영수증 링크를 준비하고 있어요. 잠시 후 다시 시도해 주세요.";
+    }
     const missingVariable = selectedTemplateVariables.find(
       (variable) => variable.required && !templateVariableValues[variable.key]?.trim(),
     );
@@ -1003,16 +1206,50 @@ function NewMessageForm({ initialBody, initialTemplateId, initialClientId, initi
     if (!body.trim()) return "메시지 본문을 입력해 주세요.";
     if (body.length > MAX_BODY) return `본문은 최대 ${MAX_BODY}자까지 입력할 수 있습니다.`;
     return null;
-  }, [receiverPayload, recipientCount, selectedTemplateVariables, templateVariableValues, body]);
+  }, [
+    body,
+    isReceiptLinkPreparing,
+    isServiceEndNoticeSelected,
+    receiptLinkPreparation,
+    receiptLinkPreparationError,
+    receiverPayload,
+    recipientCount,
+    selectedTemplateVariables,
+    serviceEndClientId,
+    serviceEndRecipientPhone,
+    serviceEndSelectionKey,
+    templateReadinessError,
+    templateVariableValues,
+  ]);
 
   const sendMutation = useMutation<SendResponse, unknown, void>({
     mutationFn: async () => {
+      if (templateReadinessError) {
+        throw new Error(templateReadinessError);
+      }
+
+      if (isServiceEndNoticeSelected) {
+        if (
+          !receiptLinkPreparation
+          || receiptLinkPreparation.clientId !== serviceEndClientId
+          || receiptLinkPreparation.recipientPhone !== serviceEndRecipientPhone
+        ) {
+          throw new Error("영수증 링크를 준비하고 있어요. 잠시 후 다시 시도해 주세요.");
+        }
+        return api.post("/receipt-links/send", {
+          documentId: receiptLinkPreparation.documentId,
+          clientId: receiptLinkPreparation.clientId,
+          recipientPhone: receiptLinkPreparation.recipientPhone,
+        }).then((response) => response.data as SendResponse);
+      }
+
       const submission = submissionRef.current;
       if (!submission) {
         throw new Error(INVALID_SMS_RESPONSE_MESSAGE);
       }
 
       const res = await api.post<SendResponse>("/message-deliveries/sms", submission.payload);
+
       const data = res.data;
       if (!isAcceptedSmsSendResponse(data, submission.payload.receiver)) {
         throw new Error(INVALID_SMS_RESPONSE_MESSAGE);
@@ -1024,28 +1261,40 @@ function NewMessageForm({ initialBody, initialTemplateId, initialClientId, initi
       setSendError(null);
       setSendRetryFingerprint(null);
       setSendOutcomeLocked(false);
-      setSuccessMessage("메시지 발송 요청이 접수되었습니다.");
+      setSuccessMessage(
+        isServiceEndNoticeSelected
+          ? "서비스 종료 안내 발송 요청이 접수되었습니다."
+          : "메시지 발송 요청이 접수되었습니다.",
+      );
+
       setReceiver("");
       setRecipientNameInputValue("");
       setRecipients([]);
       setTemplateVariableValues({});
       setBodyOverride(null);
       submissionRef.current = null;
+      setReceiptLinkPreparation(null);
+
     },
     onError: (err) => {
       const normalized = normalizeApiError(err, { operation: "mutation", locale: "ko-KR" });
       setSuccessMessage(null);
       setErrorMessage(null);
-      setSendError(normalized);
+      setSendError(
+        isServiceEndNoticeSelected
+          ? { ...normalized, message: describeReceiptLinkError(err) }
+          : normalized,
+      );
 
       const isAmbiguous = normalized.outcome === "UNKNOWN"
         || normalized.outcome === "PARTIALLY_APPLIED"
         || normalized.recovery?.action === "CHECK_STATUS";
       setSendOutcomeLocked(isAmbiguous);
-      setSendRetryFingerprint(submissionRef.current?.fingerprint ?? null);
+      setSendRetryFingerprint(isServiceEndNoticeSelected ? null : submissionRef.current?.fingerprint ?? null);
     },
     onSettled: () => {
       inFlightRef.current = false;
+
     },
   });
 
@@ -1083,21 +1332,32 @@ function NewMessageForm({ initialBody, initialTemplateId, initialClientId, initi
       return;
     }
 
-    if (recipients.length >= MAX_RECIPIENTS) {
+    if (!isServiceEndNoticeSelected && recipients.length >= MAX_RECIPIENTS) {
       setErrorMessage(getUserErrorMessage(`수신자는 한 번에 최대 ${MAX_RECIPIENTS}명까지 선택할 수 있습니다.`));
+
       return;
     }
 
-    const wasAdded = addRecipientChips([
-      {
-        id: `client-${client.id}`,
-        clientId: client.id,
-        name: client.name,
-        phone: formatRecipientPhone(normalizedPhone),
-        initial: getRecipientInitial(client.name),
-        tone: "primary",
-      },
-    ]);
+    const selectedRecipient: RecipientChip = {
+      id: `client-${client.id}`,
+      clientId: client.id,
+      name: client.name,
+      phone: formatRecipientPhone(normalizedPhone),
+      initial: getRecipientInitial(client.name),
+      tone: "primary",
+    };
+    let wasAdded: boolean;
+    if (isServiceEndNoticeSelected) {
+      setReceiptLinkPreparation(null);
+      setReceiptLinkPreparationError(null);
+      setIsReceiptLinkPreparing(true);
+      setRecipients([selectedRecipient]);
+      setReceiver("");
+      setErrorMessage(null);
+      wasAdded = true;
+    } else {
+      wasAdded = addRecipientChips([selectedRecipient]);
+    }
     if (!wasAdded) {
       return;
     }
@@ -1168,6 +1428,17 @@ function NewMessageForm({ initialBody, initialTemplateId, initialClientId, initi
   const handleTemplateSelect = (option: TemplateOption) => {
     setSelectedTemplateId(option.id);
     setBodyOverride(null);
+    setReceiptLinkPreparation(null);
+    setReceiptLinkPreparationError(null);
+  };
+
+  const handleRecipientRemove = (recipientId: string) => {
+    if (isServiceEndNoticeSelected) {
+      setReceiptLinkPreparation(null);
+      setReceiptLinkPreparationError(null);
+      setIsReceiptLinkPreparing(false);
+    }
+    setRecipients((current) => current.filter((item) => item.id !== recipientId));
   };
 
   const handleTemplateVariableChange = (key: string, value: string) => {
@@ -1264,6 +1535,7 @@ function NewMessageForm({ initialBody, initialTemplateId, initialClientId, initi
     }
 
     if (inFlightRef.current || sendMutation.isPending || sendOutcomeLocked) {
+
       return;
     }
 
@@ -1272,7 +1544,16 @@ function NewMessageForm({ initialBody, initialTemplateId, initialClientId, initi
       return;
     }
 
-    if (sendRetryFingerprint === sendPayloadFingerprint) {
+    if (!isServiceEndNoticeSelected && sendRetryFingerprint === sendPayloadFingerprint) {
+      return;
+    }
+
+    if (isServiceEndNoticeSelected) {
+      submissionRef.current = null;
+      setErrorMessage(null);
+      setSuccessMessage(null);
+      inFlightRef.current = true;
+      sendMutation.mutate();
       return;
     }
 
@@ -1300,7 +1581,7 @@ function NewMessageForm({ initialBody, initialTemplateId, initialClientId, initi
     isSenderApprovalLoading ||
     needsSenderApproval ||
     sendOutcomeLocked ||
-    sendRetryFingerprint === sendPayloadFingerprint;
+    (!isServiceEndNoticeSelected && sendRetryFingerprint === sendPayloadFingerprint);
 
   return (
     <section
@@ -1357,6 +1638,7 @@ function NewMessageForm({ initialBody, initialTemplateId, initialClientId, initi
               actionType="submit"
               actionDisabled={isSubmitDisabled}
               filters={[]}
+              loadMore={false}
             >
             <div data-component="mobile_messages_new_page_screen_form_scroll_list-card_body_form-card" className={styles.recipientCard}>
               <div
@@ -1404,29 +1686,21 @@ function NewMessageForm({ initialBody, initialTemplateId, initialClientId, initi
                         산모님 성함
                         {recipientNameVariable.required ? <span className={styles.required}>*</span> : null}
                       </label>
-                      {isPriceInfoTemplateSelected ? (
-                        <ClientAutocomplete
-                          data-component="mobile_messages_new_page_screen_form_scroll_list-card_body_form-card_content_recipient_name-row_autocomplete"
-                          inputId="recipient-name"
-                          value={null}
-                          onChange={handleClientRecipientSelect}
-                          inputValue={recipientNameInputValue}
-                          onInputValueChange={(value) => {
-                            setRecipientNameInputValue(value);
+                      <ClientAutocomplete
+                        data-component="mobile_messages_new_page_screen_form_scroll_list-card_body_form-card_content_recipient_name-row_autocomplete"
+                        inputId="recipient-name"
+                        value={null}
+                        onChange={handleClientRecipientSelect}
+                        inputValue={recipientNameInputValue}
+                        onInputValueChange={(value) => {
+                          setRecipientNameInputValue(value);
+                          if (!isServiceEndNoticeSelected) {
                             handleTemplateVariableChange("name", value);
-                          }}
-                          placeholder="산모님 성함"
-                          label=""
-                        />
-                      ) : (
-                        <Input
-                          id="recipient-name"
-                          data-component="mobile_messages_new_page_screen_form_scroll_list-card_body_form-card_content_recipient_name-row_input"
-                          value={templateVariableValues.name ?? ""}
-                          placeholder="산모님 성함"
-                          onChange={(event) => handleTemplateVariableChange("name", event.target.value)}
-                        />
-                      )}
+                          }
+                        }}
+                        placeholder="산모님 성함"
+                        label=""
+                      />
                     </div>
                   ) : null}
 
@@ -1438,7 +1712,17 @@ function NewMessageForm({ initialBody, initialTemplateId, initialClientId, initi
                     <label htmlFor="receiver" className={styles.formLabel}>
                       휴대 전화번호 <span className={styles.required}>*</span>
                     </label>
-                    {isPriceInfoTemplateSelected ? (
+                    {isServiceEndNoticeSelected ? (
+                      <Input
+                        id="receiver"
+                        type="tel"
+                        inputMode="numeric"
+                        value={receiverPayload}
+                        readOnly
+                        placeholder="산모님을 선택해 주세요"
+                        data-component="mobile_messages_new_page_screen_form_scroll_list-card_body_form-card_content_recipient_row_input"
+                      />
+                    ) : recipientNameVariable ? (
                       <Input
                         id="receiver"
                         type="tel"
@@ -1476,7 +1760,7 @@ function NewMessageForm({ initialBody, initialTemplateId, initialClientId, initi
                             type="button"
                             aria-label={`${recipient.name} 수신자 제거`}
                             className={styles.recipientChipX}
-                            onClick={() => setRecipients((current) => current.filter((item) => item.id !== recipient.id))}
+                            onClick={() => handleRecipientRemove(recipient.id)}
                           >
                             <X aria-hidden="true" size={10} strokeWidth={3} />
                           </button>

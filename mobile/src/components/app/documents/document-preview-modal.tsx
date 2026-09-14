@@ -26,6 +26,8 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Document, getDownloadUrl } from "@/hooks/use-documents";
 import { DocumentCategory } from "@/hooks/use-document-categories";
+import { useAuthenticatedFileUrl } from "@/hooks/useAuthenticatedFileUrl";
+import { downloadAuthenticatedFile } from "@/lib/files/authenticated-file";
 import { formatFileSize, formatDate } from "./document-list";
 
 interface DocumentPreviewModalProps {
@@ -57,6 +59,10 @@ export default function DocumentPreviewModal({
   onDelete,
 }: DocumentPreviewModalProps) {
   const [zoom, setZoom] = useState(1);
+  const sourceUrl = doc ? getDownloadUrl(doc.id) : "";
+  const isPdf = doc?.mimeType === "application/pdf";
+  const isImage = doc?.mimeType.startsWith("image/") ?? false;
+  const preview = useAuthenticatedFileUrl(sourceUrl, Boolean(open && doc));
 
   if (!doc) return null;
 
@@ -79,10 +85,11 @@ export default function DocumentPreviewModal({
   };
 
   const handlePrint = () => {
+    if (!preview.url) return;
     // Create a hidden iframe for printing
     const iframe = window.document.createElement("iframe");
     iframe.style.display = "none";
-    iframe.src = getDownloadUrl(doc.id);
+    iframe.src = preview.url;
 
     // When loaded, print
     iframe.onload = () => {
@@ -100,26 +107,21 @@ export default function DocumentPreviewModal({
     window.document.body.appendChild(iframe);
   };
 
-  const handleDownload = () => {
+  const handleDownload = async () => {
     let filename = doc.name;
     // Add extension if missing
     if (!filename.includes(".")) {
       filename += getExtensionFromMimetype(doc.mimeType);
     }
-    const link = window.document.createElement("a");
-    link.href = getDownloadUrl(doc.id, true);
-    link.download = filename;
-    link.target = "_blank";
-    window.document.body.appendChild(link);
-    link.click();
-    window.document.body.removeChild(link);
+    try {
+      await downloadAuthenticatedFile(sourceUrl, filename);
+    } catch {
+      // Keep the modal open so the user can retry after a transient failure.
+    }
   };
 
   const handleZoomIn = () => setZoom((prev) => Math.min(prev + 0.25, 3));
   const handleZoomOut = () => setZoom((prev) => Math.max(prev - 0.25, 0.5));
-
-  const isPdf = doc.mimeType === "application/pdf";
-  const isImage = doc.mimeType.startsWith("image/");
 
   return (
     <Dialog open={open} onOpenChange={(isOpen: boolean) => !isOpen && onClose()}>
@@ -222,25 +224,25 @@ export default function DocumentPreviewModal({
           {/* Preview Section */}
           <div className="flex-1 flex flex-col bg-muted/50 overflow-hidden relative min-h-[400px]">
             {isPdf && (
-              <iframe
-                src={`${getDownloadUrl(doc.id)}#toolbar=0`}
+              preview.url ? <iframe
+                src={`${preview.url}#toolbar=0`}
                 className="w-full h-full border-none"
                 title={doc.name}
-              />
+              /> : <p className="m-auto text-muted-foreground">파일을 불러오는 중입니다.</p>
             )}
 
             {isImage && (
               <div className="w-full h-full overflow-auto flex justify-center items-center p-4">
                 {/* eslint-disable-next-line @next/next/no-img-element -- Authenticated binary downloads are served through an app API route; next/image optimization is not suitable here. */}
-                <img
-                  src={getDownloadUrl(doc.id)}
+                {preview.url ? <img
+                  src={preview.url}
                   alt={doc.name}
                   className="max-w-full max-h-full object-contain transition-transform duration-200"
                   style={{
                     transform: `scale(${zoom})`,
                     transformOrigin: "center center",
                   }}
-                />
+                /> : <p className="text-muted-foreground">파일을 불러오는 중입니다.</p>}
 
                 {/* Zoom controls for image */}
                 <div className="absolute bottom-4 left-1/2 -translate-x-1/2 bg-black/60 rounded-full flex items-center gap-1 p-1">

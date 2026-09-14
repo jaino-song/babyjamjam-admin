@@ -59,6 +59,27 @@ export const DETAIL_PANEL_FOOTER_PROGRESS_CLASS_NAME =
 export const DETAIL_PANEL_FOOTER_ACTIONS_CLASS_NAME =
   "ml-auto flex shrink-0 flex-wrap justify-end gap-[calc(12px*var(--glint-ui-scale,1))]";
 
+export interface DetailPanelFooterActionsProps {
+  "data-component": string;
+  children: React.ReactNode;
+}
+
+export function DetailPanelFooterActions({
+  "data-component": dataComponent,
+  children,
+}: DetailPanelFooterActionsProps) {
+  return (
+    <div
+      data-component={dataComponent}
+      data-slot="detail-panel-footer-actions"
+      data-source-component="DetailPanelFooterActions"
+      className={DETAIL_PANEL_FOOTER_ACTIONS_CLASS_NAME}
+    >
+      {children}
+    </div>
+  );
+}
+
 function DetailPanelTextSkeleton({
   name,
   className,

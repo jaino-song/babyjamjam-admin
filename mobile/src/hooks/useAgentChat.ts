@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { BjjUIMessage } from "@babyjamjam/shared";
 import { AgentCapabilityMetaSchema } from "@babyjamjam/shared/agent";
+import { authenticatedFetch } from "@/lib/api/authenticated-fetch";
 
 export type MobileAgentMessage = Pick<BjjUIMessage, "id" | "role" | "parts">;
 type MobileAgentPart = { type: string; text?: string; data?: unknown };
@@ -53,7 +54,7 @@ export function useAgentShellEnabled(): AgentShellState {
         let active = true;
         void (async () => {
             try {
-                const response = await fetch("/api/ai/agent/capabilities", { credentials: "same-origin" });
+                const response = await authenticatedFetch("/api/ai/agent/capabilities", { credentials: "same-origin" });
                 if (!response.ok) throw new Error("Capability discovery failed");
                 const capabilities: unknown = await response.json();
                 if (!isUsableCapabilityCatalog(capabilities)) throw new Error("Capability catalog unavailable");
@@ -78,7 +79,7 @@ export function useAgentChat() {
     const operationEpochRef = useRef(0);
 
     const refreshSessions = useCallback(async () => {
-        const response = await fetch("/api/ai/agent/sessions", { credentials: "same-origin" });
+        const response = await authenticatedFetch("/api/ai/agent/sessions", { credentials: "same-origin" });
         if (!response.ok) return;
         const value = await response.json() as unknown;
         setSessions(Array.isArray(value) ? value as MobileAgentSessionSummary[] : []);
@@ -99,7 +100,7 @@ export function useAgentChat() {
         const operationEpoch = ++operationEpochRef.current;
         abortRef.current = controller;
         try {
-            const response = await fetch("/api/ai/agent/chat", { method: "POST", credentials: "same-origin", headers: { "content-type": "application/json" }, body: JSON.stringify({ sessionId: sessionId.current, locale: "ko", messages: [userMessage] }), signal: controller.signal });
+            const response = await authenticatedFetch("/api/ai/agent/chat", { method: "POST", credentials: "same-origin", headers: { "content-type": "application/json" }, body: JSON.stringify({ sessionId: sessionId.current, locale: "ko", messages: [userMessage] }), signal: controller.signal });
             if (!response.ok || !response.body) throw new Error("Agent request failed");
             if (controller.signal.aborted || operationEpoch !== operationEpochRef.current) return;
             sessionId.current = response.headers.get("x-agent-session-id") ?? sessionId.current;
@@ -193,7 +194,7 @@ export function useAgentChat() {
         abortRef.current = null;
         setStatus("ready");
         try {
-            const response = await fetch(`/api/ai/agent/sessions/${encodeURIComponent(id)}`, { credentials: "same-origin" });
+            const response = await authenticatedFetch(`/api/ai/agent/sessions/${encodeURIComponent(id)}`, { credentials: "same-origin" });
             if (operationEpoch !== operationEpochRef.current) return;
             if (!response.ok) {
                 if (sessionId.current === id) sessionId.current = undefined;
@@ -235,7 +236,7 @@ export function useAgentChat() {
     const resolveActionError = useCallback(async (actionId: string, fallbackMessage: string): Promise<MobileAgentError> => {
         await refreshCurrentSession().catch(() => undefined);
         try {
-            const response = await fetch(`/api/ai/agent/actions/${encodeURIComponent(actionId)}`, { credentials: "same-origin" });
+            const response = await authenticatedFetch(`/api/ai/agent/actions/${encodeURIComponent(actionId)}`, { credentials: "same-origin" });
             if (!response.ok) return { code: "action_unconfirmed", message: "작업 기록을 확인하지 못했습니다.", effectState: "succeeded-unconfirmed" };
             const action = await response.json() as { status?: unknown; error?: unknown };
             return actionErrorFromStatus(action.status, readActionErrorCode(action.error), fallbackMessage);
@@ -247,7 +248,7 @@ export function useAgentChat() {
     const approveAction = useCallback(async (actionId: string, expectedRevision: string, acknowledgementToken?: string) => {
         setErrorState(null);
         try {
-            const response = await fetch(`/api/ai/agent/actions/${encodeURIComponent(actionId)}/approve`, {
+            const response = await authenticatedFetch(`/api/ai/agent/actions/${encodeURIComponent(actionId)}/approve`, {
                 method: "POST", credentials: "same-origin", headers: { "content-type": "application/json" }, body: JSON.stringify({ expectedRevision, ...(acknowledgementToken ? { acknowledgementToken } : {}) }),
             });
             await refreshCurrentSession();
@@ -260,7 +261,7 @@ export function useAgentChat() {
     const rejectAction = useCallback(async (actionId: string) => {
         setErrorState(null);
         try {
-            const response = await fetch(`/api/ai/agent/actions/${encodeURIComponent(actionId)}/reject`, {
+            const response = await authenticatedFetch(`/api/ai/agent/actions/${encodeURIComponent(actionId)}/reject`, {
                 method: "POST", credentials: "same-origin", headers: { "content-type": "application/json" }, body: "{}",
             });
             await refreshCurrentSession();
@@ -280,7 +281,7 @@ export function useAgentChat() {
         const operationEpoch = ++operationEpochRef.current;
         abortRef.current = controller;
         try {
-            const response = await fetch("/api/ai/agent/chat", {
+            const response = await authenticatedFetch("/api/ai/agent/chat", {
                 method: "POST", credentials: "same-origin", headers: { "content-type": "application/json" },
                 body: JSON.stringify({ sessionId: sessionId.current, locale: "ko", messages: [userMessage] }), signal: controller.signal,
             });
@@ -311,7 +312,7 @@ export function useAgentChat() {
             setStatus("ready");
         }
         try {
-            const response = await fetch(`/api/ai/agent/sessions/${encodeURIComponent(id)}`, { method: "DELETE", credentials: "same-origin" });
+            const response = await authenticatedFetch(`/api/ai/agent/sessions/${encodeURIComponent(id)}`, { method: "DELETE", credentials: "same-origin" });
             if (!response.ok) return;
             if (deletingActiveSession && operationEpoch === operationEpochRef.current && sessionId.current === id) {
                 sessionId.current = undefined;
@@ -328,7 +329,7 @@ export function useAgentChat() {
 
     const submitFeedback = useCallback(async (messageId: string, type: "positive" | "negative", comment?: string) => {
         if (!sessionId.current) return;
-        await fetch("/api/ai/agent/feedback", {
+        await authenticatedFetch("/api/ai/agent/feedback", {
             method: "POST", credentials: "same-origin", headers: { "content-type": "application/json" },
             body: JSON.stringify({ sessionId: sessionId.current, messageId, type, ...(comment ? { comment } : {}) }),
         });

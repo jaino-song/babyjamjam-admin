@@ -41,6 +41,7 @@ export class UpdateBranchSystemTemplateUseCase {
                         candidateContent,
                         candidateCustomVariables,
                         candidateTransaction,
+                        branchId,
                     ),
                 transaction,
             ),

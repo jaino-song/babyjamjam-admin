@@ -92,6 +92,10 @@ test.describe("Mobile prices skeletons", () => {
     await expect(page.locator('[data-component="mobile_prices_page_detail-sheet_stack_list-page_content_list-card_filters"] [data-loading="true"]')).toHaveCount(5);
     await expect(page.locator('[data-component="mobile_prices_page_detail-sheet_stack_list-page_content_list-card_body_rows-skeleton"]')).toBeVisible();
     await expect(page.locator('[data-component="mobile_prices_page_detail-sheet_stack_list-page_content_list-card_body_rows-skeleton_row"]')).toHaveCount(5);
+    // The skeleton reserves the group headers the loaded list renders, so the
+    // rows below keep their line when the groups appear.
+    await expect(page.locator('[data-component="mobile_prices_page_detail-sheet_stack_list-page_content_list-card_body_rows-skeleton_variant_header"]')).toBeVisible();
+    await expect(page.locator('[data-component="mobile_prices_page_detail-sheet_stack_list-page_content_list-card_body_rows-skeleton_section_header"]')).toBeVisible();
 
     const skeletonFilterGeometry = await page.locator('[data-component="mobile_prices_page_detail-sheet_stack_list-page_content_list-card_filters"]').boundingBox();
 
@@ -102,6 +106,8 @@ test.describe("Mobile prices skeletons", () => {
     await expect(page.locator('[data-component="mobile_prices_page_detail-sheet_stack_list-page_content_list-card_year-filter"] [data-loading="true"]')).toHaveCount(0);
     await expect(page.locator('[data-component="mobile_prices_page_detail-sheet_stack_list-page_content_list-card_filters"] [data-loading="true"]')).toHaveCount(0);
     await expect(page.locator('[data-component="mobile_prices_page_detail-sheet_stack_list-page_content_list-card_body_rows-skeleton_row"]')).toHaveCount(0);
+    await expect(page.locator('[data-component="mobile_prices_page_detail-sheet_stack_list-page_content_list-card_body_rows-skeleton_variant_header"]')).toHaveCount(0);
+    await expect(page.locator('[data-component="mobile_prices_page_detail-sheet_stack_list-page_content_list-card_body_rows-skeleton_section_header"]')).toHaveCount(0);
     await expect(page.locator('[data-component="mobile_prices_page_detail-sheet_stack_list-page_content_list-card_body_variant_section_row"]').first()).toBeVisible();
 
     const loadedFilterGeometry = await page.locator('[data-component="mobile_prices_page_detail-sheet_stack_list-page_content_list-card_filters"]').boundingBox();

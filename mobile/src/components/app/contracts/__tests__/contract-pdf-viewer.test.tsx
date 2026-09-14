@@ -46,9 +46,25 @@ const mockPdfState = {
 const mockPageRenderCallbacks = new Map<number, () => void>();
 const PDF_BYTES = Uint8Array.from([37, 80, 68, 70, 45, 49, 46, 55, 10, 37, 37, 69, 79, 70, 10]);
 const originalFetch = global.fetch;
+const originalWindowOpen = window.open;
 const originalCreateObjectUrl = URL.createObjectURL;
 const originalRevokeObjectUrl = URL.revokeObjectURL;
 let objectUrlCounter = 0;
+
+function createPlaceholderWindow() {
+  const placeholder = {
+    closed: false,
+    opener: window,
+    close: jest.fn(),
+    location: {
+      replace: jest.fn(),
+    },
+  };
+  placeholder.close.mockImplementation(() => {
+    placeholder.closed = true;
+  });
+  return placeholder as unknown as Window;
+}
 
 function createPdfResponse(): Response {
   return {
@@ -234,6 +250,10 @@ afterAll(() => {
   global.requestAnimationFrame = originalRequestAnimationFrame;
   global.cancelAnimationFrame = originalCancelAnimationFrame;
   global.fetch = originalFetch;
+  Object.defineProperty(window, "open", {
+    configurable: true,
+    value: originalWindowOpen,
+  });
   Object.defineProperty(URL, "createObjectURL", {
     configurable: true,
     value: originalCreateObjectUrl,
@@ -397,21 +417,199 @@ describe("ContractPdfViewer", () => {
     });
   });
 
-  it("shows an error message and safe fallback link when the PDF fails to load", async () => {
+  it("shows an error message and a protected-URL-free fallback button when the PDF fails to load", async () => {
     mockPdfState.shouldError = true;
 
     renderViewer();
 
     expect(await screen.findByText("PDF 미리보기를 불러오지 못했습니다.")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "다시 시도" })).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "새 탭에서 열기" })).toHaveAttribute(
-      "href",
-      "/contract-download.pdf"
-    );
-    expect(screen.getByRole("link", { name: "새 탭에서 열기" })).toHaveAttribute(
-      "rel",
-      "noopener noreferrer"
-    );
+    const fallbackButton = screen.getByRole("button", { name: "새 탭에서 열기" });
+    expect(fallbackButton).not.toHaveAttribute("href");
+  });
+
+  it("opens a synchronous placeholder before waiting for the validated fallback binary", async () => {
+    mockPdfState.shouldError = true;
+    renderViewer();
+
+    expect(await screen.findByText("PDF 미리보기를 불러오지 못했습니다.")).toBeInTheDocument();
+
+    const placeholder = createPlaceholderWindow();
+    const events: string[] = [];
+    const openMock = jest.spyOn(window, "open").mockImplementation(() => {
+      events.push("open");
+      return placeholder;
+    });
+    const fetchMock = global.fetch as jest.Mock;
+    let resolveFallback: ((response: Response) => void) | null = null;
+    fetchMock.mockImplementation(() => {
+      events.push("fetch");
+      return new Promise<Response>((resolve) => {
+        resolveFallback = resolve;
+      });
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "새 탭에서 열기" }));
+
+    expect(events).toEqual(["open", "fetch"]);
+    expect(openMock).toHaveBeenCalledWith("about:blank", "_blank");
+    expect(placeholder.opener).toBeNull();
+    expect(placeholder.location.replace).not.toHaveBeenCalled();
+
+    const resolvePendingFallback = resolveFallback as ((response: Response) => void) | null;
+    resolvePendingFallback?.(createPdfResponse());
+    await waitFor(() => {
+      expect(placeholder.location.replace).toHaveBeenCalledWith("blob:contract-2");
+    });
+  });
+
+  it("keeps the validated PDF tab open and revokes its object URL after handoff", async () => {
+    jest.useFakeTimers();
+    try {
+      mockPdfState.shouldError = true;
+      renderViewer();
+
+      expect(await screen.findByText("PDF 미리보기를 불러오지 못했습니다.")).toBeInTheDocument();
+
+      const placeholder = createPlaceholderWindow();
+      jest.spyOn(window, "open").mockReturnValue(placeholder);
+
+      fireEvent.click(screen.getByRole("button", { name: "새 탭에서 열기" }));
+      await act(async () => {
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+
+      expect(placeholder.location.replace).toHaveBeenCalledWith("blob:contract-2");
+      expect(placeholder.close).not.toHaveBeenCalled();
+
+      jest.advanceTimersByTime(30_000);
+      expect(URL.revokeObjectURL).toHaveBeenCalledWith("blob:contract-2");
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it("closes the placeholder when fallback binary validation fails", async () => {
+    mockPdfState.shouldError = true;
+    renderViewer();
+
+    expect(await screen.findByText("PDF 미리보기를 불러오지 못했습니다.")).toBeInTheDocument();
+
+    const placeholder = createPlaceholderWindow();
+    jest.spyOn(window, "open").mockReturnValue(placeholder);
+    const fetchMock = global.fetch as jest.Mock;
+    fetchMock.mockResolvedValue(createErrorResponse("application/json", JSON.stringify({ error: "upstream" })));
+
+    fireEvent.click(screen.getByRole("button", { name: "새 탭에서 열기" }));
+
+    await waitFor(() => {
+      expect(placeholder.close).toHaveBeenCalledTimes(1);
+    });
+    expect(placeholder.location.replace).not.toHaveBeenCalled();
+    expect(URL.createObjectURL).toHaveBeenCalledTimes(1);
+  });
+
+  it("closes a pending placeholder when the viewer is cancelled", async () => {
+    mockPdfState.shouldError = true;
+    const rendered = renderViewer();
+
+    expect(await screen.findByText("PDF 미리보기를 불러오지 못했습니다.")).toBeInTheDocument();
+
+    const placeholder = createPlaceholderWindow();
+    jest.spyOn(window, "open").mockReturnValue(placeholder);
+    const fetchMock = global.fetch as jest.Mock;
+    let resolveFallback: ((response: Response) => void) | null = null;
+    fetchMock.mockImplementation(() => new Promise<Response>((resolve) => {
+      resolveFallback = resolve;
+    }));
+
+    fireEvent.click(screen.getByRole("button", { name: "새 탭에서 열기" }));
+    rendered.unmount();
+
+    expect(placeholder.close).toHaveBeenCalledTimes(1);
+    const resolvePendingFallback = resolveFallback as ((response: Response) => void) | null;
+    resolvePendingFallback?.(createPdfResponse());
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(placeholder.location.replace).not.toHaveBeenCalled();
+  });
+
+  it("keeps a newer fallback tab alive when an aborted attempt settles later", async () => {
+    mockPdfState.shouldError = true;
+    renderViewer();
+
+    expect(await screen.findByText("PDF 미리보기를 불러오지 못했습니다.")).toBeInTheDocument();
+
+    const firstPlaceholder = createPlaceholderWindow();
+    const secondPlaceholder = createPlaceholderWindow();
+    const openMock = jest
+      .spyOn(window, "open")
+      .mockReturnValueOnce(firstPlaceholder)
+      .mockReturnValueOnce(secondPlaceholder);
+    const openCallCountBeforeAttempt = openMock.mock.calls.length;
+    const fetchMock = global.fetch as jest.Mock;
+    let fallbackRequestCount = 0;
+    let retryPreviewGetCount = 0;
+    let resolveFirstFallback: ((response: Response) => void) | null = null;
+    let resolveSecondFallback: ((response: Response) => void) | null = null;
+    fetchMock.mockImplementation((url: string, init?: RequestInit) => {
+      if (init?.method === "HEAD") {
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          headers: new Headers({ "content-type": "application/pdf" }),
+        } as Response);
+      }
+
+      if (url === "/contract-download.pdf") {
+        fallbackRequestCount += 1;
+        return new Promise<Response>((resolve) => {
+          if (fallbackRequestCount === 1) {
+            resolveFirstFallback = resolve;
+          } else {
+            resolveSecondFallback = resolve;
+          }
+        });
+      }
+
+      retryPreviewGetCount += 1;
+      return Promise.resolve(createPdfResponse());
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "새 탭에서 열기" }));
+    expect(resolveFirstFallback).not.toBeNull();
+    expect(firstPlaceholder.opener).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "다시 시도" }));
+    await waitFor(() => {
+      expect(retryPreviewGetCount).toBe(1);
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "새 탭에서 열기" }));
+    expect(resolveSecondFallback).not.toBeNull();
+    expect(openMock.mock.calls.length - openCallCountBeforeAttempt).toBe(2);
+    expect(firstPlaceholder.close).toHaveBeenCalledTimes(1);
+
+    const resolvePendingFirstFallback = resolveFirstFallback as ((response: Response) => void) | null;
+    resolvePendingFirstFallback?.(createPdfResponse());
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(secondPlaceholder.close).not.toHaveBeenCalled();
+    expect(secondPlaceholder.location.replace).not.toHaveBeenCalled();
+
+    const resolvePendingSecondFallback = resolveSecondFallback as ((response: Response) => void) | null;
+    resolvePendingSecondFallback?.(createPdfResponse());
+    await waitFor(() => {
+      expect(secondPlaceholder.location.replace).toHaveBeenCalledWith("blob:contract-3");
+    });
+    expect(secondPlaceholder.opener).toBeNull();
+    expect(secondPlaceholder.close).not.toHaveBeenCalled();
   });
 
   it("does not pass a JSON response to pdf.js and can recover on retry", async () => {

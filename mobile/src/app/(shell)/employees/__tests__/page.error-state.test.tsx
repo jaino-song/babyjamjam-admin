@@ -78,6 +78,7 @@ jest.mock("@/components/app/mobile-redesign/detail-sheet", () => ({
       <span>{badge}</span>
     </div>
   ),
+  DocRowsSkeleton: () => <div>로딩 중</div>,
   InfoCard: ({ children, title }: { children: ReactNode; title: string }) => (
     <section>
       <h2>{title}</h2>

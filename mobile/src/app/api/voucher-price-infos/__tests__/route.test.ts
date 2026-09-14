@@ -7,6 +7,7 @@ import { serverAPIClient } from "@/lib/api/server";
 import { GET as getVoucherPriceInfosByType } from "../type/route";
 import { GET as getVoucherPriceYears } from "../years/route";
 import { POST as bulkUpdateVoucherPrices } from "../bulk-update/route";
+import { GET as getContractViewVoucherPriceInfos } from "../contract-view/route";
 
 async function expectCanonicalValidationResponse(
   response: Response,
@@ -74,6 +75,16 @@ describe("voucher price info API routes", () => {
     expect(mockGet).not.toHaveBeenCalled();
   });
 
+  it("requires auth before fetching contract-view voucher price infos", async () => {
+    const response = await getContractViewVoucherPriceInfos(
+      noCookieRequest("/api/voucher-price-infos/contract-view?year=2026"),
+    );
+
+    expect(response.status).toBe(401);
+    await expect(response.json()).resolves.toEqual({ error: "Unauthorized" });
+    expect(mockGet).not.toHaveBeenCalled();
+  });
+
   it("requires auth before fetching voucher price years", async () => {
     const response = await getVoucherPriceYears(noCookieRequest("/api/voucher-price-infos/years"));
     expect(response.status).toBe(401);
@@ -99,6 +110,29 @@ describe("voucher price info API routes", () => {
 
     expect(response.status).toBe(409);
     await expect(response.json()).resolves.toEqual({ error: "voucher type conflict" });
+  });
+
+  it("proxies the contract-view read with the selected year and auth token", async () => {
+    mockGet.mockResolvedValue({
+      status: 200,
+      data: [{ type: "A통합1형", duration: "15", year: 2026 }],
+    });
+
+    const response = await getContractViewVoucherPriceInfos(
+      createRequest("/api/voucher-price-infos/contract-view?year=2026"),
+    );
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual([
+      { type: "A통합1형", duration: "15", year: 2026 },
+    ]);
+    expect(mockGet).toHaveBeenCalledWith(
+      "/voucher-price-infos/contract-view",
+      expect.objectContaining({
+        params: { year: "2026" },
+        headers: expect.objectContaining({ Authorization: "Bearer auth-token" }),
+      }),
+    );
   });
 
   it("preserves backend status and payload when fetching voucher price years", async () => {

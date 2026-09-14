@@ -33,6 +33,9 @@ async function rowRects(page: Page, selector: string, count = 2) {
 }
 
 function expectSameHeight(loading: Array<{ y: number; height: number }>, loaded: Array<{ y: number; height: number }>) {
+  // Guards against a vacuous pass if a selector stops matching: an empty pair
+  // would satisfy the length equality below without measuring anything.
+  expect(loading.length).toBeGreaterThan(0);
   expect(loaded).toHaveLength(loading.length);
   for (let index = 0; index < loading.length; index += 1) {
     expect(
@@ -50,6 +53,9 @@ function expectSameFootprint(loading: Array<{ y: number; height: number }>, load
 }
 
 function expectSamePitch(loading: Array<{ y: number; height: number }>, loaded: Array<{ y: number; height: number }>) {
+  // A single row makes pitch meaningless. The call site follows
+  // expectSameHeight, which already asserts a non-empty set.
+  expect(loading.length).toBeGreaterThan(1);
   for (let index = 1; index < loading.length; index += 1) {
     expect(
       Math.abs(
@@ -73,7 +79,7 @@ async function mockAuthUser(page: Page) {
 test.describe("list skeleton parity", () => {
   test.use({ viewport: { width: 390, height: 844 } });
 
-  test("prices rows keep their height and pitch", async ({ page }) => {
+  test("prices rows keep their height, pitch, and first line", async ({ page }) => {
     test.setTimeout(180_000);
     let releaseYears: () => void = () => {};
     let releaseRows: () => void = () => {};
@@ -109,6 +115,13 @@ test.describe("list skeleton parity", () => {
 
     const body = "mobile_prices_page_detail-sheet_stack_list-page_content_list-card_body";
     await expect(page.locator(`[data-component="${body}_rows-skeleton_row"]`).first()).toBeVisible({ timeout: 60_000 });
+    // The route body class is added by a client effect, so measuring before it
+    // lands races the hydrated shell styles — exactly like the contracts spec:
+    // pre-hydration the prices-route `.section-block` still resolves to
+    // `display: contents` (no 8px flex gap) and the card headers keep their
+    // base paddings, so the skeleton measures ~55px above its hydrated line
+    // with an 8px-narrower row pitch. Wait for the hydrated styles first.
+    await page.waitForFunction(() => document.body.classList.contains("mobile-prices-route"));
     const loading = await rowRects(page, `[data-component="${body}"] .list-item`);
 
     releaseRows();
@@ -116,9 +129,83 @@ test.describe("list skeleton parity", () => {
     await expect(page.locator(`[data-component="${body}_rows-skeleton_row"]`)).toHaveCount(0);
     const loaded = await rowRects(page, `[data-component="${body}"] .list-item`);
 
-    // Group headers appear above the rows, so absolute y is not comparable;
-    // what must not change is the row box and the distance between rows.
+    // The skeleton reserves the variant/group header slots, so the first row
+    // must land on its placeholder's line; deeper rows still move because the
+    // loaded groups interleave headers between them.
     expectSameHeight(loading, loaded);
+    expect(Math.abs(loaded[0].y - loading[0].y), "row 0 y").toBeLessThanOrEqual(1);
+    expectSamePitch(loading, loaded);
+  });
+
+  test("prices loading baseline is measured with the hydrated route styles (delayed-hydration regression)", async ({ page }) => {
+    test.setTimeout(180_000);
+    let releaseRows: () => void = () => {};
+    let releaseHydration: () => void = () => {};
+    const rowsReady = new Promise<void>((resolve) => (releaseRows = resolve));
+    const hydrationReleased = new Promise<void>((resolve) => (releaseHydration = resolve));
+
+    await mockAuthUser(page);
+    await page.route(
+      (url) => url.pathname === "/api/voucher-price-infos/years",
+      async (route) => {
+        await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify([2026]) });
+      },
+    );
+    await page.route(
+      (url) => url.pathname === "/api/voucher-price-infos/type",
+      async (route) => {
+        await rowsReady;
+        const type = new URL(route.request().url()).searchParams.get("type") ?? "A통합-1형";
+        await route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify([
+            { id: 1, type, duration: "10", fullPrice: "2196000", grant: "1734000", actualPrice: "462000" },
+            { id: 2, type, duration: "15", fullPrice: "2500000", grant: "1900000", actualPrice: "600000" },
+          ]),
+        });
+      },
+    );
+    // Hold every route JS chunk behind an explicit gate: the skeleton's SSR
+    // paint and its entrance animations then settle while hydration — and the
+    // client effect that adds the route body class — are still blocked. This
+    // replays the CI failure deterministically: run34731639751 measured the
+    // loading baseline 55px above the hydrated line with an 8px-narrower row
+    // pitch, because the route class landed between the two measurements.
+    await page.route("**/_next/static/**/*.js", async (route) => {
+      await hydrationReleased;
+      await route.continue();
+    });
+
+    await page.goto("/prices", { waitUntil: "domcontentloaded", timeout: 120_000 });
+
+    const body = "mobile_prices_page_detail-sheet_stack_list-page_content_list-card_body";
+    await expect(page.locator(`[data-component="${body}_rows-skeleton_row"]`).first()).toBeVisible({ timeout: 60_000 });
+    // While hydration is gated, the SSR skeleton is visible but un-routed:
+    // documenting the precondition that makes a pre-hydration baseline wrong.
+    expect(await page.evaluate(() => document.body.classList.contains("mobile-prices-route"))).toBe(false);
+    await settle(page);
+
+    releaseHydration();
+    // The route body class is added by a client effect, so measuring before it
+    // lands races the hydrated shell styles — exactly like the contracts spec.
+    // Pre-hydration the prices-route `.section-block` still resolves to
+    // `display: contents` (no 8px flex gap) and the card headers keep their
+    // base paddings, so the skeleton sits ~55px above its hydrated line.
+    await page.waitForFunction(
+      () => document.body.classList.contains("mobile-prices-route"),
+      undefined,
+      { timeout: 60_000 },
+    );
+    const loading = await rowRects(page, `[data-component="${body}"] .list-item`);
+
+    releaseRows();
+    await expect(page.locator(`[data-component="${body}_variant_section_row"]`).first()).toBeVisible({ timeout: 60_000 });
+    await expect(page.locator(`[data-component="${body}_rows-skeleton_row"]`)).toHaveCount(0);
+    const loaded = await rowRects(page, `[data-component="${body}"] .list-item`);
+
+    expectSameHeight(loading, loaded);
+    expect(Math.abs(loaded[0].y - loading[0].y), "row 0 y").toBeLessThanOrEqual(1);
     expectSamePitch(loading, loaded);
   });
 

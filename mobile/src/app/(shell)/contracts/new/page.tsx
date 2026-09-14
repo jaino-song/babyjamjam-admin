@@ -17,6 +17,7 @@ import { useFormStore } from "@/stores/form-store";
 import { useEformsign } from "@/hooks/useEformsign";
 import { useNavigationPending } from "@/hooks/use-navigation-pending";
 import { toast } from "@/hooks/use-toast";
+import { openAuthenticatedEventSource } from "@/lib/api/authenticated-fetch";
 import { useVoucherYears, useVoucherPriceInfos, useAreaTemplates, useAllVoucherPrices } from "@/hooks";
 import { useAllClients, useCreateClient, useUpdateClient } from "@/hooks/useClients";
 import { useEmployees, type Employee } from "@/hooks/useEmployees";
@@ -891,7 +892,7 @@ export default function ContractCreationPage() {
       setIsProgressModalOpen(true);
 
       try {
-        progressSource = new EventSource(
+        progressSource = await openAuthenticatedEventSource(
           `/api/eformsign-docs/dispatch-headless/progress?progressId=${encodeURIComponent(progressId)}`,
         );
         progressSourceRef.current = progressSource;

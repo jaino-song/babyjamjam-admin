@@ -50,7 +50,7 @@ const MANUAL_BUILTIN_TYPE_BY_TEMPLATE_KEY: Readonly<Record<string, LegacyBuiltin
   SERVICE_END_NOTICE: "service-end-notice",
 };
 
-/** Legacy automation-only rows are intentionally retired from this manual-send catalog. */
+/** Automation-only rows remain visible for editing but cannot be manually sent. */
 export const RETIRED_MANUAL_TEMPLATE_KEYS = new Set([
   "CLIENT_WELCOME",
   "SERVICE_START_REMINDER",
@@ -135,7 +135,6 @@ export function buildSystemTemplateCatalog(
     if (!template) return [];
 
     const { templateKey } = template;
-    if (RETIRED_MANUAL_TEMPLATE_KEYS.has(templateKey)) return [];
     const legacyType =
       Object.prototype.hasOwnProperty.call(LEGACY_BUILTIN_TYPE_BY_KEY, templateKey)
         ? LEGACY_BUILTIN_TYPE_BY_KEY[templateKey as LegacySystemTemplateKey]
@@ -156,7 +155,8 @@ export function buildSystemTemplateCatalog(
         requiredVariables: template.requiredVariables,
         template,
         legacyType,
-        manualSendAvailability: legacyType ? "available" : "disabled",
+        manualSendAvailability:
+          RETIRED_MANUAL_TEMPLATE_KEYS.has(templateKey) || !legacyType ? "disabled" : "available",
       },
     ];
   });

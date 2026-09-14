@@ -2,7 +2,7 @@
 import { getUserErrorMessage, resolveProblemPresentation } from "@babyjamjam/shared";
 
 
-import type { ComponentType, MouseEvent, ReactNode } from "react";
+import type { ComponentType, ReactNode } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowLeft,
@@ -41,9 +41,11 @@ import { useEformsign } from "@/hooks/useEformsign";
 import { useEmployees, type Employee } from "@/hooks/useEmployees";
 import { useListInfiniteScroll } from "@/hooks/useListInfiniteScroll";
 import { useToast } from "@/hooks/use-toast";
+import { openAuthenticatedEventSource } from "@/lib/api/authenticated-fetch";
 import { useAllVoucherPriceInfos } from "@/hooks/useVoucherData";
 import { fetchAllMessageLogs } from "@/lib/messages/logs";
 import { formatDateForDisplay } from "@/lib/date/format-date-for-display";
+import { formatKoreanPhoneNumber } from "@/lib/phone";
 import { EformsignDocument } from "@/lib/eformsign/types";
 import type { EformsignDocumentOption } from "@/lib/eformsign/types";
 import {
@@ -81,6 +83,7 @@ import { HeadlessProgressModal } from "@/components/app/eformsign/HeadlessProgre
 import { ContractPdfViewerPlaceholder } from "@/components/app/contracts/contract-pdf-viewer-placeholder";
 import { MobileTwoButtonModal } from "@/components/app/ui/MobileTwoButtonModal";
 import { ApprovalTwoButtonModal } from "@/components/app/ui/ApprovalTwoButtonModal";
+
 import type { EformsignDocClientSummary } from "@babyjamjam/shared/types/eformsign";
 import {
   eformsignApi,
@@ -92,7 +95,6 @@ import {
   Badge,
   ListCard,
   ListItemRow,
-  ListLoadMoreButton,
   ListLoadMoreSentinel,
   MobileSectionNav,
 } from "@/components/app/mobile-redesign/primitives";
@@ -702,12 +704,11 @@ function normalizePhone(value: string | null | undefined): string {
   return (value ?? "").replace(/\D/g, "");
 }
 
+// 국가번호가 붙은 값(+82/0082/82)도 국내 표기(010-…)로 정규화한다.
 function formatClientPhone(value: string | null | undefined): string | undefined {
-  const digits = normalizePhone(value);
-  if (digits.length <= 0) return undefined;
-  if (digits.length <= 3) return digits;
-  if (digits.length <= 7) return `${digits.slice(0, 3)}-${digits.slice(3)}`;
-  return `${digits.slice(0, 3)}-${digits.slice(3, 7)}-${digits.slice(7, 11)}`;
+  const formatted = formatKoreanPhoneNumber(value);
+  if (!formatted) return undefined;
+  return formatted;
 }
 
 function normalizeDateToYymmdd(value: string | null | undefined): string | undefined {
@@ -1258,6 +1259,7 @@ function ContractDetailContent({
   onFinalize,
   onOpenClient,
   isClientRegistrationPending,
+  isDetailLoading,
   onEditSend,
   onDeleteRequest,
   mutationOutcomes,
@@ -1274,6 +1276,7 @@ function ContractDetailContent({
   onFinalize?: (doc: EformsignDocument, metadata?: EformsignDocClientSummary) => void;
   onOpenClient: (doc: EformsignDocument, metadata?: EformsignDocClientSummary) => Promise<void>;
   isClientRegistrationPending: boolean;
+  isDetailLoading: boolean;
   onEditSend: (doc: EformsignDocument, metadata?: EformsignDocClientSummary) => void;
   onDeleteRequest: (doc: EformsignDocument) => void;
   mutationOutcomes: readonly ContractOperationRecord[];
@@ -1421,12 +1424,10 @@ function ContractDetailContent({
       }
     }
   }, [toast]);
-  const handleReceiptDownload = (event: MouseEvent<HTMLAnchorElement>) => {
-    event.preventDefault();
+  const handleReceiptDownload = () => {
     void runValidatedDownload(receiptDownloadUrl, receiptFilename, "png");
   };
-  const handlePdfDownload = (event: MouseEvent<HTMLAnchorElement>) => {
-    event.preventDefault();
+  const handlePdfDownload = () => {
     void runValidatedDownload(downloadUrl, `${name}.pdf`, "pdf");
   };
   const handleReceiptShare = async () => {
@@ -1467,7 +1468,12 @@ function ContractDetailContent({
         avatar={<FileCheck2 size={24} strokeWidth={2.5} />}
         avatarTone="primary"
         title={isServiceRecord ? "제공기록지" : name}
-        badges={[{ label: tones.badge, tone: tones.badgeMini as BadgeTone }]}
+        badges={[
+          { label: tones.badge, tone: tones.badgeMini as BadgeTone },
+          metadata?.clientId
+            ? { label: "고객 등록 완료", tone: "green" }
+            : { label: "고객 등록 필요", tone: "burgundy" },
+        ]}
         menu={
           <DropdownMenu key={detailMenuKey} modal={false}>
             <DropdownMenuTrigger asChild>
@@ -1688,28 +1694,28 @@ function ContractDetailContent({
               className="contract-preview-header-actions"
               data-slot="contract-preview-header-actions"
             >
-              <a
+              <Button
+                type="button"
+                variant="ghost"
                 className="contract-preview-receipt"
                 data-component="mobile_contracts_detail-sheet_stack_detail-page_content_pdf-preview_header_receipt-download"
-                href={receiptDownloadUrl}
-                download={receiptFilename}
                 aria-label={`${receiptFilename} 다운로드`}
                 onClick={handleReceiptDownload}
               >
                 <Download size={16} strokeWidth={2.5} />
                 <span>영수증</span>
-              </a>
-              <a
+              </Button>
+              <Button
+                type="button"
+                variant="ghost"
                 className="contract-preview-download"
                 data-component="mobile_contracts_detail-sheet_stack_detail-page_content_pdf-preview_header_pdf-download"
-                href={downloadUrl}
-                download={`${name}.pdf`}
                 aria-label={`${name} PDF 다운로드`}
                 onClick={handlePdfDownload}
               >
                 <Download size={16} strokeWidth={2.5} />
                 <span>다운로드</span>
-              </a>
+              </Button>
             </div>
           </div>
           <ContractPdfViewer
@@ -1727,7 +1733,7 @@ function ContractDetailContent({
             data-component="mobile_contracts_detail-sheet_stack_detail-page_content_tabs"
             tabs={[
               { id: "basic", label: "기본 정보" },
-              { id: "signers", label: "서명 진행" },
+              { id: "signers", label: "계약서 정보" },
               { id: "messages", label: "알림 발송" },
             ]}
             activeTab={activeTab}
@@ -1735,27 +1741,15 @@ function ContractDetailContent({
           />
 
           <MobileDetailTabPanel data-component="mobile_contracts_detail-sheet_stack_detail-page_tab-panel" name="contracts" tabId="basic" activeTab={activeTab}>
-            <InfoCard data-component="mobile_contracts_detail-panel_info-card" title="이용자 정보">
+            <InfoCard data-component="mobile_contracts_detail-panel_info-card" title="이용자 정보" isLoading={isDetailLoading}>
               <InfoRow label="이용자" value={resolvedCustomerName} />
-              {customerPhone ? (
-                <InfoRow label="연락처" value={formatClientPhone(customerPhone) ?? customerPhone} />
-              ) : null}
+              <InfoRow
+                label="연락처"
+                value={customerPhone ? formatClientPhone(customerPhone) ?? customerPhone : null}
+              />
               <InfoRow label="제공인력" value={resolvedProviderName} />
             </InfoCard>
-            <InfoCard data-component="mobile_contracts_detail-panel_info-card-2" title="계약 정보" delay={60}>
-              <InfoRow
-                label="계약서 종류"
-                value={<span style={{ fontFamily: "'SF Mono', monospace" }}>{contractNum}</span>}
-              />
-              <InfoRow label="현재 단계" value={statusLabel} tone={tones.infoTone} />
-              <InfoRow label="생성일" value={formatDate(doc.created_date)} />
-              <InfoRow label="작성자" value={doc.creator?.name ?? "-"} />
-              <InfoRow
-                label="문서 ID"
-                value={<span style={{ fontFamily: "'SF Mono', monospace", wordBreak: "break-all" }}>{doc.id || "-"}</span>}
-              />
-            </InfoCard>
-            <InfoCard data-component="mobile_contracts_detail-panel_info-card-5" title="서비스 정보" delay={120}>
+            <InfoCard data-component="mobile_contracts_detail-panel_info-card-5" title="서비스 정보" delay={60} isLoading={isDetailLoading}>
               <InfoRow label="계약 기간" value={serviceInfo.contractPeriod} />
               <InfoRow label="서비스 일수" value={serviceInfo.serviceDays} />
               <InfoRow label="계약 시작일" value={serviceInfo.contractStartDate} />
@@ -1763,7 +1757,7 @@ function ContractDetailContent({
               <InfoRow label="본인부담금 수령일" value={serviceInfo.paymentReceiptDate} />
               <InfoRow label="영수증 발행일" value={serviceInfo.receiptIssueDate} />
             </InfoCard>
-            <InfoCard data-component="mobile_contracts_detail-panel_info-card-6" title="서비스 비용" delay={180}>
+            <InfoCard data-component="mobile_contracts_detail-panel_info-card-6" title="서비스 비용" delay={120} isLoading={isDetailLoading}>
               <InfoRow label="서비스 비용" value={serviceInfo.servicePrice} />
               <InfoRow label="정부지원금" value={serviceInfo.governmentGrant} />
               <InfoRow label="본인부담금" value={serviceInfo.outOfPocket} />
@@ -1772,7 +1766,20 @@ function ContractDetailContent({
           </MobileDetailTabPanel>
 
           <MobileDetailTabPanel data-component="mobile_contracts_detail-sheet_stack_detail-page_tab-panel-2" name="contracts" tabId="signers" activeTab={activeTab}>
-            <InfoCard data-component="mobile_contracts_detail-panel_info-card-3" title="계약서 단계">
+            <InfoCard data-component="mobile_contracts_detail-panel_info-card-2" title="계약 정보" isLoading={isDetailLoading}>
+              <InfoRow
+                label="계약서 종류"
+                value={<span style={{ fontFamily: "'SF Mono', monospace" }}>{contractNum}</span>}
+              />
+              <InfoRow label="현재 단계" value={statusLabel} tone={tones.infoTone} />
+              <InfoRow label="생성일" value={formatDate(doc.created_date)} />
+              <InfoRow label="작성자" value={doc.creator?.name} />
+              <InfoRow
+                label="문서 ID"
+                value={doc.id ? <span style={{ fontFamily: "'SF Mono', monospace", wordBreak: "break-all" }}>{doc.id}</span> : null}
+              />
+            </InfoCard>
+            <InfoCard data-component="mobile_contracts_detail-panel_info-card-3" title="계약서 단계" delay={60}>
               <ActivityTimeline
                 data-component="mobile_contracts_detail-panel_info-card-3_activity-timeline"
                 items={stageItems}
@@ -2133,7 +2140,7 @@ export default function ContractsPage() {
     let operationSettled = false;
 
     try {
-      progressSource = new EventSource(
+      progressSource = await openAuthenticatedEventSource(
         `/api/eformsign-docs/finalize-headless/progress?progressId=${encodeURIComponent(progressId)}`,
       );
       finalizeProgressSourceRef.current = progressSource;
@@ -2412,7 +2419,7 @@ export default function ContractsPage() {
     () => (Array.isArray(notificationLogsData) ? notificationLogsData : []),
     [notificationLogsData],
   );
-  const { data: selectedDocDetail } = useQuery({
+  const { data: selectedDocDetail, isPending: isSelectedDocDetailLoading } = useQuery({
     queryKey: ["eformsign-document-detail", selectedDoc?.id],
     queryFn: () => eformsignApi.getDocument(selectedDoc!.id),
     enabled: isAuthenticated && Boolean(selectedDoc?.id),
@@ -2683,21 +2690,19 @@ export default function ContractsPage() {
             activeFilter={activeFilter}
             onFilterChange={(label) => setActiveFilter(label as FilterKey)}
             scrollRef={activeSection === "automations" ? undefined : scrollContainerRef}
-            loadMore={activeSection === "automations" ? undefined : (
-              isContractsLoading ? (
+            loadMore={
+              activeSection === "automations" ? false : isContractsLoading ? (
                 <div
                   className="contracts-load-more-placeholder skeleton-base"
                   data-component="mobile_contracts_detail-sheet_stack_list-page_content_list-card_load-more_placeholder"
                   aria-hidden="true"
                 />
-              ) : isInitialLoad && hasMore ? (
-                <ListLoadMoreButton
-                  onLoadMore={loadMore}
-                  isLoading={isFetchingNextPage}
-                  data-component="mobile_contracts_detail-sheet_stack_list-page_content_list-card_load-more_button"
-                />
-              ) : null
-            )}
+              ) : (
+                isInitialLoad && hasMore
+              )
+            }
+            onLoadMore={loadMore}
+            isLoadingMore={isFetchingNextPage}
             beforeFilters={activeSection === "automations" ? undefined : (
               <MobileSearchBar
                 data-component="mobile_contracts_detail-sheet_stack_list-page_content_list-card_search"
@@ -2853,6 +2858,7 @@ export default function ContractsPage() {
             onFinalize={openFinalize}
             onOpenClient={handleOpenClientFromContract}
             isClientRegistrationPending={isClientRegistrationPending}
+            isDetailLoading={isSelectedDocDetailLoading}
             onEditSend={handleEditSendFromContract}
             onDeleteRequest={(doc) => {
               const operation = getContractOperationRecord(

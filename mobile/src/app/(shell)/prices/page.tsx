@@ -233,6 +233,7 @@ export default function PricesPage() {
               filters={typeFilterItems}
               activeFilter={typeFilter}
               onFilterChange={(label) => setTypeFilter(label as TypeFilter)}
+              loadMore={false}
               beforeFilters={
                 <div
                   className="filter-row"
@@ -275,6 +276,8 @@ export default function PricesPage() {
                   rowCount={5}
                   left={<span className="duration-badge skeleton-base" />}
                   metaClassName="price-row-meta"
+                  groupHeader
+                  variantHeader={typeFilter === "전체"}
                 />
               ) : isError ? (
                 <div

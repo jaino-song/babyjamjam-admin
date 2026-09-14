@@ -8,6 +8,7 @@ import { cn } from "@/lib/utils";
 import { ChatInput } from "./ChatInput";
 import { AssistantMessage } from "./AssistantMessage";
 import { useChatStream, ChatMessage, ChatState } from "@/hooks/useChatStream";
+import { authenticatedFetch } from "@/lib/api/authenticated-fetch";
 
 // Hook to track visual viewport height for mobile keyboard handling
 function useVisualViewportHeight() {
@@ -115,7 +116,7 @@ export function ChatFullscreen({ open, onClose }: ChatFullscreenProps) {
         comment?: string
     ) => {
         if (!sessionId) return;
-        await fetch("/api/ai/chat/feedback", {
+        await authenticatedFetch("/api/ai/chat/feedback", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({

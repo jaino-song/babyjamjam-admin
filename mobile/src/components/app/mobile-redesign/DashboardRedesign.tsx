@@ -1,5 +1,7 @@
 import "./redesign.css";
 
+import type { ReactNode, RefObject } from "react";
+
 import type { DashboardAnalytic, SectionRows } from "./mockup-data";
 import { ListCard, ListRowsSkeleton, SectionedList } from "./primitives";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -39,6 +41,14 @@ export interface DashboardRedesignProps {
   onFilterChange?: (label: string) => void;
   analyticsLoading?: boolean;
   loading?: boolean;
+  /** Forwarded to ListCard — undefined/true shows the default load-more button, false/null hides it. */
+  loadMore?: boolean | null;
+  /** Forwarded to ListCard — click handler for the default load-more button. */
+  onLoadMore?: () => void;
+  /** Rendered at the end of the list body after the rows (infinite-scroll sentinel). */
+  loadMoreSentinel?: ReactNode;
+  /** Forwarded to ListCard so the reveal hook can measure the scroll area. */
+  scrollRef?: RefObject<HTMLDivElement | null>;
 }
 
 function DashboardAnalyticsSkeleton() {
@@ -70,6 +80,10 @@ export function DashboardRedesign({
   onFilterChange,
   analyticsLoading = false,
   loading = false,
+  loadMore,
+  onLoadMore,
+  loadMoreSentinel,
+  scrollRef,
 }: DashboardRedesignProps) {
   return (
     <section
@@ -111,6 +125,9 @@ export function DashboardRedesign({
           filters={filters}
           activeFilter={activeFilter}
           onFilterChange={onFilterChange}
+          scrollRef={scrollRef}
+          loadMore={loadMore}
+          onLoadMore={onLoadMore}
         >
           {loading ? (
             <ListRowsSkeleton
@@ -118,11 +135,14 @@ export function DashboardRedesign({
               rowCount={4}
             />
           ) : (
-            <SectionedList
-              data-component={DASHBOARD_LIST_BODY_BASE}
-              sections={sections}
-              hideSectionHeader={() => true}
-            />
+            <>
+              <SectionedList
+                data-component={DASHBOARD_LIST_BODY_BASE}
+                sections={sections}
+                hideSectionHeader={() => true}
+              />
+              {loadMoreSentinel}
+            </>
           )}
         </ListCard>
       </div>

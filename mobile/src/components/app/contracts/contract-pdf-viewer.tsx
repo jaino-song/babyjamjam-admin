@@ -5,12 +5,12 @@ import { Document as PdfDocument, Page } from "react-pdf";
 
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
+import { authenticatedFetch } from "@/lib/api/authenticated-fetch";
 
 import "@/lib/pdf-config";
 import {
   BinaryDownloadError,
   fetchValidatedBinary,
-  openValidatedBinary,
   revokeObjectUrl,
 } from "@/lib/contracts/document-download";
 import { cn } from "@/lib/utils";
@@ -52,6 +52,13 @@ interface PendingScroll {
   top: number;
 }
 
+interface FallbackAttempt {
+  controller: AbortController;
+  placeholder: Window;
+  objectUrl: string | null;
+  handedOff: boolean;
+}
+
 const MIN_ZOOM = 1;
 const MAX_ZOOM = 4;
 const MAX_RENDER_DPR = 3;
@@ -64,6 +71,7 @@ const DOCUMENT_PIXEL_BUDGET = 24_000_000;
 const PAGE_GAP_PX = 16;
 const PAGE_VERTICAL_PADDING_PX = 40;
 const WHEEL_ZOOM_SENSITIVITY = 0.002;
+const FALLBACK_OBJECT_URL_REVOKE_DELAY_MS = 30_000;
 
 interface CalculateRenderDprOptions {
   baseWidth: number;
@@ -100,6 +108,34 @@ function getTouchDistance(firstTouch: Touch, secondTouch: Touch): number {
     secondTouch.clientX - firstTouch.clientX,
     secondTouch.clientY - firstTouch.clientY
   );
+}
+
+function openFallbackPlaceholder(): Window | null {
+  if (typeof window === "undefined" || typeof window.open !== "function") {
+    return null;
+  }
+
+  // Safari blocks a popup opened after an async fetch, so create the tab in
+  // the click handler and remove its opener before navigating it later.
+  let placeholder: Window | null = null;
+  try {
+    placeholder = window.open("about:blank", "_blank");
+    if (!placeholder) {
+      return null;
+    }
+
+    placeholder.opener = null;
+    if (placeholder.opener !== null) {
+      throw new BinaryDownloadError();
+    }
+
+    return placeholder;
+  } catch {
+    if (placeholder && !placeholder.closed) {
+      placeholder.close();
+    }
+    return null;
+  }
 }
 
 export function calculateRenderDpr({
@@ -157,7 +193,7 @@ export function ContractPdfViewer({
   const scrollFrameRef = useRef<number | null>(null);
   const previewRequestIdRef = useRef(0);
   const previewObjectUrlRef = useRef<string | null>(null);
-  const fallbackControllerRef = useRef<AbortController | null>(null);
+  const fallbackAttemptRef = useRef<FallbackAttempt | null>(null);
   const [numPages, setNumPages] = useState(0);
   const [baseWidth, setBaseWidth] = useState(0);
   const [pageAspectRatios, setPageAspectRatios] = useState<number[]>([]);
@@ -219,6 +255,22 @@ export function ContractPdfViewer({
     setRetryAttempt((attempt) => attempt + 1);
   }, []);
 
+  const cleanupFallbackAttempt = useCallback((attempt: FallbackAttempt) => {
+    const objectUrl = attempt.objectUrl;
+    attempt.objectUrl = null;
+    if (objectUrl) {
+      revokeObjectUrl(objectUrl);
+    }
+
+    if (!attempt.handedOff && !attempt.placeholder.closed) {
+      attempt.placeholder.close();
+    }
+
+    if (fallbackAttemptRef.current === attempt) {
+      fallbackAttemptRef.current = null;
+    }
+  }, []);
+
   useEffect(() => {
     const requestId = previewRequestIdRef.current + 1;
     previewRequestIdRef.current = requestId;
@@ -243,7 +295,7 @@ export function ContractPdfViewer({
 
     void (async () => {
       try {
-        const headResponse = await fetch(fileUrl, {
+        const headResponse = await authenticatedFetch(fileUrl, {
           method: "HEAD",
           credentials: "include",
           cache: "no-store",
@@ -287,17 +339,17 @@ export function ContractPdfViewer({
 
     return () => {
       controller.abort();
-      const fallbackController = fallbackControllerRef.current;
-      fallbackController?.abort();
-      if (fallbackControllerRef.current === fallbackController) {
-        fallbackControllerRef.current = null;
+      const fallbackAttempt = fallbackAttemptRef.current;
+      fallbackAttempt?.controller.abort();
+      if (fallbackAttempt) {
+        cleanupFallbackAttempt(fallbackAttempt);
       }
       if (createdObjectUrl && previewObjectUrlRef.current === createdObjectUrl) {
         previewObjectUrlRef.current = null;
         revokeObjectUrl(createdObjectUrl);
       }
     };
-  }, [fileUrl, retryAttempt]);
+  }, [cleanupFallbackAttempt, fileUrl, retryAttempt]);
 
   useEffect(() => {
     return () => {
@@ -576,33 +628,67 @@ export function ContractPdfViewer({
       });
   }, []);
 
-  const handleFallbackOpen = useCallback((event: React.MouseEvent<HTMLAnchorElement>) => {
-    event.preventDefault();
-    if (fallbackControllerRef.current) {
+  const handleFallbackOpen = useCallback(() => {
+    if (fallbackAttemptRef.current) {
+      return;
+    }
+
+    const placeholder = openFallbackPlaceholder();
+    if (!placeholder) {
+      setPreviewStatus("error");
       return;
     }
 
     const controller = new AbortController();
     const requestId = previewRequestIdRef.current;
-    fallbackControllerRef.current = controller;
+    const attempt: FallbackAttempt = {
+      controller,
+      placeholder,
+      objectUrl: null,
+      handedOff: false,
+    };
+    fallbackAttemptRef.current = attempt;
     void fetchValidatedBinary(fallbackHref, "pdf", { signal: controller.signal })
       .then((binary) => {
         if (
           controller.signal.aborted ||
-          previewRequestIdRef.current !== requestId
+          previewRequestIdRef.current !== requestId ||
+          fallbackAttemptRef.current !== attempt
         ) {
+          cleanupFallbackAttempt(attempt);
           return;
         }
 
-        return openValidatedBinary(fallbackHref, "pdf", {
-          binary,
-          delayMs: 30_000,
-          signal: controller.signal,
-        });
+        if (typeof URL === "undefined" || typeof URL.createObjectURL !== "function") {
+          throw new BinaryDownloadError();
+        }
+
+        if (attempt.placeholder.closed) {
+          throw new BinaryDownloadError();
+        }
+
+        const objectUrl = URL.createObjectURL(binary.blob);
+        attempt.objectUrl = objectUrl;
+        try {
+          attempt.placeholder.location.replace(objectUrl);
+        } catch {
+          throw new BinaryDownloadError();
+        }
+
+        attempt.handedOff = true;
+        attempt.objectUrl = null;
+        if (fallbackAttemptRef.current === attempt) {
+          fallbackAttemptRef.current = null;
+        }
+        setTimeout(() => {
+          revokeObjectUrl(objectUrl);
+        }, FALLBACK_OBJECT_URL_REVOKE_DELAY_MS);
       })
       .catch((error: unknown) => {
+        cleanupFallbackAttempt(attempt);
         if (
           controller.signal.aborted ||
+          previewRequestIdRef.current !== requestId ||
           (typeof error === "object" && error !== null && "name" in error && error.name === "AbortError")
         ) {
           return;
@@ -610,11 +696,11 @@ export function ContractPdfViewer({
         setPreviewStatus("error");
       })
       .finally(() => {
-        if (fallbackControllerRef.current === controller) {
-          fallbackControllerRef.current = null;
+        if (fallbackAttemptRef.current === attempt) {
+          fallbackAttemptRef.current = null;
         }
       });
-  }, [fallbackHref]);
+  }, [cleanupFallbackAttempt, fallbackHref]);
 
   const renderPdfError = (
     <div
@@ -632,14 +718,13 @@ export function ContractPdfViewer({
       >
         다시 시도
       </Button>
-      <a
-        href={fallbackHref}
-        target="_blank"
-        rel="noopener noreferrer"
+      <Button
+        type="button"
+        variant="link"
         onClick={handleFallbackOpen}
       >
         새 탭에서 열기
-      </a>
+      </Button>
     </div>
   );
 
