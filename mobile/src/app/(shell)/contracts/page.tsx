@@ -93,7 +93,6 @@ import {
   Badge,
   ListCard,
   ListItemRow,
-  ListLoadMoreButton,
   ListLoadMoreSentinel,
   MobileSectionNav,
 } from "@/components/app/mobile-redesign/primitives";
@@ -2398,21 +2397,19 @@ export default function ContractsPage() {
             activeFilter={activeFilter}
             onFilterChange={(label) => setActiveFilter(label as FilterKey)}
             scrollRef={activeSection === "automations" ? undefined : scrollContainerRef}
-            loadMore={activeSection === "automations" ? undefined : (
-              isContractsLoading ? (
+            loadMore={
+              activeSection === "automations" ? false : isContractsLoading ? (
                 <div
                   className="contracts-load-more-placeholder skeleton-base"
                   data-component="mobile_contracts_detail-sheet_stack_list-page_content_list-card_load-more_placeholder"
                   aria-hidden="true"
                 />
-              ) : isInitialLoad && hasMore ? (
-                <ListLoadMoreButton
-                  onLoadMore={loadMore}
-                  isLoading={isFetchingNextPage}
-                  data-component="mobile_contracts_detail-sheet_stack_list-page_content_list-card_load-more_button"
-                />
-              ) : null
-            )}
+              ) : (
+                isInitialLoad && hasMore
+              )
+            }
+            onLoadMore={loadMore}
+            isLoadingMore={isFetchingNextPage}
             beforeFilters={activeSection === "automations" ? undefined : (
               <MobileSearchBar
                 data-component="mobile_contracts_detail-sheet_stack_list-page_content_list-card_search"

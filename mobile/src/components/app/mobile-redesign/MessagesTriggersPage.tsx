@@ -59,6 +59,7 @@ export function MessagesTriggersPage() {
               actionLabel="+ 규칙"
               onActionClick={() => openEditor(null)}
               filters={[]}
+              loadMore={false}
               beforeScroll={<ClientRegistrationPolicySettings />}
             >
               <MessageTriggerList
