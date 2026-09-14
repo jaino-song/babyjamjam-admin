@@ -1,4 +1,6 @@
 "use client";
+import { getUserErrorMessage } from "@babyjamjam/shared";
+
 
 import {
   useMutation,
@@ -50,7 +52,7 @@ export function useClientRegistrationPolicy(): UseClientRegistrationPolicyResult
     },
     onError: (_error, _patch, context) => {
       if (context?.previous) queryClient.setQueryData(QUERY_KEY, context.previous);
-      toast({ variant: "destructive", description: "고객 자동 등록 설정을 저장하지 못했어요" });
+      toast({ variant: "destructive", description: getUserErrorMessage(_error, "고객 자동 등록 설정을 저장하지 못했어요") });
     },
     onSuccess: (saved) => {
       queryClient.setQueryData(QUERY_KEY, saved);

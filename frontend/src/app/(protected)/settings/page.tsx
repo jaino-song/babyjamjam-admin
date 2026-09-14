@@ -288,7 +288,7 @@ export default function SettingsPage() {
                         ? browserNotificationPermission === "denied"
                           ? "브라우저 설정에서 알림 권한을 허용해 주세요."
                           : "브라우저 푸시 알림을 수신합니다."
-                        : "이 브라우저는 푸시 알림을 지원하지 않습니다."}
+                        : "이 브라우저는 푸시 알림을 지원하지 않아요."}
                     </p>
                   </div>
                   {isBrowserNotificationLoading ? (

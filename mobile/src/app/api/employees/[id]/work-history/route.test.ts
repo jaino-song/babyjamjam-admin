@@ -78,4 +78,21 @@ describe("employee work-history API route", () => {
             headers: { Authorization: "Bearer auth-token" },
         });
     });
+
+    it("maps an upstream failure through the shared sanitizer without masking", async () => {
+        mockGet.mockRejectedValue({
+            response: {
+                status: 500,
+                data: { error: "upstream boom" },
+            },
+        });
+
+        const response = await GET(createRequest("/api/employees/7/work-history?page=1&limit=20"), {
+            params: Promise.resolve({ id: "7" }),
+        });
+
+        expect(response.status).toBe(500);
+        const body = await response.json();
+        expect(body.error).toBeTruthy();
+    });
 });

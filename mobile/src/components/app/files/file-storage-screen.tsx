@@ -228,7 +228,7 @@ function FileDetailContent({
       await navigator.share({ files: [file], title: doc.name });
       setActionStatus("파일을 공유했습니다.");
     } catch {
-      setActionStatus("파일 공유에 실패했습니다.");
+      setActionStatus("파일 공유에 실패했어요.");
     }
   };
 

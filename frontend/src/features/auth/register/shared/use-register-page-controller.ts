@@ -1,4 +1,6 @@
 "use client";
+import { getUserErrorMessage } from "@babyjamjam/shared";
+
 
 import axios from "axios";
 import { useEffect, useState } from "react";
@@ -11,7 +13,7 @@ import { authApi } from "@/services/api";
 
 const ACCOUNT_FIELDS = ["email", "name", "password", "confirmPassword"] as const;
 const PERSONAL_FIELDS = ["phone", "birthDate"] as const;
-const PASSWORD_MISMATCH_ERROR = "비밀번호가 일치하지 않습니다.";
+const PASSWORD_MISMATCH_ERROR = "비밀번호가 일치하지 않아요.";
 const EMAIL_DUPLICATE_ERROR = "이미 등록된 이메일입니다.";
 const EMAIL_LINKABLE_MESSAGE = "카카오 계정 연결 가능";
 const PHONE_DUPLICATE_ERROR = "이미 존재하는 사용자 입니다.";
@@ -377,7 +379,7 @@ export function useRegisterPageController() {
         setErrors((prev) => ({ ...prev, phone: PHONE_DUPLICATE_ERROR }));
         setCurrentStep(1);
       } else {
-        setServerError(response.message || "회원가입에 실패했습니다.");
+        setServerError(getUserErrorMessage(response.message || "회원가입에 실패했어요."));
       }
     } catch (requestError: unknown) {
       console.error("Registration error:", requestError);
@@ -387,11 +389,11 @@ export function useRegisterPageController() {
         setErrors((prev) => ({ ...prev, phone: PHONE_DUPLICATE_ERROR }));
         setCurrentStep(1);
       } else if (errorData?.errors) {
-        setServerError(errorData.errors.join("\n"));
+        setServerError(getUserErrorMessage(requestError, errorData.errors.join("\n")));
       } else if (errorData?.message) {
-        setServerError(errorData.message);
+        setServerError(getUserErrorMessage(requestError, errorData.message));
       } else {
-        setServerError("네트워크 오류가 발생했습니다. 다시 시도해 주세요.");
+        setServerError(getUserErrorMessage(requestError, "네트워크 오류가 발생했어요. 다시 시도해 주세요."));
       }
     } finally {
       setIsLoading(false);

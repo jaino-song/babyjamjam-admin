@@ -67,7 +67,7 @@ export async function loginWithEmail(email: string, password: string, autoLogin 
         if (status >= 400 || !data.success) {
             return {
                 success: false,
-                error: data.message || "이메일 또는 비밀번호가 올바르지 않습니다.",
+                error: data.message || "이메일 또는 비밀번호가 올바르지 않아요.",
                 authErrorCode: typeof data.code === "string" ? data.code : undefined,
                 emailVerificationRequired: data.message?.includes("이메일 인증")
             };
@@ -190,19 +190,19 @@ export async function loginWithEmail(email: string, password: string, autoLogin 
             });
 
             if (axiosError.code === 'ECONNABORTED' || axiosError.message === 'Network Error') {
-                return { success: false, error: "서버에 연결할 수 없습니다. 다시 시도해 주세요." };
+                return { success: false, error: "서버에 연결할 수 없어요. 다시 시도해 주세요." };
             }
 
             return {
                 success: false,
-                error: axiosError.response?.data?.message || "로그인에 실패했습니다.",
+                error: axiosError.response?.data?.message || "로그인에 실패했어요.",
                 authErrorCode: axiosError.response?.data?.code,
             };
         }
 
         return {
             success: false,
-            error: error instanceof Error ? error.message : "알 수 없는 오류가 발생했습니다."
+            error: error instanceof Error ? error.message : "알 수 없는 오류가 발생했어요."
         };
     }
 }

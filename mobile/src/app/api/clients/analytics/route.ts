@@ -64,7 +64,7 @@ export async function GET(request: NextRequest) {
         if (backendAnalytics) return withNoStore(NextResponse.json(backendAnalytics));
         return withNoStore(
           NextResponse.json(
-            sanitizeUpstreamClientError(response.data, "Failed to fetch dashboard analytics"),
+            sanitizeUpstreamClientError(response.data, "Failed to fetch dashboard analytics", response.status),
             { status: response.status },
           ),
         );

@@ -81,7 +81,11 @@ describe("mobile system-template BFF parity contract", () => {
         );
 
         expect(response.status).toBe(400);
-        await expect(response.json()).resolves.toEqual({ error: "Request body must be valid JSON" });
+        await expect(response.json()).resolves.toEqual(expect.objectContaining({
+            code: "VALIDATION_FAILED",
+            outcome: "NOT_APPLIED",
+            error: "Request body must be valid JSON",
+        }));
         expect(mockPost).not.toHaveBeenCalled();
     });
 

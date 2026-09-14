@@ -195,7 +195,7 @@ describe("messages/new branch template readiness", () => {
     submitForm();
 
     expect(api.post).not.toHaveBeenCalled();
-    expect(screen.getByText("지점 기본 템플릿을 불러오는 중이라 발송할 수 없습니다.")).toBeInTheDocument();
+    expect(screen.getByText("지점 기본 템플릿을 불러오는 중이라 발송할 수 없어요.")).toBeInTheDocument();
 
     templateQueries.GREETING = readyTemplate("GREETING", "branch-a 맞춤 인사");
     view.rerender(
@@ -218,7 +218,7 @@ describe("messages/new branch template readiness", () => {
     submitForm();
 
     expect(api.post).not.toHaveBeenCalled();
-    expect(screen.getByText("지점 기본 템플릿을 불러오는 중이라 발송할 수 없습니다.")).toBeInTheDocument();
+    expect(screen.getByText("지점 기본 템플릿을 불러오는 중이라 발송할 수 없어요.")).toBeInTheDocument();
   });
 
   it("sends the loaded branch customization once readiness succeeds", async () => {

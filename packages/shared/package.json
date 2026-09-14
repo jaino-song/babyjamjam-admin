@@ -37,7 +37,8 @@
         "./utils/birthday": "./src/utils/birthday.ts",
         "./utils/phone": "./src/utils/phone.ts",
         "./utils/korean-search": "./src/utils/korean-search.ts",
-        "./eslint-plugin": "./eslint-plugin/index.mjs"
+        "./eslint-plugin": "./eslint-plugin/index.mjs",
+        "./errors/problem-details": "./src/errors/problem-details.ts"
     },
     "scripts": {
         "build:backend-runtime": "tsc -p tsconfig.backend-runtime.json",

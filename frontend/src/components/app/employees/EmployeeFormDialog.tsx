@@ -1,4 +1,11 @@
 "use client";
+import {
+    normalizeApiError,
+    resolveProblemPresentation,
+    type ProblemError,
+    type ProblemOutcome,
+} from "@babyjamjam/shared";
+
 
 import { useEffect, useState, type ReactNode } from "react";
 import { useQueryClient } from "@tanstack/react-query";
@@ -99,6 +106,76 @@ const WORK_AREA_OPTIONS = WORK_AREAS.map((area) => ({
 
 const PANEL_CONTENT_CLASS_NAME = "h-auto min-h-full";
 const PANEL_FIELDS_CLASS_NAME = "grid w-full grid-cols-1 gap-[calc(16px*var(--glint-ui-scale,1))] pb-[calc(24px*var(--glint-ui-scale,1))] md:grid-cols-2";
+
+const EMPLOYEE_FORM_DIALOG_ERROR_ID_PREFIX = "desktop_employees_form-dialog_error";
+
+type EmployeeFormField = "name" | "phone";
+
+interface EmployeeFormErrorState {
+    message: string;
+    fieldErrors: readonly ProblemError[];
+    requestId?: string;
+    outcome?: ProblemOutcome;
+}
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+    typeof value === "object" && value !== null;
+
+const getErrorResponseStatus = (error: unknown): number | undefined => {
+    if (!isRecord(error)) return undefined;
+
+    const response = isRecord(error.response) ? error.response : undefined;
+    const responseStatus = response?.status;
+    if (typeof responseStatus === "number" && Number.isInteger(responseStatus)) {
+        return responseStatus;
+    }
+
+    const directStatus = error.status;
+    if (typeof directStatus === "number" && Number.isInteger(directStatus)) {
+        return directStatus;
+    }
+
+    const responseData = response?.data;
+    const data = isRecord(responseData)
+        ? responseData
+        : isRecord(error.data)
+            ? error.data
+            : error;
+    const statusCode = data.statusCode;
+    return typeof statusCode === "number" && Number.isInteger(statusCode) ? statusCode : undefined;
+};
+
+const getErrorResponsePayload = (error: unknown): unknown => {
+    if (!isRecord(error)) return undefined;
+    const response = isRecord(error.response) ? error.response : undefined;
+    if (response && "data" in response) return response.data;
+    if ("data" in error) return error.data;
+    return error;
+};
+
+const isUnstructuredLegacyEmployeeError = (
+    error: unknown,
+    normalized: ReturnType<typeof normalizeApiError>,
+): boolean => {
+    if (normalized.verified) return false;
+    const status = getErrorResponseStatus(error);
+    if (status === undefined || status < 400 || status >= 500) return false;
+
+    const payload = getErrorResponsePayload(error);
+    return !isRecord(payload) || (!("type" in payload) && !("requestId" in payload));
+};
+
+const fieldForProblemError = (problemError: ProblemError): EmployeeFormField | undefined => {
+    if (problemError.location !== undefined && problemError.location !== "body") return undefined;
+    if (problemError.pointer === "/name") return "name";
+    if (problemError.pointer === "/phone") return "phone";
+    return undefined;
+};
+
+const combineAriaDescribedBy = (...ids: Array<string | undefined>): string | undefined => {
+    const value = ids.filter((id): id is string => Boolean(id)).join(" ");
+    return value || undefined;
+};
 
 interface WorkAreaMultiSelectProps {
     id: string;
@@ -346,7 +423,7 @@ function EmployeeFormContent({
         phone: false,
         workArea: false,
     });
-    const [error, setError] = useState<string | null>(null);
+    const [error, setError] = useState<EmployeeFormErrorState | null>(null);
     const [isSubmitting, setIsSubmitting] = useState(false);
 
     const createMutation = useCreateEmployee();
@@ -446,10 +523,31 @@ function EmployeeFormContent({
         setFormData((prev) => ({ ...prev, [field]: value }));
     };
 
+    const setMutationError = (cause: unknown) => {
+        const normalized = normalizeApiError(cause, {
+            locale: locale === "en" ? "en-US" : "ko-KR",
+            operation: "mutation",
+        });
+
+        if (isUnstructuredLegacyEmployeeError(cause, normalized)) {
+            setError({
+                message: getErrorMessage(cause, locale, "employees.form.error-save-failed"),
+                fieldErrors: [],
+            });
+            return;
+        }
+
+        setError({
+            message: normalized.message,
+            fieldErrors: normalized.problem?.errors ?? [],
+            requestId: normalized.problem?.requestId,
+            outcome: normalized.outcome,
+        });
+    };
+
     const handleSubmit = async () => {
         setTouched({ phone: true, workArea: true });
         setError(null);
-
         if (!formData.name.trim() || !isPhoneValid || !isWorkAreaValid) {
             return;
         }
@@ -469,7 +567,7 @@ function EmployeeFormContent({
                 const updatedEmployee = await updateMutation.mutateAsync({ id: employee.id, dto });
 
                 if (updatedEmployee && ("code" in updatedEmployee || "statusCode" in updatedEmployee)) {
-                    setError(getErrorMessage(updatedEmployee, locale, "employees.form.error-update-failed"));
+                    setMutationError(updatedEmployee);
                     return;
                 }
 
@@ -488,7 +586,7 @@ function EmployeeFormContent({
                 const newEmployee = await createMutation.mutateAsync(dto);
 
                 if (newEmployee && ("code" in newEmployee || "statusCode" in newEmployee)) {
-                    setError(getErrorMessage(newEmployee, locale, "employees.form.error-create-failed"));
+                    setMutationError(newEmployee);
                     return;
                 }
 
@@ -499,7 +597,7 @@ function EmployeeFormContent({
             onClose();
         } catch (submitError: unknown) {
             console.error("[EmployeeFormDialog] Failed to save employee:", submitError);
-            setError(getErrorMessage(submitError, locale, "employees.form.error-save-failed"));
+            setMutationError(submitError);
         } finally {
             setIsSubmitting(false);
         }
@@ -579,13 +677,75 @@ function EmployeeFormContent({
         </div>
     );
 
+    const formErrorEntries = (error?.fieldErrors ?? []).map((fieldError, index) => ({
+        fieldError,
+        field: fieldForProblemError(fieldError),
+        id: `${EMPLOYEE_FORM_DIALOG_ERROR_ID_PREFIX}_${index}`,
+    }));
+    const nameErrorIds = formErrorEntries
+        .filter((entry) => entry.field === "name")
+        .map((entry) => entry.id);
+    const phoneErrorIds = formErrorEntries
+        .filter((entry) => entry.field === "phone")
+        .map((entry) => entry.id);
+    const problemPresentation = resolveProblemPresentation(locale);
+
+    const focusFormField = (field: EmployeeFormField) => {
+        document.getElementById(
+            surface === "panel" ? `employee-panel-${field}` : field,
+        )?.focus();
+    };
+
     const feedback = error ? (
         <Alert
             variant="destructive"
             data-component="desktop_employees_form-dialog_error"
             className="rounded-[18px] border-none bg-v3-burgundy-light px-4 py-3 text-v3-burgundy [&>svg]:text-v3-burgundy"
         >
-            <AlertDescription>{error}</AlertDescription>
+            <AlertDescription>
+                <div className="flex flex-col gap-2">
+                    <p>{error.message}</p>
+                    {formErrorEntries.length > 0 ? (
+                        <ul className="flex flex-col gap-1">
+                            {formErrorEntries.map(({ fieldError, field, id }) => {
+                                const fieldLabel = field === "name"
+                                    ? t(locale, "employees.form.name")
+                                    : field === "phone"
+                                        ? t(locale, "employees.form.phone")
+                                        : problemPresentation.unmappedField;
+                                const detail = `${fieldLabel}: ${fieldError.detail}`;
+
+                                return (
+                                    <li key={id} id={id}>
+                                        {field ? (
+                                            <Button
+                                                type="button"
+                                                variant="link"
+                                                size="sm"
+                                                className="h-auto whitespace-normal p-0 text-left"
+                                                onClick={() => focusFormField(field)}
+                                                data-component={`${EMPLOYEE_FORM_DIALOG_ERROR_ID_PREFIX}_entry_${field}`}
+                                            >
+                                                {detail}
+                                            </Button>
+                                        ) : (
+                                            <span>{detail}</span>
+                                        )}
+                                    </li>
+                                );
+                            })}
+                        </ul>
+                    ) : null}
+                    {error.outcome === "UNKNOWN" ? (
+                        <p>{problemPresentation.checkStatus}</p>
+                    ) : null}
+                    {error.requestId ? (
+                        <FormHelperText data-component={`${EMPLOYEE_FORM_DIALOG_ERROR_ID_PREFIX}_request-id`}>
+                            {locale === "en" ? `Request ID: ${error.requestId}` : `요청 ID: ${error.requestId}`}
+                        </FormHelperText>
+                    ) : null}
+                </div>
+            </AlertDescription>
         </Alert>
     ) : null;
 
@@ -611,6 +771,8 @@ function EmployeeFormContent({
                             value={formData.name}
                             onChange={(e) => handleChange("name", e.target.value)}
                             placeholder="홍길동"
+                            error={nameErrorIds.length > 0}
+                            aria-describedby={combineAriaDescribedBy(...nameErrorIds)}
                         />
                     </FormField>
 
@@ -640,12 +802,17 @@ function EmployeeFormContent({
                             onChange={(e) => handleChange("phone", parsePhoneNumber(e.target.value))}
                             onBlur={() => setTouched((prev) => ({ ...prev, phone: true }))}
                             maxLength={13}
-                            error={(touched.phone && !isPhoneFormatValid) || hasPhoneStatusError}
-                            aria-describedby={phoneInlineMessage
-                                ? "employees-form-dialog-phone-helper"
-                                : touched.phone && !isPhoneFormatValid
-                                    ? "employees-form-dialog-field-phone-error"
-                                    : undefined}
+                            error={(touched.phone && !isPhoneFormatValid)
+                                || hasPhoneStatusError
+                                || phoneErrorIds.length > 0}
+                            aria-describedby={combineAriaDescribedBy(
+                                phoneInlineMessage
+                                    ? "employees-form-dialog-phone-helper"
+                                    : touched.phone && !isPhoneFormatValid
+                                        ? "employees-form-dialog-field-phone-error"
+                                        : undefined,
+                                ...phoneErrorIds,
+                            )}
                         />
                         {touched.phone && !isPhoneFormatValid && (
                             <FormHelperText
@@ -774,6 +941,8 @@ function EmployeeFormContent({
                     onChange={(event) => handleChange("name", event.target.value)}
                     placeholder="홍길동"
                     data-component="desktop_employees_form-panel_name-field_input"
+                    error={nameErrorIds.length > 0}
+                    aria-describedby={combineAriaDescribedBy(...nameErrorIds)}
                 />
             </FormField>
 
@@ -798,23 +967,28 @@ function EmployeeFormContent({
                     </FormHelperText>
                 ) : null}
             >
-                <FormTextInput
-                    id="employee-panel-phone"
-                    type="tel"
-                    inputMode="numeric"
-                    value={formatPhoneNumber(formData.phone)}
-                    onChange={(event) => handleChange("phone", parsePhoneNumber(event.target.value))}
-                    onBlur={() => setTouched((prev) => ({ ...prev, phone: true }))}
-                    maxLength={13}
-                    placeholder="010-1234-5678"
-                    error={(touched.phone && !isPhoneFormatValid) || hasPhoneStatusError}
-                    aria-describedby={phoneInlineMessage
+            <FormTextInput
+                id="employee-panel-phone"
+                type="tel"
+                inputMode="numeric"
+                value={formatPhoneNumber(formData.phone)}
+                onChange={(event) => handleChange("phone", parsePhoneNumber(event.target.value))}
+                onBlur={() => setTouched((prev) => ({ ...prev, phone: true }))}
+                maxLength={13}
+                placeholder="010-1234-5678"
+                error={(touched.phone && !isPhoneFormatValid)
+                    || hasPhoneStatusError
+                    || phoneErrorIds.length > 0}
+                aria-describedby={combineAriaDescribedBy(
+                    phoneInlineMessage
                         ? "employees-form-panel-phone-helper"
                         : touched.phone && !isPhoneFormatValid
                             ? "employees-form-panel-phone-error"
-                            : undefined}
-                    data-component="desktop_employees_form-panel_phone-field_input"
-                />
+                            : undefined,
+                    ...phoneErrorIds,
+                )}
+                data-component="desktop_employees_form-panel_phone-field_input"
+            />
                 {touched.phone && !isPhoneFormatValid && (
                     <FormHelperText
                         id="employees-form-panel-phone-error"

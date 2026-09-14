@@ -1,4 +1,6 @@
 "use client";
+import { getUserErrorMessage } from "@babyjamjam/shared";
+
 
 import { useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
@@ -115,7 +117,7 @@ export function OnboardingForm({
         startTransition(async () => {
             const response = await completeKakaoOnboarding(result.data);
             if (!response.success) {
-                setServerError(response.error || "계정 정보를 저장하지 못했습니다.");
+                setServerError(getUserErrorMessage(response.error || "계정 정보를 저장하지 못했습니다."));
                 return;
             }
 
@@ -168,7 +170,7 @@ export function OnboardingForm({
             {serverError && (
                 <div data-component="desktop_auth_kakao-onboarding_alert">
                     <Alert variant="destructive" onClose={() => setServerError(null)}>
-                        {serverError}
+                        {serverError && getUserErrorMessage(serverError)}
                     </Alert>
                 </div>
             )}

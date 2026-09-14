@@ -1,3 +1,5 @@
+
+import { getUserErrorMessage } from "@babyjamjam/shared";
 import * as React from "react";
 import { Input, type InputProps } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -31,7 +33,7 @@ export const FormField = React.forwardRef<HTMLInputElement, FormFieldProps>(
             id={`${fieldId}-error`}
             className={cn("text-sm text-destructive animate-fade-in", errorClassName)}
           >
-            {error}
+            {error && getUserErrorMessage(error)}
           </p>
         )}
       </div>

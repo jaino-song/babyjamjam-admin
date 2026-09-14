@@ -96,7 +96,9 @@ export function useEmployees({ refetchOnMount = true }: UseEmployeesOptions = {}
                 if (Array.isArray((data as Record<string, unknown>).data)) return (data as Record<string, unknown>).data as Employee[];
                 if (Array.isArray((data as Record<string, unknown>).items)) return (data as Record<string, unknown>).items as Employee[];
             }
-            return [];
+            // 예상 밖 응답은 빈 목록 성공으로 위장하지 않는다 — 쿼리를
+            // 실패시켜 UI의 에러 분기(getUserErrorMessage)가 노출되도록 한다.
+            throw new Error("직원 목록 응답을 확인할 수 없습니다.");
         },
         staleTime: 1000 * 60 * 10, // 10 minutes
         refetchOnMount,

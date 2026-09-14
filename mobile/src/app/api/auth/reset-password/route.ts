@@ -27,7 +27,7 @@ export async function POST(request: NextRequest) {
             const responseData = error.response?.data;
 
             return NextResponse.json(
-                sanitizeUpstreamClientError(responseData, "Reset failed"),
+                sanitizeUpstreamClientError(responseData, "Reset failed", status),
                 { status }
             );
         }

@@ -35,7 +35,7 @@ export function HeadlessProgressModal({
         : -1;
 
     const defaultSub = progress.failed
-        ? "처리에 실패했습니다. 잠시 후 수동 입력 화면으로 전환됩니다."
+        ? "처리에 실패했어요. 잠시 후 수동 입력 화면으로 전환돼요."
         : progress.completed
             ? "완료되었습니다."
             : null;

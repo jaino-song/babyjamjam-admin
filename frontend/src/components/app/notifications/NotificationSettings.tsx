@@ -1,4 +1,6 @@
 "use client";
+import { getUserErrorMessage } from "@babyjamjam/shared";
+
 
 import { useState } from "react";
 import { Bell, BellOff } from "lucide-react";
@@ -138,7 +140,7 @@ export function NotificationSettings() {
 
             {error && (
                 <Alert variant="destructive" className="mt-4">
-                    <AlertDescription>{error}</AlertDescription>
+                    <AlertDescription>{error && getUserErrorMessage(error)}</AlertDescription>
                 </Alert>
             )}
         </Card>

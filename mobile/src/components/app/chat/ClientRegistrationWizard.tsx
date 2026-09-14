@@ -1,4 +1,6 @@
 "use client";
+import { getUserErrorMessage } from "@babyjamjam/shared";
+
 
 import { useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
@@ -150,17 +152,17 @@ export function ClientRegistrationWizard({ onCreated }: ClientRegistrationWizard
     const handleSubmit = async () => {
         if (!isBasicsValid) {
             setSubmitError(
-                !name.trim() ? "이름을 입력해 주세요."
+                getUserErrorMessage(!name.trim() ? "이름을 입력해 주세요."
                 : phone.replace(/\D/g, "").length !== 11 ? "연락처는 11자리 휴대폰 번호여야 합니다."
                 : !isValidClientBirthdayInput(birthday) ? CLIENT_REGISTRATION_ERROR_MESSAGES.birthday
                 : !address.trim() ? "주소를 입력해 주세요."
-                : CLIENT_REGISTRATION_ERROR_MESSAGES.dueDate,
+                : CLIENT_REGISTRATION_ERROR_MESSAGES.dueDate),
             );
             return;
         }
 
         if (voucherClient && !isVoucherInfoComplete) {
-            setSubmitError("바우처 정보를 입력해주세요.");
+            setSubmitError(getUserErrorMessage("바우처 정보를 입력해주세요."));
             return;
         }
 
@@ -198,8 +200,8 @@ export function ClientRegistrationWizard({ onCreated }: ClientRegistrationWizard
             } as CreateClientDto);
             onCreated?.(created);
         } catch (e) {
-            const msg = e instanceof Error ? e.message : "등록에 실패했습니다.";
-            setSubmitError(msg);
+            const msg = e instanceof Error ? e.message : "등록에 실패했어요.";
+            setSubmitError(getUserErrorMessage(e, msg));
         } finally {
             setIsSubmitting(false);
         }
@@ -413,7 +415,7 @@ export function ClientRegistrationWizard({ onCreated }: ClientRegistrationWizard
             {submitError && (
                 <Alert variant="destructive" className="mt-4">
                     <AlertCircle className="h-4 w-4" />
-                    <AlertDescription>{submitError}</AlertDescription>
+                    <AlertDescription>{submitError && getUserErrorMessage(submitError)}</AlertDescription>
                 </Alert>
             )}
 

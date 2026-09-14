@@ -1,4 +1,6 @@
 "use client";
+import { getUserErrorMessage } from "@babyjamjam/shared";
+
 
 import { useState, useEffect, useCallback } from "react";
 import type {
@@ -74,7 +76,7 @@ export function useEformsign(): UseEformsignResult {
 
         setIsLoaded(true);
       } catch (err) {
-        setError(err instanceof Error ? err.message : "Failed to load eformsign SDK");
+        setError(getUserErrorMessage(err, err instanceof Error ? err.message : "Failed to load eformsign SDK"));
       } finally {
         setIsLoading(false);
       }

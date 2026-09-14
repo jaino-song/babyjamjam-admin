@@ -1,4 +1,6 @@
 "use client";
+import { getUserErrorMessage } from "@babyjamjam/shared";
+
 
 import { redirect, useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
@@ -251,7 +253,7 @@ export default function DashboardPage() {
     } catch {
       toast({
         title: t(locale, "clients.delete-fail"),
-        description: t(locale, "clients.delete-fail-description"),
+        description: getUserErrorMessage(t(locale, "clients.delete-fail-description")),
         variant: "destructive",
       });
     }

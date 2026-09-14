@@ -67,7 +67,7 @@ describe("branch system-template proxy routes", () => {
     });
   });
 
-  it("preserves an upstream 403 message instead of flattening it to 500", async () => {
+  it("preserves an upstream 403 as a safe Korean message instead of flattening it to 500", async () => {
     mockGet.mockRejectedValue({
       response: {
         status: 403,
@@ -81,7 +81,7 @@ describe("branch system-template proxy routes", () => {
     );
 
     expect(response.status).toBe(403);
-    await expect(response.json()).resolves.toEqual({ error: "Branch selection required" });
+    await expect(response.json()).resolves.toEqual({ error: "이 작업을 할 권한이 없어요." });
   });
 
   it("forwards the captured branch identity and body for updates", async () => {

@@ -1,4 +1,6 @@
 "use client";
+import { getUserErrorMessage } from "@babyjamjam/shared";
+
 
 import { useState, useCallback, useRef } from "react";
 import { refreshAppAuthSession } from "@/lib/api/client";
@@ -77,11 +79,11 @@ interface UseChatStreamReturn {
 
 const SESSION_STORAGE_KEY = "ai_chat_session_id";
 const CHAT_SESSION_EXPIRED_MESSAGE =
-    "세션이 만료되었습니다. 페이지를 새로고침하거나 다시 로그인해 주세요.";
+    "세션이 만료됐어요. 페이지를 새로고침하거나 다시 로그인해 주세요.";
 const CHAT_PERMISSION_DENIED_MESSAGE =
-    "이 기능에 접근할 권한이 없습니다. 관리자에게 문의해 주세요.";
+    "이 기능에 접근할 권한이 없어요. 관리자에게 문의해 주세요.";
 const CHAT_TEMPORARY_ERROR_MESSAGE =
-    "일시적인 오류로 응답을 가져오지 못했습니다. 잠시 후 다시 시도해 주세요.";
+    "일시적인 오류로 응답을 가져오지 못했어요. 잠시 후 다시 시도해 주세요.";
 
 class ChatStreamResponseError extends Error {
     constructor(readonly status: number) {
@@ -206,11 +208,11 @@ function confirmationResultMessage(result: unknown): string {
 }
 
 function confirmationRequestErrorMessage(status: number): string {
-    if (status === 401) return "로그인이 만료되었습니다. 다시 로그인해 주세요.";
+    if (status === 401) return "로그인이 만료됐어요. 다시 로그인해 주세요.";
     if (status === 403) return "이 확인 요청에 접근할 권한이 없습니다.";
-    if (status === 404) return "확인 요청을 찾을 수 없습니다. 새로 요청해 주세요.";
-    if (status === 409) return "확인 요청이 이미 처리되었거나 만료되었습니다. 새로 요청해 주세요.";
-    return "요청 결과를 확인할 수 없습니다. 중복 실행하지 말고 기록을 새로고침해 확인해 주세요.";
+    if (status === 404) return "확인 요청을 찾을 수 없어요. 새로 요청해 주세요.";
+    if (status === 409) return "확인 요청이 이미 처리되었거나 만료됐어요. 새로 요청해 주세요.";
+    return "요청 결과를 확인할 수 없어요. 중복 실행하지 말고 기록을 새로고침해 확인해 주세요.";
 }
 
 function restoreMessagesUI(messages: ChatMessage[]): ChatMessage[] {
@@ -384,7 +386,7 @@ export function useChatStream(): UseChatStreamReturn {
         // A preview without an opaque server intent is display-only. Never
         // let a model-produced confirmation message become an approval.
         setPendingConfirmation(null);
-        setError("확인 요청을 사용할 수 없습니다. 새로 요청해 주세요.");
+        setError(getUserErrorMessage("확인 요청을 사용할 수 없어요. 새로 요청해 주세요."));
     }, [clearScheduledFlush, flushPendingAssistant]);
 
     const confirmAction = useCallback(async () => {
@@ -401,7 +403,7 @@ export function useChatStream(): UseChatStreamReturn {
         try {
             if (confirmation.expiresAt && Date.parse(confirmation.expiresAt) <= Date.now()) {
                 const safeMessage = confirmationRequestErrorMessage(409);
-                setError(safeMessage);
+                setError(getUserErrorMessage(safeMessage));
                 appendMessage({
                     role: "assistant",
                     content: safeMessage,
@@ -424,7 +426,7 @@ export function useChatStream(): UseChatStreamReturn {
 
             if (!response.ok) {
                 const safeMessage = confirmationRequestErrorMessage(response.status);
-                setError(safeMessage);
+                setError(getUserErrorMessage(safeMessage));
                 appendMessage({
                     role: "assistant",
                     content: safeMessage,
@@ -447,7 +449,7 @@ export function useChatStream(): UseChatStreamReturn {
             setState("complete");
         } catch {
             const safeMessage = confirmationRequestErrorMessage(599);
-            setError(safeMessage);
+            setError(getUserErrorMessage(safeMessage));
             appendMessage({
                 role: "assistant",
                 content: safeMessage,
@@ -695,7 +697,7 @@ export function useChatStream(): UseChatStreamReturn {
                             console.error("[chat] stream event reported an error");
                             setIsToolExecuting(false);
                             setCurrentTool(null);
-                            setError(CHAT_TEMPORARY_ERROR_MESSAGE);
+                            setError(getUserErrorMessage(CHAT_TEMPORARY_ERROR_MESSAGE));
                             setState("error");
                             clearScheduledFlush();
                             flushPendingAssistant();
@@ -760,7 +762,7 @@ export function useChatStream(): UseChatStreamReturn {
                             console.error("[chat] buffered stream event reported an error");
                             setIsToolExecuting(false);
                             setCurrentTool(null);
-                            setError(CHAT_TEMPORARY_ERROR_MESSAGE);
+                            setError(getUserErrorMessage(CHAT_TEMPORARY_ERROR_MESSAGE));
                             setState("error");
                             clearScheduledFlush();
                             flushPendingAssistant();
@@ -922,7 +924,7 @@ export function useChatStream(): UseChatStreamReturn {
                                         console.error("[chat] retried stream event reported an error");
                                         setIsToolExecuting(false);
                                         setCurrentTool(null);
-                                        setError(CHAT_TEMPORARY_ERROR_MESSAGE);
+                                        setError(getUserErrorMessage(CHAT_TEMPORARY_ERROR_MESSAGE));
                                         setState("error");
                                         clearScheduledFlush();
                                         flushPendingAssistant();
@@ -986,7 +988,7 @@ export function useChatStream(): UseChatStreamReturn {
                                         console.error("[chat] buffered retried stream event reported an error");
                                         setIsToolExecuting(false);
                                         setCurrentTool(null);
-                                        setError(CHAT_TEMPORARY_ERROR_MESSAGE);
+                                        setError(getUserErrorMessage(CHAT_TEMPORARY_ERROR_MESSAGE));
                                         setState("error");
                                         clearScheduledFlush();
                                         flushPendingAssistant();
@@ -1021,7 +1023,7 @@ export function useChatStream(): UseChatStreamReturn {
                         
                         const retryErrorMessage = getChatStreamErrorMessage(retryErr);
                         logChatStreamError("retried stream request failed", retryErr);
-                        setError(retryErrorMessage);
+                        setError(getUserErrorMessage(retryErrorMessage));
                         setState("error");
                         
                         setMessages((prev) => {
@@ -1042,7 +1044,7 @@ export function useChatStream(): UseChatStreamReturn {
             }
             
             // After second failure, show error (manual retry needed)
-            setError(errorMessage);
+            setError(getUserErrorMessage(errorMessage));
             setState("error");
             
             setMessages((prev) => {

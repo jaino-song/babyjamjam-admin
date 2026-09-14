@@ -8,7 +8,8 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 
 import { Spinner } from "@/components/ui/spinner";
-import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { ErrorFallback } from "@/components/app/ui/error-fallback";
 import {
     Popover,
     PopoverContent,
@@ -28,6 +29,7 @@ import { FilteredClientsDialog } from "./FilteredClientsDialog";
 import { cn } from "@/lib/utils";
 import { PWA_NOTIFICATIONS_ENABLED } from "@/lib/notification-config";
 import { formatDateForDisplay } from "@/lib/date/format-date-for-display";
+import { normalizeApiError } from "@babyjamjam/shared";
 
 type FilterType = "starting-soon" | "ending-soon" | "incomplete-contracts" | "no-contract";
 
@@ -121,9 +123,32 @@ export function NotificationBell({
 
     // Keep the in-app notification history available when PWA delivery is disabled.
     const notificationDataEnabled = !PWA_NOTIFICATIONS_ENABLED || isSubscribed;
-    const { data: unreadCount = 0 } = useUnreadCount(notificationDataEnabled);
-    const { data: notificationsData, isLoading: notificationsLoading } = useNotifications(10, 0, notificationDataEnabled);
+    const {
+        data: unreadCountData,
+        isError: unreadCountIsError,
+        error: unreadCountError,
+        refetch: refetchUnreadCount,
+        isFetching: unreadCountFetching,
+    } = useUnreadCount(notificationDataEnabled);
+    const {
+        data: notificationsData,
+        isLoading: notificationsLoading,
+        isError: notificationsIsError,
+        error: notificationsError,
+        refetch: refetchNotifications,
+        isFetching: notificationsFetching,
+    } = useNotifications(10, 0, notificationDataEnabled);
+    const unreadCount = typeof unreadCountData === "number" ? unreadCountData : undefined;
     const notifications = Array.isArray(notificationsData) ? notificationsData : [];
+    const notificationsHasData = notificationsData !== undefined;
+    const unreadCountNormalizedError = unreadCountError
+        ? normalizeApiError(unreadCountError, { operation: "read", locale: "ko-KR" })
+        : null;
+    const notificationsNormalizedError = notificationsError
+        ? normalizeApiError(notificationsError, { operation: "read", locale: "ko-KR" })
+        : null;
+    const showUnreadCountError = unreadCountIsError && Boolean(unreadCountNormalizedError) && !unreadCountNormalizedError?.suppress;
+    const showNotificationsError = notificationsIsError && Boolean(notificationsNormalizedError) && !notificationsNormalizedError?.suppress;
 
     // Lock body scroll when modal is open
     useEffect(() => {
@@ -268,7 +293,7 @@ export function NotificationBell({
             <>
                 <div className="p-4 flex justify-between items-center bg-popover border-b">
                     <h2 className="text-lg font-semibold">알림</h2>
-                    {unreadCount > 0 && (
+                    {unreadCount !== undefined && unreadCount > 0 && (
                         <Button
                             variant="ghost"
                             size="sm"
@@ -280,15 +305,79 @@ export function NotificationBell({
                     )}
                 </div>
 
-                {notificationsLoading ? (
+                {showUnreadCountError ? (
+                    <div className="px-4 pt-4">
+                        <Alert
+                            variant="warning"
+                            role="status"
+                            aria-live="polite"
+                            data-component="mobile_notification-bell_unread-count-error"
+                        >
+                            <AlertTitle>읽지 않은 알림 수를 새로 불러오지 못했어요</AlertTitle>
+                            <AlertDescription>
+                                <p>{unreadCountNormalizedError?.message}</p>
+                                <Button
+                                    type="button"
+                                    variant="outline"
+                                    size="sm"
+                                    className="mt-3"
+                                    onClick={() => void refetchUnreadCount()}
+                                    disabled={unreadCountFetching}
+                                >
+                                    다시 시도
+                                </Button>
+                            </AlertDescription>
+                        </Alert>
+                    </div>
+                ) : null}
+
+                {showNotificationsError && !notificationsHasData ? (
+                    <ErrorFallback
+                        title="알림을 불러오지 못했어요"
+                        description={notificationsNormalizedError?.message ?? "요청한 정보를 불러오지 못했어요."}
+                        onReset={() => void refetchNotifications()}
+                        className="min-h-0 px-4 py-8"
+                    />
+                ) : notificationsLoading && !notificationsHasData ? (
                     <div className="p-8 flex justify-center">
                         <Spinner size="default" />
                     </div>
-                ) : notifications.length === 0 ? (
+                ) : (
+                    <>
+                        {showNotificationsError ? (
+                            <div className="px-4 pt-4">
+                                <Alert
+                                    variant="warning"
+                                    role="status"
+                                    aria-live="polite"
+                                    data-component="mobile_notification-bell_list-error"
+                                >
+                                    <AlertTitle>알림 목록을 새로 불러오지 못했어요</AlertTitle>
+                                    <AlertDescription>
+                                        <p>{notificationsNormalizedError?.message}</p>
+                                        <Button
+                                            type="button"
+                                            variant="outline"
+                                            size="sm"
+                                            className="mt-3"
+                                            onClick={() => void refetchNotifications()}
+                                            disabled={notificationsFetching}
+                                        >
+                                            다시 시도
+                                        </Button>
+                                    </AlertDescription>
+                                </Alert>
+                            </div>
+                        ) : null}
+                        {notificationsLoading || (notificationsNormalizedError?.suppress && !notificationsHasData) ? (
+                            <div className="p-8 flex justify-center">
+                                <Spinner size="default" />
+                            </div>
+                        ) : notifications.length === 0 ? (
                     <div className="p-8 text-center">
                         <p className="text-muted-foreground">알림이 없습니다</p>
                     </div>
-                ) : (
+                        ) : (
                     <div className="max-h-80 overflow-y-auto scrollbar-hide">
                         {groupNotificationsByDate(notifications).map((group) => (
                             <div key={group.date}>
@@ -324,6 +413,8 @@ export function NotificationBell({
                             </div>
                         ))}
                     </div>
+                        )}
+                    </>
                 )}
             </>
         );
@@ -355,7 +446,7 @@ export function NotificationBell({
                         ) : !PWA_NOTIFICATIONS_ENABLED || isSubscribed ? (
                             <>
                                 <Bell className="!h-5 !w-5 text-primary" />
-                                {unreadCount > 0 && (
+                                {unreadCount !== undefined && unreadCount > 0 && (
                                     <Badge
                                         data-testid="notification-badge"
                                         className="absolute -right-1 -top-1 flex h-5 w-5 items-center justify-center rounded-full p-0 text-xs animate-bounce-subtle"

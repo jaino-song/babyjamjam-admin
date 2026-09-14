@@ -1,4 +1,6 @@
 "use client";
+import { getUserErrorMessage } from "@babyjamjam/shared";
+
 
 import { useState, useCallback, useRef } from "react";
 import { authenticatedFetch } from "@/lib/api/authenticated-fetch";
@@ -104,11 +106,11 @@ function confirmationResultMessage(result: unknown): string {
 }
 
 function confirmationRequestErrorMessage(status: number): string {
-    if (status === 401) return "로그인이 만료되었습니다. 다시 로그인해 주세요.";
+    if (status === 401) return "로그인이 만료됐어요. 다시 로그인해 주세요.";
     if (status === 403) return "이 확인 요청에 접근할 권한이 없습니다.";
-    if (status === 404) return "확인 요청을 찾을 수 없습니다. 새로 요청해 주세요.";
-    if (status === 409) return "확인 요청이 이미 처리되었거나 만료되었습니다. 새로 요청해 주세요.";
-    return "요청 결과를 확인할 수 없습니다. 중복 실행하지 말고 기록을 새로고침해 확인해 주세요.";
+    if (status === 404) return "확인 요청을 찾을 수 없어요. 새로 요청해 주세요.";
+    if (status === 409) return "확인 요청이 이미 처리되었거나 만료됐어요. 새로 요청해 주세요.";
+    return "요청 결과를 확인할 수 없어요. 중복 실행하지 말고 기록을 새로고침해 확인해 주세요.";
 }
 
 function parseSSEBuffer(buffer: string): { events: ChatStreamEvent[]; remaining: string } {
@@ -277,7 +279,7 @@ export function useChatStream(): UseChatStreamReturn {
 
         // A model-produced preview without a server intent is display-only.
         setPendingConfirmation(null);
-        setError("확인 요청을 사용할 수 없습니다. 새로 요청해 주세요.");
+        setError(getUserErrorMessage("확인 요청을 사용할 수 없어요. 새로 요청해 주세요."));
     }, [clearScheduledFlush, flushPendingAssistant]);
 
     const confirmAction = useCallback(async () => {
@@ -294,7 +296,7 @@ export function useChatStream(): UseChatStreamReturn {
         try {
             if (confirmation.expiresAt && Date.parse(confirmation.expiresAt) <= Date.now()) {
                 const safeMessage = confirmationRequestErrorMessage(409);
-                setError(safeMessage);
+                setError(getUserErrorMessage(safeMessage));
                 appendMessage({
                     role: "assistant",
                     content: safeMessage,
@@ -317,7 +319,7 @@ export function useChatStream(): UseChatStreamReturn {
 
             if (!response.ok) {
                 const safeMessage = confirmationRequestErrorMessage(response.status);
-                setError(safeMessage);
+                setError(getUserErrorMessage(safeMessage));
                 appendMessage({
                     role: "assistant",
                     content: safeMessage,
@@ -340,7 +342,7 @@ export function useChatStream(): UseChatStreamReturn {
             setState("complete");
         } catch {
             const safeMessage = confirmationRequestErrorMessage(599);
-            setError(safeMessage);
+            setError(getUserErrorMessage(safeMessage));
             appendMessage({
                 role: "assistant",
                 content: safeMessage,
@@ -587,7 +589,7 @@ export function useChatStream(): UseChatStreamReturn {
                         case "error":
                             setIsToolExecuting(false);
                             setCurrentTool(null);
-                            setError(event.error || "Unknown error");
+                            setError(getUserErrorMessage(event.error || "Unknown error"));
                             setState("error");
                             clearScheduledFlush();
                             flushPendingAssistant();
@@ -597,7 +599,7 @@ export function useChatStream(): UseChatStreamReturn {
                                 if (lastIdx >= 0 && updated[lastIdx].role === "assistant") {
                                     updated[lastIdx] = {
                                         ...updated[lastIdx],
-                                        content: `Error: ${event.error}`,
+                                        content: getUserErrorMessage(event.error),
                                         isStreaming: false,
                                     };
                                 }
@@ -651,7 +653,7 @@ export function useChatStream(): UseChatStreamReturn {
                         case "error":
                             setIsToolExecuting(false);
                             setCurrentTool(null);
-                            setError(event.error || "Unknown error");
+                            setError(getUserErrorMessage(event.error || "Unknown error"));
                             setState("error");
                             clearScheduledFlush();
                             flushPendingAssistant();
@@ -661,7 +663,7 @@ export function useChatStream(): UseChatStreamReturn {
                                 if (lastIdx >= 0 && updated[lastIdx].role === "assistant") {
                                     updated[lastIdx] = {
                                         ...updated[lastIdx],
-                                        content: `Error: ${event.error}`,
+                                        content: getUserErrorMessage(event.error),
                                         isStreaming: false,
                                     };
                                 }
@@ -815,7 +817,7 @@ export function useChatStream(): UseChatStreamReturn {
 	                                    case "error":
 	                                        setIsToolExecuting(false);
 	                                        setCurrentTool(null);
-	                                        setError(event.error || "Unknown error");
+	                                        setError(getUserErrorMessage(event.error || "Unknown error"));
 	                                        setState("error");
 	                                        clearScheduledFlush();
 	                                        flushPendingAssistant();
@@ -825,7 +827,7 @@ export function useChatStream(): UseChatStreamReturn {
 	                                            if (lastIdx >= 0 && updated[lastIdx].role === "assistant") {
                                                 updated[lastIdx] = {
                                                     ...updated[lastIdx],
-                                                    content: `Error: ${event.error}`,
+                                                    content: getUserErrorMessage(event.error),
                                                     isStreaming: false,
                                                 };
                                             }
@@ -878,7 +880,7 @@ export function useChatStream(): UseChatStreamReturn {
 	                                    case "error":
 	                                        setIsToolExecuting(false);
 	                                        setCurrentTool(null);
-	                                        setError(event.error || "Unknown error");
+	                                        setError(getUserErrorMessage(event.error || "Unknown error"));
 	                                        setState("error");
 	                                        clearScheduledFlush();
 	                                        flushPendingAssistant();
@@ -888,7 +890,7 @@ export function useChatStream(): UseChatStreamReturn {
 	                                            if (lastIdx >= 0 && updated[lastIdx].role === "assistant") {
                                                 updated[lastIdx] = {
                                                     ...updated[lastIdx],
-                                                    content: `Error: ${event.error}`,
+                                                    content: getUserErrorMessage(event.error),
                                                     isStreaming: false,
                                                 };
                                             }
@@ -912,7 +914,7 @@ export function useChatStream(): UseChatStreamReturn {
                         }
                         
                         const retryErrorMessage = retryErr instanceof Error ? retryErr.message : "Unknown error";
-                        setError(retryErrorMessage);
+                        setError(getUserErrorMessage(retryErrorMessage));
                         setState("error");
                         
                         setMessages((prev) => {
@@ -921,7 +923,7 @@ export function useChatStream(): UseChatStreamReturn {
                             if (lastIdx >= 0 && updated[lastIdx].role === "assistant") {
                                 updated[lastIdx] = {
                                     ...updated[lastIdx],
-                                    content: `Error: ${retryErrorMessage}`,
+                                    content: getUserErrorMessage(retryErrorMessage),
                                     isStreaming: false,
                                 };
                             }
@@ -933,7 +935,7 @@ export function useChatStream(): UseChatStreamReturn {
             }
             
             // After second failure, show error (manual retry needed)
-            setError(errorMessage);
+            setError(getUserErrorMessage(errorMessage));
             setState("error");
             
             setMessages((prev) => {
@@ -942,7 +944,7 @@ export function useChatStream(): UseChatStreamReturn {
                 if (lastIdx >= 0 && updated[lastIdx].role === "assistant") {
                     updated[lastIdx] = {
                         ...updated[lastIdx],
-                        content: `Error: ${errorMessage}`,
+                        content: getUserErrorMessage(errorMessage),
                         isStreaming: false,
                     };
                 }

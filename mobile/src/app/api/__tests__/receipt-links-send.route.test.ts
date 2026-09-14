@@ -64,6 +64,6 @@ describe("POST /api/receipt-links/send", () => {
     mockPost.mockRejectedValue({ response: { status: 502, data: { message: "at Object.<anonymous> (/app/dist/…)" } } });
     const response = await POST(request({ documentId: "doc-1" }));
     expect(response.status).toBe(500);
-    expect(await response.json()).toEqual({ error: "Failed to send receipt link" });
+    expect(await response.json()).toEqual({ error: expect.stringMatching(/[가-힣].*요[.!]?$/) });
   });
 });

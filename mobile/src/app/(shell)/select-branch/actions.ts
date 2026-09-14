@@ -56,13 +56,13 @@ export async function getUserBranches(): Promise<{
       const axiosError = error as AxiosError<APIErrorResponse>;
       return {
         success: false,
-        error: axiosError.response?.data?.message || "지점 목록을 불러오는데 실패했습니다.",
+        error: axiosError.response?.data?.message || "지점 목록을 불러오는데 실패했어요.",
       };
     }
 
     return {
       success: false,
-      error: "지점 목록을 불러오는데 실패했습니다.",
+      error: "지점 목록을 불러오는데 실패했어요.",
     };
   }
 }
@@ -134,13 +134,13 @@ export async function setCurrentBranch(branchId: string): Promise<{
       const axiosError = error as AxiosError<APIErrorResponse>;
       return {
         success: false,
-        error: axiosError.response?.data?.message || "지점 선택에 실패했습니다.",
+        error: axiosError.response?.data?.message || "지점 선택에 실패했어요.",
       };
     }
 
     return {
       success: false,
-      error: "지점 선택에 실패했습니다.",
+      error: "지점 선택에 실패했어요.",
     };
   }
 }

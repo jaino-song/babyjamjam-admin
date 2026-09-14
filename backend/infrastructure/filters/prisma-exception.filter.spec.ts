@@ -20,16 +20,20 @@ jest.mock("@sentry/nestjs", () => ({
 import { PrismaExceptionFilter } from "./prisma-exception.filter";
 
 interface MockResponse {
+    locals: Record<string, unknown>;
+    setHeader: jest.Mock;
     status: jest.Mock;
     json: jest.Mock;
 }
 
-function createHost(path = "/clients"): { host: ArgumentsHost; response: MockResponse } {
+function createHost(path = "/clients", language = "ko-KR"): { host: ArgumentsHost; response: MockResponse } {
     const response: MockResponse = {
+        locals: {},
+        setHeader: jest.fn(),
         status: jest.fn().mockReturnThis(),
         json: jest.fn(),
     };
-    const request = { originalUrl: path, url: path };
+    const request = { originalUrl: path, url: path, method: "POST", acceptsLanguages: () => language };
     const host = {
         switchToHttp: () => ({
             getResponse: () => response,
@@ -71,21 +75,23 @@ describe("PrismaExceptionFilter database failover telemetry", () => {
         filter.catch(knownError(code, rawMessage), host);
 
         expect(response.status).toHaveBeenCalledWith(503);
-        expect(response.json).toHaveBeenCalledWith({
-            statusCode: 503,
-            code,
-            error: "Service Unavailable",
-        });
+        expect(response.json).toHaveBeenCalledWith(expect.objectContaining({
+            statusCode: 503, code: "DEPENDENCY_UNAVAILABLE", outcome: "UNKNOWN", requestId: expect.any(String),
+        }));
         expect(mockScope.setTag).toHaveBeenCalledWith("environment", "production");
         expect(mockScope.setTag).toHaveBeenCalledWith("db.route", "shared");
         expect(mockScope.setTag).toHaveBeenCalledWith("db.failover_eligible", "true");
         expect(mockScope.setTag).toHaveBeenCalledWith("prisma.code", code);
+        if (code === "P1001" || code === "P1017") {
+            expect(mockScope.setTag).toHaveBeenCalledWith("error.code", "DEPENDENCY_UNAVAILABLE");
+            expect(mockScope.setTag).toHaveBeenCalledWith("outcome", "UNKNOWN");
+        }
         expect(mockCaptureException).toHaveBeenCalledTimes(1);
         expect(mockCaptureException.mock.calls[0]?.[0]).toMatchObject({
             message: "Database connectivity failure",
         });
         expect(JSON.stringify(mockScope.setTag.mock.calls)).not.toContain(rawMessage);
-        expect(consoleError).toHaveBeenCalledWith(`[PrismaException] Code: ${code}, Field: N/A`);
+        expect(JSON.stringify(response.json.mock.calls)).not.toContain(rawMessage);
     });
 
     it.each(["P2024", "P2002"])("captures %s as explicitly ineligible without raw details", (code) => {
@@ -98,7 +104,8 @@ describe("PrismaExceptionFilter database failover telemetry", () => {
         expect(mockScope.setTag).toHaveBeenCalledWith("db.failover_eligible", "false");
         expect(mockScope.setTag).toHaveBeenCalledWith("prisma.code", code);
         expect(JSON.stringify(mockScope.setTag.mock.calls)).not.toContain(rawMessage);
-        expect(response.json.mock.calls[0]?.[0]).not.toHaveProperty("message");
+        expect(JSON.stringify(response.json.mock.calls)).not.toContain(rawMessage);
+        expect(response.json.mock.calls[0]?.[0].code).toBe(code === "P2024" ? "DEPENDENCY_UNAVAILABLE" : "P2002");
     });
 
     it("captures Prisma errors without a code as ineligible instead of treating them as failover signals", () => {
@@ -114,22 +121,37 @@ describe("PrismaExceptionFilter database failover telemetry", () => {
         expect(mockScope.setTag).toHaveBeenCalledWith("db.failover_eligible", "false");
         expect(mockScope.setTag).toHaveBeenCalledWith("prisma.code", "unknown");
         expect(response.status).toHaveBeenCalledWith(500);
-        expect(response.json).toHaveBeenCalledWith({
-            statusCode: 500,
-            code: null,
-            error: "Internal Server Error",
-        });
+        expect(response.json).toHaveBeenCalledWith(expect.objectContaining({
+            statusCode: 500, code: "INTERNAL_ERROR", outcome: "UNKNOWN",
+        }));
     });
 
-    it("keeps existing service-record capture while adding database taxonomy", () => {
+    it("reports one database exception even on a service-record route", () => {
         const filter = new PrismaExceptionFilter();
         const { host, response } = createHost("/service-record/context");
 
         filter.catch(knownError("P1017"), host);
 
         expect(response.status).toHaveBeenCalledWith(503);
-        expect(mockCaptureException).toHaveBeenCalledTimes(2);
+        expect(mockCaptureException).toHaveBeenCalledTimes(1);
         expect(mockScope.setTag).toHaveBeenCalledWith("feature", "database-failover");
-        expect(mockScope.setTag).toHaveBeenCalledWith("feature", "service-records");
+        expect(mockScope.setTag).not.toHaveBeenCalledWith("feature", "service-records");
     });
+    it.each([["P2002", 409], ["P2003", 400], ["P2025", 404], ["P2011", 400], ["P2006", 400]])("preserves legacy %s without private metadata", (code, status) => {
+        const { host, response } = createHost();
+        const exception = new Prisma.PrismaClientKnownRequestError("private value", { code: String(code), clientVersion: "6.19.1", meta: { target: ["private_constraint"] } });
+        new PrismaExceptionFilter().catch(exception, host);
+        expect(response.status).toHaveBeenCalledWith(status);
+        expect(response.json).toHaveBeenCalledWith(expect.objectContaining({ code, statusCode: status }));
+        expect(JSON.stringify(response.json.mock.calls)).not.toMatch(/private|field|UNKNOWN/);
+    });
+
+    it("negotiates English for database failures", () => {
+        const { host, response } = createHost("/clients", "en-US");
+        new PrismaExceptionFilter().catch(knownError("P1001"), host);
+        expect(response.setHeader).toHaveBeenCalledWith("Content-Language", "en-US");
+        expect(response.json.mock.calls[0]?.[0].detail).not.toMatch(/[가-힣]/);
+        expect(response.json.mock.calls[0]?.[0].recovery).toEqual({ action: "CHECK_STATUS", retry: { mode: "NEVER" } });
+    });
+
 });

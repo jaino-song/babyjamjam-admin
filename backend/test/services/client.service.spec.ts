@@ -1,5 +1,8 @@
 import { BadRequestException, ConflictException, Logger, NotFoundException } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
+import type { Request, Response } from "express";
+import { normalizeApiError, PROBLEM_CATALOG } from "@babyjamjam/shared/errors/problem-details";
+import { mapHttpProblem, sendProblemResponse } from "../../infrastructure/filters/problem-response";
 
 import { ClientService } from "../../application/services/client.service";
 import { ServiceRecordLifecycleService } from "../../application/services/service-record-lifecycle.service";
@@ -223,6 +226,20 @@ describe("ClientService", () => {
 
     const branchId = "org-1";
 
+    /** Public problem contract body carried by converted client pre-write throws. */
+    const clientProblemResponse = (topCode: string, pointer: string, errorCode: string, detail: unknown) => ({
+        code: topCode,
+        params: {},
+        outcome: "NOT_APPLIED",
+        recovery: { action: "NONE", retry: { mode: "NEVER" } },
+        errors: expect.arrayContaining([expect.objectContaining({
+            pointer,
+            code: errorCode,
+            detail,
+            location: "body",
+        })]),
+    });
+
     let service: ClientService;
     let createClientUsecase: ReturnType<typeof createMockCreateClientUsecase>;
     let updateClientUsecase: ReturnType<typeof createMockUpdateClientUsecase>;
@@ -319,7 +336,10 @@ describe("ClientService", () => {
                 careCenter: false,
                 voucherClient: false,
                 breastPump: false,
-            })).rejects.toThrow("연락처가 올바른 국내 전화번호 형식이 아닙니다.");
+            })).rejects.toMatchObject({
+                status: 400,
+                response: clientProblemResponse("VALIDATION_FAILED", "/phone", "INVALID_FORMAT", "연락처가 올바른 국내 전화번호 형식이 아닙니다."),
+            });
 
             expect(systemSettingService.getClientAutoRegistrationEnabled).not.toHaveBeenCalled();
             expect(clientRepository.findByPhone).not.toHaveBeenCalled();
@@ -413,7 +433,10 @@ describe("ClientService", () => {
                     ...baseParams,
                     ...servicePeriod,
                     duration: 16,
-                })).rejects.toThrow("서비스 기간은 1일 이상 15일 이하여야 합니다.");
+                })).rejects.toMatchObject({
+                    status: 400,
+                    response: clientProblemResponse("CLIENT_DURATION_OUT_OF_RANGE", "/duration", "OUT_OF_RANGE", "서비스 기간은 1일 이상 15일 이하여야 합니다. (시작일~종료일 영업일 기준)"),
+                });
 
                 expect(createClientUsecase.execute).not.toHaveBeenCalled();
             });
@@ -1111,7 +1134,7 @@ describe("ClientService", () => {
                 breastPump: false,
             })).rejects.toMatchObject({
                 status: 409,
-                response: expect.objectContaining({ clientId: 1 }),
+                response: clientProblemResponse("CLIENT_PHONE_ALREADY_REGISTERED", "/phone", "INVALID_VALUE", "같은 전화번호의 고객이 이미 등록되어 있습니다."),
             });
         });
 
@@ -1165,7 +1188,10 @@ describe("ClientService", () => {
                 careCenter: false,
                 voucherClient: true,
                 breastPump: false,
-            })).rejects.toThrow("서비스 시작일은 종료일보다 늦을 수 없습니다.");
+            })).rejects.toMatchObject({
+            status: 400,
+            response: clientProblemResponse("CLIENT_SERVICE_PERIOD_INVALID", "/endDate", "INVALID_VALUE", "서비스 시작일은 종료일보다 늦을 수 없습니다."),
+        });
         });
 
         it("does not resolve client creation before automatic message jobs are synchronized", async () => {
@@ -1236,23 +1262,23 @@ describe("ClientService", () => {
         });
 
         describe("phone deduplication (reuse-existing)", () => {
-            it("returns 409 with the existing client id when reuse is not confirmed", async () => {
+            it("rejects unconfirmed duplicate-phone creation with the public conflict code and no clientId payload", async () => {
                 const existingClient = createClientEntity();
                 clientRepository.findByPhone.mockResolvedValue(existingClient);
 
-                await expect(service.create(branchId, {
+                const error: unknown = await service.create(branchId, {
                     name: "New Client",
                     phone: "010-1234-5678",
                     careCenter: false,
                     voucherClient: true,
                     breastPump: false,
-                })).rejects.toMatchObject({
+                }).catch((caught: unknown) => caught);
+                expect(error).toMatchObject({
                     status: 409,
-                    response: expect.objectContaining({
-                        message: "이미 같은 전화번호의 고객이 있습니다.",
-                        clientId: existingClient.id,
-                    }),
+                    response: clientProblemResponse("CLIENT_PHONE_ALREADY_REGISTERED", "/phone", "INVALID_VALUE", "같은 전화번호의 고객이 이미 등록되어 있습니다."),
                 });
+                // 소비자는 코드로 중복을 식별한다: 레거시 clientId 페이로드는 일부러 제거된다.
+                expect((error as { response: Record<string, unknown> }).response["clientId"]).toBeUndefined();
             });
 
             it("reuses the existing client when a client with the same normalized phone already exists in the branch", async () => {
@@ -1503,7 +1529,10 @@ describe("ClientService", () => {
                 careCenter: false,
                 voucherClient: true,
                 breastPump: false,
-            })).rejects.toThrow("서비스 시작일은 종료일보다 늦을 수 없습니다.");
+            })).rejects.toMatchObject({
+            status: 400,
+            response: clientProblemResponse("CLIENT_SERVICE_PERIOD_INVALID", "/endDate", "INVALID_VALUE", "서비스 시작일은 종료일보다 늦을 수 없습니다."),
+        });
         });
     });
 
@@ -1513,7 +1542,10 @@ describe("ClientService", () => {
     describe("update", () => {
         it("rejects malformed phone before reading or mutating the client", async () => {
             await expect(service.update(branchId, 1, { phone: "not-a-phone" }))
-                .rejects.toThrow("연락처가 올바른 국내 전화번호 형식이 아닙니다.");
+                .rejects.toMatchObject({
+                    status: 400,
+                    response: clientProblemResponse("VALIDATION_FAILED", "/phone", "INVALID_FORMAT", "연락처가 올바른 국내 전화번호 형식이 아닙니다."),
+                });
 
             expect(findClientByIdUsecase.execute).not.toHaveBeenCalled();
             expect(clientRepository.findByPhone).not.toHaveBeenCalled();
@@ -1921,7 +1953,10 @@ describe("ClientService", () => {
                 findClientByIdUsecase.execute.mockResolvedValue(existingClient);
 
                 await expect(service.update(branchId, 1, { duration: 103 }))
-                    .rejects.toThrow("서비스 기간은 1일 이상 102일 이하여야 합니다.");
+                    .rejects.toMatchObject({
+                        status: 400,
+                        response: clientProblemResponse("CLIENT_DURATION_OUT_OF_RANGE", "/duration", "OUT_OF_RANGE", "서비스 기간은 1일 이상 102일 이하여야 합니다. (시작일~종료일 영업일 기준)"),
+                    });
                 expect(prismaService.$transaction).not.toHaveBeenCalled();
                 expect(prismaService.client.updateMany).not.toHaveBeenCalled();
             });
@@ -1931,7 +1966,10 @@ describe("ClientService", () => {
                 findClientByIdUsecase.execute.mockResolvedValue(existingClient);
 
                 await expect(service.update(branchId, 1, { endDate: null, duration: 5 }))
-                    .rejects.toThrow("서비스 기간을 지정하려면 시작일과 종료일이 모두 있어야 합니다.");
+                    .rejects.toMatchObject({
+                        status: 400,
+                        response: clientProblemResponse("CLIENT_DURATION_NEEDS_SERVICE_PERIOD", "/duration", "REQUIRED", "서비스 기간을 지정하려면 시작일과 종료일이 모두 있어야 합니다."),
+                    });
                 expect(prismaService.$transaction).not.toHaveBeenCalled();
             });
 
@@ -1940,10 +1978,128 @@ describe("ClientService", () => {
                 findClientByIdUsecase.execute.mockResolvedValue(existingClient);
 
                 await expect(service.update(branchId, 1, { endDate: "2023-12-31" }))
-                    .rejects.toThrow("서비스 시작일은 종료일보다 늦을 수 없습니다.");
+                    .rejects.toMatchObject({
+                        status: 400,
+                        response: clientProblemResponse("CLIENT_SERVICE_PERIOD_INVALID", "/endDate", "INVALID_VALUE", "서비스 시작일은 종료일보다 늦을 수 없습니다."),
+                    });
 
                 expect(prismaService.$transaction).not.toHaveBeenCalled();
                 expect(prismaService.client.updateMany).not.toHaveBeenCalled();
+            });
+
+            it("routes one create and one update pre-write problem through the public problem response", async () => {
+                // 지정한 두 원인이 공개 계약 경로(mapHttpProblem → sendProblemResponse → normalizeApiError)를
+                // 온전히 통과하는지 확인한다. 사유 코드와 포인터는 새 계약의 정체성이다.
+                const createException: unknown = await service.create(branchId, {
+                    name: "Invalid Period",
+                    startDate: "2026-07-18",
+                    endDate: "2026-07-17",
+                    careCenter: false,
+                    voucherClient: true,
+                    breastPump: false,
+                }).catch((error: unknown) => error);
+                findClientByIdUsecase.execute.mockResolvedValue(createClientEntity());
+                const updateException: unknown = await service.update(branchId, 1, { name: null } as never)
+                    .catch((error: unknown) => error);
+
+                for (const locale of ["ko-KR", "en-US"] as const) {
+                    const requestId = `test-client-problem-${locale}`;
+                    const bodies: unknown[] = [];
+                    const mapped = [createException, updateException].map((candidate) => {
+                        const responseStub = {
+                            locals: { errorRequestId: requestId },
+                            setHeader: jest.fn(),
+                            status: jest.fn().mockReturnThis(),
+                            json: jest.fn(),
+                        };
+                        const problem = mapHttpProblem(candidate,
+                            { method: "POST", acceptsLanguages: () => locale } as unknown as Request,
+                            responseStub as unknown as Response);
+                        if (!problem) throw new Error("Expected a registered client problem");
+                        sendProblemResponse(responseStub as unknown as Response, problem);
+                        expect(responseStub.status).toHaveBeenCalledWith(400);
+                        expect(responseStub.setHeader).toHaveBeenCalledWith("Content-Type", "application/problem+json");
+                        expect(responseStub.setHeader).toHaveBeenCalledWith("Content-Language", locale);
+                        expect(responseStub.setHeader).toHaveBeenCalledWith("Cache-Control", "no-store");
+                        expect(responseStub.setHeader).toHaveBeenCalledWith("X-Request-Id", requestId);
+                        bodies.push(responseStub.json.mock.calls[0]?.[0]);
+                        return problem;
+                    });
+
+                    expect(mapped[0]).toMatchObject({
+                        code: "CLIENT_SERVICE_PERIOD_INVALID", status: 400, requestId, params: {},
+                        outcome: "NOT_APPLIED",
+                        detail: PROBLEM_CATALOG.CLIENT_SERVICE_PERIOD_INVALID.detail[locale],
+                        recovery: { action: "NONE", retry: { mode: "NEVER" } },
+                        errors: [expect.objectContaining({ pointer: "/endDate", code: "INVALID_VALUE", location: "body" })],
+                    });
+                    expect(mapped[1]).toMatchObject({
+                        code: "VALIDATION_FAILED", status: 400, requestId, params: {},
+                        outcome: "NOT_APPLIED",
+                        detail: PROBLEM_CATALOG.VALIDATION_FAILED.detail[locale],
+                        recovery: { action: "NONE", retry: { mode: "NEVER" } },
+                        errors: [expect.objectContaining({ pointer: "/name", code: "REQUIRED", location: "body" })],
+                    });
+
+                    const normalized = normalizeApiError(
+                        { response: { status: 400, data: bodies[0] } },
+                        { operation: "mutation", locale },
+                    );
+                    expect(normalized).toMatchObject({ verified: true, outcome: "NOT_APPLIED", problem: { requestId } });
+                    expect(normalized.message).toBe(PROBLEM_CATALOG.CLIENT_SERVICE_PERIOD_INVALID.detail[locale]);
+
+                    const serialized = JSON.stringify(bodies);
+                    // 커털로그가 공개 메시지를 공급한다: 각 본문은 로캘별 정본 문구를 담는다.
+                    expect(serialized).toContain(PROBLEM_CATALOG.CLIENT_SERVICE_PERIOD_INVALID.detail[locale]);
+                    for (const privateValue of ["2026-07-18", "2026-07-17", "Invalid Period", "name null"]) {
+                        expect(serialized).not.toContain(privateValue);
+                    }
+                }
+            });
+
+            it("routes the duplicate-phone conflict through the public problem response", async () => {
+                clientRepository.findByPhone.mockResolvedValue(createClientEntity());
+                const exception: unknown = await service.create(branchId, {
+                    name: "Duplicate Phone",
+                    phone: "010-1234-5678",
+                    careCenter: false,
+                    voucherClient: true,
+                    breastPump: false,
+                }).catch((error: unknown) => error);
+
+                for (const locale of ["ko-KR", "en-US"] as const) {
+                    const requestId = `test-client-conflict-${locale}`;
+                    const responseStub = {
+                        locals: { errorRequestId: requestId },
+                        setHeader: jest.fn(),
+                        status: jest.fn().mockReturnThis(),
+                        json: jest.fn(),
+                    };
+                    const problem = mapHttpProblem(exception,
+                        { method: "POST", acceptsLanguages: () => locale } as unknown as Request,
+                        responseStub as unknown as Response);
+                    if (!problem) throw new Error("Expected a registered client conflict");
+                    sendProblemResponse(responseStub as unknown as Response, problem);
+                    expect(responseStub.status).toHaveBeenCalledWith(409);
+                    expect(responseStub.setHeader).toHaveBeenCalledWith("Content-Type", "application/problem+json");
+                    expect(problem).toMatchObject({
+                        code: "CLIENT_PHONE_ALREADY_REGISTERED", status: 409, requestId, params: {},
+                        outcome: "NOT_APPLIED",
+                        detail: PROBLEM_CATALOG.CLIENT_PHONE_ALREADY_REGISTERED.detail[locale],
+                        recovery: { action: "NONE", retry: { mode: "NEVER" } },
+                        errors: [expect.objectContaining({ pointer: "/phone", code: "INVALID_VALUE", location: "body" })],
+                    });
+
+                    const body = responseStub.json.mock.calls[0]?.[0];
+                    const normalized = normalizeApiError(
+                        { response: { status: 409, data: body } },
+                        { operation: "mutation", locale },
+                    );
+                    expect(normalized).toMatchObject({ verified: true, outcome: "NOT_APPLIED", problem: { requestId } });
+                    expect(normalized.message).toBe(PROBLEM_CATALOG.CLIENT_PHONE_ALREADY_REGISTERED.detail[locale]);
+                    // 재사용 대상 고객 id는 공개 페이로드에 남지 않는다.
+                    expect(JSON.stringify(body)).not.toContain("clientId");
+                }
             });
 
             it("links matching contracts by the effective phone after client information is updated", async () => {
@@ -2314,14 +2470,21 @@ describe("ClientService", () => {
         });
 
         describe("given non-existent client", () => {
-            it("should throw error", async () => {
+            it("should reject with the public RESOURCE_NOT_FOUND problem body", async () => {
                 // Arrange
                 findClientByIdUsecase.execute.mockResolvedValue(null);
 
                 // Act & Assert
-                await expect(service.update(branchId, 999, { name: "New Name" }))
-                    .rejects
-                    .toThrow("고객을 찾을 수 없습니다. (id: 999)");
+                const error: unknown = await service.update(branchId, 999, { name: "New Name" })
+                    .catch((caught: unknown) => caught);
+                expect(error).toBeInstanceOf(NotFoundException);
+                expect((error as NotFoundException).getResponse()).toEqual({
+                    code: "RESOURCE_NOT_FOUND",
+                    params: {},
+                    outcome: "NOT_APPLIED",
+                    recovery: { action: "NONE", retry: { mode: "NEVER" } },
+                    message: "고객을 찾을 수 없습니다.",
+                });
             });
         });
 
@@ -2409,7 +2572,10 @@ describe("ClientService", () => {
                 // Act & Assert
                 await expect(
                     service.update(branchId, 1, { phone: "010-1234-5678" }),
-                ).rejects.toThrow(expect.objectContaining({ status: 409 }));
+                ).rejects.toMatchObject({
+                    status: 409,
+                    response: clientProblemResponse("CLIENT_PHONE_ALREADY_REGISTERED", "/phone", "INVALID_VALUE", "같은 전화번호의 고객이 이미 등록되어 있습니다."),
+                });
 
                 // No DB writes should have occurred
                 expect(updateClientUsecase.execute).not.toHaveBeenCalled();

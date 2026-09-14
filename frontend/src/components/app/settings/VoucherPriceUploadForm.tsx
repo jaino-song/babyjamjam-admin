@@ -1,4 +1,6 @@
 "use client";
+import { getUserErrorMessage } from "@babyjamjam/shared";
+
 
 import { useState, useCallback } from "react";
 import { Upload, CheckCircle, RotateCcw } from "lucide-react";
@@ -174,7 +176,7 @@ export function VoucherPriceUploadForm() {
             error={
               parseImageMutation.isError
                 ? parseImageMutation.error?.message ||
-                "이미지 파싱에 실패했습니다"
+                "이미지 파싱에 실패했어요"
                 : null
             }
           />
@@ -271,7 +273,7 @@ export function VoucherPriceUploadForm() {
                 <p className="font-semibold mb-2">일부 항목 처리 실패:</p>
                 <ul className="list-disc pl-4 space-y-1">
                   {updateResult.errors.map((error, index) => (
-                    <li key={index} className="text-sm">{error}</li>
+                    <li key={index} className="text-sm">{error && getUserErrorMessage(error)}</li>
                   ))}
                 </ul>
               </AlertDescription>

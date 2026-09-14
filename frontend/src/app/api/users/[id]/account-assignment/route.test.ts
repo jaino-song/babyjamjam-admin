@@ -89,7 +89,7 @@ describe("PATCH /api/users/[id]/account-assignment", () => {
         headers: {},
         config: { headers: new AxiosHeaders() },
         data: {
-          message: "다른 곳에서 계정 정보가 변경되었습니다.",
+          message: "다른 곳에서 계정 정보가 변경됐어요.",
           code: "ACCOUNT_ASSIGNMENT_CONFLICT",
         },
       }),
@@ -102,7 +102,8 @@ describe("PATCH /api/users/[id]/account-assignment", () => {
 
     expect(response.status).toBe(409);
     await expect(response.json()).resolves.toEqual({
-      error: "다른 곳에서 계정 정보가 변경되었습니다.",
+      error: "다른 곳에서 계정 정보가 변경됐어요.",
+      code: "ACCOUNT_ASSIGNMENT_CONFLICT",
     });
   });
 });

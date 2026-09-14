@@ -1,10 +1,16 @@
 "use client";
-
 import { useState, useEffect, useMemo, useRef } from "react";
 import {
     findOutOfPocketPriceInfo,
     formatOutOfPocketDurationLabel,
+    getUserErrorMessage,
+    resolveProblemPresentation,
 } from "@babyjamjam/shared";
+import {
+    normalizeApiError,
+    type NormalizedApiError,
+    type ProblemError,
+} from "@babyjamjam/shared/errors/problem-details";
 import { useCreateClient, useUpdateClient } from "@/hooks/useClients";
 import { useOutOfPocketPriceInfos, useVoucherPriceInfos } from "@/hooks/useVoucherData";
 import { EmployeeAutocomplete } from "./EmployeeAutocomplete";
@@ -57,8 +63,31 @@ interface ClientFormDialogProps {
     onSuccess?: (client: Client) => void; // Optional callback when client is created/updated
 }
 
+interface ClientFormErrorState {
+    message: string;
+    normalized?: NormalizedApiError;
+}
+
+interface StructuredErrorPresentation {
+    detail: string;
+    fieldId?: "name" | "phone";
+    label: string;
+    pointer: string;
+    summaryId: string;
+}
+
 // Format number with commas (handles comma-formatted strings too)
 const CLIENT_FORM_DIALOG_BASE = "mobile_clients_form-dialog";
+const CLIENT_FORM_ERROR_SUMMARY_ID = `${CLIENT_FORM_DIALOG_BASE}_error-summary`;
+
+const getKnownFieldId = (problemError: ProblemError): "name" | "phone" | undefined => {
+    if (problemError.location !== undefined && problemError.location !== "body") {
+        return undefined;
+    }
+    if (problemError.pointer === "/name") return "name";
+    if (problemError.pointer === "/phone") return "phone";
+    return undefined;
+};
 
 const formatPrice = (price: number | string): string => {
     if (!price && price !== 0) return "";
@@ -132,8 +161,11 @@ export function ClientFormDialog({ open, onClose, client, onSuccess }: ClientFor
         serviceStatus: "pre_booking",
     });
 
-    const [error, setError] = useState<string | null>(null);
+    const [errorState, setErrorState] = useState<ClientFormErrorState | null>(null);
+    const [hasUnknownMutationOutcome, setHasUnknownMutationOutcome] = useState(false);
     const contentRef = useRef<HTMLDivElement>(null);
+    const formSessionRef = useRef<{ open: boolean; clientId: number | null }>({ open: false, clientId: null });
+    const errorSummaryRef = useRef<HTMLDivElement>(null);
 
     // State for EmployeeFormDialog
     const [isEmployeeDialogOpen, setIsEmployeeDialogOpen] = useState(false);
@@ -235,6 +267,13 @@ export function ClientFormDialog({ open, onClose, client, onSuccess }: ClientFor
     // Reset form when dialog opens/closes or client changes
     useEffect(() => {
         if (!open) {
+            formSessionRef.current.open = false;
+            return;
+        }
+        const sessionClientId = client?.id ?? null;
+        if (formSessionRef.current.open && formSessionRef.current.clientId === sessionClientId) return;
+        formSessionRef.current = { open: true, clientId: sessionClientId };
+        if (!open) {
             return;
         }
 
@@ -289,7 +328,8 @@ export function ClientFormDialog({ open, onClose, client, onSuccess }: ClientFor
             if (!client) {
                 clearPrefillName();
             }
-            setError(null);
+            setErrorState(null);
+            setHasUnknownMutationOutcome(false);
         });
     }, [open, client, prefillName, clearPrefillName]);
 
@@ -303,19 +343,21 @@ export function ClientFormDialog({ open, onClose, client, onSuccess }: ClientFor
         handleChange(field, value);
     };
 
-    const scrollToTop = () => {
-        // Scroll the DialogContent (parent of our content div) to top
-        contentRef.current?.parentElement?.scrollTo({ top: 0, behavior: "smooth" });
-    };
-
-    const setErrorAndScroll = (errorMessage: string) => {
-        setError(errorMessage);
-        // Use setTimeout to ensure the Alert is rendered before scrolling
-        setTimeout(scrollToTop, 0);
+    const setErrorAndScroll = (errorMessage: string, normalized?: NormalizedApiError) => {
+        setErrorState({
+            message: normalized?.message ?? getUserErrorMessage(errorMessage),
+            normalized,
+        });
+        if (normalized?.outcome === "UNKNOWN") {
+            setHasUnknownMutationOutcome(true);
+        }
     };
 
     const handleSubmit = async () => {
-        setError(null);
+        if (hasUnknownMutationOutcome) {
+            return;
+        }
+        setErrorState(null);
 
         // 고객 기본 정보만 필수이며 서비스 정보는 상담 단계에서 비워둘 수 있다.
         if (!formData.name.trim()) {
@@ -391,12 +433,75 @@ export function ClientFormDialog({ open, onClose, client, onSuccess }: ClientFor
             }
             onClose();
         } catch (error: unknown) {
-            console.error("Failed to save client:", error);
+            const normalized = normalizeApiError(error, {
+                locale: locale === "en" ? "en-US" : "ko-KR",
+                operation: "mutation",
+            });
+            const responseData = error && typeof error === "object" && "response" in error
+                ? (error.response as { data?: unknown } | undefined)?.data : error;
+            const claimsProblem = responseData !== null && typeof responseData === "object"
+                && ("type" in responseData || "requestId" in responseData);
+            const isLegacyClientError = !normalized.verified && !claimsProblem
+                && normalized.status !== undefined && normalized.status >= 400 && normalized.status < 500;
+            const shouldUseNormalized = !isLegacyClientError;
+            if (shouldUseNormalized) {
+                setErrorAndScroll(normalized.message, normalized);
+                return;
+            }
             setErrorAndScroll(getErrorMessage(error, locale, "clients.form.error-save-failed"));
         }
     };
 
     const isSubmitting = createClient.isPending || updateClient.isPending;
+    const structuredErrors = useMemo<StructuredErrorPresentation[]>(() => {
+        const problemErrors = errorState?.normalized?.problem?.errors ?? [];
+        return problemErrors.map((problemError, index) => {
+            const fieldId = getKnownFieldId(problemError);
+            const label = fieldId
+                ? t(locale, `clients.form.${fieldId}`)
+                : resolveProblemPresentation(locale).unmappedField;
+            return {
+                detail: problemError.detail,
+                fieldId,
+                label,
+                pointer: problemError.pointer || "/",
+                summaryId: `${CLIENT_FORM_ERROR_SUMMARY_ID}_item-${index}`,
+            };
+        });
+    }, [errorState, locale]);
+
+    const fieldErrorMessageIds = useMemo(() => {
+        const ids: Record<"name" | "phone", string[]> = {
+            name: [],
+            phone: [],
+        };
+        structuredErrors.forEach((problemError) => {
+            if (problemError.fieldId) {
+                ids[problemError.fieldId].push(problemError.summaryId);
+            }
+        });
+        return ids;
+    }, [structuredErrors]);
+
+    useEffect(() => {
+        if (!errorState) {
+            return;
+        }
+
+        // Use a timer to ensure the Alert is rendered before scrolling and focusing it.
+        const timeoutId = setTimeout(() => {
+            contentRef.current?.parentElement?.scrollTo?.({ top: 0, behavior: "smooth" });
+            errorSummaryRef.current?.focus();
+        }, 0);
+        return () => clearTimeout(timeoutId);
+    }, [errorState]);
+
+    const focusFormField = (fieldId: "name" | "phone") => {
+        const field = document.getElementById(fieldId);
+        if (field instanceof HTMLElement) {
+            field.focus();
+        }
+    };
 
     return (
         <Dialog data-component={CLIENT_FORM_DIALOG_BASE} open={open} onOpenChange={(isOpen) => !isOpen && onClose()}>
@@ -417,9 +522,70 @@ export function ClientFormDialog({ open, onClose, client, onSuccess }: ClientFor
                 </DialogHeader>
 
                 <div ref={contentRef} data-component={`${CLIENT_FORM_DIALOG_BASE}_content`} className="space-y-6 py-4">
-                    {error && (
-                        <Alert variant="destructive">
-                            <AlertDescription>{error}</AlertDescription>
+                    {errorState && (
+                        <Alert
+                            ref={errorSummaryRef}
+                            id={CLIENT_FORM_ERROR_SUMMARY_ID}
+                            data-component={CLIENT_FORM_ERROR_SUMMARY_ID}
+                            variant="destructive"
+                            tabIndex={-1}
+                        >
+                            <AlertDescription>
+                                <p data-component={`${CLIENT_FORM_ERROR_SUMMARY_ID}_message`}>
+                                    {errorState.message}
+                                </p>
+                                {structuredErrors.length > 0 && (
+                                    <ul
+                                        className="mt-2 space-y-1"
+                                        data-component={`${CLIENT_FORM_ERROR_SUMMARY_ID}_items`}
+                                    >
+                                        {structuredErrors.map((problemError) => {
+                                            const message = `${problemError.label}: ${problemError.detail}`;
+                                            const fieldId = problemError.fieldId;
+                                            return (
+                                                <li key={problemError.summaryId} id={problemError.summaryId}>
+                                                    {fieldId ? (
+                                                        <Button
+                                                            asChild
+                                                            variant="link"
+                                                            size="sm"
+                                                            className="h-auto p-0 text-left"
+                                                        >
+                                                            <a
+                                                                href={`#${problemError.fieldId}`}
+                                                                onClick={(event) => {
+                                                                    event.preventDefault();
+                                                                    focusFormField(fieldId);
+                                                                }}
+                                                            >
+                                                                {message}
+                                                            </a>
+                                                        </Button>
+                                                    ) : (
+                                                        message
+                                                    )}
+                                                </li>
+                                            );
+                                        })}
+                                    </ul>
+                                )}
+                                {errorState.normalized?.problem?.requestId && (
+                                    <p
+                                        className="mt-2 text-xs"
+                                        data-component={`${CLIENT_FORM_ERROR_SUMMARY_ID}_request-id`}
+                                    >
+                                        {locale === "en" ? "Request ID" : "요청 ID"}: {errorState.normalized.problem.requestId}
+                                    </p>
+                                )}
+                                {hasUnknownMutationOutcome && (
+                                    <p
+                                        className="mt-2 text-xs"
+                                        data-component={`${CLIENT_FORM_ERROR_SUMMARY_ID}_status-guidance`}
+                                    >
+                                        {resolveProblemPresentation(locale).checkStatus}
+                                    </p>
+                                )}
+                            </AlertDescription>
                         </Alert>
                     )}
 
@@ -439,6 +605,9 @@ export function ClientFormDialog({ open, onClose, client, onSuccess }: ClientFor
                                     id="name"
                                     value={formData.name}
                                     onChange={(e) => handleChange("name", e.target.value)}
+                                    error={fieldErrorMessageIds.name.length > 0}
+                                    aria-invalid={fieldErrorMessageIds.name.length > 0}
+                                    aria-describedby={fieldErrorMessageIds.name.join(" ") || undefined}
                                 />
                             </div>
                             <div className="space-y-2">
@@ -471,6 +640,9 @@ export function ClientFormDialog({ open, onClose, client, onSuccess }: ClientFor
                                     value={formData.phone ?? ""}
                                     onChange={(e) => handleChange("phone", formatPhoneNumber(e.target.value))}
                                     maxLength={13}
+                                    error={fieldErrorMessageIds.phone.length > 0}
+                                    aria-invalid={fieldErrorMessageIds.phone.length > 0}
+                                    aria-describedby={fieldErrorMessageIds.phone.join(" ") || undefined}
                                 />
                             </div>
                             <div className="space-y-2 sm:col-span-2">
@@ -753,7 +925,7 @@ export function ClientFormDialog({ open, onClose, client, onSuccess }: ClientFor
                     <Button variant="outline" onClick={onClose} disabled={isSubmitting}>
                         {t(locale, "common.cancel")}
                     </Button>
-                    <Button onClick={handleSubmit} disabled={isSubmitting}>
+                    <Button onClick={handleSubmit} disabled={isSubmitting || hasUnknownMutationOutcome}>
                         {isSubmitting ? (
                             <Spinner className="h-4 w-4" />
                         ) : isEditMode ? (

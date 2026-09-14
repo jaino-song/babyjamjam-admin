@@ -106,7 +106,7 @@ export function VerifyEmailPageContent({ variant }: VerifyEmailPageContentProps)
             <>
               <Alert variant="info" className="w-full text-left">
                 {status === "error"
-                  ? "인증 링크가 만료되었거나 이미 사용된 경우, 아래에서 재발송을 요청할 수 있습니다."
+                  ? "인증 링크가 만료되었거나 이미 사용된 경우, 아래에서 재발송을 요청할 수 있어요."
                   : "인증 이메일을 받지 못하셨나요? 아래에서 재발송을 요청할 수 있습니다."}
               </Alert>
 

@@ -1,5 +1,7 @@
 "use client";
 
+import { getUserErrorMessage } from "@babyjamjam/shared";
+
 import { useMemo, useState } from "react";
 import {
   Table,
@@ -221,7 +223,7 @@ export function DataTable<T extends Record<string, unknown>>({
       >
         <Alert variant="destructive">
           <AlertDescription>
-            {error.message || "데이터를 불러오는데 실패했습니다"}
+            {getUserErrorMessage(error, "데이터를 불러오지 못했어요.")}
           </AlertDescription>
         </Alert>
       </div>

@@ -1,4 +1,6 @@
 "use client";
+import { getUserErrorMessage } from "@babyjamjam/shared";
+
 
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
@@ -258,24 +260,24 @@ export function ClientNewForm() {
     switch (step) {
       case 0:
         if (!store.name.trim()) {
-          setError(t(locale, "clients.form.error-name-required"));
+          setError(getUserErrorMessage(t(locale, "clients.form.error-name-required")));
           return false;
         }
         if (phoneDigits.length !== 11) {
-          setError(t(locale, "clients.form.error-phone-required"));
+          setError(getUserErrorMessage(t(locale, "clients.form.error-phone-required")));
           return false;
         }
         if (phoneDigits.length === 11) {
           if (isCheckingPhoneDuplicate || lastCheckedPhoneDigits !== phoneDigits) {
-            setError(getPhoneDuplicateCheckPendingMessage(locale));
+            setError(getUserErrorMessage(getPhoneDuplicateCheckPendingMessage(locale)));
             return false;
           }
           if (hasPhoneDuplicateCheckFailed) {
-            setError(getPhoneDuplicateCheckFailedMessage(locale));
+            setError(getUserErrorMessage(getPhoneDuplicateCheckFailedMessage(locale)));
             return false;
           }
           if (isPhoneDuplicate) {
-            setError(t(locale, "clients.form.error-phone-duplicate"));
+            setError(getUserErrorMessage(t(locale, "clients.form.error-phone-duplicate")));
             return false;
           }
         }
@@ -429,7 +431,7 @@ export function ClientNewForm() {
             {error ? (
               <div data-component="desktop_clients-new_basic_grid_error" className="sm:col-span-2">
                 <FormHelperText data-component="desktop_clients-new_basic_grid_error_message" tone="error">
-                  {error}
+                  {error && getUserErrorMessage(error)}
                 </FormHelperText>
               </div>
             ) : null}
@@ -584,7 +586,7 @@ export function ClientNewForm() {
 
           {error ? (
             <FormHelperText data-component="desktop_clients-new_service_error" tone="error">
-              {error}
+              {error && getUserErrorMessage(error)}
             </FormHelperText>
           ) : null}
         </div>
@@ -647,7 +649,7 @@ export function ClientNewForm() {
             {error ? (
               <div data-component="desktop_clients-new_contract_grid_error" className="sm:col-span-2">
                 <FormHelperText data-component="desktop_clients-new_contract_grid_error_message" tone="error">
-                  {error}
+                  {error && getUserErrorMessage(error)}
                 </FormHelperText>
               </div>
             ) : null}

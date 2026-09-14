@@ -1,4 +1,6 @@
 "use client";
+import { getUserErrorMessage } from "@babyjamjam/shared";
+
 
 import { useState } from "react";
 import { useMutation } from "@tanstack/react-query";
@@ -55,7 +57,7 @@ export function IssueCallIngestTokenDialog({
       onIssued();
     },
     onError: () => {
-      toast({ variant: "destructive", description: "토큰 발급에 실패했어요" });
+      toast({ variant: "destructive", description: getUserErrorMessage("토큰 발급에 실패했어요") });
     },
   });
 
@@ -84,7 +86,7 @@ export function IssueCallIngestTokenDialog({
       // again, so a silent failure would lose the token outright.
       toast({
         variant: "destructive",
-        description: "복사에 실패했어요. 토큰을 직접 선택해 복사해 주세요",
+        description: getUserErrorMessage("복사에 실패했어요. 토큰을 직접 선택해 복사해 주세요"),
       });
     }
   };
