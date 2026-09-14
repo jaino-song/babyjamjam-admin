@@ -6,6 +6,7 @@ import {
 } from "domain/entities/employee-schedule.entity";
 import { EMPLOYEE_SCHEDULE_REPOSITORY, IEmployeeScheduleRepository } from "domain/repositories/employee-schedule.repository.interface";
 import { Prisma } from "@prisma/client";
+import { codeOnlyProblemBody, problemBody } from "application/utils/problem-bodies";
 import { assertEmployeeAssignmentEligibility, type EmployeeAssignmentCandidate } from "application/policies/employee-assignment-eligibility.policy";
 import {
     assertEmployeeScheduleWriteIsAvailable,
@@ -42,7 +43,7 @@ export class CreateEmployeeScheduleUsecase {
                 select: { id: true },
             });
             if (!client) {
-                throw new NotFoundException("Client not found for branch");
+                throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
             }
 
             const employeeIds = [params.primaryEmployeeId, params.secondaryEmployeeId]
@@ -67,7 +68,7 @@ export class CreateEmployeeScheduleUsecase {
                 select: { id: true },
             });
             if (!lockedClient) {
-                throw new NotFoundException("Client not found for branch");
+                throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
             }
             const employees: EmployeeAssignmentCandidate[] = await tx.employee.findMany({
                 where: {
@@ -100,8 +101,21 @@ export class CreateEmployeeScheduleUsecase {
                     params.replaced ?? false,
                 );
             } catch (error) {
-                if (error instanceof EmployeeScheduleDateRangeError || error instanceof EmployeeScheduleRoleError) {
-                    throw new BadRequestException(error.message);
+                if (error instanceof EmployeeScheduleDateRangeError) {
+                    throw new BadRequestException(problemBody("VALIDATION_FAILED", {
+                        pointer: "/endDate",
+                        code: "INVALID_VALUE",
+                        detail: "시작일은 종료일보다 늦을 수 없어요.",
+                        location: "body",
+                    }));
+                }
+                if (error instanceof EmployeeScheduleRoleError) {
+                    throw new BadRequestException(problemBody("VALIDATION_FAILED", {
+                        pointer: "/secondaryEmployeeId",
+                        code: "INVALID_FORMAT",
+                        detail: "주담당과 부담당은 같은 직원일 수 없어요.",
+                        location: "body",
+                    }));
                 }
                 throw error;
             }

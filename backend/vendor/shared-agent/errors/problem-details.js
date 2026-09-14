@@ -58,6 +58,9 @@ const PROBLEM_CODES = [
     // Registered assignment codes (EM-CAT-01; SERVICE_RECORD_WRITE_TARGET_CHANGED keeps its shipped identifier per EM-CAT-03). BJJ-319 phase 4b.
     "EMPLOYEE_ASSIGNMENT_NOT_ELIGIBLE",
     "SERVICE_RECORD_WRITE_TARGET_CHANGED",
+    // Registered employee-schedule codes (EM-CAT-03). BJJ-319 phase 4c-1.
+    "EMPLOYEE_SCHEDULE_OVERLAP",
+    "SCHEDULE_RETENTION_BLOCKED",
 ];
 const PROBLEM_ERROR_CODES = [
     "REQUIRED",
@@ -486,6 +489,28 @@ const PROBLEM_DEFINITIONS = {
         detail: {
             "ko-KR": "작업 도중 대상 정보가 바뀌어 요청을 적용하지 않았어요. 최신 상태를 확인한 뒤 다시 시도해 주세요.",
             "en-US": "The target changed while the request was in progress, so it was not applied. Check the latest state and try again.",
+        },
+    },
+    EMPLOYEE_SCHEDULE_OVERLAP: {
+        status: 409,
+        title: {
+            "ko-KR": "일정이 겹쳐요",
+            "en-US": "Schedule dates overlap",
+        },
+        detail: {
+            "ko-KR": "같은 고객의 활성 일정과 기간이 겹쳐요.",
+            "en-US": "An active schedule for this client overlaps the requested dates.",
+        },
+    },
+    SCHEDULE_RETENTION_BLOCKED: {
+        status: 409,
+        title: {
+            "ko-KR": "일정을 삭제할 수 없어요",
+            "en-US": "Cannot delete the schedule",
+        },
+        detail: {
+            "ko-KR": "일정이 시작했거나 연결된 운영 또는 이력 데이터가 있어 삭제할 수 없어요.",
+            "en-US": "This schedule has started or has linked operational or history data and cannot be deleted.",
         },
     },
 };
