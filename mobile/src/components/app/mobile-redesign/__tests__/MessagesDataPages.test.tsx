@@ -366,7 +366,7 @@ describe("mobile message data pages (merged 발송 기록 screen)", () => {
     expect(metadataRow.children[1]).toHaveTextContent("7. 16.");
   });
 
-  it("shows a canceled row's reason inline, prefixed with 사유", () => {
+  it("hides a canceled row's reason from the history list", () => {
     mockUseMessageHistory.mockReturnValue({
       isLoading: false,
       isError: false,
@@ -376,7 +376,7 @@ describe("mobile message data pages (merged 발송 기록 screen)", () => {
     render(<MessagesHistoryPage />);
 
     expect(screen.getByText("취소 고객")).toBeInTheDocument();
-    expect(screen.getByText(`사유: ${canceledRecord.errorMessage}`)).toBeInTheDocument();
+    expect(screen.queryByText(`사유: ${canceledRecord.errorMessage}`)).not.toBeInTheDocument();
   });
 
   it("shows a 취소 사유 row in the history detail view for a canceled record", async () => {

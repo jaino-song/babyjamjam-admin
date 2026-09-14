@@ -327,7 +327,6 @@ function HistoryRow({
   const meta = HISTORY_STATUS[normalized.status];
   const StatusIcon = meta.icon;
   const variant = MESSAGE_LOG_STATUS_BADGE_VARIANT[normalized.status];
-  const reasonText = getRecordReasonText(record);
 
   return (
     <button
@@ -348,9 +347,6 @@ function HistoryRow({
               {formatMessageDateTimeCompact(normalized.sentAt)}
             </small>
           </div>
-          {reasonText ? (
-            <em data-component={`${HISTORY_ROW_BASE}_reason`}>{`${MESSAGE_RECORD_REASON_LABEL}: ${reasonText}`}</em>
-          ) : null}
         </div>
         <div className="message-data-status-group" data-slot="status-group">
           <StatusBadge variant={variant} data-component={`${HISTORY_ROW_BASE}_status`}>
