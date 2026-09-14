@@ -73,7 +73,6 @@ describe("ReceiptLinkPage", () => {
         render(<ReceiptLinkPage />);
 
         expect(await screen.findByRole("link", { name: "이미지 저장" })).toBeInTheDocument();
-        expect(screen.getByRole("heading", { name: "산모님 영수증" })).toBeInTheDocument();
         expect(screen.getByRole("img", { name: "산모님 본인부담금 영수증" })).toHaveAttribute(
             "src",
             "/api/receipt/efr_t/image",
@@ -194,7 +193,7 @@ describe("ReceiptLinkPage", () => {
         await waitFor(() => expect(imageFetchCount).toBe(1));
         await waitFor(() => expect(image.src).toContain("r=1"));
         // Still on the image screen — no broken-image copy exists, so it's simply retried.
-        expect(screen.getByRole("heading", { name: "김산모 산모님 영수증" })).toBeInTheDocument();
+        expect(image).toBeInTheDocument();
         expect(screen.getByRole("link", { name: "이미지 저장" })).toBeInTheDocument();
 
         // Mutant guard: reverting onError to an unconditional loadStatus() would make THIS
@@ -203,7 +202,7 @@ describe("ReceiptLinkPage", () => {
         fireEvent.error(image);
         expect(imageFetchCount).toBe(1);
         expect(image.src).toContain("r=1");
-        expect(screen.getByRole("heading", { name: "김산모 산모님 영수증" })).toBeInTheDocument();
+        expect(image).toBeInTheDocument();
     });
 
     it("renders an aria-hidden clock icon on the expired screen (F9)", async () => {
@@ -234,6 +233,7 @@ describe("ReceiptLinkPage", () => {
         const saveLink = await screen.findByRole("link", { name: "이미지 저장" });
         const image = screen.getByRole("img", { name: "김산모 산모님 본인부담금 영수증" });
         const imageFrame = container.querySelector('[data-slot="image-frame"]');
+        expect(screen.queryByRole("heading", { name: "김산모 산모님 영수증" })).not.toBeInTheDocument();
         expect(screen.queryByText("확인 완료")).not.toBeInTheDocument();
         expect(imageFrame).toHaveAttribute("aria-busy", "true");
         expect(screen.getByRole("status", { name: "영수증 이미지를 불러오는 중" })).toBeInTheDocument();

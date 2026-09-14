@@ -354,7 +354,6 @@ export function ReceiptLinkScreen({ token }: ReceiptLinkScreenProps) {
 
                 {screen.kind === "image" ? (
                     <section className="rcpt-card" data-component="mobile_receipt_public-page_body_image">
-                        <h2>{receiptOwnerLabel} 영수증</h2>
                         <div
                             className="rcpt-img-frame"
                             data-component="mobile_receipt_public-page_body_image_frame"
