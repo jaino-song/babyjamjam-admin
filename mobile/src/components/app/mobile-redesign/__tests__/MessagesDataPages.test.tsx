@@ -329,6 +329,24 @@ describe("mobile message data pages (merged 발송 기록 screen)", () => {
     expect(within(pastZone).getByText("발송 성공")).toBeInTheDocument();
   });
 
+  it("keeps the history status badge in the trailing column", () => {
+    mockUseMessageHistory.mockReturnValue({
+      isLoading: false,
+      isError: false,
+      data: [sentRecord],
+    });
+
+    const { container } = render(<MessagesHistoryPage />);
+    const historyRow = container.querySelector(
+      '[data-component$="_content_list-card_body_item"]',
+    ) as HTMLElement;
+    const rowCopy = historyRow.querySelector(".message-data-row-copy");
+    const statusBadge = historyRow.querySelector('[data-component$="_item_status"]');
+
+    expect(rowCopy).toHaveClass("message-data-row-copy-split");
+    expect(statusBadge?.parentElement).toHaveClass("message-data-status-group");
+  });
+
   it("shows a canceled row's reason inline, prefixed with 사유", () => {
     mockUseMessageHistory.mockReturnValue({
       isLoading: false,
