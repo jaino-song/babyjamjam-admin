@@ -280,8 +280,10 @@ export async function middleware(request: NextRequest) {
 
   // Prevent authenticated users from seeing the login screen.
   let authToken = request.cookies.get("auth_token")?.value;
+  const isLoginNavigation = request.method === "GET" || request.method === "HEAD";
   if (
     isRouteMatch(pathname, LOGIN_ROUTE)
+    && isLoginNavigation
     && authToken
     && !isTokenExpired(authToken)
   ) {
@@ -289,6 +291,7 @@ export async function middleware(request: NextRequest) {
   }
   if (
     isRouteMatch(pathname, LOGIN_ROUTE)
+    && isLoginNavigation
     && authToken
     && isTokenExpired(authToken)
   ) {

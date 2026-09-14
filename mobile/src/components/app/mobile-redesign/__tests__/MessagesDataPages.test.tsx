@@ -329,7 +329,44 @@ describe("mobile message data pages (merged 발송 기록 screen)", () => {
     expect(within(pastZone).getByText("발송 성공")).toBeInTheDocument();
   });
 
-  it("shows a canceled row's reason inline, prefixed with 사유", () => {
+  it("keeps the history status badge in the trailing column", () => {
+    mockUseMessageHistory.mockReturnValue({
+      isLoading: false,
+      isError: false,
+      data: [sentRecord],
+    });
+
+    const { container } = render(<MessagesHistoryPage />);
+    const historyRow = container.querySelector(
+      '[data-component$="_content_list-card_body_item"]',
+    ) as HTMLElement;
+    const rowCopy = historyRow.querySelector(".message-data-row-copy");
+    const statusBadge = historyRow.querySelector('[data-component$="_item_status"]');
+
+    expect(rowCopy).toHaveClass("message-data-row-copy-split");
+    expect(statusBadge?.parentElement).toHaveClass("message-data-status-group");
+  });
+
+  it("shows the recipient before the sent date on one metadata row", () => {
+    mockUseMessageHistory.mockReturnValue({
+      isLoading: false,
+      isError: false,
+      data: [sentRecord],
+    });
+
+    const { container } = render(<MessagesHistoryPage />);
+    const metadataRow = container.querySelector(".message-data-row-meta") as HTMLElement;
+
+    expect(metadataRow).toHaveAttribute("data-slot", "row-meta");
+    expect(Array.from(metadataRow.children).map((element) => element.tagName)).toEqual([
+      "P",
+      "SMALL",
+    ]);
+    expect(metadataRow.children[0]).toHaveTextContent("김문자");
+    expect(metadataRow.children[1]).toHaveTextContent("7. 16.");
+  });
+
+  it("hides a canceled row's reason from the history list", () => {
     mockUseMessageHistory.mockReturnValue({
       isLoading: false,
       isError: false,
@@ -339,7 +376,7 @@ describe("mobile message data pages (merged 발송 기록 screen)", () => {
     render(<MessagesHistoryPage />);
 
     expect(screen.getByText("취소 고객")).toBeInTheDocument();
-    expect(screen.getByText(`사유: ${canceledRecord.errorMessage}`)).toBeInTheDocument();
+    expect(screen.queryByText(`사유: ${canceledRecord.errorMessage}`)).not.toBeInTheDocument();
   });
 
   it("shows a 취소 사유 row in the history detail view for a canceled record", async () => {

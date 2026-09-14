@@ -327,7 +327,6 @@ function HistoryRow({
   const meta = HISTORY_STATUS[normalized.status];
   const StatusIcon = meta.icon;
   const variant = MESSAGE_LOG_STATUS_BADGE_VARIANT[normalized.status];
-  const reasonText = getRecordReasonText(record);
 
   return (
     <button
@@ -339,19 +338,22 @@ function HistoryRow({
       <span className="message-navigation-icon message-navigation-icon-green">
         <History size={18} aria-hidden="true" />
       </span>
-        <div className="message-data-row-copy">
+      <div className="message-data-row-copy message-data-row-copy-split">
         <div className="message-data-row-info">
           <strong className="message-data-row-title">{normalized.templateLabel}</strong>
-          <p className="message-data-row-subtitle">{normalized.recipientName}</p>
-          <small className="message-data-row-subtitle">{formatMessageDateTimeCompact(normalized.sentAt)}</small>
-          {reasonText ? (
-            <em data-component={`${HISTORY_ROW_BASE}_reason`}>{`${MESSAGE_RECORD_REASON_LABEL}: ${reasonText}`}</em>
-          ) : null}
+          <div className="message-data-row-meta" data-slot="row-meta">
+            <p className="message-data-row-subtitle">{normalized.recipientName}</p>
+            <small className="message-data-row-subtitle">
+              {formatMessageDateTimeCompact(normalized.sentAt)}
+            </small>
+          </div>
         </div>
-        <StatusBadge variant={variant} data-component={`${HISTORY_ROW_BASE}_status`}>
-          <StatusIcon aria-hidden="true" />
-          {meta.label}
-        </StatusBadge>
+        <div className="message-data-status-group" data-slot="status-group">
+          <StatusBadge variant={variant} data-component={`${HISTORY_ROW_BASE}_status`}>
+            <StatusIcon aria-hidden="true" />
+            {meta.label}
+          </StatusBadge>
+        </div>
       </div>
     </button>
   );

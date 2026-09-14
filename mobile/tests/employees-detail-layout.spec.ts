@@ -113,7 +113,7 @@ async function mockEmployeesApi(page: Page) {
   });
 }
 
-test.use({ viewport: { width: 390, height: 844 } });
+test.use({ hasTouch: true, viewport: { width: 390, height: 844 } });
 
 test.describe("employees mobile detail layout", () => {
   test("uses the shared absolute detail-sheet geometry", async ({ page }) => {
@@ -177,6 +177,35 @@ test.describe("employees mobile detail layout", () => {
     await expect(page.getByText("종료")).toBeVisible();
     await expect(page.getByText("김하늘")).toBeVisible();
     await expect(page.getByText("교체됨")).toBeVisible();
+  });
+
+  test("keeps the employee detail page open when opening its options menu", async ({ page }) => {
+    await mockEmployeesApi(page);
+
+    await page.goto("/employees");
+    const assignedRow = page.locator(
+      '[data-component="mobile_employees_detail-sheet_stack_list-page_content_list-card_body_section_row"]',
+      { hasText: "김정인" },
+    );
+    await expect(assignedRow).toBeVisible({ timeout: 15000 });
+    await assignedRow.click();
+
+    const stack = page.locator('[data-component="mobile_employees_detail-sheet_stack"]');
+    const detailPage = page.locator(
+      '[data-component="mobile_employees_detail-sheet_stack_detail-page"][data-slot="mobile-detail-stack-detail-page"]',
+    );
+    await expect(stack).toHaveClass(/show-detail/);
+    await expect(detailPage).toHaveAttribute("aria-hidden", "false");
+
+    await page.getByRole("button", { name: "제공인력 옵션" }).tap();
+
+    await expect(
+      page.locator(
+        '[data-component="mobile_employees_detail-sheet_stack_detail-page_body_header_menu"]',
+      ),
+    ).toBeVisible();
+    await expect(stack).toHaveClass(/show-detail/);
+    await expect(detailPage).toHaveAttribute("aria-hidden", "false");
   });
 
   test("shows an empty state when the employee has no assigned client", async ({ page }) => {

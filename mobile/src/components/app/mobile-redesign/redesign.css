@@ -207,6 +207,24 @@ body:has([data-slot="messages-page"]) [data-slot="messages-content"] {
   flex: 1;
 }
 
+.message-data-row-meta {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 8px;
+  white-space: nowrap;
+}
+
+.message-data-row-meta > p {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.message-data-row-meta > small {
+  flex: 0 0 auto;
+}
+
 .message-data-row-copy > .message-data-row-title {
   display: flex;
   align-items: flex-start;

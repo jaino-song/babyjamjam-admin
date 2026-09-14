@@ -12,12 +12,13 @@ jest.mock("jwt-decode", () => ({
 
 const mockJwtDecode = jwtDecode as jest.Mock;
 
-function createRequest(pathname: string, cookie?: string): NextRequest {
+function createRequest(pathname: string, cookie?: string, method = "GET"): NextRequest {
   return new NextRequest(`http://localhost${pathname}`, {
     headers: {
       host: "localhost",
       ...(cookie ? { cookie } : {}),
     },
+    method,
   });
 }
 
@@ -115,6 +116,41 @@ describe("middleware API route protection", () => {
     });
 
     const response = await middleware(createRequest("/login", "auth_token=session-token"));
+
+    expect(response.status).toBe(307);
+    expect(response.headers.get("location")).toBe("http://localhost/");
+  });
+
+  it("allows an authenticated login POST to complete its server action response", async () => {
+    mockJwtDecode.mockReturnValue({
+      sub: "user-1",
+      sid: "session-1",
+      role: "manager",
+      type: "access",
+      exp: Math.floor(Date.now() / 1000) + 60,
+    });
+
+    const response = await middleware(
+      createRequest("/login", "auth_token=session-token", "POST"),
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("x-middleware-next")).toBe("1");
+    expect(response.headers.get("location")).toBeNull();
+  });
+
+  it("redirects an authenticated login HEAD request to home", async () => {
+    mockJwtDecode.mockReturnValue({
+      sub: "user-1",
+      sid: "session-1",
+      role: "manager",
+      type: "access",
+      exp: Math.floor(Date.now() / 1000) + 60,
+    });
+
+    const response = await middleware(
+      createRequest("/login", "auth_token=session-token", "HEAD"),
+    );
 
     expect(response.status).toBe(307);
     expect(response.headers.get("location")).toBe("http://localhost/");
