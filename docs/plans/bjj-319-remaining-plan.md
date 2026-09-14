@@ -523,4 +523,5 @@ TL;DR: dev가 두 번 더 전진해 sync-2(`ab23fe2af`)·sync-3(`9ec166edc`)로 
 - **PR #657 병합 완료: `2d01ecd9d`** (2026-09-14T14:08Z). merge 시점 dev head `b6fbd28b5`(message-history-badge-alignment, 7파일)와 GitHub이 충돌 없이 자동 병합. 통합 브랜치 `korean-error-messages`는 `2d01ecd9d`로 fast-forward 완료.
 - **carried:** advisory Playwright 2건(dev 기존 stale 스펙 — 우리 회귀 아님, 위 기록), 백엔드 flake 1회(비재현), cosmetic import 여백(직원 3파일 선행), `objectContaining` parity 단언 완화(양 플랫폼 동일).
 - **다음:** 잠정 코드 정렬(EM-CAT-01 예시 대비 개명 vs 유지+문서화) → Phase 4b(배정)·4c(일정). 이후 모든 task는 dev tip `2d01ecd9d`에서 분기한다.
+- **잠정 코드 정렬 검토 완료(2026-09-14):** 현행 `CLIENT_*`/`EMPLOYEE_*` 10개 코드 유지(EM-CAT-01 등록 식별자 충족, 예시는 illustrative; EM-CAT-03 공개 안정성 우선). `problem-details.ts`의 "Provisional" 주석 해제 + em 문서에 근거·예시 매핑 기록. Phase 4b 신규 배정 충돌 코드는 `ASSIGNMENT_OVERLAP` 우선 검토. 공개 식별자 변경이 없으므로 별도 감사 없이(trivial) 마감한다.
 

@@ -71,7 +71,7 @@ Notion MCP(OpenCode)로 EM v1.0 규격 원문을 수집해 `docs/error-managemen
 
 검증: 배치별 행 커버리지 61/61·75/75·75/75·83/83·68×4·80×2·78/78 = 797/797, 매핑 ID 전량이 97-set에 포함됨을 대조했고 중복 출력 1건을 길이 기준으로 정리했다. Task1.1의 dispatch 계약(Audit: SELF)에 따라 main이 대조·검증으로 마감했다. `status: inventory-complete; spec-mapped-em-v1`, `semantic_inventory_complete: true`이며 `source_manifest`·`review_batches`·`verified_findings`·기존 mixed-format은 불변이다.
 
-잠정 공개 코드 정렬은 후속 단위다: EM-CAT-01의 예시(`CUSTOMER_PHONE_DUPLICATE`, `ASSIGNMENT_OVERLAP`, `CONTRACT_ALREADY_SIGNED`)와 `CLIENT_*`/`EMPLOYEE_*` 잠정 코드명을 대조해 필요 시 개명한다(공개 식별자 변경이므로 별도 감사 대상). 위 미완료 목록의 후속 phase(4b/4c/5~11)·실환경 검증·dev 병합·배포는 계속 열려 있다.
+EM-CAT 코드 정렬 검토(2026-09-14): EM-CAT-01은 코드가 카탈로그에 등록된 식별자일 것을 요구하고 예시로 `CONTRACT_ALREADY_SIGNED`, `CUSTOMER_PHONE_DUPLICATE`, `ASSIGNMENT_OVERLAP`을 든다(예시는 강제가 아님). EM-CAT-03은 배포된 코드의 의미 변경·재사용을 금지한다. 검토 결과 `CLIENT_*`/`EMPLOYEE_*` 10개 코드는 카탈로그·vendor·문서에 등록되어 있어 EM-CAT-01을 충족하고, 업무 원인 기준 분리와 식별자 미포함(EM-CAT-02)도 만족한다. 예시 대응은 `CUSTOMER_PHONE_DUPLICATE` ≈ `CLIENT_PHONE_ALREADY_REGISTERED`, `CONTRACT_ALREADY_SIGNED`는 기존 등록 코드, `ASSIGNMENT_OVERLAP`은 Phase 4b 배정 충돌 신규 코드에 우선 검토한다. 개명하지 않고 잠정 표기를 해제해 등록 코드로 확정한다(공개 식별자 안정성 우선). 위 미완료 목록의 후속 phase(4b/4c/5~11)·실환경 검증·dev 병합·배포는 계속 열려 있다.
 
 ## 외부 문자 결과 해석 근거
 

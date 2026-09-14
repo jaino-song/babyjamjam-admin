@@ -44,7 +44,7 @@ const PROBLEM_CODES = [
     "MESSAGE_SEND_REJECTED",
     "MESSAGE_SEND_ALREADY_REQUESTED",
     "MESSAGE_REQUEST_KEY_CONFLICT",
-    // Provisional client codes pending EM spec reconciliation (BJJ-319).
+    // Registered client/employee codes (EM-CAT-01 satisfied; spec examples are illustrative). BJJ-319 reconciliation 2026-09-14.
     "CLIENT_SERVICE_PERIOD_INVALID",
     "CLIENT_SERVICE_PERIOD_UNCOMPUTABLE",
     "CLIENT_DURATION_OUT_OF_RANGE",
@@ -352,7 +352,7 @@ const PROBLEM_DEFINITIONS = {
             "en-US": "The request key was already used with different message content.",
         },
     },
-    // Provisional client codes pending EM spec reconciliation (BJJ-319).
+    // Registered client/employee codes (EM-CAT-01 satisfied; spec examples are illustrative). BJJ-319 reconciliation 2026-09-14.
     CLIENT_SERVICE_PERIOD_INVALID: {
         status: 400,
         title: {
