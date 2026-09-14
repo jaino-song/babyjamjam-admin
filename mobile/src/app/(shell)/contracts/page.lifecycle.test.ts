@@ -3,21 +3,42 @@ import fs from "node:fs";
 const source = fs.readFileSync(require.resolve("./page"), "utf8");
 
 describe("mobile contracts action lifecycle", () => {
-  it("keeps every basic-detail info row mounted and skeletonizes its value during the initial detail request", () => {
+  it("keeps every detail info row mounted and skeletonizes its value during the initial detail request", () => {
     const basicPanelStart = source.indexOf(
       '<MobileDetailTabPanel data-component="mobile_contracts_detail-sheet_stack_detail-page_tab-panel"',
     );
     const signersPanelStart = source.indexOf(
       '<MobileDetailTabPanel data-component="mobile_contracts_detail-sheet_stack_detail-page_tab-panel-2"',
     );
+    const messagesPanelStart = source.indexOf(
+      '<MobileDetailTabPanel data-component="mobile_contracts_detail-sheet_stack_detail-page_tab-panel-3"',
+    );
     const basicPanelSource = source.slice(basicPanelStart, signersPanelStart);
+    const signersPanelSource = source.slice(signersPanelStart, messagesPanelStart);
 
     expect(source).toContain("isPending: isSelectedDocDetailLoading");
     expect(source).toContain("isDetailLoading={isSelectedDocDetailLoading}");
-    expect(basicPanelSource.match(/<InfoRow/g)).toHaveLength(18);
-    expect(basicPanelSource.match(/<InfoCard[^>]*isLoading=\{isDetailLoading\}/g)).toHaveLength(4);
+    // Basic tab: 이용자 정보 (3) + 서비스 정보 (6) + 서비스 비용 (4)
+    expect(basicPanelSource.match(/<InfoRow/g)).toHaveLength(13);
+    expect(basicPanelSource.match(/<InfoCard[^>]*isLoading=\{isDetailLoading\}/g)).toHaveLength(3);
     expect(basicPanelSource).not.toMatch(/<InfoRow[^>]*isLoading=/);
     expect(basicPanelSource).not.toContain("{customerPhone ? (");
+    // Signers tab: 계약 정보 (5) sits above the 계약서 단계 timeline, so its rows
+    // stay skeletonized there during the initial detail request.
+    expect(signersPanelSource.match(/<InfoRow/g)).toHaveLength(5);
+    expect(signersPanelSource.match(/<InfoCard[^>]*isLoading=\{isDetailLoading\}/g)).toHaveLength(1);
+    expect(signersPanelSource).not.toMatch(/<InfoRow[^>]*isLoading=/);
+    expect(signersPanelSource.indexOf("mobile_contracts_detail-panel_info-card-2")).toBeLessThan(
+      signersPanelSource.indexOf("mobile_contracts_detail-panel_info-card-3"),
+    );
+  });
+
+  it("normalizes contract phone values through the shared Korean phone formatter", () => {
+    expect(source).toContain('import { formatKoreanPhoneNumber } from "@/lib/phone";');
+    expect(source).toContain("formatKoreanPhoneNumber(value)");
+    // Mutant that must fail: restoring the old local digit slicer, which rendered
+    // a raw 82 country-code prefix (821-0454-7742) instead of the 010 form.
+    expect(source).not.toContain("digits.slice(7, 11)");
   });
 
   it("locks document deletion through the required cache refresh", () => {

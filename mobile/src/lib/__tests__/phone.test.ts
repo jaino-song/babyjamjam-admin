@@ -31,4 +31,13 @@ describe("phone formatting", () => {
     expect(isValidKoreanPhoneNumber(overlongDomestic)).toBe(false);
     expect(isValidKoreanPhoneNumber(overlongCountryCode)).toBe(false);
   });
+
+  it("normalizes country-code values that kept the subscriber zero", () => {
+    expect(formatKoreanPhoneNumber("+82 10 0454 7742")).toBe("010-0454-7742");
+    expect(formatKoreanPhoneNumber("821004547742")).toBe("010-0454-7742");
+  });
+
+  it("never renders a raw country-code prefix for a subscriber-only value", () => {
+    expect(formatKoreanPhoneNumber("821-0454-7742")).toBe("010-454-7742");
+  });
 });

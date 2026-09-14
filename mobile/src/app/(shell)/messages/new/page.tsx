@@ -1435,6 +1435,7 @@ function NewMessageForm({ initialBody, initialTemplateId, initialClientId, initi
               actionType="submit"
               actionDisabled={isSubmitDisabled}
               filters={[]}
+              loadMore={false}
             >
             <div data-component="mobile_messages_new_page_screen_form_scroll_list-card_body_form-card" className={styles.recipientCard}>
               <div

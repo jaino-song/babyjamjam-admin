@@ -11,7 +11,6 @@ import { useMessageTemplates } from "@/hooks/use-message-templates";
 import { useListInfiniteScroll } from "@/hooks/useListInfiniteScroll";
 import {
   ListCard,
-  ListLoadMoreButton,
   ListLoadMoreSentinel,
 } from "@/components/app/mobile-redesign/primitives";
 import { MessageSectionNav } from "@/components/app/mobile-redesign/MessageSectionNav";
@@ -193,12 +192,8 @@ export default function TemplatesPage() {
             </label>
           )}
           scrollRef={scrollContainerRef}
-          loadMore={isInitialLoad && hasMore ? (
-            <ListLoadMoreButton
-              data-component="mobile_messages_templates_page_content_list-card_load-more_button"
-              onLoadMore={loadMore}
-            />
-          ) : null}
+          loadMore={isInitialLoad && hasMore}
+          onLoadMore={loadMore}
         >
             {isLoading ? (
               <div className="detail-empty-state" data-component="mobile_messages_templates_page_content_list-card_body_loading">

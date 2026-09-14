@@ -502,14 +502,8 @@ export default function EmployeesPage() {
               activeFilter={activeFilter}
               onFilterChange={setActiveFilter}
               scrollRef={scrollContainerRef}
-              loadMore={
-                isInitialLoad && hasMore ? (
-                  <ListLoadMoreButton
-                    data-component="mobile_employees_detail-sheet_stack_list-page_content_list-card_load-more_button"
-                    onLoadMore={loadMore}
-                  />
-                ) : null
-              }
+              loadMore={isInitialLoad && hasMore}
+              onLoadMore={loadMore}
               beforeFilters={
                 <MobileSearchBar
                   data-component="mobile_employees_detail-sheet_stack_list-page_content_list-card_search"

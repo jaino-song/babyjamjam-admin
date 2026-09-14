@@ -43,6 +43,7 @@ import { openAuthenticatedEventSource } from "@/lib/api/authenticated-fetch";
 import { useAllVoucherPriceInfos } from "@/hooks/useVoucherData";
 import { fetchAllMessageLogs } from "@/lib/messages/logs";
 import { formatDateForDisplay } from "@/lib/date/format-date-for-display";
+import { formatKoreanPhoneNumber } from "@/lib/phone";
 import { EformsignDocument } from "@/lib/eformsign/types";
 import type { EformsignDocumentOption } from "@/lib/eformsign/types";
 import {
@@ -93,7 +94,6 @@ import {
   Badge,
   ListCard,
   ListItemRow,
-  ListLoadMoreButton,
   ListLoadMoreSentinel,
   MobileSectionNav,
 } from "@/components/app/mobile-redesign/primitives";
@@ -675,12 +675,11 @@ function normalizePhone(value: string | null | undefined): string {
   return (value ?? "").replace(/\D/g, "");
 }
 
+// 국가번호가 붙은 값(+82/0082/82)도 국내 표기(010-…)로 정규화한다.
 function formatClientPhone(value: string | null | undefined): string | undefined {
-  const digits = normalizePhone(value);
-  if (digits.length <= 0) return undefined;
-  if (digits.length <= 3) return digits;
-  if (digits.length <= 7) return `${digits.slice(0, 3)}-${digits.slice(3)}`;
-  return `${digits.slice(0, 3)}-${digits.slice(3, 7)}-${digits.slice(7, 11)}`;
+  const formatted = formatKoreanPhoneNumber(value);
+  if (!formatted) return undefined;
+  return formatted;
 }
 
 function normalizeDateToYymmdd(value: string | null | undefined): string | undefined {
@@ -1626,7 +1625,7 @@ function ContractDetailContent({
             data-component="mobile_contracts_detail-sheet_stack_detail-page_content_tabs"
             tabs={[
               { id: "basic", label: "기본 정보" },
-              { id: "signers", label: "서명 진행" },
+              { id: "signers", label: "계약서 정보" },
               { id: "messages", label: "알림 발송" },
             ]}
             activeTab={activeTab}
@@ -1642,7 +1641,24 @@ function ContractDetailContent({
               />
               <InfoRow label="제공인력" value={resolvedProviderName} />
             </InfoCard>
-            <InfoCard data-component="mobile_contracts_detail-panel_info-card-2" title="계약 정보" delay={60} isLoading={isDetailLoading}>
+            <InfoCard data-component="mobile_contracts_detail-panel_info-card-5" title="서비스 정보" delay={60} isLoading={isDetailLoading}>
+              <InfoRow label="계약 기간" value={serviceInfo.contractPeriod} />
+              <InfoRow label="서비스 일수" value={serviceInfo.serviceDays} />
+              <InfoRow label="계약 시작일" value={serviceInfo.contractStartDate} />
+              <InfoRow label="계약 종료일" value={serviceInfo.contractEndDate} />
+              <InfoRow label="본인부담금 수령일" value={serviceInfo.paymentReceiptDate} />
+              <InfoRow label="영수증 발행일" value={serviceInfo.receiptIssueDate} />
+            </InfoCard>
+            <InfoCard data-component="mobile_contracts_detail-panel_info-card-6" title="서비스 비용" delay={120} isLoading={isDetailLoading}>
+              <InfoRow label="서비스 비용" value={serviceInfo.servicePrice} />
+              <InfoRow label="정부지원금" value={serviceInfo.governmentGrant} />
+              <InfoRow label="본인부담금" value={serviceInfo.outOfPocket} />
+              <InfoRow label="바우처 가격표 연도" value={serviceInfo.voucherPriceYearLabel} />
+            </InfoCard>
+          </MobileDetailTabPanel>
+
+          <MobileDetailTabPanel data-component="mobile_contracts_detail-sheet_stack_detail-page_tab-panel-2" name="contracts" tabId="signers" activeTab={activeTab}>
+            <InfoCard data-component="mobile_contracts_detail-panel_info-card-2" title="계약 정보" isLoading={isDetailLoading}>
               <InfoRow
                 label="계약서 종류"
                 value={<span style={{ fontFamily: "'SF Mono', monospace" }}>{contractNum}</span>}
@@ -1655,24 +1671,7 @@ function ContractDetailContent({
                 value={doc.id ? <span style={{ fontFamily: "'SF Mono', monospace", wordBreak: "break-all" }}>{doc.id}</span> : null}
               />
             </InfoCard>
-            <InfoCard data-component="mobile_contracts_detail-panel_info-card-5" title="서비스 정보" delay={120} isLoading={isDetailLoading}>
-              <InfoRow label="계약 기간" value={serviceInfo.contractPeriod} />
-              <InfoRow label="서비스 일수" value={serviceInfo.serviceDays} />
-              <InfoRow label="계약 시작일" value={serviceInfo.contractStartDate} />
-              <InfoRow label="계약 종료일" value={serviceInfo.contractEndDate} />
-              <InfoRow label="본인부담금 수령일" value={serviceInfo.paymentReceiptDate} />
-              <InfoRow label="영수증 발행일" value={serviceInfo.receiptIssueDate} />
-            </InfoCard>
-            <InfoCard data-component="mobile_contracts_detail-panel_info-card-6" title="서비스 비용" delay={180} isLoading={isDetailLoading}>
-              <InfoRow label="서비스 비용" value={serviceInfo.servicePrice} />
-              <InfoRow label="정부지원금" value={serviceInfo.governmentGrant} />
-              <InfoRow label="본인부담금" value={serviceInfo.outOfPocket} />
-              <InfoRow label="바우처 가격표 연도" value={serviceInfo.voucherPriceYearLabel} />
-            </InfoCard>
-          </MobileDetailTabPanel>
-
-          <MobileDetailTabPanel data-component="mobile_contracts_detail-sheet_stack_detail-page_tab-panel-2" name="contracts" tabId="signers" activeTab={activeTab}>
-            <InfoCard data-component="mobile_contracts_detail-panel_info-card-3" title="계약서 단계">
+            <InfoCard data-component="mobile_contracts_detail-panel_info-card-3" title="계약서 단계" delay={60}>
               <ActivityTimeline
                 data-component="mobile_contracts_detail-panel_info-card-3_activity-timeline"
                 items={stageItems}
@@ -2398,21 +2397,19 @@ export default function ContractsPage() {
             activeFilter={activeFilter}
             onFilterChange={(label) => setActiveFilter(label as FilterKey)}
             scrollRef={activeSection === "automations" ? undefined : scrollContainerRef}
-            loadMore={activeSection === "automations" ? undefined : (
-              isContractsLoading ? (
+            loadMore={
+              activeSection === "automations" ? false : isContractsLoading ? (
                 <div
                   className="contracts-load-more-placeholder skeleton-base"
                   data-component="mobile_contracts_detail-sheet_stack_list-page_content_list-card_load-more_placeholder"
                   aria-hidden="true"
                 />
-              ) : isInitialLoad && hasMore ? (
-                <ListLoadMoreButton
-                  onLoadMore={loadMore}
-                  isLoading={isFetchingNextPage}
-                  data-component="mobile_contracts_detail-sheet_stack_list-page_content_list-card_load-more_button"
-                />
-              ) : null
-            )}
+              ) : (
+                isInitialLoad && hasMore
+              )
+            }
+            onLoadMore={loadMore}
+            isLoadingMore={isFetchingNextPage}
             beforeFilters={activeSection === "automations" ? undefined : (
               <MobileSearchBar
                 data-component="mobile_contracts_detail-sheet_stack_list-page_content_list-card_search"
