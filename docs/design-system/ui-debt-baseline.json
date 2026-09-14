@@ -898,7 +898,7 @@
     },
     "mobile/src/app/(shell)/consultations/page.tsx": {
       "ui-architecture/no-page-local-components": [
-        "175:10-175:28|pageLocalComponent"
+        "180:10-180:28|pageLocalComponent"
       ]
     },
     "mobile/src/app/(shell)/contracts/new/page.tsx": {

@@ -75,6 +75,25 @@ jest.mock("@/components/app/mobile-redesign/detail-sheet", () => ({
 }));
 
 describe("mobile consultations page", () => {
+  beforeEach(() => {
+    jest.spyOn(Date, "now").mockReturnValue(new Date("2026-08-01T00:00:00.000Z").getTime());
+  });
+
+  afterEach(() => {
+    jest.restoreAllMocks();
+  });
+
+  it("renders the consultation stats in the canonical order", () => {
+    const { container } = render(<ConsultationsPage />);
+    const labels = Array.from(container.querySelectorAll('[data-slot="stat-mini-label"]'))
+      .map((element) => element.textContent);
+    const values = Array.from(container.querySelectorAll('[data-slot="stat-mini-value"]'))
+      .map((element) => element.textContent);
+
+    expect(labels).toEqual(["전체", "지난 30일", "미확인", "확인"]);
+    expect(values).toEqual(["1", "1", "1", "0"]);
+  });
+
   it("renders the list content with the consultations spacing hook", () => {
     const { container } = render(<ConsultationsPage />);
 

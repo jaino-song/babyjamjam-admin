@@ -4,11 +4,13 @@ import React from "react";
 import { StatMini } from "./StatMini";
 
 export interface StatsBarItem {
-  icon: React.ComponentType<{ className?: string }>;
+  icon: React.ComponentType<{ className?: string; strokeWidth?: number }>;
   value: string | number;
   label: string;
   counter?: string;
   colorIndex?: number;
+  tone?: "primary" | "orange" | "green" | "burgundy";
+  urgent?: boolean;
 }
 
 interface StatsBarProps {
@@ -16,13 +18,24 @@ interface StatsBarProps {
   "data-component": string;
   items: readonly StatsBarItem[];
   isLoading?: boolean;
+  variant?: "default" | "compact";
 }
 
-export function StatsBar({ "data-component": dataComponent, items, isLoading = false }: StatsBarProps) {
+export function StatsBar({
+  "data-component": dataComponent,
+  items,
+  isLoading = false,
+  variant = "default",
+}: StatsBarProps) {
   return (
     <div
       data-component={dataComponent}
-      className="grid grid-cols-2 gap-4 [&>*:last-child:nth-child(odd)]:col-span-2"
+      data-slot="stats-grid"
+      className={
+        variant === "compact"
+          ? "stats-grid"
+          : "grid grid-cols-2 gap-4 [&>*:last-child:nth-child(odd)]:col-span-2"
+      }
     >
       {items.map((item, idx) => (
         <StatMini
@@ -33,8 +46,11 @@ export function StatsBar({ "data-component": dataComponent, items, isLoading = f
           label={item.label}
           counter={item.counter}
           colorIndex={item.colorIndex ?? idx}
+          tone={item.tone}
+          urgent={item.urgent}
           animationDelay={`${idx * 0.08}s`}
           isLoading={isLoading}
+          variant={variant}
         />
       ))}
     </div>
