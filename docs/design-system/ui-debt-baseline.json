@@ -933,10 +933,10 @@
       "ui-architecture/no-page-local-components": [
         "1198:10-1198:24|pageLocalComponent",
         "1223:10-1223:31|pageLocalComponent",
-        "249:10-249:33|pageLocalComponent"
+        "250:10-250:33|pageLocalComponent"
       ],
       "ui-architecture/no-page-style-constants": [
-        "193:7-193:32|pageStyleConstant"
+        "194:7-194:32|pageStyleConstant"
       ],
       "ui-architecture/no-raw-ui-in-pages": [
         "1449:15-1454:16|rawUiElement",
