@@ -144,7 +144,7 @@ export function EmployeeFormCard({
             onChange={(event) => setField("phone", normalizeKoreanPhoneDigits(event.target.value))}
             onBlur={onPhoneBlur}
             placeholder="010-1234-5678"
-            maxLength={13}
+            maxLength={20}
             inputMode="tel"
             aria-invalid={hasPhoneError || (touched.phone && !isPhoneValid)}
             disabled={disabled}
