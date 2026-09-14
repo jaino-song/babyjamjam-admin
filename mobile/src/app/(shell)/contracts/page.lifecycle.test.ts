@@ -128,4 +128,11 @@ describe("mobile contracts action lifecycle", () => {
     expect(source).toContain("receiptShareInFlightRef.current = false;");
     expect(source).toContain("}, [doc.id]);");
   });
+
+  it("never assigns protected contract binaries directly to anchor hrefs", () => {
+    expect(source).not.toContain("href={receiptDownloadUrl}");
+    expect(source).not.toContain("href={downloadUrl}");
+    expect(source).toContain("onClick={handleReceiptDownload}");
+    expect(source).toContain("onClick={handlePdfDownload}");
+  });
 });

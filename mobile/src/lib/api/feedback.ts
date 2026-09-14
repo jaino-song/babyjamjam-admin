@@ -1,3 +1,5 @@
+import { authenticatedFetch } from "@/lib/api/authenticated-fetch";
+
 export interface FeedbackData {
     sessionId: string;
     messageId: string;
@@ -6,7 +8,7 @@ export interface FeedbackData {
 }
 
 export async function submitFeedback(data: FeedbackData): Promise<{ success: boolean }> {
-    const response = await fetch("/api/ai/chat/feedback", {
+    const response = await authenticatedFetch("/api/ai/chat/feedback", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(data),

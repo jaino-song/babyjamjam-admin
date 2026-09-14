@@ -417,21 +417,15 @@ describe("ContractPdfViewer", () => {
     });
   });
 
-  it("shows an error message and safe fallback link when the PDF fails to load", async () => {
+  it("shows an error message and a protected-URL-free fallback button when the PDF fails to load", async () => {
     mockPdfState.shouldError = true;
 
     renderViewer();
 
     expect(await screen.findByText("PDF 미리보기를 불러오지 못했습니다.")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "다시 시도" })).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "새 탭에서 열기" })).toHaveAttribute(
-      "href",
-      "/contract-download.pdf"
-    );
-    expect(screen.getByRole("link", { name: "새 탭에서 열기" })).toHaveAttribute(
-      "rel",
-      "noopener noreferrer"
-    );
+    const fallbackButton = screen.getByRole("button", { name: "새 탭에서 열기" });
+    expect(fallbackButton).not.toHaveAttribute("href");
   });
 
   it("opens a synchronous placeholder before waiting for the validated fallback binary", async () => {
@@ -455,7 +449,7 @@ describe("ContractPdfViewer", () => {
       });
     });
 
-    fireEvent.click(screen.getByRole("link", { name: "새 탭에서 열기" }));
+    fireEvent.click(screen.getByRole("button", { name: "새 탭에서 열기" }));
 
     expect(events).toEqual(["open", "fetch"]);
     expect(openMock).toHaveBeenCalledWith("about:blank", "_blank");
@@ -480,7 +474,7 @@ describe("ContractPdfViewer", () => {
       const placeholder = createPlaceholderWindow();
       jest.spyOn(window, "open").mockReturnValue(placeholder);
 
-      fireEvent.click(screen.getByRole("link", { name: "새 탭에서 열기" }));
+      fireEvent.click(screen.getByRole("button", { name: "새 탭에서 열기" }));
       await act(async () => {
         await Promise.resolve();
         await Promise.resolve();
@@ -507,7 +501,7 @@ describe("ContractPdfViewer", () => {
     const fetchMock = global.fetch as jest.Mock;
     fetchMock.mockResolvedValue(createErrorResponse("application/json", JSON.stringify({ error: "upstream" })));
 
-    fireEvent.click(screen.getByRole("link", { name: "새 탭에서 열기" }));
+    fireEvent.click(screen.getByRole("button", { name: "새 탭에서 열기" }));
 
     await waitFor(() => {
       expect(placeholder.close).toHaveBeenCalledTimes(1);
@@ -530,7 +524,7 @@ describe("ContractPdfViewer", () => {
       resolveFallback = resolve;
     }));
 
-    fireEvent.click(screen.getByRole("link", { name: "새 탭에서 열기" }));
+    fireEvent.click(screen.getByRole("button", { name: "새 탭에서 열기" }));
     rendered.unmount();
 
     expect(placeholder.close).toHaveBeenCalledTimes(1);
@@ -584,7 +578,7 @@ describe("ContractPdfViewer", () => {
       return Promise.resolve(createPdfResponse());
     });
 
-    fireEvent.click(screen.getByRole("link", { name: "새 탭에서 열기" }));
+    fireEvent.click(screen.getByRole("button", { name: "새 탭에서 열기" }));
     expect(resolveFirstFallback).not.toBeNull();
     expect(firstPlaceholder.opener).toBeNull();
 
@@ -593,7 +587,7 @@ describe("ContractPdfViewer", () => {
       expect(retryPreviewGetCount).toBe(1);
     });
 
-    fireEvent.click(screen.getByRole("link", { name: "새 탭에서 열기" }));
+    fireEvent.click(screen.getByRole("button", { name: "새 탭에서 열기" }));
     expect(resolveSecondFallback).not.toBeNull();
     expect(openMock.mock.calls.length - openCallCountBeforeAttempt).toBe(2);
     expect(firstPlaceholder.close).toHaveBeenCalledTimes(1);

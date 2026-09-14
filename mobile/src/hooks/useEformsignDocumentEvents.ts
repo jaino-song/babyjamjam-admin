@@ -2,6 +2,8 @@
 
 import { useEffect, useRef } from "react";
 
+import { openAuthenticatedEventSource } from "@/lib/api/authenticated-fetch";
+
 export interface EformsignDocsChangedEvent {
   branchId?: string;
   documentId?: string;
@@ -39,6 +41,10 @@ function getDocsChangedEventKey(event: EformsignDocsChangedEvent): string {
   ].join("\u001f");
 }
 
+function isDocumentHidden(): boolean {
+  return document.visibilityState === "hidden";
+}
+
 export function useEformsignDocumentEvents({
   enabled,
   onDocsChanged,
@@ -59,6 +65,8 @@ export function useEformsignDocumentEvents({
     let lastDeliveredEventKey: string | null = null;
     let lastDeliveredAt = 0;
     let disposed = false;
+    let connecting = false;
+    let bootstrapController: AbortController | null = null;
 
     const clearReconnectTimer = () => {
       if (!reconnectTimer) return;
@@ -81,7 +89,7 @@ export function useEformsignDocumentEvents({
       if (disposed || reconnectTimer || document.visibilityState === "hidden") return;
       reconnectTimer = window.setTimeout(() => {
         reconnectTimer = null;
-        connect();
+        void connect();
       }, RECONNECT_DELAY_MS);
     };
 
@@ -106,43 +114,60 @@ export function useEformsignDocumentEvents({
       }, INVALIDATE_DEBOUNCE_MS);
     };
 
-    function connect() {
-      if (disposed || source || document.visibilityState === "hidden") return;
+    async function connect() {
+      if (disposed || source || connecting || isDocumentHidden()) return;
+
+      connecting = true;
+      const controller = new AbortController();
+      bootstrapController = controller;
 
       try {
-        source = new EventSource(EFORM_DOC_EVENTS_URL);
+        source = await openAuthenticatedEventSource(EFORM_DOC_EVENTS_URL, {
+          signal: controller.signal,
+        });
+        if (disposed || controller.signal.aborted || isDocumentHidden()) {
+          closeSource();
+          return;
+        }
+        source.addEventListener("docs-changed", handleDocsChanged);
+        source.addEventListener("error", () => {
+          closeSource();
+          scheduleReconnect();
+        });
       } catch {
         source = null;
-        scheduleReconnect();
-        return;
+        if (!disposed && !controller.signal.aborted) {
+          scheduleReconnect();
+        }
+      } finally {
+        connecting = false;
+        if (bootstrapController === controller) {
+          bootstrapController = null;
+        }
       }
-
-      source.addEventListener("docs-changed", handleDocsChanged);
-      source.addEventListener("error", () => {
-        closeSource();
-        scheduleReconnect();
-      });
     }
 
     const handleVisibilityChange = () => {
       clearReconnectTimer();
 
       if (document.visibilityState === "hidden") {
+        bootstrapController?.abort();
         closeSource();
         return;
       }
 
-      connect();
+      void connect();
     };
 
     document.addEventListener("visibilitychange", handleVisibilityChange);
-    connect();
+    void connect();
 
     return () => {
       disposed = true;
       document.removeEventListener("visibilitychange", handleVisibilityChange);
       clearReconnectTimer();
       clearInvalidateTimer();
+      bootstrapController?.abort();
       closeSource();
     };
   }, [enabled]);

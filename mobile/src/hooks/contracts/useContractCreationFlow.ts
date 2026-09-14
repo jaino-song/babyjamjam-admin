@@ -8,6 +8,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useFormStore } from "@/stores/form-store";
 import { useEformsign } from "@/hooks/useEformsign";
 import { useToast } from "@/hooks/use-toast";
+import { openAuthenticatedEventSource } from "@/lib/api/authenticated-fetch";
 import {
   useAllVoucherPrices,
   useAreaTemplates,
@@ -883,7 +884,7 @@ export function useContractCreationFlow(): ContractCreationFlow {
       setIsProgressModalOpen(true);
 
       try {
-        progressSource = new EventSource(
+        progressSource = await openAuthenticatedEventSource(
           `/api/eformsign-docs/dispatch-headless/progress?progressId=${encodeURIComponent(progressId)}`,
         );
         progressSourceRef.current = progressSource;

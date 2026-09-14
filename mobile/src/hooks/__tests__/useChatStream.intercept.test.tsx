@@ -5,7 +5,10 @@ describe("useChatStream command intercept", () => {
     const originalFetch = globalThis.fetch;
 
     beforeEach(() => {
-        globalThis.fetch = jest.fn();
+        globalThis.fetch = jest.fn().mockResolvedValue({
+            ok: true,
+            status: 200,
+        } as Response);
         localStorage.clear();
     });
 

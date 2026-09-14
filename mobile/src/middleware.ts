@@ -310,6 +310,16 @@ export async function middleware(request: NextRequest) {
 
   const needsRefresh = !authToken || isTokenExpired(authToken);
 
+  if (needsRefresh && refreshToken && isApiRoute(pathname)) {
+    return NextResponse.json(
+      {
+        code: "AUTH_REFRESH_REQUIRED",
+        error: "Session refresh required",
+      },
+      { status: 401 },
+    );
+  }
+
   if (needsRefresh && refreshToken) {
     const refreshAttempt = await tryRefreshAuthSession(refreshToken);
     if (refreshAttempt?.kind === "concurrent") {

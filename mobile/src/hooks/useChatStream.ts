@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useCallback, useRef } from "react";
+import { authenticatedFetch } from "@/lib/api/authenticated-fetch";
 import { safeStorageGetItem, safeStorageRemoveItem, safeStorageSetItem } from "@/lib/safe-storage";
 
 export interface ChatMessage {
@@ -228,7 +229,7 @@ export function useChatStream(): UseChatStreamReturn {
         sessionIdOverride: string | null = sessionId,
     ) => {
         try {
-            await fetch("/api/ai/chat/persist", {
+            await authenticatedFetch("/api/ai/chat/persist", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
@@ -303,7 +304,7 @@ export function useChatStream(): UseChatStreamReturn {
                 return;
             }
 
-            const response = await fetch("/api/ai/chat/confirm", {
+            const response = await authenticatedFetch("/api/ai/chat/confirm", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 credentials: "include",
@@ -364,7 +365,7 @@ export function useChatStream(): UseChatStreamReturn {
         isLoadingRef.current = true;
         setIsLoadingHistory(true);
         try {
-            const res = await fetch(`/api/ai/chat/history?offset=${offset}&limit=20`);
+            const res = await authenticatedFetch(`/api/ai/chat/history?offset=${offset}&limit=20`);
             if (!res.ok) {
                 console.error("failed to load history:", res.status);
                 setHasMoreHistory(false);
@@ -507,7 +508,7 @@ export function useChatStream(): UseChatStreamReturn {
         abortControllerRef.current = new AbortController();
 
         try {
-            const response = await fetch("/api/ai/chat/stream", {
+            const response = await authenticatedFetch("/api/ai/chat/stream", {
                 method: "POST",
                 headers: {
                     "Content-Type": "application/json",
@@ -736,7 +737,7 @@ export function useChatStream(): UseChatStreamReturn {
 
                     abortControllerRef.current = new AbortController();
 
-                    fetch("/api/ai/chat/stream", {
+                    authenticatedFetch("/api/ai/chat/stream", {
                         method: "POST",
                         headers: {
                             "Content-Type": "application/json",
@@ -968,7 +969,7 @@ export function useChatStream(): UseChatStreamReturn {
 
         if (currentSessionId) {
             try {
-                await fetch(`/api/ai/chat/sessions/${currentSessionId}`, {
+                await authenticatedFetch(`/api/ai/chat/sessions/${currentSessionId}`, {
                     method: "DELETE",
                 });
             } catch (e) {

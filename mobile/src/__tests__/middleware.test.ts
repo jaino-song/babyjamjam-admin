@@ -124,6 +124,30 @@ describe("middleware API route protection", () => {
     expect(response.headers.get("x-middleware-next")).toBe("1");
   });
 
+  it("delegates an expired protected API session to the client refresh coordinator", async () => {
+    mockJwtDecode.mockReturnValue({
+      sub: "user-1",
+      sid: "session-1",
+      role: "manager",
+      type: "access",
+      exp: Math.floor(Date.now() / 1000) - 60,
+    });
+    const fetchMock = jest.spyOn(global, "fetch");
+
+    const response = await middleware(createRequest(
+      "/api/clients",
+      "auth_token=expired; refresh_token=current; selected_branch_id=branch-1",
+    ));
+
+    expect(response.status).toBe(401);
+    await expect(response.json()).resolves.toEqual({
+      code: "AUTH_REFRESH_REQUIRED",
+      error: "Session refresh required",
+    });
+    expect(fetchMock).not.toHaveBeenCalled();
+    fetchMock.mockRestore();
+  });
+
   it("does not clear cookies when another request is already rotating refresh", async () => {
     mockJwtDecode.mockReturnValue({
       sub: "user-1",
