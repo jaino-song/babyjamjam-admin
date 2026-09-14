@@ -7,22 +7,38 @@ export interface VoucherPriceInfoLike {
 
 type VoucherAmountKey = "fullPrice" | "grant" | "actualPrice";
 
-function normalizeNumericString(value: string | number | null | undefined): string | null {
+function normalizeVoucherAmount(value: string | number | null | undefined): string | null {
   if (value == null) return null;
 
-  const raw = String(value).trim();
-  if (!raw || raw === "NaN" || raw === "Infinity" || raw === "-Infinity") return null;
+  if (typeof value === "number") {
+    return Number.isSafeInteger(value) && value >= 0 ? String(value) : null;
+  }
 
-  const digits = raw.replace(/[^\d]/g, "");
-  return digits ? digits : null;
+  const raw = value.trim();
+  if (!raw) return null;
+
+  const isPlainDigits = /^\d+(?:\s*원)?$/.test(raw);
+  const isCommaGrouped = /^\d{1,3}(?:,\d{3})+(?:\s*원)?$/.test(raw);
+  if (!isPlainDigits && !isCommaGrouped) return null;
+
+  return raw.replace(/\s*원$/, "").replace(/,/g, "");
+}
+
+function isMissingAmount(value: string | number | null | undefined): boolean {
+  return value == null || (typeof value === "string" && value.trim() === "");
 }
 
 function normalizeDuration(value: string | number | null | undefined): string | null {
-  const normalized = normalizeNumericString(value);
-  if (normalized == null) return null;
+  if (value == null) return null;
+  if (typeof value === "number") {
+    return Number.isSafeInteger(value) && value >= 0 ? String(value) : null;
+  }
+
+  const normalized = value.trim();
+  if (!/^\d+$/.test(normalized)) return null;
 
   const numeric = Number(normalized);
-  return Number.isFinite(numeric) ? String(numeric) : null;
+  return Number.isSafeInteger(numeric) ? String(numeric) : null;
 }
 
 /**
@@ -43,12 +59,14 @@ export function inferVoucherDurationFromAmounts(
   let matchedAny = false;
 
   for (const key of ["fullPrice", "grant", "actualPrice"] as const) {
-    const target = normalizeNumericString(amounts[key]);
-    if (target === null) continue;
+    if (isMissingAmount(amounts[key])) continue;
+
+    const target = normalizeVoucherAmount(amounts[key]);
+    if (target === null) return null;
 
     matchedAny = true;
     candidates = candidates.filter(
-      (candidate) => normalizeNumericString(candidate[key]) === target,
+      (candidate) => normalizeVoucherAmount(candidate[key]) === target,
     );
 
     if (candidates.length === 0) return null;

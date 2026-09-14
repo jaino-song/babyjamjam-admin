@@ -1,7 +1,27 @@
-export declare const SYSTEM_TEMPLATE_KEYS: readonly ["PRICE_INFO", "GREETING", "THANKS", "SURVEY", "SERVICE_INFO", "SERVICE_RECORD_LINK", "SERVICE_END_NOTICE", "REMINDER", "INFO"];
+export declare const SYSTEM_TEMPLATE_KEYS: readonly ["CLIENT_WELCOME", "SERVICE_START_REMINDER", "SERVICE_END_REMINDER", "EMPLOYEE_ASSIGNED", "PRICE_INFO", "GREETING", "THANKS", "SURVEY", "SERVICE_INFO", "SERVICE_RECORD_LINK", "SERVICE_END_NOTICE", "REMINDER", "INFO"];
 export type SystemTemplateKey = (typeof SYSTEM_TEMPLATE_KEYS)[number];
 export declare const SYSTEM_TEMPLATE_DELIVERY_MODES: readonly ["sms", "service-feedback-link", "receipt-link"];
 export type SystemTemplateDeliveryMode = (typeof SYSTEM_TEMPLATE_DELIVERY_MODES)[number];
+/**
+ * Keep the delivery path explicit for every backend registry key.  The
+ * `satisfies` constraint makes adding a registry key without choosing a
+ * delivery path a compile-time error instead of silently falling back to SMS.
+ */
+export declare const SYSTEM_TEMPLATE_DELIVERY_MODES_BY_KEY: {
+    CLIENT_WELCOME: "sms";
+    SERVICE_START_REMINDER: "sms";
+    SERVICE_END_REMINDER: "sms";
+    EMPLOYEE_ASSIGNED: "sms";
+    PRICE_INFO: "sms";
+    GREETING: "sms";
+    THANKS: "sms";
+    SURVEY: "sms";
+    SERVICE_INFO: "sms";
+    SERVICE_RECORD_LINK: "service-feedback-link";
+    SERVICE_END_NOTICE: "receipt-link";
+    REMINDER: "sms";
+    INFO: "sms";
+};
 /**
  * Resolve the delivery preparation path for a system template.
  *

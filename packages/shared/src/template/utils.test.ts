@@ -28,4 +28,14 @@ describe("shared template utilities", () => {
   it("renders numeric and boolean values without treating zero as empty", () => {
     expect(renderTemplate("{{zero}}/{{false}}", { zero: 0, false: false })).toBe("0/false");
   });
+
+  it("does not resolve inherited values from the template data prototype", () => {
+    const data = Object.create({ name: "프로토타입 고객" }) as Record<string, unknown>;
+
+    expect(renderTemplate("{{name}}", data)).toBe("{{name}}");
+    expect(renderTemplate("{{name}}", data, [
+      { key: "name", type: "text", label: "이름", required: true, fallback: "고객님" },
+    ])).toBe("고객님");
+    expect(getUnresolvedKeys("{{name}}", data)).toEqual(["name"]);
+  });
 });

@@ -42,4 +42,26 @@ describe("inferVoucherDurationFromAmounts", () => {
       { duration: "15", fullPrice: "1464000" },
     ], { fullPrice: "1464000" })).toBeNull();
   });
+
+  it.each([
+    "-1464000",
+    "1,46,4000",
+    "1,464,000abc",
+    "1464 000",
+  ])("rejects malformed currency input: %s", (fullPrice) => {
+    expect(inferVoucherDurationFromAmounts(priceInfos, { fullPrice })).toBeNull();
+  });
+
+  it("does not ignore a malformed clue when another amount happens to match", () => {
+    expect(inferVoucherDurationFromAmounts(priceInfos, {
+      fullPrice: "1,46,4000",
+      grant: "1,002,000",
+    })).toBeNull();
+  });
+
+  it("accepts only plain digits or correctly grouped currency forms", () => {
+    expect(inferVoucherDurationFromAmounts(priceInfos, { fullPrice: "2,196,000 원" })).toBe("15");
+    expect(inferVoucherDurationFromAmounts(priceInfos, { fullPrice: "2196000원" })).toBe("15");
+    expect(inferVoucherDurationFromAmounts(priceInfos, { fullPrice: "0원" })).toBeNull();
+  });
 });
