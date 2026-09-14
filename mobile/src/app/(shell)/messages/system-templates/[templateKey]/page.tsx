@@ -8,6 +8,11 @@ import { InfoCard } from '@/components/app/mobile-redesign/detail-sheet';
 import { MobileDetailSlideUp } from '@/components/app/mobile-redesign/mobile-detail-slideup';
 import { useSystemTemplate } from '@/features/system-templates/hooks';
 
+export function buildSystemTemplateSendHref(templateKey: string, content: string) {
+  const params = new URLSearchParams({ template: templateKey, body: content });
+  return `/messages/new?${params.toString()}`;
+}
+
 export default function EditSystemTemplatePage({ params }: { params: Promise<{ templateKey: string }> }) {
   const { templateKey } = use(params);
   const router = useRouter();
@@ -51,8 +56,7 @@ export default function EditSystemTemplatePage({ params }: { params: Promise<{ t
   }
 
   const handleSend = () => {
-    const params = new URLSearchParams({ body: template.content });
-    router.push(`/messages/new?${params.toString()}`);
+    router.push(buildSystemTemplateSendHref(template.templateKey, template.content));
   };
 
   return (
