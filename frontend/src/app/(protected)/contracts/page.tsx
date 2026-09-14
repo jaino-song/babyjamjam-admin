@@ -10,6 +10,7 @@ import dynamic from "next/dynamic";
 import { useRouter, useSearchParams } from "next/navigation";
 import { formatClientBirthdayAsYYMMDD } from "@/lib/date/format-client-birthday";
 import { formatDateForDisplay } from "@/lib/date/format-date-for-display";
+import { formatKoreanPhoneNumber, normalizeKoreanPhoneDigits } from "@/lib/phone";
 import {
   FileText,
   FileSignature,
@@ -271,41 +272,6 @@ function getSignatureProgress(
     { label: "계약서 완료", done: isCompleted },
   ];
   return steps;
-}
-
-function normalizePhoneNumber(
-  value:
-    | string
-    | null
-    | undefined
-    | {
-        country_code?: string;
-        phone_number?: string;
-      }
-): string {
-  const rawValue =
-    typeof value === "string"
-      ? value
-      : `${value?.country_code ?? ""}${value?.phone_number ?? ""}`;
-  const digits = rawValue.replace(/\D/g, "");
-
-  if (!digits) return "";
-  if (digits.startsWith("0082")) return `0${digits.slice(4)}`;
-  if (digits.startsWith("82")) return `0${digits.slice(2)}`;
-  return digits;
-}
-
-function formatPhoneNumber(value: string): string {
-  const digits = normalizePhoneNumber(value);
-
-  if (digits.length <= 3) return digits;
-  if (digits.length <= 7) return `${digits.slice(0, 3)}-${digits.slice(3)}`;
-  return `${digits.slice(0, 3)}-${digits.slice(3, 7)}-${digits.slice(7, 11)}`;
-}
-
-function formatOptionalPhoneNumber(value: string | null | undefined): string {
-  const digits = normalizePhoneNumber(value);
-  return digits ? formatPhoneNumber(digits) : "–";
 }
 
 function formatCurrencyValue(value: string | null | undefined): string {
@@ -1230,9 +1196,9 @@ export function ContractDetail({
   const reRequestStepSeq = detailedDocument.current_status?.step_index ?? "";
   const currentRecipient = detailedDocument.current_status?.step_recipients?.[0];
   const contactInfo = extractDocumentContactInfo(detailedDocument);
-  const initialRecipientPhone = normalizePhoneNumber(currentRecipient?.sms);
+  const initialRecipientPhone = normalizeKoreanPhoneDigits(currentRecipient?.sms);
   const [recipientPhone, setRecipientPhone] = useState(initialRecipientPhone);
-  const recipientPhoneDigits = normalizePhoneNumber(recipientPhone);
+  const recipientPhoneDigits = normalizeKoreanPhoneDigits(recipientPhone);
   const hasEditedRecipientPhone = recipientPhoneDigits !== initialRecipientPhone;
   const isRecipientPhoneValid =
     !hasEditedRecipientPhone || (recipientPhoneDigits.length >= 10 && recipientPhoneDigits.length <= 11);
@@ -1838,7 +1804,7 @@ export function ContractDetail({
             "–"
           ),
         },
-        { label: "연락처", value: formatOptionalPhoneNumber(contactInfo.phone) },
+        { label: "연락처", value: formatKoreanPhoneNumber(contactInfo.phone) || "–" },
         {
           label: "이메일",
           value: contactInfo.email ? (
@@ -1892,7 +1858,7 @@ export function ContractDetail({
       loading={isBaseDetailLoading}
       rows={[
         { label: "성명", value: provider1Name || "–" },
-        { label: "연락처", value: formatOptionalPhoneNumber(provider1Contact) },
+        { label: "연락처", value: formatKoreanPhoneNumber(provider1Contact) || "–" },
       ]}
     />
     ) : null,
@@ -1904,7 +1870,7 @@ export function ContractDetail({
       loading={isBaseDetailLoading}
       rows={[
         { label: "성명", value: provider2Name || "–" },
-        { label: "연락처", value: formatOptionalPhoneNumber(provider2Contact) },
+        { label: "연락처", value: formatKoreanPhoneNumber(provider2Contact) || "–" },
       ]}
     />
     ) : null,
@@ -2158,11 +2124,11 @@ export function ContractDetail({
               type="tel"
               inputMode="numeric"
               placeholder="010-1234-5678"
-              value={formatPhoneNumber(recipientPhoneDigits)}
+              value={formatKoreanPhoneNumber(recipientPhoneDigits)}
               onChange={(event) =>
-                setRecipientPhone(normalizePhoneNumber(event.target.value).slice(0, 11))
+                setRecipientPhone(normalizeKoreanPhoneDigits(event.target.value).slice(0, 11))
               }
-              maxLength={13}
+              maxLength={20}
               className="h-[calc(48px*var(--glint-ui-scale,1))] px-[calc(16px*var(--glint-ui-scale,1))]"
               error={hasEditedRecipientPhone && !isRecipientPhoneValid}
               aria-describedby={

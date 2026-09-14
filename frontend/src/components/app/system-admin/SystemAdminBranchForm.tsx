@@ -12,6 +12,7 @@ import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { TitleTextInputMolecule } from "@/components/ui/title-text-input-molecule";
 import type { SystemAdminBranchInput, SystemAdminBranchRequest } from "@/lib/api/system-admin";
+import { formatKoreanPhoneNumber } from "@/lib/phone";
 
 interface BranchManagerOption {
   id: string;
@@ -59,18 +60,6 @@ function optionalValue(formData: FormData, name: string): string | undefined {
   const value = String(formData.get(name) ?? "").trim();
   return value || undefined;
 }
-
-const formatPhoneNumber = (value: string): string => {
-  const digits = value.replace(/\D/g, "");
-
-  if (digits.length <= 3) {
-    return digits;
-  } else if (digits.length <= 7) {
-    return `${digits.slice(0, 3)}-${digits.slice(3)}`;
-  } else {
-    return `${digits.slice(0, 3)}-${digits.slice(3, 7)}-${digits.slice(7, 11)}`;
-  }
-};
 
 export function SystemAdminBranchForm({
   mode,
@@ -216,13 +205,13 @@ export function SystemAdminBranchForm({
           name="phone"
           label="대표 전화"
           value={phone}
-          onValueChange={(value) => setPhone(formatPhoneNumber(value))}
+          onValueChange={(value) => setPhone(formatKoreanPhoneNumber(value))}
           error={Boolean(errors.phone)}
           helperText={errors.phone}
           disabled={isSubmitting}
           type="tel"
           inputMode="numeric"
-          maxLength={13}
+          maxLength={20}
           autoComplete="tel"
           dataComponent="desktop_system-admin_sections_branch-form-field"
           inputDataComponent="desktop_system-admin_sections_branch-form_phone"

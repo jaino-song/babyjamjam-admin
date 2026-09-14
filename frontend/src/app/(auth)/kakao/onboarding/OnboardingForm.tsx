@@ -9,6 +9,7 @@ import { AuthPanel } from "@/components/auth/auth-panel";
 import { FormField } from "@/components/auth/form-field";
 import { SelectField } from "@/components/auth/select-field";
 import { Button } from "@/components/ui/button";
+import { normalizeKoreanPhoneDigits } from "@/lib/phone";
 import { Alert } from "@/components/ui/alert";
 import { Spinner } from "@/components/ui/spinner";
 import { REGISTERABLE_ROLE_OPTIONS } from "@/lib/constants/roles";
@@ -44,7 +45,8 @@ function formatBirthDateInput(value: string) {
 }
 
 function formatPhoneInput(value: string) {
-    const digits = value.replace(/\D/g, "").slice(0, 11);
+    // Country-code input is normalized first; the mobile-only prefix policy stays.
+    const digits = normalizeKoreanPhoneDigits(value).slice(0, 11);
 
     if (digits.length === 0) {
         return "";
@@ -201,7 +203,7 @@ export function OnboardingForm({
                     onChange={handleFieldChange("phone")}
                     error={errors.phone}
                     inputMode="numeric"
-                    maxLength={13}
+                    maxLength={20}
                     placeholder="010-1234-5678"
                     disabled={isPending}
                     data-component="desktop_auth_kakao-onboarding_form_phone-field"
