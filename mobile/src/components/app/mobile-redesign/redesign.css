@@ -589,10 +589,26 @@ main[data-slot="main-content"]:has([data-slot="dashboard-page"]) > [data-slot="d
   min-height: 0;
   display: flex;
 }
-/* The consultations route removes V3MainContent's outer padding, so the
-   shared sheet must not keep the negative margins that normally cancel it. */
+/* Keep the consultations shell flush with the viewport like the other
+   route-owned mobile screens. */
+[data-slot="app-root"]:has([data-slot="consultations-content"]) [data-slot="mobile-header"] {
+  position: absolute !important;
+  top: 0 !important;
+  right: 0 !important;
+  left: 0 !important;
+  width: auto !important;
+  max-width: none !important;
+  --tw-translate-x: 0px !important;
+  translate: 0 0 !important;
+  transform: none !important;
+}
+
 .mobile-detail-sheet:has([data-slot="consultations-content"]) {
   margin: 0;
+}
+
+[data-slot="consultations-content"] {
+  padding-inline: 0;
 }
 .shell-content .list-card {
   flex: 1;
