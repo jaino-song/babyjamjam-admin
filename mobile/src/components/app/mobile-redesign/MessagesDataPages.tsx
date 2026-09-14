@@ -178,6 +178,7 @@ function MessagePageShell({
           filters={filters}
           activeFilter={activeFilter}
           onFilterChange={onFilterChange}
+          loadMore={false}
         >
           {children}
         </ListCard>

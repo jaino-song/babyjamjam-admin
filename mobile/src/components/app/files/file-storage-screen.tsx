@@ -11,7 +11,7 @@ import {
   type Document,
 } from "@/hooks/use-documents";
 import { useDocumentCategories } from "@/hooks/use-document-categories";
-import { ListCard, ListItemRow, ListLoadMoreButton, ListLoadMoreSentinel } from "@/components/app/mobile-redesign/primitives";
+import { ListCard, ListItemRow, ListLoadMoreSentinel } from "@/components/app/mobile-redesign/primitives";
 import { useListInfiniteScroll } from "@/hooks/useListInfiniteScroll";
 import { useAuthenticatedFileUrl } from "@/hooks/useAuthenticatedFileUrl";
 import {
@@ -483,14 +483,8 @@ export function FileStorageScreen() {
             activeFilter={activeFilter}
             onFilterChange={setActiveFilter}
             scrollRef={scrollContainerRef}
-            loadMore={
-              isInitialLoad && hasMore ? (
-                <ListLoadMoreButton
-                  data-component="mobile_files_detail-sheet_stack_list-page_content_list-card_load-more_button"
-                  onLoadMore={loadMore}
-                />
-              ) : null
-            }
+            loadMore={isInitialLoad && hasMore}
+            onLoadMore={loadMore}
             beforeFilters={
               <MobileSearchBar
                 data-component="mobile_files_detail-sheet_stack_list-page_content_list-card_search"
