@@ -39,13 +39,9 @@
  *     instruction ("정본 = backend 의미론 기준 + 090 포함").
  *   - 047/049 (doc_request_delete / doc_delete): kept IN the canonical
  *     EXPIRED_STATUS_CODES bucket. Backend and frontend agree on this (2 of
- *     3 sources); only mobile splits them out, and that split is a mobile
- *     UI-visibility concern (hiding fully-deleted docs from a list), not a
- *     disagreement about the underlying status semantics. Porting mobile's
- *     UI-hiding behavior is out of scope for this task (status-code SET
- *     canonicalization only) — a follow-up integration task can layer a
- *     mobile-specific "is this deleted" filter on top of this shared set
- *     without changing what "expired" means.
+ *     3 sources); the separate DELETED_STATUS_CODES predicate below keeps
+ *     mobile's UI-visibility concern (hiding fully-deleted docs) distinct from
+ *     the semantic category.
  */
 
 export const COMPLETED_STATUS_CODES = [
@@ -85,6 +81,124 @@ export const REJECTED_STATUS_CODES = EXPIRED_STATUS_CODES;
 
 export type CompletedStatusCode = (typeof COMPLETED_STATUS_CODES)[number];
 export type ExpiredStatusCode = (typeof EXPIRED_STATUS_CODES)[number];
+
+/** Status codes that represent an in-progress eformsign workflow. */
+export const IN_PROGRESS_STATUS_CODES = [
+    "001", // doc_tempsave
+    "002", // doc_create
+    "010", // doc_request_approval
+    "020", // doc_request_reception
+    "030", // doc_request_outsider
+    "043", // doc_update
+    "060", // doc_request_participant
+    "063", // doc_rerequest_participant
+    "064", // doc_open_participant
+    "070", // doc_request_reviewer
+] as const;
+
+export const DELETED_STATUS_CODES = [
+    "047", // doc_request_delete
+    "049", // doc_delete
+    "099", // legacy backend webhook tombstone
+] as const;
+
+export type EformsignStatusCategory = "completed" | "expired" | "in-progress" | "unknown";
+
+export const EFORMSIGN_STATUS_CATEGORY_LABELS = {
+    completed: "계약 완료",
+    expired: "기간 만료",
+    "in-progress": "서명 대기",
+    unknown: "알 수 없음",
+} as const satisfies Record<EformsignStatusCategory, string>;
+
+/** Provider status names accepted by webhook and client payloads. */
+export const EFORMSIGN_STATUS_NAME_TO_CODE: Readonly<Record<string, string>> = {
+    doc_tempsave: "001",
+    doc_create: "002",
+    doc_complete: "003",
+    doc_request_approval: "010",
+    doc_reject_approval: "011",
+    doc_accept_approval: "012",
+    doc_request_reception: "020",
+    doc_reject_reception: "021",
+    doc_accept_reception: "022",
+    doc_request_outsider: "030",
+    doc_reject_outsider: "031",
+    doc_accept_outsider: "032",
+    doc_request_revoke: "040",
+    doc_revoke: "042",
+    doc_update: "043",
+    doc_request_reject: "045",
+    doc_request_delete: "047",
+    doc_delete: "049",
+    doc_request_participant: "060",
+    doc_reject_participant: "061",
+    doc_accept_participant: "062",
+    doc_rerequest_participant: "063",
+    doc_open_participant: "064",
+    doc_request_reviewer: "070",
+    doc_reject_reviewer: "071",
+    doc_accept_reviewer: "072",
+    doc_expired: "080",
+    face_signature_complete: "092",
+    doc_withdraw: "090",
+    doc_withdrawal: "090",
+    doc_tombstone: "099",
+} as const;
+
+export type EformsignStatusInput = string | number | null | undefined;
+
+/**
+ * Normalize a provider status code or status name to the canonical code.
+ * Unknown non-empty values are preserved (lower-cased and trimmed) so callers
+ * can record them while classifying them as `unknown`.
+ */
+export function normalizeEformsignStatusCode(status: EformsignStatusInput): string {
+    const normalized = String(status ?? "").trim().toLowerCase();
+    if (!normalized) return "000";
+
+    const knownName = EFORMSIGN_STATUS_NAME_TO_CODE[normalized];
+    if (knownName) return knownName;
+
+    if (/^\d+$/.test(normalized)) return normalized.padStart(3, "0");
+    return normalized;
+}
+
+export const normalizeEformsignStatusName = normalizeEformsignStatusCode;
+
+export function isDeletedEformsignStatusCode(status: EformsignStatusInput): boolean {
+    const normalized = normalizeEformsignStatusCode(status);
+    return (DELETED_STATUS_CODES as readonly string[]).includes(normalized);
+}
+
+export function getEformsignStatusCategory(
+    status: EformsignStatusInput,
+): EformsignStatusCategory {
+    const normalized = normalizeEformsignStatusCode(status);
+
+    if ((COMPLETED_STATUS_CODES as readonly string[]).includes(normalized)) {
+        return "completed";
+    }
+    if ((EXPIRED_STATUS_CODES as readonly string[]).includes(normalized)) {
+        return "expired";
+    }
+    if ((IN_PROGRESS_STATUS_CODES as readonly string[]).includes(normalized)) {
+        return "in-progress";
+    }
+    return "unknown";
+}
+
+export function getEformsignStatusLabel(status: EformsignStatusInput): string {
+    return EFORMSIGN_STATUS_CATEGORY_LABELS[getEformsignStatusCategory(status)];
+}
+
+// Compatibility aliases make migration from the existing frontend/mobile
+// wrappers mechanical while keeping the canonical names explicit above.
+export const normalizeStatusCode = normalizeEformsignStatusCode;
+export const getStatusCategory = getEformsignStatusCategory;
+export const mapStatusToLabel = getEformsignStatusLabel;
+export const mapEformsignStatusToLabel = getEformsignStatusLabel;
+export const isDeletedStatusCode = isDeletedEformsignStatusCode;
 
 const PROVIDER_REVIEW_STEP_TYPES = new Set(["06"]);
 const PROVIDER_REVIEW_OWNER_KEYWORDS = ["제공기관", "관리자", "담당자"];

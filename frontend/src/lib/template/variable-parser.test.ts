@@ -20,8 +20,8 @@ describe("renderTemplate", () => {
         expect(renderTemplate("안녕 {{name}}", {})).toBe("안녕 {{name}}");
     });
 
-    it("re-renders an empty value back to the canonical placeholder (two-arg call, unchanged behavior)", () => {
-        expect(renderTemplate("안녕 {{ name }}", { name: "   " })).toBe("안녕 {{name}}");
+    it("retains the original placeholder when a value is blank", () => {
+        expect(renderTemplate("안녕 {{ name }}", { name: "   " })).toBe("안녕 {{ name }}");
     });
 
     it("prefers a non-empty value over the variable's fallback", () => {
@@ -47,6 +47,30 @@ describe("renderTemplate", () => {
     it("leaves the placeholder untouched when the fallback is defined but empty", () => {
         const variables = [makeVariable("name", "   ")];
         expect(renderTemplate("안녕 {{name}}", {}, variables)).toBe("안녕 {{name}}");
+    });
+
+    it("renders numeric and boolean values, including zero and false", () => {
+        expect(renderTemplate("{{zero}}/{{enabled}}", { zero: 0, enabled: false })).toBe("0/false");
+    });
+
+    it("applies the value, fallback, then original placeholder priority to duplicates", () => {
+        const variables = [makeVariable("name", "고객님")];
+
+        expect(renderTemplate("{{name}} / {{name}}", { name: "지호" }, variables)).toBe("지호 / 지호");
+        expect(renderTemplate("{{name}} / {{name}}", {}, variables)).toBe("고객님 / 고객님");
+        expect(renderTemplate("{{name}} / {{name}}", {}, [])).toBe("{{name}} / {{name}}");
+    });
+
+    it("does not resolve inherited values from the template data prototype", () => {
+        const values = Object.create({ name: "프로토타입 고객" }) as Record<string, unknown>;
+
+        expect(renderTemplate("{{name}}", values)).toBe("{{name}}");
+        expect(renderTemplate("{{name}}", values, [makeVariable("name", "고객님")])).toBe("고객님");
+    });
+
+    it("extracts unique trimmed variable keys", () => {
+        expect(extractVariables("{{ name }} {{name}} {{phone}} {{name}}"))
+            .toEqual(["name", "phone"]);
     });
 });
 

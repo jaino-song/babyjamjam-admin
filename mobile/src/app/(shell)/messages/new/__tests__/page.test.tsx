@@ -523,6 +523,31 @@ describe("NewMessagePage", () => {
     expect(api.post).not.toHaveBeenCalled();
   });
 
+  it.each(["010-1234-56789", "010-1234-567", "010-1234-5678x"])(
+    "rejects an invalid manual recipient before formatting or sending (%s)",
+    async (value) => {
+      renderPage();
+
+      const receiverInput = screen.getByLabelText(/휴대 전화번호/);
+      fireEvent.focus(receiverInput);
+      fireEvent.change(receiverInput, { target: { value } });
+      fireEvent.keyDown(receiverInput, { key: "Enter" });
+
+      expect(await screen.findByText("기존 고객이 없으면 올바른 전화번호를 입력한 뒤 Enter를 눌러 추가해 주세요.")).toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: /수신자 제거/ })).not.toBeInTheDocument();
+      expect(api.post).not.toHaveBeenCalled();
+    },
+  );
+
+  it("validates a country-code manual recipient before storing the formatted chip", async () => {
+    renderPage();
+
+    await addManualRecipient("+82 10 1234 5678");
+
+    expect(screen.getByRole("button", { name: "010-1234-5678 수신자 제거" })).toBeInTheDocument();
+    expect(api.post).not.toHaveBeenCalled();
+  });
+
   it("adds an existing client recipient from autocomplete", async () => {
     renderPage();
 

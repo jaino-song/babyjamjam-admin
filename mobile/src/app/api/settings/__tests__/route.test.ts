@@ -8,6 +8,7 @@ import {
   GET as getMessageSenderApproval,
   POST as requestMessageSenderApproval,
 } from "../message-sender-approval/route";
+import { POST as requestMessageSenderApprovalCanonical } from "../message-sender-approval/request/route";
 import { GET as getMessageAutomationPolicies } from "../message-automation-policies/route";
 import { PUT as updateMessageAutomationPastTriggerConfig } from "../message-automation-policies/past-trigger/route";
 import {
@@ -125,6 +126,40 @@ describe("settings API routes", () => {
     expect(mockPost).toHaveBeenCalledWith(
       "/settings/message-sender-approval/request",
       approvalBody,
+      { headers: { Authorization: "Bearer auth-token" } },
+    );
+  });
+
+  it("keeps the canonical /request route and base POST alias on the same handler contract", async () => {
+    mockPost.mockResolvedValue({ status: 202, data: { approvalStatus: "pending" } });
+
+    const canonicalResponse = await requestMessageSenderApprovalCanonical(
+      createRequest("/api/settings/message-sender-approval/request", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({}),
+      }),
+    );
+    const aliasResponse = await requestMessageSenderApproval(
+      createRequest("/api/settings/message-sender-approval", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({}),
+      }),
+    );
+
+    expect(canonicalResponse.status).toBe(202);
+    expect(aliasResponse.status).toBe(202);
+    expect(mockPost).toHaveBeenNthCalledWith(
+      1,
+      "/settings/message-sender-approval/request",
+      {},
+      { headers: { Authorization: "Bearer auth-token" } },
+    );
+    expect(mockPost).toHaveBeenNthCalledWith(
+      2,
+      "/settings/message-sender-approval/request",
+      {},
       { headers: { Authorization: "Bearer auth-token" } },
     );
   });

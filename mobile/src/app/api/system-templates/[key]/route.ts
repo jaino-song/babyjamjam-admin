@@ -1,65 +1,28 @@
-import { NextRequest } from "next/server";
-import { z } from "zod";
-import { serverAPIClient } from "@/lib/api/server";
-import {
-    backendJsonResponse,
-    errorResponse,
-    getAuthHeaders,
-    getAuthToken,
-    parseBody,
-    unauthorizedResponse,
-} from "@/lib/api/route-utils";
+import { NextRequest, NextResponse } from "next/server";
 
-// Mirrors backend UpdateSystemTemplateDto: content (@IsString @IsNotEmpty) is
-// required; customVariables is @IsOptional. Passthrough lets the backend's
-// authoritative ValidationPipe own the nested customVariables shape.
-const updateSystemTemplateSchema = z
-    .object({
-        content: z.string().min(1),
-    })
-    .passthrough();
+import {
+    proxySystemTemplateGet,
+    proxySystemTemplatePut,
+} from "@/lib/api/system-template-routes";
+import { updateSystemTemplateSchema } from "@babyjamjam/shared/types/system-template";
 
 export async function GET(
     request: NextRequest,
-    { params }: { params: Promise<{ key: string }> }
-) {
-    try {
-        const token = getAuthToken(request);
-        if (!token) {
-            return unauthorizedResponse("Unauthorized");
-        }
-
-        const { key } = await params;
-        const response = await serverAPIClient.get(`/system-templates/${key}`, {
-            headers: getAuthHeaders(token),
-        });
-        return backendJsonResponse(response);
-    } catch (error) {
-        return errorResponse(error, "fetch system template");
-    }
+    { params }: { params: Promise<{ key: string }> },
+): Promise<NextResponse> {
+    const { key } = await params;
+    return proxySystemTemplateGet(request, key, "", "fetch system template");
 }
 
 export async function PUT(
     request: NextRequest,
-    { params }: { params: Promise<{ key: string }> }
-) {
-    const token = getAuthToken(request);
-    if (!token) {
-        return unauthorizedResponse("Unauthorized");
-    }
-
-    const { data, response: invalid } = await parseBody(updateSystemTemplateSchema, request);
-    if (invalid) {
-        return invalid;
-    }
-
-    try {
-        const { key } = await params;
-        const response = await serverAPIClient.put(`/system-templates/${key}`, data, {
-            headers: getAuthHeaders(token),
-        });
-        return backendJsonResponse(response);
-    } catch (error) {
-        return errorResponse(error, "update system template");
-    }
+    { params }: { params: Promise<{ key: string }> },
+): Promise<NextResponse> {
+    const { key } = await params;
+    return proxySystemTemplatePut(
+        request,
+        key,
+        "update system template",
+        updateSystemTemplateSchema,
+    );
 }

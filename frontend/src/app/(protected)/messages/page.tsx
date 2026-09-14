@@ -28,6 +28,12 @@ import {
   type MessageRecordStatusFilter,
   type MessageSectionId as SharedMessageSectionId,
 } from "@babyjamjam/shared";
+import {
+  SYSTEM_TEMPLATE_KEYS,
+  resolveSystemTemplateDeliveryMode,
+  type SystemTemplateDeliveryMode,
+  type SystemTemplateKey,
+} from "@babyjamjam/shared/types/system-template";
 import { t } from "@/lib/i18n/translations";
 import { useLocale } from "@/providers/LocaleProvider";
 import { useInitialUser } from "@/providers/UserProvider";
@@ -231,6 +237,14 @@ function getSystemTemplateIcon(templateKey: string) {
   return Object.prototype.hasOwnProperty.call(SYSTEM_TEMPLATE_ICON_BY_KEY, templateKey)
     ? SYSTEM_TEMPLATE_ICON_BY_KEY[templateKey]
     : FileText;
+}
+
+function resolveKnownSystemTemplateDeliveryMode(templateKey: string | undefined): SystemTemplateDeliveryMode {
+  if (!templateKey || !(SYSTEM_TEMPLATE_KEYS as readonly string[]).includes(templateKey)) {
+    return "sms";
+  }
+
+  return resolveSystemTemplateDeliveryMode(templateKey as SystemTemplateKey);
 }
 
 const ICON_BY_SECTION_ID: Record<SharedMessageSectionId, typeof Send> = {
@@ -1559,6 +1573,7 @@ export default function MessagesPage() {
   const selectedTemplateIcon = selectedTemplateItem?.icon ?? FileText;
   const SelectedTemplateIcon = selectedTemplateIcon;
   const selectedTemplateTitle = selectedTemplateItem?.label ?? selectedUserTemplate?.name ?? "메시지 템플릿";
+  const selectedBuiltinDeliveryMode = resolveKnownSystemTemplateDeliveryMode(selectedTemplateItem?.templateKey);
   const selectedTemplateSubtitle = isBranchTemplate
     ? selectedUserTemplate
       ? `지점 템플릿 · ${selectedUserTemplate.variables.length}개 변수`
@@ -1742,7 +1757,11 @@ export default function MessagesPage() {
           onPreviewMessageChange={handleTemplatePreviewMessageChange}
           renderLayout={selectedTemplateRenderLayout}
           showMessageSide={false}
-          mode={builtinType === "service-end-notice" ? "receipt-link" : undefined}
+          mode={selectedBuiltinDeliveryMode === "receipt-link"
+            ? "receipt-link"
+            : selectedBuiltinDeliveryMode === "service-feedback-link"
+              ? "service-feedback-link"
+              : undefined}
         />
       ) : null}
 

@@ -1,4 +1,6 @@
 // Shared system-template contracts used by both frontend and mobile.
+
+import { z } from "zod";
 //
 // The source of truth for these shapes is the backend contract surface:
 // - backend/interface/dto/system-template.dto.ts
@@ -15,6 +17,10 @@
 // string while Raw* variants retain Date for backend-reference parity.
 
 export const SYSTEM_TEMPLATE_KEYS = [
+  'CLIENT_WELCOME',
+  'SERVICE_START_REMINDER',
+  'SERVICE_END_REMINDER',
+  'EMPLOYEE_ASSIGNED',
   'PRICE_INFO',
   'GREETING',
   'THANKS',
@@ -27,6 +33,54 @@ export const SYSTEM_TEMPLATE_KEYS = [
 ] as const;
 
 export type SystemTemplateKey = (typeof SYSTEM_TEMPLATE_KEYS)[number];
+
+/** Runtime key validation for system-template BFF route parameters. */
+export const systemTemplateKeySchema = z.enum(SYSTEM_TEMPLATE_KEYS);
+
+export const SYSTEM_TEMPLATE_DELIVERY_MODES = [
+  "sms",
+  "service-feedback-link",
+  "receipt-link",
+] as const;
+
+export type SystemTemplateDeliveryMode = (typeof SYSTEM_TEMPLATE_DELIVERY_MODES)[number];
+
+/**
+ * Keep the delivery path explicit for every backend registry key.  The
+ * `satisfies` constraint makes adding a registry key without choosing a
+ * delivery path a compile-time error instead of silently falling back to SMS.
+ */
+export const SYSTEM_TEMPLATE_DELIVERY_MODES_BY_KEY = {
+  CLIENT_WELCOME: "sms",
+  SERVICE_START_REMINDER: "sms",
+  SERVICE_END_REMINDER: "sms",
+  EMPLOYEE_ASSIGNED: "sms",
+  PRICE_INFO: "sms",
+  GREETING: "sms",
+  THANKS: "sms",
+  SURVEY: "sms",
+  SERVICE_INFO: "sms",
+  SERVICE_RECORD_LINK: "service-feedback-link",
+  SERVICE_END_NOTICE: "receipt-link",
+  REMINDER: "sms",
+  INFO: "sms",
+} satisfies Record<SystemTemplateKey, SystemTemplateDeliveryMode>;
+
+/**
+ * Resolve the delivery preparation path for a system template.
+ *
+ * SERVICE_RECORD_LINK and SERVICE_END_NOTICE are not generic SMS bodies: they
+ * require a service-record link or a receipt link respectively. Every other
+ * current system template is delivered as an ordinary SMS body.
+ */
+export function resolveSystemTemplateDeliveryMode(
+  templateKey: SystemTemplateKey,
+): SystemTemplateDeliveryMode {
+  return SYSTEM_TEMPLATE_DELIVERY_MODES_BY_KEY[templateKey];
+}
+
+export const getSystemTemplateDeliveryMode = resolveSystemTemplateDeliveryMode;
+export const resolveSystemTemplateDelivery = resolveSystemTemplateDeliveryMode;
 
 export type TemplateVariableType = 'string' | 'number' | 'currency';
 
@@ -95,6 +149,38 @@ export interface PreviewSystemTemplateRequest {
   content?: string;
   data: Record<string, unknown>;
 }
+
+/**
+ * Backend DTO-compatible request schemas.
+ *
+ * The production backend uses `forbidNonWhitelisted`, so these schemas reject
+ * unknown top-level and nested fields instead of silently forwarding a body
+ * that the backend will reject later. `data` remains an open record because
+ * preview variables are intentionally caller-defined.
+ */
+export const customVariableSchema = z.object({
+  key: z.string().min(1),
+  label: z.string().min(1),
+  required: z.boolean(),
+}).strict();
+
+export const updateSystemTemplateSchema = z.object({
+  content: z.string().min(1),
+  customVariables: z.array(customVariableSchema).optional(),
+}).strict();
+
+export const validateSystemTemplateSchema = z.object({
+  content: z.string().min(1),
+}).strict();
+
+export const previewSystemTemplateSchema = z.object({
+  content: z.string().optional(),
+  data: z.record(z.string(), z.unknown()),
+}).strict();
+
+export type UpdateSystemTemplateInput = z.infer<typeof updateSystemTemplateSchema>;
+export type ValidateSystemTemplateInput = z.infer<typeof validateSystemTemplateSchema>;
+export type PreviewSystemTemplateInput = z.infer<typeof previewSystemTemplateSchema>;
 
 export interface SystemTemplateValidationResult {
   valid: boolean;
