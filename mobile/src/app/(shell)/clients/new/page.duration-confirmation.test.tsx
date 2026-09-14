@@ -198,12 +198,36 @@ describe("mobile client service date confirmation", () => {
     renderCreate();
     act(() => {
       useClientWizardStore.getState().setField("endDate", "2026-09-23");
+      useClientWizardStore.getState().setField("dueDate", "");
+      useClientWizardStore.getState().setField("birthDate", "");
     });
 
     fireEvent.click(screen.getByRole("button", { name: "등록" }));
     await waitFor(() => expect(mockCreateClient).toHaveBeenCalledTimes(1));
     expect(mockCreateClient.mock.calls[0][0]).not.toHaveProperty("allowBusinessDayMismatch");
+    expect(mockCreateClient).toHaveBeenCalledWith(expect.objectContaining({
+      dueDate: null,
+      birthDate: null,
+    }));
     expect(screen.queryByRole("dialog", { name: "서비스 기간 확인" })).not.toBeInTheDocument();
+  });
+
+  it("allows the basic-details step without due or birth dates", async () => {
+    mockSearchParams = new URLSearchParams("clientId=7");
+    mockEditingClient = {
+      ...editingClient(),
+      phone: "010-1234-5678",
+      dueDate: null,
+      birthDate: null,
+    };
+    render(<NewClientPage />);
+
+    await waitFor(() => expect(useClientWizardStore.getState().phone).toBe("010-1234-5678"));
+    expect(screen.getByRole("button", { name: "다음" })).toBeEnabled();
+
+    fireEvent.click(screen.getByRole("button", { name: "다음" }));
+
+    await waitFor(() => expect(useClientWizardStore.getState().currentStep).toBe(1));
   });
 
   it("invalidates a pending confirmation when the period changes", async () => {

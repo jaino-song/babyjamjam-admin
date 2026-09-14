@@ -764,7 +764,6 @@ export default function NewClientPage() {
       case 0:
         if (!store.name.trim()) return false;
         if (store.birthday.replace(/\D/g, "").length !== 6) return false;
-        if (!store.dueDate) return false;
         if (phoneDigits.length !== 11) return false;
         if (isUsingOriginalPhone) return true;
 
@@ -802,8 +801,6 @@ export default function NewClientPage() {
         showErrorToast(t(locale, "clients.form.error-name-required"));
       } else if (store.birthday.replace(/\D/g, "").length !== 6) {
         showErrorToast(t(locale, "clients.form.error-birthday-required"));
-      } else if (!store.dueDate) {
-        showErrorToast(t(locale, "clients.form.error-due-date-required"));
       } else if (phoneDigits.length !== 11) {
         showErrorToast(t(locale, "clients.form.error-phone-required"));
       } else if (hasPhoneDuplicateCheckFailed) {
