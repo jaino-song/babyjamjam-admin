@@ -1214,7 +1214,7 @@ export default function ContractCreationPage() {
                         onChange={(e) => setPhone(formatPhoneNumber(e.target.value))}
                         type="tel"
                         inputMode="numeric"
-                        maxLength={13}
+                        maxLength={20}
                         placeholder="010-1234-5678"
                       />
                     </Field>

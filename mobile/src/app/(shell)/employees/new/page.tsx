@@ -441,7 +441,7 @@ export default function NewEmployeePage() {
                 placeholder="010-1234-5678"
                 type="tel"
                 inputMode="numeric"
-                maxLength={13}
+                maxLength={20}
                 aria-invalid={showPhoneValidationError}
                 aria-required="true"
                 required
