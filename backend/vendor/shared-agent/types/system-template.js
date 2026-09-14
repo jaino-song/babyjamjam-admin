@@ -15,7 +15,8 @@
 // to ISO strings on the wire, so the client-facing response types below use
 // string while Raw* variants retain Date for backend-reference parity.
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.SYSTEM_TEMPLATE_KEYS = void 0;
+exports.resolveSystemTemplateDelivery = exports.getSystemTemplateDeliveryMode = exports.SYSTEM_TEMPLATE_DELIVERY_MODES = exports.SYSTEM_TEMPLATE_KEYS = void 0;
+exports.resolveSystemTemplateDeliveryMode = resolveSystemTemplateDeliveryMode;
 exports.SYSTEM_TEMPLATE_KEYS = [
     'PRICE_INFO',
     'GREETING',
@@ -27,3 +28,24 @@ exports.SYSTEM_TEMPLATE_KEYS = [
     'REMINDER',
     'INFO',
 ];
+exports.SYSTEM_TEMPLATE_DELIVERY_MODES = [
+    "sms",
+    "service-feedback-link",
+    "receipt-link",
+];
+/**
+ * Resolve the delivery preparation path for a system template.
+ *
+ * SERVICE_RECORD_LINK and SERVICE_END_NOTICE are not generic SMS bodies: they
+ * require a service-record link or a receipt link respectively. Every other
+ * current system template is delivered as an ordinary SMS body.
+ */
+function resolveSystemTemplateDeliveryMode(templateKey) {
+    if (templateKey === "SERVICE_RECORD_LINK")
+        return "service-feedback-link";
+    if (templateKey === "SERVICE_END_NOTICE")
+        return "receipt-link";
+    return "sms";
+}
+exports.getSystemTemplateDeliveryMode = resolveSystemTemplateDeliveryMode;
+exports.resolveSystemTemplateDelivery = resolveSystemTemplateDeliveryMode;

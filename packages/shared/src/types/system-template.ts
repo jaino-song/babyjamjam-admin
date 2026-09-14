@@ -28,6 +28,32 @@ export const SYSTEM_TEMPLATE_KEYS = [
 
 export type SystemTemplateKey = (typeof SYSTEM_TEMPLATE_KEYS)[number];
 
+export const SYSTEM_TEMPLATE_DELIVERY_MODES = [
+  "sms",
+  "service-feedback-link",
+  "receipt-link",
+] as const;
+
+export type SystemTemplateDeliveryMode = (typeof SYSTEM_TEMPLATE_DELIVERY_MODES)[number];
+
+/**
+ * Resolve the delivery preparation path for a system template.
+ *
+ * SERVICE_RECORD_LINK and SERVICE_END_NOTICE are not generic SMS bodies: they
+ * require a service-record link or a receipt link respectively. Every other
+ * current system template is delivered as an ordinary SMS body.
+ */
+export function resolveSystemTemplateDeliveryMode(
+  templateKey: SystemTemplateKey,
+): SystemTemplateDeliveryMode {
+  if (templateKey === "SERVICE_RECORD_LINK") return "service-feedback-link";
+  if (templateKey === "SERVICE_END_NOTICE") return "receipt-link";
+  return "sms";
+}
+
+export const getSystemTemplateDeliveryMode = resolveSystemTemplateDeliveryMode;
+export const resolveSystemTemplateDelivery = resolveSystemTemplateDeliveryMode;
+
 export type TemplateVariableType = 'string' | 'number' | 'currency';
 
 export interface TemplateVariable {
