@@ -38,7 +38,7 @@ const employeeWithoutRegisteredDate = {
   id: 7,
   name: "알 수 없는 직원",
   workArea: ["서울"],
-  phone: "010-1234-5678",
+  phone: "821012345678",
   grade: "베스트",
   openToNextWork: true,
   registeredDate: null,
@@ -58,5 +58,19 @@ describe("EmployeeDetailModal registration date", () => {
     );
 
     expect(screen.getByText("알 수 없음")).toBeInTheDocument();
+  });
+
+  it("formats a country-code prefixed stored phone with the shared formatter", () => {
+    render(
+      <EmployeeDetailModal
+        open
+        onClose={jest.fn()}
+        employee={employeeWithoutRegisteredDate}
+        onEdit={jest.fn()}
+        onDelete={jest.fn()}
+      />,
+    );
+
+    expect(screen.getByText("010-1234-5678")).toBeInTheDocument();
   });
 });

@@ -19,6 +19,7 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/component
 import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/hooks/use-toast";
 import { formatDateForDisplay } from "@/lib/date/format-date-for-display";
+import { formatKoreanPhoneNumber } from "@/lib/phone";
 import { cn } from "@/lib/utils";
 import { ServiceRecordErrorBoundary } from "@/lib/observability/service-record-error-boundary";
 import {
@@ -861,7 +862,7 @@ function LinkStatusCard({
             ) : undefined}
         >
             <ServiceRecordInfoRow label="제공인력 이름" value={employee.name} isRefreshing={isRefreshing} />
-            <ServiceRecordInfoRow label="제공인력 연락처" value={formatPhone(employee.phone)} isRefreshing={isRefreshing} />
+            <ServiceRecordInfoRow label="제공인력 연락처" value={formatKoreanPhoneNumber(employee.phone) || "-"} isRefreshing={isRefreshing} />
             <ServiceRecordInfoRow label="메시지 최근 발송" value={formatDateTimeKo(link.lastSentAt)} isRefreshing={isRefreshing} />
             <ServiceRecordInfoRow
                 label="제공기록지 본인 인증"
@@ -1570,14 +1571,6 @@ function datePartOf(value: string | null): string | null {
 
 function formatDateKo(value: string | null): string {
     return formatDateForDisplay(value);
-}
-
-function formatPhone(phone: string): string {
-    const digits = phone.replace(/\D/g, "");
-    if (digits.length === 11) {
-        return `${digits.slice(0, 3)}-${digits.slice(3, 7)}-${digits.slice(7)}`;
-    }
-    return phone || "-";
 }
 
 function getAnswerObject(value: Record<string, unknown>): Record<string, unknown> {

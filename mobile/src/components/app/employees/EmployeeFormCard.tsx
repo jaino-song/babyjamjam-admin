@@ -3,6 +3,7 @@
 import { ChevronDown } from "lucide-react";
 import { useLocale } from "@/providers/LocaleProvider";
 import { t } from "@/lib/i18n/translations";
+import { formatKoreanPhoneNumber, normalizeKoreanPhoneDigits } from "@/lib/phone";
 import { cn } from "@/lib/utils";
 import { DEFAULT_EMPLOYEE_GRADE, EMPLOYEE_GRADES } from "@/features/employees/grade";
 import { Switch } from "@/components/ui/switch";
@@ -47,17 +48,6 @@ interface EmployeeFormCardProps {
   onChange: <K extends keyof EmployeeFormCardData>(field: K, value: EmployeeFormCardData[K]) => void;
   onPhoneBlur: () => void;
   onWorkAreaTouched: () => void;
-}
-
-function formatPhoneNumber(value: string): string {
-  const numbers = value.replace(/[^\d]/g, "");
-  if (numbers.length <= 3) return numbers;
-  if (numbers.length <= 7) return `${numbers.slice(0, 3)}-${numbers.slice(3)}`;
-  return `${numbers.slice(0, 3)}-${numbers.slice(3, 7)}-${numbers.slice(7, 11)}`;
-}
-
-function parsePhoneNumber(value: string): string {
-  return value.replace(/[^\d]/g, "");
 }
 
 export function EmployeeFormCard({
@@ -150,8 +140,8 @@ export function EmployeeFormCard({
           <input
             id="employee-form-phone"
             className={cn(styles.control, (hasPhoneError || (touched.phone && !isPhoneValid)) && styles.controlError)}
-            value={formatPhoneNumber(formData.phone)}
-            onChange={(event) => setField("phone", parsePhoneNumber(event.target.value))}
+            value={formatKoreanPhoneNumber(formData.phone)}
+            onChange={(event) => setField("phone", normalizeKoreanPhoneDigits(event.target.value))}
             onBlur={onPhoneBlur}
             placeholder="010-1234-5678"
             maxLength={13}

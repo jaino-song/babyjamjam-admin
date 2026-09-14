@@ -35,7 +35,7 @@ function createAssignment(
         employee: {
             id: scheduleId,
             name: `제공${scheduleId}`,
-            phone: "01012345678",
+            phone: "821012345678",
         },
         link: {
             status,
@@ -964,6 +964,8 @@ describe("ClientServiceRecordsTab", () => {
         expect(overviewCards[2].querySelectorAll(`[data-component="${TEST_COMPONENT}_overview-grid_link-card_row"]`)).toHaveLength(4);
         expect(overviewCards[2]).toHaveTextContent("제공인력 이름");
         expect(overviewCards[2]).toHaveTextContent("제공인력 연락처");
+        // The stored value is a country-code prefixed raw string; the row must show the canonical form.
+        expect(overviewCards[2]).toHaveTextContent("010-1234-5678");
         expect(overviewCards[2]).toHaveTextContent("메시지 최근 발송");
         expect(overviewCards[2]).toHaveTextContent("제공기록지 본인 인증");
         expect(overviewCards[2]).toHaveTextContent("완료");
