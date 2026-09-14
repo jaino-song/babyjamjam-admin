@@ -18,7 +18,8 @@ export function renderTemplate(
 
   return content.replace(TEMPLATE_VARIABLE_PATTERN, (match, rawKey: string) => {
     const key = rawKey.trim();
-    const value = data[key];
+    const hasOwnValue = Object.prototype.hasOwnProperty.call(data, key);
+    const value = hasOwnValue ? data[key] : undefined;
 
     if (isPresentTemplateValue(value)) return String(value);
 

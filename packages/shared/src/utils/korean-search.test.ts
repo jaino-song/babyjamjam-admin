@@ -2,6 +2,7 @@ import {
   getChosung,
   getChosungString,
   isChosung,
+  isPhoneLikeSearchQuery,
   matchesKoreanSearch,
   matchesSearchQuery,
 } from "./korean-search";
@@ -31,5 +32,16 @@ describe("shared Korean search", () => {
     expect(matchesSearchQuery("+82 10 6621", fields)).toBe(true);
     expect(matchesSearchQuery("없는 값", fields)).toBe(false);
     expect(matchesSearchQuery("   ", fields)).toBe(true);
+  });
+
+  it("only performs phone matching for explicitly phone-like queries", () => {
+    const fields = ["송진호", "010-6621-1878"];
+
+    expect(isPhoneLikeSearchQuery("010-6621")).toBe(true);
+    expect(isPhoneLikeSearchQuery("+82 10 6621")).toBe(true);
+    expect(isPhoneLikeSearchQuery("고객0106621")).toBe(false);
+    expect(isPhoneLikeSearchQuery("0106621abc")).toBe(false);
+    expect(matchesSearchQuery("고객0106621", fields)).toBe(false);
+    expect(matchesSearchQuery("010-6621", fields)).toBe(true);
   });
 });

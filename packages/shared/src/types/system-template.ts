@@ -15,6 +15,10 @@
 // string while Raw* variants retain Date for backend-reference parity.
 
 export const SYSTEM_TEMPLATE_KEYS = [
+  'CLIENT_WELCOME',
+  'SERVICE_START_REMINDER',
+  'SERVICE_END_REMINDER',
+  'EMPLOYEE_ASSIGNED',
   'PRICE_INFO',
   'GREETING',
   'THANKS',
@@ -37,6 +41,27 @@ export const SYSTEM_TEMPLATE_DELIVERY_MODES = [
 export type SystemTemplateDeliveryMode = (typeof SYSTEM_TEMPLATE_DELIVERY_MODES)[number];
 
 /**
+ * Keep the delivery path explicit for every backend registry key.  The
+ * `satisfies` constraint makes adding a registry key without choosing a
+ * delivery path a compile-time error instead of silently falling back to SMS.
+ */
+export const SYSTEM_TEMPLATE_DELIVERY_MODES_BY_KEY = {
+  CLIENT_WELCOME: "sms",
+  SERVICE_START_REMINDER: "sms",
+  SERVICE_END_REMINDER: "sms",
+  EMPLOYEE_ASSIGNED: "sms",
+  PRICE_INFO: "sms",
+  GREETING: "sms",
+  THANKS: "sms",
+  SURVEY: "sms",
+  SERVICE_INFO: "sms",
+  SERVICE_RECORD_LINK: "service-feedback-link",
+  SERVICE_END_NOTICE: "receipt-link",
+  REMINDER: "sms",
+  INFO: "sms",
+} satisfies Record<SystemTemplateKey, SystemTemplateDeliveryMode>;
+
+/**
  * Resolve the delivery preparation path for a system template.
  *
  * SERVICE_RECORD_LINK and SERVICE_END_NOTICE are not generic SMS bodies: they
@@ -46,9 +71,7 @@ export type SystemTemplateDeliveryMode = (typeof SYSTEM_TEMPLATE_DELIVERY_MODES)
 export function resolveSystemTemplateDeliveryMode(
   templateKey: SystemTemplateKey,
 ): SystemTemplateDeliveryMode {
-  if (templateKey === "SERVICE_RECORD_LINK") return "service-feedback-link";
-  if (templateKey === "SERVICE_END_NOTICE") return "receipt-link";
-  return "sms";
+  return SYSTEM_TEMPLATE_DELIVERY_MODES_BY_KEY[templateKey];
 }
 
 export const getSystemTemplateDeliveryMode = resolveSystemTemplateDeliveryMode;

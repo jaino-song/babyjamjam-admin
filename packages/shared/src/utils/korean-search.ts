@@ -37,9 +37,16 @@ export function matchesKoreanSearch(target: string, query: string): boolean {
 
 export type SearchableValue = string | number | null | undefined;
 
+const PHONE_LIKE_QUERY_PATTERN = /^\+?[\d\s().-]*\d[\d\s().-]*$/;
+
+/** Return true only when a search query is made exclusively of phone syntax. */
+export function isPhoneLikeSearchQuery(query: string): boolean {
+  return PHONE_LIKE_QUERY_PATTERN.test(query.trim());
+}
+
 /**
- * Match a query against multiple text fields. Numeric-looking queries also
- * compare lookup-only Korean phone keys so formatting and +82 do not matter.
+ * Match a query against multiple text fields. Phone-like queries also compare
+ * lookup-only Korean phone keys so formatting and +82 do not matter.
  */
 export function matchesSearchQuery(
   query: string,
@@ -48,7 +55,9 @@ export function matchesSearchQuery(
   const normalizedQuery = query.normalize("NFC").trim();
   if (!normalizedQuery) return true;
 
-  const phoneQuery = normalizeKoreanPhoneLookupKey(normalizedQuery);
+  const phoneQuery = isPhoneLikeSearchQuery(normalizedQuery)
+    ? normalizeKoreanPhoneLookupKey(normalizedQuery)
+    : "";
 
   return values.some((value) => {
     if (value == null) return false;

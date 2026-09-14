@@ -2,6 +2,10 @@ const FOUR_DIGIT_MIDDLE_PREFIXES = ["010", "011", "016", "017", "018", "019", "0
 
 export type PhoneInput = string | number | null | undefined;
 
+function stripPhoneFormatting(value: PhoneInput): string {
+  return String(value ?? "").replace(/\D/g, "");
+}
+
 /** Strip presentation characters without changing the persisted value. */
 export function normalizePhoneDigits(value: PhoneInput, maxLength = 11): string {
   return String(value ?? "").replace(/\D/g, "").slice(0, maxLength);
@@ -15,20 +19,21 @@ export function normalizePhoneDigits(value: PhoneInput, maxLength = 11): string 
  * the +82 country-code representation.
  */
 export function normalizeKoreanPhoneLookupKey(value: PhoneInput): string {
-  const digits = String(value ?? "").replace(/\D/g, "");
+  const digits = stripPhoneFormatting(value);
   if (!digits) return "";
 
   if (digits.startsWith("82")) {
     const domesticDigits = digits.slice(2);
-    return normalizePhoneDigits(
-      domesticDigits.startsWith("0") ? domesticDigits : `0${domesticDigits}`,
-    );
+    if (!domesticDigits) return "";
+    return domesticDigits.startsWith("0") ? domesticDigits : `0${domesticDigits}`;
   }
 
   // Some provider payloads omit the leading 0 from a 1xx number.
   if (/^1\d{9}$/.test(digits)) return `0${digits}`;
 
-  return normalizePhoneDigits(digits);
+  // Lookup normalization must preserve overlong values so validation can
+  // reject them before a display formatter truncates the value.
+  return digits;
 }
 
 export const normalizeKoreanPhoneForLookup = normalizeKoreanPhoneLookupKey;

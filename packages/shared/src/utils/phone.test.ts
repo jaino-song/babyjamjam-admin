@@ -32,4 +32,11 @@ describe("shared Korean phone helpers", () => {
     expect(isValidKoreanPhoneNumber("02123456789")).toBe(false);
     expect(isValidKoreanPhoneNumber("0701234567")).toBe(false);
   });
+
+  it("preserves overlong domestic and country-code input for validation", () => {
+    expect(normalizeKoreanPhoneLookupKey("010123456789")).toBe("010123456789");
+    expect(normalizeKoreanPhoneLookupKey("+82 10 1234 56789")).toBe("010123456789");
+    expect(isValidKoreanPhoneNumber("010123456789")).toBe(false);
+    expect(isValidKoreanPhoneNumber("+82 10 1234 56789")).toBe(false);
+  });
 });
