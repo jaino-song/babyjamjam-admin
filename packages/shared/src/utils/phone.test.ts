@@ -23,6 +23,14 @@ describe("shared Korean phone helpers", () => {
     expect(isValidKoreanPhoneNumber("0082 10 1234 56789")).toBe(false);
   });
 
+  it("normalizes partial 0082 input progressively", () => {
+    expect(normalizeKoreanPhoneLookupKey("0082")).toBe("");
+    expect(normalizeKoreanPhoneLookupKey("008210")).toBe("010");
+    expect(formatKoreanPhoneNumber("0082 10 1234")).toBe("010-1234");
+    expect(formatKoreanPhoneNumber("00821012345")).toBe("010-1234-5");
+    expect(isValidKoreanPhoneNumber("008210")).toBe(false);
+  });
+
   it("formats Seoul, regional, mobile, and partial values consistently", () => {
     expect(formatKoreanPhoneNumber("01012345678")).toBe("010-1234-5678");
     expect(formatKoreanPhoneNumber("821066211878")).toBe("010-6621-1878");
