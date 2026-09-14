@@ -26,8 +26,38 @@ const createClientSchema = z
         careCenter: z.boolean(),
         voucherClient: z.boolean(),
         breastPump: z.boolean(),
+        confirmedUnavailableEmployeeIds: z.array(z.number().int()).nonempty().optional(),
     })
     .passthrough();
+
+type EmployeeActivationConfirmation = {
+    code: "EMPLOYEE_ACTIVATION_CONFIRMATION_REQUIRED";
+    unavailableEmployees: Array<{ id: number; name: string }>;
+};
+
+function getEmployeeActivationConfirmation(error: unknown): EmployeeActivationConfirmation | null {
+    const response = (error as { response?: { status?: unknown; data?: unknown } } | null)
+        ?.response;
+    if (response?.status !== 409) return null;
+    const payload = response.data;
+    if (!payload || typeof payload !== "object" || Array.isArray(payload)) return null;
+    const candidate = payload as { code?: unknown; unavailableEmployees?: unknown };
+    if (
+        candidate.code !== "EMPLOYEE_ACTIVATION_CONFIRMATION_REQUIRED"
+        || !Array.isArray(candidate.unavailableEmployees)
+    ) return null;
+
+    const unavailableEmployees = candidate.unavailableEmployees.flatMap((employee) => {
+        if (!employee || typeof employee !== "object" || Array.isArray(employee)) return [];
+        const { id, name } = employee as { id?: unknown; name?: unknown };
+        return Number.isInteger(id) && typeof name === "string"
+            ? [{ id: id as number, name }]
+            : [];
+    });
+    return unavailableEmployees.length === candidate.unavailableEmployees.length
+        ? { code: candidate.code, unavailableEmployees }
+        : null;
+}
 
 function hasPrismaErrorCode(error: unknown): boolean {
     if (!error || typeof error !== "object") {
@@ -100,11 +130,21 @@ export async function POST(request: NextRequest) {
     if (response) return response;
 
     try {
-        const backendResponse = await serverAPIClient.post("/clients", data, {
+        const backendPath = data.confirmedUnavailableEmployeeIds
+            ? "/clients/with-employee-activation"
+            : "/clients";
+        const backendResponse = await serverAPIClient.post(backendPath, data, {
             headers: getAuthHeaders(token),
         });
         return backendJsonResponse(backendResponse);
     } catch (error) {
+        const employeeConfirmation = getEmployeeActivationConfirmation(error);
+        if (employeeConfirmation) {
+            return NextResponse.json(employeeConfirmation, {
+                status: 409,
+                headers: { "Cache-Control": "no-store" },
+            });
+        }
         if (!hasUpstreamProblemCode(error)) {
             const conflict = hasPrismaErrorCode(error)
                 ? null

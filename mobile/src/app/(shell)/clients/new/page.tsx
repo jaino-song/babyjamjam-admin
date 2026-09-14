@@ -251,6 +251,10 @@ export default function NewClientPage() {
   const [hasPhoneDuplicateCheckFailed, setHasPhoneDuplicateCheckFailed] = useState(false);
   const [lastCheckedPhoneDigits, setLastCheckedPhoneDigits] = useState<string | null>(null);
   const [pendingDurationConfirmation, setPendingDurationConfirmation] = useState<string | null>(null);
+  const [pendingUnavailableEmployeeConfirmation, setPendingUnavailableEmployeeConfirmation] = useState<{
+    employees: Array<{ id: number; name: string }>;
+    confirmedPeriod?: string;
+  } | null>(null);
   const [errorState, setErrorState] = useState<NormalizedApiError | null>(null);
   const [hasUnknownMutationOutcome, setHasUnknownMutationOutcome] = useState(false);
   const lastInitializedFormKeyRef = useRef<string | null>(null);
@@ -831,7 +835,10 @@ export default function NewClientPage() {
     setCurrentStep(newStep);
   };
 
-  const handleComplete = async (confirmedPeriod?: string) => {
+  const handleComplete = async (
+    confirmedPeriod?: string,
+    confirmedUnavailableEmployeeIds?: number[],
+  ) => {
     if (submissionInFlightRef.current || hasUnknownMutationOutcome) return;
     if (!validateStep(currentStep)) return;
 
@@ -840,11 +847,12 @@ export default function NewClientPage() {
       setPendingDurationConfirmation(periodKey);
       return;
     }
+    setPendingDurationConfirmation(null);
 
     const durationConfirmation = hasMismatch && confirmedPeriod === periodKey
       ? { allowBusinessDayMismatch: true }
       : {};
-    setPendingDurationConfirmation(null);
+    setPendingUnavailableEmployeeConfirmation(null);
     submissionInFlightRef.current = true;
 
     try {
@@ -860,6 +868,9 @@ export default function NewClientPage() {
         type: store.voucherClient ? store.type || null : null,
         duration: effectiveDuration || null,
         ...durationConfirmation,
+        ...(confirmedUnavailableEmployeeIds
+          ? { confirmedUnavailableEmployeeIds }
+          : {}),
         fullPrice: store.fullPrice || null,
         grant: store.voucherClient ? store.grant || null : "0",
         actualPrice: store.voucherClient ? store.actualPrice || null : store.fullPrice || null,
@@ -881,6 +892,34 @@ export default function NewClientPage() {
       startNavigation();
       router.push(clientsReturnHref);
     } catch (err: unknown) {
+      const responseData = (err as { response?: { data?: unknown } } | null)?.response?.data;
+      if (
+        editingClientId === null
+        && responseData
+        && typeof responseData === "object"
+        && !Array.isArray(responseData)
+        && (responseData as { code?: unknown }).code === "EMPLOYEE_ACTIVATION_CONFIRMATION_REQUIRED"
+        && Array.isArray((responseData as { unavailableEmployees?: unknown }).unavailableEmployees)
+      ) {
+        const unavailableEmployees = (
+          responseData as { unavailableEmployees: unknown[] }
+        ).unavailableEmployees.flatMap((employee) => {
+          if (!employee || typeof employee !== "object" || Array.isArray(employee)) return [];
+          const { id, name } = employee as { id?: unknown; name?: unknown };
+          return Number.isInteger(id) && typeof name === "string"
+            ? [{ id: id as number, name }]
+            : [];
+        });
+        if (unavailableEmployees.length > 0) {
+          setPendingUnavailableEmployeeConfirmation({
+            employees: unavailableEmployees,
+            ...(confirmedPeriod ? { confirmedPeriod } : {}),
+          });
+          setErrorState(null);
+          setHasUnknownMutationOutcome(false);
+          return;
+        }
+      }
       const normalized = normalizeApiError(err, {
         locale: locale === "en" ? "en-US" : "ko-KR",
         operation: "mutation",
@@ -1517,6 +1556,29 @@ export default function NewClientPage() {
         onConfirm={() => {
           if (pendingDurationConfirmation !== null) {
             void handleComplete(pendingDurationConfirmation);
+          }
+        }}
+      />
+      <MobileTwoButtonModal
+        data-component="mobile_clients-new_screen_root_unavailable-employee-confirmation"
+        open={pendingUnavailableEmployeeConfirmation !== null}
+        title="제공인력 배정 확인"
+        description={`${pendingUnavailableEmployeeConfirmation?.employees.map((employee) => employee.name).join(", ") ?? "선택한"} 제공인력은 현재 배정이 불가한 상태입니다. 배정 가능 상태로 전환하고 배정을 진행할까요?`}
+        cancelLabel="취소"
+        confirmLabel="확인"
+        confirmVariant="default"
+        actionOrder="cancel-confirm"
+        loading={isSaving}
+        onOpenChange={(open) => {
+          if (!open) setPendingUnavailableEmployeeConfirmation(null);
+        }}
+        onCancel={() => setPendingUnavailableEmployeeConfirmation(null)}
+        onConfirm={() => {
+          if (pendingUnavailableEmployeeConfirmation !== null) {
+            void handleComplete(
+              pendingUnavailableEmployeeConfirmation.confirmedPeriod,
+              pendingUnavailableEmployeeConfirmation.employees.map((employee) => employee.id),
+            );
           }
         }}
       />

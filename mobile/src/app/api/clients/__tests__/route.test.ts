@@ -136,6 +136,60 @@ describe("client API routes", () => {
     expect(mockPost).toHaveBeenCalledWith("/clients", payload, expect.any(Object));
   });
 
+  it("routes confirmed employee activation through the protected backend endpoint", async () => {
+    mockPost.mockResolvedValue({ status: 201, data: { id: 8 } });
+
+    const payload = {
+      name: "Baby Kim",
+      careCenter: false,
+      voucherClient: true,
+      breastPump: false,
+      primaryEmployeeId: 12,
+      confirmedUnavailableEmployeeIds: [12],
+    };
+
+    const response = await createClient(
+      createRequest("/api/clients", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      }),
+    );
+
+    expect(response.status).toBe(201);
+    expect(mockPost).toHaveBeenCalledWith(
+      "/clients/with-employee-activation",
+      payload,
+      expect.any(Object),
+    );
+  });
+
+  it("preserves a validated server-authoritative employee confirmation response", async () => {
+    const confirmation = {
+      code: "EMPLOYEE_ACTIVATION_CONFIRMATION_REQUIRED",
+      unavailableEmployees: [{ id: 12, name: "김관리" }],
+    };
+    mockPost.mockRejectedValue({ response: { status: 409, data: confirmation } });
+
+    const response = await createClient(
+      createRequest("/api/clients", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: "Baby Kim",
+          careCenter: false,
+          voucherClient: true,
+          breastPump: false,
+          primaryEmployeeId: 12,
+        }),
+      }),
+    );
+
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toEqual(confirmation);
+    expect(mockPost).toHaveBeenCalledWith("/clients", expect.any(Object), expect.any(Object));
+  });
+
   it("surfaces a safe backend validation message through the client error mapper", async () => {
     const message = "duration must equal the Korean business-day count (15) for the submitted service period";
     mockPost.mockRejectedValue({

@@ -990,6 +990,7 @@ export class ClientService {
         type?: string | null;
         duration?: number | null;
         allowBusinessDayMismatch?: boolean;
+        confirmedUnavailableEmployeeIds?: readonly number[];
         fullPrice?: string | null;
         grant?: string | null;
         actualPrice?: string | null;
@@ -1140,11 +1141,70 @@ export class ClientService {
         const automationIntentAt = new Date();
         if (primaryEmployeeId !== null) {
             const result = await this.prismaService.$transaction(async (transaction) => {
+                const employeeIds = [primaryEmployeeId, secondaryEmployeeId]
+                    .filter((employeeId): employeeId is number => employeeId !== null);
+                await lockEmployeesForScheduleWrite(transaction, branchid, employeeIds);
+                const selectedEmployees = await transaction.employee.findMany({
+                    where: {
+                        id: { in: employeeIds },
+                        branchId: branchid,
+                    },
+                    select: {
+                        id: true,
+                        name: true,
+                        branchId: true,
+                        deletedAt: true,
+                        openToNextWork: true,
+                    },
+                });
+                const uniqueEmployeeIds = new Set(employeeIds);
+                if (
+                    selectedEmployees.length !== uniqueEmployeeIds.size
+                    || selectedEmployees.some((employee) => employee.deletedAt !== null)
+                ) {
+                    assertEmployeeAssignmentEligibility(
+                        branchid,
+                        primaryEmployeeId,
+                        secondaryEmployeeId,
+                        selectedEmployees,
+                    );
+                }
+                const unavailableEmployees = selectedEmployees
+                    .filter((employee) => employee.openToNextWork === false)
+                    .map((employee) => ({ id: employee.id, name: employee.name }))
+                    .sort((left, right) => left.id - right.id);
+                const confirmedIds = params.confirmedUnavailableEmployeeIds === undefined
+                    ? null
+                    : [...params.confirmedUnavailableEmployeeIds].sort((left, right) => left - right);
+                const currentUnavailableIds = unavailableEmployees.map((employee) => employee.id);
+                const confirmationMatches = confirmedIds !== null
+                    && confirmedIds.length === currentUnavailableIds.length
+                    && confirmedIds.every((employeeId, index) => employeeId === currentUnavailableIds[index]);
+
+                if (unavailableEmployees.length > 0 && !confirmationMatches) {
+                    throw new ConflictException({
+                        code: "EMPLOYEE_ACTIVATION_CONFIRMATION_REQUIRED",
+                        unavailableEmployees,
+                    });
+                }
+                if (confirmationMatches && currentUnavailableIds.length > 0) {
+                    await transaction.employee.updateMany({
+                        where: {
+                            id: { in: currentUnavailableIds },
+                            branchId: branchid,
+                            deletedAt: null,
+                            openToNextWork: false,
+                        },
+                        data: { openToNextWork: true },
+                    });
+                }
                 await this.assertAllowedEmployees(
                     branchid,
                     primaryEmployeeId,
                     secondaryEmployeeId,
                     transaction,
+                    undefined,
+                    true,
                 );
                 const initialScheduleStartDate = startDate ?? new Date();
                 const initialScheduleEndDate = endDate ?? new Date(Date.now() + DEFAULT_SERVICE_PERIOD_MS);
