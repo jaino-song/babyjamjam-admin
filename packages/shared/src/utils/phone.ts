@@ -66,6 +66,14 @@ export function formatKoreanPhoneNumber(value: PhoneInput): string {
     return `${seoulDigits.slice(0, 2)}-${seoulDigits.slice(2, 6)}-${seoulDigits.slice(6)}`;
   }
 
+  // Korean service numbers (1588-0000, 1600-0000, 1899-0000) are eight digits
+  // and use a 4-4 shape. Longer values that start with 1 are not service
+  // numbers, so they keep the generic grouping below.
+  if (digits.startsWith("1") && digits.length <= 8) {
+    if (digits.length <= 4) return digits;
+    return `${digits.slice(0, 4)}-${digits.slice(4)}`;
+  }
+
   if (digits.length <= 3) return digits;
 
   const usesFourDigitMiddle = FOUR_DIGIT_MIDDLE_PREFIXES.some((prefix) => digits.startsWith(prefix));

@@ -23,6 +23,16 @@ describe("shared Korean phone helpers", () => {
     expect(formatKoreanPhoneNumber("01012345")).toBe("010-1234-5");
   });
 
+  it("formats eight-digit service numbers as 4-4", () => {
+    expect(formatKoreanPhoneNumber("15880000")).toBe("1588-0000");
+    expect(formatKoreanPhoneNumber("1600-0000")).toBe("1600-0000");
+    expect(formatKoreanPhoneNumber("18991234")).toBe("1899-1234");
+    expect(formatKoreanPhoneNumber("1588")).toBe("1588");
+    expect(formatKoreanPhoneNumber("158800")).toBe("1588-00");
+    // Longer values that start with 1 are not service numbers.
+    expect(formatKoreanPhoneNumber("123456789")).toBe("123-456-789");
+  });
+
   it("validates supported Korean 10- and 11-digit forms", () => {
     expect(isValidKoreanPhoneNumber("01012345678")).toBe(true);
     expect(isValidKoreanPhoneNumber("+82 10 1234 5678")).toBe(true);

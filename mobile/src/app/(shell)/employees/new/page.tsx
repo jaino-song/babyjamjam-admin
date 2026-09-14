@@ -11,6 +11,7 @@ import { useCreateEmployee } from "@/hooks/useEmployees";
 import { useNavigationPending } from "@/hooks/use-navigation-pending";
 import { api } from "@/lib/api/client";
 import { t } from "@/lib/i18n/translations";
+import { formatKoreanPhoneNumber, normalizeKoreanPhoneDigits } from "@/lib/phone";
 import { cn } from "@/lib/utils";
 import { useLocale } from "@/providers/LocaleProvider";
 import { useEmployeeDialogStore } from "@/stores/employee-dialog-store";
@@ -42,13 +43,6 @@ const WORK_AREA_DISPLAY_ORDER = [
 const ORDERED_WORK_AREAS = WORK_AREA_DISPLAY_ORDER.filter((area) =>
   (WORK_AREAS as readonly string[]).includes(area)
 );
-
-function formatPhoneNumber(value: string): string {
-  const digits = value.replace(/\D/g, "");
-  if (digits.length <= 3) return digits;
-  if (digits.length <= 7) return `${digits.slice(0, 3)}-${digits.slice(3)}`;
-  return `${digits.slice(0, 3)}-${digits.slice(3, 7)}-${digits.slice(7, 11)}`;
-}
 
 const getPhoneDuplicateCheckFailedMessage = (locale: "ko" | "en"): string =>
   locale === "ko"
@@ -302,7 +296,7 @@ export default function NewEmployeePage() {
       const newEmployee = await createEmployee.mutateAsync({
         name: store.name.trim(),
         workArea: store.workArea,
-        phone: store.phone.replace(/\D/g, ""),
+        phone: normalizeKoreanPhoneDigits(store.phone),
         grade: store.grade,
         openToNextWork: store.openToNextWork,
       });
@@ -441,7 +435,7 @@ export default function NewEmployeePage() {
                 className={cn(styles.formInput, showPhoneValidationError && styles.formInputError)}
                 value={store.phone}
                 onChange={(event) => {
-                  setField("phone", formatPhoneNumber(event.target.value));
+                  setField("phone", formatKoreanPhoneNumber(event.target.value));
                   setError(null);
                 }}
                 placeholder="010-1234-5678"

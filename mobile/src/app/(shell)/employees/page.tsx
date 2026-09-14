@@ -25,6 +25,7 @@ import { useLocale } from "@/providers/LocaleProvider";
 import { useToast } from "@/hooks/use-toast";
 import { t } from "@/lib/i18n/translations";
 import { formatDateForDisplay } from "@/lib/date/format-date-for-display";
+import { formatKoreanPhoneNumber } from "@/lib/phone";
 import {
   Badge,
   ListCard,
@@ -74,14 +75,6 @@ function employeeAreaSummary(e: Employee) {
   const areas = employeeWorkAreas(e);
   if (areas.length === 0) return "미설정";
   return areas.join(", ");
-}
-
-function formatPhoneNumber(phone: string | null | undefined): string {
-  if (!phone) return "-";
-  const numbers = phone.replace(/[^\d]/g, "");
-  if (numbers.length <= 3) return numbers || "-";
-  if (numbers.length <= 7) return `${numbers.slice(0, 3)}-${numbers.slice(3)}`;
-  return `${numbers.slice(0, 3)}-${numbers.slice(3, 7)}-${numbers.slice(7, 11)}`;
 }
 
 function employeeMeta(e: Employee) {
@@ -202,7 +195,7 @@ function EmployeeDetailContent({
       >
         <InfoCard data-component="mobile_employees_detail-panel_info-card" title="제공인력 정보">
           <InfoRow label="이름" value={employee.name} />
-          <InfoRow label="연락처" value={formatPhoneNumber(employee.phone)} />
+          <InfoRow label="연락처" value={formatKoreanPhoneNumber(employee.phone) || "-"} />
           <InfoRow
             label="다음 배정 가능 여부"
             value={availability}

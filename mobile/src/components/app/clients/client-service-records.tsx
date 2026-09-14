@@ -36,6 +36,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { useSendServiceRecordLink } from "@/hooks/useServiceRecords";
 import { toast } from "@/hooks/use-toast";
 import type { Client } from "@/lib/client/types";
+import { formatKoreanPhoneNumber } from "@/lib/phone";
 import { ServiceRecordErrorBoundary } from "@/lib/observability/service-record-error-boundary";
 import { cn } from "@/lib/utils";
 
@@ -322,7 +323,7 @@ function LinkCard({
             ) : null}
             <InfoRow
                 label="제공인력"
-                value={`${assignment.employee.name} · ${formatPhone(assignment.employee.phone)}`}
+                value={`${assignment.employee.name} · ${formatKoreanPhoneNumber(assignment.employee.phone) || "-"}`}
             />
             {showSentMetadata ? (
                 <InfoRow
@@ -786,14 +787,6 @@ function formatTimeKo(value: string | null): string {
         minute: "2-digit",
         hour12: true,
     }).format(date);
-}
-
-function formatPhone(phone: string): string {
-    const digits = phone.replace(/\D/g, "");
-    if (digits.length === 11) {
-        return `${digits.slice(0, 3)}-${digits.slice(3, 7)}-${digits.slice(7)}`;
-    }
-    return phone || "-";
 }
 
 function formatBabyWeight(value: string | null): string {

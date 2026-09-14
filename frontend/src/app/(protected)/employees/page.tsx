@@ -6,6 +6,7 @@ import {
     OPEN_TO_NEXT_WORK_LABELS,
 } from "@babyjamjam/shared/constants/employee-status";
 import { normalizeApiError } from "@babyjamjam/shared";
+import { formatKoreanPhoneNumber } from "@/lib/phone";
 import { cn } from "@/lib/utils";
 import {
     Users,
@@ -93,16 +94,6 @@ function getEmployeeAvatarClassName(openToNextWork: boolean): string {
 
 function formatDate(dateStr: string | null | undefined, fallback: string): string {
     return formatDateForDisplay(dateStr, fallback);
-}
-
-function formatPhoneNumber(phone: string | null | undefined): string {
-    if (!phone) return "-";
-
-    const numbers = phone.replace(/[^\d]/g, "");
-    if (numbers.length <= 3) return numbers;
-    if (numbers.length <= 7) return `${numbers.slice(0, 3)}-${numbers.slice(3)}`;
-
-    return `${numbers.slice(0, 3)}-${numbers.slice(3, 7)}-${numbers.slice(7, 11)}`;
 }
 
 export default function EmployeesPage() {
@@ -308,7 +299,7 @@ export default function EmployeesPage() {
                                         subtitle={
                                             <span className="flex items-center gap-1 truncate">
                                                 <Phone className="h-[calc(12px*var(--glint-ui-scale,1))] w-[calc(12px*var(--glint-ui-scale,1))]" />
-                                                {formatPhoneNumber(employee.phone)}
+                                                {formatKoreanPhoneNumber(employee.phone) || "-"}
                                             </span>
                                         }
                                         status={getOpenToNextWorkBadge(employee.openToNextWork)}
@@ -449,7 +440,7 @@ function EmployeeDetail({ employee, onEdit, onDelete }: EmployeeDetailProps) {
             <div data-component="desktop_employees_split-layout_detail-panel_employees-detail" className="space-y-5">
                 <InfoCard data-component="desktop_employees_detail-panel_info-card" title="기본 정보">
                     <InfoRow label="이름" value={employee.name} />
-                    <InfoRow label="연락처" value={formatPhoneNumber(employee.phone)} />
+                    <InfoRow label="연락처" value={formatKoreanPhoneNumber(employee.phone) || "-"} />
                     <InfoRow label="근무 상태" value={EMPLOYEE_STATUS_LABELS[employee.status]} />
                 </InfoCard>
 

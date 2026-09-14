@@ -49,7 +49,7 @@ const mockEmployees: Employee[] = [
   {
     id: 2,
     name: '이영희',
-    phone: '01087654321',
+    phone: '821087654321',
     status: 'working',
     workArea: ['인천 연수구'],
     grade: '베스트',
@@ -59,7 +59,7 @@ const mockEmployees: Employee[] = [
   {
     id: 3,
     name: '박민수',
-    phone: '01055556666',
+    phone: '0111234567',
     status: 'unavailable',
     workArea: ['인천 부평구'],
     grade: '스탠다드',
@@ -178,11 +178,13 @@ describe('EmployeesTable', () => {
       expect(screen.getByText('박민수')).toBeInTheDocument();
     });
 
-    it('displays phone numbers in formatted format', () => {
+    it('formats stored phone variants with the shared canonical formatter', () => {
+      // Raw values mirror production data: country-code paste input and a legacy 10-digit number.
       render(<EmployeesTable />);
 
       expect(screen.getByText('010-1234-5678')).toBeInTheDocument();
       expect(screen.getByText('010-8765-4321')).toBeInTheDocument();
+      expect(screen.getByText('011-123-4567')).toBeInTheDocument();
     });
 
     it('displays correct status badges', () => {
