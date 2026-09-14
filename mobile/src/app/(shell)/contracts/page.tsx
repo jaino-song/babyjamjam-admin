@@ -2563,7 +2563,7 @@ export default function ContractsPage() {
   const filteredDocuments = displayDocuments;
 
   const filterItems = useMemo(() => {
-    if (isContractsLoading) {
+    if (isContractsLoading && !isStatusCountsSuccess && !isStatusCountsError) {
       return FILTER_LABELS.map((label) => ({ label, count: "00", skeleton: true }));
     }
 
@@ -2581,7 +2581,7 @@ export default function ContractsPage() {
       counts[FILTER_BY_CATEGORY[categorizeSignal(signal)]] += 1;
     }
     return FILTER_LABELS.map((label) => ({ label, count: String(counts[label]) }));
-  }, [isContractsLoading, statusCountsData]);
+  }, [isContractsLoading, isStatusCountsError, isStatusCountsSuccess, statusCountsData]);
 
   const sectionsFull = useMemo(() => {
     type Section = {

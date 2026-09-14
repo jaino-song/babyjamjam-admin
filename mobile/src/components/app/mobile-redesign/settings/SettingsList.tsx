@@ -1,59 +1,16 @@
 "use client";
 
 import type { ReactElement } from "react";
-import { ChevronRight } from "lucide-react";
 
+import {
+  SettingsListCard,
+  SettingsListItem as SharedSettingsListItem,
+  SettingsListRowsSkeleton,
+} from "@/components/app/mobile-redesign/settings/SettingsListCard";
 import { StatusPill } from "@/components/app/ui/status-badge";
 import { Switch } from "@/components/ui/switch";
-import { cn } from "@/lib/utils";
 
 import type { SettingsListItem } from "./settings-items";
-
-const SOURCE_COMPONENT = "SettingsList";
-const SKELETON_ROW_COUNT = 4;
-const SETTINGS_ROWS_SKELETON_SOURCE_COMPONENT = "SettingsRowsSkeleton";
-
-// Shared by the loaded row button and SettingsRowsSkeleton: both have to keep
-// the same box (min-height, padding, border width) or the list reflows when
-// the data lands.
-const SETTINGS_ROW_GEOMETRY_CLASS =
-  "flex min-h-[calc(66px*var(--glint-ui-scale,1))] w-full items-center gap-[calc(11px*var(--glint-ui-scale,1))] rounded-[calc(15px*var(--glint-ui-scale,1))] border-[calc(1px*var(--glint-ui-scale,1))] px-[calc(10px*var(--glint-ui-scale,1))] py-[calc(9px*var(--glint-ui-scale,1))]";
-
-/**
- * Mobile settings rows are not `ListRowsSkeleton`-shaped (min-h 66px, 42px
- * icon tile, absolute switch), so the generic list skeleton made the list
- * taller while loading. This mirrors the loaded row's own geometry classes
- * instead — if the row changes, change both.
- */
-function SettingsRowsSkeleton({
-  "data-component": dataComponent,
-}: {
-  "data-component": string;
-}) {
-  return (
-    <>
-      {Array.from({ length: SKELETON_ROW_COUNT }).map((_, index) => (
-        <div key={`${dataComponent}-${index}`} className="relative" aria-hidden="true">
-          <div
-            data-component={`${dataComponent}_row`}
-            data-source-component={SETTINGS_ROWS_SKELETON_SOURCE_COMPONENT}
-            className={cn(SETTINGS_ROW_GEOMETRY_CLASS, "border-transparent")}
-          >
-            <span className="skeleton-base h-[calc(42px*var(--glint-ui-scale,1))] w-[calc(42px*var(--glint-ui-scale,1))] shrink-0 rounded-[calc(13px*var(--glint-ui-scale,1))]" />
-            <span className="flex min-w-0 flex-1 flex-col gap-[calc(3px*var(--glint-ui-scale,1))]">
-              <span className="skeleton-base h-[calc(1.1rem*var(--glint-ui-scale,1))] w-[calc(118px*var(--glint-ui-scale,1))] rounded-[calc(4px*var(--glint-ui-scale,1))]" />
-              <span className="skeleton-base h-[calc(0.95rem*var(--glint-ui-scale,1))] w-[calc(150px*var(--glint-ui-scale,1))] rounded-[calc(4px*var(--glint-ui-scale,1))]" />
-            </span>
-            <span className="flex shrink-0 items-center gap-[calc(8px*var(--glint-ui-scale,1))]">
-              <span className="skeleton-base h-[calc(23.4px*var(--glint-ui-scale,1))] w-[calc(41.4px*var(--glint-ui-scale,1))] rounded-full" />
-              <span className="skeleton-base h-[calc(16px*var(--glint-ui-scale,1))] w-[calc(16px*var(--glint-ui-scale,1))] rounded-[calc(4px*var(--glint-ui-scale,1))]" />
-            </span>
-          </div>
-        </div>
-      ))}
-    </>
-  );
-}
 
 export interface SettingsListProps {
   "data-component": string;
@@ -85,125 +42,39 @@ export function SettingsList({
   const sub = (suffix: string) => `${dataComponent}_${suffix}`;
 
   return (
-    <section
+    <SettingsListCard
       data-component={dataComponent}
-      data-source-component={SOURCE_COMPONENT}
-      className="flex h-full min-h-0 flex-1 flex-col gap-[calc(18px*var(--glint-ui-scale,1))]"
+      title="설정"
+      count={items.length}
+      subtitle="메시지에 관련된 설정들을 정할 수 있어요"
     >
-      <header
-        data-component={sub("header")}
-        className="flex shrink-0 flex-col gap-[calc(6px*var(--glint-ui-scale,1))]"
-      >
-        <div
-          data-component={sub("header_title-row")}
-          className="flex items-center gap-[calc(8px*var(--glint-ui-scale,1))]"
-        >
-          <h2
-            data-component={sub("header_title-row_title")}
-            className="text-[calc(1.05rem*var(--glint-ui-scale,1))] font-bold leading-[calc(1.4rem*var(--glint-ui-scale,1))] text-v3-dark"
-          >
-            설정
-          </h2>
-          <span
-            data-component={sub("header_title-row_count")}
-            className="inline-flex items-center rounded-[calc(999px*var(--glint-ui-scale,1))] bg-v3-primary-light px-[calc(8px*var(--glint-ui-scale,1))] py-[calc(3px*var(--glint-ui-scale,1))] text-[calc(0.66rem*var(--glint-ui-scale,1))] font-bold leading-none text-v3-primary"
-          >
-            {items.length}개
-          </span>
-        </div>
-        <p
-          data-component={sub("header_subtitle")}
-          className="text-[calc(0.72rem*var(--glint-ui-scale,1))] leading-[calc(1.05rem*var(--glint-ui-scale,1))] text-v3-text-muted"
-        >
-          메시지에 관련된 설정들을 정할 수 있어요
-        </p>
-      </header>
-
-      <div
-        data-component={sub("items")}
-        className="scrollbar-hide flex min-h-0 flex-1 flex-col gap-[calc(6px*var(--glint-ui-scale,1))] overflow-y-auto overscroll-contain"
-      >
         {isLoading ? (
-          <SettingsRowsSkeleton data-component={sub("items_loading")} />
+          <SettingsListRowsSkeleton data-component={sub("items_loading")} />
         ) : (
           <>
             {items.map((item) => {
               const itemBase = sub(`item-${item.id}`);
-              const ItemIcon = item.icon;
-              const isSelected = selectedId === item.id;
               const isTenantApplication = item.kind === "tenant-application";
               const isSwitchChecked = item.active;
 
               return (
-                <div key={item.id} className="relative">
-                  <button
-                    data-component={itemBase}
-                    type="button"
-                    className={cn(
-                      SETTINGS_ROW_GEOMETRY_CLASS,
-                      "cursor-pointer text-left outline-none transition-colors active:bg-v3-primary-light/65 focus-visible:border-v3-primary/45 focus-visible:ring-[calc(3px*var(--glint-ui-scale,1))] focus-visible:ring-v3-primary/10",
-                      isSelected
-                        ? "border-v3-primary/20 bg-v3-primary-light/45"
-                        : "border-transparent bg-transparent hover:bg-v3-primary-light/30",
-                    )}
-                    onClick={() => onSelect(item.id)}
-                  >
-                    <span
-                      data-component={`${itemBase}_icon`}
-                      className="flex h-[calc(42px*var(--glint-ui-scale,1))] w-[calc(42px*var(--glint-ui-scale,1))] shrink-0 items-center justify-center rounded-[calc(13px*var(--glint-ui-scale,1))] bg-v3-primary-light text-v3-primary"
-                      aria-hidden="true"
+                <SharedSettingsListItem
+                  key={item.id}
+                  data-component={itemBase}
+                  icon={item.icon}
+                  title={item.title}
+                  subtitle={item.subtitle}
+                  isSelected={selectedId === item.id}
+                  onSelect={() => onSelect(item.id)}
+                  control={isTenantApplication ? (
+                    <StatusPill
+                      data-component={`${itemBase}_trailing_status`}
+                      variant="primary"
+                      className="pointer-events-none !rounded-[calc(999px*var(--glint-ui-scale,1))] !border-[calc(1px*var(--glint-ui-scale,1))] !border-v3-primary/15 !bg-v3-primary-light !px-[calc(8px*var(--glint-ui-scale,1))] !py-[calc(4px*var(--glint-ui-scale,1))] !text-[calc(0.62rem*var(--glint-ui-scale,1))] !text-v3-primary"
                     >
-                      <ItemIcon
-                        className="h-[calc(18px*var(--glint-ui-scale,1))] w-[calc(18px*var(--glint-ui-scale,1))]"
-                        strokeWidth={2.25}
-                      />
-                    </span>
-                    <span
-                      data-component={`${itemBase}_copy`}
-                      className="flex min-w-0 flex-1 flex-col gap-[calc(3px*var(--glint-ui-scale,1))]"
-                    >
-                      <span
-                        data-component={`${itemBase}_copy_title`}
-                        className="truncate text-[calc(0.82rem*var(--glint-ui-scale,1))] font-bold leading-[calc(1.1rem*var(--glint-ui-scale,1))] text-v3-dark"
-                      >
-                        {item.title}
-                      </span>
-                      <span
-                        data-component={`${itemBase}_copy_subtitle`}
-                        className="truncate text-[calc(0.68rem*var(--glint-ui-scale,1))] leading-[calc(0.95rem*var(--glint-ui-scale,1))] text-v3-text-muted"
-                      >
-                        {item.subtitle}
-                      </span>
-                    </span>
-                    <span
-                      data-component={`${itemBase}_trailing`}
-                      className="flex shrink-0 items-center gap-[calc(8px*var(--glint-ui-scale,1))]"
-                    >
-                      {isTenantApplication ? (
-                        <StatusPill
-                          data-component={`${itemBase}_trailing_status`}
-                          variant="primary"
-                          className="!rounded-[calc(999px*var(--glint-ui-scale,1))] !border-[calc(1px*var(--glint-ui-scale,1))] !border-v3-primary/15 !bg-v3-primary-light !px-[calc(8px*var(--glint-ui-scale,1))] !py-[calc(4px*var(--glint-ui-scale,1))] !text-[calc(0.62rem*var(--glint-ui-scale,1))] !text-v3-primary"
-                        >
-                          {item.statusLabel}
-                        </StatusPill>
-                      ) : (
-                        <>
-                          <span
-                            className="h-[calc(23.4px*var(--glint-ui-scale,1))] w-[calc(41.4px*var(--glint-ui-scale,1))]"
-                            aria-hidden="true"
-                          />
-                          <ChevronRight
-                            data-component={`${itemBase}_trailing_chevron`}
-                            className="h-[calc(16px*var(--glint-ui-scale,1))] w-[calc(16px*var(--glint-ui-scale,1))] text-v3-text-muted"
-                            strokeWidth={2.25}
-                            aria-hidden="true"
-                          />
-                        </>
-                      )}
-                    </span>
-                  </button>
-                  {!isTenantApplication ? (
+                      {item.statusLabel}
+                    </StatusPill>
+                  ) : (
                     <Switch
                       data-component={`${itemBase}_trailing_switch`}
                       thumbDataComponent={`${itemBase}_trailing_switch_thumb`}
@@ -211,10 +82,10 @@ export function SettingsList({
                       checked={isSwitchChecked}
                       disabled={togglingItemId !== null}
                       onCheckedChange={(active) => onToggle(item.id, active)}
-                      className="absolute right-[calc(34px*var(--glint-ui-scale,1))] top-1/2 -translate-y-1/2 [--v3-ui-scale:var(--glint-ui-scale,1)]"
+                      className="[--v3-ui-scale:var(--glint-ui-scale,1)]"
                     />
-                  ) : null}
-                </div>
+                  )}
+                />
               );
             })}
 
@@ -245,7 +116,6 @@ export function SettingsList({
             ) : null}
           </>
         )}
-      </div>
-    </section>
+    </SettingsListCard>
   );
 }

@@ -32,6 +32,7 @@ import {
 import type { Employee } from "@/hooks/useEmployees";
 import { useLocale } from "@/providers/LocaleProvider";
 import { t } from "@/lib/i18n/translations";
+import { formatKoreanPhoneNumber } from "@/lib/phone";
 import { getErrorMessage } from "@/lib/errors/prisma-error-mapper";
 import { cn } from "@/lib/utils";
 import { calcEndDateBusinessDays, countBusinessDaysKr } from "@/lib/date/business-days";
@@ -203,21 +204,6 @@ const formatPrice = (price: number | string): string => {
 const parsePrice = (value: string | null | undefined): string => {
     if (!value) return "";
     return value.replace(/,/g, "");
-};
-
-// Format phone number as XXX-XXXX-XXXX
-const formatPhoneNumber = (value: string): string => {
-    // Remove all non-digit characters
-    const digits = value.replace(/\D/g, "");
-
-    // Apply formatting based on length
-    if (digits.length <= 3) {
-        return digits;
-    } else if (digits.length <= 7) {
-        return `${digits.slice(0, 3)}-${digits.slice(3)}`;
-    } else {
-        return `${digits.slice(0, 3)}-${digits.slice(3, 7)}-${digits.slice(7, 11)}`;
-    }
 };
 
 const getPhoneDuplicateCheckFailedMessage = (locale: "ko" | "en"): string =>
@@ -1330,10 +1316,10 @@ function ClientFormContent({
                         placeholder="010-1234-5678"
                         value={formData.phone ?? ""}
                         onChange={(e) => {
-                            handleChange("phone", formatPhoneNumber(e.target.value));
+                            handleChange("phone", formatKoreanPhoneNumber(e.target.value));
                             clearFormError();
                         }}
-                        maxLength={13}
+                        maxLength={20}
                         error={hasPhoneStatusError || phoneErrorIds.length > 0}
                         aria-describedby={combineAriaDescribedBy(
                             phoneInlineMessage ? "clients-form-dialog-phone-helper" : undefined,
@@ -1762,10 +1748,10 @@ function ClientFormContent({
                     placeholder="010-1234-5678"
                     value={formData.phone ?? ""}
                     onChange={(event) => {
-                        handleChange("phone", formatPhoneNumber(event.target.value));
+                        handleChange("phone", formatKoreanPhoneNumber(event.target.value));
                         clearFormError();
                     }}
-                    maxLength={13}
+                    maxLength={20}
                     error={hasPhoneStatusError || phoneErrorIds.length > 0}
                     aria-describedby={combineAriaDescribedBy(
                         phoneInlineMessage ? "clients-form-panel-phone-helper" : undefined,

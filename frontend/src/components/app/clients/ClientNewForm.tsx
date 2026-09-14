@@ -31,6 +31,7 @@ import type { CreateClientDto, ServiceStatus } from "@/lib/client/types";
 import { SERVICE_STATUS_OPTIONS } from "@/lib/client/types";
 import { getErrorMessage } from "@/lib/errors/prisma-error-mapper";
 import { t } from "@/lib/i18n/translations";
+import { formatKoreanPhoneNumber } from "@/lib/phone";
 import { useLocale } from "@/providers/LocaleProvider";
 import { useClientDialogStore } from "@/stores/client-dialog-store";
 import { useClientWizardStore } from "@/stores/client-wizard-store";
@@ -43,13 +44,6 @@ type VoucherOptionGroup = Record<string, { label: string }>;
 type BooleanClientField = "voucherClient" | "careCenter" | "breastPump";
 
 const voucherOptionGroups = voucherOptions.voucherOptions as Record<string, VoucherOptionGroup>;
-
-const formatPhoneNumber = (value: string): string => {
-  const digits = value.replace(/\D/g, "");
-  if (digits.length <= 3) return digits;
-  if (digits.length <= 7) return `${digits.slice(0, 3)}-${digits.slice(3)}`;
-  return `${digits.slice(0, 3)}-${digits.slice(3, 7)}-${digits.slice(7, 11)}`;
-};
 
 const formatPrice = (price: number | string): string => {
   if (!price && price !== 0) return "";
@@ -401,12 +395,12 @@ export function ClientNewForm() {
                 type="tel"
                 value={store.phone}
                 onChange={(event) => {
-                  setField("phone", formatPhoneNumber(event.target.value));
+                  setField("phone", formatKoreanPhoneNumber(event.target.value));
                   setError(null);
                 }}
                 inputMode="numeric"
                 placeholder="010-1234-5678"
-                maxLength={13}
+                maxLength={20}
                 error={Boolean(phoneInlineMessage)}
               />
               {phoneInlineMessage ? (

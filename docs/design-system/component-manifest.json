@@ -1985,6 +1985,37 @@
         ]
       },
       {
+        "name": "SettingsListCard",
+        "layer": "organism",
+        "import": "@/components/app/mobile-redesign/settings/SettingsListCard",
+        "file": "mobile/src/components/app/mobile-redesign/settings/SettingsListCard.tsx",
+        "exports": [
+          "SettingsListCard",
+          "SettingsListRowsSkeleton"
+        ],
+        "replaces": [
+          "page-specific mobile settings list card markup"
+        ],
+        "requiredFor": [
+          "mobile settings-style list panes"
+        ]
+      },
+      {
+        "name": "SettingsListItem",
+        "layer": "molecule",
+        "import": "@/components/app/mobile-redesign/settings/SettingsListCard",
+        "file": "mobile/src/components/app/mobile-redesign/settings/SettingsListCard.tsx",
+        "exports": [
+          "SettingsListItem"
+        ],
+        "replaces": [
+          "page-specific mobile settings list item markup"
+        ],
+        "requiredFor": [
+          "mobile settings-style list rows"
+        ]
+      },
+      {
         "name": "SectionNav",
         "layer": "organism",
         "import": "@/components/app/v3",

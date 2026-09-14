@@ -572,7 +572,7 @@ export default function ClientsPage() {
                 filters={[]}
                 loadMore={false}
               >
-                <ClientRegistrationPolicySettings />
+                <ClientRegistrationPolicySettings data-component="mobile_clients_detail-sheet_stack_list-page_content_automation-card_body_client-registration-policy" />
               </ListCard>
             )}
           </div>

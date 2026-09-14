@@ -117,8 +117,10 @@ export function useCreateClient() {
     const queryClient = useQueryClient();
 
     return useMutation({
-        mutationFn: async (dto: CreateClientDto) => {
-            const { data } = await api.post("/clients", dto);
+        mutationFn: async (
+            request: CreateClientDto & { confirmedUnavailableEmployeeIds?: number[] },
+        ) => {
+            const { data } = await api.post("/clients", request);
             return data as Client;
         },
         onSuccess: () => {

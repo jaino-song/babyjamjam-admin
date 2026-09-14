@@ -1,9 +1,5 @@
-export const formatPhoneNumber = (value: string): string => {
-    const digits = value.replace(/\D/g, "");
-    if (digits.length <= 3) return digits;
-    if (digits.length <= 7) return `${digits.slice(0, 3)}-${digits.slice(3)}`;
-    return `${digits.slice(0, 3)}-${digits.slice(3, 7)}-${digits.slice(7, 11)}`;
-};
+// Call-inbox screens share the app-wide formatter; the name stays for local readers.
+export { formatKoreanPhoneNumber as formatPhoneNumber } from "@/lib/phone";
 
 export const formatDateForInput = (dateString: string | null | undefined): string => {
     if (!dateString) return "";

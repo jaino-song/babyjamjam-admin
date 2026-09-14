@@ -13,6 +13,16 @@ describe("shared Korean phone helpers", () => {
     expect(normalizeKoreanPhoneLookupKey("010-6621-1878")).toBe("01066211878");
   });
 
+  it("accepts the 0082 international access prefix like +82", () => {
+    expect(normalizeKoreanPhoneLookupKey("0082 10 1234 5678")).toBe("01012345678");
+    expect(normalizeKoreanPhoneLookupKey("00821012345678")).toBe("01012345678");
+    expect(normalizeKoreanPhoneLookupKey("0082 2 1234 5678")).toBe("0212345678");
+    expect(formatKoreanPhoneNumber("00821012345678")).toBe("010-1234-5678");
+    expect(formatKoreanPhoneNumber("0082 2 1234 5678")).toBe("02-1234-5678");
+    expect(isValidKoreanPhoneNumber("0082 10 1234 5678")).toBe(true);
+    expect(isValidKoreanPhoneNumber("0082 10 1234 56789")).toBe(false);
+  });
+
   it("formats Seoul, regional, mobile, and partial values consistently", () => {
     expect(formatKoreanPhoneNumber("01012345678")).toBe("010-1234-5678");
     expect(formatKoreanPhoneNumber("821066211878")).toBe("010-6621-1878");
