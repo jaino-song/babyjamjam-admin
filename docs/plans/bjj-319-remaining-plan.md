@@ -498,3 +498,14 @@ TL;DR: Notion MCP로 EM v1.0 카탈로그(97 ID)를 확보해 `docs/error-manage
 - 검증(자체 감사): 배치별 행 커버리지 100%(61·75·75·83·68×4·80×2·78), 매핑 ID 전량 97-set 포함, 중복 출력 1건 dedupe, 스팟체크 10행(대표 문제 helper·클라이언트/직원 전환 파일·공유 오류 모듈). inventory는 기존 mixed-format(pretty + owners/source_manifest compact one-line)을 정밀 라인 수술로 보존했고 `source_manifest`·`review_batches`·`verified_findings`는 불변이다.
 - 후속: EM-CAT-01 예시 코드(`CUSTOMER_PHONE_DUPLICATE`, `ASSIGNMENT_OVERLAP`)와 잠정 `CLIENT_*`/`EMPLOYEE_*` 코드명 정렬은 공개 식별자 변경 단위로 분리한다. Phase 4b/4c/5~11·실환경 검증·dev 병합·배포는 계속 열려 있다.
 
+## dev 동기화 실행 결과 (2026-09-14, `5ceb8b4fe`)
+
+TL;DR: dev가 63커밋 전진(계약·메시지·시스템 템플릿·single-flight 갱신)해 PR #657이 CONFLICTING이 되었고, `5ceb8b4fe`로 병합해 해소했다. 충돌 4파일(메시지 신규 페이지 9훅 포함)을 해소하고 테스트 3건을 정렬했으며, 전 영역 통합 검증과 read-only 감사 SHIP을 받았다.
+
+- 병합: `df946a6ae`(Task 1.1 마감) + `c6bac7f83`(origin/dev) → `5ceb8b4fe`. 충돌: `docs/design-system/ui-debt-baseline.json`(라인 시프트), `mobile/src/app/(shell)/contracts/page.tsx`(dev import 추가), `mobile/src/components/app/files/file-storage-screen.tsx`(문구), `mobile/src/app/(shell)/messages/new/page.tsx`(9훅).
+- 판단 기록: ① 메시지 신규 페이지 = dev의 서비스 종료 안내(영수증 링크 prepare/send) + 분기 템플릿 준비 게이트 **와** 우리 발송 안전장치(submissionRef 멱등키·outcome 잠금·normalizeApiError)를 한 흐름으로 통합. SMS 경로만 submission/재시도 지문 잠금을 적용하고, receipt-link 오류는 `describeReceiptLinkError(reason)` 문구를 normalize 결과에 입힌다. ② 계약 상세 = dev는 `handleSendReceiptLink`를 base 이후 건드리지 않았으므로 우리의 prop 기반 재작성(supersede)이 정답 — dev가 추가한 `Button`/`describeReceiptLinkError` import는 중복/불용이라 제거. ③ `ui-debt-baseline`은 재앵커로 해소: 수량 보존(frontend 27그룹/48레코드, mobile 28/44), dev 대비 정규화 시 byte-identical(앵커만 이동). ④ 문구 변환 관례에 따라 readiness 문구 기대값 2개 파일에서 해요체로 정렬(`…발송할 수 없어요.`). ⑤ dev의 single-flight `await openAuthenticatedEventSource` 도입으로 계약 생성 behavior 테스트가 실제 auth fetch에 의존하게 되어, 해당 모듈을 스프레드 mock(스텁 EventSource 반환)으로 고정했다.
+- 검증(통합 `5ceb8b4fe`, 오케스트레이터 실행): backend 355 suites/5,037 passed(44 skip), frontend 233/1,491, mobile 245/1,569, shared 21/284 jest + 76 node, UI gate frontend·mobile pass(재앵커 후), `scripts/ci` 31 pass, 해소 파일 eslint 0 errors, 집중 78 tests pass(exact SHA). vendor/lockfile 불변(설치 불필요).
+- 감사: read-only auditor **SHIP/MEDIUM** — 6개 해소 모두 검증, 충돌 마커 없음, 양 부모 대비 삭제 0, dev 변경 조용한 드랍 없음(양쪽이 바꾼 21개 파일 전부 양측 hunk 보존 확인). 런타임 검증은 감사자의 read-only 정책으로 미실행 → 오케스트레이터가 exact SHA에서 실행·기록했다.
+- nonblocking(carried): `messages/new/page.tsx`의 중복 nested 가드·여분 빈 줄, 테스트 `getAllByRole(...).length > 0` 완화(기존), SSE mock 커버리지 공백(의도·문서화), `contracts/page.tsx` import 블록 여분 빈 줄.
+- CI: `5ceb8b4fe`에서 메인 워크플로 전부 success, PR #657 `MERGEABLE`(잔여 pending 2건: auth e2e enforce·playwright advisory).
+
