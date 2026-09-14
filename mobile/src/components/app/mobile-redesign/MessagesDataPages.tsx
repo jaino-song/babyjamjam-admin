@@ -342,8 +342,12 @@ function HistoryRow({
       <div className="message-data-row-copy message-data-row-copy-split">
         <div className="message-data-row-info">
           <strong className="message-data-row-title">{normalized.templateLabel}</strong>
-          <p className="message-data-row-subtitle">{normalized.recipientName}</p>
-          <small className="message-data-row-subtitle">{formatMessageDateTimeCompact(normalized.sentAt)}</small>
+          <div className="message-data-row-meta" data-slot="row-meta">
+            <p className="message-data-row-subtitle">{normalized.recipientName}</p>
+            <small className="message-data-row-subtitle">
+              {formatMessageDateTimeCompact(normalized.sentAt)}
+            </small>
+          </div>
           {reasonText ? (
             <em data-component={`${HISTORY_ROW_BASE}_reason`}>{`${MESSAGE_RECORD_REASON_LABEL}: ${reasonText}`}</em>
           ) : null}
