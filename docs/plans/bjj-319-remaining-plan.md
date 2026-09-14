@@ -556,3 +556,9 @@ TL;DR: 배정(4b-1 백엔드: 역할·자격·동시 변경 코드 전환 / 4b-2
 - 검증(통합 `94612c8af`): backend 356/5,050, frontend 236/1,550, mobile 249/1,630, shared 349+86, 4종 타입·UI 게이트·`scripts/ci` 통과. 감사 **SHIP/HIGH**.
 - carried(auditor): N1 테스트 포맷(cosmetic), N2 `primary` pointer 미사용(무해), N3 inventory 갱신(본 기록), N4 모바일 `/new*` 미매핑(휴면), N5 create/update pointer 서비스 레벨 단언 없음(low). `useRequestReplacement` 소비자 0 — 대체 UI 슬롯은 후속.
 - 기록: inventory request-replacement 행 migrated·ClientFormDialog 행 갱신, `assignment-ui-proxy-alignment` finding 추가. unit worktree/branch 정리. **Phase 4b 완료(4b-1·4b-2)** — 다음은 **4c(일정)**.
+
+**Task 4c-1: 직원 일정 CRUD 오류 전환** (feature, high) — 바인딩 2026-09-15, base `4b5ae77dc`
+- 카탈로그 추가 2개(기존 배포 식별자 등록, EM-CAT-03): `EMPLOYEE_SCHEDULE_OVERLAP`(409, "같은 고객의 활성 일정과 기간이 겹쳐요.") · `SCHEDULE_RETENTION_BLOCKED`(409, 기존 한국어 문구를 카탈로그로 이관).
+- 전환: ① policy 날짜범위 거절 → `VALIDATION_FAILED` `/endDate` INVALID_VALUE("시작일은 종료일보다 늦을 수 없어요."), 중복 → `EMPLOYEE_SCHEDULE_OVERLAP` code-only(409, `conflictScheduleId`는 소비자 0·params 미지원이라 제거 — 기록). ② create/update/delete usecase: raw NotFound ×6 → `RESOURCE_NOT_FOUND`, lock 재읽기 충돌 ×3 → 4b-1에서 등록한 `SERVICE_RECORD_WRITE_TARGET_CHANGED` 재사용(EM-CAT-02 동일 원인), 보관 삭제 제한 → `SCHEDULE_RETENTION_BLOCKED`, 엔티티 date/role 래핑 → 위 VALIDATION_FAILED 매핑(역할은 `/secondaryEmployeeId` INVALID_FORMAT).
+- 범위 밖(기록): `parseInteger` 전역 변환(공유 헬퍼, 컨트롤러 다수) — 별도 단위 후보, `schedule-change.service`는 4c-2, BFF/UI는 4c-3, `service-record-entry`의 overlap 매핑은 제공기록지 슬롯.
+- Dispatch metadata: `Phase: 4c-1` · `Execution: DELEGATE` · `Audit: SOL` · `Agent: worker` · `Model: opencode-go/glm-5.3-flash` · `Paths: packages/shared/src/errors/problem-details.ts(+test), backend/application/policies/employee-schedule-invariants.policy.ts(+spec), backend/application/usecases/employee-schedule/{create,update,delete}-employee-schedule.usecase.ts(+specs), backend/vendor/shared-agent/**, docs/error-management.md` · `Depends: Task 4.2(4b 완료)`
