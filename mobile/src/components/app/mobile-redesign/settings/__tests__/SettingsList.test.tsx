@@ -43,8 +43,8 @@ const DEFAULT_PROPS: ComponentProps<typeof SettingsList> = {
   items: ITEMS,
   selectedId: null,
   onSelect: jest.fn(),
+  onToggle: jest.fn(),
   isLoading: false,
-  isApproved: false,
 };
 
 function renderList(overrides: Partial<ComponentProps<typeof SettingsList>> = {}) {
@@ -65,7 +65,7 @@ describe("SettingsList", () => {
     }
   });
 
-  it("shows a tenant status pill and read-only switches with approval-aware state", () => {
+  it("shows a tenant status pill and interactive policy switches", () => {
     const { rerender, props } = renderList();
 
     expect(screen.getByText("접수됨")).toBeInTheDocument();
@@ -76,16 +76,26 @@ describe("SettingsList", () => {
     const approvalSwitch = screen.getByRole("switch", { name: "승인 필요 정책 활성화" });
     const alwaysSwitch = screen.getByRole("switch", { name: "항상 활성 정책 활성화" });
 
-    expect(approvalSwitch).not.toBeChecked();
+    expect(approvalSwitch).toBeChecked();
     expect(alwaysSwitch).toBeChecked();
-    for (const readOnlySwitch of screen.getAllByRole("switch")) {
-      expect(readOnlySwitch).toBeDisabled();
-    }
+    expect(approvalSwitch).toBeEnabled();
+    expect(alwaysSwitch).toBeEnabled();
 
-    rerender(<SettingsList {...props} isApproved />);
+    rerender(<SettingsList {...props} />);
 
     expect(screen.getByRole("switch", { name: "승인 필요 정책 활성화" })).toBeChecked();
     expect(screen.getByRole("switch", { name: "항상 활성 정책 활성화" })).toBeChecked();
+  });
+
+  it("toggles an item without selecting its detail row", () => {
+    const onSelect = jest.fn();
+    const onToggle = jest.fn();
+    renderList({ onSelect, onToggle });
+
+    fireEvent.click(screen.getByRole("switch", { name: "승인 필요 정책 활성화" }));
+
+    expect(onToggle).toHaveBeenCalledWith("approval-policy", false);
+    expect(onSelect).not.toHaveBeenCalled();
   });
 
   it("shows four skeleton rows instead of item rows while loading", () => {

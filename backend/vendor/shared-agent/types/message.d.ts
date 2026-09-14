@@ -523,9 +523,19 @@ export interface MessageAutomationPastTriggerConfig {
     sendIntervalMinutes: number;
     ruleOrder: string[];
 }
+export declare const MESSAGE_SETTINGS_POLICY_IDS: readonly ["trigger-dispatch", "trigger-job-retry", "sms-retry", "past-trigger", "service-feedback-link", "duplicate-send-confirmation"];
+export type MessageSettingsPolicyId = (typeof MESSAGE_SETTINGS_POLICY_IDS)[number];
+export declare const STORED_MESSAGE_SETTINGS_POLICY_IDS: readonly ["trigger-dispatch", "trigger-job-retry", "sms-retry", "past-trigger", "duplicate-send-confirmation"];
+export type StoredMessageSettingsPolicyId = (typeof STORED_MESSAGE_SETTINGS_POLICY_IDS)[number];
+export declare const SERVICE_RECORD_LINK_RULE_ID = "system:service_record_link";
+export interface MessageSettingsPolicyActivation {
+    policyId: StoredMessageSettingsPolicyId;
+    enabled: boolean;
+}
 export interface MessageAutomationPoliciesResponse {
     policies: MessageAutomationPolicy[];
     pastTriggerConfig: MessageAutomationPastTriggerConfig;
+    policyActivations?: Partial<Record<MessageSettingsPolicyId, boolean>>;
 }
 export interface SystemAdminBranchUser {
     id: string;

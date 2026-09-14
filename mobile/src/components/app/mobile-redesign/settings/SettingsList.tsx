@@ -17,12 +17,13 @@ export interface SettingsListProps {
   items: SettingsListItem[];
   selectedId: string | null;
   onSelect: (id: string) => void;
+  onToggle: (id: string, active: boolean) => void;
+  togglingItemId?: string | null;
   isLoading: boolean;
   policiesError?: boolean;
   onRetryPolicies?: () => void;
   approvalError?: boolean;
   onRetryApproval?: () => void;
-  isApproved: boolean;
 }
 
 export function SettingsList({
@@ -30,12 +31,13 @@ export function SettingsList({
   items,
   selectedId,
   onSelect,
+  onToggle,
+  togglingItemId = null,
   isLoading,
   policiesError = false,
   onRetryPolicies,
   approvalError = false,
   onRetryApproval,
-  isApproved,
 }: SettingsListProps): ReactElement {
   const sub = (suffix: string) => `${dataComponent}_${suffix}`;
 
@@ -53,9 +55,7 @@ export function SettingsList({
             {items.map((item) => {
               const itemBase = sub(`item-${item.id}`);
               const isTenantApplication = item.kind === "tenant-application";
-              const isSwitchChecked = item.requiresApproval
-                ? isApproved && item.active
-                : item.active;
+              const isSwitchChecked = item.active;
 
               return (
                 <SharedSettingsListItem
@@ -80,8 +80,9 @@ export function SettingsList({
                       thumbDataComponent={`${itemBase}_trailing_switch_thumb`}
                       aria-label={`${item.title} 활성화`}
                       checked={isSwitchChecked}
-                      disabled
-                      className="pointer-events-none [--v3-ui-scale:var(--glint-ui-scale,1)]"
+                      disabled={togglingItemId !== null}
+                      onCheckedChange={(active) => onToggle(item.id, active)}
+                      className="[--v3-ui-scale:var(--glint-ui-scale,1)]"
                     />
                   )}
                 />
