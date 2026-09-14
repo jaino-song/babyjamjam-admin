@@ -509,3 +509,5 @@ TL;DR: dev가 63커밋 전진(계약·메시지·시스템 템플릿·single-fli
 - nonblocking(carried): `messages/new/page.tsx`의 중복 nested 가드·여분 빈 줄, 테스트 `getAllByRole(...).length > 0` 완화(기존), SSE mock 커버리지 공백(의도·문서화), `contracts/page.tsx` import 블록 여분 빈 줄.
 - CI: `5ceb8b4fe`에서 메인 워크플로 전부 success, PR #657 `MERGEABLE`(잔여 pending 2건: auth e2e enforce·playwright advisory).
 
+**advisory e2e 2건 기록 (2026-09-14):** Mobile CI의 advisory `playwright e2e`에서 2건이 실패한다: ① `system-template-preview.spec.ts:140` — `buildSystemTemplateSendHref`가 `template=` 파라미터를 추가한 dev 변경으로 실제 URL이 `/messages/new?template=THANKS&body=…`가 되어 `/messages\/new\?body=/` 정규식이 불일치. ② `contracts-mobile-list-row.spec.ts:1068` — dev의 `be3dc1db1`(인증 파일 소비자)로 영수증 다운로드가 `<a href>`에서 `<button aria-label="…다운로드">`(인증 fetch 다운로드)로 바뀌어 href 속성 단언이 불일치. **둘 다 dev 기존 실패다** — dev의 spec 파일 원문이 동일한 stale 기대값을 갖고 있고, dev CI(`Mobile CI`)는 최근 머지 커밋 4건(160983ca9, 9da26712c, 3ea495975, 074586547)에서 이미 failure다(160983ca9의 실패는 UI gate 드리프트 1줄; advisory는 skip). 우리 병합이 만든 회귀가 아니므로 우리 브랜치에서 dev의 stale 스펙을 임의 수정하지 않고 carried로 기록한다. 단, 우리 병합의 ui-debt 재앵커가 dev의 게이트 드리프트도 함께 해소한다. advisory는 non-blocking이며 required checks는 전부 pass다.
+
