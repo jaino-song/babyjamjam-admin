@@ -32,6 +32,7 @@ export function MessagesAutomationPage() {
           actionLabel="+ 새 메시지"
           actionHref="/messages/new"
           filters={[]}
+          loadMore={false}
         >
           <p className="message-navigation-intro">
             메시지 전송과 관리 기능을 한곳에서 이용할 수 있습니다.

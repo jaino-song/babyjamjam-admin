@@ -11,6 +11,7 @@ const DASHBOARD_ROUTE_BODY_CLASS = "mobile-dashboard-route";
 import { useDashboardAnalytics } from "@/hooks/useDashboardAnalytics";
 import { clientQueryKeys, useClients, useDeleteClient } from "@/hooks/useClients";
 import { useClientMessageHistory } from "@/hooks/useClientMessageHistory";
+import { useListInfiniteScroll } from "@/hooks/useListInfiniteScroll";
 import type { Client } from "@/lib/client/types";
 import { useLocale } from "@/providers/LocaleProvider";
 import { t } from "@/lib/i18n/translations";
@@ -20,6 +21,7 @@ import { ClientFormDialog } from "@/components/app/clients/ClientFormDialog";
 import { MobileTwoButtonModal } from "@/components/app/ui/MobileTwoButtonModal";
 import { ClientDetailContent, type DetailTabId } from "@/components/app/clients/client-detail";
 import { DashboardRedesign } from "@/components/app/mobile-redesign/DashboardRedesign";
+import { ListLoadMoreSentinel } from "@/components/app/mobile-redesign/primitives";
 import { deriveDashboardAnalyticsFromClients } from "@/lib/dashboard/analytics";
 import type {
   DashboardRedesignFilter,
@@ -424,7 +426,7 @@ export default function DashboardPage() {
     return { analytics: dashboardAnalytics, sections: allSections, filters, allRows, loading: false };
   }, [analytics, clients, clientsLoading, openClient]);
 
-  const visibleSections = useMemo(() => {
+  const sectionsFull = useMemo(() => {
     if (activeFilter === ALL_FILTER) {
       return dashboardData.allRows.length > 0
         ? [{ title: `${ALL_FILTER} · ${dashboardData.allRows.length}건`, rows: dashboardData.allRows }]
@@ -432,6 +434,25 @@ export default function DashboardPage() {
     }
     return dashboardData.sections.filter((s) => s.title.startsWith(activeFilter));
   }, [dashboardData.allRows, dashboardData.sections, activeFilter]);
+
+  const maxFullCount = useMemo(
+    () => sectionsFull.reduce((max, section) => Math.max(max, section.rows.length), 0),
+    [sectionsFull],
+  );
+
+  const { visibleCount, isInitialLoad, hasMore, sentinelRef, scrollContainerRef, loadMore } =
+    useListInfiniteScroll({
+      resetKey: activeFilter,
+      totalItems: maxFullCount,
+    });
+
+  const visibleSections = useMemo(
+    () =>
+      sectionsFull
+        .map((section) => ({ ...section, rows: section.rows.slice(0, visibleCount) }))
+        .filter((section) => section.rows.length > 0),
+    [sectionsFull, visibleCount],
+  );
 
   if (!user) {
     redirect("/logout");
@@ -452,6 +473,17 @@ export default function DashboardPage() {
             onFilterChange={setActiveFilter}
             analyticsLoading={(analyticsLoading || clientsLoading) && !analytics}
             loading={dashboardData.loading}
+            scrollRef={scrollContainerRef}
+            loadMore={isInitialLoad && hasMore}
+            onLoadMore={loadMore}
+            loadMoreSentinel={
+              !isInitialLoad && hasMore ? (
+                <ListLoadMoreSentinel
+                  data-component="mobile_dashboard_page_content_list-card_body_load-sentinel"
+                  sentinelRef={sentinelRef}
+                />
+              ) : null
+            }
           />
         }
         detail={

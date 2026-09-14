@@ -24,6 +24,8 @@ const LIST_CARD_SOURCE_COMPONENT = "ListCard";
 const SECTIONED_LIST_SOURCE_COMPONENT = "SectionedList";
 const LIST_ITEM_ROW_SOURCE_COMPONENT = "ListItemRow";
 const CONTRACT_LIST_SOURCE_COMPONENT = "ContractList";
+/** Keeps the default load-more button inert when the caller wired no handler. */
+const NOOP = () => {};
 export function ListLoadMoreButton({
   "data-component": dataComponent,
   onLoadMore,
@@ -652,6 +654,8 @@ export function ListCard({
   beforeScroll,
   scrollRef,
   loadMore,
+  onLoadMore,
+  isLoadingMore = false,
   className,
   children,
 }: {
@@ -671,7 +675,15 @@ export function ListCard({
   beforeFilters?: ReactNode;
   beforeScroll?: ReactNode;
   scrollRef?: RefObject<HTMLDivElement | null>;
+  /**
+   * Load-more footer. `undefined`/`true` renders the default tap-to-load-more button,
+   * `false`/`null` hides the footer, any other node renders as custom footer content.
+   */
   loadMore?: ReactNode;
+  /** Click handler for the default load-more button. Without it the button stays visible but inert. */
+  onLoadMore?: () => void;
+  /** True while the next page is loading — the default button disables and swaps to a spinner. */
+  isLoadingMore?: boolean;
   className?: string;
   children: ReactNode;
 }) {
@@ -679,6 +691,17 @@ export function ListCard({
   const handleActionClick = onActionClick ?? (actionType === "button" && actionLabel
     ? () => setActionFeedback(`${actionLabel.replace(/^\+\s*/, "")} 기능을 열었습니다.`)
     : undefined);
+
+  const isLoadMoreHidden = loadMore === false || loadMore === null;
+  const resolvedLoadMore = loadMore === undefined || loadMore === true ? (
+    <ListLoadMoreButton
+      data-component={`${dataComponent}_load-more_button`}
+      onLoadMore={onLoadMore ?? NOOP}
+      isLoading={isLoadingMore}
+    />
+  ) : (
+    loadMore
+  );
 
   return (
     <div
@@ -723,9 +746,9 @@ export function ListCard({
       >
         {children}
       </ListCardBody>
-      {loadMore && (
+      {!isLoadMoreHidden && (
         <ListCardLoadMore data-component={`${dataComponent}_load-more`}>
-          {loadMore}
+          {resolvedLoadMore}
         </ListCardLoadMore>
       )}
     </div>
