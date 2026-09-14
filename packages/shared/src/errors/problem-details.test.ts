@@ -223,6 +223,8 @@ describe("catalog coverage", () => {
         "EMPLOYEE_ACTIVE_ASSIGNMENT_BLOCKED",
         "EMPLOYEE_ASSIGNMENT_NOT_ELIGIBLE",
         "SERVICE_RECORD_WRITE_TARGET_CHANGED",
+        "EMPLOYEE_SCHEDULE_OVERLAP",
+        "SCHEDULE_RETENTION_BLOCKED",
     ];
 
     it.each(codes)("contains a complete bilingual entry for %s", (code) => {
@@ -283,6 +285,18 @@ describe("catalog coverage", () => {
         const entry = PROBLEM_CATALOG[code];
         expect(entry.status).toBe(status);
         expect(entry.statuses).toEqual([status]);
+        expect(entry.type).toBe(`https://github.com/jaino-song/babyjamjam-admin/blob/main/docs/error-management.md#${anchor}`);
+    });
+
+    const SCHEDULE_STATUS_409_CODES: Array<[ProblemCode, string]> = [
+        ["EMPLOYEE_SCHEDULE_OVERLAP", "employee-schedule-overlap"],
+        ["SCHEDULE_RETENTION_BLOCKED", "schedule-retention-blocked"],
+    ];
+
+    it.each(SCHEDULE_STATUS_409_CODES)("registers %s as status 409 with kebab-case type anchor", (code, anchor) => {
+        const entry = PROBLEM_CATALOG[code];
+        expect(entry.status).toBe(409);
+        expect(entry.statuses).toEqual([409]);
         expect(entry.type).toBe(`https://github.com/jaino-song/babyjamjam-admin/blob/main/docs/error-management.md#${anchor}`);
     });
 });
