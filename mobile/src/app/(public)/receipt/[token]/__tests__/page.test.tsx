@@ -104,7 +104,9 @@ describe("ReceiptLinkPage", () => {
 
         const { container } = render(<ReceiptLinkPage />);
 
-        await screen.findByLabelText("산모님 생년월일");
+        const birthdayInput = await screen.findByLabelText("산모님 생년월일");
+        expect(birthdayInput).toHaveAttribute("maxlength", "6");
+        expect(birthdayInput).toHaveAttribute("placeholder", "예) 940315");
         expect(container.querySelector('[data-slot="srec"].srec')).toBeInTheDocument();
         expect(container.querySelector('[data-slot="top"].top')).toBeInTheDocument();
         expect(container.querySelector('[data-slot="body"].body')).toBeInTheDocument();
@@ -549,7 +551,7 @@ describe("ReceiptLinkPage", () => {
         await screen.findByText("네트워크 연결을 확인해 주세요.");
     });
 
-    it("shows the format message without calling verify when the birthday is not 6 or 8 digits (F2)", async () => {
+    it("shows the format message without calling verify when the birthday is not 6 digits (F2)", async () => {
         let verifyCalled = false;
         global.fetch = jest.fn(async (url: unknown) => {
             const href = String(url);
@@ -562,7 +564,7 @@ describe("ReceiptLinkPage", () => {
         }) as unknown as typeof fetch;
 
         render(<ReceiptLinkPage />);
-        await reachVerifyScreenAndSubmit("12345");
+        await reachVerifyScreenAndSubmit("19900101");
 
         await screen.findByText("생년월일 6자리(YYMMDD)를 입력해 주세요.");
         expect(verifyCalled).toBe(false);

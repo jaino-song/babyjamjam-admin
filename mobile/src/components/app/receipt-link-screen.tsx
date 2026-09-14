@@ -175,7 +175,7 @@ export function ReceiptLinkScreen({ token }: ReceiptLinkScreenProps) {
     const submit = async () => {
         if (screen.kind !== "verify" || isSubmitting) return;
         const digits = birthday.replace(/\D/g, "");
-        if (digits.length !== 6 && digits.length !== 8) {
+        if (digits.length !== 6) {
             setScreen({ ...screen, error: "생년월일 6자리(YYMMDD)를 입력해 주세요." });
             return;
         }
@@ -304,7 +304,7 @@ export function ReceiptLinkScreen({ token }: ReceiptLinkScreenProps) {
                             inputMode="numeric"
                             autoComplete="off"
                             placeholder="예) 940315"
-                            maxLength={8}
+                            maxLength={6}
                             value={birthday}
                             disabled={screen.kind === "locked" || isSubmitting}
                             onChange={(event) => setBirthday(event.target.value.replace(/\D/g, ""))}
