@@ -2,6 +2,8 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 
+import { Button } from "@/components/ui/button";
+
 type Status = {
     ok: true;
     state: "pending" | "verified";
@@ -32,6 +34,11 @@ function formatLockedUntil(iso: string): string {
     return `${date.getHours()}시 ${String(date.getMinutes()).padStart(2, "0")}분`;
 }
 
+function getNextImageRetryParam(currentParam: string): string {
+    const currentAttempt = Number(new URLSearchParams(currentParam.slice(1)).get("r") ?? 0);
+    return `?r=${Number.isFinite(currentAttempt) ? currentAttempt + 1 : 1}`;
+}
+
 export interface ReceiptLinkScreenProps {
     token: string;
 }
@@ -43,10 +50,12 @@ export function ReceiptLinkScreen({ token }: ReceiptLinkScreenProps) {
     const [birthday, setBirthday] = useState("");
     const [isSubmitting, setIsSubmitting] = useState(false);
     const [isImageLoaded, setIsImageLoaded] = useState(false);
+    const [isImageError, setIsImageError] = useState(false);
     const lockedUntil = screen.kind === "locked" ? screen.lockedUntil : null;
-    // Cache-busting suffix for the receipt <img> src, set once (and only once — see
-    // handleImageError) after a transient image load failure to trigger a single retry.
+    // Cache-busting suffix for the receipt <img> src. The retry guard is reset by the
+    // explicit error-state action so each user retry gets one transient retry of its own.
     const [imageRetryParam, setImageRetryParam] = useState("");
+    const [hasRetriedImage, setHasRetriedImage] = useState(false);
 
     // True while this component instance is mounted. Every async transition below checks
     // this after each await before calling setState, so a fetch that resolves after
@@ -80,6 +89,9 @@ export function ReceiptLinkScreen({ token }: ReceiptLinkScreenProps) {
                 if (!mountedRef.current) return;
                 if (accessResponse.ok) {
                     setIsImageLoaded(false);
+                    setIsImageError(false);
+                    setHasRetriedImage(false);
+                    setImageRetryParam("");
                     setScreen({ kind: "image", branchName, clientName: null });
                     return;
                 }
@@ -148,17 +160,19 @@ export function ReceiptLinkScreen({ token }: ReceiptLinkScreenProps) {
     // itself instead: 401 means the access cookie is stale/absent (re-challenge, same as
     // any other 401 elsewhere on this page); 410 means the link expired; anything else
     // (5xx, a thrown network error) is treated as transient — stay on the image screen and
-    // retry the <img> exactly once via a cache-busting query param. imageRetryParam being
-    // already set doubles as the "already retried" guard, so a second error (e.g. the
-    // retried load also failing) does not fetch or retry again — there is no copy for a
-    // broken-image state yet, so the image is simply left alone after that.
+    // retry the <img> exactly once via a cache-busting query param. A second error (e.g. the
+    // retried load also failing) enters a recoverable error state instead of leaving the
+    // image frame busy forever. The explicit retry action resets this one-shot guard.
     const handleImageError = useCallback(async () => {
         if (screen.kind !== "image") return;
         setIsImageLoaded(false);
-        if (imageRetryParam) return;
+        if (hasRetriedImage) {
+            setIsImageError(true);
+            return;
+        }
         try {
-            // imageRetryParam is always "" here — the early return above already excludes the
-            // one case where it's set — so the probe URL is plainly the bare image path (M2).
+            // Probe the bare image path before retrying so a stale access cookie or expired link
+            // can still transition to the existing verification/expiry screens (M2).
             const response = await fetch(api("/image"));
             if (!mountedRef.current) return;
             if (response.status === 401) {
@@ -169,12 +183,22 @@ export function ReceiptLinkScreen({ token }: ReceiptLinkScreenProps) {
                 setScreen({ kind: "expired" });
                 return;
             }
-            setImageRetryParam("?r=1");
+            setHasRetriedImage(true);
+            setImageRetryParam(getNextImageRetryParam);
         } catch {
             if (!mountedRef.current) return;
-            setImageRetryParam("?r=1");
+            setHasRetriedImage(true);
+            setImageRetryParam(getNextImageRetryParam);
         }
-    }, [api, imageRetryParam, loadStatus, screen.kind]);
+    }, [api, hasRetriedImage, loadStatus, screen.kind]);
+
+    const retryImage = useCallback(() => {
+        if (screen.kind !== "image") return;
+        setIsImageError(false);
+        setIsImageLoaded(false);
+        setHasRetriedImage(false);
+        setImageRetryParam(getNextImageRetryParam);
+    }, [screen.kind]);
 
     const submit = async () => {
         if (screen.kind !== "verify" || isSubmitting) return;
@@ -200,6 +224,9 @@ export function ReceiptLinkScreen({ token }: ReceiptLinkScreenProps) {
             if (!mountedRef.current) return;
             if (response.ok) {
                 setIsImageLoaded(false);
+                setIsImageError(false);
+                setHasRetriedImage(false);
+                setImageRetryParam("");
                 setScreen({ kind: "image", branchName: screen.branchName, clientName: body.clientName || null });
                 return;
             }
@@ -358,9 +385,29 @@ export function ReceiptLinkScreen({ token }: ReceiptLinkScreenProps) {
                             className="rcpt-img-frame"
                             data-component="mobile_receipt_public-page_body_image_frame"
                             data-slot="image-frame"
-                            aria-busy={!isImageLoaded}
+                            aria-busy={!isImageLoaded && !isImageError}
                         >
-                            {!isImageLoaded ? (
+                            {isImageError ? (
+                                <div
+                                    className="rcpt-img-error"
+                                    data-component="mobile_receipt_public-page_body_image_frame_error"
+                                    data-slot="image-error"
+                                    role="alert"
+                                >
+                                    <p>영수증 이미지를 불러오지 못했습니다.</p>
+                                    <p className="rcpt-img-error-desc">잠시 후 다시 시도해 주세요.</p>
+                                    <Button
+                                        className="rcpt-btn rcpt-img-retry"
+                                        data-component="mobile_receipt_public-page_body_image_frame_error_retry"
+                                        onClick={retryImage}
+                                        type="button"
+                                        variant="v3-soft"
+                                    >
+                                        다시 시도
+                                    </Button>
+                                </div>
+                            ) : null}
+                            {!isImageLoaded && !isImageError ? (
                                 <div
                                     className="rcpt-img-loading"
                                     data-component="mobile_receipt_public-page_body_image_frame_loading"
@@ -375,7 +422,10 @@ export function ReceiptLinkScreen({ token }: ReceiptLinkScreenProps) {
                                 className={`rcpt-img${isImageLoaded ? " is-loaded" : ""}`}
                                 src={`${api("/image")}${imageRetryParam}`}
                                 alt={`${receiptOwnerLabel} 본인부담금 영수증`}
-                                onLoad={() => setIsImageLoaded(true)}
+                                onLoad={() => {
+                                    setIsImageLoaded(true);
+                                    setIsImageError(false);
+                                }}
                                 onError={() => void handleImageError()}
                             />
                         </div>
@@ -456,6 +506,10 @@ function Styles() {
 .srec .rcpt-warn{margin:14px 0 0;padding:12px 14px;border-radius:12px;background:#fdf1f5;color:#c2456e;font-size:13px}
 .srec .rcpt-img-frame{position:relative;width:100%;min-width:100%;min-height:min(568px,calc((100vw - 76px)*297/210));aspect-ratio:210/297;margin-top:12px;overflow:hidden;border:1px solid var(--line);border-radius:12px;background:#f7f8fa}
 .srec .rcpt-img-loading{position:absolute;inset:0;z-index:1;display:grid;place-items:center}
+.srec .rcpt-img-error{position:absolute;inset:0;z-index:2;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:24px;text-align:center;background:#f7f8fa}
+.srec .rcpt-img-error p{margin:0;color:var(--ink);font-size:15px;font-weight:700}
+.srec .rcpt-img-error .rcpt-img-error-desc{margin-top:6px;color:var(--muted);font-size:13px;font-weight:400}
+.srec .rcpt-img-error .rcpt-img-retry{width:auto;margin-top:14px}
 .srec .rcpt-spinner{width:30px;height:30px;border:3px solid #d7deea;border-top-color:var(--primary);border-radius:50%;animation:rcpt-spin .8s linear infinite}
 .srec .rcpt-img{position:absolute;inset:0;display:block;width:100%;height:100%;object-fit:contain;opacity:0}
 .srec .rcpt-img.is-loaded{opacity:1}

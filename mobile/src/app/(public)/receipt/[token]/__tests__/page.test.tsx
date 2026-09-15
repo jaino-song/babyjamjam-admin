@@ -192,17 +192,65 @@ describe("ReceiptLinkPage", () => {
 
         await waitFor(() => expect(imageFetchCount).toBe(1));
         await waitFor(() => expect(image.src).toContain("r=1"));
-        // Still on the image screen — no broken-image copy exists, so it's simply retried.
+        // Still on the image screen while the one-shot cache-busted retry is in flight.
         expect(image).toBeInTheDocument();
         expect(screen.getByRole("link", { name: "이미지 저장" })).toBeInTheDocument();
 
         // Mutant guard: reverting onError to an unconditional loadStatus() would make THIS
         // second error (or even the first) tear down the image screen back to "verify",
-        // since /status itself is healthy in this scenario.
+        // since /status itself is healthy in this scenario. The final failure is now
+        // recoverable through the visible retry action.
         fireEvent.error(image);
         expect(imageFetchCount).toBe(1);
         expect(image.src).toContain("r=1");
         expect(image).toBeInTheDocument();
+        expect(screen.getByRole("button", { name: "다시 시도" })).toBeInTheDocument();
+    });
+
+    it("shows a recoverable error state after the cache-busted image retry fails", async () => {
+        global.fetch = jest.fn(async (url: unknown) => {
+            const href = String(url);
+            if (href.endsWith("/status")) return jsonResponse(200, STATUS_VERIFY);
+            if (href.endsWith("/verify")) return jsonResponse(200, { ok: true, clientName: "김산모" });
+            if (href.includes("/image")) return jsonResponse(500, { error: "upstream failure" });
+            throw new Error(`unexpected fetch: ${href}`);
+        }) as unknown as typeof fetch;
+
+        const { container } = render(<ReceiptLinkPage />);
+        const image = await verifyAndReachImageScreen();
+
+        fireEvent.error(image);
+        await waitFor(() => expect(image.src).toContain("r=1"));
+
+        fireEvent.error(image);
+
+        expect(await screen.findByRole("alert")).toHaveTextContent("영수증 이미지를 불러오지 못했습니다");
+        expect(screen.getByRole("button", { name: "다시 시도" })).toBeInTheDocument();
+        expect(container.querySelector('[data-slot="image-frame"]')).toHaveAttribute("aria-busy", "false");
+        expect(screen.queryByRole("status", { name: "영수증 이미지를 불러오는 중" })).not.toBeInTheDocument();
+
+        fireEvent.click(screen.getByRole("button", { name: "다시 시도" }));
+
+        const retriedImage = screen.getByRole("img", {
+            name: "김산모 산모님 본인부담금 영수증",
+        });
+        expect(retriedImage.getAttribute("src")).toContain("r=2");
+        expect(container.querySelector('[data-slot="image-frame"]')).toHaveAttribute("aria-busy", "true");
+        expect(screen.getByRole("status", { name: "영수증 이미지를 불러오는 중" })).toBeInTheDocument();
+
+        fireEvent.error(retriedImage);
+
+        await waitFor(() => expect(global.fetch).toHaveBeenCalledTimes(4));
+        await waitFor(() => expect(retriedImage.getAttribute("src")).toContain("r=3"));
+        expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+        expect(container.querySelector('[data-slot="image-frame"]')).toHaveAttribute("aria-busy", "true");
+        expect(screen.getByRole("status", { name: "영수증 이미지를 불러오는 중" })).toBeInTheDocument();
+
+        fireEvent.error(retriedImage);
+
+        expect(await screen.findByRole("alert")).toHaveTextContent("영수증 이미지를 불러오지 못했습니다");
+        expect(screen.getByRole("button", { name: "다시 시도" })).toBeInTheDocument();
+        expect(container.querySelector('[data-slot="image-frame"]')).toHaveAttribute("aria-busy", "false");
     });
 
     it("renders an aria-hidden clock icon on the expired screen (F9)", async () => {
