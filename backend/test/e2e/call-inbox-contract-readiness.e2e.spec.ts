@@ -258,6 +258,9 @@ describeE2E(
             expect(result).toEqual({
                 success: false,
                 error: "고객의 제공인력 배정을 먼저 저장해 주세요.",
+                code: "CLIENT_ASSIGNMENT_REQUIRED",
+                outcome: "NOT_APPLIED",
+                recovery: { action: "NONE", retry: { mode: "NEVER" } },
             });
         });
 
@@ -347,6 +350,9 @@ describeE2E(
             expect(result).toEqual({
                 success: false,
                 error: "고객 연락처가 유효하지 않습니다",
+                code: "INVALID_CUSTOMER_PHONE",
+                outcome: "NOT_APPLIED",
+                recovery: { action: "NONE", retry: { mode: "NEVER" } },
             });
         });
 
