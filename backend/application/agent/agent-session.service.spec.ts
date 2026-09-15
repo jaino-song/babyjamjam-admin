@@ -13,12 +13,34 @@ describe("AgentSessionService", () => {
         upsertActionResultMessage: jest.fn(), deleteExpired: jest.fn(),
     } as jest.Mocked<IAgentSessionRepository>;
 
+    // Session rejections are registered problem bodies: the code is the stable
+    // identifier the HTTP mapper and clients key on, never a raw English string.
+    const expectNotFoundProblem = async (promise: Promise<unknown>): Promise<void> => {
+        const error: unknown = await promise.then(
+            () => { throw new Error("expected the service to reject"); },
+            (caught: unknown) => caught,
+        );
+        expect(error).toBeInstanceOf(NotFoundException);
+        expect((error as NotFoundException).getStatus()).toBe(404);
+        expect((error as NotFoundException).getResponse()).toMatchObject({ code: "RESOURCE_NOT_FOUND", outcome: "NOT_APPLIED" });
+    };
+
+    const expectConflictProblem = async (promise: Promise<unknown>): Promise<void> => {
+        const error: unknown = await promise.then(
+            () => { throw new Error("expected the service to reject"); },
+            (caught: unknown) => caught,
+        );
+        expect(error).toBeInstanceOf(ConflictException);
+        expect((error as ConflictException).getStatus()).toBe(409);
+        expect((error as ConflictException).getResponse()).toMatchObject({ code: "REQUEST_CONFLICT", outcome: "NOT_APPLIED" });
+    };
+
     beforeEach(() => jest.resetAllMocks());
 
     it("passes user and branch ownership through every resource lookup", async () => {
         repository.findOwned.mockResolvedValue(null);
         const service = new AgentSessionService(repository, new ConfigService(), createSchedulerLeaseMock());
-        await expect(service.get("session-a", owner)).rejects.toThrow("Agent session not found");
+        await expectNotFoundProblem(service.get("session-a", owner));
         expect(repository.findOwned).toHaveBeenCalledWith("session-a", owner);
     });
 
@@ -52,14 +74,14 @@ describe("AgentSessionService", () => {
         repository.deleteOwned.mockResolvedValue("blocked");
         const service = new AgentSessionService(repository, new ConfigService(), createSchedulerLeaseMock());
 
-        await expect(service.remove("session-a", owner)).rejects.toBeInstanceOf(ConflictException);
+        await expectConflictProblem(service.remove("session-a", owner));
     });
 
     it("routes archive blockers through a typed conflict", async () => {
         repository.archiveOwned.mockResolvedValue("blocked");
         const service = new AgentSessionService(repository, new ConfigService(), createSchedulerLeaseMock());
 
-        await expect(service.archive("session-a", owner)).rejects.toBeInstanceOf(ConflictException);
+        await expectConflictProblem(service.archive("session-a", owner));
         expect(repository.archiveOwned).toHaveBeenCalledWith("session-a", owner, expect.any(Date));
     });
 
@@ -67,7 +89,7 @@ describe("AgentSessionService", () => {
         repository.archiveOwned.mockResolvedValue("not_found");
         const service = new AgentSessionService(repository, new ConfigService(), createSchedulerLeaseMock());
 
-        await expect(service.archive("session-a", owner)).rejects.toBeInstanceOf(NotFoundException);
+        await expectNotFoundProblem(service.archive("session-a", owner));
     });
 
     it("permits owner-scoped unarchive without action checks", async () => {
@@ -82,7 +104,7 @@ describe("AgentSessionService", () => {
         repository.unarchiveOwned.mockResolvedValue("not_found");
         const service = new AgentSessionService(repository, new ConfigService(), createSchedulerLeaseMock());
 
-        await expect(service.unarchive("session-a", owner)).rejects.toBeInstanceOf(NotFoundException);
+        await expectNotFoundProblem(service.unarchive("session-a", owner));
     });
 
     it("keeps action-result upserts scoped to the session owner", async () => {
@@ -99,7 +121,7 @@ describe("AgentSessionService", () => {
         (repository.upsertActionResultMessage as jest.Mock).mockResolvedValue(false);
         const service = new AgentSessionService(repository, new ConfigService(), createSchedulerLeaseMock());
 
-        await expect(service.upsertActionResultMessage("session-a", owner, message)).rejects.toBeInstanceOf(NotFoundException);
+        await expectNotFoundProblem(service.upsertActionResultMessage("session-a", owner, message));
     });
 
     it("skips cleanup and never touches the repository when this process does not hold the scheduler lease", async () => {

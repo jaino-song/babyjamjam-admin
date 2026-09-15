@@ -307,6 +307,25 @@ describe("AgentRuntimeService", () => {
         expect(schema.safeParse({ receiver: 1012345678 }).success).toBe(false);
     });
 
+    it("rejects a non-object write schema with a problem-shaped internal error", () => {
+        // A non-object write schema is a capability registration defect. The
+        // failure declares the same facts the HTTP mapper would stamp for an
+        // uncoded 500 on a mutation: INTERNAL_ERROR, UNKNOWN, CHECK_STATUS.
+        let caught: unknown;
+        try {
+            buildWriteToolInputSchema(z.string() as never);
+        } catch (error) {
+            caught = error;
+        }
+        expect(caught).toBeInstanceOf(Error);
+        expect((caught as { getStatus?: () => number }).getStatus?.()).toBe(500);
+        expect((caught as { getResponse?: () => unknown }).getResponse?.()).toMatchObject({
+            code: "INTERNAL_ERROR",
+            outcome: "UNKNOWN",
+            recovery: { action: "CHECK_STATUS", retry: { mode: "NEVER" } },
+        });
+    });
+
     it("allows form recovery for refined write schemas without dropping field guidance", () => {
         const canonical = z.object({
             scheduledDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
@@ -899,7 +918,10 @@ describe("AgentRuntimeService", () => {
                     values: { name: "홍길동", phone: "01012345678" },
                 } }],
             }] as never,
-        })).rejects.toThrow("Agent is not enabled for this context");
+        })).rejects.toMatchObject({
+            status: 403,
+            response: expect.objectContaining({ code: "ACCESS_DENIED", outcome: "NOT_APPLIED" }),
+        });
         expect(actions.propose).not.toHaveBeenCalled();
     });
 
@@ -921,7 +943,10 @@ describe("AgentRuntimeService", () => {
             principal: { userId: "user-a", branchId: "branch-a", globalRole: "admin", branchRole: "admin" },
             locale: "ko",
             messages: [{ id: "message-empty", role: "user", parts: [{ type: "text", text: "사용할 수 없는 요청" }] }] as never,
-        })).rejects.toThrow("Agent is not enabled");
+        })).rejects.toMatchObject({
+            status: 403,
+            response: expect.objectContaining({ code: "ACCESS_DENIED", outcome: "NOT_APPLIED" }),
+        });
         expect(sessions.remove).toHaveBeenCalledWith("session-empty", { userId: "user-a", branchId: "branch-a" });
     });
 
@@ -944,7 +969,10 @@ describe("AgentRuntimeService", () => {
             sessionId: "session-existing",
             locale: "ko",
             messages: [{ id: "message-empty", role: "user", parts: [{ type: "text", text: "사용할 수 없는 요청" }] }] as never,
-        })).rejects.toThrow("Agent is not enabled");
+        })).rejects.toMatchObject({
+            status: 403,
+            response: expect.objectContaining({ code: "ACCESS_DENIED", outcome: "NOT_APPLIED" }),
+        });
         expect(sessions.remove).not.toHaveBeenCalled();
     });
 
@@ -1166,7 +1194,10 @@ describe("AgentRuntimeService", () => {
             principal: { userId: "user-a", branchId: "branch-a", globalRole: "admin", branchRole: "admin" },
             locale: "ko",
             messages: [] as never,
-        })).rejects.toThrow("Current user message missing");
+        })).rejects.toMatchObject({
+            status: 403,
+            response: expect.objectContaining({ code: "ACCESS_DENIED", outcome: "NOT_APPLIED" }),
+        });
 
         expect(traces.finish).toHaveBeenCalledTimes(1);
         expect(traces.finish).toHaveBeenCalledWith(

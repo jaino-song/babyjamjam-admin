@@ -101,7 +101,12 @@ describe("legacy chat tool security boundary", () => {
 
         const result = await executor.executeAuthorized(context, "createClient", args, fakeIntent);
 
-        expect(result).toEqual({ success: false, error: "Only confirmed mutation tools can use this path" });
+        expect(result).toMatchObject({
+            success: false,
+            error: "Only confirmed mutation tools can use this path",
+            code: "ACCESS_DENIED",
+            outcome: "NOT_APPLIED",
+        });
         expect(clientService.create).not.toHaveBeenCalled();
     });
 
