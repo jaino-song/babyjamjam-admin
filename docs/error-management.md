@@ -268,6 +268,56 @@ EM-CAT 코드 정렬 검토(2026-09-14): EM-CAT-01은 코드가 카탈로그에 
 
 `EFORMSIGN_PROVIDER_OPERATION_SERVER_ONLY`
 
+### invalid-customer-phone
+
+`INVALID_CUSTOMER_PHONE`
+
+### invalid-provider-phone
+
+`INVALID_PROVIDER_PHONE`
+
+### document-dispatch-in-progress
+
+`DOCUMENT_DISPATCH_IN_PROGRESS`
+
+### document-lock-unavailable
+
+`DOCUMENT_LOCK_UNAVAILABLE`
+
+### document-lock-lost
+
+`DOCUMENT_LOCK_LOST`
+
+### duplicate-pending-document
+
+`DUPLICATE_PENDING_DOCUMENT`
+
+### dispatch-already-accepted
+
+`DISPATCH_ALREADY_ACCEPTED`
+
+### dispatch-uncertain
+
+`DISPATCH_UNCERTAIN`
+
+### remote-document-unconfirmed
+
+`REMOTE_DOCUMENT_UNCONFIRMED`
+
+### document-local-persist-failed
+
+`DOCUMENT_LOCAL_PERSIST_FAILED`
+
+### document-dispatch-failed
+
+`DOCUMENT_DISPATCH_FAILED`
+
+## 2026-09-16 dispatch envelope 가산 계약 (BJJ-319 phase 5-4a)
+
+headless 문서 발송(`POST /eformsign-docs/dispatch-headless`)의 `ok:false` 응답에 등록 코드·업무 결과·복구 안내를 **가산**했다(EM-CHANGE-01/04 호환): 기존 `{ok:false, reason, fallbackHint, remoteDocumentId?, existingDocumentId?, dispatchIntentId?, failedStep?, durationMs}` 필드는 바이트 동일하게 유지되고 `code`(등록 ProblemCode)·`outcome`(ProblemOutcome)·`recovery`(`{action, retry:{mode}}`)만 추가됐다. ambiguous/partial 결과는 HTTP 오류가 아니라 업무 결과(EM-STATE-01)이므로 엔드포인트는 계속 201 `{ok:false}`로 응답하며, `fallbackHint`·문서 ID 복구 프로토콜(iframe 게이트, adopt, manual_check)은 그대로다.
+
+이유 토큰과 코드는 1:1 대응이고 `reason`은 호환 별칭으로 남는다(EM-CAT-03 의미 유지): `invalid_customer_phone`→`INVALID_CUSTOMER_PHONE`(400)·`invalid_provider_phone`→`INVALID_PROVIDER_PHONE`(400)·`operation_in_progress`→`DOCUMENT_DISPATCH_IN_PROGRESS`(409)·`operation_lock_unavailable`→`DOCUMENT_LOCK_UNAVAILABLE`(503)·`operation_lock_lost`→`DOCUMENT_LOCK_LOST`(409)·`duplicate_pending_document`→`DUPLICATE_PENDING_DOCUMENT`(409)·`dispatch_already_accepted`→`DISPATCH_ALREADY_ACCEPTED`(409)·`dispatch_uncertain_manual_reconciliation_required`→`DISPATCH_UNCERTAIN`(502)·`remote_unconfirmed`→`REMOTE_DOCUMENT_UNCONFIRMED`(502)·`local_persist_failed`→`DOCUMENT_LOCAL_PERSIST_FAILED`(502). 사전 검증·중복·락·진행중 거절은 `NOT_APPLIED`+`NONE`, 이미 접수·불확실·원격 미확인은 `UNKNOWN`+`CHECK_STATUS`, 로컬 저장 실패는 `PARTIALLY_APPLIED`+`CHECK_STATUS`다. catch 분기의 sanitized 공급자/인프라 실패는 `DOCUMENT_DISPATCH_FAILED`(502, `NOT_APPLIED`+`NONE`)이고, 이 분기에서 이유가 이미 등록 코드(가드 거절)면 그 코드를 그대로 유지한다. `recovery.retry.mode`는 항상 `NEVER`이며 재발송 자동 재시도는 없다(EM-RETRY-06). 성공 응답과 finalize envelope(5-4b)·작업 워커 판정(`isAmbiguous`)은 변경되지 않았다. ko 문구는 웹·모바일이 해당 reason에 이미 표시하던 문장을 detail로 재사용했고(고객·제공인력 연락처 검증 2종은 표시 문구가 없어 신규 작성), title과 en-US 문구는 이번에 신규 작성했다.
+
 ## 2026-09-15 eformsign tombstone 코드 등록·전환 (BJJ-319 phase 5-3a)
 
 두 배포 식별자(`EFORMSIGN_CREDENTIALS_SERVER_ONLY` · `EFORMSIGN_PROVIDER_OPERATION_SERVER_ONLY`)를 공유 카탈로그에 410으로 등록하고(EM-CAT-03: 기존 식별자 의미 유지, ko/en 문구 신규), 양 컨트롤러의 레거시 tombstone 7곳(`eformsign-doc.controller.ts` access-token/refresh-token 2곳, `eformsign.controller.ts` generate-signature/access-token/refresh-token/generate-document/generate-staff-document 5곳)을 `GoneException(codeOnlyProblemBody(...))`로 전환했다. 영문 `error` 필드 원문은 제거됐고, HTTP 상태·경로·메서드 시그니처는 그대로다. 등록된 코드는 `mapHttpProblem`이 catalog 문구의 problem+json으로 변환하며, 구버전 호환 별칭(statusCode/message/error)은 `sendProblemResponse`가 그대로 유지한다. 웹·모바일 BFF tombstone 라우트는 백엔드를 프록시하지 않고 자체 Next측 410 `{code}` 본문을 author하므로 이번 변경 대상이 아니며, 백엔드 `error` 필드를 소비하는 BFF는 없다(프론트 `lib/api/client.ts`의 `error` 읽기는 자체 응답의 "Authentication required." 접두사 확인뿐). envelope(ok/reason) 전환(5-4)과 `eformsign.controller`의 나머지 raw 본문(5-3b)은 여전히 후속이다.

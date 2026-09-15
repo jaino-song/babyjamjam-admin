@@ -12,6 +12,7 @@ import {
 } from "class-validator";
 import { ContractDataDto } from "application/dto/contract.dto";
 import type { EformsignHeadlessProgressStep } from "application/services/eformsign-headless-progress.service";
+import type { ProblemCode, ProblemOutcome, ProblemRecovery } from "@babyjamjam/shared/errors/problem-details";
 import { EFORMSIGN_DOCUMENT_KIND, type EformsignDocumentKind } from "domain/entities/eformsign-doc.entity";
 
 /**
@@ -97,6 +98,14 @@ export interface DispatchHeadlessResponseDto {
     failedStep?: EformsignHeadlessProgressStep;
     fallbackHint?: "iframe" | "adopt" | "manual_check" | "adopt-or-manual";
     dispatchIntentId?: string;
+    /**
+     * BJJ-319 phase 5-4a additive failure contract (ok:false only). Legacy
+     * fields above stay byte-identical; these forward the usecase's registered
+     * problem code, business outcome, and recovery guidance.
+     */
+    code?: ProblemCode;
+    outcome?: ProblemOutcome;
+    recovery?: ProblemRecovery;
 }
 
 export class AdoptEformsignDocDto {

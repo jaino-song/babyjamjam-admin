@@ -272,6 +272,69 @@ describe("EformsignDocumentJobWorkerService", () => {
         );
     });
 
+    it("classifies additive-envelope dispatch failures exactly as before", async () => {
+        // Through this seam a permitted create job always carries the durable
+        // creating marker, so the observable classification boundary is the
+        // progress step recorded on markReconciling: an ambiguous failure
+        // reconciles on the live progress step ("reconciling" when none was
+        // emitted), a non-ambiguous one reconciles on the durable marker
+        // ("creating"). The additive code/outcome/recovery fields must not
+        // move a failure across that boundary in either direction.
+
+        // An iframe-hint pre-send failure stays non-ambiguous even while
+        // carrying NOT_APPLIED outcome fields: it reconciles on the durable
+        // marker, not as an unknown-outcome run.
+        const preSendClaim = job();
+        const preSend = buildWorker({
+            repository: { claimDue: jest.fn().mockResolvedValue([preSendClaim]) },
+            dispatch: {
+                execute: jest.fn().mockResolvedValue({
+                    ok: false,
+                    reason: "editor timeout",
+                    fallbackHint: "iframe",
+                    durationMs: 10,
+                    code: "DOCUMENT_DISPATCH_FAILED",
+                    outcome: "NOT_APPLIED",
+                    recovery: { action: "NONE", retry: { mode: "NEVER" } },
+                }),
+            },
+        });
+        await preSend.worker.processDueJobs();
+        expect(preSend.repository.markReconciling).toHaveBeenCalledWith(
+            preSendClaim.id,
+            preSendClaim.leaseToken,
+            "creating",
+        );
+
+        // A manual_check failure carrying UNKNOWN outcome fields stays
+        // ambiguous exactly as before: it reconciles on the (absent) live
+        // progress step, not on the durable marker.
+        const ambiguousClaim = job();
+        const ambiguous = buildWorker({
+            repository: {
+                claimDue: jest.fn().mockResolvedValue([ambiguousClaim]),
+                markReconciling: jest.fn().mockResolvedValue({ ...ambiguousClaim, status: "reconciling", payload: null }),
+            },
+            dispatch: {
+                execute: jest.fn().mockResolvedValue({
+                    ok: false,
+                    reason: "remote_unconfirmed",
+                    fallbackHint: "manual_check",
+                    durationMs: 10,
+                    code: "REMOTE_DOCUMENT_UNCONFIRMED",
+                    outcome: "UNKNOWN",
+                    recovery: { action: "CHECK_STATUS", retry: { mode: "NEVER" } },
+                }),
+            },
+        });
+        await ambiguous.worker.processDueJobs();
+        expect(ambiguous.repository.markReconciling).toHaveBeenCalledWith(
+            ambiguousClaim.id,
+            ambiguousClaim.leaseToken,
+            "reconciling",
+        );
+    });
+
     it("does not retry after the provider send becomes ambiguous", async () => {
         const claimed = job();
         const { worker, repository, reconciliation } = buildWorker({
