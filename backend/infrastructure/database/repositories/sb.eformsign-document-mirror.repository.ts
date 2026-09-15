@@ -102,14 +102,15 @@ implements IEformsignDocumentMirrorRepository {
         const row = document?.files[0];
         // Mirror getStoredFileMetadata's gate exactly: a document PDF whose body
         // is already stored at the current version stays readable while status
-        // 060 (participant request) is still syncing its audit trail.
+        // 001 (draft) or 060 (participant request) is still syncing its audit trail.
         const normalizedStatus = normalizeEformsignStatusCode(
             (document?.detailPayload as EformsignApiDocumentResponse | null)
                 ?.current_status?.status_type,
         );
         const canReadActivePartialDocument = fileType === "document"
             && (
-                normalizedStatus === "060"
+                normalizedStatus === "001"
+                || normalizedStatus === "060"
                 || isReviewStageDocumentPdfReadable(normalizedStatus)
             );
         if (!document?.detailPayload
