@@ -604,3 +604,8 @@ TL;DR: 배정(4b-1 백엔드: 역할·자격·동시 변경 코드 전환 / 4b-2
 - 테스트: guard spec(코드), dispatch spec(reason 코드), 웹/모바일 helper 테스트(3케이스), 관련 e2e 단언 갱신.
 - 범위 밖: envelope(ok/reason) 전환 전체·문서/eformsign 컨트롤러(5-2/5-3), 서명된 계약 수정(별도 subphase).
 - Dispatch metadata: `Phase: 5-1` · `Execution: DELEGATE` · `Audit: SOL` · `Agent: worker` · `Model: opencode-go/glm-5.3-flash` · `Paths: packages/shared/src/errors/problem-details.ts(+test), backend/application/services/contract-client-assignment-guard.service.ts(+spec), backend/application/usecases/eformsign-doc/dispatch-document-headless.usecase.ts(+spec), frontend/src/components/app/contracts/ContractCreationForm.tsx(+test), mobile/src/lib/eformsign/headless-progress.ts(+test), backend/vendor/shared-agent/**, docs/error-management.md` · `Depends: Task 5.1 정찰`
+
+**Task 5-1 실행 결과 (2026-09-15):** worker unit `40358eb1e`(base `df9351612`) → 통합 `bafbad310`(14 files, +290/−29). 가드 3원인 코드화(`CLIENT_ASSIGNMENT_REQUIRED`·`DOCUMENT_PROVIDER_MISMATCH`·`CLIENT_SERVICE_TERMINATED`, 409), dispatch catch가 등록 코드 → `reason` 코드 문자열 매핑(그 외 sanitize 유지), 웹·모바일 `getSafeHeadlessFailureMessage` 3코드 문구 추가. red-first 4계층 확인.
+- 검증(통합 `bafbad310`): backend 357/5,059(첫 실행 flake 1건·재실행 green), frontend 238/1,582, mobile 250/1,658, shared 375+86, 4종 타입·게이트·ci·vendor 결정성. 감사 **SHIP/HIGH**(음성 분기 커버리지·dead fixture는 nonblocking).
+- carried(auditor): `registeredProblemCode` 부정 분기 테스트 공백, `eformsign.controller`의 가드 주입 dead(기존), dispatch `reason`/`uncertainReason`이 코드 문자열이 됨(외부 운영 툴 영향 가능·인레포 소비자 없음).
+- 기록: inventory 가드/dispatch 행 migrated + envelope 슬롯 노트, `contract-guard-codes` finding, vendor_parity 갱신. unit worktree/branch 정리. 다음은 **5-2(문서 컨트롤러/서비스)** — 이후 5-3(eformsign 컨트롤러, 고위험)·5-4(envelope, 최고위험).
