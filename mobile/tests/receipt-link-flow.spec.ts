@@ -65,11 +65,10 @@ test("mother verifies her birthday and reaches the receipt image", async ({ page
     await expect(page.getByText("이 링크는 발송일로부터 30일간 유효합니다.")).toBeVisible();
 });
 
-test("an 8-digit birthday entry is sent to the verify BFF exactly as typed", async ({ page }) => {
-    // The page does not pre-normalize an 8-digit YYYYMMDD entry to YYMMDD before sending
-    // it — normalizeBirthdayInput() on the backend (receipt-link-token.service.ts) slices
-    // it to the last 6 digits itself. This pins that division of responsibility: if the
-    // page ever starts normalizing client-side, this assertion should change too.
+test("a six-digit birthday entry is sent to the verify BFF exactly as typed", async ({ page }) => {
+    // The public page accepts the supported YYMMDD shape and sends those six digits to the
+    // verify BFF unchanged. This pins the client request contract to the production form
+    // validation instead of relying on the backend's separate 8-digit normalization path.
     let capturedBody: unknown = null;
     await page.route(`**/api/receipt/${TOKEN}/status`, (route) => route.fulfill({ json: STATUS }));
     await page.route(`**/api/receipt/${TOKEN}/verify`, (route) => {
@@ -88,10 +87,10 @@ test("an 8-digit birthday entry is sent to the verify BFF exactly as typed", asy
     );
 
     await page.goto(`/receipt/${TOKEN}`);
-    await page.getByLabel("산모 생년월일").fill("19940315");
+    await page.getByLabel("산모 생년월일").fill("940315");
     await page.getByRole("button", { name: "확인하기" }).click();
     await expect(page.getByRole("heading", { name: "김산모 산모님 영수증" })).toBeVisible();
-    expect(capturedBody).toEqual({ birthday: "19940315" });
+    expect(capturedBody).toEqual({ birthday: "940315" });
 });
 
 test("expired links show the expiry screen without a phone number", async ({ page }) => {
