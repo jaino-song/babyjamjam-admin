@@ -49,7 +49,10 @@ import {
   isValidKoreanPhoneNumber,
   normalizeKoreanPhoneDigits,
 } from "@/lib/phone";
-import { describeReceiptLinkError } from "@/lib/receipt-link";
+import {
+  describeReceiptLinkError,
+  RECEIPT_LINK_REASON_MESSAGES,
+} from "@/lib/receipt-link";
 import "@/components/app/mobile-redesign/redesign.css";
 import { parsePositiveIntQueryParam } from "@/lib/query-params";
 import { extractVariables, renderTemplate } from "@/lib/template-utils";
@@ -127,6 +130,13 @@ const SURVEY_TEMPLATE_ID = "SURVEY";
 const THANKS_TEMPLATE_ID = "THANKS";
 const SERVICE_END_NOTICE_TEMPLATE_ID = "SERVICE_END_NOTICE";
 const CUSTOM_TEMPLATE_ID = "__custom__";
+const RECEIPT_LINK_PRECHECK_REASONS = new Set([
+  ...Object.keys(RECEIPT_LINK_REASON_MESSAGES),
+  "branch_required",
+  "invalid_request",
+  "recipient_mismatch",
+]);
+const RECEIPT_LINK_SENDER_APPROVAL_MESSAGE = "메시지 발송 권한 승인이 필요합니다.";
 const CUSTOM_TEMPLATE_OPTION: TemplateOption = {
   id: CUSTOM_TEMPLATE_ID,
   name: "직접 작성",
@@ -144,19 +154,67 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function isReceiptLinkPreflightFailure(error: unknown): boolean {
+function hasExplicitAmbiguousOutcome(error: unknown, normalized: NormalizedApiError): boolean {
+  if (
+    normalized.verified
+    && (
+      normalized.outcome === "UNKNOWN"
+      || normalized.outcome === "PARTIALLY_APPLIED"
+      || normalized.recovery?.action === "CHECK_STATUS"
+    )
+  ) {
+    return true;
+  }
+
+  if (!isRecord(error) || !isRecord(error.response) || !isRecord(error.response.data)) {
+    return false;
+  }
+
+  const data = error.response.data;
+  return data.outcome === "UNKNOWN"
+    || data.outcome === "PARTIALLY_APPLIED"
+    || (isRecord(data.recovery) && data.recovery.action === "CHECK_STATUS");
+}
+
+function isReceiptLinkPreflightFailure(
+  error: unknown,
+  normalized: NormalizedApiError,
+): boolean {
   if (!isRecord(error) || !isRecord(error.response)) {
     return false;
   }
 
   const status = error.response.status;
-  // Receipt-link send validates approval, document eligibility, and the prepared
-  // recipient before it creates a job. A 4xx response therefore proves that no
-  // send was queued and the user can correct the state and retry.
-  return typeof status === "number"
+  if (!(typeof status === "number"
     && Number.isInteger(status)
     && status >= 400
-    && status < 500;
+    && status < 500)) {
+    return false;
+  }
+
+  // A verified ambiguous outcome (or an explicitly ambiguous legacy body) must
+  // retain the durable lock even when the HTTP status is a 4xx.
+  if (hasExplicitAmbiguousOutcome(error, normalized)) {
+    return false;
+  }
+
+  // A verified NOT_APPLIED response is an explicit non-application signal and
+  // is safe to retry before the receipt-link job can be enqueued.
+  if (normalized.verified && normalized.outcome === "NOT_APPLIED") {
+    return true;
+  }
+
+  const data = isRecord(error.response.data) ? error.response.data : null;
+  if (!data) {
+    return false;
+  }
+
+  const reason = data.reason;
+  if (typeof reason === "string" && RECEIPT_LINK_PRECHECK_REASONS.has(reason)) {
+    return true;
+  }
+
+  return data.message === RECEIPT_LINK_SENDER_APPROVAL_MESSAGE;
 }
 
 function isOptionalFiniteNumber(value: unknown): boolean {
@@ -1334,9 +1392,9 @@ function NewMessageForm({ initialBody, initialTemplateId, initialClientId, initi
       const isAmbiguous = normalized.outcome === "UNKNOWN"
         || normalized.outcome === "PARTIALLY_APPLIED"
         || normalized.recovery?.action === "CHECK_STATUS";
-      setSendOutcomeLocked(
-        isAmbiguous && !(isServiceEndNoticeSelected && isReceiptLinkPreflightFailure(err)),
-      );
+      const canRetryReceiptLink = isServiceEndNoticeSelected
+        && isReceiptLinkPreflightFailure(err, normalized);
+      setSendOutcomeLocked(isServiceEndNoticeSelected ? !canRetryReceiptLink : isAmbiguous);
       setSendRetryFingerprint(isServiceEndNoticeSelected ? null : submissionRef.current?.fingerprint ?? null);
     },
     onSettled: () => {

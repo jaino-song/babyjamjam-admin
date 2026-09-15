@@ -147,6 +147,42 @@ async function openTemplateSelect() {
   await screen.findByRole("option", { name: "인사 메시지" });
 }
 
+const receiptLinkPreparation = {
+  clientId: 7,
+  clientName: "박서연",
+  recipientPhone: "01077778888",
+  documentId: "doc-7",
+  receiptUrl: "https://m.admin.babyjamjam.com/receipt/receipt-7",
+  expiresAt: "2026-09-24T00:00:00.000Z",
+};
+
+async function renderPreparedServiceEndNotice() {
+  renderPage();
+  await openTemplateSelect();
+  fireEvent.click(screen.getByRole("option", { name: "서비스 종료 안내" }));
+
+  const recipientNameInput = screen.getByLabelText(/산모님 성함/);
+  fireEvent.focus(recipientNameInput);
+  fireEvent.change(recipientNameInput, { target: { value: "박서연" } });
+  fireEvent.click(await screen.findByText("박서연"));
+
+  const sendButton = screen.getByRole("button", { name: "즉시 발송" });
+  await waitFor(() => expect(sendButton).toBeEnabled());
+  return sendButton;
+}
+
+function mockReceiptLinkSendFailure(error: unknown) {
+  (api.post as jest.Mock).mockImplementation((url: string) => {
+    if (url === "/receipt-links/prepare") {
+      return Promise.resolve({ data: receiptLinkPreparation });
+    }
+    if (url === "/receipt-links/send") {
+      return Promise.reject(error);
+    }
+    return Promise.resolve({ data: {} });
+  });
+}
+
 function validSmsResponse(receiver = "010-1234-5678", resultOverrides: Record<string, unknown> = {}) {
   return {
     data: {
@@ -1151,6 +1187,62 @@ describe("NewMessagePage", () => {
       expect(screen.getByText("서비스 종료 안내 발송 요청이 접수되었습니다.")).toBeInTheDocument();
     });
     expect(sendAttempts).toBe(2);
+  });
+
+  it.each(["UNKNOWN", "PARTIALLY_APPLIED"] as const)(
+    "keeps a receipt-link send locked when a 4xx has an explicit %s outcome",
+    async (outcome) => {
+      const problem = createProblemDetails({
+        code: "VALIDATION_FAILED",
+        requestId: `receipt-ambiguous-${outcome.toLowerCase()}`,
+        status: 400,
+        outcome,
+      });
+      mockReceiptLinkSendFailure({ response: { status: 400, data: problem } });
+
+      const sendButton = await renderPreparedServiceEndNotice();
+      fireEvent.click(sendButton);
+
+      expect(await screen.findByText("영수증 문자 발송에 실패했어요. 잠시 후 다시 시도해 주세요.")).toBeInTheDocument();
+      expect(sendButton).toBeDisabled();
+    },
+  );
+
+  it("keeps a receipt-link send locked when a 4xx requires CHECK_STATUS recovery", async () => {
+    const problem = createProblemDetails({
+      code: "VALIDATION_FAILED",
+      requestId: "receipt-ambiguous-check-status",
+      status: 400,
+      outcome: "FAILED",
+      recovery: { action: "CHECK_STATUS", retry: { mode: "NEVER" } },
+    });
+    mockReceiptLinkSendFailure({ response: { status: 400, data: problem } });
+
+    const sendButton = await renderPreparedServiceEndNotice();
+    fireEvent.click(sendButton);
+
+    expect(await screen.findByText("영수증 문자 발송에 실패했어요. 잠시 후 다시 시도해 주세요.")).toBeInTheDocument();
+    expect(sendButton).toBeDisabled();
+  });
+
+  it("keeps a receipt-link send locked when the server returns a 5xx", async () => {
+    mockReceiptLinkSendFailure({ response: { status: 500, data: { error: "internal" } } });
+
+    const sendButton = await renderPreparedServiceEndNotice();
+    fireEvent.click(sendButton);
+
+    expect(await screen.findByText("영수증 문자 발송에 실패했어요. 잠시 후 다시 시도해 주세요.")).toBeInTheDocument();
+    expect(sendButton).toBeDisabled();
+  });
+
+  it("keeps a receipt-link send locked when the request fails without a response", async () => {
+    mockReceiptLinkSendFailure(new Error("network down"));
+
+    const sendButton = await renderPreparedServiceEndNotice();
+    fireEvent.click(sendButton);
+
+    expect(await screen.findByText("영수증 문자 발송에 실패했어요. 잠시 후 다시 시도해 주세요.")).toBeInTheDocument();
+    expect(sendButton).toBeDisabled();
   });
 
   it("keeps the latest client when service end preparations resolve out of order", async () => {
