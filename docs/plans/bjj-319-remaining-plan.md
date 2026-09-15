@@ -578,3 +578,12 @@ TL;DR: 배정(4b-1 백엔드: 역할·자격·동시 변경 코드 전환 / 4b-2
 - 검증(통합 `83dc3bcdb`): backend 356/5,058, shared 369+86, mobile 1,630, frontend 1,550, 4종 타입·게이트·ci 통과, vendor 결정성. 감사 **SHIP/MEDIUM**(payload-only·상태 일치 정적 검증; 테스트 재실행은 오케스트레이터 근거).
 - carried: `service-record-entry` PLANNED_DATE_UNAVAILABLE 경로 wire 변경(status/code/message 보존, HTTP 테스트 없음), write-lock policy 자체 throw는 미변경(등록 코드라 동작 동일), UI dict 신규 코드 미반영(4c-3), `expectConflictCode` objectContaining 완화(minor), 8코드 HTTP 경계 테스트 공백.
 - 기록: inventory 서비스 행 migrated·컨트롤러/entry 노트·vendor_parity 갱신, `schedule-change-contract` finding 추가. unit worktree/branch 정리. 다음은 **4c-3(BFF 8라우트 + UI dict)**.
+
+**Task 4c-3: 일정 BFF 8라우트·UI dict 정렬** (feature, med) — 바인딩 2026-09-15, base `dcf64d096`
+- 웹 4라우트(approve/reject/apply/preview): raw 401 → `unauthorizedResponse`, catch의 raw passthrough/raw 500 → `errorResponse`(problem 검증·passthrough, 구형은 sanitize), 성공 shape은 `backendJsonResponse`+`withNoStore`로 모바일과 정렬.
+- 웹·모바일 로컬 400(English "Invalid schedule id/date") → 플랫폼 로컬 helper(`schedule-change-route-utils.ts`, `client-route-utils.ts` 패턴 + `localValidationResponse` 출력 계약)로 problem 본문(VALIDATION_FAILED, location path/body, 해요체). 공유 `localValidationResponse`는 비공개 유지.
+- 모바일 4라우트: raw 400만 동일 helper로 교체(나머지 helper 흐름 유지).
+- UI dict(웹 `features/service-records/utils/schedule-change-error.ts`, 모바일 `lib/service-records/schedule-change-error.ts`+test): 누락 등록 코드 추가(`SCHEDULE_CHANGE_UNCOMPUTABLE`, `REQUEST_NOT_PENDING`, `SERVICE_RECORD_PLANNED_DATE_UNAVAILABLE`) — 카탈로그 문구와 일치.
+- 테스트: 웹 approve/reject 라우트 테스트 신규, apply/preview 기존 테스트 갱신, 모바일 라우트 테스트 400 본문 갱신, dict 테스트.
+- 범위 밖(기록): `localValidationResponse` 공개 export, clients 라우트 로컬 400, 컨트롤러 ParseIntPipe, 공개 페이지 UI 재설계.
+- Dispatch metadata: `Phase: 4c-3` · `Execution: DELEGATE` · `Audit: SOL` · `Agent: worker` · `Model: opencode-go/glm-5.3-flash` · `Paths: frontend/src/app/api/schedule-change-requests/** (+helper/tests), mobile/src/app/api/schedule-change-requests/** (+helper/tests), frontend/src/features/service-records/utils/schedule-change-error.ts, mobile/src/lib/service-records/schedule-change-error.ts(+test)` · `Depends: Task 4.3(4c-2)`
