@@ -681,3 +681,8 @@ TL;DR: 배정(4b-1 백엔드: 역할·자격·동시 변경 코드 전환 / 4b-2
 **Task 5-4c 실행 결과 (2026-09-16):** worker unit `981705e21`(base `17e439226`) → 통합 `53ff9d8fe` + 재앵커 `3bec2e441`. 4소비자 outcome-우선(UNKNOWN→확인필요+잠금, PARTIALLY_APPLIED→adopt) + legacy 분기 불변, **dead `useContractCreationFlow` 체인 8파일 은퇴**(도달성 4중 확인), `readHeadlessOutcome` 헬퍼. red-first mobile 5F·web 3F.
 - 검증: frontend 240/1,590(+8), mobile 250/1,666(+8), backend 357/5,083, shared 409+86, fe/mo tc 0, UI 재앵커 anchors-only(27/48·28/44 보존)·게이트 green, ci 31. 감사 **SHIP**.
 - 기록: `headless-consumer-alignment` finding. unit 정리. 다음은 **5-4d(creation/AI-tool)** → Phase 6.
+
+**Task 5-4d: creation/AI-tool 결과 계약 가산** — base `c7ebcbec7`
+- `create-and-send-contract.usecase.ts` 실패 결과에 `code`/`outcome`/`recovery` 가산(legacy `{success:false,error}` 불변, `uncertain`/`remoteDocumentId` 유지). outcome: 사전거절 NOT_APPLIED, uncertain/remote UNKNOWN+CHECK_STATUS. 코드는 재사용(가드 3코드·VALIDATION_FAILED 등) 우선.
+- 소비자: `tool-executor.service.ts`(AI툴)·`contract-external-agent-capabilities.provider.ts` — outcome/uncertain 우선 분류(legacy fallback), 테스트.
+- Dispatch: `Phase: 5-4d` · worker(glm) · `Paths: create-and-send-contract.usecase.ts(+spec), tool-executor.service.ts(+spec), contract-external-agent-capabilities.provider.ts(+spec), shared types(가산 optional)` · `Audit: SOL`
