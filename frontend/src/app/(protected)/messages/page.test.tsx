@@ -664,6 +664,28 @@ describe("messages page — server system-template catalog", () => {
     expect(badge).toHaveTextContent("직접 발송 불가");
   });
 
+  it("omits retired automation-only templates from the manual-send list", () => {
+    mockUseSystemTemplates.mockReturnValue({
+      data: [
+        buildSystemTemplate({ templateKey: "CLIENT_WELCOME", name: "고객 등록 안내" }),
+        buildSystemTemplate({ templateKey: "SERVICE_START_REMINDER", name: "서비스 시작 알림" }),
+        buildSystemTemplate({ templateKey: "SERVICE_END_REMINDER", name: "서비스 종료 알림" }),
+        buildSystemTemplate({ templateKey: "EMPLOYEE_ASSIGNED", name: "직원 배정 알림" }),
+        buildSystemTemplate({ templateKey: "GREETING", name: "인사(소개)" }),
+      ],
+      isLoading: false,
+      isError: false,
+    });
+
+    render(<MessagesPage />);
+
+    expect(screen.queryByText("고객 등록 안내")).not.toBeInTheDocument();
+    expect(screen.queryByText("서비스 시작 알림")).not.toBeInTheDocument();
+    expect(screen.queryByText("서비스 종료 알림")).not.toBeInTheDocument();
+    expect(screen.queryByText("직원 배정 알림")).not.toBeInTheDocument();
+    expect(screen.getByText("인사(소개)")).toBeInTheDocument();
+  });
+
   it.each([
     ["loading", { data: undefined, isLoading: true, isError: false }],
     ["error", { data: undefined, isLoading: false, isError: true }],

@@ -86,7 +86,7 @@ describe("system template catalog", () => {
     expect(items.find((item) => item.id === "builtin:system:SERVICE_END_NOTICE")).toBeUndefined();
   });
 
-  it("retains retired automation-only rows for editing while disabling manual send", () => {
+  it("omits retired automation-only rows from the manual-send catalog", () => {
     const items = buildSystemTemplateCatalog([
       template({ templateKey: "CLIENT_WELCOME", name: "고객 등록 안내", content: "등록 스냅샷" }),
       template({ templateKey: "SERVICE_START_REMINDER", name: "서비스 시작 알림", content: "시작 스냅샷" }),
@@ -97,50 +97,10 @@ describe("system template catalog", () => {
     ]);
 
     expect(items.map((item) => item.templateKey)).toEqual([
-      "CLIENT_WELCOME",
-      "SERVICE_START_REMINDER",
-      "SERVICE_END_REMINDER",
-      "EMPLOYEE_ASSIGNED",
       "SERVICE_END_NOTICE",
       "FUTURE_TEMPLATE",
     ]);
 
-    expect(items.slice(0, 4)).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          templateKey: "CLIENT_WELCOME",
-          label: "고객 등록 안내",
-          content: "등록 스냅샷",
-          manualSendAvailability: "disabled",
-          legacyType: null,
-          template: expect.objectContaining({ content: "등록 스냅샷" }),
-        }),
-        expect.objectContaining({
-          templateKey: "SERVICE_START_REMINDER",
-          label: "서비스 시작 알림",
-          content: "시작 스냅샷",
-          manualSendAvailability: "disabled",
-          legacyType: null,
-          template: expect.objectContaining({ content: "시작 스냅샷" }),
-        }),
-        expect.objectContaining({
-          templateKey: "SERVICE_END_REMINDER",
-          label: "서비스 종료 알림",
-          content: "종료 스냅샷",
-          manualSendAvailability: "disabled",
-          legacyType: null,
-          template: expect.objectContaining({ content: "종료 스냅샷" }),
-        }),
-        expect.objectContaining({
-          templateKey: "EMPLOYEE_ASSIGNED",
-          label: "직원 배정 알림",
-          content: "배정 스냅샷",
-          manualSendAvailability: "disabled",
-          legacyType: null,
-          template: expect.objectContaining({ content: "배정 스냅샷" }),
-        }),
-      ]),
-    );
     expect(items.find((item) => item.templateKey === "SERVICE_END_NOTICE")).toMatchObject({
       manualSendAvailability: "available",
     });
