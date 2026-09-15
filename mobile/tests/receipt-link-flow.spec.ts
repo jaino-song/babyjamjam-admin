@@ -47,17 +47,16 @@ test("mother verifies her birthday and reaches the receipt image", async ({ page
     await expect(page.getByText("김산모")).toHaveCount(0);
     await expect(page.getByText(/010-\d{4}-\d{4}/)).toHaveCount(0);
 
-    await page.getByLabel("산모 생년월일").fill("000000");
+    await page.getByLabel("산모님 생년월일").fill("000000");
     await page.getByRole("button", { name: "확인하기" }).click();
     // Next.js's built-in route announcer also carries role="alert" (always present,
     // empty text), so scope to the page's own error element rather than the role alone.
     await expect(page.locator(".rcpt-err")).toHaveText("생년월일이 일치하지 않습니다. 남은 횟수 4회");
     await expect(page.getByText("5회 연속 틀리면 30분 동안 확인이 잠깁니다", { exact: false })).toBeVisible();
 
-    await page.getByLabel("산모 생년월일").fill("940315");
+    await page.getByLabel("산모님 생년월일").fill("940315");
     await page.getByRole("button", { name: "다시 확인하기" }).click();
-    await expect(page.getByRole("heading", { name: "김산모 산모님 영수증" })).toBeVisible();
-    await expect(page.getByText("확인 완료")).toBeVisible();
+    await expect(page.getByRole("img", { name: "김산모 산모님 본인부담금 영수증" })).toBeVisible();
     await expect(page.getByRole("link", { name: "이미지 저장" })).toHaveAttribute(
         "href",
         `/api/receipt/${TOKEN}/image?download=1`,
@@ -87,9 +86,9 @@ test("a six-digit birthday entry is sent to the verify BFF exactly as typed", as
     );
 
     await page.goto(`/receipt/${TOKEN}`);
-    await page.getByLabel("산모 생년월일").fill("940315");
+    await page.getByLabel("산모님 생년월일").fill("940315");
     await page.getByRole("button", { name: "확인하기" }).click();
-    await expect(page.getByRole("heading", { name: "김산모 산모님 영수증" })).toBeVisible();
+    await expect(page.getByRole("img", { name: "김산모 산모님 본인부담금 영수증" })).toBeVisible();
     expect(capturedBody).toEqual({ birthday: "940315" });
 });
 
