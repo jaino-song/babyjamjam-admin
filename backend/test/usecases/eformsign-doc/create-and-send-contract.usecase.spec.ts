@@ -1,6 +1,11 @@
+import { ConflictException } from "@nestjs/common";
 import { CreateAndSendContractUsecase } from "application/usecases/eformsign-doc/create-and-send-contract.usecase";
+import { EformsignApiError } from "infrastructure/api/eformsign-api.error";
+import { codeOnlyProblemBody } from "application/utils/problem-bodies";
 
 const TEST_PRINCIPAL = { branchId: "branch-1", globalRole: "owner" };
+const RECOVERY_NONE = { action: "NONE", retry: { mode: "NEVER" } };
+const RECOVERY_CHECK_STATUS = { action: "CHECK_STATUS", retry: { mode: "NEVER" } };
 const createBoundary = () => ({
     withCredentials: jest.fn((
         _principal: unknown,
@@ -32,10 +37,63 @@ describe("CreateAndSendContractUsecase", () => {
         }, TEST_PRINCIPAL)).resolves.toEqual({
             success: false,
             error: "고객 연락처가 유효하지 않습니다",
+            code: "INVALID_CUSTOMER_PHONE",
+            outcome: "NOT_APPLIED",
+            recovery: RECOVERY_NONE,
         });
 
         expect(assignmentGuard.assertLiveAssignedClient).not.toHaveBeenCalled();
         expect(withCredentials.withCredentials).not.toHaveBeenCalled();
+        expect(createDocument).not.toHaveBeenCalled();
+    });
+
+    it("returns VALIDATION_FAILED problem fields when the client has no phone", async () => {
+        const createDocument = jest.fn();
+        const usecase = new CreateAndSendContractUsecase(
+            { createDocument } as never,
+            { findById: jest.fn().mockResolvedValue({
+                id: 55,
+                name: "연락처 없는 고객",
+                phone: null,
+            }) } as never,
+            createBoundary() as never,
+            { execute: jest.fn() } as never,
+            { assertLiveAssignedClient: jest.fn() } as never,
+        );
+
+        await expect(usecase.execute("branch-1", {
+            clientId: 55,
+            templateId: "template-1",
+        }, TEST_PRINCIPAL)).resolves.toEqual({
+            success: false,
+            error: "고객 연락처가 없습니다",
+            code: "VALIDATION_FAILED",
+            outcome: "NOT_APPLIED",
+            recovery: RECOVERY_NONE,
+        });
+        expect(createDocument).not.toHaveBeenCalled();
+    });
+
+    it("returns RESOURCE_NOT_FOUND problem fields when the client is missing", async () => {
+        const createDocument = jest.fn();
+        const usecase = new CreateAndSendContractUsecase(
+            { createDocument } as never,
+            { findById: jest.fn().mockResolvedValue(null) } as never,
+            createBoundary() as never,
+            { execute: jest.fn() } as never,
+            { assertLiveAssignedClient: jest.fn() } as never,
+        );
+
+        await expect(usecase.execute("branch-1", {
+            clientId: 55,
+            templateId: "template-1",
+        }, TEST_PRINCIPAL)).resolves.toEqual({
+            success: false,
+            error: "고객을 찾을 수 없습니다",
+            code: "RESOURCE_NOT_FOUND",
+            outcome: "NOT_APPLIED",
+            recovery: RECOVERY_NONE,
+        });
         expect(createDocument).not.toHaveBeenCalled();
     });
 
@@ -67,9 +125,47 @@ describe("CreateAndSendContractUsecase", () => {
         }, TEST_PRINCIPAL)).resolves.toEqual({
             success: false,
             error: "고객의 제공인력 배정을 먼저 저장해 주세요.",
+            code: "DOCUMENT_DISPATCH_FAILED",
+            outcome: "NOT_APPLIED",
+            recovery: RECOVERY_NONE,
         });
 
         expect(assignmentGuard.assertLiveAssignedClient).toHaveBeenCalledWith("branch-1", 55);
+        expect(eformsignClient.createDocument).not.toHaveBeenCalled();
+    });
+
+    it("reuses the assignment guard's registered problem code in the catch path", async () => {
+        const eformsignClient = { createDocument: jest.fn() };
+        const clientRepository = {
+            findById: jest.fn().mockResolvedValue({
+                id: 55,
+                name: "송진호",
+                phone: "010-1111-2222",
+            }),
+        };
+        const assignmentGuard = {
+            assertLiveAssignedClient: jest.fn().mockRejectedValue(
+                new ConflictException(codeOnlyProblemBody("CLIENT_ASSIGNMENT_REQUIRED")),
+            ),
+        };
+        const usecase = new CreateAndSendContractUsecase(
+            eformsignClient as never,
+            clientRepository as never,
+            createBoundary() as never,
+            { execute: jest.fn() } as never,
+            assignmentGuard as never,
+        );
+
+        await expect(usecase.execute("branch-1", {
+            clientId: 55,
+            templateId: "template-1",
+        }, TEST_PRINCIPAL)).resolves.toEqual(expect.objectContaining({
+            success: false,
+            code: "CLIENT_ASSIGNMENT_REQUIRED",
+            outcome: "NOT_APPLIED",
+            recovery: RECOVERY_NONE,
+        }));
+
         expect(eformsignClient.createDocument).not.toHaveBeenCalled();
     });
 
@@ -94,7 +190,135 @@ describe("CreateAndSendContractUsecase", () => {
         }, TEST_PRINCIPAL)).resolves.toEqual(expect.objectContaining({
             success: false,
             remoteDocumentId: "remote-1",
+            code: "REMOTE_DOCUMENT_UNCONFIRMED",
+            outcome: "UNKNOWN",
+            recovery: RECOVERY_CHECK_STATUS,
         }));
+    });
+
+    it("returns REMOTE_DOCUMENT_UNCONFIRMED when acceptance cannot be durably marked", async () => {
+        const createDocument = jest.fn().mockResolvedValue({ documentId: "remote-1" });
+        const dispatchBoundary = {
+            claim: jest.fn().mockResolvedValue({
+                disposition: "claimed",
+                intent: {
+                    id: "intent-1",
+                    businessKey: "provider-key",
+                    providerDocumentId: null,
+                },
+            }),
+            markAccepted: jest.fn().mockResolvedValue({ status: "rejected" }),
+            markUncertain: jest.fn(),
+            releaseBeforeSend: jest.fn(),
+        };
+        const usecase = new CreateAndSendContractUsecase(
+            { createDocument } as never,
+            { findById: jest.fn().mockResolvedValue({
+                id: 7,
+                name: "김고객",
+                phone: "010-1111-2222",
+                startDate: null,
+                endDate: null,
+            }) } as never,
+            createBoundary() as never,
+            { execute: jest.fn() } as never,
+            { assertLiveAssignedClient: jest.fn().mockResolvedValue({ scheduleId: 13 }) } as never,
+            dispatchBoundary as never,
+        );
+
+        await expect(usecase.execute("branch-1", {
+            clientId: 7,
+            templateId: "template-1",
+        }, TEST_PRINCIPAL)).resolves.toEqual({
+            success: false,
+            error: "계약서 발송 결과 확인이 필요합니다",
+            remoteDocumentId: "remote-1",
+            uncertain: true,
+            code: "REMOTE_DOCUMENT_UNCONFIRMED",
+            outcome: "UNKNOWN",
+            recovery: RECOVERY_CHECK_STATUS,
+        });
+    });
+
+    it("returns REMOTE_DOCUMENT_UNCONFIRMED when an accepted replay lacks its provider document id", async () => {
+        const createDocument = jest.fn();
+        const dispatchBoundary = {
+            claim: jest.fn().mockResolvedValue({
+                disposition: "already_accepted",
+                intent: { id: "intent-accepted", providerDocumentId: null },
+            }),
+        };
+        const usecase = new CreateAndSendContractUsecase(
+            { createDocument } as never,
+            { findById: jest.fn().mockResolvedValue({
+                id: 7,
+                name: "김고객",
+                phone: "010-1111-2222",
+                startDate: null,
+                endDate: null,
+            }) } as never,
+            createBoundary() as never,
+            { execute: jest.fn() } as never,
+            { assertLiveAssignedClient: jest.fn().mockResolvedValue({ scheduleId: 13 }) } as never,
+            dispatchBoundary as never,
+        );
+
+        await expect(usecase.execute("branch-1", {
+            clientId: 7,
+            templateId: "template-1",
+            idempotencyKey: "request-accepted",
+        }, TEST_PRINCIPAL)).resolves.toEqual({
+            success: false,
+            error: "계약서 발송 결과를 확인할 수 없습니다",
+            uncertain: true,
+            code: "REMOTE_DOCUMENT_UNCONFIRMED",
+            outcome: "UNKNOWN",
+            recovery: RECOVERY_CHECK_STATUS,
+        });
+        expect(createDocument).not.toHaveBeenCalled();
+    });
+
+    it("classifies a certain provider rejection as NOT_APPLIED without uncertainty", async () => {
+        const createDocument = jest.fn().mockRejectedValue(new EformsignApiError("provider rejected the request", 400, "4000010"));
+        const dispatchBoundary = {
+            claim: jest.fn().mockResolvedValue({
+                disposition: "claimed",
+                intent: {
+                    id: "intent-1",
+                    businessKey: "provider-key",
+                    providerDocumentId: null,
+                },
+            }),
+            markAccepted: jest.fn(),
+            markUncertain: jest.fn(),
+            releaseBeforeSend: jest.fn().mockResolvedValue(undefined),
+        };
+        const usecase = new CreateAndSendContractUsecase(
+            { createDocument } as never,
+            { findById: jest.fn().mockResolvedValue({
+                id: 7,
+                name: "김고객",
+                phone: "010-1111-2222",
+                startDate: null,
+                endDate: null,
+            }) } as never,
+            createBoundary() as never,
+            { execute: jest.fn() } as never,
+            { assertLiveAssignedClient: jest.fn().mockResolvedValue({ scheduleId: 13 }) } as never,
+            dispatchBoundary as never,
+        );
+
+        await expect(usecase.execute("branch-1", {
+            clientId: 7,
+            templateId: "template-1",
+        }, TEST_PRINCIPAL)).resolves.toEqual(expect.objectContaining({
+            success: false,
+            code: "DOCUMENT_DISPATCH_FAILED",
+            outcome: "NOT_APPLIED",
+            recovery: RECOVERY_NONE,
+        }));
+        expect(dispatchBoundary.markUncertain).not.toHaveBeenCalled();
+        expect(dispatchBoundary.releaseBeforeSend).toHaveBeenCalled();
     });
 
     // This used to assert that the name sent to eformsign is the name persisted locally. The
@@ -299,6 +523,9 @@ describe("CreateAndSendContractUsecase", () => {
         }, TEST_PRINCIPAL)).resolves.toEqual(expect.objectContaining({
             success: false,
             uncertain: true,
+            code: "DISPATCH_UNCERTAIN",
+            outcome: "UNKNOWN",
+            recovery: RECOVERY_CHECK_STATUS,
         }));
 
         expect(credentialBoundary.withCredentials).not.toHaveBeenCalled();
@@ -403,6 +630,9 @@ describe("CreateAndSendContractUsecase", () => {
             error: "계약서 발송 결과 확인이 필요합니다",
             remoteDocumentId: "remote-existing",
             uncertain: true,
+            code: "REMOTE_DOCUMENT_UNCONFIRMED",
+            outcome: "UNKNOWN",
+            recovery: RECOVERY_CHECK_STATUS,
         });
         expect(credentialBoundary.withCredentials).not.toHaveBeenCalled();
         expect(createDocument).not.toHaveBeenCalled();
@@ -532,11 +762,17 @@ describe("CreateAndSendContractUsecase", () => {
         expect(firstResult).toEqual(expect.objectContaining({
             success: false,
             uncertain: true,
+            code: "DISPATCH_UNCERTAIN",
+            outcome: "UNKNOWN",
+            recovery: RECOVERY_CHECK_STATUS,
         }));
         expect(secondResult).toEqual({
             success: false,
             error: "계약서 발송 결과 확인이 필요합니다",
             uncertain: true,
+            code: "DISPATCH_UNCERTAIN",
+            outcome: "UNKNOWN",
+            recovery: RECOVERY_CHECK_STATUS,
         });
         expect(createDocument).toHaveBeenCalledTimes(1);
         expect(dispatchBoundary.claim).toHaveBeenCalledTimes(2);
@@ -635,6 +871,9 @@ describe("CreateAndSendContractUsecase", () => {
         }, TEST_PRINCIPAL)).resolves.toEqual(expect.objectContaining({
             success: false,
             uncertain: true,
+            code: "DISPATCH_UNCERTAIN",
+            outcome: "UNKNOWN",
+            recovery: RECOVERY_CHECK_STATUS,
         }));
         expect(dispatchBoundary.markUncertain).toHaveBeenCalledWith(
             expect.objectContaining({ id: "intent-1" }),
