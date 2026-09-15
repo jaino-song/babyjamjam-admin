@@ -641,3 +641,9 @@ TL;DR: 배정(4b-1 백엔드: 역할·자격·동시 변경 코드 전환 / 4b-2
 - 테스트: 해당 spec들의 raw 단언 갱신 + 신규 커버, red-first.
 - 범위 밖: eformsign-doc.controller(5-3a 완료), envelope(5-4).
 - Dispatch metadata: `Phase: 5-3b` · `Execution: DELEGATE` · `Audit: SOL` · `Agent: worker` · `Model: opencode-go/glm-5.3-flash` · `Paths: backend/interface/controllers/eformsign.controller.ts [tombstone 제외], backend/test/integration/eformsign.controller.integration.spec.ts, 소비자 BFF 확인 시 frontend/mobile eformsign-docs 라우트(최소), docs/error-management.md` · `Depends: Task 5-3a`
+
+**Task 5-3b 실행 결과 (2026-09-16):** worker unit `f06e71e84`(base `31b6dce86`) → 통합 `a6533b562`(2 files, +271/−75), **감사 FIX_REQUIRED(B1)** → 보정 `bd31791d3` → 통합 `3e71aec88`, 보정 감사 **SHIP/HIGH**.
+- 내용: 12 raw `{error}` → 상태별 재사용 코드(3×VALIDATION_FAILED 포인터·6×ACCESS_DENIED·RESOURCE_NOT_FOUND·2×INTERNAL_ERROR), 7 English BadRequest(`fileType/statusCategory/templateMatch/displayStatus/section/format` 쿼리 포인터), 3 ServiceUnavailable→DEPENDENCY_UNAVAILABLE. **B1**: mutation 500 fallback 2곳이 `codeOnlyProblemBody`(NOT_APPLIED)로 변환돼 모바일 재시도 가드가 "재시도 가능"으로 오판할 수 있었음 → `uncertainProblemBody`(UNKNOWN/CHECK_STATUS) 신설·교체, 단언 보강, 카운터팩추얼로 검증.
+- 검증(통합 `3e71aec88`): backend 356/5,075, frontend 238/1,582, mobile 250/1,658, shared 379+86, backend tc 0, 게이트·ci. 교훈: **500 fallback은 절대 NOT_APPLIED로 기본 변환하지 않는다(EM-STATE-01)**.
+- carried: integration spec이 mapper 미경유(기존), 파이프 섀도우 사이트 defense-in-depth, `throwHttpOrInternalError`·한국어 기존 사이트 유지, 503 읽기 outcome NOT_APPLIED(의미상 무해), korean-error-messages 데드 엔트리.
+- 기록: inventory 컨트롤러 행 갱신, `eformsign-controller-contract` finding 추가. unit 정리. 다음은 **5-4(envelope ok/reason, 최고위험)** — 이후 Phase 6.
