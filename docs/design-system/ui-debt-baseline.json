@@ -199,30 +199,30 @@
     },
     "frontend/src/app/(protected)/contracts/page.tsx": {
       "ui-architecture/no-page-local-components": [
-        "1162:17-1162:31|pageLocalComponent",
-        "424:10-424:22|pageLocalComponent"
+        "1163:17-1163:31|pageLocalComponent",
+        "425:10-425:22|pageLocalComponent"
       ],
       "ui-architecture/no-raw-ui-in-pages": [
-        "1965:7-1972:8|rawUiElement"
+        "1973:7-1980:8|rawUiElement"
       ],
       "ui-architecture/no-visual-tailwind-in-pages": [
-        "1027:36-1027:208|visualTailwindInPage",
-        "1039:36-1039:208|visualTailwindInPage",
-        "1060:36-1060:208|visualTailwindInPage",
-        "1072:36-1072:208|visualTailwindInPage",
-        "1093:36-1093:208|visualTailwindInPage",
-        "1105:36-1105:208|visualTailwindInPage",
-        "1824:31-1824:63|visualTailwindInPage",
-        "1834:33-1834:81|visualTailwindInPage",
-        "1846:31-1846:63|visualTailwindInPage",
-        "1877:29-1877:136|visualTailwindInPage",
-        "1968:19-1968:233|visualTailwindInPage",
-        "1986:25-1986:232|visualTailwindInPage",
-        "2036:25-2036:157|visualTailwindInPage",
-        "449:27-460:19|visualTailwindInPage",
-        "733:72-733:177|visualTailwindInPage",
-        "813:27-817:18|visualTailwindInPage",
-        "883:37-883:209|visualTailwindInPage"
+        "1028:36-1028:208|visualTailwindInPage",
+        "1040:36-1040:208|visualTailwindInPage",
+        "1061:36-1061:208|visualTailwindInPage",
+        "1073:36-1073:208|visualTailwindInPage",
+        "1094:36-1094:208|visualTailwindInPage",
+        "1106:36-1106:208|visualTailwindInPage",
+        "1832:31-1832:63|visualTailwindInPage",
+        "1842:33-1842:81|visualTailwindInPage",
+        "1854:31-1854:63|visualTailwindInPage",
+        "1885:29-1885:136|visualTailwindInPage",
+        "1976:19-1976:233|visualTailwindInPage",
+        "1994:25-1994:232|visualTailwindInPage",
+        "2044:25-2044:157|visualTailwindInPage",
+        "450:27-461:19|visualTailwindInPage",
+        "734:72-734:177|visualTailwindInPage",
+        "814:27-818:18|visualTailwindInPage",
+        "884:37-884:209|visualTailwindInPage"
       ]
     },
     "frontend/src/app/(protected)/dashboard/page.tsx": {
@@ -903,30 +903,30 @@
     },
     "mobile/src/app/(shell)/contracts/new/page.tsx": {
       "ui-architecture/no-page-local-components": [
-        "107:10-107:15|pageLocalComponent"
+        "108:10-108:15|pageLocalComponent"
       ],
       "ui-architecture/no-raw-ui-in-pages": [
-        "1076:13-1082:14|rawUiElement",
-        "1086:13-1092:14|rawUiElement",
-        "1210:23-1219:25|rawUiElement",
-        "1223:25-1231:27|rawUiElement",
-        "1234:25-1242:27|rawUiElement",
-        "1246:23-1252:25|rawUiElement",
-        "1259:25-1264:26|rawUiElement",
-        "1294:23-1303:25|rawUiElement",
-        "1344:27-1353:29|rawUiElement",
-        "1370:27-1375:28|rawUiElement",
-        "1385:27-1390:28|rawUiElement",
-        "1407:25-1413:26|rawUiElement",
-        "1432:25-1439:27|rawUiElement",
-        "1445:25-1452:27|rawUiElement",
-        "1458:25-1465:27|rawUiElement",
-        "1481:25-1489:27|rawUiElement",
-        "1492:25-1500:27|rawUiElement",
-        "1513:23-1521:25|rawUiElement",
-        "1564:15-1570:16|rawUiElement",
-        "1573:15-1579:16|rawUiElement",
-        "1636:13-1642:14|rawUiElement"
+        "1097:13-1103:14|rawUiElement",
+        "1107:13-1113:14|rawUiElement",
+        "1231:23-1240:25|rawUiElement",
+        "1244:25-1252:27|rawUiElement",
+        "1255:25-1263:27|rawUiElement",
+        "1267:23-1273:25|rawUiElement",
+        "1280:25-1285:26|rawUiElement",
+        "1315:23-1324:25|rawUiElement",
+        "1365:27-1374:29|rawUiElement",
+        "1391:27-1396:28|rawUiElement",
+        "1406:27-1411:28|rawUiElement",
+        "1428:25-1434:26|rawUiElement",
+        "1453:25-1460:27|rawUiElement",
+        "1466:25-1473:27|rawUiElement",
+        "1479:25-1486:27|rawUiElement",
+        "1502:25-1510:27|rawUiElement",
+        "1513:25-1521:27|rawUiElement",
+        "1534:23-1542:25|rawUiElement",
+        "1585:15-1591:16|rawUiElement",
+        "1594:15-1600:16|rawUiElement",
+        "1657:13-1663:14|rawUiElement"
       ]
     },
     "mobile/src/app/(shell)/contracts/page.tsx": {
