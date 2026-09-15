@@ -662,3 +662,8 @@ TL;DR: 배정(4b-1 백엔드: 역할·자격·동시 변경 코드 전환 / 4b-2
 - **flaky 정체 규명:** `receipt-pdf-verifier.service.spec.ts`(pdfjs capability) — base에서도 실패하는 기존 이슈(스태시 검증), 오늘의 flake 전부 이것으로 추정.
 - carried(auditor): catch의 SCREAMING 코드 비대칭(도달 불가·Phase 6 연계), post-send catch 방어(계획 명시), inventory 갱신(본 기록), 소비자 미채택(BFF passthrough라 백엔드 변경 불요), HTTP status 미전환(201 유지 — Phase 6 판단).
 - 기록: inventory 컨트롤러/dispatch 행 노트, `dispatch-envelope-contract` finding. unit 정리. 다음은 **5-4b(finalize envelope)** → 5-4c(소비자) → 5-4d(creation/AI) → Phase 6.
+
+**Task 5-4b: finalize envelope 가산 계약** — base `68100ab3b` (5-4a 동형)
+- finalize 실패 분기에 `code/outcome/recovery` 가산, legacy 필드 바이트 동일. 신규 코드: `DOCUMENT_FINALIZE_IN_PROGRESS`(409), `EFORMSIGN_TERMINAL_FAILURE`(502), `DOCUMENT_FINALIZE_UNCONFIRMED`(502), `DOCUMENT_FINALIZE_FAILED`(502). 재사용: `DOCUMENT_LOCK_UNAVAILABLE`·`DOCUMENT_LOCK_LOST`·`ACCESS_DENIED`·`DISPATCH_ALREADY_ACCEPTED`·`DISPATCH_UNCERTAIN`.
+- outcome: 락/진행중/authorization → NOT_APPLIED/NONE(권한은 ACCESS_DENIED 403), already-accepted/uncertain/pending → UNKNOWN+CHECK_STATUS, terminal failure → FAILED/NONE, catch → NOT_APPLIED/NONE(iframe/manual_check 조건 불변). `ok:true, completed:false`(advanced) 성공 분기 불변.
+- Dispatch: `Phase: 5-4b` · worker(glm) · `Paths: finalize-document-headless.usecase.ts(+spec), eformsign-doc.dto.ts, eformsign-doc.controller.ts [finalize만], shared types, catalog(+test)+vendor, docs` · `Audit: SOL` · `Depends: 5-4a`
