@@ -139,7 +139,7 @@ describe("SbEformsignDocumentMirrorRepository", () => {
         await expect(repository.findFile("doc-1", "document")).resolves.toBeNull();
     });
 
-    it("reads a review-pending PDF without its audit trail while retaining version and purge guards", async () => {
+    it.each(["001", "doc_tempsave", "070"])("reads a draft or review PDF (%s) without its audit trail while retaining version and purge guards", async (status) => {
         const file = {
             fileType: "document",
             content: Buffer.from("pdf"),
@@ -151,7 +151,7 @@ describe("SbEformsignDocumentMirrorRepository", () => {
             syncedAt,
         };
         const row = {
-            detailPayload: { current_status: { status_type: "070" } },
+            detailPayload: { current_status: { status_type: status } },
             detailSourceUpdatedDate: detailVersion,
             syncStatus: "partial",
             permanentPurgeRequestedAt: null,
