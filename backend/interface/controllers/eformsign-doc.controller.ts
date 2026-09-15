@@ -59,6 +59,7 @@ import {
     type EformsignProviderPrincipal,
 } from "application/services/eformsign-credential-boundary.service";
 import { sanitizeEformsignErrorMessage } from "application/utils/eformsign-error-message";
+import { codeOnlyProblemBody } from "application/utils/problem-bodies";
 
 @Controller("eformsign-docs")
 @UseGuards(JwtGuard, TenantGuard)
@@ -182,18 +183,12 @@ export class EformsignDocController {
      */
     @Post("access-token")
     getAccessToken(): never {
-        throw new GoneException({
-            code: "EFORMSIGN_CREDENTIALS_SERVER_ONLY",
-            error: "Raw eformsign credentials are not exposed",
-        });
+        throw new GoneException(codeOnlyProblemBody("EFORMSIGN_CREDENTIALS_SERVER_ONLY"));
     }
 
     @Post("refresh-token")
     refreshAccessToken(): never {
-        throw new GoneException({
-            code: "EFORMSIGN_CREDENTIALS_SERVER_ONLY",
-            error: "Raw eformsign credentials are not exposed",
-        });
+        throw new GoneException(codeOnlyProblemBody("EFORMSIGN_CREDENTIALS_SERVER_ONLY"));
     }
 
     /**
