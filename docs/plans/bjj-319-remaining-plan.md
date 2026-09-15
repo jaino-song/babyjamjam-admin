@@ -694,3 +694,7 @@ TL;DR: 배정(4b-1 백엔드: 역할·자격·동시 변경 코드 전환 / 4b-2
 ## Phase 6 — 바인딩·배치 (2026-09-16)
 
 **6a: 백엔드 agent·AI-chat 도메인** — base `c80fa1d53`. 대상: `backend/application/agent/*`(5) + `backend/application/ai-chat/*`(2) — raw 4xx/에이전트 실패 분류 전환(기존 코드 재사용 우선, 필요 시 최소 신규). 소비자는 AI챗/에이전트 런타임(비HTTP·in-process) — 분류 오류·raw message 비교·빈 성공 삼킴 점검. worker(glm) · Audit SOL.
+
+**Task 6a 실행 결과 (2026-09-16):** worker unit `8db72a46b`(base `c80fa1d53`) → 통합 `157bbc29d`(16 files, +618/−88). agent 5 + ai-chat 2 파일 49+ throw 전환(전부 기존 코드 재사용, 카탈로그·vendor 불변), tool-executor 가산 code/outcome. red-first 22F→246 focused; full backend 358/5,115. 감사 **SHIP**.
+- carried: runtime L364 403 의미 긴장, confirmation-mismatch 단일 body(안티프로빙), tool-executor outcome 기본값(read NOT_APPLIED vs mutation UNKNOWN), persistResultPart L855 미전환(범위 외).
+- 기록: `agent-chat-contract` finding. unit 정리. **Phase 6 계속: 다음 배치 = 백엔드 controllers/services 잔여 → 프론트/모바일 라우트 → UI.**
