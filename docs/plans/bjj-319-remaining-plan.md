@@ -587,3 +587,8 @@ TL;DR: 배정(4b-1 백엔드: 역할·자격·동시 변경 코드 전환 / 4b-2
 - 테스트: 웹 approve/reject 라우트 테스트 신규, apply/preview 기존 테스트 갱신, 모바일 라우트 테스트 400 본문 갱신, dict 테스트.
 - 범위 밖(기록): `localValidationResponse` 공개 export, clients 라우트 로컬 400, 컨트롤러 ParseIntPipe, 공개 페이지 UI 재설계.
 - Dispatch metadata: `Phase: 4c-3` · `Execution: DELEGATE` · `Audit: SOL` · `Agent: worker` · `Model: opencode-go/glm-5.3-flash` · `Paths: frontend/src/app/api/schedule-change-requests/** (+helper/tests), mobile/src/app/api/schedule-change-requests/** (+helper/tests), frontend/src/features/service-records/utils/schedule-change-error.ts, mobile/src/lib/service-records/schedule-change-error.ts(+test)` · `Depends: Task 4.3(4c-2)`
+
+**Task 4c-3 실행 결과 (2026-09-15):** worker unit `11db7510c`(base `36af62790`) → 통합 `4ec3297e8`(19 files, +661/−116). 웹 4라우트(401→`unauthorizedResponse`, catch→`errorResponse` problem passthrough, success→`backendJsonResponse`+`withNoStore`), 모바일 4라우트 로컬 400→problem helper, 공통 헬퍼 계약(VALIDATION_FAILED·path/body pointer·ko-KR·problem+json, shared private `localValidationResponse` 모델), UI dict 양 플랫폼 8코드 완성. red-first web 8F/11P·mobile 6F/11P → 40/40·38/38.
+- 검증(통합 `4ec3297e8`): frontend 238/1,580, mobile 250/1,656, backend 356/5,058, shared 369+86, 3종 타입·UI 게이트(베이스라인 불변)·ci 통과. 감사 **SHIP/HIGH**(테스트 수 독립 검산 일치).
+- carried(auditor): 웹 helper의 scheduleId/request-id 쌍 미사용(테스트로 고정·dead export), `localValidationResponse` 계약 3중 복제(공유 export 제안), 웹 apply/preview scheduleId 미검증(기존), BFF error 본문에서 message/statusCode 별칭 제거(인레포 소비자 없음), `errorResponseMode` no-op 별칭(기존).
+- 기록: inventory BFF 8행 migrated·`schedule-bff-ui-alignment` finding 추가. unit worktree/branch 정리. **Phase 4c 완료(4c-1·4c-2·4c-3)** — 다음은 Phase 5(계약·문서 남은 웹/서버 경로).
