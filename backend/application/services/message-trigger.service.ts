@@ -54,10 +54,7 @@ import {
     IMessageTriggerRuleBranchOverrideRepository,
 } from "domain/repositories/message-trigger-rule-branch-override.repository.interface";
 import { isRuleActiveForBranch } from "domain/utils/message-trigger-rule-activation";
-import {
-    SERVICE_RECORD_LINK_RULE_ID,
-    isServiceRecordLinkManualDedupeKey,
-} from "domain/constants/service-record-link-message";
+import { isManualMessageTriggerJob, isManualMessageTriggerRule } from "domain/constants/message-trigger-job-ownership";
 import {
     MESSAGE_TRIGGER_JOB_REPOSITORY,
     IMessageTriggerJobRepository,
@@ -1758,8 +1755,7 @@ export class MessageTriggerService {
     }
 
     private isAutomaticMessageJob(job: Pick<MessageTriggerJobEntity, "templateKey" | "ruleId" | "dedupeKey">): boolean {
-        if (job.templateKey === MessageTriggerTemplateKey.SERVICE_END_NOTICE) return false;
-        return !(job.ruleId === SERVICE_RECORD_LINK_RULE_ID && isServiceRecordLinkManualDedupeKey(job.dedupeKey));
+        return !isManualMessageTriggerJob(job);
     }
 
     private orderRetroactiveCandidates(
@@ -3280,17 +3276,14 @@ export class MessageTriggerService {
 
     private async processStaleRule(rule: MessageTriggerRuleEntity): Promise<void> {
         if (!rule.branchId) return;
-        const automaticRule = rule.templateKey !== MessageTriggerTemplateKey.SERVICE_END_NOTICE;
+        const automaticRule = !isManualMessageTriggerRule(rule);
         if (automaticRule && (!this.messageAutomationActivationService || !this.messageAutomationBranchLockService)) {
             throw new ServiceUnavailableException("Message automation activation is not configured");
         }
         const reconcile = async (transaction?: Prisma.TransactionClient): Promise<void> => {
-            // A stale legacy generation may still carry an active bit from
-            // before the branch parent existed. Read the parent under the same
-            // branch lock as the generation fence; an OFF parent is a no-op.
-            if (automaticRule && !(await this.messageAutomationActivationService!.getTriggerDispatchEnabled(rule.branchId!, transaction))) {
-                return;
-            }
+            // Disabled branches must drain their stale markers as well: leaving
+            // them in the oldest bounded page would block every other branch.
+            const parentEnabled = !automaticRule || await this.messageAutomationActivationService!.getTriggerDispatchEnabled(rule.branchId!, transaction);
 
             const readUpdatedAt = rule.updatedAt;
             const canceled = await this.jobRepository.cancelPendingForRuleGeneration(
@@ -3298,7 +3291,7 @@ export class MessageTriggerService {
                 rule.id,
                 readUpdatedAt,
                 true,
-                rule.isActive ? "규칙 재생성" : "Rule deactivated",
+                !parentEnabled ? MESSAGE_AUTOMATION_PARENT_DISABLED_REASON : rule.isActive ? "규칙 재생성" : "Rule deactivated",
                 {},
                 transaction,
             );
@@ -3306,7 +3299,7 @@ export class MessageTriggerService {
             // Never rebuild or clear a newer generation.
             if (canceled === null) return;
 
-            if (rule.isActive) {
+            if (parentEnabled && rule.isActive) {
                 await this.rebuildJobsForRule(rule.branchId, rule, false, transaction);
             }
 

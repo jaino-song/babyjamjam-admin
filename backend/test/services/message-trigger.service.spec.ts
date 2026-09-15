@@ -3091,6 +3091,33 @@ describe("MessageTriggerService", () => {
         );
     });
 
+    it("drains older OFF-branch rules so the bounded stale queue reaches an enabled branch", async () => {
+        const { service, ruleRepository, messageAutomationActivationService } = createDispatchService();
+        const disabledRules = Array.from({ length: 12 }, (_, index) => createRule({
+            id: `off-rule-${index}`,
+            branchId,
+            isActive: index === 0, // Legacy active bits must not rebuild under an OFF parent.
+            jobsStale: true,
+        }));
+        const enabledRule = createRule({ id: "enabled-branch-rule", branchId: "other-branch", jobsStale: true });
+        const queue = [...disabledRules, enabledRule];
+        messageAutomationActivationService.getTriggerDispatchEnabled.mockImplementation(async (id: string) => id !== branchId);
+        ruleRepository.findStaleRules.mockImplementation(async () => queue.filter((rule) => rule.jobsStale).slice(0, 10));
+        ruleRepository.clearJobsStaleIfUnchanged.mockImplementation(async (id: string) => {
+            queue.find((rule) => rule.id === id)!.jobsStale = false;
+            return true;
+        });
+        const internals = service as unknown as ServiceInternals;
+        const rebuildSpy = jest.spyOn(internals, "rebuildJobsForRule").mockResolvedValue(undefined);
+
+        await internals.processStaleRuleRebuilds();
+        await internals.processStaleRuleRebuilds();
+
+        expect(queue.every((rule) => !rule.jobsStale)).toBe(true);
+        expect(rebuildSpy).toHaveBeenCalledTimes(1);
+        expect(rebuildSpy).toHaveBeenCalledWith(enabledRule.branchId, enabledRule, false, expect.any(Object));
+    });
+
     it("does not rebuild or clear when a second stale worker loses the generation fence", async () => {
         const { service, ruleRepository, jobRepository } = createDispatchService();
         const staleRule = createRule({

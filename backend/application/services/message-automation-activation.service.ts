@@ -12,14 +12,13 @@ import {
     MessageAutomationDatabase,
 } from "domain/repositories/message-automation-database.repository.interface";
 import { MessageTriggerRuleEntity } from "domain/entities/message-trigger-rule.entity";
-import { MessageTriggerTemplateKey } from "domain/constants/message-trigger-catalog";
 import {
     SERVICE_RECORD_LINK_BRANCH_DISABLED_REASON,
-    SERVICE_RECORD_LINK_MANUAL_DEDUPE_PATTERN,
     SERVICE_RECORD_LINK_RULE_ID,
     SERVICE_RECORD_LINK_SCHEDULING_RETRY_REASON,
-    isServiceRecordLinkManualDedupeKey,
 } from "domain/constants/service-record-link-message";
+import { isManualMessageTriggerJob, isManualMessageTriggerRule } from "domain/constants/message-trigger-job-ownership";
+import { manualMessageTriggerJobPredicate } from "application/utils/message-trigger-job-ownership-sql";
 import {
     AdminAuditActor,
     AdminAuditEventWriter,
@@ -361,12 +360,11 @@ export class MessageAutomationActivationService {
         const ruleRows = lockedRules ?? await this.lockAutomaticRules(branchId, transaction);
         const globalRuleIds: string[] = [];
         for (const rule of ruleRows) {
+            if (isManualMessageTriggerRule(rule)) continue;
             if (rule.branchId === null) {
-                if (rule.templateKey === MessageTriggerTemplateKey.SERVICE_END_NOTICE) continue;
                 globalRuleIds.push(rule.id);
                 continue;
             }
-            if (rule.templateKey === MessageTriggerTemplateKey.SERVICE_END_NOTICE) continue;
             if (rule.isActive || !rule.jobsStale) {
                 await transaction.message_trigger_rule.update({
                     where: { id: rule.id },
@@ -411,6 +409,9 @@ export class MessageAutomationActivationService {
     }
 
     private async cancelMutableJobs(branchId: string, transaction: AutomationTransaction): Promise<void> {
+        const manualJob = manualMessageTriggerJobPredicate({
+            templateKey: Prisma.sql`j.template_key`, ruleId: Prisma.sql`j.rule_id`, dedupeKey: Prisma.sql`j.dedupe_key`,
+        });
         const rows = await transaction.$queryRaw<JobLockRow[]>(Prisma.sql`
             SELECT
                 j.id,
@@ -421,7 +422,7 @@ export class MessageAutomationActivationService {
             FROM "message_trigger_job" j
             JOIN "message_trigger_rule" r ON r.id = j.rule_id
             WHERE j.branch_id = ${branchId}::uuid
-              AND r.template_key <> ${MessageTriggerTemplateKey.SERVICE_END_NOTICE}
+              AND NOT ${manualJob}
               AND (
                     j.status IN ('pending', 'processing')
                     OR (
@@ -429,10 +430,6 @@ export class MessageAutomationActivationService {
                         AND j.rule_id = ${SERVICE_RECORD_LINK_RULE_ID}
                         AND j.cancel_reason = ${SERVICE_RECORD_LINK_SCHEDULING_RETRY_REASON}
                     )
-              )
-              AND NOT (
-                    j.rule_id = ${SERVICE_RECORD_LINK_RULE_ID}
-                    AND j.dedupe_key ~ ${SERVICE_RECORD_LINK_MANUAL_DEDUPE_PATTERN}
               )
             ORDER BY j.id
             FOR UPDATE
@@ -464,15 +461,15 @@ export class MessageAutomationActivationService {
         ruleId: string,
         transaction: AutomationTransaction,
     ): Promise<void> {
+        const manualJob = manualMessageTriggerJobPredicate({
+            templateKey: Prisma.sql`template_key`, ruleId: Prisma.sql`rule_id`, dedupeKey: Prisma.sql`dedupe_key`,
+        });
         const rows = await transaction.$queryRaw<Array<{ id: string; status: string; cancel_reason: string | null }>>(Prisma.sql`
             SELECT id, status, cancel_reason
             FROM "message_trigger_job"
             WHERE branch_id = ${branchId}::uuid
               AND rule_id = ${ruleId}
-              AND NOT (
-                    rule_id = ${SERVICE_RECORD_LINK_RULE_ID}
-                    AND dedupe_key ~ ${SERVICE_RECORD_LINK_MANUAL_DEDUPE_PATTERN}
-              )
+              AND NOT ${manualJob}
               AND (
                     status IN ('pending', 'processing')
                     OR (status = 'failed' AND cancel_reason = ${SERVICE_RECORD_LINK_SCHEDULING_RETRY_REASON})
@@ -536,17 +533,13 @@ export class MessageAutomationActivationService {
     }
 
     private assertAutomaticRule(templateKey: string, ruleId: string): void {
-        if (templateKey === MessageTriggerTemplateKey.SERVICE_END_NOTICE) {
+        if (isManualMessageTriggerRule({ templateKey, id: ruleId })) {
             throw new BadRequestException(`Rule ${ruleId} is a manual message rule`);
         }
     }
 
     private isAutomaticJob(templateKey: string, ruleId: string, dedupeKey: string): boolean {
-        if (templateKey === MessageTriggerTemplateKey.SERVICE_END_NOTICE) return false;
-        if (ruleId === SERVICE_RECORD_LINK_RULE_ID && isServiceRecordLinkManualDedupeKey(dedupeKey)) {
-            return false;
-        }
-        return true;
+        return !isManualMessageTriggerJob({ templateKey, ruleId, dedupeKey });
     }
 
     private parentDisabledConflict(): ConflictException {

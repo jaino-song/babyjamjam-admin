@@ -55,6 +55,7 @@ export function isConfigurableSmsTriggerTemplate(
 }
 
 export const AGENT_SMS_RULE_ID_PREFIX = "agent-sms:";
+export const AGENT_SMS_RETRY_DEDUPE_KEY_PREFIX = "agent-sms-retry:";
 
 export type SupportedTriggerProvider = "sms";
 

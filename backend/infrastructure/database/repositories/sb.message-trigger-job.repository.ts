@@ -19,10 +19,9 @@ import {
 import { MESSAGE_AUTOMATION_INTENT_RULE_ID } from "domain/constants/message-automation-intent";
 import { MESSAGE_SENDER_APPROVAL_REQUIRED_CANCEL_REASON } from "domain/constants/message-automation-policy";
 import {
-    SERVICE_RECORD_LINK_MANUAL_DEDUPE_PATTERN,
-    SERVICE_RECORD_LINK_RULE_ID,
     SERVICE_RECORD_LINK_SCHEDULING_RETRY_REASON,
 } from "domain/constants/service-record-link-message";
+import { manualMessageTriggerJobPredicate } from "application/utils/message-trigger-job-ownership-sql";
 
 type MessageTriggerJobPrismaRow = {
     id: string;
@@ -201,24 +200,19 @@ export class SbMessageTriggerJobRepository implements IMessageTriggerJobReposito
         const ruleBranchPredicate = branchId === null
             ? Prisma.sql`rule.branch_id IS NULL`
             : Prisma.sql`(rule.branch_id = ${branchId}::uuid OR rule.branch_id IS NULL)`;
+        const manualJob = manualMessageTriggerJobPredicate({
+            templateKey: Prisma.sql`candidate.template_key`, ruleId: Prisma.sql`candidate.rule_id`, dedupeKey: Prisma.sql`candidate.dedupe_key`,
+        });
         const ruleActivationPredicate = branchId === null
             ? Prisma.sql`
                 (
-                    candidate.template_key = ${MessageTriggerTemplateKey.SERVICE_END_NOTICE}
-                    OR (
-                        candidate.rule_id = ${SERVICE_RECORD_LINK_RULE_ID}
-                        AND candidate.dedupe_key ~ ${SERVICE_RECORD_LINK_MANUAL_DEDUPE_PATTERN}
-                    )
+                    ${manualJob}
                     OR rule.is_active = true
                 )
             `
             : Prisma.sql`
                 (
-                    candidate.template_key = ${MessageTriggerTemplateKey.SERVICE_END_NOTICE}
-                    OR (
-                        candidate.rule_id = ${SERVICE_RECORD_LINK_RULE_ID}
-                        AND candidate.dedupe_key ~ ${SERVICE_RECORD_LINK_MANUAL_DEDUPE_PATTERN}
-                    )
+                    ${manualJob}
                     OR (
                         rule.is_active = true
                         AND (
@@ -262,7 +256,7 @@ export class SbMessageTriggerJobRepository implements IMessageTriggerJobReposito
                 INNER JOIN candidate_job AS candidate
                     ON candidate.rule_id = rule.id
                 WHERE ${ruleBranchPredicate}
-                  AND rule.jobs_stale = false
+                  AND (rule.jobs_stale = false OR ${manualJob})
                   AND ${ruleActivationPredicate}
                 FOR UPDATE OF rule
             )
@@ -642,6 +636,9 @@ export class SbMessageTriggerJobRepository implements IMessageTriggerJobReposito
                 Prisma.sql`branch_id = ${branchId}::uuid`,
                 Prisma.sql`rule_id = ${ruleId}`,
                 Prisma.sql`status IN ('pending', 'processing')`,
+                Prisma.sql`NOT ${manualMessageTriggerJobPredicate({
+                    templateKey: Prisma.sql`template_key`, ruleId: Prisma.sql`rule_id`, dedupeKey: Prisma.sql`dedupe_key`,
+                })}`,
             ];
             if (scope.clientId !== undefined) {
                 predicates.push(Prisma.sql`client_id = ${scope.clientId}`);
