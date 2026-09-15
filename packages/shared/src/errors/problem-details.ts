@@ -48,7 +48,16 @@ export type ProblemCode =
     | "SERVICE_RECORD_WRITE_TARGET_CHANGED"
     // Registered employee-schedule codes (EM-CAT-03). BJJ-319 phase 4c-1.
     | "EMPLOYEE_SCHEDULE_OVERLAP"
-    | "SCHEDULE_RETENTION_BLOCKED";
+    | "SCHEDULE_RETENTION_BLOCKED"
+    // Registered schedule-change codes (EM-CAT-03). BJJ-319 phase 4c-2.
+    | "SERVICE_RECORD_PLANNED_DATE_UNAVAILABLE"
+    | "INVALID_SCHEDULE_DATE"
+    | "ALL_SESSIONS_SUBMITTED"
+    | "REQUEST_ALREADY_PENDING"
+    | "REQUEST_NOT_PENDING"
+    | "SCHEDULE_DATE_NOT_POSTPONED"
+    | "REQUEST_STALE"
+    | "SCHEDULE_CHANGE_UNCOMPUTABLE";
 
 export type ProblemOutcome =
     | "NOT_APPLIED"
@@ -206,6 +215,15 @@ const PROBLEM_CODES: readonly ProblemCode[] = [
     // Registered employee-schedule codes (EM-CAT-03). BJJ-319 phase 4c-1.
     "EMPLOYEE_SCHEDULE_OVERLAP",
     "SCHEDULE_RETENTION_BLOCKED",
+    // Registered schedule-change codes (EM-CAT-03). BJJ-319 phase 4c-2.
+    "SERVICE_RECORD_PLANNED_DATE_UNAVAILABLE",
+    "INVALID_SCHEDULE_DATE",
+    "ALL_SESSIONS_SUBMITTED",
+    "REQUEST_ALREADY_PENDING",
+    "REQUEST_NOT_PENDING",
+    "SCHEDULE_DATE_NOT_POSTPONED",
+    "REQUEST_STALE",
+    "SCHEDULE_CHANGE_UNCOMPUTABLE",
 ];
 
 const PROBLEM_ERROR_CODES: readonly ProblemErrorCode[] = [
@@ -677,6 +695,95 @@ const PROBLEM_DEFINITIONS: Readonly<
         detail: {
             "ko-KR": "일정이 시작했거나 연결된 운영 또는 이력 데이터가 있어 삭제할 수 없어요.",
             "en-US": "This schedule has started or has linked operational or history data and cannot be deleted.",
+        },
+    },
+    // Registered schedule-change codes (EM-CAT-03). BJJ-319 phase 4c-2.
+    SERVICE_RECORD_PLANNED_DATE_UNAVAILABLE: {
+        status: 409,
+        title: {
+            "ko-KR": "저장된 예정 회차를 확인할 수 없어요",
+            "en-US": "Planned session dates are unavailable",
+        },
+        detail: {
+            "ko-KR": "저장된 예정 회차 정보를 확인할 수 없어 일정을 변경할 수 없어요.",
+            "en-US": "The stored planned session dates could not be read, so the schedule cannot be changed.",
+        },
+    },
+    INVALID_SCHEDULE_DATE: {
+        status: 400,
+        title: {
+            "ko-KR": "선택한 날짜로 변경할 수 없어요",
+            "en-US": "The selected date cannot be used",
+        },
+        detail: {
+            "ko-KR": "선택한 날짜로는 회차 일정을 변경할 수 없어요.",
+            "en-US": "The session schedule cannot be changed to the selected date.",
+        },
+    },
+    ALL_SESSIONS_SUBMITTED: {
+        status: 409,
+        title: {
+            "ko-KR": "모든 회차가 제출됐어요",
+            "en-US": "All sessions were submitted",
+        },
+        detail: {
+            "ko-KR": "모든 회차가 이미 제출되어 일정을 변경할 수 없어요.",
+            "en-US": "Every session has already been submitted, so the schedule cannot be changed.",
+        },
+    },
+    REQUEST_ALREADY_PENDING: {
+        status: 409,
+        title: {
+            "ko-KR": "대기 중인 일정 변경 요청이 있어요",
+            "en-US": "A schedule change request is pending",
+        },
+        detail: {
+            "ko-KR": "처리 대기 중인 일정 변경 요청이 있어 새 요청을 만들 수 없어요.",
+            "en-US": "A schedule change request is already pending, so a new one cannot be created.",
+        },
+    },
+    REQUEST_NOT_PENDING: {
+        status: 409,
+        title: {
+            "ko-KR": "이미 처리된 요청이에요",
+            "en-US": "The request was already decided",
+        },
+        detail: {
+            "ko-KR": "이미 처리됐거나 취소된 요청이라 다시 처리할 수 없어요.",
+            "en-US": "This request was already approved or canceled, so it cannot be processed again.",
+        },
+    },
+    SCHEDULE_DATE_NOT_POSTPONED: {
+        status: 409,
+        title: {
+            "ko-KR": "이후 날짜로만 변경할 수 있어요",
+            "en-US": "Only a later date is allowed",
+        },
+        detail: {
+            "ko-KR": "기존 회차보다 이후 날짜로만 일정을 적용할 수 있어요.",
+            "en-US": "The schedule can only be applied to a date after the existing session.",
+        },
+    },
+    REQUEST_STALE: {
+        status: 409,
+        title: {
+            "ko-KR": "요청을 적용할 수 없어요",
+            "en-US": "The request can no longer be applied",
+        },
+        detail: {
+            "ko-KR": "요청 이후 일정이 바뀌어 적용할 수 없어요. 최신 상태를 확인해 주세요.",
+            "en-US": "The schedule changed after the request was created, so it cannot be applied. Check the latest state.",
+        },
+    },
+    SCHEDULE_CHANGE_UNCOMPUTABLE: {
+        status: 409,
+        title: {
+            "ko-KR": "일정을 계산할 수 없어요",
+            "en-US": "The schedule could not be calculated",
+        },
+        detail: {
+            "ko-KR": "고객 회기 정보나 배정 기간이 없어 일정을 계산할 수 없어요. 정보를 확인한 뒤 다시 시도해 주세요.",
+            "en-US": "The client's session count or assignment period is missing, so the schedule could not be calculated. Check the information and try again.",
         },
     },
 };
