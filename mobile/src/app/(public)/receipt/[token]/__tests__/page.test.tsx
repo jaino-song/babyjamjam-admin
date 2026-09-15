@@ -70,9 +70,11 @@ describe("ReceiptLinkPage", () => {
             throw new Error(`unexpected fetch: ${href}`);
         }) as unknown as typeof fetch;
 
-        render(<ReceiptLinkPage />);
+        const { container } = render(<ReceiptLinkPage />);
 
         expect(await screen.findByRole("link", { name: "이미지 저장" })).toBeInTheDocument();
+        expect(container.querySelector('[data-slot="crumbs"]')).toHaveTextContent("2단계 · 영수증 저장");
+        expect(container.querySelector('[data-slot="bar"] i')).toHaveStyle("width: 100%");
         expect(screen.getByRole("img", { name: "산모님 본인부담금 영수증" })).toHaveAttribute(
             "src",
             "/api/receipt/efr_t/image",
@@ -109,6 +111,8 @@ describe("ReceiptLinkPage", () => {
         expect(container.querySelector('[data-slot="srec"].srec')).toBeInTheDocument();
         expect(container.querySelector('[data-slot="top"].top')).toBeInTheDocument();
         expect(container.querySelector('[data-slot="body"].body')).toBeInTheDocument();
+        expect(container.querySelector('[data-slot="crumbs"]')).toHaveTextContent("1단계 · 본인 확인");
+        expect(container.querySelector('[data-slot="bar"] i')).toHaveStyle("width: 50%");
         expect(screen.getByRole("heading", { name: "산모님 본인 확인" })).toBeInTheDocument();
         expect(screen.queryByText(/본인부담금 영수증은 산모님 본인만 열람/)).not.toBeInTheDocument();
         expect(screen.queryByText(/입력하신 생년월일은 본인 확인에만 사용/)).not.toBeInTheDocument();
@@ -565,6 +569,26 @@ describe("ReceiptLinkPage", () => {
         await reachVerifyScreenAndSubmit("940315");
 
         await screen.findByRole("heading", { name: "링크 유효기간이 지났습니다" });
+    });
+
+    it("hides the workflow step metadata and progress bar on an expired link (F10)", async () => {
+        global.fetch = jest.fn(async () => jsonResponse(410, { reason: "expired" })) as unknown as typeof fetch;
+
+        const { container } = render(<ReceiptLinkPage />);
+
+        await screen.findByRole("heading", { name: "링크 유효기간이 지났습니다" });
+        expect(container.querySelector('[data-slot="crumbs"]')).not.toBeInTheDocument();
+        expect(container.querySelector('[data-slot="bar"]')).not.toBeInTheDocument();
+    });
+
+    it("hides the workflow step metadata and progress bar on an invalid link (F10)", async () => {
+        global.fetch = jest.fn(async () => jsonResponse(404, { reason: "not_found" })) as unknown as typeof fetch;
+
+        const { container } = render(<ReceiptLinkPage />);
+
+        await screen.findByRole("heading", { name: "사용할 수 없는 링크입니다" });
+        expect(container.querySelector('[data-slot="crumbs"]')).not.toBeInTheDocument();
+        expect(container.querySelector('[data-slot="bar"]')).not.toBeInTheDocument();
     });
 
     it("shows the format message when verify answers 400 invalid_format (F2)", async () => {

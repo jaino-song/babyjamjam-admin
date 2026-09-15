@@ -263,6 +263,7 @@ export function ReceiptLinkScreen({ token }: ReceiptLinkScreenProps) {
     const stepNumber = screen.kind === "image" ? "2단계" : "1단계";
     const stepTitle = screen.kind === "image" ? "영수증 저장" : "본인 확인";
     const progress = screen.kind === "image" ? 100 : 50;
+    const showWorkflowProgress = screen.kind !== "expired" && screen.kind !== "invalid";
     const branchName = "branchName" in screen ? screen.branchName : BRANCH_FALLBACK;
     const receiptOwnerLabel = screen.kind === "image" && screen.clientName ? `${screen.clientName} 산모님` : "산모님";
 
@@ -286,22 +287,26 @@ export function ReceiptLinkScreen({ token }: ReceiptLinkScreenProps) {
                     >
                         {branchName}
                     </div>
+                    {showWorkflowProgress ? (
+                        <div
+                            className="crumbs"
+                            data-component="mobile_receipt_public-page_top-bar_meta_crumbs"
+                            data-slot="crumbs"
+                        >
+                            {stepNumber} · <b>{stepTitle}</b>
+                        </div>
+                    ) : null}
+                </div>
+                {showWorkflowProgress ? (
                     <div
-                        className="crumbs"
-                        data-component="mobile_receipt_public-page_top-bar_meta_crumbs"
-                        data-slot="crumbs"
+                        className="bar"
+                        data-component="mobile_receipt_public-page_top-bar_progress"
+                        data-slot="bar"
+                        aria-hidden="true"
                     >
-                        {stepNumber} · <b>{stepTitle}</b>
+                        <i style={{ width: `${progress}%` }} />
                     </div>
-                </div>
-                <div
-                    className="bar"
-                    data-component="mobile_receipt_public-page_top-bar_progress"
-                    data-slot="bar"
-                    aria-hidden="true"
-                >
-                    <i style={{ width: `${progress}%` }} />
-                </div>
+                ) : null}
             </div>
 
             <div className="body" data-component="mobile_receipt_public-page_body" data-slot="body">
