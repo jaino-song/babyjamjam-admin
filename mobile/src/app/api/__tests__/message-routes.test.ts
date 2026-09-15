@@ -75,7 +75,7 @@ describe("Message API routes", () => {
     const response = await listMessageLogs(createRequest("/api/message-logs"));
 
     expect(response.status).toBe(403);
-    await expect(response.json()).resolves.toEqual({ error: "Failed to fetch message logs" });
+    await expect(response.json()).resolves.toEqual({ error: expect.stringMatching(/[가-힣].*요[.!]?$/) });
   });
 
   it("forwards message log limit and skip params", async () => {
@@ -109,7 +109,7 @@ describe("Message API routes", () => {
     );
 
     expect(response.status).toBe(429);
-    await expect(response.json()).resolves.toEqual({ error: "Failed to fetch upcoming message trigger jobs" });
+    await expect(response.json()).resolves.toEqual({ error: expect.stringMatching(/[가-힣].*요[.!]?$/) });
   });
 
   it("forwards a safe trigger-template message while omitting diagnostics", async () => {
@@ -129,7 +129,7 @@ describe("Message API routes", () => {
 
     expect(response.status).toBe(422);
     const body = await response.json();
-    expect(body).toEqual({ error: "invalid provider" });
+    expect(body).toEqual({ error: "선택한 제공인력 정보가 올바르지 않아요." });
     expect(JSON.stringify(body)).not.toContain("sk_test_secret");
     expect(JSON.stringify(body)).not.toContain("SELECT * FROM Provider");
   });
@@ -151,7 +151,7 @@ describe("Message API routes", () => {
 
     expect(response.status).toBe(status);
     const body = await response.json();
-    expect(body).toEqual({ error: "Failed to fetch message trigger templates" });
+    expect(body).toEqual({ error: expect.stringMatching(/[가-힣].*요[.!]?$/) });
     expect(JSON.stringify(body)).not.toContain(message);
     expect(JSON.stringify(body)).not.toContain("sk_test_secret");
   });

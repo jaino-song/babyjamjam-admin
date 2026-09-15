@@ -1,4 +1,6 @@
 "use client";
+import { getUserErrorMessage } from "@babyjamjam/shared";
+
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -8,6 +10,7 @@ import dynamic from "next/dynamic";
 import { useRouter, useSearchParams } from "next/navigation";
 import { formatClientBirthdayAsYYMMDD } from "@/lib/date/format-client-birthday";
 import { formatDateForDisplay } from "@/lib/date/format-date-for-display";
+import { formatKoreanPhoneNumber, normalizeKoreanPhoneDigits } from "@/lib/phone";
 import {
   FileText,
   FileSignature,
@@ -40,6 +43,7 @@ import type { EformsignDocument, EformsignDocumentOption } from "@/lib/eformsign
 import { useDebounce } from "use-debounce";
 import {
   DocumentFilterType,
+  type DocumentStatusCategory,
   contractStatusBadgeType,
   mapDocStatusLabel,
   getStatusCategory,
@@ -253,7 +257,7 @@ function formatDateTime(timestamp: number): string {
 }
 
 function getSignatureProgress(
-  category: "completed" | "expired" | "in-progress",
+  category: DocumentStatusCategory,
   hasOpenedDocument: boolean,
   isCustomerSigned: boolean
 ) {
@@ -268,41 +272,6 @@ function getSignatureProgress(
     { label: "계약서 완료", done: isCompleted },
   ];
   return steps;
-}
-
-function normalizePhoneNumber(
-  value:
-    | string
-    | null
-    | undefined
-    | {
-        country_code?: string;
-        phone_number?: string;
-      }
-): string {
-  const rawValue =
-    typeof value === "string"
-      ? value
-      : `${value?.country_code ?? ""}${value?.phone_number ?? ""}`;
-  const digits = rawValue.replace(/\D/g, "");
-
-  if (!digits) return "";
-  if (digits.startsWith("0082")) return `0${digits.slice(4)}`;
-  if (digits.startsWith("82")) return `0${digits.slice(2)}`;
-  return digits;
-}
-
-function formatPhoneNumber(value: string): string {
-  const digits = normalizePhoneNumber(value);
-
-  if (digits.length <= 3) return digits;
-  if (digits.length <= 7) return `${digits.slice(0, 3)}-${digits.slice(3)}`;
-  return `${digits.slice(0, 3)}-${digits.slice(3, 7)}-${digits.slice(7, 11)}`;
-}
-
-function formatOptionalPhoneNumber(value: string | null | undefined): string {
-  const digits = normalizePhoneNumber(value);
-  return digits ? formatPhoneNumber(digits) : "–";
 }
 
 function formatCurrencyValue(value: string | null | undefined): string {
@@ -528,7 +497,7 @@ export default function ContractsPage() {
       toast({
         variant: "destructive",
         title: "계약 정보를 불러오지 못했어요",
-        description: "고객 정보를 직접 입력해 주세요",
+        description: getUserErrorMessage("고객 정보를 직접 입력해 주세요"),
       });
     }
   }, [registerCandidateQuery.isError, registerClientDocumentId, toast]);
@@ -694,7 +663,7 @@ export default function ContractsPage() {
         const failedItem = response.result?.fail_result?.find(
           (item) => item.document_id === deleteTargetDocumentId
         );
-        throw new Error(failedItem?.message || "문서 삭제에 실패했습니다.");
+        throw new Error(failedItem?.message || "문서 삭제에 실패했어요.");
       }
 
       if (selectedDocId === deleteTargetDocumentId) {
@@ -716,9 +685,9 @@ export default function ContractsPage() {
       toast({
         title: "문서를 삭제하지 못했어요",
         description:
-          deleteError instanceof Error
+          getUserErrorMessage(deleteError, deleteError instanceof Error
             ? deleteError.message
-            : "잠시 후 다시 시도해 주세요",
+            : "잠시 후 다시 시도해 주세요"),
         variant: "destructive",
       });
     }
@@ -729,8 +698,8 @@ export default function ContractsPage() {
       <div data-component="desktop_contracts_error" className="p-[calc(24px*var(--glint-ui-scale,1))]">
         <div data-component="desktop_contracts_error_banner" className="rounded-[18px] bg-v3-burgundy-light p-[calc(24px*var(--glint-ui-scale,1))] text-center text-v3-burgundy">
           {authError
-            ? "인증에 실패했습니다. 페이지를 새로고침 해주세요."
-            : "문서를 불러오는데 실패했습니다."}
+            ? "인증에 실패했어요. 페이지를 새로고침 해 주세요."
+            : "문서를 불러오는데 실패했어요."}
         </div>
       </div>
     );
@@ -1125,7 +1094,7 @@ export default function ContractsPage() {
         }}
         data-component="desktop_contracts_modals_delete-approval"
         title="문서를 삭제하시겠습니까?"
-        description="전자문서가 취소되어 수신자가 더 이상 서명할 수 없습니다. 복구할 수 없습니다."
+        description="전자문서가 취소되어 수신자가 더 이상 서명할 수 없어요. 복구할 수 없어요."
         approvalLabel="삭제"
         pendingLabel="삭제 중..."
         approvalVariant="destructive"
@@ -1227,9 +1196,9 @@ export function ContractDetail({
   const reRequestStepSeq = detailedDocument.current_status?.step_index ?? "";
   const currentRecipient = detailedDocument.current_status?.step_recipients?.[0];
   const contactInfo = extractDocumentContactInfo(detailedDocument);
-  const initialRecipientPhone = normalizePhoneNumber(currentRecipient?.sms);
+  const initialRecipientPhone = normalizeKoreanPhoneDigits(currentRecipient?.sms);
   const [recipientPhone, setRecipientPhone] = useState(initialRecipientPhone);
-  const recipientPhoneDigits = normalizePhoneNumber(recipientPhone);
+  const recipientPhoneDigits = normalizeKoreanPhoneDigits(recipientPhone);
   const hasEditedRecipientPhone = recipientPhoneDigits !== initialRecipientPhone;
   const isRecipientPhoneValid =
     !hasEditedRecipientPhone || (recipientPhoneDigits.length >= 10 && recipientPhoneDigits.length <= 11);
@@ -1458,7 +1427,7 @@ export function ContractDetail({
     onError: (error) => {
       toast({
         variant: "destructive",
-        description: error instanceof Error ? error.message : "재요청하지 못했어요",
+        description: getUserErrorMessage(error, error instanceof Error ? error.message : "재요청하지 못했어요"),
       });
     },
   });
@@ -1573,7 +1542,7 @@ export function ContractDetail({
       toast({
         variant: "destructive",
         title: "최종 확인을 마치지 못했어요",
-        description: error instanceof Error ? error.message : "잠시 후 다시 시도해 주세요",
+        description: getUserErrorMessage(error, error instanceof Error ? error.message : "잠시 후 다시 시도해 주세요"),
       });
     },
   });
@@ -1592,7 +1561,7 @@ export function ContractDetail({
       toast({
         variant: "destructive",
         title: "영수증 문자를 보내지 못했습니다",
-        description: describeReceiptLinkError(error),
+        description: getUserErrorMessage(describeReceiptLinkError(error)),
       });
     },
   });
@@ -1621,7 +1590,7 @@ export function ContractDetail({
     toast({
       variant: "destructive",
       title: "최종 확인을 마치지 못했어요",
-      description: message,
+      description: getUserErrorMessage(message),
     });
     closeStaffCompletionModal();
   };
@@ -1778,7 +1747,7 @@ export function ContractDetail({
     activityItems.push({
       icon: AlertTriangle,
       iconVariant: "danger",
-      text: "문서 기간이 만료되었습니다",
+      text: "문서 기간이 만료됐어요",
       time: formatDateTime(detailedDocument.updated_date),
     });
   } else {
@@ -1835,7 +1804,7 @@ export function ContractDetail({
             "–"
           ),
         },
-        { label: "연락처", value: formatOptionalPhoneNumber(contactInfo.phone) },
+        { label: "연락처", value: formatKoreanPhoneNumber(contactInfo.phone) || "–" },
         {
           label: "이메일",
           value: contactInfo.email ? (
@@ -1889,7 +1858,7 @@ export function ContractDetail({
       loading={isBaseDetailLoading}
       rows={[
         { label: "성명", value: provider1Name || "–" },
-        { label: "연락처", value: formatOptionalPhoneNumber(provider1Contact) },
+        { label: "연락처", value: formatKoreanPhoneNumber(provider1Contact) || "–" },
       ]}
     />
     ) : null,
@@ -1901,7 +1870,7 @@ export function ContractDetail({
       loading={isBaseDetailLoading}
       rows={[
         { label: "성명", value: provider2Name || "–" },
-        { label: "연락처", value: formatOptionalPhoneNumber(provider2Contact) },
+        { label: "연락처", value: formatKoreanPhoneNumber(provider2Contact) || "–" },
       ]}
     />
     ) : null,
@@ -2155,11 +2124,11 @@ export function ContractDetail({
               type="tel"
               inputMode="numeric"
               placeholder="010-1234-5678"
-              value={formatPhoneNumber(recipientPhoneDigits)}
+              value={formatKoreanPhoneNumber(recipientPhoneDigits)}
               onChange={(event) =>
-                setRecipientPhone(normalizePhoneNumber(event.target.value).slice(0, 11))
+                setRecipientPhone(normalizeKoreanPhoneDigits(event.target.value).slice(0, 11))
               }
-              maxLength={13}
+              maxLength={20}
               className="h-[calc(48px*var(--glint-ui-scale,1))] px-[calc(16px*var(--glint-ui-scale,1))]"
               error={hasEditedRecipientPhone && !isRecipientPhoneValid}
               aria-describedby={

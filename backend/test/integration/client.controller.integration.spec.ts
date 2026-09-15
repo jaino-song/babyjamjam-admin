@@ -4,8 +4,10 @@ import request from "supertest";
 import { ClientController } from "interface/controllers/client.controller";
 import { ClientService } from "application/services/client.service";
 import { JwtGuard } from "infrastructure/auth/jwt.guard";
+import { OwnerOrAdminGuard } from "infrastructure/auth/owner-or-admin.guard";
 import { TenantGuard } from "infrastructure/tenant/tenant.guard";
 import { ClientEntity } from "domain/entities/client.entity";
+import { GUARDS_METADATA } from "@nestjs/common/constants";
 
 describe("ClientController (Integration)", () => {
     // ============================================
@@ -14,6 +16,7 @@ describe("ClientController (Integration)", () => {
 
     let app: INestApplication;
     let clientService: jest.Mocked<ClientService>;
+    let ownerOrAdminAllowed: boolean;
 
     type ClientOverrides = Partial<{
         id: number;
@@ -99,6 +102,10 @@ describe("ClientController (Integration)", () => {
                 return true;
             },
         };
+        ownerOrAdminAllowed = true;
+        const mockOwnerOrAdminGuard = {
+            canActivate: () => ownerOrAdminAllowed,
+        };
 
         const moduleFixture: TestingModule = await Test.createTestingModule({
             controllers: [ClientController],
@@ -113,6 +120,8 @@ describe("ClientController (Integration)", () => {
             .useValue(mockAuthGuard)
             .overrideGuard(TenantGuard)
             .useValue(mockAuthGuard)
+            .overrideGuard(OwnerOrAdminGuard)
+            .useValue(mockOwnerOrAdminGuard)
             .compile();
 
         app = moduleFixture.createNestApplication();
@@ -124,6 +133,70 @@ describe("ClientController (Integration)", () => {
 
     afterEach(async () => {
         await app.close();
+    });
+
+    describe("unavailable employee activation confirmation", () => {
+        it("protects the activation-and-create route with owner/admin authority", () => {
+            const guards = Reflect.getMetadata(
+                GUARDS_METADATA,
+                ClientController.prototype.createWithEmployeeActivation,
+            ) ?? [];
+
+            expect(guards).toContain(OwnerOrAdminGuard);
+        });
+
+        it("enables employee activation only through the protected create route", async () => {
+            clientService.create.mockResolvedValue(createMockClient());
+            const body = {
+                name: "Unavailable employee client",
+                primaryEmployeeId: 10,
+                careCenter: false,
+                voucherClient: false,
+                breastPump: false,
+            };
+
+            await request(app.getHttpServer())
+                .post("/clients")
+                .send(body)
+                .expect(201);
+            expect(clientService.create).toHaveBeenLastCalledWith(
+                "org-1",
+                expect.objectContaining({ confirmedUnavailableEmployeeIds: undefined }),
+            );
+
+            await request(app.getHttpServer())
+                .post("/clients/with-employee-activation")
+                .send({ ...body, confirmedUnavailableEmployeeIds: [10] })
+                .expect(201);
+            expect(clientService.create).toHaveBeenLastCalledWith(
+                "org-1",
+                expect.objectContaining({ confirmedUnavailableEmployeeIds: [10] }),
+            );
+        });
+
+        it("allows normal creation but rejects activation for a non-owner/admin", async () => {
+            clientService.create.mockResolvedValue(createMockClient());
+            ownerOrAdminAllowed = false;
+            const body = {
+                name: "Role boundary client",
+                primaryEmployeeId: 10,
+                careCenter: false,
+                voucherClient: false,
+                breastPump: false,
+            };
+
+            await request(app.getHttpServer()).post("/clients").send(body).expect(201);
+            await request(app.getHttpServer())
+                .post("/clients/with-employee-activation")
+                .send({ ...body, confirmedUnavailableEmployeeIds: [10] })
+                .expect(403);
+
+            expect(clientService.create).toHaveBeenCalledTimes(1);
+            expect(clientService.create).toHaveBeenCalledWith(
+                "org-1",
+                expect.objectContaining({ confirmedUnavailableEmployeeIds: undefined }),
+            );
+        });
     });
 
     describe("business-day mismatch confirmation", () => {

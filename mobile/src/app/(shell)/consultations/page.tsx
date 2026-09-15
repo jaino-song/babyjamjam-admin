@@ -1,8 +1,10 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { CalendarDays, CircleCheck, CircleHelp, MessageCircle } from "lucide-react";
 
-import { ListCard, ListItemRow, ListLoadMoreButton, ListLoadMoreSentinel } from "@/components/app/mobile-redesign/primitives";
+import { ListCard, ListItemRow, ListLoadMoreSentinel } from "@/components/app/mobile-redesign/primitives";
+import { StatsBar } from "@/components/app/v3";
 import {
   DetailTabPills,
   InfoCard,
@@ -54,9 +56,11 @@ interface ConsultationRow {
   branchName: string;
   privacyAcceptedAtLabel: string;
   createdAtLabel: string;
+  createdAt: string;
 }
 
 const ALL_FILTER = "전체";
+const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
 
 function classifyVoucher(voucherType: string | null): VoucherKind {
   if (!voucherType) return "self";
@@ -169,6 +173,7 @@ function toRow(inquiry: ConsultationInquiry): ConsultationRow {
     branchName: inquiry.branchName ?? "-",
     privacyAcceptedAtLabel: formatConfirmedAt(inquiry.privacyAcceptedAt) ?? "-",
     createdAtLabel: formatConfirmedAt(inquiry.createdAt) ?? "-",
+    createdAt: inquiry.createdAt,
   };
 }
 
@@ -302,6 +307,7 @@ export default function ConsultationsPage() {
   const [search, setSearch] = useState("");
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<DetailTabId>("info");
+  const [statsReferenceTime] = useState(() => Date.now());
 
   const { data, isLoading, isError } = useConsultationInquiries({ limit: 100 });
   const markRead = useMarkConsultationInquiryAsRead();
@@ -316,6 +322,26 @@ export default function ConsultationsPage() {
 
   const unreadRows = useMemo(() => rows.filter((r) => r.status === "unread"), [rows]);
   const confirmedRows = useMemo(() => rows.filter((r) => r.status === "confirmed"), [rows]);
+  const statsItems = useMemo(() => {
+    const thirtyDaysAgo = statsReferenceTime - THIRTY_DAYS_MS;
+    const recentCount = rows.filter((row) => {
+      const createdAt = new Date(row.createdAt).getTime();
+      return Number.isFinite(createdAt) && createdAt >= thirtyDaysAgo && createdAt <= statsReferenceTime;
+    }).length;
+
+    return [
+      { label: "전체", value: rows.length, tone: "primary" as const, icon: MessageCircle },
+      { label: "지난 30일", value: recentCount, tone: "orange" as const, icon: CalendarDays },
+      {
+        label: "미확인",
+        value: unreadRows.length,
+        tone: "burgundy" as const,
+        icon: CircleHelp,
+        urgent: unreadRows.length > 0,
+      },
+      { label: "확인", value: confirmedRows.length, tone: "green" as const, icon: CircleCheck },
+    ];
+  }, [confirmedRows.length, rows, statsReferenceTime, unreadRows.length]);
   const searchedRows = useMemo(() => {
     const query = normalizeSearchValue(search);
     if (!query) return rows;
@@ -392,112 +418,118 @@ export default function ConsultationsPage() {
       isOpen={selectedRow !== null}
       onClose={() => setSelectedId(null)}
       list={
-        <div className="shell-content" data-component="mobile_consultations_detail-sheet_stack_list-page_content">
-          <ListCard
-            data-component="mobile_consultations_detail-sheet_stack_list-page_content_list-card"
-            title="상담 조회"
-            count={`${rows.length}건`}
-            filters={filterItems}
-            activeFilter={activeFilter}
-            onFilterChange={setActiveFilter}
-            beforeFilters={(
-              <MobileSearchBar
-                data-component="mobile_consultations_detail-sheet_stack_list-page_content_list-card_search"
-                label="consultations"
-                placeholder="이름, 연락처, 주소 검색"
-                value={search}
-                onChange={setSearch}
-              />
-            )}
-            scrollRef={scrollContainerRef}
-            loadMore={
-              isInitialLoad && hasMore ? (
-                <ListLoadMoreButton
-                  data-component="mobile_consultations_detail-sheet_stack_list-page_content_list-card_load-more_button"
-                  onLoadMore={loadMore}
-                />
-              ) : null
-            }
+        <div className="flex h-full min-h-0 flex-col">
+          <StatsBar
+            data-component="mobile_consultations_detail-sheet_stack_list-page_analytics-grid"
+            items={statsItems}
+            isLoading={isLoading}
+            variant="compact"
+          />
+          <div
+            className="shell-content"
+            data-component="mobile_consultations_detail-sheet_stack_list-page_content"
+            data-slot="consultations-content"
           >
-            {isLoading ? (
-              <div
-                style={{
-                  padding: "32px 16px",
-                  textAlign: "center",
-                  fontSize: "0.82rem",
-                  color: "hsl(var(--v3-text-muted))",
-                }}
-                data-component="mobile_consultations_detail-sheet_stack_list-page_content_list-card_body_loading"
-              >
-                불러오는 중...
-              </div>
-            ) : isError ? (
-              <div
-                style={{
-                  padding: "32px 16px",
-                  textAlign: "center",
-                  fontSize: "0.82rem",
-                  color: "hsl(var(--v3-burgundy))",
-                }}
-                data-component="mobile_consultations_detail-sheet_stack_list-page_content_list-card_body_error"
-              >
-                상담 문의를 불러오지 못했습니다.
-              </div>
-            ) : visibleSections.length === 0 ? (
-              <div
-                style={{
-                  padding: "32px 16px",
-                  textAlign: "center",
-                  fontSize: "0.82rem",
-                  color: "hsl(var(--v3-text-muted))",
-                }}
-                data-component="mobile_consultations_detail-sheet_stack_list-page_content_list-card_body_empty"
-              >
-                상담 문의가 없습니다.
-              </div>
-            ) : (
-              <>
-              {visibleSections.map((section) => (
-                <div className="section-block" key={section.title || "all"} data-component="mobile_consultations_detail-sheet_stack_list-page_content_list-card_body_section">
-                  {section.title && <div className="section-header" data-component="mobile_consultations_detail-sheet_stack_list-page_content_list-card_body_section_header">{section.title}</div>}
-                  {section.rows.map((row, idx) => (
-                    <ListItemRow
-                      key={row.id}
-                      data-component="mobile_consultations_detail-sheet_stack_list-page_content_list-card_body_section_row"
-                      style={{ animationDelay: `${Math.min(idx, 4) * 40}ms` }}
-                      className={row.status === "unread" ? "unread-row" : undefined}
-                      left={
-                        <div
-                          className={`list-avatar av-${row.status === "unread" ? "burgundy" : "green"}`}
-                          data-component="mobile_consultations_detail-sheet_stack_list-page_content_list-card_body_section_row_avatar"
-                        >
-                          {row.initial}
-                        </div>
-                      }
-                      name={row.name}
-                      metaClassName="consult-snippet"
-                      meta={
-                        <>
-                          <span className={`voucher-tag ${row.voucherKind}`}>{row.voucher}</span>
-                          <span className="snippet-sep">·</span>
-                          {row.due}
-                        </>
-                      }
-                      right={<span className="dday-sub">{row.right}</span>}
-                      onClick={() => handleSelectRow(row)}
-                    />
-                  ))}
-                </div>
-              ))}
-              {!isInitialLoad && hasMore && (
-                <ListLoadMoreSentinel
-                  data-component="mobile_consultations_detail-sheet_stack_list-page_content_list-card_body_load-sentinel"
-                  sentinelRef={sentinelRef}
+            <ListCard
+              data-component="mobile_consultations_detail-sheet_stack_list-page_content_list-card"
+              title="상담 조회"
+              count={`${rows.length}건`}
+              filters={filterItems}
+              activeFilter={activeFilter}
+              onFilterChange={setActiveFilter}
+              beforeFilters={(
+                <MobileSearchBar
+                  data-component="mobile_consultations_detail-sheet_stack_list-page_content_list-card_search"
+                  label="consultations"
+                  placeholder="이름, 연락처, 주소 검색"
+                  value={search}
+                  onChange={setSearch}
                 />
               )}
-              </>
-            )}
-          </ListCard>
+              scrollRef={scrollContainerRef}
+              loadMore={isInitialLoad && hasMore}
+              onLoadMore={loadMore}
+            >
+              {isLoading ? (
+                <div
+                  style={{
+                    padding: "32px 16px",
+                    textAlign: "center",
+                    fontSize: "0.82rem",
+                    color: "hsl(var(--v3-text-muted))",
+                  }}
+                  data-component="mobile_consultations_detail-sheet_stack_list-page_content_list-card_body_loading"
+                >
+                  불러오는 중...
+                </div>
+              ) : isError ? (
+                <div
+                  style={{
+                    padding: "32px 16px",
+                    textAlign: "center",
+                    fontSize: "0.82rem",
+                    color: "hsl(var(--v3-burgundy))",
+                  }}
+                  data-component="mobile_consultations_detail-sheet_stack_list-page_content_list-card_body_error"
+                >
+                  상담 문의를 불러오지 못했습니다.
+                </div>
+              ) : visibleSections.length === 0 ? (
+                <div
+                  style={{
+                    padding: "32px 16px",
+                    textAlign: "center",
+                    fontSize: "0.82rem",
+                    color: "hsl(var(--v3-text-muted))",
+                  }}
+                  data-component="mobile_consultations_detail-sheet_stack_list-page_content_list-card_body_empty"
+                >
+                  상담 문의가 없습니다.
+                </div>
+              ) : (
+                <>
+                  {visibleSections.map((section) => (
+                    <div className="section-block" key={section.title || "all"} data-component="mobile_consultations_detail-sheet_stack_list-page_content_list-card_body_section">
+                      {section.title && <div className="section-header" data-component="mobile_consultations_detail-sheet_stack_list-page_content_list-card_body_section_header">{section.title}</div>}
+                      {section.rows.map((row, idx) => (
+                        <ListItemRow
+                          key={row.id}
+                          data-component="mobile_consultations_detail-sheet_stack_list-page_content_list-card_body_section_row"
+                          style={{ animationDelay: `${Math.min(idx, 4) * 40}ms` }}
+                          className={row.status === "unread" ? "unread-row" : undefined}
+                          left={
+                            <div
+                              className={`list-avatar av-${row.status === "unread" ? "burgundy" : "green"}`}
+                              data-component="mobile_consultations_detail-sheet_stack_list-page_content_list-card_body_section_row_avatar"
+                            >
+                              {row.initial}
+                            </div>
+                          }
+                          name={row.name}
+                          metaClassName="consult-snippet"
+                          meta={
+                            <>
+                              <span className={`voucher-tag ${row.voucherKind}`}>{row.voucher}</span>
+                              <span className="snippet-sep">·</span>
+                              {row.due}
+                            </>
+                          }
+                          right={<span className="dday-sub">{row.right}</span>}
+                          onClick={() => handleSelectRow(row)}
+                        />
+                      ))}
+                    </div>
+                  ))}
+                  {!isInitialLoad && hasMore && (
+                    <ListLoadMoreSentinel
+                      data-component="mobile_consultations_detail-sheet_stack_list-page_content_list-card_body_load-sentinel"
+                      sentinelRef={sentinelRef}
+                    />
+                  )}
+                </>
+              )}
+            </ListCard>
+          </div>
         </div>
       }
       detail={

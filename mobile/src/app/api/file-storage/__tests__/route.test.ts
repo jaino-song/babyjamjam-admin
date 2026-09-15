@@ -13,6 +13,27 @@ import {
 } from "../files/[fileId]/route";
 import { GET as listFiles, POST as uploadFile } from "../files/route";
 
+async function expectCanonicalValidationResponse(
+  response: Response,
+  legacyError: string,
+): Promise<void> {
+  expect(response.status).toBe(400);
+  const requestId = response.headers.get("X-Request-Id");
+  expect(requestId).toEqual(expect.stringMatching(/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/));
+  expect(response.headers.get("Content-Type")).toBe("application/problem+json");
+  expect(response.headers.get("Content-Language")).toBe("ko-KR");
+  expect(response.headers.get("Cache-Control")).toBe("no-store, max-age=0");
+
+  const body = await response.json();
+  expect(body).toMatchObject({
+    code: "VALIDATION_FAILED",
+    outcome: "NOT_APPLIED",
+    error: legacyError,
+    requestId,
+  });
+  expect(Array.isArray(body.errors)).toBe(true);
+}
+
 jest.mock("@/lib/api/server", () => ({
   serverAPIClient: {
     delete: jest.fn(),
@@ -85,7 +106,7 @@ describe("file-storage API routes", () => {
     const response = await listFiles(createGetRequest("/api/file-storage/files"));
 
     expect(response.status).toBe(403);
-    await expect(response.json()).resolves.toEqual({ error: "Failed to fetch documents" });
+    await expect(response.json()).resolves.toEqual({ error: expect.stringMatching(/[가-힣].*요[.!]?$/) });
   });
 
   it("proxies the authenticated storage capability contract", async () => {
@@ -233,10 +254,7 @@ describe("file-storage API routes", () => {
       { params: Promise.resolve({ fileId: "file_123" }) },
     );
 
-    expect(response.status).toBe(400);
-    await expect(response.json()).resolves.toEqual({
-      error: "Request body must be valid JSON",
-    });
+    await expectCanonicalValidationResponse(response, "Request body must be valid JSON");
     expect(mockPut).not.toHaveBeenCalled();
   });
 
@@ -258,7 +276,7 @@ describe("file-storage API routes", () => {
 
     expect(response.status).toBe(409);
     const body = await response.json();
-    expect(body).toEqual({ error: "document is locked" });
+    expect(body).toEqual({ error: "잠긴 문서는 변경할 수 없어요." });
     expect(JSON.stringify(body)).not.toContain("sk_test_secret");
     expect(JSON.stringify(body)).not.toContain("SELECT * FROM Document");
   });
@@ -281,7 +299,7 @@ describe("file-storage API routes", () => {
 
     expect(response.status).toBe(status);
     const body = await response.json();
-    expect(body).toEqual({ error: "Failed to delete document" });
+    expect(body).toEqual({ error: expect.stringMatching(/[가-힣].*요[.!]?$/) });
     expect(JSON.stringify(body)).not.toContain(message);
     expect(JSON.stringify(body)).not.toContain("sk_test_secret");
   });

@@ -148,7 +148,7 @@ export default function DocumentPreviewModal({
       downloadFileName={getDownloadFileName(doc)}
       imageAlt={doc.name}
       previewKey={doc.id}
-      unsupportedMessage="이 파일 형식은 미리보기를 지원하지 않습니다."
+      unsupportedMessage="이 파일 형식은 미리보기를 지원하지 않아요."
     />
   );
 }

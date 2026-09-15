@@ -44,7 +44,7 @@ export const kakaoOnboardingSchema = z.object({
 // Login schema
 export const loginSchema = z.object({
     email: emailSchema,
-    password: z.string().min(1, '비밀번호는 필수입니다.'),
+    password: z.string().min(1, '비밀번호를 입력해 주세요.'),
 });
 
 // Forgot password schema
@@ -55,18 +55,18 @@ export const forgotPasswordSchema = z.object({
 // Reset password schema
 export const resetPasswordSchema = z.object({
     newPassword: passwordSchema,
-    confirmPassword: z.string().min(1, '비밀번호 확인은 필수입니다.'),
+    confirmPassword: z.string().min(1, '확인할 비밀번호를 다시 입력해 주세요.'),
 }).refine((data) => data.newPassword === data.confirmPassword, {
-    message: '비밀번호가 일치하지 않습니다.',
+    message: "비밀번호가 일치하지 않아요.",
     path: ['confirmPassword'],
 });
 
 // Link password schema (for OAuth users adding password)
 export const linkPasswordSchema = z.object({
     password: passwordSchema,
-    confirmPassword: z.string().min(1, '비밀번호 확인은 필수입니다.'),
+    confirmPassword: z.string().min(1, '확인할 비밀번호를 다시 입력해 주세요.'),
 }).refine((data) => data.password === data.confirmPassword, {
-    message: '비밀번호가 일치하지 않습니다.',
+    message: "비밀번호가 일치하지 않아요.",
     path: ['confirmPassword'],
 });
 

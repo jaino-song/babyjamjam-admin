@@ -17,6 +17,9 @@ import type {
     MessageAutomationPoliciesResponse,
     MessageAutomationPolicy,
     MessageAutomationPolicyRow,
+    MessageSettingsPolicyActivation,
+    MessageSettingsPolicyId,
+    StoredMessageSettingsPolicyId,
     MessageSenderApprovalResponse,
     MessageSenderApprovalStatus,
 } from "@babyjamjam/shared/types/message";
@@ -328,10 +331,6 @@ export const eformsignApi = {
         const { data } = await api.get('/eformsign/auth-status');
         return data;
     },
-    refreshAccessToken: async (executionTime: number) => {
-        const { data } = await api.post('/refresh-access-token', { executionTime });
-        return data;
-    },
     reRequestDocument: async (
         documentId: string,
         params: EformsignReRequestDocumentRequest
@@ -512,6 +511,9 @@ export type {
     MessageAutomationPoliciesResponse,
     MessageAutomationPolicy,
     MessageAutomationPolicyRow,
+    MessageSettingsPolicyActivation,
+    MessageSettingsPolicyId,
+    StoredMessageSettingsPolicyId,
     MessageSenderApprovalResponse,
     MessageSenderApprovalStatus,
 };
@@ -563,8 +565,18 @@ export const settingsApi = {
         const { data } = await api.put("/settings/message-automation-policies/past-trigger", config);
         return data;
     },
+    updateMessageSettingsPolicyActivation: async (
+        policyId: StoredMessageSettingsPolicyId,
+        enabled: boolean,
+    ): Promise<MessageSettingsPolicyActivation> => {
+        const { data } = await api.put(
+            `/settings/message-policy-activations/${policyId}`,
+            { enabled },
+        );
+        return data;
+    },
     requestMessageSenderApproval: async (): Promise<MessageSenderApprovalResponse> => {
-        const { data } = await api.post("/settings/message-sender-approval", {});
+        const { data } = await api.post("/settings/message-sender-approval/request", {});
         return data;
     },
     getNotificationPreferences: async (): Promise<NotificationPreferencesResponse> => {

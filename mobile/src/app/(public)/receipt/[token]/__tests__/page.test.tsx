@@ -54,7 +54,7 @@ describe("ReceiptLinkPage", () => {
     // unconditionally re-run the status check (which would tear down an otherwise-healthy
     // verified session on any transient image hiccup, e.g. a flaky connection or a 5xx).
     async function verifyAndReachImageScreen(): Promise<HTMLImageElement> {
-        const input = await screen.findByLabelText("산모 생년월일");
+        const input = await screen.findByLabelText("산모님 생년월일");
         fireEvent.change(input, { target: { value: "940315" } });
         fireEvent.click(screen.getByRole("button", { name: "확인하기" }));
         return (await screen.findByRole("img", {
@@ -70,16 +70,17 @@ describe("ReceiptLinkPage", () => {
             throw new Error(`unexpected fetch: ${href}`);
         }) as unknown as typeof fetch;
 
-        render(<ReceiptLinkPage />);
+        const { container } = render(<ReceiptLinkPage />);
 
         expect(await screen.findByRole("link", { name: "이미지 저장" })).toBeInTheDocument();
-        expect(screen.getByRole("heading", { name: "산모님 영수증" })).toBeInTheDocument();
+        expect(container.querySelector('[data-slot="crumbs"]')).toHaveTextContent("2단계 · 영수증 저장");
+        expect(container.querySelector('[data-slot="bar"] i')).toHaveStyle("width: 100%");
         expect(screen.getByRole("img", { name: "산모님 본인부담금 영수증" })).toHaveAttribute(
             "src",
             "/api/receipt/efr_t/image",
         );
         expect(screen.queryByText("산모 산모님 영수증")).not.toBeInTheDocument();
-        expect(screen.queryByLabelText("산모 생년월일")).not.toBeInTheDocument();
+        expect(screen.queryByLabelText("산모님 생년월일")).not.toBeInTheDocument();
         expect(global.fetch).toHaveBeenNthCalledWith(2, "/api/receipt/efr_t/access", { cache: "no-store" });
         expect(global.fetch).not.toHaveBeenCalledWith("/api/receipt/efr_t/image", expect.anything());
     });
@@ -94,9 +95,27 @@ describe("ReceiptLinkPage", () => {
 
         render(<ReceiptLinkPage />);
 
-        expect(await screen.findByLabelText("산모 생년월일")).toBeInTheDocument();
+        expect(await screen.findByLabelText("산모님 생년월일")).toBeInTheDocument();
         expect(screen.queryByRole("link", { name: "이미지 저장" })).not.toBeInTheDocument();
         expect(global.fetch).toHaveBeenNthCalledWith(2, "/api/receipt/efr_t/access", { cache: "no-store" });
+    });
+
+    it("uses the service-record wizard shell without the removed verification descriptions", async () => {
+        global.fetch = jest.fn(async () => jsonResponse(200, STATUS_VERIFY)) as unknown as typeof fetch;
+
+        const { container } = render(<ReceiptLinkPage />);
+
+        const birthdayInput = await screen.findByLabelText("산모님 생년월일");
+        expect(birthdayInput).toHaveAttribute("maxlength", "6");
+        expect(birthdayInput).toHaveAttribute("placeholder", "예) 940315");
+        expect(container.querySelector('[data-slot="srec"].srec')).toBeInTheDocument();
+        expect(container.querySelector('[data-slot="top"].top')).toBeInTheDocument();
+        expect(container.querySelector('[data-slot="body"].body')).toBeInTheDocument();
+        expect(container.querySelector('[data-slot="crumbs"]')).toHaveTextContent("1단계 · 본인 확인");
+        expect(container.querySelector('[data-slot="bar"] i')).toHaveStyle("width: 50%");
+        expect(screen.getByRole("heading", { name: "산모님 본인 확인" })).toBeInTheDocument();
+        expect(screen.queryByText(/본인부담금 영수증은 산모님 본인만 열람/)).not.toBeInTheDocument();
+        expect(screen.queryByText(/입력하신 생년월일은 본인 확인에만 사용/)).not.toBeInTheDocument();
     });
 
     it("shows the safe invalid-link screen when a verified-session image probe fails", async () => {
@@ -135,7 +154,7 @@ describe("ReceiptLinkPage", () => {
 
         fireEvent.error(image);
 
-        await screen.findByLabelText("산모 생년월일");
+        await screen.findByLabelText("산모님 생년월일");
         expect(screen.queryByRole("heading", { name: "김산모 산모님 영수증" })).not.toBeInTheDocument();
         expect(imageFetchCount).toBe(1);
     });
@@ -177,17 +196,65 @@ describe("ReceiptLinkPage", () => {
 
         await waitFor(() => expect(imageFetchCount).toBe(1));
         await waitFor(() => expect(image.src).toContain("r=1"));
-        // Still on the image screen — no broken-image copy exists, so it's simply retried.
-        expect(screen.getByRole("heading", { name: "김산모 산모님 영수증" })).toBeInTheDocument();
+        // Still on the image screen while the one-shot cache-busted retry is in flight.
+        expect(image).toBeInTheDocument();
         expect(screen.getByRole("link", { name: "이미지 저장" })).toBeInTheDocument();
 
         // Mutant guard: reverting onError to an unconditional loadStatus() would make THIS
         // second error (or even the first) tear down the image screen back to "verify",
-        // since /status itself is healthy in this scenario.
+        // since /status itself is healthy in this scenario. The final failure is now
+        // recoverable through the visible retry action.
         fireEvent.error(image);
         expect(imageFetchCount).toBe(1);
         expect(image.src).toContain("r=1");
-        expect(screen.getByRole("heading", { name: "김산모 산모님 영수증" })).toBeInTheDocument();
+        expect(image).toBeInTheDocument();
+        expect(screen.getByRole("button", { name: "다시 시도" })).toBeInTheDocument();
+    });
+
+    it("shows a recoverable error state after the cache-busted image retry fails", async () => {
+        global.fetch = jest.fn(async (url: unknown) => {
+            const href = String(url);
+            if (href.endsWith("/status")) return jsonResponse(200, STATUS_VERIFY);
+            if (href.endsWith("/verify")) return jsonResponse(200, { ok: true, clientName: "김산모" });
+            if (href.includes("/image")) return jsonResponse(500, { error: "upstream failure" });
+            throw new Error(`unexpected fetch: ${href}`);
+        }) as unknown as typeof fetch;
+
+        const { container } = render(<ReceiptLinkPage />);
+        const image = await verifyAndReachImageScreen();
+
+        fireEvent.error(image);
+        await waitFor(() => expect(image.src).toContain("r=1"));
+
+        fireEvent.error(image);
+
+        expect(await screen.findByRole("alert")).toHaveTextContent("영수증 이미지를 불러오지 못했습니다");
+        expect(screen.getByRole("button", { name: "다시 시도" })).toBeInTheDocument();
+        expect(container.querySelector('[data-slot="image-frame"]')).toHaveAttribute("aria-busy", "false");
+        expect(screen.queryByRole("status", { name: "영수증 이미지를 불러오는 중" })).not.toBeInTheDocument();
+
+        fireEvent.click(screen.getByRole("button", { name: "다시 시도" }));
+
+        const retriedImage = screen.getByRole("img", {
+            name: "김산모 산모님 본인부담금 영수증",
+        });
+        expect(retriedImage.getAttribute("src")).toContain("r=2");
+        expect(container.querySelector('[data-slot="image-frame"]')).toHaveAttribute("aria-busy", "true");
+        expect(screen.getByRole("status", { name: "영수증 이미지를 불러오는 중" })).toBeInTheDocument();
+
+        fireEvent.error(retriedImage);
+
+        await waitFor(() => expect(global.fetch).toHaveBeenCalledTimes(4));
+        await waitFor(() => expect(retriedImage.getAttribute("src")).toContain("r=3"));
+        expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+        expect(container.querySelector('[data-slot="image-frame"]')).toHaveAttribute("aria-busy", "true");
+        expect(screen.getByRole("status", { name: "영수증 이미지를 불러오는 중" })).toBeInTheDocument();
+
+        fireEvent.error(retriedImage);
+
+        expect(await screen.findByRole("alert")).toHaveTextContent("영수증 이미지를 불러오지 못했습니다");
+        expect(screen.getByRole("button", { name: "다시 시도" })).toBeInTheDocument();
+        expect(container.querySelector('[data-slot="image-frame"]')).toHaveAttribute("aria-busy", "false");
     });
 
     it("renders an aria-hidden clock icon on the expired screen (F9)", async () => {
@@ -209,13 +276,24 @@ describe("ReceiptLinkPage", () => {
             throw new Error(`unexpected fetch: ${href}`);
         }) as unknown as typeof fetch;
 
-        render(<ReceiptLinkPage />);
+        const { container } = render(<ReceiptLinkPage />);
 
-        const input = await screen.findByLabelText("산모 생년월일");
+        const input = await screen.findByLabelText("산모님 생년월일");
         fireEvent.change(input, { target: { value: "940315" } });
         fireEvent.click(screen.getByRole("button", { name: "확인하기" }));
 
         const saveLink = await screen.findByRole("link", { name: "이미지 저장" });
+        const image = screen.getByRole("img", { name: "김산모 산모님 본인부담금 영수증" });
+        const imageFrame = container.querySelector('[data-slot="image-frame"]');
+        expect(screen.queryByRole("heading", { name: "김산모 산모님 영수증" })).not.toBeInTheDocument();
+        expect(screen.queryByText("확인 완료")).not.toBeInTheDocument();
+        expect(imageFrame).toHaveAttribute("aria-busy", "true");
+        expect(screen.getByRole("status", { name: "영수증 이미지를 불러오는 중" })).toBeInTheDocument();
+
+        fireEvent.load(image);
+
+        expect(imageFrame).toHaveAttribute("aria-busy", "false");
+        expect(screen.queryByRole("status", { name: "영수증 이미지를 불러오는 중" })).not.toBeInTheDocument();
         const icon = saveLink.querySelector("svg.rcpt-icon");
         expect(icon).not.toBeNull();
         expect(icon).toHaveAttribute("aria-hidden", "true");
@@ -272,7 +350,7 @@ describe("ReceiptLinkPage", () => {
             await jest.advanceTimersByTimeAsync(30 * 60 * 1000);
         });
 
-        await waitFor(() => expect(screen.getByLabelText("산모 생년월일")).toBeEnabled());
+        await waitFor(() => expect(screen.getByLabelText("산모님 생년월일")).toBeEnabled());
         expect(screen.getByRole("button", { name: "확인하기" })).toBeEnabled();
         expect(statusFetchCount).toBe(2);
     });
@@ -318,7 +396,7 @@ describe("ReceiptLinkPage", () => {
             await jest.advanceTimersByTimeAsync(20_000);
         });
 
-        await waitFor(() => expect(screen.getByLabelText("산모 생년월일")).toBeEnabled());
+        await waitFor(() => expect(screen.getByLabelText("산모님 생년월일")).toBeEnabled());
         expect(statusFetchCount).toBe(3);
     });
 
@@ -441,7 +519,7 @@ describe("ReceiptLinkPage", () => {
 
         render(<ReceiptLinkPage />);
 
-        await screen.findByLabelText("산모 생년월일");
+        await screen.findByLabelText("산모님 생년월일");
         expect(screen.getByText("인천 아이미래로")).toBeInTheDocument();
     });
 
@@ -455,7 +533,7 @@ describe("ReceiptLinkPage", () => {
     });
 
     async function reachVerifyScreenAndSubmit(birthday: string) {
-        const input = await screen.findByLabelText("산모 생년월일");
+        const input = await screen.findByLabelText("산모님 생년월일");
         fireEvent.change(input, { target: { value: birthday } });
         fireEvent.click(screen.getByRole("button", { name: "확인하기" }));
     }
@@ -491,6 +569,26 @@ describe("ReceiptLinkPage", () => {
         await reachVerifyScreenAndSubmit("940315");
 
         await screen.findByRole("heading", { name: "링크 유효기간이 지났습니다" });
+    });
+
+    it("hides the workflow step metadata and progress bar on an expired link (F10)", async () => {
+        global.fetch = jest.fn(async () => jsonResponse(410, { reason: "expired" })) as unknown as typeof fetch;
+
+        const { container } = render(<ReceiptLinkPage />);
+
+        await screen.findByRole("heading", { name: "링크 유효기간이 지났습니다" });
+        expect(container.querySelector('[data-slot="crumbs"]')).not.toBeInTheDocument();
+        expect(container.querySelector('[data-slot="bar"]')).not.toBeInTheDocument();
+    });
+
+    it("hides the workflow step metadata and progress bar on an invalid link (F10)", async () => {
+        global.fetch = jest.fn(async () => jsonResponse(404, { reason: "not_found" })) as unknown as typeof fetch;
+
+        const { container } = render(<ReceiptLinkPage />);
+
+        await screen.findByRole("heading", { name: "사용할 수 없는 링크입니다" });
+        expect(container.querySelector('[data-slot="crumbs"]')).not.toBeInTheDocument();
+        expect(container.querySelector('[data-slot="bar"]')).not.toBeInTheDocument();
     });
 
     it("shows the format message when verify answers 400 invalid_format (F2)", async () => {
@@ -535,7 +633,7 @@ describe("ReceiptLinkPage", () => {
         await screen.findByText("네트워크 연결을 확인해 주세요.");
     });
 
-    it("shows the format message without calling verify when the birthday is not 6 or 8 digits (F2)", async () => {
+    it("shows the format message without calling verify when the birthday is not 6 digits (F2)", async () => {
         let verifyCalled = false;
         global.fetch = jest.fn(async (url: unknown) => {
             const href = String(url);
@@ -548,7 +646,7 @@ describe("ReceiptLinkPage", () => {
         }) as unknown as typeof fetch;
 
         render(<ReceiptLinkPage />);
-        await reachVerifyScreenAndSubmit("12345");
+        await reachVerifyScreenAndSubmit("19900101");
 
         await screen.findByText("생년월일 6자리(YYMMDD)를 입력해 주세요.");
         expect(verifyCalled).toBe(false);

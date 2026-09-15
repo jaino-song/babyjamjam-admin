@@ -33,6 +33,15 @@ describe("MobileBottomNav", () => {
     expect(screen.getByRole("link", { name: "전체" })).toHaveAttribute("aria-current", "page");
   });
 
+  it("keeps All active on the consultations route", () => {
+    mockUsePathname.mockReturnValue("/consultations");
+
+    render(<MobileBottomNav />);
+
+    expect(screen.getByRole("link", { name: "전체" })).toHaveAttribute("aria-current", "page");
+    expect(screen.getByRole("link", { name: "전체" })).toHaveAttribute("data-visual-active", "true");
+  });
+
   it("does not mark All active on notification settings", () => {
     mockUsePathname.mockReturnValue("/notification");
 

@@ -1,4 +1,6 @@
 "use client";
+import { getUserErrorMessage } from "@babyjamjam/shared";
+
 
 import {
   BadgeCheck,
@@ -136,7 +138,7 @@ export function MessageSenderApprovalSettings({
 
             {errorMessage ? (
               <Alert variant="destructive">
-                <AlertDescription>{errorMessage}</AlertDescription>
+                <AlertDescription>{errorMessage && getUserErrorMessage(errorMessage)}</AlertDescription>
               </Alert>
             ) : null}
           </div>

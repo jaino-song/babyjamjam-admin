@@ -1,4 +1,6 @@
 "use client";
+import { getUserErrorMessage } from "@babyjamjam/shared";
+
 import dayjs from "dayjs";
 import { isAxiosError } from "axios";
 import "dayjs/locale/ko";
@@ -267,18 +269,18 @@ function createHeadlessProgressId(): string {
 
 function getSafeHeadlessFailureMessage(reason: string | undefined): string {
   if (!reason) {
-    return "백엔드 자동 처리에 실패했습니다. 재시도하거나 수동 입력을 사용해 주세요.";
+    return "백엔드 자동 처리에 실패했어요. 재시도하거나 수동 입력을 사용해 주세요.";
   }
   if (/timed out|timeout/i.test(reason)) {
     return "백엔드 자동 처리 시간이 초과되었습니다. 재시도하거나 수동 입력을 사용해 주세요.";
   }
   if (/chromium|browser|executable/i.test(reason)) {
-    return "백엔드 브라우저 실행에 실패했습니다. 수동 입력으로 진행해 주세요.";
+    return "백엔드 브라우저 실행에 실패했어요. 수동 입력으로 진행해 주세요.";
   }
   if (/missing document_id/i.test(reason)) {
     return "전자문서 전송 응답에서 문서 ID를 받지 못했습니다. 재시도하거나 수동 입력을 사용해 주세요.";
   }
-  return "백엔드 자동 처리에 실패했습니다. 재시도하거나 수동 입력을 사용해 주세요.";
+  return "백엔드 자동 처리에 실패했어요. 재시도하거나 수동 입력을 사용해 주세요.";
 }
 
 export const ContractCreationForm = ({
@@ -721,13 +723,13 @@ export const ContractCreationForm = ({
         && isFeatureEnabled("headlessDispatch");
 
       if (employeeId === null || (showEmployee2 && employee2Id === null)) {
-        setSubmitError("등록된 제공인력을 목록에서 선택해 주세요.");
+        setSubmitError(getUserErrorMessage("등록된 제공인력을 목록에서 선택해 주세요."));
         setActiveStep(1);
         return;
       }
 
       if (!shouldEnqueueDocumentJob && !shouldAttemptHeadless && !isEformsignLoaded) {
-        setSubmitError("eformsign SDK가 아직 로드되지 않았습니다. 잠시 후 다시 시도해주세요.");
+        setSubmitError(getUserErrorMessage("eformsign SDK가 아직 로드되지 않았습니다. 잠시 후 다시 시도해주세요."));
         setActiveStep(CONTRACT_INFO_STEP_INDEX);
         return;
       }
@@ -780,9 +782,12 @@ export const ContractCreationForm = ({
           try {
             newClient = await createClientMutation.mutateAsync(autoRegistrationPayload);
           } catch (error) {
-            if (!isAxiosError<{ message?: string; error?: string; clientId?: number }>(error) || error.response?.status !== 409) throw error;
+            if (!isAxiosError<{ message?: string; error?: string; clientId?: number; code?: string }>(error) || error.response?.status !== 409) throw error;
             const conflict = error.response.data;
-            if (!conflict.clientId) throw new Error(getApiErrorMessage(error, "고객 자동 등록에 실패했습니다."));
+            // 중복 판별은 공개 계약 코드로 하고, 배포 전환 구간에는 레거시
+            // clientId 페이로드도 받아든다.
+            const isDuplicatePhone = conflict.code === "CLIENT_PHONE_ALREADY_REGISTERED" || Boolean(conflict.clientId);
+            if (!isDuplicatePhone) throw new Error(getApiErrorMessage(error, "고객 자동 등록에 실패했어요."));
             const shouldReuse = await requestConfirmation("이미 같은 전화번호의 고객이 있습니다. 기존 고객으로 계약을 진행할까요?");
             if (!shouldReuse) return;
             reusedExistingClient = true;
@@ -898,7 +903,7 @@ export const ContractCreationForm = ({
                   return;
                 }
                 if (data.step === "failed") {
-                  setSubmitError(getSafeHeadlessFailureMessage(data.reason));
+                  setSubmitError(getUserErrorMessage(getSafeHeadlessFailureMessage(data.reason)));
                   setCreationProgress((current) => ({
                     step: data.failedStep && isHeadlessProgressStepKey(data.failedStep)
                       ? data.failedStep
@@ -944,8 +949,8 @@ export const ContractCreationForm = ({
                 if (adopted.warnings?.includes("mirror_sync_failed")) {
                   queryClient.invalidateQueries({ queryKey: eformsignQueryKeys.documents() });
                   setSubmitError(
-                    "문서는 생성·전송되었지만 전자문서와 PDF 동기화가 완료되지 않았습니다. "
-                    + "새 계약서를 다시 만들지 말고 잠시 후 전자문서 목록에서 확인해 주세요.",
+                    getUserErrorMessage("문서는 생성·전송되었지만 전자문서와 PDF 동기화가 완료되지 않았습니다. "
+                    + "새 계약서를 다시 만들지 말고 잠시 후 전자문서 목록에서 확인해 주세요."),
                   );
                   markCreationProgressFailed();
                   return;
@@ -954,18 +959,18 @@ export const ContractCreationForm = ({
                 queryClient.invalidateQueries({ queryKey: eformsignQueryKeys.documents() });
                 setIsCreationSuccessOpen(true);
               } catch {
-                setSubmitError("문서는 생성되었으나 등록에 실패했습니다. 잠시 후 다시 시도해 주세요.");
+                setSubmitError(getUserErrorMessage("문서는 생성되었으나 등록에 실패했어요. 잠시 후 다시 시도해 주세요."));
                 markCreationProgressFailed();
               }
               return;
             }
             if (headless.reason === "remote_unconfirmed" || headless.fallbackHint === "adopt-or-manual" || headless.fallbackHint === "manual_check") {
-              setSubmitError("문서 생성 상태를 확인할 수 없습니다. 전자문서 목록에서 확인 후 다시 시도해 주세요.");
+              setSubmitError(getUserErrorMessage("문서 생성 상태를 확인할 수 없어요. 전자문서 목록에서 확인 후 다시 시도해 주세요."));
               markCreationProgressFailed();
               return;
             }
             if (headless.reason === "duplicate_pending_document") {
-              setSubmitError("최근 생성된 진행 중 문서가 있습니다.");
+              setSubmitError(getUserErrorMessage("최근 생성된 진행 중 문서가 있습니다."));
               markCreationProgressFailed();
               if (await requestConfirmation("최근 생성된 진행 중 문서가 있습니다. 그래도 새로 생성하시겠습니까?")) {
                 const forced = await eformsignApi.dispatchHeadless(contractData, finalClientId, progressId, true);
@@ -984,7 +989,7 @@ export const ContractCreationForm = ({
             );
             const canFallBackToIframe = headless.fallbackHint === "iframe";
             setAllowIframeFallback(canFallBackToIframe);
-            setSubmitError(getSafeHeadlessFailureMessage(headless.reason));
+            setSubmitError(getUserErrorMessage(getSafeHeadlessFailureMessage(headless.reason)));
             setCreationProgress((current) => ({
               step: headless.failedStep && isHeadlessProgressStepKey(headless.failedStep)
                 ? headless.failedStep
@@ -1019,7 +1024,7 @@ export const ContractCreationForm = ({
         }
 
         if (!isEformsignLoaded) {
-          setSubmitError("eformsign SDK가 아직 로드되지 않았습니다. 잠시 후 다시 시도해주세요.");
+          setSubmitError(getUserErrorMessage("eformsign SDK가 아직 로드되지 않았습니다. 잠시 후 다시 시도해주세요."));
           setActiveStep(CONTRACT_INFO_STEP_INDEX);
           return;
         }
@@ -1068,7 +1073,7 @@ export const ContractCreationForm = ({
             onError: (response) => {
               console.error("Document creation failed:", response);
               markCreationProgressFailed();
-              setSubmitError(`문서 생성 실패: ${response.message}`);
+              setSubmitError(getUserErrorMessage(response, `문서 생성 실패: ${response.message}`));
               handleDialogClose();
             },
             onAction: () => {
@@ -1082,15 +1087,15 @@ export const ContractCreationForm = ({
         }, 500);
       } catch (error) {
         if (autoRegisteredClientId) {
-          const baseMessage = error instanceof Error ? error.message : "계약서 생성 중 오류가 발생했습니다.";
-          setSubmitError(`${baseMessage} 방금 자동 등록된 고객이 남아 있습니다.`);
+          const baseMessage = error instanceof Error ? error.message : "계약서 생성 중 오류가 발생했어요.";
+          setSubmitError(`${getUserErrorMessage(error, baseMessage)} 방금 자동 등록된 고객이 남아 있어요.`);
           if (await requestConfirmation("방금 자동 등록된 고객이 남아 있습니다. 고객을 삭제할까요?")) {
             try {
               await deleteClientMutation.mutateAsync(autoRegisteredClientId);
               setClientId(null);
             } catch (deleteError) {
               if (isAxiosError<{ message?: string }>(deleteError)) {
-                setSubmitError(deleteError.response?.data.message || "고객 삭제에 실패했습니다.");
+                setSubmitError(getUserErrorMessage(deleteError, deleteError.response?.data.message || "고객 삭제에 실패했어요."));
               }
             }
           }
@@ -1100,7 +1105,7 @@ export const ContractCreationForm = ({
         setActiveStep(CONTRACT_INFO_STEP_INDEX);
         markCreationProgressFailed();
         if (!autoRegisteredClientId) {
-          setSubmitError(error instanceof Error ? error.message : "계약서 생성 중 오류가 발생했습니다.");
+          setSubmitError(getUserErrorMessage(error, error instanceof Error ? error.message : "계약서 생성 중 오류가 발생했어요."));
         }
       } finally {
         if (!keepSubmittingUntilDialogCloses) {
@@ -1144,7 +1149,7 @@ export const ContractCreationForm = ({
     if (nextStep > activeStep) {
       const validationMessage = getStepValidationMessage(activeStep);
       if (validationMessage) {
-        setSubmitError(validationMessage);
+        setSubmitError(getUserErrorMessage(validationMessage));
         return;
       }
     }
@@ -1174,7 +1179,7 @@ export const ContractCreationForm = ({
   const handleWizardComplete = () => {
     const validationMessage = getStepValidationMessage(CONTRACT_INFO_STEP_INDEX);
     if (validationMessage) {
-      setSubmitError(validationMessage);
+      setSubmitError(getUserErrorMessage(validationMessage));
       return;
     }
     setActiveStep(CONTRACT_CREATION_PROCESSING_STEP_INDEX);

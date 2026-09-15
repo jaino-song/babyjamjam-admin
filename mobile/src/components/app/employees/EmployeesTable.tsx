@@ -1,5 +1,4 @@
 "use client";
-
 import { useState, useMemo } from "react";
 import { Plus } from "lucide-react";
 import { useLocale } from "@/providers/LocaleProvider";
@@ -20,17 +19,10 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { ApprovalTwoButtonModal } from "@/components/app/ui/ApprovalTwoButtonModal";
 import { NotificationOneButtonModal } from "@/components/app/ui/NotificationOneButtonModal";
 import { EMPLOYEE_STATUS_LABELS } from "@babyjamjam/shared/constants/employee-status";
-import { getApiErrorMessage } from "@babyjamjam/shared";
+import { getUserErrorMessage } from "@babyjamjam/shared";
+import { formatKoreanPhoneNumber } from "@/lib/phone";
 
 const EMPLOYEES_TABLE_BASE = "mobile_employees_table";
-
-const formatPhoneNumber = (phone: string | null | undefined): string => {
-    if (!phone) return "-";
-    const numbers = phone.replace(/[^\d]/g, "");
-    if (numbers.length <= 3) return numbers || "-";
-    if (numbers.length <= 7) return `${numbers.slice(0, 3)}-${numbers.slice(3)}`;
-    return `${numbers.slice(0, 3)}-${numbers.slice(3, 7)}-${numbers.slice(7, 11)}`;
-};
 
 const getStatusBadge = (status: EmployeeStatus | undefined) => {
     switch (status) {
@@ -110,7 +102,7 @@ export function EmployeesTable() {
         } catch (err) {
             console.error("Failed to delete employee:", err);
             setDeleteTargetEmployeeId(null);
-            setDeleteErrorMessage(getApiErrorMessage(
+            setDeleteErrorMessage(getUserErrorMessage(
                 err,
                 t(locale, "employees.delete-confirm.error"),
             ));
@@ -149,7 +141,7 @@ export function EmployeesTable() {
             header: t(locale, "employees.table.contact"),
             width: "40%",
             align: "center",
-            render: (employee) => formatPhoneNumber(employee.phone as string | null | undefined),
+            render: (employee) => formatKoreanPhoneNumber(employee.phone as string | null | undefined) || "-",
         },
     ];
 
@@ -175,7 +167,7 @@ export function EmployeesTable() {
                 <div data-component={`${EMPLOYEES_TABLE_BASE}_error`} className="p-3">
                     <Alert variant="destructive">
                         <AlertDescription>
-                            직원 목록을 불러오는데 실패했습니다: {errorMessage}
+                            직원 목록을 불러오는데 실패했습니다: {errorMessage && getUserErrorMessage(errorMessage)}
                         </AlertDescription>
                     </Alert>
                 </div>

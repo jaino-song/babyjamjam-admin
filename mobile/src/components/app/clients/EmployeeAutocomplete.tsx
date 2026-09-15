@@ -7,18 +7,13 @@ import { useEmployees, Employee } from "@/hooks/useEmployees";
 import { useLocale } from "@/providers/LocaleProvider";
 import { t } from "@/lib/i18n/translations";
 import { useEmployeeDialogStore } from "@/stores/employee-dialog-store";
-import { matchesKoreanSearch } from "@/lib/search/korean-search";
+import { matchesSearchQuery } from "@/lib/search/korean-search";
+import { formatKoreanPhoneNumber } from "@/lib/phone";
 import { cn } from "@/lib/utils";
 import { Autocomplete } from "@/components/app/ui/Autocomplete";
 
 function stripCityPrefix(area: string): string {
     return area.replace(/^인천\s*/, "");
-}
-
-function formatPhone(phone: string): string {
-    const digits = phone.replace(/\D/g, "");
-    if (digits.length !== 11) return phone;
-    return `${digits.slice(0, 3)}-${digits.slice(3, 7)}-${digits.slice(7, 11)}`;
 }
 
 interface EmployeeAutocompleteProps {
@@ -106,7 +101,7 @@ export function EmployeeAutocomplete({
                             highlighted ? "text-white/85" : "text-muted-foreground"
                         )}
                     >
-                        {formatPhone(e.phone)}
+                        {formatKoreanPhoneNumber(e.phone)}
                     </span>
                 )}
                 getItemMeta={(e, { highlighted }) => (
@@ -127,9 +122,11 @@ export function EmployeeAutocomplete({
                     </div>
                 )}
                 filter={(e, q) =>
-                    matchesKoreanSearch(e.name, q) ||
-                    e.workArea.some((area) => area.toLowerCase().includes(q.toLowerCase())) ||
-                    e.phone.includes(q)
+                    matchesSearchQuery(q, [
+                        e.name,
+                        e.phone,
+                        ...e.workArea,
+                    ])
                 }
                 placeholder={t(locale, "clients.form.employee-search-placeholder")}
                 label={label}

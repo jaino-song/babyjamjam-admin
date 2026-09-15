@@ -27,7 +27,7 @@ export async function completeKakaoOnboarding(
     if (!pendingSignupToken) {
         return {
             success: false,
-            error: "카카오 가입 세션이 만료되었습니다. 다시 로그인해 주세요.",
+            error: "카카오 가입 세션이 만료됐어요. 다시 로그인해 주세요.",
         };
     }
 

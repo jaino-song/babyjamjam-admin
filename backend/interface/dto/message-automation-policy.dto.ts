@@ -9,7 +9,12 @@ import {
     TRIGGER_JOB_PROCESSING_RECLAIM_MS,
     TRIGGER_JOB_RETRY_DELAY_MS,
 } from "domain/constants/message-automation-policy";
-import { IsArray, IsInt, IsString, Max, Min } from "class-validator";
+import { IsArray, IsBoolean, IsIn, IsInt, IsString, Max, Min } from "class-validator";
+import {
+    DEFAULT_MESSAGE_SETTINGS_POLICY_ENABLED,
+    STORED_MESSAGE_SETTINGS_POLICY_IDS,
+    StoredMessageSettingsPolicyId,
+} from "domain/constants/message-settings-policy";
 import {
     getServiceRecordLinkScheduledFor,
     getServiceRecordTokenExpiresAt,
@@ -69,27 +74,63 @@ export class UpdateMessageAutomationPastTriggerConfigDto {
     ruleOrder!: string[];
 }
 
+export class MessageSettingsPolicyParamsDto {
+    @IsIn(STORED_MESSAGE_SETTINGS_POLICY_IDS)
+    policyId!: StoredMessageSettingsPolicyId;
+}
+
+export class UpdateMessageSettingsPolicyActivationDto {
+    @IsBoolean()
+    enabled!: boolean;
+}
+
+export class MessageSettingsPolicyActivationResponseDto {
+    policyId!: StoredMessageSettingsPolicyId;
+    enabled!: boolean;
+
+    static from(
+        policyId: StoredMessageSettingsPolicyId,
+        enabled: boolean,
+    ): MessageSettingsPolicyActivationResponseDto {
+        const dto = new MessageSettingsPolicyActivationResponseDto();
+        dto.policyId = policyId;
+        dto.enabled = enabled;
+        return dto;
+    }
+}
+
+const DEFAULT_POLICY_ACTIVATIONS = Object.fromEntries(
+    STORED_MESSAGE_SETTINGS_POLICY_IDS.map((policyId) => [
+        policyId,
+        DEFAULT_MESSAGE_SETTINGS_POLICY_ENABLED,
+    ]),
+) as Record<StoredMessageSettingsPolicyId, boolean>;
+
 export class MessageAutomationPoliciesResponseDto {
     policies!: MessageAutomationPolicyDto[];
     pastTriggerConfig!: MessageAutomationPastTriggerConfigDto;
+    policyActivations!: Record<StoredMessageSettingsPolicyId, boolean>;
 
     static from(
         pastTriggerConfig: MessageAutomationPastTriggerConfig = DEFAULT_MESSAGE_AUTOMATION_PAST_TRIGGER_CONFIG,
+        policyActivations: Record<StoredMessageSettingsPolicyId, boolean> = DEFAULT_POLICY_ACTIVATIONS,
     ): MessageAutomationPoliciesResponseDto {
-        return MessageAutomationPoliciesResponseDto.build(pastTriggerConfig);
+        return MessageAutomationPoliciesResponseDto.build(pastTriggerConfig, policyActivations);
     }
 
     static build(
         pastTriggerConfig: MessageAutomationPastTriggerConfig = DEFAULT_MESSAGE_AUTOMATION_PAST_TRIGGER_CONFIG,
+        policyActivations: Record<StoredMessageSettingsPolicyId, boolean> = DEFAULT_POLICY_ACTIVATIONS,
     ): MessageAutomationPoliciesResponseDto {
         const dto = new MessageAutomationPoliciesResponseDto();
         dto.pastTriggerConfig = MessageAutomationPastTriggerConfigDto.from(pastTriggerConfig);
+        dto.policyActivations = policyActivations;
         dto.policies = [
             {
                 id: "trigger-dispatch",
                 title: "자동 전송 실행",
                 description: "승인된 지점의 자동 전송 잡을 주기적으로 확인하고, 원자적 잡 클레임과 발송 이력 확인으로 중복 발송을 막습니다.",
-                active: true,
+                active: policyActivations["trigger-dispatch"],
                 requiresApproval: true,
                 rows: [
                     {
@@ -113,7 +154,7 @@ export class MessageAutomationPoliciesResponseDto {
                 id: "trigger-job-retry",
                 title: "자동 전송 재시도",
                 description: "자동 전송 처리 중 일시 오류가 발생하면 정해진 간격으로 재시도하고, 발신 프로필 같은 설정 미비는 별도 간격으로 다시 확인합니다.",
-                active: true,
+                active: policyActivations["trigger-job-retry"],
                 requiresApproval: true,
                 rows: [
                     {
@@ -142,7 +183,7 @@ export class MessageAutomationPoliciesResponseDto {
                 id: "sms-retry",
                 title: "SMS 재시도",
                 description: "재시도 가능한 SMS 발송 로그는 자동 전송과 수동 발송 모두 같은 정책으로 다시 처리합니다.",
-                active: true,
+                active: policyActivations["sms-retry"],
                 requiresApproval: false,
                 rows: [
                     {
@@ -166,7 +207,7 @@ export class MessageAutomationPoliciesResponseDto {
                 id: "past-trigger",
                 title: "지난 자동 전송 처리",
                 description: "기존 발송 예정의 만료와 늦게 등록한 고객의 보충 발송을 구분합니다.",
-                active: true,
+                active: policyActivations["past-trigger"],
                 requiresApproval: true,
                 rows: [
                     {

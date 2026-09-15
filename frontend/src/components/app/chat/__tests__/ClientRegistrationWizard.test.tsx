@@ -291,7 +291,7 @@ describe("ClientRegistrationWizard", () => {
         fireEvent.click(screen.getByRole("button", { name: "제출" }));
 
         expect(mockCreateClientMutateAsync).not.toHaveBeenCalled();
-        expect(await screen.findByText("제공인력 정보가 변경되었습니다. 제공인력을 다시 확인해 주세요."))
+        expect(await screen.findByText("제공인력 정보가 변경됐어요. 제공인력을 다시 확인해 주세요."))
             .toBeInTheDocument();
         expect(screen.getByLabelText("이름")).toHaveValue("홍길동");
     });

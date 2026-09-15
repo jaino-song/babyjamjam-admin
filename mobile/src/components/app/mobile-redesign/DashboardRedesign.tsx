@@ -1,8 +1,10 @@
 import "./redesign.css";
 
+import type { ReactNode, RefObject } from "react";
+
 import type { DashboardAnalytic, SectionRows } from "./mockup-data";
 import { ListCard, ListRowsSkeleton, SectionedList } from "./primitives";
-import { Skeleton } from "@/components/ui/skeleton";
+import { StatsBar } from "@/components/app/v3";
 
 const DASHBOARD_SOURCE_COMPONENT = "DashboardRedesign";
 
@@ -16,13 +18,6 @@ const DASHBOARD_ANALYTICS_BASE = `${DASHBOARD_BASE}_analytics-grid`;
 const DASHBOARD_LIST_CARD_BASE = `${DASHBOARD_BASE}_content_list-card`;
 const DASHBOARD_LIST_BODY_BASE = `${DASHBOARD_LIST_CARD_BASE}_body`;
 const DASHBOARD_LIST_SKELETON_BASE = `${DASHBOARD_LIST_BODY_BASE}_loading-skeleton`;
-
-const toneClass: Record<DashboardAnalytic["tone"], string> = {
-  primary: "bg-v3-primary-light text-v3-primary",
-  orange: "bg-v3-orange-light text-v3-orange",
-  green: "bg-v3-green-light text-v3-green",
-  burgundy: "bg-v3-burgundy-light text-v3-burgundy",
-};
 
 export interface DashboardRedesignFilter {
   label: string;
@@ -39,27 +34,14 @@ export interface DashboardRedesignProps {
   onFilterChange?: (label: string) => void;
   analyticsLoading?: boolean;
   loading?: boolean;
-}
-
-function DashboardAnalyticsSkeleton() {
-  return (
-    <>
-      {Array.from({ length: 4 }).map((_, index) => (
-        <div
-          key={`dashboard-analytic-skeleton-${index}`}
-          className="mini-stat mini-stat-skeleton"
-          data-component={`${DASHBOARD_ANALYTICS_BASE}_stat-skeleton`}
-          aria-hidden="true"
-        >
-          <Skeleton className="mini-stat-icon bg-v3-dim-white" />
-          <div className="mini-stat-skeleton-text">
-            <Skeleton className="mini-stat-skeleton-num bg-v3-dim-white" />
-            <Skeleton className="mini-stat-skeleton-label bg-v3-dim-white" />
-          </div>
-        </div>
-      ))}
-    </>
-  );
+  /** Forwarded to ListCard — undefined/true shows the default load-more button, false/null hides it. */
+  loadMore?: boolean | null;
+  /** Forwarded to ListCard — click handler for the default load-more button. */
+  onLoadMore?: () => void;
+  /** Rendered at the end of the list body after the rows (infinite-scroll sentinel). */
+  loadMoreSentinel?: ReactNode;
+  /** Forwarded to ListCard so the reveal hook can measure the scroll area. */
+  scrollRef?: RefObject<HTMLDivElement | null>;
 }
 
 export function DashboardRedesign({
@@ -70,6 +52,10 @@ export function DashboardRedesign({
   onFilterChange,
   analyticsLoading = false,
   loading = false,
+  loadMore,
+  onLoadMore,
+  loadMoreSentinel,
+  scrollRef,
 }: DashboardRedesignProps) {
   return (
     <section
@@ -78,26 +64,12 @@ export function DashboardRedesign({
       data-source-component={DASHBOARD_SOURCE_COMPONENT}
       className="flex h-full min-h-0 flex-col"
     >
-      <div className="stats-grid" data-component={DASHBOARD_ANALYTICS_BASE}>
-        {analyticsLoading ? (
-          <DashboardAnalyticsSkeleton />
-        ) : (
-          analytics.map((item) => {
-            const Icon = item.icon;
-            return (
-              <div className="mini-stat" key={item.label} data-component={`${DASHBOARD_ANALYTICS_BASE}_stat`}>
-                <div className={`mini-stat-icon ${toneClass[item.tone]}`}>
-                  <Icon size={18} strokeWidth={2.5} />
-                </div>
-                <div>
-                  <div className={`mini-stat-num ${item.urgent ? "urgent" : ""}`}>{item.value}</div>
-                  <div className="mini-stat-label">{item.label}</div>
-                </div>
-              </div>
-            );
-          })
-        )}
-      </div>
+      <StatsBar
+        data-component={DASHBOARD_ANALYTICS_BASE}
+        items={analytics}
+        isLoading={analyticsLoading}
+        variant="compact"
+      />
 
       <div
         className="shell-content"
@@ -111,6 +83,9 @@ export function DashboardRedesign({
           filters={filters}
           activeFilter={activeFilter}
           onFilterChange={onFilterChange}
+          scrollRef={scrollRef}
+          loadMore={loadMore}
+          onLoadMore={onLoadMore}
         >
           {loading ? (
             <ListRowsSkeleton
@@ -118,11 +93,14 @@ export function DashboardRedesign({
               rowCount={4}
             />
           ) : (
-            <SectionedList
-              data-component={DASHBOARD_LIST_BODY_BASE}
-              sections={sections}
-              hideSectionHeader={() => true}
-            />
+            <>
+              <SectionedList
+                data-component={DASHBOARD_LIST_BODY_BASE}
+                sections={sections}
+                hideSectionHeader={() => true}
+              />
+              {loadMoreSentinel}
+            </>
           )}
         </ListCard>
       </div>

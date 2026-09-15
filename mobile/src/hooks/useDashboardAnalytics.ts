@@ -1,6 +1,7 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
+import { authenticatedFetch } from "@/lib/api/authenticated-fetch";
 import {
   normalizeDashboardAnalyticsPayload,
   type DashboardAnalytics,
@@ -18,7 +19,7 @@ interface UseDashboardAnalyticsOptions {
 }
 
 export async function fetchDashboardAnalytics(): Promise<DashboardAnalytics> {
-  const response = await fetch("/api/clients/analytics", { cache: "no-store" });
+  const response = await authenticatedFetch("/api/clients/analytics", { cache: "no-store" });
   if (!response.ok) {
     throw new Error(`Failed to fetch dashboard analytics: ${response.status}`);
   }

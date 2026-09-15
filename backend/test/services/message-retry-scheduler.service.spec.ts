@@ -5,13 +5,17 @@ import { IMessageLogRepository } from "domain/repositories/message-log.repositor
 import { createSchedulerLeaseMock } from "../utils/mocks/scheduler-lease.mock";
 
 describe("MessageRetrySchedulerService", () => {
-    const createLog = (provider: string, retrySafety?: string) =>
+    const createLog = (
+        provider: string,
+        retrySafety?: string,
+        triggerJobId: string | null = provider === "aligo_sms" ? "trigger-77" : null,
+    ) =>
         MessageLogEntity.reconstitute(
             provider === "aligo_sms" ? 77 : 78,
             "branch-1",
             provider,
             provider === "aligo_sms" ? "client_greeting_sms" : "CLIENT_CREATED",
-            null,
+            triggerJobId,
             "01012345678",
             7,
             "message",
@@ -34,15 +38,20 @@ describe("MessageRetrySchedulerService", () => {
     let scheduler: MessageRetrySchedulerService;
     let logRepository: ReturnType<typeof createMockLogRepository>;
     let smsRetryService: { retry: jest.Mock };
+    let systemSettingService: { getMessageSettingsPolicyEnabled: jest.Mock };
     let nowSpy: jest.SpyInstance<number, []>;
 
     beforeEach(() => {
         logRepository = createMockLogRepository();
         smsRetryService = { retry: jest.fn().mockResolvedValue(undefined) };
+        systemSettingService = {
+            getMessageSettingsPolicyEnabled: jest.fn().mockResolvedValue(true),
+        };
         scheduler = new MessageRetrySchedulerService(
             logRepository as unknown as IMessageLogRepository,
             smsRetryService as unknown as SmsRetryService,
             createSchedulerLeaseMock(),
+            systemSettingService as never,
         );
         nowSpy = jest.spyOn(Date, "now");
         nowSpy.mockReturnValue(0);
@@ -60,10 +69,26 @@ describe("MessageRetrySchedulerService", () => {
 
         await scheduler.retryFailedMessages();
 
-        expect(smsRetryService.retry).toHaveBeenCalledWith(smsLog);
+        expect(smsRetryService.retry).toHaveBeenCalledWith(smsLog, "automatic");
         expect(alimtalkLog.status).toBe("failed");
         expect(alimtalkLog.nextRetryAt).toBeNull();
         expect(logRepository.update).toHaveBeenCalledWith(alimtalkLog);
+    });
+
+    it("leaves an SMS retry pending while the branch retry policy is disabled", async () => {
+        const smsLog = createLog("aligo_sms");
+        systemSettingService.getMessageSettingsPolicyEnabled.mockResolvedValue(false);
+        logRepository.findPendingRetriesSystemScope.mockResolvedValue([smsLog]);
+
+        await scheduler.retryFailedMessages();
+
+        expect(systemSettingService.getMessageSettingsPolicyEnabled).toHaveBeenCalledWith(
+            "branch-1",
+            "sms-retry",
+        );
+        expect(smsRetryService.retry).not.toHaveBeenCalled();
+        expect(logRepository.update).not.toHaveBeenCalled();
+        expect(smsLog.nextRetryAt).not.toBeNull();
     });
 
     it("does not resend uncertain Aligo SMS and marks it for provider-history/manual verification", async () => {
@@ -80,14 +105,51 @@ describe("MessageRetrySchedulerService", () => {
         expect(uncertainLog.errorMessage).toContain("수동 확인");
     });
 
+    it("does not resend a partial batch and preserves its recipient-level safety marker", async () => {
+        const partialLog = createLog("aligo_sms", "partial");
+        logRepository.findPendingRetriesSystemScope.mockResolvedValue([partialLog]);
+
+        await scheduler.retryFailedMessages();
+
+        expect(smsRetryService.retry).not.toHaveBeenCalled();
+        expect(logRepository.update).toHaveBeenCalledWith(partialLog);
+        expect(partialLog.variables["retrySafety"]).toBe("partial");
+        expect(partialLog.nextRetryAt).toBeNull();
+        expect(partialLog.errorMessage).toContain("부분 발송");
+    });
+
     it("continues retrying provider-rejected Aligo SMS logs", async () => {
         const providerRejectedLog = createLog("aligo_sms", "provider-rejected");
         logRepository.findPendingRetriesSystemScope.mockResolvedValue([providerRejectedLog]);
 
         await scheduler.retryFailedMessages();
 
-        expect(smsRetryService.retry).toHaveBeenCalledWith(providerRejectedLog);
+        expect(smsRetryService.retry).toHaveBeenCalledWith(providerRejectedLog, "automatic");
         expect(logRepository.update).not.toHaveBeenCalled();
+    });
+
+    it("does not resend a manually rejected explicit retry even if it is selected", async () => {
+        const manuallyRejectedLog = createLog("aligo_sms", "manual-provider-rejected", null);
+        logRepository.findPendingRetriesSystemScope.mockResolvedValue([manuallyRejectedLog]);
+
+        await scheduler.retryFailedMessages();
+
+        expect(smsRetryService.retry).not.toHaveBeenCalled();
+        expect(logRepository.update).toHaveBeenCalledWith(manuallyRejectedLog);
+        expect(manuallyRejectedLog.nextRetryAt).toBeNull();
+        expect(manuallyRejectedLog.errorMessage).toContain("명시적으로 다시 요청");
+    });
+
+    it("does not infer automatic ownership for an unbound stale SMS row", async () => {
+        const unboundLog = createLog("aligo_sms", "provider-rejected", null);
+        logRepository.findPendingRetriesSystemScope.mockResolvedValue([unboundLog]);
+
+        await scheduler.retryFailedMessages();
+
+        expect(smsRetryService.retry).not.toHaveBeenCalled();
+        expect(logRepository.update).toHaveBeenCalledWith(unboundLog);
+        expect(unboundLog.nextRetryAt).toBeNull();
+        expect(unboundLog.errorMessage).toContain("소유자를 확인할 수 없어");
     });
 
     it("terminates unsupported message providers instead of retrying forever", async () => {
@@ -162,6 +224,6 @@ describe("MessageRetrySchedulerService", () => {
         await scheduler.retryFailedMessages();
 
         expect(smsRetryService.retry).toHaveBeenCalledTimes(1);
-        expect(smsRetryService.retry).toHaveBeenCalledWith(firstLog);
+        expect(smsRetryService.retry).toHaveBeenCalledWith(firstLog, "automatic");
     });
 });

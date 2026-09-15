@@ -1,4 +1,6 @@
 "use client";
+import { getUserErrorMessage } from "@babyjamjam/shared";
+
 
 import { type CSSProperties, useCallback, useMemo, useState } from "react";
 import { ArrowLeft, FileText, Loader2, Plus, Trash2 } from "lucide-react";
@@ -87,7 +89,7 @@ function BranchTemplateDetail({
   if (!template) {
     return (
       <DetailEmptyState
-        message="지점 템플릿을 불러올 수 없습니다."
+        message="지점 템플릿을 불러올 수 없어요."
       />
     );
   }
@@ -99,7 +101,7 @@ function BranchTemplateDetail({
       { id: template.id, request: { name, content, variables: template.variables } },
       {
         onSuccess: () => toast({ variant: "success", description: "지점 템플릿을 저장했어요" }),
-        onError: () => toast({ variant: "destructive", description: "지점 템플릿을 저장하지 못했어요" }),
+        onError: () => toast({ variant: "destructive", description: getUserErrorMessage("지점 템플릿을 저장하지 못했어요") }),
       },
     );
   };
@@ -114,7 +116,7 @@ function BranchTemplateDetail({
       onDeleted();
       toast({ variant: "success", description: "지점 템플릿을 삭제했어요" });
     } catch {
-      toast({ variant: "destructive", description: "지점 템플릿을 삭제하지 못했어요" });
+      toast({ variant: "destructive", description: getUserErrorMessage("지점 템플릿을 삭제하지 못했어요") });
     }
   };
 
@@ -176,7 +178,7 @@ function BranchTemplateDetail({
         open={deleteDialogOpen}
         onOpenChange={setDeleteDialogOpen}
         title="지점 템플릿을 삭제하시겠습니까?"
-        description="삭제한 지점 템플릿은 복구할 수 없습니다."
+        description="삭제한 지점 템플릿은 복구할 수 없어요."
         cancelLabel="취소"
         approvalLabel="삭제"
         pendingLabel="삭제 중..."

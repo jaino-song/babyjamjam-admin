@@ -1,4 +1,5 @@
 import type { EformsignDocument } from "@/lib/eformsign/types";
+import { formatKoreanPhoneNumber, isValidKoreanPhoneNumber, normalizeKoreanPhoneDigits } from "@/lib/phone";
 
 type UnknownRecord = Record<string, unknown>;
 
@@ -209,9 +210,12 @@ function parseDuration(value: string | null | undefined): number | undefined {
 }
 
 function formatPhone(value: string | null | undefined): string | undefined {
-  const digits = (value ?? "").replace(/\D/g, "");
-  if (digits.length !== 11) return undefined;
-  return `${digits.slice(0, 3)}-${digits.slice(3, 7)}-${digits.slice(7, 11)}`;
+  // Prefill values feed the client/employee forms, which accept exactly eleven
+  // digits; anything else is omitted so the document cannot inject a number the
+  // form would reject. Country-code forms are normalized first.
+  const digits = normalizeKoreanPhoneDigits(value);
+  if (digits.length !== 11 || !isValidKoreanPhoneNumber(digits)) return undefined;
+  return formatKoreanPhoneNumber(digits);
 }
 
 function firstValue(...values: Array<string | null | undefined>): string | undefined {

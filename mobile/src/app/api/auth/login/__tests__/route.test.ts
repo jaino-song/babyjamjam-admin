@@ -91,7 +91,7 @@ describe("POST /api/auth/login", () => {
     it("returns the backend response when login fails (no cookies set)", async () => {
         mockPost.mockResolvedValue({
             status: 401,
-            data: { success: false, message: "이메일 또는 비밀번호가 올바르지 않습니다." },
+            data: { success: false, message: "이메일 또는 비밀번호가 올바르지 않아요." },
         });
 
         const response = await POST(createRequest(JSON.stringify(validBody)));

@@ -320,7 +320,7 @@ export function ClientsTable() {
                 }}
                 dataComponent="desktop_clients_table_delete-approval"
                 title={t(locale, "clients.delete-confirm")}
-                description="삭제한 고객 정보는 복구할 수 없습니다."
+                description="삭제한 고객 정보는 복구할 수 없어요."
                 approvalLabel={t(locale, "common.delete")}
                 pendingLabel="삭제 중..."
                 approvalVariant="destructive"

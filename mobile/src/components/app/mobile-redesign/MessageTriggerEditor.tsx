@@ -1,4 +1,6 @@
 "use client";
+import { getUserErrorMessage } from "@babyjamjam/shared";
+
 
 import { useMemo, useState } from "react";
 import { BellRing, Trash2 } from "lucide-react";
@@ -79,18 +81,12 @@ function initialForm(rule: MessageTriggerRule | null): RuleForm {
 
 const FIELD_CLASS = "min-h-11 w-full rounded-xl border border-v3-border bg-white px-3 text-sm text-v3-dark outline-none focus:border-v3-primary";
 
-/**
- * The editor renders inside the MobileDetailSheet opened by MessagesTriggersPage,
- * so it continues that sheet's canonical path. MobileDetailStack already owns
- * `..._stack_detail-page` and `..._stack_detail-page_header`; the editor's own
- * nodes hang off `_body` so the two never collide.
- */
-const EDITOR_BASE = "mobile_messages_triggers_detail-sheet_stack_detail-page_body";
-
 export function MessageTriggerEditor({
+  "data-component": dataComponent,
   rule,
   onClose,
 }: {
+  "data-component": string;
   rule: MessageTriggerRule | null;
   onClose: () => void;
 }) {
@@ -131,11 +127,11 @@ export function MessageTriggerEditor({
   const handleSave = async () => {
     const name = form.name.trim();
     if (!name) {
-      setError("규칙 이름을 입력해 주세요.");
+      setError(getUserErrorMessage("규칙 이름을 입력해 주세요."));
       return;
     }
     if (templates.length === 0) {
-      setError("선택한 조건에 사용할 수 있는 SMS 템플릿이 없습니다.");
+      setError(getUserErrorMessage("선택한 조건에 사용할 수 있는 SMS 템플릿이 없습니다."));
       return;
     }
 
@@ -155,7 +151,7 @@ export function MessageTriggerEditor({
       }
       onClose();
     } catch {
-      setError("자동 전송 규칙을 저장하지 못했습니다. 다시 시도해 주세요.");
+      setError(getUserErrorMessage("자동 전송 규칙을 저장하지 못했습니다. 다시 시도해 주세요."));
     }
   };
 
@@ -168,14 +164,14 @@ export function MessageTriggerEditor({
       onClose();
     } catch {
       setDeleteOpen(false);
-      setError("자동 전송 규칙을 삭제하지 못했습니다. 다시 시도해 주세요.");
+      setError(getUserErrorMessage("자동 전송 규칙을 삭제하지 못했습니다. 다시 시도해 주세요."));
     }
   };
 
   return (
-    <MobileDetailPage data-component={EDITOR_BASE} name="message-trigger-editor">
+    <MobileDetailPage data-component={dataComponent} name="message-trigger-editor">
       <MobileDetailHeader
-        data-component={`${EDITOR_BASE}_header`}
+        data-component={`${dataComponent}_header`}
         name="message-trigger-editor"
         avatar={<BellRing size={22} aria-hidden="true" />}
         title={rule ? "자동 전송 규칙 수정" : "자동 전송 규칙 추가"}
@@ -184,7 +180,7 @@ export function MessageTriggerEditor({
 
       <form
         className="space-y-4 px-4 pb-8"
-        data-component={`${EDITOR_BASE}_form`}
+        data-component={`${dataComponent}_form`}
         onSubmit={(event) => {
           event.preventDefault();
           void handleSave();
@@ -275,9 +271,9 @@ export function MessageTriggerEditor({
           />
         </label>
 
-        {error ? <p className="text-sm font-semibold text-v3-burgundy" role="alert">{error}</p> : null}
+        {error ? <p className="text-sm font-semibold text-v3-burgundy" role="alert">{error && getUserErrorMessage(error)}</p> : null}
 
-        <div className="flex gap-2" data-component={`${EDITOR_BASE}_form_actions`}>
+        <div className="flex gap-2" data-component={`${dataComponent}_form_actions`}>
           {rule ? (
             <button
               type="button"
@@ -299,14 +295,14 @@ export function MessageTriggerEditor({
         open={deleteOpen}
         onOpenChange={setDeleteOpen}
         title="자동 전송 규칙을 삭제할까요?"
-        description="삭제한 규칙은 복구할 수 없습니다."
+        description="삭제한 규칙은 복구할 수 없어요."
         isDescriptionVisuallyHidden={false}
         approvalLabel="삭제 확인"
         pendingLabel="삭제 중…"
         approvalVariant="destructive"
         isPending={deleteMutation.isPending}
         onApprove={handleDelete}
-        data-component={`${EDITOR_BASE}_delete-modal`}
+        data-component={`${dataComponent}_delete-modal`}
       />
     </MobileDetailPage>
   );

@@ -11,6 +11,27 @@ import {
 } from "../[triggerId]/route";
 import { GET as listRules, POST as createRule } from "../route";
 
+async function expectCanonicalValidationResponse(
+  response: Response,
+  legacyError: string,
+): Promise<void> {
+  expect(response.status).toBe(400);
+  const requestId = response.headers.get("X-Request-Id");
+  expect(requestId).toEqual(expect.stringMatching(/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/));
+  expect(response.headers.get("Content-Type")).toBe("application/problem+json");
+  expect(response.headers.get("Content-Language")).toBe("ko-KR");
+  expect(response.headers.get("Cache-Control")).toBe("no-store, max-age=0");
+
+  const body = await response.json();
+  expect(body).toMatchObject({
+    code: "VALIDATION_FAILED",
+    outcome: "NOT_APPLIED",
+    error: legacyError,
+    requestId,
+  });
+  expect(Array.isArray(body.errors)).toBe(true);
+}
+
 jest.mock("@/lib/api/server", () => ({
   serverAPIClient: {
     delete: jest.fn(),
@@ -83,19 +104,31 @@ describe("Message trigger rule API routes", () => {
     });
   });
 
-  it("preserves backend error status and sanitizes payload when listing rules", async () => {
-    mockGet.mockRejectedValue({
-      response: {
-        status: 403,
-        data: { error: "trigger access denied" },
-      },
-    });
+  it.each([400, 403, 409, 422])(
+    "preserves upstream %s status with one sanitized trigger error contract",
+    async (status) => {
+      mockGet.mockRejectedValue({
+        response: {
+          status,
+          data: {
+            error: "Bearer upstream-secret",
+            message: "internal db host and member@example.com",
+          },
+        },
+      });
 
-    const response = await listRules(createRequest("/api/message-trigger-rules"));
+      const response = await listRules(createRequest("/api/message-trigger-rules"));
 
-    expect(response.status).toBe(403);
-    await expect(response.json()).resolves.toEqual({ error: "Failed to fetch message trigger rules" });
-  });
+      expect(response.status).toBe(status);
+      const body = await response.json();
+      expect(body).toEqual({
+        error: "Failed to fetch message trigger rules",
+        code: "UPSTREAM_ERROR",
+      });
+      expect(JSON.stringify(body)).not.toContain("upstream-secret");
+      expect(JSON.stringify(body)).not.toContain("member@example.com");
+    },
+  );
 
   const validRulePayload = {
     name: "Reminder",
@@ -124,6 +157,34 @@ describe("Message trigger rule API routes", () => {
     expect(mockPost).toHaveBeenCalledWith(
       "/message-trigger-rules",
       { ...validRulePayload, offsetDays: 3 },
+      expect.anything(),
+    );
+  });
+
+  it("accepts SERVICE_END_NOTICE through the shared create schema", async () => {
+    mockPost.mockResolvedValue({
+      status: 201,
+      data: { id: "system:service_end_notice" },
+    });
+
+    const response = await createRule(
+      createRequest("/api/message-trigger-rules", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: "서비스 종료 영수증 안내",
+          eventType: "SERVICE_END",
+          offsetType: "SAME_DAY",
+          recipientType: "CLIENT",
+          templateKey: "SERVICE_END_NOTICE",
+        }),
+      }),
+    );
+
+    expect(response.status).toBe(201);
+    expect(mockPost).toHaveBeenCalledWith(
+      "/message-trigger-rules",
+      expect.objectContaining({ templateKey: "SERVICE_END_NOTICE" }),
       expect.anything(),
     );
   });
@@ -195,10 +256,7 @@ describe("Message trigger rule API routes", () => {
       }),
     );
 
-    expect(response.status).toBe(400);
-    await expect(response.json()).resolves.toEqual({
-      error: "Request body must be valid JSON",
-    });
+    await expectCanonicalValidationResponse(response, "Request body must be valid JSON");
     expect(mockPost).not.toHaveBeenCalled();
   });
 
@@ -211,6 +269,21 @@ describe("Message trigger rule API routes", () => {
     expect(response.status).toBe(400);
     await expect(response.json()).resolves.toEqual({ error: "Invalid trigger id" });
     expect(mockGet).not.toHaveBeenCalled();
+  });
+
+  it("encodes system trigger IDs before proxying", async () => {
+    mockGet.mockResolvedValue({ status: 200, data: { id: "system:service_end_notice" } });
+
+    const response = await getRule(
+      createRequest("/api/message-trigger-rules/system:service_end_notice"),
+      { params: Promise.resolve({ triggerId: "system:service_end_notice" }) },
+    );
+
+    expect(response.status).toBe(200);
+    expect(mockGet).toHaveBeenCalledWith(
+      "/message-trigger-rules/system%3Aservice_end_notice",
+      expect.anything(),
+    );
   });
 
   it("forwards a validated partial update to the backend path", async () => {
@@ -251,6 +324,20 @@ describe("Message trigger rule API routes", () => {
     expect(mockPatch).not.toHaveBeenCalled();
   });
 
+  it("rejects an invalid update template key before proxying", async () => {
+    const response = await updateRule(
+      createRequest("/api/message-trigger-rules/rule_123", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ templateKey: "NOT_A_TEMPLATE" }),
+      }),
+      { params: Promise.resolve({ triggerId: "rule_123" }) },
+    );
+
+    expect(response.status).toBe(400);
+    expect(mockPatch).not.toHaveBeenCalled();
+  });
+
   it("rejects malformed update JSON before proxying", async () => {
     const response = await updateRule(
       createRequest("/api/message-trigger-rules/rule_123", {
@@ -261,10 +348,7 @@ describe("Message trigger rule API routes", () => {
       { params: Promise.resolve({ triggerId: "rule_123" }) },
     );
 
-    expect(response.status).toBe(400);
-    await expect(response.json()).resolves.toEqual({
-      error: "Request body must be valid JSON",
-    });
+    await expectCanonicalValidationResponse(response, "Request body must be valid JSON");
     expect(mockPatch).not.toHaveBeenCalled();
   });
 

@@ -32,7 +32,7 @@ interface PressedNavItem {
 function isNavItemActive(href: string, pathname: string): boolean {
   if (href === "/dashboard") return pathname === "/dashboard";
   if (href === "/messages/new") return pathname.startsWith("/messages");
-  if (href === "/all") return pathname === "/all";
+  if (href === "/all") return pathname === "/all" || pathname.startsWith("/consultations");
   return pathname.startsWith(href);
 }
 

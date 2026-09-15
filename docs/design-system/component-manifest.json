@@ -1454,6 +1454,17 @@
     ],
     "mobile": [
       {
+        "name": "Alert",
+        "layer": "atom",
+        "import": "@/components/ui/alert",
+        "file": "mobile/src/components/ui/alert.tsx",
+        "exports": [
+          "Alert",
+          "AlertTitle",
+          "AlertDescription"
+        ]
+      },
+      {
         "name": "AgentActionApprovalCard",
         "layer": "organism",
         "import": "@/components/app/ui/AgentActionApprovalCard",
@@ -1971,6 +1982,37 @@
         "file": "mobile/src/components/app/v3/SearchFilterBar.tsx",
         "exports": [
           "SearchFilterBar"
+        ]
+      },
+      {
+        "name": "SettingsListCard",
+        "layer": "organism",
+        "import": "@/components/app/mobile-redesign/settings/SettingsListCard",
+        "file": "mobile/src/components/app/mobile-redesign/settings/SettingsListCard.tsx",
+        "exports": [
+          "SettingsListCard",
+          "SettingsListRowsSkeleton"
+        ],
+        "replaces": [
+          "page-specific mobile settings list card markup"
+        ],
+        "requiredFor": [
+          "mobile settings-style list panes"
+        ]
+      },
+      {
+        "name": "SettingsListItem",
+        "layer": "molecule",
+        "import": "@/components/app/mobile-redesign/settings/SettingsListCard",
+        "file": "mobile/src/components/app/mobile-redesign/settings/SettingsListCard.tsx",
+        "exports": [
+          "SettingsListItem"
+        ],
+        "replaces": [
+          "page-specific mobile settings list item markup"
+        ],
+        "requiredFor": [
+          "mobile settings-style list rows"
         ]
       },
       {

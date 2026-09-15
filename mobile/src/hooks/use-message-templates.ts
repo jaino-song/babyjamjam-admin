@@ -14,13 +14,16 @@ const normalizeTemplateList = (payload: unknown): MessageTemplate[] => {
     }
 
     if (payload && typeof payload === "object") {
-        const nestedList = (payload as { data?: unknown }).data;
-        if (Array.isArray(nestedList)) {
-            return nestedList;
+        const response = payload as { data?: unknown; items?: unknown };
+        if (Array.isArray(response.data)) {
+            return response.data;
+        }
+        if (Array.isArray(response.items)) {
+            return response.items;
         }
     }
 
-    return [];
+    throw new Error("Message templates response shape is invalid");
 };
 
 export const templateQueryKeys = {

@@ -17,6 +17,22 @@ describe("normalizeKoreanPhoneLookupKey", () => {
     expect(normalizeKoreanPhoneLookupKey("010-6621-1878")).toBe("01066211878");
     expect(normalizeKoreanPhoneLookupKey("+82 10 6621 1878")).toBe("01066211878");
   });
+
+  it("normalizes 82 and domestic Seoul landline formats to the same key", () => {
+    expect(normalizeKoreanPhoneLookupKey("0212345678")).toBe("0212345678");
+    expect(normalizeKoreanPhoneLookupKey("82 2 1234 5678")).toBe("0212345678");
+    expect(normalizeKoreanPhoneLookupKey("82 02 1234 5678")).toBe("0212345678");
+  });
+
+  it("keeps overlong lookup values intact so validation can reject them", () => {
+    const overlongDomestic = "010123456789";
+    const overlongCountryCode = "+82 10 1234 56789";
+
+    expect(normalizeKoreanPhoneLookupKey(overlongDomestic)).toBe(overlongDomestic);
+    expect(normalizeKoreanPhoneLookupKey(overlongCountryCode)).toBe("010123456789");
+    expect(isValidKoreanPhoneNumber(overlongDomestic)).toBe(false);
+    expect(isValidKoreanPhoneNumber(overlongCountryCode)).toBe(false);
+  });
 });
 
 describe("formatKoreanPhoneNumber", () => {

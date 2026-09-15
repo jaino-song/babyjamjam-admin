@@ -6,6 +6,7 @@ import { t } from "@/lib/i18n/translations";
 import { Employee } from "@/hooks/useEmployees";
 import { normalizeEmployeeGrade } from "@/features/employees/grade";
 import { formatDateForDisplay } from "@/lib/date/format-date-for-display";
+import { formatKoreanPhoneNumber } from "@/lib/phone";
 
 import {
     Dialog,
@@ -32,14 +33,6 @@ const EMPLOYEE_DETAIL_MODAL_BASE = "mobile_employees_table_detail-modal";
 
 const formatDate = (dateStr: string | null | undefined, fallback: string): string => {
     return formatDateForDisplay(dateStr, fallback);
-};
-
-const formatPhoneNumber = (phone: string | null | undefined): string => {
-    if (!phone) return "-";
-    const numbers = phone.replace(/[^\d]/g, "");
-    if (numbers.length <= 3) return numbers;
-    if (numbers.length <= 7) return `${numbers.slice(0, 3)}-${numbers.slice(3)}`;
-    return `${numbers.slice(0, 3)}-${numbers.slice(3, 7)}-${numbers.slice(7, 11)}`;
 };
 
 export function EmployeeDetailModal({
@@ -109,7 +102,7 @@ export function EmployeeDetailModal({
                             {t(locale, "employees.form.section-basic")}
                         </h4>
                         <InfoRow label={t(locale, "employees.form.name")} value={employee.name} />
-                        <InfoRow label={t(locale, "employees.form.phone")} value={formatPhoneNumber(employee.phone)} />
+                        <InfoRow label={t(locale, "employees.form.phone")} value={formatKoreanPhoneNumber(employee.phone) || "-"} />
                     </div>
 
                     <Separator />

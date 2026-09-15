@@ -54,7 +54,7 @@ describe("POST /api/message-trigger-jobs/[id]/cancel", () => {
                 statusText: "Conflict",
                 headers: {},
                 config: { headers: new AxiosHeaders() },
-                data: { message: "이미 발송되었거나 취소할 수 없는 상태입니다." },
+                data: { message: "이미 발송되었거나 취소할 수 없는 상태예요." },
             }),
         );
 
@@ -63,7 +63,7 @@ describe("POST /api/message-trigger-jobs/[id]/cancel", () => {
         });
 
         expect(response.status).toBe(409);
-        expect(await response.json()).toEqual({ message: "이미 발송되었거나 취소할 수 없는 상태입니다." });
+        expect(await response.json()).toEqual({ message: "이미 발송되었거나 취소할 수 없는 상태예요." });
     });
 
     it("requires authentication before forwarding", async () => {

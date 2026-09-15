@@ -1,14 +1,14 @@
 export const AUTH_ERROR_DIALOGS = {
   ACCOUNT_REJECTED: {
-    title: "가입이 거부되었습니다.",
+    title: "가입이 거부됐어요.",
     description: "계정 상태에 대한 자세한 내용은 관리자에게 문의해 주세요.",
   },
   ACCOUNT_PROFILE_INCOMPLETE: {
-    title: "가입 정보가 누락되었습니다.",
+    title: "가입 정보가 누락됐어요.",
     description: "오너에게 계정 정보 확인을 요청해 주세요.",
   },
   INVALID_OAUTH_STATE: {
-    title: "로그인 요청이 만료되었습니다.",
+    title: "로그인 요청이 만료됐어요.",
     description: "카카오 로그인을 다시 시도해 주세요.",
   },
   NO_ACCESSIBLE_BRANCH: {
@@ -20,7 +20,7 @@ export const AUTH_ERROR_DIALOGS = {
     description: "로그인이 필요하면 카카오 로그인을 다시 시도해 주세요.",
   },
   OAUTH_PROVIDER_ERROR: {
-    title: "카카오 로그인에 실패했습니다.",
+    title: "카카오 로그인에 실패했어요.",
     description: "잠시 후 다시 시도해 주세요.",
   },
   PENDING_APPROVAL: {
@@ -38,5 +38,5 @@ export function getAuthErrorDialog(code: string | null | undefined) {
 
 export function getSafeCallbackError(value: string | null): string | null {
   if (!value) return null;
-  return getAuthErrorDialog(value)?.title ?? "로그인 중 오류가 발생했습니다.";
+  return getAuthErrorDialog(value)?.title ?? "로그인 중 오류가 발생했어요.";
 }

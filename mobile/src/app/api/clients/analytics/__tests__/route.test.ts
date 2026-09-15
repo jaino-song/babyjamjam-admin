@@ -143,7 +143,7 @@ describe("clients analytics route", () => {
     expect(response.status).toBe(502);
     expect(response.headers.get("Cache-Control")).toBe("no-store, max-age=0");
     await expect(response.json()).resolves.toEqual({
-      error: "Failed to fetch dashboard analytics",
+      error: expect.stringMatching(/[가-힣].*요[.!]?$/),
       code: "CLIENT_ANALYTICS_ERROR",
     });
 

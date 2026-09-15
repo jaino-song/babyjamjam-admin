@@ -9,12 +9,12 @@ describe("FormField", () => {
         label="비밀번호 확인"
         value="mismatch"
         onChange={() => {}}
-        error="비밀번호가 일치하지 않습니다."
+        error="비밀번호가 일치하지 않아요."
         errorDisplay="inline"
       />
     );
 
-    const inlineError = screen.getByText("비밀번호가 일치하지 않습니다.");
+    const inlineError = screen.getByText("비밀번호가 일치하지 않아요.");
 
     expect(inlineError.tagName).toBe("SPAN");
     expect(inlineError).toHaveClass("inline-flex");
@@ -45,11 +45,11 @@ describe("FormField", () => {
         label="이메일"
         value=""
         onChange={() => {}}
-        error="이메일은 필수입니다."
+        error="이메일을 입력해 주세요."
       />
     );
 
-    const helperText = screen.getByText("이메일은 필수입니다.");
+    const helperText = screen.getByText("이메일을 입력해 주세요.");
 
     expect(helperText.tagName).toBe("P");
     expect(helperText).toHaveClass("text-sm");

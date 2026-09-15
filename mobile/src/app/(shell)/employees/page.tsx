@@ -25,6 +25,7 @@ import { useLocale } from "@/providers/LocaleProvider";
 import { useToast } from "@/hooks/use-toast";
 import { t } from "@/lib/i18n/translations";
 import { formatDateForDisplay } from "@/lib/date/format-date-for-display";
+import { formatKoreanPhoneNumber } from "@/lib/phone";
 import {
   Badge,
   ListCard,
@@ -50,7 +51,7 @@ import "@/components/app/mobile-redesign/redesign.css";
 import { getOpenToNextWorkLabel } from "@babyjamjam/shared/constants/employee-status";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
-import { getApiErrorMessage } from "@babyjamjam/shared";
+import { getUserErrorMessage, normalizeApiError } from "@babyjamjam/shared";
 import {
   buildAllEmployeeRowsForList,
   GROUPS,
@@ -74,14 +75,6 @@ function employeeAreaSummary(e: Employee) {
   const areas = employeeWorkAreas(e);
   if (areas.length === 0) return "미설정";
   return areas.join(", ");
-}
-
-function formatPhoneNumber(phone: string | null | undefined): string {
-  if (!phone) return "-";
-  const numbers = phone.replace(/[^\d]/g, "");
-  if (numbers.length <= 3) return numbers || "-";
-  if (numbers.length <= 7) return `${numbers.slice(0, 3)}-${numbers.slice(3)}`;
-  return `${numbers.slice(0, 3)}-${numbers.slice(3, 7)}-${numbers.slice(7, 11)}`;
 }
 
 function employeeMeta(e: Employee) {
@@ -114,7 +107,23 @@ function EmployeeDetailContent({
   const availabilityTone = employee.openToNextWork ? "green" : "muted";
   const unknownDateLabel = t(locale, "employees.form.registered-date-unknown");
   const { data: activeClients = [], isLoading: isActiveClientsLoading } =
-    useEmployeeActiveClients(employee.id); const { history: workHistory, isLoading: isWorkHistoryLoading, isError: isWorkHistoryError, refetch: refetchWorkHistory, hasNextPage: hasMoreWorkHistory, fetchNextPage: fetchMoreWorkHistory, isFetchingNextPage: isFetchingMoreWorkHistory } = useEmployeeWorkHistory(employee.id);
+    useEmployeeActiveClients(employee.id);
+  const {
+    history: workHistory,
+    isLoading: isWorkHistoryLoading,
+    isError: isWorkHistoryError,
+    error: workHistoryError,
+    refetch: refetchWorkHistory,
+    hasNextPage: hasMoreWorkHistory,
+    fetchNextPage: fetchMoreWorkHistory,
+    isFetchingNextPage: isFetchingMoreWorkHistory,
+  } = useEmployeeWorkHistory(employee.id);
+  const normalizedWorkHistoryError = workHistoryError
+    ? normalizeApiError(workHistoryError, { locale: locale === "en" ? "en-US" : "ko-KR", operation: "read" })
+    : null;
+  const workHistoryErrorDescription = normalizedWorkHistoryError?.verified
+    ? normalizedWorkHistoryError.message
+    : "잠시 후 다시 시도해 주세요.";
 
   return (
     <MobileDetailPage data-component="mobile_employees_detail-sheet_stack_detail-page_body" name="employees">
@@ -128,7 +137,7 @@ function EmployeeDetailContent({
           ...(employee.grade ? [{ label: employee.grade, tone: "primary" as const }] : []),
         ]}
         menu={
-          <DropdownMenu>
+          <DropdownMenu modal={false}>
             <DropdownMenuTrigger asChild>
               <button
                 type="button"
@@ -186,7 +195,7 @@ function EmployeeDetailContent({
       >
         <InfoCard data-component="mobile_employees_detail-panel_info-card" title="제공인력 정보">
           <InfoRow label="이름" value={employee.name} />
-          <InfoRow label="연락처" value={formatPhoneNumber(employee.phone)} />
+          <InfoRow label="연락처" value={formatKoreanPhoneNumber(employee.phone) || "-"} />
           <InfoRow
             label="다음 배정 가능 여부"
             value={availability}
@@ -257,7 +266,7 @@ function EmployeeDetailContent({
           ) : isWorkHistoryError && workHistory.length === 0 ? (
             <ErrorFallback
               title="근무 내역을 불러오지 못했어요"
-              description="잠시 후 다시 시도해 주세요."
+              description={workHistoryErrorDescription}
               onReset={() => void refetchWorkHistory()}
               resetLabel="다시 시도"
               className="min-h-0 px-0 py-4"
@@ -274,7 +283,7 @@ function EmployeeDetailContent({
                 >
                   <AlertTitle>근무 내역을 새로 불러오지 못했어요</AlertTitle>
                   <AlertDescription>
-                    <p>현재 저장된 근무 내역을 표시하고 있습니다. 잠시 후 다시 시도해 주세요.</p>
+                    <p>현재 저장된 근무 내역을 표시하고 있습니다. {workHistoryErrorDescription}</p>
                     <Button
                       type="button"
                       variant="outline"
@@ -379,7 +388,7 @@ export default function EmployeesPage() {
       setDeleteTarget(null);
       toast({
         title: t(locale, "employees.delete-fail"),
-        description: getApiErrorMessage(
+        description: getUserErrorMessage(
           error,
           t(locale, "employees.delete-fail-description"),
         ),
@@ -502,14 +511,8 @@ export default function EmployeesPage() {
               activeFilter={activeFilter}
               onFilterChange={setActiveFilter}
               scrollRef={scrollContainerRef}
-              loadMore={
-                isInitialLoad && hasMore ? (
-                  <ListLoadMoreButton
-                    data-component="mobile_employees_detail-sheet_stack_list-page_content_list-card_load-more_button"
-                    onLoadMore={loadMore}
-                  />
-                ) : null
-              }
+              loadMore={isInitialLoad && hasMore}
+              onLoadMore={loadMore}
               beforeFilters={
                 <MobileSearchBar
                   data-component="mobile_employees_detail-sheet_stack_list-page_content_list-card_search"

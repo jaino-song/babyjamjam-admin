@@ -161,7 +161,7 @@ function JobRow({
       <div
         data-component={sub("missing-document")}
         className="flex min-w-0 items-center gap-[calc(12px*var(--glint-ui-scale,1))] rounded-[16px] px-[calc(12px*var(--glint-ui-scale,1))] py-[calc(10px*var(--glint-ui-scale,1))]"
-        title="연결된 계약서가 없어 이동할 수 없습니다."
+        title="연결된 계약서가 없어 이동할 수 없어요."
       >
         {content}
       </div>

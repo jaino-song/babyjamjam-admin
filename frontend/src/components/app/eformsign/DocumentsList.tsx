@@ -1,5 +1,7 @@
 "use client";
 
+import { getUserErrorMessage } from "@babyjamjam/shared";
+
 import { useMemo, useState } from "react";
 import { Plus } from "lucide-react";
 import { useEformsignDocumentsByType } from "@/hooks/useEformsignDocuments";
@@ -135,13 +137,13 @@ export function DocumentsList() {
 
   // Error state - now after all hooks are called
   if (authError || error) {
-    const errorMessage = authError?.message || (error instanceof Error ? error.message : "Unknown error");
+    const errorMessage = getUserErrorMessage(authError ?? error, "문서를 불러오지 못했어요.");
     return (
       <div className="p-3">
         <Alert variant="destructive">
           <AlertDescription>
             {authError
-              ? "인증에 실패했습니다. 페이지를 새로고침 해주세요."
+              ? "인증에 실패했어요. 페이지를 새로고침 해 주세요."
               : `문서를 불러오는데 실패했습니다: ${errorMessage}`}
           </AlertDescription>
         </Alert>

@@ -44,7 +44,7 @@ export function AgentPartRegistry({ "data-component": dataComponent, message, on
                 if (toolPart.type === "dynamic-tool" || toolPart.type?.startsWith("tool-")) {
                     const toolName = toolPart.toolName ?? toolPart.type?.slice(5).replaceAll("_", ".") ?? "agent";
                     if (toolPart.state === "output-error") {
-                        return <p key={index} data-component={component("tool-error")} data-slot="tool-error" className="text-sm text-muted-foreground">{toolPart.errorText ?? "도구 결과를 표시할 수 없습니다."}</p>;
+                        return <p key={index} data-component={component("tool-error")} data-slot="tool-error" className="text-sm text-muted-foreground">{toolPart.errorText ?? "도구 결과를 표시할 수 없어요."}</p>;
                     }
                     if (toolPart.state === "output-available") {
                         const serialized = JSON.stringify(toolPart.output, null, 2);

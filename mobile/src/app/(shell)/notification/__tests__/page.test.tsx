@@ -201,10 +201,10 @@ describe("NotificationPage", () => {
       expect(emailSwitch).toHaveAttribute("aria-checked", "true");
       expect(emailSwitch).not.toBeDisabled();
     });
-    expect(screen.getByText("이메일 알림 설정을 저장하지 못했어요. 이전 설정을 유지합니다.")).toBeInTheDocument();
+    expect(screen.getByText("이메일 알림 설정을 저장하지 못했어요. 이전 설정을 유지해요.")).toBeInTheDocument();
     expect(mockToast).toHaveBeenCalledWith({
       title: "이메일 알림 설정을 저장하지 못했어요",
-      description: "이전 설정을 유지합니다",
+      description: "이전 설정을 유지해요",
       variant: "destructive",
     });
   });

@@ -13,6 +13,11 @@ import {
     DEFAULT_CONTRACT_AUTO_FINALIZE_CONFIG,
 } from "domain/entities/system-setting.entity";
 import { SystemSettingAuditContext } from "domain/repositories/system-setting.repository.interface";
+import {
+    DEFAULT_MESSAGE_SETTINGS_POLICY_ENABLED,
+    STORED_MESSAGE_SETTINGS_POLICY_IDS,
+    StoredMessageSettingsPolicyId,
+} from "domain/constants/message-settings-policy";
 
 export type PwaDigestDeliveryStatus = "sent" | "retryable" | "uncertain";
 
@@ -45,6 +50,13 @@ export class SystemSettingService {
 
     private getMessageAutomationPastTriggerConfigKey(branchId: string): string {
         return `branch:${branchId}:message_automation:past_trigger`;
+    }
+
+    private getMessageSettingsPolicyEnabledKey(
+        branchId: string,
+        policyId: StoredMessageSettingsPolicyId,
+    ): string {
+        return `branch:${branchId}:message_policy:${policyId}:enabled`;
     }
 
     private getContractAutoFinalizeConfigKey(branchId: string): string {
@@ -161,6 +173,50 @@ export class SystemSettingService {
         const key = this.getMessageAutomationPastTriggerConfigKey(branchId);
         const value = JSON.stringify(normalized);
         const auditContext = this.auditContext(actor, "system_setting.message_automation.updated", branchId);
+        return auditContext
+            ? this.updateSettingUsecase.execute(key, value, auditContext)
+            : this.updateSettingUsecase.execute(key, value);
+    }
+
+    async getMessageSettingsPolicyEnabled(
+        branchId: string,
+        policyId: StoredMessageSettingsPolicyId,
+    ): Promise<boolean> {
+        const value = await this.getSettingUsecase.executeWithDefault(
+            this.getMessageSettingsPolicyEnabledKey(branchId, policyId),
+            String(DEFAULT_MESSAGE_SETTINGS_POLICY_ENABLED),
+        );
+
+        return value === "true";
+    }
+
+    async getMessageSettingsPolicyActivations(
+        branchId: string,
+    ): Promise<Record<StoredMessageSettingsPolicyId, boolean>> {
+        const entries = await Promise.all(
+            STORED_MESSAGE_SETTINGS_POLICY_IDS.map(async (policyId) => [
+                policyId,
+                await this.getMessageSettingsPolicyEnabled(branchId, policyId),
+            ] as const),
+        );
+
+        return Object.fromEntries(entries) as Record<StoredMessageSettingsPolicyId, boolean>;
+    }
+
+    async setMessageSettingsPolicyEnabled(
+        branchId: string,
+        policyId: StoredMessageSettingsPolicyId,
+        enabled: boolean,
+        actor?: AdminAuditActor,
+    ): Promise<SystemSettingEntity> {
+        actor = actor ?? currentAdminAuditActor();
+        const key = this.getMessageSettingsPolicyEnabledKey(branchId, policyId);
+        const value = String(enabled);
+        const auditContext = this.auditContext(
+            actor,
+            "system_setting.message_policy_activation.updated",
+            branchId,
+        );
         return auditContext
             ? this.updateSettingUsecase.execute(key, value, auditContext)
             : this.updateSettingUsecase.execute(key, value);

@@ -1,4 +1,4 @@
-import { IsBoolean, IsDateString, IsIn, IsInt, IsOptional, IsString, Matches, ValidateIf } from "class-validator";
+import { ArrayNotEmpty, ArrayUnique, IsArray, IsBoolean, IsDateString, IsIn, IsInt, IsOptional, IsString, Matches, ValidateIf } from "class-validator";
 import { Transform } from "class-transformer";
 import { SERVICE_STATUS_VALUES } from "domain/value-objects/service-status.vo";
 import { KOREAN_WON_INPUT_PATTERN } from "domain/value-objects/money.vo";
@@ -120,6 +120,14 @@ export class CreateClientDto {
     @IsOptional()
     @IsIn(["contract_auto_registration"])
     source?: string;
+}
+
+export class CreateClientWithEmployeeActivationDto extends CreateClientDto {
+    @IsArray()
+    @ArrayNotEmpty()
+    @ArrayUnique()
+    @IsInt({ each: true })
+    confirmedUnavailableEmployeeIds!: number[];
 }
 
 export class UpdateClientDto {

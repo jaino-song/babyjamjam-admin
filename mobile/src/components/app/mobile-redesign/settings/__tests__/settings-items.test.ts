@@ -73,7 +73,12 @@ describe("buildSettingsListItems", () => {
   });
 
   it("keeps API policy order before client registration and duplicate-send items", () => {
-    const items = buildSettingsListItems({ approval: unapproved, policies });
+    const items = buildSettingsListItems({
+      approval: unapproved,
+      policies,
+      clientAutoRegistration: false,
+      policyActivations: { "duplicate-send-confirmation": false },
+    });
 
     expect(items.map((item) => item.id)).toEqual([
       TENANT_APPLICATION_ITEM_ID,
@@ -86,19 +91,21 @@ describe("buildSettingsListItems", () => {
       title: policies[0].title,
       subtitle: policies[0].description,
       active: true,
+      statusLabel: "활성",
       requiresApproval: true,
       rows: policies[0].rows,
     });
     expect(items[3]).toMatchObject({
       title: "고객 자동 등록",
       icon: UserPlus,
-      active: true,
-      statusLabel: "활성",
+      active: false,
+      statusLabel: "비활성",
     });
     expect(items[4]).toMatchObject({
       title: "중복 전송 확인",
       icon: Repeat2,
-      active: true,
+      active: false,
+      statusLabel: "비활성",
       rows: DUPLICATE_SEND_ROWS,
     });
   });

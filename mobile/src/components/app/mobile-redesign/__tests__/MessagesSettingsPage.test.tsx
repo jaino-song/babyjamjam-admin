@@ -13,6 +13,7 @@ const mockPush = jest.fn();
 const mockReplace = jest.fn();
 const mockBack = jest.fn();
 const mockToast = jest.fn();
+const mockUpdateBranchActivation = jest.fn();
 let mockSearchParams = new URLSearchParams();
 
 const APPROVED: MessageSenderApprovalResponse = {
@@ -104,6 +105,14 @@ const POLICIES: MessageAutomationPoliciesResponse = {
     sendIntervalMinutes: 5,
     ruleOrder: [],
   },
+  policyActivations: {
+    "trigger-dispatch": true,
+    "trigger-job-retry": true,
+    "sms-retry": false,
+    "past-trigger": true,
+    "service-feedback-link": true,
+    "duplicate-send-confirmation": true,
+  },
 };
 const MESSAGE_SENDER_APPROVAL_QUERY_KEY = [
   "settings",
@@ -154,10 +163,23 @@ jest.mock("@/hooks/use-toast", () => ({
   useToast: () => ({ toast: mockToast }),
 }));
 
+jest.mock("@/features/message-triggers/hooks/use-message-triggers", () => ({
+  useMessageTriggerRules: () => ({
+    data: [{ id: "system:service_record_link", isActive: true }],
+  }),
+  useUpdateMessageTriggerRuleBranchActivation: () => ({
+    mutate: mockUpdateBranchActivation,
+    isPending: false,
+  }),
+}));
+
 jest.mock("@/services/api", () => ({
   settingsApi: {
     getMessageSenderApproval: jest.fn(),
     getMessageAutomationPolicies: jest.fn(),
+    getClientRegistrationPolicy: jest.fn(),
+    updateClientRegistrationPolicy: jest.fn(),
+    updateMessageSettingsPolicyActivation: jest.fn(),
     requestMessageSenderApproval: jest.fn(),
   },
 }));
@@ -197,11 +219,26 @@ describe("MessagesSettingsPage", () => {
     mockReplace.mockReset();
     mockBack.mockReset();
     mockToast.mockReset();
+    mockUpdateBranchActivation.mockReset();
     mockedSettingsApi.getMessageSenderApproval.mockReset();
     mockedSettingsApi.getMessageAutomationPolicies.mockReset();
+    mockedSettingsApi.getClientRegistrationPolicy.mockReset();
+    mockedSettingsApi.updateClientRegistrationPolicy.mockReset();
+    mockedSettingsApi.updateMessageSettingsPolicyActivation.mockReset();
     mockedSettingsApi.requestMessageSenderApproval.mockReset();
     mockedSettingsApi.getMessageSenderApproval.mockResolvedValue(APPROVED);
     mockedSettingsApi.getMessageAutomationPolicies.mockResolvedValue(POLICIES);
+    mockedSettingsApi.getClientRegistrationPolicy.mockResolvedValue({
+      clientAutoRegistration: true,
+      greetingOnAutoRegistration: false,
+    });
+    mockedSettingsApi.updateClientRegistrationPolicy.mockImplementation(async (patch) => ({
+      clientAutoRegistration: patch.clientAutoRegistration ?? true,
+      greetingOnAutoRegistration: patch.greetingOnAutoRegistration ?? false,
+    }));
+    mockedSettingsApi.updateMessageSettingsPolicyActivation.mockImplementation(
+      async (policyId, enabled) => ({ policyId, enabled }),
+    );
     mockedSettingsApi.requestMessageSenderApproval.mockResolvedValue(UNAPPROVED);
   });
 
@@ -213,6 +250,65 @@ describe("MessagesSettingsPage", () => {
     expect(screen.getByText("자동 전송 실행")).toBeInTheDocument();
     expect(screen.getByText("고객 자동 등록")).toBeInTheDocument();
     expect(screen.getByText("중복 전송 확인")).toBeInTheDocument();
+  });
+
+  it("updates the real policy when a list switch is toggled", async () => {
+    renderPage();
+
+    const triggerDispatchSwitch = await screen.findByRole("switch", {
+      name: "자동 전송 실행 활성화",
+    });
+    fireEvent.click(triggerDispatchSwitch);
+
+    await waitFor(() => {
+      expect(mockedSettingsApi.updateMessageSettingsPolicyActivation)
+        .toHaveBeenCalledWith("trigger-dispatch", false);
+    });
+    await waitFor(() => expect(triggerDispatchSwitch).toBeEnabled());
+  });
+
+  it("reuses the client registration setting when its list switch is toggled", async () => {
+    renderPage();
+
+    fireEvent.click(
+      await screen.findByRole("switch", { name: "고객 자동 등록 활성화" }),
+    );
+
+    await waitFor(() => {
+      expect(mockedSettingsApi.updateClientRegistrationPolicy.mock.calls[0]?.[0])
+        .toEqual({ clientAutoRegistration: false });
+    });
+  });
+
+  it("persists the duplicate-send confirmation switch", async () => {
+    renderPage();
+
+    fireEvent.click(
+      await screen.findByRole("switch", { name: "중복 전송 확인 활성화" }),
+    );
+
+    await waitFor(() => {
+      expect(mockedSettingsApi.updateMessageSettingsPolicyActivation)
+        .toHaveBeenCalledWith("duplicate-send-confirmation", false);
+    });
+  });
+
+  it("reuses the service-record rule activation endpoint for its switch", async () => {
+    renderPage();
+
+    fireEvent.click(
+      await screen.findByRole("switch", { name: "제공기록지 링크 자동 발송 활성화" }),
+    );
+
+    expect(mockUpdateBranchActivation).toHaveBeenCalledWith(
+      {
+        id: "system:service_record_link",
+        dto: { isActive: false },
+      },
+      expect.objectContaining({ onError: expect.any(Function) }),
+    );
+    expect(mockedSettingsApi.updateMessageSettingsPolicyActivation)
+      .not.toHaveBeenCalledWith("service-feedback-link", expect.anything());
   });
 
   it("shows the sender approval form for the unapproved-only deep link", async () => {

@@ -12,7 +12,7 @@
     "start": "Get Started",
     "welcome": "Welcome",
     "loading": "Loading...",
-    "error": "Error",
+    "error": "오류",
     "save": "Save",
     "cancel": "Cancel",
     "delete": "Delete",
@@ -139,17 +139,17 @@
     "trigger-scheduled-description": "Register the message for a future date and time.",
     "schedule-date-label": "Scheduled date",
     "schedule-time-label": "Scheduled time",
-    "schedule-required": "Scheduled delivery requires both date and time.",
+    "schedule-required": "예약 발송을 선택한 경우 날짜와 시간을 모두 입력해 주세요.",
     "schedule-too-soon": "Scheduled delivery must be at least 10 minutes ahead in Korea Standard Time.",
     "test-mode-label": "Test mode",
     "test-mode-description": "Validate the integration without real billing or message delivery.",
-    "phone-required": "Recipient phone is required.",
+    "phone-required": "수신자 연락처를 입력해 주세요.",
     "send-button": "Send",
     "sending": "Sending...",
     "send-success-title": "Delivery requested",
     "send-success-immediate": "The SMS delivery request was accepted.",
     "send-success-scheduled": "The scheduled SMS delivery was registered.",
-    "send-failed": "Failed to send the SMS delivery.",
+    "send-failed": "문자 발송에 실패했어요.",
     "result-code-label": "Result code",
     "result-message-label": "Response message",
     "result-message-empty": "No response message",
@@ -269,43 +269,43 @@
       "Contract Info"
     ]
   },
-    "nav-bar": {
-      "dashboard": "Dashboard",
-      "messages": "Messages",
-      "contracts": "Contracts",
-      "clients": "Clients",
-      "employees": "Employees",
-      "file-storage": "Documents",
-      "files": "Files",
-      "settings": "Settings"
-    },
+  "nav-bar": {
+    "dashboard": "Dashboard",
+    "messages": "Messages",
+    "contracts": "Contracts",
+    "clients": "Clients",
+    "employees": "Employees",
+    "file-storage": "Documents",
+    "files": "Files",
+    "settings": "Settings"
+  },
   "login": {
     "title": "Login to Get Started",
     "subtitle": "Please select one of the social login options below to log in",
     "kakao-login": "Login with Kakao",
     "google-login": "Login with Google"
   },
-   "documents": {
-     "title": "document management",
-     "upload": "upload",
-  "upload-title": "file upload",
-  "upload-details-title": "file details",
-     "filter-all": "all",
-     "delete-confirm-title": "delete document",
-     "delete-confirm-message": "are you sure you want to delete this document? this action cannot be undone.",
-     "delete-success": "document deleted successfully",
-     "upload-success": "document uploaded successfully",
-     "update-success": "document updated successfully",
-     "upload-description": "Select files to upload to the document storage"
-   },
-   "documents-list": {
-     "title": "Contracts",
-     "subtitle": "View the list of contracts based on conditions.",
-     "document-title": "Contractor",
-     "created-date": "Created Date",
-     "status": "Status",
-     "new-document": "New Contract"
-   },
+  "documents": {
+    "title": "document management",
+    "upload": "upload",
+    "upload-title": "file upload",
+    "upload-details-title": "file details",
+    "filter-all": "all",
+    "delete-confirm-title": "delete document",
+    "delete-confirm-message": "are you sure you want to delete this document? this action cannot be undone.",
+    "delete-success": "document deleted successfully",
+    "upload-success": "document uploaded successfully",
+    "update-success": "document updated successfully",
+    "upload-description": "Select files to upload to the document storage"
+  },
+  "documents-list": {
+    "title": "Contracts",
+    "subtitle": "View the list of contracts based on conditions.",
+    "document-title": "Contractor",
+    "created-date": "Created Date",
+    "status": "Status",
+    "new-document": "New Contract"
+  },
   "clients": {
     "title": "Client Management",
     "subtitle": "Manage registered client information and register new clients.",
@@ -313,7 +313,7 @@
     "add": "Add",
     "search-placeholder": "Search by name, phone, address",
     "no-data": "No clients registered.",
-    "load-error": "Failed to load client list.",
+    "load-error": "고객 목록을 불러오는데 실패했어요.",
     "delete-confirm": "Are you sure you want to delete this client?",
     "table": {
       "name": "Name",
@@ -367,18 +367,18 @@
       "care-center": "Postpartum Care Center",
       "breast-pump": "Breast Pump Rental",
       "message-automation": "Automatic Message Sending",
-      "error-name-required": "Name is required.",
-      "error-birthday-required": "Birthday is required.",
-      "error-address-required": "Address is required.",
-      "error-phone-required": "Phone number is required.",
-      "error-phone-duplicate": "This phone number is already registered. Please enter a different phone number.",
-      "error-employee-required": "Primary provider is required.",
-      "error-type-required": "Voucher type is required.",
-      "error-duration-required": "Service duration is required.",
-      "error-price-required": "Pricing information is required.",
-      "error-start-date-required": "Start date is required.",
-      "error-end-date-required": "End date is required.",
-      "error-save-failed": "Failed to save. Please try again.",
+      "error-name-required": "이름을 입력해 주세요.",
+      "error-birthday-required": "생년월일을 입력해 주세요.",
+      "error-address-required": "주소를 입력해 주세요.",
+      "error-phone-required": "연락처를 입력해 주세요.",
+      "error-phone-duplicate": "이미 등록된 연락처 이에요.",
+      "error-employee-required": "주 담당 인력을 선택해 주세요.",
+      "error-type-required": "바우처 유형을 선택해 주세요.",
+      "error-duration-required": "서비스 기간을 선택해 주세요.",
+      "error-price-required": "요금 정보를 입력해 주세요.",
+      "error-start-date-required": "시작일을 입력해 주세요.",
+      "error-end-date-required": "종료일을 입력해 주세요.",
+      "error-save-failed": "저장에 실패했어요. 다시 시도해 주세요.",
       "employee-search-placeholder": "Search by name...",
       "no-employee-found": "No matching provider found.",
       "add-new-employee": "Add New Provider",
@@ -435,12 +435,12 @@
       "open-to-next-work": "Available for Next Work",
       "registered-date": "Registered Date",
       "registered-date-unknown": "Unknown",
-      "phone-required": "Please enter a phone number",
-      "work-area-required": "Please select at least one work area",
-      "error-phone-duplicate": "This phone number is already registered. Search for the provider by phone number instead.",
-      "error-create-failed": "Failed to register provider. Please try again.",
-      "error-update-failed": "Failed to update provider information. Please try again.",
-      "error-save-failed": "Failed to save. Please try again.",
+      "phone-required": "연락처를 입력해 주세요",
+      "work-area-required": "근무 지역을 선택해 주세요",
+      "error-phone-duplicate": "이미 등록된 연락처예요. 제공인력 목록에서 연락처로 검색해 주세요.",
+      "error-create-failed": "제공인력 등록에 실패했어요. 다시 시도해 주세요.",
+      "error-update-failed": "제공인력 정보 수정에 실패했어요. 다시 시도해 주세요.",
+      "error-save-failed": "저장에 실패했어요. 다시 시도해 주세요.",
       "create-description": "Fill in the form to register a new provider",
       "edit-description": "Modify the provider information"
     },
@@ -451,7 +451,7 @@
     "delete-confirm": {
       "title": "Delete Provider",
       "message": "Are you sure you want to delete this provider? This action cannot be undone.",
-      "error": "Failed to delete provider. Please try again."
+      "error": "제공인력 삭제에 실패했어요. 다시 시도해 주세요."
     }
   },
   "settings": {
@@ -504,40 +504,40 @@
         "success": "Update Complete!",
         "updated-count": "{count} items updated",
         "created-count": "{count} items created",
-        "partial-failure": "Some items failed to process:"
+        "partial-failure": "일부 항목 처리 실패:"
       },
       "errors": {
-        "invalid-file-type": "Invalid file type. Allowed: PNG, JPG, JPEG, PDF",
-        "file-too-large": "File size exceeds 10MB",
-        "parse-failed": "Failed to parse image",
-        "update-failed": "Update failed"
+        "invalid-file-type": "허용되지 않는 파일 형식이에요. 허용 형식: PNG, JPG, JPEG, PDF",
+        "file-too-large": "파일 크기가 10MB를 초과해요",
+        "parse-failed": "이미지 파싱에 실패했어요",
+        "update-failed": "업데이트에 실패했어요"
       }
     }
   },
   "errors": {
-    "generic": "An error occurred. Please try again.",
-    "network": "A network error occurred.",
+    "generic": "오류가 발생했어요. 다시 시도해 주세요.",
+    "network": "네트워크 오류가 발생했어요.",
     "prisma": {
-      "P2002": "{field} already exists.",
-      "P2002.phone": "This phone number is already registered. Please enter a different phone number.",
-      "P2002.email": "This email is already registered.",
-      "P2003": "Referenced data does not exist.",
-      "P2025": "Requested data not found.",
-      "P2011": "Required field is missing.",
-      "P2006": "Invalid value for {field}.",
-      "unknown": "A database error occurred."
+      "P2002": "{field}이(가) 이미 존재해요.",
+      "P2002.phone": "이미 등록된 연락처예요. 다른 연락처를 입력해 주세요.",
+      "P2002.email": "이미 등록된 이메일이에요.",
+      "P2003": "참조된 데이터가 존재하지 않아요.",
+      "P2025": "요청한 데이터를 찾을 수 없어요.",
+      "P2011": "필수 필드가 누락됐어요.",
+      "P2006": "{field}에 유효하지 않은 값이 입력됐어요.",
+      "unknown": "데이터베이스 오류가 발생했어요."
     },
     "fields": {
-      "phone": "phone number",
-      "email": "email",
-      "name": "name",
-      "address": "address",
-      "birthday": "birthday",
-      "work_area": "work area",
-      "document_id": "document ID",
-      "endpoint": "notification endpoint",
-      "kakao_id": "Kakao ID",
-      "year_type_duration": "year/type/duration"
+      "phone": "연락처",
+      "email": "이메일",
+      "name": "이름",
+      "address": "주소",
+      "birthday": "생년월일",
+      "work_area": "근무 지역",
+      "document_id": "문서 ID",
+      "endpoint": "알림 엔드포인트",
+      "kakao_id": "카카오 ID",
+      "year_type_duration": "연도/유형/기간"
     }
   }
 }

@@ -12,7 +12,7 @@ describe("TwoButtonModal", () => {
         open
         onOpenChange={handleOpenChange}
         title="직원을 삭제하시겠습니까?"
-        description="삭제한 직원 정보는 복구할 수 없습니다."
+        description="삭제한 직원 정보는 복구할 수 없어요."
         approvalLabel="삭제"
         approvalVariant="destructive"
         onApprove={handleApprove}
@@ -23,7 +23,7 @@ describe("TwoButtonModal", () => {
     const dialog = screen.getByRole("dialog");
     const header = dialog.querySelector('[data-slot="dialog-header"]');
     const title = screen.getByText("직원을 삭제하시겠습니까?");
-    const description = screen.getByText("삭제한 직원 정보는 복구할 수 없습니다.");
+    const description = screen.getByText("삭제한 직원 정보는 복구할 수 없어요.");
     const cancelButton = screen.getByRole("button", { name: "취소" });
     const approvalButton = screen.getByRole("button", { name: "삭제" });
 

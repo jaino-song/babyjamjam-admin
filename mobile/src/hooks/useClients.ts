@@ -84,7 +84,7 @@ export function useAllClients() {
                 if (Array.isArray((data as Record<string, unknown>).data)) return (data as Record<string, unknown>).data as Client[];
                 if (Array.isArray((data as Record<string, unknown>).items)) return (data as Record<string, unknown>).items as Client[];
             }
-            return [];
+            throw new Error("Clients response shape is invalid");
         },
         staleTime: 1000 * 60 * 5,
     });
@@ -117,8 +117,10 @@ export function useCreateClient() {
     const queryClient = useQueryClient();
 
     return useMutation({
-        mutationFn: async (dto: CreateClientDto) => {
-            const { data } = await api.post("/clients", dto);
+        mutationFn: async (
+            request: CreateClientDto & { confirmedUnavailableEmployeeIds?: number[] },
+        ) => {
+            const { data } = await api.post("/clients", request);
             return data as Client;
         },
         onSuccess: () => {

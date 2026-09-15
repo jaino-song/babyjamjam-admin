@@ -42,25 +42,42 @@ const fetchVapidKey = async (): Promise<string> => {
 };
 
 const fetchNotifications = async (limit = 50, offset = 0): Promise<Notification[]> => {
-    try {
-        const { data } = await api.get<Notification[]>('/notifications', {
-            params: { limit, offset },
-        });
-        return Array.isArray(data) ? data : [];
-    } catch (error) {
-        console.error('[Notifications] Failed to fetch:', error);
-        return [];
+    const { data } = await api.get<unknown>('/notifications', {
+        params: { limit, offset },
+    });
+
+    if (Array.isArray(data)) {
+        return data;
     }
+
+    if (data && typeof data === 'object') {
+        const payload = data as { data?: unknown; items?: unknown };
+        if (Array.isArray(payload.data)) {
+            return payload.data as Notification[];
+        }
+        if (Array.isArray(payload.items)) {
+            return payload.items as Notification[];
+        }
+    }
+
+    throw new Error('Notifications response shape is invalid');
 };
 
 const fetchUnreadCount = async (): Promise<number> => {
-    try {
-        const { data } = await api.get<{ count: number }>('/notifications/unread/count');
-        return data?.count ?? 0;
-    } catch (error) {
-        console.error('[Notifications] Failed to fetch unread count:', error);
-        return 0;
+    const { data } = await api.get<unknown>('/notifications/unread/count');
+    const payload = data && typeof data === 'object' && !Array.isArray(data)
+        ? data as { count?: unknown }
+        : null;
+    if (
+        payload &&
+        typeof payload.count === 'number' &&
+        Number.isInteger(payload.count) &&
+        payload.count >= 0
+    ) {
+        return payload.count;
     }
+
+    throw new Error('Unread notification count response shape is invalid');
 };
 
 const subscribePush = async (subscription: PushSubscription): Promise<void> => {

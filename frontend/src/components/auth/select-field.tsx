@@ -1,3 +1,5 @@
+
+import { getUserErrorMessage } from "@babyjamjam/shared";
 import * as React from "react";
 import { Label } from "@/components/ui/label";
 import {
@@ -106,7 +108,7 @@ export function SelectField({
           id={errorId}
           className="text-sm text-destructive animate-fade-in"
         >
-          {error}
+          {error && getUserErrorMessage(error)}
         </p>
       )}
     </div>

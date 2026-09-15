@@ -128,7 +128,7 @@ test.describe("Contracts delete flow", () => {
     await expect(deleteModal).toBeVisible();
     await expect(deleteModal.getByRole("heading", { name: "계약서 삭제" })).toBeVisible();
     await expect(
-      deleteModal.getByText("전자문서가 취소되어 수신자가 더 이상 서명할 수 없습니다. 복구할 수 없습니다."),
+      deleteModal.getByText("전자문서가 취소되어 수신자가 더 이상 서명할 수 없어요. 복구할 수 없어요."),
     ).toBeVisible();
 
     await page.locator('[data-component="mobile_contracts_delete-confirmation_modal_actions"]').getByRole("button", { name: "취소" }).click();

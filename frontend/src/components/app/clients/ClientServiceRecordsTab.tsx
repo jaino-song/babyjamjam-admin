@@ -1,4 +1,6 @@
 "use client";
+import { getUserErrorMessage } from "@babyjamjam/shared";
+
 
 import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 import {
@@ -19,6 +21,7 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/component
 import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/hooks/use-toast";
 import { formatDateForDisplay } from "@/lib/date/format-date-for-display";
+import { formatKoreanPhoneNumber } from "@/lib/phone";
 import { cn } from "@/lib/utils";
 import { ServiceRecordErrorBoundary } from "@/lib/observability/service-record-error-boundary";
 import {
@@ -161,7 +164,7 @@ function ClientServiceRecordsTabContent({
             if (!result.ok || result.status !== "sent") {
                 toast({
                     variant: "destructive",
-                    description: SEND_LINK_FAILURE_DESCRIPTION,
+                    description: getUserErrorMessage(SEND_LINK_FAILURE_DESCRIPTION),
                 });
                 return false;
             }
@@ -169,7 +172,7 @@ function ClientServiceRecordsTabContent({
             return true;
         } catch (error) {
             toast({
-                description: getErrorDescription(error),
+                description: getUserErrorMessage(getErrorDescription(error)),
                 variant: "destructive",
             });
             return false;
@@ -200,7 +203,7 @@ function ClientServiceRecordsTabContent({
     if (clientId === null) {
         return (
             <DetailEmptyState
-                message="고객 정보가 없어 제공기록지를 조회할 수 없습니다"
+                message="고객 정보가 없어 제공기록지를 조회할 수 없어요"
             />
         );
     }
@@ -861,7 +864,7 @@ function LinkStatusCard({
             ) : undefined}
         >
             <ServiceRecordInfoRow label="제공인력 이름" value={employee.name} isRefreshing={isRefreshing} />
-            <ServiceRecordInfoRow label="제공인력 연락처" value={formatPhone(employee.phone)} isRefreshing={isRefreshing} />
+            <ServiceRecordInfoRow label="제공인력 연락처" value={formatKoreanPhoneNumber(employee.phone) || "-"} isRefreshing={isRefreshing} />
             <ServiceRecordInfoRow label="메시지 최근 발송" value={formatDateTimeKo(link.lastSentAt)} isRefreshing={isRefreshing} />
             <ServiceRecordInfoRow
                 label="제공기록지 본인 인증"
@@ -1054,7 +1057,7 @@ function OutOfPeriodSessionsCard({
         <InfoCard
             data-component={dataComponent}
             title="기간 외 기록"
-            description="변경된 서비스 기간 밖에 저장된 기록입니다. 삭제되지 않습니다."
+            description="변경된 서비스 기간 밖에 저장된 기록이에요. 삭제되지 않아요."
         >
             <div data-component={`${dataComponent}_list`} className="mt-[calc(8px*var(--glint-ui-scale,1))]">
                 {sessions.map((record, index) => (
@@ -1570,14 +1573,6 @@ function datePartOf(value: string | null): string | null {
 
 function formatDateKo(value: string | null): string {
     return formatDateForDisplay(value);
-}
-
-function formatPhone(phone: string): string {
-    const digits = phone.replace(/\D/g, "");
-    if (digits.length === 11) {
-        return `${digits.slice(0, 3)}-${digits.slice(3, 7)}-${digits.slice(7)}`;
-    }
-    return phone || "-";
 }
 
 function getAnswerObject(value: Record<string, unknown>): Record<string, unknown> {

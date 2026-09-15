@@ -235,7 +235,7 @@ describe("SmsRetryService", () => {
         );
     });
 
-    it("retries again only when Aligo definitively rejects the retry request", async () => {
+    it("keeps a definitively rejected explicit retry available without scheduling an automatic resend", async () => {
         nowSpy.mockReturnValue(new Date("2026-06-05T10:20:00.000Z").getTime());
         const log = createSmsRetryLog();
         aligoService.sendSms.mockResolvedValue({
@@ -255,7 +255,7 @@ describe("SmsRetryService", () => {
             },
         });
 
-        await service.retry(log);
+        await service.retry(log, "manual");
 
         expect(logRepository.update).toHaveBeenCalledWith(
             expect.objectContaining({
@@ -263,10 +263,131 @@ describe("SmsRetryService", () => {
                 status: "failed",
                 attempts: 2,
                 errorMessage: "등록되지 않은 IP 입니다.",
-                nextRetryAt: new Date("2026-06-05T10:25:00.000Z"),
+                nextRetryAt: null,
                 variables: expect.objectContaining({
-                    retrySafety: "provider-rejected",
+                    retrySafety: "manual-provider-rejected",
                 }),
+            }),
+        );
+    });
+
+    it("retains the bounded schedule for an automated trigger rejection", async () => {
+        nowSpy.mockReturnValue(new Date("2026-06-05T10:20:00.000Z").getTime());
+        const log = createSmsRetryLog();
+        aligoService.sendSms.mockResolvedValue({
+            request: {
+                senderPhone: "0212345678",
+                receiver: "01012345678",
+                msgType: "LMS",
+                testModeYn: "N",
+            },
+            response: {
+                result_code: -101,
+                message: "등록되지 않은 IP 입니다.",
+                msg_id: 0,
+                success_cnt: 0,
+                error_cnt: 1,
+                msg_type: "LMS",
+            },
+        });
+
+        await service.retry(log, "automatic");
+
+        expect(logRepository.update).toHaveBeenCalledWith(
+            expect.objectContaining({
+                id: 78,
+                status: "failed",
+                nextRetryAt: new Date("2026-06-05T10:25:00.000Z"),
+                variables: expect.objectContaining({ retrySafety: "provider-rejected" }),
+            }),
+        );
+    });
+
+    it("treats a result-code-one response without counters as uncertain", async () => {
+        const log = createSmsRetryLog();
+        aligoService.sendSms.mockResolvedValue({
+            request: {
+                senderPhone: "0212345678",
+                receiver: "01012345678",
+                msgType: "LMS",
+                testModeYn: "N",
+            },
+            response: {
+                result_code: 1,
+                message: "success",
+            },
+        });
+
+        await service.retry(log);
+
+        expect(logRepository.update).toHaveBeenCalledWith(
+            expect.objectContaining({
+                id: 78,
+                status: "failed",
+                providerAcceptanceState: "uncertain",
+                nextRetryAt: null,
+                variables: expect.objectContaining({ retrySafety: "uncertain" }),
+            }),
+        );
+    });
+
+    it("fences a partial retry response instead of resending the whole recipient list", async () => {
+        const log = createSmsRetryLog();
+        log.receiver = "01012345678,01087654321";
+        log.recipientPhone = log.receiver;
+        aligoService.sendSms.mockResolvedValue({
+            request: {
+                senderPhone: "0212345678",
+                receiver: log.receiver,
+                msgType: "LMS",
+                testModeYn: "N",
+            },
+            response: {
+                result_code: 1,
+                message: "one recipient failed",
+                success_cnt: 1,
+                error_cnt: 1,
+            },
+        });
+
+        await service.retry(log);
+
+        expect(logRepository.update).toHaveBeenCalledWith(
+            expect.objectContaining({
+                id: 78,
+                status: "failed",
+                providerAcceptanceState: "uncertain",
+                nextRetryAt: null,
+                variables: expect.objectContaining({ retrySafety: "partial" }),
+            }),
+        );
+    });
+
+    it.each([0, 2])("treats unregistered non-negative result code %s as uncertain", async (resultCode) => {
+        const log = createSmsRetryLog();
+        aligoService.sendSms.mockResolvedValue({
+            request: {
+                senderPhone: "0212345678",
+                receiver: "01012345678",
+                msgType: "LMS",
+                testModeYn: "N",
+            },
+            response: {
+                result_code: resultCode,
+                message: "provider response",
+                success_cnt: 1,
+                error_cnt: 0,
+            },
+        });
+
+        await service.retry(log);
+
+        expect(logRepository.update).toHaveBeenCalledWith(
+            expect.objectContaining({
+                id: 78,
+                providerAcceptanceState: "uncertain",
+                nextRetryAt: null,
+                variables: expect.objectContaining({ retrySafety: "uncertain" }),
             }),
         );
     });

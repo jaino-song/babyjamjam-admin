@@ -35,6 +35,9 @@ export type SmsProviderAcceptanceState =
 
 export const SMS_UNCERTAIN_RECONCILIATION_MESSAGE =
     "문자 발송 결과가 불확실하여 자동 재전송을 중단했습니다. 제공자 이력 확인 후 수동 확인이 필요합니다.";
+export const SMS_PARTIAL_RETRY_SAFETY = "partial";
+/** Manual delivery attempts may be retried deliberately, but never by the worker. */
+export const SMS_MANUAL_PROVIDER_REJECTED_RETRY_SAFETY = "manual-provider-rejected";
 
 export class MessageLogEntity {
     constructor(
@@ -310,7 +313,16 @@ export class MessageLogEntity {
      * so treating it as not-delivered could authorize a duplicate send.
      */
     canReconcileProviderOutcome(): boolean {
-        return this.providerAcceptanceState === "uncertain";
+        return this.providerAcceptanceState === "uncertain"
+            && !this.isPartialProviderOutcome();
+    }
+
+    isPartialProviderOutcome(): boolean {
+        return this.variables["retrySafety"] === SMS_PARTIAL_RETRY_SAFETY;
+    }
+
+    isManualProviderRejection(): boolean {
+        return this.variables["retrySafety"] === SMS_MANUAL_PROVIDER_REJECTED_RETRY_SAFETY;
     }
 
     isExplicitlyReconciledNotDelivered(): boolean {

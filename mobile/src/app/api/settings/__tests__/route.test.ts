@@ -8,8 +8,10 @@ import {
   GET as getMessageSenderApproval,
   POST as requestMessageSenderApproval,
 } from "../message-sender-approval/route";
+import { POST as requestMessageSenderApprovalCanonical } from "../message-sender-approval/request/route";
 import { GET as getMessageAutomationPolicies } from "../message-automation-policies/route";
 import { PUT as updateMessageAutomationPastTriggerConfig } from "../message-automation-policies/past-trigger/route";
+import { PUT as updateMessagePolicyActivation } from "../message-policy-activations/[policyId]/route";
 import {
   GET as getNotificationPreferences,
   PUT as updateNotificationPreferences,
@@ -18,6 +20,27 @@ import {
   GET as getClientRegistrationPolicy,
   PUT as updateClientRegistrationPolicy,
 } from "../client-registration-policy/route";
+
+async function expectCanonicalValidationResponse(
+  response: Response,
+  legacyError: string,
+): Promise<void> {
+  expect(response.status).toBe(400);
+  const requestId = response.headers.get("X-Request-Id");
+  expect(requestId).toEqual(expect.stringMatching(/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/));
+  expect(response.headers.get("Content-Type")).toBe("application/problem+json");
+  expect(response.headers.get("Content-Language")).toBe("ko-KR");
+  expect(response.headers.get("Cache-Control")).toBe("no-store, max-age=0");
+
+  const body = await response.json();
+  expect(body).toMatchObject({
+    code: "VALIDATION_FAILED",
+    outcome: "NOT_APPLIED",
+    error: legacyError,
+    requestId,
+  });
+  expect(Array.isArray(body.errors)).toBe(true);
+}
 
 jest.mock("@/lib/api/server", () => ({
   serverAPIClient: {
@@ -81,10 +104,7 @@ describe("settings API routes", () => {
       }),
     );
 
-    expect(response.status).toBe(400);
-    await expect(response.json()).resolves.toEqual({
-      error: "Request body must be valid JSON",
-    });
+    await expectCanonicalValidationResponse(response, "Request body must be valid JSON");
     expect(mockPost).not.toHaveBeenCalled();
   });
 
@@ -125,6 +145,40 @@ describe("settings API routes", () => {
     expect(mockPost).toHaveBeenCalledWith(
       "/settings/message-sender-approval/request",
       approvalBody,
+      { headers: { Authorization: "Bearer auth-token" } },
+    );
+  });
+
+  it("keeps the canonical /request route and base POST alias on the same handler contract", async () => {
+    mockPost.mockResolvedValue({ status: 202, data: { approvalStatus: "pending" } });
+
+    const canonicalResponse = await requestMessageSenderApprovalCanonical(
+      createRequest("/api/settings/message-sender-approval/request", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({}),
+      }),
+    );
+    const aliasResponse = await requestMessageSenderApproval(
+      createRequest("/api/settings/message-sender-approval", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({}),
+      }),
+    );
+
+    expect(canonicalResponse.status).toBe(202);
+    expect(aliasResponse.status).toBe(202);
+    expect(mockPost).toHaveBeenNthCalledWith(
+      1,
+      "/settings/message-sender-approval/request",
+      {},
+      { headers: { Authorization: "Bearer auth-token" } },
+    );
+    expect(mockPost).toHaveBeenNthCalledWith(
+      2,
+      "/settings/message-sender-approval/request",
+      {},
       { headers: { Authorization: "Bearer auth-token" } },
     );
   });
@@ -222,6 +276,61 @@ describe("settings API routes", () => {
     const responseBody = await response.json();
     expect(responseBody.error).toBe("Invalid request body");
     expect(Array.isArray(responseBody.issues)).toBe(true);
+    expect(mockPut).not.toHaveBeenCalled();
+  });
+
+  it("requires auth before updating a message policy activation", async () => {
+    const response = await updateMessagePolicyActivation(
+      noCookieRequest(
+        "/api/settings/message-policy-activations/trigger-dispatch",
+        "PUT",
+      ),
+      { params: Promise.resolve({ policyId: "trigger-dispatch" }) },
+    );
+
+    expect(response.status).toBe(401);
+    expect(mockPut).not.toHaveBeenCalled();
+  });
+
+  it("proxies a validated message policy activation update", async () => {
+    const payload = { policyId: "trigger-dispatch", enabled: false };
+    mockPut.mockResolvedValue({ status: 200, data: payload });
+
+    const response = await updateMessagePolicyActivation(
+      createRequest(
+        "/api/settings/message-policy-activations/trigger-dispatch",
+        {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ enabled: false }),
+        },
+      ),
+      { params: Promise.resolve({ policyId: "trigger-dispatch" }) },
+    );
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual(payload);
+    expect(mockPut).toHaveBeenCalledWith(
+      "/settings/message-policy-activations/trigger-dispatch",
+      { enabled: false },
+      { headers: { Authorization: "Bearer auth-token" } },
+    );
+  });
+
+  it.each([
+    ["an unknown policy id", "unknown-policy", { enabled: false }],
+    ["a non-boolean enabled value", "sms-retry", { enabled: "false" }],
+  ])("rejects %s before proxying", async (_caseName, policyId, body) => {
+    const response = await updateMessagePolicyActivation(
+      createRequest(`/api/settings/message-policy-activations/${policyId}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      }),
+      { params: Promise.resolve({ policyId }) },
+    );
+
+    expect(response.status).toBe(400);
     expect(mockPut).not.toHaveBeenCalled();
   });
 

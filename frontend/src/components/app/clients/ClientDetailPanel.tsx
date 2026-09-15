@@ -1,4 +1,6 @@
 "use client";
+import { getUserErrorMessage } from "@babyjamjam/shared";
+
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -192,7 +194,7 @@ function ClientMessageHistoryList({
     if (!canLookupMessages) {
         return (
             <DetailEmptyState
-                message="고객 정보가 없어 메시지 발송 내역을 조회할 수 없습니다"
+                message="고객 정보가 없어 메시지 발송 내역을 조회할 수 없어요"
             />
         );
     }
@@ -712,9 +714,9 @@ function ClientDetailPanelBody({
     const showScheduleChangeErrorToast = (error: unknown, fallbackMessage: string) => {
         toast({
             variant: "destructive",
-            description: getScheduleChangeErrorCode(error) === "REQUEST_STALE"
+            description: getUserErrorMessage(getScheduleChangeErrorCode(error) === "REQUEST_STALE"
                 ? "요청이 최신 상태와 달라 만료됐어요"
-                : fallbackMessage,
+                : fallbackMessage),
         });
     };
 

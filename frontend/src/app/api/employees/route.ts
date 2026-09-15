@@ -1,26 +1,22 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getConflictPayload } from "@babyjamjam/shared";
 import { serverAPIClient } from "@/lib/api/server";
-import { AxiosError } from "axios";
-import { errorResponse, getAuthHeaders, getAuthToken } from "@/lib/api/route-utils";
+import {
+    errorResponse,
+    getAuthHeaders,
+    getAuthToken,
+    unauthorizedResponse,
+} from "@/lib/api/route-utils";
+import { invalidEmployeeIdResponse, isValidEmployeeId } from "./employee-route-utils";
 
-type BackendErrorPayload = {
-    message?: string;
-    error?: string;
-} & Record<string, unknown>;
-
-function employeeMutationErrorResponse(error: unknown, fallbackMessage: string) {
-    const axiosError = error as AxiosError<BackendErrorPayload>;
-    console.error("[API] Employee mutation error:", axiosError.response?.data || axiosError.message);
-
-    if (axiosError.response?.data) {
-        return NextResponse.json(axiosError.response.data, { status: axiosError.response.status || 500 });
-    }
-
-    return NextResponse.json(
-        { message: axiosError.message || fallbackMessage, error: "Internal Server Error" },
-        { status: 500 }
-    );
+// A converted problem body must keep its public `code`; the legacy conflict
+// bridge only carries message/clientId, so registered problems fall through
+// to the contract-preserving errorResponse passthrough instead.
+function hasUpstreamProblemCode(error: unknown): boolean {
+    if (!error || typeof error !== "object") return false;
+    const payload = (error as { response?: { data?: unknown } }).response?.data;
+    if (!payload || typeof payload !== "object" || Array.isArray(payload)) return false;
+    return typeof (payload as { code?: unknown }).code === "string";
 }
 
 // GET /api/employees - Get all employees
@@ -28,7 +24,7 @@ export async function GET(request: NextRequest) {
     try {
         const token = getAuthToken(request);
         if (!token) {
-            return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+            return unauthorizedResponse("Unauthorized");
         }
 
         const response = await serverAPIClient.get("/employees", {
@@ -55,7 +51,7 @@ export async function POST(request: NextRequest) {
     try {
         const token = getAuthToken(request);
         if (!token) {
-            return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+            return unauthorizedResponse("Unauthorized");
         }
 
         const body = await request.json();
@@ -72,13 +68,18 @@ export async function POST(request: NextRequest) {
 
         return NextResponse.json(response.data, { status: 201 });
     } catch (error) {
-        return employeeMutationErrorResponse(error, "Failed to create employee");
+        return errorResponse(error, "create employee");
     }
 }
 
 // PATCH /api/employees?id=X - Update an employee
 export async function PATCH(request: NextRequest) {
     try {
+        const token = getAuthToken(request);
+        if (!token) {
+            return unauthorizedResponse("Unauthorized");
+        }
+
         const searchParams = request.nextUrl.searchParams;
         const id = searchParams.get("id");
 
@@ -89,9 +90,8 @@ export async function PATCH(request: NextRequest) {
             );
         }
 
-        const token = getAuthToken(request);
-        if (!token) {
-            return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+        if (!isValidEmployeeId(id)) {
+            return invalidEmployeeIdResponse();
         }
 
         const body = await request.json();
@@ -108,13 +108,18 @@ export async function PATCH(request: NextRequest) {
 
         return NextResponse.json(response.data);
     } catch (error) {
-        return employeeMutationErrorResponse(error, "Failed to update employee");
+        return errorResponse(error, "update employee");
     }
 }
 
 // DELETE /api/employees?id=X - Delete an employee
 export async function DELETE(request: NextRequest) {
     try {
+        const token = getAuthToken(request);
+        if (!token) {
+            return unauthorizedResponse("Unauthorized");
+        }
+
         const searchParams = request.nextUrl.searchParams;
         const id = searchParams.get("id");
 
@@ -125,9 +130,8 @@ export async function DELETE(request: NextRequest) {
             );
         }
 
-        const token = getAuthToken(request);
-        if (!token) {
-            return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+        if (!isValidEmployeeId(id)) {
+            return invalidEmployeeIdResponse();
         }
 
         const response = await serverAPIClient.delete("/employees", {
@@ -146,9 +150,11 @@ export async function DELETE(request: NextRequest) {
 
         return NextResponse.json({ success: true });
     } catch (error) {
-        const conflict = getConflictPayload(error);
-        if (conflict) {
-            return NextResponse.json(conflict, { status: 409 });
+        if (!hasUpstreamProblemCode(error)) {
+            const conflict = getConflictPayload(error);
+            if (conflict) {
+                return NextResponse.json(conflict, { status: 409 });
+            }
         }
         return errorResponse(error, "delete employee");
     }

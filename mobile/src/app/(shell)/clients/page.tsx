@@ -1,4 +1,6 @@
 "use client";
+import { getUserErrorMessage } from "@babyjamjam/shared";
+
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -32,7 +34,6 @@ import {
   ListCard,
   ListCountSkeleton,
   ListItemRow,
-  ListLoadMoreButton,
   ListLoadMoreSentinel,
   ListRowBadges,
   ListRowsSkeleton,
@@ -327,7 +328,7 @@ export default function ClientsPage() {
     } catch {
       toast({
         title: t(locale, "clients.delete-fail"),
-        description: t(locale, "clients.delete-fail-description"),
+        description: getUserErrorMessage(t(locale, "clients.delete-fail-description")),
         variant: "destructive",
       });
     }
@@ -433,6 +434,12 @@ export default function ClientsPage() {
       totalItems: maxFullCount,
     });
 
+  // The client list expands past the first screen on its own instead of parking
+  // on the tap-to-load-more footer, so the reveal never ends on a button here.
+  useEffect(() => {
+    if (isInitialLoad && hasMore) loadMore();
+  }, [isInitialLoad, hasMore, loadMore]);
+
   const visibleSections = useMemo(
     () =>
       sectionsFull
@@ -481,14 +488,7 @@ export default function ClientsPage() {
               activeFilter={activeFilter}
               onFilterChange={setActiveFilter}
               scrollRef={scrollContainerRef}
-              loadMore={
-                isInitialLoad && hasMore ? (
-                  <ListLoadMoreButton
-                    data-component="mobile_clients_detail-sheet_stack_list-page_content_list-card_load-more_button"
-                    onLoadMore={loadMore}
-                  />
-                ) : null
-              }
+              loadMore={false}
               beforeFilters={
                 <MobileSearchBar
                   data-component="mobile_clients_detail-sheet_stack_list-page_content_list-card_search"
@@ -570,8 +570,9 @@ export default function ClientsPage() {
                 data-component="mobile_clients_detail-sheet_stack_list-page_content_automation-card"
                 title="고객 자동화"
                 filters={[]}
+                loadMore={false}
               >
-                <ClientRegistrationPolicySettings />
+                <ClientRegistrationPolicySettings data-component="mobile_clients_detail-sheet_stack_list-page_content_automation-card_body_client-registration-policy" />
               </ListCard>
             )}
           </div>

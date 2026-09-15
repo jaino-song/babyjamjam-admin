@@ -3,7 +3,12 @@ import { AligoService } from "application/services/aligo.service";
 import { MessageSenderApprovalService } from "application/services/message-sender-approval.service";
 import { parseKstSchedule } from "application/utils/kst-schedule";
 import { maskPhone } from "application/utils/mask";
-import { MessageLogEntity, SMS_DELIVERY_RETRY_DELAY_MS } from "domain/entities/message-log.entity";
+import {
+    MessageLogEntity,
+    SMS_MANUAL_PROVIDER_REJECTED_RETRY_SAFETY,
+    SMS_DELIVERY_RETRY_DELAY_MS,
+    SMS_PARTIAL_RETRY_SAFETY,
+} from "domain/entities/message-log.entity";
 import {
     MESSAGE_LOG_REPOSITORY,
     IMessageLogRepository,
@@ -14,15 +19,23 @@ import {
     SmsProviderAcceptanceService,
     SmsProviderReconciliationInput,
 } from "./sms-provider-acceptance.service";
+import {
+    classifySmsProviderOutcome,
+    countSmsRecipients,
+} from "./sms-provider-outcome.service";
 
 const INVALID_RETRY_SCHEDULE_REASON =
     "예약 발송 일시 형식이 올바르지 않아 재시도하지 않았습니다. 예약일과 예약시간을 확인해 주세요.";
+const PARTIAL_RETRY_SUPERSEDED_REASON =
+    "부분 발송 결과의 실패 수신자를 식별할 수 없어 자동 재전송을 중단했습니다. 수신자별로 확인 후 수동 발송해 주세요.";
 
 interface RetrySchedule {
     scheduledDate?: string;
     scheduledTime?: string;
     scheduledAtMs: number | null;
 }
+
+type SmsRetryInvocation = "automatic" | "manual";
 
 @Injectable()
 export class SmsRetryService {
@@ -47,6 +60,11 @@ export class SmsRetryService {
             throw new ConflictException("실패한 메시지만 재발송할 수 있습니다.");
         }
 
+        if (sourceLog.isPartialProviderOutcome()) {
+            throw new ConflictException(
+                "문자 일부 수신자만 접수되어 전체 수신자 목록 재발송을 진행할 수 없습니다. 실패 수신자를 확인해 수동 발송해 주세요.",
+            );
+        }
         if (sourceLog.isProviderOutcomeUncertain()) {
             throw new ConflictException(
                 "문자 발송 결과가 불확실합니다. 제공자 이력을 확인하고 먼저 명시적으로 재조정해 주세요.",
@@ -56,7 +74,7 @@ export class SmsRetryService {
             throw new ConflictException("이미 발송 완료로 재조정된 문자는 재발송할 수 없습니다.");
         }
 
-        const retryLog = await this.retry(sourceLog);
+        const retryLog = await this.retry(sourceLog, "manual");
         if (!retryLog) {
             throw new ConflictException("이미 재발송이 진행 중입니다.");
         }
@@ -64,7 +82,19 @@ export class SmsRetryService {
         return retryLog;
     }
 
-    async retry(sourceLog: MessageLogEntity): Promise<MessageLogEntity | null> {
+    async retry(
+        sourceLog: MessageLogEntity,
+        invocation: SmsRetryInvocation = "manual",
+    ): Promise<MessageLogEntity | null> {
+        if (sourceLog.isPartialProviderOutcome()) {
+            sourceLog.markRetrySuperseded(PARTIAL_RETRY_SUPERSEDED_REASON);
+            await this.logRepository.update(sourceLog);
+            this.logger.warn(
+                `[Retry] Skipped partial SMS log ${sourceLog.id}; recipient-level verification is required`,
+            );
+            return sourceLog;
+        }
+
         const schedule = this.parseRetrySchedule(sourceLog);
         if (!schedule) {
             sourceLog.markRetrySuperseded(INVALID_RETRY_SCHEDULE_REASON);
@@ -120,10 +150,37 @@ export class SmsRetryService {
                 ...(this.booleanVariable(retryLog, "testMode") ? { testMode: true } : {}),
             });
 
-            if (!this.isAcceptedSmsResult(result)) {
-                this.markSmsRetryRejected(providerAttempt, result.response.message || "문자 발송 요청이 실패했습니다.");
+            const providerOutcome = classifySmsProviderOutcome(
+                result,
+                countSmsRecipients(providerAttempt.receiver),
+            );
+            if (providerOutcome === "rejected") {
+                this.markSmsRetryRejected(
+                    providerAttempt,
+                    this.providerResponseMessage(result),
+                    invocation,
+                );
                 await this.logRepository.update(providerAttempt);
-                this.logger.warn(`[Retry] SMS retry rejected for log ${providerAttempt.id}: ${result.response.message}`);
+                this.logger.warn(`[Retry] SMS retry rejected for log ${providerAttempt.id}: ${this.providerResponseMessage(result)}`);
+                return providerAttempt;
+            }
+            if (providerOutcome === "partial") {
+                this.markSmsRetryPartial(providerAttempt, this.providerResponseMessage(result));
+                await this.logRepository.update(providerAttempt);
+                this.logger.warn(
+                    `[Retry] SMS retry partially accepted for log ${providerAttempt.id}; automatic retry stopped`,
+                );
+                return providerAttempt;
+            }
+            if (providerOutcome === "unknown") {
+                this.markSmsRetryUncertain(
+                    providerAttempt,
+                    "문자 발송 결과를 확인할 수 없어 자동 재전송을 중단했습니다.",
+                );
+                await this.logRepository.update(providerAttempt);
+                this.logger.warn(
+                    `[Retry] SMS retry result was not classifiable for log ${providerAttempt.id}; automatic retry stopped`,
+                );
                 return providerAttempt;
             }
 
@@ -262,7 +319,11 @@ export class SmsRetryService {
         };
     }
 
-    private markSmsRetryRejected(log: MessageLogEntity, errorMessage: string): void {
+    private markSmsRetryRejected(
+        log: MessageLogEntity,
+        errorMessage: string,
+        invocation: SmsRetryInvocation,
+    ): void {
         log.status = "failed";
         log.providerAcceptanceState = "rejected";
         log.providerAcceptedAt = null;
@@ -271,11 +332,38 @@ export class SmsRetryService {
         log.lastAttemptAt = new Date(Date.now());
         log.variables = {
             ...log.variables,
-            retrySafety: "provider-rejected",
+            retrySafety: invocation === "manual"
+                ? SMS_MANUAL_PROVIDER_REJECTED_RETRY_SAFETY
+                : "provider-rejected",
         };
+        if (invocation === "manual") {
+            // A user-initiated history retry is a separate authorization event.
+            // Keep the failed row available for a later deliberate retry, but
+            // do not turn the provider's definitive rejection into an
+            // unannounced worker submission.
+            log.nextRetryAt = null;
+            return;
+        }
+        // Trigger-delivery retries retain their existing bounded automatic
+        // policy. Their provider-rejected marker remains distinct from the
+        // manual marker above so a scheduler tick can continue that path.
         log.nextRetryAt = log.canRetry()
             ? new Date(Date.now() + SMS_DELIVERY_RETRY_DELAY_MS)
             : null;
+    }
+
+    private markSmsRetryPartial(log: MessageLogEntity, errorMessage: string): void {
+        log.status = "failed";
+        log.providerAcceptanceState = "uncertain";
+        log.providerAcceptedAt = null;
+        log.errorMessage = `${errorMessage} ${PARTIAL_RETRY_SUPERSEDED_REASON}`.trim();
+        log.attempts += 1;
+        log.lastAttemptAt = new Date(Date.now());
+        log.nextRetryAt = null;
+        log.variables = {
+            ...log.variables,
+            retrySafety: SMS_PARTIAL_RETRY_SAFETY,
+        };
     }
 
     private markSmsRetryUncertain(log: MessageLogEntity, errorMessage: string): void {
@@ -302,10 +390,22 @@ export class SmsRetryService {
         return log;
     }
 
-    private isAcceptedSmsResult(result: Awaited<ReturnType<AligoService["sendSms"]>>): boolean {
-        const resultCode = Number(result.response.result_code);
-        const errorCount = Number(result.response.error_cnt ?? 0);
-        return resultCode === 1 && errorCount === 0;
+    private providerResponseMessage(result: unknown): string {
+        if (!this.isRecord(result)) {
+            return "문자 발송 요청이 실패했습니다.";
+        }
+        const response = result["response"];
+        if (!this.isRecord(response)) {
+            return "문자 발송 요청이 실패했습니다.";
+        }
+        const message = response["message"];
+        return typeof message === "string" && message.trim()
+            ? message
+            : "문자 발송 요청이 실패했습니다.";
+    }
+
+    private isRecord(value: unknown): value is Record<string, unknown> {
+        return typeof value === "object" && value !== null && !Array.isArray(value);
     }
 
     private stringVariable(log: MessageLogEntity, key: string): string | undefined {
