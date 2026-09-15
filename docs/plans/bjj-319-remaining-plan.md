@@ -667,3 +667,8 @@ TL;DR: 배정(4b-1 백엔드: 역할·자격·동시 변경 코드 전환 / 4b-2
 - finalize 실패 분기에 `code/outcome/recovery` 가산, legacy 필드 바이트 동일. 신규 코드: `DOCUMENT_FINALIZE_IN_PROGRESS`(409), `EFORMSIGN_TERMINAL_FAILURE`(502), `DOCUMENT_FINALIZE_UNCONFIRMED`(502), `DOCUMENT_FINALIZE_FAILED`(502). 재사용: `DOCUMENT_LOCK_UNAVAILABLE`·`DOCUMENT_LOCK_LOST`·`ACCESS_DENIED`·`DISPATCH_ALREADY_ACCEPTED`·`DISPATCH_UNCERTAIN`.
 - outcome: 락/진행중/authorization → NOT_APPLIED/NONE(권한은 ACCESS_DENIED 403), already-accepted/uncertain/pending → UNKNOWN+CHECK_STATUS, terminal failure → FAILED/NONE, catch → NOT_APPLIED/NONE(iframe/manual_check 조건 불변). `ok:true, completed:false`(advanced) 성공 분기 불변.
 - Dispatch: `Phase: 5-4b` · worker(glm) · `Paths: finalize-document-headless.usecase.ts(+spec), eformsign-doc.dto.ts, eformsign-doc.controller.ts [finalize만], shared types, catalog(+test)+vendor, docs` · `Audit: SOL` · `Depends: 5-4a`
+
+**Task 5-4b 실행 결과 (2026-09-16):** worker unit `32f023dec`(base `087638855`) → 통합 `c09d2253f`(12 files, +338/−7). finalize 9개 실패 분기 + 컨트롤러 denial에 code/outcome/recovery 가산(신규 4코드, 재사용 5코드), legacy 필드·삼항 불변. red-first 17F+8F. 감사 **SHIP**.
+- 검증: backend 357/5,083(flaky 1회→재실행 green), shared 409+86, tc 0. **flaky 풀 확장 확인:** 컨트롤러 integration 스펙(Employee/UserController)도 런당 랜덤 1건 실패 — base에서도 동일(기존 환경 flake).
+- carried: 4개 분기 직접 단언 미비(N1), 컨트롤러 denial 매핑 리터럴 중복(N2).
+- 기록: `finalize-envelope-contract` finding 추가. unit 정리. 다음은 **5-4c(웹/모바일 소비자 정렬)**.

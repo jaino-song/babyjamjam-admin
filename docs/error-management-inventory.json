@@ -718,6 +718,27 @@
           "audit": "SHIP/HIGH at 75bd0816f (base 5c972b86f)"
         },
         "outcome_evidence": "Failures now declare factual outcome/recovery (pre-write NOT_APPLIED, ambiguous/partial UNKNOWN/PARTIALLY_APPLIED + CHECK_STATUS) while reason/fallbackHint/문서 ID 복구 필드가 그대로 유지되어 소비자 전환 없이 안전하게 확장된다."
+      },
+      {
+        "id": "finalize-envelope-contract",
+        "status": "migrated",
+        "implementation_task_id": "5-4b",
+        "path": "backend/application/usecases/eformsign-doc/finalize-document-headless.usecase.ts",
+        "symbol": "headless finalize failure envelope additive contract",
+        "spec_ids": ["EM-STATE-01", "EM-RETRY-05", "EM-RETRY-06", "EM-CHANGE-01"],
+        "public_codes": ["DOCUMENT_FINALIZE_IN_PROGRESS","EFORMSIGN_TERMINAL_FAILURE","DOCUMENT_FINALIZE_UNCONFIRMED","DOCUMENT_FINALIZE_FAILED"],
+        "implementation_sha": "c09d2253f",
+        "basis_sha": "087638855",
+        "review_scope": "Additive only: 9 finalize failure sites + controller denial branch gain code/outcome/recovery; legacy fields/existing ternaries byte-identical; success incl. completed:false untouched.",
+        "test_paths": ["backend/test/usecases/eformsign-doc/finalize-document-headless.usecase.spec.ts","backend/test/usecases/eformsign-doc/finalize-document-headless.ownership.spec.ts","backend/test/integration/eformsign-doc-finalize-headless-denial.spec.ts"],
+        "test_evidence": {
+          "suites": 357,
+          "passed": 5083,
+          "result": "backend 357/5083 after flake re-run (pre-existing controller flake pool); shared 409 jest + 86 node; typecheck 0",
+          "checks": ["red-first 17F+8F", "vendor byte-stable", "additive-only diff review"],
+          "audit": "SHIP at c09d2253f (base 087638855); carried: 4개 분기 직접 단언 미비(N1), controller denial 매핑 리터럴 중복(N2)"
+        },
+        "outcome_evidence": "Finalize 실패도 사실 outcome을 선언(terminal=FAILED, pending/unknown=UNKNOWN+CHECK_STATUS, 그 외 NOT_APPLIED)하면서 reason/fallbackHint/문서ID 복구 프로토콜은 그대로 유지."
       }
     ],
   "root_review_evidence": [
