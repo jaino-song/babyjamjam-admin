@@ -690,3 +690,7 @@ TL;DR: 배정(4b-1 백엔드: 역할·자격·동시 변경 코드 전환 / 4b-2
 **Task 5-4d 실행 결과 (2026-09-16):** worker unit `08912aafa`(base `c7ebcbec7`) → 통합 `cd02d5371`, **감사 FIX_REQUIRED(B1)** → 보정 `aff80c56a` → 통합 `052e2fe03`, 보정 감사 **SHIP/HIGH**. creation 실패에 code/outcome/recovery 가산(전부 기존 코드 재사용), tool-executor/agent-capability가 outcome UNKNOWN 우선 분류. B1: call-inbox e2e exact-equality 2곳이 가산 필드로 깨짐(jest가 test/e2e 제외라 미탐) → 단언 보정 + **`e2e:call-inbox` 로컬 실행 22/22 통과**로 검증. full backend 357/5,096, tc 0, eslint 0.
 - carried: N1 local-persist 패밀리를 UNKNOWN으로 분류(5-4a의 PARTIALLY_APPLIED와 상이 — 안전·기록된 선택), N2 헬퍼 중복(향후 추출), N3 null phone은 generic VALIDATION_FAILED.
 - 기록: inventory 3행 갱신·`creation-result-contract` finding. unit 정리. **Phase 5 완료(5-1~5-4d)** — 다음은 **Phase 6(나머지 전수)**.
+
+## Phase 6 — 바인딩·배치 (2026-09-16)
+
+**6a: 백엔드 agent·AI-chat 도메인** — base `c80fa1d53`. 대상: `backend/application/agent/*`(5) + `backend/application/ai-chat/*`(2) — raw 4xx/에이전트 실패 분류 전환(기존 코드 재사용 우선, 필요 시 최소 신규). 소비자는 AI챗/에이전트 런타임(비HTTP·in-process) — 분류 오류·raw message 비교·빈 성공 삼킴 점검. worker(glm) · Audit SOL.
