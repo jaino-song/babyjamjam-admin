@@ -21,6 +21,7 @@ import {
     type EformsignProviderPrincipal,
 } from "application/services/eformsign-credential-boundary.service";
 import { ContractClientAssignmentGuardService } from "application/services/contract-client-assignment-guard.service";
+import { codeOnlyProblemBody } from "application/utils/problem-bodies";
 import {
     DocumentSnapshotEntry,
     DocumentSnapshotScope,
@@ -394,42 +395,27 @@ export class EformsignController {
      */
     @Post("generate-signature")
     generateSignature(): never {
-        throw new GoneException({
-            code: "EFORMSIGN_PROVIDER_OPERATION_SERVER_ONLY",
-            error: "eformsign provider operations are server-only",
-        });
+        throw new GoneException(codeOnlyProblemBody("EFORMSIGN_PROVIDER_OPERATION_SERVER_ONLY"));
     }
 
     @Post("access-token")
     getAccessToken(): never {
-        throw new GoneException({
-            code: "EFORMSIGN_CREDENTIALS_SERVER_ONLY",
-            error: "Raw eformsign credentials are not exposed",
-        });
+        throw new GoneException(codeOnlyProblemBody("EFORMSIGN_CREDENTIALS_SERVER_ONLY"));
     }
 
     @Post("refresh-token")
     refreshAccessToken(): never {
-        throw new GoneException({
-            code: "EFORMSIGN_CREDENTIALS_SERVER_ONLY",
-            error: "Raw eformsign credentials are not exposed",
-        });
+        throw new GoneException(codeOnlyProblemBody("EFORMSIGN_CREDENTIALS_SERVER_ONLY"));
     }
 
     @Post("generate-document")
     generateDocument(): never {
-        throw new GoneException({
-            code: "EFORMSIGN_PROVIDER_OPERATION_SERVER_ONLY",
-            error: "Use the server-mediated eformsign dispatch operation",
-        });
+        throw new GoneException(codeOnlyProblemBody("EFORMSIGN_PROVIDER_OPERATION_SERVER_ONLY"));
     }
 
     @Post("generate-staff-document")
     generateStaffDocument(): never {
-        throw new GoneException({
-            code: "EFORMSIGN_PROVIDER_OPERATION_SERVER_ONLY",
-            error: "Use the server-mediated eformsign finalize operation",
-        });
+        throw new GoneException(codeOnlyProblemBody("EFORMSIGN_PROVIDER_OPERATION_SERVER_ONLY"));
     }
 
     /**

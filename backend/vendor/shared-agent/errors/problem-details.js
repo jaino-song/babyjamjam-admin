@@ -74,6 +74,9 @@ const PROBLEM_CODES = [
     "CLIENT_ASSIGNMENT_REQUIRED",
     "DOCUMENT_PROVIDER_MISMATCH",
     "CLIENT_SERVICE_TERMINATED",
+    // Registered eformsign tombstone codes (EM-CAT-03; shipped identifiers verbatim). BJJ-319 phase 5-3a.
+    "EFORMSIGN_CREDENTIALS_SERVER_ONLY",
+    "EFORMSIGN_PROVIDER_OPERATION_SERVER_ONLY",
 ];
 const PROBLEM_ERROR_CODES = [
     "REQUIRED",
@@ -647,6 +650,29 @@ const PROBLEM_DEFINITIONS = {
         detail: {
             "ko-KR": "해지된 고객에게는 전자문서를 발송할 수 없어요.",
             "en-US": "Documents cannot be sent to a client whose service has ended.",
+        },
+    },
+    // Registered eformsign tombstone codes (EM-CAT-03; shipped identifiers verbatim). BJJ-319 phase 5-3a.
+    EFORMSIGN_CREDENTIALS_SERVER_ONLY: {
+        status: 410,
+        title: {
+            "ko-KR": "서버 전용 기능이에요",
+            "en-US": "Server-only feature",
+        },
+        detail: {
+            "ko-KR": "전자서명 자격증명은 서버에서만 사용할 수 있어요.",
+            "en-US": "eformsign credentials can only be used on the server.",
+        },
+    },
+    EFORMSIGN_PROVIDER_OPERATION_SERVER_ONLY: {
+        status: 410,
+        title: {
+            "ko-KR": "서버 전용 작업이에요",
+            "en-US": "Server-only operation",
+        },
+        detail: {
+            "ko-KR": "이 전자서명 작업은 서버에서만 실행할 수 있어요. 자동 발송 절차를 이용해 주세요.",
+            "en-US": "This eformsign operation can only run on the server. Use the automated dispatch flow instead.",
         },
     },
 };

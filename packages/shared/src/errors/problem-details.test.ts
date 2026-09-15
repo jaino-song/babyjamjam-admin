@@ -237,6 +237,9 @@ describe("catalog coverage", () => {
         "CLIENT_ASSIGNMENT_REQUIRED",
         "DOCUMENT_PROVIDER_MISMATCH",
         "CLIENT_SERVICE_TERMINATED",
+        // Registered eformsign tombstone codes (EM-CAT-03; shipped identifiers verbatim). BJJ-319 phase 5-3a.
+        "EFORMSIGN_CREDENTIALS_SERVER_ONLY",
+        "EFORMSIGN_PROVIDER_OPERATION_SERVER_ONLY",
     ];
 
     it.each(codes)("contains a complete bilingual entry for %s", (code) => {
@@ -350,6 +353,18 @@ describe("catalog coverage", () => {
         const entry = PROBLEM_CATALOG[code];
         expect(entry.status).toBe(409);
         expect(entry.statuses).toEqual([409]);
+        expect(entry.type).toBe(`https://github.com/jaino-song/babyjamjam-admin/blob/main/docs/error-management.md#${anchor}`);
+    });
+
+    const EFORMSIGN_TOMBSTONE_STATUS_410_CODES: Array<[ProblemCode, string]> = [
+        ["EFORMSIGN_CREDENTIALS_SERVER_ONLY", "eformsign-credentials-server-only"],
+        ["EFORMSIGN_PROVIDER_OPERATION_SERVER_ONLY", "eformsign-provider-operation-server-only"],
+    ];
+
+    it.each(EFORMSIGN_TOMBSTONE_STATUS_410_CODES)("registers %s as status 410 with kebab-case type anchor", (code, anchor) => {
+        const entry = PROBLEM_CATALOG[code];
+        expect(entry.status).toBe(410);
+        expect(entry.statuses).toEqual([410]);
         expect(entry.type).toBe(`https://github.com/jaino-song/babyjamjam-admin/blob/main/docs/error-management.md#${anchor}`);
     });
 });

@@ -270,12 +270,19 @@ describe("EformsignController (Integration)", () => {
         await app.close();
     });
 
+    // Tombstone rejections are registered problem bodies: the controller
+    // throws GoneException(codeOnlyProblemBody(...)), so the response carries
+    // the public contract members (code/params/outcome/recovery) at 410.
     it("tombstones the legacy signature endpoint without service execution", async () => {
         const response = await request(app.getHttpServer())
             .post("/api/generate-signature")
             .send({ executionTime: "abc" });
 
         expect(response.status).toBe(410);
+        expect(response.body.code).toBe("EFORMSIGN_PROVIDER_OPERATION_SERVER_ONLY");
+        expect(response.body.outcome).toBe("NOT_APPLIED");
+        expect(response.body.params).toEqual({});
+        expect(response.body.recovery).toEqual({ action: "NONE", retry: { mode: "NEVER" } });
         expect(eformsignService.generateSignature).not.toHaveBeenCalled();
     });
 
@@ -285,6 +292,9 @@ describe("EformsignController (Integration)", () => {
             .send({ executionTime: 1780000000000 });
 
         expect(response.status).toBe(410);
+        expect(response.body.code).toBe("EFORMSIGN_CREDENTIALS_SERVER_ONLY");
+        expect(response.body.outcome).toBe("NOT_APPLIED");
+        expect(response.body.params).toEqual({});
     });
 
     it("does not invoke the provider when refresh-token is called", async () => {
@@ -293,6 +303,7 @@ describe("EformsignController (Integration)", () => {
             .send({ executionTime: 1780000000000, refreshToken: "stale-token" });
 
         expect(response.status).toBe(410);
+        expect(response.body.code).toBe("EFORMSIGN_CREDENTIALS_SERVER_ONLY");
     });
 
     it("does not invoke the provider when access-token is called", async () => {
@@ -301,6 +312,7 @@ describe("EformsignController (Integration)", () => {
             .send({ executionTime: 1780000000000 });
 
         expect(response.status).toBe(410);
+        expect(response.body.code).toBe("EFORMSIGN_CREDENTIALS_SERVER_ONLY");
     });
 
     it("tombstones the legacy document generation endpoint", async () => {
@@ -315,8 +327,23 @@ describe("EformsignController (Integration)", () => {
             });
 
         expect(response.status).toBe(410);
+        expect(response.body.code).toBe("EFORMSIGN_PROVIDER_OPERATION_SERVER_ONLY");
+        expect(response.body.outcome).toBe("NOT_APPLIED");
+        expect(response.body.params).toEqual({});
         expect(areaTemplateService.findByArea).not.toHaveBeenCalled();
         expect(eformsignService.generateDocumentOptions).not.toHaveBeenCalled();
+    });
+
+    it("tombstones the legacy staff document generation endpoint", async () => {
+        const response = await request(app.getHttpServer())
+            .post("/api/generate-staff-document")
+            .send({ accessToken: "access-token", refreshToken: "refresh-token" });
+
+        expect(response.status).toBe(410);
+        expect(response.body.code).toBe("EFORMSIGN_PROVIDER_OPERATION_SERVER_ONLY");
+        expect(response.body.outcome).toBe("NOT_APPLIED");
+        expect(response.body.params).toEqual({});
+        expect(eformsignService.getDocumentById).not.toHaveBeenCalled();
     });
 
     it("does not accept caller credentials on the legacy document generation endpoint", async () => {
@@ -352,13 +379,14 @@ describe("EformsignController (Integration)", () => {
                     paymentYear: "26",
                     paymentMonth: "07",
                     paymentDay: "01",
-                    fullPrice: "1000000",
-                    grant: "800000",
-                    actualPrice: "200000",
-                },
-            });
+                fullPrice: "1000000",
+                grant: "800000",
+                actualPrice: "200000",
+            },
+        });
 
         expect(response.status).toBe(410);
+        expect(response.body.code).toBe("EFORMSIGN_PROVIDER_OPERATION_SERVER_ONLY");
         expect(assignmentGuard.assertLiveAssignedProvider).not.toHaveBeenCalled();
         expect(eformsignService.generateDocumentOptions).not.toHaveBeenCalled();
     });

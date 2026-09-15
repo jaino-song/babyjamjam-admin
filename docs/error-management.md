@@ -260,6 +260,18 @@ EM-CAT 코드 정렬 검토(2026-09-14): EM-CAT-01은 코드가 카탈로그에 
 
 `CLIENT_SERVICE_TERMINATED`
 
+### eformsign-credentials-server-only
+
+`EFORMSIGN_CREDENTIALS_SERVER_ONLY`
+
+### eformsign-provider-operation-server-only
+
+`EFORMSIGN_PROVIDER_OPERATION_SERVER_ONLY`
+
+## 2026-09-15 eformsign tombstone 코드 등록·전환 (BJJ-319 phase 5-3a)
+
+두 배포 식별자(`EFORMSIGN_CREDENTIALS_SERVER_ONLY` · `EFORMSIGN_PROVIDER_OPERATION_SERVER_ONLY`)를 공유 카탈로그에 410으로 등록하고(EM-CAT-03: 기존 식별자 의미 유지, ko/en 문구 신규), 양 컨트롤러의 레거시 tombstone 7곳(`eformsign-doc.controller.ts` access-token/refresh-token 2곳, `eformsign.controller.ts` generate-signature/access-token/refresh-token/generate-document/generate-staff-document 5곳)을 `GoneException(codeOnlyProblemBody(...))`로 전환했다. 영문 `error` 필드 원문은 제거됐고, HTTP 상태·경로·메서드 시그니처는 그대로다. 등록된 코드는 `mapHttpProblem`이 catalog 문구의 problem+json으로 변환하며, 구버전 호환 별칭(statusCode/message/error)은 `sendProblemResponse`가 그대로 유지한다. 웹·모바일 BFF tombstone 라우트는 백엔드를 프록시하지 않고 자체 Next측 410 `{code}` 본문을 author하므로 이번 변경 대상이 아니며, 백엔드 `error` 필드를 소비하는 BFF는 없다(프론트 `lib/api/client.ts`의 `error` 읽기는 자체 응답의 "Authentication required." 접두사 확인뿐). envelope(ok/reason) 전환(5-4)과 `eformsign.controller`의 나머지 raw 본문(5-3b)은 여전히 후속이다.
+
 ## 2026-09-10 웹 직접 문자 후속 검증
 
 웹 `sendSms`가 원본 오류를 보존하며, TemplateSendForm은 검증된 NOT_APPLIED와 UNKNOWN/PARTIALLY_APPLIED를 구분한다. 불확실한 요청의 동일 화면 재발송 차단, 확정 접수 수신자 제외, 새 입력 보존, 중복 확인/발송 중 방식 전환 격리와 commit 이후 상태 갱신을 적용했다. 제공기록지의 외부 API와 발송 정책은 기존 동작을 유지한다.
