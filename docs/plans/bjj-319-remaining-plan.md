@@ -686,3 +686,7 @@ TL;DR: 배정(4b-1 백엔드: 역할·자격·동시 변경 코드 전환 / 4b-2
 - `create-and-send-contract.usecase.ts` 실패 결과에 `code`/`outcome`/`recovery` 가산(legacy `{success:false,error}` 불변, `uncertain`/`remoteDocumentId` 유지). outcome: 사전거절 NOT_APPLIED, uncertain/remote UNKNOWN+CHECK_STATUS. 코드는 재사용(가드 3코드·VALIDATION_FAILED 등) 우선.
 - 소비자: `tool-executor.service.ts`(AI툴)·`contract-external-agent-capabilities.provider.ts` — outcome/uncertain 우선 분류(legacy fallback), 테스트.
 - Dispatch: `Phase: 5-4d` · worker(glm) · `Paths: create-and-send-contract.usecase.ts(+spec), tool-executor.service.ts(+spec), contract-external-agent-capabilities.provider.ts(+spec), shared types(가산 optional)` · `Audit: SOL`
+
+**Task 5-4d 실행 결과 (2026-09-16):** worker unit `08912aafa`(base `c7ebcbec7`) → 통합 `cd02d5371`, **감사 FIX_REQUIRED(B1)** → 보정 `aff80c56a` → 통합 `052e2fe03`, 보정 감사 **SHIP/HIGH**. creation 실패에 code/outcome/recovery 가산(전부 기존 코드 재사용), tool-executor/agent-capability가 outcome UNKNOWN 우선 분류. B1: call-inbox e2e exact-equality 2곳이 가산 필드로 깨짐(jest가 test/e2e 제외라 미탐) → 단언 보정 + **`e2e:call-inbox` 로컬 실행 22/22 통과**로 검증. full backend 357/5,096, tc 0, eslint 0.
+- carried: N1 local-persist 패밀리를 UNKNOWN으로 분류(5-4a의 PARTIALLY_APPLIED와 상이 — 안전·기록된 선택), N2 헬퍼 중복(향후 추출), N3 null phone은 generic VALIDATION_FAILED.
+- 기록: inventory 3행 갱신·`creation-result-contract` finding. unit 정리. **Phase 5 완료(5-1~5-4d)** — 다음은 **Phase 6(나머지 전수)**.
