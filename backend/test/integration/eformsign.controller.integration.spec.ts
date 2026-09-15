@@ -1,5 +1,5 @@
 import { PdfPageRasterizerService, PdfPageOutOfRangeError } from "infrastructure/pdf/pdf-page-rasterizer.service";
-import { BadRequestException, ExecutionContext, INestApplication, ValidationPipe } from "@nestjs/common";
+import { ConflictException, ExecutionContext, INestApplication, ValidationPipe } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { Test, TestingModule } from "@nestjs/testing";
 import { AreaTemplateService } from "application/services/area-template.service";
@@ -11,6 +11,7 @@ import { JwtGuard } from "infrastructure/auth/jwt.guard";
 import { TenantGuard } from "infrastructure/tenant";
 import { EformsignController } from "interface/controllers/eformsign.controller";
 import { ContractClientAssignmentGuardService } from "application/services/contract-client-assignment-guard.service";
+import { codeOnlyProblemBody } from "application/utils/problem-bodies";
 import { EformsignDocumentSnapshotService } from "application/services/eformsign-document-snapshot.service";
 import { EformsignListShadowCompareService } from "application/services/eformsign-list-shadow-compare.service";
 import { EformsignMirrorListService } from "application/services/eformsign-mirror-list.service";
@@ -320,7 +321,7 @@ describe("EformsignController (Integration)", () => {
 
     it("does not accept caller credentials on the legacy document generation endpoint", async () => {
         assignmentGuard.assertLiveAssignedProvider.mockRejectedValue(
-            new BadRequestException("고객의 제공인력 배정을 먼저 저장해 주세요."),
+            new ConflictException(codeOnlyProblemBody("CLIENT_ASSIGNMENT_REQUIRED")),
         );
 
         const response = await request(app.getHttpServer())
