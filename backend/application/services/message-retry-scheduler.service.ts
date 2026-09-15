@@ -1,4 +1,4 @@
-import { Inject, Injectable, Logger } from "@nestjs/common";
+import { Inject, Injectable, Logger, Optional } from "@nestjs/common";
 import { Cron } from "@nestjs/schedule";
 import {
     MESSAGE_LOG_REPOSITORY,
@@ -7,6 +7,7 @@ import {
 import { SchedulerExecutionGuard } from "./scheduler-execution.guard";
 import { SchedulerLeaseService } from "./scheduler-lease.service";
 import { SmsRetryService } from "./sms-retry.service";
+import { SystemSettingService } from "./system-setting.service";
 import {
     isTransientPrismaConnectivityError,
     summarizePrismaError,
@@ -40,6 +41,8 @@ export class MessageRetrySchedulerService {
         private readonly logRepository: IMessageLogRepository,
         private readonly smsRetryService: SmsRetryService,
         private readonly schedulerLease: SchedulerLeaseService,
+        @Optional()
+        private readonly systemSettingService?: SystemSettingService,
     ) {}
 
     @Cron("*/5 * * * *", { timeZone: "Asia/Seoul" })
@@ -69,6 +72,16 @@ export class MessageRetrySchedulerService {
                 }
                 processedCount += 1;
                 try {
+                    if (
+                        log.branchId
+                        && this.systemSettingService
+                        && !(await this.systemSettingService.getMessageSettingsPolicyEnabled(
+                            log.branchId,
+                            "sms-retry",
+                        ))
+                    ) {
+                        continue;
+                    }
                     if (log.isPartialProviderOutcome()) {
                         log.markRetrySuperseded(PARTIAL_RETRY_SUPERSEDED_REASON);
                         await this.logRepository.update(log);

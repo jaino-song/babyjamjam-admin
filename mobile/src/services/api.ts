@@ -17,6 +17,9 @@ import type {
     MessageAutomationPoliciesResponse,
     MessageAutomationPolicy,
     MessageAutomationPolicyRow,
+    MessageSettingsPolicyActivation,
+    MessageSettingsPolicyId,
+    StoredMessageSettingsPolicyId,
     MessageSenderApprovalResponse,
     MessageSenderApprovalStatus,
 } from "@babyjamjam/shared/types/message";
@@ -508,6 +511,9 @@ export type {
     MessageAutomationPoliciesResponse,
     MessageAutomationPolicy,
     MessageAutomationPolicyRow,
+    MessageSettingsPolicyActivation,
+    MessageSettingsPolicyId,
+    StoredMessageSettingsPolicyId,
     MessageSenderApprovalResponse,
     MessageSenderApprovalStatus,
 };
@@ -557,6 +563,16 @@ export const settingsApi = {
         config: MessageAutomationPastTriggerConfig,
     ): Promise<MessageAutomationPastTriggerConfig> => {
         const { data } = await api.put("/settings/message-automation-policies/past-trigger", config);
+        return data;
+    },
+    updateMessageSettingsPolicyActivation: async (
+        policyId: StoredMessageSettingsPolicyId,
+        enabled: boolean,
+    ): Promise<MessageSettingsPolicyActivation> => {
+        const { data } = await api.put(
+            `/settings/message-policy-activations/${policyId}`,
+            { enabled },
+        );
         return data;
     },
     requestMessageSenderApproval: async (): Promise<MessageSenderApprovalResponse> => {

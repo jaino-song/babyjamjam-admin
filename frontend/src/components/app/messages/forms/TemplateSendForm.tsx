@@ -8,7 +8,7 @@ import {
 
 
 import { isAxiosError } from "axios";
-import { useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Calendar, Loader2, Send, X } from "lucide-react";
 
@@ -22,7 +22,7 @@ import { useMessageHistory } from "@/features/message-triggers/hooks/use-message
 import type { MessageLogRecord } from "@/features/message-triggers/types";
 import { serviceRecordsApi } from "@/features/service-records/api/service-records.api";
 import { useToast } from "@/hooks/use-toast";
-import { eformsignApi, messageDeliveryApi } from "@/services/api";
+import { eformsignApi, messageDeliveryApi, settingsApi } from "@/services/api";
 import type { Client } from "@/lib/client/types";
 import {
   formatKoreanPhoneNumber,
@@ -310,6 +310,12 @@ export function TemplateSendForm({
   const serviceSendIdRef = useRef(0);
   const receiptSendIdRef = useRef(0);
   const { data: historyData = [], refetch: refetchHistory } = useMessageHistory();
+  const { data: messagePolicies } = useQuery({
+    queryKey: ["settings", "message-automation-policies"],
+    queryFn: settingsApi.getMessageAutomationPolicies,
+  });
+  const duplicateSendConfirmationEnabled =
+    messagePolicies?.policyActivations?.["duplicate-send-confirmation"] ?? true;
   const {
     clientId,
     name,
@@ -1052,6 +1058,11 @@ export function TemplateSendForm({
     }
 
     const snapshot = createSmsSubmissionSnapshot(recipients);
+    if (!duplicateSendConfirmationEnabled) {
+      submissionGuardRef.current = "sending";
+      await sendMessages(snapshot.recipients);
+      return;
+    }
     submissionGuardRef.current = "checking";
     const lookupId = ++smsLookupIdRef.current;
     let duplicates: DuplicateSendMatch[];

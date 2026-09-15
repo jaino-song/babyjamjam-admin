@@ -495,6 +495,15 @@ export type ClientRegistrationPolicyPatch = Partial<ClientRegistrationPolicy>;
 export interface MessageAutomationPoliciesResponse {
     policies: MessageAutomationPolicy[];
     pastTriggerConfig: MessageAutomationPastTriggerConfig;
+    policyActivations?: Partial<Record<
+        | "trigger-dispatch"
+        | "trigger-job-retry"
+        | "sms-retry"
+        | "past-trigger"
+        | "service-feedback-link"
+        | "duplicate-send-confirmation",
+        boolean
+    >>;
 }
 
 export interface ContractAutoFinalizeConfig {

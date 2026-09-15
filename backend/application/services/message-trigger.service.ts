@@ -889,15 +889,35 @@ export class MessageTriggerService {
         // this tick can dispatch on this tick instead of waiting another minute.
         await this.processStaleRuleRebuilds();
         const jobs = await this.jobRepository.findDuePendingSystemScope(100);
+        const policyCache = new Map<string, boolean>();
+        const isEnabled = async (
+            branchId: string,
+            policyId: "trigger-dispatch" | "trigger-job-retry",
+        ): Promise<boolean> => {
+            const cacheKey = `${branchId}:${policyId}`;
+            const cached = policyCache.get(cacheKey);
+            if (cached !== undefined) return cached;
+            const enabled = await this.getMessagePolicyEnabled(branchId, policyId);
+            policyCache.set(cacheKey, enabled);
+            return enabled;
+        };
+        const eligibleJobs: MessageTriggerJobEntity[] = [];
+        for (const job of jobs) {
+            if (!job.branchId) continue;
+            if (!(await isEnabled(job.branchId, "trigger-dispatch"))) continue;
+            const isRetry = job.attempts > 0 || job.nextAttemptAt !== null;
+            if (isRetry && !(await isEnabled(job.branchId, "trigger-job-retry"))) continue;
+            eligibleJobs.push(job);
+        }
 
-        if (jobs.length > 0) {
+        if (eligibleJobs.length > 0) {
             const approvedBranchIds = await this.messageSenderApprovalService.getApprovedBranchIds(
-                [...new Set(jobs.map((job) => job.branchId).filter((id): id is string => !!id))],
+                [...new Set(eligibleJobs.map((job) => job.branchId).filter((id): id is string => !!id))],
             );
             const sentIds = await this.messageLogRepository.findSentTriggerJobIdsSystemScope(
-                jobs.map((job) => job.id),
+                eligibleJobs.map((job) => job.id),
             );
-            for (const job of jobs) {
+            for (const job of eligibleJobs) {
                 try {
                     await this.dispatchClaimedJob(job, sentIds, approvedBranchIds);
                 } catch (error) {
@@ -1459,6 +1479,11 @@ export class MessageTriggerService {
     ): Promise<ClientRuleJobCandidate[]> {
         if (candidates.length === 0) return candidates;
 
+        const pastTriggerEnabled = await this.getMessagePolicyEnabled(branchId, "past-trigger");
+        if (!pastTriggerEnabled) {
+            return candidates.filter(({ job }) => job.scheduledFor.getTime() > Date.now());
+        }
+
         const config = await this.getRetroactiveSendConfig(branchId);
         const now = Date.now();
         const baseScheduledFor = stableBatchAt
@@ -1509,6 +1534,17 @@ export class MessageTriggerService {
             return DEFAULT_MESSAGE_AUTOMATION_PAST_TRIGGER_CONFIG;
         }
         return this.systemSettingService.getMessageAutomationPastTriggerConfig(branchId);
+    }
+
+    private async getMessagePolicyEnabled(
+        branchId: string,
+        policyId: "trigger-dispatch" | "trigger-job-retry" | "past-trigger",
+    ): Promise<boolean> {
+        if (
+            !this.systemSettingService
+            || typeof this.systemSettingService.getMessageSettingsPolicyEnabled !== "function"
+        ) return true;
+        return this.systemSettingService.getMessageSettingsPolicyEnabled(branchId, policyId);
     }
 
     private orderRetroactiveCandidates(

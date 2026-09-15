@@ -38,15 +38,20 @@ describe("MessageRetrySchedulerService", () => {
     let scheduler: MessageRetrySchedulerService;
     let logRepository: ReturnType<typeof createMockLogRepository>;
     let smsRetryService: { retry: jest.Mock };
+    let systemSettingService: { getMessageSettingsPolicyEnabled: jest.Mock };
     let nowSpy: jest.SpyInstance<number, []>;
 
     beforeEach(() => {
         logRepository = createMockLogRepository();
         smsRetryService = { retry: jest.fn().mockResolvedValue(undefined) };
+        systemSettingService = {
+            getMessageSettingsPolicyEnabled: jest.fn().mockResolvedValue(true),
+        };
         scheduler = new MessageRetrySchedulerService(
             logRepository as unknown as IMessageLogRepository,
             smsRetryService as unknown as SmsRetryService,
             createSchedulerLeaseMock(),
+            systemSettingService as never,
         );
         nowSpy = jest.spyOn(Date, "now");
         nowSpy.mockReturnValue(0);
@@ -68,6 +73,22 @@ describe("MessageRetrySchedulerService", () => {
         expect(alimtalkLog.status).toBe("failed");
         expect(alimtalkLog.nextRetryAt).toBeNull();
         expect(logRepository.update).toHaveBeenCalledWith(alimtalkLog);
+    });
+
+    it("leaves an SMS retry pending while the branch retry policy is disabled", async () => {
+        const smsLog = createLog("aligo_sms");
+        systemSettingService.getMessageSettingsPolicyEnabled.mockResolvedValue(false);
+        logRepository.findPendingRetriesSystemScope.mockResolvedValue([smsLog]);
+
+        await scheduler.retryFailedMessages();
+
+        expect(systemSettingService.getMessageSettingsPolicyEnabled).toHaveBeenCalledWith(
+            "branch-1",
+            "sms-retry",
+        );
+        expect(smsRetryService.retry).not.toHaveBeenCalled();
+        expect(logRepository.update).not.toHaveBeenCalled();
+        expect(smsLog.nextRetryAt).not.toBeNull();
     });
 
     it("does not resend uncertain Aligo SMS and marks it for provider-history/manual verification", async () => {

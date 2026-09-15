@@ -1,6 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.MESSAGE_SENDER_APPROVAL_STATUSES = exports.updateMessageTriggerRuleDtoSchema = exports.createMessageTriggerRuleDtoSchema = exports.UpdateMessageTriggerRuleSchema = exports.CreateMessageTriggerRuleSchema = exports.updateMessageTriggerRuleSchema = exports.createMessageTriggerRuleSchema = exports.CONFIGURABLE_SMS_TRIGGER_TEMPLATE_KEYS = exports.SMS_TRIGGER_TEMPLATE_KEYS = exports.SMS_TRIGGER_TO_SYSTEM_TEMPLATE = exports.MESSAGE_TRIGGER_AUTOMATIC_VARIABLE_KEYS = exports.messageTriggerTemplateKeySchema = exports.messageTriggerRecipientTypeSchema = exports.messageTriggerOffsetTypeSchema = exports.messageTriggerEventTypeSchema = exports.MESSAGE_TRIGGER_TEMPLATE_KEYS = exports.MESSAGE_TRIGGER_RECIPIENT_TYPES = exports.MESSAGE_TRIGGER_OFFSET_TYPES = exports.MESSAGE_TRIGGER_EVENT_TYPES = void 0;
+exports.SERVICE_RECORD_LINK_RULE_ID = exports.STORED_MESSAGE_SETTINGS_POLICY_IDS = exports.MESSAGE_SETTINGS_POLICY_IDS = exports.MESSAGE_SENDER_APPROVAL_STATUSES = exports.updateMessageTriggerRuleDtoSchema = exports.createMessageTriggerRuleDtoSchema = exports.UpdateMessageTriggerRuleSchema = exports.CreateMessageTriggerRuleSchema = exports.updateMessageTriggerRuleSchema = exports.createMessageTriggerRuleSchema = exports.CONFIGURABLE_SMS_TRIGGER_TEMPLATE_KEYS = exports.SMS_TRIGGER_TEMPLATE_KEYS = exports.SMS_TRIGGER_TO_SYSTEM_TEMPLATE = exports.MESSAGE_TRIGGER_AUTOMATIC_VARIABLE_KEYS = exports.messageTriggerTemplateKeySchema = exports.messageTriggerRecipientTypeSchema = exports.messageTriggerOffsetTypeSchema = exports.messageTriggerEventTypeSchema = exports.MESSAGE_TRIGGER_TEMPLATE_KEYS = exports.MESSAGE_TRIGGER_RECIPIENT_TYPES = exports.MESSAGE_TRIGGER_OFFSET_TYPES = exports.MESSAGE_TRIGGER_EVENT_TYPES = void 0;
 exports.getTriggerTemplateChannel = getTriggerTemplateChannel;
 const zod_1 = require("zod");
 // Shared message contracts used by both frontend and mobile.
@@ -170,3 +170,19 @@ exports.MESSAGE_SENDER_APPROVAL_STATUSES = [
     "pending",
     "approved",
 ];
+exports.MESSAGE_SETTINGS_POLICY_IDS = [
+    "trigger-dispatch",
+    "trigger-job-retry",
+    "sms-retry",
+    "past-trigger",
+    "service-feedback-link",
+    "duplicate-send-confirmation",
+];
+exports.STORED_MESSAGE_SETTINGS_POLICY_IDS = [
+    "trigger-dispatch",
+    "trigger-job-retry",
+    "sms-retry",
+    "past-trigger",
+    "duplicate-send-confirmation",
+];
+exports.SERVICE_RECORD_LINK_RULE_ID = "system:service_record_link";
