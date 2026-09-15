@@ -3,6 +3,8 @@ import { HttpException, HttpStatus, Injectable, OnModuleDestroy } from "@nestjs/
 import { ConfigService } from "@nestjs/config";
 import Redis from "ioredis";
 
+import { codeOnlyProblemBody } from "application/utils/problem-bodies";
+
 const ATOMIC_RATE_LIMIT_SCRIPT = `
 local count = redis.call('INCR', KEYS[1])
 local ttl = redis.call('TTL', KEYS[1])
@@ -11,6 +13,10 @@ if count == 1 or ttl < 0 then
 end
 return count
 `;
+
+function rateLimitedException(): HttpException {
+    return new HttpException(codeOnlyProblemBody("REQUEST_RATE_LIMITED"), HttpStatus.TOO_MANY_REQUESTS);
+}
 
 @Injectable()
 export class AgentRateLimitService implements OnModuleDestroy {
@@ -33,7 +39,7 @@ export class AgentRateLimitService implements OnModuleDestroy {
                 if (this.redis.status === "wait") await this.redis.connect();
                 const count = Number(await this.redis.eval(ATOMIC_RATE_LIMIT_SCRIPT, 1, `agent:rate-limit:${key}`, 60));
                 if (!Number.isFinite(count)) throw new Error("Invalid Valkey rate-limit response");
-                if (count > limit) throw new HttpException("Agent rate limit exceeded", HttpStatus.TOO_MANY_REQUESTS);
+                if (count > limit) throw rateLimitedException();
                 return;
             } catch (error) {
                 if (error instanceof HttpException) throw error;
@@ -44,7 +50,7 @@ export class AgentRateLimitService implements OnModuleDestroy {
 
         const recent = (this.windows.get(key) ?? []).filter((timestamp) => timestamp > now - 60_000);
         if (recent.length >= limit) {
-            throw new HttpException("Agent rate limit exceeded", HttpStatus.TOO_MANY_REQUESTS);
+            throw rateLimitedException();
         }
         recent.push(now);
         this.windows.set(key, recent);

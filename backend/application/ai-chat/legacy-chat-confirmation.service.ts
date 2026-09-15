@@ -1,6 +1,7 @@
 import { ConflictException, Injectable, NotFoundException } from "@nestjs/common";
 import { createHash, randomBytes, timingSafeEqual } from "crypto";
 import { PrismaService } from "infrastructure/database/prisma.service";
+import { codeOnlyProblemBody } from "application/utils/problem-bodies";
 
 export const LEGACY_CHAT_CONFIRMATION_TTL_MS = 5 * 60 * 1000;
 
@@ -132,7 +133,7 @@ export class LegacyChatConfirmationService {
     ): Promise<ConsumedLegacyChatConfirmationIntent> {
         this.assertActorContext(context);
         if (!token.intentId || !token.nonce) {
-            throw new ConflictException("Confirmation intent is required");
+            throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
         }
 
         const intent = await this.prisma.legacy_chat_confirmation_intent.findFirst({
@@ -144,27 +145,27 @@ export class LegacyChatConfirmationService {
         });
 
         if (!intent) {
-            throw new NotFoundException("Confirmation intent not found");
+            throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
         }
 
         const now = new Date();
         if (intent.consumedAt) {
-            throw new ConflictException("Confirmation intent has already been used");
+            throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
         }
         if (intent.expiresAt <= now) {
-            throw new ConflictException("Confirmation intent has expired");
+            throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
         }
         if (!constantTimeDigestEqual(intent.nonceHash, hashNonce(token.nonce))) {
-            throw new ConflictException("Confirmation intent does not match");
+            throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
         }
         if (expectedToolName && intent.toolName !== expectedToolName) {
-            throw new ConflictException("Confirmation action does not match");
+            throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
         }
         if (expectedPayload && intent.payloadHash !== hashLegacyChatPayload(expectedPayload)) {
-            throw new ConflictException("Confirmation payload does not match");
+            throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
         }
         if (context.sessionId && intent.sessionId !== context.sessionId) {
-            throw new ConflictException("Confirmation session does not match");
+            throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
         }
 
         // The conditional update is the one-time-use gate. Any concurrent
@@ -182,7 +183,7 @@ export class LegacyChatConfirmationService {
             data: { consumedAt: now },
         });
         if (claimed.count !== 1) {
-            throw new ConflictException("Confirmation intent has already been used or expired");
+            throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
         }
 
         const consumed: ConsumedLegacyChatConfirmationIntent = {
@@ -210,13 +211,13 @@ export class LegacyChatConfirmationService {
     private assertContext(context: LegacyChatConfirmationContext): void {
         this.assertActorContext(context);
         if (!context.sessionId) {
-            throw new ConflictException("Authenticated session-bound chat context is required");
+            throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
         }
     }
 
     private assertActorContext(context: Pick<LegacyChatConfirmationContext, "userId" | "branchId">): void {
         if (!context.userId || !context.branchId) {
-            throw new ConflictException("Authenticated branch-bound chat context is required");
+            throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
         }
     }
 }

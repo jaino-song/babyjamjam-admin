@@ -1,4 +1,6 @@
-import { Injectable, Logger } from "@nestjs/common";
+import { Injectable, Logger, HttpException } from "@nestjs/common";
+import { PROBLEM_CATALOG } from "@babyjamjam/shared/errors/problem-details";
+import type { ProblemCode, ProblemOutcome } from "@babyjamjam/shared/errors/problem-details";
 import { ClientService } from "application/services/client.service";
 import { EmployeeService } from "application/services/employee.service";
 import { MessageService } from "application/services/message.service";
@@ -32,6 +34,11 @@ export interface ToolExecutionResult {
     confirmationExpiresAt?: string;
     /** True only when the mutation's business outcome is not proven failed. */
     uncertain?: boolean;
+    /** Additive problem classification (BJJ-319 5-4d pattern). Legacy
+     * consumers read success/error, so code and outcome ride along without
+     * changing the envelope keys. */
+    code?: ProblemCode;
+    outcome?: ProblemOutcome;
 }
 
 type ToolArgs = Record<string, unknown>;
@@ -77,6 +84,8 @@ const CLIENT_SERVICE_STATUSES = [
 const ISO_DATE_PATTERN = /^(\d{4})-(\d{2})-(\d{2})$/;
 const BIRTHDAY_PATTERN = /^(\d{2})(\d{2})(\d{2})$/;
 
+const PROBLEM_OUTCOMES: readonly string[] = ["NOT_APPLIED", "FAILED", "PARTIALLY_APPLIED", "UNKNOWN"];
+
 @Injectable()
 export class ToolExecutorService {
     private readonly logger = new Logger(ToolExecutorService.name);
@@ -110,7 +119,7 @@ export class ToolExecutorService {
         if (isCUDTool(toolName)) {
             const validationError = this.validateMutationPayload(toolName, args);
             if (validationError) {
-                return { success: false, error: validationError };
+                return { success: false, error: validationError, code: "VALIDATION_FAILED", outcome: "NOT_APPLIED" };
             }
 
             if (!this.isBoundContext(context) || !this.confirmationService) {
@@ -159,7 +168,7 @@ export class ToolExecutorService {
                     return await this.listAvailableTemplates(context.branchId);
                 case "createAndSendContract":
                     if (!principal) {
-                        return { success: false, error: "eformsign provider principal is required" };
+                        return { success: false, error: "eformsign provider principal is required", code: "ACCESS_DENIED", outcome: "NOT_APPLIED" };
                     }
                     return await this.createAndSendContract(branchid, args, principal);
                 case "getContractStatus":
@@ -201,15 +210,18 @@ export class ToolExecutorService {
                 case "listAllContracts":
                     return await this.listAllContracts(context.branchId);
                 default:
-                    return { success: false, error: `Unknown tool: ${toolName}` };
+                    return { success: false, error: `Unknown tool: ${toolName}`, code: "REQUEST_INVALID", outcome: "NOT_APPLIED" };
             }
         } catch (error) {
             const safeError = sanitizeEformsignErrorMessage(error);
             const errorMessage = redactSensitiveLegacyChatContent(safeError);
             this.logger.error(`Tool execution failed: ${errorMessage}`);
+            // Only read tools reach this catch (mutations require a confirmed
+            // intent), so nothing can have been applied: NOT_APPLIED is provable.
             return {
                 success: false,
                 error: error instanceof Error ? errorMessage : "도구 실행에 실패했습니다",
+                ...this.problemContext(error, "NOT_APPLIED"),
             };
         }
     }
@@ -232,7 +244,7 @@ export class ToolExecutorService {
             || intent.payloadHash !== hashLegacyChatPayload(args)
             || !isConsumedLegacyChatConfirmationIntent(intent)
         ) {
-            return { success: false, error: "Only confirmed mutation tools can use this path" };
+            return { success: false, error: "Only confirmed mutation tools can use this path", code: "ACCESS_DENIED", outcome: "NOT_APPLIED" };
         }
 
         const sanitizedArgs = sanitizeLegacyChatToolPayload(args);
@@ -252,19 +264,44 @@ export class ToolExecutorService {
                 case "deleteMessage": return await this.deleteMessage(context.branchId, sanitizedArgs);
                 case "createAndSendContract":
                     if (!principal) {
-                        return { success: false, error: "eformsign provider principal is required" };
+                        return { success: false, error: "eformsign provider principal is required", code: "ACCESS_DENIED", outcome: "NOT_APPLIED" };
                     }
                     return await this.createAndSendContract(context.branchId, sanitizedArgs, principal);
-                default: return { success: false, error: `Unknown tool: ${toolName}` };
+                default: return { success: false, error: `Unknown tool: ${toolName}`, code: "REQUEST_INVALID", outcome: "NOT_APPLIED" };
             }
         } catch (error) {
             this.logger.error(`Confirmed tool execution failed: ${toolName}`);
             const errorMessage = redactSensitiveLegacyChatContent(sanitizeEformsignErrorMessage(error));
+            // A confirmed mutation that rejects without a registered problem
+            // body leaves its business result unproven: UNKNOWN, never a bare
+            // failure the caller could treat as a safe retry (EM-STATE-01).
             return {
                 success: false,
                 error: error instanceof Error ? errorMessage : "도구 실행에 실패했습니다",
+                ...this.problemContext(error, "UNKNOWN"),
             };
         }
+    }
+
+    /** Reuse a caught problem body's registered code and outcome; an
+     * unclassified rejection falls back to the caller's provable default. */
+    private problemContext(
+        error: unknown,
+        fallbackOutcome: ProblemOutcome,
+    ): { code?: ProblemCode; outcome?: ProblemOutcome } {
+        const response = error instanceof HttpException ? error.getResponse() : undefined;
+        const record = response !== null && typeof response === "object" ? response as Record<string, unknown> : undefined;
+        const code = record?.["code"];
+        if (typeof code !== "string" || !Object.prototype.hasOwnProperty.call(PROBLEM_CATALOG, code)) {
+            return { outcome: fallbackOutcome };
+        }
+        const outcome = record?.["outcome"];
+        return {
+            code: code as ProblemCode,
+            outcome: typeof outcome === "string" && PROBLEM_OUTCOMES.includes(outcome)
+                ? outcome as ProblemOutcome
+                : fallbackOutcome,
+        };
     }
 
     private normalizeContext(contextOrBranchId: ToolExecutionContext): LegacyChatToolContext {
@@ -925,7 +962,9 @@ export class ToolExecutorService {
         if (!result.success) {
             // BJJ-319 5-4d additive contract: the registered outcome classifies
             // the failure first; the legacy flags stay as the fallback so an
-            // unclassified shape keeps its uncertainty signal.
+            // unclassified shape keeps its uncertainty signal. The registered
+            // code and outcome pass through additively alongside the legacy
+            // error text that mobile and the model transcript still read.
             const uncertain = result.outcome === "UNKNOWN"
                 || result.uncertain === true
                 || Boolean(result.remoteDocumentId);
@@ -933,6 +972,8 @@ export class ToolExecutorService {
                 success: false,
                 error: result.error,
                 ...(uncertain ? { uncertain: true } : {}),
+                ...(result.code ? { code: result.code } : {}),
+                ...(result.outcome ? { outcome: result.outcome } : {}),
             };
         }
 
