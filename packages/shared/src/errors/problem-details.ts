@@ -77,7 +77,14 @@ export type ProblemCode =
     | "DISPATCH_UNCERTAIN"
     | "REMOTE_DOCUMENT_UNCONFIRMED"
     | "DOCUMENT_LOCAL_PERSIST_FAILED"
-    | "DOCUMENT_DISPATCH_FAILED";
+    | "DOCUMENT_DISPATCH_FAILED"
+    // Registered headless finalize codes (EM-CAT-03; counterparts of the finalize
+    // reason tokens and vendor outcomes, which stay as compatibility aliases).
+    // BJJ-319 phase 5-4b.
+    | "DOCUMENT_FINALIZE_IN_PROGRESS"
+    | "EFORMSIGN_TERMINAL_FAILURE"
+    | "DOCUMENT_FINALIZE_UNCONFIRMED"
+    | "DOCUMENT_FINALIZE_FAILED";
 
 export type ProblemOutcome =
     | "NOT_APPLIED"
@@ -263,6 +270,11 @@ const PROBLEM_CODES: readonly ProblemCode[] = [
     "REMOTE_DOCUMENT_UNCONFIRMED",
     "DOCUMENT_LOCAL_PERSIST_FAILED",
     "DOCUMENT_DISPATCH_FAILED",
+    // Registered headless finalize codes (EM-CAT-03; reason-token counterparts). BJJ-319 phase 5-4b.
+    "DOCUMENT_FINALIZE_IN_PROGRESS",
+    "EFORMSIGN_TERMINAL_FAILURE",
+    "DOCUMENT_FINALIZE_UNCONFIRMED",
+    "DOCUMENT_FINALIZE_FAILED",
 ];
 
 const PROBLEM_ERROR_CODES: readonly ProblemErrorCode[] = [
@@ -1004,6 +1016,53 @@ const PROBLEM_DEFINITIONS: Readonly<
         detail: {
             "ko-KR": "백엔드 자동 처리에 실패했어요. 재시도하거나 수동 입력을 사용해 주세요.",
             "en-US": "The automated backend processing failed. Retry or use manual entry.",
+        },
+    },
+    // Registered headless finalize codes (EM-CAT-03; reason-token counterparts). BJJ-319 phase 5-4b.
+    // ko copy reuses the sentences the web finalize UI already shows for the
+    // matching reason tokens where one exists; the rest are authored (해요체).
+    DOCUMENT_FINALIZE_IN_PROGRESS: {
+        status: 409,
+        title: {
+            "ko-KR": "이 문서를 처리하는 중이에요",
+            "en-US": "This document is already being processed",
+        },
+        detail: {
+            "ko-KR": "이 문서를 처리하는 중이에요. 잠시 후 다시 시도해 주세요.",
+            "en-US": "This document is already being processed. Try again shortly.",
+        },
+    },
+    EFORMSIGN_TERMINAL_FAILURE: {
+        status: 502,
+        title: {
+            "ko-KR": "문서가 종료 상태로 처리됐어요",
+            "en-US": "The document ended in a terminal state",
+        },
+        detail: {
+            "ko-KR": "eformsign에서 문서가 종료 상태로 처리됐어요. 문서 상태를 확인해 주세요.",
+            "en-US": "eformsign moved the document into a terminal state. Check the document status.",
+        },
+    },
+    DOCUMENT_FINALIZE_UNCONFIRMED: {
+        status: 502,
+        title: {
+            "ko-KR": "완료 처리 결과를 확인할 수 없어요",
+            "en-US": "The finalize result is unconfirmed",
+        },
+        detail: {
+            "ko-KR": "완료 처리 결과를 확인하지 못했어요. eformsign에서 문서 상태를 확인한 뒤 다시 시도해 주세요.",
+            "en-US": "We can’t confirm the finalize result. Check the document status in eformsign before trying again.",
+        },
+    },
+    DOCUMENT_FINALIZE_FAILED: {
+        status: 502,
+        title: {
+            "ko-KR": "전자문서 완료 처리에 실패했어요",
+            "en-US": "Document finalize failed",
+        },
+        detail: {
+            "ko-KR": "백엔드 자동 완료 처리에 실패했어요. 재시도하거나 화면에서 직접 완료 처리해 주세요.",
+            "en-US": "The automated backend finalize failed. Retry or finish the step manually.",
         },
     },
 };
