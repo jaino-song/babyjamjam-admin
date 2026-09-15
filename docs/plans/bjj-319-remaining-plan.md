@@ -616,3 +616,8 @@ TL;DR: 배정(4b-1 백엔드: 역할·자격·동시 변경 코드 전환 / 4b-2
 - 테스트: `document.controller.integration.spec.ts`(143/385/395/409/425/483) + service spec 갱신, red-first.
 - 범위 밖: eformsign 컨트롤러(5-3), envelope(5-4), 업로드 UI 재설계.
 - Dispatch metadata: `Phase: 5-2` · `Execution: DELEGATE` · `Audit: SOL` · `Agent: worker` · `Model: opencode-go/glm-5.3-flash` · `Paths: backend/interface/controllers/document.controller.ts(+spec), backend/application/services/document.service.ts(+spec), backend/domain/entities/document.entity.ts, frontend/src/app/api/file-storage/** [passthrough 확인 시만]` · `Depends: Task 5-1`
+
+**Task 5-2 실행 결과 (2026-09-15):** worker unit `f17073251`(base `5469fe57b`) → 통합 `45ce8fb47`(6 files, +253/−41). 문서 컨트롤러/서비스 전환(기존 코드 재사용, 카탈로그·vendor 불변): tags 4→`/tags`, tenant 403→`ACCESS_DENIED`, file required/validationError→`/file`, name>255→`/name` OUT_OF_RANGE, not-found ×2→`RESOURCE_NOT_FOUND`(id 제거), 웹 download BFF 404 특례 제거→problem passthrough. 엔티티 throw는 도달 불가/섀도우 확인 후 유지. red-first 14 failed→39/39.
+- 검증(통합 `45ce8fb47`): backend 356/5,064, frontend 238/1,582, mobile 250/1,658, shared 375+86, 3종 타입·게이트·ci. 감사 **SHIP/MEDIUM**.
+- carried(auditor): ① name>255 테스트가 pipe 분기를 검증(컨트롤러 분기 미도달) ② `validationError` 동적 detail이 제어문자 포함 시 500 폴백(고정 문구 권장) ③ 모바일 download BFF는 아직 404 problem 미정렬(no-consumer 주장 정정) ④ storage-path 가드의 `ACCESS_DENIED` 명명(충돌 성격).
+- 기록: inventory 문서 3행 + 웹 BFF 행 migrated, `document-contract` finding 추가. unit worktree/branch 정리. 다음은 **5-3(eformsign 컨트롤러, 고위험)**.
