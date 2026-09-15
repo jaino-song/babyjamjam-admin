@@ -609,3 +609,10 @@ TL;DR: 배정(4b-1 백엔드: 역할·자격·동시 변경 코드 전환 / 4b-2
 - 검증(통합 `bafbad310`): backend 357/5,059(첫 실행 flake 1건·재실행 green), frontend 238/1,582, mobile 250/1,658, shared 375+86, 4종 타입·게이트·ci·vendor 결정성. 감사 **SHIP/HIGH**(음성 분기 커버리지·dead fixture는 nonblocking).
 - carried(auditor): `registeredProblemCode` 부정 분기 테스트 공백, `eformsign.controller`의 가드 주입 dead(기존), dispatch `reason`/`uncertainReason`이 코드 문자열이 됨(외부 운영 툴 영향 가능·인레포 소비자 없음).
 - 기록: inventory 가드/dispatch 행 migrated + envelope 슬롯 노트, `contract-guard-codes` finding, vendor_parity 갱신. unit worktree/branch 정리. 다음은 **5-2(문서 컨트롤러/서비스)** — 이후 5-3(eformsign 컨트롤러, 고위험)·5-4(envelope, 최고위험).
+
+**Task 5-2: 문서 컨트롤러·서비스 오류 전환** (feature, med) — 바인딩 2026-09-15, base `fb17885db`
+- 전환(기존 코드 재사용, 카탈로그 추가 없음): `document.controller.ts` — tags 배열/형식 400 → `VALIDATION_FAILED` `/tags` INVALID_FORMAT, `tenant context unavailable` 403 → `ACCESS_DENIED`, `file is required` → `/file` REQUIRED, validationError → `VALIDATION_FAILED`, name>255 → `/name` OUT_OF_RANGE, `Document file not found` NotFound ×2 → `RESOURCE_NOT_FOUND`(404). `document.service.ts` — Forbidden L34 → `ACCESS_DENIED`(문맥 확인), NotFound ×2 → `RESOURCE_NOT_FOUND`(id 노출 제거), plain Error L145는 500 remap 유지. `document.entity.ts` L108/L120 한국어 Error는 도달 가능할 때만 전환(그 외 기록).
+- 소비자: 웹 BFF `file-storage/files` 경유(문제 passthrough 여부 확인, 필요 시 최소 정렬) — 모바일 소비자 없음.
+- 테스트: `document.controller.integration.spec.ts`(143/385/395/409/425/483) + service spec 갱신, red-first.
+- 범위 밖: eformsign 컨트롤러(5-3), envelope(5-4), 업로드 UI 재설계.
+- Dispatch metadata: `Phase: 5-2` · `Execution: DELEGATE` · `Audit: SOL` · `Agent: worker` · `Model: opencode-go/glm-5.3-flash` · `Paths: backend/interface/controllers/document.controller.ts(+spec), backend/application/services/document.service.ts(+spec), backend/domain/entities/document.entity.ts, frontend/src/app/api/file-storage/** [passthrough 확인 시만]` · `Depends: Task 5-1`
