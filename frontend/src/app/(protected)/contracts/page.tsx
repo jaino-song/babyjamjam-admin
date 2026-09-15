@@ -39,6 +39,7 @@ import { useInfiniteContracts, type ContractsSectionParam } from "@/hooks/useInf
 import { ServiceRecordHeaderCard } from "@/features/service-records/components/ServiceRecordHeaderCard";
 import { useClientServiceRecords } from "@/features/service-records/hooks/use-service-records";
 import type { EformsignDocument, EformsignDocumentOption } from "@/lib/eformsign/types";
+import { readHeadlessOutcome } from "@/lib/eformsign/headless-outcome";
 import { useDebounce } from "use-debounce";
 import {
   DocumentFilterType,
@@ -1495,7 +1496,14 @@ export function ContractDetail({
           if (headless.ok) {
             return { kind: "headless" };
           }
-          manualCheckRequired = headless.fallbackHint === "manual_check";
+          // BJJ-319 5-4c: the structured outcome is the primary classification
+          // when the envelope carries it. An UNKNOWN verdict means eformsign may
+          // already have applied the step, so the recovery is the manual status
+          // check — never the reviewer iframe. Envelopes without the field keep
+          // the fallbackHint decision.
+          const structuredOutcome = readHeadlessOutcome(headless.outcome);
+          manualCheckRequired = headless.fallbackHint === "manual_check"
+            || structuredOutcome === "UNKNOWN";
           manualCheckReason = headless.reason;
           console.warn(
             "[finalize] headless finalize ok=false",

@@ -113,3 +113,56 @@ describe("mobile contract creation compensation flow", () => {
     expect(alert.message).toContain("계약 목록에서 상태를 확인해 주세요");
   });
 });
+
+// BJJ-319 5-4c: the additive envelope `outcome` is the primary classification
+// when present; the legacy reason/fallbackHint branches below it stay intact.
+describe("mobile dispatch outcome-first classification", () => {
+  it("intercepts an UNKNOWN envelope outcome ahead of every fallback branch", () => {
+    const unknownAt = source.indexOf('readHeadlessOutcome(headless.outcome) === "UNKNOWN"');
+    const adoptAt = source.indexOf('headless.reason === "local_persist_failed"');
+    const duplicateAt = source.indexOf('headless.reason === "duplicate_pending_document"');
+    const fallbackAt = source.indexOf("const safeFallback = canUseContractIframeFallback(");
+
+    expect(unknownAt).toBeGreaterThan(-1);
+    expect(unknownAt).toBeLessThan(adoptAt);
+    expect(unknownAt).toBeLessThan(duplicateAt);
+    expect(unknownAt).toBeLessThan(fallbackAt);
+
+    // The interception settles with the 확인 필요 copy and the submission lock
+    // (showSubmissionFailure → buildContractSubmissionAlert lock) — it must
+    // return before the adopt, duplicate-force, or iframe branches can run.
+    const intercept = source.slice(unknownAt, source.indexOf("return;", unknownAt));
+    expect(intercept).toContain("CONTRACT_OUTCOME_COPY.UNKNOWN.message");
+    expect(intercept).not.toContain("runIframeFallback");
+    expect(intercept).not.toContain("dispatchHeadless");
+  });
+
+  it("extends the adopt branch and the check-list path to PARTIALLY_APPLIED", () => {
+    expect(source).toContain(
+      '(headless.reason === "local_persist_failed" || readHeadlessOutcome(headless.outcome) === "PARTIALLY_APPLIED")',
+    );
+    const adoptAt = source.indexOf('readHeadlessOutcome(headless.outcome) === "PARTIALLY_APPLIED"');
+    const standaloneAt = source.indexOf(
+      'readHeadlessOutcome(headless.outcome) === "PARTIALLY_APPLIED"',
+      adoptAt + 1,
+    );
+    expect(standaloneAt).toBeGreaterThan(adoptAt);
+    const partialBranch = source.slice(standaloneAt, source.indexOf('headless.reason === "remote_unconfirmed"'));
+    expect(partialBranch).toContain("CONTRACT_OUTCOME_COPY.PARTIALLY_APPLIED.message");
+    expect(partialBranch).toContain('showSubmissionFailure(headless, "PARTIALLY_APPLIED")');
+    expect(partialBranch).toContain("return;");
+  });
+
+  it("keeps NOT_APPLIED envelopes on the legacy reason branches without interception", () => {
+    // Only UNKNOWN and PARTIALLY_APPLIED are intercepted; NOT_APPLIED and
+    // outcome-less envelopes keep flowing through the legacy branches
+    // (duplicate force confirm, safe iframe gate).
+    expect(source.match(/readHeadlessOutcome\(headless\.outcome\) === "NOT_APPLIED"/g)).toBeNull();
+    const duplicateBranch = source.slice(
+      source.indexOf('headless.reason === "duplicate_pending_document"'),
+      source.indexOf("const safeFallback = canUseContractIframeFallback("),
+    );
+    expect(duplicateBranch).toContain("최근 생성된 진행 중 문서가 있어 계약 목록에서 상태를 확인해 주세요.");
+    expect(duplicateBranch).not.toContain("readHeadlessOutcome");
+  });
+});
