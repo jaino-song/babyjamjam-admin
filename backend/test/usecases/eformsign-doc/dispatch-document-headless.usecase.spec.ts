@@ -1,7 +1,10 @@
 import { ConflictException } from "@nestjs/common";
 import { DispatchDocumentHeadlessUsecase } from "application/usecases/eformsign-doc/dispatch-document-headless.usecase";
 import { codeOnlyProblemBody } from "application/utils/problem-bodies";
-import { EformsignOperationAlreadyRunningError } from "infrastructure/locking/eformsign-operation-lock.service";
+import { EformsignOperationAlreadyRunningError, EformsignOperationLockUnavailableError } from "infrastructure/locking/eformsign-operation-lock.service";
+
+const RECOVERY_NONE = { action: "NONE", retry: { mode: "NEVER" } } as const;
+const RECOVERY_CHECK_STATUS = { action: "CHECK_STATUS", retry: { mode: "NEVER" } } as const;
 
 const TEST_PRINCIPAL = {
     userId: "test-user",
@@ -47,6 +50,9 @@ describe("DispatchDocumentHeadlessUsecase", () => {
         }, TEST_PRINCIPAL)).resolves.toEqual(expect.objectContaining({
             ok: false,
             reason: "invalid_customer_phone",
+            code: "INVALID_CUSTOMER_PHONE",
+            outcome: "NOT_APPLIED",
+            recovery: RECOVERY_NONE,
         }));
 
         expect(assignmentGuard.assertLiveAssignedProvider).not.toHaveBeenCalled();
@@ -80,6 +86,9 @@ describe("DispatchDocumentHeadlessUsecase", () => {
         }, TEST_PRINCIPAL)).resolves.toEqual(expect.objectContaining({
             ok: false,
             reason: "invalid_provider_phone",
+            code: "INVALID_PROVIDER_PHONE",
+            outcome: "NOT_APPLIED",
+            recovery: RECOVERY_NONE,
         }));
 
         expect(assignmentGuard.assertLiveAssignedProvider).not.toHaveBeenCalled();
@@ -299,6 +308,9 @@ describe("DispatchDocumentHeadlessUsecase", () => {
             ok: false,
             reason: "CLIENT_ASSIGNMENT_REQUIRED",
             fallbackHint: "iframe",
+            code: "CLIENT_ASSIGNMENT_REQUIRED",
+            outcome: "NOT_APPLIED",
+            recovery: RECOVERY_NONE,
         }));
 
         expect(assignmentGuard.assertLiveAssignedProvider).toHaveBeenCalledWith(
@@ -341,6 +353,9 @@ describe("DispatchDocumentHeadlessUsecase", () => {
         }, TEST_PRINCIPAL)).resolves.toEqual(expect.objectContaining({
             ok: false,
             reason: "db connection lost",
+            code: "DOCUMENT_DISPATCH_FAILED",
+            outcome: "NOT_APPLIED",
+            recovery: RECOVERY_NONE,
         }));
 
         expect(progressService.emit).toHaveBeenCalledWith(
@@ -374,6 +389,9 @@ describe("DispatchDocumentHeadlessUsecase", () => {
             reason: "local_persist_failed",
             remoteDocumentId: "remote-1",
             fallbackHint: "adopt",
+            code: "DOCUMENT_LOCAL_PERSIST_FAILED",
+            outcome: "PARTIALLY_APPLIED",
+            recovery: RECOVERY_CHECK_STATUS,
         }));
     });
 
@@ -425,6 +443,9 @@ describe("DispatchDocumentHeadlessUsecase", () => {
                     ok: false,
                     fallbackHint: "iframe",
                     failedStep: "client-started",
+                    code: "DOCUMENT_DISPATCH_FAILED",
+                    outcome: "NOT_APPLIED",
+                    recovery: RECOVERY_NONE,
                 }));
         });
 
@@ -458,6 +479,9 @@ describe("DispatchDocumentHeadlessUsecase", () => {
                 ok: false,
                 reason: "remote_unconfirmed",
                 fallbackHint: "manual_check",
+                code: "REMOTE_DOCUMENT_UNCONFIRMED",
+                outcome: "UNKNOWN",
+                recovery: RECOVERY_CHECK_STATUS,
             }));
         });
 
@@ -630,6 +654,9 @@ describe("DispatchDocumentHeadlessUsecase", () => {
         await expect(usecase.execute("branch-1", params, TEST_PRINCIPAL)).resolves.toEqual(expect.objectContaining({
             reason: "duplicate_pending_document",
             existingDocumentId: "existing-1",
+            code: "DUPLICATE_PENDING_DOCUMENT",
+            outcome: "NOT_APPLIED",
+            recovery: RECOVERY_NONE,
         }));
         await usecase.execute("branch-1", { ...params, force: true }, TEST_PRINCIPAL);
         expect(dispatchCreation).toHaveBeenCalledTimes(1);
@@ -663,8 +690,129 @@ describe("DispatchDocumentHeadlessUsecase", () => {
             ok: false,
             reason: "operation_in_progress",
             fallbackHint: "manual_check",
+            code: "DOCUMENT_DISPATCH_IN_PROGRESS",
+            outcome: "NOT_APPLIED",
+            recovery: RECOVERY_NONE,
         }));
         expect(getAccessTokenUsecase.execute).not.toHaveBeenCalled();
+        expect(headlessService.dispatchCreation).not.toHaveBeenCalled();
+    });
+
+    it("reports an unavailable operation lock as a refusal that was not applied", async () => {
+        const headlessService = { dispatchCreation: jest.fn() };
+        const operationLock = {
+            runExclusive: jest.fn().mockRejectedValue(new EformsignOperationLockUnavailableError("redis unavailable")),
+        };
+        const usecase = new DispatchDocumentHeadlessUsecase(
+            { generateDocumentOptions: jest.fn() } as never,
+            headlessService as never,
+            { findByArea: jest.fn() } as never,
+            createCredentialBoundary() as never,
+            { execute: jest.fn() } as never,
+            { execute: jest.fn() } as never,
+            { emit: jest.fn() } as never,
+            { findById: jest.fn() } as never,
+            { assertLiveAssignedProvider: jest.fn() } as never,
+            { findByClientId: jest.fn() } as never,
+            { execute: jest.fn() } as never,
+            operationLock as never,
+        );
+
+        await expect(usecase.execute("branch-1", {
+            clientId: 7,
+            contractData: {} as never,
+        }, TEST_PRINCIPAL)).resolves.toEqual(expect.objectContaining({
+            ok: false,
+            reason: "operation_lock_unavailable",
+            fallbackHint: "manual_check",
+            code: "DOCUMENT_LOCK_UNAVAILABLE",
+            outcome: "NOT_APPLIED",
+            recovery: RECOVERY_NONE,
+        }));
+        expect(headlessService.dispatchCreation).not.toHaveBeenCalled();
+    });
+
+    it("reports a lost operation lock as a refusal that was not applied", async () => {
+        const headlessService = { dispatchCreation: jest.fn() };
+        const operationLock = {
+            runExclusive: jest.fn(async (
+                _key: unknown,
+                run: (lease: { isHeld: () => boolean }) => unknown,
+            ) => run({ isHeld: () => false })),
+        };
+        const usecase = new DispatchDocumentHeadlessUsecase(
+            { generateDocumentOptions: jest.fn().mockReturnValue({}) } as never,
+            headlessService as never,
+            { findByArea: jest.fn().mockResolvedValue(null) } as never,
+            createCredentialBoundary() as never,
+            { execute: jest.fn() } as never,
+            { execute: jest.fn() } as never,
+            { emit: jest.fn() } as never,
+            { findById: jest.fn().mockResolvedValue(null) } as never,
+            { assertLiveAssignedProvider: jest.fn().mockResolvedValue({ scheduleId: 1 }) } as never,
+            { findByClientId: jest.fn().mockResolvedValue([]) } as never,
+            { execute: jest.fn().mockResolvedValue([]) } as never,
+            operationLock as never,
+        );
+
+        await expect(usecase.execute("branch-1", {
+            clientId: 7,
+            contractData: { caretaker1Contact: "010-1111-2222" } as never,
+        }, TEST_PRINCIPAL)).resolves.toEqual(expect.objectContaining({
+            ok: false,
+            reason: "operation_lock_lost",
+            fallbackHint: "manual_check",
+            code: "DOCUMENT_LOCK_LOST",
+            outcome: "NOT_APPLIED",
+            recovery: RECOVERY_NONE,
+        }));
+        expect(headlessService.dispatchCreation).not.toHaveBeenCalled();
+    });
+
+    it.each([
+        ["already_accepted", "dispatch_already_accepted", "DISPATCH_ALREADY_ACCEPTED"],
+        ["uncertain", "dispatch_uncertain_manual_reconciliation_required", "DISPATCH_UNCERTAIN"],
+    ])("reports a %s dispatch claim as an unknown outcome needing a status check", async (
+        disposition,
+        reason,
+        code,
+    ) => {
+        const headlessService = { dispatchCreation: jest.fn() };
+        const dispatchBoundary = {
+            claim: jest.fn().mockResolvedValue({
+                disposition,
+                intent: { id: "intent-1", providerDocumentId: "remote-9" },
+            }),
+            markAccepted: jest.fn(),
+            markUncertain: jest.fn(),
+            releaseBeforeSend: jest.fn(),
+        };
+        const usecase = new DispatchDocumentHeadlessUsecase(
+            { generateDocumentOptions: jest.fn() } as never,
+            headlessService as never,
+            { findByArea: jest.fn() } as never,
+            createCredentialBoundary() as never,
+            { execute: jest.fn() } as never,
+            { execute: jest.fn() } as never,
+            { emit: jest.fn() } as never,
+            { findById: jest.fn() } as never,
+            { assertLiveAssignedProvider: jest.fn().mockResolvedValue({ scheduleId: 1 }) } as never,
+            { findByClientId: jest.fn().mockResolvedValue([]) } as never,
+            { execute: jest.fn().mockResolvedValue([]) } as never,
+            undefined,
+            dispatchBoundary as never,
+        );
+
+        await expect(usecase.execute("branch-1", {
+            clientId: 7,
+            contractData: { caretaker1Contact: "010-1111-2222" } as never,
+        }, TEST_PRINCIPAL)).resolves.toEqual(expect.objectContaining({
+            ok: false,
+            reason,
+            code,
+            outcome: "UNKNOWN",
+            recovery: RECOVERY_CHECK_STATUS,
+        }));
         expect(headlessService.dispatchCreation).not.toHaveBeenCalled();
     });
 });

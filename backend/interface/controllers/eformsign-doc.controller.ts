@@ -335,6 +335,9 @@ export class EformsignDocController {
                 remoteDocumentId: result.remoteDocumentId,
                 existingDocumentId: result.existingDocumentId,
                 dispatchIntentId: result.dispatchIntentId,
+                code: result.code,
+                outcome: result.outcome,
+                recovery: result.recovery,
             };
         }
         return {

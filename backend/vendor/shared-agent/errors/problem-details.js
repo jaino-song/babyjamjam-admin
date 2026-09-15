@@ -77,6 +77,18 @@ const PROBLEM_CODES = [
     // Registered eformsign tombstone codes (EM-CAT-03; shipped identifiers verbatim). BJJ-319 phase 5-3a.
     "EFORMSIGN_CREDENTIALS_SERVER_ONLY",
     "EFORMSIGN_PROVIDER_OPERATION_SERVER_ONLY",
+    // Registered headless dispatch codes (EM-CAT-03; reason-token counterparts). BJJ-319 phase 5-4a.
+    "INVALID_CUSTOMER_PHONE",
+    "INVALID_PROVIDER_PHONE",
+    "DOCUMENT_DISPATCH_IN_PROGRESS",
+    "DOCUMENT_LOCK_UNAVAILABLE",
+    "DOCUMENT_LOCK_LOST",
+    "DUPLICATE_PENDING_DOCUMENT",
+    "DISPATCH_ALREADY_ACCEPTED",
+    "DISPATCH_UNCERTAIN",
+    "REMOTE_DOCUMENT_UNCONFIRMED",
+    "DOCUMENT_LOCAL_PERSIST_FAILED",
+    "DOCUMENT_DISPATCH_FAILED",
 ];
 const PROBLEM_ERROR_CODES = [
     "REQUIRED",
@@ -673,6 +685,130 @@ const PROBLEM_DEFINITIONS = {
         detail: {
             "ko-KR": "이 전자서명 작업은 서버에서만 실행할 수 있어요. 자동 발송 절차를 이용해 주세요.",
             "en-US": "This eformsign operation can only run on the server. Use the automated dispatch flow instead.",
+        },
+    },
+    // Registered headless dispatch codes (EM-CAT-03; reason-token counterparts). BJJ-319 phase 5-4a.
+    // ko copy reuses the sentences the web/mobile dispatch UIs already show for the
+    // matching reason tokens where one exists; the rest are authored (해요체).
+    INVALID_CUSTOMER_PHONE: {
+        status: 400,
+        title: {
+            "ko-KR": "계약서 연락처를 확인해 주세요",
+            "en-US": "Check the contract contact",
+        },
+        detail: {
+            "ko-KR": "계약서에 입력한 고객 연락처가 올바르지 않아요.",
+            "en-US": "The customer contact entered on the contract is invalid.",
+        },
+    },
+    INVALID_PROVIDER_PHONE: {
+        status: 400,
+        title: {
+            "ko-KR": "제공인력 연락처를 확인해 주세요",
+            "en-US": "Check the provider contact",
+        },
+        detail: {
+            "ko-KR": "계약서에 입력한 제공인력 연락처가 올바르지 않아요.",
+            "en-US": "The provider contact entered on the contract is invalid.",
+        },
+    },
+    DOCUMENT_DISPATCH_IN_PROGRESS: {
+        status: 409,
+        title: {
+            "ko-KR": "이 문서를 처리하는 중이에요",
+            "en-US": "This document is already being processed",
+        },
+        detail: {
+            "ko-KR": "이 문서를 처리하는 중이에요. 잠시 후 다시 시도해 주세요.",
+            "en-US": "This document is already being processed. Try again shortly.",
+        },
+    },
+    DOCUMENT_LOCK_UNAVAILABLE: {
+        status: 503,
+        title: {
+            "ko-KR": "처리 순서를 확보하지 못했어요",
+            "en-US": "Could not secure the processing slot",
+        },
+        detail: {
+            "ko-KR": "처리 순서를 확보하지 못했어요. 잠시 후 다시 시도해 주세요.",
+            "en-US": "The processing slot could not be secured. Try again shortly.",
+        },
+    },
+    DOCUMENT_LOCK_LOST: {
+        status: 409,
+        title: {
+            "ko-KR": "처리 순서를 유지하지 못했어요",
+            "en-US": "The processing slot was lost",
+        },
+        detail: {
+            "ko-KR": "처리 순서를 확보하지 못했어요. 잠시 후 다시 시도해 주세요.",
+            "en-US": "The processing slot could not be secured. Try again shortly.",
+        },
+    },
+    DUPLICATE_PENDING_DOCUMENT: {
+        status: 409,
+        title: {
+            "ko-KR": "최근 생성된 진행 중 문서가 있어요",
+            "en-US": "A recent pending document exists",
+        },
+        detail: {
+            "ko-KR": "최근 생성된 진행 중 문서가 있어 계약 목록에서 상태를 확인해 주세요.",
+            "en-US": "A recently created pending document exists, so check its status in the contract list.",
+        },
+    },
+    DISPATCH_ALREADY_ACCEPTED: {
+        status: 409,
+        title: {
+            "ko-KR": "이미 처리를 접수했어요",
+            "en-US": "The request was already accepted",
+        },
+        detail: {
+            "ko-KR": "이 단계는 이미 처리를 접수했어요. 문서 상태가 갱신되면 다음 단계를 진행할 수 있어요.",
+            "en-US": "This step already accepted the request, so the next step can continue once the document status updates.",
+        },
+    },
+    DISPATCH_UNCERTAIN: {
+        status: 502,
+        title: {
+            "ko-KR": "직전 요청의 처리 결과를 확인하지 못했어요",
+            "en-US": "The previous request result is unconfirmed",
+        },
+        detail: {
+            "ko-KR": "직전 요청의 처리 결과를 확인하지 못했어요. eformsign에서 문서 상태를 확인한 뒤 다시 시도해 주세요.",
+            "en-US": "We can’t confirm the result of the previous request. Check the document status in eformsign before trying again.",
+        },
+    },
+    REMOTE_DOCUMENT_UNCONFIRMED: {
+        status: 502,
+        title: {
+            "ko-KR": "문서 생성 상태를 확인할 수 없어요",
+            "en-US": "The document creation result is unconfirmed",
+        },
+        detail: {
+            "ko-KR": "문서 생성 상태를 확인할 수 없어요. 전자문서 목록에서 확인 후 다시 시도해 주세요.",
+            "en-US": "We can’t confirm whether the document was created. Check the e-form document list before trying again.",
+        },
+    },
+    DOCUMENT_LOCAL_PERSIST_FAILED: {
+        status: 502,
+        title: {
+            "ko-KR": "생성된 문서 등록에 실패했어요",
+            "en-US": "The created document could not be registered",
+        },
+        detail: {
+            "ko-KR": "문서는 생성되었으나 등록에 실패했어요. 잠시 후 다시 시도해 주세요.",
+            "en-US": "The document was created but could not be registered. Try again shortly.",
+        },
+    },
+    DOCUMENT_DISPATCH_FAILED: {
+        status: 502,
+        title: {
+            "ko-KR": "전자문서 발송에 실패했어요",
+            "en-US": "Document dispatch failed",
+        },
+        detail: {
+            "ko-KR": "백엔드 자동 처리에 실패했어요. 재시도하거나 수동 입력을 사용해 주세요.",
+            "en-US": "The automated backend processing failed. Retry or use manual entry.",
         },
     },
 };

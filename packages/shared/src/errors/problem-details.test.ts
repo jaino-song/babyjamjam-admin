@@ -240,6 +240,18 @@ describe("catalog coverage", () => {
         // Registered eformsign tombstone codes (EM-CAT-03; shipped identifiers verbatim). BJJ-319 phase 5-3a.
         "EFORMSIGN_CREDENTIALS_SERVER_ONLY",
         "EFORMSIGN_PROVIDER_OPERATION_SERVER_ONLY",
+        // Registered headless dispatch codes (EM-CAT-03; reason-token SCREAMING counterparts). BJJ-319 phase 5-4a.
+        "INVALID_CUSTOMER_PHONE",
+        "INVALID_PROVIDER_PHONE",
+        "DOCUMENT_DISPATCH_IN_PROGRESS",
+        "DOCUMENT_LOCK_UNAVAILABLE",
+        "DOCUMENT_LOCK_LOST",
+        "DUPLICATE_PENDING_DOCUMENT",
+        "DISPATCH_ALREADY_ACCEPTED",
+        "DISPATCH_UNCERTAIN",
+        "REMOTE_DOCUMENT_UNCONFIRMED",
+        "DOCUMENT_LOCAL_PERSIST_FAILED",
+        "DOCUMENT_DISPATCH_FAILED",
     ];
 
     it.each(codes)("contains a complete bilingual entry for %s", (code) => {
@@ -365,6 +377,27 @@ describe("catalog coverage", () => {
         const entry = PROBLEM_CATALOG[code];
         expect(entry.status).toBe(410);
         expect(entry.statuses).toEqual([410]);
+        expect(entry.type).toBe(`https://github.com/jaino-song/babyjamjam-admin/blob/main/docs/error-management.md#${anchor}`);
+    });
+
+    const HEADLESS_DISPATCH_STATUS_CODES: Array<[ProblemCode, number, string]> = [
+        ["INVALID_CUSTOMER_PHONE", 400, "invalid-customer-phone"],
+        ["INVALID_PROVIDER_PHONE", 400, "invalid-provider-phone"],
+        ["DOCUMENT_DISPATCH_IN_PROGRESS", 409, "document-dispatch-in-progress"],
+        ["DOCUMENT_LOCK_UNAVAILABLE", 503, "document-lock-unavailable"],
+        ["DOCUMENT_LOCK_LOST", 409, "document-lock-lost"],
+        ["DUPLICATE_PENDING_DOCUMENT", 409, "duplicate-pending-document"],
+        ["DISPATCH_ALREADY_ACCEPTED", 409, "dispatch-already-accepted"],
+        ["DISPATCH_UNCERTAIN", 502, "dispatch-uncertain"],
+        ["REMOTE_DOCUMENT_UNCONFIRMED", 502, "remote-document-unconfirmed"],
+        ["DOCUMENT_LOCAL_PERSIST_FAILED", 502, "document-local-persist-failed"],
+        ["DOCUMENT_DISPATCH_FAILED", 502, "document-dispatch-failed"],
+    ];
+
+    it.each(HEADLESS_DISPATCH_STATUS_CODES)("registers %s as status %s with kebab-case type anchor", (code, status, anchor) => {
+        const entry = PROBLEM_CATALOG[code];
+        expect(entry.status).toBe(status);
+        expect(entry.statuses).toEqual([status]);
         expect(entry.type).toBe(`https://github.com/jaino-song/babyjamjam-admin/blob/main/docs/error-management.md#${anchor}`);
     });
 });
