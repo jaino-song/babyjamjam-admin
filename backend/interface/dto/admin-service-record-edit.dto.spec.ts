@@ -44,6 +44,18 @@ describe("admin service-record edit DTO", () => {
         expect(errors).toHaveLength(0);
     });
 
+    it.each([true, false])("accepts explicit suffix approval %s", async (shiftFollowing) => {
+        expect(await validateStrict(UpdateServiceRecordEditDraftDto, {
+            expectedDraftVersion: 1, changes: {}, dateMove: { sessionIndex: 1, toDate: "2026-09-08", shiftFollowing },
+        })).toHaveLength(0);
+    });
+
+    it("rejects a forged non-boolean suffix approval", async () => {
+        expect((await validateStrict(UpdateServiceRecordEditDraftDto, {
+            expectedDraftVersion: 1, changes: {}, dateMove: { sessionIndex: 1, toDate: "2026-09-08", shiftFollowing: "true" },
+        })).length).toBeGreaterThan(0);
+    });
+
     it.each([
         "branchId",
         "actorUserId",

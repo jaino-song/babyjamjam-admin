@@ -550,8 +550,15 @@ export function ServiceRecordWizard({
                                     formatMonthDayKo(currentServiceDate),
                                 )
                                 : null}
+                            {adminMode && slots?.serviceDateEditor ? slots.serviceDateEditor({
+                                "data-component": child("body_date-chip_edit"),
+                                sessionIndex: day,
+                                serviceDate: currentServiceDate,
+                                disabled: readOnly || busy,
+                                onOpen: () => onOpenServiceDateEditor?.(day),
+                            }) : null}
                         </div>
-                        {!readOnly && (!editing || adminMode) && pageIdx === 0 && (
+                        {!readOnly && !adminMode && !editing && pageIdx === 0 && (
                             <div data-component={child("body_service-date-field")} data-slot="fld" className="fld">
                                 <label data-slot="lab" className="lab">제공일자</label>
                                 {adminEditing && slots?.serviceDateEditor ? (
@@ -621,7 +628,7 @@ export function ServiceRecordWizard({
                         )}
                         {isMomConfirmationPage ? (
                             <div data-component={child("body_confirmation-action")} data-slot="nav" className="nav confirmation-nav">
-                                <button data-slot="btn" className="btn submit" disabled={readOnly || busy || (!adminMode && !signatureValue)} onClick={onOpenSubmitModal}>{readOnly ? "조회 전용" : adminMode ? (busy ? "저장 중…" : "초안 저장") : "확인"}</button>
+                                {adminMode && slots?.adminSessionAction ? slots.adminSessionAction : <button data-slot="btn" className="btn submit" disabled={readOnly || busy || (!adminMode && !signatureValue)} onClick={onOpenSubmitModal}>{readOnly ? "조회 전용" : adminMode ? (busy ? "저장 중…" : "초안 저장") : "확인"}</button>}
                             </div>
                         ) : (
                             <div data-component={child("body_nav")} data-slot="nav" className="nav">

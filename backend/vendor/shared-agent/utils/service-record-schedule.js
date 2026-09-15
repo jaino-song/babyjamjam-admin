@@ -3,6 +3,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.ServiceRecordScheduleValidationError = void 0;
 exports.validateServiceRecordScheduleVector = validateServiceRecordScheduleVector;
 exports.shiftServiceRecordScheduleSuffix = shiftServiceRecordScheduleSuffix;
+exports.moveServiceRecordSessionDate = moveServiceRecordSessionDate;
 exports.getExpectedSessionDateFromRecords = getExpectedSessionDateFromRecords;
 const business_days_1 = require("./business-days");
 class ServiceRecordScheduleValidationError extends Error {
@@ -118,6 +119,24 @@ function shiftServiceRecordScheduleSuffix(entries, sessionIndex, newDate) {
         };
     });
     return { deltaBusinessDays, entries: validateServiceRecordScheduleVector(shifted, vector.length) };
+}
+/** A per-session correction moves later dates only with explicit approval. */
+function moveServiceRecordSessionDate(entries, sessionIndex, newDate, shiftFollowing) {
+    if (shiftFollowing)
+        return shiftServiceRecordScheduleSuffix(entries, sessionIndex, newDate);
+    const vector = validateServiceRecordScheduleVector(entries);
+    const selected = vector.find((entry) => entry.sessionIndex === sessionIndex);
+    if (!selected)
+        throw new ServiceRecordScheduleValidationError("INVALID_SESSION_INDEX", "수정할 회차를 찾을 수 없습니다.", sessionIndex);
+    assertBusinessDate(newDate, sessionIndex);
+    const deltaBusinessDays = (0, business_days_1.diffBusinessDaysKr)(newDate, selected.serviceDate);
+    return {
+        deltaBusinessDays: deltaBusinessDays ?? 0,
+        entries: validateServiceRecordScheduleVector(vector.map((entry) => ({
+            ...entry,
+            serviceDate: entry.sessionIndex === sessionIndex ? newDate : entry.serviceDate,
+        })), vector.length),
+    };
 }
 const DATE_ONLY_PREFIX = /^(\d{4})-(\d{2})-(\d{2})/;
 function datePartOf(value) {

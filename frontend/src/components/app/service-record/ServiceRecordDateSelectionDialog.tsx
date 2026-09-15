@@ -296,7 +296,7 @@ export function ServiceRecordDateSelectionDialog({
                 data-component={dataComponent}
                 size="compact"
                 title="서비스 제공일 변경"
-                description="선택한 회차와 이후 회차는 같은 한국 영업일 차이만큼 이동하며, 실제 제공 회차 수와 바우처 일수는 유지됩니다."
+                description="서비스 제공일을 선택해 주세요. 다음 회차와 겹치면 뒤 회차의 이동 여부를 확인합니다. 변경사항은 회차 화면에서 수정 확인을 눌러야 저장됩니다."
                 contentClassName="flex flex-col gap-4"
                 footer={(
                     <>
@@ -344,7 +344,7 @@ export function ServiceRecordDateSelectionDialog({
                         data-slot="policy"
                         className="text-sm leading-6 text-v3-text-muted"
                     >
-                        선택한 회차와 이후 회차는 같은 영업일 차이만큼 이동합니다. 실제 제공 회차 수와 바우처 일수는 유지됩니다.
+                        선택한 회차의 제공일을 수정합니다. 다음 회차와 겹치면 뒤 회차를 함께 이동할지 확인합니다.
                     </p>
 
                     {isBlocked ? (
