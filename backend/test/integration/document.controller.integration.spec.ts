@@ -1,8 +1,11 @@
 import { ExecutionContext, ForbiddenException, INestApplication, Logger, NotFoundException } from "@nestjs/common";
+import { HttpAdapterHost } from "@nestjs/core";
 import { GlobalValidationPipe } from "infrastructure/pipes/global-validation.pipe";
+import { ServiceRecordSentryExceptionFilter } from "infrastructure/observability/service-record-sentry-exception.filter";
 import { Test, TestingModule } from "@nestjs/testing";
 import { DocumentService } from "application/services/document.service";
 import { DocumentCategoryService } from "application/services/document-category.service";
+import { codeOnlyProblemBody } from "application/utils/problem-bodies";
 import { DocumentEntity } from "domain/entities/document.entity";
 import {
     FILE_STORAGE_PORT,
@@ -52,6 +55,9 @@ describe("DocumentController (Integration)", () => {
     }
 
     let tenantGlobalRole = "owner";
+    // Missing branch/user members simulate the "tenant context unavailable"
+    // boundary the controller guards against.
+    let tenantContext: { userId?: string; branchId?: string } = { userId: "user-1", branchId: "branch-1" };
 
     const authGuard = {
         canActivate: (context: ExecutionContext) => {
@@ -63,8 +69,7 @@ describe("DocumentController (Integration)", () => {
                 branchRole: "owner",
             };
             requestContext.tenant = {
-                userId: "user-1",
-                branchId: "branch-1",
+                ...tenantContext,
                 globalRole: tenantGlobalRole,
                 branchRole: "owner",
             };
@@ -74,6 +79,7 @@ describe("DocumentController (Integration)", () => {
 
     beforeEach(async () => {
         tenantGlobalRole = "owner";
+        tenantContext = { userId: "user-1", branchId: "branch-1" };
         const moduleFixture: TestingModule = await Test.createTestingModule({
             controllers: [DocumentController],
             providers: [
@@ -121,6 +127,13 @@ describe("DocumentController (Integration)", () => {
         app.useGlobalPipes(
             new GlobalValidationPipe({ whitelist: true, forbidNonWhitelisted: true, transform: true }),
         );
+        // Also matches main.ts: the catch-all filter converts coded problem
+        // bodies into the public catalog response. Without it supertest would
+        // observe Nest's raw HttpException serialization (internal detail
+        // texts included) instead of what clients actually receive.
+        app.useGlobalFilters(
+            new ServiceRecordSentryExceptionFilter(app.get(HttpAdapterHost)),
+        );
         await app.init();
 
         documentService = moduleFixture.get(DocumentService);
@@ -132,6 +145,9 @@ describe("DocumentController (Integration)", () => {
         await app.close();
     });
 
+    // Upload rejections are registered problem bodies: the HTTP filter
+    // replaces every detail text with catalog copy, so tests pin the
+    // code/status/pointer instead of the legacy message strings.
     it("should reject malformed upload tags before storage or persistence", async () => {
         const response = await request(app.getHttpServer())
             .post("/documents/upload")
@@ -141,9 +157,81 @@ describe("DocumentController (Integration)", () => {
             .attach("file", Buffer.from("%PDF-1.4"), "contract.pdf");
 
         expect(response.status).toBe(400);
-        expect(response.body.message).toBe("tags must be a valid JSON array");
+        expect(response.body.code).toBe("VALIDATION_FAILED");
+        expect(response.body.errors).toEqual([
+            expect.objectContaining({ pointer: "/tags", code: "INVALID_FORMAT", location: "body" }),
+        ]);
         expect(fileStorage.upload).not.toHaveBeenCalled();
         expect(documentService.create).not.toHaveBeenCalled();
+    });
+
+    it("should reject a non-array tags field before storage or persistence", async () => {
+        const response = await request(app.getHttpServer())
+            .post("/documents/upload")
+            .field("name", "Contract")
+            .field("categoryId", "contract")
+            .field("tags", JSON.stringify("signed"))
+            .attach("file", Buffer.from("%PDF-1.4"), "contract.pdf");
+
+        expect(response.status).toBe(400);
+        expect(response.body.code).toBe("VALIDATION_FAILED");
+        expect(response.body.errors).toEqual([
+            expect.objectContaining({ pointer: "/tags", code: "INVALID_FORMAT", location: "body" }),
+        ]);
+        expect(fileStorage.upload).not.toHaveBeenCalled();
+        expect(documentService.create).not.toHaveBeenCalled();
+    });
+
+    it("should reject an upload without a file as a required-field problem", async () => {
+        const response = await request(app.getHttpServer())
+            .post("/documents/upload")
+            .field("name", "Contract")
+            .field("categoryId", "contract");
+
+        expect(response.status).toBe(400);
+        expect(response.body.code).toBe("VALIDATION_FAILED");
+        expect(response.body.errors).toEqual([
+            expect.objectContaining({ pointer: "/file", code: "REQUIRED", location: "body" }),
+        ]);
+        expect(fileStorage.upload).not.toHaveBeenCalled();
+        expect(documentService.create).not.toHaveBeenCalled();
+    });
+
+    it("should reject an overlong document name as an out-of-range field problem", async () => {
+        fileStorage.upload.mockResolvedValue("https://example.test/signed-contract.pdf");
+        documentService.create.mockResolvedValue(createDocumentEntity("branch-1", null));
+
+        const response = await request(app.getHttpServer())
+            .post("/documents/upload")
+            .field("name", "n".repeat(256))
+            .field("categoryId", "contract")
+            .attach("file", Buffer.from("%PDF-1.4"), "contract.pdf");
+
+        expect(response.status).toBe(400);
+        expect(response.body.code).toBe("VALIDATION_FAILED");
+        expect(response.body.errors).toEqual([
+            expect.objectContaining({ pointer: "/name", code: "OUT_OF_RANGE", location: "body" }),
+        ]);
+        expect(fileStorage.upload).not.toHaveBeenCalled();
+        expect(documentService.create).not.toHaveBeenCalled();
+    });
+
+    it("should reject an upload whose tenant context is unavailable as access denied", async () => {
+        const previousTenantContext = tenantContext;
+        tenantContext = {};
+        try {
+            const response = await request(app.getHttpServer())
+                .post("/documents/upload")
+                .field("name", "Contract")
+                .field("categoryId", "contract")
+                .attach("file", Buffer.from("%PDF-1.4"), "contract.pdf");
+
+            expect(response.status).toBe(403);
+            expect(response.body.code).toBe("ACCESS_DENIED");
+        } finally {
+            tenantContext = previousTenantContext;
+        }
+        expect(fileStorage.upload).not.toHaveBeenCalled();
     });
 
     it("should reject a category from another branch before uploading storage bytes", async () => {
@@ -317,7 +405,11 @@ describe("DocumentController (Integration)", () => {
             });
 
         expect(response.status).toBe(400);
-        expect(response.body.message).toBe("file content does not match its format");
+        expect(response.body.code).toBe("VALIDATION_FAILED");
+        expect(response.body.errors).toEqual([
+            expect.objectContaining({ pointer: "/file", code: "INVALID_FORMAT", location: "body" }),
+        ]);
+        expect(JSON.stringify(response.body)).not.toContain("<script>");
         expect(fileStorage.upload).not.toHaveBeenCalled();
     });
 
@@ -382,7 +474,7 @@ describe("DocumentController (Integration)", () => {
         const response = await request(app.getHttpServer()).get("/documents/doc-1");
 
         expect(response.status).toBe(404);
-        expect(response.body.message).toBe("Document file not found");
+        expect(response.body.code).toBe("RESOURCE_NOT_FOUND");
     });
 
     it("should return not found when a document file is missing from storage", async () => {
@@ -392,7 +484,7 @@ describe("DocumentController (Integration)", () => {
         const response = await request(app.getHttpServer()).get("/documents/doc-1/download");
 
         expect(response.status).toBe(404);
-        expect(response.body.message).toBe("Document file not found");
+        expect(response.body.code).toBe("RESOURCE_NOT_FOUND");
     });
 
     it("should reject uploads whose MIME type is not allowlisted before touching storage", async () => {
@@ -407,7 +499,11 @@ describe("DocumentController (Integration)", () => {
             });
 
         expect(response.status).toBe(400);
-        expect(response.body.message).toBe("unsupported file type: text/html");
+        expect(response.body.code).toBe("VALIDATION_FAILED");
+        expect(response.body.errors).toEqual([
+            expect.objectContaining({ pointer: "/file", code: "INVALID_FORMAT", location: "body" }),
+        ]);
+        expect(JSON.stringify(response.body)).not.toContain("text/html");
         expect(fileStorage.upload).not.toHaveBeenCalled();
         expect(documentService.create).not.toHaveBeenCalled();
     });
@@ -423,7 +519,11 @@ describe("DocumentController (Integration)", () => {
             });
 
         expect(response.status).toBe(400);
-        expect(response.body.message).toBe("unsupported file type: image/svg+xml");
+        expect(response.body.code).toBe("VALIDATION_FAILED");
+        expect(response.body.errors).toEqual([
+            expect.objectContaining({ pointer: "/file", code: "INVALID_FORMAT", location: "body" }),
+        ]);
+        expect(JSON.stringify(response.body)).not.toContain("image/svg+xml");
         expect(fileStorage.upload).not.toHaveBeenCalled();
     });
 
@@ -470,7 +570,9 @@ describe("DocumentController (Integration)", () => {
 
     it("should delete the just-uploaded storage object when document creation fails", async () => {
         fileStorage.upload.mockResolvedValue("https://example.test/signed-contract.pdf");
-        documentService.create.mockRejectedValue(new ForbiddenException("storage path unavailable"));
+        documentService.create.mockRejectedValue(
+            new ForbiddenException(codeOnlyProblemBody("ACCESS_DENIED")),
+        );
         documentService.deleteStoragePath.mockResolvedValue(undefined);
 
         const response = await request(app.getHttpServer())
@@ -481,7 +583,7 @@ describe("DocumentController (Integration)", () => {
             .attach("file", Buffer.from("%PDF-1.4"), "contract.pdf");
 
         expect(response.status).toBe(403);
-        expect(response.body.message).toBe("storage path unavailable");
+        expect(response.body.code).toBe("ACCESS_DENIED");
         const uploadedPath = fileStorage.upload.mock.calls[0]?.[1];
         expect(uploadedPath).toBeDefined();
         expect(documentService.deleteStoragePath).toHaveBeenCalledWith(uploadedPath);
@@ -491,7 +593,9 @@ describe("DocumentController (Integration)", () => {
         const errorLogSpy = jest.spyOn(Logger.prototype, "error").mockImplementation(() => undefined);
         try {
             fileStorage.upload.mockResolvedValue("https://example.test/signed-contract.pdf");
-            documentService.create.mockRejectedValue(new ForbiddenException("storage path unavailable"));
+            documentService.create.mockRejectedValue(
+                new ForbiddenException(codeOnlyProblemBody("ACCESS_DENIED")),
+            );
             documentService.deleteStoragePath.mockRejectedValue(new Error("storage unavailable"));
 
             const response = await request(app.getHttpServer())
@@ -501,7 +605,7 @@ describe("DocumentController (Integration)", () => {
                 .attach("file", Buffer.from("%PDF-1.4"), "contract.pdf");
 
             expect(response.status).toBe(403);
-            expect(response.body.message).toBe("storage path unavailable");
+            expect(response.body.code).toBe("ACCESS_DENIED");
             expect(documentService.deleteStoragePath).toHaveBeenCalled();
         } finally {
             errorLogSpy.mockRestore();

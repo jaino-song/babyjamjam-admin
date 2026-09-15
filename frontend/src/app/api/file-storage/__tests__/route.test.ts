@@ -362,21 +362,52 @@ describe("file-storage API routes", () => {
       await expect(response.json()).resolves.toEqual({ error: expect.stringMatching(/[가-힣].*요[.!]?$/) });
     });
 
-    it("sanitizes upstream download errors while keeping the 404 mapping", async () => {
-      mockGet.mockRejectedValue({
+    it("passes a registered upstream 404 problem body through and sanitizes legacy 404 text", async () => {
+      // New contract: the backend emits a RESOURCE_NOT_FOUND problem body, and
+      // the proxy forwards it instead of replacing it with a local message.
+      mockGet.mockRejectedValueOnce({
+        response: {
+          status: 404,
+          data: {
+            type: "https://github.com/jaino-song/babyjamjam-admin/blob/main/docs/error-management.md#resource-not-found",
+            title: "Resource not found",
+            status: 404,
+            detail: "The requested resource could not be found.",
+            code: "RESOURCE_NOT_FOUND",
+            requestId: "req-download-1",
+            params: {},
+          },
+        },
+      });
+
+      const problemResponse = await downloadFile(
+        createGetRequest("/api/file-storage/files/file_123/download"),
+        { params: Promise.resolve({ fileId: "file_123" }) },
+      );
+
+      expect(problemResponse.status).toBe(404);
+      const problemBody = await problemResponse.json();
+      expect(problemBody.code).toBe("RESOURCE_NOT_FOUND");
+      expect(problemBody.requestId).toBe("req-download-1");
+      expect(problemResponse.headers.get("content-type")).toBe("application/problem+json");
+
+      // Legacy upstream text is still replaced with safe copy, never forwarded.
+      mockGet.mockRejectedValueOnce({
         response: {
           status: 404,
           data: { message: "Document not found in bucket s3://internal" },
         },
       });
 
-      const response = await downloadFile(
+      const legacyResponse = await downloadFile(
         createGetRequest("/api/file-storage/files/file_123/download"),
         { params: Promise.resolve({ fileId: "file_123" }) },
       );
 
-      expect(response.status).toBe(404);
-      await expect(response.json()).resolves.toEqual({ error: "Document not found" });
+      expect(legacyResponse.status).toBe(404);
+      const legacyBody = await legacyResponse.json();
+      expect(JSON.stringify(legacyBody)).not.toContain("s3://internal");
+      expect(legacyBody.error).toMatch(/[가-힣]/);
     });
   });
 
