@@ -357,6 +357,17 @@ describe("ServiceRecordAdminViewer", () => {
             expect.objectContaining({ cache: "no-store" }),
         );
     });
+
+    it("does not enable editing when the source changes during the overview load", async () => {
+        jest.spyOn(adminServiceRecordEditApi, "getDraft")
+            .mockResolvedValueOnce({ ...makeDraftState(), draft: null })
+            .mockResolvedValueOnce({ ...makeDraftState(), draft: null, sourceFingerprint: "new-source", sourceCaseVersion: 2 });
+        global.fetch = jest.fn().mockResolvedValue({ ok: true, json: async () => overview });
+        const { container } = render(<ServiceRecordAdminViewer clientId="42" />);
+        await waitFor(() => expect(screen.getByRole("button", { name: "최신 기록 불러오기" })).toBeInTheDocument());
+        fireEvent.click(container.querySelectorAll('[data-slot="day"]')[0]);
+        expect(container.querySelector('[data-slot="sec-edit"]')).toBeNull();
+    });
 });
 
 
@@ -374,7 +385,7 @@ describe("per-session administrator editing", () => {
         })), blockingReasons: [] },
     } as unknown as AdminServiceRecordEditorOverview;
     function open() {
-        const result = render(<ServiceRecordAdminWizard clientId="42" overview={sessionOverview} />);
+        const result = render(<ServiceRecordAdminWizard clientId="42" overview={sessionOverview} initialDraftState={{ ...makeDraftState(), draft: null }} />);
         fireEvent.click(result.container.querySelectorAll('[data-slot="day"]')[0]);
         return result;
     }
@@ -417,6 +428,78 @@ describe("per-session administrator editing", () => {
         await waitFor(() => expect(adminServiceRecordEditApi.confirmDraft).toHaveBeenCalledTimes(1));
         await waitFor(() => expect(container.querySelectorAll('[data-slot="day"]')).toHaveLength(3));
         expect(adminServiceRecordEditApi.updateDraft).toHaveBeenCalledWith("draft-1", 1, { sessions: [{ sessionIndex: 1, etcService: "수정된 서비스" }] }, undefined);
+    });
+
+    it("blocks a changed source before the first PATCH and preserves local input", async () => {
+        jest.mocked(adminServiceRecordEditApi.startDraft).mockResolvedValue({ ...makeDraftState(), sourceFingerprint: "source-2", sourceCaseVersion: 2 });
+        const { container } = open();
+        editNote(container);
+        fireEvent.click(screen.getByRole("button", { name: "수정 확인" }));
+        await waitFor(() => expect(screen.getByRole("button", { name: "최신 기록 불러오기" })).toBeInTheDocument());
+        expect(container).toHaveTextContent("수정된 서비스");
+        expect(adminServiceRecordEditApi.updateDraft).not.toHaveBeenCalled();
+        expect(adminServiceRecordEditApi.confirmDraft).not.toHaveBeenCalled();
+    });
+
+    it("fails closed when the displayed source has no verified identity", async () => {
+        const { container } = render(<ServiceRecordAdminWizard clientId="42" overview={sessionOverview} />);
+        fireEvent.click(container.querySelectorAll('[data-slot="day"]')[0]);
+        expect(container.querySelectorAll('[data-slot="sec-edit"]')[0]).toBeUndefined();
+        expect(screen.getByRole("button", { name: "최신 기록 불러오기" })).toBeInTheDocument();
+        expect(adminServiceRecordEditApi.updateDraft).not.toHaveBeenCalled();
+    });
+
+    it("lets an existing draft be inspected and explicitly confirmed without discarding", async () => {
+        const existing = makeDraftState({ header: { momName: "기존 수정 산모" }, sessions: [{ sessionIndex: 2, etcService: "이전 수정 내용" }] }, 2);
+        jest.mocked(adminServiceRecordEditApi.getDraft).mockResolvedValue(existing);
+        jest.mocked(adminServiceRecordEditApi.previewDraft).mockResolvedValue({
+            ...confirmPreviewResponse, draftVersion: 2, contentChanges: { headerChanged: true, changedSessionIndexes: [2] },
+        } as Awaited<ReturnType<typeof adminServiceRecordEditApi.previewDraft>>);
+        const { container } = render(<ServiceRecordAdminWizard clientId="42" overview={sessionOverview} initialDraftState={existing} />);
+        fireEvent.click(screen.getByRole("button", { name: "기본정보 확인" }));
+        expect(screen.getByDisplayValue("기존 수정 산모")).toBeDisabled();
+        fireEvent.click(screen.getByRole("button", { name: "확인" }));
+        fireEvent.click(container.querySelectorAll('[data-slot="day"]')[1]);
+        expect(container).toHaveTextContent("이전 수정 내용");
+        fireEvent.click(screen.getByRole("button", { name: "확인" }));
+        fireEvent.click(screen.getByRole("button", { name: "이전 수정사항 검토" }));
+        await waitFor(() => expect(screen.getByRole("button", { name: "수정 확정" })).toBeEnabled());
+        expect(adminServiceRecordEditApi.confirmDraft).not.toHaveBeenCalled();
+        fireEvent.click(screen.getByRole("button", { name: "수정 확정" }));
+        await waitFor(() => expect(adminServiceRecordEditApi.confirmDraft).toHaveBeenCalledTimes(1));
+        expect(adminServiceRecordEditApi.updateDraft).not.toHaveBeenCalled();
+        expect(adminServiceRecordEditApi.startDraft).not.toHaveBeenCalled();
+    });
+
+    it("preserves basic-information editing with an explicit confirmation", async () => {
+        jest.mocked(adminServiceRecordEditApi.updateDraft).mockResolvedValue(makeDraftState({ header: { momName: "새 산모 이름" } }, 2));
+        jest.mocked(adminServiceRecordEditApi.previewDraft).mockResolvedValue({
+            ...confirmPreviewResponse, draftVersion: 2, contentChanges: { headerChanged: true, changedSessionIndexes: [] },
+        } as Awaited<ReturnType<typeof adminServiceRecordEditApi.previewDraft>>);
+        render(<ServiceRecordAdminWizard clientId="42" overview={sessionOverview} initialDraftState={{ ...makeDraftState(), draft: null }} />);
+        fireEvent.click(screen.getByRole("button", { name: "기본정보 수정" }));
+        fireEvent.change(screen.getByDisplayValue("김산모"), { target: { value: "새 산모 이름" } });
+        expect(adminServiceRecordEditApi.updateDraft).not.toHaveBeenCalled();
+        fireEvent.click(screen.getByRole("button", { name: "수정 확인" }));
+        await waitFor(() => expect(adminServiceRecordEditApi.confirmDraft).toHaveBeenCalledTimes(1));
+        expect(adminServiceRecordEditApi.updateDraft).toHaveBeenCalledWith("draft-1", 1, { header: { momName: "새 산모 이름" } }, undefined);
+    });
+
+    it("rejects a preview that omits an approved suffix date move", async () => {
+        jest.mocked(adminServiceRecordEditApi.previewDraft).mockResolvedValue({
+            ...confirmPreviewResponse, draftVersion: 2,
+            before: { startDate: dates[0], endDate: dates[2], sessions: sessionOverview.scheduleProjection!.entries },
+            after: { startDate: dates[0], endDate: dates[2], sessions: sessionOverview.scheduleProjection!.entries.map((entry, index) => ({ ...entry, serviceDate: index === 0 ? "2026-09-08" : entry.serviceDate })) },
+        } as Awaited<ReturnType<typeof adminServiceRecordEditApi.previewDraft>>);
+        const { container } = open();
+        fireEvent.click(container.querySelector('[data-component$="_body_date-chip_edit"]')!);
+        fireEvent.click(screen.getAllByRole("combobox")[2]);
+        fireEvent.click(screen.getByRole("option", { name: "8일" }));
+        fireEvent.click(screen.getByRole("button", { name: "날짜 적용" }));
+        fireEvent.click(within(screen.getByRole("dialog", { name: "서비스 제공일 수정" })).getByRole("button", { name: "수정" }));
+        fireEvent.click(screen.getByRole("button", { name: "수정 확인" }));
+        await waitFor(() => expect(screen.getByRole("button", { name: "최신 기록 불러오기" })).toBeInTheDocument());
+        expect(adminServiceRecordEditApi.confirmDraft).not.toHaveBeenCalled();
     });
 
     it("shows unchanged 확인 when an edit is reverted", () => {

@@ -23,6 +23,8 @@ import {
     AdminServiceRecordEditApiError,
     type AdminServiceRecordEditChanges,
     type AdminServiceRecordEditDateMove,
+    type AdminServiceRecordEditHeaderChanges,
+    type ServiceRecordEditPreviewResponse,
     type AdminServiceRecordEditSessionChanges,
     type AdminServiceRecordEditState,
     type ServiceRecordEditPreviewBlockingReason,
@@ -30,6 +32,7 @@ import {
 } from "@/features/service-records/types";
 import { publishServiceRecordRevisionSync } from "@/features/service-records/revision-sync";
 
+import { ServiceRecordEditPreviewDialog } from "./ServiceRecordEditPreviewDialog";
 import { ServiceRecordDateSelectionDialog } from "./ServiceRecordDateSelectionDialog";
 import { moveServiceRecordSessionDate } from "@babyjamjam/shared/utils/service-record-schedule";
 
@@ -381,6 +384,26 @@ function createIdempotencyKey(): string {
     return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 }
 
+function sameSource(left: AdminServiceRecordEditState | null, right: AdminServiceRecordEditState | null): boolean {
+    return Boolean(left?.sourceFingerprint && right?.sourceFingerprint
+        && left.sourceFingerprint === right.sourceFingerprint
+        && left.sourceCaseVersion === right.sourceCaseVersion);
+}
+
+function overlayChanges(view: AdminServiceRecordView, changes: AdminServiceRecordEditChanges | null): ServiceRecordContext {
+    if (!changes) return view.context;
+    const sessions = new Map(view.context.sessions.map((session) => [session.sessionIndex, session]));
+    for (const patch of changes.sessions ?? []) {
+        const source = sessions.get(patch.sessionIndex) ?? {
+            sessionIndex: patch.sessionIndex, locked: false,
+            serviceDate: view.plannedSessions.find((entry) => entry.sessionIndex === patch.sessionIndex)?.serviceDate ?? "",
+        };
+        sessions.set(patch.sessionIndex, { ...source, ...patch, answers: { ...source.answers, ...patch.answers } });
+    }
+    return { ...view.context, header: { ...view.context.header, ...changes.header },
+        sessions: [...sessions.values()].sort((left, right) => left.sessionIndex - right.sessionIndex) };
+}
+
 export interface ServiceRecordAdminWizardProps {
     clientId: string;
     overview: AdminServiceRecordEditorOverview;
@@ -397,7 +420,15 @@ export function ServiceRecordAdminWizard({
     const [overview, setOverview] = useState(initialOverview);
     const baseView = useMemo(() => buildAdminServiceRecordView(overview), [overview]);
     const [draftState, setDraftState] = useState(initialDraftState);
-    const [screen, setScreen] = useState<"overview" | "day">("overview");
+    const [sourceIdentity, setSourceIdentity] = useState(initialDraftState);
+    const [recoveryChanges, setRecoveryChanges] = useState<AdminServiceRecordEditChanges | null>(
+        initialDraftState?.draft?.status === "ACTIVE" && hasDraftChanges(initialDraftState.draft.changes) ? initialDraftState.draft.changes : null,
+    );
+    const displayContext = overlayChanges(baseView, recoveryChanges);
+    const [headerDraft, setHeaderDraft] = useState<Record<string, string>>(headerToInput(displayContext.header));
+    const [recoveryPreview, setRecoveryPreview] = useState<ServiceRecordEditPreviewResponse | null>(null);
+    const [recoveryOpen, setRecoveryOpen] = useState(false);
+    const [screen, setScreen] = useState<"overview" | "day" | "service">("overview");
     const [day, setDay] = useState(1);
     const [pageIdx, setPageIdx] = useState(DAY_PAGES.length - 1);
     const [draft, setDraft] = useState<Record<string, unknown>>({});
@@ -410,19 +441,19 @@ export function ServiceRecordAdminWizard({
     const [busy, setBusy] = useState(false);
     const [error, setError] = useState<string | null>(initialDraftErrorStatus ? draftErrorMessage(initialDraftErrorStatus) : null);
     const [dateError, setDateError] = useState<string | null>(null);
-    const [needsReload, setNeedsReload] = useState(false);
+    const [needsReload, setNeedsReload] = useState(!initialDraftState?.sourceFingerprint);
     const [saved, setSaved] = useState(false);
     const saving = useRef(false);
     const prepared = useRef<{ draftId: string; draftVersion: number; previewId: string; idempotencyKey: string } | null>(null);
     // Once a save request starts, preserve this session until success or explicit discard.
     const [saveStarted, setSaveStarted] = useState(false);
     const supplemental = baseView.supplementalSessions.find((item) => item.key === supplementalKey);
-    const currentSession = supplemental?.session ?? baseView.context.sessions.find((item) => item.sessionIndex === day);
+    const currentSession = supplemental?.session ?? displayContext.sessions.find((item) => item.sessionIndex === day);
     const sourceDraft = draftForSession(currentSession);
     const sourceDate = dateOnly(currentSession?.serviceDate)
         || baseView.plannedSessions.find((item) => item.sessionIndex === day)?.serviceDate || "";
     const activeDraft = draftState?.draft?.status === "ACTIVE" ? draftState.draft : null;
-    const priorChanges = !saveStarted && Boolean(activeDraft && hasDraftChanges(activeDraft.changes));
+    const priorChanges = Boolean(recoveryChanges);
     const patch: AdminServiceRecordEditSessionChanges = { sessionIndex: day };
     for (const [key, value] of Object.entries(draft)) {
         if (key === "_date" || JSON.stringify(value) === JSON.stringify(sourceDraft[key])) continue;
@@ -430,7 +461,13 @@ export function ServiceRecordAdminWizard({
         else if (key === "paymentConfirmed") patch.paymentConfirmed = Boolean(value);
         else patch.answers = { ...patch.answers, [key]: value };
     }
-    const changed = !supplemental && (Object.keys(patch).length > 1 || Boolean(dateMove));
+    const headerPatch: AdminServiceRecordEditHeaderChanges = {};
+    for (const key of ["momName", "momBirth", "babyName", "babyBirth", "deliveryType", "babyWeight"] as const) {
+        if ((headerDraft[key] ?? "") !== (headerToInput(baseView.context.header)[key] ?? "")) headerPatch[key] = headerDraft[key] ?? "";
+    }
+    const editingHeader = screen === "service";
+    const changed = !priorChanges && !supplemental && (editingHeader
+        ? Object.keys(headerPatch).length > 0 : Object.keys(patch).length > 1 || Boolean(dateMove));
     const locked = busy || saveStarted || needsReload || priorChanges || Boolean(supplemental);
     const vector = baseView.plannedSessions.map((entry) => ({
         ...entry,
@@ -449,9 +486,10 @@ export function ServiceRecordAdminWizard({
         prepared.current = null;
     };
     const openDay = (index: number) => {
+        if (busy || saveStarted) return;
         setDay(index);
         setPageIdx(DAY_PAGES.length - 1);
-        setDraft(draftForSession(baseView.context.sessions.find((item) => item.sessionIndex === index)));
+        setDraft(draftForSession(displayContext.sessions.find((item) => item.sessionIndex === index)));
         setSupplementalKey(null);
         setDateMove(null);
         setError(null);
@@ -459,13 +497,19 @@ export function ServiceRecordAdminWizard({
         setScreen("day");
     };
     const refresh = async () => {
+        const before = await adminServiceRecordEditApi.getDraft(clientId);
         const response = await fetch(`/api/admin/service-records/client/${encodeURIComponent(clientId)}/editor`, { cache: "no-store" });
         if (!response.ok) throw new Error("reload");
         const fresh = parseOverview(await response.json());
         if (!fresh) throw new Error("reload");
         const state = await adminServiceRecordEditApi.getDraft(clientId);
+        if (!sameSource(before, state)) throw new Error("기록이 조회 중 변경되었습니다. 다시 불러와 주세요.");
         setOverview(fresh);
         setDraftState(state);
+        setSourceIdentity(state);
+        setRecoveryChanges(state.draft?.status === "ACTIVE" && hasDraftChanges(state.draft.changes) ? state.draft.changes : null);
+        setRecoveryOpen(false);
+        setRecoveryPreview(null);
         setNeedsReload(false);
         resetLocal();
     };
@@ -493,7 +537,7 @@ export function ServiceRecordAdminWizard({
         }
     };
     const selectDate = (next: string) => {
-        if (locked) return;
+        if (locked || baseView.scheduleProjectionBlockingReasons.length) return;
         const nextSession = vector.find((item) => item.sessionIndex === day + 1);
         if (nextSession && next >= nextSession.serviceDate) {
             try {
@@ -503,9 +547,11 @@ export function ServiceRecordAdminWizard({
             } catch { setDateError("회차 순서와 제공일을 확인해 주세요."); }
         } else applyDate(next, false);
     };
-    const confirm = async () => {
-        if (saving.current || priorChanges || needsReload || supplemental) return;
-        if (!changed && !saveStarted) { resetLocal(); return; }
+    const confirm = async (recover = false) => {
+        if (saving.current || supplemental || (priorChanges && saveStarted && !recover)) return;
+        if (priorChanges && !recover) { resetLocal(); return; }
+        if (!recover && !changed && !saveStarted) { resetLocal(); return; }
+        if (needsReload) return;
         saving.current = true;
         setBusy(true);
         setError(null);
@@ -513,6 +559,7 @@ export function ServiceRecordAdminWizard({
         try {
             let request = prepared.current;
             if (!request) {
+                if (recover) throw new Error("이전 수정사항을 다시 검토해 주세요.");
                 let state = draftState;
                 if (!state?.draft || state.draft.status !== "ACTIVE") {
                     state = await adminServiceRecordEditApi.startDraft(clientId);
@@ -522,11 +569,16 @@ export function ServiceRecordAdminWizard({
                         throw new Error("다른 수정사항이 있습니다. 최신 기록을 불러와 확인해 주세요.");
                     }
                 }
-                if (!state.draft || state.draft.status !== "ACTIVE") throw new Error("수정을 시작하지 못했습니다.");
-                // Absolute date targets are idempotent across retries of a lost PATCH response.
+                if (!sameSource(sourceIdentity, state) || state?.sourceChanged
+                    || state?.draft?.sourceFingerprint !== sourceIdentity?.sourceFingerprint
+                    || state?.draft?.sourceCaseVersion !== sourceIdentity?.sourceCaseVersion) {
+                    setNeedsReload(true);
+                    throw new Error("기록이 변경되었습니다. 입력은 보관되어 있습니다. 최신 기록을 다시 불러와 주세요.");
+                }
+                if (!state?.draft || state.draft.status !== "ACTIVE") throw new Error("수정을 시작하지 못했습니다.");
                 state = await adminServiceRecordEditApi.updateDraft(
                     state.draft.id, state.draft.draftVersion,
-                    { sessions: [patch] }, dateMove ?? undefined,
+                    editingHeader ? { header: headerPatch } : { sessions: [patch] }, dateMove ?? undefined,
                 );
                 setDraftState(state);
                 if (!state.draft || state.draft.status !== "ACTIVE") throw new Error("수정 내용을 저장하지 못했습니다.");
@@ -547,17 +599,19 @@ export function ServiceRecordAdminWizard({
                     : []);
                 const foreignContent = state.draft.changes.sessions?.some((entry) => entry.sessionIndex !== day
                     && Object.keys(entry).some((key) => key !== "sessionIndex" && key !== "serviceDate"));
-                if (foreignContent || preview.contentChanges.headerChanged || preview.contentChanges.changedSessionIndexes.some((index) => index !== day && !allowedDateIndexes.has(index))) {
+                if (editingHeader
+                    ? Boolean(state.draft.changes.sessions?.length || preview.contentChanges.changedSessionIndexes.length)
+                    : foreignContent || preview.contentChanges.headerChanged || Boolean(state.draft.changes.header && Object.keys(state.draft.changes.header).length)
+                        || preview.contentChanges.changedSessionIndexes.some((index) => index !== day && !allowedDateIndexes.has(index))) {
                     setNeedsReload(true);
                     throw new Error("다른 회차의 수정사항이 있습니다. 최신 기록을 불러와 확인해 주세요.");
                 }
-                const unexpectedDates = preview.after.sessions.some((entry) => {
-                    const before = preview.before.sessions.find((item) => item.sessionIndex === entry.sessionIndex);
-                    if (before?.serviceDate === entry.serviceDate) return false;
-                    if (!dateMove) return true;
-                    const expected = moveServiceRecordSessionDate(preview.before.sessions, day, dateMove.toDate, Boolean(dateMove.shiftFollowing));
-                    return expected.entries.find((item) => item.sessionIndex === entry.sessionIndex)?.serviceDate !== entry.serviceDate;
-                });
+                const expectedDates = dateMove
+                    ? moveServiceRecordSessionDate(preview.before.sessions, day, dateMove.toDate, Boolean(dateMove.shiftFollowing)).entries
+                    : preview.before.sessions;
+                const unexpectedDates = preview.after.sessions.length !== expectedDates.length
+                    || new Set(preview.after.sessions.map((entry) => entry.sessionIndex)).size !== expectedDates.length
+                    || preview.after.sessions.some((entry) => expectedDates.find((item) => item.sessionIndex === entry.sessionIndex)?.serviceDate !== entry.serviceDate);
                 if (unexpectedDates) { setNeedsReload(true); throw new Error("예정일이 변경되었습니다. 최신 기록을 다시 불러와 주세요."); }
                 request = { draftId: state.draft.id, draftVersion: state.draft.draftVersion, previewId: preview.previewId, idempotencyKey: createIdempotencyKey() };
                 prepared.current = request;
@@ -569,13 +623,48 @@ export function ServiceRecordAdminWizard({
             try { await refresh(); }
             catch { setError("수정은 저장되었습니다. 최신 기록을 다시 불러와 주세요."); }
         } catch (failure) {
+            // An uncertain PATCH is recovered by reloading its durable draft,
+            // not by submitting an obsolete draft version again.
+            if (!prepared.current) setNeedsReload(true);
             if (failure instanceof AdminServiceRecordEditApiError) {
                 if (failure.status === 409) setNeedsReload(true);
                 setError(failure.status === 409 ? "기록이 변경되었습니다. 입력은 보관되어 있습니다. 최신 기록을 다시 불러와 주세요."
                     : failure.status === 403 ? "수정 권한이 없습니다. 입력은 보관되어 있습니다."
                     : failure.status === 401 ? "로그인이 필요합니다. 입력은 보관되어 있습니다."
-                    : "저장 결과를 확인하지 못했습니다. 수정 확인을 다시 눌러 주세요.");
-            } else setError(failure instanceof Error && /[가-힣]/.test(failure.message) ? failure.message : "저장 결과를 확인하지 못했습니다. 수정 확인을 다시 눌러 주세요.");
+                    : prepared.current ? "저장 결과를 확인하지 못했습니다. 수정 확인을 다시 눌러 주세요." : "저장 결과를 확인하지 못했습니다. 입력은 보관되어 있습니다. 최신 기록을 불러와 이전 수정사항을 검토해 주세요.");
+            } else setError(failure instanceof Error && /[가-힣]/.test(failure.message) ? failure.message
+                : prepared.current ? "저장 결과를 확인하지 못했습니다. 수정 확인을 다시 눌러 주세요." : "저장 결과를 확인하지 못했습니다. 입력은 보관되어 있습니다. 최신 기록을 불러와 이전 수정사항을 검토해 주세요.");
+        } finally { saving.current = false; setBusy(false); }
+    };
+    const openRecovery = async () => {
+        if (saving.current || !activeDraft) return;
+        if (prepared.current) { setRecoveryOpen(true); return; }
+        saving.current = true;
+        setBusy(true);
+        setError(null);
+        try {
+            const state = await adminServiceRecordEditApi.getDraft(clientId);
+            if (!sameSource(sourceIdentity, state) || state.sourceChanged
+                || state.draft?.id !== activeDraft.id || state.draft.draftVersion !== activeDraft.draftVersion
+                || JSON.stringify(state.draft.changes) !== JSON.stringify(recoveryChanges)) {
+                setNeedsReload(true);
+                throw new Error("기록이 변경되었습니다. 최신 기록을 불러와 이전 수정사항을 다시 확인해 주세요.");
+            }
+            const preview = await adminServiceRecordEditApi.previewDraft(activeDraft.id, activeDraft.draftVersion);
+            if (preview.draftId !== activeDraft.id || preview.draftVersion !== activeDraft.draftVersion
+                || preview.sourceFingerprint !== sourceIdentity?.sourceFingerprint
+                || preview.sourceCaseVersion !== sourceIdentity?.sourceCaseVersion) {
+                setNeedsReload(true);
+                throw new Error("기록이 변경되었습니다. 최신 기록을 다시 불러와 주세요.");
+            }
+            setRecoveryPreview(preview);
+            setRecoveryOpen(true);
+            if (!preview.blockingReasons.length) prepared.current = {
+                draftId: activeDraft.id, draftVersion: activeDraft.draftVersion,
+                previewId: preview.previewId, idempotencyKey: createIdempotencyKey(),
+            };
+        } catch (failure) {
+            setError(failure instanceof Error && /[가-힣]/.test(failure.message) ? failure.message : "이전 수정사항을 불러오지 못했습니다. 다시 검토해 주세요.");
         } finally { saving.current = false; setBusy(false); }
     };
     const discard = async () => {
@@ -596,11 +685,12 @@ export function ServiceRecordAdminWizard({
     };
     return (
         <>
-            {error || priorChanges ? (
+            {error || priorChanges || needsReload ? (
                 <Alert data-component={`${ADMIN_WIZARD_COMPONENT}_save-error`} variant="warning">
                     <AlertTitle>{saved ? "수정 저장 완료" : priorChanges ? "이전 수정사항이 있습니다" : "수정 확인 필요"}</AlertTitle>
                     <AlertDescription>
-                        <p>{error ?? "다른 수정사항을 함께 확정하지 않도록 이전 수정사항을 먼저 확인하거나 취소해 주세요."}</p>
+                        <p>{error ?? (priorChanges ? "화면에 이전 수정사항이 반영되어 있습니다. 회차와 기본정보를 확인한 뒤 전체 변경을 검토·확정하거나 취소해 주세요." : "수정 기준을 확인할 수 없습니다. 최신 기록을 다시 불러와 주세요.")}</p>
+                        {priorChanges ? <Button data-component={`${ADMIN_WIZARD_COMPONENT}_save-error_review`} type="button" disabled={busy || needsReload} onClick={() => void openRecovery()}>이전 수정사항 검토</Button> : null}
                         {(priorChanges || (saveStarted && !prepared.current && !saved)) && activeDraft ? (
                             <Button data-component={`${ADMIN_WIZARD_COMPONENT}_save-error_discard`} type="button" disabled={busy} onClick={() => setDiscardModalOpen(true)}>이전 수정사항 취소</Button>
                         ) : null}
@@ -608,23 +698,31 @@ export function ServiceRecordAdminWizard({
                     </AlertDescription>
                 </Alert>
             ) : null}
+            {baseView.scheduleProjectionBlockingReasons.length ? (
+                <Alert data-component={`${ADMIN_WIZARD_COMPONENT}_schedule-blocked`} variant="warning">
+                    <AlertTitle>제공일 수정 불가</AlertTitle>
+                    <AlertDescription>{baseView.scheduleProjectionBlockingReasons.map((reason) => reason.message).join(" ")}</AlertDescription>
+                </Alert>
+            ) : null}
             <ServiceRecordWizard
                 data-component={ADMIN_WIZARD_COMPONENT}
                 screen={screen} phone="" phoneError={null}
-                context={supplemental ? { ...baseView.context, sessions: [...baseView.context.sessions.filter((item) => item.sessionIndex !== day), supplemental.session] } : baseView.context}
-                header={headerToInput(baseView.context.header)}
+                context={supplemental ? { ...baseView.context, sessions: [...baseView.context.sessions.filter((item) => item.sessionIndex !== day), supplemental.session] } : displayContext}
+                header={screen === "service" ? headerDraft : headerToInput(displayContext.header)}
                 day={day} pageIdx={pageIdx} draft={draft}
                 editing={Boolean(currentSession) || Boolean(sourceDate)}
                 readOnly={locked} adminMode clientSignature={currentSession?.clientSignature ?? null}
                 busy={busy} isRecordFinalized={false}
                 lockedDays={new Set(baseView.context.sessions.filter((item) => item.submittedAt || item.locked).map((item) => item.sessionIndex))}
                 nextOpenDay={() => 1} scheduleChangeBusy={false} hasServiceDateMismatch={false}
-                defaultDate={(index) => dateOnly(baseView.context.sessions.find((item) => item.sessionIndex === index)?.serviceDate)
+                defaultDate={(index) => dateOnly(displayContext.sessions.find((item) => item.sessionIndex === index)?.serviceDate)
                     || baseView.plannedSessions.find((item) => item.sessionIndex === index)?.serviceDate || ""}
                 onPhoneChange={() => undefined} onSubmitPhone={() => undefined}
-                onBack={back} onHeaderChange={() => undefined} onDeliveryTypeChange={() => undefined}
-                onSaveHeader={() => undefined} onOpenDay={openDay} onOpenScheduleChangePreview={() => undefined}
-                onOpenServiceDateEditor={() => { if (!locked) { setDateError(null); setDateDialogOpen(true); } }}
+                onBack={back}
+                onHeaderChange={(key, value) => { if (!locked) setHeaderDraft((current) => ({ ...current, [key]: value })); }}
+                onDeliveryTypeChange={(value) => { if (!locked) setHeaderDraft((current) => ({ ...current, deliveryType: value })); }}
+                onSaveHeader={() => void confirm()} onOpenDay={openDay} onOpenScheduleChangePreview={() => undefined}
+                onOpenServiceDateEditor={() => { if (!locked && !baseView.scheduleProjectionBlockingReasons.length) { setDateError(null); setDateDialogOpen(true); } }}
                 onServiceDateChange={selectDate}
                 onFieldChange={(key, value) => { if (!locked) setDraft((current) => ({ ...current, [key]: value })); }}
                 onToggleMulti={(key, option) => {
@@ -640,6 +738,18 @@ export function ServiceRecordAdminWizard({
                 slots={{
                     provider: ({ "data-component": component }) => <span data-component={component} data-slot="provider" className="org">관리자 {supplemental ? "조회" : "편집"}</span>,
                     signature: (props) => <ReadOnlySignature {...props} />,
+                    adminConfirmAction: (
+                        <Button data-component={`${ADMIN_WIZARD_COMPONENT}_body_overview_header-edit`} type="button" variant="outline" disabled={busy || saveStarted}
+                            onClick={() => { setHeaderDraft(headerToInput(displayContext.header)); setScreen("service"); }}>
+                            {priorChanges ? "기본정보 확인" : "기본정보 수정"}
+                        </Button>
+                    ),
+                    adminHeaderAction: (
+                        <Button data-component={`${ADMIN_WIZARD_COMPONENT}_body_header-confirm`} type="button" className="btn submit"
+                            disabled={busy || (changed && needsReload)} onClick={() => priorChanges || !changed && !saveStarted ? resetLocal() : void confirm()}>
+                            {busy ? "저장 중…" : changed || saveStarted ? "수정 확인" : "확인"}
+                        </Button>
+                    ),
                     serviceDateDisplay: ({ "data-component": component, sessionIndex, serviceDate }) => {
                         const original = baseView.plannedSessions.find((item) => item.sessionIndex === sessionIndex)?.originalDate;
                         return <span data-component={component} data-slot="date-display" className="admin-date-display">
@@ -648,11 +758,11 @@ export function ServiceRecordAdminWizard({
                         </span>;
                     },
                     serviceDateEditor: ({ "data-component": component, disabled, onOpen }) => (
-                        <Button data-component={component} type="button" size="sm" variant="outline" disabled={disabled} onClick={onOpen}>수정</Button>
+                        <Button data-component={component} type="button" size="sm" variant="outline" disabled={disabled || Boolean(baseView.scheduleProjectionBlockingReasons.length)} onClick={onOpen}>수정</Button>
                     ),
                     adminSessionAction: (
                         <Button data-component={`${ADMIN_WIZARD_COMPONENT}_body_confirmation-action_confirm`} type="button" className="btn submit"
-                            disabled={busy || needsReload || priorChanges}
+                            disabled={busy || (priorChanges && saveStarted) || (needsReload && (changed || saveStarted))}
                             onClick={() => supplemental ? resetLocal() : void confirm()}>
                             {busy ? "저장 중…" : changed || saveStarted ? "수정 확인" : "확인"}
                         </Button>
@@ -670,6 +780,9 @@ export function ServiceRecordAdminWizard({
                     ) : null,
                 }}
             />
+            <ServiceRecordEditPreviewDialog open={recoveryOpen} onOpenChange={(open) => { if (!busy) setRecoveryOpen(open); }}
+                preview={recoveryPreview} onConfirm={needsReload || !prepared.current ? undefined : () => confirm(true)}
+                confirmBusy={busy} confirmError={error} data-component={`${ADMIN_WIZARD_COMPONENT}_recovery-preview`} />
             <ServiceRecordDateSelectionDialog open={dateDialogOpen} onOpenChange={setDateDialogOpen}
                 currentServiceDate={String(draft._date || sourceDate)} sessionLabel={`${day}회차`}
                 onApply={selectDate} error={dateError} disabled={locked}
@@ -718,10 +831,13 @@ export function ServiceRecordAdminViewer({ clientId }: ServiceRecordAdminViewerP
         const controller = new AbortController();
         let alive = true;
 
-        void fetch(`/api/admin/service-records/client/${encodeURIComponent(clientId)}/editor`, {
+        // Bracket the separate overview read with source identities so a
+        // concurrent write cannot bind a stale screen to a fresh fingerprint.
+        const sourceBeforeLoad = adminServiceRecordEditApi.getDraft(clientId).catch(() => null);
+        void sourceBeforeLoad.then(() => fetch(`/api/admin/service-records/client/${encodeURIComponent(clientId)}/editor`, {
             cache: "no-store",
             signal: controller.signal,
-        })
+        }))
             .then(async (response) => {
                 if (!alive) return;
                 if (!response.ok) {
@@ -736,7 +852,8 @@ export function ServiceRecordAdminViewer({ clientId }: ServiceRecordAdminViewerP
                 }
                 try {
                     const draftState = await adminServiceRecordEditApi.getDraft(clientId);
-                    if (alive) setState({ kind: "ready", clientId, overview, draftState, draftErrorStatus: null });
+                    const stable = sameSource(await sourceBeforeLoad, draftState);
+                    if (alive) setState({ kind: "ready", clientId, overview, draftState: stable ? draftState : null, draftErrorStatus: stable ? null : 409 });
                 } catch (error) {
                     if (!alive) return;
                     const status = error instanceof AdminServiceRecordEditApiError ? error.status : 500;

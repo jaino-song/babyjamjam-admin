@@ -464,7 +464,9 @@ export function ServiceRecordWizard({
                             <label data-slot="lab" className="lab">{HEADER_FIELDS[4].label}</label>
                             <TextInput placeholder={HEADER_FIELDS[4].ph} value={header.babyWeight ?? ""} disabled={readOnly} onChange={(event) => onHeaderChange(HEADER_FIELDS[4].k, event.target.value)} />
                         </div>
-                        <button data-slot="btn" className="btn primary" disabled={readOnly || busy || !isHeaderComplete} onClick={() => onSaveHeader()}>{busy ? "저장 중…" : adminMode ? "초안 저장" : "다음"}</button>
+                        {adminMode && slots?.adminHeaderAction ? slots.adminHeaderAction : (
+                            <button data-slot="btn" className="btn primary" disabled={readOnly || busy || !isHeaderComplete} onClick={() => onSaveHeader()}>{busy ? "저장 중…" : adminMode ? "초안 저장" : "다음"}</button>
+                        )}
                     </>
                 )}
 
