@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest } from "next/server";
 
 import { serverAPIClient } from "@/lib/api/server";
 import {
@@ -10,11 +10,9 @@ import {
     withNoStore,
 } from "@/lib/api/route-utils";
 
-type RouteParams = { params: Promise<{ scheduleId: string }> };
+import { invalidScheduleIdResponse, isPositiveScheduleId } from "../../../schedule-change-route-utils";
 
-function isPositiveIntegerString(value: string): boolean {
-    return /^[1-9]\d*$/.test(value);
-}
+type RouteParams = { params: Promise<{ scheduleId: string }> };
 
 export async function GET(request: NextRequest, { params }: RouteParams) {
     try {
@@ -22,8 +20,8 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
         if (!token) return unauthorizedResponse("Unauthorized");
 
         const { scheduleId } = await params;
-        if (!isPositiveIntegerString(scheduleId)) {
-            return NextResponse.json({ error: "Invalid schedule id" }, { status: 400 });
+        if (!isPositiveScheduleId(scheduleId)) {
+            return invalidScheduleIdResponse();
         }
 
         const response = await serverAPIClient.get(
