@@ -37,8 +37,9 @@ export class SbMessageLogRepository implements IMessageLogRepository {
         return MessageLogMapper.toDomain(row);
     }
 
-    async update(log: MessageLogEntity): Promise<MessageLogEntity> {
-        const row = await this.prisma.message_log.update({
+    async update(log: MessageLogEntity, transaction?: Prisma.TransactionClient): Promise<MessageLogEntity> {
+        const client = transaction ?? this.prisma;
+        const row = await client.message_log.update({
             where: { id: log.id, ...this.branchWhereFragment(log) },
             data: MessageLogMapper.toPrismaUpdate(log),
         });
@@ -83,14 +84,18 @@ export class SbMessageLogRepository implements IMessageLogRepository {
         }
     }
 
-    async claimProviderAttempt(log: MessageLogEntity): Promise<MessageLogEntity | null> {
+    async claimProviderAttempt(
+        log: MessageLogEntity,
+        transaction?: Prisma.TransactionClient,
+    ): Promise<MessageLogEntity | null> {
         if (!log.providerAcceptanceKey || !log.providerAcceptanceFingerprint) {
             throw new Error("SMS provider acceptance key and fingerprint are required before dispatch");
         }
 
         const branchWhere = this.branchWhereFragment(log);
 
-        const claimed = await this.prisma.message_log.updateMany({
+        const client = transaction ?? this.prisma;
+        const claimed = await client.message_log.updateMany({
             where: {
                 id: log.id,
                 ...branchWhere,
@@ -105,7 +110,7 @@ export class SbMessageLogRepository implements IMessageLogRepository {
         });
         if (claimed.count !== 1) return null;
 
-        const row = await this.prisma.message_log.findUnique({
+        const row = await client.message_log.findUnique({
             where: { id: log.id, ...branchWhere },
         });
         return row ? MessageLogMapper.toDomain(row) : null;
@@ -159,10 +164,11 @@ export class SbMessageLogRepository implements IMessageLogRepository {
     async startRetryAttempt(
         sourceLog: MessageLogEntity,
         retryLog: MessageLogEntity,
+        transaction?: Prisma.TransactionClient,
     ): Promise<MessageLogEntity | null> {
-        return this.prisma.$transaction(async (transaction) => {
+        const run = async (transactionClient: Prisma.TransactionClient): Promise<MessageLogEntity | null> => {
             const claimedAt = new Date(Date.now());
-            const claimed = await transaction.message_log.updateMany({
+            const claimed = await transactionClient.message_log.updateMany({
                 where: {
                     id: sourceLog.id,
                     branchId: sourceLog.branchId,
@@ -180,11 +186,12 @@ export class SbMessageLogRepository implements IMessageLogRepository {
                 return null;
             }
 
-            const row = await transaction.message_log.create({
+            const row = await transactionClient.message_log.create({
                 data: MessageLogMapper.toPrismaCreate(retryLog),
             });
             return MessageLogMapper.toDomain(row);
-        });
+        };
+        return transaction ? run(transaction) : this.prisma.$transaction(run);
     }
 
     async findByIdInBranch(branchId: string, id: number): Promise<MessageLogEntity | null> {

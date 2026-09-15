@@ -12,6 +12,10 @@ import { AdminAuditEventWriter } from "application/services/admin-audit-event.se
 import { EformsignWebhookEventWriter } from "application/services/eformsign-webhook-event.service";
 import { EFORMSIGN_WEBHOOK_EVENT_REPOSITORY } from "domain/repositories/eformsign-webhook-event.repository.interface";
 import { SbEformsignWebhookEventRepository } from "infrastructure/database/repositories/sb.eformsign-webhook-event.repository";
+import { MessageAutomationBranchLockService } from "application/services/message-automation-branch-lock.service";
+import { MessageAutomationActivationService } from "application/services/message-automation-activation.service";
+import { PrismaService } from "infrastructure/database/prisma.service";
+import { MESSAGE_AUTOMATION_DATABASE } from "domain/repositories/message-automation-database.repository.interface";
 
 @Module({
     imports: [DatabaseModule],
@@ -29,7 +33,17 @@ import { SbEformsignWebhookEventRepository } from "infrastructure/database/repos
             useClass: SbEformsignWebhookEventRepository,
         },
         AdminAuditEventWriter,
+        { provide: MESSAGE_AUTOMATION_DATABASE, useExisting: PrismaService },
+        MessageAutomationBranchLockService,
+        MessageAutomationActivationService,
     ],
-    exports: [GetSettingUsecase, UpdateSettingUsecase, SystemSettingService, MessageSenderApprovalService],
+    exports: [
+        GetSettingUsecase,
+        UpdateSettingUsecase,
+        SystemSettingService,
+        MessageSenderApprovalService,
+        MessageAutomationBranchLockService,
+        MessageAutomationActivationService,
+    ],
 })
 export class SystemSettingModule {}

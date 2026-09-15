@@ -18,7 +18,11 @@ import {
 } from "domain/constants/message-trigger-catalog";
 import { MESSAGE_AUTOMATION_INTENT_RULE_ID } from "domain/constants/message-automation-intent";
 import { MESSAGE_SENDER_APPROVAL_REQUIRED_CANCEL_REASON } from "domain/constants/message-automation-policy";
-import { SERVICE_RECORD_LINK_SCHEDULING_RETRY_REASON } from "domain/constants/service-record-link-message";
+import {
+    SERVICE_RECORD_LINK_MANUAL_DEDUPE_PATTERN,
+    SERVICE_RECORD_LINK_RULE_ID,
+    SERVICE_RECORD_LINK_SCHEDULING_RETRY_REASON,
+} from "domain/constants/service-record-link-message";
 
 type MessageTriggerJobPrismaRow = {
     id: string;
@@ -186,13 +190,50 @@ export class SbMessageTriggerJobRepository implements IMessageTriggerJobReposito
         return row ? this.toDomain(row) : null;
     }
 
-    async claimPendingWithRuleFence(id: string, branchId: string | null): Promise<string | null> {
+    async claimPendingWithRuleFence(
+        id: string,
+        branchId: string | null,
+        transaction?: Prisma.TransactionClient,
+    ): Promise<string | null> {
         const jobBranchPredicate = branchId === null
             ? Prisma.sql`job.branch_id IS NULL`
             : Prisma.sql`job.branch_id = ${branchId}::uuid`;
         const ruleBranchPredicate = branchId === null
             ? Prisma.sql`rule.branch_id IS NULL`
             : Prisma.sql`(rule.branch_id = ${branchId}::uuid OR rule.branch_id IS NULL)`;
+        const ruleActivationPredicate = branchId === null
+            ? Prisma.sql`
+                (
+                    candidate.template_key = ${MessageTriggerTemplateKey.SERVICE_END_NOTICE}
+                    OR (
+                        candidate.rule_id = ${SERVICE_RECORD_LINK_RULE_ID}
+                        AND candidate.dedupe_key ~ ${SERVICE_RECORD_LINK_MANUAL_DEDUPE_PATTERN}
+                    )
+                    OR rule.is_active = true
+                )
+            `
+            : Prisma.sql`
+                (
+                    candidate.template_key = ${MessageTriggerTemplateKey.SERVICE_END_NOTICE}
+                    OR (
+                        candidate.rule_id = ${SERVICE_RECORD_LINK_RULE_ID}
+                        AND candidate.dedupe_key ~ ${SERVICE_RECORD_LINK_MANUAL_DEDUPE_PATTERN}
+                    )
+                    OR (
+                        rule.is_active = true
+                        AND (
+                            rule.branch_id = ${branchId}::uuid
+                            OR NOT EXISTS (
+                                SELECT 1
+                                FROM "message_trigger_rule_branch_override" AS branch_override
+                                WHERE branch_override.branch_id = ${branchId}::uuid
+                                  AND branch_override.rule_id = rule.id
+                                  AND branch_override.is_active = false
+                            )
+                        )
+                    )
+                )
+            `;
 
         // Keep the rule-then-job lock order while avoiding a long-lived Prisma
         // interactive transaction on the shared production pool. The data-
@@ -206,9 +247,10 @@ export class SbMessageTriggerJobRepository implements IMessageTriggerJobReposito
         // send-link surfaces as a 500, so the claim mints a token here and
         // returns it: the token is the CAS fence every later write on this
         // job must present, so a stale owner cannot overwrite a newer claim.
-        const claimed = await this.prisma.$queryRaw<Array<{ id: string; claim_token: string }>>(Prisma.sql`
+        const client = transaction ?? this.prisma;
+        const claimed = await client.$queryRaw<Array<{ id: string; claim_token: string }>>(Prisma.sql`
             WITH candidate_job AS MATERIALIZED (
-                SELECT job.rule_id
+                SELECT job.rule_id, job.template_key, job.dedupe_key
                 FROM "message_trigger_job" AS job
                 WHERE job.id = ${id}
                   AND ${jobBranchPredicate}
@@ -221,6 +263,7 @@ export class SbMessageTriggerJobRepository implements IMessageTriggerJobReposito
                     ON candidate.rule_id = rule.id
                 WHERE ${ruleBranchPredicate}
                   AND rule.jobs_stale = false
+                  AND ${ruleActivationPredicate}
                 FOR UPDATE OF rule
             )
             UPDATE "message_trigger_job" AS job
@@ -566,11 +609,12 @@ export class SbMessageTriggerJobRepository implements IMessageTriggerJobReposito
         expectedJobsStale: boolean,
         reason: string,
         scope: MessageTriggerJobCancellationScope = {},
+        transaction?: Prisma.TransactionClient,
     ): Promise<number | null> {
-        return this.prisma.$transaction(async (transaction) => {
+        const cancel = async (writeTransaction: Prisma.TransactionClient) => {
             // Generation-aware cancellation uses the same rule-then-job lock
             // order as the producer and dispatcher fences.
-            const rules = await transaction.$queryRaw<Array<{
+            const rules = await writeTransaction.$queryRaw<Array<{
                 id: string;
                 branch_id: string | null;
                 jobs_stale: boolean;
@@ -609,7 +653,7 @@ export class SbMessageTriggerJobRepository implements IMessageTriggerJobReposito
                 predicates.push(Prisma.sql`scheduled_for < ${scope.scheduledBefore}`);
             }
 
-            const canceled = await transaction.$queryRaw<Array<{ id: string }>>(Prisma.sql`
+            const canceled = await writeTransaction.$queryRaw<Array<{ id: string }>>(Prisma.sql`
                 UPDATE "message_trigger_job"
                 SET status = 'canceled',
                     canceled_at = date_trunc('milliseconds', clock_timestamp()),
@@ -620,7 +664,8 @@ export class SbMessageTriggerJobRepository implements IMessageTriggerJobReposito
                 RETURNING id
             `);
             return canceled.length;
-        });
+        };
+        return transaction ? cancel(transaction) : this.prisma.$transaction(cancel);
     }
 
     async upsertPending(job: MessageTriggerJobEntity): Promise<MessageTriggerJobEntity> {
@@ -631,6 +676,7 @@ export class SbMessageTriggerJobRepository implements IMessageTriggerJobReposito
         markerId: string,
         expectedClaimVersion: string,
         job: MessageTriggerJobEntity,
+        transaction?: Prisma.TransactionClient,
     ): Promise<MessageTriggerJobEntity | null> {
         // Automatic service-record scheduling uses a failed row as a durable
         // lease. It must not go through upsertPending: ordinary failed rows
@@ -639,7 +685,8 @@ export class SbMessageTriggerJobRepository implements IMessageTriggerJobReposito
         // prevents an expired owner from reviving a newer claim.
         if (!job.branchId || job.employeeScheduleId === null || !expectedClaimVersion) return null;
 
-        const rows = await this.prisma.$queryRaw<MessageTriggerJobRawRow[]>(Prisma.sql`
+        const client = transaction ?? this.prisma;
+        const rows = await client.$queryRaw<MessageTriggerJobRawRow[]>(Prisma.sql`
             UPDATE "message_trigger_job"
             SET status = 'pending',
                 scheduled_for = ${job.scheduledFor},
@@ -679,15 +726,16 @@ export class SbMessageTriggerJobRepository implements IMessageTriggerJobReposito
         expectedUpdatedAt: Date,
         expectedJobsStale: boolean,
         preserveExisting = false,
+        transaction?: Prisma.TransactionClient,
     ): Promise<MessageTriggerJobEntity | null> {
         const branchPredicate = job.branchId === null
             ? Prisma.sql`branch_id IS NULL`
             : Prisma.sql`branch_id = ${job.branchId}::uuid`;
 
-        return this.prisma.$transaction(async (transaction) => {
+        const run = async (transactionClient: Prisma.TransactionClient): Promise<MessageTriggerJobEntity | null> => {
             // All generation-aware producers lock the rule before touching a job row.
             // A producer that read an obsolete generation returns without any job write.
-            const rules = await transaction.$queryRaw<Array<{
+            const rules = await transactionClient.$queryRaw<Array<{
                 id: string;
                 branch_id: string | null;
                 jobs_stale: boolean;
@@ -711,8 +759,9 @@ export class SbMessageTriggerJobRepository implements IMessageTriggerJobReposito
                 return null;
             }
 
-            return this.upsertPendingWithClient(transaction, job, preserveExisting);
-        });
+            return this.upsertPendingWithClient(transactionClient, job, preserveExisting);
+        };
+        return transaction ? run(transaction) : this.prisma.$transaction(run);
     }
 
     private async upsertPendingWithClient(

@@ -1,4 +1,4 @@
-import { IsBoolean, IsEnum, IsNotEmpty, IsOptional, IsString, IsInt, Min } from "class-validator";
+import { Equals, IsBoolean, IsEnum, IsNotEmpty, IsOptional, IsString, IsInt, Min } from "class-validator";
 import {
     MessageTriggerEventType,
     MessageTriggerOffsetType,
@@ -68,4 +68,14 @@ export class UpdateMessageTriggerRuleDto {
 export class UpdateMessageTriggerRuleBranchActivationDto {
     @IsBoolean()
     isActive!: boolean;
+}
+
+export class UpdateMessageTriggerRuleActivationWithParentDto {
+    @IsBoolean()
+    @Equals(true)
+    isActive!: true;
+
+    @IsBoolean()
+    @Equals(true)
+    enableParent!: true;
 }
