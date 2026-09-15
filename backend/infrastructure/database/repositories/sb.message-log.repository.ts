@@ -9,6 +9,7 @@ import {
     SERVICE_RECORD_LINK_RULE_ID,
     SERVICE_RECORD_LINK_SMS_LOG_TEMPLATE_KEY,
 } from "domain/constants/service-record-link-message";
+import { SERVICE_END_NOTICE_SMS_LOG_TEMPLATE_KEY } from "domain/constants/service-end-notice-message";
 
 @Injectable()
 export class SbMessageLogRepository implements IMessageLogRepository {
@@ -38,6 +39,17 @@ export class SbMessageLogRepository implements IMessageLogRepository {
     }
 
     async update(log: MessageLogEntity): Promise<MessageLogEntity> {
+        if (this.isDeliveredServiceEndNotice(log)) {
+            return this.prisma.$transaction(async (transaction) => {
+                const row = await transaction.message_log.update({
+                    where: { id: log.id, ...this.branchWhereFragment(log) },
+                    data: MessageLogMapper.toPrismaUpdate(log),
+                });
+                await this.stampServiceEndNoticeSent(transaction, log);
+                return MessageLogMapper.toDomain(row);
+            });
+        }
+
         const row = await this.prisma.message_log.update({
             where: { id: log.id, ...this.branchWhereFragment(log) },
             data: MessageLogMapper.toPrismaUpdate(log),
@@ -149,10 +161,42 @@ export class SbMessageLogRepository implements IMessageLogRepository {
             });
             if (claimed.count !== 1) return null;
 
+            if (outcome === "delivered") {
+                await this.stampServiceEndNoticeSent(transaction, currentEntity);
+            }
+
             const updated = await transaction.message_log.findUnique({
                 where: { id: log.id, ...branchWhere },
             });
             return updated ? MessageLogMapper.toDomain(updated) : null;
+        });
+    }
+
+    private isDeliveredServiceEndNotice(log: MessageLogEntity): boolean {
+        return log.templateKey === SERVICE_END_NOTICE_SMS_LOG_TEMPLATE_KEY
+            && log.status === "sent"
+            && (
+                log.providerAcceptanceState === "accepted"
+                || log.providerAcceptanceState === "reconciled_delivered"
+            )
+            && log.providerAcceptedAt !== null
+            && log.branchId !== null
+            && log.clientId !== null;
+    }
+
+    private async stampServiceEndNoticeSent(
+        transaction: Prisma.TransactionClient,
+        log: MessageLogEntity,
+    ): Promise<void> {
+        if (!this.isDeliveredServiceEndNotice(log)) return;
+
+        await transaction.client.updateMany({
+            where: {
+                id: log.clientId!,
+                branchId: log.branchId!,
+                serviceEndNoticeSentAt: null,
+            },
+            data: { serviceEndNoticeSentAt: log.providerAcceptedAt! },
         });
     }
 

@@ -13,16 +13,25 @@ describe("SbMessageLogRepository", () => {
         findMany: jest.fn(),
         updateMany: jest.fn(),
     });
+    const createMockPrismaClient = () => ({
+        updateMany: jest.fn(),
+    });
 
     let messageLogModel: ReturnType<typeof createMockPrismaMessageLog>;
+    let clientModel: ReturnType<typeof createMockPrismaClient>;
     let prisma: PrismaService;
     let repository: SbMessageLogRepository;
 
     beforeEach(() => {
         messageLogModel = createMockPrismaMessageLog();
+        clientModel = createMockPrismaClient();
         prisma = {
             message_log: messageLogModel,
-            $transaction: jest.fn(async (callback) => callback({ message_log: messageLogModel })),
+            client: clientModel,
+            $transaction: jest.fn(async (callback) => callback({
+                message_log: messageLogModel,
+                client: clientModel,
+            })),
         } as unknown as PrismaService;
         repository = new SbMessageLogRepository(prisma);
     });
@@ -142,6 +151,99 @@ describe("SbMessageLogRepository", () => {
                     }),
                 }),
             );
+        });
+
+        it("atomically stamps the client when a service-end notice is provider-accepted", async () => {
+            const acceptedAt = new Date("2026-09-16T03:00:00.000Z");
+            const log = MessageLogEntity.reconstitute(
+                55,
+                "11111111-1111-1111-1111-111111111111",
+                "aligo_sms",
+                "service_end_notice_sms",
+                "job-55",
+                "01012345678",
+                7,
+                "서비스 종료 안내",
+                {},
+                "sent",
+                "aligo-mid",
+                null,
+                1,
+                acceptedAt,
+                null,
+                new Date("2026-09-16T02:59:00.000Z"),
+                acceptedAt,
+                "김산모",
+                "01012345678",
+                "sms:key",
+                "fingerprint",
+                "accepted",
+                new Date("2026-09-16T02:59:30.000Z"),
+                acceptedAt,
+            );
+            messageLogModel.update.mockResolvedValue({
+                ...buildRow(log.branchId),
+                templateKey: log.templateKey,
+                triggerJobId: log.triggerJobId,
+                clientId: log.clientId,
+                providerAcceptanceState: "accepted",
+                providerAcceptedAt: acceptedAt,
+            });
+            clientModel.updateMany.mockResolvedValue({ count: 1 });
+
+            await repository.update(log);
+
+            expect(prisma.$transaction).toHaveBeenCalledTimes(1);
+            expect(clientModel.updateMany).toHaveBeenCalledWith({
+                where: {
+                    id: 7,
+                    branchId: log.branchId,
+                    serviceEndNoticeSentAt: null,
+                },
+                data: { serviceEndNoticeSentAt: acceptedAt },
+            });
+        });
+
+        it("does not stamp the client for a rejected service-end notice", async () => {
+            const log = MessageLogEntity.reconstitute(
+                56,
+                "11111111-1111-1111-1111-111111111111",
+                "aligo_sms",
+                "service_end_notice_sms",
+                "job-56",
+                "01012345678",
+                7,
+                "서비스 종료 안내",
+                {},
+                "failed",
+                null,
+                "provider rejected",
+                1,
+                new Date("2026-09-16T03:00:00.000Z"),
+                new Date("2026-09-16T03:05:00.000Z"),
+                new Date("2026-09-16T02:59:00.000Z"),
+                new Date("2026-09-16T03:00:00.000Z"),
+                "김산모",
+                "01012345678",
+                "sms:key-rejected",
+                "fingerprint-rejected",
+                "rejected",
+                new Date("2026-09-16T02:59:30.000Z"),
+            );
+            messageLogModel.update.mockResolvedValue({
+                ...buildRow(log.branchId),
+                id: log.id,
+                templateKey: log.templateKey,
+                triggerJobId: log.triggerJobId,
+                clientId: log.clientId,
+                status: "failed",
+                providerAcceptanceState: "rejected",
+            });
+
+            await repository.update(log);
+
+            expect(prisma.$transaction).not.toHaveBeenCalled();
+            expect(clientModel.updateMany).not.toHaveBeenCalled();
         });
     });
 
@@ -346,6 +448,96 @@ describe("SbMessageLogRepository", () => {
                 "provider still in flight",
             )).resolves.toBeNull();
             expect(messageLogModel.updateMany).not.toHaveBeenCalled();
+        });
+
+        it("atomically stamps the client when an uncertain service-end notice is reconciled as delivered", async () => {
+            const uncertainAt = new Date("2026-09-16T03:00:00.000Z");
+            const uncertainRow = {
+                id: 43,
+                branchId: "11111111-1111-1111-1111-111111111111",
+                provider: "aligo_sms",
+                templateKey: "service_end_notice_sms",
+                triggerJobId: "job-43",
+                receiver: "01012345678",
+                clientId: 7,
+                recipientName: "김산모",
+                recipientPhone: "01012345678",
+                messageBody: "서비스 종료 안내",
+                variables: { retrySafety: "uncertain" },
+                status: "failed",
+                aligoMid: null,
+                errorMessage: "provider response unavailable",
+                attempts: 1,
+                lastAttemptAt: uncertainAt,
+                nextRetryAt: null,
+                createdAt: uncertainAt,
+                updatedAt: uncertainAt,
+                providerAcceptanceKey: "sms:key-43",
+                providerAcceptanceFingerprint: "fingerprint-43",
+                providerAcceptanceState: "uncertain",
+                providerCallStartedAt: uncertainAt,
+                providerAcceptedAt: null,
+                providerReconciledAt: null,
+                providerReconciledBy: null,
+                providerReconciliationReason: null,
+            };
+            const deliveredRow = {
+                ...uncertainRow,
+                status: "sent",
+                errorMessage: null,
+                providerAcceptanceState: "reconciled_delivered",
+                providerAcceptedAt: new Date("2026-09-16T03:10:00.000Z"),
+                providerReconciledAt: new Date("2026-09-16T03:10:00.000Z"),
+                providerReconciledBy: "operator-1",
+                providerReconciliationReason: "provider receipt confirmed delivery",
+                updatedAt: new Date("2026-09-16T03:10:00.000Z"),
+            };
+            messageLogModel.findUnique
+                .mockResolvedValueOnce(uncertainRow)
+                .mockResolvedValueOnce(deliveredRow);
+            messageLogModel.updateMany.mockResolvedValue({ count: 1 });
+            clientModel.updateMany.mockResolvedValue({ count: 1 });
+            const attempt = MessageLogEntity.reconstitute(
+                uncertainRow.id,
+                uncertainRow.branchId,
+                uncertainRow.provider,
+                uncertainRow.templateKey,
+                uncertainRow.triggerJobId,
+                uncertainRow.receiver,
+                uncertainRow.clientId,
+                uncertainRow.messageBody,
+                uncertainRow.variables,
+                "failed",
+                null,
+                uncertainRow.errorMessage,
+                1,
+                uncertainAt,
+                null,
+                uncertainAt,
+                uncertainAt,
+                uncertainRow.recipientName,
+                uncertainRow.recipientPhone,
+                uncertainRow.providerAcceptanceKey,
+                uncertainRow.providerAcceptanceFingerprint,
+                "uncertain",
+                uncertainAt,
+            );
+
+            await repository.reconcileProviderAttempt(
+                attempt,
+                "delivered",
+                "operator-1",
+                "provider receipt confirmed delivery",
+            );
+
+            expect(clientModel.updateMany).toHaveBeenCalledWith({
+                where: {
+                    id: 7,
+                    branchId: uncertainRow.branchId,
+                    serviceEndNoticeSentAt: null,
+                },
+                data: { serviceEndNoticeSentAt: expect.any(Date) },
+            });
         });
     });
 });
