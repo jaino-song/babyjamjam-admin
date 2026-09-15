@@ -129,7 +129,7 @@ export default function TemplatesPage() {
       : null;
 
   const liveRows = useMemo<TemplateRow[]>(() => {
-    const systemRows = (systemTemplates || []).filter(isVisibleManualTemplate).map<TemplateRow>((template, index) => ({
+    const systemRows = (systemTemplates || []).map<TemplateRow>((template, index) => ({
       id: `system-${template.templateKey}`,
       displayId: template.templateKey,
       kind: "system",
@@ -451,15 +451,4 @@ function MockupIcon({
       )}
     </svg>
   );
-}
-
-const HIDDEN_MANUAL_TEMPLATE_KEYS = new Set([
-  "CLIENT_WELCOME",
-  "SERVICE_START_REMINDER",
-  "SERVICE_END_REMINDER",
-  "EMPLOYEE_ASSIGNED",
-]);
-
-function isVisibleManualTemplate(template: { templateKey: string }): boolean {
-  return !HIDDEN_MANUAL_TEMPLATE_KEYS.has(template.templateKey);
 }

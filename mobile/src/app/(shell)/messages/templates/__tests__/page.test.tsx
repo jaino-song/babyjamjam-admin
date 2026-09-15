@@ -56,7 +56,7 @@ describe("TemplatesPage", () => {
     expect(screen.queryByRole("link", { name: "메시지" })).not.toBeInTheDocument();
   });
 
-  it("omits retired automation-only templates from the mobile list", () => {
+  it("renders the successful backend template list without a mobile-only visibility filter", () => {
     mockUseSystemTemplates.mockReturnValue({
       data: [
         { templateKey: "CLIENT_WELCOME", name: "고객 등록 안내", description: "", updatedAt: "2026-09-01T00:00:00.000Z" },
@@ -70,10 +70,10 @@ describe("TemplatesPage", () => {
 
     render(<TemplatesPage />);
 
-    expect(screen.queryByText("고객 등록 안내")).not.toBeInTheDocument();
-    expect(screen.queryByText("서비스 시작 알림")).not.toBeInTheDocument();
-    expect(screen.queryByText("서비스 종료 알림")).not.toBeInTheDocument();
-    expect(screen.queryByText("직원 배정 알림")).not.toBeInTheDocument();
+    expect(screen.getByText("고객 등록 안내")).toBeInTheDocument();
+    expect(screen.getByText("서비스 시작 알림")).toBeInTheDocument();
+    expect(screen.getByText("서비스 종료 알림")).toBeInTheDocument();
+    expect(screen.getByText("직원 배정 알림")).toBeInTheDocument();
     expect(screen.getByText("인사(소개)")).toBeInTheDocument();
   });
 });

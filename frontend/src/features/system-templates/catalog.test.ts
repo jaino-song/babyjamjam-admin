@@ -86,7 +86,7 @@ describe("system template catalog", () => {
     expect(items.find((item) => item.id === "builtin:system:SERVICE_END_NOTICE")).toBeUndefined();
   });
 
-  it("omits retired automation-only rows from the manual-send catalog", () => {
+  it("does not maintain a frontend-only template visibility list", () => {
     const items = buildSystemTemplateCatalog([
       template({ templateKey: "CLIENT_WELCOME", name: "고객 등록 안내", content: "등록 스냅샷" }),
       template({ templateKey: "SERVICE_START_REMINDER", name: "서비스 시작 알림", content: "시작 스냅샷" }),
@@ -97,6 +97,10 @@ describe("system template catalog", () => {
     ]);
 
     expect(items.map((item) => item.templateKey)).toEqual([
+      "CLIENT_WELCOME",
+      "SERVICE_START_REMINDER",
+      "SERVICE_END_REMINDER",
+      "EMPLOYEE_ASSIGNED",
       "SERVICE_END_NOTICE",
       "FUTURE_TEMPLATE",
     ]);

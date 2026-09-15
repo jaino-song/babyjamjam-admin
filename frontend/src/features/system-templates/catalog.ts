@@ -50,14 +50,6 @@ const MANUAL_BUILTIN_TYPE_BY_TEMPLATE_KEY: Readonly<Record<string, LegacyBuiltin
   SERVICE_END_NOTICE: "service-end-notice",
 };
 
-/** Retired automation-only templates do not belong in the manual-send catalog. */
-const HIDDEN_MANUAL_TEMPLATE_KEYS = new Set([
-  "CLIENT_WELCOME",
-  "SERVICE_START_REMINDER",
-  "SERVICE_END_REMINDER",
-  "EMPLOYEE_ASSIGNED",
-]);
-
 const LEGACY_ID_BY_KEY = new Map<string, string>(Object.entries(LEGACY_SYSTEM_TEMPLATE_IDS));
 
 /**
@@ -135,8 +127,6 @@ export function buildSystemTemplateCatalog(
     if (!template) return [];
 
     const { templateKey } = template;
-    if (HIDDEN_MANUAL_TEMPLATE_KEYS.has(templateKey)) return [];
-
     const legacyType =
       Object.prototype.hasOwnProperty.call(LEGACY_BUILTIN_TYPE_BY_KEY, templateKey)
         ? LEGACY_BUILTIN_TYPE_BY_KEY[templateKey as LegacySystemTemplateKey]
