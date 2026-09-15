@@ -621,3 +621,11 @@ TL;DR: 배정(4b-1 백엔드: 역할·자격·동시 변경 코드 전환 / 4b-2
 - 검증(통합 `45ce8fb47`): backend 356/5,064, frontend 238/1,582, mobile 250/1,658, shared 375+86, 3종 타입·게이트·ci. 감사 **SHIP/MEDIUM**.
 - carried(auditor): ① name>255 테스트가 pipe 분기를 검증(컨트롤러 분기 미도달) ② `validationError` 동적 detail이 제어문자 포함 시 500 폴백(고정 문구 권장) ③ 모바일 download BFF는 아직 404 problem 미정렬(no-consumer 주장 정정) ④ storage-path 가드의 `ACCESS_DENIED` 명명(충돌 성격).
 - 기록: inventory 문서 3행 + 웹 BFF 행 migrated, `document-contract` finding 추가. unit worktree/branch 정리. 다음은 **5-3(eformsign 컨트롤러, 고위험)**.
+
+**Task 5-3a: eformsign tombstone 코드 등록·전환** (feature, med) — 바인딩 2026-09-15, base `1c7b8cb6d`
+- 카탈로그 등록(기존 배포 식별자, 410): `EFORMSIGN_CREDENTIALS_SERVER_ONLY` · `EFORMSIGN_PROVIDER_OPERATION_SERVER_ONLY`.
+- 전환: 양 컨트롤러의 tombstone 7곳(`eformsign-doc` L186/194, `eformsign` L398/406/414/422/430) → `GoneException(codeOnlyProblemBody(...))` (410 유지, English `error` 필드 제거). 등록 즉시 전 사이트가 mapper로 problem化되므로 7곳을 한 유닛에서 함께 전환한다.
+- 소비자: 프론트/모바일 BFF가 자체 410 `{code}`를 author(불변, Next측); UI에 Gone/410 분기 없음(확인됨).
+- 테스트: tombstone 단언(eformsign.controller.integration.spec.ts:1423 등) 갱신, red-first.
+- 범위 밖: eformsign.controller의 나머지 raw {error}/BadRequest/ServiceUnavailable(5-3b), envelope(5-4).
+- Dispatch metadata: `Phase: 5-3a` · `Execution: DELEGATE` · `Audit: SOL` · `Agent: worker` · `Paths: packages/shared/src/errors/problem-details.ts(+test), backend/interface/controllers/{eformsign-doc,eformsign}.controller.ts [tombstone만], backend/vendor/shared-agent/**, docs/error-management.md, 관련 spec` · `Depends: Task 5-2`
