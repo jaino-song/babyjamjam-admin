@@ -677,3 +677,7 @@ TL;DR: 배정(4b-1 백엔드: 역할·자격·동시 변경 코드 전환 / 4b-2
 - ① mobile legacy `useContractCreationFlow.ts`의 무조건 iframe 폴백(중복 위험) — 도달성 확인 후 안전 게이트 적용 또는 정식 은퇴. ② 웹 `ContractCreationForm`·웹 `contracts/page`(finalize)·모바일 `new/page`·모바일 `contracts/page`가 가산 `outcome`/`code`를 우선 분류로 채택(UNKNOWN→확인 필요+잠금, PARTIALLY_APPLIED→adopt, NOT_APPLIED→기존), legacy reason/fallbackHint 분기는 폴백으로 유지. ③ 테스트.
 - 범위 밖: 백엔드(불변), creation/AI(5-4d), reason 토큰 변경.
 - Dispatch: `Phase: 5-4c` · worker(glm) · `Paths: frontend/src/components/app/contracts/ContractCreationForm.tsx, frontend/src/app/(protected)/contracts/page.tsx, frontend/src/services/api.ts, mobile/src/app/(shell)/contracts/{new,page}.tsx, mobile/src/hooks/useContractCreationFlow.ts, mobile/src/app/(shell)/contracts/page.helpers.ts, mobile/src/lib/contracts/contract-operation-guard.ts, 대응 테스트` · `Audit: SOL`
+
+**Task 5-4c 실행 결과 (2026-09-16):** worker unit `981705e21`(base `17e439226`) → 통합 `53ff9d8fe` + 재앵커 `3bec2e441`. 4소비자 outcome-우선(UNKNOWN→확인필요+잠금, PARTIALLY_APPLIED→adopt) + legacy 분기 불변, **dead `useContractCreationFlow` 체인 8파일 은퇴**(도달성 4중 확인), `readHeadlessOutcome` 헬퍼. red-first mobile 5F·web 3F.
+- 검증: frontend 240/1,590(+8), mobile 250/1,666(+8), backend 357/5,083, shared 409+86, fe/mo tc 0, UI 재앵커 anchors-only(27/48·28/44 보존)·게이트 green, ci 31. 감사 **SHIP**.
+- 기록: `headless-consumer-alignment` finding. unit 정리. 다음은 **5-4d(creation/AI-tool)** → Phase 6.

@@ -739,6 +739,27 @@
           "audit": "SHIP at c09d2253f (base 087638855); carried: 4개 분기 직접 단언 미비(N1), controller denial 매핑 리터럴 중복(N2)"
         },
         "outcome_evidence": "Finalize 실패도 사실 outcome을 선언(terminal=FAILED, pending/unknown=UNKNOWN+CHECK_STATUS, 그 외 NOT_APPLIED)하면서 reason/fallbackHint/문서ID 복구 프로토콜은 그대로 유지."
+      },
+      {
+        "id": "headless-consumer-alignment",
+        "status": "migrated",
+        "implementation_task_id": "5-4c",
+        "path": "frontend/src/components/app/contracts/ContractCreationForm.tsx",
+        "symbol": "headless consumers outcome-first + legacy hook retirement",
+        "spec_ids": ["EM-STATE-01", "EM-RETRY-05", "EM-CHANGE-01"],
+        "public_codes": ["DOCUMENT_FINALIZE_UNCONFIRMED","DISPATCH_UNCERTAIN","REMOTE_DOCUMENT_UNCONFIRMED"],
+        "implementation_sha": "3bec2e441",
+        "basis_sha": "17e439226",
+        "review_scope": "4 consumers adopt outcome-first (UNKNOWN/PARTIALLY_APPLIED) with legacy branches intact; dead useContractCreationFlow chain (8 files) removed; readHeadlessOutcome helpers; UI baseline re-anchored anchors-only.",
+        "test_paths": ["frontend/src/components/app/contracts/__tests__/contract-creation.headless.spec.ts","mobile/src/app/(shell)/contracts/new/page.test.ts","mobile/src/components/app/contracts/contract-operation-guard.test.ts"],
+        "test_evidence": {
+          "suites": 240,
+          "passed": 1590,
+          "result": "frontend 240/1590 (+8); mobile 250/1666 (+8); backend 357/5083; shared 409+86; gates pass after anchors-only reanchor",
+          "checks": ["red-first mobile 5F + web 3F", "fe/mo typechecks", "UI gate counts preserved"],
+          "audit": "SHIP at 3bec2e441 (base 17e439226)"
+        },
+        "outcome_evidence": "가산 outcome 필드가 있으면 UNKNOWN은 확인 필요+잠금, PARTIALLY_APPLIED는 adopt/체크리스트로 처리되고, 없으면 기존 reason/fallbackHint 분기가 그대로 동작한다; 중복 위험 legacy iframe 폴백은 은퇴."
       }
     ],
   "root_review_evidence": [
