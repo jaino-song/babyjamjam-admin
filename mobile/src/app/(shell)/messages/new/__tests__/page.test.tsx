@@ -1097,6 +1097,62 @@ describe("NewMessagePage", () => {
     );
   });
 
+  it("allows retrying a receipt-link send after a definitive preflight 4xx", async () => {
+    let sendAttempts = 0;
+    (api.post as jest.Mock).mockImplementation((url: string) => {
+      if (url === "/receipt-links/prepare") {
+        return Promise.resolve({
+          data: {
+            clientId: 7,
+            clientName: "박서연",
+            recipientPhone: "01077778888",
+            documentId: "doc-7",
+            receiptUrl: "https://m.admin.babyjamjam.com/receipt/receipt-7",
+            expiresAt: "2026-09-24T00:00:00.000Z",
+          },
+        });
+      }
+      if (url === "/receipt-links/send") {
+        sendAttempts += 1;
+        if (sendAttempts === 1) {
+          return Promise.reject({
+            response: {
+              status: 400,
+              data: {
+                reason: "recipient_mismatch",
+                message: "산모 정보가 변경되었습니다. 산모를 다시 선택해 주세요",
+              },
+            },
+          });
+        }
+        return Promise.resolve({ data: { jobId: "job-7", clientName: "박서연" } });
+      }
+      return Promise.resolve({ data: {} });
+    });
+
+    renderPage();
+    await openTemplateSelect();
+    fireEvent.click(screen.getByRole("option", { name: "서비스 종료 안내" }));
+
+    const recipientNameInput = screen.getByLabelText(/산모님 성함/);
+    fireEvent.focus(recipientNameInput);
+    fireEvent.change(recipientNameInput, { target: { value: "박서연" } });
+    fireEvent.click(await screen.findByText("박서연"));
+
+    const sendButton = screen.getByRole("button", { name: "즉시 발송" });
+    await waitFor(() => expect(sendButton).toBeEnabled());
+    fireEvent.click(sendButton);
+
+    expect(await screen.findByText("산모 정보가 변경되었습니다. 산모를 다시 선택해 주세요")).toBeInTheDocument();
+    expect(sendButton).toBeEnabled();
+
+    fireEvent.click(sendButton);
+    await waitFor(() => {
+      expect(screen.getByText("서비스 종료 안내 발송 요청이 접수되었습니다.")).toBeInTheDocument();
+    });
+    expect(sendAttempts).toBe(2);
+  });
+
   it("keeps the latest client when service end preparations resolve out of order", async () => {
     const replacementClient: Client = {
       ...mockClients[0]!,

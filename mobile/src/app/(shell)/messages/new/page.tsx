@@ -144,6 +144,21 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+function isReceiptLinkPreflightFailure(error: unknown): boolean {
+  if (!isRecord(error) || !isRecord(error.response)) {
+    return false;
+  }
+
+  const status = error.response.status;
+  // Receipt-link send validates approval, document eligibility, and the prepared
+  // recipient before it creates a job. A 4xx response therefore proves that no
+  // send was queued and the user can correct the state and retry.
+  return typeof status === "number"
+    && Number.isInteger(status)
+    && status >= 400
+    && status < 500;
+}
+
 function isOptionalFiniteNumber(value: unknown): boolean {
   return value === undefined || (typeof value === "number" && Number.isFinite(value));
 }
@@ -1319,7 +1334,9 @@ function NewMessageForm({ initialBody, initialTemplateId, initialClientId, initi
       const isAmbiguous = normalized.outcome === "UNKNOWN"
         || normalized.outcome === "PARTIALLY_APPLIED"
         || normalized.recovery?.action === "CHECK_STATUS";
-      setSendOutcomeLocked(isAmbiguous);
+      setSendOutcomeLocked(
+        isAmbiguous && !(isServiceEndNoticeSelected && isReceiptLinkPreflightFailure(err)),
+      );
       setSendRetryFingerprint(isServiceEndNoticeSelected ? null : submissionRef.current?.fingerprint ?? null);
     },
     onSettled: () => {
