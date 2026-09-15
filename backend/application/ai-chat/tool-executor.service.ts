@@ -30,6 +30,8 @@ export interface ToolExecutionResult {
     confirmationIntentId?: string;
     confirmationNonce?: string;
     confirmationExpiresAt?: string;
+    /** True only when the mutation's business outcome is not proven failed. */
+    uncertain?: boolean;
 }
 
 type ToolArgs = Record<string, unknown>;
@@ -921,7 +923,17 @@ export class ToolExecutorService {
         }, principal);
 
         if (!result.success) {
-            return { success: false, error: result.error };
+            // BJJ-319 5-4d additive contract: the registered outcome classifies
+            // the failure first; the legacy flags stay as the fallback so an
+            // unclassified shape keeps its uncertainty signal.
+            const uncertain = result.outcome === "UNKNOWN"
+                || result.uncertain === true
+                || Boolean(result.remoteDocumentId);
+            return {
+                success: false,
+                error: result.error,
+                ...(uncertain ? { uncertain: true } : {}),
+            };
         }
 
         return {

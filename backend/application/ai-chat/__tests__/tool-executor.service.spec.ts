@@ -2,6 +2,7 @@ import { BadRequestException } from "@nestjs/common";
 
 import { sanitizeEformsignErrorMessage } from "../../../domain/utils/eformsign-error-message";
 import { clientProblemBody } from "../../usecases/client/client-write-validation";
+import { LegacyChatConfirmationService } from "../legacy-chat-confirmation.service";
 import { ToolExecutorService, type ToolExecutionResult } from "../tool-executor.service";
 
 const TEST_PRINCIPAL = { branchId: "branch-1", globalRole: "owner" };
@@ -365,5 +366,107 @@ describe("ToolExecutorService", () => {
             companyRegisteredDate: "tomorrow",
         })).resolves.toMatchObject({ success: false, error: expect.stringContaining("companyRegisteredDate") });
         expect(mocks.employeeService.create).not.toHaveBeenCalled();
+    });
+
+    describe("createAndSendContract uncertainty classification", () => {
+        const chatContext = {
+            userId: "user-1",
+            branchId: "branch-1",
+            sessionId: "session-1",
+            globalRole: "owner",
+            branchRole: "admin",
+        };
+        const dispatchArgs = { clientId: 7, areaId: "incheon" };
+
+        async function dispatchWithResult(result: Record<string, unknown>) {
+            const { mocks } = createExecutor();
+            const prismaIntentRows: Array<Record<string, unknown>> = [];
+            const prisma = {
+                legacy_chat_confirmation_intent: {
+                    create: jest.fn(({ data }: { data: Record<string, unknown> }) => {
+                        const row = {
+                            id: `intent-${prismaIntentRows.length + 1}`,
+                            expiresAt: new Date(Date.now() + 60_000),
+                            ...data,
+                        };
+                        prismaIntentRows.push(row);
+                        return Promise.resolve({ id: row.id, expiresAt: row.expiresAt });
+                    }),
+                    findFirst: jest.fn(({ where }: { where: { id: string } }) => {
+                        const row = prismaIntentRows.find((entry) => entry["id"] === where.id);
+                        return Promise.resolve(row ?? null);
+                    }),
+                    updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+                },
+            };
+            const confirmationService = new LegacyChatConfirmationService(prisma as never);
+            const boundExecutor = new ToolExecutorService(
+                mocks.clientService as never,
+                mocks.employeeService as never,
+                mocks.messageService as never,
+                mocks.areaTemplateService as never,
+                mocks.eformsignDocService as never,
+                mocks.voucherPriceInfoService as never,
+                mocks.bankAccountInfoService as never,
+                mocks.employeeScheduleService as never,
+                confirmationService,
+            );
+            mocks.areaTemplateService.findByArea.mockResolvedValue({
+                areaId: "incheon",
+                templateId: "template-1",
+                templateName: "표준계약서",
+            });
+            mocks.eformsignDocService.createAndSendContract.mockResolvedValue(result);
+
+            const proposal = await boundExecutor.execute(chatContext, "createAndSendContract", dispatchArgs, TEST_PRINCIPAL);
+            const consumed = await confirmationService.consumeIntent(chatContext, {
+                intentId: String(proposal.confirmationIntentId),
+                nonce: String(proposal.confirmationNonce),
+            });
+            const authorized = await boundExecutor.executeAuthorized(
+                chatContext,
+                "createAndSendContract",
+                dispatchArgs,
+                consumed,
+                TEST_PRINCIPAL,
+            );
+            return { result: authorized, mocks };
+        }
+
+        it("classifies an additive UNKNOWN outcome as uncertain", async () => {
+            const { result, mocks } = await dispatchWithResult({
+                success: false,
+                error: "계약서 발송 결과 확인이 필요합니다",
+                outcome: "UNKNOWN",
+            });
+            expect(result).toMatchObject({ success: false, uncertain: true });
+            expect(mocks.eformsignDocService.createAndSendContract).toHaveBeenCalledTimes(1);
+        });
+
+        it("keeps legacy uncertain and remoteDocumentId failures classified as uncertain", async () => {
+            const legacyUncertain = await dispatchWithResult({
+                success: false,
+                error: "계약서 발송 결과 확인이 필요합니다",
+                uncertain: true,
+            });
+            expect(legacyUncertain.result).toMatchObject({ success: false, uncertain: true });
+
+            const legacyRemoteId = await dispatchWithResult({
+                success: false,
+                error: "계약서 발송 결과 확인이 필요합니다",
+                remoteDocumentId: "remote-1",
+            });
+            expect(legacyRemoteId.result).toMatchObject({ success: false, uncertain: true });
+        });
+
+        it("keeps a NOT_APPLIED outcome a certain failure without an uncertainty flag", async () => {
+            const { result } = await dispatchWithResult({
+                success: false,
+                error: "고객의 제공인력 배정을 먼저 저장해 주세요.",
+                code: "CLIENT_ASSIGNMENT_REQUIRED",
+                outcome: "NOT_APPLIED",
+            });
+            expect(result).toEqual({ success: false, error: "고객의 제공인력 배정을 먼저 저장해 주세요." });
+        });
     });
 });
