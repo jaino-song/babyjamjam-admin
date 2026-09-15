@@ -1,7 +1,11 @@
 import { Injectable, Logger } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
 
-import { IMessageLogRepository } from "domain/repositories/message-log.repository.interface";
+import {
+    IMessageLogRepository,
+    MessageRetryInvocation,
+    MessageRetryStartResult,
+} from "domain/repositories/message-log.repository.interface";
 import { MessageLogEntity } from "domain/entities/message-log.entity";
 import { MessageLogMapper } from "infrastructure/database/mapper/message-log.mapper";
 import { PrismaService } from "infrastructure/database/prisma.service";
@@ -9,7 +13,10 @@ import {
     SERVICE_RECORD_LINK_RULE_ID,
     SERVICE_RECORD_LINK_SMS_LOG_TEMPLATE_KEY,
 } from "domain/constants/service-record-link-message";
-import { SERVICE_END_NOTICE_SMS_LOG_TEMPLATE_KEY } from "domain/constants/service-end-notice-message";
+import {
+    SERVICE_END_NOTICE_ALREADY_SENT_CANCEL_REASON,
+    SERVICE_END_NOTICE_SMS_LOG_TEMPLATE_KEY,
+} from "domain/constants/service-end-notice-message";
 
 @Injectable()
 export class SbMessageLogRepository implements IMessageLogRepository {
@@ -203,9 +210,53 @@ export class SbMessageLogRepository implements IMessageLogRepository {
     async startRetryAttempt(
         sourceLog: MessageLogEntity,
         retryLog: MessageLogEntity,
-    ): Promise<MessageLogEntity | null> {
+        invocation: MessageRetryInvocation,
+    ): Promise<MessageRetryStartResult> {
         return this.prisma.$transaction(async (transaction) => {
             const claimedAt = new Date(Date.now());
+            if (
+                invocation === "automatic"
+                && sourceLog.templateKey === SERVICE_END_NOTICE_SMS_LOG_TEMPLATE_KEY
+                && sourceLog.branchId !== null
+                && sourceLog.clientId !== null
+            ) {
+                const clients = await transaction.$queryRaw<Array<{
+                    service_end_notice_sent_at: Date | null;
+                }>>(Prisma.sql`
+                    SELECT service_end_notice_sent_at
+                    FROM "client"
+                    WHERE id = ${sourceLog.clientId}
+                      AND branch_id = ${sourceLog.branchId}::uuid
+                    FOR UPDATE
+                `);
+                const client = clients[0];
+                if (!client) return { kind: "lost" };
+                if (client.service_end_notice_sent_at !== null) {
+                    const suppressed = await transaction.message_log.updateMany({
+                        where: {
+                            id: sourceLog.id,
+                            branchId: sourceLog.branchId,
+                            status: sourceLog.status,
+                            nextRetryAt: sourceLog.nextRetryAt,
+                            updatedAt: sourceLog.updatedAt,
+                        },
+                        data: {
+                            status: "failed",
+                            errorMessage: SERVICE_END_NOTICE_ALREADY_SENT_CANCEL_REASON,
+                            nextRetryAt: null,
+                            updatedAt: claimedAt,
+                        },
+                    });
+                    if (suppressed.count !== 1) return { kind: "lost" };
+
+                    sourceLog.status = "failed";
+                    sourceLog.errorMessage = SERVICE_END_NOTICE_ALREADY_SENT_CANCEL_REASON;
+                    sourceLog.nextRetryAt = null;
+                    sourceLog.updatedAt = claimedAt;
+                    return { kind: "suppressed", log: sourceLog };
+                }
+            }
+
             const claimed = await transaction.message_log.updateMany({
                 where: {
                     id: sourceLog.id,
@@ -221,13 +272,13 @@ export class SbMessageLogRepository implements IMessageLogRepository {
             });
 
             if (claimed.count !== 1) {
-                return null;
+                return { kind: "lost" };
             }
 
             const row = await transaction.message_log.create({
                 data: MessageLogMapper.toPrismaCreate(retryLog),
             });
-            return MessageLogMapper.toDomain(row);
+            return { kind: "started", log: MessageLogMapper.toDomain(row) };
         });
     }
 

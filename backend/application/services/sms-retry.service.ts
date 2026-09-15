@@ -12,6 +12,7 @@ import {
 import {
     MESSAGE_LOG_REPOSITORY,
     IMessageLogRepository,
+    MessageRetryInvocation,
 } from "domain/repositories/message-log.repository.interface";
 import {
     buildSmsProviderAcceptanceFingerprint,
@@ -34,8 +35,6 @@ interface RetrySchedule {
     scheduledTime?: string;
     scheduledAtMs: number | null;
 }
-
-type SmsRetryInvocation = "automatic" | "manual";
 
 @Injectable()
 export class SmsRetryService {
@@ -84,7 +83,7 @@ export class SmsRetryService {
 
     async retry(
         sourceLog: MessageLogEntity,
-        invocation: SmsRetryInvocation = "manual",
+        invocation: MessageRetryInvocation = "manual",
     ): Promise<MessageLogEntity | null> {
         if (sourceLog.isPartialProviderOutcome()) {
             sourceLog.markRetrySuperseded(PARTIAL_RETRY_SUPERSEDED_REASON);
@@ -103,14 +102,22 @@ export class SmsRetryService {
             return sourceLog;
         }
 
-        const retryLog = await this.logRepository.startRetryAttempt(
+        const retryStart = await this.logRepository.startRetryAttempt(
             sourceLog,
             this.createRetryAttempt(sourceLog),
+            invocation,
         );
-        if (!retryLog) {
+        if (retryStart.kind === "lost") {
             this.logger.warn(`[Retry] SMS log ${sourceLog.id} was already claimed`);
             return null;
         }
+        if (retryStart.kind === "suppressed") {
+            this.logger.warn(
+                `[Retry] Skipped automatic service-end SMS log ${sourceLog.id}; client was already notified`,
+            );
+            return retryStart.log;
+        }
+        const retryLog = retryStart.log;
 
         if (retryLog.branchId) {
             try {
@@ -322,7 +329,7 @@ export class SmsRetryService {
     private markSmsRetryRejected(
         log: MessageLogEntity,
         errorMessage: string,
-        invocation: SmsRetryInvocation,
+        invocation: MessageRetryInvocation,
     ): void {
         log.status = "failed";
         log.providerAcceptanceState = "rejected";

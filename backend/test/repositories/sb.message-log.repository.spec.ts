@@ -19,18 +19,21 @@ describe("SbMessageLogRepository", () => {
 
     let messageLogModel: ReturnType<typeof createMockPrismaMessageLog>;
     let clientModel: ReturnType<typeof createMockPrismaClient>;
+    let queryRaw: jest.Mock;
     let prisma: PrismaService;
     let repository: SbMessageLogRepository;
 
     beforeEach(() => {
         messageLogModel = createMockPrismaMessageLog();
         clientModel = createMockPrismaClient();
+        queryRaw = jest.fn();
         prisma = {
             message_log: messageLogModel,
             client: clientModel,
             $transaction: jest.fn(async (callback) => callback({
                 message_log: messageLogModel,
                 client: clientModel,
+                $queryRaw: queryRaw,
             })),
         } as unknown as PrismaService;
         repository = new SbMessageLogRepository(prisma);
@@ -248,42 +251,47 @@ describe("SbMessageLogRepository", () => {
     });
 
     describe("startRetryAttempt", () => {
-        const source = MessageLogEntity.reconstitute(
-            77,
-            "11111111-1111-1111-1111-111111111111",
-            "aligo_sms",
-            "service_record_link_sms",
-            "job-1",
-            "01012345678",
-            7,
-            "message",
-            {},
-            "failed",
-            null,
-            "등록되지 않은 발신번호입니다.",
-            1,
-            new Date("2026-07-22T17:13:11.000Z"),
-            new Date("2026-07-22T17:18:11.000Z"),
-            new Date("2026-07-22T17:13:11.000Z"),
-        );
-        const retryDraft = MessageLogEntity.reconstitute(
-            0,
-            source.branchId,
-            source.provider,
-            source.templateKey,
-            source.triggerJobId,
-            source.receiver,
-            source.clientId,
-            source.messageBody,
-            { retryOfLogId: "77", retryAttempt: "2" },
-            "pending",
-            null,
-            null,
-            1,
-            null,
-            new Date("2026-07-22T17:23:11.000Z"),
-            new Date("2026-07-22T17:18:11.000Z"),
-        );
+        let source: MessageLogEntity;
+        let retryDraft: MessageLogEntity;
+
+        beforeEach(() => {
+            source = MessageLogEntity.reconstitute(
+                77,
+                "11111111-1111-1111-1111-111111111111",
+                "aligo_sms",
+                "service_record_link_sms",
+                "job-1",
+                "01012345678",
+                7,
+                "message",
+                {},
+                "failed",
+                null,
+                "등록되지 않은 발신번호입니다.",
+                1,
+                new Date("2026-07-22T17:13:11.000Z"),
+                new Date("2026-07-22T17:18:11.000Z"),
+                new Date("2026-07-22T17:13:11.000Z"),
+            );
+            retryDraft = MessageLogEntity.reconstitute(
+                0,
+                source.branchId,
+                source.provider,
+                source.templateKey,
+                source.triggerJobId,
+                source.receiver,
+                source.clientId,
+                source.messageBody,
+                { retryOfLogId: "77", retryAttempt: "2" },
+                "pending",
+                null,
+                null,
+                1,
+                null,
+                new Date("2026-07-22T17:23:11.000Z"),
+                new Date("2026-07-22T17:18:11.000Z"),
+            );
+        });
 
         it("should clear only the source retry schedule and create a separate attempt", async () => {
             const claimedAt = new Date("2026-07-22T17:18:12.000Z");
@@ -311,7 +319,7 @@ describe("SbMessageLogRepository", () => {
                 updatedAt: retryDraft.createdAt,
             });
 
-            const result = await repository.startRetryAttempt(source, retryDraft);
+            const result = await repository.startRetryAttempt(source, retryDraft, "automatic");
 
             expect(messageLogModel.updateMany).toHaveBeenCalledWith({
                 where: {
@@ -327,7 +335,10 @@ describe("SbMessageLogRepository", () => {
                 },
             });
             expect(messageLogModel.create).toHaveBeenCalled();
-            expect(result).toEqual(expect.objectContaining({ id: 78, status: "pending" }));
+            expect(result).toEqual({
+                kind: "started",
+                log: expect.objectContaining({ id: 78, status: "pending" }),
+            });
             expect(source).toEqual(expect.objectContaining({
                 id: 77,
                 status: "failed",
@@ -339,9 +350,77 @@ describe("SbMessageLogRepository", () => {
         it("should not create a duplicate attempt when the source was already claimed", async () => {
             messageLogModel.updateMany.mockResolvedValue({ count: 0 });
 
-            await expect(repository.startRetryAttempt(source, retryDraft)).resolves.toBeNull();
+            await expect(repository.startRetryAttempt(source, retryDraft, "automatic")).resolves.toEqual({ kind: "lost" });
 
             expect(messageLogModel.create).not.toHaveBeenCalled();
+        });
+
+        it("atomically suppresses an automatic service-end retry when the client was already notified", async () => {
+            source.templateKey = "service_end_notice_sms";
+            const sourceSnapshot = {
+                status: source.status,
+                nextRetryAt: source.nextRetryAt,
+                updatedAt: source.updatedAt,
+            };
+            queryRaw.mockResolvedValue([{
+                service_end_notice_sent_at: new Date("2026-09-16T03:00:00.000Z"),
+            }]);
+            messageLogModel.updateMany.mockResolvedValue({ count: 1 });
+
+            const result = await repository.startRetryAttempt(source, retryDraft, "automatic");
+
+            expect(queryRaw).toHaveBeenCalledTimes(1);
+            expect(messageLogModel.updateMany).toHaveBeenCalledWith({
+                where: {
+                    id: source.id,
+                    branchId: source.branchId,
+                    status: sourceSnapshot.status,
+                    nextRetryAt: sourceSnapshot.nextRetryAt,
+                    updatedAt: sourceSnapshot.updatedAt,
+                },
+                data: expect.objectContaining({
+                    status: "failed",
+                    errorMessage: "서비스 종료 안내가 이미 발송됨",
+                    nextRetryAt: null,
+                }),
+            });
+            expect(messageLogModel.create).not.toHaveBeenCalled();
+            expect(result).toEqual({ kind: "suppressed", log: source });
+        });
+
+        it("keeps explicit manual service-end retries available", async () => {
+            source.templateKey = "service_end_notice_sms";
+            messageLogModel.updateMany.mockResolvedValue({ count: 1 });
+            messageLogModel.create.mockResolvedValue({
+                id: 78,
+                branchId: source.branchId,
+                provider: source.provider,
+                templateKey: source.templateKey,
+                triggerJobId: source.triggerJobId,
+                receiver: source.receiver,
+                clientId: source.clientId,
+                recipientName: null,
+                recipientPhone: source.receiver,
+                messageBody: source.messageBody,
+                status: "pending",
+                variables: retryDraft.variables,
+                aligoMid: null,
+                errorMessage: null,
+                attempts: retryDraft.attempts,
+                lastAttemptAt: null,
+                nextRetryAt: retryDraft.nextRetryAt,
+                createdAt: retryDraft.createdAt,
+                updatedAt: retryDraft.updatedAt,
+            });
+
+            const result = await repository.startRetryAttempt(source, retryDraft, "manual");
+
+            expect(queryRaw).not.toHaveBeenCalled();
+            expect(messageLogModel.create).toHaveBeenCalledTimes(1);
+            expect(result).toEqual({
+                kind: "started",
+                log: expect.objectContaining({ id: 78 }),
+            });
         });
     });
 
