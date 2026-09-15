@@ -647,3 +647,12 @@ TL;DR: 배정(4b-1 백엔드: 역할·자격·동시 변경 코드 전환 / 4b-2
 - 검증(통합 `3e71aec88`): backend 356/5,075, frontend 238/1,582, mobile 250/1,658, shared 379+86, backend tc 0, 게이트·ci. 교훈: **500 fallback은 절대 NOT_APPLIED로 기본 변환하지 않는다(EM-STATE-01)**.
 - carried: integration spec이 mapper 미경유(기존), 파이프 섀도우 사이트 defense-in-depth, `throwHttpOrInternalError`·한국어 기존 사이트 유지, 503 읽기 outcome NOT_APPLIED(의미상 무해), korean-error-messages 데드 엔트리.
 - 기록: inventory 컨트롤러 행 갱신, `eformsign-controller-contract` finding 추가. unit 정리. 다음은 **5-4(envelope ok/reason, 최고위험)** — 이후 Phase 6.
+
+## Phase 5-4 — headless envelope 계약 (바인딩, 2026-09-16)
+
+**설계 결정(정찰 기반):** ambiguous/partial 결과는 HTTP 오류가 아니라 **업무 결과**(EM-STATE-01)이고, `fallbackHint`·문서 ID 복구 프로토콜은 유지 의무(플랜 "server-owned fallbackHint 재사용")이므로 **가산적 계약**을 채택한다: 기존 `{ok:false, reason, fallbackHint, …}` 필드를 바이트 동일하게 유지하고 `code`(등록)·`outcome`·`recovery`만 추가(EM-CHANGE-01/04 호환). 사전-쓰기 거절의 problem+json화는 후속(6.x) 판단으로 남긴다.
+
+**Task 5-4a: dispatch envelope 가산 계약** — base `ce01b87b7`
+- dispatch 11개 실패 분기에 `code`/`outcome`/`recovery` 추가. reason 토큰을 SCREAMING 코드로 등록(의미 1:1, reason은 호환 별칭으로 유지), outcome 매핑: 사전검증/중복/락/진행중 → NOT_APPLIED, already_accepted/uncertain/remote_unconfirmed/terminal → UNKNOWN+CHECK_STATUS, local_persist_failed → PARTIALLY_APPLIED+CHECK_STATUS, iframe 가능한 pre-send 실패 → NOT_APPLIED(+fallbackHint 유지).
+- must-NOT-change: iframe 게이트·duplicate force 재시도·local_persist adopt·fallbackHint/reason/문서 ID 필드(바이트 동일), worker `isAmbiguous` 입력.
+- Dispatch metadata: `Phase: 5-4a` · `Execution: DELEGATE` · `Audit: SOL` · `Agent: worker` · `Model: opencode-go/glm-5.3-flash` · `Paths: packages/shared/src/errors/problem-details.ts(+test), packages/shared/src/types/eformsign.ts, backend/application/usecases/eformsign-doc/dispatch-document-headless.usecase.ts(+spec), backend/interface/dto/eformsign-doc.dto.ts, backend/interface/controllers/eformsign-doc.controller.ts [dispatch 응답만], backend/vendor/shared-agent/**, docs/error-management.md, worker spec 단언` · `Depends: Task 5-3b`
