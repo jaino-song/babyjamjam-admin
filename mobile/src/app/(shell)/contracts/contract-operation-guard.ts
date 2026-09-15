@@ -214,9 +214,24 @@ function isDeleteFailure(value: unknown): boolean {
     && nonEmptyString(value.message);
 }
 
-/** Only a response explicitly listing the target in success_result is success. */
+/**
+ * Confirm a delete from the local outcome when available, then fall back to
+ * the provider result for older responses without local reconciliation data.
+ */
 export function isContractDeleteResponseConfirmed(value: unknown, resourceId: string): boolean {
   if (!isRecord(value) || !isRecord(value.result)) return false;
+
+  // The backend purges terminal documents locally even when the provider puts
+  // them in fail_result. Its unresolved list is therefore the authoritative
+  // confirmation signal for the delete operation when it is present.
+  if (value.unresolved_document_ids !== undefined) {
+    const unresolvedDocumentIds = value.unresolved_document_ids;
+    if (!Array.isArray(unresolvedDocumentIds) || !unresolvedDocumentIds.every(nonEmptyString)) {
+      return false;
+    }
+    return !unresolvedDocumentIds.includes(resourceId);
+  }
+
   const successResult = value.result.success_result;
   const failResult = value.result.fail_result;
   if (!Array.isArray(successResult) || !successResult.every(nonEmptyString)) return false;
