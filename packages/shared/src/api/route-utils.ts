@@ -399,6 +399,28 @@ function safeErrorCode(value: unknown): string | undefined {
     return /^[A-Z][A-Z0-9_:-]{0,63}$/.test(value) ? value : undefined;
 }
 
+const MESSAGE_AUTOMATION_PARENT_DISABLED_CODE = "MESSAGE_AUTOMATION_PARENT_DISABLED";
+
+function getMessageTriggerParentConflictCode(error: unknown): string | undefined {
+    const data = getUpstreamErrorData(error);
+    if (!data || typeof data !== "object" || Array.isArray(data)) {
+        return undefined;
+    }
+
+    const payload = data as { code?: unknown; error?: unknown };
+    const directCode = safeErrorCode(payload.code);
+    if (directCode === MESSAGE_AUTOMATION_PARENT_DISABLED_CODE) {
+        return directCode;
+    }
+
+    if (!payload.error || typeof payload.error !== "object" || Array.isArray(payload.error)) {
+        return undefined;
+    }
+
+    const nestedCode = safeErrorCode((payload.error as { code?: unknown }).code);
+    return nestedCode === MESSAGE_AUTOMATION_PARENT_DISABLED_CODE ? nestedCode : undefined;
+}
+
 export function sanitizeUpstreamClientError(
     upstreamData: unknown,
     fallbackMessage: string,
@@ -486,9 +508,12 @@ export function messageTriggerUpstreamErrorResponse(
 ): NextResponse {
     const status = getUpstreamErrorStatus(error);
     logUpstreamError(context, error);
+    const code = status === 409
+        ? getMessageTriggerParentConflictCode(error) ?? "UPSTREAM_ERROR"
+        : "UPSTREAM_ERROR";
 
     return NextResponse.json(
-        { error: `Failed to ${context}`, code: "UPSTREAM_ERROR" },
+        { error: `Failed to ${context}`, code },
         { status },
     );
 }

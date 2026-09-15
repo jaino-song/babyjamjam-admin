@@ -201,6 +201,35 @@ describe("frontend message trigger rule API routes", () => {
     );
   });
 
+  it("forwards the allowlisted parent-disabled code through the ordinary update route", async () => {
+    mockPatch.mockRejectedValue({
+      response: {
+        status: 409,
+        data: {
+          code: "MESSAGE_AUTOMATION_PARENT_DISABLED",
+          message: "internal branch identifier and database details",
+        },
+      },
+    });
+
+    const response = await updateRule(
+      createRequest("/api/message-trigger-rules/rule_123", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ isActive: true }),
+      }),
+      { params: Promise.resolve({ triggerId: "rule_123" }) },
+    );
+
+    expect(response.status).toBe(409);
+    const body = await response.json();
+    expect(body).toEqual({
+      error: "Failed to update message trigger rule",
+      code: "MESSAGE_AUTOMATION_PARENT_DISABLED",
+    });
+    expect(JSON.stringify(body)).not.toContain("internal branch identifier");
+  });
+
   it("preserves a backend delete response instead of manufacturing a success body", async () => {
     mockDelete.mockResolvedValue({ status: 204, data: undefined });
 
