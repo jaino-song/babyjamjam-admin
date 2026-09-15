@@ -629,3 +629,8 @@ TL;DR: 배정(4b-1 백엔드: 역할·자격·동시 변경 코드 전환 / 4b-2
 - 테스트: tombstone 단언(eformsign.controller.integration.spec.ts:1423 등) 갱신, red-first.
 - 범위 밖: eformsign.controller의 나머지 raw {error}/BadRequest/ServiceUnavailable(5-3b), envelope(5-4).
 - Dispatch metadata: `Phase: 5-3a` · `Execution: DELEGATE` · `Audit: SOL` · `Agent: worker` · `Paths: packages/shared/src/errors/problem-details.ts(+test), backend/interface/controllers/{eformsign-doc,eformsign}.controller.ts [tombstone만], backend/vendor/shared-agent/**, docs/error-management.md, 관련 spec` · `Depends: Task 5-2`
+
+**Task 5-3a 실행 결과 (2026-09-16):** worker unit `22f8a3ce4`(base `2d22172b6`) → 통합 `88bb0b970`(8 files, +126/−35). tombstone 코드 2종 등록(410)·7사이트 전환. red-first shared 4F·integration 4F. 감사 **SHIP/HIGH**.
+- 검증(통합 `88bb0b970`): **교훈 — vendor 변경 유닛은 통합에서 먼저 `pnpm install --frozen-lockfile`로 `file:` 복사본을 갱신해야 함**(미갱신 시 type-check 실패·스퓨리어스 test 실패; 갱신 후 backend tc 0, 356/5,065 pass, flake 1회 재발). frontend 238/1,582, mobile 250/1,658, shared 379+86, 게이트·ci 통과.
+- carried(auditor): integration spec이 프로덕션 mapper 미경유(raw 직렬화 단언 — mapper는 코드 검증), eformsign-doc tombstone 2곳 직접 테스트 없음, BFF tombstone 14파일은 Next측 자체 410(정렬 여부 후속 판단), mapper 410 등록코드 테스트 공백.
+- 기록: inventory 컨트롤러 2행 migrated, `eformsign-tombstones` finding 추가. unit 정리. 다음은 **5-3b(eformsign.controller 나머지)**.
