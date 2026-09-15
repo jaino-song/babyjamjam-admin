@@ -11,6 +11,7 @@ import {
     DEFAULT_MESSAGE_AUTOMATION_PAST_TRIGGER_CONFIG,
     ContractAutoFinalizeConfig,
     DEFAULT_CONTRACT_AUTO_FINALIZE_CONFIG,
+    normalizeContractAutoFinalizeConfig,
 } from "domain/entities/system-setting.entity";
 import { SystemSettingAuditContext } from "domain/repositories/system-setting.repository.interface";
 import {
@@ -233,7 +234,7 @@ export class SystemSettingService {
         actor?: AdminAuditActor,
     ): Promise<SystemSettingEntity> {
         actor = actor ?? currentAdminAuditActor();
-        const normalized = this.normalizeContractAutoFinalizeConfig(config);
+        const normalized = normalizeContractAutoFinalizeConfig(config);
         const key = this.getContractAutoFinalizeConfigKey(branchId);
         const value = JSON.stringify(normalized);
         const auditContext = this.auditContext(actor, "system_setting.contract_automation.updated", branchId);
@@ -484,26 +485,10 @@ export class SystemSettingService {
     private parseContractAutoFinalizeConfig(value: string | null): ContractAutoFinalizeConfig {
         if (!value) return DEFAULT_CONTRACT_AUTO_FINALIZE_CONFIG;
         try {
-            return this.normalizeContractAutoFinalizeConfig(JSON.parse(value));
+            return normalizeContractAutoFinalizeConfig(JSON.parse(value));
         } catch {
             return DEFAULT_CONTRACT_AUTO_FINALIZE_CONFIG;
         }
-    }
-
-    private normalizeContractAutoFinalizeConfig(config: unknown): ContractAutoFinalizeConfig {
-        if (typeof config !== "object" || config === null) return DEFAULT_CONTRACT_AUTO_FINALIZE_CONFIG;
-        const candidate = config as Partial<ContractAutoFinalizeConfig>;
-        return {
-            enabled: typeof candidate.enabled === "boolean"
-                ? candidate.enabled
-                : DEFAULT_CONTRACT_AUTO_FINALIZE_CONFIG.enabled,
-            graceDays: Number.isInteger(candidate.graceDays)
-                ? Math.min(Math.max(candidate.graceDays as number, 0), 30)
-                : DEFAULT_CONTRACT_AUTO_FINALIZE_CONFIG.graceDays,
-            maxAttempts: Number.isInteger(candidate.maxAttempts)
-                ? Math.min(Math.max(candidate.maxAttempts as number, 1), 10)
-                : DEFAULT_CONTRACT_AUTO_FINALIZE_CONFIG.maxAttempts,
-        };
     }
 
     private getPwaDigestDeliveryKey(deliveryKey: string): string {
