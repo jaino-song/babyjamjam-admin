@@ -634,3 +634,10 @@ TL;DR: 배정(4b-1 백엔드: 역할·자격·동시 변경 코드 전환 / 4b-2
 - 검증(통합 `88bb0b970`): **교훈 — vendor 변경 유닛은 통합에서 먼저 `pnpm install --frozen-lockfile`로 `file:` 복사본을 갱신해야 함**(미갱신 시 type-check 실패·스퓨리어스 test 실패; 갱신 후 backend tc 0, 356/5,065 pass, flake 1회 재발). frontend 238/1,582, mobile 250/1,658, shared 379+86, 게이트·ci 통과.
 - carried(auditor): integration spec이 프로덕션 mapper 미경유(raw 직렬화 단언 — mapper는 코드 검증), eformsign-doc tombstone 2곳 직접 테스트 없음, BFF tombstone 14파일은 Next측 자체 410(정렬 여부 후속 판단), mapper 410 등록코드 테스트 공백.
 - 기록: inventory 컨트롤러 2행 migrated, `eformsign-tombstones` finding 추가. unit 정리. 다음은 **5-3b(eformsign.controller 나머지)**.
+
+**Task 5-3b: eformsign.controller 나머지 전환** (feature, high) — 바인딩 2026-09-16, base `5cd9b1463`
+- 전환(tombstone 제외): raw `HttpException({error})` ×12(L684/701/799/820/855/867/895/955/1048/1058/1069/1093) → 상태별 재사용 코드 매핑(400→`REQUEST_INVALID`/`VALIDATION_FAILED`(본문 파라미터면 pointer), 403→`ACCESS_DENIED`, 404→`RESOURCE_NOT_FOUND`, 502/503→`DEPENDENCY_UNAVAILABLE`/`UPSTREAM_*`), English `BadRequestException` ×5(L87/114/127/133/139) → `VALIDATION_FAILED`/`REQUEST_INVALID` 한국어 문구, `ServiceUnavailableException({...})` ×3(L828/912/972) → `DEPENDENCY_UNAVAILABLE`(503, payload의 소비자 확인 후 최소 보존/제거).
+- 소비자: eformsign-docs BFF/web·모바일 — 문제 passthrough 확인, 필요 시 최소 정렬. `{error}` 문자열을 읽는 소비자는 카탈로그 호환 별칭으로 유지됨.
+- 테스트: 해당 spec들의 raw 단언 갱신 + 신규 커버, red-first.
+- 범위 밖: eformsign-doc.controller(5-3a 완료), envelope(5-4).
+- Dispatch metadata: `Phase: 5-3b` · `Execution: DELEGATE` · `Audit: SOL` · `Agent: worker` · `Model: opencode-go/glm-5.3-flash` · `Paths: backend/interface/controllers/eformsign.controller.ts [tombstone 제외], backend/test/integration/eformsign.controller.integration.spec.ts, 소비자 BFF 확인 시 frontend/mobile eformsign-docs 라우트(최소), docs/error-management.md` · `Depends: Task 5-3a`
