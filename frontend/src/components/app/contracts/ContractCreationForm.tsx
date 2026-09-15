@@ -47,6 +47,7 @@ import { useToast } from "@/hooks/use-toast";
 import { useEnqueueEformsignDocumentCreation } from "@/hooks/useEformsignDocumentJobs";
 import { useGetAuthUser } from "@/hooks/useGetAuthUser";
 import type { EformsignDocumentOption } from "@/lib/eformsign/types";
+import { readHeadlessOutcome } from "@/lib/eformsign/headless-outcome";
 import {
   HeadlessProgressStepper,
   type HeadlessProgressEvent,
@@ -949,7 +950,25 @@ export const ContractCreationForm = ({
               return;
             }
 
-            if (headless.reason === "local_persist_failed" && headless.remoteDocumentId) {
+            // BJJ-319 5-4c: the structured outcome is the primary classification
+            // when the envelope carries it. An UNKNOWN verdict means the provider
+            // send boundary may already be crossed, so the only safe recovery is
+            // the durable 확인 필요 notice — no iframe, no automatic retry. A
+            // PARTIALLY_APPLIED verdict joins the local-persist adopt/check-list
+            // recovery below. Envelopes without the field keep the legacy
+            // reason/fallbackHint branches underneath.
+            const structuredOutcome = readHeadlessOutcome(headless.outcome);
+            if (structuredOutcome === "UNKNOWN") {
+              setAllowIframeFallback(false);
+              setUnverifiedDispatchNotice(
+                "자동 생성 결과를 확인하지 못했습니다. 전자문서 목록에서 생성 여부를 먼저 확인하시고, "
+                + "확인 전에는 새 계약서를 만들지 마세요.",
+              );
+              markCreationProgressFailed();
+              return;
+            }
+
+            if ((headless.reason === "local_persist_failed" || structuredOutcome === "PARTIALLY_APPLIED") && headless.remoteDocumentId) {
               try {
                 const adopted = await eformsignApi.adoptDocument(
                   headless.remoteDocumentId,
@@ -971,6 +990,16 @@ export const ContractCreationForm = ({
                 setSubmitError(getUserErrorMessage("문서는 생성되었으나 등록에 실패했어요. 잠시 후 다시 시도해 주세요."));
                 markCreationProgressFailed();
               }
+              return;
+            }
+            if (structuredOutcome === "PARTIALLY_APPLIED") {
+              // The verdict says the document exists but could not be adopted
+              // here and no remote id was provided to retry the adoption with.
+              // Reuse the existing check-list copy: check the list, do not
+              // re-create the contract.
+              setSubmitError(getUserErrorMessage("문서는 생성·전송되었지만 전자문서와 PDF 동기화가 완료되지 않았습니다. "
+                + "새 계약서를 다시 만들지 말고 잠시 후 전자문서 목록에서 확인해 주세요."));
+              markCreationProgressFailed();
               return;
             }
             if (headless.reason === "remote_unconfirmed" || headless.fallbackHint === "adopt-or-manual" || headless.fallbackHint === "manual_check") {

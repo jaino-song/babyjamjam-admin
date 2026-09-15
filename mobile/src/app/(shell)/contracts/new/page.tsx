@@ -62,6 +62,7 @@ import {
   isValidIframeSuccessResponse,
   type ContractSubmissionAlert,
 } from "./page.helpers";
+import { readHeadlessOutcome } from "../contract-operation-guard";
 import styles from "./page.module.css";
 
 interface ContractDataDto {
@@ -960,11 +961,22 @@ export default function ContractCreationPage() {
         headlessFailureStep = headless.failedStep;
         headlessFallbackHint = headless.fallbackHint;
 
+        // BJJ-319 5-4c: the structured outcome is the primary classification
+        // when the envelope carries it. An UNKNOWN verdict means the provider
+        // send boundary may already be crossed, so the response must surface
+        // the 확인 필요 copy and keep the submission locked — no iframe, no
+        // retry. Envelopes without the field keep the legacy branches below.
+        if (readHeadlessOutcome(headless.outcome) === "UNKNOWN") {
+          setProgressErrorHint(CONTRACT_OUTCOME_COPY.UNKNOWN.message);
+          showSubmissionFailure(headless, "UNKNOWN");
+          return;
+        }
+
         const remoteDocumentId = typeof headless.remoteDocumentId === "string"
           && headless.remoteDocumentId.trim().length > 0
           ? headless.remoteDocumentId
           : null;
-        if (headless.reason === "local_persist_failed" && remoteDocumentId) {
+        if ((headless.reason === "local_persist_failed" || readHeadlessOutcome(headless.outcome) === "PARTIALLY_APPLIED") && remoteDocumentId) {
           try {
             const adopted = await eformsignApi.adoptDocument(remoteDocumentId, finalClientId);
             if (adopted.warnings?.includes("mirror_sync_failed")) {
@@ -991,6 +1003,15 @@ export default function ContractCreationPage() {
             setProgressErrorHint("전자문서 등록 상태를 확인할 수 없어 계약 목록에서 확인해 주세요.");
             showSubmissionFailure(error, "UNKNOWN");
           }
+          return;
+        }
+
+        if (readHeadlessOutcome(headless.outcome) === "PARTIALLY_APPLIED") {
+          // The verdict says the document exists but could not be adopted here
+          // and no remote id was provided to retry the adoption with. Surface
+          // the shared check-list copy and keep the submission locked.
+          setProgressErrorHint(CONTRACT_OUTCOME_COPY.PARTIALLY_APPLIED.message);
+          showSubmissionFailure(headless, "PARTIALLY_APPLIED");
           return;
         }
 

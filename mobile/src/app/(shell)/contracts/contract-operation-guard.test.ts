@@ -12,6 +12,7 @@ import {
   normalizeContractMutationError,
   parseFinalizeHeadlessResult,
   parseReceiptLinkResult,
+  readHeadlessOutcome,
   refreshContractMutationStatus,
   resolveFinalizeDateInput,
   settleContractOperation,
@@ -246,5 +247,62 @@ describe("contract operation guard", () => {
 
     expect(getContractOperationRecord(state, "delete", "doc-1")).toBeUndefined();
     expect(getContractOperationRecord(state, "delete", "doc-2")?.state).toBe("in-flight");
+  });
+});
+
+// BJJ-319 5-4c: the additive envelope `outcome` (5-4a/5-4b) becomes the primary
+// classification wherever the headless response carries it; the legacy
+// reason/fallbackHint branches stay as the fallback for envelopes without it.
+describe("headless envelope outcome classification", () => {
+  it("reads only registered outcomes and treats every other shape as absent", () => {
+    expect(readHeadlessOutcome("NOT_APPLIED")).toBe("NOT_APPLIED");
+    expect(readHeadlessOutcome("FAILED")).toBe("FAILED");
+    expect(readHeadlessOutcome("PARTIALLY_APPLIED")).toBe("PARTIALLY_APPLIED");
+    expect(readHeadlessOutcome("UNKNOWN")).toBe("UNKNOWN");
+    expect(readHeadlessOutcome(undefined)).toBeNull();
+    expect(readHeadlessOutcome(null)).toBeNull();
+    // A legacy reason token is not an outcome and must not be promoted.
+    expect(readHeadlessOutcome("remote_unconfirmed")).toBeNull();
+    expect(readHeadlessOutcome(42)).toBeNull();
+    expect(readHeadlessOutcome({ outcome: "UNKNOWN" })).toBeNull();
+  });
+
+  it("keeps an UNKNOWN finalize verdict locked even when a stale hint offers the iframe", () => {
+    expect(parseFinalizeHeadlessResult({
+      ok: false,
+      reason: "dispatch_uncertain_manual_reconciliation_required",
+      fallbackHint: "iframe",
+      outcome: "UNKNOWN",
+      durationMs: 1200,
+    })).toEqual({ kind: "unknown" });
+  });
+
+  it("keeps the legacy fallbackHint decision when the finalize envelope carries no outcome", () => {
+    expect(parseFinalizeHeadlessResult({ ok: false, fallbackHint: "iframe", durationMs: 10 })).toEqual({
+      kind: "iframe",
+    });
+  });
+
+  it("keeps NOT_APPLIED and FAILED finalize envelopes on the existing fallbackHint branches", () => {
+    // 5-4b maps iframe-capable pre-send failures to NOT_APPLIED — unchanged path.
+    expect(parseFinalizeHeadlessResult({
+      ok: false,
+      fallbackHint: "iframe",
+      outcome: "NOT_APPLIED",
+      durationMs: 10,
+    })).toEqual({ kind: "iframe" });
+    expect(parseFinalizeHeadlessResult({
+      ok: false,
+      fallbackHint: "manual_check",
+      outcome: "NOT_APPLIED",
+      durationMs: 10,
+    })).toEqual({ kind: "unknown" });
+    // Terminal failures (FAILED) keep the manual-check handling.
+    expect(parseFinalizeHeadlessResult({
+      ok: false,
+      fallbackHint: "manual_check",
+      outcome: "FAILED",
+      durationMs: 10,
+    })).toEqual({ kind: "unknown" });
   });
 });
