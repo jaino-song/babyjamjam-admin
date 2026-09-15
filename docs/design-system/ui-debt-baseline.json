@@ -1008,11 +1008,11 @@
     },
     "mobile/src/app/(shell)/messages/new/page.tsx": {
       "ui-architecture/no-page-local-components": [
-        "709:10-709:24|pageLocalComponent"
+        "724:10-724:24|pageLocalComponent"
       ],
       "ui-architecture/no-raw-ui-in-pages": [
-        "1798:27-1803:28|rawUiElement",
-        "2038:23-2043:24|rawUiElement"
+        "1815:27-1820:28|rawUiElement",
+        "2055:23-2060:24|rawUiElement"
       ]
     },
     "mobile/src/app/(shell)/messages/system-templates/[templateKey]/page.tsx": {
