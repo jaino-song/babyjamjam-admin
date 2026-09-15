@@ -233,6 +233,10 @@ describe("catalog coverage", () => {
         "SCHEDULE_DATE_NOT_POSTPONED",
         "REQUEST_STALE",
         "SCHEDULE_CHANGE_UNCOMPUTABLE",
+        // Registered contract-send guard codes (EM-CAT-03). BJJ-319 phase 5-1.
+        "CLIENT_ASSIGNMENT_REQUIRED",
+        "DOCUMENT_PROVIDER_MISMATCH",
+        "CLIENT_SERVICE_TERMINATED",
     ];
 
     it.each(codes)("contains a complete bilingual entry for %s", (code) => {
@@ -330,6 +334,19 @@ describe("catalog coverage", () => {
     ];
 
     it.each(SCHEDULE_CHANGE_STATUS_409_CODES)("registers %s as status 409 with kebab-case type anchor", (code, anchor) => {
+        const entry = PROBLEM_CATALOG[code];
+        expect(entry.status).toBe(409);
+        expect(entry.statuses).toEqual([409]);
+        expect(entry.type).toBe(`https://github.com/jaino-song/babyjamjam-admin/blob/main/docs/error-management.md#${anchor}`);
+    });
+
+    const CONTRACT_SEND_GUARD_STATUS_409_CODES: Array<[ProblemCode, string]> = [
+        ["CLIENT_ASSIGNMENT_REQUIRED", "client-assignment-required"],
+        ["DOCUMENT_PROVIDER_MISMATCH", "document-provider-mismatch"],
+        ["CLIENT_SERVICE_TERMINATED", "client-service-terminated"],
+    ];
+
+    it.each(CONTRACT_SEND_GUARD_STATUS_409_CODES)("registers %s as status 409 with kebab-case type anchor", (code, anchor) => {
         const entry = PROBLEM_CATALOG[code];
         expect(entry.status).toBe(409);
         expect(entry.statuses).toEqual([409]);

@@ -1,4 +1,6 @@
-import { Inject, Injectable, Logger, Optional } from "@nestjs/common";
+import { HttpException, Inject, Injectable, Logger, Optional } from "@nestjs/common";
+import { PROBLEM_CATALOG } from "@babyjamjam/shared/errors/problem-details";
+import type { ProblemCode } from "@babyjamjam/shared/errors/problem-details";
 import { createHash } from "node:crypto";
 import { ContractDataDto } from "application/dto/contract.dto";
 import { EformsignService } from "application/services/eformsign.service";
@@ -40,6 +42,23 @@ const HEADLESS_CREATE_RECONCILIATION_DEADLINE_MS = 130_000;
 const CREATED_DOCUMENT_DETAIL_READ_TIMEOUT_MS = 5_000;
 
 class CreatedDocumentReconciliationDeadlineError extends Error {}
+
+const REGISTERED_PROBLEM_CODES: ReadonlySet<string> = new Set(Object.keys(PROBLEM_CATALOG));
+
+/**
+ * Guard rejections arrive as registered problem bodies; their public code is
+ * the stable dispatch reason the headless UI maps to its own copy. Everything
+ * else keeps the sanitized error message.
+ */
+function registeredProblemCode(error: unknown): ProblemCode | undefined {
+    if (!(error instanceof HttpException)) return undefined;
+    const response = error.getResponse();
+    if (typeof response !== "object" || response === null) return undefined;
+    const code = (response as { code?: unknown }).code;
+    return typeof code === "string" && REGISTERED_PROBLEM_CODES.has(code)
+        ? code as ProblemCode
+        : undefined;
+}
 
 function invalidContractPhoneField(contractData: ContractDataDto): string | null {
     const phoneFields: Array<[string, unknown]> = [
@@ -444,7 +463,8 @@ export class DispatchDocumentHeadlessUsecase {
                 },
             );
         } catch (error) {
-            const reason = sanitizeEformsignErrorMessage(error || "unknown headless dispatch error");
+            const reason = registeredProblemCode(error)
+                ?? sanitizeEformsignErrorMessage(error || "unknown headless dispatch error");
             if (dispatchIntent) {
                 if (latestProgressStep === "creating" || latestProgressStep === "sent") {
                     await this.dispatchBoundary?.markUncertain(dispatchIntent, reason).catch((persistError) => {

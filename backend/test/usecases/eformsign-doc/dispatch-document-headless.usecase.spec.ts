@@ -1,4 +1,6 @@
+import { ConflictException } from "@nestjs/common";
 import { DispatchDocumentHeadlessUsecase } from "application/usecases/eformsign-doc/dispatch-document-headless.usecase";
+import { codeOnlyProblemBody } from "application/utils/problem-bodies";
 import { EformsignOperationAlreadyRunningError } from "infrastructure/locking/eformsign-operation-lock.service";
 
 const TEST_PRINCIPAL = {
@@ -264,12 +266,13 @@ describe("DispatchDocumentHeadlessUsecase", () => {
         );
     });
 
-    it("stops before eformsign authentication when the client assignment is missing", async () => {
+    it("surfaces a registered guard problem code as the dispatch reason", async () => {
         const getAccessTokenUsecase = { execute: jest.fn() };
         const headlessService = { dispatchCreation: jest.fn() };
+        const progressService = { emit: jest.fn() };
         const assignmentGuard = {
             assertLiveAssignedProvider: jest.fn().mockRejectedValue(
-                new Error("고객의 제공인력 배정을 먼저 저장해 주세요."),
+                new ConflictException(codeOnlyProblemBody("CLIENT_ASSIGNMENT_REQUIRED")),
             ),
         };
         const usecase = new DispatchDocumentHeadlessUsecase(
@@ -279,7 +282,7 @@ describe("DispatchDocumentHeadlessUsecase", () => {
             createCredentialBoundary() as never,
             { execute: jest.fn() } as never,
             { execute: jest.fn() } as never,
-            { emit: jest.fn() } as never,
+            progressService as never,
             { findById: jest.fn() } as never,
             assignmentGuard as never,
             { findByClientId: jest.fn().mockResolvedValue([]) } as never,
@@ -288,12 +291,14 @@ describe("DispatchDocumentHeadlessUsecase", () => {
 
         await expect(usecase.execute("branch-1", {
             clientId: 55,
+            progressId: "progress-guard",
             contractData: {
                 caretaker1Contact: "010-1111-2222",
             } as never,
         }, TEST_PRINCIPAL)).resolves.toEqual(expect.objectContaining({
             ok: false,
-            reason: "고객의 제공인력 배정을 먼저 저장해 주세요.",
+            reason: "CLIENT_ASSIGNMENT_REQUIRED",
+            fallbackHint: "iframe",
         }));
 
         expect(assignmentGuard.assertLiveAssignedProvider).toHaveBeenCalledWith(
@@ -303,6 +308,47 @@ describe("DispatchDocumentHeadlessUsecase", () => {
         );
         expect(getAccessTokenUsecase.execute).not.toHaveBeenCalled();
         expect(headlessService.dispatchCreation).not.toHaveBeenCalled();
+        expect(progressService.emit).toHaveBeenCalledWith(
+            "progress-guard",
+            "failed",
+            "CLIENT_ASSIGNMENT_REQUIRED",
+            undefined,
+        );
+    });
+
+    it("keeps the sanitized message as the reason for errors without a registered problem code", async () => {
+        const progressService = { emit: jest.fn() };
+        const usecase = new DispatchDocumentHeadlessUsecase(
+            { generateDocumentOptions: jest.fn() } as never,
+            { dispatchCreation: jest.fn() } as never,
+            { findByArea: jest.fn() } as never,
+            createCredentialBoundary() as never,
+            { execute: jest.fn() } as never,
+            { execute: jest.fn() } as never,
+            progressService as never,
+            { findById: jest.fn() } as never,
+            { assertLiveAssignedProvider: jest.fn().mockRejectedValue(new Error("db connection lost")) } as never,
+            { findByClientId: jest.fn().mockResolvedValue([]) } as never,
+            { execute: jest.fn().mockResolvedValue([]) } as never,
+        );
+
+        await expect(usecase.execute("branch-1", {
+            clientId: 55,
+            progressId: "progress-fallback",
+            contractData: {
+                caretaker1Contact: "010-1111-2222",
+            } as never,
+        }, TEST_PRINCIPAL)).resolves.toEqual(expect.objectContaining({
+            ok: false,
+            reason: "db connection lost",
+        }));
+
+        expect(progressService.emit).toHaveBeenCalledWith(
+            "progress-fallback",
+            "failed",
+            "db connection lost",
+            undefined,
+        );
     });
 
     it("returns the remote document id when local persistence fails", async () => {

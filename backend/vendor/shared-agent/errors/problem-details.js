@@ -70,6 +70,10 @@ const PROBLEM_CODES = [
     "SCHEDULE_DATE_NOT_POSTPONED",
     "REQUEST_STALE",
     "SCHEDULE_CHANGE_UNCOMPUTABLE",
+    // Registered contract-send guard codes (EM-CAT-03). BJJ-319 phase 5-1.
+    "CLIENT_ASSIGNMENT_REQUIRED",
+    "DOCUMENT_PROVIDER_MISMATCH",
+    "CLIENT_SERVICE_TERMINATED",
 ];
 const PROBLEM_ERROR_CODES = [
     "REQUIRED",
@@ -609,6 +613,40 @@ const PROBLEM_DEFINITIONS = {
         detail: {
             "ko-KR": "고객 회기 정보나 배정 기간이 없어 일정을 계산할 수 없어요. 정보를 확인한 뒤 다시 시도해 주세요.",
             "en-US": "The client's session count or assignment period is missing, so the schedule could not be calculated. Check the information and try again.",
+        },
+    },
+    // Registered contract-send guard codes (EM-CAT-03). BJJ-319 phase 5-1.
+    CLIENT_ASSIGNMENT_REQUIRED: {
+        status: 409,
+        title: {
+            "ko-KR": "고객 배정이 필요해요",
+            "en-US": "Client assignment required",
+        },
+        detail: {
+            "ko-KR": "고객의 제공인력 배정을 먼저 저장해 주세요.",
+            "en-US": "Save the client's provider assignment first.",
+        },
+    },
+    DOCUMENT_PROVIDER_MISMATCH: {
+        status: 409,
+        title: {
+            "ko-KR": "제공인력 정보가 일치하지 않아요",
+            "en-US": "Provider information does not match",
+        },
+        detail: {
+            "ko-KR": "전자문서의 제공인력과 고객 배정 정보가 일치하지 않아요.",
+            "en-US": "The document provider does not match the client's saved assignment.",
+        },
+    },
+    CLIENT_SERVICE_TERMINATED: {
+        status: 409,
+        title: {
+            "ko-KR": "해지된 고객이에요",
+            "en-US": "This client's service has ended",
+        },
+        detail: {
+            "ko-KR": "해지된 고객에게는 전자문서를 발송할 수 없어요.",
+            "en-US": "Documents cannot be sent to a client whose service has ended.",
         },
     },
 };

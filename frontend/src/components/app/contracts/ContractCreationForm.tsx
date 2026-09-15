@@ -271,6 +271,15 @@ function getSafeHeadlessFailureMessage(reason: string | undefined): string {
   if (!reason) {
     return "백엔드 자동 처리에 실패했어요. 재시도하거나 수동 입력을 사용해 주세요.";
   }
+  if (reason === "CLIENT_ASSIGNMENT_REQUIRED") {
+    return "고객의 제공인력 배정을 먼저 저장한 뒤 다시 시도해 주세요.";
+  }
+  if (reason === "DOCUMENT_PROVIDER_MISMATCH") {
+    return "전자문서의 제공인력과 고객 배정 정보가 일치하지 않아요. 배정을 확인해 주세요.";
+  }
+  if (reason === "CLIENT_SERVICE_TERMINATED") {
+    return "해지된 고객에게는 전자문서를 발송할 수 없어요.";
+  }
   if (/timed out|timeout/i.test(reason)) {
     return "백엔드 자동 처리 시간이 초과되었습니다. 재시도하거나 수동 입력을 사용해 주세요.";
   }

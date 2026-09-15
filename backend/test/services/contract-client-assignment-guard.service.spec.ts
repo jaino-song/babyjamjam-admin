@@ -1,9 +1,23 @@
-import { BadRequestException } from "@nestjs/common";
+import { ConflictException } from "@nestjs/common";
 import { ContractClientAssignmentGuardService } from "application/services/contract-client-assignment-guard.service";
 import { PrismaService } from "infrastructure/database/prisma.service";
 
 describe("ContractClientAssignmentGuardService", () => {
     const branchId = "branch-1";
+
+    // Guard rejections are state conflicts: registered 409 problem bodies whose
+    // code is the stable identifier the dispatch reason and UI copy map from.
+    const expectGuardConflict = async (promise: Promise<unknown>, code: string): Promise<void> => {
+        const error: unknown = await promise.then(
+            () => { throw new Error("expected the guard to reject"); },
+            (caught: unknown) => caught,
+        );
+        expect(error).toBeInstanceOf(ConflictException);
+        const httpError = error as ConflictException;
+        expect(httpError.getStatus()).toBe(409);
+        expect(httpError.getResponse()).toMatchObject({ code, outcome: "NOT_APPLIED" });
+    };
+
     const createPrisma = () => ({
         employee_schedule: {
             findFirst: jest.fn(),
@@ -18,9 +32,10 @@ describe("ContractClientAssignmentGuardService", () => {
         prisma.employee_schedule.findFirst.mockResolvedValue(null);
         const service = new ContractClientAssignmentGuardService(prisma as unknown as PrismaService);
 
-        await expect(
+        await expectGuardConflict(
             service.assertAssignedProvider(branchId, 55, "010-1111-2222"),
-        ).rejects.toBeInstanceOf(BadRequestException);
+            "CLIENT_ASSIGNMENT_REQUIRED",
+        );
 
         expect(prisma.employee_schedule.findFirst).toHaveBeenCalledWith({
             where: { clientId: 55, branchId, replaced: false },
@@ -42,9 +57,10 @@ describe("ContractClientAssignmentGuardService", () => {
         });
         const service = new ContractClientAssignmentGuardService(prisma as unknown as PrismaService);
 
-        await expect(
+        await expectGuardConflict(
             service.assertAssignedProvider(branchId, 55, "010-1111-2222"),
-        ).rejects.toBeInstanceOf(BadRequestException);
+            "DOCUMENT_PROVIDER_MISMATCH",
+        );
     });
 
     it("accepts formatting differences for the assigned provider phone", async () => {
@@ -120,7 +136,10 @@ describe("ContractClientAssignmentGuardService", () => {
             });
             const service = new ContractClientAssignmentGuardService(prisma as unknown as PrismaService);
 
-            await expect(service.assertLiveAssignedClient(branchId, 55)).rejects.toThrow("해지된 고객에게는 전자문서를 발송할 수 없습니다.");
+            await expectGuardConflict(
+                service.assertLiveAssignedClient(branchId, 55),
+                "CLIENT_SERVICE_TERMINATED",
+            );
         });
 
         it("reports termination rather than a provider mismatch, even when the provider matches", async () => {
@@ -132,9 +151,10 @@ describe("ContractClientAssignmentGuardService", () => {
             });
             const service = new ContractClientAssignmentGuardService(prisma as unknown as PrismaService);
 
-            await expect(
+            await expectGuardConflict(
                 service.assertLiveAssignedProvider(branchId, 55, "010-1111-2222"),
-            ).rejects.toThrow("해지된 고객에게는 전자문서를 발송할 수 없습니다.");
+                "CLIENT_SERVICE_TERMINATED",
+            );
         });
 
         it("refuses a client whose status was set to 중단 without the termination flow", async () => {
@@ -149,7 +169,10 @@ describe("ContractClientAssignmentGuardService", () => {
             prisma.client.findFirst.mockResolvedValue({ serviceStatus: "terminated" });
             const service = new ContractClientAssignmentGuardService(prisma as unknown as PrismaService);
 
-            await expect(service.assertLiveAssignedClient(branchId, 55)).rejects.toThrow("해지된 고객에게는 전자문서를 발송할 수 없습니다.");
+            await expectGuardConflict(
+                service.assertLiveAssignedClient(branchId, 55),
+                "CLIENT_SERVICE_TERMINATED",
+            );
             expect(prisma.client.findFirst).toHaveBeenCalledWith({
                 where: { id: 55, branchId },
                 select: { serviceStatus: true },
@@ -161,7 +184,10 @@ describe("ContractClientAssignmentGuardService", () => {
             prisma.employee_schedule.findFirst.mockResolvedValue(null);
             const service = new ContractClientAssignmentGuardService(prisma as unknown as PrismaService);
 
-            await expect(service.assertLiveAssignedClient(branchId, 55)).rejects.toThrow("고객의 제공인력 배정을 먼저 저장해 주세요.");
+            await expectGuardConflict(
+                service.assertLiveAssignedClient(branchId, 55),
+                "CLIENT_ASSIGNMENT_REQUIRED",
+            );
         });
     });
 });
