@@ -656,3 +656,9 @@ TL;DR: 배정(4b-1 백엔드: 역할·자격·동시 변경 코드 전환 / 4b-2
 - dispatch 11개 실패 분기에 `code`/`outcome`/`recovery` 추가. reason 토큰을 SCREAMING 코드로 등록(의미 1:1, reason은 호환 별칭으로 유지), outcome 매핑: 사전검증/중복/락/진행중 → NOT_APPLIED, already_accepted/uncertain/remote_unconfirmed/terminal → UNKNOWN+CHECK_STATUS, local_persist_failed → PARTIALLY_APPLIED+CHECK_STATUS, iframe 가능한 pre-send 실패 → NOT_APPLIED(+fallbackHint 유지).
 - must-NOT-change: iframe 게이트·duplicate force 재시도·local_persist adopt·fallbackHint/reason/문서 ID 필드(바이트 동일), worker `isAmbiguous` 입력.
 - Dispatch metadata: `Phase: 5-4a` · `Execution: DELEGATE` · `Audit: SOL` · `Agent: worker` · `Model: opencode-go/glm-5.3-flash` · `Paths: packages/shared/src/errors/problem-details.ts(+test), packages/shared/src/types/eformsign.ts, backend/application/usecases/eformsign-doc/dispatch-document-headless.usecase.ts(+spec), backend/interface/dto/eformsign-doc.dto.ts, backend/interface/controllers/eformsign-doc.controller.ts [dispatch 응답만], backend/vendor/shared-agent/**, docs/error-management.md, worker spec 단언` · `Depends: Task 5-3b`
+
+**Task 5-4a 실행 결과 (2026-09-16):** worker unit `a0457cc77`(base `5c972b86f`) → 통합 `75bd0816f`(12 files, +809/−7). dispatch 실패 11분기에 `code/outcome/recovery` 가산(11코드 등록), legacy 필드 바이트 동일(기계 감사: 제거 7줄 전부 슈퍼셋/리팩터). worker `isAmbiguous` 불변(가드 테스트 추가), 컨트롤러 envelope 스펙 신규. red-first 14F/22F/1F.
+- 검증(통합 `75bd0816f`): backend 357/5,082, frontend 238/1,582, mobile 250/1,658, shared 401+86, typecheck 0, 게이트·ci. 감사 **SHIP/HIGH**.
+- **flaky 정체 규명:** `receipt-pdf-verifier.service.spec.ts`(pdfjs capability) — base에서도 실패하는 기존 이슈(스태시 검증), 오늘의 flake 전부 이것으로 추정.
+- carried(auditor): catch의 SCREAMING 코드 비대칭(도달 불가·Phase 6 연계), post-send catch 방어(계획 명시), inventory 갱신(본 기록), 소비자 미채택(BFF passthrough라 백엔드 변경 불요), HTTP status 미전환(201 유지 — Phase 6 판단).
+- 기록: inventory 컨트롤러/dispatch 행 노트, `dispatch-envelope-contract` finding. unit 정리. 다음은 **5-4b(finalize envelope)** → 5-4c(소비자) → 5-4d(creation/AI) → Phase 6.
