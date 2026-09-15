@@ -437,6 +437,45 @@ describe("TriggerRulesManager", () => {
     expect(screen.getByRole("switch", { name: "제공기록지 작성 링크 활성화" })).toBeInTheDocument();
   });
 
+  it("excludes manual-only SERVICE_END_NOTICE from create and edit template pickers", () => {
+    mockSettingsQueries({ providerEnabled: true, senderApproved: true });
+    mockedUseMessageTriggerTemplates.mockReturnValue({
+      data: [
+        {
+          key: "SERVICE_INFO",
+          name: "서비스 안내",
+          description: "서비스 시작 전에 안내합니다.",
+          allowedEventTypes: ["SERVICE_START"],
+          allowedRecipientTypes: ["CLIENT"],
+          requiredVariables: [],
+          providers: { sms: { templateKey: "SERVICE_INFO" } },
+        },
+        {
+          key: "SERVICE_END_NOTICE",
+          name: "수동 영수증 안내",
+          description: "수동 발송으로만 사용하는 영수증 안내입니다.",
+          allowedEventTypes: ["SERVICE_START"],
+          allowedRecipientTypes: ["CLIENT"],
+          requiredVariables: [],
+          providers: { sms: { templateKey: "SERVICE_END_NOTICE" } },
+        },
+      ],
+    } as unknown as ReturnType<typeof useMessageTriggerTemplates>);
+
+    render(<TriggerRulesManager dataComponent="desktop_messages_sections_section-content_triggers-section_trigger-rules" />);
+
+    fireEvent.click(screen.getByRole("button", { name: "새 규칙" }));
+    const createTemplateTrigger = screen.getByLabelText("발송 템플릿");
+    fireEvent.click(createTemplateTrigger);
+    expect(screen.queryByRole("option", { name: "수동 영수증 안내" })).not.toBeInTheDocument();
+    fireEvent.keyDown(createTemplateTrigger, { key: "Escape" });
+
+    fireEvent.click(screen.getByText("서비스 시작 안내"));
+    const editTemplateTrigger = screen.getByLabelText("발송 템플릿");
+    fireEvent.click(editTemplateTrigger);
+    expect(screen.queryByRole("option", { name: "수동 영수증 안내" })).not.toBeInTheDocument();
+  });
+
   it("shows the client registration greeting condition on the existing CLIENT_GREETING rule", () => {
     mockSettingsQueries({
       providerEnabled: true,

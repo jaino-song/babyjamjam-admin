@@ -376,22 +376,23 @@ export function TriggerRulesManager({
   const selectedSystemTemplateKey = SMS_TRIGGER_TO_SYSTEM_TEMPLATE[formState.templateKey] ?? "";
   const { data: selectedSystemTemplate } = useSystemTemplate(selectedSystemTemplateKey);
 
-  const channelTemplates = useMemo(
-    () => getChannelTemplates(templateQuery.data ?? [], channel),
+  const automaticChannelTemplates = useMemo(
+    () => getChannelTemplates(templateQuery.data ?? [], channel)
+      .filter((template) => template.key !== MANUAL_ONLY_TRIGGER_TEMPLATE_KEY),
     [channel, templateQuery.data],
   );
 
   const eventOptions = useMemo(() => {
-    const allowedEvents = new Set(deriveEventTypesFromTemplates(channelTemplates));
+    const allowedEvents = new Set(deriveEventTypesFromTemplates(automaticChannelTemplates));
     return EVENT_OPTIONS.filter((option) => allowedEvents.has(option.value));
-  }, [channelTemplates]);
+  }, [automaticChannelTemplates]);
 
   const getRecipientTypesForEvent = useCallback(
     (eventType: TriggerEventType): TriggerRecipientType[] => {
-      const allowed = new Set(deriveRecipientTypesFromTemplates(channelTemplates, eventType));
+      const allowed = new Set(deriveRecipientTypesFromTemplates(automaticChannelTemplates, eventType));
       return RECIPIENT_TYPE_ORDER.filter((recipientType) => allowed.has(recipientType));
     },
-    [channelTemplates],
+    [automaticChannelTemplates],
   );
 
   const recipientOptions = useMemo(() => {
@@ -430,9 +431,9 @@ export function TriggerRulesManager({
         },
       }];
     }
-    return deriveAvailableTemplates(channelTemplates, formState.eventType, formState.recipientType);
+    return deriveAvailableTemplates(automaticChannelTemplates, formState.eventType, formState.recipientType);
   }, [
-    channelTemplates,
+    automaticChannelTemplates,
     formState.eventType,
     formState.recipientType,
     isSelectedDedicatedRule,
