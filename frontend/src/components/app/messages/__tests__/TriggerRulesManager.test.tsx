@@ -9,8 +9,9 @@ import {
   useDeleteMessageTriggerRule,
   useUpdateMessageTriggerRule,
   useUpdateMessageTriggerRuleBranchActivation,
+  useActivateMessageTriggerRuleWithParent,
 } from "@/features/message-triggers/hooks/use-message-triggers";
-import { settingsApi } from "@/services/api";
+import { settingsApi, type MessageAutomationPoliciesResponse } from "@/services/api";
 
 jest.mock("@tanstack/react-query", () => ({
   useMutation: jest.fn(),
@@ -21,6 +22,7 @@ jest.mock("@tanstack/react-query", () => ({
 jest.mock("@/services/api", () => ({
   settingsApi: {
     getMessageSenderApproval: jest.fn(),
+    getMessageAutomationPolicies: jest.fn(),
     getClientRegistrationPolicy: jest.fn(),
     updateClientRegistrationPolicy: jest.fn(),
   },
@@ -84,6 +86,7 @@ jest.mock("@/features/message-triggers/hooks/use-message-triggers", () => ({
   useUpdateMessageTriggerRule: jest.fn(),
   useDeleteMessageTriggerRule: jest.fn(),
   useUpdateMessageTriggerRuleBranchActivation: jest.fn(),
+  useActivateMessageTriggerRuleWithParent: jest.fn(),
 }));
 
 const mockedUseQuery = jest.mocked(useQuery);
@@ -95,6 +98,7 @@ const mockedUseCreateMessageTriggerRule = jest.mocked(useCreateMessageTriggerRul
 const mockedUseUpdateMessageTriggerRule = jest.mocked(useUpdateMessageTriggerRule);
 const mockedUseDeleteMessageTriggerRule = jest.mocked(useDeleteMessageTriggerRule);
 const mockedUseUpdateMessageTriggerRuleBranchActivation = jest.mocked(useUpdateMessageTriggerRuleBranchActivation);
+const mockedUseActivateMessageTriggerRuleWithParent = jest.mocked(useActivateMessageTriggerRuleWithParent);
 const mockedSettingsApi = jest.mocked(settingsApi);
 
 const mockInvalidateQueries = jest.fn();
@@ -116,6 +120,10 @@ interface SettingsQueryState {
   };
   clientRegistrationPolicyLoading?: boolean;
   clientRegistrationPolicyError?: boolean;
+  messageAutomationPolicies?: MessageAutomationPoliciesResponse;
+  messageAutomationPoliciesLoading?: boolean;
+  messageAutomationPoliciesError?: boolean;
+  messageAutomationPoliciesRefetch?: jest.Mock;
   systemTemplate?: {
     id: string;
     templateKey: string;
@@ -123,6 +131,22 @@ interface SettingsQueryState {
     customVariables: Array<{ key: string; label: string; required: boolean }>;
     requiredVariables: Array<{ key: string; label: string; required: boolean; type: string }>;
     updatedAt: string;
+  };
+}
+
+function automationPoliciesWithTriggerDispatch(active: boolean): MessageAutomationPoliciesResponse {
+  return {
+    canManageActivation: true,
+    pastTriggerConfig: { sendIntervalMinutes: 1, ruleOrder: [] },
+    policies: [{
+      id: "trigger-dispatch",
+      title: "메시지 자동 발송",
+      description: "지점의 메시지를 자동으로 발송합니다.",
+      active,
+      requiresApproval: true,
+      rows: [],
+    }],
+    policyActivations: { "trigger-dispatch": active },
   };
 }
 
@@ -142,6 +166,22 @@ function mockSettingsQueries({
   },
   clientRegistrationPolicyLoading = false,
   clientRegistrationPolicyError = false,
+  messageAutomationPolicies = {
+    canManageActivation: true,
+    pastTriggerConfig: { sendIntervalMinutes: 1, ruleOrder: [] },
+    policies: [{
+      id: "trigger-dispatch",
+      title: "메시지 자동 발송",
+      description: "지점의 메시지를 자동으로 발송합니다.",
+      active: true,
+      requiresApproval: true,
+      rows: [],
+    }],
+    policyActivations: { "trigger-dispatch": true },
+  },
+  messageAutomationPoliciesLoading = false,
+  messageAutomationPoliciesError = false,
+  messageAutomationPoliciesRefetch = jest.fn(),
   systemTemplate,
 }: SettingsQueryState = {}) {
   mockedUseQuery.mockImplementation((options: QueryOptions) => {
@@ -165,6 +205,17 @@ function mockSettingsQueries({
         isLoading: clientRegistrationPolicyLoading,
         isError: clientRegistrationPolicyError,
         refetch: mockRefetchClientRegistrationPolicy,
+      } as unknown as ReturnType<typeof useQuery>;
+    }
+
+    if (queryKey.includes("message-automation-policies")) {
+      return {
+        data: messageAutomationPoliciesLoading || messageAutomationPoliciesError
+          ? undefined
+          : messageAutomationPolicies,
+        isLoading: messageAutomationPoliciesLoading,
+        isError: messageAutomationPoliciesError,
+        refetch: messageAutomationPoliciesRefetch,
       } as unknown as ReturnType<typeof useQuery>;
     }
 
@@ -235,6 +286,7 @@ beforeEach(() => {
       },
     ],
     isLoading: false,
+    refetch: jest.fn(),
   } as unknown as ReturnType<typeof useMessageTriggerRules>);
 
   mockedUseMessageTriggerTemplates.mockReturnValue({
@@ -272,6 +324,10 @@ beforeEach(() => {
     isPending: false,
     mutateAsync: jest.fn(),
   } as unknown as ReturnType<typeof useUpdateMessageTriggerRuleBranchActivation>);
+  mockedUseActivateMessageTriggerRuleWithParent.mockReturnValue({
+    isPending: false,
+    mutateAsync: jest.fn(),
+  } as unknown as ReturnType<typeof useActivateMessageTriggerRuleWithParent>);
 });
 
 describe("TriggerRulesManager", () => {
@@ -353,6 +409,7 @@ describe("TriggerRulesManager", () => {
         },
       ],
       isLoading: false,
+      refetch: jest.fn(),
     } as unknown as ReturnType<typeof useMessageTriggerRules>);
     mockedUseMessageTriggerTemplates.mockReturnValue({
       data: [
@@ -428,6 +485,7 @@ describe("TriggerRulesManager", () => {
         },
       ],
       isLoading: false,
+      refetch: jest.fn(),
     } as unknown as ReturnType<typeof useMessageTriggerRules>);
 
     render(<TriggerRulesManager dataComponent="desktop_messages_sections_section-content_triggers-section_trigger-rules" />);
@@ -500,6 +558,7 @@ describe("TriggerRulesManager", () => {
         updatedAt: "2026-03-01T00:00:00.000Z",
       }],
       isLoading: false,
+      refetch: jest.fn(),
     } as unknown as ReturnType<typeof useMessageTriggerRules>);
     mockedUseMessageTriggerTemplates.mockReturnValue({
       data: [{
@@ -548,6 +607,7 @@ describe("TriggerRulesManager", () => {
         updatedAt: "2026-03-01T00:00:00.000Z",
       }],
       isLoading: false,
+      refetch: jest.fn(),
     } as unknown as ReturnType<typeof useMessageTriggerRules>);
     mockedUseMessageTriggerTemplates.mockReturnValue({
       data: [{
@@ -603,6 +663,7 @@ describe("TriggerRulesManager", () => {
         updatedAt: "2026-03-01T00:00:00.000Z",
       }],
       isLoading: false,
+      refetch: jest.fn(),
     } as unknown as ReturnType<typeof useMessageTriggerRules>);
     mockedUseMessageTriggerTemplates.mockReturnValue({
       data: [{
@@ -649,6 +710,7 @@ describe("TriggerRulesManager", () => {
         updatedAt: "2026-03-01T00:00:00.000Z",
       }],
       isLoading: false,
+      refetch: jest.fn(),
     } as unknown as ReturnType<typeof useMessageTriggerRules>);
     mockedUseMessageTriggerTemplates.mockReturnValue({
       data: [{
@@ -720,6 +782,7 @@ describe("TriggerRulesManager", () => {
         },
       ],
       isLoading: false,
+      refetch: jest.fn(),
     } as unknown as ReturnType<typeof useMessageTriggerRules>);
     mockedUseMessageTriggerTemplates.mockReturnValue({
       data: [
@@ -788,6 +851,7 @@ describe("TriggerRulesManager", () => {
         },
       ],
       isLoading: false,
+      refetch: jest.fn(),
     } as unknown as ReturnType<typeof useMessageTriggerRules>);
 
     const branchActivationMutation = jest.fn().mockResolvedValue(undefined);
@@ -835,6 +899,7 @@ describe("TriggerRulesManager", () => {
         updatedAt: "2026-09-01T00:00:00.000Z",
       }],
       isLoading: false,
+      refetch: jest.fn(),
     } as unknown as ReturnType<typeof useMessageTriggerRules>);
 
     render(<TriggerRulesManager dataComponent="desktop_messages_sections_section-content_triggers-section_trigger-rules" />);
@@ -960,5 +1025,381 @@ describe("TriggerRulesManager", () => {
 
     expect(await screen.findByText(/자동 입력 출처가 없는 필수 변수/)).toHaveTextContent("예약번호");
     expect(screen.getByRole("button", { name: "저장" })).toBeDisabled();
+  });
+
+  it("opens the parent confirmation for an inactive child while parent is off, and cancel performs no write", () => {
+    mockSettingsQueries({
+      senderApproved: true,
+      messageAutomationPolicies: automationPoliciesWithTriggerDispatch(false),
+    });
+    const inactiveRule = {
+      id: "rule-off",
+      branchId: "org-1",
+      name: "꺼진 서비스 안내",
+      isActive: false,
+      eventType: "SERVICE_START" as const,
+      offsetType: "BEFORE_DAYS" as const,
+      offsetDays: 3,
+      recipientType: "CLIENT" as const,
+      templateKey: "SERVICE_INFO" as const,
+      createdAt: "2026-03-01T00:00:00.000Z",
+      updatedAt: "2026-03-01T00:00:00.000Z",
+    };
+    const parentMutation = jest.fn();
+    mockedUseMessageTriggerRules.mockReturnValue({
+      data: [inactiveRule],
+      isLoading: false,
+      refetch: jest.fn(),
+    } as unknown as ReturnType<typeof useMessageTriggerRules>);
+    mockedUseActivateMessageTriggerRuleWithParent.mockReturnValue({
+      isPending: false,
+      mutateAsync: parentMutation,
+    } as unknown as ReturnType<typeof useActivateMessageTriggerRuleWithParent>);
+
+    render(<TriggerRulesManager dataComponent="desktop_messages_sections_section-content_triggers-section_trigger-rules" />);
+    fireEvent.click(screen.getByRole("button", { name: "비활성화" }));
+    fireEvent.click(screen.getByRole("switch", { name: "꺼진 서비스 안내 활성화" }));
+
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+    expect(screen.getByText("이 지점의 메시지 자동 발송을 켤까요?")).toBeInTheDocument();
+    expect(screen.getByText(/메시지 자동 발송과 선택한 “꺼진 서비스 안내” 규칙을 함께 켭니다/)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "취소" }));
+    expect(parentMutation).not.toHaveBeenCalled();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+
+  it("uses exactly one aggregate activation call and follows the refreshed server state", async () => {
+    const inactiveRule = {
+      id: "rule-off",
+      branchId: "org-1",
+      name: "꺼진 서비스 안내",
+      isActive: false,
+      eventType: "SERVICE_START" as const,
+      offsetType: "BEFORE_DAYS" as const,
+      offsetDays: 3,
+      recipientType: "CLIENT" as const,
+      templateKey: "SERVICE_INFO" as const,
+      createdAt: "2026-03-01T00:00:00.000Z",
+      updatedAt: "2026-03-01T00:00:00.000Z",
+    };
+    const activatedRule = { ...inactiveRule, isActive: true };
+    const parentRefetch = jest.fn().mockResolvedValue({
+      data: automationPoliciesWithTriggerDispatch(true),
+    });
+    const rulesRefetch = jest.fn().mockResolvedValue({ data: [activatedRule] });
+    mockSettingsQueries({
+      senderApproved: true,
+      messageAutomationPolicies: automationPoliciesWithTriggerDispatch(false),
+      messageAutomationPoliciesRefetch: parentRefetch,
+    });
+    mockedUseMessageTriggerRules.mockReturnValue({
+      data: [inactiveRule],
+      isLoading: false,
+      refetch: rulesRefetch,
+    } as unknown as ReturnType<typeof useMessageTriggerRules>);
+    const parentMutation = jest.fn().mockResolvedValue(activatedRule);
+    const ordinaryMutation = jest.fn();
+    const ordinaryBranchMutation = jest.fn();
+    mockedUseActivateMessageTriggerRuleWithParent.mockReturnValue({
+      isPending: false,
+      mutateAsync: parentMutation,
+    } as unknown as ReturnType<typeof useActivateMessageTriggerRuleWithParent>);
+    mockedUseUpdateMessageTriggerRule.mockReturnValue({
+      isPending: false,
+      mutateAsync: ordinaryMutation,
+    } as unknown as ReturnType<typeof useUpdateMessageTriggerRule>);
+    mockedUseUpdateMessageTriggerRuleBranchActivation.mockReturnValue({
+      isPending: false,
+      mutateAsync: ordinaryBranchMutation,
+    } as unknown as ReturnType<typeof useUpdateMessageTriggerRuleBranchActivation>);
+
+    render(<TriggerRulesManager dataComponent="desktop_messages_sections_section-content_triggers-section_trigger-rules" />);
+    fireEvent.click(screen.getByRole("button", { name: "비활성화" }));
+    fireEvent.click(screen.getByRole("switch", { name: "꺼진 서비스 안내 활성화" }));
+    fireEvent.click(screen.getByRole("button", { name: "확인" }));
+
+    await waitFor(() => expect(parentMutation).toHaveBeenCalledTimes(1));
+    expect(parentMutation).toHaveBeenCalledWith("rule-off");
+    expect(ordinaryMutation).not.toHaveBeenCalled();
+    expect(ordinaryBranchMutation).not.toHaveBeenCalled();
+    expect(rulesRefetch).toHaveBeenCalledTimes(1);
+    expect(parentRefetch).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    expect(mockInvalidateQueries).toHaveBeenCalledWith({ queryKey: ["message-triggers"] });
+  });
+
+  it("does not resurrect a child when the authoritative refresh reports parent off", async () => {
+    const inactiveRule = {
+      id: "rule-off",
+      branchId: "org-1",
+      name: "꺼진 서비스 안내",
+      isActive: false,
+      eventType: "SERVICE_START" as const,
+      offsetType: "BEFORE_DAYS" as const,
+      offsetDays: 3,
+      recipientType: "CLIENT" as const,
+      templateKey: "SERVICE_INFO" as const,
+      createdAt: "2026-03-01T00:00:00.000Z",
+      updatedAt: "2026-03-01T00:00:00.000Z",
+    };
+    const parentRefetch = jest.fn().mockResolvedValue({
+      data: automationPoliciesWithTriggerDispatch(false),
+    });
+    const rulesRefetch = jest.fn().mockResolvedValue({ data: [inactiveRule] });
+    mockSettingsQueries({
+      senderApproved: true,
+      messageAutomationPolicies: automationPoliciesWithTriggerDispatch(false),
+      messageAutomationPoliciesRefetch: parentRefetch,
+    });
+    mockedUseMessageTriggerRules.mockReturnValue({
+      data: [inactiveRule],
+      isLoading: false,
+      refetch: rulesRefetch,
+    } as unknown as ReturnType<typeof useMessageTriggerRules>);
+    const parentMutation = jest.fn().mockResolvedValue({ ...inactiveRule, isActive: true });
+    mockedUseActivateMessageTriggerRuleWithParent.mockReturnValue({
+      isPending: false,
+      mutateAsync: parentMutation,
+    } as unknown as ReturnType<typeof useActivateMessageTriggerRuleWithParent>);
+
+    render(<TriggerRulesManager dataComponent="desktop_messages_sections_section-content_triggers-section_trigger-rules" />);
+    fireEvent.click(screen.getByRole("button", { name: "비활성화" }));
+    fireEvent.click(screen.getByRole("switch", { name: "꺼진 서비스 안내 활성화" }));
+    fireEvent.click(screen.getByRole("button", { name: "확인" }));
+
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    expect(screen.getByRole("switch", { name: "꺼진 서비스 안내 활성화" })).not.toBeChecked();
+  });
+
+  it("keeps the confirmation open when the authoritative refresh fails", async () => {
+    const inactiveRule = {
+      id: "rule-off",
+      branchId: "org-1",
+      name: "꺼진 서비스 안내",
+      isActive: false,
+      eventType: "SERVICE_START" as const,
+      offsetType: "BEFORE_DAYS" as const,
+      offsetDays: 3,
+      recipientType: "CLIENT" as const,
+      templateKey: "SERVICE_INFO" as const,
+      createdAt: "2026-03-01T00:00:00.000Z",
+      updatedAt: "2026-03-01T00:00:00.000Z",
+    };
+    const parentRefetch = jest.fn().mockResolvedValue({ isError: true, data: undefined });
+    mockSettingsQueries({
+      senderApproved: true,
+      messageAutomationPolicies: automationPoliciesWithTriggerDispatch(false),
+      messageAutomationPoliciesRefetch: parentRefetch,
+    });
+    mockedUseMessageTriggerRules.mockReturnValue({
+      data: [inactiveRule],
+      isLoading: false,
+      refetch: jest.fn().mockResolvedValue({ data: [inactiveRule] }),
+    } as unknown as ReturnType<typeof useMessageTriggerRules>);
+    const parentMutation = jest.fn().mockResolvedValue({ ...inactiveRule, isActive: true });
+    mockedUseActivateMessageTriggerRuleWithParent.mockReturnValue({
+      isPending: false,
+      mutateAsync: parentMutation,
+    } as unknown as ReturnType<typeof useActivateMessageTriggerRuleWithParent>);
+
+    render(<TriggerRulesManager dataComponent="desktop_messages_sections_section-content_triggers-section_trigger-rules" />);
+    fireEvent.click(screen.getByRole("button", { name: "비활성화" }));
+    fireEvent.click(screen.getByRole("switch", { name: "꺼진 서비스 안내 활성화" }));
+    fireEvent.click(screen.getByRole("button", { name: "확인" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "이 지점의 메시지 자동 발송이 꺼져 있어요. 설정을 새로고침한 뒤 다시 시도해 주세요.",
+    );
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+    expect(parentMutation).toHaveBeenCalledTimes(1);
+  });
+
+  it("locks modal controls while the authoritative refresh is pending", async () => {
+    const inactiveRule = {
+      id: "rule-off",
+      branchId: "org-1",
+      name: "꺼진 서비스 안내",
+      isActive: false,
+      eventType: "SERVICE_START" as const,
+      offsetType: "BEFORE_DAYS" as const,
+      offsetDays: 3,
+      recipientType: "CLIENT" as const,
+      templateKey: "SERVICE_INFO" as const,
+      createdAt: "2026-03-01T00:00:00.000Z",
+      updatedAt: "2026-03-01T00:00:00.000Z",
+    };
+    const refreshPending = new Promise<never>(() => {});
+    const parentRefetch = jest.fn().mockReturnValue(refreshPending);
+    const rulesRefetch = jest.fn().mockReturnValue(refreshPending);
+    mockSettingsQueries({
+      senderApproved: true,
+      messageAutomationPolicies: automationPoliciesWithTriggerDispatch(false),
+      messageAutomationPoliciesRefetch: parentRefetch,
+    });
+    mockedUseMessageTriggerRules.mockReturnValue({
+      data: [inactiveRule],
+      isLoading: false,
+      refetch: rulesRefetch,
+    } as unknown as ReturnType<typeof useMessageTriggerRules>);
+    const parentMutation = jest.fn().mockResolvedValue({ ...inactiveRule, isActive: true });
+    mockedUseActivateMessageTriggerRuleWithParent.mockReturnValue({
+      isPending: false,
+      mutateAsync: parentMutation,
+    } as unknown as ReturnType<typeof useActivateMessageTriggerRuleWithParent>);
+
+    render(<TriggerRulesManager dataComponent="desktop_messages_sections_section-content_triggers-section_trigger-rules" />);
+    fireEvent.click(screen.getByRole("button", { name: "비활성화" }));
+    const childSwitch = screen.getByRole("switch", { name: "꺼진 서비스 안내 활성화" });
+    fireEvent.click(childSwitch);
+    fireEvent.click(screen.getByRole("button", { name: "확인" }));
+
+    await waitFor(() => expect(parentMutation).toHaveBeenCalledTimes(1));
+    expect(screen.getByRole("button", { name: "취소" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "처리 중..." })).toBeDisabled();
+    expect(childSwitch).toBeDisabled();
+  });
+
+  it("keeps the confirmation open after a mutation failure and permits retry without duplicate calls", async () => {
+    const inactiveRule = {
+      id: "rule-off",
+      branchId: "org-1",
+      name: "꺼진 서비스 안내",
+      isActive: false,
+      eventType: "SERVICE_START" as const,
+      offsetType: "BEFORE_DAYS" as const,
+      offsetDays: 3,
+      recipientType: "CLIENT" as const,
+      templateKey: "SERVICE_INFO" as const,
+      createdAt: "2026-03-01T00:00:00.000Z",
+      updatedAt: "2026-03-01T00:00:00.000Z",
+    };
+    mockSettingsQueries({
+      senderApproved: true,
+      messageAutomationPolicies: automationPoliciesWithTriggerDispatch(false),
+    });
+    mockedUseMessageTriggerRules.mockReturnValue({
+      data: [inactiveRule],
+      isLoading: false,
+      refetch: jest.fn().mockResolvedValue({ data: [inactiveRule] }),
+    } as unknown as ReturnType<typeof useMessageTriggerRules>);
+    const parentMutation = jest.fn()
+      .mockRejectedValueOnce(new Error("temporary failure"))
+      .mockResolvedValueOnce({ ...inactiveRule, isActive: true });
+    mockedUseActivateMessageTriggerRuleWithParent.mockReturnValue({
+      isPending: false,
+      mutateAsync: parentMutation,
+    } as unknown as ReturnType<typeof useActivateMessageTriggerRuleWithParent>);
+
+    render(<TriggerRulesManager dataComponent="desktop_messages_sections_section-content_triggers-section_trigger-rules" />);
+    fireEvent.click(screen.getByRole("button", { name: "비활성화" }));
+    fireEvent.click(screen.getByRole("switch", { name: "꺼진 서비스 안내 활성화" }));
+    fireEvent.click(screen.getByRole("button", { name: "확인" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("규칙을 켜지 못했어요. 잠시 후 다시 시도해 주세요");
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "확인" }));
+    await waitFor(() => expect(parentMutation).toHaveBeenCalledTimes(2));
+  });
+
+  it("does not treat unrelated coded 409 conflicts as parent-disabled races", async () => {
+    const inactiveRule = {
+      id: "rule-off",
+      branchId: "org-1",
+      name: "꺼진 서비스 안내",
+      isActive: false,
+      eventType: "SERVICE_START" as const,
+      offsetType: "BEFORE_DAYS" as const,
+      offsetDays: 3,
+      recipientType: "CLIENT" as const,
+      templateKey: "SERVICE_INFO" as const,
+      createdAt: "2026-03-01T00:00:00.000Z",
+      updatedAt: "2026-03-01T00:00:00.000Z",
+    };
+    mockSettingsQueries({
+      senderApproved: true,
+      messageAutomationPolicies: automationPoliciesWithTriggerDispatch(false),
+    });
+    mockedUseMessageTriggerRules.mockReturnValue({
+      data: [inactiveRule],
+      isLoading: false,
+      refetch: jest.fn(),
+    } as unknown as ReturnType<typeof useMessageTriggerRules>);
+    const conflict = Object.assign(new Error("global lock"), {
+      response: { status: 409, data: { code: "GLOBAL_RULE_DISABLED" } },
+    });
+    const parentMutation = jest.fn().mockRejectedValue(conflict);
+    mockedUseActivateMessageTriggerRuleWithParent.mockReturnValue({
+      isPending: false,
+      mutateAsync: parentMutation,
+    } as unknown as ReturnType<typeof useActivateMessageTriggerRuleWithParent>);
+
+    render(<TriggerRulesManager dataComponent="desktop_messages_sections_section-content_triggers-section_trigger-rules" />);
+    fireEvent.click(screen.getByRole("button", { name: "비활성화" }));
+    fireEvent.click(screen.getByRole("switch", { name: "꺼진 서비스 안내 활성화" }));
+    fireEvent.click(screen.getByRole("button", { name: "확인" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("현재 데이터 상태와 요청이 충돌해 처리할 수 없어요.");
+    expect(mockInvalidateQueries).not.toHaveBeenCalledWith({ queryKey: ["message-triggers"] });
+  });
+
+  it("creates a new rule inactive when the known parent is off", async () => {
+    mockSettingsQueries({
+      senderApproved: true,
+      messageAutomationPolicies: automationPoliciesWithTriggerDispatch(false),
+    });
+    const createMutation = jest.fn().mockResolvedValue({ id: "rule-created", isActive: false });
+    mockedUseCreateMessageTriggerRule.mockReturnValue({
+      isPending: false,
+      mutateAsync: createMutation,
+    } as unknown as ReturnType<typeof useCreateMessageTriggerRule>);
+
+    render(<TriggerRulesManager dataComponent="desktop_messages_sections_section-content_triggers-section_trigger-rules" />);
+    fireEvent.click(screen.getByRole("button", { name: "새 규칙" }));
+    fireEvent.change(screen.getByLabelText("규칙 이름"), { target: { value: "부모가 꺼진 새 규칙" } });
+    fireEvent.click(screen.getByRole("button", { name: "저장" }));
+
+    await waitFor(() => expect(createMutation).toHaveBeenCalledWith(expect.objectContaining({
+      name: "부모가 꺼진 새 규칙",
+      isActive: false,
+    })));
+  });
+
+  it("preserves an unsaved new-rule draft when the parent state changes", () => {
+    mockSettingsQueries({
+      senderApproved: true,
+      messageAutomationPolicies: automationPoliciesWithTriggerDispatch(false),
+    });
+    const view = render(<TriggerRulesManager dataComponent="desktop_messages_sections_section-content_triggers-section_trigger-rules" />);
+    fireEvent.click(screen.getByRole("button", { name: "새 규칙" }));
+    const nameInput = screen.getByLabelText("규칙 이름");
+    fireEvent.change(nameInput, { target: { value: "작성 중인 규칙" } });
+
+    mockSettingsQueries({
+      senderApproved: true,
+      messageAutomationPolicies: automationPoliciesWithTriggerDispatch(true),
+    });
+    view.rerender(<TriggerRulesManager dataComponent="desktop_messages_sections_section-content_triggers-section_trigger-rules" />);
+
+    expect(screen.getByLabelText("규칙 이름")).toHaveValue("작성 중인 규칙");
+  });
+
+  it("allows a member to use the ordinary child toggle while the parent is on", () => {
+    mockSettingsQueries({
+      senderApproved: true,
+      messageAutomationPolicies: automationPoliciesWithTriggerDispatch(true),
+    });
+    const ordinaryMutation = jest.fn().mockResolvedValue(undefined);
+    mockedUseUpdateMessageTriggerRule.mockReturnValue({
+      isPending: false,
+      mutateAsync: ordinaryMutation,
+    } as unknown as ReturnType<typeof useUpdateMessageTriggerRule>);
+
+    render(<TriggerRulesManager dataComponent="desktop_messages_sections_section-content_triggers-section_trigger-rules" />);
+    const childSwitch = screen.getByRole("switch", { name: "서비스 시작 안내 활성화" });
+    expect(childSwitch).toBeEnabled();
+    fireEvent.click(childSwitch);
+    expect(ordinaryMutation).toHaveBeenCalledTimes(1);
   });
 });

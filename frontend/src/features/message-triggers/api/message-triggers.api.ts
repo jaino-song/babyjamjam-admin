@@ -18,6 +18,11 @@ export const messageTriggersApi = {
         api.post<MessageTriggerRule>("/message-trigger-rules", dto),
     update: (id: string, dto: UpdateMessageTriggerRuleDto) =>
         api.patch<MessageTriggerRule>(`/message-trigger-rules/${id}`, dto),
+    activateWithParent: (id: string) =>
+        api.put<MessageTriggerRule>(
+            `/message-trigger-rules/${id}/activation-with-parent`,
+            { isActive: true, enableParent: true },
+        ),
     updateBranchActivation: (id: string, dto: UpdateMessageTriggerRuleBranchActivationDto) =>
         api.put<MessageTriggerRule>(`/message-trigger-rules/${id}/branch-activation`, dto),
     delete: (id: string) => api.delete(`/message-trigger-rules/${id}`),

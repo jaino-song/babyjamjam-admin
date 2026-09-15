@@ -33,6 +33,7 @@ import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import { isTriggerRuleInChannel } from "@/features/message-triggers/channel";
 import { useMessageTriggerRules } from "@/features/message-triggers/hooks/use-message-triggers";
+import { messageTriggerKeys } from "@/features/message-triggers/hooks/keys";
 import type {
   MessageTriggerRule,
   TriggerEventType,
@@ -44,6 +45,7 @@ import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 import {
   settingsApi,
+  type MessagePolicyActivationResponse,
   type MessageAutomationPoliciesResponse,
   type MessageAutomationPastTriggerConfig,
   type MessageAutomationPolicy,
@@ -55,6 +57,13 @@ const SERVICE_RECORD_LINK_POLICY_ID = "service-feedback-link";
 const MANUAL_ONLY_TRIGGER_TEMPLATE_KEY = "SERVICE_END_NOTICE";
 const SMS_RETRY_POLICY_ID = "sms-retry";
 const PAST_TRIGGER_POLICY_ID = "past-trigger";
+const TRIGGER_DISPATCH_POLICY_ID = "trigger-dispatch";
+const MESSAGE_AUTOMATION_POLICIES_QUERY_KEY = [
+  "settings",
+  "message-automation-policies",
+] as const;
+const TRIGGER_DISPATCH_SCOPE_COPY =
+  "현재 지점의 메시지 자동 발송을 관리합니다. 끄면 이 지점의 자동 전송 규칙이 모두 비활성화됩니다.";
 const DEFAULT_PAST_TRIGGER_CONFIG: MessageAutomationPastTriggerConfig = {
   sendIntervalMinutes: 1,
   ruleOrder: [],
@@ -132,6 +141,7 @@ type TenantApplicationListItem = {
   kind: "tenant-application" | "automation-policy" | "duplicate-send-policy";
   active: boolean;
   requiresApproval: boolean;
+  activationUnavailable?: boolean;
   rows?: MessageAutomationPolicy["rows"];
 };
 
@@ -203,6 +213,33 @@ function getOrderedTriggerRules(rules: MessageTriggerRule[], orderIds: string[])
   return [...ordered, ...missing];
 }
 
+function withTriggerDispatchActivation(
+  current: MessageAutomationPoliciesResponse | undefined,
+  enabled: boolean,
+): MessageAutomationPoliciesResponse | undefined {
+  if (!current) return current;
+
+  return {
+    ...current,
+    policies: current.policies.map((policy) =>
+      policy.id === TRIGGER_DISPATCH_POLICY_ID ? { ...policy, active: enabled } : policy,
+    ),
+    policyActivations: {
+      ...current.policyActivations,
+      [TRIGGER_DISPATCH_POLICY_ID]: enabled,
+    },
+  };
+}
+
+async function invalidateMessageAutomationCaches(queryClient: ReturnType<typeof useQueryClient>) {
+  await Promise.all([
+    queryClient.invalidateQueries({ queryKey: MESSAGE_AUTOMATION_POLICIES_QUERY_KEY }),
+    queryClient.invalidateQueries({ queryKey: messageTriggerKeys.all }),
+    queryClient.invalidateQueries({ queryKey: messageTriggerKeys.upcoming() }),
+    queryClient.invalidateQueries({ queryKey: messageTriggerKeys.history() }),
+  ]);
+}
+
 export function MessageTenantApplicationSettings() {
   const { data: authUser } = useGetAuthUser();
   const { toast } = useToast();
@@ -214,8 +251,10 @@ export function MessageTenantApplicationSettings() {
   const {
     data: messageAutomationPolicies,
     isLoading: isMessageAutomationPoliciesLoading,
+    isError: isMessageAutomationPoliciesError,
+    refetch: refetchMessageAutomationPolicies,
   } = useQuery({
-    queryKey: ["settings", "message-automation-policies"],
+    queryKey: MESSAGE_AUTOMATION_POLICIES_QUERY_KEY,
     queryFn: settingsApi.getMessageAutomationPolicies,
   });
   const { data: triggerRulesData = [], isLoading: isTriggerRulesLoading } = useMessageTriggerRules();
@@ -233,6 +272,24 @@ export function MessageTenantApplicationSettings() {
   const isMessageSenderApproved = messageSenderApproval?.isApproved === true;
   const isMessageSettingsListLoading =
     isMessageSenderApprovalLoading || isMessageAutomationPoliciesLoading;
+  const isAdminOrOwner = messageAutomationPolicies?.canManageActivation === true;
+  const triggerDispatchPolicy = messageAutomationPolicies?.policies?.find(
+    (policy) => policy.id === TRIGGER_DISPATCH_POLICY_ID,
+  );
+  const triggerDispatchActive =
+    isMessageAutomationPoliciesLoading || isMessageAutomationPoliciesError
+      ? null
+      : typeof triggerDispatchPolicy?.active === "boolean"
+      ? triggerDispatchPolicy.active
+      : typeof messageAutomationPolicies?.policyActivations?.[TRIGGER_DISPATCH_POLICY_ID] === "boolean"
+        ? messageAutomationPolicies.policyActivations[TRIGGER_DISPATCH_POLICY_ID]
+        : null;
+  const isTriggerDispatchAvailable =
+    !isMessageAutomationPoliciesLoading &&
+    !isMessageAutomationPoliciesError &&
+    triggerDispatchPolicy !== undefined &&
+    triggerDispatchActive !== null;
+  const isTriggerDispatchUnavailable = !isTriggerDispatchAvailable;
   const listItems = useMemo<TenantApplicationListItem[]>(
     () => {
       if (isMessageSettingsListLoading) {
@@ -259,17 +316,29 @@ export function MessageTenantApplicationSettings() {
       const automationPolicyItems = (messageAutomationPolicies?.policies ?? [])
         .filter((policy) => policy.id !== SERVICE_RECORD_LINK_POLICY_ID)
         .map<TenantApplicationListItem>(
-          (policy) => ({
-            id: policy.id,
-            title: policy.title,
-            subtitle: policy.description,
-            statusLabel: getPolicyStatusLabel(policy.active),
-            icon: getAutomationPolicyIcon(policy.id),
-            kind: "automation-policy",
-            active: policy.active,
-            requiresApproval: policy.requiresApproval,
-            rows: policy.rows,
-          }),
+          (policy) => {
+            const isTriggerDispatch = policy.id === TRIGGER_DISPATCH_POLICY_ID;
+            const active = isTriggerDispatch
+              ? triggerDispatchActive === true
+              : policy.active;
+
+            return {
+              id: policy.id,
+              title: policy.title,
+              subtitle: isTriggerDispatch
+                ? `${policy.description} ${TRIGGER_DISPATCH_SCOPE_COPY}`
+                : policy.description,
+              statusLabel: isTriggerDispatch && isTriggerDispatchUnavailable
+                ? "확인 필요"
+                : getPolicyStatusLabel(active),
+              icon: getAutomationPolicyIcon(policy.id),
+              kind: "automation-policy",
+              active,
+              requiresApproval: policy.requiresApproval,
+              activationUnavailable: isTriggerDispatch && isTriggerDispatchUnavailable,
+              rows: policy.rows,
+            };
+          },
         );
 
       items.push(...automationPolicyItems, DUPLICATE_SEND_POLICY_ITEM);
@@ -278,10 +347,12 @@ export function MessageTenantApplicationSettings() {
     },
     [
       canSubmit,
+      isTriggerDispatchUnavailable,
       isMessageSettingsListLoading,
       isMessageSenderApproved,
       messageAutomationPolicies?.policies,
       requestedAt,
+      triggerDispatchActive,
     ],
   );
   const fallbackSelectedItemId = isMessageSenderApproved
@@ -294,11 +365,11 @@ export function MessageTenantApplicationSettings() {
   const activeSmsTriggerRules = useMemo(
     () => (Array.isArray(triggerRulesData) ? triggerRulesData : [])
       .filter((rule) =>
-        rule.isActive &&
+        (isTriggerDispatchAvailable && triggerDispatchActive === false ? false : rule.isActive) &&
         rule.templateKey !== MANUAL_ONLY_TRIGGER_TEMPLATE_KEY &&
         isTriggerRuleInChannel(rule, "sms"),
       ),
-    [triggerRulesData],
+    [isTriggerDispatchAvailable, triggerDispatchActive, triggerRulesData],
   );
   const savedPastTriggerConfig = messageAutomationPolicies?.pastTriggerConfig ?? DEFAULT_PAST_TRIGGER_CONFIG;
   const retroactiveRuleOrderIds = draftRetroactiveRuleOrderIds ?? savedPastTriggerConfig.ruleOrder;
@@ -356,6 +427,63 @@ export function MessageTenantApplicationSettings() {
       });
     },
   });
+
+  const triggerDispatchMutation = useMutation<
+    MessagePolicyActivationResponse,
+    Error,
+    boolean,
+    { previous?: MessageAutomationPoliciesResponse }
+  >({
+    mutationFn: settingsApi.updateMessagePolicyActivation,
+    onMutate: async (enabled) => {
+      await queryClient.cancelQueries({ queryKey: MESSAGE_AUTOMATION_POLICIES_QUERY_KEY });
+      const previous = queryClient.getQueryData<MessageAutomationPoliciesResponse>(
+        MESSAGE_AUTOMATION_POLICIES_QUERY_KEY,
+      );
+      queryClient.setQueryData<MessageAutomationPoliciesResponse>(
+        MESSAGE_AUTOMATION_POLICIES_QUERY_KEY,
+        (current) => withTriggerDispatchActivation(current, enabled),
+      );
+      return { previous };
+    },
+    onError: (error, _enabled, context) => {
+      if (context?.previous) {
+        queryClient.setQueryData(MESSAGE_AUTOMATION_POLICIES_QUERY_KEY, context.previous);
+      }
+      toast({
+        variant: "destructive",
+        description: getUserErrorMessage(error, "이 지점의 메시지 자동 발송 설정을 저장하지 못했어요"),
+      });
+    },
+    onSuccess: (savedActivation) => {
+      queryClient.setQueryData<MessageAutomationPoliciesResponse>(
+        MESSAGE_AUTOMATION_POLICIES_QUERY_KEY,
+        (current) => withTriggerDispatchActivation(current, savedActivation.enabled),
+      );
+      toast({
+        variant: "success",
+        description: savedActivation.enabled
+          ? "이 지점의 메시지 자동 발송을 켰어요"
+          : "이 지점의 메시지 자동 발송을 껐어요",
+      });
+    },
+    onSettled: async () => {
+      await invalidateMessageAutomationCaches(queryClient);
+    },
+  });
+
+  const handleTriggerDispatchToggle = (enabled: boolean) => {
+    if (!isAdminOrOwner) return;
+    if (isTriggerDispatchUnavailable) {
+      void refetchMessageAutomationPolicies();
+      toast({
+        variant: "destructive",
+        description: "이 지점의 메시지 자동 발송 설정을 확인한 뒤 다시 시도해 주세요.",
+      });
+      return;
+    }
+    triggerDispatchMutation.mutate(enabled);
+  };
 
   const savePastTriggerConfigMutation = useMutation({
     mutationFn: settingsApi.updateMessageAutomationPastTriggerConfig,
@@ -452,6 +580,30 @@ export function MessageTenantApplicationSettings() {
           </span>
         }
       >
+        {isTriggerDispatchUnavailable ? (
+          <InfoCard
+            title="메시지 자동 발송 상태"
+            description="현재 지점의 메시지 자동 발송 설정을 확인할 수 없어요."
+            data-component="desktop_messages_sections_settings-trigger-dispatch-error"
+          >
+            <InfoRow
+              data-component="desktop_messages_sections_settings-trigger-dispatch-error_status"
+              label="상태"
+              value="설정을 불러오지 못했어요."
+            />
+            <div className="mt-3 flex justify-end">
+              <Button
+                type="button"
+                variant="neutral"
+                size="sm"
+                onClick={() => void refetchMessageAutomationPolicies()}
+                data-component="desktop_messages_sections_settings-trigger-dispatch-error_retry"
+              >
+                다시 시도
+              </Button>
+            </div>
+          </InfoCard>
+        ) : null}
         <AnimatedSlotList<TenantApplicationListItem>
           items={listItems}
           isLoading={false}
@@ -479,9 +631,16 @@ export function MessageTenantApplicationSettings() {
                   ) : (
                     <Switch
                       aria-label={`${item.title} 활성화`}
-                      checked={item.requiresApproval ? (isMessageSenderApproved && item.active) : item.active}
-                      disabled
+                      checked={item.id === TRIGGER_DISPATCH_POLICY_ID
+                        ? item.active
+                        : item.requiresApproval ? (isMessageSenderApproved && item.active) : item.active}
+                      disabled={item.id === TRIGGER_DISPATCH_POLICY_ID
+                        ? !isAdminOrOwner || item.activationUnavailable === true || triggerDispatchMutation.isPending
+                        : true}
                       onClick={(event) => event.stopPropagation()}
+                      onCheckedChange={item.id === TRIGGER_DISPATCH_POLICY_ID
+                        ? (checked) => handleTriggerDispatchToggle(checked)
+                        : undefined}
                       className="ml-auto shrink-0"
                     />
                   )
