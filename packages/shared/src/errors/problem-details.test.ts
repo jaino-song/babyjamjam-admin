@@ -225,6 +225,14 @@ describe("catalog coverage", () => {
         "SERVICE_RECORD_WRITE_TARGET_CHANGED",
         "EMPLOYEE_SCHEDULE_OVERLAP",
         "SCHEDULE_RETENTION_BLOCKED",
+        "SERVICE_RECORD_PLANNED_DATE_UNAVAILABLE",
+        "INVALID_SCHEDULE_DATE",
+        "ALL_SESSIONS_SUBMITTED",
+        "REQUEST_ALREADY_PENDING",
+        "REQUEST_NOT_PENDING",
+        "SCHEDULE_DATE_NOT_POSTPONED",
+        "REQUEST_STALE",
+        "SCHEDULE_CHANGE_UNCOMPUTABLE",
     ];
 
     it.each(codes)("contains a complete bilingual entry for %s", (code) => {
@@ -294,6 +302,34 @@ describe("catalog coverage", () => {
     ];
 
     it.each(SCHEDULE_STATUS_409_CODES)("registers %s as status 409 with kebab-case type anchor", (code, anchor) => {
+        const entry = PROBLEM_CATALOG[code];
+        expect(entry.status).toBe(409);
+        expect(entry.statuses).toEqual([409]);
+        expect(entry.type).toBe(`https://github.com/jaino-song/babyjamjam-admin/blob/main/docs/error-management.md#${anchor}`);
+    });
+
+    const SCHEDULE_CHANGE_STATUS_400_CODES: Array<[ProblemCode, string]> = [
+        ["INVALID_SCHEDULE_DATE", "invalid-schedule-date"],
+    ];
+
+    it.each(SCHEDULE_CHANGE_STATUS_400_CODES)("registers %s as status 400 with kebab-case type anchor", (code, anchor) => {
+        const entry = PROBLEM_CATALOG[code];
+        expect(entry.status).toBe(400);
+        expect(entry.statuses).toEqual([400]);
+        expect(entry.type).toBe(`https://github.com/jaino-song/babyjamjam-admin/blob/main/docs/error-management.md#${anchor}`);
+    });
+
+    const SCHEDULE_CHANGE_STATUS_409_CODES: Array<[ProblemCode, string]> = [
+        ["SERVICE_RECORD_PLANNED_DATE_UNAVAILABLE", "service-record-planned-date-unavailable"],
+        ["ALL_SESSIONS_SUBMITTED", "all-sessions-submitted"],
+        ["REQUEST_ALREADY_PENDING", "request-already-pending"],
+        ["REQUEST_NOT_PENDING", "request-not-pending"],
+        ["SCHEDULE_DATE_NOT_POSTPONED", "schedule-date-not-postponed"],
+        ["REQUEST_STALE", "request-stale"],
+        ["SCHEDULE_CHANGE_UNCOMPUTABLE", "schedule-change-uncomputable"],
+    ];
+
+    it.each(SCHEDULE_CHANGE_STATUS_409_CODES)("registers %s as status 409 with kebab-case type anchor", (code, anchor) => {
         const entry = PROBLEM_CATALOG[code];
         expect(entry.status).toBe(409);
         expect(entry.statuses).toEqual([409]);

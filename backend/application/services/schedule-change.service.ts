@@ -14,6 +14,7 @@ import {
     lockScheduleChangeRequestForWrite,
     lockServiceRecordWriteSet,
 } from "application/policies/service-record-write-lock.policy";
+import { codeOnlyProblemBody } from "application/utils/problem-bodies";
 import { getServiceRecordTokenExpiresAt } from "domain/constants/service-record-link-message";
 import { addBusinessDaysKr, isBusinessDayKr, nextBusinessDayKr } from "domain/utils/business-days";
 import { PrismaService } from "infrastructure/database/prisma.service";
@@ -118,12 +119,12 @@ function shiftCanonicalPlan(
     const planned = canonicalPlannedSessions(record);
     if (!hasPersistedPlan) return null;
     if (!planned) {
-        throw new ConflictException({ code: "SERVICE_RECORD_PLANNED_DATE_UNAVAILABLE" });
+        throw new ConflictException(codeOnlyProblemBody("SERVICE_RECORD_PLANNED_DATE_UNAVAILABLE"));
     }
     try {
         return shiftServiceRecordScheduleSuffix(planned, sessionIndex, newDate).entries;
     } catch {
-        throw new BadRequestException({ code: "INVALID_SCHEDULE_DATE" });
+        throw new BadRequestException(codeOnlyProblemBody("INVALID_SCHEDULE_DATE"));
     }
 }
 
@@ -189,17 +190,17 @@ export class ScheduleChangeService {
         const hasPersistedPlan = record?.plannedSessions !== null && record?.plannedSessions !== undefined;
         const planned = record ? canonicalPlannedSessions(record) : null;
         if (hasPersistedPlan && !planned) {
-            throw new ConflictException({ code: "SERVICE_RECORD_PLANNED_DATE_UNAVAILABLE" });
+            throw new ConflictException(codeOnlyProblemBody("SERVICE_RECORD_PLANNED_DATE_UNAVAILABLE"));
         }
         const totalSessions = record?.requiredSessionCount ?? client.duration;
         if (!totalSessions || totalSessions <= 0) {
-            throw new BadRequestException("Client has no session duration");
+            throw new ConflictException(codeOnlyProblemBody("SCHEDULE_CHANGE_UNCOMPUTABLE"));
         }
 
         const lastLocked = days.reduce((max, row) => (row.locked ? Math.max(max, row.sessionIndex) : max), 0);
         const sessionIndex = lastLocked + 1;
         if (sessionIndex > totalSessions) {
-            throw new ConflictException({ code: "ALL_SESSIONS_SUBMITTED" });
+            throw new ConflictException(codeOnlyProblemBody("ALL_SESSIONS_SUBMITTED"));
         }
 
         const currentRow = days.find((row) => row.sessionIndex === sessionIndex);
@@ -207,7 +208,7 @@ export class ScheduleChangeService {
         if (planned) {
             const plannedRow = planned.find((row) => row.sessionIndex === sessionIndex);
             if (!plannedRow) {
-                throw new ConflictException({ code: "SERVICE_RECORD_PLANNED_DATE_UNAVAILABLE" });
+                throw new ConflictException(codeOnlyProblemBody("SERVICE_RECORD_PLANNED_DATE_UNAVAILABLE"));
             }
             fromDate = plannedRow.serviceDate;
         } else if (currentRow) {
@@ -220,7 +221,7 @@ export class ScheduleChangeService {
                 const startDate = toIso(schedule.startDate);
                 fromDate = isBusinessDayKr(startDate) ? startDate : nextBusinessDayKr(startDate);
             } else {
-                throw new BadRequestException("Assignment has no start date");
+                throw new ConflictException(codeOnlyProblemBody("SCHEDULE_CHANGE_UNCOMPUTABLE"));
             }
         }
 
@@ -257,8 +258,8 @@ export class ScheduleChangeService {
             where: { id: ctx.scheduleId },
             include: { client: true },
         });
-        if (!schedule) throw new NotFoundException("Assignment not found");
-        if (!record) throw new NotFoundException("Service record not found");
+        if (!schedule) throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
+        if (!record) throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
 
         const days = await this.prisma.service_record_day.findMany({
             where: { serviceRecordCaseId: record.id },
@@ -285,14 +286,14 @@ export class ScheduleChangeService {
             where: { id: ctx.scheduleId },
             include: { client: true },
         });
-        if (!schedule) throw new NotFoundException("Assignment not found");
-        if (!record) throw new NotFoundException("Service record not found");
+        if (!schedule) throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
+        if (!record) throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
 
         const existing = await this.prisma.schedule_change_request.findFirst({
             where: { scheduleId: ctx.scheduleId, status: "pending" },
         });
         if (existing) {
-            throw new ConflictException({ code: "REQUEST_ALREADY_PENDING" });
+            throw new ConflictException(codeOnlyProblemBody("REQUEST_ALREADY_PENDING"));
         }
 
         const days = await this.prisma.service_record_day.findMany({
@@ -305,7 +306,7 @@ export class ScheduleChangeService {
             locked: day.locked,
         })), record);
         if (!schedule.endDate) {
-            throw new BadRequestException("Assignment has no end date");
+            throw new ConflictException(codeOnlyProblemBody("SCHEDULE_CHANGE_UNCOMPUTABLE"));
         }
 
         try {
@@ -331,7 +332,7 @@ export class ScheduleChangeService {
             };
         } catch (error) {
             if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
-                throw new ConflictException({ code: "REQUEST_ALREADY_PENDING" });
+                throw new ConflictException(codeOnlyProblemBody("REQUEST_ALREADY_PENDING"));
             }
             throw error;
         }
@@ -345,12 +346,12 @@ export class ScheduleChangeService {
             where: { id: scheduleId, branchId },
             include: { client: true },
         });
-        if (!schedule) throw new NotFoundException("Assignment not found");
+        if (!schedule) throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
 
         const record = await this.prisma.service_record_case.findFirst({
             where: { branchId, clientId: schedule.clientId },
         });
-        if (!record) throw new NotFoundException("Service record not found");
+        if (!record) throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
 
         const days = await this.prisma.service_record_day.findMany({
             where: { serviceRecordCaseId: record.id },
@@ -381,7 +382,7 @@ export class ScheduleChangeService {
             || toIso(selectedDateValue) !== selectedDate
             || !isBusinessDayKr(selectedDate)
         ) {
-            throw new BadRequestException({ code: "INVALID_SCHEDULE_DATE" });
+            throw new BadRequestException(codeOnlyProblemBody("INVALID_SCHEDULE_DATE"));
         }
 
         let scheduleIdForSync: number | null = null;
@@ -393,15 +394,15 @@ export class ScheduleChangeService {
                     where: { id: scheduleId, branchId },
                     include: { client: true, primaryEmployee: true },
                 });
-                if (!schedule) throw new NotFoundException("Assignment not found");
+                if (!schedule) throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
                 if (!schedule.endDate) {
-                    throw new BadRequestException("Assignment has no end date");
+                    throw new ConflictException(codeOnlyProblemBody("SCHEDULE_CHANGE_UNCOMPUTABLE"));
                 }
 
                 let record = await tx.service_record_case.findFirst({
                     where: { branchId, clientId: schedule.clientId },
                 });
-                if (!record) throw new NotFoundException("Service record not found");
+                if (!record) throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
 
                 // Discover ids before locking, then use the shared order and
                 // reread the owner rows. This keeps admin date changes aligned
@@ -427,7 +428,7 @@ export class ScheduleChangeService {
                     || !rereadRecord
                     || rereadRecord.id !== record.id
                 ) {
-                    throw new ConflictException("Schedule-change target changed while acquiring write locks");
+                    throw new ConflictException(codeOnlyProblemBody("SERVICE_RECORD_WRITE_TARGET_CHANGED"));
                 }
                 schedule = rereadSchedule;
                 record = rereadRecord;
@@ -446,7 +447,7 @@ export class ScheduleChangeService {
                     locked: day.locked,
                 })), record);
                 if (selectedDate <= target.fromDate) {
-                    throw new ConflictException({ code: "SCHEDULE_DATE_NOT_POSTPONED" });
+                    throw new ConflictException(codeOnlyProblemBody("SCHEDULE_DATE_NOT_POSTPONED"));
                 }
 
                 const shiftedPlannedSessions = shiftCanonicalPlan(
@@ -456,7 +457,7 @@ export class ScheduleChangeService {
                 );
                 const totalSessions = record.requiredSessionCount ?? schedule.client.duration;
                 if (!totalSessions || totalSessions <= 0) {
-                    throw new BadRequestException("Client has no session duration");
+                    throw new ConflictException(codeOnlyProblemBody("SCHEDULE_CHANGE_UNCOMPUTABLE"));
                 }
                 const newEndDateIso = shiftedPlannedSessions
                     ? shiftedPlannedSessions[shiftedPlannedSessions.length - 1]!.serviceDate
@@ -619,18 +620,18 @@ export class ScheduleChangeService {
                 let request = await tx.schedule_change_request.findFirst({
                     where: { id: requestId, branchId: tenant.branchId ?? "" },
                 });
-                if (!request) throw new NotFoundException("Schedule change request not found");
+                if (!request) throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
                 if (request.status !== "pending") {
-                    throw new ConflictException({ code: "REQUEST_NOT_PENDING" });
+                    throw new ConflictException(codeOnlyProblemBody("REQUEST_NOT_PENDING"));
                 }
 
                 let schedule = await tx.employee_schedule.findUnique({
                     where: { id: request.scheduleId },
                     include: { client: true, primaryEmployee: true },
                 });
-                if (!schedule) throw new NotFoundException("Assignment not found");
+                if (!schedule) throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
                 let record = await tx.service_record_case.findUnique({ where: { clientId: request.clientId } });
-                if (!record) throw new NotFoundException("Service record not found");
+                if (!record) throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
 
                 await lockServiceRecordWriteSet(tx, {
                     branchId: request.branchId,
@@ -645,21 +646,21 @@ export class ScheduleChangeService {
                     request.id,
                 );
                 if (typeof tx.$queryRaw === "function" && !requestLocked) {
-                    throw new ConflictException({ code: "SERVICE_RECORD_WRITE_TARGET_CHANGED" });
+                    throw new ConflictException(codeOnlyProblemBody("SERVICE_RECORD_WRITE_TARGET_CHANGED"));
                 }
                 const rereadRequest = await tx.schedule_change_request.findFirst({
                     where: { id: request.id, branchId: request.branchId },
                 });
-                if (!rereadRequest) throw new NotFoundException("Schedule change request not found");
+                if (!rereadRequest) throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
                 if (rereadRequest.status !== "pending") {
-                    throw new ConflictException({ code: "REQUEST_NOT_PENDING" });
+                    throw new ConflictException(codeOnlyProblemBody("REQUEST_NOT_PENDING"));
                 }
                 if (
                     rereadRequest.scheduleId !== request.scheduleId
                     || rereadRequest.clientId !== request.clientId
                     || rereadRequest.branchId !== request.branchId
                 ) {
-                    throw new ConflictException("Schedule-change request target changed while acquiring write locks");
+                    throw new ConflictException(codeOnlyProblemBody("SERVICE_RECORD_WRITE_TARGET_CHANGED"));
                 }
                 request = rereadRequest;
                 const rereadSchedule = await tx.employee_schedule.findUnique({
@@ -676,7 +677,7 @@ export class ScheduleChangeService {
                     || !rereadRecord
                     || rereadRecord.id !== record.id
                 ) {
-                    throw new ConflictException("Schedule-change target changed while acquiring write locks");
+                    throw new ConflictException(codeOnlyProblemBody("SERVICE_RECORD_WRITE_TARGET_CHANGED"));
                 }
                 schedule = rereadSchedule;
                 record = rereadRecord;
@@ -830,7 +831,7 @@ export class ScheduleChangeService {
                     },
                     data: { status: "stale", decidedAt: new Date() },
                 });
-                throw new ConflictException({ code: "REQUEST_STALE" });
+                throw new ConflictException(codeOnlyProblemBody("REQUEST_STALE"));
             }
             throw error;
         } finally {
@@ -856,9 +857,9 @@ export class ScheduleChangeService {
         const request = await this.prisma.schedule_change_request.findFirst({
             where: { id: requestId, branchId: tenant.branchId ?? "" },
         });
-        if (!request) throw new NotFoundException("Schedule change request not found");
+        if (!request) throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
         if (request.status !== "pending") {
-            throw new ConflictException({ code: "REQUEST_NOT_PENDING" });
+            throw new ConflictException(codeOnlyProblemBody("REQUEST_NOT_PENDING"));
         }
 
         const updated = await this.prisma.$transaction(async (tx) => {
@@ -876,9 +877,9 @@ export class ScheduleChangeService {
                     })
                     : null;
                 const rereadRequest = rereadRequestCandidate ?? request;
-                if (!rereadRequest) throw new NotFoundException("Schedule change request not found");
+                if (!rereadRequest) throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
                 if (rereadRequest.status !== "pending") {
-                    throw new ConflictException({ code: "REQUEST_NOT_PENDING" });
+                    throw new ConflictException(codeOnlyProblemBody("REQUEST_NOT_PENDING"));
                 }
                 return tx.schedule_change_request.update({
                     where: { id: rereadRequest.id },
@@ -906,7 +907,7 @@ export class ScheduleChangeService {
                 || schedule.clientId !== request.clientId
                 || schedule.branchId !== request.branchId
             ) {
-                throw new ConflictException("Schedule-change target changed while acquiring write locks");
+                throw new ConflictException(codeOnlyProblemBody("SERVICE_RECORD_WRITE_TARGET_CHANGED"));
             }
             const record = await tx.service_record_case.findUnique({
                 where: { clientId: request.clientId },
@@ -917,7 +918,7 @@ export class ScheduleChangeService {
                 || record.branchId !== request.branchId
                 || record.clientId !== request.clientId
             ) {
-                throw new NotFoundException("Service record not found");
+                throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
             }
             await lockServiceRecordWriteSet(tx, {
                 branchId: request.branchId,
@@ -932,21 +933,21 @@ export class ScheduleChangeService {
                 request.id,
             );
             if (!requestLocked) {
-                throw new ConflictException({ code: "SERVICE_RECORD_WRITE_TARGET_CHANGED" });
+                throw new ConflictException(codeOnlyProblemBody("SERVICE_RECORD_WRITE_TARGET_CHANGED"));
             }
             const rereadRequest = await tx.schedule_change_request.findFirst({
                 where: { id: request.id, branchId: request.branchId },
             });
-            if (!rereadRequest) throw new NotFoundException("Schedule change request not found");
+            if (!rereadRequest) throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
             if (rereadRequest.status !== "pending") {
-                throw new ConflictException({ code: "REQUEST_NOT_PENDING" });
+                throw new ConflictException(codeOnlyProblemBody("REQUEST_NOT_PENDING"));
             }
             if (
                 rereadRequest.scheduleId !== request.scheduleId
                 || rereadRequest.clientId !== request.clientId
                 || rereadRequest.branchId !== request.branchId
             ) {
-                throw new ConflictException("Schedule-change request target changed while acquiring write locks");
+                throw new ConflictException(codeOnlyProblemBody("SERVICE_RECORD_WRITE_TARGET_CHANGED"));
             }
             return tx.schedule_change_request.update({
                 where: { id: rereadRequest.id },
