@@ -174,6 +174,26 @@ describe("contract operation guard", () => {
     })).toBe(true);
   });
 
+  it("confirms a locally purged terminal document even when the provider reports a failure", () => {
+    const response = {
+      result: {
+        success_result: [],
+        fail_result: [{
+          document_id: "doc-1",
+          code: "4000164",
+          message: "document is already terminal",
+        }],
+      },
+      unresolved_document_ids: [],
+    };
+
+    expect(isContractDeleteResponseConfirmed(response, "doc-1")).toBe(true);
+    expect(isContractDeleteResponseConfirmed({
+      ...response,
+      unresolved_document_ids: ["doc-1"],
+    }, "doc-1")).toBe(false);
+  });
+
   it("keeps unverified legacy 4xx outcomes unknown without exposing raw details", () => {
     const normalized = normalizeContractMutationError(
       { response: { status: 422, data: { message: ["endDate must be a valid ISO 8601 date string"] } } },
