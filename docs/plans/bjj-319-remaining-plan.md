@@ -592,3 +592,15 @@ TL;DR: 배정(4b-1 백엔드: 역할·자격·동시 변경 코드 전환 / 4b-2
 - 검증(통합 `4ec3297e8`): frontend 238/1,580, mobile 250/1,656, backend 356/5,058, shared 369+86, 3종 타입·UI 게이트(베이스라인 불변)·ci 통과. 감사 **SHIP/HIGH**(테스트 수 독립 검산 일치).
 - carried(auditor): 웹 helper의 scheduleId/request-id 쌍 미사용(테스트로 고정·dead export), `localValidationResponse` 계약 3중 복제(공유 export 제안), 웹 apply/preview scheduleId 미검증(기존), BFF error 본문에서 message/statusCode 별칭 제거(인레포 소비자 없음), `errorResponseMode` no-op 별칭(기존).
 - 기록: inventory BFF 8행 migrated·`schedule-bff-ui-alignment` finding 추가. unit worktree/branch 정리. **Phase 4c 완료(4c-1·4c-2·4c-3)** — 다음은 Phase 5(계약·문서 남은 웹/서버 경로).
+
+## Phase 5 — 계약·문서 남은 경로 (바인딩, 2026-09-15)
+
+정찰(`em-5-scout`) 분할: 5-1 가드+계약 발송(저위험) → 5-2 문서 컨트롤러/서비스 → 5-3 eformsign 컨트롤러(고위험: 정렬된 UI) → 5-4 envelope(ok/reason) 전환(최고위험·마지막).
+
+**Task 5-1: 계약 발송 가드 오류 코드화·가시화** (feature, high) — base `ed74acdf3`
+- 배경: `contract-client-assignment-guard`의 한국어 400 3종은 모든 호출부(create-and-send/dispatch/finalize)에서 envelope({success}/{ok})로 감싸지고, dispatch 경로의 `reason`은 웹·모바일 `getSafeHeadlessFailureMessage`가 한국어를 버리고 일반 문구로 표시한다 → 사용자에게 원인이 안 보임.
+- 카탈로그 3코드(신규): `CLIENT_ASSIGNMENT_REQUIRED`(409) · `DOCUMENT_PROVIDER_MISMATCH`(409) · `CLIENT_SERVICE_TERMINATED`(409).
+- 전환: ① 가드 3 throw → `ConflictException(codeOnlyProblemBody(...))`(문구는 카탈로그로 이관). ② `dispatch-document-headless.usecase` catch: 등록된 problem code가 있으면 `reason`을 그 코드 문자열로(없으면 기존 sanitize 유지) — progress emit도 동일. ③ 웹 `ContractCreationForm` 인라인 helper + 모바일 `lib/eformsign/headless-progress.getSafeHeadlessFailureMessage`에 3코드 → 한국어 문구 매핑 추가. ④ create-and-send(AI툴 경로)·finalize(스왈로우)는 범위 밖(기록).
+- 테스트: guard spec(코드), dispatch spec(reason 코드), 웹/모바일 helper 테스트(3케이스), 관련 e2e 단언 갱신.
+- 범위 밖: envelope(ok/reason) 전환 전체·문서/eformsign 컨트롤러(5-2/5-3), 서명된 계약 수정(별도 subphase).
+- Dispatch metadata: `Phase: 5-1` · `Execution: DELEGATE` · `Audit: SOL` · `Agent: worker` · `Model: opencode-go/glm-5.3-flash` · `Paths: packages/shared/src/errors/problem-details.ts(+test), backend/application/services/contract-client-assignment-guard.service.ts(+spec), backend/application/usecases/eformsign-doc/dispatch-document-headless.usecase.ts(+spec), frontend/src/components/app/contracts/ContractCreationForm.tsx(+test), mobile/src/lib/eformsign/headless-progress.ts(+test), backend/vendor/shared-agent/**, docs/error-management.md` · `Depends: Task 5.1 정찰`
