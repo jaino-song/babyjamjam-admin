@@ -563,6 +563,22 @@
         ]
       },
       {
+        "name": "TwoButtonModal",
+        "layer": "organism",
+        "import": "@/components/app/ui/TwoButtonModal",
+        "file": "frontend/src/components/app/ui/TwoButtonModal.tsx",
+        "exports": [
+          "TwoButtonModal",
+          "TwoButtonModalProps"
+        ],
+        "replaces": [
+          "custom two-button confirmation modal markup"
+        ],
+        "requiredFor": [
+          "two-button confirmation and approval dialogs"
+        ]
+      },
+      {
         "name": "SystemAdminAccountEditDialog",
         "layer": "organism",
         "import": "@/components/app/ui/SystemAdminAccountEditDialog",

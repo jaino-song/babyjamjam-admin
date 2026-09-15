@@ -5,7 +5,7 @@ import { getUserErrorMessage } from "@babyjamjam/shared";
 /* eslint-disable react-hooks/set-state-in-effect -- controlled form state is synchronized when list selection and template availability change */
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   BellRing,
   CalendarClock,
@@ -26,6 +26,7 @@ import {
   DetailTabs,
   DetailTabPanels,
   InfoCard,
+  InfoRow,
   type SplitLayoutMode,
 } from "@/components/app/v3";
 import { Switch } from "@/components/ui/switch";
@@ -34,7 +35,11 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { TitleSelectMolecule } from "@/components/ui/title-select-molecule";
 import { TitleTextInputMolecule } from "@/components/ui/title-text-input-molecule";
-import { settingsApi } from "@/services/api";
+import {
+  settingsApi,
+  type ClientRegistrationPolicy,
+  type ClientRegistrationPolicyPatch,
+} from "@/services/api";
 import { useToast } from "@/hooks/use-toast";
 import {
   useMessageTriggerRules,
@@ -163,6 +168,8 @@ const TRIGGER_RULE_DETAIL_TABS = [
 
 const TRIGGER_RULE_APPROVAL_MESSAGE =
   "메시지 발송 승인 후에 설정 가능합니다. 설정에서 메시지 발송 기능을 신청해 주세요.";
+const CLIENT_REGISTRATION_POLICY_QUERY_KEY = ["settings", "client-registration-policy"] as const;
+const MANUAL_ONLY_TRIGGER_TEMPLATE_KEY = "SERVICE_END_NOTICE";
 
 const DEDICATED_TRIGGER_TEMPLATE_LABELS: Partial<Record<TriggerTemplateKey, string>> = {
   SERVICE_RECORD_LINK: "제공기록지 작성 링크",
@@ -288,6 +295,7 @@ export function TriggerRulesManager({
   channel?: TriggerMessageChannel;
 }) {
   const { toast } = useToast();
+  const queryClient = useQueryClient();
   const [selectedRuleId, setSelectedRuleId] = useState<RuleSelection>(null);
   const [isRuleDetailDismissed, setIsRuleDetailDismissed] = useState(false);
   const [splitLayoutMode, setSplitLayoutMode] = useState<SplitLayoutMode | null>(null);
@@ -309,6 +317,43 @@ export function TriggerRulesManager({
   const { data: senderApproval, isLoading: isSenderApprovalLoading } = useQuery({
     queryKey: ["settings", "message-sender-approval"],
     queryFn: settingsApi.getMessageSenderApproval,
+  });
+  const {
+    data: clientRegistrationPolicy,
+    isLoading: isClientRegistrationPolicyLoading,
+    isError: isClientRegistrationPolicyError,
+    refetch: refetchClientRegistrationPolicy,
+  } = useQuery<ClientRegistrationPolicy>({
+    queryKey: CLIENT_REGISTRATION_POLICY_QUERY_KEY,
+    queryFn: settingsApi.getClientRegistrationPolicy,
+  });
+  const updateClientRegistrationPolicyMutation = useMutation({
+    mutationFn: settingsApi.updateClientRegistrationPolicy,
+    onMutate: async (patch: ClientRegistrationPolicyPatch) => {
+      await queryClient.cancelQueries({ queryKey: CLIENT_REGISTRATION_POLICY_QUERY_KEY });
+      const previous = queryClient.getQueryData<ClientRegistrationPolicy>(CLIENT_REGISTRATION_POLICY_QUERY_KEY);
+      queryClient.setQueryData<ClientRegistrationPolicy>(
+        CLIENT_REGISTRATION_POLICY_QUERY_KEY,
+        (current) => current ? { ...current, ...patch } : current,
+      );
+      return { previous };
+    },
+    onError: (error, _patch, context) => {
+      if (context?.previous) {
+        queryClient.setQueryData(CLIENT_REGISTRATION_POLICY_QUERY_KEY, context.previous);
+      }
+      toast({
+        variant: "destructive",
+        description: getUserErrorMessage(error, "자동 등록 고객의 인사 문자 설정을 저장하지 못했어요"),
+      });
+    },
+    onSuccess: (savedPolicy) => {
+      queryClient.setQueryData(CLIENT_REGISTRATION_POLICY_QUERY_KEY, savedPolicy);
+      toast({ variant: "success", description: "자동 등록 고객의 인사 문자 설정을 저장했어요" });
+    },
+    onSettled: async () => {
+      await queryClient.invalidateQueries({ queryKey: CLIENT_REGISTRATION_POLICY_QUERY_KEY });
+    },
   });
   const isTriggerRulesLocked = !isSenderApprovalLoading && senderApproval?.isApproved === false;
   const effectiveSelectedRuleId = isTriggerRulesLocked ? null : selectedRuleId;
@@ -401,6 +446,7 @@ export function TriggerRulesManager({
   const selectedTemplate = useMemo(() => {
     return availableTemplates.find((template) => template.key === formState.templateKey) ?? null;
   }, [availableTemplates, formState.templateKey]);
+  const isClientGreetingRule = formState.templateKey === "CLIENT_GREETING";
   const requiredTemplateVariables = useMemo(() => {
     const variables = [...(selectedTemplate?.requiredVariables ?? [])];
     const knownKeys = new Set(variables.map((variable) => variable.key));
@@ -428,6 +474,7 @@ export function TriggerRulesManager({
   const filteredRules = useMemo(() => {
     return rules.filter((rule) =>
       rule.isActive === (statusFilter === "active") &&
+      rule.templateKey !== MANUAL_ONLY_TRIGGER_TEMPLATE_KEY &&
       isTriggerRuleInChannel(rule, channel)
     );
   }, [channel, rules, statusFilter]);
@@ -936,6 +983,65 @@ export function TriggerRulesManager({
                           dataComponent={component("trigger-rules-template")}
                           triggerDataComponent={component("trigger-rules-template-select")}
                         />
+
+                        {isClientGreetingRule ? (
+                          <InfoCard
+                            title="추가 발송 조건"
+                            description={isClientRegistrationPolicyLoading
+                              ? "고객 자동 등록 설정을 불러오는 중이에요."
+                              : isClientRegistrationPolicyError
+                                ? "고객 자동 등록 설정을 불러오지 못했어요. 다시 시도해 주세요."
+                                : clientRegistrationPolicy?.clientAutoRegistration
+                                  ? "전자문서로 자동 등록된 고객에게 인사 문자를 보낼지 별도로 정합니다."
+                                  : "고객 자동 등록이 꺼져 있어도 미리 설정할 수 있어요. 자동 등록을 켜면 이 조건이 적용됩니다."}
+                            data-component={component("trigger-rules-client-registration-condition")}
+                            className="md:col-span-2"
+                          >
+                            <div className="-mt-1">
+                              {isClientRegistrationPolicyLoading ? (
+                                <InfoRow
+                                  data-component={component("trigger-rules-client-registration-condition-loading")}
+                                  label="상태"
+                                  value="설정 정보를 불러오는 중이에요."
+                                />
+                              ) : isClientRegistrationPolicyError ? (
+                                <>
+                                  <InfoRow
+                                    data-component={component("trigger-rules-client-registration-condition-error")}
+                                    label="상태"
+                                    value="설정 정보를 불러오지 못했어요."
+                                  />
+                                  <div className="mt-3 flex justify-end">
+                                    <Button
+                                      type="button"
+                                      variant="neutral"
+                                      size="sm"
+                                      onClick={() => void refetchClientRegistrationPolicy()}
+                                      data-component={component("trigger-rules-client-registration-condition-retry")}
+                                    >
+                                      다시 시도
+                                    </Button>
+                                  </div>
+                                </>
+                              ) : (
+                                <InfoRow
+                                  data-component={component("trigger-rules-client-registration-condition-toggle")}
+                                  label="전자문서 자동 등록 고객에게도 발송"
+                                  value={(
+                                    <Switch
+                                      aria-label="전자문서 자동 등록 고객에게도 발송"
+                                      checked={clientRegistrationPolicy?.greetingOnAutoRegistration === true}
+                                      disabled={clientRegistrationPolicy === undefined || updateClientRegistrationPolicyMutation.isPending}
+                                      onCheckedChange={(checked) => {
+                                        updateClientRegistrationPolicyMutation.mutate({ greetingOnAutoRegistration: checked });
+                                      }}
+                                    />
+                                  )}
+                                />
+                              )}
+                            </div>
+                          </InfoCard>
+                        ) : null}
 
                         <InfoCard
                           title="필수 자동 입력 정보"

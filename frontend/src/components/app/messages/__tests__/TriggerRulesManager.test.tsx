@@ -1,5 +1,5 @@
-import { act, fireEvent, render, screen } from "@testing-library/react";
-import { useQuery } from "@tanstack/react-query";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { ReactNode } from "react";
 import { TriggerRulesManager } from "../TriggerRulesManager";
 import {
@@ -10,9 +10,20 @@ import {
   useUpdateMessageTriggerRule,
   useUpdateMessageTriggerRuleBranchActivation,
 } from "@/features/message-triggers/hooks/use-message-triggers";
+import { settingsApi } from "@/services/api";
 
 jest.mock("@tanstack/react-query", () => ({
+  useMutation: jest.fn(),
   useQuery: jest.fn(),
+  useQueryClient: jest.fn(),
+}));
+
+jest.mock("@/services/api", () => ({
+  settingsApi: {
+    getMessageSenderApproval: jest.fn(),
+    getClientRegistrationPolicy: jest.fn(),
+    updateClientRegistrationPolicy: jest.fn(),
+  },
 }));
 
 jest.mock("@/components/app/v3", () => {
@@ -76,12 +87,21 @@ jest.mock("@/features/message-triggers/hooks/use-message-triggers", () => ({
 }));
 
 const mockedUseQuery = jest.mocked(useQuery);
+const mockedUseMutation = jest.mocked(useMutation);
+const mockedUseQueryClient = jest.mocked(useQueryClient);
 const mockedUseMessageTriggerRules = jest.mocked(useMessageTriggerRules);
 const mockedUseMessageTriggerTemplates = jest.mocked(useMessageTriggerTemplates);
 const mockedUseCreateMessageTriggerRule = jest.mocked(useCreateMessageTriggerRule);
 const mockedUseUpdateMessageTriggerRule = jest.mocked(useUpdateMessageTriggerRule);
 const mockedUseDeleteMessageTriggerRule = jest.mocked(useDeleteMessageTriggerRule);
 const mockedUseUpdateMessageTriggerRuleBranchActivation = jest.mocked(useUpdateMessageTriggerRuleBranchActivation);
+const mockedSettingsApi = jest.mocked(settingsApi);
+
+const mockInvalidateQueries = jest.fn();
+const mockSetQueryData = jest.fn();
+const mockCancelQueries = jest.fn();
+const mockGetQueryData = jest.fn();
+const mockRefetchClientRegistrationPolicy = jest.fn();
 
 type QueryOptions = {
   queryKey?: readonly unknown[];
@@ -90,6 +110,12 @@ type QueryOptions = {
 interface SettingsQueryState {
   providerEnabled?: boolean;
   senderApproved?: boolean;
+  clientRegistrationPolicy?: {
+    clientAutoRegistration: boolean;
+    greetingOnAutoRegistration: boolean;
+  };
+  clientRegistrationPolicyLoading?: boolean;
+  clientRegistrationPolicyError?: boolean;
   systemTemplate?: {
     id: string;
     templateKey: string;
@@ -110,6 +136,12 @@ function useQueryResult<TData>(data: TData, isLoading = false): ReturnType<typeo
 function mockSettingsQueries({
   providerEnabled = false,
   senderApproved = false,
+  clientRegistrationPolicy = {
+    clientAutoRegistration: true,
+    greetingOnAutoRegistration: false,
+  },
+  clientRegistrationPolicyLoading = false,
+  clientRegistrationPolicyError = false,
   systemTemplate,
 }: SettingsQueryState = {}) {
   mockedUseQuery.mockImplementation((options: QueryOptions) => {
@@ -123,6 +155,17 @@ function mockSettingsQueries({
         requestedAt: null,
         approvedAt: senderApproved ? "2026-06-05T00:00:00.000Z" : null,
       });
+    }
+
+    if (queryKey.includes("client-registration-policy")) {
+      return {
+        data: clientRegistrationPolicyLoading || clientRegistrationPolicyError
+          ? undefined
+          : clientRegistrationPolicy,
+        isLoading: clientRegistrationPolicyLoading,
+        isError: clientRegistrationPolicyError,
+        refetch: mockRefetchClientRegistrationPolicy,
+      } as unknown as ReturnType<typeof useQuery>;
     }
 
     if (queryKey.includes("system-templates")) {
@@ -147,6 +190,33 @@ beforeEach(() => {
   });
 
   mockSettingsQueries();
+  mockedUseQueryClient.mockReturnValue({
+    invalidateQueries: mockInvalidateQueries,
+    setQueryData: mockSetQueryData,
+    cancelQueries: mockCancelQueries,
+    getQueryData: mockGetQueryData,
+  } as unknown as ReturnType<typeof useQueryClient>);
+  mockedSettingsApi.updateClientRegistrationPolicy.mockImplementation(async (patch) => ({
+    clientAutoRegistration: true,
+    greetingOnAutoRegistration: false,
+    ...patch,
+  }));
+  mockedUseMutation.mockImplementation(((options: {
+    mutationFn?: (variables?: unknown) => unknown;
+    onMutate?: (variables: unknown) => unknown;
+    onSuccess?: (data: unknown, variables: unknown, context: unknown) => unknown;
+    onError?: (error: unknown, variables: unknown, context: unknown) => unknown;
+    onSettled?: (...args: unknown[]) => unknown;
+  }) => ({
+    mutate: (variables?: unknown) => {
+      Promise.resolve(options.onMutate?.(variables))
+        .then((context) => Promise.resolve(options.mutationFn?.(variables))
+          .then((data) => options.onSuccess?.(data, variables, context))
+          .catch((error) => options.onError?.(error, variables, context))
+          .finally(() => options.onSettled?.(undefined, undefined, variables, context)));
+    },
+    isPending: false,
+  })) as unknown as typeof useMutation);
 
   mockedUseMessageTriggerRules.mockReturnValue({
     data: [
@@ -324,6 +394,250 @@ describe("TriggerRulesManager", () => {
       "aria-checked",
       "true",
     );
+  });
+
+  it("hides manual-only SERVICE_END_NOTICE rules while retaining the backend service-record rule", () => {
+    mockSettingsQueries({ providerEnabled: true, senderApproved: true });
+    mockedUseMessageTriggerRules.mockReturnValue({
+      data: [
+        {
+          id: "manual-service-end-notice",
+          branchId: "org-1",
+          name: "수동 영수증 안내",
+          isActive: true,
+          eventType: "SERVICE_END",
+          offsetType: "AFTER_DAYS",
+          offsetDays: 1,
+          recipientType: "CLIENT",
+          templateKey: "SERVICE_END_NOTICE",
+          createdAt: "2026-03-01T00:00:00.000Z",
+          updatedAt: "2026-03-01T00:00:00.000Z",
+        },
+        {
+          id: "system:service_record_link",
+          branchId: null,
+          name: "제공기록지 작성 링크",
+          isActive: true,
+          eventType: "SERVICE_START",
+          offsetType: "SAME_DAY",
+          offsetDays: 0,
+          recipientType: "PRIMARY_EMPLOYEE",
+          templateKey: "SERVICE_RECORD_LINK",
+          createdAt: "2026-03-01T00:00:00.000Z",
+          updatedAt: "2026-03-01T00:00:00.000Z",
+        },
+      ],
+      isLoading: false,
+    } as unknown as ReturnType<typeof useMessageTriggerRules>);
+
+    render(<TriggerRulesManager dataComponent="desktop_messages_sections_section-content_triggers-section_trigger-rules" />);
+
+    expect(screen.queryByText("수동 영수증 안내")).not.toBeInTheDocument();
+    expect(screen.getByText("제공기록지 작성 링크")).toBeInTheDocument();
+    expect(screen.getByRole("switch", { name: "제공기록지 작성 링크 활성화" })).toBeInTheDocument();
+  });
+
+  it("shows the client registration greeting condition on the existing CLIENT_GREETING rule", () => {
+    mockSettingsQueries({
+      providerEnabled: true,
+      senderApproved: true,
+      clientRegistrationPolicy: {
+        clientAutoRegistration: false,
+        greetingOnAutoRegistration: false,
+      },
+    });
+    mockedUseMessageTriggerRules.mockReturnValue({
+      data: [{
+        id: "client-greeting-rule",
+        branchId: "org-1",
+        name: "인사 메시지",
+        isActive: true,
+        eventType: "CLIENT_CREATED",
+        offsetType: "IMMEDIATE",
+        offsetDays: 0,
+        recipientType: "CLIENT",
+        templateKey: "CLIENT_GREETING",
+        createdAt: "2026-03-01T00:00:00.000Z",
+        updatedAt: "2026-03-01T00:00:00.000Z",
+      }],
+      isLoading: false,
+    } as unknown as ReturnType<typeof useMessageTriggerRules>);
+    mockedUseMessageTriggerTemplates.mockReturnValue({
+      data: [{
+        key: "CLIENT_GREETING",
+        name: "인사 메시지",
+        description: "고객 등록 인사 메시지입니다.",
+        allowedEventTypes: ["CLIENT_CREATED"],
+        allowedRecipientTypes: ["CLIENT"],
+        requiredVariables: [],
+        providers: { sms: { templateKey: "CLIENT_GREETING" } },
+      }],
+    } as unknown as ReturnType<typeof useMessageTriggerTemplates>);
+
+    render(<TriggerRulesManager dataComponent="desktop_messages_sections_section-content_triggers-section_trigger-rules" />);
+    fireEvent.click(screen.getAllByText("인사 메시지")[0]);
+
+    const conditionSwitch = screen.getByRole("switch", { name: "전자문서 자동 등록 고객에게도 발송" });
+    expect(conditionSwitch).toBeEnabled();
+    expect(screen.getByText(/고객 자동 등록이 꺼져 있어도 미리 설정할 수 있어요/)).toBeInTheDocument();
+    expect(screen.getByRole("switch", { name: "인사 메시지 활성화" })).toBeChecked();
+  });
+
+  it("persists the greeting condition through the shared client-registration policy API", async () => {
+    const previousPolicy = {
+      clientAutoRegistration: false,
+      greetingOnAutoRegistration: false,
+    };
+    mockGetQueryData.mockReturnValue(previousPolicy);
+    mockSettingsQueries({
+      providerEnabled: true,
+      senderApproved: true,
+      clientRegistrationPolicy: previousPolicy,
+    });
+    mockedUseMessageTriggerRules.mockReturnValue({
+      data: [{
+        id: "client-greeting-rule",
+        branchId: "org-1",
+        name: "인사 메시지",
+        isActive: true,
+        eventType: "CLIENT_CREATED",
+        offsetType: "IMMEDIATE",
+        offsetDays: 0,
+        recipientType: "CLIENT",
+        templateKey: "CLIENT_GREETING",
+        createdAt: "2026-03-01T00:00:00.000Z",
+        updatedAt: "2026-03-01T00:00:00.000Z",
+      }],
+      isLoading: false,
+    } as unknown as ReturnType<typeof useMessageTriggerRules>);
+    mockedUseMessageTriggerTemplates.mockReturnValue({
+      data: [{
+        key: "CLIENT_GREETING",
+        name: "인사 메시지",
+        description: "고객 등록 인사 메시지입니다.",
+        allowedEventTypes: ["CLIENT_CREATED"],
+        allowedRecipientTypes: ["CLIENT"],
+        requiredVariables: [],
+        providers: { sms: { templateKey: "CLIENT_GREETING" } },
+      }],
+    } as unknown as ReturnType<typeof useMessageTriggerTemplates>);
+
+    render(<TriggerRulesManager dataComponent="desktop_messages_sections_section-content_triggers-section_trigger-rules" />);
+    fireEvent.click(screen.getAllByText("인사 메시지")[0]);
+    fireEvent.click(screen.getByRole("switch", { name: "전자문서 자동 등록 고객에게도 발송" }));
+
+    await waitFor(() => {
+      expect(mockedSettingsApi.updateClientRegistrationPolicy).toHaveBeenCalledWith({
+        greetingOnAutoRegistration: true,
+      });
+      expect(mockSetQueryData).toHaveBeenCalledWith(
+        ["settings", "client-registration-policy"],
+        expect.objectContaining({ greetingOnAutoRegistration: true }),
+      );
+    });
+  });
+
+  it("rolls back the greeting condition when the client-registration policy save fails", async () => {
+    const previousPolicy = {
+      clientAutoRegistration: false,
+      greetingOnAutoRegistration: false,
+    };
+    mockGetQueryData.mockReturnValue(previousPolicy);
+    mockedSettingsApi.updateClientRegistrationPolicy.mockRejectedValueOnce(new Error("failed"));
+    mockSettingsQueries({
+      providerEnabled: true,
+      senderApproved: true,
+      clientRegistrationPolicy: previousPolicy,
+    });
+    mockedUseMessageTriggerRules.mockReturnValue({
+      data: [{
+        id: "client-greeting-rule",
+        branchId: "org-1",
+        name: "인사 메시지",
+        isActive: true,
+        eventType: "CLIENT_CREATED",
+        offsetType: "IMMEDIATE",
+        offsetDays: 0,
+        recipientType: "CLIENT",
+        templateKey: "CLIENT_GREETING",
+        createdAt: "2026-03-01T00:00:00.000Z",
+        updatedAt: "2026-03-01T00:00:00.000Z",
+      }],
+      isLoading: false,
+    } as unknown as ReturnType<typeof useMessageTriggerRules>);
+    mockedUseMessageTriggerTemplates.mockReturnValue({
+      data: [{
+        key: "CLIENT_GREETING",
+        name: "인사 메시지",
+        description: "고객 등록 인사 메시지입니다.",
+        allowedEventTypes: ["CLIENT_CREATED"],
+        allowedRecipientTypes: ["CLIENT"],
+        requiredVariables: [],
+        providers: { sms: { templateKey: "CLIENT_GREETING" } },
+      }],
+    } as unknown as ReturnType<typeof useMessageTriggerTemplates>);
+
+    render(<TriggerRulesManager dataComponent="desktop_messages_sections_section-content_triggers-section_trigger-rules" />);
+    fireEvent.click(screen.getAllByText("인사 메시지")[0]);
+    fireEvent.click(screen.getByRole("switch", { name: "전자문서 자동 등록 고객에게도 발송" }));
+
+    await waitFor(() => {
+      expect(mockSetQueryData).toHaveBeenCalledWith(
+        ["settings", "client-registration-policy"],
+        previousPolicy,
+      );
+    });
+  });
+
+  it("shows loading and retry states for the client registration greeting condition", () => {
+    mockSettingsQueries({
+      providerEnabled: true,
+      senderApproved: true,
+      clientRegistrationPolicyLoading: true,
+    });
+    mockedUseMessageTriggerRules.mockReturnValue({
+      data: [{
+        id: "client-greeting-rule",
+        branchId: "org-1",
+        name: "인사 메시지",
+        isActive: true,
+        eventType: "CLIENT_CREATED",
+        offsetType: "IMMEDIATE",
+        offsetDays: 0,
+        recipientType: "CLIENT",
+        templateKey: "CLIENT_GREETING",
+        createdAt: "2026-03-01T00:00:00.000Z",
+        updatedAt: "2026-03-01T00:00:00.000Z",
+      }],
+      isLoading: false,
+    } as unknown as ReturnType<typeof useMessageTriggerRules>);
+    mockedUseMessageTriggerTemplates.mockReturnValue({
+      data: [{
+        key: "CLIENT_GREETING",
+        name: "인사 메시지",
+        description: "고객 등록 인사 메시지입니다.",
+        allowedEventTypes: ["CLIENT_CREATED"],
+        allowedRecipientTypes: ["CLIENT"],
+        requiredVariables: [],
+        providers: { sms: { templateKey: "CLIENT_GREETING" } },
+      }],
+    } as unknown as ReturnType<typeof useMessageTriggerTemplates>);
+
+    const view = render(<TriggerRulesManager dataComponent="desktop_messages_sections_section-content_triggers-section_trigger-rules" />);
+    fireEvent.click(screen.getAllByText("인사 메시지")[0]);
+    expect(screen.getAllByText("고객 자동 등록 설정을 불러오는 중이에요.").length).toBeGreaterThan(0);
+    expect(screen.queryByRole("switch", { name: "전자문서 자동 등록 고객에게도 발송" })).not.toBeInTheDocument();
+
+    mockSettingsQueries({
+      providerEnabled: true,
+      senderApproved: true,
+      clientRegistrationPolicyError: true,
+    });
+    view.rerender(<TriggerRulesManager dataComponent="desktop_messages_sections_section-content_triggers-section_trigger-rules" />);
+
+    expect(screen.getByRole("button", { name: "다시 시도" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "다시 시도" }));
+    expect(mockRefetchClientRegistrationPolicy).toHaveBeenCalledTimes(1);
   });
 
   it("preserves a dedicated service-record rule while editing its name", async () => {

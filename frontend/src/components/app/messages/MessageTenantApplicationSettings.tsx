@@ -8,7 +8,6 @@ import {
   ArrowDown,
   ArrowUp,
   Building2,
-  CalendarClock,
   CheckCircle2,
   Clock3,
   ExternalLink,
@@ -16,7 +15,6 @@ import {
   Repeat2,
   Send,
   ShieldCheck,
-  UserPlus,
 } from "lucide-react";
 import { mergeRuleOrder } from "@babyjamjam/shared/utils/rule-order";
 import {
@@ -29,7 +27,6 @@ import {
   ListEmptyState,
   ListPanel,
 } from "@/components/app/v3";
-import { AutomationStatusNotice } from "@/components/app/ui/automation-status-notice";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -47,8 +44,6 @@ import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 import {
   settingsApi,
-  type ClientRegistrationPolicy,
-  type ClientRegistrationPolicyPatch,
   type MessageAutomationPoliciesResponse,
   type MessageAutomationPastTriggerConfig,
   type MessageAutomationPolicy,
@@ -57,6 +52,7 @@ import {
 const UNIFIED_SENDER_PHONE = "010-9641-1878";
 const DUPLICATE_SEND_POLICY_ITEM_ID = "duplicate-send-confirmation";
 const SERVICE_RECORD_LINK_POLICY_ID = "service-feedback-link";
+const MANUAL_ONLY_TRIGGER_TEMPLATE_KEY = "SERVICE_END_NOTICE";
 const SMS_RETRY_POLICY_ID = "sms-retry";
 const PAST_TRIGGER_POLICY_ID = "past-trigger";
 const DEFAULT_PAST_TRIGGER_CONFIG: MessageAutomationPastTriggerConfig = {
@@ -126,7 +122,6 @@ const ALIGO_POLICY_ITEMS = [
 ] as const;
 
 const CURRENT_TENANT_ITEM_ID = "current-tenant";
-const CLIENT_REGISTRATION_POLICY_ITEM_ID = "client-registration-policy";
 
 type TenantApplicationListItem = {
   id: string;
@@ -134,7 +129,7 @@ type TenantApplicationListItem = {
   subtitle: string;
   statusLabel: string;
   icon: typeof Building2;
-  kind: "tenant-application" | "automation-policy" | "duplicate-send-policy" | "client-registration-policy";
+  kind: "tenant-application" | "automation-policy" | "duplicate-send-policy";
   active: boolean;
   requiresApproval: boolean;
   rows?: MessageAutomationPolicy["rows"];
@@ -161,10 +156,6 @@ function formatRequestedAt(date: Date) {
 }
 
 function getAutomationPolicyIcon(policyId: string) {
-  if (policyId === SERVICE_RECORD_LINK_POLICY_ID) {
-    return CalendarClock;
-  }
-
   if (policyId === PAST_TRIGGER_POLICY_ID) {
     return History;
   }
@@ -227,10 +218,6 @@ export function MessageTenantApplicationSettings() {
     queryKey: ["settings", "message-automation-policies"],
     queryFn: settingsApi.getMessageAutomationPolicies,
   });
-  const { data: clientRegistrationPolicy } = useQuery({
-    queryKey: ["settings", "client-registration-policy"],
-    queryFn: settingsApi.getClientRegistrationPolicy,
-  });
   const { data: triggerRulesData = [], isLoading: isTriggerRulesLoading } = useMessageTriggerRules();
   const [agreements, setAgreements] = useState<Record<string, boolean>>(() =>
     Object.fromEntries(ALIGO_POLICY_ITEMS.map((item) => [item.id, false])),
@@ -269,30 +256,23 @@ export function MessageTenantApplicationSettings() {
         });
       }
 
-      const automationPolicyItems = (messageAutomationPolicies?.policies ?? []).map<TenantApplicationListItem>(
-        (policy) => ({
-          id: policy.id,
-          title: policy.title,
-          subtitle: policy.description,
-          statusLabel: getPolicyStatusLabel(policy.active),
-          icon: getAutomationPolicyIcon(policy.id),
-          kind: "automation-policy",
-          active: policy.active,
-          requiresApproval: policy.requiresApproval,
-          rows: policy.rows,
-        }),
-      );
+      const automationPolicyItems = (messageAutomationPolicies?.policies ?? [])
+        .filter((policy) => policy.id !== SERVICE_RECORD_LINK_POLICY_ID)
+        .map<TenantApplicationListItem>(
+          (policy) => ({
+            id: policy.id,
+            title: policy.title,
+            subtitle: policy.description,
+            statusLabel: getPolicyStatusLabel(policy.active),
+            icon: getAutomationPolicyIcon(policy.id),
+            kind: "automation-policy",
+            active: policy.active,
+            requiresApproval: policy.requiresApproval,
+            rows: policy.rows,
+          }),
+        );
 
-      items.push(...automationPolicyItems, {
-        id: CLIENT_REGISTRATION_POLICY_ITEM_ID,
-        title: "고객 자동 등록",
-        subtitle: "전자문서 고객 등록과 인사 문자 발송을 관리합니다.",
-        statusLabel: getPolicyStatusLabel(clientRegistrationPolicy?.clientAutoRegistration === true),
-        icon: UserPlus,
-        kind: "client-registration-policy",
-        active: clientRegistrationPolicy?.clientAutoRegistration === true,
-        requiresApproval: false,
-      }, DUPLICATE_SEND_POLICY_ITEM);
+      items.push(...automationPolicyItems, DUPLICATE_SEND_POLICY_ITEM);
 
       return items;
     },
@@ -301,7 +281,6 @@ export function MessageTenantApplicationSettings() {
       isMessageSettingsListLoading,
       isMessageSenderApproved,
       messageAutomationPolicies?.policies,
-      clientRegistrationPolicy?.clientAutoRegistration,
       requestedAt,
     ],
   );
@@ -314,7 +293,11 @@ export function MessageTenantApplicationSettings() {
   const SelectedItemIcon = selectedItem?.icon ?? ShieldCheck;
   const activeSmsTriggerRules = useMemo(
     () => (Array.isArray(triggerRulesData) ? triggerRulesData : [])
-      .filter((rule) => rule.isActive && isTriggerRuleInChannel(rule, "sms")),
+      .filter((rule) =>
+        rule.isActive &&
+        rule.templateKey !== MANUAL_ONLY_TRIGGER_TEMPLATE_KEY &&
+        isTriggerRuleInChannel(rule, "sms"),
+      ),
     [triggerRulesData],
   );
   const savedPastTriggerConfig = messageAutomationPolicies?.pastTriggerConfig ?? DEFAULT_PAST_TRIGGER_CONFIG;
@@ -390,35 +373,6 @@ export function MessageTenantApplicationSettings() {
         variant: "destructive",
         description: getUserErrorMessage("지난 자동 전송 설정을 저장하지 못했어요"),
       });
-    },
-  });
-
-  const updateClientRegistrationPolicyMutation = useMutation({
-    mutationFn: settingsApi.updateClientRegistrationPolicy,
-    onMutate: async (patch: ClientRegistrationPolicyPatch) => {
-      await queryClient.cancelQueries({ queryKey: ["settings", "client-registration-policy"] });
-      const previous = queryClient.getQueryData<ClientRegistrationPolicy>([
-        "settings",
-        "client-registration-policy",
-      ]);
-      queryClient.setQueryData<ClientRegistrationPolicy>(
-        ["settings", "client-registration-policy"],
-        (current) => current ? { ...current, ...patch } : current,
-      );
-      return { previous };
-    },
-    onError: (_error, _patch, context) => {
-      if (context?.previous) {
-        queryClient.setQueryData(["settings", "client-registration-policy"], context.previous);
-      }
-      toast({ variant: "destructive", description: getUserErrorMessage(_error, "고객 자동 등록 설정을 저장하지 못했어요") });
-    },
-    onSuccess: (savedPolicy) => {
-      queryClient.setQueryData(["settings", "client-registration-policy"], savedPolicy);
-      toast({ variant: "success", description: "고객 자동 등록 설정을 저장했어요" });
-    },
-    onSettled: async () => {
-      await queryClient.invalidateQueries({ queryKey: ["settings", "client-registration-policy"] });
     },
   });
 
@@ -682,34 +636,6 @@ export function MessageTenantApplicationSettings() {
               </InfoCard>
             ) : null}
           </div>
-        </DetailPanel>
-      ) : selectedItem?.kind === "client-registration-policy" ? (
-        <DetailPanel data-component="desktop_messages_sections_split-layout_detail-panel-3"
-          avatar={<div className="flex h-12 w-12 items-center justify-center rounded-[16px] bg-v3-primary-light text-v3-primary"><UserPlus className="h-5 w-5" /></div>}
-          title="고객 자동 등록"
-          subtitle="eformsign 계약서 고객 등록과 인사 문자 발송을 관리합니다."
-        >
-          <InfoCard data-component="desktop_messages_sections_settings-client-registration-policy-card" title="고객 자동 등록">
-            <div className="-mt-1">
-              <InfoRow
-                data-component="desktop_messages_sections_settings-client-auto-registration"
-                label="eformsign 계약서 도착 시 고객 자동 등록"
-                value={<Switch aria-label="eformsign 계약서 도착 시 고객 자동 등록" checked={clientRegistrationPolicy?.clientAutoRegistration === true} disabled={!clientRegistrationPolicy || updateClientRegistrationPolicyMutation.isPending} onCheckedChange={(checked) => updateClientRegistrationPolicyMutation.mutate({ clientAutoRegistration: checked })} />}
-              />
-              <InfoRow
-                data-component="desktop_messages_sections_settings-greeting-on-auto-registration"
-                label="자동 등록 시 인사 문자 발송"
-                value={<Switch aria-label="자동 등록 시 인사 문자 발송" checked={clientRegistrationPolicy?.greetingOnAutoRegistration === true} disabled={!clientRegistrationPolicy?.clientAutoRegistration || updateClientRegistrationPolicyMutation.isPending} onCheckedChange={(checked) => updateClientRegistrationPolicyMutation.mutate({ greetingOnAutoRegistration: checked })} />}
-              />
-            </div>
-          </InfoCard>
-          <InfoCard data-component="desktop_messages_sections_settings-client-registration-automation-card" title="동작 방식">
-            <AutomationStatusNotice
-              data-component="desktop_messages_sections_settings-client-registration-automation-card_notice"
-              enabled={clientRegistrationPolicy?.clientAutoRegistration === true}
-              automation={clientRegistrationPolicy?.automation}
-            />
-          </InfoCard>
         </DetailPanel>
       ) : selectedItem?.kind === "duplicate-send-policy" ? (
         <DetailPanel data-component="desktop_messages_sections_split-layout_detail-panel-4"
