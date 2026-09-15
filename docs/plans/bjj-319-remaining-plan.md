@@ -567,3 +567,9 @@ TL;DR: 배정(4b-1 백엔드: 역할·자격·동시 변경 코드 전환 / 4b-2
 - 검증(통합 `97a752cef`): backend 356/5,050, shared 353+86, mobile 1,630, frontend 1,550, 4종 타입·게이트·ci 통과, vendor 결정성. 감사 **SHIP/HIGH**.
 - carried: parseInteger 전역 변환(별도 단위), `service-record-entry` 특정 연장 문구가 카탈로그 일반 문구로 대체(제공기록지 슬롯), HTTP 경계 직접 테스트는 기존 패턴 의존.
 - 기록: inventory 4행 migrated·service-record-entry 노트·vendor_parity 갱신, `schedule-crud-contract` finding 추가. unit worktree/branch 정리. 다음은 **4c-2(schedule-change 서비스)**.
+
+**Task 4c-2: schedule-change 서비스 오류 전환** (feature, high) — 바인딩 2026-09-15, base `91cb0f26c`
+- 카탈로그 등록(기존 배포 식별자, EM-CAT-03): `SERVICE_RECORD_PLANNED_DATE_UNAVAILABLE`(409) · `INVALID_SCHEDULE_DATE`(400) · `ALL_SESSIONS_SUBMITTED`(409) · `REQUEST_ALREADY_PENDING`(409) · `REQUEST_NOT_PENDING`(409) · `SCHEDULE_DATE_NOT_POSTPONED`(409) · `REQUEST_STALE`(409). 추가 1개: `SCHEDULE_CHANGE_UNCOMPUTABLE`(409, "고객 회기 정보/배정 기간 부재로 계산 불가" — raw 메시지 3종 대체).
+- 전환: `schedule-change.service.ts`의 코드 throw 전부 `codeOnlyProblemBody`로(원인·상태 보존), raw English 메시지 — NF 3종 → `RESOURCE_NOT_FOUND`, lock("target changed while acquiring write locks") → `SERVICE_RECORD_WRITE_TARGET_CHANGED` 재사용, 계산 불가 3종("Client has no session duration"/"Assignment has no start date"/"Assignment has no end date") → `SCHEDULE_CHANGE_UNCOMPUTABLE`(409).
+- 범위 밖(기록): BFF 8라우트·UI dict는 4c-3, `schedule-change.controller` ParseIntPipe raw는 carried, `service-record-entry`의 연장 불가 문구는 제공기록지 슬롯(3c-1 audit item 6).
+- Dispatch metadata: `Phase: 4c-2` · `Execution: DELEGATE` · `Audit: SOL` · `Agent: worker` · `Model: opencode-go/glm-5.3-flash` · `Paths: packages/shared/src/errors/problem-details.ts(+test), backend/application/services/schedule-change.service.ts(+spec), backend/vendor/shared-agent/**, docs/error-management.md, 관련 spec/e2e 단언` · `Depends: Task 4.3(4c-1)`
