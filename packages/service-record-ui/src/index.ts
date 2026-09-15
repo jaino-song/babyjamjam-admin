@@ -12,6 +12,7 @@ export {
     formatShortDate,
     hasDisplayValue,
     isDailyItemComplete,
+    isServiceRecordHeaderComplete,
 } from "./form-definition";
 export type { DailyItem, DayPage, ItemType } from "./form-definition";
 export type {

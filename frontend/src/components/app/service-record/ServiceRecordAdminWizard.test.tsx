@@ -485,6 +485,18 @@ describe("per-session administrator editing", () => {
         expect(adminServiceRecordEditApi.updateDraft).toHaveBeenCalledWith("draft-1", 1, { header: { momName: "새 산모 이름" } }, undefined);
     });
 
+    it.each(["김산모", "900101", "김아기", "260714", "3.2"])("does not save when a required header value (%s) is blank", (value) => {
+        render(<ServiceRecordAdminWizard clientId="42" overview={sessionOverview} initialDraftState={{ ...makeDraftState(), draft: null }} />);
+        fireEvent.click(screen.getByRole("button", { name: "기본정보 수정" }));
+        fireEvent.change(screen.getByDisplayValue(value), { target: { value: " " } });
+        const confirm = screen.getByRole("button", { name: "수정 확인" });
+        expect(confirm).toBeDisabled();
+        fireEvent.click(confirm);
+        expect(adminServiceRecordEditApi.startDraft).not.toHaveBeenCalled();
+        expect(adminServiceRecordEditApi.updateDraft).not.toHaveBeenCalled();
+        expect(adminServiceRecordEditApi.confirmDraft).not.toHaveBeenCalled();
+    });
+
     it("rejects a preview that omits an approved suffix date move", async () => {
         jest.mocked(adminServiceRecordEditApi.previewDraft).mockResolvedValue({
             ...confirmPreviewResponse, draftVersion: 2,

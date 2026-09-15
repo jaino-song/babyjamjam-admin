@@ -7,6 +7,7 @@ import {
     DAY_PAGES,
     ServiceRecordWizard,
     formatShortDate,
+    isServiceRecordHeaderComplete,
 } from "@babyjamjam/service-record-ui";
 import type {
     ServiceRecordContext,
@@ -552,6 +553,10 @@ export function ServiceRecordAdminWizard({
         if (priorChanges && !recover) { resetLocal(); return; }
         if (!recover && !changed && !saveStarted) { resetLocal(); return; }
         if (needsReload) return;
+        if (!recover && editingHeader && !isServiceRecordHeaderComplete(headerDraft)) {
+            setError("필수 기본정보를 모두 입력해 주세요.");
+            return;
+        }
         saving.current = true;
         setBusy(true);
         setError(null);
@@ -744,9 +749,9 @@ export function ServiceRecordAdminWizard({
                             {priorChanges ? "기본정보 확인" : "기본정보 수정"}
                         </Button>
                     ),
-                    adminHeaderAction: (
+                    adminHeaderAction: ({ isHeaderComplete }) => (
                         <Button data-component={`${ADMIN_WIZARD_COMPONENT}_body_header-confirm`} type="button" className="btn submit"
-                            disabled={busy || (changed && needsReload)} onClick={() => priorChanges || !changed && !saveStarted ? resetLocal() : void confirm()}>
+                            disabled={busy || (changed && (needsReload || !isHeaderComplete))} onClick={() => priorChanges || !changed && !saveStarted ? resetLocal() : void confirm()}>
                             {busy ? "저장 중…" : changed || saveStarted ? "수정 확인" : "확인"}
                         </Button>
                     ),

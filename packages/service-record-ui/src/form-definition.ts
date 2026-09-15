@@ -91,6 +91,10 @@ export const hasDisplayValue = (value: unknown): boolean => {
     return true;
 };
 
+export const isServiceRecordHeaderComplete = (header: Record<string, unknown>): boolean => (
+    HEADER_FIELDS.every((field) => hasDisplayValue(header[field.k])) && hasDisplayValue(header.deliveryType)
+);
+
 export function formatReviewFieldValue(
     field: DailyItem,
     draft: Record<string, unknown>,

@@ -84,7 +84,7 @@ export interface ServiceRecordWizardSlots {
     /** Per-session administrator save/return action. */
     adminSessionAction?: ReactNode;
     /** Administrator-only basic-information confirmation. */
-    adminHeaderAction?: ReactNode;
+    adminHeaderAction?: (props: { isHeaderComplete: boolean }) => ReactNode;
     /** Optional administrator-only date display override; public defaults stay unchanged. */
     serviceDateDisplay?: (props: ServiceDateDisplaySlotProps) => ReactNode;
     /** Optional administrator-only date editor trigger; public date input stays unchanged. */

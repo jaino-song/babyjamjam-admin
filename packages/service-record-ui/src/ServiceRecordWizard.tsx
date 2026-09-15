@@ -11,6 +11,7 @@ import {
     formatShortDate,
     hasDisplayValue,
     isDailyItemComplete,
+    isServiceRecordHeaderComplete,
 } from "./form-definition";
 import type {
     ServiceRecordWizardSlots,
@@ -343,8 +344,7 @@ export function ServiceRecordWizard({
     const isMomConfirmationPage = Boolean(currentDayPage.confirmation);
     const signatureValue = currentSession?.clientSignature ?? clientSignature;
     const isSignatureLocked = Boolean(currentSession?.clientSignature);
-    const isHeaderComplete = HEADER_FIELDS.every((field) => hasDisplayValue(header[field.k]))
-        && hasDisplayValue(header.deliveryType);
+    const isHeaderComplete = isServiceRecordHeaderComplete(header);
     const plannedDateForSession = (sessionIndex: number): string | undefined => plannedDateBySession?.get(sessionIndex);
     const displayDateForSession = (sessionIndex: number, session?: { serviceDate: string }): string => (
         session?.serviceDate?.slice(0, 10)
@@ -464,7 +464,7 @@ export function ServiceRecordWizard({
                             <label data-slot="lab" className="lab">{HEADER_FIELDS[4].label}</label>
                             <TextInput placeholder={HEADER_FIELDS[4].ph} value={header.babyWeight ?? ""} disabled={readOnly} onChange={(event) => onHeaderChange(HEADER_FIELDS[4].k, event.target.value)} />
                         </div>
-                        {adminMode && slots?.adminHeaderAction ? slots.adminHeaderAction : (
+                        {adminMode && slots?.adminHeaderAction ? slots.adminHeaderAction({ isHeaderComplete }) : (
                             <button data-slot="btn" className="btn primary" disabled={readOnly || busy || !isHeaderComplete} onClick={() => onSaveHeader()}>{busy ? "저장 중…" : adminMode ? "초안 저장" : "다음"}</button>
                         )}
                     </>
