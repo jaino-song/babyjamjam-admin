@@ -672,3 +672,8 @@ TL;DR: 배정(4b-1 백엔드: 역할·자격·동시 변경 코드 전환 / 4b-2
 - 검증: backend 357/5,083(flaky 1회→재실행 green), shared 409+86, tc 0. **flaky 풀 확장 확인:** 컨트롤러 integration 스펙(Employee/UserController)도 런당 랜덤 1건 실패 — base에서도 동일(기존 환경 flake).
 - carried: 4개 분기 직접 단언 미비(N1), 컨트롤러 denial 매핑 리터럴 중복(N2).
 - 기록: `finalize-envelope-contract` finding 추가. unit 정리. 다음은 **5-4c(웹/모바일 소비자 정렬)**.
+
+**Task 5-4c: headless 소비자 정렬** — base `6629eee55`
+- ① mobile legacy `useContractCreationFlow.ts`의 무조건 iframe 폴백(중복 위험) — 도달성 확인 후 안전 게이트 적용 또는 정식 은퇴. ② 웹 `ContractCreationForm`·웹 `contracts/page`(finalize)·모바일 `new/page`·모바일 `contracts/page`가 가산 `outcome`/`code`를 우선 분류로 채택(UNKNOWN→확인 필요+잠금, PARTIALLY_APPLIED→adopt, NOT_APPLIED→기존), legacy reason/fallbackHint 분기는 폴백으로 유지. ③ 테스트.
+- 범위 밖: 백엔드(불변), creation/AI(5-4d), reason 토큰 변경.
+- Dispatch: `Phase: 5-4c` · worker(glm) · `Paths: frontend/src/components/app/contracts/ContractCreationForm.tsx, frontend/src/app/(protected)/contracts/page.tsx, frontend/src/services/api.ts, mobile/src/app/(shell)/contracts/{new,page}.tsx, mobile/src/hooks/useContractCreationFlow.ts, mobile/src/app/(shell)/contracts/page.helpers.ts, mobile/src/lib/contracts/contract-operation-guard.ts, 대응 테스트` · `Audit: SOL`
