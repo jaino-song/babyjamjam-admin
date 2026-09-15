@@ -21,7 +21,7 @@ import {
     type EformsignProviderPrincipal,
 } from "application/services/eformsign-credential-boundary.service";
 import { ContractClientAssignmentGuardService } from "application/services/contract-client-assignment-guard.service";
-import { problemBody, codeOnlyProblemBody } from "application/utils/problem-bodies";
+import { codeOnlyProblemBody, problemBody, uncertainProblemBody } from "application/utils/problem-bodies";
 import {
     DocumentSnapshotEntry,
     DocumentSnapshotScope,
@@ -805,7 +805,7 @@ export class EformsignController {
             if (error instanceof HttpException) {
                 throw error;
             }
-            throw new InternalServerErrorException(codeOnlyProblemBody("INTERNAL_ERROR"));
+            throw new InternalServerErrorException(uncertainProblemBody("INTERNAL_ERROR"));
         }
     }
 
@@ -1080,7 +1080,7 @@ export class EformsignController {
                 throw error;
             }
 
-            throw new InternalServerErrorException(codeOnlyProblemBody("INTERNAL_ERROR"));
+            throw new InternalServerErrorException(uncertainProblemBody("INTERNAL_ERROR"));
         }
     }
 }

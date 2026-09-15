@@ -537,7 +537,11 @@ describe("EformsignController (Integration)", () => {
             .send({ document_ids: ["deleted-doc", "rejected-doc"] });
 
         expect(response.status).toBe(500);
-        expect(response.body).toEqual(expect.objectContaining({ code: "INTERNAL_ERROR" }));
+        expect(response.body).toEqual(expect.objectContaining({
+            code: "INTERNAL_ERROR",
+            outcome: "UNKNOWN",
+            recovery: expect.objectContaining({ action: "CHECK_STATUS" }),
+        }));
         expect(documentMirrorService.clearPermanentPurgeRequest).toHaveBeenCalledTimes(1);
         expect(documentMirrorService.purgeDocuments).toHaveBeenCalledWith(["deleted-doc"]);
     });
@@ -766,6 +770,8 @@ describe("EformsignController (Integration)", () => {
 
         expect(response.status).toBe(500);
         expect(response.body.code).toBe("INTERNAL_ERROR");
+        expect(response.body.outcome).toBe("UNKNOWN");
+        expect(response.body.recovery).toEqual(expect.objectContaining({ action: "CHECK_STATUS" }));
     });
 
     it("rejects an empty document_ids payload with a field pointer (defense-in-depth)", async () => {
@@ -841,6 +847,8 @@ describe("EformsignController (Integration)", () => {
 
             expect(response.status).toBe(500);
             expect(response.body.code).toBe("INTERNAL_ERROR");
+        expect(response.body.outcome).toBe("UNKNOWN");
+        expect(response.body.recovery).toEqual(expect.objectContaining({ action: "CHECK_STATUS" }));
         });
     });
 
