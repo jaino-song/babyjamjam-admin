@@ -341,6 +341,14 @@ export type HeadlessFinalizeResponse = {
    * document must be verified in eformsign before anyone acts on it.
    */
   fallbackHint?: "iframe" | "manual_check";
+  /**
+   * BJJ-319 phase 5-4b additive failure contract (ok:false only). The legacy
+   * fields above stay byte-identical; these classify the failure with the
+   * registered problem code, the business outcome, and the recovery guidance.
+   */
+  code?: ProblemCode;
+  outcome?: ProblemOutcome;
+  recovery?: ProblemRecovery;
 };
 
 export type FinalizeHeadlessResponse = HeadlessFinalizeResponse;

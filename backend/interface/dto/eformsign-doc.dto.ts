@@ -155,6 +155,14 @@ export type FinalizeHeadlessResponseDto = {
     reason?: string;
     fallbackHint?: "iframe" | "manual_check";
     dispatchIntentId?: string;
+    /**
+     * BJJ-319 phase 5-4b additive failure contract (ok:false only). Legacy
+     * fields above stay byte-identical; these forward the usecase's registered
+     * problem code, business outcome, and recovery guidance.
+     */
+    code?: ProblemCode;
+    outcome?: ProblemOutcome;
+    recovery?: ProblemRecovery;
 };
 
 /** Explicit operator outcome for a provider call that crossed the network boundary. */

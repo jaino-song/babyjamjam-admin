@@ -377,6 +377,12 @@ export class EformsignDocController {
                 durationMs: 0,
                 reason: "authorization_denied",
                 fallbackHint: "manual_check",
+                // BJJ-319 phase 5-4b additive fields for the same refusal the
+                // usecase's assertOwnedTarget returns; the reason stays the
+                // compatibility alias.
+                code: "ACCESS_DENIED",
+                outcome: "NOT_APPLIED",
+                recovery: { action: "NONE", retry: { mode: "NEVER" } },
             };
         }
         this.logger.log(`[POST /eformsign-docs/finalize-headless] documentId=${dto.documentId}`);
@@ -399,6 +405,9 @@ export class EformsignDocController {
                 reason: result.reason,
                 fallbackHint: result.fallbackHint,
                 dispatchIntentId: result.dispatchIntentId,
+                code: result.code,
+                outcome: result.outcome,
+                recovery: result.recovery,
             };
         }
         return {

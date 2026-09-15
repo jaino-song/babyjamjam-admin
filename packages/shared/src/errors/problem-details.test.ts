@@ -252,6 +252,11 @@ describe("catalog coverage", () => {
         "REMOTE_DOCUMENT_UNCONFIRMED",
         "DOCUMENT_LOCAL_PERSIST_FAILED",
         "DOCUMENT_DISPATCH_FAILED",
+        // Registered headless finalize codes (EM-CAT-03; reason-token counterparts). BJJ-319 phase 5-4b.
+        "DOCUMENT_FINALIZE_IN_PROGRESS",
+        "EFORMSIGN_TERMINAL_FAILURE",
+        "DOCUMENT_FINALIZE_UNCONFIRMED",
+        "DOCUMENT_FINALIZE_FAILED",
     ];
 
     it.each(codes)("contains a complete bilingual entry for %s", (code) => {
@@ -395,6 +400,20 @@ describe("catalog coverage", () => {
     ];
 
     it.each(HEADLESS_DISPATCH_STATUS_CODES)("registers %s as status %s with kebab-case type anchor", (code, status, anchor) => {
+        const entry = PROBLEM_CATALOG[code];
+        expect(entry.status).toBe(status);
+        expect(entry.statuses).toEqual([status]);
+        expect(entry.type).toBe(`https://github.com/jaino-song/babyjamjam-admin/blob/main/docs/error-management.md#${anchor}`);
+    });
+
+    const HEADLESS_FINALIZE_STATUS_CODES: Array<[ProblemCode, number, string]> = [
+        ["DOCUMENT_FINALIZE_IN_PROGRESS", 409, "document-finalize-in-progress"],
+        ["EFORMSIGN_TERMINAL_FAILURE", 502, "eformsign-terminal-failure"],
+        ["DOCUMENT_FINALIZE_UNCONFIRMED", 502, "document-finalize-unconfirmed"],
+        ["DOCUMENT_FINALIZE_FAILED", 502, "document-finalize-failed"],
+    ];
+
+    it.each(HEADLESS_FINALIZE_STATUS_CODES)("registers %s as status %s with kebab-case type anchor", (code, status, anchor) => {
         const entry = PROBLEM_CATALOG[code];
         expect(entry.status).toBe(status);
         expect(entry.statuses).toEqual([status]);

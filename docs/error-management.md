@@ -312,6 +312,28 @@ EM-CAT 코드 정렬 검토(2026-09-14): EM-CAT-01은 코드가 카탈로그에 
 
 `DOCUMENT_DISPATCH_FAILED`
 
+### document-finalize-in-progress
+
+`DOCUMENT_FINALIZE_IN_PROGRESS`
+
+### eformsign-terminal-failure
+
+`EFORMSIGN_TERMINAL_FAILURE`
+
+### document-finalize-unconfirmed
+
+`DOCUMENT_FINALIZE_UNCONFIRMED`
+
+### document-finalize-failed
+
+`DOCUMENT_FINALIZE_FAILED`
+
+## 2026-09-16 finalize envelope 가산 계약 (BJJ-319 phase 5-4b)
+
+headless 문서 완료(`POST /eformsign-docs/finalize-headless`)의 `ok:false` 응답에 등록 코드·업무 결과·복구 안내를 **가산**했다(EM-CHANGE-01/04 호환, 5-4a 발송 envelope과 동형): 기존 `{ok:false, reason, fallbackHint, dispatchIntentId?, failedStep?, durationMs}` 필드는 바이트 동일하게 유지되고 `code`(등록 ProblemCode)·`outcome`(ProblemOutcome)·`recovery`(`{action, retry:{mode}}`)만 추가됐다. 결과는 업무 결과(EM-STATE-01)이므로 엔드포인트는 계속 201 `{ok:false}`로 응답하며, `fallbackHint` 로직(전송 시도 전에만 `iframe`)과 성공 응답(`{ok:true, completed}` — advanced `completed:false` 포함)은 그대로다.
+
+이유 토큰과 코드는 1:1 대응이고 `reason`은 호환 별칭으로 남는다(EM-CAT-03 의미 유지): `operation_in_progress`→`DOCUMENT_FINALIZE_IN_PROGRESS`(409)·`operation_lock_unavailable`→`DOCUMENT_LOCK_UNAVAILABLE`(503)·`operation_lock_lost`→`DOCUMENT_LOCK_LOST`(409)·`authorization_denied`→`ACCESS_DENIED`(403)·`dispatch_already_accepted`→`DISPATCH_ALREADY_ACCEPTED`(409)·`dispatch_uncertain_manual_reconciliation_required`→`DISPATCH_UNCERTAIN`(502). 거절(락·진행중·권한)은 `NOT_APPLIED`+`NONE`, 이미 접수·불확실 클레임은 `UNKNOWN`+`CHECK_STATUS`다. 공급자 결과 분기는 벤더 상태로 판정한다: 확정 종료(`eformsign_terminal_failure`)는 `EFORMSIGN_TERMINAL_FAILURE`(502, `FAILED`+`NONE`), pending·판독 불가(sdk 성공 미제출 포함)는 `DOCUMENT_FINALIZE_UNCONFIRMED`(502, `UNKNOWN`+`CHECK_STATUS`)다. 전송 시도 전 공급자 실패(`fallbackHint:"iframe"`)와 catch 분기의 sanitized 공급자/인프라 실패는 `DOCUMENT_FINALIZE_FAILED`(502, `NOT_APPLIED`+`NONE`)이고 이 분기들의 `fallbackHint` 조건(`sendWasAttempted ? manual_check : iframe`)은 변경하지 않았다. `recovery.retry.mode`는 항상 `NEVER`이며 자동 재전송은 없다(EM-RETRY-06). ko 문구는 웹 finalize UI가 해당 reason에 이미 표시하던 문장을 detail로 재사용했고(진행중 1·종료 1·미확인 fallback 1), title과 en-US 문구, 그리고 UI 문구가 없는 `DOCUMENT_FINALIZE_FAILED`의 ko 문구는 이번에 신규 작성했다. 소비자(web/mobile) 채택은 5-4c에서 다룬다.
+
 ## 2026-09-16 dispatch envelope 가산 계약 (BJJ-319 phase 5-4a)
 
 headless 문서 발송(`POST /eformsign-docs/dispatch-headless`)의 `ok:false` 응답에 등록 코드·업무 결과·복구 안내를 **가산**했다(EM-CHANGE-01/04 호환): 기존 `{ok:false, reason, fallbackHint, remoteDocumentId?, existingDocumentId?, dispatchIntentId?, failedStep?, durationMs}` 필드는 바이트 동일하게 유지되고 `code`(등록 ProblemCode)·`outcome`(ProblemOutcome)·`recovery`(`{action, retry:{mode}}`)만 추가됐다. ambiguous/partial 결과는 HTTP 오류가 아니라 업무 결과(EM-STATE-01)이므로 엔드포인트는 계속 201 `{ok:false}`로 응답하며, `fallbackHint`·문서 ID 복구 프로토콜(iframe 게이트, adopt, manual_check)은 그대로다.
