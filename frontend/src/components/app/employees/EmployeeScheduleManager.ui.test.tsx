@@ -84,11 +84,18 @@ describe("EmployeeScheduleManager calendar grid", () => {
         const range = getScheduleMonthRange(new Date("2026-09-29T09:00:00+09:00"));
         const october = buildMonthCalendarDays(new Date(2027, 8, 1), range.horizonStart, range.horizonEnd);
 
-        expect(range.minMonthKey).toBe("2026-09");
+        expect(range.minMonthKey).toBe("2026-01");
         expect(range.maxMonthKey).toBe("2027-09");
         expect(october.find((day) => day.dateKey === "2027-09-29")?.isInHorizon).toBe(true);
         expect(october.find((day) => day.dateKey === "2027-09-30")?.isInHorizon).toBe(false);
     });
+    it("enables January 2026 and disables the preceding year", () => {
+        const range = getScheduleMonthRange(new Date(2026, 8, 17));
+        const days = buildMonthCalendarDays(new Date(2026, 0, 1), range.horizonStart, range.horizonEnd);
+        expect(days.find((day) => day.dateKey === "2026-01-01")?.isInHorizon).toBe(true);
+        expect(days.find((day) => day.dateKey === "2025-12-31")?.isInHorizon).toBe(false);
+    });
+
     it("clamps a leap-day horizon to February 28 next year", () => {
         const range = getScheduleMonthRange(new Date(2028, 1, 29));
         expect(localDateKey(range.horizonEnd)).toBe("2029-02-28");
@@ -170,7 +177,7 @@ describe("EmployeeScheduleManager interactions", () => {
         mockClients([]);
         const { container, rerender } = renderManager();
         fireEvent.click(screen.getByRole("tab", { name: "목록" }));
-        expect(screen.getByText("앞으로 12개월 일정이 없습니다.")).toBeInTheDocument();
+        expect(screen.getByText("조회 기간의 일정이 없습니다.")).toBeInTheDocument();
 
         mockedUseClients.mockReturnValue({
             data: undefined,

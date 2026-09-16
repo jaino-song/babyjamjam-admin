@@ -164,13 +164,14 @@ function formatSelectedDate(date: Date) {
 }
 
 function getScheduleHorizon(now: Date) {
-    const horizonStart = startOfDay(now);
-    const horizonEnd = new Date(horizonStart);
+    const horizonStart = new Date(2026, 0, 1);
+    const today = startOfDay(now);
+    const horizonEnd = new Date(today);
     // Clamp leap day to February's final day in the following year.
-    const targetYear = horizonStart.getFullYear() + 1;
-    const month = horizonStart.getMonth();
+    const targetYear = today.getFullYear() + 1;
+    const month = today.getMonth();
     const lastDay = new Date(targetYear, month + 1, 0).getDate();
-    horizonEnd.setFullYear(targetYear, month, Math.min(horizonStart.getDate(), lastDay));
+    horizonEnd.setFullYear(targetYear, month, Math.min(today.getDate(), lastDay));
     horizonEnd.setHours(23, 59, 59, 999);
     return { horizonStart, horizonEnd };
 }
@@ -222,12 +223,13 @@ function moveMonth(month: Date, amount: number) {
 }
 
 /**
- * Build schedule events for the next 12 calendar months from live client data.
+ * Build schedule events from January 2026 through 12 months from today.
  * Replacement requests are surfaced on today; service dates are included only
  * while they fall inside the upcoming horizon.
  */
 export function buildScheduleEntries(clients: Client[], now: Date = new Date()): ScheduleEntry[] {
-    const { horizonStart: today, horizonEnd: horizon } = getScheduleHorizon(now);
+    const { horizonStart, horizonEnd: horizon } = getScheduleHorizon(now);
+    const today = startOfDay(now);
     const entries: ScheduleEntry[] = [];
 
     for (const client of clients) {
@@ -250,7 +252,7 @@ export function buildScheduleEntries(clients: Client[], now: Date = new Date()):
         }
 
         const startDate = parseScheduleDate(client.startDate);
-        if (startDate && client.serviceStatus !== "terminated" && startDate >= today && startDate <= horizon) {
+        if (startDate && client.serviceStatus !== "terminated" && startDate >= horizonStart && startDate <= horizon) {
             entries.push({
                 id: `${client.id}-start`,
                 clientId: client.id,
@@ -266,7 +268,7 @@ export function buildScheduleEntries(clients: Client[], now: Date = new Date()):
         }
 
         const endDate = parseScheduleDate(client.endDate);
-        if (endDate && client.serviceStatus === "active" && endDate >= today && endDate <= horizon) {
+        if (endDate && client.serviceStatus === "active" && endDate >= horizonStart && endDate <= horizon) {
             entries.push({
                 id: `${client.id}-end`,
                 clientId: client.id,
@@ -299,7 +301,7 @@ function MonthControls({ visibleMonth, range, onMonthChange, onToday }: MonthCon
     return (
         <div data-slot="month-controls" className="flex flex-wrap items-center justify-between gap-2">
             <span className="text-[calc(11.2px*var(--glint-ui-scale,1))] text-v3-text-muted">
-                범위: 오늘부터 12개월 후까지
+                범위: 2026년 1월부터 오늘 기준 12개월 후까지
             </span>
             <div className="flex items-center gap-1">
                 <Button
@@ -567,7 +569,7 @@ export function EmployeeScheduleManager({
             >
                 <h1 className="text-[calc(22px*var(--glint-ui-scale,1))] font-bold text-v3-dark">서비스 일정</h1>
                 <p className="mt-1 text-[calc(13px*var(--glint-ui-scale,1))] text-v3-text-muted">
-                    오늘부터 12개월간의 서비스 시작·종료·교체 요청을 확인합니다.
+                    2026년 1월부터 오늘 기준 12개월 후까지의 서비스 일정을 확인합니다.
                 </p>
             </header>
 
@@ -654,7 +656,7 @@ export function EmployeeScheduleManager({
                                     {entries.length > 0 ? (
                                         <ScheduleEntryList dataComponent={component("list")} entries={entries}
                                             selectedEntryId={selectedEntryId} onEntrySelect={handleEntrySelect} />
-                                    ) : <ListEmptyState icon={Calendar} message="앞으로 12개월 일정이 없습니다." />}
+                                    ) : <ListEmptyState icon={Calendar} message="조회 기간의 일정이 없습니다." />}
                                 </ListPanel>
                             ) },
                         ]}

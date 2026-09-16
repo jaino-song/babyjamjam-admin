@@ -81,9 +81,17 @@ describe("buildScheduleEntries", () => {
         expect(entries.map((entry) => entry.dateKey)).toEqual(["2027-03-01", "2027-09-16"]);
     });
 
+    it("includes historical dates from January 1, 2026", () => {
+        const entries = buildScheduleEntries([
+            makeClient({ id: 10, startDate: "2026-01-01", endDate: "2026-08-01" }),
+            makeClient({ id: 11, startDate: "2025-12-31" }),
+        ], now);
+        expect(entries.map((entry) => entry.dateKey)).toEqual(["2026-01-01", "2026-08-01"]);
+    });
+
     it("ignores dates outside the next 12 months and malformed dates", () => {
         const entries = buildScheduleEntries([
-            makeClient({ id: 4, startDate: "2026-08-01" }),
+            makeClient({ id: 4, startDate: "2025-12-31" }),
             makeClient({ id: 5, startDate: "2027-09-17" }),
             makeClient({ id: 6, startDate: "not-a-date" }),
         ], now);
