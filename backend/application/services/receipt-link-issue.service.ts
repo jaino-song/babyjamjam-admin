@@ -1,4 +1,4 @@
-import { Inject, Injectable, Logger } from "@nestjs/common";
+import { forwardRef, Inject, Injectable, Logger } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { createHash, randomUUID } from "node:crypto";
 import { ClientEntity } from "domain/entities/client.entity";
@@ -116,6 +116,7 @@ export class ReceiptLinkIssueService {
         @Inject(EFORMSIGN_DOC_REPOSITORY) private readonly eformsignDocRepository: IEformsignDocRepository,
         @Inject(EFORMSIGN_DOCUMENT_MIRROR_REPOSITORY)
         private readonly mirrorRepository: IEformsignDocumentMirrorRepository,
+        @Inject(forwardRef(() => EformsignDocumentMirrorService))
         private readonly documentMirrorService: EformsignDocumentMirrorService,
         private readonly configService: ConfigService,
         private readonly rasterizer: PdfPageRasterizerService,
