@@ -183,7 +183,7 @@ function installFormState(overrides: Record<string, unknown> = {}) {
     isManualEntry: false,
     name: "테스트 고객",
     phone: "010-1234-5678",
-    birthday: "900101",
+    birthday: "1958-03-03",
     dueDate: "",
     address: "인천시",
     employeeId: 11,
@@ -257,6 +257,14 @@ beforeEach(() => {
 });
 
 describe("contract creation mutation lifecycle", () => {
+  it.each(["1905-01-01", "2005-01-01", "1958-03-03"])("preserves birthday %s in the live route payload", async (birthday) => {
+    installFormState({ birthday, clientId: null, isManualEntry: true, name: "새로운 고객", phone: "010-6621-1878" });
+    mockDispatchHeadless.mockResolvedValue({ ok: true });
+    const submit = await renderReadyPage();
+    fireEvent.click(submit);
+    await waitFor(() => expect(mockCreateClient).toHaveBeenCalledWith(expect.objectContaining({ birthday })));
+  });
+
   it("sends at most once on a same-tick double click and locks an unknown result", async () => {
     const pending = deferred<unknown>();
     mockDispatchHeadless.mockReturnValue(pending.promise);

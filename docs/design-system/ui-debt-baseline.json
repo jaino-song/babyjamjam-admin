@@ -903,30 +903,30 @@
     },
     "mobile/src/app/(shell)/contracts/new/page.tsx": {
       "ui-architecture/no-page-local-components": [
-        "107:10-107:15|pageLocalComponent"
+        "108:10-108:15|pageLocalComponent"
       ],
       "ui-architecture/no-raw-ui-in-pages": [
-        "1076:13-1082:14|rawUiElement",
-        "1086:13-1092:14|rawUiElement",
-        "1210:23-1219:25|rawUiElement",
-        "1223:25-1231:27|rawUiElement",
-        "1234:25-1242:27|rawUiElement",
-        "1246:23-1252:25|rawUiElement",
-        "1259:25-1264:26|rawUiElement",
-        "1294:23-1303:25|rawUiElement",
-        "1344:27-1353:29|rawUiElement",
-        "1370:27-1375:28|rawUiElement",
-        "1385:27-1390:28|rawUiElement",
-        "1407:25-1413:26|rawUiElement",
-        "1432:25-1439:27|rawUiElement",
-        "1445:25-1452:27|rawUiElement",
-        "1458:25-1465:27|rawUiElement",
-        "1481:25-1489:27|rawUiElement",
-        "1492:25-1500:27|rawUiElement",
-        "1513:23-1521:25|rawUiElement",
-        "1564:15-1570:16|rawUiElement",
-        "1573:15-1579:16|rawUiElement",
-        "1636:13-1642:14|rawUiElement"
+        "1073:13-1079:14|rawUiElement",
+        "1083:13-1089:14|rawUiElement",
+        "1207:23-1216:25|rawUiElement",
+        "1220:25-1228:27|rawUiElement",
+        "1231:25-1239:27|rawUiElement",
+        "1243:23-1249:25|rawUiElement",
+        "1256:25-1261:26|rawUiElement",
+        "1291:23-1300:25|rawUiElement",
+        "1341:27-1350:29|rawUiElement",
+        "1367:27-1372:28|rawUiElement",
+        "1382:27-1387:28|rawUiElement",
+        "1404:25-1410:26|rawUiElement",
+        "1429:25-1436:27|rawUiElement",
+        "1442:25-1449:27|rawUiElement",
+        "1455:25-1462:27|rawUiElement",
+        "1478:25-1486:27|rawUiElement",
+        "1489:25-1497:27|rawUiElement",
+        "1510:23-1518:25|rawUiElement",
+        "1561:15-1567:16|rawUiElement",
+        "1570:15-1576:16|rawUiElement",
+        "1633:13-1639:14|rawUiElement"
       ]
     },
     "mobile/src/app/(shell)/contracts/page.tsx": {

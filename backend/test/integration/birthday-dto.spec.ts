@@ -1,8 +1,10 @@
+import "reflect-metadata";
+import { ConfirmNewClientFieldsDto } from "interface/dto/call-inbox.dto";
 import { validate } from "class-validator";
 import { CreateClientDto, UpdateClientDto } from "interface/dto/client.dto";
 import { CreateEmployeeDto, UpdateEmployeeDto } from "interface/dto/employee.dto";
 
-const dtoTypes = [CreateClientDto, UpdateClientDto, CreateEmployeeDto, UpdateEmployeeDto];
+const dtoTypes = [CreateClientDto, UpdateClientDto, CreateEmployeeDto, UpdateEmployeeDto, ConfirmNewClientFieldsDto];
 
 describe.each(dtoTypes)("%p birthday boundary", (Dto) => {
     async function birthdayErrors(birthday: unknown) {

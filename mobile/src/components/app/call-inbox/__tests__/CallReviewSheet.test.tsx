@@ -127,10 +127,19 @@ describe("CallReviewSheet — NEW_CLIENT PENDING", () => {
     expect(phoneInput).toHaveValue("010-4821-7763");
   });
 
+  it.each(["1905-01-01", "2005-01-01", "1958-03-03"])("submits an explicit birthday century %s", async (birthday) => {
+    const user = userEvent.setup();
+    render(<CallReviewSheet draftId="draft-1" onClose={jest.fn()} />);
+    await user.type(screen.getByLabelText(/생년월일/i), birthday.replace(/-/g, ""));
+    expect(screen.getByLabelText(/생년월일/i)).toHaveValue(birthday);
+    await user.click(screen.getByRole("button", { name: "고객 등록" }));
+    expect(mockConfirmMutateAsync).toHaveBeenCalledWith(expect.objectContaining({ fields: expect.objectContaining({ birthday }) }));
+  });
+
   describe("input rules", () => {
     // The extraction returns bare digits; the reviewer sees, and types, the
     // punctuated form. The three ISO dates are typed rather than picked, so
-    // they are text inputs — birthday is YYMMDD and stays untouched.
+    // they are text inputs with four-digit years, including birthdays.
     const rawDetail = {
       ...baseDetail,
       proposals: [
@@ -146,8 +155,8 @@ describe("CallReviewSheet — NEW_CLIENT PENDING", () => {
 
       expect(screen.getByRole("textbox", { name: /연락처/i })).toHaveValue("010-1234-5678");
       expect(screen.getByLabelText(/출산예정일/i)).toHaveValue("2026-07-15");
-      // YYMMDD, not ISO — left exactly as extracted.
-      expect(screen.getByLabelText(/생년월일/i)).toHaveValue("990315");
+      // Legacy birthdays are shown with an explicit century.
+      expect(screen.getByLabelText(/생년월일/i)).toHaveValue("1999-03-15");
     });
 
     it("takes dates from the keyboard instead of a native picker", () => {
