@@ -309,12 +309,13 @@ describe("CallReviewSheet — CLIENT_UPDATE PENDING", () => {
     expect(mockConfirmMutateAsync).toHaveBeenCalledWith(expect.objectContaining({ changes: { birthday: expected } }));
   });
 
-  it("does not apply an invalid birthday to an existing client", async () => {
+  it.each(["1905-02-30", "not-a-date", "1958-03-03junk"])("does not apply invalid birthday %s to an existing client", async (value) => {
     mockUseClientDraft.mockReturnValue({ data: { ...updateDetail, proposals: [
-      { field: "birthday", value: "1905-02-30", confidence: "high", evidence: "생년월일" },
+      { field: "birthday", value, confidence: "high", evidence: "생년월일" },
     ] }, isLoading: false });
     const user = userEvent.setup();
     render(<CallReviewSheet draftId="draft-1" onClose={jest.fn()} />);
+    expect(screen.getByLabelText("생년월일")).toHaveValue(value);
     await user.click(screen.getByRole("button", { name: /변경 적용/ }));
     expect(mockConfirmMutateAsync).not.toHaveBeenCalled();
   });

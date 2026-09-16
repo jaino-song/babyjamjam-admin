@@ -476,7 +476,9 @@ function ClientUpdateReview({
           p.field,
           p.value === null || p.value === undefined
             ? ""
-            : formatFieldValue(p.field, p.field === "birthday" ? normalizeBirthdayIsoDate(String(p.value)) ?? String(p.value) : String(p.value)),
+            : p.field === "birthday"
+              ? normalizeBirthdayIsoDate(String(p.value)) ?? String(p.value)
+              : formatFieldValue(p.field, String(p.value)),
         ]),
     ),
   );
