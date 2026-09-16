@@ -7,7 +7,6 @@ import {
 } from "@babyjamjam/shared/constants/employee-status";
 import { normalizeApiError } from "@babyjamjam/shared";
 import { formatKoreanPhoneNumber } from "@/lib/phone";
-import { cn } from "@/lib/utils";
 import {
     Users,
     UserCheck,
@@ -17,9 +16,6 @@ import {
     Plus,
     Phone,
     Calendar,
-    MoreVertical,
-    Pencil,
-    Trash2,
 } from "lucide-react";
 import {
     Employee,
@@ -37,8 +33,6 @@ import {
     SplitLayout,
     ListPanel,
     DetailPanel,
-    InfoCard,
-    InfoRow,
     HeaderActionButton,
     AnimatedSlotList,
     AnimatedSlotListItemContent,
@@ -50,33 +44,13 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { StatusPill } from "@/components/app/ui/status-badge";
-import {
-    DropdownMenu,
-    DropdownMenuContent,
-    DropdownMenuItem,
-    DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
-import { formatWorkAreaLabel } from "@/components/app/employees/employee-form.constants";
-import { getEmployeeGradeBadgeStyle, normalizeEmployeeGrade } from "@/features/employees/grade";
-import { formatDateForDisplay } from "@/lib/date/format-date-for-display";
 import { useLocale } from "@/providers/LocaleProvider";
-import { t } from "@/lib/i18n/translations";
 import { EmployeeDetailPanel } from "@/components/app/employees/EmployeeDetailPanel";
 const filterItems = [
     { label: "전체", value: "all" },
     { label: EMPLOYEE_STATUS_LABELS.available, value: "active" },
     { label: EMPLOYEE_STATUS_LABELS.unavailable, value: "inactive" },
 ];
-
-function getGradeBadge(grade: string) {
-    const { label, variant } = getEmployeeGradeBadgeStyle(grade);
-
-    return (
-        <StatusPill variant={variant} size="sm" className="px-2.5 py-0.5 text-[0.6rem]">
-            {label}
-        </StatusPill>
-    );
-}
 
 function getOpenToNextWorkBadge(openToNextWork: boolean) {
     return (
@@ -90,10 +64,6 @@ function getEmployeeAvatarClassName(openToNextWork: boolean): string {
     return openToNextWork
         ? "border border-[hsl(137,34%,84%)] bg-[hsl(137,60%,94%)] text-v3-green"
         : "border border-[hsl(220,20%,90%)] bg-[hsl(220,20%,97%)] text-v3-text-muted";
-}
-
-function formatDate(dateStr: string | null | undefined, fallback: string): string {
-    return formatDateForDisplay(dateStr, fallback);
 }
 
 export default function EmployeesPage() {
@@ -378,106 +348,3 @@ export default function EmployeesPage() {
         </PageSection>
     );
 }
-
-interface EmployeeDetailProps {
-    employee: Employee;
-    onEdit: (employee: Employee) => void;
-    onDelete: (id: number) => void;
-}
-
-function EmployeeDetail({ employee, onEdit, onDelete }: EmployeeDetailProps) {
-    const locale = useLocale();
-    const unknownDateLabel = t(locale, "employees.form.registered-date-unknown");
-
-    return (
-        <DetailPanel data-component="desktop_employees_split-layout_detail-panel"
-            avatar={
-                <div data-component="desktop_employees_split-layout_detail-panel_employees-detail-avatar" className={cn("w-12 h-12 rounded-[16px] flex items-center justify-center shadow-lg shrink-0", getEmployeeAvatarClassName(employee.openToNextWork))}>
-                    <UserCheck className="w-5 h-5 shrink-0 transition-colors" aria-hidden="true" />
-                </div>
-            }
-            title={employee.name}
-            badges={
-                <>
-                    {getGradeBadge(employee.grade)}
-                    {getOpenToNextWorkBadge(employee.openToNextWork)}
-                </>
-            }
-            subtitle={
-                <span className="inline-flex items-center gap-1">
-                    <Calendar className="w-3 h-3" />
-                    {t(locale, "employees.form.registered-date")} {formatDate(employee.registeredDate, unknownDateLabel)}
-                </span>
-            }
-            trailing={
-                <DropdownMenu>
-                    <DropdownMenuTrigger asChild>
-                        <button
-                            type="button"
-                            aria-label="직원 작업 메뉴 열기"
-                            className="w-9 h-9 flex items-center justify-center rounded-full hover:bg-v3-dim-white transition-colors"
-                        >
-                            <MoreVertical className="w-5 h-5 text-v3-text-muted" />
-                        </button>
-                    </DropdownMenuTrigger>
-                    <DropdownMenuContent align="end" className="min-w-[140px]">
-                        <DropdownMenuItem onClick={() => onEdit(employee)} className="gap-2">
-                            <Pencil className="w-4 h-4" />
-                            수정
-                        </DropdownMenuItem>
-                        <DropdownMenuItem
-                            data-component="desktop_employees_split-layout_detail-panel_employees-detail-menu-delete"
-                            onClick={() => onDelete(employee.id)}
-                            className="gap-2 text-destructive focus:text-destructive"
-                        >
-                            <Trash2 className="w-4 h-4" />
-                            삭제
-                        </DropdownMenuItem>
-                    </DropdownMenuContent>
-                </DropdownMenu>
-            }
-        >
-            <div data-component="desktop_employees_split-layout_detail-panel_employees-detail" className="space-y-5">
-                <InfoCard data-component="desktop_employees_detail-panel_info-card" title="기본 정보">
-                    <InfoRow label="이름" value={employee.name} />
-                    <InfoRow label="연락처" value={formatKoreanPhoneNumber(employee.phone) || "-"} />
-                    <InfoRow label="근무 상태" value={EMPLOYEE_STATUS_LABELS[employee.status]} />
-                </InfoCard>
-
-                <InfoCard data-component="desktop_employees_detail-panel_info-card-2" title="업무 정보">
-                    <InfoRow label="등급" value={normalizeEmployeeGrade(employee.grade)} />
-                    <InfoRow
-                        label="다음 업무 가능"
-                        value={employee.openToNextWork ? "가능" : "불가"}
-                    />
-                    <InfoRow
-                        label="근무 지역"
-                        value={
-                            <div data-component="desktop_employees_detail-panel_info-card-2_employees-detail-work-area-tags" className="flex flex-wrap gap-1.5">
-                                {employee.workArea.map((area) => (
-                                    <span
-                                        key={area}
-                                        className="inline-flex items-center rounded-full bg-v3-primary-light text-v3-primary px-2 py-0.5 text-[0.65rem] font-medium"
-                                    >
-                                        {formatWorkAreaLabel(area)}
-                                    </span>
-                                ))}
-                            </div>
-                        }
-                    />
-                </InfoCard>
-
-                <InfoCard data-component="desktop_employees_detail-panel_info-card-3" title="등록 정보">
-                    <InfoRow
-                        label={t(locale, "employees.form.registered-date")}
-                        value={formatDate(employee.registeredDate, unknownDateLabel)}
-                    />
-                </InfoCard>
-            </div>
-        </DetailPanel>
-    );
-}
-
-// Kept as a baseline-compatible compatibility implementation while the
-// selected employee route uses EmployeeDetailPanel above.
-void EmployeeDetail;
