@@ -40,7 +40,7 @@ The user approved the detailed implementation plan on 2026-09-16 and requested i
 | 0 | Baseline, policies, ADR | complete | base above; ADR-013; 121 existing unit tests passed |
 | 1 | Shared contracts + 48-case evaluator (parallel) | complete | source close: 76d0445babb87f46ecab3a754323695cef9d0203; SOL SHIP; 19 shared tests, 8 evaluator tests, 48 harness cases |
 | 2 | Additive persistence + evaluation providers (parallel) | complete | source close d19ef533619f87add609767cc23e99ea447308bf; SOL SHIP; guarded DB14/14, final provider/evaluator39/39, migration compatibility |
-| 3 | Task create/read/patch, protected inputs, replay | in progress | start40b258a1b0dfbb125cb8ee7e42cc5aaa24223477; approved clear-state amendment; isolated Luna/max unit |
+| 3 | Task create/read/patch, protected inputs, replay | complete | source724bddb9f688d05f4aa41a1088246f0e877a36a3; SOL SHIP/HIGH; 393 backend tests, 60 agent E2E tests |
 | 4 | Commands, retention, session lifecycle | pending | |
 | 5 | TurnContext, conversation policy, routing | pending | |
 | 6 | Atomic task/action approval binding | pending | |
@@ -176,3 +176,9 @@ Corrected-source FINAL review at `53a46d184` returned **FIX_REQUIRED/HIGH** for 
 Latest corrected source `427eb4a7fd7a2a116f88292c3f429def1c394970` integrates unit `b76fb704d914bc03bf82960b2a802240a78ef8b3`. Parent reran both frozen unit and integration: 25 backend suites / 391 tests and all 5 agent E2E suites / 60 tests passed. Backend/frontend/mobile type checks, backend build, 47-capability manifest, exact CI suite partition, and diff-check passed. Full lint JSON confirms 0 errors, 93 warnings, and 0 warnings in any Phase3 changed file. The additional database case checks persisted provenance and review metadata. FINAL re-review is in progress at this exact source.
 
 Environment observation: the separate `dev` checkout has advanced to `96f4026ab40229d00ed13a4ead31b1f2223f3fc6` during parallel user work; its only untracked file remains `mobile/AGENTS.md`. This task retains the user-approved original baseline and isolated integration branch. No environment-branch synchronization, merge or deployment has been performed; any later integration into current dev requires fresh validation and its separate merge approval.
+
+### Phase 3 close
+
+FINAL SOL returned **SHIP/HIGH** at exact source `724bddb9f688d05f4aa41a1088246f0e877a36a3`, with no blocking findings, nonblocking findings, or missing verification in Phase3 scope. The final unit correction is `3a6e6681e84614b4cb495b8c86527d0e42b23ffd`. Both frozen unit and integration passed 393 backend tests and 60 agent E2E tests; all type checks, backend build, 47-capability manifest, CI suite partition and diff-check passed. Full lint remains 0 errors / 93 unchanged-file warnings. Shared and migration compatibility evidence remains valid because those sources were unchanged in the final corrections.
+
+Phase3 is closed. Phase4's lifecycle contract received SOL PLAN APPROVE/HIGH after exhaustive recovery-response, command/state and purge-projection bindings. Its reviewed restore/port/DI/shared interfaces are unchanged by the final Phase3 service-only corrections. Phase4 will start from this close commit in a separate local unit; no action execution, real model quality, automation delivery, UI or operational completion is implied.
