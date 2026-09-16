@@ -12,6 +12,7 @@ import { NotificationEntity } from "domain/entities/notification.entity";
 import { UserEntity } from "domain/entities/user.entity";
 import { IUserRepository, USER_REPOSITORY } from "domain/repositories/user.repository.interface";
 import { EMAIL_PORT, EmailPort } from "domain/ports/email.port";
+import { codeOnlyProblemBody } from "application/utils/problem-bodies";
 import { SystemSettingService } from "./system-setting.service";
 import { isNotificationEmailEnabled } from "application/constants/notification";
 
@@ -243,7 +244,8 @@ export class NotificationService {
     private async requireBranchUser(branchId: string, userId: string): Promise<UserEntity> {
         const user = await this.userRepository.findByIdInBranch(userId, branchId);
         if (!user) {
-            throw new ForbiddenException("Notification target is outside the current branch");
+            // 지점 경계 밖의 수신자 요청은 공개 접근 거부 계약으로 변환해요.
+            throw new ForbiddenException(codeOnlyProblemBody("ACCESS_DENIED"));
         }
         return user;
     }

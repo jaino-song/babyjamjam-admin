@@ -67,18 +67,30 @@ export class SystemTemplateMutationGuardService {
     ): Promise<void> {
         const validation = validateSystemTemplateCandidate(key, content, customVariables);
         if (!validation.valid) {
+            // 입력 검증 거절은 공개 검증 계약으로 변환해요. RFC6901 포인터는 본문의 content
+            // 필드를 가리키고, 세부 원인은 호환 별칭 message와 변수 토큰으로 식별해요.
             throw new BadRequestException({
+                code: "VALIDATION_FAILED",
+                params: {},
+                outcome: "NOT_APPLIED",
+                recovery: { action: "NONE", retry: { mode: "NEVER" } },
                 message: "Template validation failed",
                 errors: [
                     ...validation.missingVariables.map((variable) => ({
-                        field: "content",
-                        message: `필수 변수 누락: {{${variable}}}`,
+                        pointer: "/content",
+                        code: "REQUIRED" as const,
+                        detail: `필수 변수 누락: {{${variable}}}`,
                     })),
                     ...validation.unknownVariables.map((variable) => ({
-                        field: "content",
-                        message: `정의되지 않은 변수: {{${variable}}}`,
+                        pointer: "/content",
+                        code: "INVALID_VALUE" as const,
+                        detail: `정의되지 않은 변수: {{${variable}}}`,
                     })),
-                    ...validation.syntaxErrors.map((message) => ({ field: "content", message })),
+                    ...validation.syntaxErrors.map((message) => ({
+                        pointer: "/content",
+                        code: "INVALID_FORMAT" as const,
+                        detail: message,
+                    })),
                 ],
             });
         }
@@ -113,8 +125,20 @@ export class SystemTemplateMutationGuardService {
         )];
         if (unsupportedActiveVariables.length === 0) return;
 
+        // 활성 자동 발송 규칙이 요구하는 변수를 자동 소스 없이 요구하는 편집 거절도 같은
+        // 공개 검증 계약으로 변환해요. 변수별 포인터로 원인을 식별하고, 기존 소비자가 읽는
+        // unsupportedVariables 목록은 호환을 위해 그대로 남겨요.
         throw new BadRequestException({
+            code: "VALIDATION_FAILED",
+            params: {},
+            outcome: "NOT_APPLIED",
+            recovery: { action: "NONE", retry: { mode: "NEVER" } },
             message: "활성 자동 발송 규칙에서 입력할 수 없는 필수 템플릿 변수가 있습니다.",
+            errors: unsupportedActiveVariables.map((variable) => ({
+                pointer: `/customVariables/${variable}`,
+                code: "INVALID_VALUE" as const,
+                detail: `자동 발송 규칙에서 입력할 수 없는 변수: {{${variable}}}`,
+            })),
             unsupportedVariables: unsupportedActiveVariables,
         });
     }
