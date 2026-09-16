@@ -1,4 +1,5 @@
 import { expect, test, type Page, type Route, type TestInfo } from "@playwright/test";
+import { isBusinessDayKr } from "../src/lib/date/business-days";
 
 const LOCAL_ORIGIN = "http://127.0.0.1:3107";
 const CLIENT_ID = "42";
@@ -18,7 +19,7 @@ const plannedDates = [
     "2026-07-14",
     "2026-07-15",
     "2026-07-16",
-    "2026-07-17",
+    "2026-07-20",
 ] as const;
 
 const answers = {
@@ -96,8 +97,7 @@ function shiftBusinessDays(isoDate: string, offset: number): string {
     let remaining = Math.abs(offset);
     while (remaining > 0) {
         current.setUTCDate(current.getUTCDate() + direction);
-        const weekday = current.getUTCDay();
-        if (weekday !== 0 && weekday !== 6) remaining -= 1;
+        if (isBusinessDayKr(current.toISOString().slice(0, 10))) remaining -= 1;
     }
     return current.toISOString().slice(0, 10);
 }
@@ -109,8 +109,7 @@ function businessDayDistance(from: string, to: string): number {
     let distance = 0;
     while (start.toISOString().slice(0, 10) !== to) {
         start.setUTCDate(start.getUTCDate() + direction);
-        const weekday = start.getUTCDay();
-        if (weekday !== 0 && weekday !== 6) distance += direction;
+        if (isBusinessDayKr(start.toISOString().slice(0, 10))) distance += direction;
     }
     return distance;
 }
@@ -215,7 +214,7 @@ function makeDraftState(
 function mergeChanges(
     current: Draft["changes"],
     incoming: Draft["changes"],
-    dateMove?: { sessionIndex: number; toDate: string },
+    dateMove?: { sessionIndex: number; toDate: string; shiftFollowing?: boolean },
 ): Draft["changes"] {
     const byIndex = new Map<number, SessionChange>();
     for (const session of current.sessions ?? []) byIndex.set(session.sessionIndex, clone(session));
@@ -234,6 +233,7 @@ function mergeChanges(
         if (sourceDate) {
             const offset = businessDayDistance(sourceDate, dateMove.toDate);
             for (let index = dateMove.sessionIndex; index <= plannedDates.length; index += 1) {
+                if (index !== dateMove.sessionIndex && !dateMove.shiftFollowing) break;
                 const previous = byIndex.get(index);
                 byIndex.set(index, {
                     ...(previous ?? { sessionIndex: index }),
@@ -281,7 +281,7 @@ function previewFor(state: DraftState): Record<string, unknown> {
         sourceFingerprint: "phase6-source-fingerprint",
         requiredSessionCount: plannedDates.length,
         calendarVersion: "kr-2026",
-        before: { startDate: plannedDates[0], endDate: "2026-07-17", sessions: before },
+        before: { startDate: plannedDates[0], endDate: plannedDates[plannedDates.length - 1], sessions: before },
         after: { startDate: plannedDates[0], endDate: "2026-08-10", sessions: after },
         provenance: [{
             assignmentId: "assignment-phase6",
@@ -349,6 +349,7 @@ async function installMocks(page: Page, options: MockOptions = {}): Promise<Mock
     let generationFailure = options.generationFailure === true;
     let conflictOnConfirm = false;
     let previewSequence = 0;
+    let confirmedChanges: Draft["changes"] = {};
 
     page.on("request", (request) => {
         const url = new URL(request.url());
@@ -401,7 +402,13 @@ async function installMocks(page: Page, options: MockOptions = {}): Promise<Mock
             return json(route, 200, { ok: true });
         }
         if (pathname === `/api/admin/service-records/client/${CLIENT_ID}/editor` && method === "GET") {
-            return json(route, 200, makeOverview());
+            const overview = makeOverview();
+            const record = overview.record as { sessions: Record<string, unknown>[] };
+            record.sessions = record.sessions.map((session) => {
+                const change = confirmedChanges.sessions?.find((entry) => entry.sessionIndex === session.sessionIndex);
+                return change ? { ...session, ...change, answers: { ...(session.answers as object), ...change.answers } } : session;
+            });
+            return json(route, 200, overview);
         }
         if (pathname === `/api/admin/service-records/client/${CLIENT_ID}/draft` && method === "GET") {
             return json(route, 200, state);
@@ -420,11 +427,12 @@ async function installMocks(page: Page, options: MockOptions = {}): Promise<Mock
             const patch = (body ?? {}) as {
                 expectedDraftVersion?: number;
                 changes?: Draft["changes"];
-                dateMove?: { sessionIndex: number; toDate: string };
+                dateMove?: { sessionIndex: number; toDate: string; shiftFollowing?: boolean };
             };
             if (conflictOnNextSave) {
                 conflictOnNextSave = false;
                 const latest = makeDraftState({ sessions: [{ sessionIndex: 1, notes: "서버 최신 입력" }] }, state.draft.draftVersion + 1);
+                state.draft = latest.draft;
                 return json(route, 409, {
                     code: "SERVICE_RECORD_EDIT_DRAFT_CONFLICT",
                     latestDraft: latest.draft,
@@ -456,7 +464,12 @@ async function installMocks(page: Page, options: MockOptions = {}): Promise<Mock
                 conflictOnConfirm = false;
                 return json(route, 409, { code: "STALE_PREVIEW" });
             }
-            return json(route, 200, confirmResponse(state, generationFailure));
+            const result = confirmResponse(state, generationFailure);
+            confirmedChanges = clone(state.draft.changes);
+            state.draft = null;
+            state.sourceCaseVersion = 8;
+            state.sourceFingerprint = "phase6-confirmed-fingerprint";
+            return json(route, 200, result);
         }
         unhandledApiRequests.push(`${method} ${pathname}`);
         return route.abort();
@@ -515,151 +528,143 @@ async function openDay(page: Page, sessionIndex: number): Promise<void> {
     await expect(page.locator('[data-component="desktop_service-record-admin_wizard_body_day-title"]')).toBeVisible();
 }
 
+
 async function goToServicePage(page: Page): Promise<void> {
-    await page.getByRole("button", { name: "다음" }).click();
-    await page.getByRole("button", { name: "다음" }).click();
+    await page.locator('[data-slot="review"] [data-slot="sec-edit"]').nth(2).click();
 }
 
 async function applyDateMove(page: Page, day: string): Promise<void> {
-    await page.getByRole("button", { name: /제공일 변경/ }).click();
-    const dialog = page.getByRole("dialog", { name: "서비스 제공일 변경" });
-    await expect(dialog).toBeVisible();
+    await page.locator('[data-component$="_body_date-edit"]').click();
+    const dialog = page.getByRole("dialog", { name: "1회차 서비스 제공일 수정" });
     await dialog.getByRole("combobox", { name: "일" }).click();
-    // Radix renders the listbox in a document-level portal, outside the
-    // dialog subtree.
     await page.getByRole("option", { name: `${Number(day)}일` }).click();
-    await dialog.getByRole("button", { name: "날짜 적용" }).click();
-    await expect(dialog).toBeHidden();
+    await dialog.getByRole("button", { name: "수정", exact: true }).click();
+    const collision = page.locator('[data-component$="_date-collision-modal"]');
+    await expect(collision).toBeVisible();
+    await collision.getByRole("button", { name: "수정", exact: true }).click();
+    await expect(collision).toBeHidden();
 }
 
 test.beforeEach(async ({ page }) => {
     await enableLocalAdminAuth(page);
 });
 
-test("admin direct Step 3 renders all dates and 14 fields, then preserves original/revised date and content", async ({ page }, testInfo: TestInfo) => {
+test("session review retains all fields and dates and writes only after confirmation", async ({ page }, testInfo: TestInfo) => {
     const evidence = await installMocks(page, { initialDraft: makeDraftState() });
     await openEditor(page);
+    await expect(page.locator('[data-slot="admin-toolbar"]')).toHaveCount(0);
     await openDay(page, 1);
-
-    expect(await page.locator('[data-component="desktop_service-record-admin_wizard_body_day-field"]').count()).toBe(5);
-    await applyDateMove(page, "20");
-    await expect(page.locator('[data-component="desktop_service-record-admin_wizard_body_date-chip_date-display"]')).toContainText("2026.07.20");
-    await expect(page.locator('[data-component="desktop_service-record-admin_wizard_body_date-chip_date-display"]')).toContainText("원본 2026.07.01");
-
-    await page.getByRole("button", { name: "다음" }).click();
-    expect(await page.locator('[data-component="desktop_service-record-admin_wizard_body_day-field"]').count()).toBe(6);
-    await page.getByLabel("체온").fill("36.7");
-    await page.getByRole("button", { name: "다음" }).click();
-    expect(await page.locator('[data-component="desktop_service-record-admin_wizard_body_day-field"]').count()).toBe(3);
-    await page.getByPlaceholder("서비스 제공 관련 특이사항 기록 필요 시 기재").fill("Phase6 관리자 메모");
-    await page.getByRole("button", { name: "다음" }).click();
     await expect(page.locator('[data-component$="_body_review_section"]')).toHaveCount(3);
     await expect(page.locator('[data-component$="_body_review_section_row"], [data-component$="_body_review_section_note"]')).toHaveCount(14);
     await expect(page.getByRole("img", { name: "산모 서명" })).toHaveAttribute("src", /phase6-signature/);
-
-    await page.locator('[data-component="desktop_service-record-admin_wizard_top-bar_admin-toolbar_save"]').click();
-    await expect(page.getByText("저장됨")).toBeVisible();
-    await expect.poll(() => evidence.requests.filter((request) => request.method === "PATCH").length).toBe(2);
-
-    await page.reload({ waitUntil: "domcontentloaded" });
-    await expect(page.locator('[data-slot="day"]').nth(0)).toContainText("2026.07.20");
-    await page.screenshot({ path: testInfo.outputPath("phase6-admin-desktop-overview.png"), fullPage: true });
-    await openDay(page, 1);
+    await applyDateMove(page, "20");
+    await expect(page.locator('[data-component$="_body_date-chip_date-display"]')).toContainText("2026.07.20");
+    await expect(page.locator('[data-component$="_body_date-chip_date-display"]')).toContainText("원본 2026.07.01");
+    await page.locator('[data-slot="review"] [data-slot="sec-edit"]').nth(1).click();
+    await page.getByLabel("체온").fill("36.7");
+    await page.getByRole("button", { name: "다음" }).click();
     await goToServicePage(page);
-    await expect(page.getByPlaceholder("서비스 제공 관련 특이사항 기록 필요 시 기재")).toHaveValue("Phase6 관리자 메모");
-    await page.screenshot({ path: testInfo.outputPath("phase6-admin-desktop.png"), fullPage: true });
+    await page.getByPlaceholder("서비스 제공 관련 특이사항 기록 필요 시 기재").fill("회차 수정 테스트 메모");
+    await page.getByRole("button", { name: "다음" }).click();
+    expect(evidence.requests.filter((request) => request.method !== "GET")).toHaveLength(0);
+    await page.getByRole("button", { name: "수정 확인", exact: true }).click();
+    await expect(page.locator('[data-slot="day"]')).toHaveCount(plannedDates.length);
+    expect(evidence.requests.filter((request) => request.method === "PATCH")).toHaveLength(1);
+    expect(evidence.requests.filter((request) => request.pathname.endsWith("/confirm"))).toHaveLength(1);
+    await page.reload({ waitUntil: "domcontentloaded" });
+    await expect(page.locator('[data-slot="day"]').first()).toContainText("2026.07.20");
+    await openDay(page, 1);
+    await expect(page.locator('[data-slot="review"]')).toContainText("회차 수정 테스트 메모");
+    await expect(page.locator('[data-slot="review"]')).toContainText("36.7");
+    await page.screenshot({ path: testInfo.outputPath("admin-desktop-confirmed.png"), fullPage: true });
     evidence.assertSafe();
 });
 
-test("durable draft save and resume leads to preview and one confirmed result", async ({ page }) => {
-    const evidence = await installMocks(page, { initialDraft: { ...makeDraftState(), draft: null } });
+test("a durable previous draft is reviewed explicitly before confirmation", async ({ page }) => {
+    const evidence = await installMocks(page, { initialDraft: makeDraftState({ sessions: [{ sessionIndex: 1, notes: "재개된 초안 메모" }] }) });
     await openEditor(page);
-    await page.locator('[data-component="desktop_service-record-admin_wizard_top-bar_admin-toolbar_save"]').click();
-    await expect(page.getByText("저장됨")).toBeVisible();
     await openDay(page, 1);
-    await goToServicePage(page);
-    await page.getByPlaceholder("서비스 제공 관련 특이사항 기록 필요 시 기재").fill("재개된 초안 메모");
-    await page.locator('[data-component="desktop_service-record-admin_wizard_top-bar_admin-toolbar_save"]').click();
-    await expect(page.getByText("저장됨")).toBeVisible();
-
-    await page.reload({ waitUntil: "domcontentloaded" });
-    await openDay(page, 1);
-    await goToServicePage(page);
-    await expect(page.getByPlaceholder("서비스 제공 관련 특이사항 기록 필요 시 기재")).toHaveValue("재개된 초안 메모");
-    await page.getByRole("button", { name: "변경 미리보기" }).click();
+    await expect(page.locator('[data-slot="review"]')).toContainText("재개된 초안 메모");
+    await expect(page.locator('[data-slot="review"] [data-slot="sec-edit"]')).toHaveCount(0);
+    await page.getByRole("button", { name: "이전 수정사항 검토" }).click();
     const preview = page.getByRole("dialog", { name: "초안 변경 미리보기" });
-    await expect(preview).toBeVisible();
     await expect(preview).toContainText("변경 전");
-    await preview.getByRole("button", { name: "수정 확정" }).click();
-    await expect(page.getByText("수정 확정됨").first()).toBeVisible();
-    await expect(page.getByText("전자문서 처리 대기 중").first()).toBeVisible();
-    await expect(preview.getByRole("button", { name: "수정 확정됨" })).toBeDisabled();
+    await preview.getByRole("button", { name: "수정 확정", exact: true }).click();
+    await expect(preview).toBeHidden();
+    await expect(page.locator('[data-slot="day"]')).toHaveCount(plannedDates.length);
+    expect(evidence.requests.filter((request) => request.pathname.endsWith("/confirm"))).toHaveLength(1);
     evidence.assertSafe();
 });
 
-test("a draft conflict retains local edits and requires an explicit fresh preview", async ({ page }) => {
-    const evidence = await installMocks(page, {
-        initialDraft: makeDraftState({ sessions: [{ sessionIndex: 1, notes: "기존 초안" }] }),
-        conflictOnNextSave: true,
-    });
+test("a conflict preserves input and requires reload before reviewing the latest draft", async ({ page }) => {
+    const evidence = await installMocks(page, { initialDraft: makeDraftState(), conflictOnNextSave: true });
     await openEditor(page);
     await openDay(page, 1);
     await goToServicePage(page);
-    const notes = page.getByPlaceholder("서비스 제공 관련 특이사항 기록 필요 시 기재");
-    await notes.fill("내 입력 보존");
-    await page.locator('[data-component="desktop_service-record-admin_wizard_top-bar_admin-toolbar_save"]').click();
-    await expect(page.getByText(/다른 관리자의 변경으로 저장되지 않았습니다/)).toBeVisible();
-    await expect(notes).toHaveValue("내 입력 보존");
-    await page.getByRole("button", { name: "내 입력 유지" }).click();
-    await page.getByRole("button", { name: "변경 미리보기" }).click();
+    await page.getByPlaceholder("서비스 제공 관련 특이사항 기록 필요 시 기재").fill("내 입력 보존");
+    await page.getByRole("button", { name: "다음" }).click();
+    await page.getByRole("button", { name: "수정 확인", exact: true }).click();
+    await expect(page.getByText("기록이 변경되었습니다. 입력은 보관되어 있습니다. 최신 기록을 다시 불러와 주세요.")).toBeVisible();
+    await expect(page.locator('[data-slot="review"]')).toContainText("내 입력 보존");
+    expect(evidence.requests.filter((request) => request.pathname.endsWith("/confirm"))).toHaveLength(0);
+    await page.getByRole("button", { name: "최신 기록 불러오기" }).click();
+    await page.getByRole("button", { name: "이전 수정사항 검토" }).click();
     await expect(page.getByRole("dialog", { name: "초안 변경 미리보기" })).toBeVisible();
-    await expect.poll(() => evidence.requests.filter((request) => request.method === "PATCH").length).toBe(2);
     evidence.assertSafe();
 });
 
-test("generation failure remains an explicit unverified document status without false completion", async ({ page }) => {
+test("unverified document generation does not become a false document completion claim", async ({ page }) => {
     const evidence = await installMocks(page, {
         initialDraft: makeDraftState({ sessions: [{ sessionIndex: 1, notes: "문서 처리 확인" }] }),
         generationFailure: true,
     });
     await openEditor(page);
-    await page.getByRole("button", { name: "변경 미리보기" }).click();
+    await page.getByRole("button", { name: "이전 수정사항 검토" }).click();
     const preview = page.getByRole("dialog", { name: "초안 변경 미리보기" });
-    await expect(preview).toBeVisible();
-    await preview.getByRole("button", { name: "수정 확정" }).click();
-    await expect(page.getByText("수정 확정됨").first()).toBeVisible();
-    await expect(page.getByText("전자문서 처리 근거 확인 필요").first()).toBeVisible();
+    await preview.getByRole("button", { name: "수정 확정", exact: true }).click();
+    await expect(preview).toBeHidden();
+    expect(evidence.requests.filter((request) => request.pathname.endsWith("/confirm"))).toHaveLength(1);
     await expect(page.getByText("전자문서 처리 완료")).toHaveCount(0);
     evidence.assertSafe();
 });
 
-test("a stale confirm keeps the draft and offers a fresh preview without another unsafe route", async ({ page }) => {
+test("a stale confirm blocks another confirm until the latest draft is reloaded", async ({ page }) => {
     const evidence = await installMocks(page, { initialDraft: makeDraftState({ sessions: [{ sessionIndex: 1, notes: "재확인 필요" }] }) });
-    const setConfirmConflict = (evidence as MockEvidence & { setConfirmConflict: () => void }).setConfirmConflict;
-    setConfirmConflict();
+    (evidence as MockEvidence & { setConfirmConflict: () => void }).setConfirmConflict();
     await openEditor(page);
-    await page.getByRole("button", { name: "변경 미리보기" }).click();
-    const preview = page.getByRole("dialog", { name: "초안 변경 미리보기" });
+    await page.getByRole("button", { name: "이전 수정사항 검토" }).click();
+    let preview = page.getByRole("dialog", { name: "초안 변경 미리보기" });
+    await preview.getByRole("button", { name: "수정 확정", exact: true }).click();
+    await expect(preview).toContainText("기록이 변경되었습니다.");
+    await expect(preview.getByRole("button", { name: "수정 확정", exact: true })).toHaveCount(0);
+    await page.keyboard.press("Escape");
+    await page.getByRole("button", { name: "최신 기록 불러오기" }).click();
+    await page.getByRole("button", { name: "이전 수정사항 검토" }).click();
+    preview = page.getByRole("dialog", { name: "초안 변경 미리보기" });
     await expect(preview).toBeVisible();
-    await preview.getByRole("button", { name: "수정 확정" }).click();
-    await expect(page.getByText(/미리보기가 오래되어 수정 확정에 실패했습니다/)).toBeVisible();
-    await expect(page.getByRole("button", { name: "최신 미리보기" })).toBeVisible();
-    await page.getByRole("button", { name: "최신 미리보기" }).click();
-    await expect(page.getByRole("dialog", { name: "초안 변경 미리보기" })).toBeVisible();
-    expect(evidence.requests.filter((request) => request.pathname.endsWith("/confirm")).length).toBe(1);
-    expect(evidence.requests.filter((request) => request.pathname.endsWith("/preview")).length).toBe(2);
+    expect(evidence.requests.filter((request) => request.pathname.endsWith("/confirm"))).toHaveLength(1);
+    expect(evidence.requests.filter((request) => request.pathname.endsWith("/preview"))).toHaveLength(2);
     evidence.assertSafe();
 });
 
-test("the admin wizard retains original/revised dates at a narrow mobile viewport", async ({ page }, testInfo: TestInfo) => {
-    const evidence = await installMocks(page, {
-        initialDraft: makeDraftState({ sessions: [{ sessionIndex: 1, serviceDate: "2026-07-20" }] }),
-    });
-    await page.setViewportSize({ width: 390, height: 844 });
+test("mobile date editing uses a bottom sheet and cancellation leaves data unchanged", async ({ page }, testInfo: TestInfo) => {
+    const evidence = await installMocks(page, { initialDraft: makeDraftState() });
+    await page.setViewportSize({ width: 375, height: 812 });
     await openEditor(page);
     await openDay(page, 1);
-    await expect(page.locator('[data-component="desktop_service-record-admin_wizard_body_date-chip_date-display"]')).toContainText("2026.07.20");
-    await expect(page.locator('[data-component="desktop_service-record-admin_wizard_body_date-chip_date-display"]')).toContainText("원본 2026.07.01");
-    await page.screenshot({ path: testInfo.outputPath("phase6-admin-mobile-390.png"), fullPage: true });
+    await page.locator('[data-component$="_body_date-edit"]').click();
+    const dialog = page.getByRole("dialog", { name: "1회차 서비스 제공일 수정" });
+    await expect(dialog).toBeVisible();
+    const bounds = await dialog.boundingBox();
+    expect(bounds).not.toBeNull();
+    expect(bounds!.x).toBeCloseTo(0, 0);
+    expect(bounds!.width).toBeCloseTo(375, 0);
+    expect(bounds!.y + bounds!.height).toBeCloseTo(812, 0);
+    await expect(dialog.getByRole("combobox", { name: "일" })).toHaveCSS("height", "54px");
+    await page.screenshot({ path: testInfo.outputPath("admin-mobile-date-sheet.png"), fullPage: true });
+    await dialog.getByRole("button", { name: "취소", exact: true }).click();
+    await expect(dialog).toBeHidden();
+    await expect(page.getByRole("button", { name: "확인", exact: true })).toBeVisible();
+    expect(evidence.requests.filter((request) => request.method !== "GET")).toHaveLength(0);
     evidence.assertSafe();
 });
