@@ -829,6 +829,7 @@ function ClientDetailPanelBody({
             >
                 <DetailTabPanels
                     activeTab={activeDetailTab}
+                    durationMs={layout === "mobile" ? 0 : undefined}
                     dataComponent={`${dataComponentPrefix}_content`}
                     panelDataComponent={`${dataComponentPrefix}_content_panel`}
                     idPrefix={idPrefix}
