@@ -713,3 +713,7 @@ TL;DR: 배정(4b-1 백엔드: 역할·자격·동시 변경 코드 전환 / 4b-2
 - 매핑: Prisma P2002→REQUEST_CONFLICT(409), P2025→RESOURCE_NOT_FOUND(404), P2003→REQUEST_CONFLICT, P2000→VALIDATION_FAILED(400), P2024/P1001/P1002/P1008/P1017→DEPENDENCY_UNAVAILABLE(503), 기타 4xx→REQUEST_INVALID, >=500 기존 흐름 유지 — 필터 자체는 경계 공용이므로 status 보존 최우선. 기존 `{statusCode,code:prismaCode}` 소비자(웹 getUserErrorMessage 별도) 확인.
 - 서비스: 알림 Forbidden→ACCESS_DENIED; system-admin/setting/template/mutation-guard raw NotFound/Conflict/BadRequest→등록 코드(+errors 배열 VALIDATION_FAILED); document-category GLOBAL_CATEGORY_CONFLICT/P2002→REQUEST_CONFLICT.
 - worker(glm) · Audit SOL.
+
+**Task 6c 실행 결과 (2026-09-17):** worker `d18ac6956`(base `c02b250c5`) → 통합 `e4ee58dc2` (15 파일). red-first 20F→119; 362 suites/5,138; 감사 SHIP. 신규 코드 0.
+- carried: 필터 status 정정 2건(P2000 500→400, P1002/P1008 500→503), mutation-guard wire 필드 제거(unsupportedVariables — 소비자 무 확인), 내부 불변식 Error 4곳.
+- **dev 관찰(다음 sync 대비):** dev(96f4026ab)에 PR #704(sentry-400-advisories) 머지됨 — `backend/infrastructure/observability/http-advisory.spec.ts` 존재(우리 트리엔 없음), dev에서 로컬 실행 시 1건 실패(EMPLOYEE_ASSIGNMENT_UNAVAILABLE 400 매핑) — dev node_modules 미갱신 가능성 또는 dev 자체 이슈, **우리 범위 아님·다음 sync 때 확인**. dev에 untracked `mobile/AGENTS.md`(사용자 WIP) — 건드리지 말 것.
