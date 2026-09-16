@@ -13,6 +13,8 @@ import { resetAuthorityState } from "@/lib/auth/authority-state";
 import {
   appendSafeReturnPath,
   getSafeReturnPathFromSearchParams,
+  OAUTH_RETURN_PATH_STORAGE_KEY,
+  serializeSafeReturnPathForStorage,
 } from "@/lib/auth/safe-return-path";
 import { loginWithEmail } from "@/app/(auth)/login/actions";
 
@@ -32,6 +34,15 @@ export function useLoginPageController() {
   const [emailVerificationRequired, setEmailVerificationRequired] = useState(false);
   const [isResendingVerification, setIsResendingVerification] = useState(false);
   const { isPending: isLoginPending, beginNavigation } = useNavigationPending(isLoading);
+
+  useEffect(() => {
+    const serializedReturnPath = serializeSafeReturnPathForStorage(returnPath);
+    if (serializedReturnPath) {
+      safeStorageSetItem("session", OAUTH_RETURN_PATH_STORAGE_KEY, serializedReturnPath);
+    } else {
+      safeStorageRemoveItem("session", OAUTH_RETURN_PATH_STORAGE_KEY);
+    }
+  }, [returnPath]);
 
   useEffect(() => {
     const savedAutoLogin = safeStorageGetItem("local", "login:autoLogin") === "true";
@@ -100,11 +111,13 @@ export function useLoginPageController() {
       if (response.success) {
         if (response.onboardingRequired) {
           beginNavigation();
-          router.replace(response.onboardingRoute || "/onboarding");
+          router.replace(appendSafeReturnPath(response.onboardingRoute || "/onboarding", returnPath));
+          safeStorageRemoveItem("session", OAUTH_RETURN_PATH_STORAGE_KEY);
           return;
         }
 
         beginNavigation();
+        safeStorageRemoveItem("session", OAUTH_RETURN_PATH_STORAGE_KEY);
         if (response.requiresBranchSelection) {
           router.replace(appendSafeReturnPath("/select-branch", returnPath));
         } else {

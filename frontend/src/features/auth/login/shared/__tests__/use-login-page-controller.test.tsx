@@ -3,6 +3,10 @@ import { act, renderHook, waitFor } from "@testing-library/react";
 import { useLoginPageController } from "../use-login-page-controller";
 import { loginWithEmail } from "@/app/(auth)/login/actions";
 import { resetAuthorityState } from "@/lib/auth/authority-state";
+import {
+  getSafeReturnPathFromStorage,
+  OAUTH_RETURN_PATH_STORAGE_KEY,
+} from "@/lib/auth/safe-return-path";
 
 const mockReplace = jest.fn();
 let returnTo: string | null = null;
@@ -43,9 +47,59 @@ beforeEach(() => {
   jest.clearAllMocks();
   returnTo = null;
   mockResetAuthorityState.mockResolvedValue(undefined);
+  window.sessionStorage.clear();
 });
 
 describe("useLoginPageController return navigation", () => {
+  it("stores a safe editor path for the social login handoff", async () => {
+    returnTo = "/service-record-admin/client-1";
+
+    renderHook(() => useLoginPageController());
+
+    await waitFor(() => {
+      expect(
+        getSafeReturnPathFromStorage(
+          window.sessionStorage.getItem(OAUTH_RETURN_PATH_STORAGE_KEY),
+        ),
+      ).toBe("/service-record-admin/client-1");
+    });
+  });
+
+  it("clears stale social return metadata on a normal login page", async () => {
+    window.sessionStorage.setItem(
+      OAUTH_RETURN_PATH_STORAGE_KEY,
+      JSON.stringify({
+        path: "/service-record-admin/client-1",
+        expiresAt: Date.now() + 60_000,
+      }),
+    );
+
+    renderHook(() => useLoginPageController());
+
+    await waitFor(() => {
+      expect(window.sessionStorage.getItem(OAUTH_RETURN_PATH_STORAGE_KEY)).toBeNull();
+    });
+  });
+
+  it("keeps the safe editor path when email login requires onboarding", async () => {
+    returnTo = "/service-record-admin/client-1";
+    mockLoginWithEmail.mockResolvedValue({
+      success: true,
+      onboardingRequired: true,
+      onboardingRoute: "/onboarding",
+    });
+
+    const { result } = renderHook(() => useLoginPageController());
+    await submitLogin(result);
+
+    await waitFor(() => {
+      expect(mockReplace).toHaveBeenCalledWith(
+        "/onboarding?returnTo=%2Fservice-record-admin%2Fclient-1",
+      );
+    });
+    expect(window.sessionStorage.getItem(OAUTH_RETURN_PATH_STORAGE_KEY)).toBeNull();
+  });
+
   it("routes a successful login directly to the safe editor path", async () => {
     returnTo = "/service-record-admin/client-1";
     mockLoginWithEmail.mockResolvedValue({ success: true, requiresBranchSelection: false });

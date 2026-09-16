@@ -1,4 +1,6 @@
 export const RETURN_TO_QUERY_PARAM = "returnTo";
+export const OAUTH_RETURN_PATH_STORAGE_KEY = "auth:oauth-return-path";
+export const OAUTH_RETURN_PATH_TTL_MS = 10 * 60 * 1000;
 
 const SERVICE_RECORD_ADMIN_PREFIX = "/service-record-admin/";
 const SAFE_CLIENT_ID_PATTERN = /^[A-Za-z0-9_-]{1,128}$/;
@@ -49,4 +51,48 @@ export function appendSafeReturnPath(
 
   const separator = route.includes("?") ? "&" : "?";
   return `${route}${separator}${RETURN_TO_QUERY_PARAM}=${encodeURIComponent(safeReturnPath)}`;
+}
+
+export function serializeSafeReturnPathForStorage(
+  returnPath: string | null | undefined,
+  now = Date.now(),
+): string | null {
+  const safeReturnPath = getSafeServiceRecordAdminReturnPath(returnPath);
+  if (!safeReturnPath) {
+    return null;
+  }
+
+  return JSON.stringify({
+    path: safeReturnPath,
+    expiresAt: now + OAUTH_RETURN_PATH_TTL_MS,
+  });
+}
+
+export function getSafeReturnPathFromStorage(
+  value: string | null | undefined,
+  now = Date.now(),
+): string | null {
+  if (typeof value !== "string" || value.length === 0) {
+    return null;
+  }
+
+  try {
+    const parsed: unknown = JSON.parse(value);
+    if (
+      typeof parsed !== "object" ||
+      parsed === null ||
+      !("path" in parsed) ||
+      !("expiresAt" in parsed) ||
+      typeof parsed.path !== "string" ||
+      typeof parsed.expiresAt !== "number" ||
+      !Number.isFinite(parsed.expiresAt) ||
+      parsed.expiresAt <= now
+    ) {
+      return null;
+    }
+
+    return getSafeServiceRecordAdminReturnPath(parsed.path);
+  } catch {
+    return null;
+  }
 }

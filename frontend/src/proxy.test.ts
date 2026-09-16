@@ -89,6 +89,15 @@ describe("admin gateway proxy", () => {
     expect(redirectUrl).toBeNull();
   });
 
+  it("keeps the OAuth callback on the desktop host for session-storage continuity", () => {
+    const redirectUrl = getMobileGatewayRedirectUrl(
+      new URL("https://admin.babyjamjam.com/callback?code=oauth-code"),
+      IPHONE_USER_AGENT,
+    );
+
+    expect(redirectUrl).toBeNull();
+  });
+
   it("continues mobile gateway routing for an unsafe return path", () => {
     const redirectUrl = getMobileGatewayRedirectUrl(
       new URL("https://admin.babyjamjam.com/login?returnTo=https%3A%2F%2Fevil.example"),

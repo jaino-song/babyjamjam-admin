@@ -1,7 +1,10 @@
 import {
   appendSafeReturnPath,
   getSafeReturnPathFromSearchParams,
+  getSafeReturnPathFromStorage,
   getSafeServiceRecordAdminReturnPath,
+  OAUTH_RETURN_PATH_TTL_MS,
+  serializeSafeReturnPathForStorage,
 } from "./safe-return-path";
 
 describe("service-record-admin return paths", () => {
@@ -57,5 +60,31 @@ describe("service-record-admin return paths", () => {
     expect(appendSafeReturnPath("/dashboard", "https://evil.example")).toBe(
       "/dashboard",
     );
+  });
+
+  it("serializes a safe path with a short expiry for the OAuth handoff", () => {
+    const now = 1_000;
+    const serialized = serializeSafeReturnPathForStorage(
+      "/service-record-admin/client-1",
+      now,
+    );
+
+    expect(serialized).toBe(JSON.stringify({
+      path: "/service-record-admin/client-1",
+      expiresAt: now + OAUTH_RETURN_PATH_TTL_MS,
+    }));
+    expect(getSafeReturnPathFromStorage(serialized, now)).toBe(
+      "/service-record-admin/client-1",
+    );
+  });
+
+  it.each([
+    JSON.stringify({ path: "https://evil.example", expiresAt: 2_000 }),
+    JSON.stringify({ path: "/service-record-admin/client-1/../other", expiresAt: 2_000 }),
+    JSON.stringify({ path: "/service-record-admin/client-1", expiresAt: 1_000 }),
+    JSON.stringify({ path: "/service-record-admin/client-1", expiresAt: "later" }),
+    "not-json",
+  ])("rejects an unsafe or expired OAuth handoff value (%s)", (value) => {
+    expect(getSafeReturnPathFromStorage(value, 1_000)).toBeNull();
   });
 });

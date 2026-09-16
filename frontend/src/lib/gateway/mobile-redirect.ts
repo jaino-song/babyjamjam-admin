@@ -18,6 +18,12 @@ function keepsDesktopGatewayRoute(requestUrl: URL): boolean {
     return true;
   }
 
+  // OAuth callback must remain on the desktop origin so the same-tab session
+  // storage written by the login page is available when the callback runs.
+  if (requestUrl.pathname === "/callback") {
+    return true;
+  }
+
   if (requestUrl.pathname !== "/login" && requestUrl.pathname !== "/select-branch") {
     return false;
   }
