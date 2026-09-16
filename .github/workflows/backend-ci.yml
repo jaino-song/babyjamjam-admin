@@ -211,6 +211,21 @@ jobs:
           --health-interval 5s
           --health-timeout 5s
           --health-retries 10
+      # Task persistence tests enforce this exact disposable database identity.
+      # Keep it separate from the auth fixtures and general agent runtime tests.
+      conversation-postgres:
+        image: postgres@sha256:c1b3783309b6499c795eed7c20135a1a4d25cae1b575c3d52c6f536129a1b109 # postgres:16
+        env:
+          POSTGRES_HOST_AUTH_METHOD: trust
+          POSTGRES_USER: bjj_test
+          POSTGRES_DB: bjj_conversation_test
+        ports:
+          - 55433:5432
+        options: >-
+          --health-cmd "pg_isready -U bjj_test -d bjj_conversation_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
       valkey:
         image: valkey/valkey@sha256:e0eb7c480958d32bdc4357a74bdd70653ae15f2f9b4c93c4a5a9fad1dc471c84 # valkey/valkey:8-alpine
         ports:
@@ -248,12 +263,31 @@ jobs:
         run: pnpm --filter ./backend run test:auth-e2e
 
       - name: Run deterministic agent runtime E2E
-        run: pnpm --filter ./backend run test:agent-e2e
+        run: >-
+          pnpm --filter ./backend run test:agent-e2e
+          --testPathIgnorePatterns='test/agent-e2e/runtime/agent-task-.*\.e2e\.spec\.ts$'
         env:
           AGENT_E2E: '1'
           AGENT_ENABLED: 'true'
           AGENT_READ_ENABLED: 'true'
           AGENT_RATE_LIMIT_PER_MINUTE: '100'
+
+      - name: Apply isolated conversation task migrations
+        run: pnpm --filter ./backend run db:migrate:deploy
+        env:
+          DATABASE_URL: postgresql://bjj_test@127.0.0.1:55433/bjj_conversation_test
+          DIRECT_URL: postgresql://bjj_test@127.0.0.1:55433/bjj_conversation_test
+
+      # The positive selector must match the exclusion above exactly. Both steps
+      # are required, so no task suite is skipped by the database partition.
+      - name: Run isolated conversation task E2E
+        run: >-
+          pnpm --filter ./backend run test:agent-e2e
+          --testPathPatterns='test/agent-e2e/runtime/agent-task-.*\.e2e\.spec\.ts$'
+        env:
+          DATABASE_URL: postgresql://bjj_test@127.0.0.1:55433/bjj_conversation_test
+          DIRECT_URL: postgresql://bjj_test@127.0.0.1:55433/bjj_conversation_test
+          AGENT_E2E: '1'
 
   lightnode-connection-smoke:
     name: LightNode CI connection smoke
