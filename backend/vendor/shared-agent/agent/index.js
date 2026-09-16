@@ -16,4 +16,7 @@ var __exportStar = (this && this.__exportStar) || function(m, exports) {
 Object.defineProperty(exports, "__esModule", { value: true });
 __exportStar(require("./action-types"), exports);
 __exportStar(require("./capability-meta"), exports);
+__exportStar(require("./client-input-policy"), exports);
 __exportStar(require("./message-parts"), exports);
+__exportStar(require("./task-projection"), exports);
+__exportStar(require("./task-types"), exports);

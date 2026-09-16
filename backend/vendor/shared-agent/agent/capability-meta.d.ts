@@ -24,6 +24,9 @@ export declare const AgentCapabilityMetaSchema: z.ZodObject<{
         attachment: "attachment";
         form: "form";
         feedback: "feedback";
+        "task-snapshot": "task-snapshot";
+        "entity-select": "entity-select";
+        "task-patch": "task-patch";
     }>;
     flagKey: z.ZodString;
     sideEffect: z.ZodBoolean;
