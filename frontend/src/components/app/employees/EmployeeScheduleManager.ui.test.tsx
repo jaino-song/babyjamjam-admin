@@ -117,6 +117,10 @@ describe("EmployeeScheduleManager interactions", () => {
         expect(screen.getByRole("region", { name: "고객 상세" })).toHaveTextContent("1 · 박서연");
         const back = screen.getByRole("button", { name: "서비스 일정으로 돌아가기" });
         expect(back).toHaveFocus();
+        const slide = container.querySelector('[data-slot="sliding-detail-panel"]');
+        expect(slide?.parentElement).toHaveAttribute("data-slot", "schedule-workspace");
+        expect(slide?.contains(container.querySelector('[data-slot="calendar-grid"]'))).toBe(false);
+        expect(screen.getByRole("tab", { name: "달력" })).toBeInTheDocument();
         expect(container.querySelector('[data-slot="sliding-detail-list"]')).toHaveAttribute("inert");
         fireEvent.click(back);
         expect(container.querySelector('[data-slot="sliding-detail-panel"]')).toHaveAttribute("data-open", "false");

@@ -457,6 +457,8 @@ export interface ClientDetailPanelProps {
     client: Client;
     /** Page-specific trailing action (e.g. edit/delete menu, or a link-only menu). */
     trailing: ReactNode;
+    /** Stack basic information when embedded in a narrow detail pane. */
+    basicInfoColumns?: 1 | 2;
     /** Called after a schedule-change request is approved/rejected so the caller can clear its own local client state. */
     onScheduleChangeDecided?: (clientId: number) => void;
     /** Prefix applied to every `data-component` attribute rendered by this panel. */
@@ -480,6 +482,7 @@ export interface ClientDetailPanelProps {
 function ClientDetailPanelBody({
     client,
     trailing,
+    basicInfoColumns = 2,
     onScheduleChangeDecided,
     dataComponentPrefix = "desktop_clients-detail_panel",
     messageHistoryDataComponentPrefix = "desktop_clients-detail_panel_message-history",
@@ -892,8 +895,8 @@ function ClientDetailPanelBody({
                         {
                             key: "basic",
                             children: (
-                                <div data-component={`${dataComponentPrefix}_content_basic_grid`} className="grid grid-cols-2 gap-4">
-                                    <InfoCard data-component={`${dataComponentPrefix}_content_basic_grid_client-card`} title="고객 정보" className="col-start-1 row-start-1 row-end-3">
+                                <div data-component={`${dataComponentPrefix}_content_basic_grid`} className={cn("grid gap-4", basicInfoColumns === 1 ? "grid-cols-1" : "grid-cols-2")}>
+                                    <InfoCard data-component={`${dataComponentPrefix}_content_basic_grid_client-card`} title="고객 정보" className={basicInfoColumns === 2 ? "col-start-1 row-start-1 row-end-3" : undefined}>
                                         <InfoRow
                                             label={t(locale, "clients.form.name")}
                                             value={client.name}
@@ -922,7 +925,7 @@ function ClientDetailPanelBody({
                                         />
                                     </InfoCard>
 
-                                    <InfoCard data-component={`${dataComponentPrefix}_content_basic_grid_employee-card`} title="담당 관리사" className="col-start-1 row-start-3 row-end-5">
+                                    <InfoCard data-component={`${dataComponentPrefix}_content_basic_grid_employee-card`} title="담당 관리사" className={basicInfoColumns === 2 ? "col-start-1 row-start-3 row-end-5" : undefined}>
                                         <InfoRow
                                             label={t(locale, "clients.form.primary-employee")}
                                             value={
@@ -951,7 +954,7 @@ function ClientDetailPanelBody({
                                         />
                                     </InfoCard>
 
-                                    <InfoCard data-component={`${dataComponentPrefix}_content_basic_grid_service-card`} title="서비스 정보" className="col-start-2 row-start-1 row-end-5 content-start">
+                                    <InfoCard data-component={`${dataComponentPrefix}_content_basic_grid_service-card`} title="서비스 정보" className={cn("content-start", basicInfoColumns === 2 && "col-start-2 row-start-1 row-end-5")}>
                                         <InfoRow
                                             label={t(locale, "clients.form.voucher-type")}
                                             value={client.type ? getClientDisplayLabel(client.type) : "-"}

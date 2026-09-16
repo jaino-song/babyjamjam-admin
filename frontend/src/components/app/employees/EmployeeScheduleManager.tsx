@@ -519,6 +519,7 @@ export function EmployeeScheduleManager({
         if (!day.isInHorizon) return;
         setSelectedDateKey(day.dateKey);
         setSelectedEntryId(null);
+        setIsDetailOpen(false);
     };
 
     const handleEntrySelect = (entry: ScheduleEntry) => {
@@ -531,6 +532,7 @@ export function EmployeeScheduleManager({
         setVisibleMonth(startOfMonth(today));
         setSelectedDateKey(dateKey(today));
         setSelectedEntryId(null);
+        setIsDetailOpen(false);
     };
 
     const handleMonthChange = (amount: number) => {
@@ -564,7 +566,7 @@ export function EmployeeScheduleManager({
                 </p>
             </header>
 
-            <div data-component={component("view-tabs")} data-slot="view-tabs" aria-hidden={isDetailOpen && Boolean(selectedClient)} inert={isDetailOpen && Boolean(selectedClient) || undefined} className={cn("shrink-0", isDetailOpen && selectedClient && "invisible")}>
+            <div data-component={component("view-tabs")} data-slot="view-tabs" className="shrink-0">
                 <DetailTabs
                     tabs={[...VIEW_TABS]}
                     activeTab={viewMode}
@@ -574,23 +576,7 @@ export function EmployeeScheduleManager({
                 />
             </div>
 
-            <SlidingDetailPanel
-                data-component={component("sliding-detail")}
-                open={isDetailOpen && Boolean(selectedClient)}
-                onBack={() => setIsDetailOpen(false)}
-                backLabel="서비스 일정으로 돌아가기"
-                detail={selectedClient ? (
-                    <ClientDetailPanel
-                        key={selectedClient.id}
-                        client={selectedClient}
-                        trailing={null}
-                        dataComponentPrefix={component("sliding-detail_detail-pane_body_client")}
-                        messageHistoryDataComponentPrefix={component("sliding-detail_detail-pane_body_client_message-history")}
-                        idPrefix={`${dataComponent}-client-${selectedClient.id}`}
-                        tabsAriaLabel="고객 상세 정보"
-                    />
-                ) : null}
-                list={isLoading ? (
+            {isLoading ? (
 
                 <div
                     data-component={component("loading")}
@@ -659,6 +645,24 @@ export function EmployeeScheduleManager({
                         />
                     </ListPanel>
 
+                    <SlidingDetailPanel
+                        data-component={component("agenda-panel_sliding-detail")}
+                        open={isDetailOpen && Boolean(selectedClient)}
+                        onBack={() => setIsDetailOpen(false)}
+                        backLabel="서비스 일정으로 돌아가기"
+                        detail={selectedClient ? (
+                            <ClientDetailPanel
+                                key={selectedClient.id}
+                                client={selectedClient}
+                                trailing={null}
+                                basicInfoColumns={1}
+                                dataComponentPrefix={component("agenda-panel_sliding-detail_detail-pane_body_client")}
+                                messageHistoryDataComponentPrefix={component("agenda-panel_sliding-detail_detail-pane_body_client_message-history")}
+                                idPrefix={`${dataComponent}-client-${selectedClient.id}`}
+                                tabsAriaLabel="고객 상세 정보"
+                    />
+                ) : null}
+                list={(
                     <DetailPanel
                         data-component={component("agenda-panel")}
                         title={formatSelectedDate(selectedDate)}
@@ -682,9 +686,10 @@ export function EmployeeScheduleManager({
                             <ListEmptyState icon={CalendarClock} message="선택한 날짜의 일정이 없습니다." />
                         )}
                     </DetailPanel>
+                )}
+                    />
                 </div>
             )}
-            />
         </section>
     );
 }
