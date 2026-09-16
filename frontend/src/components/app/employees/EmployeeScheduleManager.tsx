@@ -655,7 +655,7 @@ export function EmployeeScheduleManager({
                                 key={selectedClient.id}
                                 client={selectedClient}
                                 trailing={null}
-                                basicInfoColumns={1}
+                                layout="mobile"
                                 dataComponentPrefix={component("agenda-panel_sliding-detail_detail-pane_body_client")}
                                 messageHistoryDataComponentPrefix={component("agenda-panel_sliding-detail_detail-pane_body_client_message-history")}
                                 idPrefix={`${dataComponent}-client-${selectedClient.id}`}

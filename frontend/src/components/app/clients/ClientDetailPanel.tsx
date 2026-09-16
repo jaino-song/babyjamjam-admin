@@ -459,6 +459,8 @@ export interface ClientDetailPanelProps {
     trailing: ReactNode;
     /** Stack basic information when embedded in a narrow detail pane. */
     basicInfoColumns?: 1 | 2;
+    /** Mobile presentation for an embedded sliding detail pane. */
+    layout?: "desktop" | "mobile";
     /** Called after a schedule-change request is approved/rejected so the caller can clear its own local client state. */
     onScheduleChangeDecided?: (clientId: number) => void;
     /** Prefix applied to every `data-component` attribute rendered by this panel. */
@@ -482,7 +484,8 @@ export interface ClientDetailPanelProps {
 function ClientDetailPanelBody({
     client,
     trailing,
-    basicInfoColumns = 2,
+    layout = "desktop",
+    basicInfoColumns = layout === "mobile" ? 1 : 2,
     onScheduleChangeDecided,
     dataComponentPrefix = "desktop_clients-detail_panel",
     messageHistoryDataComponentPrefix = "desktop_clients-detail_panel_message-history",
@@ -1026,6 +1029,7 @@ function ClientDetailPanelBody({
                             children: (
                                 <ClientServiceRecordsTab
                                     data-component={`${dataComponentPrefix}_service-records`}
+                                    layout={layout}
                                     overview={serviceRecordsQuery.data}
                                     clientId={clientId}
                                     isLoading={serviceRecordsQuery.isLoading}
@@ -1068,5 +1072,10 @@ function ClientDetailPanelBody({
  * remount-on-select behavior.
  */
 export function ClientDetailPanel(props: ClientDetailPanelProps) {
-    return <ClientDetailPanelBody key={props.client.id} {...props} />;
+    return <div
+        data-component={`${props.dataComponentPrefix ?? "desktop_clients-detail_panel"}_presentation`}
+        data-slot="client-detail-presentation"
+        data-layout={props.layout ?? "desktop"}
+        className="flex h-full min-h-0 flex-1 flex-col"
+    ><ClientDetailPanelBody key={props.client.id} {...props} /></div>;
 }

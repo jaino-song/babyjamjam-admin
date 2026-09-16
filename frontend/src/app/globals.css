@@ -1673,3 +1673,19 @@ body {
   .sliding-detail-list, .sliding-detail-content, .sliding-detail-dim { transition-duration: .01ms; }
   .schedule-content-enter { animation: none; }
 }
+
+/* Embedded client detail follows the mobile card rhythm independent of viewport. */
+[data-slot="client-detail-presentation"][data-layout="mobile"] [data-slot="detail-panel"] { border-radius: 0; box-shadow: none; }
+[data-slot="client-detail-presentation"][data-layout="mobile"] [data-slot="detail-panel-header"] { padding: 16px; }
+[data-slot="client-detail-presentation"][data-layout="mobile"] [data-slot="detail-panel-scroll-content"] { padding: 16px; }
+[data-slot="client-detail-presentation"][data-layout="mobile"] [data-slot="detail-panel-bottom-spacer"] { height: 0; }
+[data-slot="client-detail-presentation"][data-layout="mobile"] :is([data-source-component="InfoCard"], [data-source-component="ServiceRecordHeaderCard"]) { padding: 14px 16px; border-radius: 18px; background: hsl(var(--v3-dim-white)); }
+[data-slot="client-detail-presentation"][data-layout="mobile"] :is([data-source-component="InfoCard"], [data-source-component="ServiceRecordHeaderCard"]) h3 { font-size: .6rem; letter-spacing: .08em; margin-bottom: 8px; }
+[data-slot="client-detail-presentation"][data-layout="mobile"] [data-source-component="InfoRow"] { gap: 12px; padding: 8px 0; }
+[data-slot="client-detail-presentation"][data-layout="mobile"] [data-source-component="InfoRow"] > span { font-size: .78rem; word-break: keep-all; }
+[data-slot="client-detail-presentation"][data-layout="mobile"] [data-source-component="ClientServiceRecordsTab"] .grid { grid-template-columns: minmax(0, 1fr); }
+[data-slot="client-detail-presentation"][data-layout="mobile"] [role="tablist"] { display: flex; gap: 4px; border: 0; padding: 4px; border-radius: 14px; background: hsl(var(--v3-dim-white)); }
+[data-slot="client-detail-presentation"][data-layout="mobile"] [role="tab"] { flex: 1; min-width: 0; padding: 8px 4px; border: 0; border-radius: 10px; font-size: .7rem; white-space: nowrap; }
+[data-slot="client-detail-presentation"][data-layout="mobile"] [role="tab"][aria-selected="true"] { background: white; box-shadow: 0 2px 8px hsl(214 50% 20% / .06); }
+
+[data-slot="client-detail-presentation"][data-layout="mobile"] [role="tablist"] > div { display: none; }
