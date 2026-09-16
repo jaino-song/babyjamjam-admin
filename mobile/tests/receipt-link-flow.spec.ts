@@ -51,7 +51,7 @@ test("mother verifies her birthday and reaches the receipt image", async ({ page
     await page.getByRole("button", { name: "확인하기" }).click();
     // Next.js's built-in route announcer also carries role="alert" (always present,
     // empty text), so scope to the page's own error element rather than the role alone.
-    await expect(page.locator(".rcpt-err")).toHaveText("생년월일이 일치하지 않습니다. 남은 횟수 4회");
+    await expect(page.locator('[data-slot="err"][role="alert"]')).toHaveText("생년월일이 일치하지 않습니다. 남은 횟수 4회");
     await expect(page.getByText("5회 연속 틀리면 30분 동안 확인이 잠깁니다", { exact: false })).toBeVisible();
 
     await page.getByLabel("산모님 생년월일").fill("940315");
@@ -106,5 +106,5 @@ test("a locked link disables the form and shows the exact lock-until time", asyn
     await page.goto(`/receipt/${TOKEN}`);
     await expect(page.getByRole("button", { name: "확인하기" })).toBeDisabled();
     // timezoneId is pinned to UTC above, so 2026-09-03T01:00:00.000Z renders as 1시 00분.
-    await expect(page.locator(".rcpt-err")).toHaveText("5회 연속 틀려 1시 00분까지 확인이 잠겼습니다.");
+    await expect(page.locator('[data-slot="err"][role="alert"]')).toHaveText("5회 연속 틀려 1시 00분까지 확인이 잠겼습니다.");
 });
