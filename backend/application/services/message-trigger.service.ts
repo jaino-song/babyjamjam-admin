@@ -55,7 +55,7 @@ import {
 } from "domain/repositories/message-trigger-rule-branch-override.repository.interface";
 import { isRuleActiveForBranch } from "domain/utils/message-trigger-rule-activation";
 import { SERVICE_RECORD_LINK_BRANCH_DISABLED_REASON, SERVICE_RECORD_LINK_SCHEDULING_RETRY_REASON } from "domain/constants/service-record-link-message";
-import { SERVICE_END_NOTICE_ALREADY_SENT_CANCEL_REASON } from "domain/constants/service-end-notice-message";
+import { MANUAL_DEDUPE_MARKER, SERVICE_END_NOTICE_ALREADY_SENT_CANCEL_REASON } from "domain/constants/service-end-notice-message";
 import {
     MESSAGE_TRIGGER_JOB_REPOSITORY,
     IMessageTriggerJobRepository,
@@ -76,7 +76,6 @@ import { normalizePhone } from "application/utils/normalize-phone";
 import { SystemSettingService } from "./system-setting.service";
 import { SystemTemplateService } from "./system-template.service";
 import { MessageTemplateAutomationLockService } from "./message-template-automation-lock.service";
-import { MANUAL_DEDUPE_MARKER } from "./receipt-link-delivery-enricher.service";
 import {
     DEFAULT_MESSAGE_AUTOMATION_PAST_TRIGGER_CONFIG,
     MessageAutomationPastTriggerConfig,
