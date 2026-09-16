@@ -5,7 +5,7 @@ import type { VerifiedTenantPrincipal } from "infrastructure/tenant/tenant.conte
 import { AgentModelFactory } from "infrastructure/agent/agent-model.factory";
 import { AgentFlagsService } from "./agent-flags.service";
 import { CapabilityRegistryService } from "./capability-registry.service";
-import { redactFreeText } from "./agent-model-redaction";
+import { redactClassifierText } from "./agent-model-redaction";
 
 const DOMAIN_TERMS: Record<string, RegExp> = {
     clients: /(산모|고객|client|mother)/i,
@@ -30,8 +30,8 @@ const DOMAIN_TERMS: Record<string, RegExp> = {
     admin: /(관리자|지점 생성|admin|branch creation)/i,
 };
 
-export function minimizeClassifierText(text: string): string {
-    return redactFreeText(text).slice(0, 240);
+export function minimizeClassifierText(text: string, knownValues: readonly unknown[] = []): string {
+    return redactClassifierText(text, knownValues);
 }
 
 @Injectable()
@@ -42,7 +42,7 @@ export class CapabilityRouterService {
         @Optional() private readonly models?: AgentModelFactory,
     ) {}
 
-    async route(text: string, principal: VerifiedTenantPrincipal, max = 12) {
+    async route(text: string, principal: VerifiedTenantPrincipal, max = 12, protectedValues: readonly unknown[] = []) {
         const snapshot = await this.flags.getSnapshot();
         const enabledCapabilities = this.registry.list().filter((capability) => (
             this.flags.isCapabilityEnabledFromSnapshot(capability.meta, principal, snapshot)
@@ -54,7 +54,7 @@ export class CapabilityRouterService {
             .filter((domain) => enabledDomains.has(domain));
         const classifierDomains = matched.length === 1
             ? matched
-            : await this.classifyAmbiguous(text, [...enabledDomains]);
+            : await this.classifyAmbiguous(text, [...enabledDomains], protectedValues);
         const routedDomains = classifierDomains.length > 0 ? classifierDomains : matched;
         const selectedDomains = routedDomains.length > 0 ? routedDomains : (enabledDomains.has("clients") ? ["clients"] : []);
         const offered = [];
@@ -66,9 +66,9 @@ export class CapabilityRouterService {
         return { domains: selectedDomains, capabilities: offered };
     }
 
-    private async classifyAmbiguous(text: string, enabledDomains: string[]): Promise<string[]> {
+    private async classifyAmbiguous(text: string, enabledDomains: string[], protectedValues: readonly unknown[]): Promise<string[]> {
         if (!this.models || enabledDomains.length === 0 || process.env["AGENT_ROUTER_CLASSIFIER_ENABLED"] === "false") return [];
-        const prompt = minimizeClassifierText(text);
+        const prompt = minimizeClassifierText(text, protectedValues);
         try {
             const result = await generateText({
                 model: this.models.create(),

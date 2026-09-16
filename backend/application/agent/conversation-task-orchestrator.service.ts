@@ -126,6 +126,16 @@ export class ConversationTaskOrchestratorService {
         }
     }
 
+    async protectedValuesForConversation(
+        principal: VerifiedTenantPrincipal,
+        sessionId: string,
+    ): Promise<string[]> {
+        const reader = (this.tasks as AgentTaskService & {
+            protectedValuesForConversation?: AgentTaskService["protectedValuesForConversation"];
+        }).protectedValuesForConversation;
+        return reader ? reader.call(this.tasks, principal, sessionId) : [];
+    }
+
     async filterWriteCapabilities(
         principal: VerifiedTenantPrincipal,
         capabilities: readonly CapabilityDefinition[],
@@ -205,9 +215,7 @@ export class ConversationTaskOrchestratorService {
         // A live task owns the continuation capability. Router output can
         // contain a different client write capability after compaction or a
         // follow-up question, but it must not retarget the existing task.
-        const capabilityId = current?.capabilityId === "clients.update"
-            ? "clients.update"
-            : input.capabilityId ?? "clients.create";
+        const capabilityId = current?.capabilityId ?? input.capabilityId;
 
         if (operations.length === 0) {
             const index = ordinalIndex(text);
@@ -217,7 +225,7 @@ export class ConversationTaskOrchestratorService {
                     choiceSetRef: input.message.displayedChoice.choiceSetRef,
                     revision: current.revision,
                 })) {
-                if (!await this.taskModeEnabled(input.principal, capabilityId)) {
+                if (!await this.taskModeEnabled(input.principal, current.capabilityId)) {
                     return {
                         canonical,
                         eventId,
@@ -247,7 +255,7 @@ export class ConversationTaskOrchestratorService {
             if (!current || isQuestionLike(text)) {
                 return { canonical, eventId, requestHash, text, isQuestion: isQuestionLike(text), task: current, mutated: false, replayed: false, operations };
             }
-            if (!await this.taskModeEnabled(input.principal, capabilityId)) {
+            if (!await this.taskModeEnabled(input.principal, current.capabilityId)) {
                 return {
                     canonical,
                     eventId,
@@ -265,6 +273,20 @@ export class ConversationTaskOrchestratorService {
             return { canonical, eventId, requestHash, text, isQuestion: isQuestionLike(text), task: recorded.snapshot, mutated: false, replayed: false, operations };
         }
 
+        if (!capabilityId) {
+            return {
+                canonical,
+                eventId,
+                requestHash,
+                text,
+                isQuestion: isQuestionLike(text),
+                task: current,
+                mutated: false,
+                replayed: false,
+                operations,
+                refusal: "unsupported-input",
+            };
+        }
         if (!await this.taskModeEnabled(input.principal, capabilityId)) {
             return { canonical, eventId, requestHash, text, isQuestion: isQuestionLike(text), task: current, mutated: false, replayed: false, operations, refusal: "feature-disabled" };
         }

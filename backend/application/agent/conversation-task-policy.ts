@@ -12,7 +12,7 @@ import {
     type ClientInputOperation,
     type ClientModelTaskOperation,
 } from "@babyjamjam/shared";
-import { redactFreeText } from "./agent-model-redaction";
+import { redactExplicitLabeledText, redactFreeText, redactKnownValues } from "./agent-model-redaction";
 
 /**
  * A mutation origin is supplied by a trusted server call site.  It is never
@@ -122,19 +122,6 @@ export function assertModelOperations(raw: unknown): ClientModelTaskOperation[] 
  * narrow capture rule: arbitrary Korean prose is not treated as a name/address
  * parser and remains subject to the ordinary regex masking only.
  */
-function sanitizeExplicitLabeledText(text: string): string {
-    return [
-        /((?:이름|성명)\s*[:：]\s*)([^,，\n]{1,120})/gu,
-        /(주소\s*[:：]\s*)([^,，\n]{1,300})/gu,
-        /((?:전화번호|휴대폰|연락처)\s*[:：]\s*)([+()\d\s.-]{7,40})/gu,
-        /(서비스\s*유형\s*[:：]\s*)([^,，\n]{1,40})/gu,
-        /((?:startDate|시작일|이용\s*시작일)\s*[:：]\s*)([^,，\n]{1,100})/gu,
-        /((?:endDate|종료일|이용\s*종료일)\s*[:：]\s*)([^,，\n]{1,100})/gu,
-        /((?:dueDate|출산\s*예정일|예정일)\s*[:：]\s*)([^,，\n]{1,100})/gu,
-        /((?:birthDate|출생일)\s*[:：]\s*)([^,，\n]{1,100})/gu,
-    ].reduce((value, pattern) => value.replace(pattern, "$1[protected]"), text);
-}
-
 function safeTaskSnapshotPart(data: unknown): Record<string, unknown> | null {
     if (!data || typeof data !== "object" || Array.isArray(data)) return null;
     const value = data as Record<string, unknown>;
@@ -254,6 +241,7 @@ export function sanitizeConversationMessage(message: {
     role: "user" | "assistant" | "system";
     parts: readonly unknown[];
     displayedChoice?: AgentTaskDisplayedChoiceHint;
+    protectedValues?: readonly unknown[];
 }): {
     id: string;
     role: "user" | "assistant" | "system";
@@ -278,7 +266,10 @@ export function sanitizeConversationMessage(message: {
             return safe ? [safe] : [];
         }
         if (value["type"] === "text" && typeof value["text"] === "string") {
-            return [{ type: "text", text: redactFreeText(sanitizeExplicitLabeledText(value["text"])) }];
+            return [{
+                type: "text",
+                text: redactKnownValues(redactFreeText(redactExplicitLabeledText(value["text"])), message.protectedValues),
+            }];
         }
         return [];
     });

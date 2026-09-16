@@ -23,10 +23,10 @@ import { CapabilityRouterService } from "./capability-router.service";
 import { AgentTraceService } from "./agent-trace.service";
 import { ActionCoordinatorService } from "./action-coordinator.service";
 import { AgentIntelligenceService, AgentSessionSummarySchema, LegacyAgentSessionSummarySchema } from "./agent-intelligence.service";
-import { redactFreeText, redactModelValue } from "./agent-model-redaction";
+import { redactFreeText, redactKnownValues, redactModelValue } from "./agent-model-redaction";
 import { ConversationContextAssemblerService, type ConversationContext } from "./conversation-context-assembler.service";
 import { ConversationTaskOrchestratorService, type ConversationTaskTurnResult } from "./conversation-task-orchestrator.service";
-import { sanitizeConversationMessage } from "./conversation-task-policy";
+import { extractExplicitUserOperations, sanitizeConversationMessage } from "./conversation-task-policy";
 
 export { redactFreeText, redactModelValue } from "./agent-model-redaction";
 
@@ -93,6 +93,16 @@ function findFormSubmission(messages: BjjUIMessage[]): FormSubmission | undefine
     return undefined;
 }
 
+function selectedClientWriteCapability(
+    text: string,
+    capabilities: readonly { meta: { name: string } }[],
+): "clients.create" | "clients.update" | undefined {
+    const offered = new Set(capabilities.map((capability) => capability.meta.name));
+    if (/(?:수정|변경|업데이트|고쳐|edit|update)/iu.test(text) && offered.has("clients.update")) return "clients.update";
+    if (/(?:등록|생성|추가|만들|create|register|new\s+client)/iu.test(text) && offered.has("clients.create")) return "clients.create";
+    return undefined;
+}
+
 function parseSessionSummary(value: string | null) {
     if (!value) return null;
     try {
@@ -111,16 +121,15 @@ export function buildAuthoritativeModelMessages(
     persistedMessages: BjjUIMessage[],
     currentMessage: BjjUIMessage,
     summarizedMessageCount = 0,
+    protectedValues: readonly unknown[] = [],
 ): BjjUIMessage[] {
     const history = persistedMessages
         .slice(Math.max(0, Math.min(summarizedMessageCount, persistedMessages.length)))
         .filter((message) => message.role === "user" || message.role === "assistant")
         .map((message) => {
-            const sanitized = sanitizeConversationMessage(message as unknown as {
-                id: string;
-                role: "user" | "assistant";
-                parts: readonly unknown[];
-                displayedChoice?: AgentTaskDisplayedChoiceHint;
+            const sanitized = sanitizeConversationMessage({
+                ...(message as unknown as { id: string; role: "user" | "assistant"; parts: readonly unknown[]; displayedChoice?: AgentTaskDisplayedChoiceHint }),
+                protectedValues,
             });
             return {
                 id: sanitized.id,
@@ -130,16 +139,14 @@ export function buildAuthoritativeModelMessages(
                         && typeof part === "object"
                         && (part as Record<string, unknown>)["type"] === "text"
                         && typeof (part as Record<string, unknown>)["text"] === "string")
-                    .map((part) => ({ type: "text" as const, text: redactFreeText(part.text) })),
+                .map((part) => ({ type: "text" as const, text: redactKnownValues(redactFreeText(part.text), protectedValues) })),
             };
         })
         .filter((message) => message.parts.length > 0)
         .slice(-19) as BjjUIMessage[];
-    const sanitized = sanitizeConversationMessage(currentMessage as unknown as {
-        id: string;
-        role: "user";
-        parts: readonly unknown[];
-        displayedChoice?: AgentTaskDisplayedChoiceHint;
+    const sanitized = sanitizeConversationMessage({
+        ...(currentMessage as unknown as { id: string; role: "user"; parts: readonly unknown[]; displayedChoice?: AgentTaskDisplayedChoiceHint }),
+        protectedValues,
     });
     const redactedCurrentMessage = {
         ...sanitized,
@@ -147,7 +154,7 @@ export function buildAuthoritativeModelMessages(
             if (!part || typeof part !== "object") return part;
             const value = part as Record<string, unknown>;
             return value["type"] === "text" && typeof value["text"] === "string"
-                ? { ...value, text: redactFreeText(value["text"]) }
+                ? { ...value, text: redactKnownValues(redactFreeText(value["text"]), protectedValues) }
                 : value;
         }),
     } as BjjUIMessage;
@@ -209,6 +216,18 @@ export class AgentRuntimeService {
             .find((message) => message.role === "user")?.parts
             .map((part) => (part.type === "text" ? part.text : ""))
             .join(" ") ?? "";
+        const intakeValues = extractExplicitUserOperations(lastUserText).flatMap((operation) => (
+            "value" in operation && typeof operation.value === "string" ? [operation.value] : []
+        ));
+        const knownTaskValues = this.taskOrchestrator && typeof this.taskOrchestrator.protectedValuesForConversation === "function"
+            ? await this.taskOrchestrator.protectedValuesForConversation(input.principal, session.id)
+            : [];
+        const selectedEntityValues = Object.values(currentSelectedEntities).flatMap((entry) => {
+            if (!entry || typeof entry !== "object" || Array.isArray(entry)) return [];
+            const name = (entry as Record<string, unknown>)["name"];
+            return typeof name === "string" ? [name] : [];
+        });
+        const protectedValues = [...new Set([...intakeValues, ...knownTaskValues, ...selectedEntityValues])];
         const submittedCapability = formSubmission
             ? this.registry.list().find((capability) => formSubmission.formId === `${capability.meta.name}-${session.id}`)
             : undefined;
@@ -219,12 +238,18 @@ export class AgentRuntimeService {
             ? submittedCapability && submittedCapabilityEnabled
                 ? { domains: [submittedCapability.meta.domain], capabilities: [submittedCapability] }
                 : { domains: [], capabilities: [] }
-            : await this.router.route(lastUserText, input.principal, 12);
+            : protectedValues.length > 0
+                ? await this.router.route(lastUserText, input.principal, 12, protectedValues)
+                : await this.router.route(lastUserText, input.principal, 12);
         const currentMessage = input.messages[0];
         let offered = routed.capabilities;
+        const selectedWriteCapability = formSubmission?.formId === `${submittedCapability?.meta.name}-${session.id}`
+            ? submittedCapability?.meta.name as "clients.create" | "clients.update" | undefined
+            : selectedClientWriteCapability(lastUserText, routed.capabilities);
         const routedTaskCapabilities = routed.capabilities
             .filter((capability): capability is typeof capability & { meta: { name: "clients.create" | "clients.update" } } => capability.meta.name === "clients.create" || capability.meta.name === "clients.update")
-            .map((capability) => capability.meta.name);
+            .map((capability) => capability.meta.name)
+            .filter((capability) => capability === selectedWriteCapability);
         // Preserve traceability for malformed setup requests.  A missing current
         // message is a setup failure, but the trace still needs a terminal outcome
         // so the session does not retain an open span.
@@ -239,7 +264,7 @@ export class AgentRuntimeService {
         let conversationTask: ConversationTaskTurnResult | undefined;
         let conversationContext: ConversationContext | undefined;
         if (this.taskOrchestrator) {
-            const requestedCapability = routed.capabilities.find((capability) => capability.meta.name === "clients.create" || capability.meta.name === "clients.update")?.meta.name as "clients.create" | "clients.update" | undefined;
+            const requestedCapability = selectedWriteCapability;
             conversationTask = await this.taskOrchestrator.handleUserTurn({
                 principal: input.principal,
                 sessionId: session.id,
@@ -284,6 +309,7 @@ export class AgentRuntimeService {
                     displayedChoice: (currentMessage as unknown as { displayedChoice?: unknown }).displayedChoice as never,
                     summary,
                     summarizedMessageCount: summaryContext?.sourceMessageCount ?? 0,
+                    protectedValues,
                 },
             );
         }
@@ -351,7 +377,7 @@ export class AgentRuntimeService {
                             taskId: conversationTask?.task?.capabilityId === capabilityId ? conversationTask.task.taskId : undefined,
                             expectedRevision: conversationTask?.task?.capabilityId === capabilityId ? conversationTask.task.revision : undefined,
                             intakeEventId: conversationTask?.eventId ?? currentMessage.id,
-                            userCorrection: Boolean(conversationTask?.operations.length),
+                            userCorrection: Boolean(conversationTask?.operations?.length),
                         });
                         writeDataChunk({ type: "data-task-snapshot", data: taskSnapshotPart(result.task) });
                         return { kind: "task-update" as const, taskId: result.task.taskId, revision: result.task.revision, state: result.task.state };
@@ -553,7 +579,7 @@ export class AgentRuntimeService {
             })];
         }), ...taskToolEntries]);
 
-        const modelMessages = buildAuthoritativeModelMessages(session.messages ?? [], currentMessage, summaryContext?.sourceMessageCount ?? 0);
+        const modelMessages = buildAuthoritativeModelMessages(session.messages ?? [], currentMessage, summaryContext?.sourceMessageCount ?? 0, protectedValues);
         const taskContextText = conversationContext ? JSON.stringify(redactModelValue(conversationContext)) : "{}";
         const taskInstruction = conversationTask?.replayed
             ? "This is an exact conversation intake replay. Answer from the restored server snapshot and use read-only tools only; do not mutate the task, create a proposal, approve, execute, or claim a write."
@@ -583,9 +609,15 @@ export class AgentRuntimeService {
             const usage = await Promise.resolve(result.usage).catch(() => undefined);
             try {
                 const safeInput = lastInput
-                    ? sanitizeConversationMessage(lastInput as unknown as { id: string; role: "user"; parts: readonly unknown[] }) as BjjUIMessage
+                    ? sanitizeConversationMessage({
+                        ...(lastInput as unknown as { id: string; role: "user"; parts: readonly unknown[] }),
+                        protectedValues,
+                    }) as BjjUIMessage
                     : undefined;
-                const safeResponse = sanitizeConversationMessage(responseMessage as unknown as { id: string; role: "assistant"; parts: readonly unknown[] }) as BjjUIMessage;
+                const safeResponse = sanitizeConversationMessage({
+                    ...(responseMessage as unknown as { id: string; role: "assistant"; parts: readonly unknown[] }),
+                    protectedValues,
+                }) as BjjUIMessage;
                 // Intake retries already have a durable user-message event.
                 // Persist only the new assistant response so the stable caller
                 // message is never duplicated in the session transcript.

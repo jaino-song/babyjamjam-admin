@@ -31,6 +31,7 @@ export interface ConversationContextInput {
     displayedChoice?: AgentTaskDisplayedChoiceHint;
     actionOutcomes?: readonly ConversationContextActionOutcome[];
     summarizedMessageCount?: number;
+    protectedValues?: readonly unknown[];
 }
 
 export interface ConversationContext {
@@ -72,16 +73,14 @@ function safeSummary(summary: unknown): Record<string, unknown> {
     };
 }
 
-function safeHistory(messages: readonly AgentConversationMessage[], summarizedMessageCount = 0) {
+function safeHistory(messages: readonly AgentConversationMessage[], summarizedMessageCount = 0, protectedValues: readonly unknown[] = []) {
     return messages
         .slice(Math.max(0, Math.min(summarizedMessageCount, messages.length)))
         .filter((message): message is AgentConversationMessage & { role: "user" | "assistant" } => message.role === "user" || message.role === "assistant")
         .map((message) => {
-            const sanitized = sanitizeConversationMessage(message as unknown as {
-                id: string;
-                role: "user" | "assistant";
-                parts: readonly unknown[];
-                displayedChoice?: AgentTaskDisplayedChoiceHint;
+            const sanitized = sanitizeConversationMessage({
+                ...(message as unknown as { id: string; role: "user" | "assistant"; parts: readonly unknown[]; displayedChoice?: AgentTaskDisplayedChoiceHint }),
+                protectedValues,
             });
             return {
                 id: sanitized.id,
@@ -119,11 +118,9 @@ export function assembleConversationContext(input: ConversationContextInput): Co
     const latest = input.messages.at(-1);
     const latestText = latest ? conversationText(latest) : "";
     const latestSafe = latest
-        ? sanitizeConversationMessage(latest as unknown as {
-            id: string;
-            role: "user" | "assistant" | "system";
-            parts: readonly unknown[];
-            displayedChoice?: AgentTaskDisplayedChoiceHint;
+        ? sanitizeConversationMessage({
+            ...(latest as unknown as { id: string; role: "user" | "assistant" | "system"; parts: readonly unknown[]; displayedChoice?: AgentTaskDisplayedChoiceHint }),
+            protectedValues: input.protectedValues,
         })
         : undefined;
     const tasks = safeTasks(input.tasks ?? []);
@@ -140,7 +137,7 @@ export function assembleConversationContext(input: ConversationContextInput): Co
     // comes from the live inventory above. No protected task values enter this
     // context object.
     return {
-        history: safeHistory(input.messages, input.summarizedMessageCount),
+        history: safeHistory(input.messages, input.summarizedMessageCount, input.protectedValues),
         taskInventory: tasks,
         activeTask,
         ...(displayedChoice ? { displayedChoice } : {}),

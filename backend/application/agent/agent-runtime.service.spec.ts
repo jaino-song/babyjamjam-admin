@@ -50,6 +50,60 @@ describe("AgentRuntimeService", () => {
         expect(messages[0]?.parts).toEqual([{ type: "text", text: "[redacted] [redacted] 고객" }]);
     });
 
+    it("redacts server-known task values in authoritative model history", () => {
+        const messages = buildAuthoritativeModelMessages([], {
+            id: "known-value",
+            role: "user",
+            parts: [{ type: "text", text: "이전 고객 홍길동의 주소를 확인해줘" }],
+        }, 0, ["홍길동"]);
+
+        expect(messages[0]?.parts).toEqual([{ type: "text", text: "이전 고객 [protected]의 주소를 확인해줘" }]);
+    });
+
+    it("passes only protected current-intake and known-task values to the router boundary", async () => {
+        const capability = buildEntityCapability("clients.search", "clients", jest.fn().mockResolvedValue({ id: 1, name: "결과" }));
+        const route = jest.fn().mockResolvedValue({ domains: ["clients"], capabilities: [capability] });
+        const sessions = {
+            get: jest.fn().mockResolvedValue({ id: "session-known", selectedEntities: {}, messages: [], summary: null }),
+            appendMessages: jest.fn().mockResolvedValue(undefined),
+        };
+        const taskOrchestrator = {
+            protectedValuesForConversation: jest.fn().mockResolvedValue(["기존 홍길동"]),
+            handleUserTurn: jest.fn().mockResolvedValue({ task: null, operations: [], replayed: false }),
+            filterWriteCapabilities: jest.fn().mockResolvedValue({ capabilities: [capability], taskMode: false }),
+        };
+        const runtime = new AgentRuntimeService(
+            { list: () => [capability] } as never,
+            { isCapabilityEnabled: jest.fn().mockResolvedValue(true) } as never,
+            sessions as never,
+            { modelId: "deterministic-agent-v1", create: () => new DeterministicAgentLanguageModel([{ type: "text", text: "확인했습니다." }]) } as never,
+            { route } as never,
+            { start: jest.fn().mockResolvedValue({ id: "trace-known", startedAt: Date.now() }), finish: jest.fn().mockResolvedValue(undefined) } as never,
+            undefined,
+            undefined,
+            undefined,
+            taskOrchestrator as never,
+        );
+        const text = "이름: 홍길동, 기존 홍길동의 주소를 확인해줘";
+        const result = await runtime.stream({
+            principal: { userId: "user-a", branchId: "branch-a", globalRole: "admin", branchRole: "admin" },
+            sessionId: "session-known",
+            locale: "ko",
+            messages: [{ id: "message-known", role: "user", parts: [{ type: "text", text }] }] as never,
+        });
+        const reader = result.stream.getReader();
+        while (!(await reader.read()).done) {
+            // Drain completion so persistence stays on the same runtime path.
+        }
+
+        expect(route).toHaveBeenCalledWith(
+            text,
+            expect.objectContaining({ userId: "user-a", branchId: "branch-a" }),
+            12,
+            expect.arrayContaining(["홍길동", "기존 홍길동"]),
+        );
+    });
+
     it("redacts Korean landlines and hyphenated identifiers in persisted history and the current turn", () => {
         const messages = buildAuthoritativeModelMessages([
             { id: "history", role: "user", parts: [{ type: "text", text: "02-1234-5678 900101-1234567 070-1234-5678 +82-2-1234-5678" }] },

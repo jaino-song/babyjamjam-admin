@@ -125,6 +125,27 @@ describe("ConversationTaskOrchestratorService", () => {
         );
     });
 
+    it("does not create a task from labelled facts without a selected client write capability", async () => {
+        const createFromConversation = jest.fn();
+        const { orchestrator, policy } = build({ createFromConversation });
+
+        const result = await orchestrator.handleUserTurn({
+            principal,
+            sessionId,
+            message: {
+                id: randomUUID(),
+                role: "user",
+                parts: [{ type: "text", text: "이름: 홍길동, 주소: 서울시 강남구" }],
+            },
+        });
+
+        expect(result.refusal).toBe("unsupported-input");
+        expect(result.mutated).toBe(false);
+        expect(result.task).toBeNull();
+        expect(createFromConversation).not.toHaveBeenCalled();
+        expect(policy.assertCanCreate).not.toHaveBeenCalled();
+    });
+
     it("refuses a clear fact when task mode is disabled without recording intake", async () => {
         const current = task();
         const patchFromConversation = jest.fn();

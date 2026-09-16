@@ -399,6 +399,30 @@ export class AgentTaskService {
     }
 
     /**
+     * Values already accepted by this scoped conversation are server-known
+     * protection inputs for downstream model boundaries. Return only scalar
+     * strings; task identity, revisions, and other operational metadata never
+     * become classifier prompt text.
+     */
+    async protectedValuesForConversation(principal: VerifiedTenantPrincipal, sessionId: string): Promise<string[]> {
+        const result = await this.repository.listOwned({ ...taskOwner(principal), sessionId });
+        if (result.status === "not_found") throw new NotFoundException("Agent session not found");
+        if (result.status === "storage_failure") throw storageUnavailable();
+        if (result.status === "session_archived" || result.status === "session_expired") return [];
+        const now = Date.now();
+        const values: string[] = [];
+        for (const task of result.tasks) {
+            if (task.purgedAt !== null || task.expiresAt.getTime() <= now) continue;
+            for (const bucket of [task.draft.confirmed, task.draft.tentative]) {
+                for (const value of Object.values(bucket)) {
+                    if (typeof value === "string" && value.trim().length >= 2) values.push(value);
+                }
+            }
+        }
+        return [...new Set(values)];
+    }
+
+    /**
      * Persist a canonical conversation intake receipt without adding a draft
      * operation. This is used for question-only turns and for retries where
      * the parser has no new fact to apply.
