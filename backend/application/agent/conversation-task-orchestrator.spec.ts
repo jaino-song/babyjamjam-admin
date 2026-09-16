@@ -415,10 +415,11 @@ describe("ConversationTaskOrchestratorService", () => {
     it("includes resolved mutation origins in the model event hash", async () => {
         const intakeEventId = randomUUID();
         const current = task({
-            confirmed: { name: "홍길동" },
+            confirmed: { name: "홍길동", startDate: "2026-01-15" },
             provenance: {
                 confirmed: {
                     name: { source: "user", capturedAt: new Date().toISOString(), eventId: intakeEventId, valueRef: randomUUID() },
+                    startDate: { source: "user", capturedAt: new Date().toISOString(), eventId: intakeEventId, valueRef: randomUUID() },
                 },
                 tentative: {},
             },
@@ -431,7 +432,7 @@ describe("ConversationTaskOrchestratorService", () => {
             capabilityId: "clients.create",
             taskId: current.taskId,
             intakeEventId,
-            operations: [{ op: "set", field: "serviceStatus", value: "active" }],
+            operations: [{ op: "set", field: "startDate", value: "2026-01-15" }],
         });
         const modelLiteralHash = patchFromConversation.mock.calls[0]?.[4];
         await orchestrator.applyModelMutation({
@@ -440,11 +441,12 @@ describe("ConversationTaskOrchestratorService", () => {
             capabilityId: "clients.create",
             taskId: current.taskId,
             intakeEventId,
-            operations: [{ op: "set", field: "name", valueRef: current.provenance.confirmed["name"]!.valueRef! }],
+            operations: [{ op: "set", field: "startDate", valueRef: current.provenance.confirmed["startDate"]!.valueRef! }],
         });
         const userReferenceHash = patchFromConversation.mock.calls[1]?.[4];
         expect(modelLiteralHash).toEqual(expect.any(String));
         expect(userReferenceHash).toEqual(expect.any(String));
+        expect(patchFromConversation.mock.calls[0]?.[2].operations).toEqual(patchFromConversation.mock.calls[1]?.[2].operations);
         expect(userReferenceHash).not.toBe(modelLiteralHash);
     });
 

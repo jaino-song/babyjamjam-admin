@@ -243,9 +243,12 @@ export class AgentRuntimeService {
                 : await this.router.route(lastUserText, input.principal, 12);
         const currentMessage = input.messages[0];
         let offered = routed.capabilities;
-        const selectedWriteCapability = formSubmission?.formId === `${submittedCapability?.meta.name}-${session.id}`
-            ? submittedCapability?.meta.name as "clients.create" | "clients.update" | undefined
-            : selectedClientWriteCapability(lastUserText, routed.capabilities);
+        const submittedClientWriteCapability = formSubmission?.formId === `${submittedCapability?.meta.name}-${session.id}`
+            && (submittedCapability?.meta.name === "clients.create" || submittedCapability?.meta.name === "clients.update")
+            ? submittedCapability.meta.name
+            : undefined;
+        const selectedWriteCapability = submittedClientWriteCapability
+            ?? (formSubmission ? undefined : selectedClientWriteCapability(lastUserText, routed.capabilities));
         const routedTaskCapabilities = routed.capabilities
             .filter((capability): capability is typeof capability & { meta: { name: "clients.create" | "clients.update" } } => capability.meta.name === "clients.create" || capability.meta.name === "clients.update")
             .map((capability) => capability.meta.name)
@@ -289,8 +292,16 @@ export class AgentRuntimeService {
                 // An intake replay is answer/read-only only. Drop legacy write
                 // capabilities as well as conversational task tools, even if
                 // the rollout gate is currently disabled.
-                offered = offered.filter((capability) => capability.meta.name !== "clients.create" && capability.meta.name !== "clients.update");
+                offered = offered.filter((capability) => capability.meta.risk === "read" && capability.meta.sideEffect === false);
                 taskMode = false;
+            }
+            if (conversationTask?.isQuestion && conversationTask.operations.length === 0 && !conversationTask.replayed) {
+                // A question may use an owned task as context and execute read
+                // dependencies, but it must never expose a write or
+                // side-effect tool to the model. Keep task mode enabled for
+                // the protected context assembler while suppressing task
+                // mutation tools below.
+                offered = offered.filter((capability) => capability.meta.risk === "read" && capability.meta.sideEffect === false);
             }
             if (conversationTask?.task && !taskMode && !conversationTask.replayed) {
                 // Keep the feature-off runtime on its legacy path. The
@@ -350,6 +361,55 @@ export class AgentRuntimeService {
             else pendingDataChunks.push(chunk);
         };
 
+        const attachClientTargetChoices = async (
+            results: readonly { label: string; description?: string; clientId: number }[],
+            visibleChoices: readonly { id: string; label: string; description?: string }[],
+            prompt: string,
+        ): Promise<void> => {
+            const ownedTask = taskMode
+                && this.taskOrchestrator
+                && conversationTask?.task
+                && !conversationTask.replayed
+                && ["collecting", "confirming_target", "review_ready"].includes(conversationTask.task.state);
+            if (ownedTask && this.taskOrchestrator && conversationTask?.task) {
+                try {
+                    const attached = await this.taskOrchestrator.attachDerivedChoices(
+                        input.principal,
+                        conversationTask.task.taskId,
+                        "client-target",
+                        results,
+                    );
+                    conversationTask = { ...conversationTask, task: attached.snapshot };
+                    writeDataChunk({ type: "data-task-snapshot", data: taskSnapshotPart(attached.snapshot) });
+                    // A visible choice is emitted only after the server has
+                    // persisted its protected mapping.  A failed attachment
+                    // must never leave an unmapped customer label/ID in the
+                    // task UI.
+                    if (visibleChoices.length > 0) {
+                        writeDataChunk({
+                            type: "data-entity-choice",
+                            data: { entityType: "clients", prompt, choices: [...visibleChoices] },
+                        });
+                    }
+                } catch {
+                    // A stale or malformed lookup is represented by the
+                    // existing bounded task conflict; it must not become a
+                    // fabricated target selection or visible unmapped choice.
+                }
+                return;
+            }
+            // Legacy/feature-off rendering remains unchanged.  In task mode
+            // without an owned mutable task, multi-result search still uses
+            // the existing entity-choice presentation; a unique entity has no
+            // server mapping and therefore remains structural-only.
+            if (visibleChoices.length >= 2) {
+                writeDataChunk({
+                    type: "data-entity-choice",
+                    data: { entityType: "clients", prompt, choices: [...visibleChoices] },
+                });
+            }
+        };
+
         if (conversationTask?.task) {
             writeDataChunk({ type: "data-task-snapshot", data: taskSnapshotPart(conversationTask.task) });
         }
@@ -357,11 +417,14 @@ export class AgentRuntimeService {
         const writeToolNames = new Set(offered
             .filter((capability) => capability.meta.risk !== "read" || capability.meta.sideEffect)
             .map((capability) => capability.meta.name.replaceAll(".", "_")));
-        if (taskMode && this.taskOrchestrator) {
+        const taskToolsEnabled = taskMode
+            && this.taskOrchestrator
+            && !(conversationTask?.isQuestion && conversationTask.operations.length === 0);
+        if (taskToolsEnabled && this.taskOrchestrator) {
             writeToolNames.add("clients_create");
             writeToolNames.add("clients_update");
         }
-        const taskToolEntries = taskMode && this.taskOrchestrator
+        const taskToolEntries = taskToolsEnabled && this.taskOrchestrator
             ? taskCapabilityIds.map((capabilityId) => {
                 const toolName = capabilityId.replaceAll(".", "_");
                 return [toolName, tool({
@@ -475,13 +538,28 @@ export class AgentRuntimeService {
                     // stream or persistence can observe it.
                     const safeParsed = redactModelValue(parsed) as typeof parsed;
                     if (typeof safeParsed === "object" && safeParsed !== null && "kind" in safeParsed && safeParsed.kind === "entity" && "entity" in safeParsed) {
-                        const entity = safeParsed.entity as { id?: number | string; name?: string };
+                        const entity = safeParsed.entity as { id?: number | string; name?: string; serviceStatus?: string | null };
                         const entityId = entity.id;
                         // Client identities and names are task-owned in task
                         // mode. Legacy selected-entity memory remains intact
                         // while the feature is disabled.
                         if (entityId !== undefined && !(taskMode && capability.meta.domain === "clients")) {
                             await mergeSelectedEntity(capability.meta.domain, { id: entityId, ...(entity.name ? { name: entity.name } : {}) });
+                        }
+                        if (capability.meta.name === "clients.search" && taskMode && this.taskOrchestrator && conversationTask?.task && !conversationTask.replayed) {
+                            const numericClientId = typeof entityId === "number" && Number.isSafeInteger(entityId) && entityId > 0
+                                ? entityId
+                                : typeof entityId === "string" && /^\d+$/.test(entityId) && Number.isSafeInteger(Number(entityId)) && Number(entityId) > 0
+                                    ? Number(entityId)
+                                    : undefined;
+                            if (numericClientId !== undefined && typeof entity.name === "string" && entity.name.trim().length > 0) {
+                                const prompt = "어느 산모를 말씀하시는지 선택해 주세요.";
+                                await attachClientTargetChoices(
+                                    [{ label: entity.name, ...(entity.serviceStatus ? { description: entity.serviceStatus } : {}), clientId: numericClientId }],
+                                    [{ id: String(numericClientId), label: entity.name, ...(entity.serviceStatus ? { description: entity.serviceStatus } : {}) }],
+                                    prompt,
+                                );
+                            }
                         }
                     }
                     if (typeof safeParsed === "object" && safeParsed !== null && "kind" in safeParsed && safeParsed.kind === "choices" && "choices" in safeParsed) {
@@ -491,7 +569,34 @@ export class AgentRuntimeService {
                             label: choice.name,
                             ...(choice.serviceStatus ? { description: choice.serviceStatus } : {}),
                         }));
-                        if (choices.length >= 2) {
+                        if (choices.length >= 2 && capability.meta.name === "clients.search") {
+                            const results = choiceResult.choices.flatMap((choice) => {
+                                const numericClientId = typeof choice.id === "number" && Number.isSafeInteger(choice.id) && choice.id > 0
+                                    ? choice.id
+                                    : typeof choice.id === "string" && /^\d+$/.test(choice.id) && Number.isSafeInteger(Number(choice.id)) && Number(choice.id) > 0
+                                        ? Number(choice.id)
+                                        : undefined;
+                                return numericClientId === undefined
+                                    ? []
+                                    : [{ label: choice.name, ...(choice.serviceStatus ? { description: choice.serviceStatus } : {}), clientId: numericClientId }];
+                            });
+                            if (results.length === choiceResult.choices.length) {
+                                await attachClientTargetChoices(results, choices, choiceResult.prompt);
+                            } else if (!taskMode) {
+                                // Preserve the legacy provider projection when
+                                // task mode is disabled, including opaque
+                                // provider identifiers that are not eligible
+                                // for a protected client-target mapping.
+                                writeDataChunk({
+                                    type: "data-entity-choice",
+                                    data: {
+                                        entityType: capability.meta.domain,
+                                        prompt: choiceResult.prompt,
+                                        choices: [...choices],
+                                    },
+                                });
+                            }
+                        } else if (choices.length >= 2) {
                             writeDataChunk({
                                 type: "data-entity-choice",
                                 data: {
@@ -500,33 +605,6 @@ export class AgentRuntimeService {
                                     choices,
                                 },
                             });
-                        }
-                        if (
-                            taskMode
-                            && this.taskOrchestrator
-                            && conversationTask?.task
-                            && !conversationTask.replayed
-                            && capability.meta.name === "clients.search"
-                            && choices.length >= 2
-                        ) {
-                            try {
-                            const attached = await this.taskOrchestrator.attachDerivedChoices(
-                                    input.principal,
-                                    conversationTask.task.taskId,
-                                    "client-target",
-                                    choiceResult.choices.map((choice) => ({
-                                        label: choice.name,
-                                        ...(choice.serviceStatus ? { description: choice.serviceStatus } : {}),
-                                        clientId: Number(choice.id),
-                                    })),
-                                );
-                                conversationTask = { ...conversationTask, task: attached.snapshot };
-                                writeDataChunk({ type: "data-task-snapshot", data: taskSnapshotPart(attached.snapshot) });
-                            } catch {
-                                // A stale or malformed lookup is represented by
-                                // the existing bounded task conflict; it must not
-                                // become a fabricated target selection.
-                            }
                         }
                     }
                     if (capability.meta.renderer === "entity-choice" && typeof safeParsed === "object" && safeParsed !== null && "employees" in safeParsed) {

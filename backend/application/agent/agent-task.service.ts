@@ -1235,10 +1235,28 @@ export class AgentTaskService {
             expiresAt,
         });
         if (sourceUpdated.status !== "updated") {
-            if (sourceUpdated.status === "stale_revision") return sourceUpdated;
-            if (sourceUpdated.status === "task_expired" || sourceUpdated.status === "task_purged") return sourceUpdated;
+            // Retention is extended before the source update so the
+            // conversion can keep both tasks alive.  Once that write has
+            // happened, every source-update refusal must abort the enclosing
+            // unit of work; returning directly would commit the retention
+            // change without the conversion receipt.
+            if (sourceUpdated.status === "stale_revision") {
+                return transaction.abort<InternalMutation>({
+                    status: "stale_revision",
+                    currentTask: sourceUpdated.currentTask,
+                });
+            }
+            if (sourceUpdated.status === "task_expired") {
+                return transaction.abort<InternalMutation>({ status: "task_expired", task: sourceUpdated.task });
+            }
+            if (sourceUpdated.status === "task_purged") {
+                return transaction.abort<InternalMutation>({ status: "task_purged" });
+            }
             if (sourceUpdated.status === "active_task_conflict") {
-                return { status: "state_conflict", reason: "active_task", task: source };
+                return transaction.abort<InternalMutation>({ status: "state_conflict", reason: "active_task", task: source });
+            }
+            if (sourceUpdated.status === "not_found" || sourceUpdated.status === "session_archived" || sourceUpdated.status === "session_expired") {
+                return transaction.abort<InternalMutation>({ status: sourceUpdated.status });
             }
             return transaction.abort<InternalMutation>({ status: "storage_failure" });
         }

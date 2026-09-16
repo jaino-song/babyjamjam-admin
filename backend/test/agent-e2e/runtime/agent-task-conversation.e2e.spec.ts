@@ -13,7 +13,7 @@ import { AgentTaskController } from "interface/controllers/agent-task.controller
 import { AgentTaskService } from "application/agent/agent-task.service";
 import { ConversationTaskOrchestratorService } from "application/agent/conversation-task-orchestrator.service";
 import { clientAgentTargetVersion } from "application/usecases/client/client-agent-target";
-import { createEmptyAgentTaskDraft, type AgentTaskDraft } from "domain/entities/agent-task.entity";
+import { createEmptyAgentTaskDraft, type AgentTaskDraft, type AgentTaskEntity } from "domain/entities/agent-task.entity";
 import type { ClientEntity } from "domain/entities/client.entity";
 import { PrismaAgentTaskRepository } from "infrastructure/database/repositories/prisma-agent-task.repository";
 import { JwtGuard } from "infrastructure/auth/jwt.guard";
@@ -130,7 +130,10 @@ describeAgentE2E("conversation task runtime against the guarded local database",
      * failures so source, destination, receipt, and session retention all
      * roll back together.
      */
-    function serviceWithInjectedStartUpdateFailure(mode: "destination-conflict" | "event-write") {
+    function serviceWithInjectedStartUpdateFailure(
+        mode: "destination-conflict" | "event-write" | "source-update-conflict" | "postwrite-throw",
+        sourceTask?: AgentTaskEntity,
+    ) {
         const injected = Object.create(repository) as PrismaAgentTaskRepository;
         const withTransaction = repository.withTransaction.bind(repository);
         injected.withTransaction = ((scope, operation) => withTransaction(scope, async (transaction) => {
@@ -141,6 +144,14 @@ describeAgentE2E("conversation task runtime against the guarded local database",
                     }
                     if (property === "insertEvent" && mode === "event-write") {
                         return async () => ({ status: "storage_failure" as const });
+                    }
+                    if (property === "updateTask" && mode === "source-update-conflict") {
+                        return async () => ({ status: "stale_revision" as const, currentTask: sourceTask! });
+                    }
+                    if (property === "createTask" && mode === "postwrite-throw") {
+                        return async () => {
+                            throw new Error("injected postwrite failure");
+                        };
                     }
                     const value = Reflect.get(target, property, receiver);
                     return typeof value === "function" ? value.bind(target) : value;
@@ -510,6 +521,48 @@ describeAgentE2E("conversation task runtime against the guarded local database",
         expect(await prisma.agent_message.count({ where: { sessionId } })).toBe(0);
     });
 
+    it("rejects the same model event when only resolved authority origin changes", async () => {
+        const taskService = service();
+        const created = await taskService.create(principal, {
+            sessionId,
+            capabilityId: "clients.create",
+            clientEventId: randomUUID(),
+            operations: [{ op: "set", field: "name", value: "동일 해석" }],
+        });
+        const clientEventId = randomUUID();
+        const operations = [{ op: "set", field: "name", value: "동일 해석" }] as const;
+        const modelHash = conversationMessageHash({
+            userId: USER_ID,
+            branchId: BRANCH_ID,
+            sessionId,
+            messageId: clientEventId,
+            text: JSON.stringify({ operations, origins: ["model"] }),
+        });
+        const userHash = conversationMessageHash({
+            userId: USER_ID,
+            branchId: BRANCH_ID,
+            sessionId,
+            messageId: clientEventId,
+            text: JSON.stringify({ operations, origins: ["user"] }),
+        });
+        expect(userHash).not.toBe(modelHash);
+
+        await taskService.patch(principal, created.snapshot.taskId, {
+            clientEventId,
+            expectedRevision: created.snapshot.revision,
+            operations,
+        }, "model", modelHash, ["model"]);
+        await expect(taskService.patch(principal, created.snapshot.taskId, {
+            clientEventId,
+            expectedRevision: created.snapshot.revision,
+            operations,
+        }, "model", userHash, ["user"])).rejects.toMatchObject({
+            status: 409,
+            response: expect.objectContaining({ code: "AGENT_TASK_CONFLICT", reason: "event_payload" }),
+        });
+        expect(await prisma.agent_task_event.count({ where: { sessionId, clientEventId } })).toBe(1);
+    });
+
     it("replaces derived choices, replays them without a TTL extension, and keeps identity references protected", async () => {
         clientsById.set(401, makeClient(401, "선택 고객 하나"));
         clientsById.set(402, makeClient(402, "선택 고객 둘"));
@@ -750,6 +803,8 @@ describeAgentE2E("conversation task runtime against the guarded local database",
     it.each([
         ["a returned destination conflict", "destination-conflict" as const, 409],
         ["a returned event-write failure", "event-write" as const, 503],
+        ["a returned source-update conflict", "source-update-conflict" as const, 409],
+        ["a thrown postwrite failure", "postwrite-throw" as const, 503],
     ])("aborts start-update after %s through AgentTaskService.command", async (_description, mode, expectedStatus) => {
         const seeded = await seedResolvedCreate({ sessionId });
         const beforeTasks = await prisma.agent_task.findMany({ where: { sessionId }, orderBy: { id: "asc" } });
@@ -764,7 +819,7 @@ describeAgentE2E("conversation task runtime against the guarded local database",
             targetRef: seeded.targetRef,
             expectedTargetVersion: seeded.targetVersion,
         };
-        const taskService = serviceWithInjectedStartUpdateFailure(mode);
+        const taskService = serviceWithInjectedStartUpdateFailure(mode, seeded.task);
         await expect(taskService.command(principal, seeded.task.taskId, command))
             .rejects.toMatchObject({ status: expectedStatus });
 
