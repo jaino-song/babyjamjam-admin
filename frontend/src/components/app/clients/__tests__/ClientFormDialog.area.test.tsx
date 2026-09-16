@@ -72,7 +72,7 @@ const existingClient: Client = {
   id: 155,
   name: "자동발송 테스트",
   createdAt: "2026-08-24T00:00:00.000Z",
-  birthday: "900101",
+  birthday: "1990-01-01",
   dueDate: null,
   birthDate: null,
   address: "인천광역시 남동구",
@@ -123,7 +123,7 @@ describe("ClientFormDialog area persistence", () => {
     });
 
     fireEvent.change(screen.getByLabelText(/이름/), { target: { value: "신규 자동발송 고객" } });
-    fireEvent.change(screen.getByLabelText(/생년월일/), { target: { value: "900101" } });
+    fireEvent.change(screen.getByLabelText(/생년월일/), { target: { value: "1990-01-01" } });
     fireEvent.change(screen.getByLabelText("관할 지역"), { target: { value: "Namdonggu" } });
     fireEvent.change(screen.getByLabelText(/주소/), { target: { value: "인천광역시 남동구" } });
     fireEvent.change(screen.getByLabelText(/연락처/), { target: { value: "01012345678" } });

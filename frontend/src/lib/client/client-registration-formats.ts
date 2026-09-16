@@ -1,3 +1,4 @@
+import { isValidBirthdayIsoDate } from "@babyjamjam/shared/utils/birthday";
 import type { CreateClientDto } from "@/lib/client/types";
 
 const COMPACT_DATE_PATTERN = /^\d{6}$/;
@@ -6,7 +7,7 @@ const BIRTH_YEAR_PIVOT = 70;
 const MOBILE_PHONE_DIGITS = 11;
 
 export const CLIENT_REGISTRATION_ERROR_MESSAGES = {
-    birthday: "생년월일은 유효한 YYMMDD 6자리여야 합니다.",
+    birthday: "생년월일을 YYYY-MM-DD 형식의 유효한 날짜로 입력해 주세요.",
     dueDate: "출산 예정일은 유효한 날짜여야 합니다.",
     phone: "연락처는 11자리 휴대폰 번호여야 합니다.",
 } as const;
@@ -44,18 +45,7 @@ export function isStrictIsoDate(value: string): boolean {
 }
 
 export function isValidClientBirthdayInput(value: string): boolean {
-    if (!COMPACT_DATE_PATTERN.test(value)) return false;
-
-    const date = new Date(Date.UTC(
-        2000 + Number(value.slice(0, 2)),
-        Number(value.slice(2, 4)) - 1,
-        Number(value.slice(4, 6)),
-    ));
-    return (
-        date.getUTCFullYear() === 2000 + Number(value.slice(0, 2))
-        && date.getUTCMonth() + 1 === Number(value.slice(2, 4))
-        && date.getUTCDate() === Number(value.slice(4, 6))
-    );
+    return isValidBirthdayIsoDate(value);
 }
 
 export function formatKoreanPhoneNumber(value: string): string {
@@ -78,7 +68,7 @@ export function buildCanonicalClientRegistrationBasics(input: ClientRegistration
     CreateClientDto,
     "name" | "phone" | "birthday" | "address" | "dueDate"
 > {
-    const birthday = parseCompactDateInput(input.birthday);
+    const birthday = input.birthday;
     return {
         name: input.name.trim(),
         phone: formatKoreanPhoneNumber(input.phone),
@@ -93,7 +83,7 @@ export function getCanonicalClientRegistrationError(input: ClientRegistrationBas
     if (input.phone.replace(/\D/g, "").length !== MOBILE_PHONE_DIGITS) {
         return CLIENT_REGISTRATION_ERROR_MESSAGES.phone;
     }
-    if (!isValidClientBirthdayInput(parseCompactDateInput(input.birthday))) {
+    if (!isValidClientBirthdayInput(input.birthday)) {
         return CLIENT_REGISTRATION_ERROR_MESSAGES.birthday;
     }
     if (!input.address.trim()) return "주소를 입력해 주세요.";

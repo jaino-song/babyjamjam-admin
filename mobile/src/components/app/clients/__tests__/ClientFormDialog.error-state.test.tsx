@@ -48,7 +48,7 @@ const clearPrefillName = jest.fn();
 const validClient = {
     id: 1,
     name: "김고객",
-    birthday: "900101",
+    birthday: "1990-01-01",
     dueDate: "2026-10-10",
     address: "인천",
     phone: "010-1234-5678",
@@ -75,7 +75,7 @@ const renderDialog = (onClose = jest.fn(), onSuccess = jest.fn()) => {
 const fillRequiredFields = async () => {
     const user = userEvent.setup();
     await user.type(screen.getByLabelText(/이름/), "김고객");
-    await user.type(screen.getByLabelText(/생년월일/), "900101");
+    await user.type(screen.getByLabelText(/생년월일/), "1990-01-01");
     await user.type(screen.getByLabelText(/출산 예정일/), "2026-10-10");
     await user.type(screen.getByLabelText(/연락처/), "01012345678");
     await user.type(screen.getByLabelText(/주소/), "인천");

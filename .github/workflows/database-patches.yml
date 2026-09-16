@@ -160,6 +160,15 @@ jobs:
           DIRECT_URL: ${{ secrets.DEV_DIRECT_URL || secrets.DEVELOPMENT_DIRECT_URL || secrets.DEV_DATABASE_URL || secrets.DEVELOPMENT_DATABASE_URL }}
         run: pnpm exec prisma db execute --schema prisma/schema.prisma --file prisma/migrations/20260717000000_employee_client_hardening/migration.sql
 
+      - name: Expand and verify birthday ISO storage
+        working-directory: backend
+        env:
+          DATABASE_URL: ${{ secrets.DEV_DATABASE_URL || secrets.DEVELOPMENT_DATABASE_URL }}
+          DIRECT_URL: ${{ secrets.DEV_DIRECT_URL || secrets.DEVELOPMENT_DIRECT_URL || secrets.DEV_DATABASE_URL || secrets.DEVELOPMENT_DATABASE_URL }}
+        run: |
+          pnpm exec prisma db execute --schema prisma/schema.prisma --file prisma/migrations/20260916175632_expand_birthday_to_iso/migration.sql
+          pnpm exec prisma db execute --schema prisma/schema.prisma --file prisma/scripts/verify-birthday-iso-columns.sql
+
       - name: Apply client pre-booking status patch
         working-directory: backend
         env:
@@ -691,6 +700,15 @@ jobs:
           DATABASE_URL: ${{ secrets.PREVIEW_DATABASE_URL }}
           DIRECT_URL: ${{ secrets.PREVIEW_DIRECT_URL || secrets.PREVIEW_DATABASE_URL }}
         run: ./scripts/run-prisma-db-execute.sh --schema prisma/schema.prisma --file prisma/migrations/20260717000000_employee_client_hardening/migration.sql
+
+      - name: Expand and verify birthday ISO storage
+        working-directory: backend
+        env:
+          DATABASE_URL: ${{ secrets.PREVIEW_DATABASE_URL }}
+          DIRECT_URL: ${{ secrets.PREVIEW_DIRECT_URL || secrets.PREVIEW_DATABASE_URL }}
+        run: |
+          ./scripts/run-prisma-db-execute.sh --schema prisma/schema.prisma --file prisma/migrations/20260916175632_expand_birthday_to_iso/migration.sql
+          ./scripts/run-prisma-db-execute.sh --schema prisma/schema.prisma --file prisma/scripts/verify-birthday-iso-columns.sql
 
       - name: Apply client pre-booking status patch
         working-directory: backend
@@ -1273,6 +1291,15 @@ jobs:
           DATABASE_URL: ${{ secrets.PRODUCTION_DATABASE_URL || secrets.PROD_DATABASE_URL }}
           DIRECT_URL: ${{ secrets.PRODUCTION_DIRECT_URL || secrets.PROD_DIRECT_URL || secrets.PRODUCTION_DATABASE_URL || secrets.PROD_DATABASE_URL }}
         run: pnpm exec prisma db execute --schema prisma/schema.prisma --file prisma/migrations/20260717000000_employee_client_hardening/migration.sql
+
+      - name: Expand and verify birthday ISO storage
+        working-directory: backend
+        env:
+          DATABASE_URL: ${{ secrets.PRODUCTION_DATABASE_URL || secrets.PROD_DATABASE_URL }}
+          DIRECT_URL: ${{ secrets.PRODUCTION_DIRECT_URL || secrets.PROD_DIRECT_URL || secrets.PRODUCTION_DATABASE_URL || secrets.PROD_DATABASE_URL }}
+        run: |
+          pnpm exec prisma db execute --schema prisma/schema.prisma --file prisma/migrations/20260916175632_expand_birthday_to_iso/migration.sql
+          pnpm exec prisma db execute --schema prisma/schema.prisma --file prisma/scripts/verify-birthday-iso-columns.sql
 
       - name: Apply client pre-booking status patch
         working-directory: backend

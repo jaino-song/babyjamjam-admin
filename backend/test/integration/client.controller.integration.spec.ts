@@ -231,6 +231,17 @@ describe("ClientController (Integration)", () => {
     // POST /clients - Create
     // ============================================
     describe("POST /clients", () => {
+        it.each(["1958-03-03", "1905-01-01", "2005-01-01"])("preserves birthday %s through HTTP create and update", async (birthday) => {
+            const client = createMockClient({ birthday });
+            clientService.create.mockResolvedValue(client);
+            clientService.update.mockResolvedValue(client);
+            await request(app.getHttpServer()).post("/clients")
+                .send({ name: "Birthday client", voucherClient: false, breastPump: false, birthday }).expect(201);
+            expect(clientService.create).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({ birthday }));
+            await request(app.getHttpServer()).patch("/clients/1").send({ birthday }).expect(200);
+            expect(clientService.update).toHaveBeenCalledWith(expect.any(String), 1, expect.objectContaining({ birthday }));
+        });
+
         describe("given valid client data", () => {
             it("should create a new client and return 201", async () => {
                 // Arrange

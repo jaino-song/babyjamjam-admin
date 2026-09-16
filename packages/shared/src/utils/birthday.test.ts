@@ -1,14 +1,20 @@
 import { formatBirthdayYYMMDD } from "./birthday";
 
 describe("formatBirthdayYYMMDD", () => {
-    it("formats a 20xx birthday (two-digit year below the century pivot)", () => {
+    it("formats a recent legacy birthday", () => {
         expect(formatBirthdayYYMMDD("000229")).toBe("2000.02.29"); // leap day
         expect(formatBirthdayYYMMDD("050101")).toBe("2005.01.01");
     });
 
-    it("formats a 19xx birthday (two-digit year at/above the century pivot)", () => {
+    it("preserves full years and does not display a future legacy birth year", () => {
+        expect(formatBirthdayYYMMDD("580303")).toBe("1958.03.03");
+        expect(formatBirthdayYYMMDD("1958-03-03")).toBe("1958.03.03");
+        expect(formatBirthdayYYMMDD("1905-01-01")).toBe("1905.01.01");
+    });
+
+    it("formats a twentieth-century legacy birthday", () => {
         expect(formatBirthdayYYMMDD("960414")).toBe("1996.04.14");
-        expect(formatBirthdayYYMMDD("700101")).toBe("1970.01.01"); // pivot boundary itself
+        expect(formatBirthdayYYMMDD("700101")).toBe("1970.01.01");
     });
 
     it("returns the original string when it is not exactly 6 digits", () => {

@@ -17,7 +17,7 @@ describe("extractClientRegistrationDraft", () => {
         expect(draft).toEqual({
             name: "홍길동",
             phone: "01012345678",
-            birthday: "900101",
+            birthday: "1990-01-01",
             address: "인천 연수구",
             dueDate: "260201",
             missingFields: [],
@@ -63,7 +63,7 @@ describe("extractClientRegistrationDraft", () => {
         );
 
         expect(draft.dueDate).toBeUndefined();
-        expect(draft.birthday).toBe("900101");
+        expect(draft.birthday).toBe("1990-01-01");
         expect(draft.missingFields).toContain("dueDate");
     });
 
@@ -82,7 +82,7 @@ describe("extractClientRegistrationDraft", () => {
         );
 
         expect(draft.dueDate).toBeUndefined();
-        expect(draft.birthday).toBe("900101");
+        expect(draft.birthday).toBe("1990-01-01");
         expect(draft.missingFields).toContain("dueDate");
     });
 
@@ -91,12 +91,12 @@ describe("extractClientRegistrationDraft", () => {
             "산모 등록. 생년월일은 모르겠고 생일은 2000-01-01.",
         );
 
-        expect(draft.birthday).toBe("000101");
+        expect(draft.birthday).toBe("2000-01-01");
     });
 
     it.each([
-        ["생년월일 2000-02-31, 생일 2000-01-01", "000101"],
-        ["생년월일 2000-01-01, 생일 2000-02-31", "000101"],
+        ["생년월일 2000-02-31, 생일 2000-01-01", "2000-01-01"],
+        ["생년월일 2000-01-01, 생일 2000-02-31", "2000-01-01"],
     ])("chooses the first valid repeated birthday candidate: %s", (message, expectedBirthday) => {
         const draft = extractClientRegistrationDraft(`산모 등록. ${message}.`);
 
@@ -121,7 +121,7 @@ describe("extractClientRegistrationDraft", () => {
         ],
         [
             "출산 예정일은 2026-02-31, 생년월일은 2000-01-01",
-            "000101",
+            "2000-01-01",
             undefined,
         ],
     ])("does not cross a later labeled field while resolving repeated dates: %s", (message, expectedBirthday, expectedDueDate) => {
@@ -132,11 +132,11 @@ describe("extractClientRegistrationDraft", () => {
     });
 
     it.each([
-        ["생년월일 000101", "000101"],
-        ["생년월일 900101", "900101"],
-        ["생년월일 2000-01-01", "000101"],
-        ["생년월일 2000-1-1", "000101"],
-        ["생년월일 20000101", "000101"],
+        ["생년월일 000101", "2000-01-01"],
+        ["생년월일 900101", "1990-01-01"],
+        ["생년월일 2000-01-01", "2000-01-01"],
+        ["생년월일 2000-1-1", "2000-01-01"],
+        ["생년월일 20000101", "2000-01-01"],
     ])("normalizes a labeled birthday without reusing it as dueDate: %s", (message, expectedBirthday) => {
         const draft = extractClientRegistrationDraft(`산모 등록. ${message}.`);
 
@@ -151,7 +151,7 @@ describe("extractClientRegistrationDraft", () => {
         );
 
         expect(draft).toEqual(expect.objectContaining({
-            birthday: "000101",
+            birthday: "2000-01-01",
             dueDate: "260201",
         }));
     });
@@ -169,7 +169,7 @@ describe("extractClientRegistrationDraft", () => {
 
     it.each([
         ["출산 예정일은 2026년 2월 1일로 정했어", "dueDate", "260201"],
-        ["생년월일은 2000년 1월 1일으로 등록해줘", "birthday", "000101"],
+        ["생년월일은 2000년 1월 1일으로 등록해줘", "birthday", "2000-01-01"],
         ["출산 예정일은 2026년 2월 1일로, 주소는 서울이야", "dueDate", "260201"],
         ["출산 예정일은 2026년 2월 1일으로 생년월일은 2000-01-01", "dueDate", "260201"],
     ])("accepts labeled dates followed by Korean 로/으로 connective context: %s", (message, field, expectedValue) => {
@@ -192,12 +192,12 @@ describe("extractClientRegistrationDraft", () => {
     it.each([
         [
             "생년월일은 2000년 1월 1일이고 출산 예정일은 2026년 2월 1일이에요",
-            "000101",
+            "2000-01-01",
             "260201",
         ],
         [
             "생년월일은 2000년 1월 1일이며 출산 예정일은 2026년 2월 1일입니다",
-            "000101",
+            "2000-01-01",
             "260201",
         ],
     ])("accepts recognized Korean sentence endings after labeled dates: %s", (message, expectedBirthday, expectedDueDate) => {
@@ -220,15 +220,15 @@ describe("extractClientRegistrationDraft", () => {
     it("parses a complete birthday 일자 label without leaving its particle in the value", () => {
         const draft = extractClientRegistrationDraft("산모 등록. 생년월일자는 2000-01-01.");
 
-        expect(draft.birthday).toBe("000101");
+        expect(draft.birthday).toBe("2000-01-01");
         expect(draft.dueDate).toBeUndefined();
     });
 
     it.each([
-        ["생년월일은 양력 000101", "000101"],
-        ["생년월일: 양력 2000-01-01", "000101"],
-        ["생년월일은 양력으로 000101", "000101"],
-        ["생년월일은 양력, 2000-01-01", "000101"],
+        ["생년월일은 양력 000101", "2000-01-01"],
+        ["생년월일: 양력 2000-01-01", "2000-01-01"],
+        ["생년월일은 양력으로 000101", "2000-01-01"],
+        ["생년월일은 양력, 2000-01-01", "2000-01-01"],
     ])("accepts a recognized birthday calendar qualifier before the date: %s", (message, expectedBirthday) => {
         const draft = extractClientRegistrationDraft(`산모 등록. ${message}.`);
 
@@ -263,7 +263,7 @@ describe("extractClientRegistrationDraft", () => {
             "산모 등록. 생년월일은 양력 2000-01-01, 2026-02-01.",
         );
 
-        expect(draft.birthday).toBe("000101");
+        expect(draft.birthday).toBe("2000-01-01");
         expect(draft.dueDate).toBeUndefined();
         expect(draft.missingFields).toContain("dueDate");
     });

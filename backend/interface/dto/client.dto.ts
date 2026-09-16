@@ -4,6 +4,8 @@ import { SERVICE_STATUS_VALUES } from "domain/value-objects/service-status.vo";
 import { KOREAN_WON_INPUT_PATTERN } from "domain/value-objects/money.vo";
 import { IsCanonicalPhone, trimNullablePhone } from "./canonical-phone.validator";
 
+import { IsBirthdayDate } from "./birthday.validator";
+
 const KOREAN_WON_VALIDATION_MESSAGE = "금액은 정수 원 단위(예: 1,000원)만 입력할 수 있습니다.";
 
 function trimKoreanWonInput({ value }: { value: unknown }): unknown {
@@ -79,7 +81,7 @@ export class CreateClientDto {
 
     @IsOptional()
     @IsString()
-    @Matches(/^\d{2}(0[1-9]|1[0-2])(0[1-9]|[12]\d|3[01])$/, { message: "생년월일은 YYMMDD 6자리여야 합니다." })
+    @IsBirthdayDate()
     birthday?: string | null;
 
     @IsOptional()
@@ -201,7 +203,7 @@ export class UpdateClientDto {
 
     @IsOptional()
     @IsString()
-    @Matches(/^\d{2}(0[1-9]|1[0-2])(0[1-9]|[12]\d|3[01])$/, { message: "생년월일은 YYMMDD 6자리여야 합니다." })
+    @IsBirthdayDate()
     birthday?: string | null;
 
     @IsOptional()

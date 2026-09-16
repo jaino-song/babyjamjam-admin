@@ -8,7 +8,7 @@ import type { EformsignDocClientSummary } from "@babyjamjam/shared/types/eformsi
 import { isContractReceiptSendable } from "@babyjamjam/shared/constants/eformsign-doc-status";
 import dynamic from "next/dynamic";
 import { useRouter, useSearchParams } from "next/navigation";
-import { formatClientBirthdayAsYYMMDD } from "@/lib/date/format-client-birthday";
+import { normalizeBirthdayIsoDate } from "@babyjamjam/shared/utils/birthday";
 import { formatDateForDisplay } from "@/lib/date/format-date-for-display";
 import { formatKoreanPhoneNumber, normalizeKoreanPhoneDigits } from "@/lib/phone";
 import {
@@ -1206,7 +1206,7 @@ export function ContractDetail({
   const customerAddress = documentAddress ?? null;
   const isCustomerInfoLoading = isBaseDetailLoading
     || (isServiceRecordDocument && serviceRecordQuery.isLoading);
-  const customerBirthDate = formatClientBirthdayAsYYMMDD(
+  const customerBirthDate = normalizeBirthdayIsoDate(
     extractDocumentFieldValue(detailedDocument, [
       "이용자 생년월일",
       "이용자생년월일",

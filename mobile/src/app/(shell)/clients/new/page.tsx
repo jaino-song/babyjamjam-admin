@@ -1,4 +1,5 @@
 "use client";
+import { formatBirthdayInput, isValidBirthdayIsoDate, normalizeBirthdayIsoDate } from "@babyjamjam/shared/utils/birthday";
 import {
   getUserErrorMessage,
   normalizeApiError,
@@ -365,7 +366,7 @@ export default function NewClientPage() {
     reset();
 
     if (prefillClient.name !== undefined) setField("name", prefillClient.name);
-    if (prefillClient.birthday !== undefined) setField("birthday", prefillClient.birthday);
+    if (prefillClient.birthday !== undefined) setField("birthday", normalizeBirthdayIsoDate(prefillClient.birthday) ?? prefillClient.birthday);
     if (prefillClient.dueDate !== undefined) setField("dueDate", toIsoDate(prefillClient.dueDate));
     if (prefillClient.address !== undefined) setField("address", prefillClient.address);
     if (prefillClient.phone !== undefined) setField("phone", prefillClient.phone);
@@ -409,7 +410,7 @@ export default function NewClientPage() {
     previousServicePeriodRef.current = null;
 
     setField("name", editingClient.name);
-    setField("birthday", editingClient.birthday ?? "");
+    setField("birthday", normalizeBirthdayIsoDate(editingClient.birthday) ?? editingClient.birthday ?? "");
     setField("dueDate", normalizeIsoDate(editingClient.dueDate));
     setField("birthDate", normalizeIsoDate(editingClient.birthDate));
     setField("address", editingClient.address ?? "");
@@ -470,7 +471,7 @@ export default function NewClientPage() {
     );
     const hydratedStore = useClientWizardStore.getState();
 
-    if (!hydratedStore.birthday && prefill.birthday) setField("birthday", prefill.birthday);
+    if (!hydratedStore.birthday && prefill.birthday) setField("birthday", normalizeBirthdayIsoDate(prefill.birthday) ?? prefill.birthday);
     if (!hydratedStore.dueDate && prefill.dueDate) setField("dueDate", toIsoDate(prefill.dueDate));
     if (!hydratedStore.address && prefill.address) setField("address", prefill.address);
     if (!hydratedStore.phone && prefill.phone) setField("phone", prefill.phone);
@@ -780,7 +781,7 @@ export default function NewClientPage() {
     switch (step) {
       case 0:
         if (!store.name.trim()) return false;
-        if (store.birthday.replace(/\D/g, "").length !== 6) return false;
+        if (!isValidBirthdayIsoDate(store.birthday)) return false;
         if (phoneDigits.length !== 11) return false;
         if (isUsingOriginalPhone) return true;
 
@@ -816,7 +817,7 @@ export default function NewClientPage() {
     if (step === 0) {
       if (!store.name.trim()) {
         showErrorToast(t(locale, "clients.form.error-name-required"));
-      } else if (store.birthday.replace(/\D/g, "").length !== 6) {
+      } else if (!isValidBirthdayIsoDate(store.birthday)) {
         showErrorToast(t(locale, "clients.form.error-birthday-required"));
       } else if (phoneDigits.length !== 11) {
         showErrorToast(t(locale, "clients.form.error-phone-required"));
@@ -1181,10 +1182,10 @@ export default function NewClientPage() {
                         id="birthday"
                         data-component="mobile_clients-new_screen_root_page_wizard_form-scroll_basic-details-card_birthday-field_birthday-input"
                         value={store.birthday}
-                        onChange={(e) => setField("birthday", e.target.value)}
+                        onChange={(e) => setField("birthday", formatBirthdayInput(e.target.value))}
                         inputMode="numeric"
-                        maxLength={6}
-                        placeholder="YYMMDD"
+                        maxLength={10}
+                        placeholder="YYYY-MM-DD"
                         error={fieldErrorMessageIds.birthday.length > 0}
                         aria-invalid={fieldErrorMessageIds.birthday.length > 0}
                         aria-describedby={fieldErrorMessageIds.birthday.join(" ") || undefined}
