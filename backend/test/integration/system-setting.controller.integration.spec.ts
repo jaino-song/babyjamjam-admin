@@ -235,7 +235,7 @@ describe("SystemSettingController (Integration)", () => {
             expect(getRowValue(response, "trigger-dispatch", "dispatch-interval"))
                 .toBe(`${formatCronIntervalMinutes(TRIGGER_DISPATCH_CRON)}마다`);
             expect(getRowValue(response, "trigger-dispatch", "send-time"))
-                .toBe(`${formatKstHour(SEND_HOUR_KST)} KST`);
+                .toBe(`규칙별 설정 (기본 ${formatKstHour(SEND_HOUR_KST)} KST)`);
             expect(getRowValue(response, "trigger-job-retry", "retry-delay"))
                 .toBe(`${formatMinutes(TRIGGER_JOB_RETRY_DELAY_MS)} 후`);
             expect(getRowValue(response, "trigger-job-retry", "max-attempts"))

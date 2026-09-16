@@ -38,7 +38,6 @@ import { EMPLOYEE_ASSIGNMENT_AUTOMATION_CHANGED_CANCEL_REASON } from "domain/con
 import {
     MESSAGE_SENDER_APPROVAL_REQUIRED_CANCEL_REASON,
     PAST_OCCURRENCE_GRACE_MS,
-    SEND_HOUR_KST,
     TRIGGER_JOB_PROCESSING_RECLAIM_MS,
 } from "domain/constants/message-automation-policy";
 import { MessageTriggerRuleEntity } from "domain/entities/message-trigger-rule.entity";
@@ -88,6 +87,7 @@ interface UpsertRuleParams {
     eventType: MessageTriggerEventType;
     offsetType: MessageTriggerOffsetType;
     offsetDays?: number;
+    sendTime?: string;
     recipientType: MessageTriggerRecipientType;
     templateKey: MessageTriggerTemplateKey;
 }
@@ -99,7 +99,7 @@ export interface MessageTriggerIntentSyncOptions {
 
 type MessageTriggerRuleValidationParams = Pick<
     UpsertRuleParams,
-    "eventType" | "offsetType" | "offsetDays" | "recipientType" | "templateKey"
+    "eventType" | "offsetType" | "offsetDays" | "sendTime" | "recipientType" | "templateKey"
 >;
 
 const DEFAULT_SERVICE_INFO_TRIGGER: UpsertRuleParams = {
@@ -155,6 +155,9 @@ export function validateMessageTriggerRule(
     params: MessageTriggerRuleValidationParams,
     allowedExistingTemplateKey?: MessageTriggerTemplateKey,
 ): void {
+    if (params.sendTime !== undefined && (typeof params.sendTime !== "string" || !/^([01]\d|2[0-3]):[0-5]\d$/.test(params.sendTime))) {
+        throw new BadRequestException("발송 시각은 HH:mm 형식이어야 합니다 (한국 시간).");
+    }
     const template = MESSAGE_TRIGGER_TEMPLATE_CATALOG[params.templateKey];
     if (!template) {
         throw new BadRequestException("Unknown template key");
@@ -733,6 +736,7 @@ export class MessageTriggerService {
             eventType: params.eventType ?? rule.eventType,
             offsetType: params.offsetType ?? rule.offsetType,
             offsetDays: params.offsetDays ?? rule.offsetDays,
+            sendTime: params.sendTime === undefined ? rule.sendTime : params.sendTime,
             recipientType: params.recipientType ?? rule.recipientType,
             templateKey: params.templateKey ?? rule.templateKey,
         };
@@ -782,6 +786,7 @@ export class MessageTriggerService {
             eventType: params.eventType ?? expected.eventType,
             offsetType: params.offsetType ?? expected.offsetType,
             offsetDays: params.offsetDays ?? expected.offsetDays,
+            sendTime: params.sendTime === undefined ? expected.sendTime : params.sendTime,
             recipientType: params.recipientType ?? expected.recipientType,
             templateKey: params.templateKey ?? expected.templateKey,
         };
@@ -800,6 +805,7 @@ export class MessageTriggerService {
             expected.updatedAt,
             expected.isDefault,
             expected.jobsStale,
+            expected.sendTime,
         );
         next.update({
             ...nextState,
@@ -1778,8 +1784,7 @@ export class MessageTriggerService {
         }
 
         const targetDate = this.getKstCalendarDate(anchorDate, offsetDays);
-        const sendHour = String(SEND_HOUR_KST).padStart(2, "0");
-        return new Date(`${targetDate}T${sendHour}:00:00+09:00`);
+        return new Date(`${targetDate}T${rule.sendTime}:00+09:00`);
     }
 
     private getKstCalendarDate(referenceDate: Date, offsetDays: number): string {
@@ -1851,6 +1856,7 @@ export class MessageTriggerService {
             eventType: rule.eventType,
             offsetType: rule.offsetType,
             offsetDays: rule.offsetDays,
+            sendTime: rule.sendTime,
             recipientType: rule.recipientType,
             templateKey: rule.templateKey,
             isDefault: rule.isDefault,
@@ -1868,6 +1874,7 @@ export class MessageTriggerService {
         const eventType = snapshot["eventType"];
         const offsetType = snapshot["offsetType"];
         const offsetDays = snapshot["offsetDays"];
+        const sendTime = snapshot["sendTime"];
         const recipientType = snapshot["recipientType"];
         const templateKey = snapshot["templateKey"];
         const isDefault = snapshot["isDefault"];
@@ -1882,6 +1889,8 @@ export class MessageTriggerService {
             || typeof eventType !== "string"
             || typeof offsetType !== "string"
             || typeof offsetDays !== "number"
+            || typeof sendTime !== "string"
+            || !/^([01]\d|2[0-3]):[0-5]\d$/.test(sendTime)
             || typeof recipientType !== "string"
             || typeof templateKey !== "string"
             || typeof isDefault !== "boolean"
@@ -1908,6 +1917,7 @@ export class MessageTriggerService {
             updated,
             isDefault,
             jobsStale,
+            sendTime,
         );
     }
 
@@ -3072,6 +3082,7 @@ export class MessageTriggerService {
                     eventType: rule.eventType,
                     offsetType: rule.offsetType,
                     offsetDays: rule.offsetDays,
+                    sendTime: rule.sendTime,
                     recipientType: rule.recipientType,
                     templateKey: rule.templateKey,
                 };
@@ -3138,11 +3149,12 @@ export class MessageTriggerService {
     }
 
     private async hasTriggerSchema(): Promise<boolean> {
-        const [hasRuleTable, hasJobTable] = await Promise.all([
+        const [hasRuleTable, hasJobTable, hasSendTime] = await Promise.all([
             hasTable(this.prisma, "message_trigger_rule"),
             hasTable(this.prisma, "message_trigger_job"),
+            hasColumn(this.prisma, "message_trigger_rule", "send_time"),
         ]);
-        return hasRuleTable && hasJobTable;
+        return hasRuleTable && hasJobTable && hasSendTime;
     }
 
     private async ensureTriggerSchemaReady(): Promise<void> {

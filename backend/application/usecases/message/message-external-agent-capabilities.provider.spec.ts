@@ -629,6 +629,18 @@ describe("MessageExternalAgentCapabilitiesProvider", () => {
         expect(repository.upsertPending).not.toHaveBeenCalled();
     });
 
+    it("binds automation approval to the persisted send time", async () => {
+        const { delivery, capabilities } = setup();
+        const update = capabilities.find((entry) => entry.meta.name === "automation.update")!;
+        const rule = await delivery.getRule(principal.branchId, "rule-a");
+        rule.sendTime = "14:37";
+        const inspection = await update.inspect!(context, { id: "rule-a", sendTime: "15:42" });
+        expect(inspection.targetSnapshot).toEqual(expect.objectContaining({ sendTime: "14:37" }));
+        rule.sendTime = "16:00";
+        await expect(update.revalidate!(context, { id: "rule-a", sendTime: "15:42" }, inspection.targetVersion!))
+            .resolves.toEqual(expect.objectContaining({ valid: false }));
+    });
+
     it("uses the canonical automation service for branch-scoped lifecycle operations", async () => {
         const { delivery, capabilities } = setup();
         const list = capabilities.find((entry) => entry.meta.name === "automation.list");
@@ -771,7 +783,7 @@ describe("MessageExternalAgentCapabilitiesProvider", () => {
             result: { status: "created", id: "rule-a", isActive: true },
         });
 
-        expect(delivery.createRule).toHaveBeenCalledWith(principal.branchId, input, expect.objectContaining({ agent_action: expect.any(Object) }));
+        expect(delivery.createRule).toHaveBeenCalledWith(principal.branchId, { ...input, sendTime: "09:00" }, expect.objectContaining({ agent_action: expect.any(Object) }));
         expect(prisma.agent_action.updateMany).toHaveBeenCalledWith(expect.objectContaining({
             where: expect.objectContaining({ id: context.actionId, capability: "automation.create" }),
         }));
@@ -793,7 +805,7 @@ describe("MessageExternalAgentCapabilitiesProvider", () => {
         };
 
         await expect(create.execute(context, input)).rejects.toThrow("receipt could not be persisted");
-        expect(delivery.createRule).toHaveBeenCalledWith(principal.branchId, input, expect.objectContaining({ agent_action: expect.any(Object) }));
+        expect(delivery.createRule).toHaveBeenCalledWith(principal.branchId, { ...input, sendTime: "09:00" }, expect.objectContaining({ agent_action: expect.any(Object) }));
     });
 
     it("rejects id-only automation updates before the canonical service is called", async () => {

@@ -88,6 +88,8 @@ export interface MessageTriggerRule {
     eventType: MessageTriggerEventType;
     offsetType: MessageTriggerOffsetType;
     offsetDays: number;
+    /** HH:mm in Asia/Seoul; absent on older servers means 09:00. */
+    sendTime?: string;
     recipientType: MessageTriggerRecipientType;
     templateKey: MessageTriggerTemplateKey;
     createdAt: string;
@@ -116,6 +118,7 @@ export declare const createMessageTriggerRuleSchema: z.ZodObject<{
         AFTER_DAYS: "AFTER_DAYS";
     }>;
     offsetDays: z.ZodOptional<z.ZodNumber>;
+    sendTime: z.ZodOptional<z.ZodString>;
     recipientType: z.ZodEnum<{
         CLIENT: "CLIENT";
         PRIMARY_EMPLOYEE: "PRIMARY_EMPLOYEE";
@@ -154,6 +157,7 @@ export declare const updateMessageTriggerRuleSchema: z.ZodObject<{
         AFTER_DAYS: "AFTER_DAYS";
     }>>;
     offsetDays: z.ZodOptional<z.ZodOptional<z.ZodNumber>>;
+    sendTime: z.ZodOptional<z.ZodOptional<z.ZodString>>;
     recipientType: z.ZodOptional<z.ZodEnum<{
         CLIENT: "CLIENT";
         PRIMARY_EMPLOYEE: "PRIMARY_EMPLOYEE";
@@ -191,6 +195,7 @@ export declare const CreateMessageTriggerRuleSchema: z.ZodObject<{
         AFTER_DAYS: "AFTER_DAYS";
     }>;
     offsetDays: z.ZodOptional<z.ZodNumber>;
+    sendTime: z.ZodOptional<z.ZodString>;
     recipientType: z.ZodEnum<{
         CLIENT: "CLIENT";
         PRIMARY_EMPLOYEE: "PRIMARY_EMPLOYEE";
@@ -228,6 +233,7 @@ export declare const UpdateMessageTriggerRuleSchema: z.ZodObject<{
         AFTER_DAYS: "AFTER_DAYS";
     }>>;
     offsetDays: z.ZodOptional<z.ZodOptional<z.ZodNumber>>;
+    sendTime: z.ZodOptional<z.ZodOptional<z.ZodString>>;
     recipientType: z.ZodOptional<z.ZodEnum<{
         CLIENT: "CLIENT";
         PRIMARY_EMPLOYEE: "PRIMARY_EMPLOYEE";
@@ -265,6 +271,7 @@ export declare const createMessageTriggerRuleDtoSchema: z.ZodObject<{
         AFTER_DAYS: "AFTER_DAYS";
     }>;
     offsetDays: z.ZodOptional<z.ZodNumber>;
+    sendTime: z.ZodOptional<z.ZodString>;
     recipientType: z.ZodEnum<{
         CLIENT: "CLIENT";
         PRIMARY_EMPLOYEE: "PRIMARY_EMPLOYEE";
@@ -302,6 +309,7 @@ export declare const updateMessageTriggerRuleDtoSchema: z.ZodObject<{
         AFTER_DAYS: "AFTER_DAYS";
     }>>;
     offsetDays: z.ZodOptional<z.ZodOptional<z.ZodNumber>>;
+    sendTime: z.ZodOptional<z.ZodOptional<z.ZodString>>;
     recipientType: z.ZodOptional<z.ZodEnum<{
         CLIENT: "CLIENT";
         PRIMARY_EMPLOYEE: "PRIMARY_EMPLOYEE";

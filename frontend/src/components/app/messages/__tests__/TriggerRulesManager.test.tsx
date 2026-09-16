@@ -158,6 +158,7 @@ beforeEach(() => {
         eventType: "SERVICE_START",
         offsetType: "BEFORE_DAYS",
         offsetDays: 3,
+        sendTime: "09:00",
         recipientType: "CLIENT",
         templateKey: "SERVICE_INFO",
         createdAt: "2026-03-01T00:00:00.000Z",
@@ -410,6 +411,7 @@ describe("TriggerRulesManager", () => {
         eventType: "SERVICE_START",
         offsetType: "SAME_DAY",
         offsetDays: 0,
+        sendTime: "09:00",
         recipientType: "PRIMARY_EMPLOYEE",
         templateKey: "SERVICE_RECORD_LINK",
       },
@@ -450,7 +452,7 @@ describe("TriggerRulesManager", () => {
     render(<TriggerRulesManager dataComponent="desktop_messages_sections_section-content_triggers-section_trigger-rules" />);
 
     expect(screen.getByText("제공기록지 작성 링크")).toBeInTheDocument();
-    expect(screen.getByText("시스템 자동화 · 서비스 시작 · 시작 당일 · 주 담당 직원")).toBeInTheDocument();
+    expect(screen.getByText("시스템 자동화 · 서비스 시작 · 시작 당일 09:00 (한국 시간) · 주 담당 직원")).toBeInTheDocument();
     expect(screen.getByRole("switch", { name: "제공기록지 작성 링크 활성화" })).toBeEnabled();
     fireEvent.click(screen.getByRole("switch", { name: "제공기록지 작성 링크 활성화" }));
     expect(branchActivationMutation).toHaveBeenCalledWith({
@@ -476,6 +478,7 @@ describe("TriggerRulesManager", () => {
         eventType: "SERVICE_START",
         offsetType: "SAME_DAY",
         offsetDays: 0,
+        sendTime: "09:00",
         recipientType: "PRIMARY_EMPLOYEE",
         templateKey: "SERVICE_RECORD_LINK",
         createdAt: "2026-09-01T00:00:00.000Z",
@@ -506,6 +509,7 @@ describe("TriggerRulesManager", () => {
         eventType: "SERVICE_START",
         offsetType: "BEFORE_DAYS",
         offsetDays: 3,
+        sendTime: "09:00",
         recipientType: "CLIENT",
         templateKey: "SERVICE_INFO",
       },
@@ -572,6 +576,8 @@ describe("TriggerRulesManager", () => {
     fireEvent.change(screen.getByLabelText("규칙 이름"), {
       target: { value: "서비스 시작 7일 전 안내" },
     });
+    expect(screen.getByLabelText("발송 시각 (한국 시간)")).toHaveValue("09:00");
+    fireEvent.change(screen.getByLabelText("발송 시각 (한국 시간)"), { target: { value: "14:37" } });
     fireEvent.click(screen.getByRole("button", { name: "저장" }));
 
     expect(mutateAsync).toHaveBeenCalledWith({
@@ -580,6 +586,7 @@ describe("TriggerRulesManager", () => {
       eventType: "SERVICE_START",
       offsetType: "BEFORE_DAYS",
       offsetDays: 7,
+      sendTime: "14:37",
       recipientType: "CLIENT",
       templateKey: "SERVICE_INFO",
     });

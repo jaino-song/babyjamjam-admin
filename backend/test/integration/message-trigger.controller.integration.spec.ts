@@ -217,6 +217,23 @@ describe("MessageTriggerController (Integration)", () => {
         await app.close();
     });
 
+    describe("rule sendTime validation", () => {
+        it.each(["24:00", "09:60", "9:00", "09:00:00", "", null])("rejects invalid update %s before persistence", async (sendTime) => {
+            const response = await request(app.getHttpServer())
+                .patch("/message-trigger-rules/rule-1").send({ sendTime });
+            expect(response.status).toBe(400);
+            expect(triggerService.updateRule).not.toHaveBeenCalled();
+        });
+        it("passes minute-precision KST time to the owning tenant service", async () => {
+            triggerService.updateRule.mockResolvedValue({ ...createMockRule(), sendTime: "23:59" });
+            const response = await request(app.getHttpServer())
+                .patch("/message-trigger-rules/rule-1").send({ sendTime: "23:59" });
+            expect(response.status).toBe(200);
+            expect(response.body.sendTime).toBe("23:59");
+            expect(triggerService.updateRule).toHaveBeenCalledWith(branchId, "rule-1", expect.objectContaining({ sendTime: "23:59" }));
+        });
+    });
+
     describe("GET /message-trigger-rules", () => {
         it("returns rules for the authenticated tenant", async () => {
             triggerService.listRules.mockResolvedValue([createMockRule()]);

@@ -99,7 +99,7 @@ describe("MessageTriggerList", () => {
 
   it("renders only actual trigger rules instead of fallback rows", async () => {
     mockUseMessageTriggerRules.mockReturnValue({
-      data: [createRule()],
+      data: [createRule({ sendTime: "14:37" })],
       isError: false,
       isLoading: false,
     });
@@ -155,7 +155,7 @@ describe("MessageTriggerList", () => {
       document.querySelector(
         '[data-component="mobile_messages_triggers_test_list_item-rule-start_copy_subtitle"]',
       ),
-    ).toHaveTextContent(`${monthLabel()} 2건 · 서비스 시작 1일 전 · 고객 · SMS`);
+    ).toHaveTextContent(`${monthLabel()} 2건 · 서비스 시작 1일 전 14:37 (한국 시간) · 고객 · SMS`);
   });
 
   it("updates the selected real rule when the toggle row is pressed", async () => {
@@ -237,7 +237,7 @@ describe("MessageTriggerList", () => {
     renderPage();
 
     expect(screen.getByText("서비스 시작 7일 전 서비스 안내")).toBeInTheDocument();
-    expect(screen.getByText(/서비스 시작 7일 전 · 고객 · SMS/)).toBeInTheDocument();
+    expect(screen.getByText(/서비스 시작 7일 전 09:00 \(한국 시간\) · 고객 · SMS/)).toBeInTheDocument();
     const serviceInfoRow = screen.getByRole("button", { name: /서비스 시작 7일 전 서비스 안내/ });
     const serviceInfoItem = serviceInfoRow.closest('[data-trigger-channel="SMS"]');
     expect(serviceInfoItem).toHaveAttribute("data-trigger-channel", "SMS");
