@@ -93,6 +93,47 @@ export declare const AutomationConsentChoiceSchema: z.ZodEnum<{
 export type AutomationConsentChoice = z.infer<typeof AutomationConsentChoiceSchema>;
 export declare const AUTOMATION_INPUT_FIELD_NAMES: readonly ["automationChoice", "noSend"];
 export type AutomationInputField = (typeof AUTOMATION_INPUT_FIELD_NAMES)[number];
+/**
+ * Provider-nullable business fields that may be explicitly deleted. Required
+ * identity fields and non-nullable booleans use set:false or set values and
+ * never enter this marker set.
+ */
+export declare const CLIENT_CLEARABLE_FIELD_NAMES: readonly ["address", "type", "duration", "fullPrice", "grant", "actualPrice", "startDate", "endDate", "careCenter", "birthday", "dueDate", "birthDate", "serviceStatus", "areaId"];
+export type ClientClearableField = (typeof CLIENT_CLEARABLE_FIELD_NAMES)[number];
+export declare const ClientClearableFieldSchema: z.ZodEnum<{
+    type: "type";
+    address: "address";
+    duration: "duration";
+    fullPrice: "fullPrice";
+    grant: "grant";
+    actualPrice: "actualPrice";
+    startDate: "startDate";
+    endDate: "endDate";
+    careCenter: "careCenter";
+    birthday: "birthday";
+    dueDate: "dueDate";
+    birthDate: "birthDate";
+    serviceStatus: "serviceStatus";
+    areaId: "areaId";
+}>;
+/** Canonical marker representation used in state and persisted task drafts. */
+export declare const ClientClearedFieldsSchema: z.ZodPipe<z.ZodArray<z.ZodEnum<{
+    type: "type";
+    address: "address";
+    duration: "duration";
+    fullPrice: "fullPrice";
+    grant: "grant";
+    actualPrice: "actualPrice";
+    startDate: "startDate";
+    endDate: "endDate";
+    careCenter: "careCenter";
+    birthday: "birthday";
+    dueDate: "dueDate";
+    birthDate: "birthDate";
+    serviceStatus: "serviceStatus";
+    areaId: "areaId";
+}>>, z.ZodTransform<("type" | "address" | "duration" | "fullPrice" | "grant" | "actualPrice" | "startDate" | "endDate" | "careCenter" | "birthday" | "dueDate" | "birthDate" | "serviceStatus" | "areaId")[], ("type" | "address" | "duration" | "fullPrice" | "grant" | "actualPrice" | "startDate" | "endDate" | "careCenter" | "birthday" | "dueDate" | "birthDate" | "serviceStatus" | "areaId")[]>>;
+export type ClientClearedFields = z.infer<typeof ClientClearedFieldsSchema>;
 type SetOperation = {
     op: "set";
     field: ClientWriteField | AutomationInputField;
@@ -105,14 +146,19 @@ type MarkTentativeOperation = {
 };
 type ClearOperation = {
     op: "clear";
-    field: Exclude<ClientWriteField, "name" | "phone"> | AutomationInputField;
+    field: ClientClearableField | AutomationInputField;
+};
+type DiscardChangeOperation = {
+    op: "discard-change";
+    field: ClientWriteField;
 };
 /** A bounded, field-level conversational edit. */
-export type ClientInputOperation = SetOperation | MarkTentativeOperation | ClearOperation;
+export type ClientInputOperation = SetOperation | MarkTentativeOperation | ClearOperation | DiscardChangeOperation;
 export declare const ClientInputOperationSchema: z.ZodType<ClientInputOperation>;
 export type ClientSetOperation = SetOperation;
 export type ClientMarkTentativeOperation = MarkTentativeOperation;
 export type ClientClearOperation = ClearOperation;
+export type ClientDiscardChangeOperation = DiscardChangeOperation;
 export declare const ClientInputOperationsSchema: z.ZodArray<z.ZodType<ClientInputOperation, unknown, z.core.$ZodTypeInternals<ClientInputOperation, unknown>>>;
 export declare const ClientDuplicateCheckStatusSchema: z.ZodEnum<{
     failed: "failed";
@@ -157,6 +203,7 @@ export type ClientReadinessResult = z.infer<typeof ClientReadinessResultSchema>;
 export interface ClientInputState {
     confirmed: ClientWriteFields;
     tentative: ClientTentativeValues;
+    clearedFields: ClientClearedFields;
     automationChoice: AutomationConsentChoice;
     noSend: boolean;
 }
@@ -178,24 +225,6 @@ export declare const ClientWriteFieldSchema: z.ZodEnum<{
     name: "name";
     address: "address";
     phone: "phone";
-    duration: "duration";
-    fullPrice: "fullPrice";
-    grant: "grant";
-    actualPrice: "actualPrice";
-    startDate: "startDate";
-    endDate: "endDate";
-    careCenter: "careCenter";
-    voucherClient: "voucherClient";
-    birthday: "birthday";
-    dueDate: "dueDate";
-    birthDate: "birthDate";
-    serviceStatus: "serviceStatus";
-    breastPump: "breastPump";
-    areaId: "areaId";
-}>;
-export declare const ClientClearableFieldSchema: z.ZodEnum<{
-    type: "type";
-    address: "address";
     duration: "duration";
     fullPrice: "fullPrice";
     grant: "grant";

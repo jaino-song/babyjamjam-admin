@@ -3,6 +3,7 @@ import { Prisma } from "@prisma/client";
 import {
     AgentAutomationConsentSchema,
     AgentTaskCapabilityIdSchema,
+    ClientClearedFieldsSchema,
     AgentTaskConstraintsSchema,
     AgentTaskIssueSchema,
     AgentTaskProvenanceSchema,
@@ -228,6 +229,9 @@ function parseDraft(value: unknown): AgentTaskDraft {
     if (!isRecord(value)) throw new InvalidAgentTaskStorageError();
     const confirmed = ClientWriteFieldsSchema.safeParse(value["confirmed"]);
     const tentative = ClientTentativeValuesSchema.safeParse(value["tentative"]);
+    const clearedFields = ClientClearedFieldsSchema.safeParse(
+        value["clearedFields"] === undefined ? [] : value["clearedFields"],
+    );
     const provenance = AgentTaskProvenanceSchema.safeParse(value["provenance"]);
     const issues = Array.isArray(value["issues"])
         ? value["issues"].map((issue) => AgentTaskIssueSchema.safeParse(issue))
@@ -239,6 +243,7 @@ function parseDraft(value: unknown): AgentTaskDraft {
     if (
         !confirmed.success
         || !tentative.success
+        || !clearedFields.success
         || !provenance.success
         || !constraints.success
         || !consent.success
@@ -246,6 +251,7 @@ function parseDraft(value: unknown): AgentTaskDraft {
         || !value["currentSnapshotRef"]
         || !choiceSets
         || issues.some((issue) => !issue.success)
+        || clearedFields.data.some((field) => Object.prototype.hasOwnProperty.call(confirmed.data, field))
     ) {
         throw new InvalidAgentTaskStorageError();
     }
@@ -271,6 +277,7 @@ function parseDraft(value: unknown): AgentTaskDraft {
     return {
         confirmed: confirmed.data,
         tentative: tentative.data,
+        clearedFields: clearedFields.data,
         provenance: provenance.data,
         issues: issues.map((issue) => {
             if (!issue.success) throw new InvalidAgentTaskStorageError();

@@ -11,7 +11,7 @@ import {
     type AgentTask,
     type AgentTaskRevision,
 } from "./task-types";
-import { CLIENT_WRITE_FIELD_NAMES, type ClientWriteField } from "./client-input-policy";
+import { ClientClearedFieldsSchema, CLIENT_WRITE_FIELD_NAMES, type ClientWriteField } from "./client-input-policy";
 
 const SafeFieldStatusSchema = z.enum(["missing", "confirmed", "tentative", "confirmed-and-tentative"]);
 
@@ -37,6 +37,7 @@ export const AgentTaskSafeSnapshotSchema = z.object({
     revision: AgentTaskRevisionSchema,
     state: AgentTaskStateSchema,
     fieldStatus: z.array(AgentTaskSafeFieldStatusSchema),
+    clearedFields: ClientClearedFieldsSchema,
     constraints: z.object({ noSend: z.boolean() }).strict(),
     target: z.object({ targetRef: AgentTaskReferenceSchema }).strict().nullable(),
     choiceSets: z.array(AgentTaskSafeChoiceSetSchema),
@@ -304,7 +305,9 @@ function fieldStatus(field: ClientWriteField, task: AgentTask): AgentTaskSafeFie
             : hasTentative
                 ? "tentative"
                 : "missing";
-    const valueRef = task.provenance.tentative[field]?.valueRef ?? task.provenance.confirmed[field]?.valueRef;
+    const valueRef = task.clearedFields.some((clearedField) => clearedField === field)
+        ? task.provenance.tentative[field]?.valueRef
+        : task.provenance.tentative[field]?.valueRef ?? task.provenance.confirmed[field]?.valueRef;
     return { field, status, ...(valueRef ? { valueRef } : {}) };
 }
 
@@ -320,6 +323,7 @@ export function projectTaskForSafeChat(task: AgentTask): AgentTaskSafeSnapshot {
         revision: parsedTask.revision,
         state: parsedTask.state,
         fieldStatus: CLIENT_WRITE_FIELD_NAMES.map((field) => fieldStatus(field, parsedTask)),
+        clearedFields: parsedTask.clearedFields,
         constraints: parsedTask.constraints,
         target: parsedTask.target ? { targetRef: parsedTask.target.targetRef } : null,
         choiceSets: parsedTask.choiceSets.map((choiceSet) => ({

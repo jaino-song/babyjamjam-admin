@@ -167,13 +167,40 @@ export type AutomationConsentChoice = z.infer<typeof AutomationConsentChoiceSche
 export const AUTOMATION_INPUT_FIELD_NAMES = ["automationChoice", "noSend"] as const;
 export type AutomationInputField = (typeof AUTOMATION_INPUT_FIELD_NAMES)[number];
 
-const CLIENT_CLEARABLE_FIELD_NAMES = CLIENT_WRITE_FIELD_NAMES.filter(
-    (field): field is Exclude<ClientWriteField, "name" | "phone"> => field !== "name" && field !== "phone",
-);
+/**
+ * Provider-nullable business fields that may be explicitly deleted. Required
+ * identity fields and non-nullable booleans use set:false or set values and
+ * never enter this marker set.
+ */
+export const CLIENT_CLEARABLE_FIELD_NAMES = [
+    "address",
+    "type",
+    "duration",
+    "fullPrice",
+    "grant",
+    "actualPrice",
+    "startDate",
+    "endDate",
+    "careCenter",
+    "birthday",
+    "dueDate",
+    "birthDate",
+    "serviceStatus",
+    "areaId",
+] as const;
+export type ClientClearableField = (typeof CLIENT_CLEARABLE_FIELD_NAMES)[number];
+export const ClientClearableFieldSchema = z.enum(CLIENT_CLEARABLE_FIELD_NAMES);
+
+/** Canonical marker representation used in state and persisted task drafts. */
+export const ClientClearedFieldsSchema = z.array(ClientClearableFieldSchema).transform((fields) => [
+    ...new Set(fields),
+].sort() as ClientClearableField[]);
+export type ClientClearedFields = z.infer<typeof ClientClearedFieldsSchema>;
 
 type SetOperation = { op: "set"; field: ClientWriteField | AutomationInputField; value: unknown };
 type MarkTentativeOperation = { op: "mark-tentative"; field: ClientWriteField; value: unknown };
-type ClearOperation = { op: "clear"; field: Exclude<ClientWriteField, "name" | "phone"> | AutomationInputField };
+type ClearOperation = { op: "clear"; field: ClientClearableField | AutomationInputField };
+type DiscardChangeOperation = { op: "discard-change"; field: ClientWriteField };
 
 function strictSetVariants() {
     const clientVariants = CLIENT_WRITE_FIELD_NAMES.map((field) => z.object({
@@ -210,12 +237,20 @@ function strictClearVariants() {
     ] as const;
 }
 
+function strictDiscardChangeVariants() {
+    return CLIENT_WRITE_FIELD_NAMES.map((field) => z.object({
+        op: z.literal("discard-change"),
+        field: z.literal(field),
+    }).strict()) as unknown as readonly [z.ZodTypeAny, ...z.ZodTypeAny[]];
+}
+
 /** A bounded, field-level conversational edit. */
-export type ClientInputOperation = SetOperation | MarkTentativeOperation | ClearOperation;
+export type ClientInputOperation = SetOperation | MarkTentativeOperation | ClearOperation | DiscardChangeOperation;
 const ClientInputOperationRawSchema = z.union([
     ...strictSetVariants(),
     ...strictTentativeVariants(),
     ...strictClearVariants(),
+    ...strictDiscardChangeVariants(),
 ] as unknown as [z.ZodTypeAny, z.ZodTypeAny, ...z.ZodTypeAny[]]);
 
 function normalizeParsedOperation(operation: ClientInputOperation): ClientInputOperation {
@@ -231,6 +266,7 @@ export const ClientInputOperationSchema: z.ZodType<ClientInputOperation> = Clien
 export type ClientSetOperation = SetOperation;
 export type ClientMarkTentativeOperation = MarkTentativeOperation;
 export type ClientClearOperation = ClearOperation;
+export type ClientDiscardChangeOperation = DiscardChangeOperation;
 export const ClientInputOperationsSchema = z.array(ClientInputOperationSchema).max(100);
 
 export const ClientDuplicateCheckStatusSchema = z.enum(["not_checked", "checking", "clear", "duplicate", "failed"]);
@@ -259,6 +295,7 @@ export type ClientReadinessResult = z.infer<typeof ClientReadinessResultSchema>;
 export interface ClientInputState {
     confirmed: ClientWriteFields;
     tentative: ClientTentativeValues;
+    clearedFields: ClientClearedFields;
     automationChoice: AutomationConsentChoice;
     noSend: boolean;
 }
@@ -286,14 +323,35 @@ function cloneTentative(values: ClientTentativeValues | undefined): ClientTentat
     return values ? { ...values } : {};
 }
 
+function hasClearedConfirmedField(
+    confirmed: ClientWriteFields,
+    clearedFields: readonly ClientClearableField[],
+): boolean {
+    return clearedFields.some((field) => Object.prototype.hasOwnProperty.call(confirmed, field));
+}
+
+function removeClearedField(fields: ClientClearedFields, field: ClientClearableField): ClientClearedFields {
+    return fields.filter((candidate) => candidate !== field);
+}
+
+function addClearedField(fields: ClientClearedFields, field: ClientClearableField): ClientClearedFields {
+    return ClientClearedFieldsSchema.parse([...fields, field]);
+}
+
 /** Apply only validated operations; tentative values never promote themselves. */
 export function applyClientInputOperations(
     operations: readonly unknown[],
     initial: Partial<ClientInputState> = {},
 ): ClientInputState {
+    const clearedFields = ClientClearedFieldsSchema.parse(initial.clearedFields ?? []);
+    const confirmed = cloneConfirmed(initial.confirmed);
+    if (hasClearedConfirmedField(confirmed, clearedFields)) {
+        throw new Error("A cleared field cannot also have a confirmed value");
+    }
     const state: ClientInputState = {
-        confirmed: cloneConfirmed(initial.confirmed),
+        confirmed,
         tentative: cloneTentative(initial.tentative),
+        clearedFields,
         automationChoice: initial.automationChoice ?? "unanswered",
         noSend: initial.noSend ?? false,
     };
@@ -309,17 +367,27 @@ export function applyClientInputOperations(
                 const field = operation.field as ClientWriteField;
                 state.confirmed[field] = normalizeOperationValue(field, operation.value) as never;
                 delete state.tentative[field];
+                if (ClientClearableFieldSchema.safeParse(field).success) {
+                    state.clearedFields = removeClearedField(state.clearedFields, field as ClientClearableField);
+                }
             }
         } else if (operation.op === "mark-tentative") {
             state.tentative[operation.field] = normalizeOperationValue(operation.field, operation.value) as never;
+        } else if (operation.op === "discard-change") {
+            delete state.confirmed[operation.field];
+            delete state.tentative[operation.field];
+            if (ClientClearableFieldSchema.safeParse(operation.field).success) {
+                state.clearedFields = removeClearedField(state.clearedFields, operation.field as ClientClearableField);
+            }
         } else if (operation.field === "automationChoice") {
             state.automationChoice = "unanswered";
         } else if (operation.field === "noSend") {
             state.noSend = false;
         } else {
-            const field = operation.field as ClientWriteField;
+            const field = operation.field as ClientClearableField;
             delete state.confirmed[field];
             delete state.tentative[field];
+            state.clearedFields = addClearedField(state.clearedFields, field);
         }
     }
 
@@ -369,9 +437,14 @@ export const CLIENT_CREATE_DEFAULTS = { voucherClient: false, serviceStatus: "pr
 export const AUTOMATION_CHOICE_DEFAULT: AutomationConsentChoice = "unanswered";
 
 export function createClientInputState(): ClientInputState {
-    return { confirmed: { ...CLIENT_CREATE_DEFAULTS }, tentative: {}, automationChoice: AUTOMATION_CHOICE_DEFAULT, noSend: false };
+    return {
+        confirmed: { ...CLIENT_CREATE_DEFAULTS },
+        tentative: {},
+        clearedFields: [],
+        automationChoice: AUTOMATION_CHOICE_DEFAULT,
+        noSend: false,
+    };
 }
 
 export const ClientWriteFieldSchema = z.enum(CLIENT_WRITE_FIELD_NAMES);
-export const ClientClearableFieldSchema = z.enum(CLIENT_CLEARABLE_FIELD_NAMES);
 export const ClientAutomationInputFieldSchema = z.enum(AUTOMATION_INPUT_FIELD_NAMES);

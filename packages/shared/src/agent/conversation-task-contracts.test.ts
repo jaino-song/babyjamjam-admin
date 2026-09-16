@@ -13,6 +13,7 @@ import {
     AgentTaskStateSchema,
     AgentTaskTargetVersionSchema,
     ClientInputOperationSchema,
+    ClientClearedFieldsSchema,
     ClientWriteFieldsSchema,
     ClientTentativeValuesSchema,
     applyClientInputOperations,
@@ -89,15 +90,97 @@ describe("conversational task contracts", () => {
             { op: "set", field: "phone", value: "010-1234-5678" },
             { op: "mark-tentative", field: "dueDate", value: "연말쯤" },
             { op: "clear", field: "address" },
-        ], { confirmed: { address: "삭제될 주소" }, tentative: {}, automationChoice: "unanswered", noSend: false });
+        ], { confirmed: { address: "삭제될 주소" }, tentative: {}, clearedFields: [], automationChoice: "unanswered", noSend: false });
 
         expect(state.confirmed).toEqual({ name: "홍길동", phone: "01012345678" });
         expect(state.tentative).toEqual({ dueDate: "연말쯤" });
+        expect(state.clearedFields).toEqual(["address"]);
         expect(ClientInputOperationSchema.parse({ op: "set", field: "phone", value: "010-1234-5678" })).toEqual({
             op: "set", field: "phone", value: "01012345678",
         });
         expect(ClientInputOperationSchema.safeParse({ op: "clear", field: "name" }).success).toBe(false);
+        expect(ClientInputOperationSchema.safeParse({ op: "clear", field: "phone" }).success).toBe(false);
+        expect(ClientInputOperationSchema.safeParse({ op: "clear", field: "voucherClient" }).success).toBe(false);
+        expect(ClientInputOperationSchema.safeParse({ op: "clear", field: "breastPump" }).success).toBe(false);
         expect(ClientInputOperationSchema.safeParse({ op: "set", field: "address", value: null }).success).toBe(false);
+    });
+
+    it("canonicalizes clear markers, preserves clear intent, and rejects contradictions", () => {
+        expect(ClientClearedFieldsSchema.parse(["dueDate", "address", "dueDate"])).toEqual(["address", "dueDate"]);
+
+        const cleared = applyClientInputOperations([
+            { op: "clear", field: "address" },
+            { op: "mark-tentative", field: "address", value: "나중에 확인" },
+        ], {
+            confirmed: { address: "삭제될 주소" },
+            tentative: {},
+            clearedFields: [],
+            automationChoice: "unanswered",
+            noSend: false,
+        });
+        expect(cleared.confirmed).toEqual({});
+        expect(cleared.tentative).toEqual({ address: "나중에 확인" });
+        expect(cleared.clearedFields).toEqual(["address"]);
+
+        const restored = applyClientInputOperations([{ op: "set", field: "address", value: "새 주소" }], cleared);
+        expect(restored.confirmed).toEqual({ address: "새 주소" });
+        expect(restored.tentative).toEqual({});
+        expect(restored.clearedFields).toEqual([]);
+        const clearOnly = applyClientInputOperations([{ op: "clear", field: "address" }], {
+            confirmed: { address: "삭제될 주소" },
+            tentative: {},
+            clearedFields: [],
+            automationChoice: "unanswered",
+            noSend: false,
+        });
+        expect(applyClientInputOperations([{ op: "clear", field: "address" }], clearOnly)).toEqual(clearOnly);
+        expect(() => applyClientInputOperations([], {
+            confirmed: { address: "충돌" },
+            tentative: {},
+            clearedFields: ["address"],
+            automationChoice: "unanswered",
+            noSend: false,
+        })).toThrow("cleared field");
+        expect(AgentTaskSchema.safeParse({ ...makeTask(), confirmed: { address: "충돌" }, clearedFields: ["address"] }).success).toBe(false);
+    });
+
+    it("supports ordered discard-change composition without touching automation controls", () => {
+        const initial = {
+            confirmed: { name: "기존 이름", startDate: "2026-03-01", address: "기존 주소" },
+            tentative: { startDate: "2026-03-05" },
+            clearedFields: [],
+            automationChoice: "unanswered" as const,
+            noSend: false,
+        };
+        const setThenDiscard = applyClientInputOperations([
+            { op: "set", field: "startDate", value: "2026-03-05" },
+            { op: "discard-change", field: "startDate" },
+        ], initial);
+        expect(setThenDiscard.confirmed.startDate).toBeUndefined();
+        expect(setThenDiscard.tentative.startDate).toBeUndefined();
+
+        const clearThenDiscard = applyClientInputOperations([
+            { op: "clear", field: "address" },
+            { op: "discard-change", field: "address" },
+        ], initial);
+        expect(clearThenDiscard.clearedFields).toEqual([]);
+        expect(clearThenDiscard.confirmed.address).toBeUndefined();
+
+        const discardThenSet = applyClientInputOperations([
+            { op: "discard-change", field: "startDate" },
+            { op: "set", field: "startDate", value: "2026-03-05" },
+        ], initial);
+        expect(discardThenSet.confirmed.startDate).toBe("2026-03-05");
+
+        const discardThenClear = applyClientInputOperations([
+            { op: "discard-change", field: "startDate" },
+            { op: "clear", field: "startDate" },
+        ], initial);
+        expect(discardThenClear.confirmed.startDate).toBeUndefined();
+        expect(discardThenClear.clearedFields).toEqual(["startDate"]);
+        expect(ClientInputOperationSchema.safeParse({ op: "discard-change", field: "automationChoice" }).success).toBe(false);
+        expect(ClientInputOperationSchema.safeParse({ op: "discard-change", field: "noSend" }).success).toBe(false);
+        expect(ClientInputOperationSchema.safeParse({ op: "discard-change", field: "unknown" }).success).toBe(false);
     });
 
     it("keeps create defaults out of an update and rejects authority fields", () => {
@@ -165,6 +248,23 @@ describe("conversational task contracts", () => {
             { field: "address", status: "confirmed", valueRef: IDS.addressRef },
             { field: "birthday", status: "confirmed", valueRef: IDS.birthRef },
         ]));
+        expect(safe.clearedFields).toEqual([]);
+    });
+
+    it("keeps clear-only markers distinct and drops stale deleted provenance refs", () => {
+        const task = makeTask({
+            confirmed: { name: "홍길동", phone: "01012345678" },
+            tentative: {},
+            clearedFields: ["address"],
+            provenance: {
+                confirmed: { address: { source: "user", valueRef: IDS.addressRef } },
+                tentative: {},
+            },
+        });
+        const safe = projectTaskForSafeChat(task);
+        expect(safe.clearedFields).toEqual(["address"]);
+        expect(safe.fieldStatus.find((entry) => entry.field === "address")).toEqual({ field: "address", status: "missing" });
+        expect(JSON.stringify(safe)).not.toContain(IDS.addressRef);
     });
 
     it("accepts only monotonic identity and revision snapshots", () => {

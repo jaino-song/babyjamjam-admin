@@ -316,4 +316,51 @@ describe("PrismaAgentTaskRepository", () => {
         await expect(repository.findOwned(TASK_ID, owner)).resolves.toEqual(expect.objectContaining({ status: "found" }));
         expect(record.lastAcceptedAt).toEqual(new Date("2026-09-16T00:00:00.000Z"));
     });
+
+    it("restores legacy draft JSON without a clearedFields marker as an empty marker set", async () => {
+        const legacyDraft = { ...draft() } as Record<string, unknown>;
+        delete legacyDraft["clearedFields"];
+        const record = taskRecord({ draft: legacyDraft as unknown as AgentTaskDraft });
+        const prisma = {
+            agent_task: { findFirst: jest.fn().mockResolvedValue(record) },
+            agent_session: { findFirst: jest.fn().mockResolvedValue(sessionLockRow()) },
+        };
+        const repository = new PrismaAgentTaskRepository(prisma as never);
+
+        const result = await repository.findOwned(TASK_ID, owner);
+
+        expect(result).toMatchObject({ status: "found", task: { draft: { clearedFields: [] } } });
+    });
+
+    it("round-trips an explicit clear marker through stored draft JSON", async () => {
+        const clearedDraft: AgentTaskDraft = {
+            ...draft(),
+            confirmed: { name: "홍길동" },
+            clearedFields: ["address"],
+            provenance: { confirmed: {}, tentative: {} },
+        };
+        const storedRecord = taskRecord({ draft: clearedDraft });
+        const transaction = transactionWithSessionAndTask(storedRecord);
+        transaction.$queryRaw.mockReset().mockResolvedValueOnce([sessionLockRow()]);
+        transaction.agent_task.create.mockResolvedValue(storedRecord);
+        const { repository } = repositoryForTransaction(transaction);
+
+        const result = await repository.createWithEvent(scope, {
+            taskId: TASK_ID,
+            capabilityId: "clients.create",
+            draft: clearedDraft,
+            status: "collecting",
+            expiresAt: futureDate(),
+        }, {
+            clientEventId: EVENT_ID,
+            operation: "create",
+            requestHash: HASH,
+            acceptedRevision: 1,
+        });
+
+        expect(transaction.agent_task.create).toHaveBeenCalledWith(expect.objectContaining({
+            data: expect.objectContaining({ draft: expect.objectContaining({ clearedFields: ["address"] }) }),
+        }));
+        expect(result).toMatchObject({ status: "created", task: { draft: { clearedFields: ["address"] } } });
+    });
 });

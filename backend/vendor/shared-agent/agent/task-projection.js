@@ -30,6 +30,7 @@ exports.AgentTaskSafeSnapshotSchema = zod_1.z.object({
     revision: task_types_1.AgentTaskRevisionSchema,
     state: task_types_1.AgentTaskStateSchema,
     fieldStatus: zod_1.z.array(exports.AgentTaskSafeFieldStatusSchema),
+    clearedFields: client_input_policy_1.ClientClearedFieldsSchema,
     constraints: zod_1.z.object({ noSend: zod_1.z.boolean() }).strict(),
     target: zod_1.z.object({ targetRef: task_types_1.AgentTaskReferenceSchema }).strict().nullable(),
     choiceSets: zod_1.z.array(exports.AgentTaskSafeChoiceSetSchema),
@@ -224,7 +225,9 @@ function fieldStatus(field, task) {
             : hasTentative
                 ? "tentative"
                 : "missing";
-    const valueRef = task.provenance.tentative[field]?.valueRef ?? task.provenance.confirmed[field]?.valueRef;
+    const valueRef = task.clearedFields.some((clearedField) => clearedField === field)
+        ? task.provenance.tentative[field]?.valueRef
+        : task.provenance.tentative[field]?.valueRef ?? task.provenance.confirmed[field]?.valueRef;
     return { field, status, ...(valueRef ? { valueRef } : {}) };
 }
 /** Safe model/chat projection never copies values or presentation labels. */
@@ -239,6 +242,7 @@ function projectTaskForSafeChat(task) {
         revision: parsedTask.revision,
         state: parsedTask.state,
         fieldStatus: client_input_policy_1.CLIENT_WRITE_FIELD_NAMES.map((field) => fieldStatus(field, parsedTask)),
+        clearedFields: parsedTask.clearedFields,
         constraints: parsedTask.constraints,
         target: parsedTask.target ? { targetRef: parsedTask.target.targetRef } : null,
         choiceSets: parsedTask.choiceSets.map((choiceSet) => ({

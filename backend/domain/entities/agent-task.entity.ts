@@ -12,6 +12,7 @@ import type {
 export interface AgentTaskDraft {
     confirmed: AgentTask["confirmed"];
     tentative: AgentTask["tentative"];
+    clearedFields: AgentTask["clearedFields"];
     provenance: AgentTask["provenance"];
     issues: AgentTask["issues"];
     constraints: AgentTask["constraints"];
@@ -108,6 +109,7 @@ export function createEmptyAgentTaskDraft(currentSnapshotRef: string): AgentTask
     return {
         confirmed: {},
         tentative: {},
+        clearedFields: [],
         provenance: { confirmed: {}, tentative: {} },
         issues: [],
         constraints: { noSend: false },
@@ -157,6 +159,7 @@ export function toAgentTaskContract(entity: AgentTaskEntity): AgentTask {
         state: entity.status,
         confirmed: entity.draft.confirmed,
         tentative: entity.draft.tentative,
+        clearedFields: entity.draft.clearedFields,
         provenance: entity.draft.provenance,
         issues: entity.draft.issues,
         constraints: entity.draft.constraints,

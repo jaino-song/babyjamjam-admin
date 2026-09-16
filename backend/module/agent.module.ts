@@ -27,11 +27,18 @@ import { ConsultationInquiryModule } from "module/consultation-inquiry.module";
 import { DocumentModule } from "module/document.module";
 import { AgentReleaseEvidenceService } from "application/agent/agent-release-evidence.service";
 import { AgentFeedbackService } from "application/agent/agent-feedback.service";
+import { AgentTaskService } from "application/agent/agent-task.service";
+import { AgentTaskPolicyService } from "application/agent/agent-task-policy.service";
 import { SystemAdminModule } from "module/system-admin.module";
+import { AgentTaskController } from "interface/controllers/agent-task.controller";
+import { AGENT_TASK_REPOSITORY } from "domain/repositories/agent-task.repository.interface";
+import { CLIENT_REPOSITORY } from "domain/repositories/client.repository.interface";
+import { PrismaAgentTaskRepository } from "infrastructure/database/repositories/prisma-agent-task.repository";
+import { SbClientRepository } from "infrastructure/database/repositories/sb.client.repository";
 
 @Module({
     imports: [DiscoveryModule, SystemSettingModule, SystemAdminModule, DatabaseModule, CallInboxModule, ConsultationInquiryModule, DocumentModule],
-    controllers: [AgentController, AgentActionController],
+    controllers: [AgentController, AgentActionController, AgentTaskController],
     providers: [
         AgentFlagsService,
         ActionCoordinatorService,
@@ -46,10 +53,14 @@ import { SystemAdminModule } from "module/system-admin.module";
         AgentTraceService,
         AgentReleaseEvidenceService,
         AgentFeedbackService,
+        AgentTaskService,
+        AgentTaskPolicyService,
         AgentModelFactory,
         OwnerGuard,
         { provide: AGENT_ACTION_REPOSITORY, useClass: PrismaAgentActionRepository },
         { provide: AGENT_SESSION_REPOSITORY, useClass: PrismaAgentSessionRepository },
+        { provide: AGENT_TASK_REPOSITORY, useClass: PrismaAgentTaskRepository },
+        { provide: CLIENT_REPOSITORY, useClass: SbClientRepository },
     ],
     exports: [CapabilityRegistryService],
 })

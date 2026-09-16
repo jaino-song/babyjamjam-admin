@@ -3,6 +3,7 @@ import { z } from "zod";
 import {
     AutomationConsentChoiceSchema,
     ClientInputOperationsSchema,
+    ClientClearedFieldsSchema,
     ClientTentativeValuesSchema,
     ClientWriteFieldsSchema,
     CLIENT_WRITE_FIELD_NAMES,
@@ -152,6 +153,7 @@ export const AgentTaskSchema = z.object({
     state: AgentTaskStateSchema,
     confirmed: ClientWriteFieldsSchema,
     tentative: ClientTentativeValuesSchema,
+    clearedFields: ClientClearedFieldsSchema.default([]),
     provenance: AgentTaskProvenanceSchema,
     issues: z.array(AgentTaskIssueSchema),
     constraints: AgentTaskConstraintsSchema,
@@ -165,6 +167,15 @@ export const AgentTaskSchema = z.object({
 }).strict().superRefine((value, context) => {
     if (value.kind !== value.capabilityId) {
         context.addIssue({ code: "custom", path: ["kind"], message: "Task kind must match capabilityId" });
+    }
+    for (const field of value.clearedFields) {
+        if (Object.prototype.hasOwnProperty.call(value.confirmed, field)) {
+            context.addIssue({
+                code: "custom",
+                path: ["clearedFields"],
+                message: "A cleared field cannot also have a confirmed value",
+            });
+        }
     }
 });
 export type AgentTask = z.infer<typeof AgentTaskSchema>;

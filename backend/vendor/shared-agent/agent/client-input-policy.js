@@ -1,6 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.ClientAutomationInputFieldSchema = exports.ClientClearableFieldSchema = exports.ClientWriteFieldSchema = exports.AUTOMATION_CHOICE_DEFAULT = exports.CLIENT_CREATE_DEFAULTS = exports.isClientReadyForTask = exports.ClientReadinessResultSchema = exports.ClientReadinessIssueSchema = exports.ClientDuplicateCheckResultSchema = exports.ClientDuplicateCheckStatusSchema = exports.ClientInputOperationsSchema = exports.ClientInputOperationSchema = exports.AUTOMATION_INPUT_FIELD_NAMES = exports.AutomationConsentChoiceSchema = exports.AUTOMATION_CONSENT_CHOICES = exports.ClientTentativeValuesSchema = exports.ClientConfirmedValuesSchema = exports.ClientWriteFieldsSchema = exports.CLIENT_WRITE_FIELD_NAMES = void 0;
+exports.ClientAutomationInputFieldSchema = exports.ClientWriteFieldSchema = exports.AUTOMATION_CHOICE_DEFAULT = exports.CLIENT_CREATE_DEFAULTS = exports.isClientReadyForTask = exports.ClientReadinessResultSchema = exports.ClientReadinessIssueSchema = exports.ClientDuplicateCheckResultSchema = exports.ClientDuplicateCheckStatusSchema = exports.ClientInputOperationsSchema = exports.ClientInputOperationSchema = exports.ClientClearedFieldsSchema = exports.ClientClearableFieldSchema = exports.CLIENT_CLEARABLE_FIELD_NAMES = exports.AUTOMATION_INPUT_FIELD_NAMES = exports.AutomationConsentChoiceSchema = exports.AUTOMATION_CONSENT_CHOICES = exports.ClientTentativeValuesSchema = exports.ClientConfirmedValuesSchema = exports.ClientWriteFieldsSchema = exports.CLIENT_WRITE_FIELD_NAMES = void 0;
 exports.normalizeClientPhone = normalizeClientPhone;
 exports.applyClientInputOperations = applyClientInputOperations;
 exports.evaluateClientReadiness = evaluateClientReadiness;
@@ -149,7 +149,32 @@ const CLIENT_TENTATIVE_OPERATION_VALUE_SCHEMAS = {
 exports.AUTOMATION_CONSENT_CHOICES = ["unanswered", "yes", "no"];
 exports.AutomationConsentChoiceSchema = zod_1.z.enum(exports.AUTOMATION_CONSENT_CHOICES);
 exports.AUTOMATION_INPUT_FIELD_NAMES = ["automationChoice", "noSend"];
-const CLIENT_CLEARABLE_FIELD_NAMES = exports.CLIENT_WRITE_FIELD_NAMES.filter((field) => field !== "name" && field !== "phone");
+/**
+ * Provider-nullable business fields that may be explicitly deleted. Required
+ * identity fields and non-nullable booleans use set:false or set values and
+ * never enter this marker set.
+ */
+exports.CLIENT_CLEARABLE_FIELD_NAMES = [
+    "address",
+    "type",
+    "duration",
+    "fullPrice",
+    "grant",
+    "actualPrice",
+    "startDate",
+    "endDate",
+    "careCenter",
+    "birthday",
+    "dueDate",
+    "birthDate",
+    "serviceStatus",
+    "areaId",
+];
+exports.ClientClearableFieldSchema = zod_1.z.enum(exports.CLIENT_CLEARABLE_FIELD_NAMES);
+/** Canonical marker representation used in state and persisted task drafts. */
+exports.ClientClearedFieldsSchema = zod_1.z.array(exports.ClientClearableFieldSchema).transform((fields) => [
+    ...new Set(fields),
+].sort());
 function strictSetVariants() {
     const clientVariants = exports.CLIENT_WRITE_FIELD_NAMES.map((field) => zod_1.z.object({
         op: zod_1.z.literal("set"),
@@ -170,7 +195,7 @@ function strictTentativeVariants() {
     }).strict());
 }
 function strictClearVariants() {
-    const clientVariants = CLIENT_CLEARABLE_FIELD_NAMES.map((field) => zod_1.z.object({
+    const clientVariants = exports.CLIENT_CLEARABLE_FIELD_NAMES.map((field) => zod_1.z.object({
         op: zod_1.z.literal("clear"),
         field: zod_1.z.literal(field),
     }).strict());
@@ -180,10 +205,17 @@ function strictClearVariants() {
         zod_1.z.object({ op: zod_1.z.literal("clear"), field: zod_1.z.literal("noSend") }).strict(),
     ];
 }
+function strictDiscardChangeVariants() {
+    return exports.CLIENT_WRITE_FIELD_NAMES.map((field) => zod_1.z.object({
+        op: zod_1.z.literal("discard-change"),
+        field: zod_1.z.literal(field),
+    }).strict());
+}
 const ClientInputOperationRawSchema = zod_1.z.union([
     ...strictSetVariants(),
     ...strictTentativeVariants(),
     ...strictClearVariants(),
+    ...strictDiscardChangeVariants(),
 ]);
 function normalizeParsedOperation(operation) {
     if ((operation.op === "set" || operation.op === "mark-tentative") && operation.field === "phone") {
@@ -234,11 +266,26 @@ function cloneConfirmed(values) {
 function cloneTentative(values) {
     return values ? { ...values } : {};
 }
+function hasClearedConfirmedField(confirmed, clearedFields) {
+    return clearedFields.some((field) => Object.prototype.hasOwnProperty.call(confirmed, field));
+}
+function removeClearedField(fields, field) {
+    return fields.filter((candidate) => candidate !== field);
+}
+function addClearedField(fields, field) {
+    return exports.ClientClearedFieldsSchema.parse([...fields, field]);
+}
 /** Apply only validated operations; tentative values never promote themselves. */
 function applyClientInputOperations(operations, initial = {}) {
+    const clearedFields = exports.ClientClearedFieldsSchema.parse(initial.clearedFields ?? []);
+    const confirmed = cloneConfirmed(initial.confirmed);
+    if (hasClearedConfirmedField(confirmed, clearedFields)) {
+        throw new Error("A cleared field cannot also have a confirmed value");
+    }
     const state = {
-        confirmed: cloneConfirmed(initial.confirmed),
+        confirmed,
         tentative: cloneTentative(initial.tentative),
+        clearedFields,
         automationChoice: initial.automationChoice ?? "unanswered",
         noSend: initial.noSend ?? false,
     };
@@ -255,10 +302,20 @@ function applyClientInputOperations(operations, initial = {}) {
                 const field = operation.field;
                 state.confirmed[field] = normalizeOperationValue(field, operation.value);
                 delete state.tentative[field];
+                if (exports.ClientClearableFieldSchema.safeParse(field).success) {
+                    state.clearedFields = removeClearedField(state.clearedFields, field);
+                }
             }
         }
         else if (operation.op === "mark-tentative") {
             state.tentative[operation.field] = normalizeOperationValue(operation.field, operation.value);
+        }
+        else if (operation.op === "discard-change") {
+            delete state.confirmed[operation.field];
+            delete state.tentative[operation.field];
+            if (exports.ClientClearableFieldSchema.safeParse(operation.field).success) {
+                state.clearedFields = removeClearedField(state.clearedFields, operation.field);
+            }
         }
         else if (operation.field === "automationChoice") {
             state.automationChoice = "unanswered";
@@ -270,6 +327,7 @@ function applyClientInputOperations(operations, initial = {}) {
             const field = operation.field;
             delete state.confirmed[field];
             delete state.tentative[field];
+            state.clearedFields = addClearedField(state.clearedFields, field);
         }
     }
     return state;
@@ -311,8 +369,13 @@ exports.isClientReadyForTask = isClientReadyForTask;
 exports.CLIENT_CREATE_DEFAULTS = { voucherClient: false, serviceStatus: "pre_booking" };
 exports.AUTOMATION_CHOICE_DEFAULT = "unanswered";
 function createClientInputState() {
-    return { confirmed: { ...exports.CLIENT_CREATE_DEFAULTS }, tentative: {}, automationChoice: exports.AUTOMATION_CHOICE_DEFAULT, noSend: false };
+    return {
+        confirmed: { ...exports.CLIENT_CREATE_DEFAULTS },
+        tentative: {},
+        clearedFields: [],
+        automationChoice: exports.AUTOMATION_CHOICE_DEFAULT,
+        noSend: false,
+    };
 }
 exports.ClientWriteFieldSchema = zod_1.z.enum(exports.CLIENT_WRITE_FIELD_NAMES);
-exports.ClientClearableFieldSchema = zod_1.z.enum(CLIENT_CLEARABLE_FIELD_NAMES);
 exports.ClientAutomationInputFieldSchema = zod_1.z.enum(exports.AUTOMATION_INPUT_FIELD_NAMES);

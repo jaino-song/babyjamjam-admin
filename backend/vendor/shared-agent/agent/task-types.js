@@ -125,6 +125,7 @@ exports.AgentTaskSchema = zod_1.z.object({
     state: exports.AgentTaskStateSchema,
     confirmed: client_input_policy_1.ClientWriteFieldsSchema,
     tentative: client_input_policy_1.ClientTentativeValuesSchema,
+    clearedFields: client_input_policy_1.ClientClearedFieldsSchema.default([]),
     provenance: exports.AgentTaskProvenanceSchema,
     issues: zod_1.z.array(exports.AgentTaskIssueSchema),
     constraints: exports.AgentTaskConstraintsSchema,
@@ -138,6 +139,15 @@ exports.AgentTaskSchema = zod_1.z.object({
 }).strict().superRefine((value, context) => {
     if (value.kind !== value.capabilityId) {
         context.addIssue({ code: "custom", path: ["kind"], message: "Task kind must match capabilityId" });
+    }
+    for (const field of value.clearedFields) {
+        if (Object.prototype.hasOwnProperty.call(value.confirmed, field)) {
+            context.addIssue({
+                code: "custom",
+                path: ["clearedFields"],
+                message: "A cleared field cannot also have a confirmed value",
+            });
+        }
     }
 });
 exports.AgentTaskCreateRequestSchema = zod_1.z.object({

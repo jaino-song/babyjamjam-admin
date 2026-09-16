@@ -285,6 +285,22 @@ export declare const AgentTaskSchema: z.ZodObject<{
         breastPump: z.ZodOptional<z.ZodUnion<readonly [z.ZodBoolean, z.ZodString]>>;
         areaId: z.ZodOptional<z.ZodNullable<z.ZodString>>;
     }, z.core.$strict>;
+    clearedFields: z.ZodDefault<z.ZodPipe<z.ZodArray<z.ZodEnum<{
+        type: "type";
+        address: "address";
+        duration: "duration";
+        fullPrice: "fullPrice";
+        grant: "grant";
+        actualPrice: "actualPrice";
+        startDate: "startDate";
+        endDate: "endDate";
+        careCenter: "careCenter";
+        birthday: "birthday";
+        dueDate: "dueDate";
+        birthDate: "birthDate";
+        serviceStatus: "serviceStatus";
+        areaId: "areaId";
+    }>>, z.ZodTransform<("type" | "address" | "duration" | "fullPrice" | "grant" | "actualPrice" | "startDate" | "endDate" | "careCenter" | "birthday" | "dueDate" | "birthDate" | "serviceStatus" | "areaId")[], ("type" | "address" | "duration" | "fullPrice" | "grant" | "actualPrice" | "startDate" | "endDate" | "careCenter" | "birthday" | "dueDate" | "birthDate" | "serviceStatus" | "areaId")[]>>>;
     provenance: z.ZodObject<{
         confirmed: z.ZodRecord<z.ZodString, z.ZodObject<{
             source: z.ZodEnum<{
@@ -555,6 +571,22 @@ export declare const AgentTaskMutationResponseSchema: z.ZodObject<{
             breastPump: z.ZodOptional<z.ZodUnion<readonly [z.ZodBoolean, z.ZodString]>>;
             areaId: z.ZodOptional<z.ZodNullable<z.ZodString>>;
         }, z.core.$strict>;
+        clearedFields: z.ZodDefault<z.ZodPipe<z.ZodArray<z.ZodEnum<{
+            type: "type";
+            address: "address";
+            duration: "duration";
+            fullPrice: "fullPrice";
+            grant: "grant";
+            actualPrice: "actualPrice";
+            startDate: "startDate";
+            endDate: "endDate";
+            careCenter: "careCenter";
+            birthday: "birthday";
+            dueDate: "dueDate";
+            birthDate: "birthDate";
+            serviceStatus: "serviceStatus";
+            areaId: "areaId";
+        }>>, z.ZodTransform<("type" | "address" | "duration" | "fullPrice" | "grant" | "actualPrice" | "startDate" | "endDate" | "careCenter" | "birthday" | "dueDate" | "birthDate" | "serviceStatus" | "areaId")[], ("type" | "address" | "duration" | "fullPrice" | "grant" | "actualPrice" | "startDate" | "endDate" | "careCenter" | "birthday" | "dueDate" | "birthDate" | "serviceStatus" | "areaId")[]>>>;
         provenance: z.ZodObject<{
             confirmed: z.ZodRecord<z.ZodString, z.ZodObject<{
                 source: z.ZodEnum<{
