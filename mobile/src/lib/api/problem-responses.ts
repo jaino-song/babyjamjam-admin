@@ -142,18 +142,25 @@ export function upstreamSseTransportErrorResponse(applied: "read" | "mutation"):
 
 /**
  * SSE-formatted upstream rejection for streaming proxies. Forwards a verbatim
- * upstream problem body; otherwise falls back to the same sanitized Korean
- * message the JSON BFF boundaries emit (`sanitizeUpstreamClientError`), with
- * the upstream HTTP status preserved and no invented code.
+ * upstream problem body (with the legacy `error` alias the JSON boundary also
+ * attaches); otherwise falls back to the same sanitized Korean message the
+ * JSON BFF boundaries emit (`sanitizeUpstreamClientError`), with the upstream
+ * HTTP status preserved and no invented code. `applied` follows the stream's
+ * operation: a mutation whose result cannot be confirmed carries the
+ * UNKNOWN/CHECK_STATUS semantics instead of the read failure copy.
  */
-export function upstreamSseUpstreamErrorResponse(status: number, upstreamBodyText?: string): Response {
+export function upstreamSseUpstreamErrorResponse(
+    status: number,
+    upstreamBodyText?: string,
+    applied: "read" | "mutation" = "mutation",
+): Response {
     const data = upstreamBodyText ? safeJsonParse(upstreamBodyText) : undefined;
     const upstreamProblem = parseProblemDetails(data, status);
     if (upstreamProblem) {
-        return sseErrorPayload(status, upstreamProblem);
+        return sseErrorPayload(status, { ...upstreamProblem, error: upstreamProblem.detail });
     }
 
-    const sanitized = sanitizeUpstreamClientError(data, "Streaming unavailable", status, "read");
+    const sanitized = sanitizeUpstreamClientError(data, "Streaming unavailable", status, applied);
     return sseErrorPayload(status, sanitized);
 }
 

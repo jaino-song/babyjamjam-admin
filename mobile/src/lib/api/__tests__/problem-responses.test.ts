@@ -126,7 +126,7 @@ describe("mobile BFF local problem responses", () => {
         expect(payload.requestId).toBeTruthy();
     });
 
-    it("forwards a verbatim upstream problem body through the SSE envelope", async () => {
+    it("forwards a verbatim upstream problem body with the legacy error alias through the SSE envelope", async () => {
         const upstreamProblem = {
             type: PROBLEM_CATALOG.REQUEST_INVALID.type,
             title: PROBLEM_CATALOG.REQUEST_INVALID.title["ko-KR"],
@@ -136,7 +136,7 @@ describe("mobile BFF local problem responses", () => {
             requestId: "req-1",
             params: {},
         };
-        const response = upstreamSseUpstreamErrorResponse(400, JSON.stringify(upstreamProblem));
+        const response = upstreamSseUpstreamErrorResponse(400, JSON.stringify(upstreamProblem), "read");
 
         expect(response.status).toBe(400);
         const payload = JSON.parse((await response.text()).replace(/^event: error\ndata: /, "").trim());
@@ -145,6 +145,7 @@ describe("mobile BFF local problem responses", () => {
             code: "REQUEST_INVALID",
             status: 400,
             requestId: "req-1",
+            error: PROBLEM_CATALOG.REQUEST_INVALID.detail["ko-KR"],
         });
     });
 
@@ -156,5 +157,21 @@ describe("mobile BFF local problem responses", () => {
         expect(payload).toMatchObject({ type: "error", error: expect.stringMatching(/[가-힣]/) });
         expect(payload).not.toHaveProperty("code");
         expect(JSON.stringify(payload)).not.toContain("too many requests");
+    });
+
+    it("uses the unconfirmable-mutation copy, not the read copy, for a malformed-problem mutation body", async () => {
+        const malformedProblem = JSON.stringify({
+            type: PROBLEM_CATALOG.REQUEST_INVALID.type,
+            requestId: "req-9",
+        });
+
+        const mutation = upstreamSseUpstreamErrorResponse(400, malformedProblem, "mutation");
+        const mutationPayload = JSON.parse((await mutation.text()).replace(/^event: error\ndata: /, "").trim());
+        expect(mutation.status).toBe(400);
+        expect(mutationPayload.error).toBe("변경 결과를 확인할 수 없으니 다시 실행하기 전에 작업 상태를 확인해 주세요.");
+
+        const read = upstreamSseUpstreamErrorResponse(400, malformedProblem, "read");
+        const readPayload = JSON.parse((await read.text()).replace(/^event: error\ndata: /, "").trim());
+        expect(readPayload.error).toBe("요청한 정보를 불러오지 못했어요.");
     });
 });

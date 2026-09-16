@@ -4,7 +4,7 @@ import { AxiosError } from "axios";
 import { jwtDecode } from "jwt-decode";
 import { z } from "zod";
 
-import { errorResponse, parseBody } from "@/lib/api/route-utils";
+import { errorResponse, logUpstreamError, parseBody } from "@/lib/api/route-utils";
 import { dependencyUnavailableProblemResponse } from "@/lib/api/problem-responses";
 import { serverAPIClient } from "@/lib/api/server";
 import { getServerRuntimeConfig } from "@/lib/env";
@@ -72,7 +72,10 @@ export async function POST(request: NextRequest) {
     } catch (error) {
         // Network failure before the exchange completed: the registered
         // DEPENDENCY_UNAVAILABLE problem keeps the established 503 status.
+        // The data-free log (name/code/status only) preserves the
+        // pre-conversion diagnostic without leaking request/response bodies.
         if (error instanceof AxiosError && !error.response) {
+            logUpstreamError("exchange authorization code", error);
             return dependencyUnavailableProblemResponse("mutation");
         }
 
