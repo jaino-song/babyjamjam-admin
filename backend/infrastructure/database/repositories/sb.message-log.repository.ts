@@ -99,14 +99,15 @@ export class SbMessageLogRepository implements IMessageLogRepository {
         }
     }
 
-    async claimProviderAttempt(log: MessageLogEntity): Promise<MessageLogEntity | null> {
+    async claimProviderAttempt(log: MessageLogEntity, transaction?: Prisma.TransactionClient): Promise<MessageLogEntity | null> {
         if (!log.providerAcceptanceKey || !log.providerAcceptanceFingerprint) {
             throw new Error("SMS provider acceptance key and fingerprint are required before dispatch");
         }
 
         const branchWhere = this.branchWhereFragment(log);
+        const client = transaction ?? this.prisma;
 
-        const claimed = await this.prisma.message_log.updateMany({
+        const claimed = await client.message_log.updateMany({
             where: {
                 id: log.id,
                 ...branchWhere,
@@ -121,7 +122,7 @@ export class SbMessageLogRepository implements IMessageLogRepository {
         });
         if (claimed.count !== 1) return null;
 
-        const row = await this.prisma.message_log.findUnique({
+        const row = await client.message_log.findUnique({
             where: { id: log.id, ...branchWhere },
         });
         return row ? MessageLogMapper.toDomain(row) : null;

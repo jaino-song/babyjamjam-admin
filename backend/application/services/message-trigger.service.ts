@@ -82,7 +82,7 @@ import {
     MESSAGE_AUTOMATION_PARENT_DISABLED_REASON,
 } from "./message-automation-activation.service";
 import { AdminAuditActor } from "./admin-audit-event.service";
-import { MANUAL_DEDUPE_MARKER } from "./receipt-link-delivery-enricher.service";
+import { MANUAL_DEDUPE_MARKER } from "domain/constants/service-end-notice-message";
 import {
     DEFAULT_MESSAGE_AUTOMATION_PAST_TRIGGER_CONFIG,
     MessageAutomationPastTriggerConfig,
