@@ -2,7 +2,12 @@ import { cookies } from "next/headers";
 import { NextRequest } from "next/server";
 import { z } from "zod";
 import { BACKEND_BASE_URL } from "@/lib/api/server";
-import { parseBody, upstreamSseErrorResponse } from "@/lib/api/route-utils";
+import { parseBody } from "@/lib/api/route-utils";
+import {
+    unauthorizedProblemResponse,
+    upstreamSseTransportErrorResponse,
+    upstreamSseUpstreamErrorResponse,
+} from "@/lib/api/problem-responses";
 
 const BACKEND_URL = BACKEND_BASE_URL;
 
@@ -22,10 +27,7 @@ export async function POST(request: NextRequest) {
     const authToken = cookieStore.get("auth_token");
 
     if (!authToken) {
-        return new Response(JSON.stringify({ error: "Unauthorized" }), {
-            status: 401,
-            headers: { "Content-Type": "application/json" },
-        });
+        return unauthorizedProblemResponse();
     }
 
     const { data, response } = await parseBody(chatStreamSchema, request);
@@ -42,8 +44,8 @@ export async function POST(request: NextRequest) {
         });
 
         if (!backendResponse.ok) {
-            await backendResponse.text().catch(() => "");
-            return upstreamSseErrorResponse(backendResponse.status);
+            const upstreamText = await backendResponse.text().catch(() => "");
+            return upstreamSseUpstreamErrorResponse(backendResponse.status, upstreamText || undefined);
         }
 
         return new Response(backendResponse.body, {
@@ -54,6 +56,6 @@ export async function POST(request: NextRequest) {
             },
         });
     } catch {
-        return upstreamSseErrorResponse();
+        return upstreamSseTransportErrorResponse("mutation");
     }
 }

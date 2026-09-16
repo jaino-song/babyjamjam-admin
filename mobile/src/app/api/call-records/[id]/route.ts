@@ -5,9 +5,9 @@ import {
     errorResponse,
     getAuthHeaders,
     getAuthToken,
-    unauthorizedResponse,
     withNoStore,
 } from "@/lib/api/route-utils";
+import { unauthorizedProblemResponse } from "@/lib/api/problem-responses";
 
 type RouteParams = { params: Promise<{ id: string }> };
 
@@ -15,7 +15,7 @@ type RouteParams = { params: Promise<{ id: string }> };
 export async function GET(request: NextRequest, { params }: RouteParams) {
     try {
         const token = getAuthToken(request);
-        if (!token) return unauthorizedResponse("Unauthorized");
+        if (!token) return unauthorizedProblemResponse();
 
         const { id } = await params;
 
