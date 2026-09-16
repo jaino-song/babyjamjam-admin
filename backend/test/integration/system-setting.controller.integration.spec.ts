@@ -270,6 +270,28 @@ describe("SystemSettingController (Integration)", () => {
                 .toBe(SERVICE_RECORD_LINK_SMS_LOG_TEMPLATE_KEY);
         });
 
+        it("should project activation management from the resolved tenant roles", async () => {
+            const owner = await controller.getMessageAutomationPolicies({
+                branchId: "branch-1",
+                globalRole: "owner",
+                branchRole: "user",
+            });
+            const admin = await controller.getMessageAutomationPolicies({
+                branchId: "branch-1",
+                globalRole: "user",
+                branchRole: "admin",
+            });
+            const member = await controller.getMessageAutomationPolicies({
+                branchId: "branch-1",
+                globalRole: "user",
+                branchRole: "user",
+            });
+
+            expect(owner.canManageActivation).toBe(true);
+            expect(admin.canManageActivation).toBe(true);
+            expect(member.canManageActivation).toBe(false);
+        });
+
         it("should update a branch-scoped policy activation", async () => {
             systemSettingService.setMessageSettingsPolicyEnabled.mockResolvedValue(
                 new SystemSettingEntity(

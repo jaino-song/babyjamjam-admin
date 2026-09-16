@@ -45,23 +45,20 @@ export class SbMessageLogRepository implements IMessageLogRepository {
         return MessageLogMapper.toDomain(row);
     }
 
-    async update(log: MessageLogEntity): Promise<MessageLogEntity> {
-        if (this.isDeliveredServiceEndNotice(log)) {
-            return this.prisma.$transaction(async (transaction) => {
-                const row = await transaction.message_log.update({
-                    where: { id: log.id, ...this.branchWhereFragment(log) },
-                    data: MessageLogMapper.toPrismaUpdate(log),
-                });
-                await this.stampServiceEndNoticeSent(transaction, log);
-                return MessageLogMapper.toDomain(row);
+    async update(log: MessageLogEntity, transaction?: Prisma.TransactionClient): Promise<MessageLogEntity> {
+        const run = async (client: Prisma.TransactionClient): Promise<MessageLogEntity> => {
+            const row = await client.message_log.update({
+                where: { id: log.id, ...this.branchWhereFragment(log) },
+                data: MessageLogMapper.toPrismaUpdate(log),
             });
-        }
-
-        const row = await this.prisma.message_log.update({
-            where: { id: log.id, ...this.branchWhereFragment(log) },
-            data: MessageLogMapper.toPrismaUpdate(log),
-        });
-        return MessageLogMapper.toDomain(row);
+            if (this.isDeliveredServiceEndNotice(log)) {
+                await this.stampServiceEndNoticeSent(client, log);
+            }
+            return MessageLogMapper.toDomain(row);
+        };
+        if (transaction) return run(transaction);
+        if (this.isDeliveredServiceEndNotice(log)) return this.prisma.$transaction(run);
+        return run(this.prisma);
     }
 
     async prepareProviderAttempt(log: MessageLogEntity): Promise<MessageLogEntity> {
@@ -102,14 +99,15 @@ export class SbMessageLogRepository implements IMessageLogRepository {
         }
     }
 
-    async claimProviderAttempt(log: MessageLogEntity): Promise<MessageLogEntity | null> {
+    async claimProviderAttempt(log: MessageLogEntity, transaction?: Prisma.TransactionClient): Promise<MessageLogEntity | null> {
         if (!log.providerAcceptanceKey || !log.providerAcceptanceFingerprint) {
             throw new Error("SMS provider acceptance key and fingerprint are required before dispatch");
         }
 
         const branchWhere = this.branchWhereFragment(log);
+        const client = transaction ?? this.prisma;
 
-        const claimed = await this.prisma.message_log.updateMany({
+        const claimed = await client.message_log.updateMany({
             where: {
                 id: log.id,
                 ...branchWhere,
@@ -124,7 +122,7 @@ export class SbMessageLogRepository implements IMessageLogRepository {
         });
         if (claimed.count !== 1) return null;
 
-        const row = await this.prisma.message_log.findUnique({
+        const row = await client.message_log.findUnique({
             where: { id: log.id, ...branchWhere },
         });
         return row ? MessageLogMapper.toDomain(row) : null;
@@ -211,8 +209,9 @@ export class SbMessageLogRepository implements IMessageLogRepository {
         sourceLog: MessageLogEntity,
         retryLog: MessageLogEntity,
         invocation: MessageRetryInvocation,
+        transaction?: Prisma.TransactionClient,
     ): Promise<MessageRetryStartResult> {
-        return this.prisma.$transaction(async (transaction) => {
+        const run = async (transaction: Prisma.TransactionClient): Promise<MessageRetryStartResult> => {
             const claimedAt = new Date(Date.now());
             if (
                 invocation === "automatic"
@@ -279,7 +278,8 @@ export class SbMessageLogRepository implements IMessageLogRepository {
                 data: MessageLogMapper.toPrismaCreate(retryLog),
             });
             return { kind: "started", log: MessageLogMapper.toDomain(row) };
-        });
+        };
+        return transaction ? run(transaction) : this.prisma.$transaction(run);
     }
 
     async findByIdInBranch(branchId: string, id: number): Promise<MessageLogEntity | null> {

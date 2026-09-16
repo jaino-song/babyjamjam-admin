@@ -1,7 +1,8 @@
-import { ConflictException, Injectable } from "@nestjs/common";
+import { ConflictException, Injectable, Optional, ServiceUnavailableException } from "@nestjs/common";
 import { createHash, randomUUID } from "node:crypto";
 import { AdminAuditActor, AdminAuditEventWriter } from "application/services/admin-audit-event.service";
 import { currentAdminAuditActor } from "application/services/admin-audit-context";
+import { MessageAutomationActivationService } from "application/services/message-automation-activation.service";
 import { GetSettingUsecase, UpdateSettingUsecase } from "application/usecases/system-setting";
 import {
     SystemSettingEntity,
@@ -11,6 +12,7 @@ import {
     DEFAULT_MESSAGE_AUTOMATION_PAST_TRIGGER_CONFIG,
     ContractAutoFinalizeConfig,
     DEFAULT_CONTRACT_AUTO_FINALIZE_CONFIG,
+    normalizeContractAutoFinalizeConfig,
 } from "domain/entities/system-setting.entity";
 import { SystemSettingAuditContext } from "domain/repositories/system-setting.repository.interface";
 import {
@@ -42,6 +44,8 @@ export class SystemSettingService {
         private readonly getSettingUsecase: GetSettingUsecase,
         private readonly updateSettingUsecase: UpdateSettingUsecase,
         private readonly auditWriter?: AdminAuditEventWriter,
+        @Optional()
+        private readonly messageAutomationActivationService?: MessageAutomationActivationService,
     ) {}
 
     private getUserEmailNotificationPreferenceKey(userId: string): string {
@@ -210,6 +214,12 @@ export class SystemSettingService {
         actor?: AdminAuditActor,
     ): Promise<SystemSettingEntity> {
         actor = actor ?? currentAdminAuditActor();
+        if (policyId === "trigger-dispatch") {
+            if (!this.messageAutomationActivationService) {
+                throw new ServiceUnavailableException("Message automation activation is not configured");
+            }
+            return this.messageAutomationActivationService.setTriggerDispatchEnabled(branchId, enabled, actor);
+        }
         const key = this.getMessageSettingsPolicyEnabledKey(branchId, policyId);
         const value = String(enabled);
         const auditContext = this.auditContext(
@@ -233,7 +243,7 @@ export class SystemSettingService {
         actor?: AdminAuditActor,
     ): Promise<SystemSettingEntity> {
         actor = actor ?? currentAdminAuditActor();
-        const normalized = this.normalizeContractAutoFinalizeConfig(config);
+        const normalized = normalizeContractAutoFinalizeConfig(config);
         const key = this.getContractAutoFinalizeConfigKey(branchId);
         const value = JSON.stringify(normalized);
         const auditContext = this.auditContext(actor, "system_setting.contract_automation.updated", branchId);
@@ -484,26 +494,10 @@ export class SystemSettingService {
     private parseContractAutoFinalizeConfig(value: string | null): ContractAutoFinalizeConfig {
         if (!value) return DEFAULT_CONTRACT_AUTO_FINALIZE_CONFIG;
         try {
-            return this.normalizeContractAutoFinalizeConfig(JSON.parse(value));
+            return normalizeContractAutoFinalizeConfig(JSON.parse(value));
         } catch {
             return DEFAULT_CONTRACT_AUTO_FINALIZE_CONFIG;
         }
-    }
-
-    private normalizeContractAutoFinalizeConfig(config: unknown): ContractAutoFinalizeConfig {
-        if (typeof config !== "object" || config === null) return DEFAULT_CONTRACT_AUTO_FINALIZE_CONFIG;
-        const candidate = config as Partial<ContractAutoFinalizeConfig>;
-        return {
-            enabled: typeof candidate.enabled === "boolean"
-                ? candidate.enabled
-                : DEFAULT_CONTRACT_AUTO_FINALIZE_CONFIG.enabled,
-            graceDays: Number.isInteger(candidate.graceDays)
-                ? Math.min(Math.max(candidate.graceDays as number, 0), 30)
-                : DEFAULT_CONTRACT_AUTO_FINALIZE_CONFIG.graceDays,
-            maxAttempts: Number.isInteger(candidate.maxAttempts)
-                ? Math.min(Math.max(candidate.maxAttempts as number, 1), 10)
-                : DEFAULT_CONTRACT_AUTO_FINALIZE_CONFIG.maxAttempts,
-        };
     }
 
     private getPwaDigestDeliveryKey(deliveryKey: string): string {

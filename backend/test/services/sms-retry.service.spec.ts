@@ -576,4 +576,59 @@ describe("SmsRetryService", () => {
             }),
         );
     });
+
+    it("denies an automatic retry while the branch automation parent is disabled before mutating or calling the provider", async () => {
+        const sourceLog = createSmsRetryLog();
+        sourceLog.triggerJobId = "job-automatic";
+        const activationService = {
+            runAutomaticRetryIfEnabled: jest.fn().mockResolvedValue({
+                allowed: false,
+                applies: true,
+            }),
+        };
+        const retryService = new SmsRetryService(
+            logRepository as unknown as IMessageLogRepository,
+            aligoService as unknown as AligoService,
+            messageSenderApprovalService as unknown as MessageSenderApprovalService,
+            undefined,
+            activationService as never,
+        );
+
+        await expect(retryService.retry(sourceLog, "automatic")).resolves.toBeNull();
+
+        expect(activationService.runAutomaticRetryIfEnabled).toHaveBeenCalledWith(
+            sourceLog.branchId,
+            sourceLog.triggerJobId,
+            expect.any(Function),
+        );
+        expect(logRepository.startRetryAttempt).not.toHaveBeenCalled();
+        expect(logRepository.update).not.toHaveBeenCalled();
+        expect(aligoService.sendSms).not.toHaveBeenCalled();
+    });
+    it("keeps automatic retry suppression inside the branch activation transaction", async () => {
+        const sourceLog = createSmsRetryLog();
+        sourceLog.triggerJobId = "job-automatic";
+        const transaction = { message_log: {} };
+        const activationService = {
+            runAutomaticRetryIfEnabled: jest.fn().mockImplementation(async (_branch, _job, work) => ({
+                allowed: true, applies: true, value: await work(transaction),
+            })),
+        };
+        logRepository.startRetryAttempt.mockResolvedValue({ kind: "suppressed", log: sourceLog });
+        const retryService = new SmsRetryService(
+            logRepository as unknown as IMessageLogRepository,
+            aligoService as unknown as AligoService,
+            messageSenderApprovalService as unknown as MessageSenderApprovalService,
+            undefined,
+            activationService as never,
+        );
+
+        await expect(retryService.retry(sourceLog, "automatic")).resolves.toBe(sourceLog);
+        expect(logRepository.startRetryAttempt).toHaveBeenCalledWith(
+            sourceLog, expect.anything(), "automatic", transaction,
+        );
+        expect(messageSenderApprovalService.ensureApproved).not.toHaveBeenCalled();
+        expect(aligoService.sendSms).not.toHaveBeenCalled();
+    });
+
 });

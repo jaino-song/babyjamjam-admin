@@ -98,14 +98,15 @@ export class SystemSettingController {
     @Get("message-automation-policies")
     @UseGuards(TenantGuard)
     async getMessageAutomationPolicies(
-        @CurrentTenant() tenant?: { branchId?: string },
+        @CurrentTenant() tenant?: { branchId?: string; globalRole?: string; branchRole?: string },
     ): Promise<MessageAutomationPoliciesResponseDto> {
         const branchId = tenant?.branchId ?? "";
         const [pastTriggerConfig, policyActivations] = await Promise.all([
             this.systemSettingService.getMessageAutomationPastTriggerConfig(branchId),
             this.systemSettingService.getMessageSettingsPolicyActivations(branchId),
         ]);
-        return MessageAutomationPoliciesResponseDto.from(pastTriggerConfig, policyActivations);
+        const canManageActivation = tenant?.globalRole === "owner" || tenant?.branchRole === "admin";
+        return MessageAutomationPoliciesResponseDto.from(pastTriggerConfig, policyActivations, canManageActivation);
     }
 
     @Put("message-policy-activations/:policyId")

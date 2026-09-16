@@ -17,6 +17,7 @@ import {
 import { MessageTriggerJobEntity } from "domain/entities/message-trigger-job.entity";
 import {
     AGENT_SMS_RULE_ID_PREFIX,
+    AGENT_SMS_RETRY_DEDUPE_KEY_PREFIX,
     MessageTriggerEventType,
     MessageTriggerOffsetType,
     MessageTriggerRecipientType,
@@ -670,7 +671,7 @@ export class MessageExternalAgentCapabilitiesProvider implements AgentCapability
             recipientType: source.recipientType,
             recipientPhone: source.recipientPhone,
             templateKey: source.templateKey,
-            dedupeKey: `agent-sms-retry:${context.actionId}`,
+            dedupeKey: `${AGENT_SMS_RETRY_DEDUPE_KEY_PREFIX}${context.actionId}`,
             payload: {
                 ...source.payload,
                 memberId: `agent-action:${context.actionId}`,
@@ -740,7 +741,7 @@ export class MessageExternalAgentCapabilitiesProvider implements AgentCapability
         const job = jobId
             ? await this.prisma.message_trigger_job.findFirst({ where: { id: jobId, branchId: context.principal.branchId } })
             : actionId
-                ? await this.prisma.message_trigger_job.findFirst({ where: { branchId: context.principal.branchId, OR: [{ dedupeKey: `agent-sms:${actionId}` }, { dedupeKey: `agent-sms-retry:${actionId}` }] } })
+                ? await this.prisma.message_trigger_job.findFirst({ where: { branchId: context.principal.branchId, OR: [{ dedupeKey: `agent-sms:${actionId}` }, { dedupeKey: `${AGENT_SMS_RETRY_DEDUPE_KEY_PREFIX}${actionId}` }] } })
                 : null;
         if (!job || job.status === "pending" || job.status === "processing" || job.status === "dispatching") {
             return { status: "uncertain" as const, reason: "SMS delivery is not terminal" };

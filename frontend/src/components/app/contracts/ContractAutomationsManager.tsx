@@ -18,6 +18,7 @@ import {
   SteppedWizardPanelContent,
 } from "@/components/app/v3";
 import { Button } from "@/components/ui/button";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
 import { TitleSelectMolecule } from "@/components/ui/title-select-molecule";
@@ -41,6 +42,10 @@ const DETAIL_TABS = [
 function getErrorMessage(error: unknown): string {
   if (error instanceof Error) return error.message;
   return "자동화 설정을 저장하지 못했습니다";
+}
+
+function formatGraceDays(graceDays: number): string {
+  return graceDays === 0 ? "종료일 당일" : `종료일 ${graceDays}일 후`;
 }
 
 export interface ContractAutomationsManagerProps {
@@ -74,12 +79,36 @@ export function ContractAutomationsManager({ dataComponent }: ContractAutomation
   }, [saved, isDirty]);
 
   const component = (suffix: string) => `${dataComponent}_${suffix}`;
-  const current = draft ?? saved;
+  const current = query.isError ? undefined : draft ?? saved;
+  const queryErrorState = query.isError ? (
+    <Alert
+      data-component={component("query-error")}
+      variant="destructive"
+      className="pointer-events-auto"
+    >
+      <AlertTitle>자동화 설정을 불러오지 못했습니다</AlertTitle>
+      <AlertDescription>
+        설정을 확인할 수 없습니다. 잠시 후 다시 시도해 주세요.
+        <Button
+          data-component={component("query-error_retry")}
+          type="button"
+          variant="outline"
+          size="sm"
+          className="mt-3"
+          onClick={() => void query.refetch()}
+          disabled={query.isFetching}
+        >
+          {query.isFetching ? "재시도 중..." : "다시 시도"}
+        </Button>
+      </AlertDescription>
+    </Alert>
+  ) : undefined;
   const summary = useMemo(() => {
+    if (query.isError) return "자동화 설정을 불러오지 못했습니다";
     if (!saved) return "검토 필요 → 계약 완료 · 설정 불러오는 중";
-    const timing = saved.graceDays === 0 ? "종료일 당일" : `종료일 ${saved.graceDays}일 후`;
+    const timing = formatGraceDays(saved.graceDays);
     return `검토 필요 → 계약 완료 · ${timing} · 매일 17:00`;
-  }, [saved]);
+  }, [query.isError, saved]);
   const updateDraft = (patch: Partial<ContractAutoFinalizeConfig>) => {
     if (!current) return;
     setDraft({ ...current, ...patch });
@@ -106,10 +135,11 @@ export function ContractAutomationsManager({ dataComponent }: ContractAutomation
           data-component={component("list-panel")}
           title="자동화"
           subtitle="계약서 상태를 자동으로 처리하는 규칙을 관리합니다"
+          emptyState={queryErrorState}
         >
           <AnimatedSlotList
             data-component={component("list")}
-            items={query.isLoading ? undefined : [{ id: RULE_ID }]}
+            items={query.isLoading || query.isError ? undefined : [{ id: RULE_ID }]}
             isLoading={query.isLoading}
             loadingCount={1}
             getSlotState={({ item, isLoading }) => ({ isActive: !isLoading && item?.id === selectedId, isInteractive: !isLoading && Boolean(item) })}
@@ -117,7 +147,7 @@ export function ContractAutomationsManager({ dataComponent }: ContractAutomation
             getItemKey={(item) => item.id}
             render={({ item, isLoading }) => {
               if (isLoading) return <Skeleton className="h-16 w-full rounded-[18px] bg-v3-dim-white" />;
-              if (!item || !saved) return null;
+              if (!item || !saved || query.isError) return null;
               return (
                 <AnimatedSlotListItemContent
                   dataComponent={component("row")}
@@ -139,17 +169,17 @@ export function ContractAutomationsManager({ dataComponent }: ContractAutomation
           <DetailPanel
             data-component={component("detail-panel")}
             isLoading={query.isLoading}
-            title="계약 종료일 자동 완료"
-            subtitle="검토 필요 상태의 산모 계약서를 계약 종료일 이후 자동으로 완료 처리합니다."
-            tabs={<DetailTabs tabs={[...DETAIL_TABS]} activeTab={activeTab} onTabChange={(key) => setActiveTab(key as typeof activeTab)} />}
-            footer={(
+            title={query.isError ? "자동화 설정 오류" : "계약 종료일 자동 완료"}
+            subtitle={query.isError ? undefined : "검토 필요 상태의 산모 계약서를 계약 종료일 이후 자동으로 완료 처리합니다."}
+            tabs={query.isError ? undefined : <DetailTabs tabs={[...DETAIL_TABS]} activeTab={activeTab} onTabChange={(key) => setActiveTab(key as typeof activeTab)} />}
+            footer={current ? (
               <>
                 <Button type="button" variant="outline" size="sm" width="sm" onClick={reset} disabled={!isDirty || mutation.isPending}>되돌리기</Button>
                 <Button type="button" variant="positive" size="sm" width="sm" onClick={save} disabled={!isDirty || mutation.isPending}>{mutation.isPending ? "저장 중..." : "저장"}</Button>
               </>
-            )}
+            ) : undefined}
           >
-            <DetailTabPanels
+            {query.isError ? queryErrorState : <DetailTabPanels
               activeTab={activeTab}
               dataComponent={component("detail-tabs")}
               className="flex min-h-0 flex-1"
@@ -174,10 +204,10 @@ export function ContractAutomationsManager({ dataComponent }: ContractAutomation
                 },
                 {
                   key: "description",
-                  children: <div className="space-y-3 text-sm leading-relaxed text-v3-text-muted"><p>계약 종료일이 지나면 매일 17:00 (KST)에 검토 필요 상태의 산모 계약서를 확인합니다.</p><p>대상 문서에는 eformsign의 &apos;검토 완료 확인&apos; 동작을 자동 실행해 계약 완료로 전환합니다.</p><p>실패 시 최대 시도 횟수까지 재시도 후 알림이 발송됩니다.</p></div>,
+                  children: saved ? <div className="space-y-3 text-sm leading-relaxed text-v3-text-muted"><p>실행 시점은 {formatGraceDays(saved.graceDays)}입니다. 매일 17:00 (KST)에 검토 필요 상태의 산모 계약서를 확인합니다.</p><p>대상 문서에는 eformsign의 &apos;검토 완료 확인&apos; 동작을 자동 실행해 계약 완료로 전환합니다.</p><p>실패 시 최대 시도 횟수까지 재시도 후 알림이 발송됩니다.</p></div> : null,
                 },
               ]}
-            />
+            />}
           </DetailPanel>
         )}
       </SplitLayout>

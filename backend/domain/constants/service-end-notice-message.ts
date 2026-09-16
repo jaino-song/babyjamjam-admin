@@ -1,3 +1,4 @@
+export const MANUAL_DEDUPE_MARKER = ":manual:";
 export const SERVICE_END_NOTICE_RULE_ID = "system:service_end_notice";
 export const SERVICE_END_NOTICE_SMS_LOG_TEMPLATE_KEY = "service_end_notice_sms";
 export const SERVICE_END_NOTICE_SMS_AUTOMATION_KEY = "SERVICE_END_NOTICE_SMS";

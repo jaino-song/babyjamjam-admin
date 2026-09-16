@@ -30,6 +30,7 @@ jest.mock("@/services/api", () => ({
     getClientRegistrationPolicy: jest.fn(),
     updateClientRegistrationPolicy: jest.fn(),
     updateMessageAutomationPastTriggerConfig: jest.fn(),
+    updateMessagePolicyActivation: jest.fn(),
     requestMessageSenderApproval: jest.fn(),
   },
 }));
@@ -127,6 +128,7 @@ const DEFAULT_TRIGGER_RULES: MessageTriggerRule[] = [
 ];
 
 const DEFAULT_AUTOMATION_POLICIES: MessageAutomationPoliciesResponse = {
+  canManageActivation: true,
   pastTriggerConfig: {
     sendIntervalMinutes: 1,
     ruleOrder: [],
@@ -168,6 +170,27 @@ const DEFAULT_AUTOMATION_POLICIES: MessageAutomationPoliciesResponse = {
   ],
 };
 
+function automationPoliciesWithTriggerDispatch(
+  active: boolean,
+): MessageAutomationPoliciesResponse {
+  return {
+    ...DEFAULT_AUTOMATION_POLICIES,
+    canManageActivation: true,
+    policies: [
+      {
+        id: "trigger-dispatch",
+        title: "메시지 자동 발송",
+        description: "지점의 메시지를 자동으로 발송합니다.",
+        active,
+        requiresApproval: true,
+        rows: [],
+      },
+      ...DEFAULT_AUTOMATION_POLICIES.policies,
+    ],
+    policyActivations: { "trigger-dispatch": active },
+  };
+}
+
 function getQueryKey(options: unknown) {
   if (typeof options !== "object" || options === null || !("queryKey" in options)) {
     return undefined;
@@ -180,7 +203,7 @@ function mockSettingsQueries(
   isApproved: boolean,
   automationPolicies: MessageAutomationPoliciesResponse = DEFAULT_AUTOMATION_POLICIES,
   triggerRules: MessageTriggerRule[] = DEFAULT_TRIGGER_RULES,
-  options: { automationPoliciesLoading?: boolean } = {},
+  options: { automationPoliciesLoading?: boolean; automationPoliciesError?: boolean } = {},
 ) {
   mockedUseQuery.mockImplementation(((queryOptions: unknown) => {
     const queryKey = getQueryKey(queryOptions);
@@ -202,6 +225,8 @@ function mockSettingsQueries(
       return {
         data: options.automationPoliciesLoading ? undefined : automationPolicies,
         isLoading: options.automationPoliciesLoading ?? false,
+        isError: options.automationPoliciesError ?? false,
+        refetch: jest.fn(),
       } as unknown as ReturnType<typeof useQuery>;
     }
 
@@ -230,6 +255,7 @@ beforeEach(() => {
       id: "user-1",
       name: "송진호",
       branchName: "인천점",
+      role: "admin",
     },
   } as unknown as ReturnType<typeof useGetAuthUser>);
   mockedUseQueryClient.mockReturnValue({
@@ -240,6 +266,10 @@ beforeEach(() => {
   } as unknown as ReturnType<typeof useQueryClient>);
   mockedSettingsApi.getMessageAutomationPolicies.mockResolvedValue(DEFAULT_AUTOMATION_POLICIES);
   mockedSettingsApi.updateMessageAutomationPastTriggerConfig.mockImplementation(async (config) => config);
+  mockedSettingsApi.updateMessagePolicyActivation.mockImplementation(async (enabled) => ({
+    policyId: "trigger-dispatch",
+    enabled,
+  }));
   mockedSettingsApi.updateClientRegistrationPolicy.mockImplementation(async (patch) => ({
     clientAutoRegistration: true,
     greetingOnAutoRegistration: false,
@@ -249,13 +279,15 @@ beforeEach(() => {
     mutationFn?: (variables?: unknown) => unknown;
     onSuccess?: (data: unknown, variables: unknown, context: unknown) => unknown;
     onError?: (error: unknown, variables: unknown, context: unknown) => unknown;
+    onSettled?: (...args: unknown[]) => unknown;
   }) => {
     return {
       mutate: (variables?: unknown) => {
         Promise.resolve((options as { onMutate?: (variables: unknown) => unknown }).onMutate?.(variables))
           .then((context) => Promise.resolve(options.mutationFn?.(variables))
             .then((data) => options.onSuccess?.(data, variables, context))
-            .catch((error) => options.onError?.(error, variables, context)));
+            .catch((error) => options.onError?.(error, variables, context))
+            .finally(() => options.onSettled?.(undefined, variables, undefined)));
       },
       isPending: false,
     };
@@ -263,36 +295,17 @@ beforeEach(() => {
 });
 
 describe("MessageTenantApplicationSettings", () => {
-  it("renders and updates the client registration policy switches", async () => {
+  it("does not render or fetch the client registration policy", () => {
     mockSettingsQueries(true);
     render(<MessageTenantApplicationSettings />);
 
-    fireEvent.click(screen.getByText("고객 자동 등록"));
-    const autoRegistration = screen.getByRole("switch", { name: "eformsign 계약서 도착 시 고객 자동 등록" });
-    const greeting = screen.getByRole("switch", { name: "자동 등록 시 인사 문자 발송" });
-    expect(autoRegistration).toBeChecked();
-    expect(greeting).not.toBeDisabled();
-
-    fireEvent.click(greeting);
-    await waitFor(() => expect(mockedSettingsApi.updateClientRegistrationPolicy).toHaveBeenCalledWith({ greetingOnAutoRegistration: true }));
-    expect(mockSetQueryData).toHaveBeenCalled();
+    expect(screen.queryByText("고객 자동 등록")).not.toBeInTheDocument();
+    expect(screen.queryByRole("switch", { name: "eformsign 계약서 도착 시 고객 자동 등록" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("switch", { name: "자동 등록 시 인사 문자 발송" })).not.toBeInTheDocument();
+    expect(mockedSettingsApi.getClientRegistrationPolicy).not.toHaveBeenCalled();
+    expect(mockedSettingsApi.updateClientRegistrationPolicy).not.toHaveBeenCalled();
   });
 
-  it("rolls back the client registration policy when saving fails", async () => {
-    mockSettingsQueries(true);
-    const previous = { clientAutoRegistration: true, greetingOnAutoRegistration: false };
-    mockGetQueryData.mockReturnValue(previous);
-    mockedSettingsApi.updateClientRegistrationPolicy.mockRejectedValueOnce(new Error("failed"));
-    render(<MessageTenantApplicationSettings />);
-
-    fireEvent.click(screen.getByText("고객 자동 등록"));
-    fireEvent.click(screen.getByRole("switch", { name: "자동 등록 시 인사 문자 발송" }));
-
-    await waitFor(() => expect(mockSetQueryData).toHaveBeenCalledWith(
-      ["settings", "client-registration-policy"],
-      previous,
-    ));
-  });
   it("renders automation policy items from the API", async () => {
     mockSettingsQueries(true, {
       pastTriggerConfig: DEFAULT_AUTOMATION_POLICIES.pastTriggerConfig,
@@ -334,17 +347,15 @@ describe("MessageTenantApplicationSettings", () => {
 
     expect(screen.getAllByText("설정").length).toBeGreaterThan(0);
     expect(screen.queryByText("메시지 발송 기능 신청")).not.toBeInTheDocument();
-    expect(screen.getAllByText("API 제공기록지 정책").length).toBeGreaterThan(0);
-    expect(screen.getByText("API 오후 3시")).toBeInTheDocument();
-    expect(screen.getByText("API 지난 루틴 정책")).toBeInTheDocument();
-    expect(screen.getByText("API SMS 재시도 정책")).toBeInTheDocument();
+    expect(screen.queryByText("API 제공기록지 정책")).not.toBeInTheDocument();
+    expect(screen.queryByText("API 오후 3시")).not.toBeInTheDocument();
+    expect(screen.queryByRole("switch", { name: "API 제공기록지 정책 활성화" })).not.toBeInTheDocument();
+    expect(screen.getAllByText("API 지난 루틴 정책").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("API SMS 재시도 정책").length).toBeGreaterThan(0);
     expect(screen.getAllByText("중복 전송 확인").length).toBeGreaterThan(0);
-    const servicePolicySwitch = screen.getByRole("switch", { name: "API 제공기록지 정책 활성화" });
     const inactivePolicySwitch = screen.getByRole("switch", { name: "API 지난 루틴 정책 활성화" });
     const smsPolicySwitch = screen.getByRole("switch", { name: "API SMS 재시도 정책 활성화" });
 
-    expect(servicePolicySwitch).toBeDisabled();
-    expect(servicePolicySwitch).toHaveAttribute("aria-checked", "true");
     expect(inactivePolicySwitch).toBeDisabled();
     expect(inactivePolicySwitch).toHaveAttribute("aria-checked", "false");
     expect(smsPolicySwitch).toBeDisabled();
@@ -354,7 +365,7 @@ describe("MessageTenantApplicationSettings", () => {
       "true",
     );
 
-    fireEvent.click(screen.getByText("API 지난 루틴 정책"));
+    fireEvent.click(screen.getAllByText("API 지난 루틴 정책")[0]);
 
     expect(screen.getByText("API 지난 루틴 미실행")).toBeInTheDocument();
     expect(screen.getByText("전송 간격")).toBeInTheDocument();
@@ -428,7 +439,7 @@ describe("MessageTenantApplicationSettings", () => {
 
     render(<MessageTenantApplicationSettings />);
 
-    fireEvent.click(screen.getByText("지난 자동 전송 처리 규칙"));
+    fireEvent.click(screen.getAllByText("지난 자동 전송 처리 규칙")[0]);
 
     expect(screen.getByText(DEFAULT_TRIGGER_RULES[0].name)).toBeInTheDocument();
     expect(screen.getByText(DEFAULT_TRIGGER_RULES[1].name)).toBeInTheDocument();
@@ -448,6 +459,40 @@ describe("MessageTenantApplicationSettings", () => {
           inactiveReminder.id,
           DEFAULT_TRIGGER_RULES[3].id,
         ],
+      });
+    });
+  });
+
+  it("hides manual-only SERVICE_END_NOTICE rules from automatic ordering while preserving their saved position", async () => {
+    const manualOnlyRule: MessageTriggerRule = {
+      ...DEFAULT_TRIGGER_RULES[0],
+      id: "manual-service-end-notice",
+      name: "수동 영수증 안내",
+      templateKey: "SERVICE_END_NOTICE",
+    };
+    const triggerRules = [manualOnlyRule, DEFAULT_TRIGGER_RULES[0]];
+    mockSettingsQueries(true, {
+      ...DEFAULT_AUTOMATION_POLICIES,
+      pastTriggerConfig: {
+        sendIntervalMinutes: 1,
+        ruleOrder: triggerRules.map((rule) => rule.id),
+      },
+    }, triggerRules);
+
+    render(<MessageTenantApplicationSettings />);
+    fireEvent.click(screen.getAllByText("지난 자동 전송 처리 규칙")[0]);
+
+    expect(screen.queryByText(manualOnlyRule.name)).not.toBeInTheDocument();
+    expect(screen.getByText(DEFAULT_TRIGGER_RULES[0].name)).toBeInTheDocument();
+
+    const intervalInput = screen.getByRole("spinbutton", { name: "늦은 등록 자동 전송 간격" });
+    fireEvent.change(intervalInput, { target: { value: "2" } });
+    fireEvent.click(screen.getByRole("button", { name: "저장" }));
+
+    await waitFor(() => {
+      expect(mockedSettingsApi.updateMessageAutomationPastTriggerConfig).toHaveBeenCalledWith({
+        sendIntervalMinutes: 2,
+        ruleOrder: [manualOnlyRule.id, DEFAULT_TRIGGER_RULES[0].id],
       });
     });
   });
@@ -473,7 +518,7 @@ describe("MessageTenantApplicationSettings", () => {
 
     render(<MessageTenantApplicationSettings />);
 
-    fireEvent.click(screen.getByText("지난 자동 전송 처리 규칙"));
+    fireEvent.click(screen.getAllByText("지난 자동 전송 처리 규칙")[0]);
     fireEvent.click(screen.getByRole("button", {
       name: `${DEFAULT_TRIGGER_RULES[1].name} 아래로 이동`,
     }));
@@ -498,11 +543,11 @@ describe("MessageTenantApplicationSettings", () => {
     const { container } = render(<MessageTenantApplicationSettings />);
 
     expect(screen.getAllByText("메시지 발송 기능 신청").length).toBeGreaterThan(0);
-    expect(screen.getByText("제공기록지 전송 자동화 규칙")).toBeInTheDocument();
-    expect(screen.getByText("지난 자동 전송 처리 규칙")).toBeInTheDocument();
+    expect(screen.queryByText("제공기록지 전송 자동화 규칙")).not.toBeInTheDocument();
+    expect(screen.getAllByText("지난 자동 전송 처리 규칙").length).toBeGreaterThan(0);
     expect(screen.getByText("SMS 재시도 규칙")).toBeInTheDocument();
     expect(screen.getByText("중복 전송 확인")).toBeInTheDocument();
-    expect(screen.getByRole("switch", { name: "제공기록지 전송 자동화 규칙 활성화" })).toBeInTheDocument();
+    expect(screen.queryByRole("switch", { name: "제공기록지 전송 자동화 규칙 활성화" })).not.toBeInTheDocument();
     expect(container.querySelector('[data-component="desktop_messages_sections_settings-tenant-application"]')).toBeInTheDocument();
   });
 
@@ -519,7 +564,7 @@ describe("MessageTenantApplicationSettings", () => {
     mockSettingsQueries(true);
     view.rerender(<MessageTenantApplicationSettings />);
 
-    expect(screen.getAllByText("제공기록지 전송 자동화 규칙").length).toBeGreaterThan(0);
+    expect(screen.queryByText("제공기록지 전송 자동화 규칙")).not.toBeInTheDocument();
     expect(screen.getAllByText("지난 자동 전송 처리 규칙").length).toBeGreaterThan(0);
   });
 
@@ -529,7 +574,6 @@ describe("MessageTenantApplicationSettings", () => {
     render(<MessageTenantApplicationSettings />);
 
     const approvalGatedSwitchNames = [
-      "제공기록지 전송 자동화 규칙 활성화",
       "지난 자동 전송 처리 규칙 활성화",
       "중복 전송 확인 활성화",
     ];
@@ -583,5 +627,81 @@ describe("MessageTenantApplicationSettings", () => {
     expect(mockInvalidateQueries).toHaveBeenCalledWith({
       queryKey: ["settings", "message-sender-approval"],
     });
+  });
+
+  it("shows the stored trigger-dispatch state and lets an admin change only that parent", async () => {
+    mockSettingsQueries(false, automationPoliciesWithTriggerDispatch(true));
+
+    render(<MessageTenantApplicationSettings />);
+
+    const parentSwitch = screen.getByRole("switch", { name: "메시지 자동 발송 활성화" });
+    expect(parentSwitch).toBeChecked();
+    expect(parentSwitch).toBeEnabled();
+
+    fireEvent.click(parentSwitch);
+
+    await waitFor(() => {
+      expect(mockedSettingsApi.updateMessagePolicyActivation).toHaveBeenCalledWith(false);
+    });
+    expect(mockInvalidateQueries).toHaveBeenCalledWith({
+      queryKey: ["message-triggers"],
+    });
+    expect(mockInvalidateQueries).toHaveBeenCalledWith({
+      queryKey: ["settings", "message-automation-policies"],
+    });
+  });
+
+  it("keeps the parent switch unavailable to members while preserving the stored checked state", () => {
+    mockSettingsQueries(false, {
+      ...automationPoliciesWithTriggerDispatch(true),
+      canManageActivation: false,
+    });
+    mockedUseGetAuthUser.mockReturnValue({
+      data: { id: "user-2", name: "멤버", branchName: "인천점", role: "member" },
+    } as unknown as ReturnType<typeof useGetAuthUser>);
+
+    render(<MessageTenantApplicationSettings />);
+
+    const parentSwitch = screen.getByRole("switch", { name: "메시지 자동 발송 활성화" });
+    expect(parentSwitch).toBeChecked();
+    expect(parentSwitch).toBeDisabled();
+    fireEvent.click(parentSwitch);
+    expect(mockedSettingsApi.updateMessagePolicyActivation).not.toHaveBeenCalled();
+  });
+
+  it("fails closed when the activation capability projection is missing", () => {
+    mockSettingsQueries(false, {
+      ...automationPoliciesWithTriggerDispatch(true),
+      canManageActivation: undefined,
+    });
+
+    render(<MessageTenantApplicationSettings />);
+
+    const parentSwitch = screen.getByRole("switch", { name: "메시지 자동 발송 활성화" });
+    expect(parentSwitch).toBeChecked();
+    expect(parentSwitch).toBeDisabled();
+  });
+
+  it("masks active child rules when the trigger-dispatch parent is off", () => {
+    mockSettingsQueries(true, automationPoliciesWithTriggerDispatch(false));
+
+    render(<MessageTenantApplicationSettings />);
+    fireEvent.click(screen.getAllByText("지난 자동 전송 처리 규칙")[0]);
+
+    for (const rule of DEFAULT_TRIGGER_RULES) {
+      expect(screen.queryByText(rule.name)).not.toBeInTheDocument();
+    }
+  });
+
+  it("fails closed when the trigger-dispatch policy query errors", () => {
+    mockSettingsQueries(true, automationPoliciesWithTriggerDispatch(true), DEFAULT_TRIGGER_RULES, {
+      automationPoliciesError: true,
+    });
+
+    render(<MessageTenantApplicationSettings />);
+
+    expect(screen.getByText("현재 지점의 메시지 자동 발송 설정을 확인할 수 없어요.")).toBeInTheDocument();
+    expect(screen.getByRole("switch", { name: "메시지 자동 발송 활성화" })).toBeDisabled();
+    expect(screen.getByRole("switch", { name: "메시지 자동 발송 활성화" })).not.toBeChecked();
   });
 });

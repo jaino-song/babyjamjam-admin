@@ -403,7 +403,11 @@ describe("SbEformsignDocumentJobRepository", () => {
         expect(sqlText(queryRaw.mock.calls[0][0])).toContain("jsonb_typeof(payload)");
     });
 
-    it("records an auto-finalize terminal attempt atomically and releases retry capacity below the cap", async () => {
+    it.each([
+        ["one", JSON.stringify({ enabled: true, graceDays: 7, maxAttempts: 1 }), 1, "finalize:doc-1"],
+        ["three", JSON.stringify({ enabled: true, graceDays: 7, maxAttempts: 3 }), 2, null],
+        ["five", JSON.stringify({ enabled: true, graceDays: 7, maxAttempts: 5 }), 5, "finalize:doc-1"],
+    ] as const)("honors the branch maxAttempts setting (%s)", async (_label, settingValue, recordedAttempts, expectedActiveKey) => {
         const executeRawInTransaction = jest.fn().mockResolvedValue(1);
         const queryRawInTransaction = jest.fn().mockResolvedValueOnce([row({
             job_type: "finalize_document",
@@ -418,7 +422,10 @@ describe("SbEformsignDocumentJobRepository", () => {
                 $queryRaw: queryRawInTransaction,
                 $executeRaw: executeRawInTransaction,
                 eformsign_doc: {
-                    update: jest.fn().mockResolvedValue({ autoFinalizeAttempts: 2 }),
+                    update: jest.fn().mockResolvedValue({ autoFinalizeAttempts: recordedAttempts }),
+                },
+                system_setting: {
+                    findUnique: jest.fn().mockResolvedValue({ value: settingValue }),
                 },
             })),
         } as unknown as PrismaService;
@@ -431,13 +438,19 @@ describe("SbEformsignDocumentJobRepository", () => {
         );
 
         expect(transitioned).toEqual(expect.objectContaining({
-            autoFinalizeOutcomeAttempts: 2,
-            activeKey: null,
+            autoFinalizeOutcomeAttempts: recordedAttempts,
+            activeKey: expectedActiveKey,
         }));
         expect(executeRawInTransaction).toHaveBeenCalledTimes(2);
     });
 
-    it("retains the auto-finalize active key when the third terminal attempt is exhausted", async () => {
+    it.each([
+        ["missing", null, 2, null],
+        ["malformed", "{malformed", 3, "finalize:doc-1"],
+        ["noninteger", JSON.stringify({ maxAttempts: "5" }), 3, "finalize:doc-1"],
+        ["below-bound", JSON.stringify({ maxAttempts: 0 }), 1, "finalize:doc-1"],
+        ["above-bound", JSON.stringify({ maxAttempts: 99 }), 3, null],
+    ] as const)("uses the normalized cap for %s branch settings", async (_label, settingValue, recordedAttempts, expectedActiveKey) => {
         const executeRawInTransaction = jest.fn().mockResolvedValue(1);
         const queryRawInTransaction = jest.fn().mockResolvedValueOnce([row({
             job_type: "finalize_document",
@@ -447,12 +460,16 @@ describe("SbEformsignDocumentJobRepository", () => {
             active_key: "finalize:doc-1",
             lease_token: "00000000-0000-0000-0000-000000000099",
         })]);
+        const findUnique = jest.fn().mockResolvedValue({ value: settingValue });
         const prisma = {
             $transaction: jest.fn(async (operation: (tx: unknown) => Promise<unknown>) => operation({
                 $queryRaw: queryRawInTransaction,
                 $executeRaw: executeRawInTransaction,
                 eformsign_doc: {
-                    update: jest.fn().mockResolvedValue({ autoFinalizeAttempts: 3 }),
+                    update: jest.fn().mockResolvedValue({ autoFinalizeAttempts: recordedAttempts }),
+                },
+                system_setting: {
+                    findUnique,
                 },
             })),
         } as unknown as PrismaService;
@@ -465,9 +482,13 @@ describe("SbEformsignDocumentJobRepository", () => {
         );
 
         expect(transitioned).toEqual(expect.objectContaining({
-            autoFinalizeOutcomeAttempts: 3,
-            activeKey: "finalize:doc-1",
+            autoFinalizeOutcomeAttempts: recordedAttempts,
+            activeKey: expectedActiveKey,
         }));
+        expect(findUnique).toHaveBeenCalledWith({
+            where: { key: "branch:00000000-0000-0000-0000-000000000010:contract_automation:auto_finalize" },
+            select: { value: true },
+        });
     });
 
     it("recovers only pre-send progress to queued and reconciles possible sends", async () => {
