@@ -1,0 +1,102 @@
+--- a/backend/prisma/schema.prisma
++++ b/backend/prisma/schema.prisma
+@@ -103,6 +103,9 @@
+ }
+ 
+ model agent_session {
++  tasks          agent_task[]
++  taskEvents     agent_task_event[]
++
+   id               String           @id @default(dbgenerated("(gen_random_uuid())::text"))
+   userId           String           @map("user_id") @db.Uuid
+   branchId         String           @map("branch_id") @db.Uuid
+@@ -144,6 +147,12 @@
+ }
+ 
+ model agent_action {
++  taskId         String? @map("task_id")
++  taskRevision   Int? @map("task_revision")
++  task           agent_task? @relation(fields: [taskId], references: [id], onDelete: NoAction)
++
++  @@index([taskId], map: "idx_agent_action_task")
++
+   id                    String        @id @default(dbgenerated("(gen_random_uuid())::text"))
+   sessionId             String        @map("session_id")
+   userId                String        @map("user_id") @db.Uuid
+@@ -591,6 +600,9 @@
+ }
+ 
+ model branch {
++  agentTasks     agent_task[]
++  agentTaskEvents agent_task_event[]
++
+   id                            String                            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+   name                          String
+   slug                          String                            @unique
+@@ -742,6 +754,9 @@
+ }
+ 
+ model user {
++  agentTasks     agent_task[]
++  agentTaskEvents agent_task_event[]
++
+   id                            String                            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+   email                         String?                           @unique @db.VarChar
+   name                          String?                           @db.VarChar
+@@ -1543,3 +1558,56 @@
+   @@index([outcome, createdAt], map: "idx_eformsign_webhook_event_outcome_created")
+   @@index([createdAt], map: "idx_eformsign_webhook_event_created")
+ }
++
++
++/// Protected task draft; expiry clears draft JSON while ownership tombstones remain.
++model agent_task {
++  id             String @id @default(dbgenerated("(gen_random_uuid())::text"))
++  sessionId      String @map("session_id")
++  userId         String @map("user_id") @db.Uuid
++  branchId       String @map("branch_id") @db.Uuid
++  capabilityId   String @map("capability_id") @db.VarChar(100)
++  schemaVersion  Int @default(1) @map("schema_version")
++  revision       Int @default(1)
++  status         String @default("collecting") @db.VarChar(32)
++  activeSlot     Int? @map("active_slot")
++  draft          Json @default("{}")
++  targetRef      Json? @map("target_ref")
++  targetVersion  String? @map("target_version")
++  activeActionId String? @map("active_action_id")
++  lastAcceptedAt DateTime @default(now()) @map("last_accepted_at") @db.Timestamptz(6)
++  expiresAt      DateTime @map("expires_at") @db.Timestamptz(6)
++  terminalAt     DateTime? @map("terminal_at") @db.Timestamptz(6)
++  purgedAt       DateTime? @map("purged_at") @db.Timestamptz(6)
++  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
++  updatedAt      DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
++  session        agent_session @relation(fields: [sessionId], references: [id], onDelete: Cascade)
++  user           user @relation(fields: [userId], references: [id], onDelete: Cascade)
++  branch         branch @relation(fields: [branchId], references: [id], onDelete: Cascade)
++  actions        agent_action[]
++
++  @@unique([sessionId, activeSlot], map: "uq_agent_task_session_active_slot")
++  @@index([userId, branchId, sessionId], map: "idx_agent_task_owner_session")
++  @@index([expiresAt, purgedAt], map: "idx_agent_task_expiry")
++}
++
++/// Minimal acceptance receipt, with no request body or sensitive value copies.
++model agent_task_event {
++  id               String @id @default(dbgenerated("(gen_random_uuid())::text"))
++  sessionId        String @map("session_id")
++  userId           String @map("user_id") @db.Uuid
++  branchId         String @map("branch_id") @db.Uuid
++  clientEventId    String @map("client_event_id") @db.VarChar(100)
++  taskId           String @map("task_id")
++  operation        String @db.VarChar(40)
++  requestHash      String @map("request_hash") @db.VarChar(64)
++  acceptedRevision Int @map("accepted_revision")
++  resultActionId   String? @map("result_action_id")
++  acceptedAt       DateTime @default(now()) @map("accepted_at") @db.Timestamptz(6)
++  session          agent_session @relation(fields: [sessionId], references: [id], onDelete: Cascade)
++  user             user @relation(fields: [userId], references: [id], onDelete: Cascade)
++  branch           branch @relation(fields: [branchId], references: [id], onDelete: Cascade)
++
++  @@unique([userId, branchId, sessionId, clientEventId], map: "uq_agent_task_event_owner_session_event")
++  @@index([taskId, acceptedAt], map: "idx_agent_task_event_task_accepted")
++}

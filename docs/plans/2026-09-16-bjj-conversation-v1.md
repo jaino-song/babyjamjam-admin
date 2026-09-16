@@ -2,7 +2,7 @@
 
 ## Authority and delivery boundary
 
-The user approved the detailed implementation plan on 2026-09-16 and requested implementation, including its additive schema, shared build configuration and evaluation-only provider dependency changes. Source: [implementation plan](https://app.notion.com/p/3dd0b0492434814a9585c7a93eddcf30) and [PRD](https://app.notion.com/p/3dd0b0492434815b8766c0cd621b4b68), superseded by the explicit decisions below.
+The user approved the detailed implementation plan on 2026-09-16 and requested implementation. Its section 3 retains a concrete pre-change confirmation for additive schema, shared build configuration and new evaluation dependencies. Source: [implementation plan](https://app.notion.com/p/3dd0b0492434814a9585c7a93eddcf30) and [PRD](https://app.notion.com/p/3dd0b0492434815b8766c0cd621b4b68), superseded by the explicit decisions below.
 
 - Base: `dev`, `4198fb991a59d63f14f529f54b1d66c1587ca76b`; remote synchronization confirmed at start.
 - Integration: `codex/bjj-conversation-v1`, sibling worktree `bjj-conversation-v1`.
@@ -38,7 +38,7 @@ The user approved the detailed implementation plan on 2026-09-16 and requested i
 | Phase | Deliverable | State | Integration SHA / verification |
 | --- | --- | --- | --- |
 | 0 | Baseline, policies, ADR | complete | base above; ADR-013; 121 existing unit tests passed |
-| 1 | Shared contracts + 48-case evaluator (parallel) | pending | |
+| 1 | Shared contracts + 48-case evaluator (parallel) | in progress | start: 83ea2c57a1019138c2afe960c6cb6f6ffcdab55a; SOL brief review APPROVE |
 | 2 | Additive persistence + evaluation providers (parallel) | pending | |
 | 3 | Task create/read/patch, protected inputs, replay | pending | |
 | 4 | Commands, retention, session lifecycle | pending | |
@@ -70,7 +70,10 @@ Every dependent phase starts from a committed, verified integration SHA. Indepen
 - Vault lookup was attempted and failed with missing `@covenant-labs/vault-contracts`; no Vault files changed.
 - Plan independent review: APPROVE after explicit retention/replay/consent/policy corrections. This is a plan review, not an implementation audit.
 - Existing `action-coordinator.service.spec.ts` and `client-write-agent-capabilities.provider.spec.ts`: 2 suites / 121 tests passed. Logged assignment-refresh failures are expected injected negative paths. These baseline tests do not establish the new task behavior.
-- Prisma client generation passed without connecting to or migrating a database. Docker is unavailable on this host; isolated database verification requires a local PostgreSQL substrate before Phase 2/6 close.
+- Prisma client generation passed. Docker is unavailable; an isolated ephemeral PostgreSQL 16.13 cluster was instead started on 127.0.0.1:55433. All 70 existing migrations applied successfully to its empty test database, with both Prisma URL variables explicitly pointing there. No operational database was used.
+- Phase 1 unit worktrees have independent frozen dependency installs and env-bootstrap. Shared build configuration/vendor changes are held pending the concrete confirmation; contract logic and evaluation work continue.
+- Prepared [additive schema preview](./2026-09-16-agent-task-schema-preview.diff). Event task IDs deliberately have no cascading task foreign key, so an expired/purged task cannot erase the replay evidence while its owning session exists. Task data is purged separately from its minimal ownership tombstone.
+- The preview validates with Prisma 6.19.2. Existing migration history compared to the unchanged checked-in schema using a separate local shadow database: no difference detected. The preview has not been applied to the product schema or database.
 
 ## Final acceptance and deferred gates
 
