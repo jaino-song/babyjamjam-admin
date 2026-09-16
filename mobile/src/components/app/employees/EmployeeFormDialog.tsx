@@ -1,4 +1,5 @@
 "use client";
+import { isValidBirthdayIsoDate, normalizeBirthdayIsoDate } from "@babyjamjam/shared/utils/birthday";
 import {
     getUserErrorMessage,
     normalizeApiError,
@@ -223,7 +224,7 @@ export function EmployeeFormDialog({
                 phone: employee.phone,
                 grade: normalizeEmployeeGrade(employee.grade),
                 openToNextWork: employee.openToNextWork,
-                birthday: employee.birthday ?? "",
+                birthday: normalizeBirthdayIsoDate(employee.birthday) ?? employee.birthday ?? "",
             }
             : {
                 ...initialFormData,
@@ -368,6 +369,11 @@ export function EmployeeFormDialog({
         }
         if (!isPhoneDuplicateCheckReady) {
             setError({ message: getUserErrorMessage(getPhoneDuplicateCheckPendingMessage(locale)), fieldErrors: [] });
+            return;
+        }
+
+        if (formData.birthday && !isValidBirthdayIsoDate(formData.birthday)) {
+            setError({ message: t(locale, "clients.form.error-birthday-required"), fieldErrors: [] });
             return;
         }
 

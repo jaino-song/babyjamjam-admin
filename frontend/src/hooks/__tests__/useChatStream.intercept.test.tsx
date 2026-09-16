@@ -70,7 +70,7 @@ describe("useChatStream command intercept", () => {
                 type: "clientRegistrationWizard",
                 registrationDraft: expect.objectContaining({
                     name: "홍길동",
-                    birthday: "900101",
+                    birthday: "1990-01-01",
                     address: expect.stringContaining("인천 연수구"),
                 }),
             }),

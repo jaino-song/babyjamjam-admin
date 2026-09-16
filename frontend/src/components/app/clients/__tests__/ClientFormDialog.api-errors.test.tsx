@@ -61,7 +61,7 @@ const flushOpenEffect = async () => {
 
 const fillRequiredFields = () => {
   fireEvent.change(screen.getByLabelText(/이름/), { target: { value: "홍길동" } });
-  fireEvent.change(screen.getByLabelText(/생년월일/), { target: { value: "900101" } });
+  fireEvent.change(screen.getByLabelText(/생년월일/), { target: { value: "1990-01-01" } });
   fireEvent.change(screen.getByLabelText(/주소/), { target: { value: "서울시 강남구" } });
   fireEvent.change(screen.getByLabelText(/연락처/), { target: { value: "01012345678" } });
 };
@@ -144,7 +144,7 @@ describe("ClientFormDialog API errors", () => {
           onClose={jest.fn()}
           prefill={{
             name: "홍길동",
-            birthday: "900101",
+            birthday: "1990-01-01",
             address: "서울시 강남구",
             phone: "01012345678",
           }}

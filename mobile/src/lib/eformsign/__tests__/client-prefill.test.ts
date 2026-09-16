@@ -33,6 +33,15 @@ function documentWithFields(fields: unknown[]): EformsignDocument {
 }
 
 describe("buildClientEditPrefillFromEformsignDocument", () => {
+  it.each([
+    ["1905-01-01", "1905-01-01"],
+    ["1958년 3월 3일", "1958-03-03"],
+    ["580303", "1958-03-03"],
+  ])("preserves the birthday century when prefilling %s", (birthday, expected) => {
+    const doc = documentWithFields([{ id: "이용자 생년월일", value: birthday }]);
+    expect(buildClientEditPrefillFromEformsignDocument(doc).birthday).toBe(expected);
+  });
+
   it("extracts client service settings from eformsign fields", () => {
     const doc = documentWithFields([
       { id: "바우처 유형", value: "A통합-3형" },

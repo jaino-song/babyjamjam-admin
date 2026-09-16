@@ -1,4 +1,4 @@
-import { normalizeContractBirthday } from "@babyjamjam/shared/utils/birthday";
+import { normalizeBirthdayIsoDate } from "@babyjamjam/shared/utils/birthday";
 import { Prisma } from "@prisma/client";
 
 import {
@@ -498,7 +498,7 @@ export function extractEformsignContractClientPrefillCandidate(
             "customerAddress",
             "clientAddress",
         ]),
-        birthday: normalizeContractBirthday(eformsignDocumentFieldValue(document, [
+        birthday: normalizeBirthdayIsoDate(eformsignDocumentFieldValue(document, [
             "이용자 생년월일",
             "이용자생년월일",
             "고객 생년월일",

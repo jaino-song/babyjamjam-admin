@@ -1,4 +1,5 @@
 "use client";
+import { formatBirthdayInput, isValidBirthdayIsoDate } from "@babyjamjam/shared/utils/birthday";
 import { getUserErrorMessage } from "@babyjamjam/shared";
 
 
@@ -251,6 +252,10 @@ export function ClientNewForm() {
   };
 
   const validateStep = (step: number): boolean => {
+    if (store.birthday && !isValidBirthdayIsoDate(store.birthday)) {
+      setError(t(locale, "clients.form.error-birthday-required"));
+      return false;
+    }
     switch (step) {
       case 0:
         if (!store.name.trim()) {
@@ -367,10 +372,10 @@ export function ClientNewForm() {
                 data-component="desktop_clients-new_basic_birthday-input"
                 type="text"
                 value={store.birthday}
-                onChange={(event) => setField("birthday", event.target.value)}
+                onChange={(event) => setField("birthday", formatBirthdayInput(event.target.value))}
                 inputMode="numeric"
-                placeholder="YYMMDD"
-                maxLength={6}
+                placeholder="YYYY-MM-DD"
+                maxLength={10}
               />
             </FormField>
             <FormField data-component="desktop_clients-new_basic_due-date-field" label={t(locale, "clients.form.due-date")}>

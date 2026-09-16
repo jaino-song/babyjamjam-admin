@@ -111,7 +111,7 @@ describe("EmployeeWriteAgentCapabilitiesProvider", () => {
         expect(findEmployee.execute).not.toHaveBeenCalled();
     });
 
-    it.each(["900101", "000229", "240229", "991231"])("accepts calendar-valid YYMMDD birthday %s", (birthday) => {
+    it.each(["1958-03-03", "1905-01-01", "2005-01-01", "2000-02-29", "2024-02-29", "1999-12-31"])("accepts calendar-valid YYYY-MM-DD birthday %s", (birthday) => {
         const { capabilities } = setup(null);
         const create = capabilities.find((entry) => entry.meta.name === "employees.create")!;
         const update = capabilities.find((entry) => entry.meta.name === "employees.update")!;
@@ -126,7 +126,7 @@ describe("EmployeeWriteAgentCapabilitiesProvider", () => {
         expect(update.inputSchema.safeParse({ id: 7, birthday })).toEqual(expect.objectContaining({ success: true }));
     });
 
-    it.each(["1990-01-01", "90010", "9001011", "90A101", "901300", "900231", "230229"])("rejects malformed or impossible birthday %j", (birthday) => {
+    it.each(["900101", "1900-02-29", "2005-02-29", "2058-03-03", "90010", "9001011", "90A101", "901300", "900231", "230229"])("rejects malformed or impossible birthday %j", (birthday) => {
         const { capabilities } = setup(null);
         const create = capabilities.find((entry) => entry.meta.name === "employees.create")!;
         const update = capabilities.find((entry) => entry.meta.name === "employees.update")!;
@@ -146,7 +146,7 @@ describe("EmployeeWriteAgentCapabilitiesProvider", () => {
         const { createEmployee, updateEmployee, findEmployee, prisma, capabilities } = setup(employee);
         const create = capabilities.find((entry) => entry.meta.name === "employees.create")!;
         const update = capabilities.find((entry) => entry.meta.name === "employees.update")!;
-        const createInput = { name: "김길동", workArea: ["서울"], phone: "01012345678", grade: "프리미엄", birthday: "1990-01-01" };
+        const createInput = { name: "김길동", workArea: ["서울"], phone: "01012345678", grade: "프리미엄", birthday: "1990-02-30" };
         const updateInput = { id: 7, birthday: "900231" };
 
         await expect(create.execute(context, createInput)).rejects.toThrow();
@@ -161,17 +161,17 @@ describe("EmployeeWriteAgentCapabilitiesProvider", () => {
         expect(findEmployee.execute).not.toHaveBeenCalled();
     });
 
-    it("describes birthday input as numeric YYMMDD text in create and update forms", () => {
+    it("describes birthday input as YYYY-MM-DD dates in create and update forms", () => {
         const { capabilities } = setup(null);
         const create = capabilities.find((entry) => entry.meta.name === "employees.create")!;
         const update = capabilities.find((entry) => entry.meta.name === "employees.update")!;
         const expectedBirthdayField = expect.objectContaining({
             name: "birthday",
             label: "생년월일",
-            type: "text",
+            type: "date",
             inputMode: "numeric",
-            placeholder: "YYMMDD",
-            maxLength: 6,
+            placeholder: "YYYY-MM-DD",
+            maxLength: 10,
         });
 
         expect(create.formFields).toEqual(expect.arrayContaining([expectedBirthdayField]));

@@ -1,4 +1,5 @@
 "use client";
+import { formatBirthdayInput, isValidBirthdayIsoDate, normalizeBirthdayIsoDate } from "@babyjamjam/shared/utils/birthday";
 import {
     normalizeApiError,
     resolveProblemPresentation,
@@ -487,7 +488,7 @@ function EmployeeFormContent({
                 phone: employee.phone,
                 grade: normalizeEmployeeGrade(employee.grade),
                 openToNextWork: employee.openToNextWork,
-                birthday: employee.birthday ?? "",
+                birthday: normalizeBirthdayIsoDate(employee.birthday) ?? employee.birthday ?? "",
             }
             : {
                 ...initialFormData,
@@ -539,6 +540,11 @@ function EmployeeFormContent({
         setTouched({ phone: true, workArea: true });
         setError(null);
         if (!formData.name.trim() || !isPhoneValid || !isWorkAreaValid) {
+            return;
+        }
+
+        if (formData.birthday && !isValidBirthdayIsoDate(formData.birthday)) {
+            setError({ message: t(locale, "clients.form.error-birthday-required"), fieldErrors: [] });
             return;
         }
 
@@ -818,14 +824,14 @@ function EmployeeFormContent({
                     <FormField
                         data-component="desktop_employees_form-dialog_section-basic_grid_field-birthday"
                         htmlFor="birthday"
-                        label="생년월일 (YYMMDD)"
+                        label="생년월일 (YYYY-MM-DD)"
                     >
                         <FormTextInput
                             id="birthday"
                             value={formData.birthday}
-                            onChange={(e) => handleChange("birthday", e.target.value)}
-                            placeholder="YYMMDD"
-                            maxLength={6}
+                            onChange={(e) => handleChange("birthday", formatBirthdayInput(e.target.value))}
+                            placeholder="YYYY-MM-DD"
+                            maxLength={10}
                             inputMode="numeric"
                         />
                     </FormField>
@@ -993,14 +999,15 @@ function EmployeeFormContent({
             <FormField
                 data-component="desktop_employees_form-panel_birthday-field"
                 htmlFor="employee-panel-birthday"
-                label="생년월일 (YYMMDD)"
+                label="생년월일 (YYYY-MM-DD)"
             >
                 <FormTextInput
                     id="employee-panel-birthday"
                     value={formData.birthday}
-                    onChange={(event) => handleChange("birthday", event.target.value)}
-                    placeholder="YYMMDD"
-                    maxLength={6}
+                    onChange={(event) => handleChange("birthday", formatBirthdayInput(event.target.value))}
+                    placeholder="YYYY-MM-DD"
+                    inputMode="numeric"
+                    maxLength={10}
                     data-component="desktop_employees_form-panel_birthday-field_input"
                 />
             </FormField>
