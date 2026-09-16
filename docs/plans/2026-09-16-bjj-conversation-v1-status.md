@@ -10,7 +10,7 @@ Integration: `codex/bjj-conversation-v1`. This status distinguishes local implem
 | 2 — persistence and provider evaluation adapters | Closed | Additive migration compatibility, real local DB, mock provider contracts; SOL SHIP |
 | 3 — owned draft APIs | Closed | Authenticated HTTP/DB replay, conflicts and scope tests; SOL SHIP |
 | 4 — lifecycle and retention | Closed | Source `3b094cdfa13b20f1c08762b916c2f2f20ffcef9c`; shared23, backend436, DB/HTTP73; SOL SHIP/HIGH |
-| 5 — conversation intake and context | Corrections in progress | Initial unit `ca6f89b550fd48356e59762126043c5607f1d612` passed shared25/backend470; actual product driver and executable conversation DB tests are still required before integration and FINAL review |
+| 5 — conversation intake and context | FINAL corrections in progress | Integrated `143d6870424a224b1148df12499a398529ddac9d` passed shared 25/backend 471/DB group 82; independent review returned FIX_REQUIRED/HIGH with eight blocking findings and a real authenticated chat verification gap |
 | 6 — atomic task/action approval | Not implemented | Preparation includes inactive-session recovery and its terminal-retention cleanup guard |
 | 7 — client writes and automation consent | Not implemented | Consent must survive intent materialization and temporary-task purge through actual dispatch/retry |
 | 8 — desktop and mobile | Not implemented | Both renderers, protected forms and authenticated browser QA pending |
@@ -18,15 +18,24 @@ Integration: `codex/bjj-conversation-v1`. This status distinguishes local implem
 
 ## Latest integrated verification
 
-Both the frozen Phase4 unit and integration passed shared23 tests, backend436 tests, guarded PostgreSQL/full-AppModule HTTP73 tests, shared/backend/frontend/mobile types, backend build, capability manifest47, generated-vendor checks and diff check. Backend lint has0 errors and93 existing warnings, with0 warnings in Phase4 changed files. Local CI discovery proves a disjoint complete partition of3 task suites and3 other agent suites. Hosted CI was not run.
+At Phase5 source `143d6870424a224b1148df12499a398529ddac9d`, shared 25 tests and cumulative backend 471 tests passed. The guarded PostgreSQL/HTTP group passed 82 tests across seven suites. Earlier suites include real AppModule checks; the new conversation suite uses a reduced module with overridden guards and is not authenticated chat proof. Shared/backend/frontend/mobile types, backend build, capability manifest (47), generated and installed vendor parity (31 files), and diff checks passed. Backend lint has 0 errors and 93 existing warnings, with 0 warnings in Phase5 changed files. Local CI discovery proves a disjoint complete partition of four task suites and three other agent suites. Hosted CI was not run.
 
 ## Phase5 verification and open corrections
 
-The initial unit passed shared25 tests, backend470 tests, all app type checks, backend build, capability manifest47, exact installed parity for31 generated vendor files, and diff check. Full backend lint has0 errors,93 baseline warnings and0 warnings in changed files. These are unit results; this code has not been integrated or approved by FINAL review.
+The real runtime driver and executable conversation tests were added and integrated. The independent Sol FINAL review nevertheless found eight blockers:
 
-The guarded DB/HTTP run passed the existing73 tests, but the new conversation suite was skipped. Its single test only checked schema/import wiring. The additional `AGENT_CONVERSATION_E2E` gate is being removed and the suite is being replaced with actual persistence, replay, conversion and rollback tests under the established isolated DB guard. Local CI discovery correctly includes all7 suites (4 task,3 other).
+1. Recognized name/address values can reach the optional capability classifier before protected-intake masking.
+2. An unrelated routed message can create a registration task from a labelled fact.
+3. Exact replay can return an expired task instead of `410`.
+4. Model references and destructive corrections lack current-turn and same-field authority.
+5. Existing-task question retries do not obtain a canonical receipt and can duplicate persisted input.
+6. Conversion must abort every post-write refusal, and rollback tests must invoke the actual service command.
+7. The product adapter omits available Phase5 observations, while missing fields can hide observed mismatches in the evaluator.
+8. A unique customer search hit lacks a selectable protected task reference.
 
-The reported evaluation command still ran the existing synthetic harness (48/48, zero network). The new product adapter had an optional driver interface but no real runtime driver. A deterministic host invoking the actual conversation/task services and an explicit product-mode command are being implemented. Harness results are not product-runtime evidence.
+These corrections are underway in the isolated Phase5 unit. A guarded real-AppModule chat test with actual JWT/TenantGuard authorization is also required. Passing the existing tests does not close these gaps.
+
+The explicit product CLI now invokes real runtime/task services. Both ordinary and process-network-denied runs reported 0 passed, 0 failed, 48 not evaluated, with zero network/transport calls. This is not an acceptance score: available state observations and mismatch precedence must be corrected before the evaluator can provide useful Phase5 evidence. The separate synthetic harness result remains 48/48 and does not establish product correctness.
 
 At2026-09-17 06:29 KST, new read-only DeepSeek exploration failed with provider402/insufficient balance. No fallback model or scout role was selected. Known, already-scoped Phase5 corrections continue; new multi-file exploration awaits provider restoration. This does not invalidate completed code/test evidence.
 
