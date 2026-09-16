@@ -69,10 +69,6 @@ function taskRecord(overrides: Partial<TaskRecordFixture> = {}): TaskRecordFixtu
     };
 }
 
-function makeTaskRecord(): TaskRecordFixture {
-    return taskRecord();
-}
-
 interface EventRecordFixture {
     id: string;
     sessionId: string;
@@ -102,10 +98,6 @@ function eventRecord(overrides: Partial<EventRecordFixture> = {}): EventRecordFi
         acceptedAt: new Date("2026-09-16T00:00:01.000Z"),
         ...overrides,
     };
-}
-
-function makeEventRecord(): EventRecordFixture {
-    return eventRecord();
 }
 
 function sessionLockRow() {

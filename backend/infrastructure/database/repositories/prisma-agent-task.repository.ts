@@ -139,11 +139,6 @@ function cloneJsonObject(value: unknown): Record<string, unknown> {
     return JSON.parse(JSON.stringify(value)) as Record<string, unknown>;
 }
 
-function requireString(value: unknown): string {
-    if (typeof value !== "string" || value.length === 0) throw new InvalidAgentTaskStorageError();
-    return value;
-}
-
 function requireReference(value: unknown): string {
     const parsed = AgentTaskReferenceSchema.safeParse(value);
     if (!parsed.success) throw new InvalidAgentTaskStorageError();
