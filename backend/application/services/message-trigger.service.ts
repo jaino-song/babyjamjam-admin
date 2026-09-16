@@ -1732,24 +1732,6 @@ export class MessageTriggerService {
         client: ClientTriggerSource,
     ): Record<string, string> {
         switch (rule.templateKey) {
-            case MessageTriggerTemplateKey.CLIENT_WELCOME:
-                return {
-                    clientName: client.name,
-                    registrationDate: this.formatDate(client.createdAt ?? null),
-                    serviceType: client.type ?? "방문요양",
-                };
-            case MessageTriggerTemplateKey.SERVICE_START_REMINDER:
-                return {
-                    clientName: client.name,
-                    serviceStartDate: this.formatDate(client.startDate),
-                    timingText: this.describeTiming(rule, "서비스 시작"),
-                };
-            case MessageTriggerTemplateKey.SERVICE_END_REMINDER:
-                return {
-                    clientName: client.name,
-                    serviceEndDate: this.formatDate(client.endDate),
-                    timingText: this.describeTiming(rule, "서비스 종료"),
-                };
             case MessageTriggerTemplateKey.PRICE_INFO:
                 // PRICE_INFO is the only SMS template that renders price/bank fields,
                 // so it is the only one that carries them into the job payload (data minimization).

@@ -118,7 +118,7 @@ describe("MessageTriggerService", () => {
             overrides.offsetType ?? MessageTriggerOffsetType.IMMEDIATE,
             overrides.offsetDays ?? 0,
             overrides.recipientType ?? MessageTriggerRecipientType.CLIENT,
-            overrides.templateKey ?? MessageTriggerTemplateKey.CLIENT_WELCOME,
+            overrides.templateKey ?? MessageTriggerTemplateKey.CLIENT_GREETING,
             overrides.createdAt ?? new Date("2026-06-01T00:00:00.000Z"),
             overrides.updatedAt ?? new Date("2026-06-01T00:00:00.000Z"),
             overrides.isDefault ?? false,
@@ -1091,7 +1091,11 @@ describe("MessageTriggerService", () => {
             offsetType: MessageTriggerOffsetType.IMMEDIATE,
             recipientType: MessageTriggerRecipientType.CLIENT,
             templateKey,
-        })).rejects.toThrow("일반 자동 전송 규칙에서 사용할 수 없는 템플릿입니다.");
+        })).rejects.toThrow(
+            templateKey === MessageTriggerTemplateKey.SERVICE_RECORD_LINK
+                ? "일반 자동 전송 규칙에서 사용할 수 없는 템플릿입니다."
+                : "SMS 발송 채널이 없는 템플릿입니다.",
+        );
         expect(ruleRepository.create).not.toHaveBeenCalled();
     });
 

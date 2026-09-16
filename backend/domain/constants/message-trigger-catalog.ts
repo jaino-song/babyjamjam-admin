@@ -36,6 +36,25 @@ export enum MessageTriggerTemplateKey {
     SERVICE_END_NOTICE = "SERVICE_END_NOTICE",
 }
 
+/**
+ * Persisted rules and jobs may still contain these keys. Keep the wire values
+ * readable, but never expose or deliver them as active templates.
+ */
+export const RETIRED_FIXED_EVENT_TEMPLATE_KEYS = [
+    MessageTriggerTemplateKey.CLIENT_WELCOME,
+    MessageTriggerTemplateKey.SERVICE_START_REMINDER,
+    MessageTriggerTemplateKey.SERVICE_END_REMINDER,
+    MessageTriggerTemplateKey.EMPLOYEE_ASSIGNED,
+] as const;
+
+export function isRetiredFixedEventTemplate(
+    templateKey: MessageTriggerTemplateKey,
+): boolean {
+    return RETIRED_FIXED_EVENT_TEMPLATE_KEYS.includes(
+        templateKey as (typeof RETIRED_FIXED_EVENT_TEMPLATE_KEYS)[number],
+    );
+}
+
 /** Templates whose variables and recipient can be produced by the generic rule engine. */
 export const CONFIGURABLE_SMS_TRIGGER_TEMPLATE_KEYS: readonly MessageTriggerTemplateKey[] = [
     MessageTriggerTemplateKey.SERVICE_INFO,
@@ -129,9 +148,7 @@ export const MESSAGE_TRIGGER_TEMPLATE_CATALOG: Record<
             { key: "registrationDate", label: "등록일" },
             { key: "serviceType", label: "서비스 타입" },
         ],
-        providers: {
-            sms: { templateKey: "CLIENT_WELCOME" },
-        },
+        providers: {},
     },
     [MessageTriggerTemplateKey.SERVICE_START_REMINDER]: {
         key: MessageTriggerTemplateKey.SERVICE_START_REMINDER,
@@ -144,9 +161,7 @@ export const MESSAGE_TRIGGER_TEMPLATE_CATALOG: Record<
             { key: "serviceStartDate", label: "서비스 시작일" },
             { key: "timingText", label: "발송 기준 문구" },
         ],
-        providers: {
-            sms: { templateKey: "SERVICE_START_REMINDER" },
-        },
+        providers: {},
     },
     [MessageTriggerTemplateKey.SERVICE_INFO]: {
         key: MessageTriggerTemplateKey.SERVICE_INFO,
@@ -172,9 +187,7 @@ export const MESSAGE_TRIGGER_TEMPLATE_CATALOG: Record<
             { key: "serviceEndDate", label: "서비스 종료일" },
             { key: "timingText", label: "발송 기준 문구" },
         ],
-        providers: {
-            sms: { templateKey: "SERVICE_END_REMINDER" },
-        },
+        providers: {},
     },
     [MessageTriggerTemplateKey.EMPLOYEE_ASSIGNED]: {
         key: MessageTriggerTemplateKey.EMPLOYEE_ASSIGNED,
@@ -190,9 +203,7 @@ export const MESSAGE_TRIGGER_TEMPLATE_CATALOG: Record<
             { key: "clientName", label: "고객명" },
             { key: "serviceStartDate", label: "서비스 시작일" },
         ],
-        providers: {
-            sms: { templateKey: "EMPLOYEE_ASSIGNED" },
-        },
+        providers: {},
     },
     [MessageTriggerTemplateKey.SERVICE_RECORD_LINK]: {
         key: MessageTriggerTemplateKey.SERVICE_RECORD_LINK,

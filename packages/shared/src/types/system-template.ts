@@ -17,10 +17,6 @@ import { z } from "zod";
 // string while Raw* variants retain Date for backend-reference parity.
 
 export const SYSTEM_TEMPLATE_KEYS = [
-  'CLIENT_WELCOME',
-  'SERVICE_START_REMINDER',
-  'SERVICE_END_REMINDER',
-  'EMPLOYEE_ASSIGNED',
   'PRICE_INFO',
   'GREETING',
   'THANKS',
@@ -51,10 +47,6 @@ export type SystemTemplateDeliveryMode = (typeof SYSTEM_TEMPLATE_DELIVERY_MODES)
  * delivery path a compile-time error instead of silently falling back to SMS.
  */
 export const SYSTEM_TEMPLATE_DELIVERY_MODES_BY_KEY = {
-  CLIENT_WELCOME: "sms",
-  SERVICE_START_REMINDER: "sms",
-  SERVICE_END_REMINDER: "sms",
-  EMPLOYEE_ASSIGNED: "sms",
   PRICE_INFO: "sms",
   GREETING: "sms",
   THANKS: "sms",
