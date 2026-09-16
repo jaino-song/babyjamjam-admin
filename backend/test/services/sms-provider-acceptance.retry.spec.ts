@@ -65,8 +65,9 @@ describe("SMS provider acceptance and retry boundary", () => {
             startRetryAttempt: jest.fn().mockImplementation(async (
                 _sourceLog: MessageLogEntity,
                 draft: MessageLogEntity,
-            ) =>
-                MessageLogEntity.reconstitute(
+            ) => ({
+                kind: "started" as const,
+                log: MessageLogEntity.reconstitute(
                     78,
                     draft.branchId,
                     draft.provider,
@@ -95,7 +96,7 @@ describe("SMS provider acceptance and retry boundary", () => {
                     draft.providerReconciledBy,
                     draft.providerReconciliationReason,
                 ),
-            ),
+            })),
         };
         return repository;
     };

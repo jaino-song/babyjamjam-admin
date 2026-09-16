@@ -254,6 +254,7 @@ model client {
   birthday               String?                   @db.VarChar(6)
   breastPump             Boolean                   @default(false) @map("breast_pump")
   serviceStatus          String?                   @map("service_status")
+  serviceEndNoticeSentAt DateTime?                 @map("service_end_notice_sent_at") @db.Timestamptz(6)
   eDocId                 String?                   @unique @map("e_doc_id")
   dueDate                DateTime?                 @map("due_date") @db.Date
   birthDate              DateTime?                 @map("birth_date") @db.Date

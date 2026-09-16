@@ -55,6 +55,7 @@ import {
 } from "domain/repositories/message-trigger-rule-branch-override.repository.interface";
 import { isRuleActiveForBranch } from "domain/utils/message-trigger-rule-activation";
 import { SERVICE_RECORD_LINK_BRANCH_DISABLED_REASON, SERVICE_RECORD_LINK_SCHEDULING_RETRY_REASON } from "domain/constants/service-record-link-message";
+import { SERVICE_END_NOTICE_ALREADY_SENT_CANCEL_REASON } from "domain/constants/service-end-notice-message";
 import {
     MESSAGE_TRIGGER_JOB_REPOSITORY,
     IMessageTriggerJobRepository,
@@ -75,6 +76,7 @@ import { normalizePhone } from "application/utils/normalize-phone";
 import { SystemSettingService } from "./system-setting.service";
 import { SystemTemplateService } from "./system-template.service";
 import { MessageTemplateAutomationLockService } from "./message-template-automation-lock.service";
+import { MANUAL_DEDUPE_MARKER } from "./receipt-link-delivery-enricher.service";
 import {
     DEFAULT_MESSAGE_AUTOMATION_PAST_TRIGGER_CONFIG,
     MessageAutomationPastTriggerConfig,
@@ -260,6 +262,7 @@ interface ClientTriggerSource {
     type: string | null;
     startDate: Date | null;
     endDate: Date | null;
+    serviceEndNoticeSentAt: Date | null;
     createdAt?: Date | null;
     duration?: number | null;
     fullPrice?: string | null;
@@ -1004,6 +1007,7 @@ export class MessageTriggerService {
                 type: true,
                 startDate: true,
                 endDate: true,
+                serviceEndNoticeSentAt: true,
                 duration: true,
                 fullPrice: true,
                 grant: true,
@@ -1425,6 +1429,7 @@ export class MessageTriggerService {
                 type: true,
                 startDate: true,
                 endDate: true,
+                serviceEndNoticeSentAt: true,
                 duration: true,
                 fullPrice: true,
                 grant: true,
@@ -1618,6 +1623,12 @@ export class MessageTriggerService {
         client: ClientTriggerSource,
     ): MessageTriggerJobEntity | null {
         if (!client.phone) return null;
+        if (
+            rule.templateKey === MessageTriggerTemplateKey.SERVICE_END_NOTICE
+            && client.serviceEndNoticeSentAt !== null
+        ) {
+            return null;
+        }
 
         const anchorDate = this.getClientAnchorDate(rule.eventType, client);
         if (!anchorDate) return null;
@@ -1721,24 +1732,6 @@ export class MessageTriggerService {
         client: ClientTriggerSource,
     ): Record<string, string> {
         switch (rule.templateKey) {
-            case MessageTriggerTemplateKey.CLIENT_WELCOME:
-                return {
-                    clientName: client.name,
-                    registrationDate: this.formatDate(client.createdAt ?? null),
-                    serviceType: client.type ?? "방문요양",
-                };
-            case MessageTriggerTemplateKey.SERVICE_START_REMINDER:
-                return {
-                    clientName: client.name,
-                    serviceStartDate: this.formatDate(client.startDate),
-                    timingText: this.describeTiming(rule, "서비스 시작"),
-                };
-            case MessageTriggerTemplateKey.SERVICE_END_REMINDER:
-                return {
-                    clientName: client.name,
-                    serviceEndDate: this.formatDate(client.endDate),
-                    timingText: this.describeTiming(rule, "서비스 종료"),
-                };
             case MessageTriggerTemplateKey.PRICE_INFO:
                 // PRICE_INFO is the only SMS template that renders price/bank fields,
                 // so it is the only one that carries them into the job payload (data minimization).
@@ -2268,6 +2261,14 @@ export class MessageTriggerService {
         job: MessageTriggerJobEntity,
     ): Promise<PreProviderSendFenceResult> {
         return this.prisma.$transaction(async (transaction) => {
+            const serviceEndNoticeFence = await this.fenceServiceEndNoticeBeforeProviderSend(
+                job,
+                transaction,
+            );
+            if (serviceEndNoticeFence.kind !== "allow") {
+                return serviceEndNoticeFence;
+            }
+
             const revisionFence = await this.fenceServiceRecordRevisionBeforeProviderSend(
                 job,
                 transaction,
@@ -2335,6 +2336,12 @@ export class MessageTriggerService {
         preparation?: SmsTriggerDeliveryPreparation,
     ): Promise<PreProviderSendFenceResult> {
         return this.prisma.$transaction(async (transaction) => {
+            const serviceEndNoticeFence = await this.fenceServiceEndNoticeBeforeProviderSend(
+                job,
+                transaction,
+            );
+            if (serviceEndNoticeFence.kind === "lost") return serviceEndNoticeFence;
+
             // Revised service-record messages carry a server-derived context.
             // Acquire the same client-owned lock set before the job row and
             // compare that context after the lock. This keeps a confirm that
@@ -2369,7 +2376,9 @@ export class MessageTriggerService {
                 ? sourceFence
                 : revisionFence.kind === "stale"
                     ? revisionFence
-                    : null;
+                    : serviceEndNoticeFence.kind === "stale"
+                        ? serviceEndNoticeFence
+                        : null;
             if (staleFence) {
                 const canceled = await transaction.$queryRaw<Array<{ id: string }>>(Prisma.sql`
                     UPDATE "message_trigger_job"
@@ -2400,6 +2409,36 @@ export class MessageTriggerService {
             maxWait: CLAIM_DISPATCH_AUTHORIZATION_TIMEOUT_MS,
             timeout: CLAIM_DISPATCH_AUTHORIZATION_TIMEOUT_MS,
         });
+    }
+
+    private async fenceServiceEndNoticeBeforeProviderSend(
+        job: MessageTriggerJobEntity,
+        transaction: Prisma.TransactionClient,
+    ): Promise<PreProviderSendFenceResult> {
+        if (
+            job.templateKey !== MessageTriggerTemplateKey.SERVICE_END_NOTICE
+            || job.dedupeKey.includes(MANUAL_DEDUPE_MARKER)
+        ) {
+            return { kind: "allow" };
+        }
+        if (!job.branchId || job.clientId === null) {
+            return { kind: "lost" };
+        }
+
+        const rows = await transaction.$queryRaw<Array<{
+            service_end_notice_sent_at: Date | null;
+        }>>(Prisma.sql`
+            SELECT service_end_notice_sent_at
+            FROM "client"
+            WHERE id = ${job.clientId}
+              AND branch_id = ${job.branchId}::uuid
+            FOR UPDATE
+        `);
+        const client = rows[0];
+        if (!client) return { kind: "lost" };
+        return client.service_end_notice_sent_at === null
+            ? { kind: "allow" }
+            : { kind: "stale", reason: SERVICE_END_NOTICE_ALREADY_SENT_CANCEL_REASON };
     }
 
     /**

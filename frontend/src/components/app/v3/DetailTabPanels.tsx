@@ -88,7 +88,11 @@ export function DetailTabPanels({
       <div
         data-component={trackDataComponent}
         className={cn(
-          "flex transition-transform duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] will-change-transform motion-reduce:transition-none",
+          // items-start keeps every panel at its own content height while the
+          // outgoing panel is still in the track; with the default stretch the
+          // shorter incoming panel would be deformed to the taller sibling's
+          // height for the slide duration and snap back afterwards.
+          "flex items-start transition-transform duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] will-change-transform motion-reduce:transition-none",
           trackClassName
         )}
         style={{ transform: `translateX(-${activeTabIndex * 100}%)` }}

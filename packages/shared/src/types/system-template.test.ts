@@ -16,10 +16,6 @@ describe("resolveSystemTemplateDeliveryMode", () => {
   it("mirrors every key in the backend system-template registry", () => {
     expect(Object.keys(SYSTEM_TEMPLATE_REGISTRY).sort()).toEqual([...SYSTEM_TEMPLATE_KEYS].sort());
     expect(SYSTEM_TEMPLATE_KEYS).toEqual([
-      "CLIENT_WELCOME",
-      "SERVICE_START_REMINDER",
-      "SERVICE_END_REMINDER",
-      "EMPLOYEE_ASSIGNED",
       "PRICE_INFO",
       "GREETING",
       "THANKS",
@@ -41,10 +37,6 @@ describe("resolveSystemTemplateDeliveryMode", () => {
 
     expect(modes).toHaveLength(SYSTEM_TEMPLATE_KEYS.length);
     expect(modes).toEqual([
-      "sms",
-      "sms",
-      "sms",
-      "sms",
       "sms",
       "sms",
       "sms",
