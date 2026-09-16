@@ -293,6 +293,32 @@ describe("CallReviewSheet — CLIENT_UPDATE PENDING", () => {
     mockConfirmMutateAsync.mockResolvedValue({ clientId: 7 });
   });
 
+  it.each([
+    ["580303", "1958-03-03"],
+    [580303, "1958-03-03"],
+    ["1905-01-01", "1905-01-01"],
+    ["2005-01-01", "2005-01-01"],
+  ])("preserves proposed birthday %s when updating an existing client", async (value, expected) => {
+    mockUseClientDraft.mockReturnValue({ data: { ...updateDetail, proposals: [
+      { field: "birthday", value, confidence: "high", evidence: "생년월일" },
+    ] }, isLoading: false });
+    const user = userEvent.setup();
+    render(<CallReviewSheet draftId="draft-1" onClose={jest.fn()} />);
+    expect(screen.getByLabelText("생년월일")).toHaveValue(expected);
+    await user.click(screen.getByRole("button", { name: /변경 적용/ }));
+    expect(mockConfirmMutateAsync).toHaveBeenCalledWith(expect.objectContaining({ changes: { birthday: expected } }));
+  });
+
+  it("does not apply an invalid birthday to an existing client", async () => {
+    mockUseClientDraft.mockReturnValue({ data: { ...updateDetail, proposals: [
+      { field: "birthday", value: "1905-02-30", confidence: "high", evidence: "생년월일" },
+    ] }, isLoading: false });
+    const user = userEvent.setup();
+    render(<CallReviewSheet draftId="draft-1" onClose={jest.fn()} />);
+    await user.click(screen.getByRole("button", { name: /변경 적용/ }));
+    expect(mockConfirmMutateAsync).not.toHaveBeenCalled();
+  });
+
   it("does NOT render Phase 2 notice", () => {
     render(<CallReviewSheet draftId="draft-1" onClose={jest.fn()} />);
 

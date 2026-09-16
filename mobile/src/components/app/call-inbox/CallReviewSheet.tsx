@@ -476,7 +476,7 @@ function ClientUpdateReview({
           p.field,
           p.value === null || p.value === undefined
             ? ""
-            : formatFieldValue(p.field, String(p.value)),
+            : formatFieldValue(p.field, p.field === "birthday" ? normalizeBirthdayIsoDate(String(p.value)) ?? String(p.value) : String(p.value)),
         ]),
     ),
   );
@@ -503,6 +503,14 @@ function ClientUpdateReview({
         changes[proposal.field] = proposal.value;
       } else {
         const raw = editedValues[proposal.field] ?? "";
+        if (proposal.field === "birthday") {
+          if (raw && !isValidBirthdayIsoDate(raw)) {
+            toast({ title: "생년월일을 YYYY-MM-DD 형식으로 입력해 주세요", variant: "destructive" });
+            return;
+          }
+          changes.birthday = raw || null;
+          continue;
+        }
         // coerce numeric fields
         if (typeof proposal.value === "number") {
           const n = Number(raw);
