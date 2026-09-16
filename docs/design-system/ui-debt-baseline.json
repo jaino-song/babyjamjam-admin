@@ -235,27 +235,15 @@
       ]
     },
     "frontend/src/app/(protected)/employees/page.tsx": {
-      "ui-architecture/no-page-local-components": [
-        "388:10-388:24|pageLocalComponent"
-      ],
-      "ui-architecture/no-raw-ui-in-pages": [
-        "415:25-419:26|rawUiElement"
-      ],
       "ui-architecture/no-visual-tailwind-in-pages": [
-        "227:39-227:82|visualTailwindInPage",
-        "279:155-279:249|visualTailwindInPage",
-        "280:69-280:101|visualTailwindInPage",
-        "283:69-283:102|visualTailwindInPage",
-        "284:69-284:95|visualTailwindInPage",
-        "286:65-286:113|visualTailwindInPage",
-        "325:51-325:155|visualTailwindInPage",
-        "395:117-395:254|visualTailwindInPage",
-        "418:39-418:134|visualTailwindInPage",
-        "420:53-420:81|visualTailwindInPage",
-        "431:39-431:86|visualTailwindInPage",
-        "460:51-460:165|visualTailwindInPage",
-        "75:59-75:88|visualTailwindInPage",
-        "83:90-83:119|visualTailwindInPage"
+        "197:39-197:82|visualTailwindInPage",
+        "249:155-249:249|visualTailwindInPage",
+        "250:69-250:101|visualTailwindInPage",
+        "253:69-253:102|visualTailwindInPage",
+        "254:69-254:95|visualTailwindInPage",
+        "256:65-256:113|visualTailwindInPage",
+        "295:51-295:155|visualTailwindInPage",
+        "57:90-57:119|visualTailwindInPage"
       ]
     },
     "frontend/src/app/(protected)/messages/page.tsx": {
