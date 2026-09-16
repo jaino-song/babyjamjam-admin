@@ -4,16 +4,20 @@ import {
     AgentEntitySelectPartSchema,
     AgentTaskCommandRequestSchema,
     AgentTaskCreateRequestSchema,
+    AgentTaskIssueCodeSchema,
     AgentTaskPatchPartSchema,
     AgentTaskPatchRequestSchema,
     AgentTaskSchema,
     AgentTaskSafeSnapshotSchema,
     AgentTaskSnapshotEnvelopeSchema,
     AgentTaskStateSchema,
+    AgentTaskTargetVersionSchema,
     ClientInputOperationSchema,
     ClientWriteFieldsSchema,
     ClientTentativeValuesSchema,
     applyClientInputOperations,
+    captureAgentTaskSnapshotRequest,
+    createAgentTaskSnapshotState,
     createAgentTaskDefaults,
     evaluateClientReadiness,
     normalizeClientPhone,
@@ -166,29 +170,31 @@ describe("conversational task contracts", () => {
     it("accepts only monotonic identity and revision snapshots", () => {
         const current: AgentTaskClientSnapshotState = {
             identityEpoch: 2,
+            requestGeneration: 0,
             task: makeTask({ revision: 2 }),
             acknowledgedEventIds: [],
             pendingEventIds: [IDS.event1, IDS.event2],
         };
-        const lower = acceptAgentTaskSnapshot(current, AgentTaskSnapshotEnvelopeSchema.parse({ identityEpoch: 2, task: makeTask({ revision: 1 }) }));
+        const currentRequest = captureAgentTaskSnapshotRequest(current);
+        const lower = acceptAgentTaskSnapshot(current, AgentTaskSnapshotEnvelopeSchema.parse({ identityEpoch: 2, task: makeTask({ revision: 1 }) }), currentRequest);
         expect(lower.accepted).toBe(false);
         expect(lower.reason).toBe("lower-revision");
 
-        const staleIdentity = acceptAgentTaskSnapshot(current, AgentTaskSnapshotEnvelopeSchema.parse({ identityEpoch: 1, task: makeTask({ revision: 3 }) }));
+        const staleIdentity = acceptAgentTaskSnapshot(current, AgentTaskSnapshotEnvelopeSchema.parse({ identityEpoch: 1, task: makeTask({ revision: 3 }) }), currentRequest);
         expect(staleIdentity.accepted).toBe(false);
         expect(staleIdentity.reason).toBe("stale-identity");
 
         const sessionMismatch = acceptAgentTaskSnapshot(current, AgentTaskSnapshotEnvelopeSchema.parse({
             identityEpoch: 2,
             task: makeTask({ sessionId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", revision: 3 }),
-        }));
+        }), currentRequest);
         expect(sessionMismatch.reason).toBe("different-session");
 
         const newerEpoch = acceptAgentTaskSnapshot(current, AgentTaskSnapshotEnvelopeSchema.parse({
             identityEpoch: 3,
             task: makeTask({ taskId: "cccccccc-cccc-4ccc-8ccc-cccccccccccc", sessionId: "dddddddd-dddd-4ddd-8ddd-dddddddddddd", revision: 0 }),
             acknowledgedEventId: IDS.event2,
-        }));
+        }), currentRequest);
         expect(newerEpoch.reason).toBe("accepted-new-identity");
         expect(newerEpoch.state.pendingEventIds).toEqual([]);
         expect(newerEpoch.state.acknowledgedEventIds).toEqual([IDS.event2]);
@@ -197,25 +203,78 @@ describe("conversational task contracts", () => {
             identityEpoch: 2,
             task: makeTask({ revision: 3 }),
             acknowledgedEventId: IDS.event1,
-        }));
+        }), currentRequest);
         expect(ack.state.pendingEventIds).toEqual([IDS.event2]);
 
         const conflict = acceptAgentTaskSnapshot(current, AgentTaskSnapshotEnvelopeSchema.parse({
             identityEpoch: 2,
             task: makeTask({ revision: 3 }),
             conflict: { status: 409, latestRevision: 3, latestSnapshotRef: IDS.snapshot3 },
-        }));
+        }), currentRequest);
         expect(conflict.reason).toBe("conflict-latest");
         expect(conflict.autoMerged).toBe(false);
         expect(conflict.state.pendingEventIds).toEqual([IDS.event1, IDS.event2]);
         expect(conflict.needsReconciliation).toBe(true);
 
-        const reset = resetAgentTaskSnapshotState(4);
-        const oldAfterReset = acceptAgentTaskSnapshot(reset, AgentTaskSnapshotEnvelopeSchema.parse({ identityEpoch: 3, task: makeTask({ revision: 99 }) }));
-        expect(oldAfterReset.reason).toBe("stale-identity");
-        const newAfterReset = acceptAgentTaskSnapshot(reset, AgentTaskSnapshotEnvelopeSchema.parse({ identityEpoch: 4, task: makeTask({ revision: 0 }) }));
+        const reset = resetAgentTaskSnapshotState(current, 4);
+        const resetRequest = captureAgentTaskSnapshotRequest(reset);
+        const oldAfterReset = acceptAgentTaskSnapshot(reset, AgentTaskSnapshotEnvelopeSchema.parse({ identityEpoch: 3, task: makeTask({ revision: 99 }) }), currentRequest);
+        expect(oldAfterReset.reason).toBe("stale-generation");
+        const newAfterReset = acceptAgentTaskSnapshot(reset, AgentTaskSnapshotEnvelopeSchema.parse({ identityEpoch: 4, task: makeTask({ revision: 0 }) }), resetRequest);
         expect(newAfterReset.accepted).toBe(true);
         expect(newAfterReset.state.task?.revision).toBe(0);
+        expect(newAfterReset.state.requestGeneration).toBe(reset.requestGeneration);
+
+        const initial = createAgentTaskSnapshotState(2);
+        const requestA = captureAgentTaskSnapshotRequest(initial);
+        const resetSameIdentity = resetAgentTaskSnapshotState(initial);
+        const requestB = captureAgentTaskSnapshotRequest(resetSameIdentity);
+        const responseA = acceptAgentTaskSnapshot(resetSameIdentity, AgentTaskSnapshotEnvelopeSchema.parse({
+            identityEpoch: 2,
+            task: makeTask({ taskId: "cccccccc-cccc-4ccc-8ccc-cccccccccccc", revision: 1 }),
+        }), requestA);
+        expect(responseA.accepted).toBe(false);
+        expect(responseA.reason).toBe("stale-generation");
+        expect(responseA.state.task).toBeNull();
+        const responseB = acceptAgentTaskSnapshot(resetSameIdentity, AgentTaskSnapshotEnvelopeSchema.parse({
+            identityEpoch: 2,
+            task: makeTask({ taskId: "dddddddd-dddd-4ddd-8ddd-dddddddddddd", revision: 1 }),
+        }), requestB);
+        expect(responseB.accepted).toBe(true);
+        expect(responseB.state.task?.taskId).toBe("dddddddd-dddd-4ddd-8ddd-dddddddddddd");
+
+        const accountSwitch = resetAgentTaskSnapshotState(resetSameIdentity, 3);
+        const accountRequest = captureAgentTaskSnapshotRequest(accountSwitch);
+        expect(accountSwitch.requestGeneration).toBe(resetSameIdentity.requestGeneration + 1);
+        expect(acceptAgentTaskSnapshot(accountSwitch, AgentTaskSnapshotEnvelopeSchema.parse({
+            identityEpoch: 2,
+            task: makeTask({ revision: 2 }),
+        }), requestB).reason).toBe("stale-generation");
+        expect(acceptAgentTaskSnapshot(accountSwitch, AgentTaskSnapshotEnvelopeSchema.parse({
+            identityEpoch: 3,
+            task: makeTask({ taskId: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee", sessionId: "ffffffff-ffff-4fff-8fff-ffffffffffff", revision: 0 }),
+        }), accountRequest).reason).toBe("accepted");
+        const repeatedReset = resetAgentTaskSnapshotState(accountSwitch, 3);
+        expect(repeatedReset.requestGeneration).toBe(accountSwitch.requestGeneration + 1);
+    });
+
+    it("keeps provider target versions separate from task revisions", () => {
+        expect(AgentTaskTargetVersionSchema.safeParse(HASH).success).toBe(true);
+        expect(AgentTaskTargetVersionSchema.safeParse(2).success).toBe(false);
+        expect(AgentTaskSchema.safeParse({ ...makeTask(), target: { targetRef: IDS.task, version: HASH } }).success).toBe(true);
+        expect(AgentTaskSchema.safeParse({ ...makeTask(), target: { targetRef: IDS.task, version: 2 } }).success).toBe(false);
+    });
+
+    it("uses a finite issue-code vocabulary on authorized and safe paths", () => {
+        const validIssue = { code: "task.required" as const, field: "phone" as const, severity: "error" as const, message: "전화번호가 필요합니다" };
+        expect(AgentTaskIssueCodeSchema.safeParse(validIssue.code).success).toBe(true);
+        const safe = projectTaskForSafeChat(makeTask({ issues: [validIssue] }));
+        expect(safe.issues).toEqual([{ code: "task.required", field: "phone", severity: "error" }]);
+        for (const code of ["task.01012345678", "task.900101", "task.unregistered"]) {
+            expect(AgentTaskIssueCodeSchema.safeParse(code).success).toBe(false);
+            expect(AgentTaskSchema.safeParse({ ...makeTask(), issues: [{ ...validIssue, code }] }).success).toBe(false);
+            expect(AgentTaskSafeSnapshotSchema.safeParse({ ...safe, issues: [{ ...safe.issues[0], code }] }).success).toBe(false);
+        }
     });
 
     it("keeps new data parts reference-only", () => {

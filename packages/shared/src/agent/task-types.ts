@@ -56,8 +56,20 @@ export const AgentTaskProvenanceSchema = z.object({
     tentative: z.record(z.string(), AgentTaskFieldProvenanceSchema),
 }).strict();
 
-/** Codes are structural and cannot carry arbitrary display/PII strings. */
-export const AgentTaskIssueCodeSchema = z.string().regex(/^task\.[a-z0-9]+(?:[._-][a-z0-9]+)*$/);
+/**
+ * Issue codes are structural and intentionally finite. They are safe to copy
+ * into model/chat projections because no user-provided value can become a
+ * code accidentally (for example a phone number or birthday).
+ */
+export const AGENT_TASK_ISSUE_CODES = [
+    "task.required",
+    "task.invalid",
+    "task.duplicate",
+    "task.ambiguous",
+    "task.stale",
+    "task.consent_required",
+] as const;
+export const AgentTaskIssueCodeSchema = z.enum(AGENT_TASK_ISSUE_CODES);
 export const AgentTaskIssueSeveritySchema = z.enum(["info", "warning", "error"]);
 export const AgentTaskIssueSchema = z.object({
     code: AgentTaskIssueCodeSchema,
@@ -68,9 +80,12 @@ export const AgentTaskIssueSchema = z.object({
 
 export const AgentTaskConstraintsSchema = z.object({ noSend: z.boolean() }).strict();
 
+/** Provider target versions are SHA-256 snapshots, distinct from task revisions. */
+export const AgentTaskTargetVersionSchema = z.string().regex(/^[a-f0-9]{64}$/i);
+export type AgentTaskTargetVersion = z.infer<typeof AgentTaskTargetVersionSchema>;
 export const AgentTaskTargetSchema = z.object({
     targetRef: AgentTaskReferenceSchema,
-    version: AgentTaskRevisionSchema,
+    version: AgentTaskTargetVersionSchema,
     choiceSetRef: AgentTaskReferenceSchema.optional(),
     optionId: AgentTaskReferenceSchema.optional(),
 }).strict();

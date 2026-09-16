@@ -101,7 +101,14 @@ export declare const AgentTaskSafeSnapshotSchema: z.ZodObject<{
     }, z.core.$strict>>;
     orderedChoiceRefs: z.ZodArray<z.ZodUUID>;
     issues: z.ZodArray<z.ZodObject<{
-        code: z.ZodString;
+        code: z.ZodEnum<{
+            "task.required": "task.required";
+            "task.invalid": "task.invalid";
+            "task.duplicate": "task.duplicate";
+            "task.ambiguous": "task.ambiguous";
+            "task.stale": "task.stale";
+            "task.consent_required": "task.consent_required";
+        }>;
         field: z.ZodOptional<z.ZodEnum<{
             type: "type";
             name: "name";
@@ -255,7 +262,14 @@ export declare const AgentTaskSnapshotEnvelopeSchema: z.ZodObject<{
             }, z.core.$strict>>;
         }, z.core.$strict>;
         issues: z.ZodArray<z.ZodObject<{
-            code: z.ZodString;
+            code: z.ZodEnum<{
+                "task.required": "task.required";
+                "task.invalid": "task.invalid";
+                "task.duplicate": "task.duplicate";
+                "task.ambiguous": "task.ambiguous";
+                "task.stale": "task.stale";
+                "task.consent_required": "task.consent_required";
+            }>;
             field: z.ZodOptional<z.ZodEnum<{
                 type: "type";
                 name: "name";
@@ -299,7 +313,7 @@ export declare const AgentTaskSnapshotEnvelopeSchema: z.ZodObject<{
         orderedChoiceRefs: z.ZodArray<z.ZodUUID>;
         target: z.ZodNullable<z.ZodObject<{
             targetRef: z.ZodUUID;
-            version: z.ZodNumber;
+            version: z.ZodString;
             choiceSetRef: z.ZodOptional<z.ZodUUID>;
             optionId: z.ZodOptional<z.ZodUUID>;
         }, z.core.$strict>>;
@@ -342,11 +356,18 @@ export declare const AgentTaskSnapshotEnvelopeSchema: z.ZodObject<{
 export type AgentTaskSnapshotEnvelope = z.infer<typeof AgentTaskSnapshotEnvelopeSchema>;
 export interface AgentTaskClientSnapshotState {
     identityEpoch: number;
+    /** Client transport generation; never comes from a server snapshot. */
+    requestGeneration: number;
     task: AgentTask | null;
     acknowledgedEventIds: readonly string[];
     pendingEventIds: readonly string[];
 }
-export type AgentTaskSnapshotAcceptanceReason = "accepted" | "accepted-new-identity" | "acknowledged-event" | "same-revision" | "lower-revision" | "stale-identity" | "different-task" | "different-session" | "conflict-latest";
+/** Metadata captured when a snapshot request is dispatched. */
+export interface AgentTaskSnapshotRequestContext {
+    identityEpoch: number;
+    requestGeneration: number;
+}
+export type AgentTaskSnapshotAcceptanceReason = "accepted" | "accepted-new-identity" | "acknowledged-event" | "same-revision" | "lower-revision" | "stale-generation" | "stale-identity" | "different-task" | "different-session" | "conflict-latest";
 export interface AgentTaskSnapshotAcceptance {
     accepted: boolean;
     autoMerged: false;
@@ -354,14 +375,26 @@ export interface AgentTaskSnapshotAcceptance {
     state: AgentTaskClientSnapshotState;
     needsReconciliation: boolean;
 }
-/** Clear task/ack/pending state while retaining the account identity epoch. */
-export declare function resetAgentTaskSnapshotState(identityEpoch: number): AgentTaskClientSnapshotState;
+/** Create an empty client state before the first snapshot request. */
+export declare function createAgentTaskSnapshotState(identityEpoch?: number): AgentTaskClientSnapshotState;
+/** Capture the generation that a request carries until its response arrives. */
+export declare function captureAgentTaskSnapshotRequest(current: AgentTaskClientSnapshotState): AgentTaskSnapshotRequestContext;
+/**
+ * Clear task/ack/pending state and advance the client generation. The
+ * generation is intentionally derived from the current state so a caller
+ * cannot accidentally reuse an in-flight request's generation after a task
+ * or account switch. It is transport metadata, not a server authority field.
+ */
+export declare function resetAgentTaskSnapshotState(current: AgentTaskClientSnapshotState, nextIdentityEpoch?: number): AgentTaskClientSnapshotState;
 /**
  * Accept server snapshots monotonically. A newer identity epoch replaces the
  * entire local task/ack/pending state; a 409 keeps unsent events pending and
- * never attempts an automatic merge.
+ * never attempts an automatic merge. Callers must capture
+ * `captureAgentTaskSnapshotRequest(state)` before dispatch and pass that same
+ * context to this function when the response returns; capturing after the
+ * response would defeat stale-response rejection.
  */
-export declare function acceptAgentTaskSnapshot(current: AgentTaskClientSnapshotState | null, incoming: AgentTaskSnapshotEnvelope): AgentTaskSnapshotAcceptance;
+export declare function acceptAgentTaskSnapshot(current: AgentTaskClientSnapshotState | null, incoming: AgentTaskSnapshotEnvelope, request: AgentTaskSnapshotRequestContext): AgentTaskSnapshotAcceptance;
 /** Authorized REST callers receive the protected editing snapshot. */
 export declare function projectTaskForAuthorizedRest(task: AgentTask): AgentTask;
 /** Safe model/chat projection never copies values or presentation labels. */

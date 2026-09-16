@@ -1,6 +1,8 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.AgentTaskSnapshotEnvelopeSchema = exports.AgentTaskSnapshotConflictSchema = exports.AgentTaskSafeSnapshotSchema = exports.AgentTaskSafeChoiceSetSchema = exports.AgentTaskSafeFieldStatusSchema = void 0;
+exports.createAgentTaskSnapshotState = createAgentTaskSnapshotState;
+exports.captureAgentTaskSnapshotRequest = captureAgentTaskSnapshotRequest;
 exports.resetAgentTaskSnapshotState = resetAgentTaskSnapshotState;
 exports.acceptAgentTaskSnapshot = acceptAgentTaskSnapshot;
 exports.projectTaskForAuthorizedRest = projectTaskForAuthorizedRest;
@@ -78,35 +80,90 @@ function stateWithAck(current, acknowledgedEventId) {
         return current;
     return { ...current, acknowledgedEventIds, pendingEventIds };
 }
-function initialClientSnapshotState(envelope) {
+function assertSafeCounter(value, name) {
+    if (!Number.isSafeInteger(value) || value < 0) {
+        throw new RangeError(`${name} must be a non-negative safe integer`);
+    }
+}
+function nextRequestGeneration(current) {
+    assertSafeCounter(current, "requestGeneration");
+    if (current === Number.MAX_SAFE_INTEGER) {
+        throw new RangeError("requestGeneration cannot advance beyond Number.MAX_SAFE_INTEGER");
+    }
+    return current + 1;
+}
+function initialClientSnapshotState(envelope, requestGeneration) {
+    assertSafeCounter(requestGeneration, "requestGeneration");
     return {
         identityEpoch: envelope.identityEpoch,
+        requestGeneration,
         task: envelope.task,
         acknowledgedEventIds: envelope.acknowledgedEventId ? [envelope.acknowledgedEventId] : [],
         pendingEventIds: [],
     };
 }
-/** Clear task/ack/pending state while retaining the account identity epoch. */
-function resetAgentTaskSnapshotState(identityEpoch) {
-    if (!Number.isSafeInteger(identityEpoch) || identityEpoch < 0) {
-        throw new RangeError("identityEpoch must be a non-negative safe integer");
-    }
-    return { identityEpoch, task: null, acknowledgedEventIds: [], pendingEventIds: [] };
+/** Create an empty client state before the first snapshot request. */
+function createAgentTaskSnapshotState(identityEpoch = 0) {
+    assertSafeCounter(identityEpoch, "identityEpoch");
+    return {
+        identityEpoch,
+        requestGeneration: 0,
+        task: null,
+        acknowledgedEventIds: [],
+        pendingEventIds: [],
+    };
+}
+/** Capture the generation that a request carries until its response arrives. */
+function captureAgentTaskSnapshotRequest(current) {
+    assertSafeCounter(current.identityEpoch, "identityEpoch");
+    assertSafeCounter(current.requestGeneration, "requestGeneration");
+    return { identityEpoch: current.identityEpoch, requestGeneration: current.requestGeneration };
+}
+/**
+ * Clear task/ack/pending state and advance the client generation. The
+ * generation is intentionally derived from the current state so a caller
+ * cannot accidentally reuse an in-flight request's generation after a task
+ * or account switch. It is transport metadata, not a server authority field.
+ */
+function resetAgentTaskSnapshotState(current, nextIdentityEpoch = current.identityEpoch) {
+    assertSafeCounter(current.identityEpoch, "identityEpoch");
+    assertSafeCounter(current.requestGeneration, "requestGeneration");
+    assertSafeCounter(nextIdentityEpoch, "identityEpoch");
+    return {
+        identityEpoch: nextIdentityEpoch,
+        requestGeneration: nextRequestGeneration(current.requestGeneration),
+        task: null,
+        acknowledgedEventIds: [],
+        pendingEventIds: [],
+    };
 }
 /**
  * Accept server snapshots monotonically. A newer identity epoch replaces the
  * entire local task/ack/pending state; a 409 keeps unsent events pending and
- * never attempts an automatic merge.
+ * never attempts an automatic merge. Callers must capture
+ * `captureAgentTaskSnapshotRequest(state)` before dispatch and pass that same
+ * context to this function when the response returns; capturing after the
+ * response would defeat stale-response rejection.
  */
-function acceptAgentTaskSnapshot(current, incoming) {
+function acceptAgentTaskSnapshot(current, incoming, request) {
+    assertSafeCounter(request.identityEpoch, "identityEpoch");
+    assertSafeCounter(request.requestGeneration, "requestGeneration");
     if (!current) {
+        if (incoming.identityEpoch < request.identityEpoch) {
+            const state = createAgentTaskSnapshotState(request.identityEpoch);
+            return { accepted: false, autoMerged: false, reason: "stale-identity", state, needsReconciliation: false };
+        }
         return {
             accepted: true,
             autoMerged: false,
             reason: "accepted",
-            state: initialClientSnapshotState(incoming),
+            state: initialClientSnapshotState(incoming, request.requestGeneration),
             needsReconciliation: Boolean(incoming.conflict),
         };
+    }
+    if (request.identityEpoch !== current.identityEpoch
+        || request.requestGeneration !== current.requestGeneration) {
+        return { accepted: false, autoMerged: false, reason: "stale-generation", state: current, needsReconciliation: false };
     }
     if (incoming.identityEpoch < current.identityEpoch) {
         return { accepted: false, autoMerged: false, reason: "stale-identity", state: current, needsReconciliation: false };
@@ -116,7 +173,7 @@ function acceptAgentTaskSnapshot(current, incoming) {
             accepted: true,
             autoMerged: false,
             reason: "accepted-new-identity",
-            state: initialClientSnapshotState(incoming),
+            state: initialClientSnapshotState(incoming, current.requestGeneration),
             needsReconciliation: Boolean(incoming.conflict),
         };
     }
@@ -125,7 +182,7 @@ function acceptAgentTaskSnapshot(current, incoming) {
             accepted: true,
             autoMerged: false,
             reason: "accepted",
-            state: initialClientSnapshotState(incoming),
+            state: initialClientSnapshotState(incoming, current.requestGeneration),
             needsReconciliation: Boolean(incoming.conflict),
         };
     }

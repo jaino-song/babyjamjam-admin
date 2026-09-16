@@ -1,6 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.AgentTaskMutationResponseSchema = exports.AgentTaskEventReceiptSchema = exports.AgentTaskCommandNameSchema = exports.AgentTaskCommandRequestSchema = exports.AgentTaskSelectTargetCommandSchema = exports.AgentTaskPatchRequestSchema = exports.AgentTaskCreateRequestSchema = exports.AgentTaskSchema = exports.AgentAutomationConsentInputSchema = exports.AgentAutomationConsentSchema = exports.AgentAutomationConsentBindingSchema = exports.AgentTaskTimesSchema = exports.AgentTaskActionLinkSchema = exports.AgentTaskChoiceSetSchema = exports.AgentTaskChoiceOptionSchema = exports.AgentTaskTargetSchema = exports.AgentTaskConstraintsSchema = exports.AgentTaskIssueSchema = exports.AgentTaskIssueSeveritySchema = exports.AgentTaskIssueCodeSchema = exports.AgentTaskProvenanceSchema = exports.AgentTaskFieldProvenanceSchema = exports.AgentTaskSourceSchema = exports.AgentTaskIsoDateTimeSchema = exports.AgentTaskEventHashSchema = exports.AgentTaskSnapshotRefSchema = exports.AgentTaskEventIdSchema = exports.AgentTaskIdSchema = exports.AgentTaskReferenceSchema = exports.AgentActionRevisionTokenSchema = exports.AgentTaskRevisionSchema = exports.AgentTaskStateSchema = exports.AgentTaskKindSchema = exports.AgentTaskCapabilityIdSchema = exports.AgentTaskSchemaVersionSchema = exports.AGENT_TASK_SCHEMA_VERSION = void 0;
+exports.AgentTaskMutationResponseSchema = exports.AgentTaskEventReceiptSchema = exports.AgentTaskCommandNameSchema = exports.AgentTaskCommandRequestSchema = exports.AgentTaskSelectTargetCommandSchema = exports.AgentTaskPatchRequestSchema = exports.AgentTaskCreateRequestSchema = exports.AgentTaskSchema = exports.AgentAutomationConsentInputSchema = exports.AgentAutomationConsentSchema = exports.AgentAutomationConsentBindingSchema = exports.AgentTaskTimesSchema = exports.AgentTaskActionLinkSchema = exports.AgentTaskChoiceSetSchema = exports.AgentTaskChoiceOptionSchema = exports.AgentTaskTargetSchema = exports.AgentTaskTargetVersionSchema = exports.AgentTaskConstraintsSchema = exports.AgentTaskIssueSchema = exports.AgentTaskIssueSeveritySchema = exports.AgentTaskIssueCodeSchema = exports.AGENT_TASK_ISSUE_CODES = exports.AgentTaskProvenanceSchema = exports.AgentTaskFieldProvenanceSchema = exports.AgentTaskSourceSchema = exports.AgentTaskIsoDateTimeSchema = exports.AgentTaskEventHashSchema = exports.AgentTaskSnapshotRefSchema = exports.AgentTaskEventIdSchema = exports.AgentTaskIdSchema = exports.AgentTaskReferenceSchema = exports.AgentActionRevisionTokenSchema = exports.AgentTaskRevisionSchema = exports.AgentTaskStateSchema = exports.AgentTaskKindSchema = exports.AgentTaskCapabilityIdSchema = exports.AgentTaskSchemaVersionSchema = exports.AGENT_TASK_SCHEMA_VERSION = void 0;
 exports.createAgentTaskDefaults = createAgentTaskDefaults;
 const zod_1 = require("zod");
 const client_input_policy_1 = require("./client-input-policy");
@@ -41,8 +41,20 @@ exports.AgentTaskProvenanceSchema = zod_1.z.object({
     confirmed: zod_1.z.record(zod_1.z.string(), exports.AgentTaskFieldProvenanceSchema),
     tentative: zod_1.z.record(zod_1.z.string(), exports.AgentTaskFieldProvenanceSchema),
 }).strict();
-/** Codes are structural and cannot carry arbitrary display/PII strings. */
-exports.AgentTaskIssueCodeSchema = zod_1.z.string().regex(/^task\.[a-z0-9]+(?:[._-][a-z0-9]+)*$/);
+/**
+ * Issue codes are structural and intentionally finite. They are safe to copy
+ * into model/chat projections because no user-provided value can become a
+ * code accidentally (for example a phone number or birthday).
+ */
+exports.AGENT_TASK_ISSUE_CODES = [
+    "task.required",
+    "task.invalid",
+    "task.duplicate",
+    "task.ambiguous",
+    "task.stale",
+    "task.consent_required",
+];
+exports.AgentTaskIssueCodeSchema = zod_1.z.enum(exports.AGENT_TASK_ISSUE_CODES);
 exports.AgentTaskIssueSeveritySchema = zod_1.z.enum(["info", "warning", "error"]);
 exports.AgentTaskIssueSchema = zod_1.z.object({
     code: exports.AgentTaskIssueCodeSchema,
@@ -51,9 +63,11 @@ exports.AgentTaskIssueSchema = zod_1.z.object({
     message: zod_1.z.string().trim().min(1).max(1000),
 }).strict();
 exports.AgentTaskConstraintsSchema = zod_1.z.object({ noSend: zod_1.z.boolean() }).strict();
+/** Provider target versions are SHA-256 snapshots, distinct from task revisions. */
+exports.AgentTaskTargetVersionSchema = zod_1.z.string().regex(/^[a-f0-9]{64}$/i);
 exports.AgentTaskTargetSchema = zod_1.z.object({
     targetRef: exports.AgentTaskReferenceSchema,
-    version: exports.AgentTaskRevisionSchema,
+    version: exports.AgentTaskTargetVersionSchema,
     choiceSetRef: exports.AgentTaskReferenceSchema.optional(),
     optionId: exports.AgentTaskReferenceSchema.optional(),
 }).strict();

@@ -85,15 +85,34 @@ export declare const AgentTaskProvenanceSchema: z.ZodObject<{
         valueRef: z.ZodOptional<z.ZodUUID>;
     }, z.core.$strict>>;
 }, z.core.$strict>;
-/** Codes are structural and cannot carry arbitrary display/PII strings. */
-export declare const AgentTaskIssueCodeSchema: z.ZodString;
+/**
+ * Issue codes are structural and intentionally finite. They are safe to copy
+ * into model/chat projections because no user-provided value can become a
+ * code accidentally (for example a phone number or birthday).
+ */
+export declare const AGENT_TASK_ISSUE_CODES: readonly ["task.required", "task.invalid", "task.duplicate", "task.ambiguous", "task.stale", "task.consent_required"];
+export declare const AgentTaskIssueCodeSchema: z.ZodEnum<{
+    "task.required": "task.required";
+    "task.invalid": "task.invalid";
+    "task.duplicate": "task.duplicate";
+    "task.ambiguous": "task.ambiguous";
+    "task.stale": "task.stale";
+    "task.consent_required": "task.consent_required";
+}>;
 export declare const AgentTaskIssueSeveritySchema: z.ZodEnum<{
     error: "error";
     info: "info";
     warning: "warning";
 }>;
 export declare const AgentTaskIssueSchema: z.ZodObject<{
-    code: z.ZodString;
+    code: z.ZodEnum<{
+        "task.required": "task.required";
+        "task.invalid": "task.invalid";
+        "task.duplicate": "task.duplicate";
+        "task.ambiguous": "task.ambiguous";
+        "task.stale": "task.stale";
+        "task.consent_required": "task.consent_required";
+    }>;
     field: z.ZodOptional<z.ZodEnum<{
         type: "type";
         name: "name";
@@ -124,9 +143,12 @@ export declare const AgentTaskIssueSchema: z.ZodObject<{
 export declare const AgentTaskConstraintsSchema: z.ZodObject<{
     noSend: z.ZodBoolean;
 }, z.core.$strict>;
+/** Provider target versions are SHA-256 snapshots, distinct from task revisions. */
+export declare const AgentTaskTargetVersionSchema: z.ZodString;
+export type AgentTaskTargetVersion = z.infer<typeof AgentTaskTargetVersionSchema>;
 export declare const AgentTaskTargetSchema: z.ZodObject<{
     targetRef: z.ZodUUID;
-    version: z.ZodNumber;
+    version: z.ZodString;
     choiceSetRef: z.ZodOptional<z.ZodUUID>;
     optionId: z.ZodOptional<z.ZodUUID>;
 }, z.core.$strict>;
@@ -292,7 +314,14 @@ export declare const AgentTaskSchema: z.ZodObject<{
         }, z.core.$strict>>;
     }, z.core.$strict>;
     issues: z.ZodArray<z.ZodObject<{
-        code: z.ZodString;
+        code: z.ZodEnum<{
+            "task.required": "task.required";
+            "task.invalid": "task.invalid";
+            "task.duplicate": "task.duplicate";
+            "task.ambiguous": "task.ambiguous";
+            "task.stale": "task.stale";
+            "task.consent_required": "task.consent_required";
+        }>;
         field: z.ZodOptional<z.ZodEnum<{
             type: "type";
             name: "name";
@@ -336,7 +365,7 @@ export declare const AgentTaskSchema: z.ZodObject<{
     orderedChoiceRefs: z.ZodArray<z.ZodUUID>;
     target: z.ZodNullable<z.ZodObject<{
         targetRef: z.ZodUUID;
-        version: z.ZodNumber;
+        version: z.ZodString;
         choiceSetRef: z.ZodOptional<z.ZodUUID>;
         optionId: z.ZodOptional<z.ZodUUID>;
     }, z.core.$strict>>;
@@ -555,7 +584,14 @@ export declare const AgentTaskMutationResponseSchema: z.ZodObject<{
             }, z.core.$strict>>;
         }, z.core.$strict>;
         issues: z.ZodArray<z.ZodObject<{
-            code: z.ZodString;
+            code: z.ZodEnum<{
+                "task.required": "task.required";
+                "task.invalid": "task.invalid";
+                "task.duplicate": "task.duplicate";
+                "task.ambiguous": "task.ambiguous";
+                "task.stale": "task.stale";
+                "task.consent_required": "task.consent_required";
+            }>;
             field: z.ZodOptional<z.ZodEnum<{
                 type: "type";
                 name: "name";
@@ -599,7 +635,7 @@ export declare const AgentTaskMutationResponseSchema: z.ZodObject<{
         orderedChoiceRefs: z.ZodArray<z.ZodUUID>;
         target: z.ZodNullable<z.ZodObject<{
             targetRef: z.ZodUUID;
-            version: z.ZodNumber;
+            version: z.ZodString;
             choiceSetRef: z.ZodOptional<z.ZodUUID>;
             optionId: z.ZodOptional<z.ZodUUID>;
         }, z.core.$strict>>;
