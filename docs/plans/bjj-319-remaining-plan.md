@@ -704,3 +704,6 @@ TL;DR: 배정(4b-1 백엔드: 역할·자격·동시 변경 코드 전환 / 4b-2
 - 매핑: 파서 → `VALIDATION_FAILED`(pointer `/<name>`, min/max 위반 OUT_OF_RANGE·그 외 INVALID_FORMAT, location 생략 — path/query 혼용) 해요체, 400 유지. auth Unauthorized raw → `AUTH_REQUIRED`(401). rate-limit `{code:AUTH_RATE_LIMITED}` → 기존 `REQUEST_RATE_LIMITED`(429) 재사용. tenant.guard Forbidden → `ACCESS_DENIED`(403).
 - 범위 밖: `prisma-exception.filter.ts`(6c 별도), ParseUUIDPipe(Nest 내장 — carried), 컨트롤러/서비스 잔여.
 - Dispatch: worker(glm) · `Paths: 위 파일 + 대응 spec` · `Audit: SOL`
+
+**Task 6b 실행 결과 (2026-09-16/17):** worker `0dd877dbf`(base `416fcb09e`) → 통합 `b6443f90f` (8 파일 + specs). 전부 기존 코드 재사용, 카탈로그·vendor 불변. red-first 25F→45 focused; 360 suites/5,127; **call-inbox e2e 22/22 실검증**; 감사 SHIP. 통합 첫 실행 2F는 플레이크 풀(재실행 green, employee-schedule 25/25).
+- carried: rate-limit 429 본문 retryAfter 제거(헤더 유지, sanctioned), shared `AUTH_RATE_LIMITED` 죽은 키 정리(후속), ParseUUIDPipe(Nest 내장) 미전환.
