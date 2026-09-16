@@ -49,7 +49,7 @@ export function SlidingDetailPanel({
                 className="sliding-detail-content" aria-hidden={!open} inert={!open || undefined}>
                 <div data-component={`${dataComponent}_detail-pane_header`} data-slot="sliding-detail-header" className="sliding-detail-header">
                     <Button ref={backRef} variant="ghost" size="sm" onClick={onBack}
-                        className="h-7 border-0 bg-transparent px-0 text-v3-primary shadow-none"
+                        className="h-7 border-0 bg-transparent px-0 text-v3-primary shadow-none hover:bg-transparent"
                         data-component={`${dataComponent}_detail-pane_header_back`}>
                         <ChevronLeft aria-hidden="true" />{backLabel}
                     </Button>
