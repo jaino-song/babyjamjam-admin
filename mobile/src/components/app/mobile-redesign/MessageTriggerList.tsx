@@ -72,16 +72,17 @@ function getRuleTimingLabel(rule: MessageTriggerRule) {
     return `${eventLabel} 즉시`;
   }
 
+  const timeLabel = `${rule.sendTime ?? "09:00"} (한국 시간)`;
   if (rule.offsetType === "SAME_DAY") {
-    return `${eventLabel} 당일`;
+    return `${eventLabel} 당일 ${timeLabel}`;
   }
 
   const dayLabel = `${Math.max(rule.offsetDays, 0)}일`;
   if (rule.offsetType === "BEFORE_DAYS") {
-    return `${eventLabel} ${dayLabel} 전`;
+    return `${eventLabel} ${dayLabel} 전 ${timeLabel}`;
   }
 
-  return `${eventLabel} ${dayLabel} 후`;
+  return `${eventLabel} ${dayLabel} 후 ${timeLabel}`;
 }
 
 function isCurrentMonthLog(log: MessageLogRecord) {

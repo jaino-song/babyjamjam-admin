@@ -110,21 +110,25 @@ export class MessageAutomationPoliciesResponseDto {
     policies!: MessageAutomationPolicyDto[];
     pastTriggerConfig!: MessageAutomationPastTriggerConfigDto;
     policyActivations!: Record<StoredMessageSettingsPolicyId, boolean>;
+    canManageActivation!: boolean;
 
     static from(
         pastTriggerConfig: MessageAutomationPastTriggerConfig = DEFAULT_MESSAGE_AUTOMATION_PAST_TRIGGER_CONFIG,
         policyActivations: Record<StoredMessageSettingsPolicyId, boolean> = DEFAULT_POLICY_ACTIVATIONS,
+        canManageActivation = false,
     ): MessageAutomationPoliciesResponseDto {
-        return MessageAutomationPoliciesResponseDto.build(pastTriggerConfig, policyActivations);
+        return MessageAutomationPoliciesResponseDto.build(pastTriggerConfig, policyActivations, canManageActivation);
     }
 
     static build(
         pastTriggerConfig: MessageAutomationPastTriggerConfig = DEFAULT_MESSAGE_AUTOMATION_PAST_TRIGGER_CONFIG,
         policyActivations: Record<StoredMessageSettingsPolicyId, boolean> = DEFAULT_POLICY_ACTIVATIONS,
+        canManageActivation = false,
     ): MessageAutomationPoliciesResponseDto {
         const dto = new MessageAutomationPoliciesResponseDto();
         dto.pastTriggerConfig = MessageAutomationPastTriggerConfigDto.from(pastTriggerConfig);
         dto.policyActivations = policyActivations;
+        dto.canManageActivation = canManageActivation;
         dto.policies = [
             {
                 id: "trigger-dispatch",
@@ -146,7 +150,7 @@ export class MessageAutomationPoliciesResponseDto {
                     {
                         id: "send-time",
                         label: "발송 시각",
-                        value: `${formatKstHour(SEND_HOUR_KST)} KST`,
+                        value: `규칙별 설정 (기본 ${formatKstHour(SEND_HOUR_KST)} KST)`,
                     },
                 ],
             },

@@ -84,6 +84,10 @@ export class ServiceRecordEditDateMoveDto {
     @IsString()
     @Matches(/^\d{4}-\d{2}-\d{2}$/)
     toDate!: string;
+
+    /** False changes only this session; true represents an approved suffix move. */
+    @IsOptional() @IsBoolean()
+    shiftFollowing?: boolean;
 }
 
 export class UpdateServiceRecordEditDraftDto {

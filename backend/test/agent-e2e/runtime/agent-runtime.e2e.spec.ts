@@ -307,6 +307,7 @@ describeAgentE2E("Release A runtime with Postgres, Valkey, and the deterministic
                 eventType: currentRule!.eventType,
                 offsetType: currentRule!.offsetType,
                 offsetDays: currentRule!.offsetDays,
+                sendTime: currentRule!.sendTime,
                 recipientType: currentRule!.recipientType,
                 templateKey: currentRule!.templateKey,
                 isDefault: currentRule!.isDefault,
@@ -447,6 +448,7 @@ describeAgentE2E("Release A runtime with Postgres, Valkey, and the deterministic
                 eventType: currentRule!.eventType,
                 offsetType: currentRule!.offsetType,
                 offsetDays: currentRule!.offsetDays,
+                sendTime: currentRule!.sendTime,
                 recipientType: currentRule!.recipientType,
                 templateKey: currentRule!.templateKey,
                 isDefault: currentRule!.isDefault,
@@ -494,7 +496,10 @@ describeAgentE2E("Release A runtime with Postgres, Valkey, and the deterministic
         }
     }, 30_000);
 
-    it("reconciles a same-dedupe stale rebuild before the rebuilt pending job is delivered", async () => {
+    it.each([
+        { templateKey: MessageTriggerTemplateKey.SERVICE_INFO, expectedStatus: "sent", expectedSendCount: 1 },
+        { templateKey: MessageTriggerTemplateKey.SERVICE_START_REMINDER, expectedStatus: "canceled", expectedSendCount: 0 },
+    ])("reconciles a same-dedupe stale rebuild for $templateKey as $expectedStatus", async ({ templateKey, expectedStatus, expectedSendCount }) => {
         const suffix = Date.now();
         const ruleId = `agent-e2e-rebuild-rule-${suffix}`;
         const clientPhone = `010${String(suffix).slice(-8)}`;
@@ -544,7 +549,7 @@ describeAgentE2E("Release A runtime with Postgres, Valkey, and the deterministic
                     offsetType: "BEFORE_DAYS",
                     offsetDays: 1,
                     recipientType: MessageTriggerRecipientType.CLIENT,
-                    templateKey: "SERVICE_START_REMINDER",
+                    templateKey,
                     isDefault: false,
                     jobsStale: true,
                     createdAt: oldGenerationAt,
@@ -570,7 +575,7 @@ describeAgentE2E("Release A runtime with Postgres, Valkey, and the deterministic
                     clientId: client.id,
                     recipientType: MessageTriggerRecipientType.CLIENT,
                     recipientPhone: clientPhone,
-                    templateKey: "SERVICE_START_REMINDER",
+                    templateKey,
                     dedupeKey,
                     payload: {
                         memberId: String(client.id),
@@ -610,9 +615,9 @@ describeAgentE2E("Release A runtime with Postgres, Valkey, and the deterministic
             expect(sendSpy).not.toHaveBeenCalled();
 
             await expect(triggerService.dispatchPendingJobNow(job.id, { expectedBranchId: BRANCH_ID })).resolves.toEqual(
-                expect.objectContaining({ id: job.id, status: "sent" }),
+                expect.objectContaining({ id: job.id, status: expectedStatus }),
             );
-            expect(sendSpy).toHaveBeenCalledTimes(1);
+            expect(sendSpy).toHaveBeenCalledTimes(expectedSendCount);
         } finally {
             sendSpy.mockRestore();
             await prisma.message_trigger_rule.deleteMany({ where: { id: ruleId } });
@@ -723,6 +728,7 @@ describeAgentE2E("Release A runtime with Postgres, Valkey, and the deterministic
                 eventType: r1Rule!.eventType,
                 offsetType: r1Rule!.offsetType,
                 offsetDays: r1Rule!.offsetDays,
+                sendTime: r1Rule!.sendTime,
                 recipientType: r1Rule!.recipientType,
                 templateKey: r1Rule!.templateKey,
                 isDefault: r1Rule!.isDefault,

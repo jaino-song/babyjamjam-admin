@@ -1,7 +1,8 @@
 import { createHash } from "node:crypto";
+import { execFileSync } from "node:child_process";
+import path from "node:path";
 
 import {
-    PdfJsReceiptPdfTextExtractor,
     ReceiptPdfVerifierService,
     ReceiptPdfTextExtractor,
     ReceiptPdfTextExtraction,
@@ -103,15 +104,26 @@ describe("ReceiptPdfVerifierService", () => {
     });
 
     it("uses installed pdfjs to extract local receipt fields before accepting proof", async () => {
-        const service = new ReceiptPdfVerifierService(new PdfJsReceiptPdfTextExtractor());
         const pdf = localReceiptPdf();
-
-        const result = await service.verify(input({ pdf }));
+        // Exercise the real ESM dependency in Node, not Jest's disposable VM.
+        // Identical Function-based import trampolines can otherwise retain an
+        // earlier suite's loader and import after that environment was torn down.
+        const output = execFileSync(process.execPath, [
+            "--require", require.resolve("ts-node/register/transpile-only"),
+            path.join(__dirname, "../utils/receipt-pdf-proof-probe.ts"),
+        ], {
+            cwd: path.join(__dirname, "../.."),
+            input: JSON.stringify({ pdf: pdf.toString("base64"), scope: SCOPE, expected: EXPECTED }),
+            encoding: "utf8",
+            timeout: 10000,
+        });
+        const result = JSON.parse(output.trim().split("\n").at(-1)!);
         expect(result).toMatchObject({
             status: "verified",
             officialPdfSha256: createHash("sha256").update(pdf).digest("hex"),
             pageCount: 1,
         });
+        expect(result).toMatchObject({ scope: SCOPE, expected: EXPECTED });
     });
 
     it("stays capability_unverified when a scoped field label is missing", async () => {

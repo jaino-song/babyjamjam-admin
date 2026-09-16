@@ -19,6 +19,7 @@ type MessageTriggerRuleRawRow = {
     event_type: string;
     offset_type: string;
     offset_days: number;
+    send_time: string;
     recipient_type: string;
     template_key: string;
     is_default: boolean;
@@ -41,8 +42,12 @@ export class SbMessageTriggerRuleRepository implements IMessageTriggerRuleReposi
         return rows.map((row) => this.toDomain(row));
     }
 
-    async findById(branchId: string, id: string): Promise<MessageTriggerRuleEntity | null> {
-        const row = await this.prisma.message_trigger_rule.findFirst({
+    async findById(
+        branchId: string,
+        id: string,
+        transaction?: Prisma.TransactionClient,
+    ): Promise<MessageTriggerRuleEntity | null> {
+        const row = await (transaction ?? this.prisma).message_trigger_rule.findFirst({
             where: { id, branchId },
         });
         return row ? this.toDomain(row) : null;
@@ -127,6 +132,7 @@ export class SbMessageTriggerRuleRepository implements IMessageTriggerRuleReposi
                 eventType: rule.eventType,
                 offsetType: rule.offsetType,
                 offsetDays: rule.offsetDays,
+                sendTime: rule.sendTime,
                 recipientType: rule.recipientType,
                 templateKey: rule.templateKey,
                 isDefault: rule.isDefault,
@@ -150,6 +156,7 @@ export class SbMessageTriggerRuleRepository implements IMessageTriggerRuleReposi
                 eventType: rule.eventType,
                 offsetType: rule.offsetType,
                 offsetDays: rule.offsetDays,
+                sendTime: rule.sendTime,
                 recipientType: rule.recipientType,
                 templateKey: rule.templateKey,
                 isDefault: rule.isDefault,
@@ -173,6 +180,7 @@ export class SbMessageTriggerRuleRepository implements IMessageTriggerRuleReposi
                 eventType: expected.eventType,
                 offsetType: expected.offsetType,
                 offsetDays: expected.offsetDays,
+                sendTime: expected.sendTime,
                 recipientType: expected.recipientType,
                 templateKey: expected.templateKey,
                 isDefault: expected.isDefault,
@@ -185,6 +193,7 @@ export class SbMessageTriggerRuleRepository implements IMessageTriggerRuleReposi
                 eventType: next.eventType,
                 offsetType: next.offsetType,
                 offsetDays: next.offsetDays,
+                sendTime: next.sendTime,
                 recipientType: next.recipientType,
                 templateKey: next.templateKey,
                 isDefault: next.isDefault,
@@ -212,6 +221,7 @@ export class SbMessageTriggerRuleRepository implements IMessageTriggerRuleReposi
                     event_type,
                     offset_type,
                     offset_days,
+                    send_time,
                     recipient_type,
                     template_key,
                     is_default,
@@ -255,6 +265,7 @@ export class SbMessageTriggerRuleRepository implements IMessageTriggerRuleReposi
                     event_type = ${next.eventType},
                     offset_type = ${next.offsetType},
                     offset_days = ${next.offsetDays},
+                    send_time = ${next.sendTime},
                     recipient_type = ${next.recipientType},
                     template_key = ${next.templateKey},
                     is_default = ${next.isDefault},
@@ -270,6 +281,7 @@ export class SbMessageTriggerRuleRepository implements IMessageTriggerRuleReposi
                     event_type,
                     offset_type,
                     offset_days,
+                    send_time,
                     recipient_type,
                     template_key,
                     is_default,
@@ -322,6 +334,7 @@ export class SbMessageTriggerRuleRepository implements IMessageTriggerRuleReposi
                     eventType: rule.eventType,
                     offsetType: rule.offsetType,
                     offsetDays: rule.offsetDays,
+                    sendTime: rule.sendTime,
                     recipientType: rule.recipientType,
                     templateKey: rule.templateKey,
                     isDefault: rule.isDefault,
@@ -335,8 +348,9 @@ export class SbMessageTriggerRuleRepository implements IMessageTriggerRuleReposi
     async clearJobsStaleIfUnchanged(
         ruleId: string,
         updatedAtAtReadTime: Date,
+        transaction?: Prisma.TransactionClient,
     ): Promise<boolean> {
-        const result = await this.prisma.message_trigger_rule.updateMany({
+        const result = await (transaction ?? this.prisma).message_trigger_rule.updateMany({
             where: {
                 id: ruleId,
                 jobsStale: true,
@@ -370,6 +384,7 @@ export class SbMessageTriggerRuleRepository implements IMessageTriggerRuleReposi
                 eventType: expected.eventType,
                 offsetType: expected.offsetType,
                 offsetDays: expected.offsetDays,
+                sendTime: expected.sendTime,
                 recipientType: expected.recipientType,
                 templateKey: expected.templateKey,
                 isDefault: expected.isDefault,
@@ -396,6 +411,7 @@ export class SbMessageTriggerRuleRepository implements IMessageTriggerRuleReposi
                     event_type,
                     offset_type,
                     offset_days,
+                    send_time,
                     recipient_type,
                     template_key,
                     is_default,
@@ -457,6 +473,7 @@ export class SbMessageTriggerRuleRepository implements IMessageTriggerRuleReposi
         eventType: string;
         offsetType: string;
         offsetDays: number;
+        sendTime: string;
         recipientType: string;
         templateKey: string;
         isDefault?: boolean;
@@ -478,6 +495,7 @@ export class SbMessageTriggerRuleRepository implements IMessageTriggerRuleReposi
             row.updatedAt,
             row.isDefault ?? false,
             row.jobsStale ?? false,
+            row.sendTime,
         );
     }
 
@@ -490,6 +508,7 @@ export class SbMessageTriggerRuleRepository implements IMessageTriggerRuleReposi
             eventType: row.event_type,
             offsetType: row.offset_type,
             offsetDays: row.offset_days,
+            sendTime: row.send_time,
             recipientType: row.recipient_type,
             templateKey: row.template_key,
             isDefault: row.is_default,
@@ -512,6 +531,7 @@ export class SbMessageTriggerRuleRepository implements IMessageTriggerRuleReposi
             && current.eventType === expected.eventType
             && current.offsetType === expected.offsetType
             && current.offsetDays === expected.offsetDays
+            && current.sendTime === expected.sendTime
             && current.recipientType === expected.recipientType
             && current.templateKey === expected.templateKey
             && current.isDefault === expected.isDefault

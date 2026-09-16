@@ -470,6 +470,11 @@ export interface MessageAutomationPastTriggerConfig {
     ruleOrder: string[];
 }
 
+export interface MessagePolicyActivationResponse {
+    policyId: "trigger-dispatch";
+    enabled: boolean;
+}
+
 export interface ClientRegistrationPolicyAutomationStatus {
     /** 웹훅 수신이 가능한 상태인지 (시크릿 + 테넌트 허용목록 존재). */
     webhookConfigured: boolean;
@@ -495,6 +500,8 @@ export type ClientRegistrationPolicyPatch = Partial<ClientRegistrationPolicy>;
 export interface MessageAutomationPoliciesResponse {
     policies: MessageAutomationPolicy[];
     pastTriggerConfig: MessageAutomationPastTriggerConfig;
+    /** Resolved current-branch owner/admin capability for activation mutations. */
+    canManageActivation?: boolean;
     policyActivations?: Partial<Record<
         | "trigger-dispatch"
         | "trigger-job-retry"
@@ -631,6 +638,15 @@ export const settingsApi = {
         config: MessageAutomationPastTriggerConfig,
     ): Promise<MessageAutomationPastTriggerConfig> => {
         const { data } = await api.put("/settings/message-automation-policies/past-trigger", config);
+        return data;
+    },
+    updateMessagePolicyActivation: async (
+        enabled: boolean,
+    ): Promise<MessagePolicyActivationResponse> => {
+        const { data } = await api.put(
+            "/settings/message-policy-activations/trigger-dispatch",
+            { enabled },
+        );
         return data;
     },
     requestMessageSenderApproval: async (): Promise<MessageSenderApprovalResponse> => {

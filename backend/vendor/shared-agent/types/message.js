@@ -151,6 +151,7 @@ exports.createMessageTriggerRuleSchema = zod_1.z
     eventType: exports.messageTriggerEventTypeSchema,
     offsetType: exports.messageTriggerOffsetTypeSchema,
     offsetDays: zod_1.z.number().int().min(0).optional(),
+    sendTime: zod_1.z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/).optional(),
     recipientType: exports.messageTriggerRecipientTypeSchema,
     templateKey: exports.messageTriggerTemplateKeySchema,
 })

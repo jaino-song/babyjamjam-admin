@@ -19,10 +19,6 @@ const zod_1 = require("zod");
 // to ISO strings on the wire, so the client-facing response types below use
 // string while Raw* variants retain Date for backend-reference parity.
 exports.SYSTEM_TEMPLATE_KEYS = [
-    'CLIENT_WELCOME',
-    'SERVICE_START_REMINDER',
-    'SERVICE_END_REMINDER',
-    'EMPLOYEE_ASSIGNED',
     'PRICE_INFO',
     'GREETING',
     'THANKS',
@@ -46,10 +42,6 @@ exports.SYSTEM_TEMPLATE_DELIVERY_MODES = [
  * delivery path a compile-time error instead of silently falling back to SMS.
  */
 exports.SYSTEM_TEMPLATE_DELIVERY_MODES_BY_KEY = {
-    CLIENT_WELCOME: "sms",
-    SERVICE_START_REMINDER: "sms",
-    SERVICE_END_REMINDER: "sms",
-    EMPLOYEE_ASSIGNED: "sms",
     PRICE_INFO: "sms",
     GREETING: "sms",
     THANKS: "sms",

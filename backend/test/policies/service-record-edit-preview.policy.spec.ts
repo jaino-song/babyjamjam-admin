@@ -98,6 +98,12 @@ function source(overrides: Partial<ServiceRecordEditSource> = {}): ServiceRecord
 }
 
 describe("service-record-edit-preview.policy", () => {
+    it("preserves later dates for an explicitly single-session correction", () => {
+        const normalized = normalizeServiceRecordEditChanges(source(), {}, {}, { sessionIndex: 1, toDate: "2026-09-04", shiftFollowing: false });
+        expect(normalized.entries?.map((entry) => entry.serviceDate)).toEqual(["2026-09-04", "2026-09-08", "2026-09-09", "2026-09-10", "2026-09-11"]);
+        expect(() => normalizeServiceRecordEditChanges(source(), {}, {}, { sessionIndex: 1, toDate: "2026-09-08", shiftFollowing: false })).toThrow();
+    });
+
     it("keeps nominal duration separate and shifts only the selected suffix", () => {
         const normalized = normalizeServiceRecordEditChanges(
             source(),

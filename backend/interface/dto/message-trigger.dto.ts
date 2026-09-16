@@ -1,4 +1,4 @@
-import { IsBoolean, IsEnum, IsNotEmpty, IsOptional, IsString, IsInt, Min } from "class-validator";
+import { Equals, IsBoolean, IsEnum, IsNotEmpty, IsOptional, IsString, IsInt, Min, Matches, ValidateIf } from "class-validator";
 import {
     MessageTriggerEventType,
     MessageTriggerOffsetType,
@@ -25,6 +25,11 @@ export class CreateMessageTriggerRuleDto {
     @IsInt()
     @Min(0)
     offsetDays?: number;
+
+    @ValidateIf((_object, value) => value !== undefined)
+    @IsString()
+    @Matches(/^([01]\d|2[0-3]):[0-5]\d$/, { message: "발송 시각은 HH:mm 형식이어야 합니다 (한국 시간)." })
+    sendTime?: string;
 
     @IsEnum(MessageTriggerRecipientType)
     recipientType!: MessageTriggerRecipientType;
@@ -56,6 +61,11 @@ export class UpdateMessageTriggerRuleDto {
     @Min(0)
     offsetDays?: number;
 
+    @ValidateIf((_object, value) => value !== undefined)
+    @IsString()
+    @Matches(/^([01]\d|2[0-3]):[0-5]\d$/, { message: "발송 시각은 HH:mm 형식이어야 합니다 (한국 시간)." })
+    sendTime?: string;
+
     @IsOptional()
     @IsEnum(MessageTriggerRecipientType)
     recipientType?: MessageTriggerRecipientType;
@@ -68,4 +78,14 @@ export class UpdateMessageTriggerRuleDto {
 export class UpdateMessageTriggerRuleBranchActivationDto {
     @IsBoolean()
     isActive!: boolean;
+}
+
+export class UpdateMessageTriggerRuleActivationWithParentDto {
+    @IsBoolean()
+    @Equals(true)
+    isActive!: true;
+
+    @IsBoolean()
+    @Equals(true)
+    enableParent!: true;
 }

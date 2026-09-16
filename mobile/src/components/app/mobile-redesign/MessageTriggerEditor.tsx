@@ -5,6 +5,7 @@ import { getUserErrorMessage } from "@babyjamjam/shared";
 import { useMemo, useState } from "react";
 import { BellRing, Trash2 } from "lucide-react";
 
+import { InputField } from "@/components/app/v3/InputField";
 import { MobileDetailHeader, MobileDetailPage } from "./detail-sheet";
 import { ApprovalTwoButtonModal } from "@/components/app/ui/ApprovalTwoButtonModal";
 import {
@@ -63,6 +64,7 @@ function initialForm(rule: MessageTriggerRule | null): RuleForm {
       eventType: rule.eventType,
       offsetType: rule.offsetType,
       offsetDays: rule.offsetDays,
+      sendTime: rule.sendTime ?? "09:00",
       recipientType: rule.recipientType,
       templateKey: rule.templateKey,
     };
@@ -74,6 +76,7 @@ function initialForm(rule: MessageTriggerRule | null): RuleForm {
     eventType: "SERVICE_START",
     offsetType: "BEFORE_DAYS",
     offsetDays: 7,
+    sendTime: "09:00",
     recipientType: "CLIENT",
     templateKey: "SERVICE_INFO",
   };
@@ -125,6 +128,11 @@ export function MessageTriggerEditor({
   };
 
   const handleSave = async () => {
+    if (rule?.branchId === null) return;
+    if (form.offsetType !== "IMMEDIATE" && !/^([01]\d|2[0-3]):[0-5]\d$/.test(form.sendTime)) {
+      setError("발송 시각을 입력해 주세요 (한국 시간).");
+      return;
+    }
     const name = form.name.trim();
     if (!name) {
       setError(getUserErrorMessage("규칙 이름을 입력해 주세요."));
@@ -137,6 +145,7 @@ export function MessageTriggerEditor({
 
     const dto: CreateMessageTriggerRuleDto = {
       ...form,
+      sendTime: form.offsetType === "IMMEDIATE" ? "09:00" : form.sendTime,
       name,
       templateKey: selectedTemplateKey,
       offsetDays: needsDays ? Math.max(0, Number(form.offsetDays) || 0) : 0,
@@ -220,6 +229,24 @@ export function MessageTriggerEditor({
             {OFFSET_OPTIONS[form.eventType].map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
           </select>
         </label>
+
+        {form.offsetType !== "IMMEDIATE" && (
+          <InputField
+            data-component={`${dataComponent}_form_send-time`}
+            title="발송 시각 (한국 시간)"
+            inputProps={{
+              id: "trigger-rule-send-time",
+              name: "sendTime",
+              type: "time",
+              step: 60,
+              required: true,
+              value: form.sendTime,
+              disabled: rule?.branchId === null,
+              onChange: (event) => setField("sendTime", event.target.value),
+              "data-component": `${dataComponent}_form_send-time_input`,
+            }}
+          />
+        )}
 
         {needsDays ? (
           <label className="block space-y-1.5 text-xs font-semibold text-v3-text-muted">

@@ -76,6 +76,7 @@
 .srec .completion-title{margin:0;color:var(--primary);font-size:20px;font-weight:700;letter-spacing:-.2px}
 
 /* 신규 추가분 */
+.srec .date-row{display:flex;justify-content:space-between;align-items:baseline}
 .srec .sec-head{display:flex;justify-content:space-between;align-items:baseline}
 .srec .sec-edit{border:0;background:transparent;color:var(--primary);font:inherit;font-size:12.5px;font-weight:700;cursor:pointer;padding:0}
 .srec .sign-fld{margin-top:16px;padding-top:14px;border-top:1px dashed var(--line)}
