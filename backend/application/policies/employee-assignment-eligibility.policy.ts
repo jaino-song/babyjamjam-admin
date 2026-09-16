@@ -66,8 +66,17 @@ export function assertEmployeeAssignmentEligibility(
         .filter((employeeId): employeeId is number => employeeId !== null);
     if (employeeIds.some((employeeId) => {
         const employee = byId.get(employeeId);
-        return employee === undefined || !isEmployeeAssignmentEligible(employee, branchId, retainedEmployeeIds);
+        return employee === undefined || employee.branchId !== branchId || employee.deletedAt !== null;
     })) {
         throw new BadRequestException(INVALID_EMPLOYEE_ASSIGNMENT_MESSAGE);
+    }
+    // Only disclose availability after every requested employee passes the branch
+    // and deletion checks. Retained employees still use the canonical predicate.
+    if (employeeIds.some((employeeId) =>
+        !isEmployeeAssignmentEligible(byId.get(employeeId)!, branchId, retainedEmployeeIds))) {
+        throw new BadRequestException({
+            code: "EMPLOYEE_ASSIGNMENT_UNAVAILABLE",
+            outcome: "NOT_APPLIED",
+        });
     }
 }
