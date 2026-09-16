@@ -25,9 +25,9 @@ describe("RECEIPT_LINK_REASON_MESSAGES", () => {
     );
   });
 
-  it("uses the contract_not_signed copy shared with the desktop twin", () => {
+  it("explains that the customer must finish signing before sending", () => {
     expect(RECEIPT_LINK_REASON_MESSAGES.contract_not_signed).toBe(
-      "계약서 서명이 완료된 후 발송할 수 있습니다.",
+      "고객이 계약서 서명을 완료해야 발송할 수 있습니다.",
     );
   });
 

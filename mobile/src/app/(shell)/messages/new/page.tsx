@@ -1689,6 +1689,9 @@ function NewMessageForm({ initialBody, initialTemplateId, initialClientId, initi
     sendMutation.mutate();
   };
 
+  const visibleErrorMessage = (errorMessage ? getUserErrorMessage(errorMessage) : null)
+    ?? (isServiceEndNoticeSelected ? validationError : null);
+
   const isSubmitDisabled =
     Boolean(validationError) ||
     sendMutation.isPending ||
@@ -2190,13 +2193,14 @@ function NewMessageForm({ initialBody, initialTemplateId, initialClientId, initi
               </Alert>
             ) : null}
 
-            {errorMessage ? (
+            {visibleErrorMessage ? (
               <Alert
                 data-component="mobile_messages_new_page_screen_form_scroll_list-card_body_error"
                 variant="destructive"
+                aria-live="polite"
                 className={styles.feedbackAlert}
               >
-                {errorMessage && getUserErrorMessage(errorMessage)}
+                {visibleErrorMessage}
               </Alert>
             ) : null}
 
