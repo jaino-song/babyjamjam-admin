@@ -225,6 +225,26 @@ describe("ClientFormDialog mutation error presentation", () => {
         expect(mutateAsync).toHaveBeenCalledTimes(1);
     });
 
+    it("explains disabled next-service assignment on edit and keeps the form retryable", async () => {
+        const problem = createProblemDetails({
+            code: "EMPLOYEE_ASSIGNMENT_UNAVAILABLE",
+            requestId: "12345678-1234-4234-8234-123456789abc",
+            outcome: "NOT_APPLIED",
+        });
+        const mutateAsync = jest.fn().mockRejectedValue({ response: { status: 400, data: problem } });
+        mockUseUpdateClient.mockReturnValue({ mutateAsync, isPending: false } as unknown as ReturnType<typeof useUpdateClient>);
+        const onClose = jest.fn();
+        render(<ClientFormDialog open onClose={onClose} client={validClient as ComponentProps<typeof ClientFormDialog>["client"]} />);
+        await waitFor(() => expect(screen.getByLabelText(/이름/)).toHaveValue("김고객"));
+        fireEvent.click(screen.getByRole("button", { name: "저장" }));
+        const alert = await screen.findByRole("alert");
+        expect(alert).toHaveTextContent("다음 서비스 배정이 비활성화되어 있어요");
+        expect(alert).toHaveTextContent("다른 제공인력을 선택해 주세요");
+        expect(screen.getByRole("button", { name: "저장" })).not.toBeDisabled();
+        expect(screen.getByLabelText(/이름/)).toHaveValue("김고객");
+        expect(onClose).not.toHaveBeenCalled();
+    });
+
     it("preserves a failed edit when the same customer is refreshed", async () => {
         const mutateAsync = jest.fn().mockRejectedValue({ response: { status: 500, data: unknownProblem } });
         mockUseUpdateClient.mockReturnValue({ mutateAsync, isPending: false } as unknown as ReturnType<typeof useUpdateClient>);

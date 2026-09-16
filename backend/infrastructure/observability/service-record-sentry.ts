@@ -8,6 +8,7 @@ import type {
     NodeOptions,
 } from "@sentry/nestjs";
 import type { DatabaseConnectionMode } from "infrastructure/database/prisma-url.utils";
+import { isHttpAdvisory, sanitizeHttpAdvisory } from "./http-advisory";
 
 const FILTERED_VALUE = "[Filtered]";
 const MAX_SANITIZE_DEPTH = 3;
@@ -462,6 +463,10 @@ export function filterAndSanitizeSentryEvent(
     event: ErrorEvent,
     hint: EventHint = {},
 ): ErrorEvent | null {
+    if (isHttpAdvisory(event)) {
+        hint.attachments = [];
+        return sanitizeHttpAdvisory(event) as ErrorEvent;
+    }
     const databaseFailoverEvent = isDatabaseFailoverEvent(event);
     const serviceRecordEvent = isServiceRecordEvent(event);
     if (serviceRecordEvent && isExpectedEvent(event, hint)) return null;
