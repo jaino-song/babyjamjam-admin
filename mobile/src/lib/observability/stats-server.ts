@@ -23,7 +23,8 @@ export interface InquirySummary {
   sevenDayAvg: number;
   thirtyDayTotal: number;
   lastSubmissionAt: string | null;
-  conversionRate: number;
+  /** Null when the source does not carry enough dimensions to attribute conversion. */
+  conversionRate: number | null;
 }
 
 export interface InquiryDailyPoint { day: string; count: number }
@@ -175,12 +176,15 @@ function posthogAvailability(results: readonly { state: StatsSourceState }[]): S
 
 async function queryInquirySummary(branchSlug: string | null): Promise<{ value: InquirySummary | null; state: StatsSourceState }> {
   const filter = branchFilter(branchSlug);
+  const viewedQuery = branchSlug === null
+    ? hogQL<[number]>(`SELECT count() FROM events WHERE event = 'pricing_viewed' AND timestamp >= now() - INTERVAL 7 DAY`)
+    : Promise.resolve({ rows: [] as [number][], state: "unavailable" as StatsSourceState });
   const [summary, submitted, viewed] = await Promise.all([
     hogQL<[number, number, number, number, string | null]>(`SELECT countIf(toDate(timestamp) = today()), countIf(toDate(timestamp) = today() - 1), countIf(timestamp >= now() - INTERVAL 7 DAY), countIf(timestamp >= now() - INTERVAL 30 DAY), max(timestamp) FROM events WHERE event = 'consultation_submitted' AND timestamp >= now() - INTERVAL 30 DAY ${filter}`),
     hogQL<[number]>(`SELECT count() FROM events WHERE event = 'consultation_submitted' AND timestamp >= now() - INTERVAL 7 DAY ${filter}`),
-    hogQL<[number]>(`SELECT count() FROM events WHERE event = 'pricing_viewed' AND timestamp >= now() - INTERVAL 7 DAY ${filter}`),
+    viewedQuery,
   ]);
-  const state = posthogAvailability([summary, submitted, viewed]);
+  const state = posthogAvailability(branchSlug === null ? [summary, submitted, viewed] : [summary, submitted]);
   if (state !== "ready") return { value: null, state };
   const row = summary.rows[0];
   const sevenDay = safeNumber(row?.[2]);
@@ -194,7 +198,7 @@ async function queryInquirySummary(branchSlug: string | null): Promise<{ value: 
       sevenDayAvg: sevenDay / 7,
       thirtyDayTotal: safeNumber(row?.[3]),
       lastSubmissionAt: safeString(row?.[4]),
-      conversionRate: views > 0 ? (safeNumber(submitted.rows[0]?.[0]) / views) * 100 : 0,
+      conversionRate: branchSlug === null ? (views > 0 ? (safeNumber(submitted.rows[0]?.[0]) / views) * 100 : 0) : null,
     },
   };
 }

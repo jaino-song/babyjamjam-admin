@@ -6,7 +6,7 @@ const originalFetch = global.fetch;
 const envKeys = ["POSTHOG_HOST", "POSTHOG_API_KEY", "POSTHOG_PROJECT_ID"] as const;
 const originalEnv = Object.fromEntries(envKeys.map((key) => [key, process.env[key]]));
 
-describe("stats tenant scoping", () => {
+describe("stats tenant scoping and conversion semantics", () => {
   beforeEach(() => {
     jest.resetModules();
     process.env.POSTHOG_HOST = "https://posthog.example";
@@ -23,7 +23,7 @@ describe("stats tenant scoping", () => {
     }
   });
 
-  it("applies the branch filter to every inquiry query", async () => {
+  it("keeps branch inquiry conversion unavailable when pricing views have no branch dimension", async () => {
     const fetchMock = jest.fn(async () => ({
       ok: true,
       json: async () => ({ results: [] }),
@@ -38,8 +38,33 @@ describe("stats tenant scoping", () => {
       const body = JSON.parse(String(init?.body)) as { query: { query: string } };
       return body.query.query;
     });
-    expect(queries).toHaveLength(7);
-    expect(queries.filter((query) => /event = '(consultation_submitted|pricing_viewed)'/.test(query))).toHaveLength(7);
+    expect(queries).toHaveLength(6);
+    expect(queries.some((query) => query.includes("event = 'pricing_viewed'"))).toBe(false);
     expect(queries.every((query) => query.includes("AND properties.branch_slug = 'gangnam'"))).toBe(true);
+    expect(response.data?.summary.conversionRate).toBeNull();
+  });
+
+  it("computes global conversion from the unscoped pricing view denominator for owners", async () => {
+    const fetchMock = jest.fn(async (_input: unknown, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body)) as { query: { query: string } };
+      const query = body.query.query;
+      if (query.includes("event = 'pricing_viewed'")) return { ok: true, json: async () => ({ results: [[20]] }) };
+      if (query.includes("countIf(toDate(timestamp) = today())")) return { ok: true, json: async () => ({ results: [[2, 1, 8, 12, "2026-09-17T00:00:00.000Z"]] }) };
+      if (query.includes("event = 'consultation_submitted'")) return { ok: true, json: async () => ({ results: [[10]] }) };
+      return { ok: true, json: async () => ({ results: [] }) };
+    });
+    global.fetch = fetchMock as unknown as typeof fetch;
+
+    const { getStatsView } = await import("../stats-server");
+    const response = await getStatsView("inquiries", null);
+
+    expect(response.state).toBe("ready");
+    expect(response.data?.summary.conversionRate).toBe(50);
+    const pricingQuery = (fetchMock.mock.calls as unknown as Array<[unknown, RequestInit?]>)
+      .map(([, init]) => JSON.parse(String(init?.body)) as { query: { query: string } })
+      .map((body) => body.query.query)
+      .find((query) => query.includes("event = 'pricing_viewed'"));
+    expect(pricingQuery).toBeDefined();
+    expect(pricingQuery).not.toContain("properties.branch_slug");
   });
 });
