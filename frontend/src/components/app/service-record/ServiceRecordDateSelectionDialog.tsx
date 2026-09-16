@@ -295,14 +295,17 @@ export function ServiceRecordDateSelectionDialog({
             <FormDialogShell
                 data-component={dataComponent}
                 size="compact"
-                title="서비스 제공일 변경"
+                mobileSheet
+                title={<>{sessionLabel} 서비스 제공일 수정</>}
                 description="서비스 제공일을 선택해 주세요. 다음 회차와 겹치면 뒤 회차의 이동 여부를 확인합니다. 변경사항은 회차 화면에서 수정 확인을 눌러야 저장됩니다."
-                contentClassName="flex flex-col gap-4"
+                contentClassName="flex flex-col gap-4 max-sm:px-[22px] max-sm:pt-1 max-sm:pb-[22px]"
+                footerClassName="grid grid-cols-[1fr_2fr] gap-2.5 px-[22px] pb-[max(22px,env(safe-area-inset-bottom))]"
                 footer={(
                     <>
                         <Button
                             type="button"
                             variant="neutral"
+                            className="h-[52px] rounded-xl text-base"
                             data-component={`${dataComponent}_actions_cancel`}
                             disabled={busy}
                             onClick={() => handleOpenChange(false)}
@@ -312,12 +315,13 @@ export function ServiceRecordDateSelectionDialog({
                         <Button
                             type="button"
                             variant="positive"
+                            className="h-[52px] rounded-xl text-base"
                             data-component={`${dataComponent}_actions_apply`}
                             disabled={applyDisabled}
                             aria-busy={busy || undefined}
                             onClick={handleApply}
                         >
-                            {busy ? "적용 중…" : "날짜 적용"}
+                            {busy ? "적용 중…" : "수정"}
                         </Button>
                     </>
                 )}
@@ -333,18 +337,17 @@ export function ServiceRecordDateSelectionDialog({
                         data-slot="current-date"
                         className="flex flex-col gap-1"
                     >
-                        <span className="text-sm font-semibold text-v3-dark">{sessionLabel} 현재 제공일</span>
                         <span className="text-sm text-v3-text-muted">
-                            {currentDisplayDate ?? "현재 제공일을 확인할 수 없습니다."}
+                            {currentDisplayDate ? `현재 ${Number(currentServiceDate.slice(0, 4))}년 ${Number(currentServiceDate.slice(5, 7))}월 ${Number(currentServiceDate.slice(8, 10))}일` : "현재 제공일을 확인할 수 없습니다."}
                         </span>
                     </div>
 
                     <p
                         data-component={`${dataComponent}_content_date-form_policy`}
                         data-slot="policy"
-                        className="text-sm leading-6 text-v3-text-muted"
+                        className="text-sm font-semibold text-v3-dark"
                     >
-                        선택한 회차의 제공일을 수정합니다. 다음 회차와 겹치면 뒤 회차를 함께 이동할지 확인합니다.
+                        변경할 날짜
                     </p>
 
                     {isBlocked ? (
@@ -361,7 +364,7 @@ export function ServiceRecordDateSelectionDialog({
                             <div
                                 data-component={`${dataComponent}_content_date-form_controls`}
                                 data-slot="date-controls"
-                                className="flex flex-wrap items-end gap-2"
+                                className="grid grid-cols-[1.3fr_1fr_1fr] items-end gap-2.5"
                                 role="group"
                                 aria-label="새 제공일"
                             >
@@ -373,6 +376,8 @@ export function ServiceRecordDateSelectionDialog({
                                     <Label htmlFor={yearId}>연도</Label>
                                     <CompactDateSelect
                                         id={yearId}
+                                        triggerClassName="w-full h-[54px] rounded-xl px-3 text-base font-semibold"
+                                        contentClassName="w-auto min-w-[100px] [&_[role=option]]:min-h-11 [&_[role=option]]:text-base"
                                         ariaLabel="연도"
                                         value={selection.year}
                                         onValueChange={(value) => {
@@ -393,6 +398,8 @@ export function ServiceRecordDateSelectionDialog({
                                     <Label htmlFor={monthId}>월</Label>
                                     <CompactDateSelect
                                         id={monthId}
+                                        triggerClassName="w-full h-[54px] rounded-xl px-3 text-base font-semibold"
+                                        contentClassName="w-auto min-w-[100px] [&_[role=option]]:min-h-11 [&_[role=option]]:text-base"
                                         ariaLabel="월"
                                         value={selection.month}
                                         onValueChange={(value) => {
@@ -413,6 +420,8 @@ export function ServiceRecordDateSelectionDialog({
                                     <Label htmlFor={dayId}>일</Label>
                                     <CompactDateSelect
                                         id={dayId}
+                                        triggerClassName="w-full h-[54px] rounded-xl px-3 text-base font-semibold"
+                                        contentClassName="w-auto min-w-[100px] [&_[role=option]]:min-h-11 [&_[role=option]]:text-base"
                                         ariaLabel="일"
                                         value={selection.day}
                                         onValueChange={(value) => {
@@ -433,15 +442,7 @@ export function ServiceRecordDateSelectionDialog({
                                 data-slot="selection-hint"
                                 className="text-xs leading-5 text-v3-text-muted"
                             >
-                                주말과 한국 공휴일은 선택할 수 없습니다. 연도나 월을 바꾸면 영업일을 다시 선택해 주세요.
-                            </p>
-                            <p
-                                data-component={`${dataComponent}_content_date-form_preview`}
-                                data-slot="preview"
-                                className="text-sm font-semibold text-v3-dark"
-                                aria-live="polite"
-                            >
-                                적용 예정일: {selectedDate ? formatDateForDisplay(selectedDate) : "날짜를 선택해 주세요."}
+                                주말·공휴일을 제외한 영업일만 선택할 수 있어요.
                             </p>
                             {applyError ? (
                                 <p

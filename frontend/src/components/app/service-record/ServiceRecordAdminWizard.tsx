@@ -17,6 +17,8 @@ import type {
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { TwoButtonModal } from "@/components/app/ui/TwoButtonModal";
 import { Button } from "@/components/ui/button";
+import { Dialog } from "@/components/ui/dialog";
+import { FormDialogShell } from "@/components/app/ui/FormDialogShell";
 import {
     adminServiceRecordEditApi,
 } from "@/features/service-records/api/admin-service-record-edit.api";
@@ -763,7 +765,7 @@ export function ServiceRecordAdminWizard({
                         </span>;
                     },
                     serviceDateEditor: ({ "data-component": component, disabled, onOpen }) => (
-                        <Button data-component={component} type="button" size="sm" variant="outline" disabled={disabled || Boolean(baseView.scheduleProjectionBlockingReasons.length)} onClick={onOpen}>수정</Button>
+                        <button data-component={component} data-slot="sec-edit" type="button" className="sec-edit" disabled={disabled || Boolean(baseView.scheduleProjectionBlockingReasons.length)} onClick={onOpen}>수정</button>
                     ),
                     adminSessionAction: (
                         <Button data-component={`${ADMIN_WIZARD_COMPONENT}_body_confirmation-action_confirm`} type="button" className="btn submit"
@@ -792,11 +794,25 @@ export function ServiceRecordAdminWizard({
                 currentServiceDate={String(draft._date || sourceDate)} sessionLabel={`${day}회차`}
                 onApply={selectDate} error={dateError} disabled={locked}
                 data-component={`${ADMIN_WIZARD_COMPONENT}_date-selection-dialog`} />
-            <TwoButtonModal open={Boolean(collision)} onOpenChange={(open) => { if (!open) { setCollision(null); setDateDialogOpen(true); } }}
-                title="서비스 제공일 수정" size="detail" isDescriptionVisuallyHidden={false}
-                description={collision ? `${day}회차 서비스 제공일을 ${Number(collision.date.slice(5, 7))}월 ${Number(collision.date.slice(8, 10))}일로 수정하면 다음 회차와 날짜가 겹칩니다. 뒷 회차들의 서비스 제공일도 ${collision.delta} 영업일씩 수정할까요?` : ""}
-                approvalLabel="수정" onApprove={() => { if (collision) applyDate(collision.date, true); }}
-                data-component={`${ADMIN_WIZARD_COMPONENT}_date-collision-modal`} />
+            <Dialog open={Boolean(collision)} onOpenChange={(open) => { if (!open) { setCollision(null); setDateDialogOpen(true); } }}>
+                <FormDialogShell mobileSheet size="compact" title={`${day}회차 서비스 제공일 수정`}
+                    description="다음 회차와 겹치는 서비스 제공일의 변경 여부를 확인합니다."
+                    data-component={`${ADMIN_WIZARD_COMPONENT}_date-collision-modal`}
+                    footerClassName="grid grid-cols-[1fr_2fr] gap-2.5 px-[22px] pb-[max(22px,env(safe-area-inset-bottom))]"
+                    footer={<>
+                        <Button type="button" variant="neutral" className="h-[52px] rounded-xl text-base"
+                            data-component={`${ADMIN_WIZARD_COMPONENT}_date-collision-modal_actions_cancel`}
+                            onClick={() => { setCollision(null); setDateDialogOpen(true); }}>취소</Button>
+                        <Button type="button" variant="positive" className="h-[52px] rounded-xl text-base"
+                            data-component={`${ADMIN_WIZARD_COMPONENT}_date-collision-modal_actions_apply`}
+                            onClick={() => { if (collision) applyDate(collision.date, true); }}>수정</Button>
+                    </>}>
+                    <Alert variant="warning" data-component={`${ADMIN_WIZARD_COMPONENT}_date-collision-modal_content_warning`}>
+                        <AlertTitle>다음 회차와 날짜가 겹쳐요</AlertTitle>
+                        <AlertDescription>{collision ? `${day}회차 서비스 제공일을 ${Number(collision.date.slice(5, 7))}월 ${Number(collision.date.slice(8, 10))}일로 수정하면 다음 회차와 날짜가 겹칩니다. 뒷 회차들의 서비스 제공일도 ${collision.delta} 영업일씩 수정할까요?` : ""}</AlertDescription>
+                    </Alert>
+                </FormDialogShell>
+            </Dialog>
             <TwoButtonModal open={leaveModalOpen} onOpenChange={setLeaveModalOpen}
                 title="수정사항을 취소할까요?" description="확정하지 않은 이 회차의 수정사항이 취소됩니다."
                 approvalLabel="나가기" onApprove={() => { setLeaveModalOpen(false); resetLocal(); }}

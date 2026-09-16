@@ -32,6 +32,17 @@ function chooseOption(label: string, optionName: string) {
 }
 
 describe("ServiceRecordDateSelectionDialog", () => {
+    it("uses the approved mobile sheet layout without preview or save guidance", () => {
+        renderDialog();
+        const dialog = screen.getByRole("dialog", { name: "3회차 서비스 제공일 수정" });
+        expect(dialog).toHaveClass("max-sm:bottom-0", "max-sm:w-full", "max-sm:translate-y-0");
+        expect(screen.getByText("현재 2026년 7월 16일")).toBeInTheDocument();
+        expect(screen.getByRole("button", { name: "닫기" })).toBeInTheDocument();
+        expect(screen.getByRole("combobox", { name: "일" })).toHaveClass("h-[54px]", "w-full");
+        expect(dialog.querySelector('[data-slot="dialog-footer"]')).toHaveClass("grid", "grid-cols-[1fr_2fr]");
+        expect(dialog.querySelector('[data-slot="preview"]')).toBeNull();
+        expect(dialog.querySelector('[data-slot="notice"]')).toBeNull();
+    });
     it("derives supported years from the shared calendar and filters weekends and holidays", () => {
         const years = getSupportedKoreanBusinessYears();
         const julyOptions = getBusinessDayOptions(2026, 7);
@@ -63,7 +74,7 @@ describe("ServiceRecordDateSelectionDialog", () => {
         const { rerender } = renderDialog({ currentServiceDate: "2026-02-30" });
         expect(screen.getByRole("alert")).toHaveTextContent("형식이 올바르지 않아");
         expect(screen.queryByRole("combobox", { name: "연도" })).not.toBeInTheDocument();
-        expect(screen.getByRole("button", { name: "날짜 적용" })).toBeDisabled();
+        expect(screen.getByRole("button", { name: "수정" })).toBeDisabled();
 
         rerender(
             <ServiceRecordDateSelectionDialog
@@ -97,7 +108,7 @@ describe("ServiceRecordDateSelectionDialog", () => {
 
         chooseOption("일", "15일");
         expect(onApply).not.toHaveBeenCalled();
-        fireEvent.click(screen.getByRole("button", { name: "날짜 적용" }));
+        fireEvent.click(screen.getByRole("button", { name: "수정" }));
 
         expect(onApply).toHaveBeenCalledTimes(1);
         expect(onApply).toHaveBeenCalledWith("2026-07-15");
@@ -116,8 +127,8 @@ describe("ServiceRecordDateSelectionDialog", () => {
         });
 
         expect(screen.getByRole("combobox", { name: "일" })).toHaveTextContent("15일");
-        expect(screen.getByText("적용 예정일: 2026.07.15")).toBeInTheDocument();
-        fireEvent.click(screen.getByRole("button", { name: "날짜 적용" }));
+        expect(screen.queryByText(/적용 예정일/)).not.toBeInTheDocument();
+        fireEvent.click(screen.getByRole("button", { name: "수정" }));
         expect(onApply).toHaveBeenCalledWith("2026-07-15");
         fireEvent.click(screen.getByRole("button", { name: "최신 초안 불러오기" }));
         expect(onReloadLatest).toHaveBeenCalledTimes(1);
@@ -129,12 +140,12 @@ describe("ServiceRecordDateSelectionDialog", () => {
 
         chooseOption("월", "8월");
         expect(screen.getByRole("combobox", { name: "일" })).toHaveTextContent("일");
-        expect(screen.getByRole("button", { name: "날짜 적용" })).toBeDisabled();
+        expect(screen.getByRole("button", { name: "수정" })).toBeDisabled();
 
         chooseOption("일", "3일");
         chooseOption("연도", "2025년");
         expect(screen.getByRole("combobox", { name: "일" })).toHaveTextContent("일");
-        expect(screen.getByRole("button", { name: "날짜 적용" })).toBeDisabled();
+        expect(screen.getByRole("button", { name: "수정" })).toBeDisabled();
 
         fireEvent.click(screen.getByRole("combobox", { name: "일" }));
         expect(screen.queryByRole("option", { name: "17일" })).not.toBeInTheDocument();

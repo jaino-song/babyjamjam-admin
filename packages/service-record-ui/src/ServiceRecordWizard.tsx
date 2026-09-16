@@ -542,18 +542,20 @@ export function ServiceRecordWizard({
                         >
                             이전
                         </button>
-                        <div data-component={child("body_date-chip")} data-slot="datechip" className="datechip">
-                            {day}회차{editing ? " · " : ""}
-                            {editing
-                                ? renderServiceDateDisplay(
-                                    day,
-                                    currentServiceDate,
-                                    "body_date-chip_date-display",
-                                    formatMonthDayKo(currentServiceDate),
-                                )
-                                : null}
+                        <div data-slot="date-row" className={adminMode ? "date-row" : undefined}>
+                            <div data-component={child("body_date-chip")} data-slot="datechip" className="datechip">
+                                {day}회차{editing ? " · " : ""}
+                                {editing
+                                    ? renderServiceDateDisplay(
+                                        day,
+                                        currentServiceDate,
+                                        "body_date-chip_date-display",
+                                        formatMonthDayKo(currentServiceDate),
+                                    )
+                                    : null}
+                            </div>
                             {adminMode && slots?.serviceDateEditor ? slots.serviceDateEditor({
-                                "data-component": child("body_date-chip_edit"),
+                                "data-component": child("body_date-edit"),
                                 sessionIndex: day,
                                 serviceDate: currentServiceDate,
                                 disabled: readOnly || busy,
