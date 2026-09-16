@@ -11,7 +11,7 @@ import {
 } from "lucide-react";
 
 import type { Client } from "@/lib/client/types";
-import { useClients } from "@/hooks/useClients";
+import { useAllClients } from "@/hooks/useClients";
 import { formatDateForDisplay } from "@/lib/date/format-date-for-display";
 import {
     AnimatedSlotList,
@@ -165,7 +165,12 @@ function formatSelectedDate(date: Date) {
 
 function getScheduleHorizon(now: Date) {
     const horizonStart = startOfDay(now);
-    const horizonEnd = addDays(horizonStart, 30);
+    const horizonEnd = new Date(horizonStart);
+    // Clamp leap day to February's final day in the following year.
+    const targetYear = horizonStart.getFullYear() + 1;
+    const month = horizonStart.getMonth();
+    const lastDay = new Date(targetYear, month + 1, 0).getDate();
+    horizonEnd.setFullYear(targetYear, month, Math.min(horizonStart.getDate(), lastDay));
     horizonEnd.setHours(23, 59, 59, 999);
     return { horizonStart, horizonEnd };
 }
@@ -217,7 +222,7 @@ function moveMonth(month: Date, amount: number) {
 }
 
 /**
- * Build the same 30-day schedule events used by mobile from live client data.
+ * Build schedule events for the next 12 calendar months from live client data.
  * Replacement requests are surfaced on today; service dates are included only
  * while they fall inside the upcoming horizon.
  */
@@ -294,7 +299,7 @@ function MonthControls({ visibleMonth, range, onMonthChange, onToday }: MonthCon
     return (
         <div data-slot="month-controls" className="flex flex-wrap items-center justify-between gap-2">
             <span className="text-[calc(11.2px*var(--glint-ui-scale,1))] text-v3-text-muted">
-                범위: 오늘부터 30일 후까지
+                범위: 오늘부터 12개월 후까지
             </span>
             <div className="flex items-center gap-1">
                 <Button
@@ -495,8 +500,8 @@ export function EmployeeScheduleManager({
     const [selectedDateKey, setSelectedDateKey] = useState(() => dateKey(today));
     const [selectedEntryId, setSelectedEntryId] = useState<string | null>(null);
     const [isDetailOpen, setIsDetailOpen] = useState(false);
-    const { data, isLoading, isError, refetch } = useClients(1, 50);
-    const entries = useMemo(() => buildScheduleEntries(data?.data ?? [], today), [data?.data, today]);
+    const { data, isLoading, isError, refetch } = useAllClients();
+    const entries = useMemo(() => buildScheduleEntries(data ?? [], today), [data, today]);
     const entriesByDate = useMemo(() => {
         const grouped = new Map<string, ScheduleEntry[]>();
         for (const entry of entries) {
@@ -509,7 +514,7 @@ export function EmployeeScheduleManager({
     const selectedDate = dateFromKey(selectedDateKey);
     const selectedDateEntries = entriesByDate.get(selectedDateKey) ?? [];
     const selectedEntry = entries.find((entry) => entry.id === selectedEntryId) ?? null;
-    const selectedClient = data?.data.find((client) => client.id === selectedEntry?.clientId) ?? null;
+    const selectedClient = data?.find((client) => client.id === selectedEntry?.clientId) ?? null;
     const calendarDays = useMemo(
         () => buildMonthCalendarDays(visibleMonth, range.horizonStart, range.horizonEnd),
         [range.horizonEnd, range.horizonStart, visibleMonth],
@@ -562,7 +567,7 @@ export function EmployeeScheduleManager({
             >
                 <h1 className="text-[calc(22px*var(--glint-ui-scale,1))] font-bold text-v3-dark">서비스 일정</h1>
                 <p className="mt-1 text-[calc(13px*var(--glint-ui-scale,1))] text-v3-text-muted">
-                    오늘부터 30일간의 서비스 시작·종료·교체 요청을 확인합니다.
+                    오늘부터 12개월간의 서비스 시작·종료·교체 요청을 확인합니다.
                 </p>
             </header>
 
@@ -610,21 +615,22 @@ export function EmployeeScheduleManager({
                     data-slot="schedule-workspace"
                     className="grid min-h-0 flex-1 grid-cols-1 gap-[calc(16px*var(--glint-ui-scale,1))] overflow-hidden lg:grid-cols-[minmax(0,2fr)_minmax(280px,1fr)] lg:grid-rows-1"
                 >
-                    <ListPanel
-                        data-component={component("calendar-panel")}
-                        title={viewMode === "calendar" ? formatMonthLabel(visibleMonth) : "전체 일정"}
-                        subtitle={viewMode === "calendar"
-                            ? "날짜를 선택하면 오른쪽에서 일정을 확인합니다."
-                            : `${formatScheduleDate(range.horizonStart)} ~ ${formatScheduleDate(range.horizonEnd)} · ${entries.length}건`}
-                        headerPadding="compact"
-                        subHeader={viewMode === "calendar" ? monthControls : undefined}
-                    >
-                        <DetailTabPanels
-                            data-component={component("view-panels")}
-                            activeTab={viewMode}
-                            idPrefix={`${dataComponent}-view`}
-                            panels={[
-                                { key: "calendar", children: (
+                    <DetailTabPanels
+                        data-component={component("view-panels")}
+                        activeTab={viewMode}
+                        idPrefix={`${dataComponent}-view`}
+                        className="h-full min-h-0 min-w-0"
+                        trackClassName="h-full"
+                        panelClassName="h-full"
+                        panels={[
+                            { key: "calendar", children: (
+                                <ListPanel
+                                    data-component={component("calendar-panel")}
+                                    title={formatMonthLabel(visibleMonth)}
+                                    subtitle="날짜를 선택하면 오른쪽에서 일정을 확인합니다."
+                                    headerPadding="compact"
+                                    subHeader={monthControls}
+                                >
                                     <div key={monthKey(visibleMonth)} data-slot="schedule-content-enter" className="schedule-content-enter">
                                         <CalendarGrid
                                             dataComponent={component("calendar")}
@@ -636,14 +642,23 @@ export function EmployeeScheduleManager({
                                             onDateSelect={handleDateSelect}
                                         />
                                     </div>
-                                ) },
-                                { key: "list", children: entries.length > 0 ? (
-                                    <ScheduleEntryList dataComponent={component("list")} entries={entries}
-                                        selectedEntryId={selectedEntryId} onEntrySelect={handleEntrySelect} />
-                                ) : <ListEmptyState icon={Calendar} message="앞으로 30일 일정이 없습니다." /> },
-                            ]}
-                        />
-                    </ListPanel>
+                                </ListPanel>
+                            ) },
+                            { key: "list", children: (
+                                <ListPanel
+                                    data-component={component("list-panel")}
+                                    title="전체 일정"
+                                    subtitle={`${formatScheduleDate(range.horizonStart)} ~ ${formatScheduleDate(range.horizonEnd)} · ${entries.length}건`}
+                                    headerPadding="compact"
+                                >
+                                    {entries.length > 0 ? (
+                                        <ScheduleEntryList dataComponent={component("list")} entries={entries}
+                                            selectedEntryId={selectedEntryId} onEntrySelect={handleEntrySelect} />
+                                    ) : <ListEmptyState icon={Calendar} message="앞으로 12개월 일정이 없습니다." />}
+                                </ListPanel>
+                            ) },
+                        ]}
+                    />
 
                     <SlidingDetailPanel
                         data-component={component("agenda-panel_sliding-detail")}

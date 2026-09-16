@@ -72,10 +72,19 @@ describe("buildScheduleEntries", () => {
         }));
     });
 
-    it("ignores dates outside the next 30 days and malformed dates", () => {
+    it("includes future events through the exact 12-month boundary", () => {
+        const entries = buildScheduleEntries([
+            makeClient({ id: 7, startDate: "2027-03-01" }),
+            makeClient({ id: 8, startDate: "2027-09-16" }),
+            makeClient({ id: 9, startDate: "2027-09-17" }),
+        ], now);
+        expect(entries.map((entry) => entry.dateKey)).toEqual(["2027-03-01", "2027-09-16"]);
+    });
+
+    it("ignores dates outside the next 12 months and malformed dates", () => {
         const entries = buildScheduleEntries([
             makeClient({ id: 4, startDate: "2026-08-01" }),
-            makeClient({ id: 5, startDate: "2026-10-30" }),
+            makeClient({ id: 5, startDate: "2027-09-17" }),
             makeClient({ id: 6, startDate: "not-a-date" }),
         ], now);
 

@@ -1,6 +1,6 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import type { Client } from "@/lib/client/types";
-import { useClients } from "@/hooks/useClients";
+import { useAllClients } from "@/hooks/useClients";
 import {
     buildMonthCalendarDays,
     EmployeeScheduleManager,
@@ -8,14 +8,14 @@ import {
 } from "./EmployeeScheduleManager";
 
 jest.mock("@/hooks/useClients", () => ({
-    useClients: jest.fn(),
+    useAllClients: jest.fn(),
 }));
 
 jest.mock("@/components/app/clients/ClientDetailPanel", () => ({
     ClientDetailPanel: ({ client }: { client: Client }) => <section aria-label="고객 상세" data-testid="client-detail">{client.id} · {client.name}</section>,
 }));
 
-const mockedUseClients = jest.mocked(useClients);
+const mockedUseClients = jest.mocked(useAllClients);
 
 function makeClient(overrides: Partial<Client>): Client {
     return {
@@ -53,12 +53,12 @@ function localDateKey(value: Date) {
 function mockClients(clients: Client[] = [], overrides: Record<string, unknown> = {}) {
     const refetch = jest.fn();
     mockedUseClients.mockReturnValue({
-        data: { data: clients },
+        data: clients,
         isLoading: false,
         isError: false,
         refetch,
         ...overrides,
-    } as unknown as ReturnType<typeof useClients>);
+    } as unknown as ReturnType<typeof useAllClients>);
     return refetch;
 }
 
@@ -80,15 +80,20 @@ describe("EmployeeScheduleManager calendar grid", () => {
         expect(thursdayStart[4]?.dateKey).toBe("2026-10-01");
     });
 
-    it("rolls the navigable range across a month boundary and marks dates beyond day 30 out of scope", () => {
+    it("allows 12 months and disables dates after the inclusive end date", () => {
         const range = getScheduleMonthRange(new Date("2026-09-29T09:00:00+09:00"));
-        const october = buildMonthCalendarDays(new Date(2026, 9, 1), range.horizonStart, range.horizonEnd);
+        const october = buildMonthCalendarDays(new Date(2027, 8, 1), range.horizonStart, range.horizonEnd);
 
         expect(range.minMonthKey).toBe("2026-09");
-        expect(range.maxMonthKey).toBe("2026-10");
-        expect(october.find((day) => day.dateKey === "2026-10-29")?.isInHorizon).toBe(true);
-        expect(october.find((day) => day.dateKey === "2026-10-30")?.isInHorizon).toBe(false);
+        expect(range.maxMonthKey).toBe("2027-09");
+        expect(october.find((day) => day.dateKey === "2027-09-29")?.isInHorizon).toBe(true);
+        expect(october.find((day) => day.dateKey === "2027-09-30")?.isInHorizon).toBe(false);
     });
+    it("clamps a leap-day horizon to February 28 next year", () => {
+        const range = getScheduleMonthRange(new Date(2028, 1, 29));
+        expect(localDateKey(range.horizonEnd)).toBe("2029-02-28");
+    });
+
 });
 
 describe("EmployeeScheduleManager interactions", () => {
@@ -136,7 +141,9 @@ describe("EmployeeScheduleManager interactions", () => {
 
         const { container } = renderManager();
         expect(screen.getByRole("tabpanel")).toHaveAttribute("aria-labelledby", "test_schedule_manager-view-tab-calendar");
+        expect(screen.getByRole("tabpanel")).toContainElement(container.querySelector('[data-component="test_schedule_manager_calendar-panel"]'));
         fireEvent.click(screen.getByRole("tab", { name: "목록" }));
+        expect(screen.getByRole("tabpanel")).toContainElement(container.querySelector('[data-component="test_schedule_manager_list-panel"]'));
         expect(screen.getByRole("tabpanel")).toHaveAttribute("id", "test_schedule_manager-view-panel-list");
 
         expect(container.querySelector('[data-panel="calendar"]')).toHaveAttribute("aria-hidden", "true");
@@ -148,18 +155,29 @@ describe("EmployeeScheduleManager interactions", () => {
         expect(screen.getByRole("region", { name: "고객 상세" })).toHaveTextContent("1 · 박서연");
     });
 
+    it("includes events beyond the first 50 clients", () => {
+        const tomorrow = new Date();
+        tomorrow.setDate(tomorrow.getDate() + 1);
+        const clients = Array.from({ length: 50 }, (_, index) => makeClient({ id: index + 1 }));
+        clients.push(makeClient({ id: 51, name: "추가 일정 고객", startDate: localDateKey(tomorrow) }));
+        mockClients(clients);
+        const { container } = renderManager();
+        fireEvent.click(screen.getByRole("tab", { name: "목록" }));
+        expect(container.querySelector('[data-component="test_schedule_manager_list_row"]')).toHaveTextContent("추가 일정 고객");
+    });
+
     it("renders empty, loading, and retryable error states", () => {
         mockClients([]);
         const { container, rerender } = renderManager();
         fireEvent.click(screen.getByRole("tab", { name: "목록" }));
-        expect(screen.getByText("앞으로 30일 일정이 없습니다.")).toBeInTheDocument();
+        expect(screen.getByText("앞으로 12개월 일정이 없습니다.")).toBeInTheDocument();
 
         mockedUseClients.mockReturnValue({
             data: undefined,
             isLoading: true,
             isError: false,
             refetch: jest.fn(),
-        } as unknown as ReturnType<typeof useClients>);
+        } as unknown as ReturnType<typeof useAllClients>);
         rerender(<EmployeeScheduleManager data-component="test_schedule_manager" />);
         expect(screen.getByRole("status", { name: "일정 로딩 중" })).toBeInTheDocument();
 
