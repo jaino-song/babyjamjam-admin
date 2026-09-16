@@ -24,10 +24,17 @@ describe("stats tenant scoping and conversion semantics", () => {
   });
 
   it("keeps branch inquiry conversion unavailable when pricing views have no branch dimension", async () => {
-    const fetchMock = jest.fn(async () => ({
-      ok: true,
-      json: async () => ({ results: [] }),
-    }));
+    const fetchMock = jest.fn(async (_input: unknown, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body)) as { query: { query: string } };
+      const query = body.query.query;
+      if (query.includes("countIf(toDate(timestamp) = today())")) return { ok: true, json: async () => ({ results: [[2, 1, 8, 12, "2026-09-17T00:00:00.000Z"]] }) };
+      if (query.includes("toDate(timestamp), count()")) return { ok: true, json: async () => ({ results: [["2026-09-17", 3]] }) };
+      if (query.includes("toHour(timestamp)")) return { ok: true, json: async () => ({ results: [[10, 2]] }) };
+      if (query.includes("properties.branch_slug, count()")) return { ok: true, json: async () => ({ results: [["gangnam", 8]] }) };
+      if (query.includes("distinct_id, properties.branch_slug")) return { ok: true, json: async () => ({ results: [["visitor-1", "gangnam", "organic", "/consult", "mobile", "2026-09-17T00:00:00.000Z"]] }) };
+      if (query.includes("event = 'consultation_submitted'")) return { ok: true, json: async () => ({ results: [[8]] }) };
+      return { ok: true, json: async () => ({ results: [] }) };
+    });
     global.fetch = fetchMock as unknown as typeof fetch;
 
     const { getStatsView } = await import("../stats-server");
@@ -41,6 +48,8 @@ describe("stats tenant scoping and conversion semantics", () => {
     expect(queries).toHaveLength(6);
     expect(queries.some((query) => query.includes("event = 'pricing_viewed'"))).toBe(false);
     expect(queries.every((query) => query.includes("AND properties.branch_slug = 'gangnam'"))).toBe(true);
+    expect(response.data?.summary.today).toBe(2);
+    expect(response.data?.summary.sevenDayTotal).toBe(8);
     expect(response.data?.summary.conversionRate).toBeNull();
   });
 
