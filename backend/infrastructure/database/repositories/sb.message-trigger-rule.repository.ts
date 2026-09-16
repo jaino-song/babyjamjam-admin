@@ -41,8 +41,12 @@ export class SbMessageTriggerRuleRepository implements IMessageTriggerRuleReposi
         return rows.map((row) => this.toDomain(row));
     }
 
-    async findById(branchId: string, id: string): Promise<MessageTriggerRuleEntity | null> {
-        const row = await this.prisma.message_trigger_rule.findFirst({
+    async findById(
+        branchId: string,
+        id: string,
+        transaction?: Prisma.TransactionClient,
+    ): Promise<MessageTriggerRuleEntity | null> {
+        const row = await (transaction ?? this.prisma).message_trigger_rule.findFirst({
             where: { id, branchId },
         });
         return row ? this.toDomain(row) : null;
@@ -335,8 +339,9 @@ export class SbMessageTriggerRuleRepository implements IMessageTriggerRuleReposi
     async clearJobsStaleIfUnchanged(
         ruleId: string,
         updatedAtAtReadTime: Date,
+        transaction?: Prisma.TransactionClient,
     ): Promise<boolean> {
-        const result = await this.prisma.message_trigger_rule.updateMany({
+        const result = await (transaction ?? this.prisma).message_trigger_rule.updateMany({
             where: {
                 id: ruleId,
                 jobsStale: true,

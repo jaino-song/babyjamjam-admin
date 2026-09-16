@@ -1,6 +1,5 @@
 import { Inject, Injectable, OnModuleInit, Optional } from "@nestjs/common";
 import { MessageTriggerTemplateKey } from "domain/constants/message-trigger-catalog";
-import { MANUAL_DEDUPE_MARKER } from "domain/constants/service-end-notice-message";
 import { MessageTriggerJobEntity } from "domain/entities/message-trigger-job.entity";
 import {
     FILE_STORAGE_PORT,
@@ -14,6 +13,9 @@ import {
     SmsTriggerPayloadEnricher,
     SmsTriggerPayloadEnricherRegistry,
 } from "./sms-trigger-payload-enricher.registry";
+
+import { MANUAL_DEDUPE_MARKER } from "domain/constants/service-end-notice-message";
+export { MANUAL_DEDUPE_MARKER } from "domain/constants/service-end-notice-message";
 
 function receiptLinkUnusableError(): SmsTriggerDeliverySkipError {
     return new SmsTriggerDeliverySkipError(

@@ -347,6 +347,28 @@ describe("SbMessageLogRepository", () => {
             nowSpy.mockRestore();
         });
 
+        it("claims the newly created retry attempt through the same supplied transaction", async () => {
+            const pendingRow = {
+                ...retryDraft, id: 78, providerAcceptanceKey: "retry:key",
+                providerAcceptanceFingerprint: "retry:fingerprint", providerAcceptanceState: "prepared",
+            };
+            const txModel = createMockPrismaMessageLog();
+            txModel.updateMany.mockResolvedValue({ count: 1 });
+            txModel.create.mockResolvedValue(pendingRow);
+            txModel.findUnique.mockResolvedValue({ ...pendingRow, providerAcceptanceState: "started" });
+            const transaction = { message_log: txModel } as unknown as import("@prisma/client").Prisma.TransactionClient;
+            const started = await repository.startRetryAttempt(source, retryDraft, "automatic", transaction);
+            expect(started.kind).toBe("started");
+            if (started.kind !== "started") throw new Error("Retry was not created");
+            await expect(repository.claimProviderAttempt(started.log, transaction)).resolves.toEqual(
+                expect.objectContaining({ id: 78, providerAcceptanceState: "started" }),
+            );
+            expect(txModel.updateMany).toHaveBeenCalledTimes(2);
+            expect(messageLogModel.updateMany).not.toHaveBeenCalled();
+            expect(messageLogModel.findUnique).not.toHaveBeenCalled();
+            expect(prisma.$transaction).not.toHaveBeenCalled();
+        });
+
         it("should not create a duplicate attempt when the source was already claimed", async () => {
             messageLogModel.updateMany.mockResolvedValue({ count: 0 });
 
