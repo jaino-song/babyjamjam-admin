@@ -17,12 +17,12 @@ describe("SmsRetryService", () => {
     const createMockMessageSenderApprovalService = () => ({
         ensureApproved: jest.fn().mockResolvedValue(undefined),
     });
-    const createSmsRetryLog = () =>
+    const createSmsRetryLog = (templateKey = "client_greeting_sms") =>
         MessageLogEntity.reconstitute(
             77,
             "11111111-1111-1111-1111-111111111111",
             "aligo_sms",
-            "client_greeting_sms",
+            templateKey,
             null,
             "01012345678",
             7,
@@ -46,8 +46,9 @@ describe("SmsRetryService", () => {
             new Date("2026-06-05T09:20:00.000Z"),
             new Date("2026-06-05T09:20:00.000Z"),
         );
-    const persistRetryAttempt = (_source: MessageLogEntity, draft: MessageLogEntity) =>
-        MessageLogEntity.reconstitute(
+    const persistRetryAttempt = (_source: MessageLogEntity, draft: MessageLogEntity) => ({
+        kind: "started" as const,
+        log: MessageLogEntity.reconstitute(
             78,
             draft.branchId,
             draft.provider,
@@ -67,7 +68,8 @@ describe("SmsRetryService", () => {
             draft.updatedAt,
             draft.recipientName,
             draft.recipientPhone,
-        );
+        ),
+    });
 
     let service: SmsRetryService;
     let logRepository: ReturnType<typeof createMockLogRepository>;
@@ -136,6 +138,7 @@ describe("SmsRetryService", () => {
                     retrySafety: "uncertain",
                 }),
             }),
+            "manual",
         );
         expect(logRepository.update).toHaveBeenCalledWith(
             expect.objectContaining({
@@ -155,7 +158,7 @@ describe("SmsRetryService", () => {
     });
 
     it("manually retries a branch-owned failure as a separate history item", async () => {
-        const sourceLog = createSmsRetryLog();
+        const sourceLog = createSmsRetryLog("service_end_notice_sms");
         logRepository.findByIdInBranch.mockResolvedValue(sourceLog);
         aligoService.sendSms.mockResolvedValue({
             request: {
@@ -189,6 +192,31 @@ describe("SmsRetryService", () => {
             status: "failed",
             errorMessage: "등록되지 않은 IP 입니다.",
         }));
+        expect(logRepository.startRetryAttempt).toHaveBeenCalledWith(
+            sourceLog,
+            expect.any(MessageLogEntity),
+            "manual",
+        );
+    });
+
+    it("does not call the provider when an automatic service-end retry is transactionally suppressed", async () => {
+        const sourceLog = createSmsRetryLog("service_end_notice_sms");
+        sourceLog.markRetrySuperseded("서비스 종료 안내가 이미 발송됨");
+        logRepository.startRetryAttempt.mockResolvedValue({
+            kind: "suppressed",
+            log: sourceLog,
+        });
+
+        const result = await service.retry(sourceLog, "automatic");
+
+        expect(result).toBe(sourceLog);
+        expect(logRepository.startRetryAttempt).toHaveBeenCalledWith(
+            sourceLog,
+            expect.any(MessageLogEntity),
+            "automatic",
+        );
+        expect(aligoService.sendSms).not.toHaveBeenCalled();
+        expect(logRepository.update).not.toHaveBeenCalled();
     });
 
     it("does not reveal or retry a log owned by another branch", async () => {
@@ -203,7 +231,7 @@ describe("SmsRetryService", () => {
     it("rejects a duplicate manual retry when another request already claimed the log", async () => {
         const sourceLog = createSmsRetryLog();
         logRepository.findByIdInBranch.mockResolvedValue(sourceLog);
-        logRepository.startRetryAttempt.mockResolvedValue(null);
+        logRepository.startRetryAttempt.mockResolvedValue({ kind: "lost" });
 
         await expect(
             service.retryById("11111111-1111-1111-1111-111111111111", 77),
@@ -577,4 +605,30 @@ describe("SmsRetryService", () => {
         expect(logRepository.update).not.toHaveBeenCalled();
         expect(aligoService.sendSms).not.toHaveBeenCalled();
     });
+    it("keeps automatic retry suppression inside the branch activation transaction", async () => {
+        const sourceLog = createSmsRetryLog();
+        sourceLog.triggerJobId = "job-automatic";
+        const transaction = { message_log: {} };
+        const activationService = {
+            runAutomaticRetryIfEnabled: jest.fn().mockImplementation(async (_branch, _job, work) => ({
+                allowed: true, applies: true, value: await work(transaction),
+            })),
+        };
+        logRepository.startRetryAttempt.mockResolvedValue({ kind: "suppressed", log: sourceLog });
+        const retryService = new SmsRetryService(
+            logRepository as unknown as IMessageLogRepository,
+            aligoService as unknown as AligoService,
+            messageSenderApprovalService as unknown as MessageSenderApprovalService,
+            undefined,
+            activationService as never,
+        );
+
+        await expect(retryService.retry(sourceLog, "automatic")).resolves.toBe(sourceLog);
+        expect(logRepository.startRetryAttempt).toHaveBeenCalledWith(
+            sourceLog, expect.anything(), "automatic", transaction,
+        );
+        expect(messageSenderApprovalService.ensureApproved).not.toHaveBeenCalled();
+        expect(aligoService.sendSms).not.toHaveBeenCalled();
+    });
+
 });

@@ -272,70 +272,19 @@ describe("SmsTriggerDeliveryService", () => {
         expect(aligoService.sendSms).not.toHaveBeenCalled();
     });
 
-    it("sends a CLIENT_WELCOME job through Aligo and records the SMS contract", async () => {
-        const job = MessageTriggerJobEntity.reconstitute(
-            "job-client-welcome",
-            branchId,
-            "rule-client-welcome",
-            "pending",
-            new Date("2026-07-17T00:00:00.000Z"),
-            null,
-            null,
-            null,
-            7,
-            null,
-            MessageTriggerRecipientType.CLIENT,
-            "010-1234-5678",
-            MessageTriggerTemplateKey.CLIENT_WELCOME,
-            "rule-client-welcome:7",
-            {
-                clientId: 7,
-                clientName: "김산모",
-                memberId: "7",
-                recipientName: "김산모",
-                recipientPhone: "010-1234-5678",
-                templateVariables: {
-                    clientName: "김산모",
-                    registrationDate: "2026-07-17",
-                    serviceType: "바우처",
-                },
-            },
-            new Date("2026-07-17T00:00:00.000Z"),
-            new Date("2026-07-17T00:00:00.000Z"),
-        );
-        const aligoService = {
-            sendSms: jest.fn().mockResolvedValue({
-                request: { receiver: "01012345678", msgType: "LMS", testModeYn: "N" },
-                response: { result_code: 1, message: "성공", msg_id: 275, success_cnt: 1, error_cnt: 0 },
-            }),
-        };
-        const systemTemplateService = {
-            getByKeyForBranch: jest.fn().mockResolvedValue({
-                content: "{{clientName}}님 {{registrationDate}} 등록 완료 ({{serviceType}})",
-            }),
-        };
-        const logRepository = { save: jest.fn().mockImplementation(async (log: MessageLogEntity) => log) };
+    it.each([
+        MessageTriggerTemplateKey.CLIENT_WELCOME,
+        MessageTriggerTemplateKey.SERVICE_START_REMINDER,
+        MessageTriggerTemplateKey.SERVICE_END_REMINDER,
+        MessageTriggerTemplateKey.EMPLOYEE_ASSIGNED,
+    ])("does not handle retired fixed-event template %s", (templateKey) => {
         const service = new SmsTriggerDeliveryService(
-            aligoService as unknown as AligoService,
-            systemTemplateService as unknown as SystemTemplateService,
-            logRepository as unknown as IMessageLogRepository,
+            { sendSms: jest.fn() } as unknown as AligoService,
+            { getByKeyForBranch: jest.fn() } as unknown as SystemTemplateService,
+            { save: jest.fn() } as unknown as IMessageLogRepository,
         );
 
-        await expect(service.sendJob(job)).resolves.toBe(true);
-
-        expect(systemTemplateService.getByKeyForBranch).toHaveBeenCalledWith(branchId, SystemTemplateKey.CLIENT_WELCOME);
-        expect(aligoService.sendSms).toHaveBeenCalledWith(expect.objectContaining({
-            receiver: "010-1234-5678",
-            message: "김산모님 2026-07-17 등록 완료 (바우처)",
-            title: "고객 등록 안내",
-        }));
-        const savedLog = logRepository.save.mock.calls[0]?.[0] as MessageLogEntity;
-        expect(savedLog.templateKey).toBe("client_welcome_sms");
-        expect(savedLog.status).toBe("sent");
-        expect(savedLog.variables).toEqual(expect.objectContaining({
-            automationKey: "CLIENT_WELCOME_SMS",
-            systemTemplateKey: SystemTemplateKey.CLIENT_WELCOME,
-        }));
+        expect(service.canHandle(templateKey)).toBe(false);
     });
 
     it("sends the CLIENT_GREETING trigger through SMS with the same log contract as the retired sender", async () => {

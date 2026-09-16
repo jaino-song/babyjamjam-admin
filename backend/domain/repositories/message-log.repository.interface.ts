@@ -1,6 +1,13 @@
 import { MessageLogEntity } from "domain/entities/message-log.entity";
 import type { Prisma } from "@prisma/client";
 
+export type MessageRetryInvocation = "automatic" | "manual";
+
+export type MessageRetryStartResult =
+    | { kind: "started"; log: MessageLogEntity }
+    | { kind: "suppressed"; log: MessageLogEntity }
+    | { kind: "lost" };
+
 export interface IMessageLogRepository {
     save(log: MessageLogEntity): Promise<MessageLogEntity>;
     update(log: MessageLogEntity, transaction?: Prisma.TransactionClient): Promise<MessageLogEntity>;
@@ -22,8 +29,9 @@ export interface IMessageLogRepository {
     startRetryAttempt(
         sourceLog: MessageLogEntity,
         retryLog: MessageLogEntity,
+        invocation: MessageRetryInvocation,
         transaction?: Prisma.TransactionClient,
-    ): Promise<MessageLogEntity | null>;
+    ): Promise<MessageRetryStartResult>;
     findByIdInBranch(branchId: string, id: number): Promise<MessageLogEntity | null>;
     findSentTriggerJobIdsSystemScope(jobIds: string[]): Promise<Set<string>>;
     findUncertainTriggerJobIdsSystemScope(jobIds: string[]): Promise<Set<string>>;

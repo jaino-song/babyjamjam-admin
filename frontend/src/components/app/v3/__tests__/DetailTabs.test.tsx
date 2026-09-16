@@ -56,6 +56,31 @@ describe("DetailTabs", () => {
     expect(contractsPanel).not.toHaveAttribute("inert");
   });
 
+  it("keeps every panel at its own height while the outgoing panel is still in the track", () => {
+    render(<DetailTabsHarness />);
+
+    const track = document.querySelector<HTMLElement>(
+      '[data-component="desktop_v3_detail-tab-panels-track"]',
+    );
+    const basicTab = screen.getByRole("tab", { name: "기본 정보" });
+    const basicPanel = screen.getByRole("tabpanel", { name: "기본 정보" });
+    const contractsPanel = document.querySelector<HTMLElement>(
+      "#dashboard-client-detail-panel-contracts",
+    );
+
+    // Stretching panels to the tallest sibling would deform the shorter
+    // incoming panel for the whole slide duration.
+    expect(track).toHaveClass("items-start");
+    expect(track).not.toHaveClass("items-stretch");
+
+    fireEvent.keyDown(basicTab, { key: "ArrowRight" });
+
+    // Both panels stay in the track during the transition; neither is
+    // collapsed yet, so equal-height stretching would apply if it existed.
+    expect(basicPanel).not.toHaveClass("max-h-0");
+    expect(contractsPanel).not.toHaveClass("max-h-0");
+  });
+
   it("remeasures the underline on the next frame when the active tab changes", () => {
     const frameCallbacks: FrameRequestCallback[] = [];
     const requestFrameSpy = jest
