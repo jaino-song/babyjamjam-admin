@@ -717,3 +717,10 @@ TL;DR: 배정(4b-1 백엔드: 역할·자격·동시 변경 코드 전환 / 4b-2
 **Task 6c 실행 결과 (2026-09-17):** worker `d18ac6956`(base `c02b250c5`) → 통합 `e4ee58dc2` (15 파일). red-first 20F→119; 362 suites/5,138; 감사 SHIP. 신규 코드 0.
 - carried: 필터 status 정정 2건(P2000 500→400, P1002/P1008 500→503), mutation-guard wire 필드 제거(unsupportedVariables — 소비자 무 확인), 내부 불변식 Error 4곳.
 - **dev 관찰(다음 sync 대비):** dev(96f4026ab)에 PR #704(sentry-400-advisories) 머지됨 — `backend/infrastructure/observability/http-advisory.spec.ts` 존재(우리 트리엔 없음), dev에서 로컬 실행 시 1건 실패(EMPLOYEE_ASSIGNMENT_UNAVAILABLE 400 매핑) — dev node_modules 미갱신 가능성 또는 dev 자체 이슈, **우리 범위 아님·다음 sync 때 확인**. dev에 untracked `mobile/AGENTS.md`(사용자 WIP) — 건드리지 말 것.
+
+## Phase 6 — 병렬 웨이브 (2026-09-17~)
+
+**웨이브1 = 6d1(백엔드 서비스5) + 6g1(FE api 32) + 6h1(MO api 29)** — base `3458d2403`
+- 6d1: admin-service-record-edit/admin-service-record/call-inbox/call-ingest-token/consultation-inquiry. 기존 코드 재사용; 상태 보존; raw 4xx→등록 코드.
+- 6g1/6h1: BFF raw 영문 `{error}`/passthrough → 공유 헬퍼 규약(`frontend/src/app/api/clients/route.ts` 참조, `@/lib/api/route-utils` errorResponse 계열). **packages/shared 편집 금지**(부족 코드는 리포트로). 리스트: `/tmp/em-6/wave1-fe.txt`, `/tmp/em-6/wave1-mo.txt`.
+- 규칙: 동일 카탈로그 writer는 백엔드 1유닛만; FE/MO는 코드 신규 등록 금지. worker×3 · Audit SOL ×3.
