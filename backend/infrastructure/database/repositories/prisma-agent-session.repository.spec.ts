@@ -750,6 +750,38 @@ describe("PrismaAgentSessionRepository", () => {
         expect(tx.agent_session.deleteMany).not.toHaveBeenCalled();
     });
 
+    it("deletes an expired session when only terminal tasks remain", async () => {
+        const now = new Date("2026-08-04T00:00:00.000Z");
+        const tx = {
+            $queryRaw: jest.fn()
+                .mockResolvedValueOnce([{ id: "session-a", userId: owner.userId, branchId: owner.branchId }])
+                .mockResolvedValueOnce([{ id: "task-a" }])
+                .mockResolvedValueOnce([{ id: "action-a" }]),
+            agent_session: { deleteMany: jest.fn().mockResolvedValue({ count: 1 }) },
+            agent_action: { findFirst: jest.fn().mockResolvedValue(null) },
+            agent_task: { findFirst: jest.fn().mockResolvedValue(null) },
+        };
+        const prisma = {
+            $transaction: jest.fn().mockImplementation(async (callback: (transaction: typeof tx) => Promise<unknown>) => callback(tx)),
+            agent_task: { findFirst: jest.fn() },
+            agent_session: { deleteMany: jest.fn() },
+        };
+        const repository = new PrismaAgentSessionRepository(prisma as never);
+
+        await expect(repository.deleteExpired(now)).resolves.toBe(1);
+        expect(tx.agent_session.deleteMany).toHaveBeenCalledWith({ where: { id: "session-a", expiresAt: { lte: now } } });
+        expect(tx.agent_task.findFirst).toHaveBeenCalledWith({
+            where: {
+                sessionId: "session-a",
+                userId: owner.userId,
+                branchId: owner.branchId,
+                purgedAt: null,
+                status: { notIn: ["completed", "failed", "cancelled"] },
+            },
+            select: { id: true },
+        });
+    });
+
     it("retains an expired session when a task has a dangling active action link", async () => {
         const now = new Date("2026-08-04T00:00:00.000Z");
         const tx = {

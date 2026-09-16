@@ -68,10 +68,6 @@ function retainedTaskWhere(owner?: AgentSessionOwner) {
     };
 }
 
-function anyRetainedTaskWhere(owner?: AgentSessionOwner) {
-    return { ...(owner ? ownerScope(owner) : {}), purgedAt: null };
-}
-
 type LifecycleEvidenceTransaction = {
     agent_task: { findMany: (input: unknown) => Promise<AgentTaskLifecycleTaskEvidence[]> };
     agent_action: { findMany: (input: unknown) => Promise<AgentTaskLifecycleActionEvidence[]> };
@@ -577,7 +573,7 @@ export class PrismaAgentSessionRepository implements IAgentSessionRepository {
                 for (const candidate of candidates) {
                     const candidateOwner = { userId: candidate.userId, branchId: candidate.branchId };
                     const blockingTask = await tx.agent_task.findFirst({
-                        where: { sessionId: candidate.id, ...anyRetainedTaskWhere(candidateOwner) },
+                        where: { sessionId: candidate.id, ...retainedTaskWhere(candidateOwner) },
                         select: { id: true },
                     });
                     if (blockingTask) continue;
