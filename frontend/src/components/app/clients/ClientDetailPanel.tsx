@@ -832,9 +832,9 @@ function ClientDetailPanelBody({
                     dataComponent={`${dataComponentPrefix}_content`}
                     panelDataComponent={`${dataComponentPrefix}_content_panel`}
                     idPrefix={idPrefix}
-                    className={tabPanelsClassName}
-                    trackClassName={tabPanelsTrackClassName}
-                    panelClassName={tabPanelsPanelClassName}
+                    className={cn(tabPanelsClassName, layout === "mobile" && "flex flex-1 flex-col")}
+                    trackClassName={cn(tabPanelsTrackClassName, layout === "mobile" && "flex-1 !items-stretch")}
+                    panelClassName={cn(tabPanelsPanelClassName, layout === "mobile" && "flex flex-col")}
                     panels={[
                         ...(activeScheduleChange
                             ? [
