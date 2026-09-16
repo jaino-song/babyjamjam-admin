@@ -1,4 +1,4 @@
-import { BadRequestException, ForbiddenException } from "@nestjs/common";
+import { BadRequestException, ConflictException, ForbiddenException } from "@nestjs/common";
 import { randomUUID } from "node:crypto";
 
 import type { AgentTask } from "@babyjamjam/shared";
@@ -76,11 +76,12 @@ function build(tasksOverrides: Record<string, jest.Mock> = {}, policyOverrides: 
 }
 
 describe("ConversationTaskOrchestratorService", () => {
-    it("leaves a pure question as a question without recording a task mutation", async () => {
+    it("records a canonical receipt for a pure question without changing task state", async () => {
         const current = task();
         const listForConversation = jest.fn().mockResolvedValue([current]);
-        const recordConversationIntake = jest.fn();
-        const { orchestrator, policy } = build({ listForConversation, recordConversationIntake });
+        const recordConversationIntake = jest.fn().mockResolvedValue({ snapshot: current, receipt: receipt(current.taskId) });
+        const replayConversationIntake = jest.fn().mockResolvedValue(null);
+        const { orchestrator, policy } = build({ listForConversation, recordConversationIntake, replayConversationIntake });
 
         const result = await orchestrator.handleUserTurn({
             principal,
@@ -91,8 +92,18 @@ describe("ConversationTaskOrchestratorService", () => {
         expect(result.isQuestion).toBe(true);
         expect(result.mutated).toBe(false);
         expect(result.task?.taskId).toBe(current.taskId);
-        expect(recordConversationIntake).not.toHaveBeenCalled();
-        expect(policy.assertCanCreate).not.toHaveBeenCalled();
+        expect(recordConversationIntake).toHaveBeenCalledWith(principal, current.taskId, result.eventId, result.requestHash);
+        expect(policy.assertCanCreate).toHaveBeenCalledWith(principal, "clients.create");
+
+        replayConversationIntake.mockResolvedValueOnce({ snapshot: current, receipt: receipt(current.taskId) });
+        const replay = await orchestrator.handleUserTurn({
+            principal,
+            sessionId,
+            message: { id: result.canonical.messageId, role: "user", parts: [{ type: "text", text: "이 작업은 어떻게 진행되나요?" }] },
+        });
+        expect(replay.replayed).toBe(true);
+        expect(replay.task?.taskId).toBe(current.taskId);
+        expect(recordConversationIntake).toHaveBeenCalledTimes(1);
     });
 
     it("stores explicit facts while retaining the question part of a mixed turn", async () => {
@@ -271,5 +282,32 @@ describe("ConversationTaskOrchestratorService", () => {
             intakeEventId: randomUUID(),
             operations: [{ op: "set", field: "name", value: "임의 이름" }],
         })).rejects.toBeInstanceOf(BadRequestException);
+    });
+
+    it("rejects a model write attempt on a pure-question turn before changing the task", async () => {
+        const current = task({ confirmed: { name: "기존 이름" }, revision: 3 });
+        const patchFromConversation = jest.fn();
+        const createFromConversation = jest.fn();
+        const { orchestrator } = build({
+            get: jest.fn().mockResolvedValue(current),
+            listForConversation: jest.fn().mockResolvedValue([current]),
+            patchFromConversation,
+            createFromConversation,
+        });
+
+        await expect(orchestrator.applyModelMutation({
+            principal,
+            sessionId,
+            capabilityId: "clients.create",
+            taskId: current.taskId,
+            expectedRevision: current.revision,
+            intakeEventId: randomUUID(),
+            operations: [{ op: "set", field: "name", value: "변경 시도" }],
+            allowMutation: false,
+        })).rejects.toBeInstanceOf(ConflictException);
+
+        expect(current.confirmed.name).toBe("기존 이름");
+        expect(patchFromConversation).not.toHaveBeenCalled();
+        expect(createFromConversation).not.toHaveBeenCalled();
     });
 });

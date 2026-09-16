@@ -1555,6 +1555,31 @@ describe("AgentTaskService", () => {
         expect(repository.events.size).toBe(1);
     });
 
+    it("returns task gone for an identical derived-choice replay after the task expires", async () => {
+        const repository = new FakeTaskRepository();
+        const target = makeClientRecord(7);
+        const task = makeTask();
+        repository.tasks.set(task.taskId, task);
+        const service = buildService(repository, {
+            findByPhone: jest.fn().mockResolvedValue(null),
+            findById: jest.fn().mockResolvedValue(target),
+        }).service;
+        const first = await service.attachChoices(owner, task.taskId, {
+            expectedRevision: task.revision,
+            producer: "client-target",
+            results: [{ label: "first", clientId: target.id }],
+        });
+        repository.tasks.get(task.taskId)!.expiresAt = new Date(Date.now() - 1_000);
+
+        await expect(service.attachChoices(owner, task.taskId, {
+            expectedRevision: task.revision,
+            producer: "client-target",
+            results: [{ label: "first", clientId: target.id }],
+        })).rejects.toMatchObject({ status: 410 });
+        expect(repository.tasks.get(task.taskId)!.revision).toBe(first.snapshot.revision);
+        expect(repository.events.size).toBe(1);
+    });
+
     it("replays conversation intake through the original task after a later task becomes active", async () => {
         const repository = new FakeTaskRepository();
         const service = buildService(repository).service;
@@ -1577,7 +1602,7 @@ describe("AgentTaskService", () => {
         expect(paused.snapshot.state).toBe("paused");
     });
 
-    it("rejects changed intake payloads and preserves an expired original within replay retention", async () => {
+    it("rejects changed intake payloads and returns gone for an expired original", async () => {
         const repository = new FakeTaskRepository();
         const service = buildService(repository).service;
         const source = await service.create(owner, createInput());
@@ -1590,9 +1615,8 @@ describe("AgentTaskService", () => {
         await expect(service.replayConversationIntake(owner, sessionId, intakeEventId, "c".repeat(64))).rejects.toMatchObject({
             response: expect.objectContaining({ code: "AGENT_TASK_CONFLICT", reason: "event_payload" }),
         });
-        const replay = await service.replayConversationIntake(owner, sessionId, intakeEventId, intakeHash);
-        expect(replay?.snapshot.taskId).toBe(source.snapshot.taskId);
-        expect(replay?.snapshot.state).toBe("collecting");
+        await expect(service.replayConversationIntake(owner, sessionId, intakeEventId, intakeHash)).rejects.toMatchObject({ status: 410 });
+        expect(repository.tasks.get(source.snapshot.taskId)!.expiresAt.getTime()).toBeLessThan(Date.now());
     });
 
     it("returns task gone for a purged original intake and storage unavailable on lookup failure", async () => {

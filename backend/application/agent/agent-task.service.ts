@@ -131,7 +131,7 @@ type CreateEventLookup =
     | { status: "new" }
     | { status: "event_replay"; task: AgentTaskEntity; event: AgentTaskEventEntity }
     | { status: "event_hash_conflict"; task?: AgentTaskEntity }
-    | { status: TransactionStatus | "task_purged" };
+    | { status: TransactionStatus | "task_expired" | "task_purged" };
 
 function invalidTaskInput(): BadRequestException {
     return new BadRequestException({ code: "AGENT_TASK_INVALID", message: "Invalid task input" });
@@ -178,6 +178,10 @@ function asAuthorizedTask(entity: AgentTaskEntity): AgentTask {
 
 function isReplayWithinRetention(event: Pick<AgentTaskEventEntity | DomainEventReceipt, "acceptedAt">): boolean {
     return Date.now() - event.acceptedAt.getTime() <= REPLAY_RETENTION_MS;
+}
+
+function isTaskLiveForReplay(task: Pick<AgentTaskEntity, "expiresAt" | "purgedAt">): boolean {
+    return task.purgedAt === null && task.expiresAt.getTime() > Date.now();
 }
 
 @Injectable()
@@ -453,9 +457,10 @@ export class AgentTaskService {
                     };
                 }
                 const current = await transaction.readTask(existing.event.taskId);
-                if (current.status === "found" || current.status === "task_expired") {
+                if (current.status === "found") {
                     return { status: "event_replay", task: current.task, receipt: existing.event };
                 }
+                if (current.status === "task_expired") return { status: "task_expired" };
                 return current.status === "task_purged" ? { status: "task_purged" } : { status: current.status };
             }
             const locked = await transaction.lockTask(parsedTaskId.data);
@@ -504,7 +509,8 @@ export class AgentTaskService {
                 };
             }
             const current = await transaction.readTask(existing.event.taskId);
-            if (current.status === "found" || current.status === "task_expired") return { status: "event_replay", task: current.task, event: existing.event };
+            if (current.status === "found") return { status: "event_replay", task: current.task, event: existing.event };
+            if (current.status === "task_expired") return { status: "task_expired" };
             return current.status === "task_purged" ? { status: "task_purged" } : { status: current.status };
         });
         // A repository-level failure must never be interpreted as a missing
@@ -521,10 +527,10 @@ export class AgentTaskService {
         if (value.status === "new") return null;
         if (value.status === "event_hash_conflict") throw new AgentTaskConflictException("event_payload", value.task ? asAuthorizedTask(value.task) : undefined);
         if (value.status === "event_replay") {
-            if (!isReplayWithinRetention(value.event)) throw taskGone();
+            if (!isReplayWithinRetention(value.event) || !isTaskLiveForReplay(value.task)) throw taskGone();
             return this.responseFromReceipt(eventReceipt(value.event, value.task), value.task);
         }
-        if (value.status === "task_purged" || value.status === "session_archived" || value.status === "session_expired") throw taskGone();
+        if (value.status === "task_expired" || value.status === "task_purged" || value.status === "session_archived" || value.status === "session_expired") throw taskGone();
         if (value.status === "not_found") throw new NotFoundException("Agent session not found");
         throw storageUnavailable();
     }
@@ -571,7 +577,8 @@ export class AgentTaskService {
                     return { status: "event_hash_conflict", ...(current.status === "found" || current.status === "task_expired" ? { task: current.task } : {}) };
                 }
                 const current = await transaction.readTask(existing.event.taskId);
-                if (current.status === "found" || current.status === "task_expired") return { status: "event_replay", task: current.task, receipt: existing.event };
+                if (current.status === "found") return { status: "event_replay", task: current.task, receipt: existing.event };
+                if (current.status === "task_expired") return { status: "task_expired" };
                 return current.status === "task_purged" ? { status: "task_purged" } : { status: current.status };
             }
             const locked = await transaction.lockTask(parsedTaskId.data);
@@ -799,6 +806,7 @@ export class AgentTaskService {
             if (!isReplayWithinRetention(lookup.event)) throw taskGone();
             return this.responseFromReceipt(eventReceipt(lookup.event, lookup.task), lookup.task) as never;
         }
+        if (lookup.status === "task_expired") throw taskGone();
         if (lookup.status === "not_found") throw new NotFoundException("Agent session not found");
         if (lookup.status === "session_archived" || lookup.status === "session_expired") throw taskGone();
         if (lookup.status === "task_purged") throw taskGone();

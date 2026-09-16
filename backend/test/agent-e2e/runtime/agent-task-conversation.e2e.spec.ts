@@ -354,6 +354,102 @@ describeAgentE2E("conversation task runtime against the guarded local database",
             .rejects.toMatchObject({ status: 410 });
     });
 
+    it("records pure-question receipts on the owning task without writes or duplicate user turns", async () => {
+        const policy = policyStub();
+        const firstService = service();
+        const firstOrchestrator = new ConversationTaskOrchestratorService(firstService, policy as never);
+        const original = {
+            principal,
+            sessionId,
+            message: {
+                id: randomUUID(),
+                role: "user" as const,
+                parts: [{ type: "text", text: "고객 등록해줘. 이름: 질문 대상, 전화번호: 01012345678" }],
+            },
+            capabilityId: "clients.create" as const,
+        };
+        const created = await firstOrchestrator.handleUserTurn(original);
+        if (!created.task) throw new Error("Expected original task");
+        const beforeQuestion = await prisma.agent_task.findUnique({ where: { id: created.task.taskId } });
+        if (!beforeQuestion) throw new Error("Expected original task row");
+
+        const question = {
+            principal,
+            sessionId,
+            message: {
+                id: randomUUID(),
+                role: "user" as const,
+                parts: [{ type: "text", text: "이 등록 작업은 어떻게 진행되나요?" }],
+            },
+        };
+        const firstQuestion = await firstOrchestrator.handleUserTurn(question);
+        expect(firstQuestion.isQuestion).toBe(true);
+        expect(firstQuestion.mutated).toBe(false);
+        expect(firstQuestion.task?.taskId).toBe(created.task.taskId);
+        const afterQuestion = await prisma.agent_task.findUnique({ where: { id: created.task.taskId } });
+        expect(afterQuestion).toEqual(expect.objectContaining({
+            revision: beforeQuestion.revision,
+            lastAcceptedAt: beforeQuestion.lastAcceptedAt,
+            expiresAt: beforeQuestion.expiresAt,
+            updatedAt: beforeQuestion.updatedAt,
+            draft: beforeQuestion.draft,
+        }));
+        const questionEventCount = await prisma.agent_task_event.count({ where: { sessionId } });
+
+        const retry = await firstOrchestrator.handleUserTurn(question);
+        expect(retry.replayed).toBe(true);
+        expect(retry.mutated).toBe(false);
+        expect(retry.task?.taskId).toBe(created.task.taskId);
+        expect(await prisma.agent_task_event.count({ where: { sessionId } })).toBe(questionEventCount);
+
+        const paused = await firstService.command(principal, created.task.taskId, {
+            clientEventId: randomUUID(),
+            expectedRevision: created.task.revision,
+            command: "pause",
+        });
+        expect(paused.snapshot.state).toBe("paused");
+        const continuation = await firstOrchestrator.handleUserTurn({
+            principal,
+            sessionId,
+            capabilityId: "clients.create",
+            message: {
+                id: randomUUID(),
+                role: "user",
+                parts: [{ type: "text", text: "고객 등록해줘. 이름: 두 번째 대상, 전화번호: 01012345679" }],
+            },
+        });
+        expect(continuation.task?.taskId).not.toBe(created.task.taskId);
+
+        const restartedPolicy = policyStub();
+        const restartedService = new AgentTaskService(repository as never, restartedPolicy as never, clients as never);
+        const restartedOrchestrator = new ConversationTaskOrchestratorService(restartedService, restartedPolicy as never);
+        const replayAfterRestart = await restartedOrchestrator.handleUserTurn(question);
+        expect(replayAfterRestart.replayed).toBe(true);
+        expect(replayAfterRestart.mutated).toBe(false);
+        expect(replayAfterRestart.task?.taskId).toBe(created.task.taskId);
+
+        await expect(restartedOrchestrator.applyModelMutation({
+            principal,
+            sessionId,
+            capabilityId: "clients.create",
+            taskId: created.task.taskId,
+            expectedRevision: created.task.revision,
+            intakeEventId: firstQuestion.eventId,
+            operations: [{ op: "set", field: "name", value: "모델 변경 시도" }],
+            allowMutation: false,
+        })).rejects.toMatchObject({ status: 409 });
+
+        const afterModelAttempt = await prisma.agent_task.findUnique({ where: { id: created.task.taskId } });
+        expect(afterModelAttempt).toEqual(expect.objectContaining({
+            revision: beforeQuestion.revision,
+            lastAcceptedAt: beforeQuestion.lastAcceptedAt,
+            expiresAt: beforeQuestion.expiresAt,
+            draft: beforeQuestion.draft,
+        }));
+        expect(await prisma.agent_task_event.count({ where: { sessionId } })).toBe(questionEventCount + 2);
+        expect(await prisma.agent_message.count({ where: { sessionId } })).toBe(0);
+    });
+
     it("stores explicit text/form facts only in the protected task draft and leaves receipts text-free", async () => {
         const taskService = service();
         const orchestrator = new ConversationTaskOrchestratorService(taskService, policyStub() as never);
@@ -430,6 +526,75 @@ describeAgentE2E("conversation task runtime against the guarded local database",
         expect(sessionAfterChoices?.expiresAt).toEqual(sessionBeforeChoices?.expiresAt);
         expect(JSON.stringify(replacement.snapshot)).not.toContain("clientId");
         expect(JSON.stringify(storedReplacement?.draft)).toContain("402");
+    });
+
+    it("returns 410 for exact expired intake and derived-choice replays without reviving state", async () => {
+        const taskService = service();
+        const intakeMessageId = randomUUID();
+        const intakeText = "고객 등록해줘. 이름: 만료 대상, 전화번호: 01099998888";
+        const intakeEventId = conversationMessageEventId({
+            userId: USER_ID,
+            branchId: BRANCH_ID,
+            sessionId,
+            messageId: intakeMessageId,
+        });
+        const intakeHash = conversationMessageHash({
+            userId: USER_ID,
+            branchId: BRANCH_ID,
+            sessionId,
+            messageId: intakeMessageId,
+            text: intakeText,
+        });
+        const created = await taskService.create(principal, {
+            sessionId,
+            capabilityId: "clients.create",
+            clientEventId: intakeEventId,
+            operations: [
+                { op: "set", field: "name", value: "만료 대상" },
+                { op: "set", field: "phone", value: "01099998888" },
+            ],
+        }, "user", intakeHash);
+        await prisma.agent_task.update({ where: { id: created.snapshot.taskId }, data: { expiresAt: new Date(Date.now() - 1_000) } });
+        await expect(taskService.replayConversationIntake(principal, sessionId, intakeEventId, "d".repeat(64)))
+            .rejects.toMatchObject({ status: 409, response: expect.objectContaining({ reason: "event_payload" }) });
+        await expect(taskService.replayConversationIntake(principal, sessionId, intakeEventId, intakeHash))
+            .rejects.toMatchObject({ status: 410 });
+
+        const beforeChoiceReplay = await prisma.agent_task.findUnique({ where: { id: created.snapshot.taskId } });
+        if (!beforeChoiceReplay) throw new Error("Expected expired intake task row");
+        clientsById.set(405, makeClient(405, "만료 선택 대상"));
+        const choiceSessionId = await createSession();
+        const choiceTask = await taskService.create(principal, {
+            sessionId: choiceSessionId,
+            capabilityId: "clients.create",
+            clientEventId: randomUUID(),
+            operations: [
+                { op: "set", field: "name", value: "선택 만료 대상" },
+                { op: "set", field: "phone", value: "01088889999" },
+            ],
+        });
+        const choiceInput = {
+            expectedRevision: choiceTask.snapshot.revision,
+            producer: "client-target" as const,
+            results: [{ label: "ignored", clientId: 405 }],
+        };
+        const attached = await taskService.attachChoices(principal, choiceTask.snapshot.taskId, choiceInput);
+        const beforeChoiceExpiry = await prisma.agent_task.findUnique({ where: { id: choiceTask.snapshot.taskId } });
+        if (!beforeChoiceExpiry) throw new Error("Expected attached choice task row");
+        expect(beforeChoiceExpiry.revision).toBe(attached.snapshot.revision);
+        await prisma.agent_task.update({ where: { id: choiceTask.snapshot.taskId }, data: { expiresAt: new Date(Date.now() - 1_000) } });
+        await expect(taskService.attachChoices(principal, choiceTask.snapshot.taskId, choiceInput))
+            .rejects.toMatchObject({ status: 410 });
+        const afterChoiceReplay = await prisma.agent_task.findUnique({ where: { id: choiceTask.snapshot.taskId } });
+        expect(afterChoiceReplay).toEqual(expect.objectContaining({
+            revision: beforeChoiceExpiry.revision,
+            lastAcceptedAt: beforeChoiceExpiry.lastAcceptedAt,
+            expiresAt: expect.any(Date),
+            draft: beforeChoiceExpiry.draft,
+        }));
+        expect(afterChoiceReplay?.expiresAt.getTime()).toBeLessThan(Date.now());
+        expect(afterChoiceReplay?.expiresAt.getTime()).toBeLessThan(beforeChoiceExpiry.expiresAt.getTime());
+        expect(beforeChoiceReplay.expiresAt.getTime()).toBeLessThan(Date.now());
     });
 
     it("keeps GET read-only and omits protected task references from the HTTP projection", async () => {

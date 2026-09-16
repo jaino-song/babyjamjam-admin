@@ -63,6 +63,12 @@ export interface ConversationModelMutationInput {
     taskId?: string;
     intakeEventId: string;
     userCorrection?: boolean;
+    /**
+     * A pure-question turn may still expose task tools for read-only context,
+     * but any attempted model write must be rejected before task resolution
+     * or persistence.  Omitted means the normal mutation path is allowed.
+     */
+    allowMutation?: boolean;
 }
 
 function ordinalIndex(text: string): number | null {
@@ -252,8 +258,26 @@ export class ConversationTaskOrchestratorService {
                     return { canonical, eventId, requestHash, text, isQuestion: false, task: selected.snapshot, mutated: true, replayed: false, operations };
                 }
             }
-            if (!current || isQuestionLike(text)) {
+            if (!current) {
                 return { canonical, eventId, requestHash, text, isQuestion: isQuestionLike(text), task: current, mutated: false, replayed: false, operations };
+            }
+            if (isQuestionLike(text)) {
+                if (!await this.taskModeEnabled(input.principal, current.capabilityId)) {
+                    return {
+                        canonical,
+                        eventId,
+                        requestHash,
+                        text,
+                        isQuestion: true,
+                        task: current,
+                        mutated: false,
+                        replayed: false,
+                        operations,
+                        refusal: "feature-disabled",
+                    };
+                }
+                const recorded = await this.tasks.recordConversationIntake(input.principal, current.taskId, eventId, requestHash);
+                return { canonical, eventId, requestHash, text, isQuestion: true, task: recorded.snapshot, mutated: false, replayed: false, operations };
             }
             if (!await this.taskModeEnabled(input.principal, current.capabilityId)) {
                 return {
@@ -313,6 +337,7 @@ export class ConversationTaskOrchestratorService {
 
     /** Parse and apply a model tool call after its independent finite schema check. */
     async applyModelMutation(input: ConversationModelMutationInput): Promise<{ task: AgentTask; mutated: boolean }> {
+        if (input.allowMutation === false) throw new ConflictException("Question turn is read-only");
         const parsed = ClientModelTaskOperationsSchema.safeParse(input.operations);
         if (!parsed.success) throw new BadRequestException("Unsupported task operation");
         const resolved = await this.resolveModelOperations(input, parsed.data);

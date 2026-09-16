@@ -101,8 +101,8 @@ describe("deterministic product runtime bridge", () => {
         const scenario = projectScenarioForProduct(CONVERSATION_EVAL_CASES[0]!);
         const turn = {
             id: "product-runtime-replay-turn",
-            userText: "이름: SYN_PRODUCT, 전화번호: 01012345678",
-            inputEvents: [{ type: "user_message" as const, text: "이름: SYN_PRODUCT, 전화번호: 01012345678" }],
+            userText: "고객 등록해줘. 이름: SYN_PRODUCT, 전화번호: 01012345678",
+            inputEvents: [{ type: "user_message" as const, text: "고객 등록해줘. 이름: SYN_PRODUCT, 전화번호: 01012345678" }],
         };
         const context = {
             scenario,

@@ -1306,6 +1306,111 @@ describe("AgentRuntimeService", () => {
         expect(sessions.appendMessages.mock.calls[0]?.[2][0]).toMatchObject({ role: "assistant" });
     });
 
+    it("keeps a replayed task lookup read-only without attaching fresh choices", async () => {
+        const replayTask = {
+            schemaVersion: 1,
+            taskId: "123e4567-e89b-42d3-a456-426614174001",
+            sessionId: "123e4567-e89b-42d3-a456-426614174002",
+            kind: "clients.create",
+            capabilityId: "clients.create",
+            revision: 2,
+            state: "collecting",
+            confirmed: {},
+            tentative: {},
+            clearedFields: [],
+            provenance: { confirmed: {}, tentative: {} },
+            issues: [],
+            constraints: { noSend: false },
+            choiceSets: [],
+            orderedChoiceRefs: [],
+            target: null,
+            consent: { choice: "unanswered", binding: null },
+            action: null,
+            times: {
+                createdAt: "2026-01-01T00:00:00.000Z",
+                updatedAt: "2026-01-01T00:00:00.000Z",
+                acceptedAt: "2026-01-01T00:00:00.000Z",
+                expiresAt: "2026-02-01T00:00:00.000Z",
+            },
+            currentSnapshotRef: "123e4567-e89b-42d3-a456-426614174003",
+        };
+        const search = {
+            meta: {
+                name: "clients.search",
+                domain: "clients",
+                version: "1.0.0",
+                description: "Search clients",
+                risk: "read" as const,
+                requiredRoles: ["admin"],
+                renderer: "activity" as const,
+                flagKey: "agent.capability.clients.search",
+                sideEffect: false,
+            },
+            inputSchema: z.object({ query: z.string().optional() }),
+            outputSchema: z.object({
+                kind: z.literal("choices"),
+                prompt: z.string(),
+                choices: z.array(z.object({ id: z.number(), name: z.string(), serviceStatus: z.string().nullable() })),
+            }),
+            execute: jest.fn().mockResolvedValue({
+                kind: "choices",
+                prompt: "선택해 주세요",
+                choices: [
+                    { id: 1, name: "홍길동", serviceStatus: null },
+                    { id: 2, name: "김철수", serviceStatus: "active" },
+                ],
+            }),
+        };
+        const sessions = {
+            get: jest.fn().mockResolvedValue({ id: replayTask.sessionId, selectedEntities: {}, messages: [] }),
+            appendMessages: jest.fn().mockResolvedValue(undefined),
+        };
+        const attachDerivedChoices = jest.fn();
+        const taskOrchestrator = {
+            handleUserTurn: jest.fn().mockResolvedValue({
+                task: replayTask,
+                eventId: "123e4567-e89b-42d3-a456-426614174004",
+                operations: [],
+                isQuestion: true,
+                replayed: true,
+            }),
+            filterWriteCapabilities: jest.fn().mockResolvedValue({ capabilities: [search], taskMode: false }),
+            taskModeEnabled: jest.fn().mockResolvedValue(true),
+            attachDerivedChoices,
+            protectedValuesForConversation: jest.fn().mockResolvedValue([]),
+        };
+        const runtime = new AgentRuntimeService(
+            { list: () => [search] } as never,
+            { isCapabilityEnabled: jest.fn().mockResolvedValue(true) } as never,
+            sessions as never,
+            { modelId: "deterministic-agent-v1", create: () => new DeterministicAgentLanguageModel([
+                { type: "tool-call", toolName: "clients_search", input: { query: "고객" } },
+                { type: "text", text: "기존 결과를 확인했습니다." },
+            ]) } as never,
+            { route: jest.fn().mockResolvedValue({ domains: ["clients"], capabilities: [search] }) } as never,
+            { start: jest.fn().mockResolvedValue({ id: "trace-replay-choice", startedAt: Date.now() }), finish: jest.fn().mockResolvedValue(undefined) } as never,
+            undefined,
+            undefined,
+            undefined,
+            taskOrchestrator as never,
+        );
+
+        const result = await runtime.stream({
+            principal: { userId: "user-a", branchId: "branch-a", globalRole: "admin", branchRole: "admin" },
+            sessionId: replayTask.sessionId,
+            locale: "ko",
+            messages: [{ id: "message-replay-choice", role: "user", parts: [{ type: "text", text: "기존 고객 조회를 다시 보여줘" }] }] as never,
+        });
+        const reader = result.stream.getReader();
+        while (!(await reader.read()).done) {
+            // Drain the replay stream so read-only tool post-processing runs.
+        }
+
+        expect(attachDerivedChoices).not.toHaveBeenCalled();
+        expect(taskOrchestrator.handleUserTurn).toHaveBeenCalled();
+        expect(sessions.appendMessages).toHaveBeenCalledTimes(1);
+    });
+
     it("contains finish-time persistence failures and records a failed trace", async () => {
         const capability = {
             meta: { name: "clients.search", domain: "clients", version: "1.0.0", description: "Search clients", risk: "read" as const, requiredRoles: ["admin"], renderer: "activity" as const, flagKey: "agent.capability.clients.search", sideEffect: false },

@@ -378,6 +378,9 @@ export class AgentRuntimeService {
                             expectedRevision: conversationTask?.task?.capabilityId === capabilityId ? conversationTask.task.revision : undefined,
                             intakeEventId: conversationTask?.eventId ?? currentMessage.id,
                             userCorrection: Boolean(conversationTask?.operations?.length),
+                            ...(conversationTask?.isQuestion && (conversationTask.operations?.length ?? 0) === 0
+                                ? { allowMutation: false }
+                                : {}),
                         });
                         writeDataChunk({ type: "data-task-snapshot", data: taskSnapshotPart(result.task) });
                         return { kind: "task-update" as const, taskId: result.task.taskId, revision: result.task.revision, state: result.task.state };
@@ -496,6 +499,7 @@ export class AgentRuntimeService {
                             taskMode
                             && this.taskOrchestrator
                             && conversationTask?.task
+                            && !conversationTask.replayed
                             && capability.meta.name === "clients.search"
                             && choices.length >= 2
                         ) {
