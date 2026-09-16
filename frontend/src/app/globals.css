@@ -1689,3 +1689,4 @@ body {
 [data-slot="client-detail-presentation"][data-layout="mobile"] [role="tab"][aria-selected="true"] { background: white; box-shadow: 0 2px 8px hsl(214 50% 20% / .06); }
 
 [data-slot="client-detail-presentation"][data-layout="mobile"] [role="tablist"] > div { display: none; }
+[data-slot="client-detail-presentation"][data-layout="mobile"] [data-source-component="ClientServiceRecordsTab"] :is(button, a) { min-height: 40px; font-size: .78rem; }
