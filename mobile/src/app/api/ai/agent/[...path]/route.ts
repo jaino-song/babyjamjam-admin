@@ -1,12 +1,12 @@
 import { cookies } from "next/headers";
 import { NextRequest } from "next/server";
 import { BACKEND_BASE_URL } from "@/lib/api/server";
+import {
+    unauthorizedProblemResponse,
+    upstreamUnavailableProblemResponse,
+} from "@/lib/api/problem-responses";
 
 const BACKEND_URL = BACKEND_BASE_URL;
-
-function json(data: unknown, status: number): Response {
-    return new Response(JSON.stringify(data), { status, headers: { "Content-Type": "application/json" } });
-}
 
 export async function GET(request: NextRequest, { params }: { params: Promise<{ path: string[] }> }): Promise<Response> {
     return forward(request, await params, undefined);
@@ -26,7 +26,7 @@ export async function DELETE(request: NextRequest, { params }: { params: Promise
 
 async function forward(request: NextRequest, params: { path: string[] }, body: string | undefined): Promise<Response> {
     const token = (await cookies()).get("auth_token");
-    if (!token) return json({ error: "Unauthorized" }, 401);
+    if (!token) return unauthorizedProblemResponse();
     const path = params.path.map((segment) => encodeURIComponent(segment)).join("/");
     const backendPath = path === "capabilities"
         ? "/ai/capabilities"
@@ -52,6 +52,6 @@ async function forward(request: NextRequest, params: { path: string[] }, body: s
             },
         });
     } catch {
-        return json({ error: "Upstream unavailable" }, 502);
+        return upstreamUnavailableProblemResponse(request.method === "GET" ? "read" : "mutation");
     }
 }

@@ -1,8 +1,5 @@
-import { NextResponse } from "next/server";
+import { requestExpiredProblemResponse } from "@/lib/api/problem-responses";
 
 export function GET() {
-    return NextResponse.json(
-        { error: "Legacy token callback is disabled" },
-        { status: 410 },
-    );
+    return requestExpiredProblemResponse("Legacy token callback is disabled");
 }

@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest } from "next/server";
 
 import { serverAPIClient } from "@/lib/api/server";
 import {
@@ -6,28 +6,22 @@ import {
     errorResponse,
     getAuthHeaders,
     getAuthToken,
-    unauthorizedResponse,
 } from "@/lib/api/route-utils";
+import { unauthorizedProblemResponse } from "@/lib/api/problem-responses";
+
+import { invalidScheduleIdResponse, isPositiveScheduleId } from "../../link-route-utils";
 
 type RouteParams = { params: Promise<{ scheduleId: string }> };
-
-function isPositiveIntegerString(value: string): boolean {
-    return /^[1-9]\d*$/.test(value);
-}
-
-function invalidScheduleIdResponse(): NextResponse {
-    return NextResponse.json({ error: "Invalid schedule id" }, { status: 400 });
-}
 
 export async function POST(request: NextRequest, { params }: RouteParams) {
     try {
         const token = getAuthToken(request);
         if (!token) {
-            return unauthorizedResponse("Unauthorized");
+            return unauthorizedProblemResponse();
         }
 
         const { scheduleId } = await params;
-        if (!isPositiveIntegerString(scheduleId)) {
+        if (!isPositiveScheduleId(scheduleId)) {
             return invalidScheduleIdResponse();
         }
 

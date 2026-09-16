@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest } from "next/server";
 
 import { serverAPIClient } from "@/lib/api/server";
 import {
@@ -6,32 +6,42 @@ import {
     errorResponse,
     getAuthHeaders,
     getAuthToken,
-    unauthorizedResponse,
+    invalidJsonResponse,
+    readJsonObjectBody,
 } from "@/lib/api/route-utils";
+import {
+    unauthorizedProblemResponse,
+    validationProblemResponse,
+} from "@/lib/api/problem-responses";
+
+import { invalidScheduleIdResponse, isPositiveScheduleId } from "../../link-route-utils";
 
 type RouteParams = { params: Promise<{ scheduleId: string }> };
-
-function isPositiveIntegerString(value: string): boolean {
-    return /^[1-9]\d*$/.test(value);
-}
-
-function invalidScheduleIdResponse(): NextResponse {
-    return NextResponse.json({ error: "Invalid schedule id" }, { status: 400 });
-}
 
 export async function POST(request: NextRequest, { params }: RouteParams) {
     try {
         const token = getAuthToken(request);
         if (!token) {
-            return unauthorizedResponse("Unauthorized");
+            return unauthorizedProblemResponse();
         }
 
         const { scheduleId } = await params;
-        if (!isPositiveIntegerString(scheduleId)) {
+        if (!isPositiveScheduleId(scheduleId)) {
             return invalidScheduleIdResponse();
         }
 
-        const body = await request.json().catch(() => ({}));
+        // A malformed JSON body is rejected before proxying instead of being
+        // silently forwarded as `{}` (which would mask the client bug).
+        let body: Record<string, unknown>;
+        try {
+            body = await readJsonObjectBody(request);
+        } catch (error) {
+            return invalidJsonResponse(error)
+                ?? validationProblemResponse("Request body must be valid JSON", [
+                    { pointer: "", code: "INVALID_FORMAT", detail: "입력 형식이 올바르지 않아요.", location: "body" },
+                ]);
+        }
+
         const response = await serverAPIClient.post(
             `/admin/service-records/schedules/${scheduleId}/send-link`,
             body,

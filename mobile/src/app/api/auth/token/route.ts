@@ -4,7 +4,8 @@ import { AxiosError } from "axios";
 import { jwtDecode } from "jwt-decode";
 import { z } from "zod";
 
-import { parseBody } from "@/lib/api/route-utils";
+import { errorResponse, parseBody } from "@/lib/api/route-utils";
+import { dependencyUnavailableProblemResponse } from "@/lib/api/problem-responses";
 import { serverAPIClient } from "@/lib/api/server";
 import { getServerRuntimeConfig } from "@/lib/env";
 import {
@@ -26,44 +27,9 @@ interface TokenPayload {
     type: "access" | "refresh";
 }
 
-interface APIErrorResponse {
-    statusCode: number;
-    message: string;
-    error: string;
-}
-
 const {
     isSecureCookieEnv: isSecureCookie,
 } = getServerRuntimeConfig();
-
-// 30일 세션을 부여받는 권한 있는 역할들
-function getErrorCode(error: Error): string | undefined {
-    if (!("code" in error)) {
-        return undefined;
-    }
-
-    const { code } = error as { code?: unknown };
-    return typeof code === "string" ? code : undefined;
-}
-
-function logTokenExchangeFailure(error: unknown): void {
-    const safeDetails: {
-        errorName?: string;
-        errorCode?: string;
-        status?: number;
-    } = {};
-
-    if (error instanceof Error) {
-        safeDetails.errorName = error.name;
-        safeDetails.errorCode = getErrorCode(error);
-    }
-
-    if (error instanceof AxiosError) {
-        safeDetails.status = error.response?.status;
-    }
-
-    console.error("[Token Exchange] Failed", safeDetails);
-}
 
 export async function POST(request: NextRequest) {
     const { data: parsed, response: invalid } = await parseBody(tokenExchangeSchema, request);
@@ -104,23 +70,14 @@ export async function POST(request: NextRequest) {
         })
         return NextResponse.json({ message: "Success" }, { status: 200 });
     } catch (error) {
-        logTokenExchangeFailure(error);
-
-        if (error instanceof AxiosError) {
-            const axiosError = error as AxiosError<APIErrorResponse>;
-
-            // Network error - backend unreachable
-            if (!axiosError.response) {
-                return NextResponse.json(
-                    { error: "Authentication service unavailable" },
-                    { status: 503 }
-                );
-            }
-
-            const status = axiosError.response?.status || 500;
-            return NextResponse.json({ error: "Token exchange failed" }, { status });
+        // Network failure before the exchange completed: the registered
+        // DEPENDENCY_UNAVAILABLE problem keeps the established 503 status.
+        if (error instanceof AxiosError && !error.response) {
+            return dependencyUnavailableProblemResponse("mutation");
         }
 
-        return NextResponse.json({ error: "Internal Server Error" }, { status: 500 });
+        // Upstream rejections keep their status and forward problem bodies;
+        // other failures fall back to the sanitized 500 boundary.
+        return errorResponse(error, "exchange authorization code");
     }
 }

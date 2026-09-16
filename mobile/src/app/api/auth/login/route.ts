@@ -1,10 +1,9 @@
 import { cookies } from "next/headers";
 import { NextResponse, NextRequest } from "next/server";
-import { AxiosError } from "axios";
 import { jwtDecode } from "jwt-decode";
 import { z } from "zod";
 
-import { getUpstreamErrorStatus, logUpstreamError, parseBody, sanitizeUpstreamClientError } from "@/lib/api/route-utils";
+import { errorResponse, parseBody } from "@/lib/api/route-utils";
 import { serverAPIClient } from "@/lib/api/server";
 import { getServerRuntimeConfig } from "@/lib/env";
 import {
@@ -28,13 +27,6 @@ interface TokenPayload {
     sub: string;
     role: string | null;
     type: "access" | "refresh";
-}
-
-interface APIErrorResponse {
-    statusCode: number;
-    message: string;
-    error: string;
-    code?: string;
 }
 
 export async function POST(request: NextRequest) {
@@ -94,22 +86,6 @@ export async function POST(request: NextRequest) {
             requiresBranchSelection: data.requiresBranchSelection,
         }, { status: 200 });
     } catch (error) {
-        logUpstreamError("Auth Login", error);
-
-        if (error instanceof AxiosError) {
-            const axiosError = error as AxiosError<APIErrorResponse>;
-            const status = getUpstreamErrorStatus(error);
-            const responseData = axiosError.response?.data;
-
-            return NextResponse.json(
-                sanitizeUpstreamClientError(responseData, "Login failed", status),
-                { status }
-            );
-        }
-
-        return NextResponse.json(
-            { error: "Internal Server Error" },
-            { status: 500 }
-        );
+        return errorResponse(error, "login");
     }
 }
