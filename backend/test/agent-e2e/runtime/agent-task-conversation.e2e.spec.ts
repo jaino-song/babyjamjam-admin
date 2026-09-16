@@ -587,7 +587,14 @@ describeAgentE2E("conversation task runtime against the guarded local database",
         });
         const replay = await taskService.command(principal, seeded.task.taskId, command);
         expect(sourceRevised.snapshot.taskId).toBe(seeded.task.taskId);
-        expect(replay.receipt).toEqual(converted.receipt);
+        expect(replay.receipt).toEqual(expect.objectContaining({
+            taskId: converted.receipt.taskId,
+            eventId: converted.receipt.eventId,
+            eventHash: converted.receipt.eventHash,
+            acceptedRevision: converted.receipt.acceptedRevision,
+        }));
+        expect(replay.receipt.currentSnapshotRef).toBe(replay.snapshot.currentSnapshotRef);
+        expect(replay.receipt.currentSnapshotRef).not.toBe(converted.receipt.currentSnapshotRef);
         expect(replay.snapshot.taskId).toBe(converted.snapshot.taskId);
         expect(replay.snapshot.state).toBe("paused");
     });
