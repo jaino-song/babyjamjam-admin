@@ -3,6 +3,7 @@ import { DatabaseModule } from "infrastructure/database/database.module";
 import { AligoModule } from "module/aligo.module";
 import { MessageModule } from "module/message.module";
 import { SystemTemplateModule } from "module/system-template.module";
+import { SystemSettingModule } from "module/system-setting.module";
 import { EformsignDocModule } from "module/eformsign-doc.module";
 import { AdminServiceRecordController } from "interface/controllers/admin-service-record.controller";
 import { ServiceRecordEntryController } from "interface/controllers/service-record-entry.controller";
@@ -31,7 +32,7 @@ import { ServiceRecordEditRepository } from "infrastructure/database/repositorie
  * hooks (employee-schedule + client modules) can issue and revoke links.
  */
 @Module({
-    imports: [DatabaseModule, AligoModule, MessageModule, SystemTemplateModule, EformsignDocModule],
+    imports: [DatabaseModule, AligoModule, MessageModule, SystemTemplateModule, SystemSettingModule, EformsignDocModule],
     controllers: [ServiceRecordEntryController, ScheduleChangeController, AdminServiceRecordController],
     providers: [
         AdminServiceRecordService,

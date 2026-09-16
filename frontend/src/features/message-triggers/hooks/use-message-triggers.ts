@@ -177,6 +177,49 @@ export function useUpdateMessageTriggerRuleBranchActivation() {
     });
 }
 
+/**
+ * Enables one existing rule and its branch's trigger-dispatch parent in the
+ * backend's single atomic operation. This deliberately has no fallback to the
+ * ordinary rule update or branch activation mutations.
+ */
+export function useActivateMessageTriggerRuleWithParent() {
+    const queryClient = useQueryClient();
+
+    const isParentDisabledConflict = (error: unknown) => {
+        if (!error || typeof error !== "object" || !("response" in error)) return false;
+        const response = (error as { response?: { status?: unknown; data?: unknown } }).response;
+        if (response?.status !== 409 || !response.data || typeof response.data !== "object") return false;
+        const payload = response.data as { code?: unknown; error?: unknown };
+        if (payload.code === "MESSAGE_AUTOMATION_PARENT_DISABLED") return true;
+        return Boolean(
+            payload.error &&
+            typeof payload.error === "object" &&
+            (payload.error as { code?: unknown }).code === "MESSAGE_AUTOMATION_PARENT_DISABLED",
+        );
+    };
+
+    return useMutation({
+        mutationFn: (id: string) =>
+            messageTriggersApi.activateWithParent(id).then((response) => response.data),
+        onSuccess: async () => {
+            await queryClient.invalidateQueries({ queryKey: messageTriggerKeys.all });
+            await queryClient.invalidateQueries({ queryKey: messageTriggerKeys.upcoming() });
+            await queryClient.invalidateQueries({ queryKey: messageTriggerKeys.history() });
+            await queryClient.invalidateQueries({
+                queryKey: ["settings", "message-automation-policies"],
+            });
+        },
+        onError: async (error) => {
+            if (!isParentDisabledConflict(error)) return;
+
+            await queryClient.invalidateQueries({ queryKey: messageTriggerKeys.all });
+            await queryClient.invalidateQueries({
+                queryKey: ["settings", "message-automation-policies"],
+            });
+        },
+    });
+}
+
 // Removes a rule from the cached rule list. Non-array shapes pass through unchanged.
 function removeTriggerRuleFromCacheData(current: unknown, id: string): unknown {
     if (!Array.isArray(current)) return current;

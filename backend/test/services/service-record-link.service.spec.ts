@@ -1,4 +1,4 @@
-import { BadRequestException, NotFoundException } from "@nestjs/common";
+import { BadRequestException, NotFoundException, ServiceUnavailableException } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { ServiceRecordLinkService } from "application/services/service-record-link.service";
 import {
@@ -37,7 +37,10 @@ describe("ServiceRecordLinkService", () => {
             },
             message_trigger_rule: {
                 upsert: jest.fn().mockResolvedValue(undefined),
-                findUnique: jest.fn().mockResolvedValue({ isActive: true }),
+                findUnique: jest.fn().mockResolvedValue({ branchId: null, isActive: true }),
+            },
+            message_trigger_rule_branch_override: {
+                findUnique: jest.fn().mockResolvedValue(null),
             },
             system_template: {
                 findUnique: jest.fn().mockResolvedValue({ customVariables: [] }),
@@ -48,6 +51,15 @@ describe("ServiceRecordLinkService", () => {
         ));
         return prisma;
     };
+    const createAutomationActivationService = () => ({
+        getTriggerDispatchEnabled: jest.fn().mockResolvedValue(true),
+    });
+    const createBranchLock = (prisma: unknown) => ({
+        runExclusive: jest.fn().mockImplementation(async (
+            _branchId: string,
+            work: (transaction: unknown) => Promise<unknown>,
+        ) => work(prisma)),
+    });
     const createTokenService = () => ({
         issueLink: jest.fn().mockResolvedValue({ linkToken: "efl_token" }),
         reuseActiveLink: jest.fn().mockResolvedValue(null),
@@ -122,6 +134,10 @@ describe("ServiceRecordLinkService", () => {
             jobRepository as unknown as IMessageTriggerJobRepository,
             createLogRepository() as unknown as IMessageLogRepository,
             createOverrideRepository() as unknown as IMessageTriggerRuleBranchOverrideRepository,
+            undefined,
+            undefined,
+            createBranchLock(prisma) as never,
+            createAutomationActivationService() as never,
         );
         prisma.employee_schedule.findUnique.mockResolvedValue(createSchedule());
 
@@ -459,6 +475,10 @@ describe("ServiceRecordLinkService", () => {
             createJobRepository() as unknown as IMessageTriggerJobRepository,
             createLogRepository() as unknown as IMessageLogRepository,
             createOverrideRepository() as unknown as IMessageTriggerRuleBranchOverrideRepository,
+            undefined,
+            undefined,
+            createBranchLock(prisma) as never,
+            createAutomationActivationService() as never,
         );
         prisma.employee_schedule.findUnique.mockResolvedValue(createSchedule());
 
@@ -487,6 +507,10 @@ describe("ServiceRecordLinkService", () => {
             jobRepository as unknown as IMessageTriggerJobRepository,
             createLogRepository() as unknown as IMessageLogRepository,
             createOverrideRepository() as unknown as IMessageTriggerRuleBranchOverrideRepository,
+            undefined,
+            undefined,
+            createBranchLock(prisma) as never,
+            createAutomationActivationService() as never,
         );
         prisma.employee_schedule.findUnique.mockResolvedValue(createSchedule());
 
@@ -500,6 +524,7 @@ describe("ServiceRecordLinkService", () => {
                 ruleId: SERVICE_RECORD_LINK_RULE_ID,
                 employeeScheduleId: 10,
             }),
+            expect.any(Object),
         );
         expect(jobRepository.upsertPending).not.toHaveBeenCalled();
     });
@@ -516,6 +541,10 @@ describe("ServiceRecordLinkService", () => {
             jobRepository as unknown as IMessageTriggerJobRepository,
             createLogRepository() as unknown as IMessageLogRepository,
             createOverrideRepository() as unknown as IMessageTriggerRuleBranchOverrideRepository,
+            undefined,
+            undefined,
+            createBranchLock(prisma) as never,
+            createAutomationActivationService() as never,
         );
         prisma.employee_schedule.findUnique.mockResolvedValue(createSchedule());
 
@@ -539,6 +568,10 @@ describe("ServiceRecordLinkService", () => {
             jobRepository as unknown as IMessageTriggerJobRepository,
             createLogRepository() as unknown as IMessageLogRepository,
             createOverrideRepository() as unknown as IMessageTriggerRuleBranchOverrideRepository,
+            undefined,
+            undefined,
+            createBranchLock(prisma) as never,
+            createAutomationActivationService() as never,
         );
         prisma.employee_schedule.findUnique.mockResolvedValue(createSchedule());
 
@@ -562,6 +595,10 @@ describe("ServiceRecordLinkService", () => {
             jobRepository as unknown as IMessageTriggerJobRepository,
             createLogRepository() as unknown as IMessageLogRepository,
             createOverrideRepository() as unknown as IMessageTriggerRuleBranchOverrideRepository,
+            undefined,
+            undefined,
+            createBranchLock(prisma) as never,
+            createAutomationActivationService() as never,
         );
         prisma.employee_schedule.findUnique.mockResolvedValue(createSchedule());
         await expect(service.scheduleForServiceStart(10)).rejects.toThrow("token unavailable");
@@ -636,6 +673,10 @@ describe("ServiceRecordLinkService", () => {
             jobRepository as unknown as IMessageTriggerJobRepository,
             logRepository as unknown as IMessageLogRepository,
             createOverrideRepository() as unknown as IMessageTriggerRuleBranchOverrideRepository,
+            undefined,
+            undefined,
+            createBranchLock(prisma) as never,
+            createAutomationActivationService() as never,
         );
         prisma.employee_schedule.findUnique.mockResolvedValue(createSchedule({
             primaryEmployee: {
@@ -752,6 +793,10 @@ describe("ServiceRecordLinkService", () => {
             createJobRepository() as unknown as IMessageTriggerJobRepository,
             createLogRepository() as unknown as IMessageLogRepository,
             createOverrideRepository() as unknown as IMessageTriggerRuleBranchOverrideRepository,
+            undefined,
+            undefined,
+            createBranchLock(prisma) as never,
+            createAutomationActivationService() as never,
         );
         prisma.employee_schedule.findUnique.mockResolvedValue(createSchedule());
 
@@ -850,7 +895,12 @@ describe("ServiceRecordLinkService", () => {
                 jobRepository as unknown as IMessageTriggerJobRepository,
                 createLogRepository() as unknown as IMessageLogRepository,
                 overrideRepository as unknown as IMessageTriggerRuleBranchOverrideRepository,
+                undefined,
+                undefined,
+                createBranchLock(prisma) as never,
+                createAutomationActivationService() as never,
             );
+            prisma.message_trigger_rule_branch_override.findUnique.mockImplementation(() => overrideRepository.findOne("branch-1", SERVICE_RECORD_LINK_RULE_ID));
             prisma.employee_schedule.findUnique.mockResolvedValue(createSchedule());
 
             await expect(service.scheduleForServiceStart(10)).resolves.toBe(false);
@@ -878,7 +928,12 @@ describe("ServiceRecordLinkService", () => {
                 jobRepository as unknown as IMessageTriggerJobRepository,
                 createLogRepository() as unknown as IMessageLogRepository,
                 overrideRepository as unknown as IMessageTriggerRuleBranchOverrideRepository,
+                undefined,
+                undefined,
+                createBranchLock(prisma) as never,
+                createAutomationActivationService() as never,
             );
+            prisma.message_trigger_rule_branch_override.findUnique.mockImplementation(() => overrideRepository.findOne("branch-1", SERVICE_RECORD_LINK_RULE_ID));
             prisma.employee_schedule.findUnique.mockResolvedValue(createSchedule());
 
             // 1. Opted out: no job enqueued.
@@ -956,13 +1011,49 @@ describe("ServiceRecordLinkService", () => {
                 jobRepository as unknown as IMessageTriggerJobRepository,
                 createLogRepository() as unknown as IMessageLogRepository,
                 overrideRepository as unknown as IMessageTriggerRuleBranchOverrideRepository,
+                undefined,
+                undefined,
+                createBranchLock(prisma) as never,
+                createAutomationActivationService() as never,
             );
+            prisma.message_trigger_rule_branch_override.findUnique.mockImplementation(() => overrideRepository.findOne("branch-1", SERVICE_RECORD_LINK_RULE_ID));
             prisma.employee_schedule.findUnique.mockResolvedValue(createSchedule());
 
             await expect(service.scheduleForServiceStart(10)).resolves.toBe(false);
 
             expect(jobRepository.promoteAutomaticSchedulingClaim).not.toHaveBeenCalled();
             expect(prisma.$queryRaw).not.toHaveBeenCalled();
+        });
+
+        it("fails closed when an automatic claim has a branch lock but no activation fence", async () => {
+            const prisma = createPrisma();
+            const tokenService = createTokenService();
+            const jobRepository = createJobRepository();
+            const branchLock = {
+                runExclusive: jest.fn(async (
+                    _branchId: string,
+                    work: (transaction: typeof prisma) => Promise<unknown>,
+                ) => work(prisma)),
+            };
+            const service = new ServiceRecordLinkService(
+                prisma as unknown as PrismaService,
+                tokenService as never,
+                createConfigService() as unknown as ConfigService,
+                jobRepository as unknown as IMessageTriggerJobRepository,
+                createLogRepository() as unknown as IMessageLogRepository,
+                createOverrideRepository() as unknown as IMessageTriggerRuleBranchOverrideRepository,
+                undefined,
+                undefined,
+                branchLock as never,
+            );
+            prisma.employee_schedule.findUnique.mockResolvedValue(createSchedule());
+
+            await expect(service.scheduleForServiceStart(10)).rejects.toBeInstanceOf(ServiceUnavailableException);
+
+            expect(prisma.$queryRaw).not.toHaveBeenCalled();
+            expect(jobRepository.promoteAutomaticSchedulingClaim).not.toHaveBeenCalled();
+            expect(jobRepository.upsertPending).not.toHaveBeenCalled();
+            expect(tokenService.issueLink).not.toHaveBeenCalled();
         });
     });
 });

@@ -1,6 +1,7 @@
-import { ConflictException, Inject, Injectable, Logger, NotFoundException, Optional } from "@nestjs/common";
+import { ConflictException, Inject, Injectable, Logger, NotFoundException, Optional, ServiceUnavailableException } from "@nestjs/common";
 import { AligoService } from "application/services/aligo.service";
 import { MessageSenderApprovalService } from "application/services/message-sender-approval.service";
+import { MessageAutomationActivationService } from "application/services/message-automation-activation.service";
 import { parseKstSchedule } from "application/utils/kst-schedule";
 import { maskPhone } from "application/utils/mask";
 import {
@@ -36,6 +37,16 @@ interface RetrySchedule {
     scheduledAtMs: number | null;
 }
 
+type AutomaticRetryBoundary =
+    | { kind: "terminal"; log: MessageLogEntity }
+    | { kind: "claimed"; log: null }
+    | {
+        kind: "ready";
+        schedule: RetrySchedule;
+        retryLog: MessageLogEntity;
+        providerAttempt: MessageLogEntity;
+    };
+
 @Injectable()
 export class SmsRetryService {
     private readonly logger = new Logger(SmsRetryService.name);
@@ -47,6 +58,8 @@ export class SmsRetryService {
         private readonly messageSenderApprovalService: MessageSenderApprovalService,
         @Optional()
         private readonly acceptanceService?: SmsProviderAcceptanceService,
+        @Optional()
+        private readonly messageAutomationActivationService?: MessageAutomationActivationService,
     ) {}
 
     async retryById(branchId: string, logId: number): Promise<MessageLogEntity> {
@@ -85,6 +98,85 @@ export class SmsRetryService {
         sourceLog: MessageLogEntity,
         invocation: MessageRetryInvocation = "manual",
     ): Promise<MessageLogEntity | null> {
+        if (
+            invocation === "automatic"
+            && sourceLog.branchId
+            && sourceLog.triggerJobId
+            && !this.messageAutomationActivationService
+        ) {
+            throw new ServiceUnavailableException("Message automation retry fence is not configured");
+        }
+        if (
+            invocation === "automatic"
+            && this.messageAutomationActivationService
+            && sourceLog.branchId
+            && sourceLog.triggerJobId
+        ) {
+            const boundary = await this.messageAutomationActivationService.runAutomaticRetryIfEnabled(
+                sourceLog.branchId,
+                sourceLog.triggerJobId,
+                async (transaction): Promise<AutomaticRetryBoundary> => {
+                    if (sourceLog.isPartialProviderOutcome()) {
+                        sourceLog.markRetrySuperseded(PARTIAL_RETRY_SUPERSEDED_REASON);
+                        await this.logRepository.update(sourceLog, transaction);
+                        return { kind: "terminal", log: sourceLog };
+                    }
+
+                    const schedule = this.parseRetrySchedule(sourceLog);
+                    if (!schedule) {
+                        sourceLog.markRetrySuperseded(INVALID_RETRY_SCHEDULE_REASON);
+                        await this.logRepository.update(sourceLog, transaction);
+                        return { kind: "terminal", log: sourceLog };
+                    }
+
+                    const retryStart = await this.logRepository.startRetryAttempt(
+                        sourceLog,
+                        this.createRetryAttempt(sourceLog),
+                        invocation,
+                        transaction,
+                    );
+                    if (retryStart.kind === "lost") return { kind: "claimed", log: null };
+                    if (retryStart.kind === "suppressed") return { kind: "terminal", log: retryStart.log };
+                    const retryLog = retryStart.log;
+
+                    try {
+                        await this.messageSenderApprovalService.ensureApproved(retryLog.branchId ?? sourceLog.branchId!);
+                    } catch (approvalError) {
+                        const reason = approvalError instanceof Error ? approvalError.message : String(approvalError);
+                        retryLog.status = "failed";
+                        retryLog.errorMessage = reason;
+                        retryLog.attempts += 1;
+                        retryLog.lastAttemptAt = new Date(Date.now());
+                        retryLog.nextRetryAt = null;
+                        await this.logRepository.update(retryLog, transaction);
+                        return { kind: "terminal", log: retryLog };
+                    }
+
+                    const providerAttempt = this.acceptanceService
+                        ? await this.acceptanceService.beginProviderCall(retryLog, transaction)
+                        : this.beginProviderCallWithoutBoundary(retryLog);
+                    if (!this.acceptanceService) {
+                        await this.logRepository.update(providerAttempt, transaction);
+                    }
+                    return { kind: "ready", schedule, retryLog, providerAttempt };
+                },
+            );
+            if (!boundary.applies) {
+                // Manual receipt/SR jobs use the existing retry path even when
+                // the automation parent is disabled.
+            } else {
+                if (!boundary.allowed || !boundary.value) return null;
+                if (boundary.value.kind === "terminal") return boundary.value.log;
+                if (boundary.value.kind === "claimed") return null;
+                return this.sendRetryAttempt(
+                    boundary.value.schedule,
+                    boundary.value.retryLog,
+                    boundary.value.providerAttempt,
+                    invocation,
+                );
+            }
+        }
+
         if (sourceLog.isPartialProviderOutcome()) {
             sourceLog.markRetrySuperseded(PARTIAL_RETRY_SUPERSEDED_REASON);
             await this.logRepository.update(sourceLog);
@@ -139,12 +231,20 @@ export class SmsRetryService {
             ? await this.acceptanceService.beginProviderCall(retryLog)
             : this.beginProviderCallWithoutBoundary(retryLog);
 
+        return this.sendRetryAttempt(schedule, retryLog, providerAttempt, invocation);
+    }
+
+    private async sendRetryAttempt(
+        schedule: RetrySchedule,
+        retryLog: MessageLogEntity,
+        providerAttempt: MessageLogEntity,
+        invocation: MessageRetryInvocation,
+    ): Promise<MessageLogEntity> {
+        const isScheduledInFuture = schedule.scheduledAtMs !== null && schedule.scheduledAtMs > Date.now();
+        const scheduledDate = isScheduledInFuture ? schedule.scheduledDate : undefined;
+        const scheduledTime = isScheduledInFuture ? schedule.scheduledTime : undefined;
+
         try {
-            const isScheduledInFuture = schedule.scheduledAtMs !== null && schedule.scheduledAtMs > Date.now();
-
-            const scheduledDate = isScheduledInFuture ? schedule.scheduledDate : undefined;
-            const scheduledTime = isScheduledInFuture ? schedule.scheduledTime : undefined;
-
             const result = await this.aligoService.sendSms({
                 senderPhone: this.stringVariable(retryLog, "senderPhone"),
                 receiver: providerAttempt.receiver,
@@ -157,16 +257,9 @@ export class SmsRetryService {
                 ...(this.booleanVariable(retryLog, "testMode") ? { testMode: true } : {}),
             });
 
-            const providerOutcome = classifySmsProviderOutcome(
-                result,
-                countSmsRecipients(providerAttempt.receiver),
-            );
+            const providerOutcome = classifySmsProviderOutcome(result, countSmsRecipients(providerAttempt.receiver));
             if (providerOutcome === "rejected") {
-                this.markSmsRetryRejected(
-                    providerAttempt,
-                    this.providerResponseMessage(result),
-                    invocation,
-                );
+                this.markSmsRetryRejected(providerAttempt, this.providerResponseMessage(result), invocation);
                 await this.logRepository.update(providerAttempt);
                 this.logger.warn(`[Retry] SMS retry rejected for log ${providerAttempt.id}: ${this.providerResponseMessage(result)}`);
                 return providerAttempt;
@@ -174,27 +267,17 @@ export class SmsRetryService {
             if (providerOutcome === "partial") {
                 this.markSmsRetryPartial(providerAttempt, this.providerResponseMessage(result));
                 await this.logRepository.update(providerAttempt);
-                this.logger.warn(
-                    `[Retry] SMS retry partially accepted for log ${providerAttempt.id}; automatic retry stopped`,
-                );
+                this.logger.warn(`[Retry] SMS retry partially accepted for log ${providerAttempt.id}; automatic retry stopped`);
                 return providerAttempt;
             }
             if (providerOutcome === "unknown") {
-                this.markSmsRetryUncertain(
-                    providerAttempt,
-                    "문자 발송 결과를 확인할 수 없어 자동 재전송을 중단했습니다.",
-                );
+                this.markSmsRetryUncertain(providerAttempt, "문자 발송 결과를 확인할 수 없어 자동 재전송을 중단했습니다.");
                 await this.logRepository.update(providerAttempt);
-                this.logger.warn(
-                    `[Retry] SMS retry result was not classifiable for log ${providerAttempt.id}; automatic retry stopped`,
-                );
+                this.logger.warn(`[Retry] SMS retry result was not classifiable for log ${providerAttempt.id}; automatic retry stopped`);
                 return providerAttempt;
             }
 
-            providerAttempt.variables = {
-                ...providerAttempt.variables,
-                retrySafety: "accepted",
-            };
+            providerAttempt.variables = { ...providerAttempt.variables, retrySafety: "accepted" };
             if (isScheduledInFuture) {
                 providerAttempt.status = "pending";
                 providerAttempt.aligoMid = result.response.msg_id ? String(result.response.msg_id) : null;
@@ -210,14 +293,9 @@ export class SmsRetryService {
             this.logger.log(`[Retry] Successfully resent SMS ${providerAttempt.templateKey} to ${maskPhone(providerAttempt.receiver)}`);
             return providerAttempt;
         } catch (error) {
-            this.markSmsRetryUncertain(
-                providerAttempt,
-                error instanceof Error ? error.message : String(error),
-            );
+            this.markSmsRetryUncertain(providerAttempt, error instanceof Error ? error.message : String(error));
             await this.logRepository.update(providerAttempt);
-            this.logger.warn(
-                `[Retry] SMS result uncertain for log ${providerAttempt.id}; automatic retry stopped: ${error}`,
-            );
+            this.logger.warn(`[Retry] SMS result uncertain for log ${providerAttempt.id}; automatic retry stopped: ${error}`);
             return providerAttempt;
         }
     }
