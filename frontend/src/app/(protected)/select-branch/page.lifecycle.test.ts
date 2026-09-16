@@ -20,4 +20,11 @@ describe("frontend select-branch navigation lifecycle", () => {
     expect(source).toContain("const result = await logout(pushEndpoint)");
     expect(source).not.toContain(["document", "cookie"].join("."));
   });
+
+  it("returns to a safe editor path after branch selection", () => {
+    expect(source).toContain('useSearchParams } from "next/navigation"');
+    expect(source).toContain('getSafeReturnPathFromSearchParams(useSearchParams())');
+    expect(source).toContain('router.replace(returnPath || "/dashboard")');
+    expect(source).toContain('appendSafeReturnPath("/login", returnPath)');
+  });
 });

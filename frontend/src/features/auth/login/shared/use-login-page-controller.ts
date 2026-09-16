@@ -3,17 +3,23 @@ import { getUserErrorMessage } from "@babyjamjam/shared";
 
 
 import { useEffect, useMemo, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 
 import { resendVerificationEmail } from "@/features/auth/shared/auth-api";
 import { useNavigationPending } from "@/lib/hooks/use-navigation-pending";
 import { loginSchema, type LoginFormData } from "@/lib/validations/auth";
 import { safeStorageGetItem, safeStorageRemoveItem, safeStorageSetItem } from "@/lib/safe-storage";
 import { resetAuthorityState } from "@/lib/auth/authority-state";
+import {
+  appendSafeReturnPath,
+  getSafeReturnPathFromSearchParams,
+} from "@/lib/auth/safe-return-path";
 import { loginWithEmail } from "@/app/(auth)/login/actions";
 
 export function useLoginPageController() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const returnPath = getSafeReturnPathFromSearchParams(searchParams);
   const [autoLogin, setAutoLogin] = useState(false);
   const [rememberId, setRememberId] = useState(false);
   const [formData, setFormData] = useState<Partial<LoginFormData>>({
@@ -100,15 +106,18 @@ export function useLoginPageController() {
 
         beginNavigation();
         if (response.requiresBranchSelection) {
-          router.replace("/select-branch");
+          router.replace(appendSafeReturnPath("/select-branch", returnPath));
         } else {
-          router.replace("/dashboard");
+          router.replace(returnPath || "/dashboard");
         }
         return;
       }
 
       if (response.authErrorCode) {
-        router.replace(`/login?authError=${encodeURIComponent(response.authErrorCode)}`);
+        router.replace(appendSafeReturnPath(
+          `/login?authError=${encodeURIComponent(response.authErrorCode)}`,
+          returnPath,
+        ));
         return;
       }
 

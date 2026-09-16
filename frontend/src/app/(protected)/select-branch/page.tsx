@@ -3,7 +3,7 @@ import { getUserErrorMessage } from "@babyjamjam/shared";
 
 
 import { useCallback, useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useQueryClient } from "@tanstack/react-query";
 import { Building2 } from "lucide-react";
 import { AuthPanel } from "@/components/auth/auth-panel";
@@ -17,9 +17,9 @@ import { FooterNavigation } from "@/components/ui/footer-navigation";
 import { getRoleLabel } from "@/lib/constants/roles";
 import { resetAuthorityState } from "@/lib/auth/authority-state";
 import { getCurrentPushEndpoint } from "@/lib/notifications/push-endpoint";
+import { appendSafeReturnPath, getSafeReturnPathFromSearchParams } from "@/lib/auth/safe-return-path";
 import { logout } from "@/app/logout/actions";
 import { getUserBranches, setCurrentBranch } from "./actions";
-
 interface Branch {
     id: string;
     name: string;
@@ -59,7 +59,7 @@ function SelectBranchLoadingSkeleton() {
 
 export default function SelectBranchPage() {
     const router = useRouter();
-    const queryClient = useQueryClient();
+    const queryClient = useQueryClient(), returnPath = getSafeReturnPathFromSearchParams(useSearchParams());
     const [branches, setBranches] = useState<Branch[]>([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
@@ -105,7 +105,7 @@ export default function SelectBranchPage() {
                 return false;
             }
 
-            router.replace("/dashboard");
+            router.replace(returnPath || "/dashboard");
             return true;
         } catch (err) {
             console.error("[Select Branch] Error selecting branch:", err);
@@ -113,7 +113,7 @@ export default function SelectBranchPage() {
             setSelecting(null);
             return false;
         }
-    }, [router, queryClient]);
+    }, [returnPath, router, queryClient]);
 
     useEffect(() => {
         const fetchBranches = async () => {
@@ -193,7 +193,7 @@ export default function SelectBranchPage() {
                     <p className="rounded-full bg-destructive/10 px-3 py-1 text-sm font-semibold text-destructive">
                         {error && getUserErrorMessage(error)}
                     </p>
-                    <Button variant="outline" onClick={() => router.push("/login")}>
+                    <Button variant="outline" onClick={() => router.push(appendSafeReturnPath("/login", returnPath))}>
                         로그인 페이지로 돌아가기
                     </Button>
                 </div>
