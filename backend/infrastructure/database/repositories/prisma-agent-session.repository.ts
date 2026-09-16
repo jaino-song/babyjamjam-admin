@@ -213,8 +213,8 @@ export class PrismaAgentSessionRepository implements IAgentSessionRepository {
                 SELECT "id"
                 FROM "agent_session"
                 WHERE "id" = ${id}
-                  AND "user_id" = ${owner.userId}
-                  AND "branch_id" = ${owner.branchId}
+                  AND "user_id" = CAST(${owner.userId} AS uuid)
+                  AND "branch_id" = CAST(${owner.branchId} AS uuid)
                 FOR UPDATE
             `);
             if (locked.length === 0) return "not_found";

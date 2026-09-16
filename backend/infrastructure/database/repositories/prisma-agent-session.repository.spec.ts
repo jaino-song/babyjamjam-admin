@@ -516,6 +516,9 @@ describe("PrismaAgentSessionRepository", () => {
         const repository = new PrismaAgentSessionRepository(prisma as never);
 
         await expect(repository.archiveOwned("session-a", owner, new Date("2026-08-04T00:00:00.000Z"))).resolves.toBe("archived");
+        const sessionLockQuery = (prisma as typeof prisma & { $queryRaw: jest.Mock }).$queryRaw.mock.calls[0]?.[0] as { sql?: string };
+        expect(sessionLockQuery.sql).toEqual(expect.stringContaining('"user_id" = CAST(? AS uuid)'));
+        expect(sessionLockQuery.sql).toEqual(expect.stringContaining('"branch_id" = CAST(? AS uuid)'));
         expect(prisma.agent_action.findFirst).toHaveBeenCalledWith({
             where: {
                 sessionId: "session-a",
