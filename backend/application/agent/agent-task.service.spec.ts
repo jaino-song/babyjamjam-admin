@@ -227,6 +227,11 @@ class FakeTaskRepository {
                     activeSlot: input.status === "collecting" || input.status === "confirming_target" || input.status === "review_ready" ? 1 : null,
                     lastAcceptedAt: input.lastAcceptedAt ?? new Date(),
                     expiresAt: input.expiresAt,
+                    targetRef: input.targetRef ?? null,
+                    targetVersion: input.targetVersion ?? null,
+                    activeActionId: input.activeActionId ?? null,
+                    terminalAt: input.terminalAt ?? null,
+                    purgedAt: input.purgedAt ?? null,
                 });
                 this.tasks.set(task.taskId, task);
                 lockedTask = task;
@@ -243,7 +248,9 @@ class FakeTaskRepository {
                     activeSlot: input.status === "collecting" || input.status === "confirming_target" || input.status === "review_ready"
                         ? 1
                         : input.status === undefined && lockedTask.activeSlot === 1 ? 1 : null,
-                    lastAcceptedAt: input.acceptedAt ?? lockedTask.lastAcceptedAt,
+                    lastAcceptedAt: input.preserveLastAcceptedAt
+                        ? lockedTask.lastAcceptedAt
+                        : input.acceptedAt ?? lockedTask.lastAcceptedAt,
                     expiresAt: input.expiresAt ?? lockedTask.expiresAt,
                     updatedAt: input.acceptedAt ?? lockedTask.updatedAt,
                     targetRef: input.targetRef === undefined ? lockedTask.targetRef : input.targetRef,
@@ -1362,6 +1369,330 @@ describe("AgentTaskService", () => {
         await expect(service.get(owner, randomUUID())).rejects.toMatchObject({ status: 404 });
         repository.listOwned = jest.fn().mockResolvedValue({ status: "storage_failure" });
         await expect(service.restoreSession(owner, sessionId)).rejects.toMatchObject({ status: 503 });
+    });
+
+    it("attaches server-derived client choices with a deterministic replay and no TTL renewal", async () => {
+        const repository = new FakeTaskRepository();
+        const target = makeClientRecord(7);
+        const client = {
+            findByPhone: jest.fn().mockResolvedValue(null),
+            findById: jest.fn().mockResolvedValue(target),
+        };
+        const task = makeTask();
+        repository.tasks.set(task.taskId, task);
+        const service = buildService(repository, client).service;
+        const beforeAcceptedAt = task.lastAcceptedAt;
+        const beforeExpiry = task.expiresAt;
+        const beforeSessionExpiry = repository.session.expiresAt;
+
+        const first = await service.attachChoices(owner, task.taskId, {
+            expectedRevision: task.revision,
+            producer: "client-target",
+            results: [{ label: "caller supplied label", clientId: target.id, description: "활성" }],
+        });
+        const firstRow = repository.tasks.get(task.taskId)!;
+        expect(first.snapshot.state).toBe("confirming_target");
+        expect(first.snapshot.revision).toBe(task.revision + 1);
+        expect(first.snapshot.choiceSets).toHaveLength(1);
+        expect(first.snapshot.choiceSets[0]?.options[0]?.label).toBe(target.name);
+        expect(first.snapshot.choiceSets[0]?.options[0]?.label).not.toBe("caller supplied label");
+        expect(firstRow.lastAcceptedAt).toEqual(beforeAcceptedAt);
+        expect(firstRow.expiresAt).toEqual(beforeExpiry);
+        expect(repository.session.expiresAt).toEqual(beforeSessionExpiry);
+        expect(firstRow.draft.server.references.choiceTargets).toEqual([
+            expect.objectContaining({ clientId: target.id }),
+        ]);
+
+        const replay = await service.attachChoices(owner, task.taskId, {
+            expectedRevision: task.revision,
+            producer: "client-target",
+            results: [{ label: "different caller label", clientId: target.id, description: "활성" }],
+        });
+        expect(replay.receipt).toEqual(first.receipt);
+        expect(replay.snapshot).toEqual(first.snapshot);
+        expect(repository.tasks.get(task.taskId)!.revision).toBe(first.snapshot.revision);
+        expect(repository.events.size).toBe(1);
+    });
+
+    it("replaces only the phone producer choices and preserves unrelated client choices", async () => {
+        const repository = new FakeTaskRepository();
+        const clientChoiceRef = randomUUID();
+        const clientOptionId = randomUUID();
+        const phoneChoiceRef = randomUUID();
+        const phoneOptionId = randomUUID();
+        const task = makeTask({ draft: {
+            ...createEmptyAgentTaskDraft(randomUUID()),
+            choiceSets: [
+                { choiceSetRef: clientChoiceRef, options: [{ optionId: clientOptionId, label: "고객" }] },
+                { choiceSetRef: phoneChoiceRef, options: [{ optionId: phoneOptionId, label: "전화 후보" }] },
+            ],
+            orderedChoiceRefs: [clientChoiceRef, phoneChoiceRef],
+            server: { references: {
+                target: null,
+                choiceTargets: [{ choiceSetRef: clientChoiceRef, optionId: clientOptionId, clientId: 7 }],
+                phoneCandidates: { [phoneChoiceRef]: [{ candidateRef: phoneOptionId, normalizedPhone: "01012345678" }] },
+            } },
+        } });
+        repository.tasks.set(task.taskId, task);
+        const service = buildService(repository).service;
+
+        const result = await service.attachChoices(owner, task.taskId, {
+            expectedRevision: task.revision,
+            producer: "phone-candidate",
+            results: [{ label: "ignored", normalizedPhone: "010-9999-8888" }],
+        });
+        const row = repository.tasks.get(task.taskId)!;
+        const refs = result.snapshot.choiceSets.map((set) => set.choiceSetRef);
+        expect(result.snapshot.state).toBe("confirming_target");
+        expect(refs).toContain(clientChoiceRef);
+        expect(refs).not.toContain(phoneChoiceRef);
+        expect(row.draft.server.references.choiceTargets).toEqual([
+            { choiceSetRef: clientChoiceRef, optionId: clientOptionId, clientId: 7 },
+        ]);
+        const phoneRefs = Object.keys(row.draft.server.references.phoneCandidates);
+        expect(phoneRefs).toHaveLength(1);
+        expect(phoneRefs[0]).not.toBe(phoneChoiceRef);
+        expect(row.draft.server.references.phoneCandidates[phoneRefs[0]!]?.[0]?.normalizedPhone).toBe("01099998888");
+    });
+
+    it("records an empty derived result without attaching a choice set or extending retention", async () => {
+        const repository = new FakeTaskRepository();
+        const task = makeTask();
+        repository.tasks.set(task.taskId, task);
+        const service = buildService(repository).service;
+        const before = repository.tasks.get(task.taskId)!;
+        const beforeSessionExpiry = repository.session.expiresAt;
+        const result = await service.attachChoices(owner, task.taskId, {
+            expectedRevision: task.revision,
+            producer: "client-target",
+            results: [],
+        });
+        const after = repository.tasks.get(task.taskId)!;
+
+        expect(result.snapshot.revision).toBe(before.revision);
+        expect(result.snapshot.state).toBe(before.status);
+        expect(result.snapshot.choiceSets).toEqual([]);
+        expect(after.lastAcceptedAt).toEqual(before.lastAcceptedAt);
+        expect(after.expiresAt).toEqual(before.expiresAt);
+        expect(repository.session.expiresAt).toEqual(beforeSessionExpiry);
+        expect(repository.events.size).toBe(1);
+        expect(repository.events.values().next().value).toEqual(expect.objectContaining({ operation: "choices:client-target:empty" }));
+    });
+
+    it.each(["paused", "awaiting_approval", "executing", "reconciling", "completed", "failed", "cancelled"] as const)(
+        "refuses derived choices for %s tasks without mutation",
+        async (status) => {
+            const repository = new FakeTaskRepository();
+            const task = makeTask({ status, activeSlot: status === "paused" ? 1 : null });
+            repository.tasks.set(task.taskId, task);
+            const service = buildService(repository).service;
+            const before = JSON.stringify(task);
+
+            await expect(service.attachChoices(owner, task.taskId, {
+                expectedRevision: task.revision,
+                producer: "client-target",
+                results: [{ label: "candidate", clientId: 7 }],
+            })).rejects.toMatchObject({ response: expect.objectContaining({ code: "AGENT_TASK_CONFLICT", reason: "state" }) });
+            expect(JSON.stringify(repository.tasks.get(task.taskId))).toBe(before);
+            expect(repository.events.size).toBe(0);
+        },
+    );
+
+    it("refuses malformed mixed producer mappings and stale revisions before attaching", async () => {
+        const repository = new FakeTaskRepository();
+        const choiceSetRef = randomUUID();
+        const optionId = randomUUID();
+        const task = makeTask({ draft: {
+            ...createEmptyAgentTaskDraft(randomUUID()),
+            choiceSets: [{ choiceSetRef, options: [{ optionId, label: "혼합" }] }],
+            orderedChoiceRefs: [choiceSetRef],
+            server: { references: {
+                target: null,
+                choiceTargets: [{ choiceSetRef, optionId, clientId: 7 }],
+                phoneCandidates: { [choiceSetRef]: [{ candidateRef: optionId, normalizedPhone: "01012345678" }] },
+            } },
+        } });
+        repository.tasks.set(task.taskId, task);
+        const service = buildService(repository).service;
+
+        await expect(service.attachChoices(owner, task.taskId, {
+            expectedRevision: task.revision,
+            producer: "client-target",
+            results: [{ label: "candidate", clientId: 7 }],
+        })).rejects.toMatchObject({ response: expect.objectContaining({ code: "AGENT_TASK_CONFLICT", reason: "state" }) });
+        await expect(service.attachChoices(owner, task.taskId, {
+            expectedRevision: task.revision - 1,
+            producer: "phone-candidate",
+            results: [{ label: "candidate", normalizedPhone: "01012345678" }],
+        })).rejects.toMatchObject({ response: expect.objectContaining({ code: "AGENT_TASK_CONFLICT", reason: "revision" }) });
+        expect(repository.events.size).toBe(0);
+    });
+
+    it("replays a derived-choice receipt after the task is paused", async () => {
+        const repository = new FakeTaskRepository();
+        const target = makeClientRecord(7);
+        const task = makeTask();
+        repository.tasks.set(task.taskId, task);
+        const service = buildService(repository, {
+            findByPhone: jest.fn().mockResolvedValue(null),
+            findById: jest.fn().mockResolvedValue(target),
+        }).service;
+        const first = await service.attachChoices(owner, task.taskId, {
+            expectedRevision: task.revision,
+            producer: "client-target",
+            results: [{ label: "first", clientId: target.id }],
+        });
+        repository.tasks.get(task.taskId)!.status = "paused";
+        const replay = await service.attachChoices(owner, task.taskId, {
+            expectedRevision: task.revision,
+            producer: "client-target",
+            results: [{ label: "second", clientId: target.id }],
+        });
+
+        expect(replay.receipt).toEqual(first.receipt);
+        expect(replay.snapshot.state).toBe("paused");
+        expect(repository.tasks.get(task.taskId)!.revision).toBe(first.snapshot.revision);
+        expect(repository.events.size).toBe(1);
+    });
+
+    it("replays conversation intake through the original task after a later task becomes active", async () => {
+        const repository = new FakeTaskRepository();
+        const service = buildService(repository).service;
+        const source = await service.create(owner, createInput());
+        const intakeEventId = randomUUID();
+        const intakeHash = "a".repeat(64);
+        const recorded = await service.recordConversationIntake(owner, source.snapshot.taskId, intakeEventId, intakeHash);
+        expect(recorded.snapshot.taskId).toBe(source.snapshot.taskId);
+
+        const paused = await service.command(owner, source.snapshot.taskId, commandInput("pause", source.snapshot.revision, randomUUID()));
+        const later = await service.create(owner, createInput(randomUUID(), [{ op: "set", field: "name", value: "later" }, { op: "set", field: "phone", value: "010-9876-5432" }]));
+        expect(later.snapshot.taskId).not.toBe(source.snapshot.taskId);
+
+        const replay = await buildService(repository).service.replayConversationIntake(owner, sessionId, intakeEventId, intakeHash);
+        expect(replay?.receipt.eventId).toBe(intakeEventId);
+        expect(replay?.receipt.taskId).toBe(source.snapshot.taskId);
+        expect(replay?.snapshot.taskId).toBe(source.snapshot.taskId);
+        expect(replay?.snapshot.state).toBe("paused");
+        expect(replay?.snapshot.taskId).not.toBe(later.snapshot.taskId);
+        expect(paused.snapshot.state).toBe("paused");
+    });
+
+    it("rejects changed intake payloads and preserves an expired original within replay retention", async () => {
+        const repository = new FakeTaskRepository();
+        const service = buildService(repository).service;
+        const source = await service.create(owner, createInput());
+        const intakeEventId = randomUUID();
+        const intakeHash = "b".repeat(64);
+        await service.recordConversationIntake(owner, source.snapshot.taskId, intakeEventId, intakeHash);
+        const row = repository.tasks.get(source.snapshot.taskId)!;
+        row.expiresAt = new Date(Date.now() - 1_000);
+
+        await expect(service.replayConversationIntake(owner, sessionId, intakeEventId, "c".repeat(64))).rejects.toMatchObject({
+            response: expect.objectContaining({ code: "AGENT_TASK_CONFLICT", reason: "event_payload" }),
+        });
+        const replay = await service.replayConversationIntake(owner, sessionId, intakeEventId, intakeHash);
+        expect(replay?.snapshot.taskId).toBe(source.snapshot.taskId);
+        expect(replay?.snapshot.state).toBe("collecting");
+    });
+
+    it("returns task gone for a purged original intake and storage unavailable on lookup failure", async () => {
+        const repository = new FakeTaskRepository();
+        const service = buildService(repository).service;
+        const source = await service.create(owner, createInput());
+        const intakeEventId = randomUUID();
+        const intakeHash = "d".repeat(64);
+        await service.recordConversationIntake(owner, source.snapshot.taskId, intakeEventId, intakeHash);
+        repository.tasks.get(source.snapshot.taskId)!.purgedAt = new Date();
+        await expect(service.replayConversationIntake(owner, sessionId, intakeEventId, intakeHash)).rejects.toMatchObject({ status: 410 });
+
+        const unavailable = new FakeTaskRepository();
+        unavailable.withTransaction = jest.fn().mockResolvedValue({ status: "storage_failure" });
+        await expect(buildService(unavailable).service.replayConversationIntake(owner, sessionId, randomUUID(), intakeHash)).rejects.toMatchObject({ status: 503 });
+    });
+
+    it("atomically converts a resolved create task into an update task with only explicit user facts", async () => {
+        const repository = new FakeTaskRepository();
+        const target = makeClientRecord(7);
+        const targetRef = randomUUID();
+        const targetVersion = clientAgentTargetVersion(target);
+        const sourceEventId = randomUUID();
+        const source = makeTask({
+            capabilityId: "clients.create",
+            targetRef,
+            targetVersion,
+            draft: {
+                ...createEmptyAgentTaskDraft(randomUUID()),
+                confirmed: {
+                    name: "explicit user name",
+                    type: "server supplied type",
+                    phone: "01012345678",
+                },
+                tentative: {
+                    address: "wizard address",
+                    fullPrice: "9999",
+                },
+                constraints: { noSend: true },
+                provenance: {
+                    confirmed: {
+                        name: { source: "user", capturedAt: new Date().toISOString(), eventId: sourceEventId, valueRef: randomUUID() },
+                        type: { source: "server", capturedAt: new Date().toISOString(), eventId: sourceEventId, valueRef: randomUUID() },
+                        phone: { source: "model", capturedAt: new Date().toISOString(), eventId: sourceEventId, valueRef: randomUUID() },
+                    },
+                    tentative: {
+                        address: { source: "wizard", capturedAt: new Date().toISOString(), eventId: sourceEventId, valueRef: randomUUID() },
+                        fullPrice: { source: "lookup", capturedAt: new Date().toISOString(), eventId: sourceEventId, valueRef: randomUUID() },
+                    },
+                },
+                server: { references: { target: { targetRef, clientId: target.id }, choiceTargets: [], phoneCandidates: {} } },
+            },
+        });
+        repository.tasks.set(source.taskId, source);
+        const client = {
+            findByPhone: jest.fn().mockResolvedValue(null),
+            findById: jest.fn().mockResolvedValue(target),
+        };
+        const { service, policy } = buildService(repository, client);
+        const beforeSessionExpiry = repository.session.expiresAt;
+        const conversionInput = commandInput("start-update", source.revision, sourceEventId, {
+            targetRef,
+            expectedTargetVersion: targetVersion,
+        });
+
+        const converted = await service.command(owner, source.taskId, conversionInput);
+        const sourceRow = repository.tasks.get(source.taskId)!;
+        const newTaskId = converted.snapshot.taskId;
+        const newRow = repository.tasks.get(newTaskId)!;
+        const receiptEvent = repository.events.get(sourceEventId)!;
+
+        expect(newTaskId).not.toBe(source.taskId);
+        expect(sourceRow.status).toBe("paused");
+        expect(sourceRow.activeSlot).toBeNull();
+        expect(newRow.capabilityId).toBe("clients.update");
+        expect(converted.snapshot.state).toBe("collecting");
+        expect(converted.snapshot.target?.version).toBe(targetVersion);
+        expect(converted.snapshot.target?.targetRef).toEqual(newRow.targetRef);
+        expect(converted.snapshot.target?.targetRef).not.toBe(targetRef);
+        expect(converted.snapshot.confirmed).toEqual({ name: "explicit user name" });
+        expect(converted.snapshot.tentative).toEqual({ address: "wizard address" });
+        expect(converted.snapshot.confirmed).not.toHaveProperty("phone");
+        expect(converted.snapshot.confirmed).not.toHaveProperty("type");
+        expect(converted.snapshot.tentative).not.toHaveProperty("fullPrice");
+        expect(converted.snapshot.constraints.noSend).toBe(true);
+        expect(converted.snapshot.consent).toEqual({ choice: "unanswered", binding: null });
+        expect(converted.snapshot.provenance.confirmed["name"]?.source).toBe("user");
+        expect(converted.snapshot.provenance.tentative["address"]?.source).toBe("wizard");
+        expect(receiptEvent.taskId).toBe(newTaskId);
+        expect(receiptEvent.operation).toBe("command:start-update");
+        expect(policy.assertCanCreate).toHaveBeenCalledWith(owner, "clients.update");
+        expect(repository.session.expiresAt.getTime()).toBeGreaterThanOrEqual(beforeSessionExpiry.getTime());
+
+        // Replaying the original command remains associated with the new task
+        // even after the source is resumed and revised.
+        await service.command(owner, source.taskId, commandInput("resume", sourceRow.revision));
+        const replay = await service.command(owner, source.taskId, conversionInput);
+        expect(replay.receipt).toEqual(converted.receipt);
+        expect(replay.snapshot.taskId).toBe(newTaskId);
+        expect(repository.tasks.size).toBe(2);
     });
 });
 

@@ -74,4 +74,10 @@ export class AgentTaskPolicyService {
         }
         return capability;
     }
+
+    /** Both the source registration and destination update gates are required. */
+    async assertCanStartUpdate(principal: VerifiedTenantPrincipal): Promise<void> {
+        await this.assertCanCreate(principal, "clients.create");
+        await this.assertCanCreate(principal, "clients.update");
+    }
 }

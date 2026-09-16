@@ -204,7 +204,7 @@ describe("AgentRuntimeService", () => {
             appendMessages: jest.fn().mockResolvedValue(undefined),
         };
         const runtime = new AgentRuntimeService(
-            {} as never,
+            { list: () => [capability] } as never,
             { isCapabilityEnabled: jest.fn().mockResolvedValue(true) } as never,
             sessions as never,
             {
@@ -1014,6 +1014,242 @@ describe("AgentRuntimeService", () => {
                 ] }),
             }),
         ]));
+    });
+
+    it("keeps task-mode client lookup labels in the UI path while stripping them from model/history/persisted messages", async () => {
+        const capability = {
+            meta: {
+                name: "clients.search",
+                domain: "clients",
+                version: "1.0.0",
+                description: "Search clients",
+                risk: "read" as const,
+                requiredRoles: ["admin"],
+                renderer: "entity-choice" as const,
+                flagKey: "agent.capability.clients.search",
+                sideEffect: false,
+            },
+            inputSchema: z.object({ query: z.string() }),
+            outputSchema: z.object({
+                kind: z.literal("choices"),
+                prompt: z.string(),
+                choices: z.array(z.object({ id: z.number(), name: z.string(), serviceStatus: z.string().nullable() })).min(2),
+            }),
+            execute: jest.fn().mockResolvedValue({
+                kind: "choices",
+                prompt: "어느 산모를 말씀하시는지 선택해 주세요.",
+                choices: [
+                    { id: 1, name: "홍길동", serviceStatus: null },
+                    { id: 2, name: "김철수", serviceStatus: "active" },
+                ],
+            }),
+        };
+        const model = new DeterministicAgentLanguageModel([
+            { type: "tool-call", toolName: "clients_search", input: { query: "고객" } },
+            { type: "text", text: "선택지를 표시했습니다." },
+        ]);
+        const modelStream = jest.spyOn(model, "doStream");
+        const sessions = {
+            create: jest.fn().mockResolvedValue({
+                id: "session-task-privacy",
+                selectedEntities: { clients: { id: 99, name: "기존 보호 고객" } },
+                messages: [{
+                    id: "legacy-choice",
+                    role: "assistant",
+                    parts: [{ type: "data-entity-choice", data: {
+                        entityType: "clients",
+                        prompt: "어느 산모인지 선택",
+                        choices: [{ id: "1", label: "홍길동" }, { id: "2", label: "김철수" }],
+                    } }],
+                }, {
+                    id: "legacy-form",
+                    role: "assistant",
+                    parts: [{ type: "data-form", data: {
+                        formId: "clients.create-session-task-privacy",
+                        title: "고객 등록",
+                        schemaVersion: "1.0.0",
+                        fields: [{ name: "name", label: "홍길동", type: "text" }],
+                    } }],
+                }],
+            }),
+            appendMessages: jest.fn().mockResolvedValue(undefined),
+        };
+        const taskOrchestrator = {
+            handleUserTurn: jest.fn().mockResolvedValue({ task: null, eventId: "event-task-privacy", operations: [] }),
+            filterWriteCapabilities: jest.fn().mockResolvedValue({ capabilities: [capability], taskMode: true }),
+        };
+        const runtime = new AgentRuntimeService(
+            { list: () => [capability] } as never,
+            { isCapabilityEnabled: jest.fn().mockResolvedValue(true) } as never,
+            sessions as never,
+            { modelId: "deterministic-agent-v1", create: () => model } as never,
+            { route: jest.fn().mockResolvedValue({ domains: ["clients"], capabilities: [capability] }) } as never,
+            { start: jest.fn().mockResolvedValue({ id: "trace-task-privacy", startedAt: Date.now() }), finish: jest.fn().mockResolvedValue(undefined) } as never,
+            undefined,
+            undefined,
+            undefined,
+            taskOrchestrator as never,
+        );
+
+        const result = await runtime.stream({
+            principal: { userId: "user-a", branchId: "branch-a", globalRole: "admin", branchRole: "admin" },
+            locale: "ko",
+            messages: [{
+                id: "message-task-privacy",
+                role: "user",
+                parts: [{ type: "data-form-submit", data: {
+                    formId: "clients.create-session-task-privacy",
+                    values: { name: "홍길동", phone: "01012345678" },
+                } }],
+            }] as never,
+        });
+        const chunks: unknown[] = [];
+        const reader = result.stream.getReader();
+        while (true) {
+            const next = await reader.read();
+            if (next.done) break;
+            chunks.push(next.value);
+        }
+
+        const prompt = JSON.stringify(modelStream.mock.calls);
+        const persisted = JSON.stringify(sessions.appendMessages.mock.calls);
+        expect(prompt).not.toContain("홍길동");
+        expect(prompt).not.toContain("01012345678");
+        expect(prompt).not.toContain("기존 보호 고객");
+        expect(persisted).not.toContain("홍길동");
+        expect(persisted).not.toContain("01012345678");
+        expect(chunks).toEqual(expect.arrayContaining([
+            expect.objectContaining({ type: "data-entity-choice", data: expect.objectContaining({ choices: [
+                { id: "1", label: "홍길동" },
+                { id: "2", label: "김철수", description: "active" },
+            ] }) }),
+        ]));
+    });
+
+    it("returns only a structural reference for task-mode clients.get while preserving no lookup label in model output", async () => {
+        const capability = {
+            meta: {
+                name: "clients.get",
+                domain: "clients",
+                version: "1.0.0",
+                description: "Get client",
+                risk: "read" as const,
+                requiredRoles: ["admin"],
+                renderer: "activity" as const,
+                flagKey: "agent.capability.clients.get",
+                sideEffect: false,
+            },
+            inputSchema: z.object({ id: z.number() }),
+            outputSchema: z.object({
+                kind: z.literal("entity"),
+                entity: z.object({ id: z.number(), name: z.string(), address: z.string().nullable() }),
+            }),
+            execute: jest.fn().mockResolvedValue({
+                kind: "entity",
+                entity: { id: 7, name: "조회된 보호 고객", address: "서울시 보호 주소" },
+            }),
+        };
+        const model = new DeterministicAgentLanguageModel([
+            { type: "tool-call", toolName: "clients_get", input: { id: 7 } },
+            { type: "text", text: "고객 정보를 확인했습니다." },
+        ]);
+        const modelStream = jest.spyOn(model, "doStream");
+        const sessions = {
+            create: jest.fn().mockResolvedValue({
+                id: "session-task-get-privacy",
+                selectedEntities: { clients: { id: 7, name: "기존 보호 고객" } },
+                messages: [],
+            }),
+            appendMessages: jest.fn().mockResolvedValue(undefined),
+        };
+        const taskOrchestrator = {
+            handleUserTurn: jest.fn().mockResolvedValue({ task: null, eventId: "event-task-get-privacy", operations: [] }),
+            filterWriteCapabilities: jest.fn().mockResolvedValue({ capabilities: [capability], taskMode: true }),
+        };
+        const runtime = new AgentRuntimeService(
+            { list: () => [capability] } as never,
+            { isCapabilityEnabled: jest.fn().mockResolvedValue(true) } as never,
+            sessions as never,
+            { modelId: "deterministic-agent-v1", create: () => model } as never,
+            { route: jest.fn().mockResolvedValue({ domains: ["clients"], capabilities: [capability] }) } as never,
+            { start: jest.fn().mockResolvedValue({ id: "trace-task-get-privacy", startedAt: Date.now() }), finish: jest.fn().mockResolvedValue(undefined) } as never,
+            undefined,
+            undefined,
+            undefined,
+            taskOrchestrator as never,
+        );
+
+        const result = await runtime.stream({
+            principal: { userId: "user-a", branchId: "branch-a", globalRole: "admin", branchRole: "admin" },
+            locale: "ko",
+            messages: [{ id: "message-task-get-privacy", role: "user", parts: [{ type: "text", text: "고객 7 조회" }] }] as never,
+        });
+        const chunks: unknown[] = [];
+        const reader = result.stream.getReader();
+        while (true) {
+            const next = await reader.read();
+            if (next.done) break;
+            chunks.push(next.value);
+        }
+
+        const prompt = JSON.stringify(modelStream.mock.calls);
+        const output = JSON.stringify(chunks);
+        expect(prompt).not.toContain("기존 보호 고객");
+        expect(prompt).not.toContain("서울시 보호 주소");
+        expect(output).not.toContain("조회된 보호 고객");
+        expect(output).not.toContain("서울시 보호 주소");
+        expect(output).toContain("referenceAvailable");
+        expect(sessions.appendMessages).toHaveBeenCalled();
+        expect(JSON.stringify(sessions.appendMessages.mock.calls)).not.toContain("조회된 보호 고객");
+    });
+
+    it("does not duplicate the caller message when the task intake is replayed", async () => {
+        const capability = {
+            meta: { name: "clients.search", domain: "clients", version: "1.0.0", description: "Search clients", risk: "read" as const, requiredRoles: ["admin"], renderer: "activity" as const, flagKey: "agent.capability.clients.search", sideEffect: false },
+            inputSchema: z.object({ query: z.string().optional() }),
+            outputSchema: z.object({}),
+            execute: jest.fn().mockResolvedValue({}),
+        };
+        const sessions = {
+            create: jest.fn().mockResolvedValue({ id: "session-replay", selectedEntities: {}, messages: [] }),
+            appendMessages: jest.fn().mockResolvedValue(undefined),
+        };
+        const taskOrchestrator = {
+            handleUserTurn: jest.fn().mockResolvedValue({
+                task: null,
+                eventId: "event-replay",
+                operations: [],
+                replayed: true,
+            }),
+            filterWriteCapabilities: jest.fn().mockResolvedValue({ capabilities: [capability], taskMode: false }),
+            taskModeEnabled: jest.fn().mockResolvedValue(false),
+        };
+        const runtime = new AgentRuntimeService(
+            { list: () => [capability] } as never,
+            { isCapabilityEnabled: jest.fn().mockResolvedValue(true) } as never,
+            sessions as never,
+            { modelId: "deterministic-agent-v1", create: () => new DeterministicAgentLanguageModel([{ type: "text", text: "재전송 답변" }]) } as never,
+            { route: jest.fn().mockResolvedValue({ domains: ["clients"], capabilities: [capability] }) } as never,
+            { start: jest.fn().mockResolvedValue({ id: "trace-replay", startedAt: Date.now() }), finish: jest.fn().mockResolvedValue(undefined) } as never,
+            undefined,
+            undefined,
+            undefined,
+            taskOrchestrator as never,
+        );
+
+        const result = await runtime.stream({
+            principal: { userId: "user-a", branchId: "branch-a", globalRole: "admin", branchRole: "admin" },
+            locale: "ko",
+            messages: [{ id: "caller-replay", role: "user", parts: [{ type: "text", text: "기존 요청 재전송" }] }] as never,
+        });
+        const reader = result.stream.getReader();
+        while (!(await reader.read()).done) {
+            // Drain so replay persistence runs.
+        }
+
+        expect(sessions.appendMessages).toHaveBeenCalledTimes(1);
+        expect(sessions.appendMessages.mock.calls[0]?.[2]).toHaveLength(1);
+        expect(sessions.appendMessages.mock.calls[0]?.[2][0]).toMatchObject({ role: "assistant" });
     });
 
     it("contains finish-time persistence failures and records a failed trace", async () => {

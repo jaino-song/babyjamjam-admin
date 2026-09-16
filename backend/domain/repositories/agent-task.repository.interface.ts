@@ -91,6 +91,8 @@ export interface UpdateAgentTaskInput {
     targetVersion?: string | null;
     activeActionId?: string | null;
     acceptedAt?: Date;
+    /** Derived choices advance task revision without extending acceptance TTL. */
+    preserveLastAcceptedAt?: boolean;
     expiresAt?: Date;
     terminalAt?: Date | null;
     purgedAt?: Date | null;

@@ -634,7 +634,9 @@ class PrismaAgentTaskTransaction implements AgentTaskTransaction {
             revision: task.revision + 1,
             status: nextStatus,
             activeSlot: activeSlotForStatus(nextStatus),
-            lastAcceptedAt: input.acceptedAt ?? new Date(),
+            lastAcceptedAt: input.preserveLastAcceptedAt
+                ? task.lastAcceptedAt
+                : input.acceptedAt ?? new Date(),
             ...(input.draft === undefined ? {} : { draft: jsonValue(input.draft) }),
             ...(input.targetRef === undefined ? {} : { targetRef: input.targetRef === null ? Prisma.JsonNull : jsonValue(input.targetRef) }),
             ...(input.targetVersion === undefined ? {} : { targetVersion: input.targetVersion }),

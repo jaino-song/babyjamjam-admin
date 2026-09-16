@@ -30,6 +30,10 @@ import {
     type ClientInputOperation,
     type ClientInputState,
 } from "@babyjamjam/shared";
+import {
+    canonicalChoiceDigest,
+    type ConversationMutationOrigin,
+} from "./conversation-task-policy";
 
 import { AgentTaskPolicyService } from "application/agent/agent-task-policy.service";
 import { clientAgentTargetVersion } from "application/usecases/client/client-agent-target";
@@ -62,6 +66,24 @@ const DYNAMIC_ISSUE_CODES = new Set(["task.required", "task.invalid", "task.dupl
 const TERMINAL_STATES = new Set(["completed", "failed", "cancelled"]);
 
 export type AgentTaskConflictReason = "revision" | "event_payload" | "state" | "active_task" | "consent_required";
+
+export type AgentTaskMutationOrigin = ConversationMutationOrigin;
+
+export type AgentTaskChoiceProducerKind = "client-target" | "phone-candidate";
+
+export interface AgentTaskChoiceAttachmentInput {
+    clientEventId?: string;
+    expectedRevision: number;
+    producer: AgentTaskChoiceProducerKind;
+    /** Server-derived, branch-scoped identities. Numeric IDs never reach the model. */
+    results: readonly ({
+        label: string;
+        description?: string;
+        clientId?: number;
+        normalizedPhone?: string;
+        version?: string;
+    })[];
+}
 
 export interface AgentTaskConflictBody {
     code: "AGENT_TASK_CONFLICT";
@@ -141,6 +163,15 @@ function canonicalHash(value: unknown): string {
     return createHash("sha256").update(JSON.stringify(value)).digest("hex");
 }
 
+function uuidFromDigest(digest: string): string {
+    const normalized = digest.replace(/[^a-f0-9]/gi, "").toLowerCase().padEnd(32, "0").slice(0, 32);
+    return `${normalized.slice(0, 8)}-${normalized.slice(8, 12)}-5${normalized.slice(13, 16)}-${((Number.parseInt(normalized.slice(16, 18), 16) & 0x3f) | 0x80).toString(16).padStart(2, "0")}${normalized.slice(18, 20)}-${normalized.slice(20)}`;
+}
+
+function originSource(origin: AgentTaskMutationOrigin): AgentTaskDraft["provenance"]["confirmed"][string]["source"] {
+    return origin;
+}
+
 function asAuthorizedTask(entity: AgentTaskEntity): AgentTask {
     return projectTaskForAuthorizedRest(toAgentTaskContract(entity));
 }
@@ -157,16 +188,22 @@ export class AgentTaskService {
         @Inject(CLIENT_REPOSITORY) private readonly clientRepository: IClientRepository,
     ) {}
 
-    async create(principal: VerifiedTenantPrincipal, rawInput: unknown): Promise<{ receipt: AgentTaskEventReceipt; snapshot: AgentTask }> {
+    async create(
+        principal: VerifiedTenantPrincipal,
+        rawInput: unknown,
+        origin: AgentTaskMutationOrigin = "user",
+        requestHashOverride?: string,
+    ): Promise<{ receipt: AgentTaskEventReceipt; snapshot: AgentTask }> {
         const input = this.parseCreate(rawInput);
         await this.policy.assertCanCreate(principal, input.capabilityId);
 
         const scope = { ...taskOwner(principal), sessionId: input.sessionId };
-        const requestHash = canonicalHash({
+        const requestHash = requestHashOverride ?? canonicalHash({
             operation: "create",
             sessionId: input.sessionId,
             capabilityId: input.capabilityId,
             operations: input.operations,
+            origin,
         });
 
         // Resolve an existing event before creating a candidate task UUID. A
@@ -178,7 +215,7 @@ export class AgentTaskService {
         const now = new Date();
         const taskId = randomUUID();
         const snapshotRef = randomUUID();
-        const draft = await this.createDraft(principal, input, snapshotRef);
+        const draft = await this.createDraft(principal, input, snapshotRef, origin);
         const result = await this.repository.createWithEvent(scope, {
             taskId,
             capabilityId: input.capabilityId,
@@ -224,7 +261,14 @@ export class AgentTaskService {
         this.throwReadResult(result);
     }
 
-    async patch(principal: VerifiedTenantPrincipal, taskId: string, rawInput: unknown): Promise<{ receipt: AgentTaskEventReceipt; snapshot: AgentTask }> {
+    async patch(
+        principal: VerifiedTenantPrincipal,
+        taskId: string,
+        rawInput: unknown,
+        origin: AgentTaskMutationOrigin = "user",
+        requestHashOverride?: string,
+        operationOrigins?: readonly AgentTaskMutationOrigin[],
+    ): Promise<{ receipt: AgentTaskEventReceipt; snapshot: AgentTask }> {
         const parsedTaskId = AgentTaskIdSchema.safeParse(taskId);
         if (!parsedTaskId.success) throw invalidTaskInput();
         const input = this.parsePatch(rawInput);
@@ -234,36 +278,44 @@ export class AgentTaskService {
         this.policy.assertCanPatch(principal, initial.task.capabilityId);
 
         const scope = { ...owner, sessionId: initial.task.sessionId };
-        const requestHash = canonicalHash({
+        const requestHash = requestHashOverride ?? canonicalHash({
             operation: "patch",
             taskId: parsedTaskId.data,
             sessionId: initial.task.sessionId,
             expectedRevision: input.expectedRevision,
             operations: input.operations,
+            origin,
         });
 
-        const result = await this.runPatchTransaction(principal, scope, parsedTaskId.data, input, requestHash);
+        const result = await this.runPatchTransaction(principal, scope, parsedTaskId.data, input, requestHash, origin, operationOrigins);
         return this.mapInternalMutation(result);
     }
 
-    async command(principal: VerifiedTenantPrincipal, taskId: string, rawInput: unknown): Promise<{ receipt: AgentTaskEventReceipt; snapshot: AgentTask }> {
+    async command(
+        principal: VerifiedTenantPrincipal,
+        taskId: string,
+        rawInput: unknown,
+        origin: AgentTaskMutationOrigin = "user",
+        requestHashOverride?: string,
+    ): Promise<{ receipt: AgentTaskEventReceipt; snapshot: AgentTask }> {
         const parsedTaskId = AgentTaskIdSchema.safeParse(taskId);
         if (!parsedTaskId.success) throw invalidTaskInput();
         const input = this.parseCommand(rawInput);
         const owner = taskOwner(principal);
         const initial = await this.repository.findOwned(parsedTaskId.data, owner);
-        if (initial.status !== "found" && initial.status !== "task_expired") this.throwReadResult(initial);
+        if (initial.status !== "found" && initial.status !== "task_expired" && initial.status !== "task_purged") this.throwReadResult(initial);
 
-        const scope = { ...owner, sessionId: initial.task.sessionId };
+        const scope = { ...owner, sessionId: initial.status === "task_purged" ? initial.tombstone.sessionId : initial.task.sessionId };
         const canonicalCommand = this.canonicalCommand(input);
-        const requestHash = canonicalHash({
+        const requestHash = requestHashOverride ?? canonicalHash({
             operation: "command",
             taskId: parsedTaskId.data,
-            sessionId: initial.task.sessionId,
+            sessionId: scope.sessionId,
             expectedRevision: input.expectedRevision,
             command: canonicalCommand,
+            origin,
         });
-        const result = await this.runCommandTransaction(principal, scope, parsedTaskId.data, input, requestHash);
+        const result = await this.runCommandTransaction(principal, scope, parsedTaskId.data, input, requestHash, origin);
         return this.mapInternalMutation(result);
     }
 
@@ -299,6 +351,336 @@ export class AgentTaskService {
     patchTask = this.patch.bind(this);
     commandTask = this.command.bind(this);
 
+    /**
+     * Internal conversation seam.  REST controllers never pass an origin or
+     * hash override; the orchestrator calls these methods only after its
+     * server-side policy/reference checks have completed.
+     */
+    createFromConversation(
+        principal: VerifiedTenantPrincipal,
+        rawInput: unknown,
+        origin: AgentTaskMutationOrigin,
+        requestHash: string,
+    ) {
+        return this.create(principal, rawInput, origin, requestHash);
+    }
+
+    patchFromConversation(
+        principal: VerifiedTenantPrincipal,
+        taskId: string,
+        rawInput: unknown,
+        origin: AgentTaskMutationOrigin,
+        requestHash: string,
+        operationOrigins?: readonly AgentTaskMutationOrigin[],
+    ) {
+        return this.patch(principal, taskId, rawInput, origin, requestHash, operationOrigins);
+    }
+
+    commandFromConversation(
+        principal: VerifiedTenantPrincipal,
+        taskId: string,
+        rawInput: unknown,
+        origin: AgentTaskMutationOrigin,
+        requestHash: string,
+    ) {
+        return this.command(principal, taskId, rawInput, origin, requestHash);
+    }
+
+    /** Return all still-live tasks for the conversation context assembler. */
+    async listForConversation(principal: VerifiedTenantPrincipal, sessionId: string): Promise<AgentTask[]> {
+        const result = await this.repository.listOwned({ ...taskOwner(principal), sessionId });
+        if (result.status === "not_found") throw new NotFoundException("Agent session not found");
+        if (result.status === "storage_failure") throw storageUnavailable();
+        if (result.status === "session_archived" || result.status === "session_expired") return [];
+        const now = Date.now();
+        return result.tasks
+            .filter((task) => task.purgedAt === null && task.expiresAt.getTime() > now)
+            .map(asAuthorizedTask);
+    }
+
+    /**
+     * Persist a canonical conversation intake receipt without adding a draft
+     * operation. This is used for question-only turns and for retries where
+     * the parser has no new fact to apply.
+     */
+    async recordConversationIntake(
+        principal: VerifiedTenantPrincipal,
+        taskId: string,
+        clientEventId: string,
+        requestHash: string,
+    ): Promise<{ receipt: AgentTaskEventReceipt; snapshot: AgentTask }> {
+        const parsedTaskId = AgentTaskIdSchema.safeParse(taskId);
+        if (!parsedTaskId.success) throw invalidTaskInput();
+        const owner = taskOwner(principal);
+        const initial = await this.repository.findOwned(parsedTaskId.data, owner);
+        if (initial.status !== "found" && initial.status !== "task_expired" && initial.status !== "task_purged") this.throwReadResult(initial);
+        const sessionId = initial.status === "task_purged" ? initial.tombstone.sessionId : initial.task.sessionId;
+        const raw = await this.repository.withTransaction({ ...owner, sessionId }, async (transaction): Promise<InternalMutation> => {
+            const session = await transaction.lockSession();
+            if (session.status !== "locked") return { status: session.status };
+            const existing = await transaction.findEvent(clientEventId);
+            if (existing.status === "storage_failure") return existing;
+            if (existing.status === "found") {
+                if (existing.event.requestHash !== requestHash) {
+                    const current = await transaction.readTask(existing.event.taskId);
+                    return {
+                        status: "event_hash_conflict",
+                        ...(current.status === "found" || current.status === "task_expired" ? { task: current.task } : {}),
+                    };
+                }
+                const current = await transaction.readTask(existing.event.taskId);
+                if (current.status === "found" || current.status === "task_expired") {
+                    return { status: "event_replay", task: current.task, receipt: existing.event };
+                }
+                return current.status === "task_purged" ? { status: "task_purged" } : { status: current.status };
+            }
+            const locked = await transaction.lockTask(parsedTaskId.data);
+            if (locked.status === "not_found" || locked.status === "storage_failure") return locked;
+            if (locked.status === "task_purged" || locked.status === "task_expired") return locked;
+            const now = new Date();
+            const inserted = await transaction.insertEvent({
+                clientEventId,
+                operation: "conversation:intake",
+                requestHash,
+                acceptedRevision: locked.task.revision,
+                acceptedAt: now,
+            });
+            if (inserted.status !== "inserted") {
+                return transaction.abort<InternalMutation>(
+                    inserted.status === "event_hash_conflict" ? { status: "event_hash_conflict" } : { status: "storage_failure" },
+                );
+            }
+            return { status: "updated", task: locked.task, receipt: inserted.event };
+        });
+        return this.mapInternalMutation(raw.status === "ok" || raw.status === "aborted" ? raw.value : raw.status === "event_hash_conflict" ? { status: "event_hash_conflict" } : { status: "storage_failure" });
+    }
+
+    /**
+     * Resolve a message retry before parsing/selecting the current task. The
+     * event's immutable task association remains authoritative.
+     */
+    async replayConversationIntake(
+        principal: VerifiedTenantPrincipal,
+        sessionId: string,
+        clientEventId: string,
+        requestHash: string,
+    ): Promise<{ receipt: AgentTaskEventReceipt; snapshot: AgentTask } | null> {
+        const owner = taskOwner(principal);
+        const raw = await this.repository.withTransaction({ ...owner, sessionId }, async (transaction): Promise<CreateEventLookup> => {
+            const session = await transaction.lockSession();
+            if (session.status !== "locked") return { status: session.status };
+            const existing = await transaction.findEvent(clientEventId);
+            if (existing.status === "storage_failure") return existing;
+            if (existing.status === "not_found") return { status: "new" };
+            if (existing.event.requestHash !== requestHash) {
+                const current = await transaction.readTask(existing.event.taskId);
+                return {
+                    status: "event_hash_conflict",
+                    ...(current.status === "found" || current.status === "task_expired" ? { task: current.task } : {}),
+                };
+            }
+            const current = await transaction.readTask(existing.event.taskId);
+            if (current.status === "found" || current.status === "task_expired") return { status: "event_replay", task: current.task, event: existing.event };
+            return current.status === "task_purged" ? { status: "task_purged" } : { status: current.status };
+        });
+        // A repository-level failure must never be interpreted as a missing
+        // intake event: doing so would let a retry create a duplicate task.
+        // The transaction result is intentionally mapped before inspecting
+        // the value so storage failures retain their bounded 503 semantics.
+        if (raw.status === "storage_failure") throw storageUnavailable();
+        if (raw.status !== "ok" && raw.status !== "aborted") {
+            if (raw.status === "active_task_conflict") throw new AgentTaskConflictException("active_task");
+            if (raw.status === "event_hash_conflict") throw new AgentTaskConflictException("event_payload");
+            throw storageUnavailable();
+        }
+        const value = raw.value;
+        if (value.status === "new") return null;
+        if (value.status === "event_hash_conflict") throw new AgentTaskConflictException("event_payload", value.task ? asAuthorizedTask(value.task) : undefined);
+        if (value.status === "event_replay") {
+            if (!isReplayWithinRetention(value.event)) throw taskGone();
+            return this.responseFromReceipt(eventReceipt(value.event, value.task), value.task);
+        }
+        if (value.status === "task_purged" || value.status === "session_archived" || value.status === "session_expired") throw taskGone();
+        if (value.status === "not_found") throw new NotFoundException("Agent session not found");
+        throw storageUnavailable();
+    }
+
+    /**
+     * Attach a fresh, server-derived result set to a live task. Choices are
+     * revisioned task state, never a session-retention mutation.
+     */
+    async attachChoices(
+        principal: VerifiedTenantPrincipal,
+        taskId: string,
+        input: AgentTaskChoiceAttachmentInput,
+    ): Promise<{ receipt: AgentTaskEventReceipt; snapshot: AgentTask }> {
+        const parsedTaskId = AgentTaskIdSchema.safeParse(taskId);
+        if (!parsedTaskId.success || !Number.isSafeInteger(input.expectedRevision) || input.expectedRevision < 0) throw invalidTaskInput();
+        if (input.producer !== "client-target" && input.producer !== "phone-candidate") throw invalidTaskInput();
+        const owner = taskOwner(principal);
+        const initial = await this.repository.findOwned(parsedTaskId.data, owner);
+        if (initial.status !== "found" && initial.status !== "task_expired") this.throwReadResult(initial);
+        const scope = { ...owner, sessionId: initial.task.sessionId };
+        const prepared = await this.prepareChoiceResults(principal, input);
+        const requestHash = canonicalChoiceDigest({
+            taskId: parsedTaskId.data,
+            expectedRevision: input.expectedRevision,
+            producer: input.producer,
+            results: prepared.canonical,
+        });
+        const clientEventId = uuidFromDigest(canonicalHash({
+            protocol: "agent-task-choice-attachment-v1",
+            scope,
+            taskId: parsedTaskId.data,
+            expectedRevision: input.expectedRevision,
+            producer: input.producer,
+            requestHash,
+        }));
+        const raw = await this.repository.withTransaction(scope, async (transaction): Promise<InternalMutation> => {
+            const session = await transaction.lockSession();
+            if (session.status !== "locked") return { status: session.status };
+            const existing = await transaction.findEvent(clientEventId);
+            if (existing.status === "storage_failure") return existing;
+            if (existing.status === "found") {
+                if (existing.event.requestHash !== requestHash) {
+                    const current = await transaction.readTask(existing.event.taskId);
+                    return { status: "event_hash_conflict", ...(current.status === "found" || current.status === "task_expired" ? { task: current.task } : {}) };
+                }
+                const current = await transaction.readTask(existing.event.taskId);
+                if (current.status === "found" || current.status === "task_expired") return { status: "event_replay", task: current.task, receipt: existing.event };
+                return current.status === "task_purged" ? { status: "task_purged" } : { status: current.status };
+            }
+            const locked = await transaction.lockTask(parsedTaskId.data);
+            if (locked.status === "not_found" || locked.status === "storage_failure") return locked;
+            if (locked.status === "task_expired" || locked.status === "task_purged") return locked;
+            const task = locked.task;
+            if (task.revision !== input.expectedRevision) return { status: "stale_revision", currentTask: task };
+            if (task.activeSlot !== 1 || task.activeActionId !== null || !["collecting", "confirming_target", "review_ready"].includes(task.status)) {
+                return transaction.abort<InternalMutation>({ status: "state_conflict", reason: "state", task });
+            }
+            if (input.producer === "client-target" && task.targetRef !== null) {
+                return transaction.abort<InternalMutation>({ status: "state_conflict", reason: "state", task });
+            }
+
+            const mappings = this.validateChoiceProducerMappings(task, input.producer);
+            if (prepared.entries.length === 0) {
+                const now = new Date();
+                const inserted = await transaction.insertEvent({
+                    clientEventId,
+                    operation: `choices:${input.producer}:empty`,
+                    requestHash,
+                    acceptedRevision: task.revision,
+                    acceptedAt: now,
+                });
+                if (inserted.status !== "inserted") {
+                    return transaction.abort<InternalMutation>(inserted.status === "event_hash_conflict" ? { status: "event_hash_conflict" } : { status: "storage_failure" });
+                }
+                return { status: "updated", task, receipt: inserted.event };
+            }
+
+            const choiceSetRef = randomUUID();
+            const options = prepared.entries.map((entry, index) => ({
+                optionId: randomUUID(),
+                label: input.producer === "phone-candidate" ? `전화번호 후보 ${index + 1}` : entry.label,
+                ...(entry.description ? { description: entry.description } : {}),
+            }));
+            const choiceSet = { choiceSetRef, options };
+            const preservedSets = task.draft.choiceSets.filter((set) => !mappings.refs.has(set.choiceSetRef));
+            const preservedOrder = task.draft.orderedChoiceRefs.filter((ref) => !mappings.refs.has(ref));
+            const preservedTargets = task.draft.server.references.choiceTargets.filter((mapping) => !mappings.refs.has(mapping.choiceSetRef));
+            const preservedPhones = Object.fromEntries(Object.entries(task.draft.server.references.phoneCandidates)
+                .filter(([ref]) => !mappings.refs.has(ref)));
+            const choiceTargets = input.producer === "client-target"
+                ? options.map((option, index) => ({ choiceSetRef, optionId: option.optionId, clientId: prepared.entries[index]!.clientId! }))
+                : preservedTargets;
+            const phoneCandidates = input.producer === "phone-candidate"
+                ? { ...preservedPhones, [choiceSetRef]: options.map((option, index) => ({ candidateRef: option.optionId, normalizedPhone: prepared.entries[index]!.normalizedPhone! })) }
+                : preservedPhones;
+            const issues = task.draft.issues.filter((issue) => !(input.producer === "client-target" && ["task.required", "task.stale"].includes(issue.code) && issue.field === undefined));
+            const draft: AgentTaskDraft = {
+                ...task.draft,
+                choiceSets: [...preservedSets, choiceSet],
+                orderedChoiceRefs: [...preservedOrder, choiceSetRef],
+                issues,
+                server: { ...task.draft.server, references: { ...task.draft.server.references, choiceTargets, phoneCandidates } },
+                currentSnapshotRef: randomUUID(),
+            };
+            const now = new Date();
+            const updated = await transaction.updateTask({
+                expectedRevision: input.expectedRevision,
+                draft,
+                status: "confirming_target",
+                preserveLastAcceptedAt: true,
+            });
+            if (updated.status !== "updated") {
+                if (updated.status === "stale_revision") return updated;
+                if (updated.status === "task_expired" || updated.status === "task_purged") return updated;
+                return transaction.abort<InternalMutation>({ status: "storage_failure" });
+            }
+            const inserted = await transaction.insertEvent({
+                clientEventId,
+                operation: `choices:${input.producer}`,
+                requestHash,
+                acceptedRevision: updated.task.revision,
+                acceptedAt: now,
+            });
+            if (inserted.status !== "inserted") {
+                return transaction.abort<InternalMutation>(inserted.status === "event_hash_conflict" ? { status: "event_hash_conflict" } : { status: "storage_failure" });
+            }
+            return { status: "updated", task: updated.task, receipt: inserted.event };
+        });
+        return this.mapInternalMutation(raw.status === "ok" || raw.status === "aborted" ? raw.value : raw.status === "event_hash_conflict" ? { status: "event_hash_conflict" } : { status: "storage_failure" });
+    }
+
+    private async prepareChoiceResults(
+        principal: VerifiedTenantPrincipal,
+        input: AgentTaskChoiceAttachmentInput,
+    ): Promise<{
+        entries: Array<AgentTaskChoiceAttachmentInput["results"][number]>;
+        canonical: Array<Record<string, unknown>>;
+    }> {
+        if (input.results.length > 100) throw invalidTaskInput();
+        const entries: Array<AgentTaskChoiceAttachmentInput["results"][number]> = [];
+        const canonical: Array<Record<string, unknown>> = [];
+        for (const [index, raw] of input.results.entries()) {
+            if (!raw || typeof raw.label !== "string" || raw.label.trim().length === 0 || raw.label.length > 300) throw invalidTaskInput();
+            if (raw.description !== undefined && (typeof raw.description !== "string" || raw.description.length > 1000)) throw invalidTaskInput();
+            if (input.producer === "client-target") {
+                if (!Number.isSafeInteger(raw.clientId) || (raw.clientId ?? 0) <= 0) throw invalidTaskInput();
+                const client = await this.clientRepository.findById(principal.branchId, raw.clientId!);
+                if (!client) throw new AgentTaskConflictException("state");
+                const version = clientAgentTargetVersion(client);
+                const entry = { label: client.name.slice(0, 300), ...(raw.description ? { description: raw.description } : {}), clientId: client.id, version };
+                entries.push(entry);
+                canonical.push({ order: index, identityDigest: canonicalHash({ clientId: client.id }), versionDigest: canonicalHash(version), labelDigest: canonicalHash(entry.label), ...(entry.description ? { descriptionDigest: canonicalHash(entry.description) } : {}) });
+            } else {
+                const normalizedPhone = normalizePhone(raw.normalizedPhone ?? "");
+                if (!normalizedPhone || !/^\d{9,11}$/.test(normalizedPhone)) throw invalidTaskInput();
+                const entry = { label: `전화번호 후보 ${index + 1}`, ...(raw.description ? { description: raw.description } : {}), normalizedPhone, ...(raw.version ? { version: raw.version } : {}) };
+                entries.push(entry);
+                canonical.push({ order: index, identityDigest: canonicalHash(normalizedPhone), ...(raw.version ? { versionDigest: canonicalHash(raw.version) } : {}) });
+            }
+        }
+        return { entries, canonical };
+    }
+
+    private validateChoiceProducerMappings(
+        task: AgentTaskEntity,
+        producer: AgentTaskChoiceProducerKind,
+    ): { refs: Set<string> } {
+        const choiceSetRefs = new Set(task.draft.choiceSets.map((set) => set.choiceSetRef));
+        const orderedRefs = new Set(task.draft.orderedChoiceRefs);
+        if ([...orderedRefs].some((ref) => !choiceSetRefs.has(ref))) throw new AgentTaskConflictException("state");
+        const targetRefs = new Set(task.draft.server.references.choiceTargets.map((mapping) => mapping.choiceSetRef));
+        const phoneRefs = new Set(Object.keys(task.draft.server.references.phoneCandidates));
+        if ([...targetRefs].some((ref) => !choiceSetRefs.has(ref)) || [...phoneRefs].some((ref) => !choiceSetRefs.has(ref))) throw new AgentTaskConflictException("state");
+        if ([...targetRefs].some((ref) => phoneRefs.has(ref))) throw new AgentTaskConflictException("state");
+        const existingProducerRefs = producer === "client-target" ? targetRefs : phoneRefs;
+        const unrelatedRefs = producer === "client-target" ? phoneRefs : targetRefs;
+        if ([...unrelatedRefs].some((ref) => existingProducerRefs.has(ref))) throw new AgentTaskConflictException("state");
+        return { refs: existingProducerRefs };
+    }
+
     private parseCreate(rawInput: unknown): AgentTaskCreateRequest {
         try {
             return AgentTaskCreateRequestSchema.parse(rawInput);
@@ -329,6 +711,13 @@ export class AgentTaskService {
                 command: input.command,
                 choiceSetRef: "choiceSetRef" in input ? input.choiceSetRef : input.choiceSetId,
                 optionId: input.optionId,
+            };
+        }
+        if (input.command === "start-update") {
+            return {
+                command: input.command,
+                targetRef: input.targetRef,
+                expectedTargetVersion: input.expectedTargetVersion,
             };
         }
         return { command: input.command };
@@ -396,6 +785,7 @@ export class AgentTaskService {
         principal: VerifiedTenantPrincipal,
         input: AgentTaskCreateRequest,
         snapshotRef: string,
+        origin: AgentTaskMutationOrigin = "user",
     ): Promise<AgentTaskDraft> {
         const state = applyClientInputOperations(input.operations, {
             confirmed: input.capabilityId === "clients.create" ? createAgentTaskDefaults() : {},
@@ -404,7 +794,7 @@ export class AgentTaskService {
             automationChoice: "unanswered",
             noSend: false,
         });
-        const provenance = this.applyProvenance({ confirmed: {}, tentative: {} }, input.operations, input.clientEventId);
+        const provenance = this.applyProvenance({ confirmed: {}, tentative: {} }, input.operations, input.clientEventId, origin);
         const duplicateCheck = input.capabilityId === "clients.update"
             ? { status: "not_checked" as const }
             : await this.duplicateCheck(principal, state, undefined);
@@ -433,6 +823,8 @@ export class AgentTaskService {
         taskId: string,
         input: AgentTaskPatchRequest,
         requestHash: string,
+        origin: AgentTaskMutationOrigin = "user",
+        operationOrigins?: readonly AgentTaskMutationOrigin[],
     ): Promise<InternalMutation> {
         const raw = await this.repository.withTransaction(scope, async (transaction): Promise<InternalMutation> => {
             const session = await transaction.lockSession();
@@ -472,7 +864,7 @@ export class AgentTaskService {
 
             let next: { draft: AgentTaskDraft; status: AgentTaskEntity["status"] };
             try {
-                next = await this.nextDraft(principal, locked.task, input.operations, input.clientEventId);
+                next = await this.nextDraft(principal, locked.task, input.operations, input.clientEventId, origin, operationOrigins);
             } catch (error) {
                 if (error instanceof AgentTaskConflictException) {
                     const response = error.getResponse();
@@ -567,18 +959,17 @@ export class AgentTaskService {
         taskId: string,
         input: AgentTaskCommandRequest,
         requestHash: string,
+        origin: AgentTaskMutationOrigin = "user",
     ): Promise<InternalMutation> {
         const operation = `command:${input.command}`;
         const raw = await this.repository.withTransaction(scope, async (transaction): Promise<InternalMutation> => {
             const session = await transaction.lockSession();
             if (session.status !== "locked") return { status: session.status };
 
-            const locked = await transaction.lockTask(taskId);
-            if (locked.status === "not_found" || locked.status === "storage_failure") return locked;
-
-            // Event lookup intentionally precedes expiry, revision, action and
-            // role/state checks so an accepted retry remains replayable even
-            // after the task has naturally expired or its rollout flag moved.
+            // Event lookup intentionally precedes task selection, expiry,
+            // revision, action and role/state checks. A retry therefore stays
+            // tied to the task recorded on its original receipt even if a
+            // later task became active or the source task changed state.
             const existing = await transaction.findEvent(input.clientEventId);
             if (existing.status === "storage_failure") return existing;
             if (existing.status === "found") {
@@ -598,6 +989,9 @@ export class AgentTaskService {
                     : { status: current.status };
             }
 
+            const locked = await transaction.lockTask(taskId);
+            if (locked.status === "not_found" || locked.status === "storage_failure") return locked;
+
             if (locked.status === "task_expired" || locked.status === "task_purged") return locked;
             if (input.expectedRevision !== locked.task.revision) {
                 return { status: "stale_revision", currentTask: locked.task };
@@ -610,7 +1004,17 @@ export class AgentTaskService {
             }
 
             try {
-                if (input.command === "prepare-review") {
+                if (input.command === "start-update") {
+                    const assertStartUpdate = (this.policy as AgentTaskPolicyService & {
+                        assertCanStartUpdate?: AgentTaskPolicyService["assertCanStartUpdate"];
+                    }).assertCanStartUpdate;
+                    if (assertStartUpdate) await assertStartUpdate.call(this.policy, principal);
+                    else {
+                        await this.policy.assertCanCreate(principal, "clients.create");
+                        await this.policy.assertCanCreate(principal, "clients.update");
+                        this.policy.assertCanPatch(principal, locked.task.capabilityId);
+                    }
+                } else if (input.command === "prepare-review") {
                     const assertPrepare = (this.policy as AgentTaskPolicyService & {
                         assertCanPrepareReview?: AgentTaskPolicyService["assertCanPrepareReview"];
                     }).assertCanPrepareReview;
@@ -626,9 +1030,13 @@ export class AgentTaskService {
                 throw error;
             }
 
+            if (input.command === "start-update") {
+                return this.runStartUpdateTransaction(principal, scope, locked.task, input, requestHash, transaction);
+            }
+
             let transition: CommandTransition;
             try {
-                transition = await this.nextCommand(principal, locked.task, input);
+                transition = await this.nextCommand(principal, locked.task, input, origin);
             } catch (error) {
                 if (error instanceof AgentTaskConflictException) {
                     return transaction.abort<InternalMutation>({ status: "state_conflict", reason: "state", task: locked.task });
@@ -720,6 +1128,186 @@ export class AgentTaskService {
         return { status: "storage_failure" };
     }
 
+    /**
+     * Convert an accepted duplicate registration draft into a scoped client
+     * update in the same task UoW. The source update is deliberately performed
+     * before createTask: the transaction adapter's locked-task cursor then
+     * points at the new task so the single receipt references that task.
+     */
+    private async runStartUpdateTransaction(
+        principal: VerifiedTenantPrincipal,
+        scope: AgentTaskSessionScope,
+        source: AgentTaskEntity,
+        input: Extract<AgentTaskCommandRequest, { command: "start-update" }>,
+        requestHash: string,
+        transaction: AgentTaskTransaction,
+    ): Promise<InternalMutation> {
+        if (
+            source.capabilityId !== "clients.create"
+            || source.activeSlot !== 1
+            || source.activeActionId !== null
+            || !["collecting", "confirming_target", "review_ready"].includes(source.status)
+            || source.targetRef === null
+            || source.targetVersion === null
+        ) {
+            return transaction.abort<InternalMutation>({ status: "state_conflict", reason: "state", task: source });
+        }
+
+        const protectedTarget = source.draft.server.references.target;
+        if (!protectedTarget || protectedTarget.targetRef !== source.targetRef) {
+            return transaction.abort<InternalMutation>({ status: "state_conflict", reason: "state", task: source });
+        }
+        if (input.targetRef !== source.targetRef || input.expectedTargetVersion !== source.targetVersion) {
+            return transaction.abort<InternalMutation>({ status: "state_conflict", reason: "state", task: source });
+        }
+        // A source with any client-target mapping has an unresolved target
+        // choice (including an orphaned/malformed mapping), so it cannot be
+        // converted. Phone candidates are independent and may remain queued
+        // on the source; choices are intentionally not copied to the update.
+        try {
+            this.validateChoiceProducerMappings(source, "client-target");
+            this.validateChoiceProducerMappings(source, "phone-candidate");
+        } catch {
+            return transaction.abort<InternalMutation>({ status: "state_conflict", reason: "state", task: source });
+        }
+        if (source.draft.server.references.choiceTargets.length > 0) {
+            return transaction.abort<InternalMutation>({ status: "state_conflict", reason: "state", task: source });
+        }
+
+        let targetClient: Awaited<ReturnType<IClientRepository["findById"]>>;
+        try {
+            targetClient = await this.clientRepository.findById(principal.branchId, protectedTarget.clientId);
+        } catch (error) {
+            if (error instanceof ServiceUnavailableException) throw error;
+            return transaction.abort<InternalMutation>({ status: "storage_failure" });
+        }
+        if (!targetClient || clientAgentTargetVersion(targetClient) !== source.targetVersion) {
+            return transaction.abort<InternalMutation>({ status: "state_conflict", reason: "state", task: source });
+        }
+
+        const now = new Date();
+        const expiresAt = new Date(now.getTime() + TASK_RETENTION_MS);
+        if (!await this.ensureRetention(transaction, expiresAt)) {
+            return transaction.abort<InternalMutation>({ status: "storage_failure" });
+        }
+
+        const sourceDraft: AgentTaskDraft = {
+            ...source.draft,
+            currentSnapshotRef: randomUUID(),
+        };
+        const sourceUpdated = await transaction.updateTask({
+            expectedRevision: input.expectedRevision,
+            draft: sourceDraft,
+            status: "paused",
+            acceptedAt: now,
+            expiresAt,
+        });
+        if (sourceUpdated.status !== "updated") {
+            if (sourceUpdated.status === "stale_revision") return sourceUpdated;
+            if (sourceUpdated.status === "task_expired" || sourceUpdated.status === "task_purged") return sourceUpdated;
+            if (sourceUpdated.status === "active_task_conflict") {
+                return { status: "state_conflict", reason: "active_task", task: source };
+            }
+            return transaction.abort<InternalMutation>({ status: "storage_failure" });
+        }
+
+        const transferredConfirmed: AgentTaskEntity["draft"]["confirmed"] = {};
+        const transferredTentative: AgentTaskEntity["draft"]["tentative"] = {};
+        const transferredProvenance: AgentTaskDraft["provenance"] = { confirmed: {}, tentative: {} };
+        const transfer = (bucket: "confirmed" | "tentative") => {
+            const values = source.draft[bucket];
+            const provenance = source.draft.provenance[bucket];
+            const destination = bucket === "confirmed" ? transferredConfirmed : transferredTentative;
+            for (const [field, value] of Object.entries(values)) {
+                const provenanceEntry = provenance[field];
+                if (!provenanceEntry || !["user", "wizard"].includes(provenanceEntry.source)) continue;
+                (destination as Record<string, unknown>)[field] = value;
+                transferredProvenance[bucket][field] = {
+                    source: provenanceEntry.source,
+                    capturedAt: now.toISOString(),
+                    eventId: input.clientEventId,
+                    valueRef: randomUUID(),
+                };
+            }
+        };
+        transfer("confirmed");
+        transfer("tentative");
+
+        const targetRef = randomUUID();
+        const state: ClientInputState = {
+            confirmed: transferredConfirmed,
+            tentative: transferredTentative,
+            clearedFields: [],
+            automationChoice: "unanswered",
+            noSend: source.draft.constraints.noSend,
+        };
+        const empty = createEmptyAgentTaskDraft(randomUUID());
+        const newTaskDraft: AgentTaskDraft = {
+            ...empty,
+            confirmed: transferredConfirmed,
+            tentative: transferredTentative,
+            provenance: transferredProvenance,
+            constraints: { noSend: state.noSend },
+            consent: { choice: "unanswered", binding: null },
+            server: {
+                ...empty.server,
+                references: {
+                    ...empty.server.references,
+                    target: { targetRef, clientId: targetClient.id },
+                },
+            },
+        };
+        newTaskDraft.issues = await this.updateIssues(
+            principal,
+            state,
+            {
+                ...source,
+                taskId: "conversion",
+                capabilityId: "clients.update",
+                status: "collecting",
+                targetRef,
+                targetVersion: source.targetVersion,
+                draft: newTaskDraft,
+            },
+            [],
+            { targetRef, targetVersion: source.targetVersion, targetClient },
+        );
+
+        const newTaskId = randomUUID();
+        const created = await transaction.createTask({
+            taskId: newTaskId,
+            capabilityId: "clients.update",
+            draft: newTaskDraft,
+            status: "collecting",
+            revision: 1,
+            targetRef,
+            targetVersion: source.targetVersion,
+            lastAcceptedAt: now,
+            expiresAt,
+        });
+        if (created.status !== "created") {
+            if (created.status === "active_task_conflict") {
+                return { status: "state_conflict", reason: "active_task", task: source };
+            }
+            return transaction.abort<InternalMutation>({ status: "storage_failure" });
+        }
+        const inserted = await transaction.insertEvent({
+            clientEventId: input.clientEventId,
+            operation: "command:start-update",
+            requestHash,
+            acceptedRevision: created.task.revision,
+            acceptedAt: now,
+        });
+        if (inserted.status !== "inserted") {
+            return transaction.abort<InternalMutation>(
+                inserted.status === "event_hash_conflict"
+                    ? { status: "event_hash_conflict" }
+                    : { status: "storage_failure" },
+            );
+        }
+        return { status: "updated", task: created.task, receipt: inserted.event };
+    }
+
     private commandStateAllowed(status: AgentTaskEntity["status"], command: AgentTaskCommandRequest["command"]): boolean {
         if (command === "pause") return ["collecting", "confirming_target", "review_ready", "paused"].includes(status);
         if (command === "resume") return ["collecting", "confirming_target", "review_ready", "paused"].includes(status);
@@ -732,6 +1320,7 @@ export class AgentTaskService {
         principal: VerifiedTenantPrincipal,
         task: AgentTaskEntity,
         input: AgentTaskCommandRequest,
+        origin: AgentTaskMutationOrigin = "user",
     ): Promise<CommandTransition> {
         if (input.command === "pause") {
             if (task.status === "paused") return { draft: task.draft, status: task.status, changed: false };
@@ -749,7 +1338,10 @@ export class AgentTaskService {
             if (task.status === "review_ready") return { draft: task.draft, status: task.status, changed: false };
             return { draft: { ...task.draft, issues: readiness.issues }, status: "review_ready", changed: true };
         }
-        return this.selectTarget(principal, task, input);
+        if (input.command !== "select-target") {
+            throw new AgentTaskConflictException("state", asAuthorizedTask(task));
+        }
+        return this.selectTarget(principal, task, input, origin);
     }
 
     private async reviewReadiness(
@@ -774,6 +1366,7 @@ export class AgentTaskService {
         principal: VerifiedTenantPrincipal,
         task: AgentTaskEntity,
         input: Extract<AgentTaskCommandRequest, { command: "select-target" }>,
+        origin: AgentTaskMutationOrigin = "user",
     ): Promise<CommandTransition> {
         const choiceSetRef = "choiceSetRef" in input ? input.choiceSetRef : input.choiceSetId;
         const choiceSet = task.draft.choiceSets.find((candidate) => candidate.choiceSetRef === choiceSetRef);
@@ -811,7 +1404,7 @@ export class AgentTaskService {
                 automationChoice: task.draft.consent.choice,
                 noSend: task.draft.constraints.noSend,
             });
-            const provenance = this.applyProvenance(task.draft.provenance, operations, input.clientEventId);
+            const provenance = this.applyProvenance(task.draft.provenance, operations, input.clientEventId, origin);
             const issues = task.capabilityId === "clients.update"
                 ? await this.updateIssues(principal, state, task, task.draft.issues)
                 : this.issues(task.draft.issues, state, await this.duplicateCheck(principal, state, undefined));
@@ -896,6 +1489,8 @@ export class AgentTaskService {
         task: AgentTaskEntity,
         operations: readonly ClientInputOperation[],
         clientEventId: string,
+        origin: AgentTaskMutationOrigin = "user",
+        operationOrigins?: readonly AgentTaskMutationOrigin[],
     ): Promise<{ draft: AgentTaskDraft; status: AgentTaskEntity["status"] }> {
         const state = applyClientInputOperations(operations, {
             confirmed: task.draft.confirmed,
@@ -909,7 +1504,7 @@ export class AgentTaskService {
             throw new AgentTaskConflictException("consent_required", asAuthorizedTask(task));
         }
 
-        const provenance = this.applyProvenance(task.draft.provenance, operations, clientEventId);
+        const provenance = this.applyProvenance(task.draft.provenance, operations, clientEventId, origin, operationOrigins);
         const issues = task.capabilityId === "clients.update"
             ? await this.updateIssues(principal, state, task, task.draft.issues)
             : this.issues(task.draft.issues, state, await this.duplicateCheck(principal, state, undefined));
@@ -1091,16 +1686,18 @@ export class AgentTaskService {
         initial: AgentTaskDraft["provenance"],
         operations: readonly ClientInputOperation[],
         eventId: string,
+        origin: AgentTaskMutationOrigin = "user",
+        operationOrigins?: readonly AgentTaskMutationOrigin[],
     ): AgentTaskDraft["provenance"] {
         const confirmed = { ...initial.confirmed };
         const tentative = { ...initial.tentative };
         const capturedAt = new Date().toISOString();
-        for (const operation of operations) {
+        for (const [index, operation] of operations.entries()) {
             if (operation.op === "set" && operation.field !== "automationChoice" && operation.field !== "noSend") {
-                confirmed[operation.field] = { source: "user", capturedAt, eventId, valueRef: randomUUID() };
+                confirmed[operation.field] = { source: originSource(operationOrigins?.[index] ?? origin), capturedAt, eventId, valueRef: randomUUID() };
                 delete tentative[operation.field];
             } else if (operation.op === "mark-tentative") {
-                tentative[operation.field] = { source: "user", capturedAt, eventId, valueRef: randomUUID() };
+                tentative[operation.field] = { source: originSource(operationOrigins?.[index] ?? origin), capturedAt, eventId, valueRef: randomUUID() };
             } else if (operation.op === "clear" && operation.field !== "automationChoice" && operation.field !== "noSend") {
                 delete confirmed[operation.field];
                 delete tentative[operation.field];
