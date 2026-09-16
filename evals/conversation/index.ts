@@ -6,4 +6,5 @@ export {
     formatConversationEvaluationReport,
     runConversationEvaluation,
     runDeterministicHarness,
+    runDeterministicProduct,
 } from "./run-evaluation";

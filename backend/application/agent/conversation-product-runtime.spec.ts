@@ -1,7 +1,11 @@
 import { CONVERSATION_EVAL_CASES } from "../../../evals/conversation/cases";
 import { createDeterministicClock, evaluateConversationCase } from "../../../evals/conversation/evaluation-policy";
 import { createNoNetworkMockTransport } from "../../../evals/conversation/mock-transport";
-import { createProductRuntimeAdapter, projectScenarioForProduct } from "../../../evals/conversation/product-runtime-adapter";
+import {
+    createDeterministicProductRuntimeDriver,
+    createProductRuntimeAdapter,
+    projectScenarioForProduct,
+} from "../../../evals/conversation/product-runtime-adapter";
 
 describe("deterministic product runtime bridge", () => {
     it("projects turns without carrying fixture oracle expectations", () => {
@@ -84,5 +88,45 @@ describe("deterministic product runtime bridge", () => {
             expect.objectContaining({ code: "other", message: expect.stringContaining("network calls") }),
         ]));
         expect(observation.transport).toEqual({ networkCalls: 2, calls: 2 });
+    });
+
+    it("drives the real runtime and task service, then replays the same intake without a second task", async () => {
+        const transport = createNoNetworkMockTransport();
+        const driver = createDeterministicProductRuntimeDriver();
+        await driver.reset?.({
+            scenario: projectScenarioForProduct(CONVERSATION_EVAL_CASES[0]!),
+            clock: createDeterministicClock(),
+            transport,
+        });
+        const scenario = projectScenarioForProduct(CONVERSATION_EVAL_CASES[0]!);
+        const turn = {
+            id: "product-runtime-replay-turn",
+            userText: "이름: SYN_PRODUCT, 전화번호: 01012345678",
+            inputEvents: [{ type: "user_message" as const, text: "이름: SYN_PRODUCT, 전화번호: 01012345678" }],
+        };
+        const context = {
+            scenario,
+            turn,
+            turnIndex: 0,
+            clock: createDeterministicClock(),
+            transport,
+        };
+
+        await driver.runTurn(context);
+        const first = driver.getEvidence();
+        expect(first.runtimeInvocations).toBe(1);
+        expect(first.modelInvocations).toBe(1);
+        expect(first.taskServiceReads).toBeGreaterThan(0);
+        expect(first.acceptedTaskIds).toHaveLength(1);
+        expect(first.eventCount).toBe(1);
+
+        await driver.runTurn(context);
+        const replay = driver.getEvidence();
+        expect(replay.runtimeInvocations).toBe(2);
+        expect(replay.modelInvocations).toBe(2);
+        expect(replay.acceptedTaskIds).toEqual(first.acceptedTaskIds);
+        expect(replay.eventCount).toBe(first.eventCount);
+        expect(replay.replayedMessageIds).toEqual([turn.id]);
+        expect(transport.networkCalls).toBe(0);
     });
 });
