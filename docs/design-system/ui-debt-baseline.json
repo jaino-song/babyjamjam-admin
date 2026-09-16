@@ -234,18 +234,6 @@
         "291:47-291:75|visualTailwindInPage"
       ]
     },
-    "frontend/src/app/(protected)/employees/page.tsx": {
-      "ui-architecture/no-visual-tailwind-in-pages": [
-        "197:39-197:82|visualTailwindInPage",
-        "249:155-249:249|visualTailwindInPage",
-        "250:69-250:101|visualTailwindInPage",
-        "253:69-253:102|visualTailwindInPage",
-        "254:69-254:95|visualTailwindInPage",
-        "256:65-256:113|visualTailwindInPage",
-        "295:51-295:155|visualTailwindInPage",
-        "57:90-57:119|visualTailwindInPage"
-      ]
-    },
     "frontend/src/app/(protected)/messages/page.tsx": {
       "ui-architecture/no-page-local-components": [
         "559:10-559:35|pageLocalComponent",

@@ -469,8 +469,7 @@ function ScheduleEntryList({ dataComponent, entries, selectedEntryId, onEntrySel
                             dataComponent={`${dataComponent}_item`}
                             icon={Icon}
                             title={item.clientName}
-                            subtitle={SCHEDULE_KIND_LABELS[item.kind]}
-                            meta={item.meta}
+                            subtitle={`${item.dateLabel} · ${item.meta}`}
                             status={<StatusPill variant={SCHEDULE_KIND_VARIANTS[item.kind]}>{SCHEDULE_KIND_LABELS[item.kind]}</StatusPill>}
                         />
                     );
@@ -622,10 +621,10 @@ export function EmployeeScheduleManager({
                 >
                     <ListPanel
                         data-component={component("calendar-panel")}
-                        title={formatMonthLabel(visibleMonth)}
+                        title={viewMode === "calendar" ? formatMonthLabel(visibleMonth) : "전체 일정"}
                         subtitle={viewMode === "calendar"
                             ? "날짜를 선택하면 오른쪽에서 일정을 확인합니다."
-                            : "서비스 시작·종료·교체 요청을 날짜순으로 확인합니다."}
+                            : `${formatScheduleDate(range.horizonStart)} ~ ${formatScheduleDate(range.horizonEnd)} · ${entries.length}건`}
                         headerPadding="compact"
                         subHeader={viewMode === "calendar" ? monthControls : undefined}
                     >
