@@ -25,6 +25,7 @@ export interface AdminServiceRecordEditSessionChanges {
 export interface AdminServiceRecordEditDateMove {
     sessionIndex: number;
     toDate: string;
+    shiftFollowing?: boolean;
 }
 
 export interface AdminServiceRecordEditChanges {

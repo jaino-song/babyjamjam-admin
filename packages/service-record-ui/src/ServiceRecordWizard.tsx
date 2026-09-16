@@ -11,6 +11,7 @@ import {
     formatShortDate,
     hasDisplayValue,
     isDailyItemComplete,
+    isServiceRecordHeaderComplete,
 } from "./form-definition";
 import type {
     ServiceRecordWizardSlots,
@@ -343,8 +344,7 @@ export function ServiceRecordWizard({
     const isMomConfirmationPage = Boolean(currentDayPage.confirmation);
     const signatureValue = currentSession?.clientSignature ?? clientSignature;
     const isSignatureLocked = Boolean(currentSession?.clientSignature);
-    const isHeaderComplete = HEADER_FIELDS.every((field) => hasDisplayValue(header[field.k]))
-        && hasDisplayValue(header.deliveryType);
+    const isHeaderComplete = isServiceRecordHeaderComplete(header);
     const plannedDateForSession = (sessionIndex: number): string | undefined => plannedDateBySession?.get(sessionIndex);
     const displayDateForSession = (sessionIndex: number, session?: { serviceDate: string }): string => (
         session?.serviceDate?.slice(0, 10)
@@ -464,7 +464,9 @@ export function ServiceRecordWizard({
                             <label data-slot="lab" className="lab">{HEADER_FIELDS[4].label}</label>
                             <TextInput placeholder={HEADER_FIELDS[4].ph} value={header.babyWeight ?? ""} disabled={readOnly} onChange={(event) => onHeaderChange(HEADER_FIELDS[4].k, event.target.value)} />
                         </div>
-                        <button data-slot="btn" className="btn primary" disabled={readOnly || busy || !isHeaderComplete} onClick={() => onSaveHeader()}>{busy ? "저장 중…" : adminMode ? "초안 저장" : "다음"}</button>
+                        {adminMode && slots?.adminHeaderAction ? slots.adminHeaderAction({ isHeaderComplete }) : (
+                            <button data-slot="btn" className="btn primary" disabled={readOnly || busy || !isHeaderComplete} onClick={() => onSaveHeader()}>{busy ? "저장 중…" : adminMode ? "초안 저장" : "다음"}</button>
+                        )}
                     </>
                 )}
 
@@ -540,18 +542,27 @@ export function ServiceRecordWizard({
                         >
                             이전
                         </button>
-                        <div data-component={child("body_date-chip")} data-slot="datechip" className="datechip">
-                            {day}회차{editing ? " · " : ""}
-                            {editing
-                                ? renderServiceDateDisplay(
-                                    day,
-                                    currentServiceDate,
-                                    "body_date-chip_date-display",
-                                    formatMonthDayKo(currentServiceDate),
-                                )
-                                : null}
+                        <div data-slot="date-row" className={adminMode ? "date-row" : undefined}>
+                            <div data-component={child("body_date-chip")} data-slot="datechip" className="datechip">
+                                {day}회차{editing ? " · " : ""}
+                                {editing
+                                    ? renderServiceDateDisplay(
+                                        day,
+                                        currentServiceDate,
+                                        "body_date-chip_date-display",
+                                        formatMonthDayKo(currentServiceDate),
+                                    )
+                                    : null}
+                            </div>
+                            {adminMode && slots?.serviceDateEditor ? slots.serviceDateEditor({
+                                "data-component": child("body_date-edit"),
+                                sessionIndex: day,
+                                serviceDate: currentServiceDate,
+                                disabled: readOnly || busy,
+                                onOpen: () => onOpenServiceDateEditor?.(day),
+                            }) : null}
                         </div>
-                        {!readOnly && (!editing || adminMode) && pageIdx === 0 && (
+                        {!readOnly && !adminMode && !editing && pageIdx === 0 && (
                             <div data-component={child("body_service-date-field")} data-slot="fld" className="fld">
                                 <label data-slot="lab" className="lab">제공일자</label>
                                 {adminEditing && slots?.serviceDateEditor ? (
@@ -621,7 +632,7 @@ export function ServiceRecordWizard({
                         )}
                         {isMomConfirmationPage ? (
                             <div data-component={child("body_confirmation-action")} data-slot="nav" className="nav confirmation-nav">
-                                <button data-slot="btn" className="btn submit" disabled={readOnly || busy || (!adminMode && !signatureValue)} onClick={onOpenSubmitModal}>{readOnly ? "조회 전용" : adminMode ? (busy ? "저장 중…" : "초안 저장") : "확인"}</button>
+                                {adminMode && slots?.adminSessionAction ? slots.adminSessionAction : <button data-slot="btn" className="btn submit" disabled={readOnly || busy || (!adminMode && !signatureValue)} onClick={onOpenSubmitModal}>{readOnly ? "조회 전용" : adminMode ? (busy ? "저장 중…" : "초안 저장") : "확인"}</button>}
                             </div>
                         ) : (
                             <div data-component={child("body_nav")} data-slot="nav" className="nav">

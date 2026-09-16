@@ -36,6 +36,8 @@ export declare function validateServiceRecordScheduleVector(entries: ReadonlyArr
  * independently, preserving intentionally irregular gaps in the vector.
  */
 export declare function shiftServiceRecordScheduleSuffix(entries: ReadonlyArray<ServiceRecordPlannedSession>, sessionIndex: number, newDate: string): ServiceRecordScheduleShiftResult;
+/** A per-session correction moves later dates only with explicit approval. */
+export declare function moveServiceRecordSessionDate(entries: ReadonlyArray<ServiceRecordPlannedSession>, sessionIndex: number, newDate: string, shiftFollowing: boolean): ServiceRecordScheduleShiftResult;
 /**
  * Computes the expected (예정일) date for an unwritten session slot.
  *
