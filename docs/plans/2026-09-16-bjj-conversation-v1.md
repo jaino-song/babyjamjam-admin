@@ -40,7 +40,7 @@ The user approved the detailed implementation plan on 2026-09-16 and requested i
 | 0 | Baseline, policies, ADR | complete | base above; ADR-013; 121 existing unit tests passed |
 | 1 | Shared contracts + 48-case evaluator (parallel) | complete | source close: 76d0445babb87f46ecab3a754323695cef9d0203; SOL SHIP; 19 shared tests, 8 evaluator tests, 48 harness cases |
 | 2 | Additive persistence + evaluation providers (parallel) | complete | source close d19ef533619f87add609767cc23e99ea447308bf; SOL SHIP; guarded DB14/14, final provider/evaluator39/39, migration compatibility |
-| 3 | Task create/read/patch, protected inputs, replay | pending | |
+| 3 | Task create/read/patch, protected inputs, replay | in progress | start40b258a1b0dfbb125cb8ee7e42cc5aaa24223477; approved clear-state amendment; isolated Luna/max unit |
 | 4 | Commands, retention, session lifecycle | pending | |
 | 5 | TurnContext, conversation policy, routing | pending | |
 | 6 | Atomic task/action approval binding | pending | |
@@ -145,3 +145,5 @@ The existing `AgentFlagsService` reads `agent.flags`, including open-ended capab
 - Localized final fixes integrated at `d19ef533619f87add609767cc23e99ea447308bf` (unit `7d59b3829f287aee8c1045012a20ff40f9ad45cf`). Parent independently verified focused39/39, backendTypeScript, zero-warningfocusedESLint anddiffcheck; integrationfocused39/39 andTypeScript passed. No source changes tostorage since its verifiedunusedhelpercleanup. Earlier realDB14/14, legacyrecordequality, migrationparity and166-test integration remain applicable tounchangedscope.
 - FINAL SOL returned SHIP/HIGH at exactd19ef5336, no blockers, nonblockingfindings or missingverification inPhase2scope. Phase2 isclosed. This doesnot establishliveproviderquality orproductruntimebehavior.
 - Phase3 corrected API brief and additiveclear amendment both receivedPLANAPPROVE/HIGH. One isolatedLuna/maxunit will implement sharedclear markers/safeprojection/JSONcodec first, followedbyownedcreate/read/patch APIs, protectedinput, durable replay andsessionrestore. Sharedvendorrefresh isparent-owned betweencontractcheckpoint andAPIcompilation. No newPrismaschema, migration, dependency, buildsetting orauthcorechange isrequired.
+
+- Phase3 dispatched to `codex/unit/bjj-conv-task-api` at `/Users/jaino/Development/babyjamjam-admin/bjj-conv-task-api`, starting exactly `40b258a1b0dfbb125cb8ee7e42cc5aaa24223477`. Runtime role Luna implementation, gpt-5.6-luna/max, local sandbox; no nesteddelegation. Parent prepared env-bootstrap, frozenoffline1472-packageinstall with0downloads, Prisma generation, andenv-check withonlyexistingSTALEGEMINI_EXTRACTION_MODEL. Worktreecleanbeforedispatch. Shared/vendorcheckpoint precedes parentdependencyrefresh andAPIcompilation.
