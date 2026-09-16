@@ -21,10 +21,9 @@ interface RawIssue {
   stats?: { "24h"?: Array<[number, number]>; "30d"?: Array<[number, number]> };
 }
 
-async function sentryGet<T>(path: string, revalidate = REVALIDATE_SECONDS): Promise<T | null> {
+async function sentryGet<T>(path: string, revalidate = REVALIDATE_SECONDS): Promise<T> {
   if (!SENTRY_TOKEN || !SENTRY_ORG) {
-    console.warn("[sentry] missing SENTRY_AUTH_TOKEN or SENTRY_ORG");
-    return null;
+    throw new Error("Sentry statistics are not configured");
   }
   const url = path.startsWith("http") ? path : `${SENTRY_BASE}${path}`;
   try {
@@ -33,13 +32,11 @@ async function sentryGet<T>(path: string, revalidate = REVALIDATE_SECONDS): Prom
       next: { revalidate },
     });
     if (!res.ok) {
-      console.warn(`[sentry] ${res.status} ${path}`);
-      return null;
+      throw new Error("Sentry query failed");
     }
     return (await res.json()) as T;
-  } catch (err) {
-    console.warn("[sentry] fetch failed", path, err);
-    return null;
+  } catch {
+    throw new Error("Sentry statistics are unavailable");
   }
 }
 
@@ -72,7 +69,7 @@ export async function getOpenIssues(
   });
   const path = `/organizations/${SENTRY_ORG}/issues/?${params.toString()}`;
   const data = await sentryGet<RawIssue[]>(path);
-  if (!Array.isArray(data)) return [];
+  if (!Array.isArray(data)) throw new Error("Invalid Sentry statistics response");
   return data.map(normalizeIssue);
 }
 
@@ -86,7 +83,7 @@ export async function getIssuesWithStats(): Promise<{ issues: SentryIssue[]; raw
   });
   const path = `/organizations/${SENTRY_ORG}/issues/?${params.toString()}`;
   const data = await sentryGet<RawIssue[]>(path);
-  if (!Array.isArray(data)) return { issues: [], raw: [] };
+  if (!Array.isArray(data)) throw new Error("Invalid Sentry statistics response");
   return { issues: data.map(normalizeIssue), raw: data };
 }
 

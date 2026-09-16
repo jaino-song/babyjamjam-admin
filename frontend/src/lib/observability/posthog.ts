@@ -48,8 +48,7 @@ async function hogQL<Row extends unknown[]>(
   revalidate = REVALIDATE_SECONDS
 ): Promise<Row[]> {
   if (!POSTHOG_API_KEY || !POSTHOG_PROJECT_ID) {
-    console.warn("[posthog] missing POSTHOG_API_KEY or POSTHOG_PROJECT_ID");
-    return [];
+    throw new Error("PostHog statistics are not configured");
   }
   try {
     const res = await fetch(
@@ -65,18 +64,16 @@ async function hogQL<Row extends unknown[]>(
       }
     );
     if (!res.ok) {
-      console.warn(`[posthog] ${res.status} - ${query.slice(0, 80)}`);
-      return [];
+      throw new Error("PostHog query failed");
     }
     const data = (await res.json()) as HogQLResponse;
-    if (data.error) {
-      console.warn("[posthog] query error", data.error);
-      return [];
+    if (data.error || !Array.isArray(data.results)) {
+      throw new Error("Invalid PostHog response");
     }
-    return (data.results ?? []) as Row[];
-  } catch (err) {
-    console.warn("[posthog] fetch failed", err);
-    return [];
+    return data.results as Row[];
+  } catch {
+    // Keep provider payloads, credentials and request details out of error logs.
+    throw new Error("PostHog statistics are unavailable");
   }
 }
 
