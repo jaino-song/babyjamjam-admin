@@ -724,3 +724,5 @@ TL;DR: 배정(4b-1 백엔드: 역할·자격·동시 변경 코드 전환 / 4b-2
 - 6d1: admin-service-record-edit/admin-service-record/call-inbox/call-ingest-token/consultation-inquiry. 기존 코드 재사용; 상태 보존; raw 4xx→등록 코드.
 - 6g1/6h1: BFF raw 영문 `{error}`/passthrough → 공유 헬퍼 규약(`frontend/src/app/api/clients/route.ts` 참조, `@/lib/api/route-utils` errorResponse 계열). **packages/shared 편집 금지**(부족 코드는 리포트로). 리스트: `/tmp/em-6/wave1-fe.txt`, `/tmp/em-6/wave1-mo.txt`.
 - 규칙: 동일 카탈로그 writer는 백엔드 1유닛만; FE/MO는 코드 신규 등록 금지. worker×3 · Audit SOL ×3.
+
+**웨이브2 = 6d2(auth/auth-session/user/ai-chat 4서비스) + 6g2(FE api 31) + 6h2(MO api 29)** — base `582e806a1` (웨이브1 병합 후). 리스트 `/tmp/em-6/wave2-{fe,mo}.txt`.
