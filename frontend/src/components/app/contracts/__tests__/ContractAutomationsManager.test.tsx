@@ -54,4 +54,31 @@ describe("ContractAutomationsManager", () => {
     fireEvent.click(screen.getByRole("button", { name: "저장" }));
     await waitFor(() => expect(updateConfig.mock.calls[0]?.[0]).toEqual({ enabled: true, graceDays: 3, maxAttempts: 3 }));
   });
+
+  it("shows a retryable query error and uses the saved grace days after retry", async () => {
+    getPolicies
+      .mockRejectedValueOnce(new Error("settings unavailable"))
+      .mockResolvedValueOnce({ autoFinalize: { enabled: true, graceDays: 7, maxAttempts: 5 } });
+
+    renderManager();
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("자동화 설정을 불러오지 못했습니다");
+    expect(screen.getByRole("button", { name: "다시 시도" })).toBeInTheDocument();
+    expect(screen.queryByText(/종료일 7일 후/)).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "다시 시도" }));
+
+    await waitFor(() => expect(getPolicies).toHaveBeenCalledTimes(2));
+    expect(await screen.findByText(/종료일 7일 후/)).toBeInTheDocument();
+  });
+
+  it("describes the saved grace days in the explanation tab", async () => {
+    getPolicies.mockResolvedValue({ autoFinalize: { enabled: true, graceDays: 3, maxAttempts: 5 } });
+
+    renderManager();
+    fireEvent.click(await screen.findByText("계약 종료일 자동 완료"));
+    fireEvent.click(screen.getByRole("tab", { name: "동작 설명" }));
+
+    expect(await screen.findByText(/실행 시점은 종료일 3일 후입니다/)).toBeInTheDocument();
+  });
 });

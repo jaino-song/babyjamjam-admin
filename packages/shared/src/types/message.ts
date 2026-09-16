@@ -206,6 +206,8 @@ export interface MessageTriggerRule {
   eventType: MessageTriggerEventType;
   offsetType: MessageTriggerOffsetType;
   offsetDays: number;
+  /** HH:mm in Asia/Seoul; absent on older servers means 09:00. */
+  sendTime?: string;
   recipientType: MessageTriggerRecipientType;
   templateKey: MessageTriggerTemplateKey;
   createdAt: string;
@@ -226,6 +228,7 @@ export const createMessageTriggerRuleSchema = z
     eventType: messageTriggerEventTypeSchema,
     offsetType: messageTriggerOffsetTypeSchema,
     offsetDays: z.number().int().min(0).optional(),
+    sendTime: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/).optional(),
     recipientType: messageTriggerRecipientTypeSchema,
     templateKey: messageTriggerTemplateKeySchema,
   })

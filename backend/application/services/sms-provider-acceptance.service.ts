@@ -1,4 +1,5 @@
 import { ConflictException, Inject, Injectable, NotFoundException } from "@nestjs/common";
+import type { Prisma } from "@prisma/client";
 import { createHash } from "node:crypto";
 import {
     MessageLogEntity,
@@ -90,7 +91,10 @@ export class SmsProviderAcceptanceService {
         return this.logRepository.save(log);
     }
 
-    async beginProviderCall(log: MessageLogEntity): Promise<MessageLogEntity> {
+    async beginProviderCall(
+        log: MessageLogEntity,
+        transaction?: Prisma.TransactionClient,
+    ): Promise<MessageLogEntity> {
         if (log.providerAcceptanceState !== "prepared") {
             throw new ConflictException(
                 `SMS provider attempt cannot start from ${log.providerAcceptanceState}`,
@@ -98,10 +102,13 @@ export class SmsProviderAcceptanceService {
         }
 
         const repository = this.logRepository as IMessageLogRepository & {
-            claimProviderAttempt?: (attempt: MessageLogEntity) => Promise<MessageLogEntity | null>;
+            claimProviderAttempt?: (
+                attempt: MessageLogEntity,
+                transaction?: Prisma.TransactionClient,
+            ) => Promise<MessageLogEntity | null>;
         };
         if (typeof repository.claimProviderAttempt === "function") {
-            const claimed = await repository.claimProviderAttempt(log);
+            const claimed = await repository.claimProviderAttempt(log, transaction);
             if (!claimed) {
                 throw new ConflictException("SMS provider attempt is already claimed or no longer prepared");
             }
@@ -109,7 +116,7 @@ export class SmsProviderAcceptanceService {
         }
 
         log.markProviderCallStarted();
-        await this.logRepository.update(log);
+        await this.logRepository.update(log, transaction);
         return log;
     }
 

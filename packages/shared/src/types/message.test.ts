@@ -57,3 +57,16 @@ describe("message trigger shared contract", () => {
     expect(updateMessageTriggerRuleSchema.safeParse({ templateKey: "NOPE" }).success).toBe(false);
   });
 });
+
+describe("rule send time", () => {
+  it.each(["00:00", "09:00", "10:37", "23:59"])("accepts KST time %s", (sendTime) => {
+    expect(createMessageTriggerRuleSchema.parse({ ...validRule, sendTime }).sendTime).toBe(sendTime);
+  });
+  it.each(["24:00", "12:60", "9:00", "09:00:00", "", null, 930])("rejects invalid time %s", (sendTime) => {
+    expect(createMessageTriggerRuleSchema.safeParse({ ...validRule, sendTime }).success).toBe(false);
+    expect(updateMessageTriggerRuleSchema.safeParse({ sendTime }).success).toBe(false);
+  });
+  it("does not invent a time for legacy partial updates", () => {
+    expect(updateMessageTriggerRuleSchema.parse({ name: "renamed" })).not.toHaveProperty("sendTime");
+  });
+});

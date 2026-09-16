@@ -19,6 +19,22 @@ import {
 } from "../../../packages/shared/src/types/message";
 
 describe("SMS trigger template consistency", () => {
+    const retiredFixedEventTemplateKeys = [
+        MessageTriggerTemplateKey.CLIENT_WELCOME,
+        MessageTriggerTemplateKey.SERVICE_START_REMINDER,
+        MessageTriggerTemplateKey.SERVICE_END_REMINDER,
+        MessageTriggerTemplateKey.EMPLOYEE_ASSIGNED,
+    ] as const;
+
+    it.each(retiredFixedEventTemplateKeys)(
+        "keeps retired fixed-event template %s out of every active delivery catalog",
+        (templateKey) => {
+            expect(MESSAGE_TRIGGER_TEMPLATE_CATALOG[templateKey].providers.sms).toBeUndefined();
+            expect(SMS_TEMPLATE_DELIVERY[templateKey]).toBeUndefined();
+            expect(SYSTEM_TEMPLATE_REGISTRY).not.toHaveProperty(templateKey);
+        },
+    );
+
     it("keeps the frontend and backend configurable SMS template lists identical", () => {
         expect(BACKEND_CONFIGURABLE_SMS_TRIGGER_TEMPLATE_KEYS).toEqual(
             SHARED_CONFIGURABLE_SMS_TRIGGER_TEMPLATE_KEYS,

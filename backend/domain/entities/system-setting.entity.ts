@@ -40,6 +40,25 @@ export const DEFAULT_CONTRACT_AUTO_FINALIZE_CONFIG: ContractAutoFinalizeConfig =
     maxAttempts: 3,
 };
 
+export function normalizeContractAutoFinalizeConfig(config: unknown): ContractAutoFinalizeConfig {
+    if (typeof config !== "object" || config === null || Array.isArray(config)) {
+        return DEFAULT_CONTRACT_AUTO_FINALIZE_CONFIG;
+    }
+
+    const candidate = config as Partial<ContractAutoFinalizeConfig>;
+    return {
+        enabled: typeof candidate.enabled === "boolean"
+            ? candidate.enabled
+            : DEFAULT_CONTRACT_AUTO_FINALIZE_CONFIG.enabled,
+        graceDays: Number.isInteger(candidate.graceDays)
+            ? Math.min(Math.max(candidate.graceDays as number, 0), 30)
+            : DEFAULT_CONTRACT_AUTO_FINALIZE_CONFIG.graceDays,
+        maxAttempts: Number.isInteger(candidate.maxAttempts)
+            ? Math.min(Math.max(candidate.maxAttempts as number, 1), 10)
+            : DEFAULT_CONTRACT_AUTO_FINALIZE_CONFIG.maxAttempts,
+    };
+}
+
 export class SystemSettingEntity {
     static readonly RIBBON_CONFIG_KEY = "ribbon_config";
 

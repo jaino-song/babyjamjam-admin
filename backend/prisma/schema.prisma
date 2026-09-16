@@ -254,6 +254,7 @@ model client {
   birthday               String?                   @db.VarChar(6)
   breastPump             Boolean                   @default(false) @map("breast_pump")
   serviceStatus          String?                   @map("service_status")
+  serviceEndNoticeSentAt DateTime?                 @map("service_end_notice_sent_at") @db.Timestamptz(6)
   eDocId                 String?                   @unique @map("e_doc_id")
   dueDate                DateTime?                 @map("due_date") @db.Date
   birthDate              DateTime?                 @map("birth_date") @db.Date
@@ -1017,6 +1018,7 @@ model message_trigger_rule {
   eventType     String                @map("event_type")
   offsetType    String                @map("offset_type")
   offsetDays    Int                   @default(0) @map("offset_days")
+  sendTime      String                @default("09:00") @map("send_time") @db.VarChar(5)
   recipientType String                @map("recipient_type")
   templateKey   String                @map("template_key")
   isDefault     Boolean               @default(false) @map("is_default")

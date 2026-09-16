@@ -235,7 +235,7 @@ describe("SystemSettingController (Integration)", () => {
             expect(getRowValue(response, "trigger-dispatch", "dispatch-interval"))
                 .toBe(`${formatCronIntervalMinutes(TRIGGER_DISPATCH_CRON)}마다`);
             expect(getRowValue(response, "trigger-dispatch", "send-time"))
-                .toBe(`${formatKstHour(SEND_HOUR_KST)} KST`);
+                .toBe(`규칙별 설정 (기본 ${formatKstHour(SEND_HOUR_KST)} KST)`);
             expect(getRowValue(response, "trigger-job-retry", "retry-delay"))
                 .toBe(`${formatMinutes(TRIGGER_JOB_RETRY_DELAY_MS)} 후`);
             expect(getRowValue(response, "trigger-job-retry", "max-attempts"))
@@ -268,6 +268,28 @@ describe("SystemSettingController (Integration)", () => {
                 .toBe(SERVICE_RECORD_LINK_SMS_AUTOMATION_KEY);
             expect(getRowValue(response, "service-feedback-link", "template-key"))
                 .toBe(SERVICE_RECORD_LINK_SMS_LOG_TEMPLATE_KEY);
+        });
+
+        it("should project activation management from the resolved tenant roles", async () => {
+            const owner = await controller.getMessageAutomationPolicies({
+                branchId: "branch-1",
+                globalRole: "owner",
+                branchRole: "user",
+            });
+            const admin = await controller.getMessageAutomationPolicies({
+                branchId: "branch-1",
+                globalRole: "user",
+                branchRole: "admin",
+            });
+            const member = await controller.getMessageAutomationPolicies({
+                branchId: "branch-1",
+                globalRole: "user",
+                branchRole: "user",
+            });
+
+            expect(owner.canManageActivation).toBe(true);
+            expect(admin.canManageActivation).toBe(true);
+            expect(member.canManageActivation).toBe(false);
         });
 
         it("should update a branch-scoped policy activation", async () => {

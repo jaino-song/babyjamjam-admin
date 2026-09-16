@@ -1,4 +1,5 @@
 import { MessageTriggerJobEntity } from "domain/entities/message-trigger-job.entity";
+import type { Prisma } from "@prisma/client";
 
 export interface MessageTriggerJobCancellationScope {
     clientId?: number;
@@ -16,7 +17,7 @@ export interface IMessageTriggerJobRepository {
      * returned token is unique to this processing attempt and must be supplied
      * to every terminal update/fence before a provider call.
      */
-    claimPendingWithRuleFence(id: string, branchId: string | null): Promise<string | null>;
+    claimPendingWithRuleFence(id: string, branchId: string | null, transaction?: Prisma.TransactionClient): Promise<string | null>;
     findDuePendingSystemScope(limit?: number): Promise<MessageTriggerJobEntity[]>;
     findStaleProcessingSystemScope(cutoff: Date, limit?: number): Promise<MessageTriggerJobEntity[]>;
     findUpcomingPendingByBranch(
@@ -86,6 +87,7 @@ export interface IMessageTriggerJobRepository {
         markerId: string,
         expectedClaimVersion: string,
         job: MessageTriggerJobEntity,
+        transaction?: Prisma.TransactionClient,
     ): Promise<MessageTriggerJobEntity | null>;
     /**
      * Cancel mutable pending jobs only while the branch-scoped rule is at the
@@ -99,6 +101,7 @@ export interface IMessageTriggerJobRepository {
         expectedJobsStale: boolean,
         reason: string,
         scope?: MessageTriggerJobCancellationScope,
+        transaction?: Prisma.TransactionClient,
     ): Promise<number | null>;
     upsertPending(job: MessageTriggerJobEntity): Promise<MessageTriggerJobEntity>;
     /**
@@ -111,6 +114,7 @@ export interface IMessageTriggerJobRepository {
         expectedUpdatedAt: Date,
         expectedJobsStale: boolean,
         preserveExisting?: boolean,
+        transaction?: Prisma.TransactionClient,
     ): Promise<MessageTriggerJobEntity | null>;
     /**
      * Lock and compare a rejected source job, then create the action-bound

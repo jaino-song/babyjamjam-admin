@@ -5,6 +5,7 @@ import {
     type ServiceRecordPlannedSession as SharedPlannedSession,
     validateServiceRecordScheduleVector,
     shiftServiceRecordScheduleSuffix,
+    moveServiceRecordSessionDate,
 } from "@babyjamjam/shared/utils/service-record-schedule";
 import type {
     ServiceRecordEditDocumentScope,
@@ -46,6 +47,7 @@ export interface DraftNormalizationResult {
 export interface ServiceRecordEditDateMove {
     sessionIndex: number;
     toDate: string;
+    shiftFollowing?: boolean;
 }
 
 export interface ServiceRecordEditPreviewBuildInput {
@@ -582,7 +584,7 @@ export function normalizeServiceRecordEditChanges(
     }
     let sessions = normalizedSessionChanges(projection.entries, previousSessions, dateMove ? [] : incomingSessions);
     if (dateMove) {
-        const shifted = shiftServiceRecordScheduleSuffix(current, dateMove.sessionIndex, dateMove.toDate);
+        const shifted = moveServiceRecordSessionDate(current, dateMove.sessionIndex, dateMove.toDate, dateMove.shiftFollowing ?? true);
         const content = mergedContentChanges(previousSessions, incomingSessions);
         const normalizedByIndex = new Map<number, DraftSessionChange>();
         const previousDateIndexes = new Set(previousSessions

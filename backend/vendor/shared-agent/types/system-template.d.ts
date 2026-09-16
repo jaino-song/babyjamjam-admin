@@ -1,12 +1,8 @@
 import { z } from "zod";
-export declare const SYSTEM_TEMPLATE_KEYS: readonly ["CLIENT_WELCOME", "SERVICE_START_REMINDER", "SERVICE_END_REMINDER", "EMPLOYEE_ASSIGNED", "PRICE_INFO", "GREETING", "THANKS", "SURVEY", "SERVICE_INFO", "SERVICE_RECORD_LINK", "SERVICE_END_NOTICE", "REMINDER", "INFO"];
+export declare const SYSTEM_TEMPLATE_KEYS: readonly ["PRICE_INFO", "GREETING", "THANKS", "SURVEY", "SERVICE_INFO", "SERVICE_RECORD_LINK", "SERVICE_END_NOTICE", "REMINDER", "INFO"];
 export type SystemTemplateKey = (typeof SYSTEM_TEMPLATE_KEYS)[number];
 /** Runtime key validation for system-template BFF route parameters. */
 export declare const systemTemplateKeySchema: z.ZodEnum<{
-    CLIENT_WELCOME: "CLIENT_WELCOME";
-    SERVICE_START_REMINDER: "SERVICE_START_REMINDER";
-    SERVICE_END_REMINDER: "SERVICE_END_REMINDER";
-    EMPLOYEE_ASSIGNED: "EMPLOYEE_ASSIGNED";
     PRICE_INFO: "PRICE_INFO";
     GREETING: "GREETING";
     THANKS: "THANKS";
@@ -25,10 +21,6 @@ export type SystemTemplateDeliveryMode = (typeof SYSTEM_TEMPLATE_DELIVERY_MODES)
  * delivery path a compile-time error instead of silently falling back to SMS.
  */
 export declare const SYSTEM_TEMPLATE_DELIVERY_MODES_BY_KEY: {
-    CLIENT_WELCOME: "sms";
-    SERVICE_START_REMINDER: "sms";
-    SERVICE_END_REMINDER: "sms";
-    EMPLOYEE_ASSIGNED: "sms";
     PRICE_INFO: "sms";
     GREETING: "sms";
     THANKS: "sms";

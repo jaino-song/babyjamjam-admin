@@ -8,6 +8,40 @@ import { MessageTriggerJobEntity } from "domain/entities/message-trigger-job.ent
 import type { SmsTriggerDeliveryPreparation } from "application/services/sms-trigger-delivery.service";
 
 describe("MessageTriggerDeliveryService", () => {
+    it.each([
+        MessageTriggerTemplateKey.CLIENT_WELCOME,
+        MessageTriggerTemplateKey.SERVICE_START_REMINDER,
+        MessageTriggerTemplateKey.SERVICE_END_REMINDER,
+        MessageTriggerTemplateKey.EMPLOYEE_ASSIGNED,
+    ])("cancels retired fixed-event template %s before SMS preparation", async (templateKey) => {
+        const smsTriggerDeliveryService = {
+            prepareJob: jest.fn(),
+        };
+        const service = new MessageTriggerDeliveryService(
+            smsTriggerDeliveryService as unknown as SmsTriggerDeliveryService,
+        );
+        const job = MessageTriggerJobEntity.create({
+            branchId: "branch-1",
+            ruleId: "legacy-rule",
+            scheduledFor: new Date("2026-06-12T00:00:00.000Z"),
+            recipientType: MessageTriggerRecipientType.CLIENT,
+            templateKey,
+            dedupeKey: `legacy-rule:${templateKey}`,
+            payload: {
+                memberId: "7",
+                recipientName: "김지니",
+                recipientPhone: "01012345678",
+                templateVariables: {},
+            },
+        });
+        job.markProcessing("claim-a");
+
+        await expect(service.prepareJob(job)).resolves.toBeNull();
+        expect(smsTriggerDeliveryService.prepareJob).not.toHaveBeenCalled();
+        expect(job.status).toBe("canceled");
+        expect(job.cancelReason).toBe("삭제된 고정 이벤트 템플릿");
+    });
+
     it("delegates every active trigger delivery to the SMS service", async () => {
         const smsTriggerDeliveryService = {
             sendJob: jest.fn().mockResolvedValue(true),

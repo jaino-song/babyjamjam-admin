@@ -1,15 +1,23 @@
 import { MessageLogEntity } from "domain/entities/message-log.entity";
+import type { Prisma } from "@prisma/client";
+
+export type MessageRetryInvocation = "automatic" | "manual";
+
+export type MessageRetryStartResult =
+    | { kind: "started"; log: MessageLogEntity }
+    | { kind: "suppressed"; log: MessageLogEntity }
+    | { kind: "lost" };
 
 export interface IMessageLogRepository {
     save(log: MessageLogEntity): Promise<MessageLogEntity>;
-    update(log: MessageLogEntity): Promise<MessageLogEntity>;
+    update(log: MessageLogEntity, transaction?: Prisma.TransactionClient): Promise<MessageLogEntity>;
     /**
      * Persist (or converge on) one deterministic provider attempt before any
      * external request. Implementations must reject a fingerprint mismatch.
      */
     prepareProviderAttempt(log: MessageLogEntity): Promise<MessageLogEntity>;
     /** Atomically claim the prepared row immediately before crossing the network. */
-    claimProviderAttempt(log: MessageLogEntity): Promise<MessageLogEntity | null>;
+    claimProviderAttempt(log: MessageLogEntity, transaction?: Prisma.TransactionClient): Promise<MessageLogEntity | null>;
     /** Conditionally apply one operator reconciliation to an uncertain attempt. */
     reconcileProviderAttempt(
         log: MessageLogEntity,
@@ -21,7 +29,9 @@ export interface IMessageLogRepository {
     startRetryAttempt(
         sourceLog: MessageLogEntity,
         retryLog: MessageLogEntity,
-    ): Promise<MessageLogEntity | null>;
+        invocation: MessageRetryInvocation,
+        transaction?: Prisma.TransactionClient,
+    ): Promise<MessageRetryStartResult>;
     findByIdInBranch(branchId: string, id: number): Promise<MessageLogEntity | null>;
     findSentTriggerJobIdsSystemScope(jobIds: string[]): Promise<Set<string>>;
     findUncertainTriggerJobIdsSystemScope(jobIds: string[]): Promise<Set<string>>;

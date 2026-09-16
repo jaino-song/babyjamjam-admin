@@ -14,7 +14,8 @@ import {
     SmsTriggerPayloadEnricherRegistry,
 } from "./sms-trigger-payload-enricher.registry";
 
-export const MANUAL_DEDUPE_MARKER = ":manual:";
+import { MANUAL_DEDUPE_MARKER } from "domain/constants/service-end-notice-message";
+export { MANUAL_DEDUPE_MARKER } from "domain/constants/service-end-notice-message";
 
 function receiptLinkUnusableError(): SmsTriggerDeliverySkipError {
     return new SmsTriggerDeliverySkipError(
