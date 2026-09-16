@@ -38,7 +38,7 @@ The user approved the detailed implementation plan on 2026-09-16 and requested i
 | Phase | Deliverable | State | Integration SHA / verification |
 | --- | --- | --- | --- |
 | 0 | Baseline, policies, ADR | complete | base above; ADR-013; 121 existing unit tests passed |
-| 1 | Shared contracts + 48-case evaluator (parallel) | in progress | start: 83ea2c57a1019138c2afe960c6cb6f6ffcdab55a; SOL brief review APPROVE |
+| 1 | Shared contracts + 48-case evaluator (parallel) | complete | source close: 76d0445babb87f46ecab3a754323695cef9d0203; SOL SHIP; 19 shared tests, 8 evaluator tests, 48 harness cases |
 | 2 | Additive persistence + evaluation providers (parallel) | pending | |
 | 3 | Task create/read/patch, protected inputs, replay | pending | |
 | 4 | Commands, retention, session lifecycle | pending | |
@@ -71,9 +71,15 @@ Every dependent phase starts from a committed, verified integration SHA. Indepen
 - Plan independent review: APPROVE after explicit retention/replay/consent/policy corrections. This is a plan review, not an implementation audit.
 - Existing `action-coordinator.service.spec.ts` and `client-write-agent-capabilities.provider.spec.ts`: 2 suites / 121 tests passed. Logged assignment-refresh failures are expected injected negative paths. These baseline tests do not establish the new task behavior.
 - Prisma client generation passed. Docker is unavailable; an isolated ephemeral PostgreSQL 16.13 cluster was instead started on 127.0.0.1:55433. All 70 existing migrations applied successfully to its empty test database, with both Prisma URL variables explicitly pointing there. No operational database was used.
-- Phase 1 unit worktrees have independent frozen dependency installs and env-bootstrap. Shared build configuration/vendor changes are held pending the concrete confirmation; contract logic and evaluation work continue.
+- Phase 1 unit worktrees have independent frozen dependency installs and env-bootstrap. After the concrete schema/shared-build preview question, the user instructed `continue`; the previewed additive schema and shared include/vendor scope is authorized. Actual operational migration/deployment remains excluded.
 - Prepared [additive schema preview](./2026-09-16-agent-task-schema-preview.diff). Event task IDs deliberately have no cascading task foreign key, so an expired/purged task cannot erase the replay evidence while its owning session exists. Task data is purged separately from its minimal ownership tombstone.
 - The preview validates with Prisma 6.19.2. Existing migration history compared to the unchanged checked-in schema using a separate local shadow database: no difference detected. The preview has not been applied to the product schema or database.
+- Shared source integrated at a999017c7 (unit 24dca62eb); 2 suites/16 tests and shared/frontend/mobile type checks passed in integration. Dedicated SOL audit was interrupted by provider quota, then resumed after a fresh usage check permitted work. No approval result is claimed until it returns.
+- Evaluation foundation integrated at 8ddcb4d80 (unit 5a63ecc58): 48 cases (32 development/16 holdout), independent state/execution assertions and explicit harness-only reporting. An unnecessary evaluation-local tsconfig was removed at 3874fe218 in favor of an explicit CommonJS runner flag; it was not part of the previewed build scope.
+- Dependency audit: 1,627 dependencies, zero reported vulnerabilities at this checkpoint; no dependency additions. Ignored environment files confirmed excluded from Git.
+- Integration backend type-check passed after the normal Prisma client generation step. The evaluation unit's earlier ungenerated-client errors did not reproduce in the prepared integration worktree.
+- SOL source audit at 17615c606 returned FIX_REQUIRED: constrain nested safe-reference strings, fix identity/revision/acknowledgement reducer behavior, match optional date/currency/birthday validation, establish one consent choice, and make chat patch parts reference accepted events. The correction unit also adds the missing task capability/session-create identity contract. Phase 1 remains open until corrected source, generated parity and repeat SOL review pass.
+- Before any new task migration, a synthetic legacy user/branch/session/rejected action was inserted in the isolated test DB. Original action JSON saved outside the repository for exact postmigration comparison (canonical hash c62963a51ce721628cd27ce220c8a9e4fd2a8504afbf11670e29895b09e37c51). This is a synthetic compatibility fixture, not an operational action or external execution.
 
 ## Final acceptance and deferred gates
 
@@ -82,3 +88,17 @@ Required implementation evidence: unit/integration checks; real database concurr
 Deferred: real-model A/B/C/D comparison, three repetitions, frozen latency/cost budgets, human conversational review and production activation. Proposed quality targets (95% scenario success, all core repeats, <=5% needless repeat questions, human mean >=4/no core dimension <3, zero observed safety failures) are NOT proven by deterministic tests.
 
 Rollback keeps additive tables/columns and result/reconciliation reads. Disable new task creation and review issuance. Never destructively revert tables containing unresolved actions. Environment branch merge needs separate user approval.
+
+## Phase 1 correction verification
+
+- Corrected shared source/vendor integrated at `eefc21d2396340e0f3bdd10eb63478b7bb6004bd` (unit `a7b863a115c785026acb2da126ac18aa802f8587`). Structural reference fields now use UUIDs/digests; task revisions remain integer and existing action proposal revisions remain opaque tokens; identity/session resets and acknowledgements are handled separately; confirmed/tentative input validators and one consent authority are explicit.
+- Integration verification passed: two shared agent suites / 17 tests; shared, backend, desktop and mobile type checks; generated backend runtime rebuild followed by zero vendor difference. Corrective SOL review at that SHA still required three localized fixes: same-identity reset generation, SHA-256 customer target version distinct from integer task revision, and a fixed issue-code vocabulary. Phase 1 remains open pending their correction and re-review.
+- Phase 2 briefs were reviewed before dispatch. They now require a single task/event storage transaction with typed conflict/replay outcomes, adapter-owned active-slot derivation, parent-owned legacy migration proof, mandatory stateless provider continuation, explicit supported model profiles and error/metadata privacy checks. The corrected Phase 2 briefs received SOL APPROVE. No Phase 2 writer has started; both will pin the eventual Phase 1 close SHA.
+
+- Second correction integrated at `b6f1b3b48a9df4636bb4c1cde7907ef9bcc97785` (unit `eebb3c102`): request generation captured before dispatch and incremented on reset, separate SHA-256 customer target version, fixed issue-code vocabulary. All 19 shared tests, all four typechecks, generated vendor parity and diffcheck passed. Final amendment `76d0445babb87f46ecab3a754323695cef9d0203` removes the nullable state bypass. All integration checks were rerun successfully and SOL returned SHIP with no blockers or nonblocking findings at that exact SHA. Phase 1 is closed; this is contract/harness verification, not product runtime or model quality proof.
+
+## Phase 2 dispatch contract
+
+- SOL pre-dispatch review: APPROVE after typed UoW, active-slot enforcement, legacy migration workflow and provider continuation/privacy corrections. Storage and provider adapters have disjoint file ownership and start from the committed Phase 1 close record.
+- Storage changes are limited to the approved additive schema, a generated migration, task entity/repository port and adapter, focused unit tests and opt-in guarded local database tests. The parent alone generates/applies the migration and verifies exact legacy record equality.
+- Provider codecs use injected mock transport, fixed official endpoints, explicitly registered model profiles, stateless opaque continuation, bounded sanitized errors and no import-time network I/O. No SDK/dependency or operational route change is authorized or needed.
