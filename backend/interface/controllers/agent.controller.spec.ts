@@ -32,6 +32,7 @@ describe("AgentController task restore composition", () => {
                 activeTaskId: "task-1",
                 pausedTaskIds: ["task-2"],
                 taskRestoreStatus: "available",
+                recoveryTaskIds: [],
             }),
         };
         const controller = new AgentController(
@@ -56,6 +57,7 @@ describe("AgentController task restore composition", () => {
             activeTaskId: "task-1",
             pausedTaskIds: ["task-2"],
             taskRestoreStatus: "available",
+            recoveryTaskIds: [],
         });
         expect(sessions.getForRestore).toHaveBeenCalledWith("session-1", { userId: "user-1", branchId: "branch-1" });
         expect(sessions.get).not.toHaveBeenCalled();

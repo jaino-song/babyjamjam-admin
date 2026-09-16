@@ -25,6 +25,7 @@ describe("AgentTaskController", () => {
             create: jest.fn().mockResolvedValue({ receipt: {}, snapshot: {} }),
             get: jest.fn().mockResolvedValue({}),
             patch: jest.fn().mockResolvedValue({ receipt: {}, snapshot: {} }),
+            command: jest.fn().mockResolvedValue({ receipt: {}, snapshot: {} }),
         };
         const controller = new AgentTaskController(tasks as never);
         const res = response();
@@ -36,8 +37,10 @@ describe("AgentTaskController", () => {
 
         await controller.get("task-1", request as never, res as never);
         await controller.patch("task-1", { clientEventId: "e", expectedRevision: 1, operations: [] }, request as never, res as never);
+        await controller.command("task-1", { clientEventId: "e", expectedRevision: 1, command: "pause" }, request as never, res as never);
         expect(tasks.get).toHaveBeenCalledWith(principal, "task-1");
         expect(tasks.patch).toHaveBeenCalledWith(principal, "task-1", expect.objectContaining({ expectedRevision: 1 }));
+        expect(tasks.command).toHaveBeenCalledWith(principal, "task-1", expect.objectContaining({ command: "pause" }));
     });
 
     it("does not fall back to a body principal", () => {

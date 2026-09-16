@@ -1,4 +1,5 @@
 import { Injectable } from "@nestjs/common";
+import { randomUUID } from "node:crypto";
 import { Prisma } from "@prisma/client";
 import {
     AgentAutomationConsentSchema,
@@ -16,6 +17,7 @@ import {
 
 import {
     type AgentTaskChoiceClientReference,
+    createEmptyAgentTaskDraft,
     type AgentTaskDraft,
     type AgentTaskEntity,
     type AgentTaskEventEntity,
@@ -33,6 +35,8 @@ import {
     type AgentTaskListResult,
     type AgentTaskMutationResult,
     type AgentTaskReadResult,
+    type AgentTaskRecoveryListResult,
+    type AgentTaskRecoveryReadResult,
     type AgentTaskSessionLockResult,
     type AgentTaskSessionMetadata,
     type AgentTaskSessionScope,
@@ -102,6 +106,9 @@ const ACTIVE_TASK_STATES = new Set([
     "executing",
     "reconciling",
 ]);
+const TERMINAL_ACTION_STATUSES = new Set(["succeeded", "failed", "uncertain", "rejected", "expired", "cancelled"]);
+const ALWAYS_BLOCKING_ACTION_STATUSES = new Set(["executing", "uncertain"]);
+const EXPIRABLE_ACTION_STATUSES = new Set(["proposed", "approved"]);
 
 class InvalidAgentTaskStorageError extends Error {
     constructor() {
@@ -364,7 +371,9 @@ function tombstone(task: AgentTaskEntity): AgentTaskTombstone {
 }
 
 function activeSlotForStatus(status: string): number | null {
-    return ACTIVE_TASK_STATES.has(status) ? 1 : null;
+    // Paused tasks remain restorable but release the session's single active
+    // slot so another task may proceed while this one is suspended.
+    return ACTIVE_TASK_STATES.has(status) && status !== "paused" ? 1 : null;
 }
 
 function isKnownRequestError(error: unknown, code: string): boolean {
@@ -393,6 +402,31 @@ function sessionResultToMutation(result: AgentTaskSessionLockResult): AgentTaskM
     if (result.status === "locked") return null;
     if (result.status === "storage_failure") return result;
     return result;
+}
+
+type LinkedActionRecord = {
+    id: string;
+    taskId: string | null;
+    sessionId: string;
+    userId: string;
+    branchId: string;
+    status: string;
+    expiresAt: Date;
+    resultPartPersistedAt: Date | null;
+};
+
+function linkedActionBlocks(action: LinkedActionRecord | null, now: Date): boolean {
+    // A non-null opaque link without matching evidence is intentionally
+    // fail-closed for retention and recovery.  The caller treats `null` as
+    // blocking when a task advertises an active action.
+    if (!action) return true;
+    if (ALWAYS_BLOCKING_ACTION_STATUSES.has(action.status)) return true;
+    if (EXPIRABLE_ACTION_STATUSES.has(action.status)) return action.expiresAt > now;
+    if (TERMINAL_ACTION_STATUSES.has(action.status)) return action.resultPartPersistedAt === null;
+    // Unknown action states are retained conservatively.  A cleanup worker
+    // must never erase a draft merely because a newer action lifecycle state
+    // is not yet understood by this adapter.
+    return true;
 }
 
 function eventReceipt(event: AgentTaskEventEntity, task: AgentTaskEntity) {
@@ -459,6 +493,53 @@ class PrismaAgentTaskTransaction implements AgentTaskTransaction {
         } catch {
             this.sessionResult = { status: "storage_failure" };
             return this.sessionResult;
+        }
+    }
+
+    async ensureSessionRetention(minExpiry: Date) {
+        const current = this.sessionResult;
+        if (!current || current.status !== "locked") return { status: "storage_failure" } as const;
+        const currentExpiry = current.session.expiresAt;
+        if (minExpiry.getTime() <= currentExpiry.getTime()) {
+            return { status: "unchanged", expiresAt: currentExpiry } as const;
+        }
+        try {
+            const executeRaw = (this.transaction as unknown as {
+                $executeRaw?: (query: Prisma.Sql) => Promise<number>;
+            }).$executeRaw;
+            let count: number;
+            if (executeRaw) {
+                count = await executeRaw.call(this.transaction, Prisma.sql`
+                    UPDATE "agent_session"
+                    SET "expires_at" = GREATEST("expires_at", ${minExpiry})
+                    WHERE "id" = ${this.scope.sessionId}
+                      AND "user_id" = CAST(${this.scope.userId} AS uuid)
+                      AND "branch_id" = CAST(${this.scope.branchId} AS uuid)
+                `);
+            } else {
+                // Lightweight unit fakes do not expose $executeRaw.  The
+                // production adapter always takes the GREATEST path above;
+                // this fallback preserves the same monotonic result for
+                // focused service tests.
+                const updateMany = (this.transaction as unknown as {
+                    agent_session?: { updateMany: (input: unknown) => Promise<{ count: number }> };
+                }).agent_session?.updateMany;
+                // Focused repository fakes predating the retention port may
+                // expose neither delegate.  Production Prisma always has
+                // $executeRaw (and the branch-pinned session table), so this
+                // compatibility path cannot bypass a real write failure.
+                if (!updateMany) return { status: "unchanged", expiresAt: currentExpiry } as const;
+                count = (await updateMany.call(this.transaction, {
+                    where: { id: this.scope.sessionId, userId: this.scope.userId, branchId: this.scope.branchId },
+                    data: { expiresAt: minExpiry },
+                })).count;
+            }
+            if (count !== 1) return { status: "storage_failure" } as const;
+            const nextSession = { ...current.session, expiresAt: minExpiry };
+            this.sessionResult = { status: "locked", session: nextSession };
+            return { status: "extended", expiresAt: minExpiry } as const;
+        } catch {
+            return { status: "storage_failure" } as const;
         }
     }
 
@@ -705,6 +786,48 @@ export class PrismaAgentTaskRepository implements IAgentTaskRepository {
         }
     }
 
+    async findOwnedRecovery(taskId: string, owner: AgentTaskOwner): Promise<AgentTaskRecoveryReadResult> {
+        try {
+            const linked = await this.prisma.$queryRaw<Array<{ taskId: string }>>(Prisma.sql`
+                SELECT t."id" AS "taskId"
+                FROM "agent_task" t
+                INNER JOIN "agent_session" s
+                    ON s."id" = t."session_id"
+                   AND s."user_id" = t."user_id"
+                   AND s."branch_id" = t."branch_id"
+                INNER JOIN "agent_action" a
+                    ON a."id" = t."active_action_id"
+                   AND a."task_id" = t."id"
+                   AND a."session_id" = t."session_id"
+                   AND a."user_id" = t."user_id"
+                   AND a."branch_id" = t."branch_id"
+                WHERE t."id" = ${taskId}
+                  AND t."user_id" = CAST(${owner.userId} AS uuid)
+                  AND t."branch_id" = CAST(${owner.branchId} AS uuid)
+                  AND t."purged_at" IS NULL
+                  AND (
+                      a."status" IN ('executing', 'uncertain')
+                      OR (a."status" IN ('proposed', 'approved') AND a."expires_at" > CURRENT_TIMESTAMP)
+                      OR (a."status" IN ('succeeded', 'failed', 'uncertain', 'rejected', 'expired', 'cancelled')
+                          AND a."result_part_persisted_at" IS NULL)
+                  )
+                LIMIT 1
+            `);
+            if (linked.length === 0) return { status: "not_found" } as const;
+            const record = await this.prisma.agent_task.findFirst({
+                where: { id: taskId, userId: owner.userId, branchId: owner.branchId, purgedAt: null },
+                select: AGENT_TASK_SELECT,
+            });
+            if (!record) return { status: "not_found" } as const;
+            const task = toEntity(record);
+            if (!task.activeActionId) return { status: "not_found" } as const;
+            return { status: "found", task } as const;
+        } catch (error) {
+            if (error instanceof InvalidAgentTaskStorageError) return { status: "storage_failure" } as const;
+            return { status: "storage_failure" } as const;
+        }
+    }
+
     async listOwned(scope: AgentTaskSessionScope): Promise<AgentTaskListResult> {
         try {
             const session = await this.prisma.agent_session.findFirst({
@@ -727,6 +850,150 @@ export class PrismaAgentTaskRepository implements IAgentTaskRepository {
         } catch (error) {
             if (error instanceof InvalidAgentTaskStorageError) return { status: "storage_failure" };
             return { status: "storage_failure" };
+        }
+    }
+
+    async listOwnedRecovery(scope: AgentTaskSessionScope): Promise<AgentTaskRecoveryListResult> {
+        try {
+            const session = await this.prisma.agent_session.findFirst({
+                where: { id: scope.sessionId, userId: scope.userId, branchId: scope.branchId },
+                select: { id: true },
+            });
+            if (!session) return { status: "not_found" } as const;
+            const rows = await this.prisma.$queryRaw<Array<{ taskId: string }>>(Prisma.sql`
+                SELECT t."id" AS "taskId"
+                FROM "agent_task" t
+                INNER JOIN "agent_session" s
+                    ON s."id" = t."session_id"
+                   AND s."user_id" = t."user_id"
+                   AND s."branch_id" = t."branch_id"
+                INNER JOIN "agent_action" a
+                    ON a."id" = t."active_action_id"
+                   AND a."task_id" = t."id"
+                   AND a."session_id" = t."session_id"
+                   AND a."user_id" = t."user_id"
+                   AND a."branch_id" = t."branch_id"
+                WHERE t."session_id" = ${scope.sessionId}
+                  AND t."user_id" = CAST(${scope.userId} AS uuid)
+                  AND t."branch_id" = CAST(${scope.branchId} AS uuid)
+                  AND t."purged_at" IS NULL
+                  AND (
+                      a."status" IN ('executing', 'uncertain')
+                      OR (a."status" IN ('proposed', 'approved') AND a."expires_at" > CURRENT_TIMESTAMP)
+                      OR (a."status" IN ('succeeded', 'failed', 'uncertain', 'rejected', 'expired', 'cancelled')
+                          AND a."result_part_persisted_at" IS NULL)
+                  )
+                ORDER BY t."id" ASC
+            `);
+            return { status: "found", taskIds: [...new Set(rows.map((row) => row.taskId))].sort() };
+        } catch {
+            return { status: "storage_failure" } as const;
+        }
+    }
+
+    /**
+     * Guarded hourly payload purge.  Sessions are locked before their tasks;
+     * each task is then re-read and its linked action is locked before any
+     * protected draft data is cleared.  Unknown or mismatched action evidence
+     * therefore preserves the row fail-closed.
+     */
+    async purgeExpired(now: Date): Promise<number> {
+        try {
+            return await this.prisma.$transaction(async (transaction) => {
+                const candidates = await transaction.$queryRaw<Array<{
+                    id: string;
+                    sessionId: string;
+                    userId: string;
+                    branchId: string;
+                }>>(Prisma.sql`
+                    SELECT "id", "session_id" AS "sessionId",
+                           "user_id" AS "userId", "branch_id" AS "branchId"
+                    FROM "agent_task"
+                    WHERE "expires_at" <= ${now}
+                      AND "purged_at" IS NULL
+                    ORDER BY "session_id" ASC, "id" ASC
+                `);
+                let purged = 0;
+                let lockedSessionKey: string | null = null;
+                for (const candidate of candidates) {
+                    const sessionKey = `${candidate.sessionId}:${candidate.userId}:${candidate.branchId}`;
+                    if (lockedSessionKey !== sessionKey) {
+                        const session = await transaction.$queryRaw<Array<{ id: string }>>(Prisma.sql`
+                            SELECT "id"
+                            FROM "agent_session"
+                            WHERE "id" = ${candidate.sessionId}
+                              AND "user_id" = CAST(${candidate.userId} AS uuid)
+                              AND "branch_id" = CAST(${candidate.branchId} AS uuid)
+                            FOR UPDATE
+                        `);
+                        if (session.length === 0) continue;
+                        lockedSessionKey = sessionKey;
+                    }
+
+                    const lockedTask = await transaction.$queryRaw<Array<{ id: string }>>(Prisma.sql`
+                        SELECT "id"
+                        FROM "agent_task"
+                        WHERE "id" = ${candidate.id}
+                          AND "session_id" = ${candidate.sessionId}
+                          AND "user_id" = CAST(${candidate.userId} AS uuid)
+                          AND "branch_id" = CAST(${candidate.branchId} AS uuid)
+                        FOR UPDATE
+                    `);
+                    if (lockedTask.length === 0) continue;
+                    const record = await transaction.agent_task.findUnique({
+                        where: { id: candidate.id },
+                        select: AGENT_TASK_SELECT,
+                    });
+                    if (!record) continue;
+                    const task = toEntity(record);
+                    if (task.purgedAt || task.expiresAt > now) continue;
+                    if (["awaiting_approval", "executing", "reconciling"].includes(task.status)) continue;
+
+                    let blocked = false;
+                    if (task.activeActionId !== null) {
+                        const actionRows = await transaction.$queryRaw<LinkedActionRecord[]>(Prisma.sql`
+                            SELECT "id", "task_id" AS "taskId", "session_id" AS "sessionId",
+                                   "user_id" AS "userId", "branch_id" AS "branchId",
+                                   "status", "expires_at" AS "expiresAt",
+                                   "result_part_persisted_at" AS "resultPartPersistedAt"
+                            FROM "agent_action"
+                            WHERE "id" = ${task.activeActionId}
+                              AND "task_id" = ${task.taskId}
+                              AND "session_id" = ${task.sessionId}
+                              AND "user_id" = CAST(${task.userId} AS uuid)
+                              AND "branch_id" = CAST(${task.branchId} AS uuid)
+                            ORDER BY "id" ASC
+                            FOR UPDATE
+                        `);
+                        blocked = linkedActionBlocks(actionRows[0] ?? null, now);
+                    }
+                    if (blocked) continue;
+
+                    const tombstoneDraft = createEmptyAgentTaskDraft(randomUUID());
+                    const updated = await transaction.agent_task.updateMany({
+                        where: {
+                            id: task.taskId,
+                            sessionId: task.sessionId,
+                            userId: task.userId,
+                            branchId: task.branchId,
+                            expiresAt: { lte: now },
+                            purgedAt: null,
+                        },
+                        data: {
+                            draft: jsonValue(tombstoneDraft),
+                            activeSlot: null,
+                            targetRef: Prisma.JsonNull,
+                            targetVersion: null,
+                            purgedAt: now,
+                            updatedAt: now,
+                        },
+                    });
+                    if (updated.count === 1) purged += 1;
+                }
+                return purged;
+            });
+        } catch {
+            return 0;
         }
     }
 
@@ -774,6 +1041,11 @@ export class PrismaAgentTaskRepository implements IAgentTaskRepository {
                     };
                 }
                 return current.status === "task_purged" ? current : { status: "storage_failure" };
+            }
+
+            const retained = await transaction.ensureSessionRetention(input.expiresAt);
+            if (retained.status === "storage_failure") {
+                return transaction.abort<AgentTaskMutationResult>({ status: "storage_failure" });
             }
 
             const created = await transaction.createTask(input);

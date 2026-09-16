@@ -512,6 +512,48 @@ describe("PrismaAgentSessionRepository", () => {
         expect(prisma.agent_action.findFirst).not.toHaveBeenCalled();
     });
 
+    it("blocks archive and owner deletion while a retained nonterminal task exists", async () => {
+        const tx = {
+            $queryRaw: jest.fn().mockResolvedValue([{ id: "session-a" }]),
+            agent_session: { updateMany: jest.fn().mockResolvedValue({ count: 1 }), deleteMany: jest.fn().mockResolvedValue({ count: 1 }) },
+            agent_action: { findFirst: jest.fn().mockResolvedValue(null) },
+            agent_task: { findFirst: jest.fn().mockResolvedValue({ id: "task-a" }) },
+        };
+        const prisma = {
+            $transaction: jest.fn().mockImplementation(async (callback: (transaction: typeof tx) => Promise<unknown>) => callback(tx)),
+            agent_task: { findFirst: jest.fn() },
+            agent_session: { updateMany: jest.fn(), deleteMany: jest.fn(), findFirst: jest.fn() },
+        };
+        const repository = new PrismaAgentSessionRepository(prisma as never);
+
+        await expect(repository.archiveOwned("session-a", owner, new Date("2026-08-04T00:00:00.000Z"))).resolves.toBe("blocked");
+        await expect(repository.deleteOwned("session-a", owner)).resolves.toBe("blocked");
+        expect(tx.agent_session.updateMany).not.toHaveBeenCalled();
+        expect(tx.agent_session.deleteMany).not.toHaveBeenCalled();
+    });
+
+    it("retains an expired session during guarded cleanup while a retained task remains", async () => {
+        const now = new Date("2026-08-04T00:00:00.000Z");
+        const tx = {
+            $queryRaw: jest.fn()
+                .mockResolvedValueOnce([{ id: "session-a", userId: owner.userId, branchId: owner.branchId }])
+                .mockResolvedValueOnce([{ id: "task-a" }])
+                .mockResolvedValueOnce([]),
+            agent_session: { deleteMany: jest.fn().mockResolvedValue({ count: 1 }) },
+            agent_action: { findFirst: jest.fn().mockResolvedValue(null) },
+            agent_task: { findFirst: jest.fn().mockResolvedValue({ id: "task-a" }) },
+        };
+        const prisma = {
+            $transaction: jest.fn().mockImplementation(async (callback: (transaction: typeof tx) => Promise<unknown>) => callback(tx)),
+            agent_task: { findFirst: jest.fn() },
+            agent_session: { deleteMany: jest.fn() },
+        };
+        const repository = new PrismaAgentSessionRepository(prisma as never);
+
+        await expect(repository.deleteExpired(now)).resolves.toBe(0);
+        expect(tx.agent_session.deleteMany).not.toHaveBeenCalled();
+    });
+
     it("unarchives only the owned session and permits expired sessions", async () => {
         const prisma = {
             agent_session: {

@@ -130,6 +130,23 @@ class FakeTaskRepository {
         return { status: "found", tasks: [...this.tasks.values()].filter((task) => this.scoped(task, scope)) } as const;
     }
 
+    async findOwnedRecovery(taskId: string, scopedOwner: { userId: string; branchId: string }) {
+        const task = this.tasks.get(taskId);
+        return task && task.userId === scopedOwner.userId && task.branchId === scopedOwner.branchId && task.activeActionId
+            ? { status: "found", task } as const
+            : { status: "not_found" } as const;
+    }
+
+    async listOwnedRecovery(scope: { userId: string; branchId: string; sessionId: string }) {
+        return {
+            status: "found",
+            taskIds: [...this.tasks.values()]
+                .filter((task) => this.scoped(task, scope) && task.activeActionId)
+                .map((task) => task.taskId)
+                .sort(),
+        } as const;
+    }
+
     async withTransaction<T>(scope: { userId: string; branchId: string; sessionId: string }, operation: (transaction: any) => Promise<T>) {
         try {
             return { status: "ok", value: await operation(this.transaction(scope)) } as const;
@@ -152,6 +169,8 @@ class FakeTaskRepository {
                 }
                 return current;
             }
+            const retained = await transaction.ensureSessionRetention(eventInput.expiresAt ?? input.expiresAt);
+            if (retained.status === "storage_failure") return { status: "storage_failure" };
             const created = await transaction.createTask(input);
             if (created.status !== "created") return created;
             const inserted = await transaction.insertEvent(eventInput);
@@ -203,7 +222,7 @@ class FakeTaskRepository {
                     draft: input.draft,
                     revision: input.revision ?? 1,
                     status: input.status ?? "collecting",
-                    activeSlot: input.status === "paused" || input.status === "collecting" || input.status === "confirming_target" || input.status === "review_ready" ? 1 : null,
+                    activeSlot: input.status === "collecting" || input.status === "confirming_target" || input.status === "review_ready" ? 1 : null,
                     expiresAt: input.expiresAt,
                 });
                 this.tasks.set(task.taskId, task);
@@ -218,12 +237,16 @@ class FakeTaskRepository {
                     revision: lockedTask.revision + 1,
                     draft: input.draft ?? lockedTask.draft,
                     status: input.status ?? lockedTask.status,
-                    activeSlot: input.status === "paused" || input.status === "collecting" || input.status === "confirming_target" || input.status === "review_ready"
+                    activeSlot: input.status === "collecting" || input.status === "confirming_target" || input.status === "review_ready"
                         ? 1
                         : input.status === undefined && lockedTask.activeSlot === 1 ? 1 : null,
                     lastAcceptedAt: input.acceptedAt ?? lockedTask.lastAcceptedAt,
                     expiresAt: input.expiresAt ?? lockedTask.expiresAt,
                     updatedAt: input.acceptedAt ?? lockedTask.updatedAt,
+                    targetRef: input.targetRef === undefined ? lockedTask.targetRef : input.targetRef,
+                    targetVersion: input.targetVersion === undefined ? lockedTask.targetVersion : input.targetVersion,
+                    activeActionId: input.activeActionId === undefined ? lockedTask.activeActionId : input.activeActionId,
+                    terminalAt: input.terminalAt === undefined ? lockedTask.terminalAt : input.terminalAt,
                 });
                 this.tasks.set(task.taskId, task);
                 lockedTask = task;
@@ -249,6 +272,11 @@ class FakeTaskRepository {
                 return { status: "inserted", event } as const;
             },
             readTask: async (taskId: string) => read(taskId),
+            ensureSessionRetention: async (minExpiry: Date) => {
+                if (minExpiry <= this.session.expiresAt) return { status: "unchanged", expiresAt: this.session.expiresAt } as const;
+                this.session.expiresAt = minExpiry;
+                return { status: "extended", expiresAt: minExpiry } as const;
+            },
             abort: <T>(result: T): never => { throw new TransactionAbort(result); },
         };
     }
@@ -272,6 +300,7 @@ function buildService(repository: FakeTaskRepository, client = { findByPhone: je
     const policy = {
         assertCanCreate: jest.fn().mockResolvedValue(capability),
         assertCanPatch: jest.fn().mockReturnValue(capability),
+        assertCanPrepareReview: jest.fn().mockResolvedValue(capability),
     };
     const service = new AgentTaskService(repository as never, policy as never, client as never);
     return { service, policy, client };
@@ -282,6 +311,10 @@ function createInput(eventId: string = randomUUID(), operations: unknown[] = [
     { op: "set", field: "phone", value: "010-1234-5678" },
 ]) {
     return { sessionId, capabilityId: "clients.create", clientEventId: eventId, operations };
+}
+
+function commandInput(command: string, expectedRevision: number, clientEventId = randomUUID(), extra: Record<string, unknown> = {}) {
+    return { command, expectedRevision, clientEventId, ...extra };
 }
 
 describe("AgentTaskService", () => {
@@ -1055,9 +1088,10 @@ describe("AgentTaskService", () => {
             activeTaskId: active.taskId,
             pausedTaskIds: [paused.taskId],
             taskRestoreStatus: "available",
+            recoveryTaskIds: [],
         });
         repository.session.archivedAt = new Date();
-        await expect(service.restoreSession(owner, sessionId)).resolves.toEqual({ activeTaskId: null, pausedTaskIds: [], taskRestoreStatus: "session_archived" });
+        await expect(service.restoreSession(owner, sessionId)).resolves.toEqual({ activeTaskId: null, pausedTaskIds: [], taskRestoreStatus: "session_archived", recoveryTaskIds: [] });
     });
 
     it.each([
@@ -1112,6 +1146,145 @@ describe("AgentTaskService", () => {
         expect(client.findById).toHaveBeenCalledWith(owner.branchId, 7);
         expect(repository.tasks.get(task.taskId)!.draft.server.actionExpectedRevision).toBeUndefined();
         expect(repository.tasks.get(task.taskId)!.draft.server.actionProposalRevision).toBeUndefined();
+    });
+
+    it("runs pause, resume and cancel as ordered lifecycle transitions", async () => {
+        const repository = new FakeTaskRepository();
+        const service = buildService(repository).service;
+        const created = await service.create(owner, createInput());
+        const paused = await service.command(owner, created.snapshot.taskId, commandInput("pause", created.snapshot.revision));
+        expect(paused.snapshot.state).toBe("paused");
+        expect(paused.snapshot.revision).toBe(created.snapshot.revision + 1);
+        expect(repository.tasks.get(created.snapshot.taskId)!.activeSlot).toBeNull();
+
+        const pausedExpiry = repository.tasks.get(created.snapshot.taskId)!.expiresAt;
+        const pauseNoOp = await service.command(owner, created.snapshot.taskId, commandInput("pause", paused.snapshot.revision));
+        expect(pauseNoOp.snapshot.revision).toBe(paused.snapshot.revision);
+        expect(repository.tasks.get(created.snapshot.taskId)!.expiresAt).toEqual(pausedExpiry);
+
+        const resumed = await service.command(owner, created.snapshot.taskId, commandInput("resume", paused.snapshot.revision));
+        expect(resumed.snapshot.state).toBe("collecting");
+        expect(repository.tasks.get(created.snapshot.taskId)!.activeSlot).toBe(1);
+
+        const cancelled = await service.command(owner, created.snapshot.taskId, commandInput("cancel", resumed.snapshot.revision));
+        const cancelledRow = repository.tasks.get(created.snapshot.taskId)!;
+        expect(cancelled.snapshot.state).toBe("cancelled");
+        expect(cancelledRow.activeSlot).toBeNull();
+        expect(cancelledRow.terminalAt).toBeInstanceOf(Date);
+        expect(cancelledRow.expiresAt.getTime()).toBeLessThanOrEqual(Date.now() + 7 * 24 * 60 * 60 * 1000 + 1000);
+        expect(repository.events.size).toBe(5);
+    });
+
+    it("replays a command receipt and canonicalizes legacy choiceSetId", async () => {
+        const repository = new FakeTaskRepository();
+        const service = buildService(repository).service;
+        const created = await service.create(owner, createInput());
+        const eventId = randomUUID();
+        const first = await service.command(owner, created.snapshot.taskId, commandInput("pause", created.snapshot.revision, eventId));
+        const replay = await service.command(owner, created.snapshot.taskId, commandInput("pause", created.snapshot.revision, eventId));
+        expect(replay.receipt).toEqual(first.receipt);
+        expect(repository.tasks.get(created.snapshot.taskId)!.revision).toBe(first.snapshot.revision);
+
+        const choiceSetRef = randomUUID();
+        const optionId = randomUUID();
+        const task = makeTask({ draft: {
+            ...createEmptyAgentTaskDraft(randomUUID()),
+            choiceSets: [{ choiceSetRef, options: [{ optionId, label: "고객" }] }],
+            orderedChoiceRefs: [choiceSetRef],
+            server: { references: {
+                target: null,
+                choiceTargets: [{ choiceSetRef, optionId, clientId: 7 }],
+                phoneCandidates: {},
+            } },
+        } });
+        repository.tasks.set(task.taskId, task);
+        const client = makeClientRecord(7);
+        const withTarget = buildService(repository, { findByPhone: jest.fn().mockResolvedValue(null), findById: jest.fn().mockResolvedValue(client) }).service;
+        const selectEventId = randomUUID();
+        const selected = await withTarget.command(owner, task.taskId, commandInput("select-target", task.revision, selectEventId, { choiceSetId: choiceSetRef, optionId }));
+        const selectedReplay = await withTarget.command(owner, task.taskId, commandInput("select-target", selected.snapshot.revision - 1, selectEventId, { choiceSetRef, optionId }));
+        expect(selectedReplay.receipt).toEqual(selected.receipt);
+        expect(selected.snapshot.state).toBe("collecting");
+        expect(selected.snapshot.target).toEqual({ targetRef: choiceSetRef, version: clientAgentTargetVersion(client) });
+    });
+
+    it("rejects forged and mixed protected choices without consuming them", async () => {
+        const repository = new FakeTaskRepository();
+        const choiceSetRef = randomUUID();
+        const optionId = randomUUID();
+        const candidateRef = randomUUID();
+        const task = makeTask({ draft: {
+            ...createEmptyAgentTaskDraft(randomUUID()),
+            choiceSets: [{ choiceSetRef, options: [{ optionId, label: "고객" }, { optionId: candidateRef, label: "전화" }] }],
+            orderedChoiceRefs: [choiceSetRef],
+            server: { references: {
+                target: null,
+                choiceTargets: [{ choiceSetRef, optionId, clientId: 7 }],
+                phoneCandidates: { [choiceSetRef]: [{ candidateRef, normalizedPhone: "01012345678" }] },
+            } },
+        } });
+        repository.tasks.set(task.taskId, task);
+        const service = buildService(repository).service;
+        await expect(service.command(owner, task.taskId, commandInput("select-target", task.revision, randomUUID(), { choiceSetRef, optionId }))).rejects.toMatchObject({
+            response: expect.objectContaining({ code: "AGENT_TASK_CONFLICT", reason: "state" }),
+        });
+        await expect(service.command(owner, task.taskId, commandInput("select-target", task.revision, randomUUID(), { choiceSetRef, optionId: randomUUID() }))).rejects.toMatchObject({
+            response: expect.objectContaining({ code: "AGENT_TASK_CONFLICT", reason: "state" }),
+        });
+        expect(repository.tasks.get(task.taskId)!.draft.orderedChoiceRefs).toEqual([choiceSetRef]);
+        expect(repository.events.size).toBe(0);
+    });
+
+    it("selects a protected phone candidate and keeps it separate from customer targeting", async () => {
+        const repository = new FakeTaskRepository();
+        const choiceSetRef = randomUUID();
+        const candidateRef = randomUUID();
+        const task = makeTask({ draft: {
+            ...createEmptyAgentTaskDraft(randomUUID()),
+            choiceSets: [{ choiceSetRef, options: [{ optionId: candidateRef, label: "01012345678" }] }],
+            orderedChoiceRefs: [choiceSetRef],
+            server: { references: {
+                target: null,
+                choiceTargets: [],
+                phoneCandidates: { [choiceSetRef]: [{ candidateRef, normalizedPhone: "01012345678" }] },
+            } },
+        } });
+        repository.tasks.set(task.taskId, task);
+        const service = buildService(repository).service;
+        const result = await service.command(owner, task.taskId, commandInput("select-target", task.revision, randomUUID(), { choiceSetRef, optionId: candidateRef }));
+        expect(result.snapshot.confirmed.phone).toBe("01012345678");
+        expect(result.snapshot.target).toBeNull();
+        expect(result.snapshot.choiceSets).toEqual([]);
+        expect(repository.tasks.get(task.taskId)!.draft.server.references.phoneCandidates).toEqual({});
+    });
+
+    it("prepares review only after fresh readiness and makes the second call a no-op", async () => {
+        const repository = new FakeTaskRepository();
+        const { service, policy } = buildService(repository);
+        const created = await service.create(owner, createInput());
+        const prepared = await service.command(owner, created.snapshot.taskId, commandInput("prepare-review", created.snapshot.revision));
+        expect(prepared.snapshot.state).toBe("review_ready");
+        const before = repository.tasks.get(created.snapshot.taskId)!;
+        const noOp = await service.command(owner, created.snapshot.taskId, commandInput("prepare-review", prepared.snapshot.revision));
+        const after = repository.tasks.get(created.snapshot.taskId)!;
+        expect(noOp.snapshot.revision).toBe(prepared.snapshot.revision);
+        expect(after.draft.currentSnapshotRef).toBe(before.draft.currentSnapshotRef);
+        expect(after.expiresAt).toEqual(before.expiresAt);
+        expect(policy.assertCanPrepareReview).toHaveBeenCalledTimes(2);
+    });
+
+    it("discovers recovery ids independently from ordinary restore selection", async () => {
+        const repository = new FakeTaskRepository();
+        const recovery = makeTask({ status: "executing", activeActionId: randomUUID(), expiresAt: new Date(Date.now() - 1000) });
+        repository.tasks.set(recovery.taskId, recovery);
+        const service = buildService(repository).service;
+        await expect(service.restoreSession(owner, sessionId)).resolves.toEqual({
+            activeTaskId: null,
+            pausedTaskIds: [],
+            taskRestoreStatus: "available",
+            recoveryTaskIds: [recovery.taskId],
+        });
+        await expect(service.get(owner, recovery.taskId)).resolves.toMatchObject({ taskId: recovery.taskId });
     });
 
     it("maps storage failure and foreign ownership to bounded errors", async () => {

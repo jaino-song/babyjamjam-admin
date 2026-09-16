@@ -1,6 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.AgentTaskMutationResponseSchema = exports.AgentTaskEventReceiptSchema = exports.AgentTaskCommandNameSchema = exports.AgentTaskCommandRequestSchema = exports.AgentTaskSelectTargetCommandSchema = exports.AgentTaskPatchRequestSchema = exports.AgentTaskCreateRequestSchema = exports.AgentTaskSchema = exports.AgentAutomationConsentInputSchema = exports.AgentAutomationConsentSchema = exports.AgentAutomationConsentBindingSchema = exports.AgentTaskTimesSchema = exports.AgentTaskActionLinkSchema = exports.AgentTaskChoiceSetSchema = exports.AgentTaskChoiceOptionSchema = exports.AgentTaskTargetSchema = exports.AgentTaskTargetVersionSchema = exports.AgentTaskConstraintsSchema = exports.AgentTaskIssueSchema = exports.AgentTaskIssueSeveritySchema = exports.AgentTaskIssueCodeSchema = exports.AGENT_TASK_ISSUE_CODES = exports.AgentTaskProvenanceSchema = exports.AgentTaskFieldProvenanceSchema = exports.AgentTaskSourceSchema = exports.AgentTaskIsoDateTimeSchema = exports.AgentTaskEventHashSchema = exports.AgentTaskSnapshotRefSchema = exports.AgentTaskEventIdSchema = exports.AgentTaskIdSchema = exports.AgentTaskReferenceSchema = exports.AgentActionRevisionTokenSchema = exports.AgentTaskRevisionSchema = exports.AgentTaskStateSchema = exports.AgentTaskKindSchema = exports.AgentTaskCapabilityIdSchema = exports.AgentTaskSchemaVersionSchema = exports.AGENT_TASK_SCHEMA_VERSION = void 0;
+exports.AgentTaskRestoreMetadataSchema = exports.AgentTaskMutationResponseSchema = exports.AgentTaskEventReceiptSchema = exports.AgentTaskCommandNameSchema = exports.AgentTaskCommandRequestSchema = exports.AgentTaskSelectTargetCommandSchema = exports.AgentTaskPatchRequestSchema = exports.AgentTaskCreateRequestSchema = exports.AgentTaskSchema = exports.AgentAutomationConsentInputSchema = exports.AgentAutomationConsentSchema = exports.AgentAutomationConsentBindingSchema = exports.AgentTaskTimesSchema = exports.AgentTaskActionLinkSchema = exports.AgentTaskChoiceSetSchema = exports.AgentTaskChoiceOptionSchema = exports.AgentTaskTargetSchema = exports.AgentTaskTargetVersionSchema = exports.AgentTaskConstraintsSchema = exports.AgentTaskIssueSchema = exports.AgentTaskIssueSeveritySchema = exports.AgentTaskIssueCodeSchema = exports.AGENT_TASK_ISSUE_CODES = exports.AgentTaskProvenanceSchema = exports.AgentTaskFieldProvenanceSchema = exports.AgentTaskSourceSchema = exports.AgentTaskIsoDateTimeSchema = exports.AgentTaskEventHashSchema = exports.AgentTaskSnapshotRefSchema = exports.AgentTaskEventIdSchema = exports.AgentTaskIdSchema = exports.AgentTaskReferenceSchema = exports.AgentActionRevisionTokenSchema = exports.AgentTaskRevisionSchema = exports.AgentTaskRestoreStatusSchema = exports.AgentTaskStateSchema = exports.AgentTaskKindSchema = exports.AgentTaskCapabilityIdSchema = exports.AgentTaskSchemaVersionSchema = exports.AGENT_TASK_SCHEMA_VERSION = void 0;
 exports.createAgentTaskDefaults = createAgentTaskDefaults;
 const zod_1 = require("zod");
 const client_input_policy_1 = require("./client-input-policy");
@@ -19,6 +19,16 @@ exports.AgentTaskStateSchema = zod_1.z.enum([
     "completed",
     "failed",
     "cancelled",
+]);
+/**
+ * Session restore classification is deliberately independent from recovery
+ * task discovery.  A session may be available, archived, or expired while
+ * still exposing separately scoped unresolved task evidence.
+ */
+exports.AgentTaskRestoreStatusSchema = zod_1.z.enum([
+    "available",
+    "session_archived",
+    "session_expired",
 ]);
 /** Task revisions are persistence-safe ordered values, unlike action tokens. */
 exports.AgentTaskRevisionSchema = zod_1.z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
@@ -195,6 +205,16 @@ exports.AgentTaskEventReceiptSchema = zod_1.z.object({
     currentSnapshotRef: exports.AgentTaskSnapshotRefSchema,
 }).strict();
 exports.AgentTaskMutationResponseSchema = zod_1.z.object({ receipt: exports.AgentTaskEventReceiptSchema, snapshot: exports.AgentTaskSchema }).strict();
+/**
+ * Additive metadata returned alongside an owned session restore.  Older
+ * payloads that predate recovery discovery parse as an empty recovery list.
+ */
+exports.AgentTaskRestoreMetadataSchema = zod_1.z.object({
+    activeTaskId: exports.AgentTaskIdSchema.nullable(),
+    pausedTaskIds: zod_1.z.array(exports.AgentTaskIdSchema),
+    taskRestoreStatus: exports.AgentTaskRestoreStatusSchema,
+    recoveryTaskIds: zod_1.z.array(exports.AgentTaskIdSchema).default([]),
+}).strict();
 function createAgentTaskDefaults() {
     return { voucherClient: false, serviceStatus: "pre_booking" };
 }

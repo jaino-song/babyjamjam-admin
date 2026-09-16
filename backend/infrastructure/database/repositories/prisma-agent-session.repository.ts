@@ -22,6 +22,7 @@ type AgentSessionRecord = Prisma.agent_sessionGetPayload<{ include: { messages: 
 const ALWAYS_BLOCKING_ACTION_STATUSES = ["executing", "uncertain"];
 const EXPIRABLE_ACTION_STATUSES = ["proposed", "approved"];
 const TERMINAL_ACTION_STATUSES = ["succeeded", "failed", "uncertain", "rejected", "expired", "cancelled"];
+const TERMINAL_TASK_STATES = ["completed", "failed", "cancelled"];
 
 function blockingActionWhere(now: Date, owner?: AgentSessionOwner, includeUnpersistedTerminal = false) {
     const ownerScope = owner ? { userId: owner.userId, branchId: owner.branchId } : {};
@@ -33,6 +34,33 @@ function blockingActionWhere(now: Date, owner?: AgentSessionOwner, includeUnpers
         OR.push({ ...ownerScope, status: { in: TERMINAL_ACTION_STATUSES }, resultPartPersistedAt: null });
     }
     return { OR };
+}
+
+function blockingTaskWhere(now: Date, owner?: AgentSessionOwner) {
+    return {
+        ...(owner ? { userId: owner.userId, branchId: owner.branchId } : {}),
+        purgedAt: null,
+        expiresAt: { gt: now },
+        status: { notIn: TERMINAL_TASK_STATES },
+    };
+}
+
+/**
+ * Owner deletion retains the task tombstone boundary: an unpurged nonterminal
+ * task remains a blocking draft even after its draft TTL has elapsed.  The
+ * hourly task purge owns the transition to purgedAt before a session may be
+ * physically removed.
+ */
+function retainedTaskWhere(owner?: AgentSessionOwner) {
+    return {
+        ...(owner ? { userId: owner.userId, branchId: owner.branchId } : {}),
+        purgedAt: null,
+        status: { notIn: TERMINAL_TASK_STATES },
+    };
+}
+
+function anyRetainedTaskWhere() {
+    return { purgedAt: null };
 }
 
 function isUniqueConstraintError(error: unknown): boolean {
@@ -152,6 +180,22 @@ export class PrismaAgentSessionRepository implements IAgentSessionRepository {
             });
             if (blockingAction) return "blocked";
 
+            // A retained task draft is independently restorable even when no
+            // action has been created yet.  Archive must therefore hold the
+            // session lock and inspect the owned task boundary as well.  The
+            // optional delegate keeps existing lightweight repository tests
+            // compatible; production Prisma always exposes it.
+            const taskDelegate = (transaction as unknown as {
+                agent_task?: { findFirst: (input: unknown) => Promise<{ id: string } | null> };
+            }).agent_task;
+            if (taskDelegate) {
+                const blockingTask = await taskDelegate.findFirst({
+                    where: { sessionId: id, ...blockingTaskWhere(new Date(), owner) },
+                    select: { id: true },
+                });
+                if (blockingTask) return "blocked";
+            }
+
             await transaction.agent_session.updateMany({
                 where: { id, ...owner, archivedAt: null },
                 data: { archivedAt },
@@ -176,6 +220,64 @@ export class PrismaAgentSessionRepository implements IAgentSessionRepository {
 
     async deleteOwned(id: string, owner: AgentSessionOwner): Promise<AgentSessionDeleteResult> {
         const now = new Date();
+        const taskDelegate = (this.prisma as unknown as {
+            agent_task?: { findFirst: (input: unknown) => Promise<{ id: string } | null> };
+        }).agent_task;
+        const transaction = (this.prisma as unknown as {
+            $transaction?: <T>(callback: (transaction: unknown) => Promise<T>) => Promise<T>;
+        }).$transaction;
+        if (taskDelegate && transaction) {
+            return transaction.call(this.prisma, async (txUnknown) => {
+                const tx = txUnknown as {
+                    $queryRaw: <T>(query: Prisma.Sql) => Promise<T>;
+                    agent_session: {
+                        deleteMany: (input: unknown) => Promise<{ count: number }>;
+                    };
+                    agent_task: { findFirst: (input: unknown) => Promise<{ id: string } | null> };
+                    agent_action: { findFirst: (input: unknown) => Promise<{ id: string } | null> };
+                };
+                const locked = await tx.$queryRaw<Array<{ id: string }>>(Prisma.sql`
+                    SELECT "id"
+                    FROM "agent_session"
+                    WHERE "id" = ${id}
+                      AND "user_id" = CAST(${owner.userId} AS uuid)
+                      AND "branch_id" = CAST(${owner.branchId} AS uuid)
+                    FOR UPDATE
+                `);
+                if (locked.length === 0) return "not_found";
+
+                await tx.$queryRaw(Prisma.sql`
+                    SELECT "id"
+                    FROM "agent_task"
+                    WHERE "session_id" = ${id}
+                      AND "user_id" = CAST(${owner.userId} AS uuid)
+                      AND "branch_id" = CAST(${owner.branchId} AS uuid)
+                    ORDER BY "id" ASC
+                    FOR UPDATE
+                `);
+                await tx.$queryRaw(Prisma.sql`
+                    SELECT "id"
+                    FROM "agent_action"
+                    WHERE "session_id" = ${id}
+                      AND "user_id" = CAST(${owner.userId} AS uuid)
+                      AND "branch_id" = CAST(${owner.branchId} AS uuid)
+                    ORDER BY "id" ASC
+                    FOR UPDATE
+                `);
+                const blockingTask = await tx.agent_task.findFirst({
+                    where: { sessionId: id, ...retainedTaskWhere(owner) },
+                    select: { id: true },
+                });
+                if (blockingTask) return "blocked";
+                const blockingAction = await tx.agent_action.findFirst({
+                    where: { sessionId: id, ...owner, ...blockingActionWhere(now, owner, true) },
+                    select: { id: true },
+                });
+                if (blockingAction) return "blocked";
+                const deleted = await tx.agent_session.deleteMany({ where: { id, ...owner } });
+                return deleted.count === 1 ? "deleted" : "not_found";
+            }) as Promise<AgentSessionDeleteResult>;
+        }
         const result = await this.prisma.agent_session.deleteMany({
             where: {
                 id,
@@ -321,6 +423,63 @@ export class PrismaAgentSessionRepository implements IAgentSessionRepository {
     }
 
     async deleteExpired(now: Date): Promise<number> {
+        const taskDelegate = (this.prisma as unknown as {
+            agent_task?: { findFirst: (input: unknown) => Promise<{ id: string } | null> };
+        }).agent_task;
+        const transaction = (this.prisma as unknown as {
+            $transaction?: <T>(callback: (transaction: unknown) => Promise<T>) => Promise<T>;
+        }).$transaction;
+        if (taskDelegate && transaction) {
+            return transaction.call(this.prisma, async (txUnknown) => {
+                const tx = txUnknown as {
+                    $queryRaw: <T>(query: Prisma.Sql) => Promise<T>;
+                    agent_session: {
+                        deleteMany: (input: unknown) => Promise<{ count: number }>;
+                    };
+                    agent_task: { findFirst: (input: unknown) => Promise<{ id: string } | null> };
+                    agent_action: { findFirst: (input: unknown) => Promise<{ id: string } | null> };
+                };
+                const candidates = await tx.$queryRaw<Array<{ id: string; userId: string; branchId: string }>>(Prisma.sql`
+                    SELECT "id", "user_id" AS "userId", "branch_id" AS "branchId"
+                    FROM "agent_session"
+                    WHERE "expires_at" <= ${now}
+                    ORDER BY "id" ASC
+                    FOR UPDATE
+                `);
+                let deletedCount = 0;
+                for (const candidate of candidates) {
+                    await tx.$queryRaw(Prisma.sql`
+                        SELECT "id"
+                        FROM "agent_task"
+                        WHERE "session_id" = ${candidate.id}
+                        ORDER BY "id" ASC
+                        FOR UPDATE
+                    `);
+                    await tx.$queryRaw(Prisma.sql`
+                        SELECT "id"
+                        FROM "agent_action"
+                        WHERE "session_id" = ${candidate.id}
+                        ORDER BY "id" ASC
+                        FOR UPDATE
+                    `);
+                    const blockingTask = await tx.agent_task.findFirst({
+                        where: { sessionId: candidate.id, ...anyRetainedTaskWhere() },
+                        select: { id: true },
+                    });
+                    if (blockingTask) continue;
+                    const blockingAction = await tx.agent_action.findFirst({
+                        where: { sessionId: candidate.id, ...blockingActionWhere(now, undefined, true) },
+                        select: { id: true },
+                    });
+                    if (blockingAction) continue;
+                    const deleted = await tx.agent_session.deleteMany({
+                        where: { id: candidate.id, expiresAt: { lte: now } },
+                    });
+                    if (deleted.count === 1) deletedCount += 1;
+                }
+                return deletedCount;
+            }) as Promise<number>;
+        }
         return (await this.prisma.agent_session.deleteMany({
             where: {
                 expiresAt: { lte: now },

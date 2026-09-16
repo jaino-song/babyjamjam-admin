@@ -47,6 +47,26 @@ export type AgentTaskListResult =
     | { status: "session_expired"; session: AgentTaskSessionMetadata }
     | { status: "storage_failure" };
 
+/**
+ * Recovery reads are deliberately narrower than ordinary task reads.  They
+ * expose an owned task only when its opaque action link is backed by the same
+ * owner/session/task action row and that action still needs recovery.
+ */
+export type AgentTaskRecoveryReadResult =
+    | { status: "found"; task: AgentTaskEntity }
+    | { status: "not_found" }
+    | { status: "storage_failure" };
+
+export type AgentTaskRecoveryListResult =
+    | { status: "found"; taskIds: string[] }
+    | { status: "not_found" }
+    | { status: "storage_failure" };
+
+export type AgentTaskSessionRetentionResult =
+    | { status: "extended"; expiresAt: Date }
+    | { status: "unchanged"; expiresAt: Date }
+    | { status: "storage_failure" };
+
 export interface CreateAgentTaskInput {
     taskId: string;
     capabilityId: AgentTaskCapabilityId;
@@ -144,6 +164,11 @@ export interface AgentTaskTransaction {
     insertEvent(input: AgentTaskEventInput): Promise<AgentTaskEventInsertResult>;
     readTask(taskId: string): Promise<AgentTaskReadResult>;
     /**
+     * Monotonically extend the already-held owner-scoped session lock.  The
+     * adapter must apply GREATEST(current, minExpiry) in this transaction.
+     */
+    ensureSessionRetention(minExpiry: Date): Promise<AgentTaskSessionRetentionResult>;
+    /**
      * Abort the enclosing transaction after a write and return the supplied
      * domain value to the caller. Implementations must roll back before
      * exposing that value; no Prisma error or client leaks through this port.
@@ -160,7 +185,9 @@ export type AgentTaskTransactionResult<T> =
 
 export interface IAgentTaskRepository {
     findOwned(taskId: string, owner: AgentTaskOwner): Promise<AgentTaskReadResult>;
+    findOwnedRecovery(taskId: string, owner: AgentTaskOwner): Promise<AgentTaskRecoveryReadResult>;
     listOwned(session: AgentTaskSessionScope): Promise<AgentTaskListResult>;
+    listOwnedRecovery(scope: AgentTaskSessionScope): Promise<AgentTaskRecoveryListResult>;
     withTransaction<T>(
         scope: AgentTaskSessionScope,
         operation: (transaction: AgentTaskTransaction) => Promise<T>,
@@ -176,6 +203,8 @@ export interface IAgentTaskRepository {
         input: UpdateAgentTaskInput,
         event: AgentTaskEventInput,
     ): Promise<AgentTaskMutationResult>;
+    /** Run the guarded hourly payload purge for expired tasks. */
+    purgeExpired(now: Date): Promise<number>;
 }
 
 export const AGENT_TASK_REPOSITORY = Symbol("AGENT_TASK_REPOSITORY");

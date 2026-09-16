@@ -54,4 +54,24 @@ export class AgentTaskPolicyService {
         }
         return capability;
     }
+
+    /**
+     * Preparing a review is the rollout-gated lifecycle transition.  The
+     * ordinary draft command rules stay available to an authorized role even
+     * while the conversation task feature is rolled back.
+     */
+    async assertCanPrepareReview(
+        principal: VerifiedTenantPrincipal,
+        capabilityId: string,
+    ): Promise<AgentCapabilityMeta> {
+        const capability = this.capability(capabilityId);
+        const snapshot = await this.flags.getSnapshot();
+        if (
+            snapshot.config.capabilities["conversation.tasks"] !== true
+            || !this.flags.isCapabilityEnabledFromSnapshot(capability, principal, snapshot)
+        ) {
+            throw new ForbiddenException("Agent task review preparation unavailable");
+        }
+        return capability;
+    }
 }

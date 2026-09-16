@@ -25,6 +25,17 @@ export declare const AgentTaskStateSchema: z.ZodEnum<{
     reconciling: "reconciling";
 }>;
 export type AgentTaskState = z.infer<typeof AgentTaskStateSchema>;
+/**
+ * Session restore classification is deliberately independent from recovery
+ * task discovery.  A session may be available, archived, or expired while
+ * still exposing separately scoped unresolved task evidence.
+ */
+export declare const AgentTaskRestoreStatusSchema: z.ZodEnum<{
+    available: "available";
+    session_archived: "session_archived";
+    session_expired: "session_expired";
+}>;
+export type AgentTaskRestoreStatus = z.infer<typeof AgentTaskRestoreStatusSchema>;
 /** Task revisions are persistence-safe ordered values, unlike action tokens. */
 export declare const AgentTaskRevisionSchema: z.ZodNumber;
 export type AgentTaskRevision = z.infer<typeof AgentTaskRevisionSchema>;
@@ -702,4 +713,19 @@ export declare const AgentTaskMutationResponseSchema: z.ZodObject<{
     }, z.core.$strict>;
 }, z.core.$strict>;
 export type AgentTaskMutationResponse = z.infer<typeof AgentTaskMutationResponseSchema>;
+/**
+ * Additive metadata returned alongside an owned session restore.  Older
+ * payloads that predate recovery discovery parse as an empty recovery list.
+ */
+export declare const AgentTaskRestoreMetadataSchema: z.ZodObject<{
+    activeTaskId: z.ZodNullable<z.ZodUUID>;
+    pausedTaskIds: z.ZodArray<z.ZodUUID>;
+    taskRestoreStatus: z.ZodEnum<{
+        available: "available";
+        session_archived: "session_archived";
+        session_expired: "session_expired";
+    }>;
+    recoveryTaskIds: z.ZodDefault<z.ZodArray<z.ZodUUID>>;
+}, z.core.$strict>;
+export type AgentTaskRestoreMetadata = z.infer<typeof AgentTaskRestoreMetadataSchema>;
 export declare function createAgentTaskDefaults(): Pick<ClientWriteFields, "voucherClient" | "serviceStatus">;

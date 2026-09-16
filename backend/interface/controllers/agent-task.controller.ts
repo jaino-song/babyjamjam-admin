@@ -45,6 +45,17 @@ export class AgentTaskController {
         return this.tasks.patch(this.principal(request), id, dto);
     }
 
+    @Post(":id/commands")
+    command(
+        @Param("id") id: string,
+        @Body() dto: unknown,
+        @Req() request: AgentTaskRequest,
+        @Res({ passthrough: true }) response: Response,
+    ) {
+        response.setHeader("Cache-Control", "no-store");
+        return this.tasks.command(this.principal(request), id, dto);
+    }
+
     private principal(request: AgentTaskRequest): VerifiedTenantPrincipal {
         if (!request.tenant?.userId || !request.tenant.branchId) {
             throw new ForbiddenException("Verified tenant principal missing");

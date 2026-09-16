@@ -7,6 +7,7 @@ import {
     AgentTaskIssueCodeSchema,
     AgentTaskPatchPartSchema,
     AgentTaskPatchRequestSchema,
+    AgentTaskRestoreMetadataSchema,
     AgentTaskSchema,
     AgentTaskSafeSnapshotSchema,
     AgentTaskSnapshotEnvelopeSchema,
@@ -232,6 +233,25 @@ describe("conversational task contracts", () => {
             choice: "yes",
             binding: { recipientRef: IDS.phoneRef, effectDigest: HASH, templateRef: IDS.choiceSet, policyDigest: HASH, consentEventId: IDS.event1 },
         }).success).toBe(true);
+    });
+
+    it("parses restore metadata with an additive legacy recovery default", () => {
+        expect(AgentTaskRestoreMetadataSchema.parse({
+            activeTaskId: IDS.task,
+            pausedTaskIds: [IDS.event1],
+            taskRestoreStatus: "available",
+        })).toEqual({
+            activeTaskId: IDS.task,
+            pausedTaskIds: [IDS.event1],
+            taskRestoreStatus: "available",
+            recoveryTaskIds: [],
+        });
+        expect(AgentTaskRestoreMetadataSchema.parse({
+            activeTaskId: null,
+            pausedTaskIds: [],
+            taskRestoreStatus: "session_expired",
+            recoveryTaskIds: [IDS.task],
+        }).recoveryTaskIds).toEqual([IDS.task]);
     });
 
     it("projects every protected value as statuses and precise refs only", () => {

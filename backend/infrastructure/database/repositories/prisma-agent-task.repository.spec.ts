@@ -363,4 +363,104 @@ describe("PrismaAgentTaskRepository", () => {
         }));
         expect(result).toMatchObject({ status: "created", task: { draft: { clearedFields: ["address"] } } });
     });
+
+    it("returns only same-owner recovery tasks joined to a blocking action", async () => {
+        const record = taskRecord({ activeActionId: "action-a", expiresAt: new Date("2026-01-01T00:00:00.000Z") });
+        const prisma = {
+            $queryRaw: jest.fn().mockResolvedValue([{ taskId: TASK_ID }]),
+            agent_task: { findFirst: jest.fn().mockResolvedValue(record) },
+        };
+        const repository = new PrismaAgentTaskRepository(prisma as never);
+
+        await expect(repository.findOwnedRecovery(TASK_ID, owner)).resolves.toEqual({ status: "found", task: expect.objectContaining({ taskId: TASK_ID }) });
+        expect(prisma.agent_task.findFirst).toHaveBeenCalledWith(expect.objectContaining({
+            where: { id: TASK_ID, userId: USER_ID, branchId: BRANCH_ID, purgedAt: null },
+        }));
+    });
+
+    it("returns deterministic unique recovery IDs and keeps missing sessions distinct", async () => {
+        const prisma = {
+            $queryRaw: jest.fn().mockResolvedValue([{ taskId: "z" }, { taskId: "a" }, { taskId: "z" }]),
+            agent_session: { findFirst: jest.fn().mockResolvedValue({ id: SESSION_ID }) },
+        };
+        const repository = new PrismaAgentTaskRepository(prisma as never);
+
+        await expect(repository.listOwnedRecovery(scope)).resolves.toEqual({ status: "found", taskIds: ["a", "z"] });
+        prisma.agent_session.findFirst.mockResolvedValue(null);
+        await expect(repository.listOwnedRecovery(scope)).resolves.toEqual({ status: "not_found" });
+    });
+
+    it("purges only expired unblocked payloads and preserves canonical row tombstone fields", async () => {
+        const now = new Date("2026-09-17T00:00:00.000Z");
+        const oldDraft: AgentTaskDraft = {
+            ...draft(),
+            confirmed: { name: "sensitive" },
+            tentative: { phone: "01012345678" },
+            clearedFields: ["address"],
+            server: {
+                references: {
+                    target: { targetRef: "61000000-0000-4000-8000-000000000001", clientId: 99 },
+                    choiceTargets: [{ choiceSetRef: "62000000-0000-4000-8000-000000000001", optionId: "63000000-0000-4000-8000-000000000001", clientId: 99 }],
+                    phoneCandidates: { "64000000-0000-4000-8000-000000000001": [{ candidateRef: "65000000-0000-4000-8000-000000000001", normalizedPhone: "01012345678" }] },
+                },
+                actionExpectedRevision: "opaque-action-revision",
+                actionProposalRevision: 4,
+            },
+        };
+        const record = taskRecord({
+            draft: oldDraft,
+            status: "collecting",
+            activeSlot: 1,
+            activeActionId: null,
+            expiresAt: new Date("2026-09-16T00:00:00.000Z"),
+            terminalAt: null,
+            purgedAt: null,
+        });
+        const transaction = {
+            $queryRaw: jest.fn()
+                .mockResolvedValueOnce([{ id: TASK_ID, sessionId: SESSION_ID, userId: USER_ID, branchId: BRANCH_ID }])
+                .mockResolvedValueOnce([{ id: SESSION_ID }])
+                .mockResolvedValueOnce([{ id: TASK_ID }]),
+            agent_task: {
+                findUnique: jest.fn().mockResolvedValue(record),
+                updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+            },
+        };
+        const prisma = {
+            $transaction: jest.fn().mockImplementation(async (callback: (tx: typeof transaction) => Promise<number>) => callback(transaction)),
+        };
+        const repository = new PrismaAgentTaskRepository(prisma as never);
+
+        await expect(repository.purgeExpired(now)).resolves.toBe(1);
+        const update = transaction.agent_task.updateMany.mock.calls[0]?.[0];
+        expect(update.where).toEqual(expect.objectContaining({ id: TASK_ID, sessionId: SESSION_ID, purgedAt: null }));
+        expect(update.data).toEqual(expect.objectContaining({ activeSlot: null, targetVersion: null, purgedAt: now, updatedAt: now }));
+        const purgedDraft = update.data.draft as Record<string, unknown>;
+        expect(purgedDraft["confirmed"]).toEqual({});
+        expect(purgedDraft["tentative"]).toEqual({});
+        expect(purgedDraft["clearedFields"]).toEqual([]);
+        expect(purgedDraft["server"]).toEqual({ references: { target: null, choiceTargets: [], phoneCandidates: {} } });
+        expect(purgedDraft["currentSnapshotRef"]).toEqual(expect.any(String));
+    });
+
+    it.each(["executing", "uncertain"])("retains an expired task with a %s linked action", async (status) => {
+        const now = new Date("2026-09-17T00:00:00.000Z");
+        const record = taskRecord({ activeActionId: "action-a", expiresAt: new Date("2026-09-16T00:00:00.000Z") });
+        const transaction = {
+            $queryRaw: jest.fn()
+                .mockResolvedValueOnce([{ id: TASK_ID, sessionId: SESSION_ID, userId: USER_ID, branchId: BRANCH_ID }])
+                .mockResolvedValueOnce([{ id: SESSION_ID }])
+                .mockResolvedValueOnce([{ id: TASK_ID }])
+                .mockResolvedValueOnce([{
+                    id: "action-a", taskId: TASK_ID, sessionId: SESSION_ID, userId: USER_ID, branchId: BRANCH_ID,
+                    status, expiresAt: new Date("2026-09-01T00:00:00.000Z"), resultPartPersistedAt: null,
+                }]),
+            agent_task: { findUnique: jest.fn().mockResolvedValue(record), updateMany: jest.fn() },
+        };
+        const prisma = { $transaction: jest.fn().mockImplementation(async (callback: (tx: typeof transaction) => Promise<number>) => callback(transaction)) };
+        const repository = new PrismaAgentTaskRepository(prisma as never);
+
+        await expect(repository.purgeExpired(now)).resolves.toBe(0);
+        expect(transaction.agent_task.updateMany).not.toHaveBeenCalled();
+    });
 });
