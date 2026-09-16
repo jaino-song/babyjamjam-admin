@@ -3,6 +3,7 @@ export const SERVICE_END_NOTICE_SMS_LOG_TEMPLATE_KEY = "service_end_notice_sms";
 export const SERVICE_END_NOTICE_SMS_AUTOMATION_KEY = "SERVICE_END_NOTICE_SMS";
 export const SERVICE_END_NOTICE_SMS_TITLE = "서비스 종료 안내";
 export const SERVICE_END_NOTICE_SMS_TRIGGER_TYPE = "service_end_notice";
+export const SERVICE_END_NOTICE_ALREADY_SENT_CANCEL_REASON = "서비스 종료 안내가 이미 발송됨";
 
 export const SERVICE_END_NOTICE_DEFAULT_CONTENT = `[사회서비스 제공자 품질평가 A등급]
 안녕하세요, 인천 아이미래로 입니다 :)

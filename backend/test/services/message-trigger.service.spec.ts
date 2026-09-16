@@ -1599,6 +1599,67 @@ describe("MessageTriggerService", () => {
         expect(jobRepository.update).toHaveBeenCalledWith(job);
     });
 
+    it("cancels a queued automatic service-end notice when the client was already notified", async () => {
+        const dispatcher = createDispatchService();
+        const job = createJob({
+            clientId: 7,
+            templateKey: MessageTriggerTemplateKey.SERVICE_END_NOTICE,
+            dedupeKey: "rule-service-end-notice:client:7:CLIENT:2026-09-16T03:00:00.000Z",
+        });
+        dispatcher.jobRepository.findDuePendingSystemScope.mockResolvedValue([job]);
+        dispatcher.claimedJobRead.mockResolvedValue(job);
+        dispatcher.transaction.$queryRaw
+            .mockResolvedValueOnce([{ service_end_notice_sent_at: new Date("2026-09-15T03:00:00.000Z") }])
+            .mockResolvedValueOnce([{ status: "processing", claim_token: "claim-a" }])
+            .mockResolvedValueOnce([{ id: job.id }]);
+
+        await dispatcher.service.dispatchDueJobs();
+
+        expect(dispatcher.deliveryService.sendJob).not.toHaveBeenCalled();
+        expect(job.status).toBe("canceled");
+        expect(job.cancelReason).toBe("서비스 종료 안내가 이미 발송됨");
+    });
+
+    it("still allows an explicitly requested manual service-end notice", async () => {
+        const dispatcher = createDispatchService();
+        const job = createJob({
+            clientId: 7,
+            templateKey: MessageTriggerTemplateKey.SERVICE_END_NOTICE,
+            dedupeKey: "system:service_end_notice:client:7:manual:request-1",
+        });
+        dispatcher.jobRepository.findDuePendingSystemScope.mockResolvedValue([job]);
+        dispatcher.claimedJobRead.mockResolvedValue(job);
+
+        await dispatcher.service.dispatchDueJobs();
+
+        expect(dispatcher.deliveryService.sendJob).toHaveBeenCalledWith(job);
+        expect(job.status).toBe("sent");
+    });
+
+    it("blocks an already-sent automatic service-end notice before receipt-link preparation", async () => {
+        const dispatcher = createDispatchService();
+        const job = createJob({
+            clientId: 7,
+            templateKey: MessageTriggerTemplateKey.SERVICE_END_NOTICE,
+            dedupeKey: "rule-service-end-notice:client:7:CLIENT:2026-09-16T03:00:00.000Z",
+        });
+        const prepareJob = jest.fn();
+        const sendPreparedJob = jest.fn();
+        Object.assign(dispatcher.deliveryService, { prepareJob, sendPreparedJob });
+        dispatcher.jobRepository.findDuePendingSystemScope.mockResolvedValue([job]);
+        dispatcher.claimedJobRead.mockResolvedValue(job);
+        dispatcher.transaction.$queryRaw.mockResolvedValueOnce([{
+            service_end_notice_sent_at: new Date("2026-09-15T03:00:00.000Z"),
+        }]);
+
+        await dispatcher.service.dispatchDueJobs();
+
+        expect(prepareJob).not.toHaveBeenCalled();
+        expect(sendPreparedJob).not.toHaveBeenCalled();
+        expect(job.status).toBe("canceled");
+        expect(job.cancelReason).toBe("서비스 종료 안내가 이미 발송됨");
+    });
+
     it("leaves initial pending jobs untouched while branch dispatch is disabled", async () => {
         const systemSettingService = {
             getMessageSettingsPolicyEnabled: jest.fn().mockResolvedValue(false),
@@ -3088,6 +3149,7 @@ describe("MessageTriggerService", () => {
         type: string | null;
         startDate: Date | null;
         endDate: Date | null;
+        serviceEndNoticeSentAt: Date | null;
         createdAt: Date | null;
     }> = {}) => {
         const ruleRepository = {
@@ -3130,6 +3192,7 @@ describe("MessageTriggerService", () => {
                     type: null,
                     startDate: null,
                     endDate: null,
+                    serviceEndNoticeSentAt: null,
                     createdAt: new Date("2026-06-27T00:00:00.000Z"),
                     ...clientOverrides,
                 }),
@@ -3438,6 +3501,25 @@ describe("MessageTriggerService", () => {
         const persistedJob = recreated.jobRepository.upsertPending.mock.calls[0]?.[0];
         expect(persistedJob?.clientId).toBe(42);
         expect(persistedJob?.dedupeKey).toContain(":client:42:");
+    });
+
+    it("does not enqueue an automatic service-end notice after one was already sent", async () => {
+        const serviceEndNoticeRule = createRule({
+            id: "rule-service-end-notice",
+            eventType: MessageTriggerEventType.SERVICE_END,
+            offsetType: MessageTriggerOffsetType.BEFORE_DAYS,
+            offsetDays: 0,
+            templateKey: MessageTriggerTemplateKey.SERVICE_END_NOTICE,
+        });
+        const sync = createSyncService({
+            endDate: new Date("2026-08-01T00:00:00.000Z"),
+            serviceEndNoticeSentAt: new Date("2026-07-31T03:00:00.000Z"),
+        });
+        sync.ruleRepository.findActiveByEventTypes.mockResolvedValue([serviceEndNoticeRule]);
+
+        await sync.service.syncClientRulesForClient(branchId, 1, true);
+
+        expect(sync.jobRepository.upsertPending).not.toHaveBeenCalled();
     });
 
     it("rebuildJobsForRule is a no-op for an unapproved branch", async () => {

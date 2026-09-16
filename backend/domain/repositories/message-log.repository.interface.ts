@@ -1,5 +1,12 @@
 import { MessageLogEntity } from "domain/entities/message-log.entity";
 
+export type MessageRetryInvocation = "automatic" | "manual";
+
+export type MessageRetryStartResult =
+    | { kind: "started"; log: MessageLogEntity }
+    | { kind: "suppressed"; log: MessageLogEntity }
+    | { kind: "lost" };
+
 export interface IMessageLogRepository {
     save(log: MessageLogEntity): Promise<MessageLogEntity>;
     update(log: MessageLogEntity): Promise<MessageLogEntity>;
@@ -21,7 +28,8 @@ export interface IMessageLogRepository {
     startRetryAttempt(
         sourceLog: MessageLogEntity,
         retryLog: MessageLogEntity,
-    ): Promise<MessageLogEntity | null>;
+        invocation: MessageRetryInvocation,
+    ): Promise<MessageRetryStartResult>;
     findByIdInBranch(branchId: string, id: number): Promise<MessageLogEntity | null>;
     findSentTriggerJobIdsSystemScope(jobIds: string[]): Promise<Set<string>>;
     findUncertainTriggerJobIdsSystemScope(jobIds: string[]): Promise<Set<string>>;
