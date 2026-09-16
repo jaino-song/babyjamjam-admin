@@ -111,6 +111,8 @@ describe("service-record revision proxy routes", () => {
         );
 
         expect(response.status).toBe(status);
-        await expect(response.json()).resolves.toEqual({ code: `REVISION_${status}` });
+        // errorResponse passes the legacy upstream `code` through and adds the
+        // ko-KR status copy as the compatibility `error` alias.
+        await expect(response.json()).resolves.toMatchObject({ code: `REVISION_${status}` });
     });
 });

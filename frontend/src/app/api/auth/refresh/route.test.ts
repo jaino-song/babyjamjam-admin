@@ -64,18 +64,18 @@ describe("POST /api/auth/refresh", () => {
         );
     });
 
-    it("returns 401 without contacting the backend when the refresh cookie is missing", async () => {
+    it("returns a registered 401 problem body without contacting the backend when the refresh cookie is missing", async () => {
         const response = await POST(createRequest("auto_login=1"));
 
         expect(response.status).toBe(401);
-        await expect(response.json()).resolves.toEqual({
-            error: "Session refresh required",
-            code: "AUTH_REFRESH_REQUIRED",
-        });
+        expect(response.headers.get("Content-Type")).toBe("application/problem+json");
+        const body = await response.json();
+        expect(body).toMatchObject({ code: "AUTH_REQUIRED", status: 401 });
+        expect(body.requestId).toBe(response.headers.get("X-Request-Id"));
         expect(mockServerPost).not.toHaveBeenCalled();
     });
 
-    it("clears the local session when the refresh token is rejected", async () => {
+    it("clears the local session with a registered 401 problem body when the refresh token is rejected", async () => {
         mockServerPost.mockRejectedValue({ response: { status: 401, data: { error: "Unauthorized" } } });
 
         const response = await POST(createRequest());
@@ -84,10 +84,9 @@ describe("POST /api/auth/refresh", () => {
         expect(cookieStore.delete).toHaveBeenCalledWith("auth_token");
         expect(cookieStore.delete).toHaveBeenCalledWith("refresh_token");
         expect(cookieStore.delete).toHaveBeenCalledWith("auto_login");
-        await expect(response.json()).resolves.toEqual({
-            error: "Session refresh failed",
-            code: "AUTH_REFRESH_FAILED",
-        });
+        const body = await response.json();
+        expect(body).toMatchObject({ code: "AUTH_REQUIRED", status: 401 });
+        expect(body).not.toHaveProperty("recovery");
     });
 
     it("clears the local session when upstream answers without a usable token pair", async () => {
@@ -101,22 +100,33 @@ describe("POST /api/auth/refresh", () => {
         expect(response.status).toBe(401);
         expect(cookieStore.delete).toHaveBeenCalledWith("auth_token");
         expect(cookieStore.delete).toHaveBeenCalledWith("refresh_token");
-        await expect(response.json()).resolves.toEqual({
-            error: "Session refresh failed",
-            code: "AUTH_REFRESH_FAILED",
-        });
+        await expect(response.json()).resolves.toMatchObject({ code: "AUTH_REQUIRED" });
     });
 
-    it("keeps session cookies on a transient upstream failure", async () => {
+    it("keeps session cookies and the upstream status on a transient upstream failure", async () => {
         mockServerPost.mockRejectedValue({ response: { status: 503 } });
 
         const response = await POST(createRequest());
 
-        expect(response.status).toBe(502);
+        expect(response.status).toBe(503);
+        const body = await response.json();
+        expect(body).toMatchObject({ code: "DEPENDENCY_UNAVAILABLE", status: 503 });
         expect(cookieStore.delete).not.toHaveBeenCalled();
-        await expect(response.json()).resolves.toEqual({
-            error: "Session refresh failed",
-            code: "AUTH_REFRESH_FAILED",
+    });
+
+    it("reports an unconfirmable transport failure with CHECK_STATUS recovery", async () => {
+        mockServerPost.mockRejectedValue(new Error("socket hang up"));
+
+        const response = await POST(createRequest());
+
+        expect(response.status).toBe(502);
+        const body = await response.json();
+        expect(body).toMatchObject({
+            code: "UPSTREAM_INVALID_RESPONSE",
+            status: 502,
+            outcome: "UNKNOWN",
         });
+        expect(body.recovery).toMatchObject({ action: "CHECK_STATUS" });
+        expect(cookieStore.delete).not.toHaveBeenCalled();
     });
 });

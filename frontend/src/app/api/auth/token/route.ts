@@ -1,14 +1,16 @@
 import { cookies } from "next/headers";
-import { NextResponse, NextRequest } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { serverAPIClient } from "@/lib/api/server";
 import { AxiosError } from "axios";
+import {
+    errorResponse,
+    invalidJsonResponse,
+    localValidationProblemResponse,
+    logUpstreamError,
+    readJsonObjectBody,
+    upstreamStatusProblemResponse,
+} from "@/lib/api/route-utils";
 import { clearAuthSessionCookies, setAuthSessionCookies } from "@/lib/auth/session-cookies";
-
-interface APIErrorResponse {
-    statusCode: number;
-    message: string;
-    error: string;
-}
 
 interface TokenExchangeSuccessResponse {
     accessToken: string;
@@ -54,20 +56,19 @@ function isAccountOnboardingResponse(data: TokenExchangeResponse): data is Token
 
 export async function POST(request: NextRequest) {
     try {
-        const { code } = await request.json();
+        const { code } = await readJsonObjectBody(request);
 
-        if (!code) {
+        if (typeof code !== "string" || code.length === 0) {
             console.error("[Token Exchange] No code provided");
-            return NextResponse.json({ error: "Authorization Code Required" }, { status: 400 });
+            return localValidationProblemResponse([
+                { pointer: "/code", code: "REQUIRED", detail: "Invalid input", location: "body" },
+            ]);
         }
 
         const response = await serverAPIClient.post<TokenExchangeResponse>("/auth/token", { code });
 
         if (response.status >= 400) {
-            const message = typeof response.data === "object" && response.data && "message" in response.data
-                ? String(response.data.message)
-                : "Token Exchange Failed";
-            return NextResponse.json({ error: message }, { status: response.status });
+            return errorResponse({ response }, "exchange authorization code");
         }
 
         const { data } = response;
@@ -117,7 +118,7 @@ export async function POST(request: NextRequest) {
         }, { status: 200 });
     } catch (error) {
         console.error("Token Exchange Error:", error);
-        console.error("Backend URL:", serverAPIClient.defaults.baseURL);
+        console.error("Backend URL:", serverAPIClient.defaults?.baseURL);
         console.error("Environment:", process.env.NODE_ENV);
 
         if (error instanceof Error) {
@@ -129,35 +130,26 @@ export async function POST(request: NextRequest) {
         }
 
         if (error instanceof AxiosError) {
-            const axiosError = error as AxiosError<APIErrorResponse>;
             console.error("Axios Error Details:", {
-                message: axiosError.message,
-                code: axiosError.code,
-                status: axiosError.response?.status,
-                statusText: axiosError.response?.statusText,
-                data: axiosError.response?.data,
-                url: axiosError.config?.url,
-                baseURL: axiosError.config?.baseURL,
-                timeout: axiosError.config?.timeout,
+                message: error.message,
+                code: error.code,
+                status: error.response?.status,
+                statusText: error.response?.statusText,
             });
 
-            if (axiosError.code === 'ECONNABORTED' || axiosError.message === 'Network Error') {
+            if (error.code === "ECONNABORTED" || error.message === "Network Error") {
                 console.error("[Token Exchange] Cannot reach backend server");
-                console.error("[Token Exchange] Backend might be down or unreachable from Vercel");
-                return NextResponse.json({
-                    error: "Backend server unreachable. Please try again later.",
-                    details: "The authentication server is currently unavailable."
-                }, { status: 503 });
+                logUpstreamError("exchange authorization code", error);
+                // Transport failure: whether the exchange applied is unconfirmable.
+                return upstreamStatusProblemResponse(503, "exchange authorization code", "UNKNOWN");
             }
 
-            const status = axiosError.response?.status || 500;
-            const message = axiosError.response?.data?.message || "Token Exchange Failed";
-            return NextResponse.json({ error: message }, { status });
+            return errorResponse(error, "exchange authorization code");
         }
 
-        return NextResponse.json({
-            error: "Internal Server Error",
-            details: error instanceof Error ? error.message : "Unknown error"
-        }, { status: 500 });
+        const invalidJson = invalidJsonResponse(error);
+        if (invalidJson) return invalidJson;
+
+        return errorResponse(error, "exchange authorization code");
     }
 }

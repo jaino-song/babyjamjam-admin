@@ -212,7 +212,9 @@ describe("service-record draft proxy routes", () => {
         );
 
         expect(response.status).toBe(status);
-        await expect(response.json()).resolves.toEqual({ code: `DRAFT_${status}` });
+        // errorResponse passes the legacy upstream `code` through and adds the
+        // ko-KR status copy as the compatibility `error` alias.
+        await expect(response.json()).resolves.toMatchObject({ code: `DRAFT_${status}` });
     });
 
     it.each([
@@ -250,7 +252,17 @@ describe("service-record draft proxy routes", () => {
                 );
 
         expect(response.status).toBe(400);
-        await expect(response.json()).resolves.toEqual({ error: "Invalid JSON body" });
+        if (operation === "start" || operation === "discard") {
+            // start/discard still speak the raw proxy convention.
+            await expect(response.json()).resolves.toEqual({ error: "Invalid JSON body" });
+        } else {
+            // update/preview use the shared validation problem contract.
+            await expect(response.json()).resolves.toMatchObject({
+                code: "VALIDATION_FAILED",
+                outcome: "NOT_APPLIED",
+                error: "Request body must be valid JSON",
+            });
+        }
         expect(mockPost).not.toHaveBeenCalled();
         expect(mockPatch).not.toHaveBeenCalled();
     });

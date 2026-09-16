@@ -26,6 +26,11 @@ describe("GET /api/area-templates/available-areas", () => {
     );
 
     expect(response.status).toBe(401);
+    expect(response.headers.get("Content-Type")).toBe("application/problem+json");
+    await expect(response.json()).resolves.toMatchObject({
+      code: "AUTH_REQUIRED",
+      status: 401,
+    });
     expect(mockGet).not.toHaveBeenCalled();
   });
 
