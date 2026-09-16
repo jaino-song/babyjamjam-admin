@@ -78,6 +78,37 @@ describe("PrismaAgentSessionRepository", () => {
         });
     });
 
+    it("projects principal metadata out of transactional owner query scopes", async () => {
+        const ownerWithRoles = { ...owner, globalRole: "admin", branchRole: "manager" };
+        const actionFindFirst = jest.fn().mockResolvedValue(null);
+        const sessionDeleteMany = jest.fn().mockResolvedValue({ count: 1 });
+        const transactionClient = {
+            $queryRaw: jest.fn().mockResolvedValue([{ id: "session-a" }]),
+            agent_session: { deleteMany: sessionDeleteMany },
+            agent_task: { findFirst: jest.fn().mockResolvedValue(null) },
+            agent_action: { findFirst: actionFindFirst },
+        };
+        const prisma = {
+            agent_task: { findFirst: jest.fn() },
+            $transaction: jest.fn().mockImplementation(async (callback: (client: typeof transactionClient) => Promise<unknown>) => callback(transactionClient)),
+        };
+        const repository = new PrismaAgentSessionRepository(prisma as never);
+
+        await expect(repository.deleteOwned("session-a", ownerWithRoles)).resolves.toBe("deleted");
+
+        const actionWhere = actionFindFirst.mock.calls[0]?.[0].where;
+        expect(actionWhere).toEqual(expect.objectContaining({
+            sessionId: "session-a",
+            userId: owner.userId,
+            branchId: owner.branchId,
+        }));
+        expect(actionWhere).not.toHaveProperty("globalRole");
+        expect(actionWhere).not.toHaveProperty("branchRole");
+        expect(sessionDeleteMany).toHaveBeenCalledWith({
+            where: { id: "session-a", userId: owner.userId, branchId: owner.branchId },
+        });
+    });
+
     it("preserves an explicit title and assigns deterministic message timestamps", async () => {
         const transaction = jest.fn().mockImplementation(async (operations: Array<Promise<unknown>>) => Promise.all(operations));
         const prisma = {

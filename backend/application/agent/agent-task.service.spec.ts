@@ -108,6 +108,7 @@ function makeConsentBinding() {
 class FakeTaskRepository {
     readonly tasks = new Map<string, AgentTaskEntity>();
     readonly events = new Map<string, AgentTaskEventEntity>();
+    readonly createInputs: any[] = [];
     session = { expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000), archivedAt: null as Date | null };
 
     private scoped(task: AgentTaskEntity, scope: { userId: string; branchId: string; sessionId: string }) {
@@ -213,6 +214,7 @@ class FakeTaskRepository {
                     : { status: "not_found" } as const;
             },
             createTask: async (input: any) => {
+                this.createInputs.push(input);
                 const task = makeTask({
                     taskId: input.taskId,
                     sessionId: scope.sessionId,
@@ -223,6 +225,7 @@ class FakeTaskRepository {
                     revision: input.revision ?? 1,
                     status: input.status ?? "collecting",
                     activeSlot: input.status === "collecting" || input.status === "confirming_target" || input.status === "review_ready" ? 1 : null,
+                    lastAcceptedAt: input.lastAcceptedAt ?? new Date(),
                     expiresAt: input.expiresAt,
                 });
                 this.tasks.set(task.taskId, task);
@@ -335,6 +338,20 @@ describe("AgentTaskService", () => {
         expect(created.receipt).toEqual(replay.receipt);
         expect(replay.snapshot.taskId).toBe(created.snapshot.taskId);
         expect(repository.tasks.size).toBe(1);
+    });
+
+    it("anchors the initial retention deadline to the accepted event instant", async () => {
+        const repository = new FakeTaskRepository();
+        const service = buildService(repository).service;
+        const eventId = randomUUID();
+
+        const created = await service.create(owner, createInput(eventId));
+        const task = repository.tasks.get(created.snapshot.taskId)!;
+        const event = repository.events.get(eventId)!;
+
+        expect(repository.createInputs[0].lastAcceptedAt).toEqual(event.acceptedAt);
+        expect(task.lastAcceptedAt).toEqual(event.acceptedAt);
+        expect(task.expiresAt.getTime() - task.lastAcceptedAt.getTime()).toBe(30 * 24 * 60 * 60 * 1000);
     });
 
     it("rejects a reused event id with a different semantic payload and no receipt", async () => {

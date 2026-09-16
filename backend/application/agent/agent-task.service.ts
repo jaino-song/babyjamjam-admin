@@ -184,6 +184,11 @@ export class AgentTaskService {
             capabilityId: input.capabilityId,
             draft,
             status: input.capabilityId === "clients.update" ? "confirming_target" : "collecting",
+            // Keep the row's acceptance timestamp and its retention deadline
+            // anchored to the same instant.  The repository otherwise falls
+            // back to the database clock for lastAcceptedAt, which can make
+            // the exact retention interval drift by a few milliseconds.
+            lastAcceptedAt: now,
             expiresAt: new Date(now.getTime() + TASK_RETENTION_MS),
         }, {
             clientEventId: input.clientEventId,

@@ -24,6 +24,10 @@ const EXPIRABLE_ACTION_STATUSES = ["proposed", "approved"];
 const TERMINAL_ACTION_STATUSES = ["succeeded", "failed", "uncertain", "rejected", "expired", "cancelled"];
 const TERMINAL_TASK_STATES = ["completed", "failed", "cancelled"];
 
+function ownerScope(owner: AgentSessionOwner) {
+    return { userId: owner.userId, branchId: owner.branchId };
+}
+
 function blockingActionWhere(now: Date, owner?: AgentSessionOwner, includeUnpersistedTerminal = false) {
     const ownerScope = owner ? { userId: owner.userId, branchId: owner.branchId } : {};
     const OR: Prisma.agent_actionWhereInput[] = [
@@ -100,7 +104,7 @@ export class PrismaAgentSessionRepository implements IAgentSessionRepository {
 
     async list(owner: AgentSessionOwner): Promise<AgentSessionSummary[]> {
         const records = await this.prisma.agent_session.findMany({
-            where: { ...owner, archivedAt: null, expiresAt: { gt: new Date() } },
+            where: { ...ownerScope(owner), archivedAt: null, expiresAt: { gt: new Date() } },
             select: {
                 id: true,
                 userId: true,
@@ -122,7 +126,7 @@ export class PrismaAgentSessionRepository implements IAgentSessionRepository {
 
     async findOwned(id: string, owner: AgentSessionOwner): Promise<AgentSessionEntity | null> {
         const record = await this.prisma.agent_session.findFirst({
-            where: { id, ...owner, archivedAt: null, expiresAt: { gt: new Date() } },
+            where: { id, ...ownerScope(owner), archivedAt: null, expiresAt: { gt: new Date() } },
             include: { messages: true },
         });
         return record ? toEntity(record) : null;
@@ -130,7 +134,7 @@ export class PrismaAgentSessionRepository implements IAgentSessionRepository {
 
     async findOwnedForRestore(id: string, owner: AgentSessionOwner): Promise<AgentSessionEntity | null> {
         const record = await this.prisma.agent_session.findFirst({
-            where: { id, ...owner },
+            where: { id, ...ownerScope(owner) },
             include: { messages: true },
         });
         return record ? toEntity(record) : null;
@@ -145,10 +149,10 @@ export class PrismaAgentSessionRepository implements IAgentSessionRepository {
             ...patch,
             selectedEntities: patch.selectedEntities as Prisma.InputJsonValue | undefined,
         };
-        const result = await this.prisma.agent_session.updateMany({ where: { id, ...owner }, data });
+        const result = await this.prisma.agent_session.updateMany({ where: { id, ...ownerScope(owner) }, data });
         if (result.count !== 1) return null;
         const record = await this.prisma.agent_session.findFirst({
-            where: { id, ...owner, expiresAt: { gt: new Date() } },
+            where: { id, ...ownerScope(owner), expiresAt: { gt: new Date() } },
             include: { messages: true },
         });
         return record ? toEntity(record) : null;
@@ -173,7 +177,7 @@ export class PrismaAgentSessionRepository implements IAgentSessionRepository {
             const blockingAction = await transaction.agent_action.findFirst({
                 where: {
                     sessionId: id,
-                    ...owner,
+                    ...ownerScope(owner),
                     ...blockingActionWhere(new Date()),
                 },
                 select: { id: true },
@@ -197,7 +201,7 @@ export class PrismaAgentSessionRepository implements IAgentSessionRepository {
             }
 
             await transaction.agent_session.updateMany({
-                where: { id, ...owner, archivedAt: null },
+                where: { id, ...ownerScope(owner), archivedAt: null },
                 data: { archivedAt },
             });
             return "archived";
@@ -206,13 +210,13 @@ export class PrismaAgentSessionRepository implements IAgentSessionRepository {
 
     async unarchiveOwned(id: string, owner: AgentSessionOwner): Promise<AgentSessionUnarchiveResult> {
         const result = await this.prisma.agent_session.updateMany({
-            where: { id, ...owner, archivedAt: { not: null } },
+            where: { id, ...ownerScope(owner), archivedAt: { not: null } },
             data: { archivedAt: null },
         });
         if (result.count === 1) return "unarchived";
 
         const session = await this.prisma.agent_session.findFirst({
-            where: { id, ...owner },
+            where: { id, ...ownerScope(owner) },
             select: { id: true },
         });
         return session ? "unarchived" : "not_found";
@@ -270,23 +274,23 @@ export class PrismaAgentSessionRepository implements IAgentSessionRepository {
                 });
                 if (blockingTask) return "blocked";
                 const blockingAction = await tx.agent_action.findFirst({
-                    where: { sessionId: id, ...owner, ...blockingActionWhere(now, owner, true) },
+                    where: { sessionId: id, ...ownerScope(owner), ...blockingActionWhere(now, owner, true) },
                     select: { id: true },
                 });
                 if (blockingAction) return "blocked";
-                const deleted = await tx.agent_session.deleteMany({ where: { id, ...owner } });
+                const deleted = await tx.agent_session.deleteMany({ where: { id, ...ownerScope(owner) } });
                 return deleted.count === 1 ? "deleted" : "not_found";
             }) as Promise<AgentSessionDeleteResult>;
         }
         const result = await this.prisma.agent_session.deleteMany({
             where: {
                 id,
-                ...owner,
+                ...ownerScope(owner),
                 actions: { none: blockingActionWhere(now, owner, true) },
             },
         });
         if (result.count === 1) return "deleted";
-        const session = await this.prisma.agent_session.findFirst({ where: { id, ...owner }, select: { id: true } });
+        const session = await this.prisma.agent_session.findFirst({ where: { id, ...ownerScope(owner) }, select: { id: true } });
         return session ? "blocked" : "not_found";
     }
 
@@ -296,7 +300,7 @@ export class PrismaAgentSessionRepository implements IAgentSessionRepository {
         messages: BjjUIMessage[],
         traceId?: string,
     ): Promise<boolean> {
-        const session = await this.prisma.agent_session.findFirst({ select: { id: true, title: true }, where: { id, ...owner } });
+        const session = await this.prisma.agent_session.findFirst({ select: { id: true, title: true }, where: { id, ...ownerScope(owner) } });
         if (!session) return false;
         const title = this.titleFromMessages(messages);
         const timestamp = Date.now();
@@ -316,13 +320,13 @@ export class PrismaAgentSessionRepository implements IAgentSessionRepository {
             // TENANT_ISOLATION_MODE=enforce an update whose `where` lacks
             // branchId is rejected as unpinned_write before it runs.
             this.prisma.agent_session.updateMany({
-                where: { id, ...owner },
+                where: { id, ...ownerScope(owner) },
                 data: { updatedAt: new Date() },
             }),
         ];
         if (title && !session.title) {
             operations.push(this.prisma.agent_session.updateMany({
-                where: { id, ...owner, title: null },
+                where: { id, ...ownerScope(owner), title: null },
                 data: { title },
             }));
         }
@@ -372,7 +376,7 @@ export class PrismaAgentSessionRepository implements IAgentSessionRepository {
     ): Promise<boolean> {
         const session = await transaction.agent_session.findFirst({
             select: { id: true },
-            where: { id, ...owner },
+            where: { id, ...ownerScope(owner) },
         });
         if (!session) return false;
 
@@ -406,7 +410,7 @@ export class PrismaAgentSessionRepository implements IAgentSessionRepository {
         if (!persisted) return false;
 
         const refreshed = await transaction.agent_session.updateMany({
-            where: { id, ...owner },
+            where: { id, ...ownerScope(owner) },
             data: { updatedAt: new Date(), summary: null },
         });
         return refreshed.count === 1;
