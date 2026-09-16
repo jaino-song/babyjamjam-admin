@@ -619,7 +619,7 @@ export function EmployeeScheduleManager({
                         data-component={component("view-panels")}
                         activeTab={viewMode}
                         idPrefix={`${dataComponent}-view`}
-                        className="h-full min-h-0 min-w-0"
+                        className="isolate h-full min-h-0 min-w-0 rounded-[28px]"
                         trackClassName="h-full"
                         panelClassName="h-full"
                         panels={[
