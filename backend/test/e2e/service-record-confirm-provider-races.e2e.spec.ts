@@ -344,7 +344,7 @@ describeE2E("service-record confirmation/provider lock races (real disposable Po
             });
             const staleConfirmError = await confirmPromise.then(() => undefined, (error) => error);
             expect(staleConfirmError).toBeInstanceOf(ConflictException);
-            expect(conflictCode(staleConfirmError)).toBe("SERVICE_RECORD_SOURCE_CHANGED");
+            expect(conflictCode(staleConfirmError)).toBe("SERVICE_RECORD_WRITE_TARGET_CHANGED");
 
             const state = await readCaseState(prisma, fixture);
             expect(state.days).toHaveLength(4);

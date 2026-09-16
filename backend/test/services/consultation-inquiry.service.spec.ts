@@ -279,7 +279,7 @@ describe("ConsultationInquiryService", () => {
     });
 
     it("should reject public inquiry when privacy is not accepted", async () => {
-        await expect(service.createPublicInquiry({
+        const rejection = service.createPublicInquiry({
             branchSlug: "incheon-yeonsu",
             motherName: "김지은",
             phone: "010-1234-5678",
@@ -288,13 +288,24 @@ describe("ConsultationInquiryService", () => {
             birthExperience: "초산",
             referralSource: "검색",
             privacyAccepted: false,
-        })).rejects.toBeInstanceOf(BadRequestException);
+        });
+        await expect(rejection).rejects.toBeInstanceOf(BadRequestException);
+        await expect(rejection).rejects.toMatchObject({
+            status: 400,
+            response: expect.objectContaining({
+                code: "VALIDATION_FAILED",
+                outcome: "NOT_APPLIED",
+                recovery: { action: "NONE", retry: { mode: "NEVER" } },
+                errors: [expect.objectContaining({ pointer: "/privacyAccepted", code: "REQUIRED" })],
+            }),
+        });
+        expect(repository.findActiveBranchBySlug).not.toHaveBeenCalled();
     });
 
     it("should reject public inquiry when branch is missing", async () => {
         repository.findActiveBranchBySlug.mockResolvedValue(null);
 
-        await expect(service.createPublicInquiry({
+        const rejection = service.createPublicInquiry({
             branchSlug: "unknown",
             motherName: "김지은",
             phone: "010-1234-5678",
@@ -303,10 +314,20 @@ describe("ConsultationInquiryService", () => {
             birthExperience: "초산",
             referralSource: "검색",
             privacyAccepted: true,
-        })).rejects.toBeInstanceOf(NotFoundException);
+        });
+        await expect(rejection).rejects.toBeInstanceOf(NotFoundException);
+        await expect(rejection).rejects.toMatchObject({
+            status: 404,
+            response: expect.objectContaining({
+                code: "RESOURCE_NOT_FOUND",
+                outcome: "NOT_APPLIED",
+                recovery: { action: "NONE", retry: { mode: "NEVER" } },
+            }),
+        });
+        expect(repository.create).not.toHaveBeenCalled();
     });
 
-    it("should reject invalid calendar due date", async () => {
+    it("should reject a malformed due-date format with a validation problem body", async () => {
         repository.findActiveBranchBySlug.mockResolvedValue({
             id: "branch-1",
             name: "인천점",
@@ -318,11 +339,45 @@ describe("ConsultationInquiryService", () => {
             motherName: "김지은",
             phone: "010-1234-5678",
             address: "인천 연수구",
+            dueDate: "2026/05/01",
+            birthExperience: "초산",
+            referralSource: "검색",
+            privacyAccepted: true,
+        })).rejects.toMatchObject({
+            status: 400,
+            response: expect.objectContaining({
+                code: "VALIDATION_FAILED",
+                errors: [expect.objectContaining({ pointer: "/dueDate", code: "INVALID_FORMAT" })],
+            }),
+        });
+        expect(repository.create).not.toHaveBeenCalled();
+    });
+
+    it("should reject invalid calendar due date", async () => {
+        repository.findActiveBranchBySlug.mockResolvedValue({
+            id: "branch-1",
+            name: "인천점",
+            slug: "incheon",
+        });
+
+        const rejection = service.createPublicInquiry({
+            branchSlug: "incheon-yeonsu",
+            motherName: "김지은",
+            phone: "010-1234-5678",
+            address: "인천 연수구",
             dueDate: "2026-02-31",
             birthExperience: "초산",
             referralSource: "검색",
             privacyAccepted: true,
-        })).rejects.toBeInstanceOf(BadRequestException);
+        });
+        await expect(rejection).rejects.toBeInstanceOf(BadRequestException);
+        await expect(rejection).rejects.toMatchObject({
+            status: 400,
+            response: expect.objectContaining({
+                code: "VALIDATION_FAILED",
+                errors: [expect.objectContaining({ pointer: "/dueDate", code: "INVALID_VALUE" })],
+            }),
+        });
         expect(repository.create).not.toHaveBeenCalled();
     });
 

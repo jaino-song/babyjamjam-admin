@@ -225,7 +225,10 @@ describe("CallInboxService", () => {
 
         await expect(
             service.confirmNewClient("branch-1", "user-1", "draft-1", { fields: { name: "x", careCenter: false, voucherClient: false, breastPump: false } }),
-        ).rejects.toThrow(ConflictException);
+        ).rejects.toMatchObject({
+            status: 409,
+            response: expect.objectContaining({ code: "REQUEST_NOT_PENDING" }),
+        });
         expect(clientService.create).not.toHaveBeenCalled();
     });
 
@@ -265,9 +268,12 @@ describe("CallInboxService", () => {
 
     it("confirmNewClient: 404 for a draft in another branch", async () => {
         prisma.client_draft.findFirst.mockResolvedValue(null);
-        await expect(
-            service.confirmNewClient("branch-2", "user-1", "draft-1", { fields: { name: "x", careCenter: false, voucherClient: false, breastPump: false } }),
-        ).rejects.toThrow(NotFoundException);
+        const rejection = service.confirmNewClient("branch-2", "user-1", "draft-1", { fields: { name: "x", careCenter: false, voucherClient: false, breastPump: false } });
+        await expect(rejection).rejects.toBeInstanceOf(NotFoundException);
+        await expect(rejection).rejects.toMatchObject({
+            status: 404,
+            response: expect.objectContaining({ code: "RESOURCE_NOT_FOUND" }),
+        });
     });
 
     it("confirmNewClient: 501 for CLIENT_UPDATE drafts (Phase 2)", async () => {
@@ -373,7 +379,14 @@ describe("CallInboxService", () => {
             service.confirm("branch-1", "user-1", "draft-1", {
                 changes: { startDate: "2026-06-23" },
             }),
-        ).rejects.toThrow(ConflictException);
+        ).rejects.toMatchObject({
+            status: 409,
+            response: expect.objectContaining({
+                code: "CLIENT_ASSIGNMENT_REQUIRED",
+                outcome: "NOT_APPLIED",
+                recovery: { action: "NONE", retry: { mode: "NEVER" } },
+            }),
+        });
         expect(clientService.update).not.toHaveBeenCalled();
         expect(prisma.client_draft.updateMany).not.toHaveBeenCalled();
     });
@@ -400,13 +413,20 @@ describe("CallInboxService", () => {
         expect(clientService.update).not.toHaveBeenCalled();
     });
 
-    it("confirmClientUpdate: 409 on lock race (updateMany count 0)", async () => {
+    it("confirmClientUpdate: 409 when draft loses the PENDING->CONFIRMING race", async () => {
         prisma.client_draft.findFirst.mockResolvedValue(clientUpdateDraft);
         prisma.client_draft.updateMany.mockResolvedValue({ count: 0 });
 
         await expect(
             service.confirm("branch-1", "user-1", "draft-1", { changes: { startDate: "2026-06-23" } }),
-        ).rejects.toThrow(ConflictException);
+        ).rejects.toMatchObject({
+            status: 409,
+            response: expect.objectContaining({
+                code: "REQUEST_NOT_PENDING",
+                outcome: "NOT_APPLIED",
+                recovery: { action: "NONE", retry: { mode: "NEVER" } },
+            }),
+        });
         expect(clientService.update).not.toHaveBeenCalled();
     });
 
@@ -451,9 +471,13 @@ describe("CallInboxService", () => {
             const draft = { ...clientUpdateDraft, clientId: null };
             prisma.client_draft.findFirst.mockResolvedValue(draft);
 
-            await expect(service.confirmApprovedTarget("branch-1", "user-1", "draft-1", {
+            const rejection = service.confirmApprovedTarget("branch-1", "user-1", "draft-1", {
                 changes: { startDate: "2026-06-23" },
-            }, createHash("sha256").update(JSON.stringify(draft)).digest("hex"))).rejects.toThrow(ConflictException);
+            }, createHash("sha256").update(JSON.stringify(draft)).digest("hex"));
+            await expect(rejection).rejects.toBeInstanceOf(ConflictException);
+            await expect(rejection).rejects.toMatchObject({
+                response: expect.objectContaining({ code: "CLIENT_ASSIGNMENT_REQUIRED" }),
+            });
 
             expect(prisma.client_draft.updateMany).not.toHaveBeenCalled();
             expect(clientService.update).not.toHaveBeenCalled();
@@ -492,7 +516,13 @@ describe("CallInboxService", () => {
 
             await expect(service.confirmApprovedTarget("branch-1", "user-1", "draft-1", {
                 changes: { startDate: "2026-06-23" },
-            }, createHash("sha256").update(JSON.stringify(draft)).digest("hex"))).rejects.toThrow(BadRequestException);
+            }, createHash("sha256").update(JSON.stringify(draft)).digest("hex"))).rejects.toMatchObject({
+                status: 400,
+                response: expect.objectContaining({
+                    code: "VALIDATION_FAILED",
+                    errors: [expect.objectContaining({ pointer: "/type", code: "INVALID_VALUE" })],
+                }),
+            });
 
             expect(prisma.client_draft.updateMany).not.toHaveBeenCalled();
             expect(clientService.update).not.toHaveBeenCalled();
@@ -503,7 +533,14 @@ describe("CallInboxService", () => {
 
             await expect(service.confirmApprovedTarget("branch-1", "user-1", "draft-1", {
                 changes: { startDate: "2026-06-23" },
-            }, "stale-version")).rejects.toThrow(ConflictException);
+            }, "stale-version")).rejects.toMatchObject({
+                status: 409,
+                response: expect.objectContaining({
+                    code: "SERVICE_RECORD_WRITE_TARGET_CHANGED",
+                    outcome: "NOT_APPLIED",
+                    recovery: { action: "NONE", retry: { mode: "NEVER" } },
+                }),
+            });
 
             expect(prisma.client_draft.updateMany).not.toHaveBeenCalled();
             expect(clientService.update).not.toHaveBeenCalled();
@@ -684,12 +721,23 @@ describe("CallInboxService", () => {
         expect(prisma.client_draft.update).not.toHaveBeenCalled();
     });
 
-    it("patchDraft rejects malformed phone proposals before persisting the draft", async () => {
+    it("patchDraft rejects malformed phone proposals with a registered validation body", async () => {
         prisma.client_draft.findFirst.mockResolvedValue(pendingDraft);
 
-        await expect(service.patchDraft("branch-1", "draft-1", {
+        const rejection = service.patchDraft("branch-1", "draft-1", {
             proposals: [{ field: "phone", value: "not-a-phone", evidence: "e", confidence: "high" }],
-        })).rejects.toThrow(BadRequestException);
+        });
+        await expect(rejection).rejects.toBeInstanceOf(BadRequestException);
+        await expect(rejection).rejects.toMatchObject({
+            status: 400,
+            response: expect.objectContaining({
+                code: "VALIDATION_FAILED",
+                errors: [expect.objectContaining({
+                    pointer: "/proposals",
+                    code: "INVALID_FORMAT",
+                })],
+            }),
+        });
 
         expect(prisma.client_draft.update).not.toHaveBeenCalled();
         expect(prisma.client.findFirst).not.toHaveBeenCalled();

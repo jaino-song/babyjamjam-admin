@@ -1,5 +1,6 @@
 import { BadRequestException, Inject, Injectable, Logger, NotFoundException } from "@nestjs/common";
 
+import { problemBody, codeOnlyProblemBody } from "application/utils/problem-bodies";
 import {
     ConsultationInquiryEntity,
     ConsultationSelectedServices,
@@ -54,7 +55,12 @@ function normalizeSelectedServices(
 function parsePublicDueDate(value: string): Date {
     const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
     if (!match) {
-        throw new BadRequestException("출산 예정일은 YYYY-MM-DD 형식이어야 합니다.");
+        throw new BadRequestException(problemBody("VALIDATION_FAILED", {
+            pointer: "/dueDate",
+            code: "INVALID_FORMAT",
+            detail: "출산 예정일은 YYYY-MM-DD 형식이어야 해요.",
+            location: "body",
+        }));
     }
 
     const year = Number(match[1]);
@@ -67,7 +73,12 @@ function parsePublicDueDate(value: string): Date {
         dueDate.getUTCMonth() !== month - 1 ||
         dueDate.getUTCDate() !== day
     ) {
-        throw new BadRequestException("존재하지 않는 출산 예정일입니다.");
+        throw new BadRequestException(problemBody("VALIDATION_FAILED", {
+            pointer: "/dueDate",
+            code: "INVALID_VALUE",
+            detail: "존재하지 않는 출산 예정일이에요.",
+            location: "body",
+        }));
     }
 
     return dueDate;
@@ -94,14 +105,20 @@ export class ConsultationInquiryService {
 
     async createPublicInquiry(dto: CreatePublicConsultationInquiryDto): Promise<ConsultationInquiryEntity> {
         if (!dto.privacyAccepted) {
-            throw new BadRequestException("개인정보 수집 및 이용 동의가 필요합니다.");
+            throw new BadRequestException(problemBody("VALIDATION_FAILED", {
+                pointer: "/privacyAccepted",
+                code: "REQUIRED",
+                detail: "개인정보 수집 및 이용 동의가 필요해요.",
+                location: "body",
+            }));
         }
 
         const publicBranchSlug = dto.branchSlug.trim();
         const staffBranchSlug = getStaffBranchSlugForPublicInquiry(publicBranchSlug);
         const branch = await this.repository.findActiveBranchBySlug(staffBranchSlug);
         if (!branch) {
-            throw new NotFoundException("상담 가능한 지점을 찾을 수 없습니다.");
+            // 지점 슬러그는 공개 식별자가 아니므로 등록 코드만 응답해요.
+            throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
         }
 
         const dueDate = parsePublicDueDate(dto.dueDate);
