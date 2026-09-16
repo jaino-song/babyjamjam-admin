@@ -428,6 +428,8 @@ describeAgentE2E("conversation task runtime against the guarded local database",
         expect(replayAfterRestart.mutated).toBe(false);
         expect(replayAfterRestart.task?.taskId).toBe(created.task.taskId);
 
+        const beforeModelAttempt = await prisma.agent_task.findUnique({ where: { id: created.task.taskId } });
+        if (!beforeModelAttempt) throw new Error("Expected task row before model attempt");
         await expect(restartedOrchestrator.applyModelMutation({
             principal,
             sessionId,
@@ -441,10 +443,11 @@ describeAgentE2E("conversation task runtime against the guarded local database",
 
         const afterModelAttempt = await prisma.agent_task.findUnique({ where: { id: created.task.taskId } });
         expect(afterModelAttempt).toEqual(expect.objectContaining({
-            revision: beforeQuestion.revision,
-            lastAcceptedAt: beforeQuestion.lastAcceptedAt,
-            expiresAt: beforeQuestion.expiresAt,
-            draft: beforeQuestion.draft,
+            status: beforeModelAttempt.status,
+            revision: beforeModelAttempt.revision,
+            lastAcceptedAt: beforeModelAttempt.lastAcceptedAt,
+            expiresAt: beforeModelAttempt.expiresAt,
+            draft: beforeModelAttempt.draft,
         }));
         expect(await prisma.agent_task_event.count({ where: { sessionId } })).toBe(questionEventCount + 2);
         expect(await prisma.agent_message.count({ where: { sessionId } })).toBe(0);
