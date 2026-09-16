@@ -707,3 +707,9 @@ TL;DR: 배정(4b-1 백엔드: 역할·자격·동시 변경 코드 전환 / 4b-2
 
 **Task 6b 실행 결과 (2026-09-16/17):** worker `0dd877dbf`(base `416fcb09e`) → 통합 `b6443f90f` (8 파일 + specs). 전부 기존 코드 재사용, 카탈로그·vendor 불변. red-first 25F→45 focused; 360 suites/5,127; **call-inbox e2e 22/22 실검증**; 감사 SHIP. 통합 첫 실행 2F는 플레이크 풀(재실행 green, employee-schedule 25/25).
 - carried: rate-limit 429 본문 retryAfter 제거(헤더 유지, sanctioned), shared `AUTH_RATE_LIMITED` 죽은 키 정리(후속), ParseUUIDPipe(Nest 내장) 미전환.
+
+**Task 6c: Prisma 필터 + 설정·템플릿·알림 서비스** — base `58a9393f7`
+- 대상(7): `backend/infrastructure/filters/prisma-exception.filter.ts`, `application/services/{notification,system-admin,system-setting,system-template,system-template-mutation-guard,document-category}.service.ts`.
+- 매핑: Prisma P2002→REQUEST_CONFLICT(409), P2025→RESOURCE_NOT_FOUND(404), P2003→REQUEST_CONFLICT, P2000→VALIDATION_FAILED(400), P2024/P1001/P1002/P1008/P1017→DEPENDENCY_UNAVAILABLE(503), 기타 4xx→REQUEST_INVALID, >=500 기존 흐름 유지 — 필터 자체는 경계 공용이므로 status 보존 최우선. 기존 `{statusCode,code:prismaCode}` 소비자(웹 getUserErrorMessage 별도) 확인.
+- 서비스: 알림 Forbidden→ACCESS_DENIED; system-admin/setting/template/mutation-guard raw NotFound/Conflict/BadRequest→등록 코드(+errors 배열 VALIDATION_FAILED); document-category GLOBAL_CATEGORY_CONFLICT/P2002→REQUEST_CONFLICT.
+- worker(glm) · Audit SOL.
