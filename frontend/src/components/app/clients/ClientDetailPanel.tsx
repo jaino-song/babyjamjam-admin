@@ -1072,6 +1072,7 @@ function ClientDetailPanelBody({
  * remount-on-select behavior.
  */
 export function ClientDetailPanel(props: ClientDetailPanelProps) {
+    if (props.layout !== "mobile") return <ClientDetailPanelBody key={props.client.id} {...props} />;
     return <div
         data-component={`${props.dataComponentPrefix ?? "desktop_clients-detail_panel"}_presentation`}
         data-slot="client-detail-presentation"

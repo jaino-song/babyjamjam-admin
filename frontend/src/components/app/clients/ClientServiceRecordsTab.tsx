@@ -247,7 +247,7 @@ function ClientServiceRecordsTabContent({
                     <>
                         <div
                             data-component={`${dataComponent}_overview-grid`}
-                            className={cn("grid grid-cols-1 items-stretch gap-3 [&>*]:content-start", layout === "desktop" && "lg:grid-cols-3")}
+                            className={cn("grid grid-cols-1 items-stretch [&>*]:content-start", layout === "desktop" ? "gap-[calc(16px*var(--glint-ui-scale,1))] lg:grid-cols-3" : "gap-3")}
                         >
                             <RecordStatusCard record={record} isRefreshing={isTextRefreshing} />
                             {layout === "desktop" && (<ServiceRecordHeaderCard
@@ -397,7 +397,7 @@ function ClientServiceRecordsSkeleton({ layout }: { layout: "desktop" | "mobile"
         <div data-component={dataComponent} data-source-component="ClientServiceRecordsTab" className="space-y-[calc(16px*var(--glint-ui-scale,1))]">
             <div
                 data-component={`${dataComponent}_overview-grid`}
-                className={cn("grid grid-cols-1 items-stretch gap-3 [&>*]:content-start", layout === "desktop" && "lg:grid-cols-3")}
+                className={cn("grid grid-cols-1 items-stretch [&>*]:content-start", layout === "desktop" ? "gap-[calc(16px*var(--glint-ui-scale,1))] lg:grid-cols-3" : "gap-3")}
             >
                 <InfoCard
                     title="제공기록지 진행 상태"
@@ -414,7 +414,7 @@ function ClientServiceRecordsSkeleton({ layout }: { layout: "desktop" | "mobile"
                     ))}
                 </InfoCard>
 
-                <InfoCard
+                {layout === "desktop" && (<InfoCard
                     title="서비스 기본정보"
                     data-component={`${dataComponent}_overview-grid_header-card`}
                 >
@@ -428,7 +428,7 @@ function ClientServiceRecordsSkeleton({ layout }: { layout: "desktop" | "mobile"
                     ].map((label) => (
                         <ServiceRecordInfoRowSkeleton key={label} label={label} />
                     ))}
-                </InfoCard>
+                </InfoCard>)}
 
                 <InfoCard
                     title="제공기록지 작성 링크"
@@ -444,6 +444,21 @@ function ClientServiceRecordsSkeleton({ layout }: { layout: "desktop" | "mobile"
                     ))}
                     <Skeleton className="mt-[calc(14px*var(--glint-ui-scale,1))] h-9 w-full rounded-full bg-white/70" />
                 </InfoCard>
+                {layout === "mobile" && (<InfoCard
+                    title="서비스 기본정보"
+                    data-component={`${dataComponent}_overview-grid_header-card`}
+                >
+                    {[
+                        "산모 성명",
+                        "산모 생년월일",
+                        "신생아 성명",
+                        "신생아 출생일자",
+                        "분만형태",
+                        "신생아 몸무게",
+                    ].map((label) => (
+                        <ServiceRecordInfoRowSkeleton key={label} label={label} />
+                    ))}
+                </InfoCard>)}
             </div>
 
             <InfoCard
@@ -470,7 +485,7 @@ function ClientServiceRecordsSkeleton({ layout }: { layout: "desktop" | "mobile"
                 </div>
             </InfoCard>
 
-            <InfoCard
+            {layout === "desktop" && <InfoCard
                 title="수정본·문서 이력"
                 data-component={`${dataComponent}_revision-history`}
                 titleTrailing={<Skeleton className="h-8 w-20 bg-white/70" />}
@@ -482,7 +497,7 @@ function ClientServiceRecordsSkeleton({ layout }: { layout: "desktop" | "mobile"
                 ].map((label) => (
                     <ServiceRecordInfoRowSkeleton key={label} label={label} />
                 ))}
-            </InfoCard>
+            </InfoCard>}
         </div>
     );
 }
