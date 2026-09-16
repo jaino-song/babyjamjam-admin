@@ -2,8 +2,9 @@ import { cookies } from "next/headers";
 import { NextRequest } from "next/server";
 
 import {
+    authRequiredResponse,
     logUpstreamError,
-    upstreamSseErrorResponse,
+    upstreamSseProblemErrorResponse,
 } from "@/lib/api/route-utils";
 
 const isProduction = process.env.NODE_ENV === "production" || process.env.VERCEL_ENV === "preview";
@@ -16,10 +17,7 @@ export async function POST(request: NextRequest) {
     const authToken = cookieStore.get("auth_token");
 
     if (!authToken) {
-        return new Response(JSON.stringify({ error: "Unauthorized" }), {
-            status: 401,
-            headers: { "Content-Type": "application/json" },
-        });
+        return authRequiredResponse();
     }
 
     const body = await request.json();
@@ -40,7 +38,9 @@ export async function POST(request: NextRequest) {
             { response: { status: backendResponse.status } },
             upstreamBody,
         );
-        return upstreamSseErrorResponse(backendResponse.status);
+        // SSE transports cannot carry problem+json; the error event carries the
+        // registered catalog code instead, and the upstream body stays server-side.
+        return upstreamSseProblemErrorResponse(backendResponse.status);
     }
 
     return new Response(backendResponse.body, {

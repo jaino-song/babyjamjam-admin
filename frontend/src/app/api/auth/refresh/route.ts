@@ -2,7 +2,12 @@ import { cookies } from "next/headers";
 import { NextRequest, NextResponse } from "next/server";
 
 import { serverAPIClient } from "@/lib/api/server";
-import { getUpstreamErrorStatus, logUpstreamError } from "@/lib/api/route-utils";
+import {
+    authRequiredResponse,
+    getUpstreamErrorStatus,
+    logUpstreamError,
+    upstreamStatusProblemResponse,
+} from "@/lib/api/route-utils";
 import { clearAuthSessionCookies, setAuthSessionCookies } from "@/lib/auth/session-cookies";
 import { AUTH_COOKIE_NAMES } from "@/lib/auth/session-policy";
 
@@ -21,13 +26,18 @@ function isAutoLoginEnabled(value: string | undefined): boolean {
     return value !== "0" && value !== "false";
 }
 
+function hasUpstreamResponse(error: unknown): boolean {
+    return Boolean(
+        error
+        && typeof error === "object"
+        && (error as { response?: unknown }).response,
+    );
+}
+
 export async function POST(request: NextRequest) {
     const refreshToken = request.cookies.get(AUTH_COOKIE_NAMES.refreshToken)?.value;
     if (!refreshToken) {
-        return NextResponse.json(
-            { error: "Session refresh required", code: "AUTH_REFRESH_REQUIRED" },
-            { status: 401 },
-        );
+        return authRequiredResponse();
     }
 
     try {
@@ -55,7 +65,7 @@ export async function POST(request: NextRequest) {
     } catch (error) {
         const status = error instanceof UnrecoverableRefreshError
             ? 401
-            : getUpstreamErrorStatus(error);
+            : getUpstreamErrorStatus(error, 502);
         logUpstreamError("refresh app session", error);
 
         if (status === 401) {
@@ -63,10 +73,11 @@ export async function POST(request: NextRequest) {
             clearAuthSessionCookies(cookieStore);
         }
 
-        const result = NextResponse.json(
-            { error: "Session refresh failed", code: "AUTH_REFRESH_FAILED" },
-            { status: status === 401 ? 401 : 502 },
-        );
+        // An upstream rejection is a known non-application (NOT_APPLIED); a
+        // transport failure leaves the rotation result unconfirmable (UNKNOWN,
+        // which carries CHECK_STATUS recovery in the problem contract).
+        const outcome = hasUpstreamResponse(error) ? "NOT_APPLIED" : "UNKNOWN";
+        const result = upstreamStatusProblemResponse(status, "refresh app session", outcome);
         result.headers.set("Cache-Control", "no-store, max-age=0");
         return result;
     }

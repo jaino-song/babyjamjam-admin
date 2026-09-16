@@ -35,12 +35,15 @@ describe("POST /api/ai/chat/confirm", () => {
         globalThis.fetch = originalFetch;
     });
 
-    it("rejects unauthenticated confirmation before proxying", async () => {
+    it("rejects unauthenticated confirmation with a registered 401 problem body", async () => {
         mockCookies.mockResolvedValue({ get: jest.fn().mockReturnValue(undefined) } as never);
 
         const response = await POST(request({ intentId: "i", nonce: "n" }));
 
         expect(response.status).toBe(401);
+        expect(response.headers.get("Content-Type")).toBe("application/problem+json");
+        const body = await response.json();
+        expect(body).toMatchObject({ code: "AUTH_REQUIRED", status: 401 });
         expect(globalThis.fetch).not.toHaveBeenCalled();
     });
 
@@ -48,6 +51,10 @@ describe("POST /api/ai/chat/confirm", () => {
         const response = await POST(request({ intentId: "i", nonce: "n", confirmed: true }));
 
         expect(response.status).toBe(400);
+        await expect(response.json()).resolves.toMatchObject({
+            code: "VALIDATION_FAILED",
+            outcome: "NOT_APPLIED",
+        });
         expect(globalThis.fetch).not.toHaveBeenCalled();
     });
 
@@ -67,7 +74,7 @@ describe("POST /api/ai/chat/confirm", () => {
         });
     });
 
-    it("maps replay/expiry errors without exposing upstream details", async () => {
+    it("maps replay/expiry rejections to a registered problem without exposing upstream details", async () => {
         (globalThis.fetch as jest.Mock).mockResolvedValue(
             new Response("raw confirmation intent details", { status: 409 }),
         );
@@ -75,7 +82,28 @@ describe("POST /api/ai/chat/confirm", () => {
         const response = await POST(request({ intentId: "intent-1", nonce: "nonce-1" }));
 
         expect(response.status).toBe(409);
-        const body = await response.text();
-        expect(body).not.toContain("raw confirmation intent details");
+        expect(response.headers.get("Content-Type")).toBe("application/problem+json");
+        const body = await response.json();
+        expect(body).toMatchObject({
+            code: "REQUEST_CONFLICT",
+            status: 409,
+            outcome: "NOT_APPLIED",
+        });
+        expect(JSON.stringify(body)).not.toContain("raw confirmation intent details");
+    });
+
+    it("reports an unconfirmable transport failure with a registered code and CHECK_STATUS recovery", async () => {
+        (globalThis.fetch as jest.Mock).mockRejectedValue(new Error("fetch failed"));
+
+        const response = await POST(request({ intentId: "intent-1", nonce: "nonce-1" }));
+
+        expect(response.status).toBe(502);
+        const body = await response.json();
+        expect(body).toMatchObject({
+            code: "UPSTREAM_INVALID_RESPONSE",
+            status: 502,
+            outcome: "UNKNOWN",
+        });
+        expect(body.recovery).toMatchObject({ action: "CHECK_STATUS" });
     });
 });

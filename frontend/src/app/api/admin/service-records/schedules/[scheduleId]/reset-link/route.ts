@@ -1,14 +1,14 @@
-import { isAxiosError } from "axios";
 import { NextRequest, NextResponse } from "next/server";
 
 import { serverAPIClient } from "@/lib/api/server";
+import { authRequiredResponse, errorResponse } from "@/lib/api/route-utils";
 
 type RouteParams = { params: Promise<{ scheduleId: string }> };
 
 export async function POST(request: NextRequest, { params }: RouteParams) {
     const token = request.cookies.get("auth_token")?.value || null;
     if (!token) {
-        return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+        return authRequiredResponse();
     }
 
     const { scheduleId } = await params;
@@ -24,12 +24,6 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
             headers: { "Cache-Control": "no-store" },
         });
     } catch (error) {
-        if (isAxiosError(error) && error.response) {
-            return NextResponse.json(error.response.data ?? { error: "Request failed" }, {
-                status: error.response.status,
-            });
-        }
-        console.error("[API] Error resetting service record link");
-        return NextResponse.json({ error: "Failed to reset service record link" }, { status: 500 });
+        return errorResponse(error, "reset service record link");
     }
 }
