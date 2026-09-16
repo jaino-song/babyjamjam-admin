@@ -1225,6 +1225,58 @@ describe("AgentTaskService", () => {
         expect(selected.snapshot.target).toEqual({ targetRef: choiceSetRef, version: clientAgentTargetVersion(client) });
     });
 
+    it("recomputes update readiness after selecting an existing client without filling PII", async () => {
+        const repository = new FakeTaskRepository();
+        const choiceSetRef = randomUUID();
+        const optionId = randomUUID();
+        const client = makeClientRecord(7);
+        client.name = "고객 원본 이름";
+        client.phone = "01099998888";
+        const task = makeTask({
+            capabilityId: "clients.update",
+            draft: {
+                ...createEmptyAgentTaskDraft(randomUUID()),
+                confirmed: { dueDate: "2026-03-05" },
+                issues: [
+                    { code: "task.required", severity: "error", message: "A customer target is required" },
+                    { code: "task.stale", severity: "error", message: "The customer target is stale" },
+                    { code: "task.ambiguous", field: "name", severity: "error", message: "Choose a name" },
+                ],
+                choiceSets: [{ choiceSetRef, options: [{ optionId, label: "고객 원본 이름" }] }],
+                orderedChoiceRefs: [choiceSetRef],
+                server: {
+                    references: {
+                        target: null,
+                        choiceTargets: [{ choiceSetRef, optionId, clientId: client.id }],
+                        phoneCandidates: {},
+                    },
+                },
+            },
+        });
+        repository.tasks.set(task.taskId, task);
+        const service = buildService(repository, {
+            findByPhone: jest.fn().mockResolvedValue(null),
+            findById: jest.fn().mockResolvedValue(client),
+        }).service;
+
+        const result = await service.command(owner, task.taskId, commandInput("select-target", task.revision, randomUUID(), {
+            choiceSetRef,
+            optionId,
+        }));
+
+        expect(result.snapshot.target).toEqual({ targetRef: choiceSetRef, version: clientAgentTargetVersion(client) });
+        expect(result.snapshot.confirmed).toEqual({ dueDate: "2026-03-05" });
+        expect(result.snapshot.confirmed).not.toHaveProperty("name");
+        expect(result.snapshot.confirmed).not.toHaveProperty("phone");
+        expect(result.snapshot.issues).not.toEqual(expect.arrayContaining([
+            expect.objectContaining({ code: "task.required" }),
+            expect.objectContaining({ code: "task.stale" }),
+        ]));
+        expect(result.snapshot.issues).toEqual(expect.arrayContaining([
+            expect.objectContaining({ code: "task.ambiguous", field: "name" }),
+        ]));
+    });
+
     it("rejects forged and mixed protected choices without consuming them", async () => {
         const repository = new FakeTaskRepository();
         const choiceSetRef = randomUUID();

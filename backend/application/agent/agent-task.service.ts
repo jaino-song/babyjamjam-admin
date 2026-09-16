@@ -796,6 +796,7 @@ export class AgentTaskService {
         let draft: AgentTaskDraft;
         let targetRef: string | null | undefined;
         let targetVersion: string | null | undefined;
+        let selectedTargetClient: Awaited<ReturnType<IClientRepository["findById"]>> | undefined;
         if (phoneSetPresent) {
             const candidates = task.draft.server.references.phoneCandidates[choiceSetRef] ?? [];
             const candidate = candidates.find((value) => value.candidateRef === input.optionId);
@@ -836,6 +837,7 @@ export class AgentTaskService {
             const mapping = mappings[0]!;
             const client = await this.clientRepository.findById(principal.branchId, mapping.clientId);
             if (!client) throw new AgentTaskConflictException("state", asAuthorizedTask(task));
+            selectedTargetClient = client;
             targetRef = mapping.choiceSetRef;
             targetVersion = clientAgentTargetVersion(client);
             draft = {
@@ -851,6 +853,25 @@ export class AgentTaskService {
                     },
                 },
             };
+        }
+        if (task.capabilityId === "clients.update" && selectedTargetClient && targetRef && targetVersion) {
+            // Recompute dynamic readiness against the freshly selected,
+            // branch-scoped target. The selection only consumes protected
+            // references; it never copies the customer's current PII into
+            // the task draft.
+            const state: ClientInputState = {
+                confirmed: task.draft.confirmed,
+                tentative: task.draft.tentative,
+                clearedFields: task.draft.clearedFields,
+                automationChoice: task.draft.consent.choice,
+                noSend: task.draft.constraints.noSend,
+            };
+            const issues = await this.updateIssues(principal, state, task, draft.issues, {
+                targetRef,
+                targetVersion,
+                targetClient: selectedTargetClient,
+            });
+            draft = { ...draft, issues };
         }
         const status = draft.orderedChoiceRefs.length > 0 ? "confirming_target" : "collecting";
         return {
@@ -980,6 +1001,11 @@ export class AgentTaskService {
         state: ClientInputState,
         task: AgentTaskEntity | null,
         existing: AgentTaskEntity["draft"]["issues"],
+        targetOverride?: {
+            targetRef: string;
+            targetVersion: string;
+            targetClient: Awaited<ReturnType<IClientRepository["findById"]>>;
+        },
     ): Promise<AgentTaskEntity["draft"]["issues"]> {
         const issues = existing.filter((issue) => !DYNAMIC_ISSUE_CODES.has(issue.code));
         const addIssue = (
@@ -993,7 +1019,14 @@ export class AgentTaskService {
 
         let targetStatus: "missing" | "stale" | "valid" = "missing";
         let targetClientId: number | undefined;
-        if (task) {
+        if (targetOverride) {
+            if (targetOverride.targetClient && clientAgentTargetVersion(targetOverride.targetClient) === targetOverride.targetVersion) {
+                targetStatus = "valid";
+                targetClientId = targetOverride.targetClient.id;
+            } else {
+                targetStatus = "stale";
+            }
+        } else if (task) {
             const target = task.draft.server.references.target;
             const targetRef = task.targetRef;
             const targetVersion = task.targetVersion;

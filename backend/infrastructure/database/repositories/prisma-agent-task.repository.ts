@@ -49,6 +49,10 @@ import {
     type UpdateAgentTaskInput,
 } from "domain/repositories/agent-task.repository.interface";
 import { PrismaService } from "infrastructure/database/prisma.service";
+import {
+    lifecycleTaskActionEvidenceBlocks,
+    type AgentTaskLifecycleActionEvidence,
+} from "./agent-task-lifecycle-evidence";
 
 const AGENT_TASK_SELECT = {
     id: true,
@@ -106,9 +110,6 @@ const ACTIVE_TASK_STATES = new Set([
     "executing",
     "reconciling",
 ]);
-const TERMINAL_ACTION_STATUSES = new Set(["succeeded", "failed", "uncertain", "rejected", "expired", "cancelled"]);
-const ALWAYS_BLOCKING_ACTION_STATUSES = new Set(["executing", "uncertain"]);
-const EXPIRABLE_ACTION_STATUSES = new Set(["proposed", "approved"]);
 
 class InvalidAgentTaskStorageError extends Error {
     constructor() {
@@ -402,31 +403,6 @@ function sessionResultToMutation(result: AgentTaskSessionLockResult): AgentTaskM
     if (result.status === "locked") return null;
     if (result.status === "storage_failure") return result;
     return result;
-}
-
-type LinkedActionRecord = {
-    id: string;
-    taskId: string | null;
-    sessionId: string;
-    userId: string;
-    branchId: string;
-    status: string;
-    expiresAt: Date;
-    resultPartPersistedAt: Date | null;
-};
-
-function linkedActionBlocks(action: LinkedActionRecord | null, now: Date): boolean {
-    // A non-null opaque link without matching evidence is intentionally
-    // fail-closed for retention and recovery.  The caller treats `null` as
-    // blocking when a task advertises an active action.
-    if (!action) return true;
-    if (ALWAYS_BLOCKING_ACTION_STATUSES.has(action.status)) return true;
-    if (EXPIRABLE_ACTION_STATUSES.has(action.status)) return action.expiresAt > now;
-    if (TERMINAL_ACTION_STATUSES.has(action.status)) return action.resultPartPersistedAt === null;
-    // Unknown action states are retained conservatively.  A cleanup worker
-    // must never erase a draft merely because a newer action lifecycle state
-    // is not yet understood by this adapter.
-    return true;
 }
 
 function eventReceipt(event: AgentTaskEventEntity, task: AgentTaskEntity) {
@@ -892,10 +868,10 @@ export class PrismaAgentTaskRepository implements IAgentTaskRepository {
     }
 
     /**
-     * Guarded hourly payload purge.  Sessions are locked before their tasks;
-     * each task is then re-read and its linked action is locked before any
-     * protected draft data is cleared.  Unknown or mismatched action evidence
-     * therefore preserves the row fail-closed.
+     * Guarded hourly payload purge.  The transaction locks all candidate
+     * sessions, then all candidate tasks, then all same-owned actions before
+     * rechecking and clearing protected payloads.  Unknown or mismatched
+     * action evidence therefore preserves the row fail-closed.
      */
     async purgeExpired(now: Date): Promise<number> {
         try {
@@ -913,61 +889,161 @@ export class PrismaAgentTaskRepository implements IAgentTaskRepository {
                       AND "purged_at" IS NULL
                     ORDER BY "session_id" ASC, "id" ASC
                 `);
-                let purged = 0;
-                let lockedSessionKey: string | null = null;
-                for (const candidate of candidates) {
-                    const sessionKey = `${candidate.sessionId}:${candidate.userId}:${candidate.branchId}`;
-                    if (lockedSessionKey !== sessionKey) {
-                        const session = await transaction.$queryRaw<Array<{ id: string }>>(Prisma.sql`
-                            SELECT "id"
-                            FROM "agent_session"
-                            WHERE "id" = ${candidate.sessionId}
-                              AND "user_id" = CAST(${candidate.userId} AS uuid)
-                              AND "branch_id" = CAST(${candidate.branchId} AS uuid)
-                            FOR UPDATE
-                        `);
-                        if (session.length === 0) continue;
-                        lockedSessionKey = sessionKey;
-                    }
 
-                    const lockedTask = await transaction.$queryRaw<Array<{ id: string }>>(Prisma.sql`
+                type Candidate = (typeof candidates)[number];
+                type CandidateGroup = {
+                    key: string;
+                    sessionId: string;
+                    userId: string;
+                    branchId: string;
+                    candidates: Candidate[];
+                };
+                const groups = new Map<string, CandidateGroup>();
+                for (const candidate of candidates) {
+                    const key = `${candidate.sessionId}:${candidate.userId}:${candidate.branchId}`;
+                    const group = groups.get(key);
+                    if (group) {
+                        group.candidates.push(candidate);
+                    } else {
+                        groups.set(key, {
+                            key,
+                            sessionId: candidate.sessionId,
+                            userId: candidate.userId,
+                            branchId: candidate.branchId,
+                            candidates: [candidate],
+                        });
+                    }
+                }
+                const orderedGroups = [...groups.values()].sort((left, right) =>
+                    left.sessionId.localeCompare(right.sessionId)
+                    || left.userId.localeCompare(right.userId)
+                    || left.branchId.localeCompare(right.branchId));
+                for (const group of orderedGroups) {
+                    group.candidates.sort((left, right) => left.id.localeCompare(right.id));
+                }
+
+                // The cleanup lock order is global to this transaction: all
+                // candidate sessions first, then all candidate tasks, then
+                // all same-owned action rows.  No later session/task lock may
+                // follow an action lock from an earlier candidate.
+                const lockedSessions = new Set<string>();
+                for (const group of orderedGroups) {
+                    const session = await transaction.$queryRaw<Array<{ id: string }>>(Prisma.sql`
                         SELECT "id"
-                        FROM "agent_task"
-                        WHERE "id" = ${candidate.id}
-                          AND "session_id" = ${candidate.sessionId}
-                          AND "user_id" = CAST(${candidate.userId} AS uuid)
-                          AND "branch_id" = CAST(${candidate.branchId} AS uuid)
+                        FROM "agent_session"
+                        WHERE "id" = ${group.sessionId}
+                          AND "user_id" = CAST(${group.userId} AS uuid)
+                          AND "branch_id" = CAST(${group.branchId} AS uuid)
                         FOR UPDATE
                     `);
-                    if (lockedTask.length === 0) continue;
+                    if (session.length > 0) lockedSessions.add(group.key);
+                }
+
+                const lockedCandidates: Array<{ candidate: Candidate; group: CandidateGroup }> = [];
+                for (const group of orderedGroups) {
+                    if (!lockedSessions.has(group.key)) continue;
+                    for (const candidate of group.candidates) {
+                        const lockedTask = await transaction.$queryRaw<Array<{ id: string }>>(Prisma.sql`
+                            SELECT "id"
+                            FROM "agent_task"
+                            WHERE "id" = ${candidate.id}
+                              AND "session_id" = ${group.sessionId}
+                              AND "user_id" = CAST(${group.userId} AS uuid)
+                              AND "branch_id" = CAST(${group.branchId} AS uuid)
+                            FOR UPDATE
+                        `);
+                        if (lockedTask.length > 0) lockedCandidates.push({ candidate, group });
+                    }
+                }
+
+                const lockedTasks = new Map<string, AgentTaskEntity>();
+                for (const { candidate } of lockedCandidates) {
                     const record = await transaction.agent_task.findUnique({
                         where: { id: candidate.id },
                         select: AGENT_TASK_SELECT,
                     });
-                    if (!record) continue;
-                    const task = toEntity(record);
+                    if (record) lockedTasks.set(candidate.id, toEntity(record));
+                }
+
+                const localActions = new Map<string, AgentTaskLifecycleActionEvidence[]>();
+                for (const group of orderedGroups) {
+                    if (!lockedSessions.has(group.key)) continue;
+                    const tasks = group.candidates
+                        .map((candidate) => lockedTasks.get(candidate.id))
+                        .filter((task): task is AgentTaskEntity => task !== undefined);
+                    if (tasks.length === 0) continue;
+                    const taskIds = [...new Set(tasks.map((task) => task.taskId))].sort();
+                    const activeActionIds = [...new Set(
+                        tasks
+                            .map((task) => task.activeActionId)
+                            .filter((actionId): actionId is string => actionId !== null),
+                    )].sort();
+                    const actionPredicate = activeActionIds.length === 0
+                        ? Prisma.sql`"task_id" IN (${Prisma.join(taskIds)})`
+                        : Prisma.sql`("task_id" IN (${Prisma.join(taskIds)}) OR "id" IN (${Prisma.join(activeActionIds)}))`;
+                    const rows = await transaction.$queryRaw<AgentTaskLifecycleActionEvidence[]>(Prisma.sql`
+                        SELECT "id", "task_id" AS "taskId", "session_id" AS "sessionId",
+                               "user_id" AS "userId", "branch_id" AS "branchId",
+                               "status", "expires_at" AS "expiresAt",
+                               "result_part_persisted_at" AS "resultPartPersistedAt"
+                        FROM "agent_action"
+                        WHERE "session_id" = ${group.sessionId}
+                          AND "user_id" = CAST(${group.userId} AS uuid)
+                          AND "branch_id" = CAST(${group.branchId} AS uuid)
+                          AND ${actionPredicate}
+                        ORDER BY "session_id" ASC, "id" ASC
+                        FOR UPDATE
+                    `);
+                    localActions.set(group.key, rows);
+                }
+
+                let purged = 0;
+                for (const { candidate, group } of lockedCandidates) {
+                    const task = lockedTasks.get(candidate.id);
+                    if (!task) continue;
+                    if (
+                        task.sessionId !== group.sessionId
+                        || task.userId !== group.userId
+                        || task.branchId !== group.branchId
+                    ) continue;
                     if (task.purgedAt || task.expiresAt > now) continue;
                     if (["awaiting_approval", "executing", "reconciling"].includes(task.status)) continue;
 
-                    let blocked = false;
-                    if (task.activeActionId !== null) {
-                        const actionRows = await transaction.$queryRaw<LinkedActionRecord[]>(Prisma.sql`
-                            SELECT "id", "task_id" AS "taskId", "session_id" AS "sessionId",
-                                   "user_id" AS "userId", "branch_id" AS "branchId",
-                                   "status", "expires_at" AS "expiresAt",
-                                   "result_part_persisted_at" AS "resultPartPersistedAt"
-                            FROM "agent_action"
-                            WHERE "id" = ${task.activeActionId}
-                              AND "task_id" = ${task.taskId}
-                              AND "session_id" = ${task.sessionId}
-                              AND "user_id" = CAST(${task.userId} AS uuid)
-                              AND "branch_id" = CAST(${task.branchId} AS uuid)
-                            ORDER BY "id" ASC
-                            FOR UPDATE
-                        `);
-                        blocked = linkedActionBlocks(actionRows[0] ?? null, now);
-                    }
-                    if (blocked) continue;
+                    const localActionRows = localActions.get(group.key) ?? [];
+                    // Read reverse links and a dangling forward link by
+                    // identity without locking a foreign session's action.
+                    // The result contains only lifecycle evidence fields.
+                    const globalActionRows = await transaction.$queryRaw<AgentTaskLifecycleActionEvidence[]>(
+                        task.activeActionId === null
+                            ? Prisma.sql`
+                                SELECT "id", "task_id" AS "taskId", "session_id" AS "sessionId",
+                                       "user_id" AS "userId", "branch_id" AS "branchId",
+                                       "status", "expires_at" AS "expiresAt",
+                                       "result_part_persisted_at" AS "resultPartPersistedAt"
+                                FROM "agent_action"
+                                WHERE "task_id" = ${task.taskId}
+                                ORDER BY "id" ASC
+                            `
+                            : Prisma.sql`
+                                SELECT "id", "task_id" AS "taskId", "session_id" AS "sessionId",
+                                       "user_id" AS "userId", "branch_id" AS "branchId",
+                                       "status", "expires_at" AS "expiresAt",
+                                       "result_part_persisted_at" AS "resultPartPersistedAt"
+                                FROM "agent_action"
+                                WHERE "task_id" = ${task.taskId} OR "id" = ${task.activeActionId}
+                                ORDER BY "id" ASC
+                            `,
+                    );
+                    const actionRows = [...new Map(
+                        [...localActionRows, ...globalActionRows].map((action) => [action.id, action]),
+                    ).values()];
+                    if (lifecycleTaskActionEvidenceBlocks({
+                        id: task.taskId,
+                        sessionId: task.sessionId,
+                        userId: task.userId,
+                        branchId: task.branchId,
+                        activeActionId: task.activeActionId,
+                    }, actionRows, now)) continue;
 
                     const tombstoneDraft = createEmptyAgentTaskDraft(randomUUID());
                     const updated = await transaction.agent_task.updateMany({

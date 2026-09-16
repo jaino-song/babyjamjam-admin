@@ -17,6 +17,11 @@ import type {
     IAgentSessionRepository,
 } from "domain/repositories/agent-session.repository.interface";
 import { PrismaService } from "infrastructure/database/prisma.service";
+import {
+    lifecycleTaskActionEvidenceBlocks,
+    type AgentTaskLifecycleActionEvidence,
+    type AgentTaskLifecycleTaskEvidence,
+} from "./agent-task-lifecycle-evidence";
 
 type AgentSessionRecord = Prisma.agent_sessionGetPayload<{ include: { messages: true } }>;
 const ALWAYS_BLOCKING_ACTION_STATUSES = ["executing", "uncertain"];
@@ -63,8 +68,48 @@ function retainedTaskWhere(owner?: AgentSessionOwner) {
     };
 }
 
-function anyRetainedTaskWhere() {
-    return { purgedAt: null };
+function anyRetainedTaskWhere(owner?: AgentSessionOwner) {
+    return { ...(owner ? ownerScope(owner) : {}), purgedAt: null };
+}
+
+type LifecycleEvidenceTransaction = {
+    agent_task: { findMany: (input: unknown) => Promise<AgentTaskLifecycleTaskEvidence[]> };
+    agent_action: { findMany: (input: unknown) => Promise<AgentTaskLifecycleActionEvidence[]> };
+};
+
+async function readLifecycleEvidence(
+    transaction: LifecycleEvidenceTransaction,
+    sessionId: string,
+    owner: AgentSessionOwner,
+): Promise<{ tasks: AgentTaskLifecycleTaskEvidence[]; actions: AgentTaskLifecycleActionEvidence[] }> {
+    const tasks = await transaction.agent_task.findMany({
+        where: { sessionId, userId: owner.userId, branchId: owner.branchId },
+        select: { id: true, sessionId: true, userId: true, branchId: true, activeActionId: true },
+        orderBy: { id: "asc" },
+    });
+    const taskIds = tasks.map((task) => task.id);
+    const activeActionIds = tasks.flatMap((task) => task.activeActionId === null ? [] : [task.activeActionId]);
+    const actions = await transaction.agent_action.findMany({
+        where: {
+            OR: [
+                { sessionId },
+                ...(taskIds.length === 0 ? [] : [{ taskId: { in: taskIds } }]),
+                ...(activeActionIds.length === 0 ? [] : [{ id: { in: activeActionIds } }]),
+            ],
+        },
+        select: {
+            id: true,
+            taskId: true,
+            sessionId: true,
+            userId: true,
+            branchId: true,
+            status: true,
+            expiresAt: true,
+            resultPartPersistedAt: true,
+        },
+        orderBy: { id: "asc" },
+    });
+    return { tasks, actions };
 }
 
 function isUniqueConstraintError(error: unknown): boolean {
@@ -174,11 +219,30 @@ export class PrismaAgentSessionRepository implements IAgentSessionRepository {
             `);
             if (locked.length === 0) return "not_found";
 
+            await transaction.$queryRaw(Prisma.sql`
+                SELECT "id"
+                FROM "agent_task"
+                WHERE "session_id" = ${id}
+                  AND "user_id" = CAST(${owner.userId} AS uuid)
+                  AND "branch_id" = CAST(${owner.branchId} AS uuid)
+                ORDER BY "id" ASC
+                FOR UPDATE
+            `);
+            await transaction.$queryRaw(Prisma.sql`
+                SELECT "id"
+                FROM "agent_action"
+                WHERE "session_id" = ${id}
+                  AND "user_id" = CAST(${owner.userId} AS uuid)
+                  AND "branch_id" = CAST(${owner.branchId} AS uuid)
+                ORDER BY "id" ASC
+                FOR UPDATE
+            `);
+
             const blockingAction = await transaction.agent_action.findFirst({
                 where: {
                     sessionId: id,
                     ...ownerScope(owner),
-                    ...blockingActionWhere(new Date()),
+                    ...blockingActionWhere(new Date(), owner, true),
                 },
                 select: { id: true },
             });
@@ -198,6 +262,17 @@ export class PrismaAgentSessionRepository implements IAgentSessionRepository {
                     select: { id: true },
                 });
                 if (blockingTask) return "blocked";
+            }
+
+            const evidenceTransaction = transaction as unknown as {
+                agent_task?: { findMany?: (input: unknown) => Promise<AgentTaskLifecycleTaskEvidence[]> };
+                agent_action?: { findMany?: (input: unknown) => Promise<AgentTaskLifecycleActionEvidence[]> };
+            };
+            if (evidenceTransaction.agent_task?.findMany && evidenceTransaction.agent_action?.findMany) {
+                const evidence = await readLifecycleEvidence(evidenceTransaction as LifecycleEvidenceTransaction, id, owner);
+                if (evidence.tasks.some((task) => lifecycleTaskActionEvidenceBlocks(task, evidence.actions, new Date()))) {
+                    return "blocked";
+                }
             }
 
             await transaction.agent_session.updateMany({
@@ -237,7 +312,10 @@ export class PrismaAgentSessionRepository implements IAgentSessionRepository {
                     agent_session: {
                         deleteMany: (input: unknown) => Promise<{ count: number }>;
                     };
-                    agent_task: { findFirst: (input: unknown) => Promise<{ id: string } | null> };
+                    agent_task: {
+                        findFirst: (input: unknown) => Promise<{ id: string } | null>;
+                        findMany?: (input: unknown) => Promise<AgentTaskLifecycleTaskEvidence[]>;
+                    };
                     agent_action: { findFirst: (input: unknown) => Promise<{ id: string } | null> };
                 };
                 const locked = await tx.$queryRaw<Array<{ id: string }>>(Prisma.sql`
@@ -278,6 +356,17 @@ export class PrismaAgentSessionRepository implements IAgentSessionRepository {
                     select: { id: true },
                 });
                 if (blockingAction) return "blocked";
+
+                const evidenceTransaction = tx as unknown as {
+                    agent_task?: { findMany?: (input: unknown) => Promise<AgentTaskLifecycleTaskEvidence[]> };
+                    agent_action?: { findMany?: (input: unknown) => Promise<AgentTaskLifecycleActionEvidence[]> };
+                };
+                if (evidenceTransaction.agent_task?.findMany && evidenceTransaction.agent_action?.findMany) {
+                    const evidence = await readLifecycleEvidence(evidenceTransaction as LifecycleEvidenceTransaction, id, owner);
+                    if (evidence.tasks.some((task) => lifecycleTaskActionEvidenceBlocks(task, evidence.actions, now))) {
+                        return "blocked";
+                    }
+                }
                 const deleted = await tx.agent_session.deleteMany({ where: { id, ...ownerScope(owner) } });
                 return deleted.count === 1 ? "deleted" : "not_found";
             }) as Promise<AgentSessionDeleteResult>;
@@ -440,8 +529,14 @@ export class PrismaAgentSessionRepository implements IAgentSessionRepository {
                     agent_session: {
                         deleteMany: (input: unknown) => Promise<{ count: number }>;
                     };
-                    agent_task: { findFirst: (input: unknown) => Promise<{ id: string } | null> };
-                    agent_action: { findFirst: (input: unknown) => Promise<{ id: string } | null> };
+                    agent_task: {
+                        findFirst: (input: unknown) => Promise<{ id: string } | null>;
+                        findMany?: (input: unknown) => Promise<AgentTaskLifecycleTaskEvidence[]>;
+                    };
+                    agent_action: {
+                        findFirst: (input: unknown) => Promise<{ id: string } | null>;
+                        findMany?: (input: unknown) => Promise<AgentTaskLifecycleActionEvidence[]>;
+                    };
                 };
                 const candidates = await tx.$queryRaw<Array<{ id: string; userId: string; branchId: string }>>(Prisma.sql`
                     SELECT "id", "user_id" AS "userId", "branch_id" AS "branchId"
@@ -450,32 +545,57 @@ export class PrismaAgentSessionRepository implements IAgentSessionRepository {
                     ORDER BY "id" ASC
                     FOR UPDATE
                 `);
-                let deletedCount = 0;
+
+                // Every expired-session candidate is already session-locked by
+                // the discovery query.  Complete the remaining lock phases
+                // globally before evaluating or deleting any candidate so a
+                // later session/task is never acquired after an action lock.
                 for (const candidate of candidates) {
                     await tx.$queryRaw(Prisma.sql`
                         SELECT "id"
                         FROM "agent_task"
                         WHERE "session_id" = ${candidate.id}
+                          AND "user_id" = CAST(${candidate.userId} AS uuid)
+                          AND "branch_id" = CAST(${candidate.branchId} AS uuid)
                         ORDER BY "id" ASC
                         FOR UPDATE
                     `);
+                }
+                for (const candidate of candidates) {
                     await tx.$queryRaw(Prisma.sql`
                         SELECT "id"
                         FROM "agent_action"
                         WHERE "session_id" = ${candidate.id}
+                          AND "user_id" = CAST(${candidate.userId} AS uuid)
+                          AND "branch_id" = CAST(${candidate.branchId} AS uuid)
                         ORDER BY "id" ASC
                         FOR UPDATE
                     `);
+                }
+
+                let deletedCount = 0;
+                for (const candidate of candidates) {
+                    const candidateOwner = { userId: candidate.userId, branchId: candidate.branchId };
                     const blockingTask = await tx.agent_task.findFirst({
-                        where: { sessionId: candidate.id, ...anyRetainedTaskWhere() },
+                        where: { sessionId: candidate.id, ...anyRetainedTaskWhere(candidateOwner) },
                         select: { id: true },
                     });
                     if (blockingTask) continue;
                     const blockingAction = await tx.agent_action.findFirst({
-                        where: { sessionId: candidate.id, ...blockingActionWhere(now, undefined, true) },
+                        where: { sessionId: candidate.id, ...blockingActionWhere(now, candidateOwner, true) },
                         select: { id: true },
                     });
                     if (blockingAction) continue;
+                    if (tx.agent_task.findMany && tx.agent_action.findMany) {
+                        const evidence = await readLifecycleEvidence(
+                            tx as LifecycleEvidenceTransaction,
+                            candidate.id,
+                            { userId: candidate.userId, branchId: candidate.branchId },
+                        );
+                        if (evidence.tasks.some((task) => lifecycleTaskActionEvidenceBlocks(task, evidence.actions, now))) {
+                            continue;
+                        }
+                    }
                     const deleted = await tx.agent_session.deleteMany({
                         where: { id: candidate.id, expiresAt: { lte: now } },
                     });

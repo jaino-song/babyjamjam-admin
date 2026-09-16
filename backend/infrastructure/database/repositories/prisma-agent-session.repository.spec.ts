@@ -521,11 +521,173 @@ describe("PrismaAgentSessionRepository", () => {
                 sessionId: "session-a",
                 ...owner,
                 OR: [
-                    { status: { in: ["executing", "uncertain"] } },
-                    { status: { in: ["proposed", "approved"] }, expiresAt: { gt: expect.any(Date) } },
+                    { ...owner, status: { in: ["executing", "uncertain"] } },
+                    { ...owner, status: { in: ["proposed", "approved"] }, expiresAt: { gt: expect.any(Date) } },
+                    {
+                        ...owner,
+                        status: { in: ["succeeded", "failed", "uncertain", "rejected", "expired", "cancelled"] },
+                        resultPartPersistedAt: null,
+                    },
                 ],
             },
             select: { id: true },
+        });
+    });
+
+    it("blocks archive while a terminal action result part is pending", async () => {
+        const prisma = {
+            agent_session: {
+                updateMany: jest.fn(),
+                findFirst: jest.fn(),
+            },
+            agent_action: {
+                findFirst: jest.fn().mockResolvedValue({ id: "action-a", status: "succeeded", resultPartPersistedAt: null }),
+            },
+        };
+        (prisma as typeof prisma & { $transaction: jest.Mock; $queryRaw: jest.Mock }).$transaction = jest.fn()
+            .mockImplementation(async (callback: (transaction: typeof prisma) => Promise<unknown>) => callback(prisma));
+        (prisma as typeof prisma & { $queryRaw: jest.Mock }).$queryRaw = jest.fn().mockResolvedValue([{ id: "session-a" }]);
+        const repository = new PrismaAgentSessionRepository(prisma as never);
+
+        await expect(repository.archiveOwned("session-a", owner, new Date("2026-08-04T00:00:00.000Z"))).resolves.toBe("blocked");
+        expect(prisma.agent_session.updateMany).not.toHaveBeenCalled();
+        expect(prisma.agent_action.findFirst).toHaveBeenCalledWith(expect.objectContaining({
+            where: expect.objectContaining({
+                OR: expect.arrayContaining([
+                    expect.objectContaining({
+                        status: { in: ["succeeded", "failed", "uncertain", "rejected", "expired", "cancelled"] },
+                        resultPartPersistedAt: null,
+                    }),
+                ]),
+            }),
+        }));
+    });
+
+    it("allows archive once a terminal action result part is persisted", async () => {
+        const prisma = {
+            agent_session: {
+                updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+                findFirst: jest.fn(),
+            },
+            agent_action: { findFirst: jest.fn().mockResolvedValue(null) },
+        };
+        (prisma as typeof prisma & { $transaction: jest.Mock; $queryRaw: jest.Mock }).$transaction = jest.fn()
+            .mockImplementation(async (callback: (transaction: typeof prisma) => Promise<unknown>) => callback(prisma));
+        (prisma as typeof prisma & { $queryRaw: jest.Mock }).$queryRaw = jest.fn().mockResolvedValue([{ id: "session-a" }]);
+        const repository = new PrismaAgentSessionRepository(prisma as never);
+
+        await expect(repository.archiveOwned("session-a", owner, new Date("2026-08-04T00:00:00.000Z"))).resolves.toBe("archived");
+        expect(prisma.agent_session.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+            data: { archivedAt: expect.any(Date) },
+        }));
+    });
+
+    it("blocks archive for a dangling task action link", async () => {
+        const tx = {
+            $queryRaw: jest.fn().mockResolvedValue([{ id: "session-a" }]),
+            agent_session: { updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
+            agent_task: {
+                findFirst: jest.fn().mockResolvedValue(null),
+                findMany: jest.fn().mockResolvedValue([{
+                    id: "task-a", sessionId: "session-a", userId: owner.userId, branchId: owner.branchId, activeActionId: "missing-action",
+                }]),
+            },
+            agent_action: {
+                findFirst: jest.fn().mockResolvedValue(null),
+                findMany: jest.fn().mockResolvedValue([]),
+            },
+        };
+        const prisma = {
+            $transaction: jest.fn().mockImplementation(async (callback: (transaction: typeof tx) => Promise<unknown>) => callback(tx)),
+        };
+        const repository = new PrismaAgentSessionRepository(prisma as never);
+
+        await expect(repository.archiveOwned("session-a", owner, new Date("2026-08-04T00:00:00.000Z"))).resolves.toBe("blocked");
+        expect(tx.agent_session.updateMany).not.toHaveBeenCalled();
+    });
+
+    it("allows archive for a terminal persisted action with matching forward and reverse links", async () => {
+        const tx = {
+            $queryRaw: jest.fn().mockResolvedValue([{ id: "session-a" }]),
+            agent_session: { updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
+            agent_task: {
+                findFirst: jest.fn().mockResolvedValue(null),
+                findMany: jest.fn().mockResolvedValue([{
+                    id: "task-a", sessionId: "session-a", userId: owner.userId, branchId: owner.branchId, activeActionId: "action-a",
+                }]),
+            },
+            agent_action: {
+                findFirst: jest.fn().mockResolvedValue(null),
+                findMany: jest.fn().mockResolvedValue([{
+                    id: "action-a", taskId: "task-a", sessionId: "session-a", userId: owner.userId, branchId: owner.branchId,
+                    status: "succeeded", expiresAt: new Date("2026-08-01T00:00:00.000Z"), resultPartPersistedAt: new Date("2026-08-02T00:00:00.000Z"),
+                }]),
+            },
+        };
+        const prisma = {
+            $transaction: jest.fn().mockImplementation(async (callback: (transaction: typeof tx) => Promise<unknown>) => callback(tx)),
+        };
+        const repository = new PrismaAgentSessionRepository(prisma as never);
+
+        await expect(repository.archiveOwned("session-a", owner, new Date("2026-08-04T00:00:00.000Z"))).resolves.toBe("archived");
+        expect(tx.agent_session.updateMany).toHaveBeenCalledTimes(1);
+    });
+
+    it("blocks owner deletion for reverse evidence from another scope", async () => {
+        const tx = {
+            $queryRaw: jest.fn().mockResolvedValue([{ id: "session-a" }]),
+            agent_session: { deleteMany: jest.fn().mockResolvedValue({ count: 1 }) },
+            agent_task: {
+                findFirst: jest.fn().mockResolvedValue(null),
+                findMany: jest.fn().mockResolvedValue([{
+                    id: "task-a", sessionId: "session-a", userId: owner.userId, branchId: owner.branchId, activeActionId: null,
+                }]),
+            },
+            agent_action: {
+                findFirst: jest.fn().mockResolvedValue(null),
+                findMany: jest.fn().mockResolvedValue([{
+                    id: "action-foreign", taskId: "task-a", sessionId: "session-a", userId: "user-b", branchId: owner.branchId,
+                    status: "succeeded", expiresAt: new Date("2026-08-01T00:00:00.000Z"), resultPartPersistedAt: new Date("2026-08-02T00:00:00.000Z"),
+                }]),
+            },
+        };
+        const prisma = {
+            agent_task: { findFirst: jest.fn() },
+            $transaction: jest.fn().mockImplementation(async (callback: (transaction: typeof tx) => Promise<unknown>) => callback(tx)),
+        };
+        const repository = new PrismaAgentSessionRepository(prisma as never);
+
+        await expect(repository.deleteOwned("session-a", owner)).resolves.toBe("blocked");
+        expect(tx.agent_session.deleteMany).not.toHaveBeenCalled();
+    });
+
+    it("allows owner deletion for a settled matching action link", async () => {
+        const tx = {
+            $queryRaw: jest.fn().mockResolvedValue([{ id: "session-a" }]),
+            agent_session: { deleteMany: jest.fn().mockResolvedValue({ count: 1 }) },
+            agent_task: {
+                findFirst: jest.fn().mockResolvedValue(null),
+                findMany: jest.fn().mockResolvedValue([{
+                    id: "task-a", sessionId: "session-a", userId: owner.userId, branchId: owner.branchId, activeActionId: "action-a",
+                }]),
+            },
+            agent_action: {
+                findFirst: jest.fn().mockResolvedValue(null),
+                findMany: jest.fn().mockResolvedValue([{
+                    id: "action-a", taskId: "task-a", sessionId: "session-a", userId: owner.userId, branchId: owner.branchId,
+                    status: "failed", expiresAt: new Date("2026-08-01T00:00:00.000Z"), resultPartPersistedAt: new Date("2026-08-02T00:00:00.000Z"),
+                }]),
+            },
+        };
+        const prisma = {
+            agent_task: { findFirst: jest.fn() },
+            $transaction: jest.fn().mockImplementation(async (callback: (transaction: typeof tx) => Promise<unknown>) => callback(tx)),
+        };
+        const repository = new PrismaAgentSessionRepository(prisma as never);
+
+        await expect(repository.deleteOwned("session-a", owner)).resolves.toBe("deleted");
+        expect(tx.agent_session.deleteMany).toHaveBeenCalledWith({
+            where: { id: "session-a", userId: owner.userId, branchId: owner.branchId },
         });
     });
 
@@ -583,6 +745,39 @@ describe("PrismaAgentSessionRepository", () => {
 
         await expect(repository.deleteExpired(now)).resolves.toBe(0);
         expect(tx.agent_session.deleteMany).not.toHaveBeenCalled();
+    });
+
+    it("retains an expired session when a task has a dangling active action link", async () => {
+        const now = new Date("2026-08-04T00:00:00.000Z");
+        const tx = {
+            $queryRaw: jest.fn()
+                .mockResolvedValueOnce([{ id: "session-a", userId: owner.userId, branchId: owner.branchId }])
+                .mockResolvedValueOnce([])
+                .mockResolvedValueOnce([]),
+            agent_session: { deleteMany: jest.fn().mockResolvedValue({ count: 1 }) },
+            agent_action: {
+                findFirst: jest.fn().mockResolvedValue(null),
+                findMany: jest.fn().mockResolvedValue([]),
+            },
+            agent_task: {
+                findFirst: jest.fn().mockResolvedValue(null),
+                findMany: jest.fn().mockResolvedValue([{
+                    id: "task-a", sessionId: "session-a", userId: owner.userId, branchId: owner.branchId,
+                    activeActionId: "missing-action",
+                }]),
+            },
+        };
+        const prisma = {
+            $transaction: jest.fn().mockImplementation(async (callback: (transaction: typeof tx) => Promise<unknown>) => callback(tx)),
+            agent_task: { findFirst: jest.fn() },
+            agent_session: { deleteMany: jest.fn() },
+        };
+        const repository = new PrismaAgentSessionRepository(prisma as never);
+
+        await expect(repository.deleteExpired(now)).resolves.toBe(0);
+        expect(tx.agent_session.deleteMany).not.toHaveBeenCalled();
+        expect(tx.agent_task.findMany).toHaveBeenCalled();
+        expect(tx.agent_action.findMany).toHaveBeenCalled();
     });
 
     it("unarchives only the owned session and permits expired sessions", async () => {

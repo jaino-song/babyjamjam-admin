@@ -16,6 +16,8 @@ const describeAgentE2E = process.env["AGENT_E2E"] === "1" ? describe : describe.
 const USER_ID = "a1000000-0000-4000-8000-000000000001";
 const BRANCH_ID = "a2000000-0000-4000-8000-000000000001";
 const SESSION_ID = "a3000000-0000-4000-8000-000000000001";
+const FOREIGN_USER_ID = "a1000000-0000-4000-8000-000000000002";
+const FOREIGN_BRANCH_ID = "a2000000-0000-4000-8000-000000000002";
 const principal: VerifiedTenantPrincipal = {
     userId: USER_ID,
     branchId: BRANCH_ID,
@@ -65,19 +67,23 @@ function createInput(clientEventId = randomUUID()) {
 async function createAction(
     prisma: PrismaClient,
     input: {
-        taskId: string;
+        taskId: string | null;
         id?: string;
         status: string;
         resultPartPersistedAt?: Date | null;
+        sessionId?: string;
+        userId?: string;
+        branchId?: string;
+        expiresAt?: Date;
     },
 ) {
     const id = input.id ?? randomUUID();
     await prisma.agent_action.create({
         data: {
             id,
-            sessionId: SESSION_ID,
-            userId: USER_ID,
-            branchId: BRANCH_ID,
+            sessionId: input.sessionId ?? SESSION_ID,
+            userId: input.userId ?? USER_ID,
+            branchId: input.branchId ?? BRANCH_ID,
             capability: "clients.create",
             capabilityVersion: "1.0.0",
             risk: "reversible-write",
@@ -86,12 +92,12 @@ async function createAction(
             proposalRevision: "1",
             inputHash: "b".repeat(64),
             authorizationContext: { fixture: "lifecycle" },
-            expiresAt: futureDate(),
+            expiresAt: input.expiresAt ?? futureDate(),
             idempotencyKey: randomUUID(),
             requestDedupeKey: randomUUID(),
             dedupeExpiresAt: futureDate(),
             taskId: input.taskId,
-            taskRevision: 1,
+            taskRevision: input.taskId === null ? null : 1,
             resultPartPersistedAt: input.resultPartPersistedAt ?? null,
         },
     });
@@ -166,11 +172,20 @@ describeAgentE2E("agent task lifecycle against the guarded local database", () =
         assertApprovedAgentTaskPersistenceDatabaseTarget();
         prisma = createApprovedAgentTaskPersistenceClient();
         await prisma.$connect();
-        await prisma.agent_session.deleteMany({ where: { userId: USER_ID, branchId: BRANCH_ID } });
-        await prisma.user.deleteMany({ where: { id: USER_ID } });
-        await prisma.branch.deleteMany({ where: { id: BRANCH_ID } });
+        await prisma.agent_session.deleteMany({
+            where: {
+                OR: [
+                    { userId: USER_ID, branchId: BRANCH_ID },
+                    { userId: FOREIGN_USER_ID, branchId: FOREIGN_BRANCH_ID },
+                ],
+            },
+        });
+        await prisma.user.deleteMany({ where: { id: { in: [USER_ID, FOREIGN_USER_ID] } } });
+        await prisma.branch.deleteMany({ where: { id: { in: [BRANCH_ID, FOREIGN_BRANCH_ID] } } });
         await prisma.user.create({ data: { id: USER_ID, email: "agent-task-lifecycle@example.invalid" } });
         await prisma.branch.create({ data: { id: BRANCH_ID, name: "Agent task lifecycle branch", slug: "agent-task-lifecycle" } });
+        await prisma.user.create({ data: { id: FOREIGN_USER_ID, email: "agent-task-lifecycle-foreign@example.invalid" } });
+        await prisma.branch.create({ data: { id: FOREIGN_BRANCH_ID, name: "Agent task lifecycle foreign branch", slug: "agent-task-lifecycle-foreign" } });
         await prisma.agent_session.create({
             data: {
                 id: SESSION_ID,
@@ -206,9 +221,18 @@ describeAgentE2E("agent task lifecycle against the guarded local database", () =
     });
 
     afterAll(async () => {
-        await prisma.agent_session.deleteMany({ where: { userId: USER_ID, branchId: BRANCH_ID } });
+        await prisma.agent_session.deleteMany({
+            where: {
+                OR: [
+                    { userId: USER_ID, branchId: BRANCH_ID },
+                    { userId: FOREIGN_USER_ID, branchId: FOREIGN_BRANCH_ID },
+                ],
+            },
+        });
         await prisma.branch.deleteMany({ where: { id: BRANCH_ID } });
         await prisma.user.deleteMany({ where: { id: USER_ID } });
+        await prisma.branch.deleteMany({ where: { id: FOREIGN_BRANCH_ID } });
+        await prisma.user.deleteMany({ where: { id: FOREIGN_USER_ID } });
         await prisma.$disconnect();
     });
 
@@ -449,6 +473,101 @@ describeAgentE2E("agent task lifecycle against the guarded local database", () =
         await expect(prisma.agent_task.findUnique({ where: { id: uncertainTaskId } })).resolves.toEqual(
             expect.objectContaining({ purgedAt: null, activeActionId: uncertainActionId }),
         );
+    });
+
+    it("fails closed for reverse and inconsistent task-action links while allowing settled history", async () => {
+        const expiredAt = new Date(Date.now() - 1000);
+        const cleanupAt = new Date(Date.now() + 1000);
+        const cases = [
+            { label: "reverse uncertain", status: "uncertain", resultPartPersistedAt: cleanupAt, taskId: null as string | null, actionTaskId: "reverse" as const },
+            { label: "reverse proposed", status: "proposed", resultPartPersistedAt: cleanupAt, taskId: null as string | null, actionTaskId: "reverse" as const },
+            { label: "reverse pending result", status: "succeeded", resultPartPersistedAt: null, taskId: null as string | null, actionTaskId: "reverse" as const },
+            { label: "dangling forward", status: "succeeded", resultPartPersistedAt: cleanupAt, taskId: "forward" as const, actionTaskId: "none" as const },
+            { label: "foreign reverse", status: "failed", resultPartPersistedAt: cleanupAt, taskId: null as string | null, actionTaskId: "foreign" as const },
+        ] as const;
+
+        for (const testCase of cases) {
+            const taskId = randomUUID();
+            const actionId = randomUUID();
+            const created = await repository.createWithEvent({ userId: USER_ID, branchId: BRANCH_ID, sessionId: SESSION_ID }, {
+                taskId,
+                capabilityId: "clients.create",
+                draft: taskDraft(),
+                status: "cancelled",
+                expiresAt: expiredAt,
+            }, { clientEventId: randomUUID(), operation: "create", requestHash: randomUUID().replace(/-/g, "").padEnd(64, "0"), acceptedRevision: 1 });
+            expect(created.status).toBe("created");
+
+            const actionTaskId = testCase.actionTaskId === "reverse" || testCase.actionTaskId === "foreign"
+                ? taskId
+                : null;
+            await createAction(prisma, {
+                taskId: actionTaskId,
+                id: actionId,
+                status: testCase.status,
+                resultPartPersistedAt: testCase.resultPartPersistedAt,
+                ...(testCase.actionTaskId === "foreign" ? { userId: FOREIGN_USER_ID, branchId: FOREIGN_BRANCH_ID } : {}),
+            });
+            if (testCase.taskId === "forward") {
+                await prisma.agent_task.update({ where: { id: taskId }, data: { activeActionId: actionId } });
+            }
+
+            expect(await repository.purgeExpired(cleanupAt)).toBe(0);
+            await expect(prisma.agent_task.findUnique({ where: { id: taskId } })).resolves.toEqual(
+                expect.objectContaining({ purgedAt: null }),
+            );
+        }
+
+        const settledTaskId = randomUUID();
+        const settledActionId = randomUUID();
+        const settledCreated = await repository.createWithEvent({ userId: USER_ID, branchId: BRANCH_ID, sessionId: SESSION_ID }, {
+            taskId: settledTaskId,
+            capabilityId: "clients.create",
+            draft: taskDraft(),
+            status: "cancelled",
+            expiresAt: expiredAt,
+        }, { clientEventId: randomUUID(), operation: "create", requestHash: randomUUID().replace(/-/g, "").padEnd(64, "0"), acceptedRevision: 1 });
+        expect(settledCreated.status).toBe("created");
+        await createAction(prisma, {
+            taskId: settledTaskId,
+            id: settledActionId,
+            status: "failed",
+            resultPartPersistedAt: cleanupAt,
+        });
+        await prisma.agent_task.update({ where: { id: settledTaskId }, data: { activeActionId: settledActionId } });
+        const actionBefore = await prisma.agent_action.findUnique({ where: { id: settledActionId } });
+        expect(await repository.purgeExpired(cleanupAt)).toBe(1);
+        expect(await repository.purgeExpired(cleanupAt)).toBe(0);
+        await expect(prisma.agent_task.findUnique({ where: { id: settledTaskId } })).resolves.toEqual(
+            expect.objectContaining({ purgedAt: cleanupAt, activeActionId: settledActionId }),
+        );
+        await expect(prisma.agent_action.findUnique({ where: { id: settledActionId } })).resolves.toEqual(actionBefore);
+    });
+
+    it("applies bidirectional evidence to archive and owner delete", async () => {
+        const sessionRepository = new PrismaAgentSessionRepository(prisma as never);
+        const taskId = randomUUID();
+        const created = await repository.createWithEvent({ userId: USER_ID, branchId: BRANCH_ID, sessionId: SESSION_ID }, {
+            taskId,
+            capabilityId: "clients.create",
+            draft: taskDraft(),
+            status: "cancelled",
+            expiresAt: new Date(Date.now() - 1000),
+        }, { clientEventId: randomUUID(), operation: "create", requestHash: "f".repeat(64), acceptedRevision: 1 });
+        expect(created.status).toBe("created");
+        await prisma.agent_task.update({ where: { id: taskId }, data: { activeActionId: randomUUID() } });
+
+        await expect(sessionRepository.archiveOwned(SESSION_ID, principal, new Date())).resolves.toBe("blocked");
+        await expect(sessionRepository.deleteOwned(SESSION_ID, principal)).resolves.toBe("blocked");
+
+        const actionId = await createAction(prisma, {
+            taskId,
+            status: "failed",
+            resultPartPersistedAt: new Date(),
+        });
+        await prisma.agent_task.update({ where: { id: taskId }, data: { activeActionId: actionId } });
+        await expect(sessionRepository.archiveOwned(SESSION_ID, principal, new Date())).resolves.toBe("archived");
+        await expect(sessionRepository.deleteOwned(SESSION_ID, principal)).resolves.toBe("deleted");
     });
 
     it("serializes edit-first against cleanup with an explicit lock barrier", async () => {

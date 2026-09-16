@@ -4,7 +4,10 @@ import { createEmptyAgentTaskDraft, type AgentTaskDraft } from "domain/entities/
 const USER_ID = "10000000-0000-4000-8000-000000000001";
 const BRANCH_ID = "20000000-0000-4000-8000-000000000001";
 const SESSION_ID = "30000000-0000-4000-8000-000000000001";
+const SESSION_ID_2 = "30000000-0000-4000-8000-000000000002";
 const TASK_ID = "40000000-0000-4000-8000-000000000001";
+const TASK_ID_2 = "40000000-0000-4000-8000-000000000002";
+const TASK_ID_3 = "40000000-0000-4000-8000-000000000003";
 const EVENT_ID = "50000000-0000-4000-8000-000000000001";
 const SNAPSHOT_ID = "60000000-0000-4000-8000-000000000001";
 const HASH = "a".repeat(64);
@@ -134,6 +137,29 @@ function repositoryForTransaction(transaction: ReturnType<typeof transactionWith
         $transaction: jest.fn().mockImplementation(async (callback: (tx: typeof transaction) => Promise<unknown>) => callback(transaction)),
     };
     return { repository: new PrismaAgentTaskRepository(prisma as never), prisma };
+}
+
+function purgeTransaction(
+    record: TaskRecordFixture,
+    localActions: readonly Record<string, unknown>[] = [],
+    globalActions: readonly Record<string, unknown>[] = localActions,
+) {
+    const transaction = {
+        $queryRaw: jest.fn()
+            .mockResolvedValueOnce([{ id: TASK_ID, sessionId: SESSION_ID, userId: USER_ID, branchId: BRANCH_ID }])
+            .mockResolvedValueOnce([{ id: SESSION_ID }])
+            .mockResolvedValueOnce([{ id: TASK_ID }])
+            .mockResolvedValueOnce(localActions)
+            .mockResolvedValueOnce(globalActions),
+        agent_task: {
+            findUnique: jest.fn().mockResolvedValue(record),
+            updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+        },
+    };
+    const prisma = {
+        $transaction: jest.fn().mockImplementation(async (callback: (tx: typeof transaction) => Promise<number>) => callback(transaction)),
+    };
+    return { transaction, repository: new PrismaAgentTaskRepository(prisma as never) };
 }
 
 describe("PrismaAgentTaskRepository", () => {
@@ -420,7 +446,9 @@ describe("PrismaAgentTaskRepository", () => {
             $queryRaw: jest.fn()
                 .mockResolvedValueOnce([{ id: TASK_ID, sessionId: SESSION_ID, userId: USER_ID, branchId: BRANCH_ID }])
                 .mockResolvedValueOnce([{ id: SESSION_ID }])
-                .mockResolvedValueOnce([{ id: TASK_ID }]),
+                .mockResolvedValueOnce([{ id: TASK_ID }])
+                .mockResolvedValueOnce([])
+                .mockResolvedValueOnce([]),
             agent_task: {
                 findUnique: jest.fn().mockResolvedValue(record),
                 updateMany: jest.fn().mockResolvedValue({ count: 1 }),
@@ -443,6 +471,57 @@ describe("PrismaAgentTaskRepository", () => {
         expect(purgedDraft["currentSnapshotRef"]).toEqual(expect.any(String));
     });
 
+    it("locks every candidate session, then tasks, then actions in stable order", async () => {
+        const now = new Date("2026-09-17T00:00:00.000Z");
+        const first = taskRecord({ id: TASK_ID, expiresAt: new Date("2026-09-16T00:00:00.000Z") });
+        const second = taskRecord({ id: TASK_ID_2, expiresAt: new Date("2026-09-16T00:00:00.000Z") });
+        const third = taskRecord({
+            id: TASK_ID_3,
+            sessionId: SESSION_ID_2,
+            expiresAt: new Date("2026-09-16T00:00:00.000Z"),
+        });
+        const records = new Map([
+            [TASK_ID, first],
+            [TASK_ID_2, second],
+            [TASK_ID_3, third],
+        ]);
+        const transaction = {
+            $queryRaw: jest.fn()
+                .mockResolvedValueOnce([
+                    { id: TASK_ID, sessionId: SESSION_ID, userId: USER_ID, branchId: BRANCH_ID },
+                    { id: TASK_ID_2, sessionId: SESSION_ID, userId: USER_ID, branchId: BRANCH_ID },
+                    { id: TASK_ID_3, sessionId: SESSION_ID_2, userId: USER_ID, branchId: BRANCH_ID },
+                ])
+                .mockResolvedValueOnce([{ id: SESSION_ID }])
+                .mockResolvedValueOnce([{ id: SESSION_ID_2 }])
+                .mockResolvedValueOnce([{ id: TASK_ID }])
+                .mockResolvedValueOnce([{ id: TASK_ID_2 }])
+                .mockResolvedValueOnce([{ id: TASK_ID_3 }])
+                .mockResolvedValueOnce([])
+                .mockResolvedValueOnce([])
+                .mockResolvedValueOnce([])
+                .mockResolvedValueOnce([])
+                .mockResolvedValueOnce([]),
+            agent_task: {
+                findUnique: jest.fn().mockImplementation(({ where }: { where: { id: string } }) => records.get(where.id)),
+                updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+            },
+        };
+        const prisma = {
+            $transaction: jest.fn().mockImplementation(async (callback: (tx: typeof transaction) => Promise<number>) => callback(transaction)),
+        };
+        const repository = new PrismaAgentTaskRepository(prisma as never);
+
+        await expect(repository.purgeExpired(now)).resolves.toBe(3);
+
+        const sqlCalls = transaction.$queryRaw.mock.calls.map(([query]: [{ sql?: string }]) => query.sql ?? "");
+        expect(sqlCalls.slice(1, 3).every((sql) => sql.includes('FROM "agent_session"') && sql.includes("FOR UPDATE"))).toBe(true);
+        expect(sqlCalls.slice(3, 6).every((sql) => sql.includes('FROM "agent_task"') && sql.includes("FOR UPDATE"))).toBe(true);
+        expect(sqlCalls.slice(6, 8).every((sql) => sql.includes('FROM "agent_action"') && sql.includes("FOR UPDATE"))).toBe(true);
+        expect(sqlCalls.slice(8).every((sql) => sql.includes('FROM "agent_action"') && !sql.includes("FOR UPDATE"))).toBe(true);
+        expect(transaction.agent_task.updateMany).toHaveBeenCalledTimes(3);
+    });
+
     it.each(["executing", "uncertain"])("retains an expired task with a %s linked action", async (status) => {
         const now = new Date("2026-09-17T00:00:00.000Z");
         const record = taskRecord({ activeActionId: "action-a", expiresAt: new Date("2026-09-16T00:00:00.000Z") });
@@ -454,6 +533,10 @@ describe("PrismaAgentTaskRepository", () => {
                 .mockResolvedValueOnce([{
                     id: "action-a", taskId: TASK_ID, sessionId: SESSION_ID, userId: USER_ID, branchId: BRANCH_ID,
                     status, expiresAt: new Date("2026-09-01T00:00:00.000Z"), resultPartPersistedAt: null,
+                }])
+                .mockResolvedValueOnce([{
+                    id: "action-a", taskId: TASK_ID, sessionId: SESSION_ID, userId: USER_ID, branchId: BRANCH_ID,
+                    status, expiresAt: new Date("2026-09-01T00:00:00.000Z"), resultPartPersistedAt: null,
                 }]),
             agent_task: { findUnique: jest.fn().mockResolvedValue(record), updateMany: jest.fn() },
         };
@@ -462,5 +545,68 @@ describe("PrismaAgentTaskRepository", () => {
 
         await expect(repository.purgeExpired(now)).resolves.toBe(0);
         expect(transaction.agent_task.updateMany).not.toHaveBeenCalled();
+    });
+
+    it.each([
+        ["reverse uncertain", "uncertain", new Date("2026-09-18T00:00:00.000Z"), null],
+        ["reverse proposed", "proposed", new Date("2026-09-18T00:00:00.000Z"), new Date("2026-09-18T00:00:00.000Z")],
+        ["reverse pending result", "succeeded", new Date("2026-09-18T00:00:00.000Z"), null],
+        ["reverse unknown", "future-state", new Date("2026-09-18T00:00:00.000Z"), new Date("2026-09-18T00:00:00.000Z")],
+    ])("fails closed for %s evidence", async (_label, status, expiresAt, resultPartPersistedAt) => {
+        const now = new Date("2026-09-17T00:00:00.000Z");
+        const record = taskRecord({ activeActionId: null, expiresAt: new Date("2026-09-16T00:00:00.000Z") });
+        const action = {
+            id: "action-reverse",
+            taskId: TASK_ID,
+            sessionId: SESSION_ID,
+            userId: USER_ID,
+            branchId: BRANCH_ID,
+            status,
+            expiresAt,
+            resultPartPersistedAt,
+        };
+        const { repository, transaction } = purgeTransaction(record, [action], [action]);
+
+        await expect(repository.purgeExpired(now)).resolves.toBe(0);
+        expect(transaction.agent_task.updateMany).not.toHaveBeenCalled();
+    });
+
+    it("fails closed for a forward link whose reverse action points nowhere", async () => {
+        const now = new Date("2026-09-17T00:00:00.000Z");
+        const record = taskRecord({ activeActionId: "action-forward", expiresAt: new Date("2026-09-16T00:00:00.000Z") });
+        const action = {
+            id: "action-forward",
+            taskId: null,
+            sessionId: SESSION_ID,
+            userId: USER_ID,
+            branchId: BRANCH_ID,
+            status: "failed",
+            expiresAt: new Date("2026-09-01T00:00:00.000Z"),
+            resultPartPersistedAt: new Date("2026-09-02T00:00:00.000Z"),
+        };
+        const { repository, transaction } = purgeTransaction(record, [action], [action]);
+
+        await expect(repository.purgeExpired(now)).resolves.toBe(0);
+        expect(transaction.agent_task.updateMany).not.toHaveBeenCalled();
+    });
+
+    it("purges settled forward evidence and leaves a repeated cleanup idempotent", async () => {
+        const now = new Date("2026-09-17T00:00:00.000Z");
+        const record = taskRecord({ activeActionId: "action-settled", expiresAt: new Date("2026-09-16T00:00:00.000Z") });
+        const action = {
+            id: "action-settled",
+            taskId: TASK_ID,
+            sessionId: SESSION_ID,
+            userId: USER_ID,
+            branchId: BRANCH_ID,
+            status: "failed",
+            expiresAt: new Date("2026-09-01T00:00:00.000Z"),
+            resultPartPersistedAt: new Date("2026-09-02T00:00:00.000Z"),
+        };
+        const { repository, transaction } = purgeTransaction(record, [action], [action]);
+
+        await expect(repository.purgeExpired(now)).resolves.toBe(1);
+        await expect(repository.purgeExpired(now)).resolves.toBe(0);
+        expect(transaction.agent_task.updateMany).toHaveBeenCalledTimes(1);
     });
 });
