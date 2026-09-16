@@ -1,3 +1,4 @@
+import { IsBirthdayDate } from "./birthday.validator";
 import {
     ArrayMaxSize,
     ArrayMinSize,
@@ -13,11 +14,8 @@ import {
     Matches,
     MaxLength,
     Min,
-    Validate,
     ValidateIf,
     ValidateNested,
-    ValidatorConstraint,
-    ValidatorConstraintInterface,
 } from "class-validator";
 import { Transform, Type } from "class-transformer";
 import { PROPOSAL_FIELDS } from "application/services/call-extraction.prompt";
@@ -28,25 +26,6 @@ import { IsCanonicalPhone, trimNullablePhone } from "./canonical-phone.validator
 const KOREAN_WON_VALIDATION_MESSAGE = "금액은 정수 원 단위(예: 1,000원)만 입력할 수 있습니다.";
 const trimKoreanWonInput = ({ value }: { value: unknown }): unknown =>
     typeof value === "string" ? value.trim() : value;
-
-@ValidatorConstraint({ name: "calendarBirthday", async: false })
-class CalendarBirthdayConstraint implements ValidatorConstraintInterface {
-    validate(value: unknown): boolean {
-        if (typeof value !== "string" || !/^\d{6}$/.test(value)) return false;
-
-        const year = Number(value.slice(0, 2));
-        const month = Number(value.slice(2, 4));
-        const day = Number(value.slice(4, 6));
-        if (month < 1 || month > 12 || day < 1) return false;
-
-        const daysInMonth = [31, year % 4 === 0 ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
-        return day <= (daysInMonth[month - 1] ?? 0);
-    }
-
-    defaultMessage(): string {
-        return "생년월일은 유효한 YYMMDD 6자리여야 합니다.";
-    }
-}
 
 export class CreateCallIngestTokenDto {
     @IsString()
@@ -154,7 +133,7 @@ export class ConfirmNewClientFieldsDto {
     voucherClient?: boolean;
 
     @IsOptional() @IsString()
-    @Validate(CalendarBirthdayConstraint)
+    @IsBirthdayDate()
     birthday?: string | null;
 
     @IsOptional() @IsDateString()

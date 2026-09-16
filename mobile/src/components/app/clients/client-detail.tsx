@@ -257,7 +257,6 @@ function firstValue(...values: Array<string | number | null | undefined>): strin
 
 function formatDate(dateStr: string | null | undefined): string {
   if (!dateStr) return "-";
-  if (/^\d{6}$/.test(dateStr)) return formatBirthdayYYMMDD(dateStr);
   const normalized = compactDateToIsoDate(dateStr) ?? yymmddToIsoDate(dateStr) ?? dateStr;
   const formatted = formatIsoDateParts(normalized);
   if (formatted) return formatted;
@@ -1238,7 +1237,7 @@ export function ClientDetailContent({
       <MobileDetailTabPanel data-component={`${dataComponent}_tab-panel_basic`} name="clients" tabId="basic" activeTab={activeTab}>
         <InfoCard data-component={`${dataComponent}_tab-panel_basic_client-card`} title="고객 정보">
           <InfoRow label="이름" value={client.name} />
-          <InfoRow label="생년월일" value={formatDate(birthDate)} />
+          <InfoRow label="생년월일" value={birthDate ? formatBirthdayYYMMDD(birthDate) : "-"} />
           <InfoRow label="출산 예정일" value={formatDate(dueDate)} />
           <InfoRow label="연락처" value={phone ? formatKoreanPhoneNumber(phone) : "-"} />
           <InfoRow label="주소" value={address ?? "-"} />

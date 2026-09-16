@@ -107,7 +107,7 @@ jest.mock("@/lib/eformsign/client-prefill", () => ({
 
 const initialForm = {
   name: "등록 고객",
-  birthday: "900101",
+  birthday: "1958-03-03",
   dueDate: "2026-08-01",
   birthDate: "",
   address: "인천시",

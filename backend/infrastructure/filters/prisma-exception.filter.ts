@@ -10,6 +10,7 @@ import type { Response } from "express";
 import type { Request } from "express";
 import { createProblemDetails } from "@babyjamjam/shared/errors/problem-details";
 import { getProblemLocale, getProblemRequestId, sendProblemResponse } from "./problem-response";
+import { captureHttpAdvisory } from "../observability/http-advisory";
 
 import { getDatabaseConnectionMode } from "infrastructure/database/prisma-url.utils";
 import {
@@ -64,14 +65,18 @@ export class PrismaExceptionFilter implements ExceptionFilter {
         }) : undefined;
         this.logger.error({ code: prismaCode, requestId, status });
         try {
-            capturePrismaError(exception, {
-                code: prismaCode,
-                requestId,
-                problemCode: problem?.code,
-                outcome: problem?.outcome,
-                eligible: isPrismaFailoverEligible(exception),
-                route: getDatabaseConnectionMode(),
-            });
+            if (status === HttpStatus.BAD_REQUEST) {
+                captureHttpAdvisory(request, requestId, undefined, prismaCode);
+            } else {
+                capturePrismaError(exception, {
+                    code: prismaCode,
+                    requestId,
+                    problemCode: problem?.code,
+                    outcome: problem?.outcome,
+                    eligible: isPrismaFailoverEligible(exception),
+                    route: getDatabaseConnectionMode(),
+                });
+            }
         } catch {
             // 진단 수집 실패는 원래 응답을 바꾸지 않아요.
         }

@@ -1,3 +1,4 @@
+import { isValidBirthdayIsoDate } from "@babyjamjam/shared/utils/birthday";
 import { Inject, Injectable, Logger, Optional } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
 import { z } from "zod";
@@ -24,21 +25,9 @@ const EmployeeGradeSchema = z.preprocess(
     z.enum(EMPLOYEE_GRADES),
 );
 
-function isCalendarValidYymmdd(value: string): boolean {
-    if (!/^\d{6}$/.test(value)) return false;
-
-    const year = Number(value.slice(0, 2));
-    const month = Number(value.slice(2, 4));
-    const day = Number(value.slice(4, 6));
-    if (month < 1 || month > 12 || day < 1) return false;
-
-    const daysInMonth = [31, year % 4 === 0 ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
-    return day <= (daysInMonth[month - 1] ?? 0);
-}
-
 const EmployeeBirthdaySchema = z.string()
-    .regex(/^\d{6}$/, "Birthday must be six numeric YYMMDD digits")
-    .refine(isCalendarValidYymmdd, "Birthday must be a calendar-valid YYMMDD date")
+    .regex(/^\d{4}-\d{2}-\d{2}$/, "Birthday must use YYYY-MM-DD")
+    .refine(isValidBirthdayIsoDate, "Birthday must be a valid YYYY-MM-DD date")
     .optional();
 
 const EMPLOYEE_BRANCH_PHONE_UNIQUE_CONSTRAINT = "employee_branch_id_phone_normalized_key";
@@ -114,7 +103,7 @@ const EMPLOYEE_CREATE_FIELDS: AgentFormField[] = [
     { name: "phone", label: "전화번호", type: "text", required: true },
     { name: "grade", label: "등급", type: "text", required: true },
     { name: "openToNextWork", label: "다음 업무 가능", type: "boolean" },
-    { name: "birthday", label: "생년월일", type: "text", inputMode: "numeric", placeholder: "YYMMDD", maxLength: 6 },
+    { name: "birthday", label: "생년월일", type: "date", inputMode: "numeric", placeholder: "YYYY-MM-DD", maxLength: 10 },
 ];
 const EMPLOYEE_UPDATE_FIELDS: AgentFormField[] = [
     { name: "id", label: "직원 ID", type: "number", required: true },

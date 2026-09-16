@@ -334,6 +334,16 @@ describe("ToolExecutorService", () => {
         expect(mocks.clientService.findByFilter).not.toHaveBeenCalled();
     });
 
+    it.each(["1905-01-01", "2005-01-01", "1958-03-03"])("accepts ISO birthday %s before legacy tool confirmation", async (birthday) => {
+        const { executor, mocks } = createExecutor();
+        const result = await executor.execute("branch-1", "createClient", {
+            confirmed: true, name: "김산모", primaryEmployeeId: 1,
+            careCenter: false, voucherClient: true, birthday,
+        });
+        expect(result).toMatchObject({ success: true, requiresConfirmation: true });
+        expect(mocks.clientService.create).not.toHaveBeenCalled();
+    });
+
     it("should reject malformed date strings before mutation services run", async () => {
         const { executor, mocks } = createExecutor();
 
@@ -353,7 +363,7 @@ describe("ToolExecutorService", () => {
             primaryEmployeeId: 1,
             careCenter: false,
             voucherClient: true,
-            birthday: "2026-01-01",
+            birthday: "2026-02-30",
         })).resolves.toMatchObject({ success: false, error: expect.stringContaining("birthday") });
         expect(mocks.clientService.create).not.toHaveBeenCalled();
 

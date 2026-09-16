@@ -1,4 +1,4 @@
-import { normalizeContractBirthday } from "@babyjamjam/shared/utils/birthday";
+import { normalizeBirthdayIsoDate } from "@babyjamjam/shared/utils/birthday";
 
 import type { ClientWizardPrefill } from "@/stores/client-dialog-store";
 import type { ContractCreationPrefill } from "@/stores/form-store";
@@ -32,7 +32,7 @@ export function buildContractClientPrefill(
   if (name && name !== "고객 미지정") prefill.name = name;
   if (input.phone) prefill.phone = input.phone;
 
-  const birthday = normalizeContractBirthday(input.birthday, now) ?? undefined;
+  const birthday = normalizeBirthdayIsoDate(input.birthday, now) ?? undefined;
   if (birthday) prefill.birthday = birthday;
   if (input.dueDate) prefill.dueDate = input.dueDate;
   if (input.address) prefill.address = input.address;
