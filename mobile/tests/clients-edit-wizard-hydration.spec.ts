@@ -91,8 +91,8 @@ test.describe("clients edit wizard hydration", () => {
         status: 200,
         contentType: "application/json",
         body: JSON.stringify([
-          { id: 1, name: "김정인", status: "active" },
-          { id: 2, name: "박지영", status: "active" },
+          { id: 1, name: "김정인", status: "active", workArea: [] },
+          { id: 2, name: "박지영", status: "active", workArea: [] },
         ]),
       });
     });
