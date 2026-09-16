@@ -110,7 +110,7 @@ describe("useSendClientReceipt", () => {
 
         expect(send).not.toHaveBeenCalled();
         expect(mockToast).toHaveBeenCalledWith(expect.objectContaining({
-            description: "계약서 서명이 완료된 후 발송할 수 있어요.",
+            description: "고객이 계약서 서명을 완료해야 발송할 수 있어요.",
         }));
         expect(result.current.isSending).toBe(false);
 
