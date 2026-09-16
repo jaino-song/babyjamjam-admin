@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="ko">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>제공일 수정 · 모바일 시안</title>
+<style>
+:root{font-family:Pretendard,-apple-system,BlinkMacSystemFont,"Apple SD Gothic Neo",sans-serif;color:#203047;background:#edf2f7;font-synthesis:none}*{box-sizing:border-box}body{margin:0}button,select{font:inherit}button{cursor:pointer}button:focus-visible,select:focus-visible{outline:3px solid #7ba8ee;outline-offset:3px}.stage{min-height:100dvh;display:grid;place-items:center;padding:32px}.phone{width:375px;height:780px;max-height:calc(100dvh - 64px);position:relative;overflow:hidden;background:#fff;border-radius:28px;box-shadow:0 12px 56px #20304725}.page{padding:30px 22px}.page h1{font-size:20px;line-height:1.5;margin:28px 0}.chip{display:inline-block;color:#0052ad;background:#eaf1ff;font-size:13px;font-weight:700;border-radius:99px;padding:7px 12px}.record{margin-top:24px;border-top:1px solid #e1e7ef;padding-top:22px;line-height:2.5}.veil{position:absolute;inset:0;background:#10243c60}.sheet{position:absolute;inset:auto 0 0;background:#fff;border-radius:24px 24px 0 0;max-height:94%;display:flex;flex-direction:column}.handle{height:4px;width:36px;background:#d2d9e2;border-radius:3px;margin:10px auto 0;flex-shrink:0}.head{display:flex;justify-content:space-between;align-items:center;padding:10px 14px 8px 22px}.head h2{font-size:21px;letter-spacing:-.6px;margin:0;font-weight:750}.close{width:44px;height:44px;border:0;background:transparent;color:#657386;font-size:26px;border-radius:50%}.content{padding:4px 22px 22px;overflow-y:auto}.current{font-size:14px;color:#657386;margin:0 0 28px;line-height:1.6}.label{font-size:15px;font-weight:700;margin:0 0 12px}.fields{display:grid;grid-template-columns:1.3fr 1fr 1fr;gap:10px}.field{display:flex;flex-direction:column;gap:8px}.field span{font-size:12px;color:#657386}.field select{width:100%;min-height:54px;border:1px solid #cbd5e2;border-radius:12px;background:#fff;color:#203047;padding:0 10px;font-size:17px;font-weight:650}.hint{font-size:13px;color:#657386;line-height:1.6;margin:12px 0 24px}.preview{display:flex;justify-content:space-between;align-items:center;background:#eef5ff;padding:16px;border-radius:12px;font-size:14px;color:#0052ad}.preview strong{font-size:17px}.notice{font-size:14px;line-height:1.7;margin:18px 0 0;color:#4f5e72}.collision{background:#fff4e4;border-radius:12px;padding:16px;margin:0 0 20px;font-size:15px;line-height:1.7}.collision strong{display:block;margin-bottom:6px;font-size:17px}.actions{border-top:1px solid #edf0f4;padding:16px 22px max(22px,env(safe-area-inset-bottom));display:grid;grid-template-columns:1fr 2fr;gap:10px;background:#fff}.actions button{min-height:52px;border-radius:12px;font-size:16px;font-weight:700;border:1px solid #d8e0e9;background:white;color:#4f5e72}.actions .primary{background:#0052ad;color:white;border-color:#0052ad}.status{font-size:14px;line-height:1.7;color:#0052ad}.hidden{display:none}.caption{position:fixed;left:20px;top:16px;font-size:13px;color:#657386}@media(max-width:540px){.stage{padding:0;display:block}.phone{width:100%;height:100dvh;max-height:none;border-radius:0;box-shadow:none}.caption{display:none}}
+</style>
+<body data-component="mobile_service-record-preview_root">
+<span class="caption" data-slot="caption">디자인 시안 · 실제 기록은 변경되지 않습니다</span>
+<main class="stage" data-slot="stage"><div class="phone" data-slot="phone">
+<div class="page" data-slot="page"><span>이전</span><h1>서비스 제공기록지</h1><span class="chip" data-slot="chip">1회차 · 2026.09.07</span><div class="record" data-slot="record">기록 내용 확인<br>산모<br>① 회음절개부위　이상없음<br>② 유방상태　이상없음</div><p class="status" data-slot="status" id="status"></p></div>
+<div class="veil" data-slot="veil" id="veil"></div>
+<section class="sheet" data-slot="sheet" data-component="mobile_service-record-preview_root_date-sheet" role="dialog" aria-modal="true" aria-labelledby="title" aria-describedby="description" id="sheet">
+<div class="handle" data-slot="handle" aria-hidden="true"></div>
+<header class="head" data-slot="head"><h2 id="title">1회차 서비스 제공일 수정</h2><button class="close" data-slot="close" aria-label="닫기" onclick="dismiss()">×</button></header>
+<div class="content" data-slot="content"><p class="current" data-slot="current" id="description">현재 2026년 9월 7일</p>
+<div id="selection"><p class="label" data-slot="label">변경할 날짜</p><div class="fields" data-slot="fields">
+<label class="field" data-slot="field"><span>연도</span><select aria-label="연도"><option>2026년</option></select></label>
+<label class="field" data-slot="field"><span>월</span><select aria-label="월"><option>9월</option></select></label>
+<label class="field" data-slot="field"><span>일</span><select aria-label="일" id="day"><option value="7">7일</option><option value="8">8일</option><option value="9">9일</option><option value="10">10일</option><option value="11">11일</option><option value="14">14일</option></select></label>
+</div><p class="hint" data-slot="hint">주말·공휴일을 제외한 영업일만 선택할 수 있어요.</p></div>
+<div class="collision hidden" data-slot="collision" id="collision"><strong>다음 회차와 날짜가 겹쳐요</strong><span id="collision-text"></span></div>
+</div>
+<footer class="actions" data-slot="actions"><button onclick="cancel()">취소</button><button class="primary" data-slot="primary" id="apply" onclick="apply()">수정</button></footer>
+</section></div></main>
+<script>
+let confirming=false;const el=id=>document.getElementById(id);
+function dismiss(){el('sheet').classList.add('hidden');el('veil').classList.add('hidden');el('status').textContent='확인용 시안입니다. 새로고침하면 다시 열립니다.'}
+function cancel(){if(confirming){confirming=false;el('collision').classList.add('hidden');el('selection').classList.remove('hidden');el('apply').textContent='수정'}else dismiss()}
+function apply(){if(!confirming&&el('day').value==='8'){confirming=true;el('selection').classList.add('hidden');el('collision').classList.remove('hidden');el('collision-text').textContent='1회차 서비스 제공일을 9월 8일로 수정하면 다음 회차와 날짜가 겹칩니다. 뒷 회차들의 서비스 제공일도 1 영업일씩 수정할까요?';el('apply').textContent='수정';return}dismiss();el('status').textContent='시안 동작 확인: 날짜를 임시 적용했습니다. 실제 데이터는 변경되지 않았습니다.'}
+</script>
+</body></html>
