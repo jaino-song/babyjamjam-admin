@@ -1,6 +1,7 @@
 import { SystemAdminService } from "application/services/system-admin.service";
 import { SystemAdminBranchRequestDto } from "interface/dto/system-admin.dto";
 import { PrismaService } from "infrastructure/database/prisma.service";
+import { Prisma } from "@prisma/client";
 
 // noUncheckedIndexedAccess is on: narrow indexed access to a defined element.
 const first = (rows: SystemAdminBranchRequestDto[]): SystemAdminBranchRequestDto => {
@@ -491,9 +492,14 @@ describe("SystemAdminService", () => {
         it("rejects an unknown or unapproved branch manager before writing", async () => {
             userModel.findFirst.mockResolvedValue(null);
 
-            await expect(service.createBranch(branchInput)).rejects.toThrow(
-                "승인된 계정을 찾을 수 없습니다.",
-            );
+            await expect(service.createBranch(branchInput)).rejects.toMatchObject({
+                status: 404,
+                response: expect.objectContaining({
+                    code: "RESOURCE_NOT_FOUND",
+                    outcome: "NOT_APPLIED",
+                    recovery: { action: "NONE", retry: { mode: "NEVER" } },
+                }),
+            });
             expect(branchModel.create).not.toHaveBeenCalled();
         });
 
@@ -544,14 +550,49 @@ describe("SystemAdminService", () => {
             expect(userModel.update).not.toHaveBeenCalled();
         });
 
-        it("throws NotFoundException when the branch to update does not exist", async () => {
+        it("throws a RESOURCE_NOT_FOUND problem body when the branch to update does not exist", async () => {
             branchModel.findUnique.mockResolvedValueOnce(null);
 
             await expect(
                 service.updateBranch("missing-branch", { ...branchInput, ownerId: null }),
-            ).rejects.toThrow("지점을 찾을 수 없습니다.");
+            ).rejects.toMatchObject({
+                status: 404,
+                response: expect.objectContaining({
+                    code: "RESOURCE_NOT_FOUND",
+                    outcome: "NOT_APPLIED",
+                    recovery: { action: "NONE", retry: { mode: "NEVER" } },
+                }),
+            });
 
             expect(branchModel.update).not.toHaveBeenCalled();
+        });
+
+        it("rethrows known prisma mutation failures as REQUEST_CONFLICT and RESOURCE_NOT_FOUND problem bodies", async () => {
+            const known = (code: string) => new Prisma.PrismaClientKnownRequestError("db", { code, clientVersion: "test" });
+
+            branchModel.findUnique.mockResolvedValueOnce(createBranchRow({ ownerId: null }));
+            (prisma.$transaction as jest.Mock).mockRejectedValueOnce(known("P2002"));
+            await expect(
+                service.updateBranch("branch-1", { ...branchInput, ownerId: null }),
+            ).rejects.toMatchObject({
+                status: 409,
+                response: expect.objectContaining({ code: "REQUEST_CONFLICT", outcome: "NOT_APPLIED" }),
+            });
+
+            branchModel.findUnique.mockResolvedValueOnce(createBranchRow({ ownerId: null }));
+            (prisma.$transaction as jest.Mock).mockRejectedValueOnce(known("P2025"));
+            await expect(
+                service.updateBranch("branch-1", { ...branchInput, ownerId: null }),
+            ).rejects.toMatchObject({
+                status: 404,
+                response: expect.objectContaining({ code: "RESOURCE_NOT_FOUND", outcome: "NOT_APPLIED" }),
+            });
+
+            branchModel.findUnique.mockResolvedValueOnce(createBranchRow({ ownerId: null }));
+            (prisma.$transaction as jest.Mock).mockRejectedValueOnce(new Error("downstream"));
+            await expect(
+                service.updateBranch("branch-1", { ...branchInput, ownerId: null }),
+            ).rejects.toThrow("downstream");
         });
     });
 

@@ -58,9 +58,11 @@ describe("system template rollback and reset mutation safety", () => {
             "owner-1",
         )).rejects.toMatchObject({
             response: expect.objectContaining({
+                code: "VALIDATION_FAILED",
                 errors: expect.arrayContaining([
                     expect.objectContaining({
-                        message: "정의되지 않은 변수: {{reservationCode}}",
+                        pointer: "/content",
+                        detail: "정의되지 않은 변수: {{reservationCode}}",
                     }),
                 ]),
             }),

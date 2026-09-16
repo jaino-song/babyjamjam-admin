@@ -11,6 +11,7 @@ import {
 import { PrismaService } from "infrastructure/database/prisma.service";
 import { AdminAuditActor, AdminAuditEventWriter } from "application/services/admin-audit-event.service";
 import { currentAdminAuditActor } from "application/services/admin-audit-context";
+import { codeOnlyProblemBody } from "application/utils/problem-bodies";
 
 @Injectable()
 export class SystemAdminService {
@@ -173,7 +174,7 @@ export class SystemAdminService {
                     select: { ownerId: true, isActive: true },
                 });
                 if (!existing) {
-                    throw new NotFoundException("지점을 찾을 수 없습니다.");
+                    throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
                 }
 
                 const manager = dto.ownerId
@@ -286,7 +287,7 @@ export class SystemAdminService {
         });
 
         if (!manager?.role) {
-            throw new NotFoundException("승인된 계정을 찾을 수 없습니다.");
+            throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
         }
 
         return { id: manager.id, role: manager.role };
@@ -361,6 +362,8 @@ export class SystemAdminService {
         actor: AdminAuditActor | undefined,
         event: Omit<Parameters<AdminAuditEventWriter["append"]>[1], "actor" | "outcome" | "source">,
     ): Promise<void> {
+        // 내부 조립 불변성(감사 writer 누락·인증 컨텍스트 없는 감사)은 사용자 입력으로
+        // 도달하지 않아요. 공개 문제 계약이 아니라 내부 결함 신호로 남기 위해 Error를 유지해요.
         if (!this.auditWriter) {
             if (actor) throw new Error("Admin audit writer is required for audited branch mutations");
             return;
@@ -408,7 +411,7 @@ export class SystemAdminService {
         });
 
         if (!branch) {
-            throw new NotFoundException("지점을 찾을 수 없습니다.");
+            throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
         }
 
         const requester = branch.smsSenderApprovalRequestedBy
@@ -451,10 +454,10 @@ export class SystemAdminService {
     private rethrowBranchMutationError(error: unknown): never {
         if (error instanceof Prisma.PrismaClientKnownRequestError) {
             if (error.code === "P2002") {
-                throw new ConflictException("이미 사용 중인 지점 식별자입니다.");
+                throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
             }
             if (error.code === "P2025") {
-                throw new NotFoundException("지점을 찾을 수 없습니다.");
+                throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
             }
         }
 
