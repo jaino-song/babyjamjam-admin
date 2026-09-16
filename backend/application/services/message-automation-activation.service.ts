@@ -41,6 +41,7 @@ type RuleRow = {
     eventType: string;
     offsetType: string;
     offsetDays: number;
+    sendTime: string;
     recipientType: string;
     templateKey: string;
     isDefault: boolean;
@@ -395,6 +396,7 @@ export class MessageAutomationActivationService {
                 event_type AS "eventType",
                 offset_type AS "offsetType",
                 offset_days AS "offsetDays",
+                send_time AS "sendTime",
                 recipient_type AS "recipientType",
                 template_key AS "templateKey",
                 is_default AS "isDefault",
@@ -529,6 +531,7 @@ export class MessageAutomationActivationService {
             new Date(row.updatedAt),
             row.isDefault,
             row.jobsStale,
+            row.sendTime,
         );
     }
 

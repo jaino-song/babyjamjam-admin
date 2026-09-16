@@ -712,6 +712,7 @@ export class MessageTriggerService {
                             eventType: candidate.eventType,
                             offsetType: candidate.offsetType,
                             offsetDays: candidate.offsetDays,
+                            sendTime: candidate.sendTime,
                             recipientType: candidate.recipientType,
                             templateKey: candidate.templateKey,
                         });
@@ -862,6 +863,7 @@ export class MessageTriggerService {
                     eventType: params.eventType ?? current.eventType,
                     offsetType: params.offsetType ?? current.offsetType,
                     offsetDays: params.offsetDays ?? current.offsetDays,
+                    sendTime: params.sendTime === undefined ? current.sendTime : params.sendTime,
                     recipientType: params.recipientType ?? current.recipientType,
                     templateKey,
                 };
@@ -971,6 +973,7 @@ export class MessageTriggerService {
                         eventType: params.eventType ?? current.eventType,
                         offsetType: params.offsetType ?? current.offsetType,
                         offsetDays: params.offsetDays ?? current.offsetDays,
+                        sendTime: params.sendTime === undefined ? current.sendTime : params.sendTime,
                         recipientType: params.recipientType ?? current.recipientType,
                         templateKey,
                     };

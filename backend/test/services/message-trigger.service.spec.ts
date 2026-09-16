@@ -978,6 +978,27 @@ describe("MessageTriggerService", () => {
         expect(jobRepository.upsertPendingForRuleGeneration).not.toHaveBeenCalled();
     });
 
+    it.each([undefined, "16:09"])("uses the locked rule time unless a new time is requested (%s)", async (sendTime) => {
+        const { service, ruleRepository } = createService();
+        const staleRule = createRule({ id: "rule-send-time-lock", isActive: false });
+        staleRule.sendTime = "10:00";
+        const rule = createRule({ id: "rule-send-time-lock", isActive: false });
+        rule.sendTime = "14:37";
+        ruleRepository.findById.mockResolvedValueOnce(staleRule).mockResolvedValue(rule);
+        ruleRepository.update.mockImplementation(async (
+            _branchId: string,
+            persisted: MessageTriggerRuleEntity,
+        ) => persisted);
+
+        await service.updateRule(branchId, rule.id, { name: "Changed under lock", sendTime });
+
+        expect(ruleRepository.update).toHaveBeenCalledWith(
+            branchId,
+            expect.objectContaining({ id: rule.id, sendTime: sendTime ?? "14:37", isActive: false }),
+            expect.any(Object),
+        );
+    });
+
     it("clamps a metadata-only update to the locked inactive row after a concurrent parent-off fence", async () => {
         const { service, ruleRepository } = createService();
         const staleActiveRule = createRule({
