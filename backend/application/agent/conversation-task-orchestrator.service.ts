@@ -8,6 +8,7 @@ import {
     type AgentTaskDisplayedChoiceHint,
     type ClientInputOperation,
     type ClientModelTaskOperation,
+    type ClientWriteField,
 } from "@babyjamjam/shared";
 import type { CapabilityDefinition } from "./capability.types";
 import type { VerifiedTenantPrincipal } from "infrastructure/tenant/tenant.context";
@@ -54,6 +55,11 @@ export interface ConversationTaskTurnResult {
     refusal?: "feature-disabled" | "unsupported-input";
 }
 
+export interface ConversationUserCorrectionEvidence {
+    operation: "clear" | "discard-change";
+    field: ClientWriteField;
+}
+
 export interface ConversationModelMutationInput {
     principal: VerifiedTenantPrincipal;
     sessionId: string;
@@ -62,7 +68,13 @@ export interface ConversationModelMutationInput {
     expectedRevision?: number;
     taskId?: string;
     intakeEventId: string;
-    userCorrection?: boolean;
+    /**
+     * Per-field and per-operation evidence observed by trusted server intake.
+     * A model operation cannot authorize a destructive operation on another
+     * field (or with another destructive operation) merely because some other
+     * operation was supplied in the turn.
+     */
+    userCorrectionEvidence?: readonly ConversationUserCorrectionEvidence[];
     /**
      * A pure-question turn may still expose task tools for read-only context,
      * but any attempted model write must be rejected before task resolution
@@ -353,7 +365,11 @@ export class ConversationTaskOrchestratorService {
             branchId: input.principal.branchId,
             sessionId: input.sessionId,
             messageId: input.intakeEventId,
-            text: JSON.stringify(operations),
+            // Mutation provenance is part of the deterministic event payload.
+            // Reusing one intake event with a different authority must be a
+            // conflict instead of silently replaying a differently-authorized
+            // mutation.
+            text: JSON.stringify({ operations, origins: resolved.origins }),
         });
         const eventId = conversationMessageEventId({
             userId: input.principal.userId,
@@ -399,12 +415,17 @@ export class ConversationTaskOrchestratorService {
             ? (await this.tasks.get(input.principal, input.taskId))
             : (await this.tasks.listForConversation(input.principal, input.sessionId)).find((candidate) => candidate.capabilityId === input.capabilityId && ["collecting", "confirming_target", "review_ready"].includes(candidate.state));
         if (!task && operations.some((operation) => "valueRef" in operation)) throw new ConflictException("Task reference is unavailable");
-        if (operations.some((operation) => (operation.op === "clear" || operation.op === "discard-change") && !input.userCorrection)) {
-            throw new ConflictException("Explicit user correction is required");
-        }
+        const correctionEvidence = new Set((input.userCorrectionEvidence ?? []).map((evidence) => `${evidence.operation}:${evidence.field}`));
         const origins: AgentTaskMutationOrigin[] = [];
         const resolved = operations.map((operation) => {
             if (!("valueRef" in operation)) {
+                if (operation.op === "clear" || operation.op === "discard-change") {
+                    if (!correctionEvidence.has(`${operation.op}:${operation.field}`)) {
+                        throw new ConflictException("Explicit user correction is required for this field");
+                    }
+                    origins.push("user");
+                    return operation as ClientInputOperation;
+                }
                 origins.push("model");
                 return operation as ClientInputOperation;
             }
@@ -415,6 +436,13 @@ export class ConversationTaskOrchestratorService {
             ] as const;
             const match = candidates.find(([, provenance]) => provenance?.valueRef === operation.valueRef);
             if (!match || !match[1] || !["user", "wizard"].includes(match[1].source)) throw new ConflictException("Task reference is not owned by this turn");
+            if (match[1].eventId !== input.intakeEventId) throw new ConflictException("Task reference is stale");
+            // A current-turn tentative/wish value is still tentative.  A
+            // valueRef only identifies the server-captured value; it does not
+            // grant the model certainty to promote it into confirmed state.
+            if (match[0] === "tentative" && operation.op === "set") {
+                throw new ConflictException("Tentative task reference cannot be confirmed");
+            }
             const value = match[2];
             if (value === undefined) throw new ConflictException("Task reference has no current value");
             origins.push("user");

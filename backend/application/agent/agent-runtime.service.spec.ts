@@ -1,5 +1,6 @@
 import { z } from "zod";
 
+import type { AgentTask } from "@babyjamjam/shared";
 import { DeterministicAgentLanguageModel } from "infrastructure/agent/deterministic-agent-language-model";
 import { AgentRuntimeService, buildAuthoritativeModelMessages, buildWriteToolInputSchema, redactModelValue } from "./agent-runtime.service";
 
@@ -102,6 +103,104 @@ describe("AgentRuntimeService", () => {
             12,
             expect.arrayContaining(["홍길동", "기존 홍길동"]),
         );
+    });
+
+    it("passes operation-specific correction evidence to the model task boundary", async () => {
+        const capability = {
+            meta: {
+                name: "clients.create",
+                domain: "clients",
+                version: "1.0.0",
+                description: "Create client",
+                risk: "reversible-write" as const,
+                requiredRoles: ["admin"],
+                renderer: "action-proposal" as const,
+                flagKey: "agent.capability.clients.create",
+                sideEffect: true,
+                approvalPolicy: "structured" as const,
+                idempotencyPolicy: "action-id" as const,
+            },
+            inputSchema: z.object({}),
+            outputSchema: z.object({ status: z.string() }),
+            execute: jest.fn(),
+        };
+        const taskSnapshot = {
+            schemaVersion: 1,
+            taskId: "123e4567-e89b-42d3-a456-426614174001",
+            sessionId: "123e4567-e89b-42d3-a456-426614174002",
+            kind: "clients.create",
+            capabilityId: "clients.create",
+            revision: 1,
+            state: "collecting",
+            confirmed: {},
+            tentative: {},
+            clearedFields: [],
+            provenance: { confirmed: {}, tentative: {} },
+            issues: [],
+            constraints: { noSend: false },
+            choiceSets: [],
+            orderedChoiceRefs: [],
+            target: null,
+            consent: { choice: "unanswered", binding: null },
+            action: null,
+            times: {
+                createdAt: "2026-01-01T00:00:00.000Z",
+                updatedAt: "2026-01-01T00:00:00.000Z",
+                acceptedAt: "2026-01-01T00:00:00.000Z",
+                expiresAt: "2026-02-01T00:00:00.000Z",
+            },
+            currentSnapshotRef: "123e4567-e89b-42d3-a456-426614174003",
+        } as AgentTask;
+        const applyModelMutation = jest.fn().mockResolvedValue({ task: taskSnapshot, mutated: true });
+        const taskOrchestrator = {
+            handleUserTurn: jest.fn().mockResolvedValue({
+                task: taskSnapshot,
+                eventId: "123e4567-e89b-42d3-a456-426614174004",
+                operations: [{ op: "clear", field: "address" }],
+                isQuestion: false,
+                replayed: false,
+            }),
+            filterWriteCapabilities: jest.fn().mockResolvedValue({ capabilities: [], taskMode: true }),
+            applyModelMutation,
+        };
+        const sessions = {
+            create: jest.fn().mockResolvedValue({ id: "session-task-correction", selectedEntities: {}, messages: [] }),
+            appendMessages: jest.fn().mockResolvedValue(undefined),
+        };
+        const runtime = new AgentRuntimeService(
+            { list: () => [capability] } as never,
+            { isCapabilityEnabled: jest.fn().mockResolvedValue(true) } as never,
+            sessions as never,
+            {
+                modelId: "deterministic-agent-v1",
+                create: () => new DeterministicAgentLanguageModel([
+                    { type: "tool-call", toolName: "clients_create", input: { operations: [{ op: "clear", field: "address" }] } },
+                    { type: "text", text: "주소를 비웠습니다." },
+                ]),
+            } as never,
+            { route: jest.fn().mockResolvedValue({ domains: ["clients"], capabilities: [capability] }) } as never,
+            { start: jest.fn().mockResolvedValue({ id: "trace-task-correction", startedAt: Date.now() }), finish: jest.fn().mockResolvedValue(undefined) } as never,
+            undefined,
+            undefined,
+            undefined,
+            taskOrchestrator as never,
+        );
+
+        const result = await runtime.stream({
+            principal: { userId: "user-a", branchId: "branch-a", globalRole: "admin", branchRole: "admin" },
+            locale: "ko",
+            messages: [{ id: "message-task-correction", role: "user", parts: [{ type: "text", text: "고객 등록 주소 삭제" }] }] as never,
+        });
+        const reader = result.stream.getReader();
+        while (!(await reader.read()).done) {
+            // Drain the stream so the task tool executes through the runtime.
+        }
+
+        expect(applyModelMutation).toHaveBeenCalledWith(expect.objectContaining({
+            capabilityId: "clients.create",
+            intakeEventId: "123e4567-e89b-42d3-a456-426614174004",
+            userCorrectionEvidence: [{ operation: "clear", field: "address" }],
+        }));
     });
 
     it("redacts Korean landlines and hyphenated identifiers in persisted history and the current turn", () => {

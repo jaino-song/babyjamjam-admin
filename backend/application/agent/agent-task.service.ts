@@ -1319,7 +1319,11 @@ export class AgentTaskService {
         });
         if (created.status !== "created") {
             if (created.status === "active_task_conflict") {
-                return { status: "state_conflict", reason: "active_task", task: source };
+                // The source was already paused and its retention extended.
+                // A compliant adapter may report a destination conflict
+                // instead of throwing, so abort the enclosing transaction for
+                // every post-write refusal before exposing the conflict.
+                return transaction.abort<InternalMutation>({ status: "state_conflict", reason: "active_task", task: source });
             }
             return transaction.abort<InternalMutation>({ status: "storage_failure" });
         }

@@ -244,11 +244,12 @@ describe("ConversationTaskOrchestratorService", () => {
     });
 
     it("keeps model literals finite and resolves only exact user-owned references", async () => {
+        const intakeEventId = randomUUID();
         const current = task({
             confirmed: { name: "홍길동" },
             provenance: {
                 confirmed: {
-                    name: { source: "user", valueRef: randomUUID() },
+                    name: { source: "user", capturedAt: new Date().toISOString(), eventId: intakeEventId, valueRef: randomUUID() },
                 },
                 tentative: {},
             },
@@ -262,7 +263,7 @@ describe("ConversationTaskOrchestratorService", () => {
             sessionId,
             capabilityId: "clients.create",
             taskId: current.taskId,
-            intakeEventId: randomUUID(),
+            intakeEventId,
             operations: [{ op: "set", field: "name", valueRef: ownedRef }],
         });
         expect(patchFromConversation).toHaveBeenCalledWith(
@@ -282,6 +283,169 @@ describe("ConversationTaskOrchestratorService", () => {
             intakeEventId: randomUUID(),
             operations: [{ op: "set", field: "name", value: "임의 이름" }],
         })).rejects.toBeInstanceOf(BadRequestException);
+    });
+
+    it("rejects stale or cross-field references and never promotes a tentative value", async () => {
+        const intakeEventId = randomUUID();
+        const staleEventId = randomUUID();
+        const current = task({
+            confirmed: { name: "홍길동" },
+            tentative: { address: "서울시 희망 주소" },
+            provenance: {
+                confirmed: {
+                    name: { source: "user", capturedAt: new Date().toISOString(), eventId: intakeEventId, valueRef: randomUUID() },
+                },
+                tentative: {
+                    address: { source: "wizard", capturedAt: new Date().toISOString(), eventId: intakeEventId, valueRef: randomUUID() },
+                },
+            },
+        });
+        const patchFromConversation = jest.fn().mockResolvedValue({ snapshot: current, receipt: receipt(current.taskId) });
+        const { orchestrator } = build({ get: jest.fn().mockResolvedValue(current), listForConversation: jest.fn().mockResolvedValue([current]), patchFromConversation });
+        const confirmedRef = current.provenance.confirmed["name"]!.valueRef!;
+        const tentativeRef = current.provenance.tentative["address"]!.valueRef!;
+
+        await expect(orchestrator.applyModelMutation({
+            principal,
+            sessionId,
+            capabilityId: "clients.create",
+            taskId: current.taskId,
+            intakeEventId: staleEventId,
+            operations: [{ op: "set", field: "name", valueRef: confirmedRef }],
+        })).rejects.toMatchObject({ response: expect.objectContaining({ message: "Task reference is stale" }) });
+
+        await expect(orchestrator.applyModelMutation({
+            principal,
+            sessionId,
+            capabilityId: "clients.create",
+            taskId: current.taskId,
+            intakeEventId,
+            operations: [{ op: "set", field: "phone", valueRef: confirmedRef }],
+        })).rejects.toMatchObject({ response: expect.objectContaining({ message: "Task reference is not owned by this turn" }) });
+
+        await expect(orchestrator.applyModelMutation({
+            principal,
+            sessionId,
+            capabilityId: "clients.create",
+            taskId: current.taskId,
+            intakeEventId,
+            operations: [{ op: "set", field: "address", valueRef: tentativeRef }],
+        })).rejects.toMatchObject({ response: expect.objectContaining({ message: "Tentative task reference cannot be confirmed" }) });
+
+        await orchestrator.applyModelMutation({
+            principal,
+            sessionId,
+            capabilityId: "clients.create",
+            taskId: current.taskId,
+            intakeEventId,
+            operations: [{ op: "mark-tentative", field: "address", valueRef: tentativeRef }],
+        });
+        expect(patchFromConversation).toHaveBeenCalledWith(
+            principal,
+            current.taskId,
+            expect.objectContaining({ operations: [{ op: "mark-tentative", field: "address", value: "서울시 희망 주소" }] }),
+            "model",
+            expect.any(String),
+            ["user"],
+        );
+    });
+
+    it("requires field-specific correction evidence for clear and discard operations", async () => {
+        const current = task({ confirmed: { address: "서울시", name: "홍길동" } });
+        const patchFromConversation = jest.fn().mockResolvedValue({ snapshot: current, receipt: receipt(current.taskId) });
+        const { orchestrator } = build({ get: jest.fn().mockResolvedValue(current), listForConversation: jest.fn().mockResolvedValue([current]), patchFromConversation });
+
+        await expect(orchestrator.applyModelMutation({
+            principal,
+            sessionId,
+            capabilityId: "clients.create",
+            taskId: current.taskId,
+            intakeEventId: randomUUID(),
+            operations: [{ op: "clear", field: "address" }],
+            userCorrectionEvidence: [{ operation: "clear", field: "name" }],
+        })).rejects.toMatchObject({ response: expect.objectContaining({ message: "Explicit user correction is required for this field" }) });
+
+        await orchestrator.applyModelMutation({
+            principal,
+            sessionId,
+            capabilityId: "clients.create",
+            taskId: current.taskId,
+            intakeEventId: randomUUID(),
+            operations: [{ op: "clear", field: "address" }],
+            userCorrectionEvidence: [{ operation: "clear", field: "address" }],
+        });
+        expect(patchFromConversation).toHaveBeenCalledWith(
+            principal,
+            current.taskId,
+            expect.objectContaining({ operations: [{ op: "clear", field: "address" }] }),
+            "model",
+            expect.any(String),
+            ["user"],
+        );
+
+        await orchestrator.applyModelMutation({
+            principal,
+            sessionId,
+            capabilityId: "clients.create",
+            taskId: current.taskId,
+            intakeEventId: randomUUID(),
+            operations: [{ op: "discard-change", field: "address" }],
+            userCorrectionEvidence: [{ operation: "discard-change", field: "address" }],
+        });
+        expect(patchFromConversation).toHaveBeenLastCalledWith(
+            principal,
+            current.taskId,
+            expect.objectContaining({ operations: [{ op: "discard-change", field: "address" }] }),
+            "model",
+            expect.any(String),
+            ["user"],
+        );
+
+        await expect(orchestrator.applyModelMutation({
+            principal,
+            sessionId,
+            capabilityId: "clients.create",
+            taskId: current.taskId,
+            intakeEventId: randomUUID(),
+            operations: [{ op: "discard-change", field: "name" }],
+            userCorrectionEvidence: [{ operation: "clear", field: "name" }],
+        })).rejects.toMatchObject({ response: expect.objectContaining({ message: "Explicit user correction is required for this field" }) });
+    });
+
+    it("includes resolved mutation origins in the model event hash", async () => {
+        const intakeEventId = randomUUID();
+        const current = task({
+            confirmed: { name: "홍길동" },
+            provenance: {
+                confirmed: {
+                    name: { source: "user", capturedAt: new Date().toISOString(), eventId: intakeEventId, valueRef: randomUUID() },
+                },
+                tentative: {},
+            },
+        });
+        const patchFromConversation = jest.fn().mockResolvedValue({ snapshot: current, receipt: receipt(current.taskId) });
+        const { orchestrator } = build({ get: jest.fn().mockResolvedValue(current), listForConversation: jest.fn().mockResolvedValue([current]), patchFromConversation });
+        await orchestrator.applyModelMutation({
+            principal,
+            sessionId,
+            capabilityId: "clients.create",
+            taskId: current.taskId,
+            intakeEventId,
+            operations: [{ op: "set", field: "serviceStatus", value: "active" }],
+        });
+        const modelLiteralHash = patchFromConversation.mock.calls[0]?.[4];
+        await orchestrator.applyModelMutation({
+            principal,
+            sessionId,
+            capabilityId: "clients.create",
+            taskId: current.taskId,
+            intakeEventId,
+            operations: [{ op: "set", field: "name", valueRef: current.provenance.confirmed["name"]!.valueRef! }],
+        });
+        const userReferenceHash = patchFromConversation.mock.calls[1]?.[4];
+        expect(modelLiteralHash).toEqual(expect.any(String));
+        expect(userReferenceHash).toEqual(expect.any(String));
+        expect(userReferenceHash).not.toBe(modelLiteralHash);
     });
 
     it("rejects a model write attempt on a pure-question turn before changing the task", async () => {

@@ -11,7 +11,7 @@ import {
     type UIMessageStreamOptions,
 } from "ai";
 
-import { AgentFormSubmitPartSchema, ClientModelTaskOperationsSchema, projectTaskForSafeChat } from "@babyjamjam/shared";
+import { AgentFormSubmitPartSchema, ClientModelTaskOperationsSchema, ClientWriteFieldSchema, projectTaskForSafeChat, type ClientWriteField } from "@babyjamjam/shared";
 import type { BjjUIMessage } from "@babyjamjam/shared";
 import type { AgentTaskDisplayedChoiceHint } from "@babyjamjam/shared";
 import type { VerifiedTenantPrincipal } from "infrastructure/tenant/tenant.context";
@@ -377,7 +377,13 @@ export class AgentRuntimeService {
                             taskId: conversationTask?.task?.capabilityId === capabilityId ? conversationTask.task.taskId : undefined,
                             expectedRevision: conversationTask?.task?.capabilityId === capabilityId ? conversationTask.task.revision : undefined,
                             intakeEventId: conversationTask?.eventId ?? currentMessage.id,
-                            userCorrection: Boolean(conversationTask?.operations?.length),
+                            userCorrectionEvidence: conversationTask?.operations
+                                ?.map((operation) => {
+                                    if (operation.op !== "clear" && operation.op !== "discard-change") return undefined;
+                                    if (!ClientWriteFieldSchema.safeParse(operation.field).success) return undefined;
+                                    return { operation: operation.op, field: operation.field as ClientWriteField };
+                                })
+                                .filter((evidence): evidence is { operation: "clear" | "discard-change"; field: ClientWriteField } => evidence !== undefined),
                             ...(conversationTask?.isQuestion && (conversationTask.operations?.length ?? 0) === 0
                                 ? { allowMutation: false }
                                 : {}),

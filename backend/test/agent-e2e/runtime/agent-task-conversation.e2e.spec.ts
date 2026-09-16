@@ -123,6 +123,34 @@ describeAgentE2E("conversation task runtime against the guarded local database",
         return new AgentTaskService(repository as never, policyStub() as never, clients as never);
     }
 
+    /**
+     * Exercise AgentTaskService.command with a real Prisma transaction while
+     * injecting an adapter-level postwrite refusal.  The service must call
+     * transaction.abort for both returned conflicts and returned event-write
+     * failures so source, destination, receipt, and session retention all
+     * roll back together.
+     */
+    function serviceWithInjectedStartUpdateFailure(mode: "destination-conflict" | "event-write") {
+        const injected = Object.create(repository) as PrismaAgentTaskRepository;
+        const withTransaction = repository.withTransaction.bind(repository);
+        injected.withTransaction = ((scope, operation) => withTransaction(scope, async (transaction) => {
+            const wrapped = new Proxy(transaction, {
+                get(target, property, receiver) {
+                    if (property === "createTask" && mode === "destination-conflict") {
+                        return async () => ({ status: "active_task_conflict" as const });
+                    }
+                    if (property === "insertEvent" && mode === "event-write") {
+                        return async () => ({ status: "storage_failure" as const });
+                    }
+                    const value = Reflect.get(target, property, receiver);
+                    return typeof value === "function" ? value.bind(target) : value;
+                },
+            });
+            return operation(wrapped);
+        })) as PrismaAgentTaskRepository["withTransaction"];
+        return new AgentTaskService(injected as never, policyStub() as never, clients as never);
+    }
+
     function scope(forSession = sessionId) {
         return { userId: USER_ID, branchId: BRANCH_ID, sessionId: forSession };
     }
@@ -717,6 +745,37 @@ describeAgentE2E("conversation task runtime against the guarded local database",
         expect(await prisma.agent_task_event.count({ where: { sessionId } })).toBe(1);
         const afterSession = await prisma.agent_session.findUnique({ where: { id: sessionId } });
         expect(afterSession?.expiresAt).toEqual(beforeSession?.expiresAt);
+    });
+
+    it.each([
+        ["a returned destination conflict", "destination-conflict" as const, 409],
+        ["a returned event-write failure", "event-write" as const, 503],
+    ])("aborts start-update after %s through AgentTaskService.command", async (_description, mode, expectedStatus) => {
+        const seeded = await seedResolvedCreate({ sessionId });
+        const beforeTasks = await prisma.agent_task.findMany({ where: { sessionId }, orderBy: { id: "asc" } });
+        const beforeEvents = await prisma.agent_task_event.findMany({ where: { sessionId }, orderBy: { clientEventId: "asc" } });
+        const beforeSession = await prisma.agent_session.findUnique({ where: { id: sessionId } });
+        if (!beforeSession) throw new Error("Expected session row");
+
+        const command = {
+            clientEventId: randomUUID(),
+            expectedRevision: seeded.task.revision,
+            command: "start-update" as const,
+            targetRef: seeded.targetRef,
+            expectedTargetVersion: seeded.targetVersion,
+        };
+        const taskService = serviceWithInjectedStartUpdateFailure(mode);
+        await expect(taskService.command(principal, seeded.task.taskId, command))
+            .rejects.toMatchObject({ status: expectedStatus });
+
+        const afterTasks = await prisma.agent_task.findMany({ where: { sessionId }, orderBy: { id: "asc" } });
+        const afterEvents = await prisma.agent_task_event.findMany({ where: { sessionId }, orderBy: { clientEventId: "asc" } });
+        const afterSession = await prisma.agent_session.findUnique({ where: { id: sessionId } });
+        expect(afterTasks).toEqual(beforeTasks);
+        expect(afterEvents).toEqual(beforeEvents);
+        expect(afterSession?.expiresAt).toEqual(beforeSession.expiresAt);
+        expect(afterTasks.some((row) => row.capabilityId === "clients.update")).toBe(false);
+        expect(afterEvents.some((row) => row.clientEventId === command.clientEventId)).toBe(false);
     });
 
     it("replays a conversion receipt after the source is resumed and revised", async () => {
