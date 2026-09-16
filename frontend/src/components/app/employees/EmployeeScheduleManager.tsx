@@ -18,14 +18,15 @@ import {
     AnimatedSlotListItemContent,
     DetailPanel,
     DetailTabs,
-    InfoCard,
-    InfoRow,
+    DetailTabPanels,
+    SlidingDetailPanel,
     ListEmptyState,
     ListPanel,
 } from "@/components/app/v3";
 import { StatusPill } from "@/components/app/ui/status-badge";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
+import { ClientDetailPanel } from "@/components/app/clients/ClientDetailPanel";
 import { cn } from "@/lib/utils";
 
 export type ScheduleKind = "start" | "end" | "replacement";
@@ -479,22 +480,6 @@ function ScheduleEntryList({ dataComponent, entries, selectedEntryId, onEntrySel
     );
 }
 
-function ScheduleEntryDetail({ dataComponent, entry }: { dataComponent: string; entry: ScheduleEntry }) {
-    return (
-        <InfoCard data-component={`${dataComponent}_info-card`} title={entry.clientName}>
-            <InfoRow data-component={`${dataComponent}_info-card_kind`} label="일정 유형" value={SCHEDULE_KIND_LABELS[entry.kind]} />
-            <InfoRow data-component={`${dataComponent}_info-card_date`} label="일정 날짜" value={entry.dateLabel} />
-            <InfoRow data-component={`${dataComponent}_info-card_employee`} label="담당 제공인력" value={entry.employeeName ?? "제공인력 미배정"} />
-            <InfoRow data-component={`${dataComponent}_info-card_client`} label="고객" value={entry.clientName} />
-            <InfoRow
-                data-component={`${dataComponent}_info-card_status`}
-                label="상태"
-                value={<StatusPill variant={SCHEDULE_KIND_VARIANTS[entry.kind]}>{SCHEDULE_KIND_LABELS[entry.kind]}</StatusPill>}
-            />
-        </InfoCard>
-    );
-}
-
 export interface EmployeeScheduleManagerProps {
     "data-component"?: string;
 }
@@ -509,6 +494,7 @@ export function EmployeeScheduleManager({
     const [visibleMonth, setVisibleMonth] = useState(() => startOfMonth(today));
     const [selectedDateKey, setSelectedDateKey] = useState(() => dateKey(today));
     const [selectedEntryId, setSelectedEntryId] = useState<string | null>(null);
+    const [isDetailOpen, setIsDetailOpen] = useState(false);
     const { data, isLoading, isError, refetch } = useClients(1, 50);
     const entries = useMemo(() => buildScheduleEntries(data?.data ?? [], today), [data?.data, today]);
     const entriesByDate = useMemo(() => {
@@ -523,6 +509,7 @@ export function EmployeeScheduleManager({
     const selectedDate = dateFromKey(selectedDateKey);
     const selectedDateEntries = entriesByDate.get(selectedDateKey) ?? [];
     const selectedEntry = entries.find((entry) => entry.id === selectedEntryId) ?? null;
+    const selectedClient = data?.data.find((client) => client.id === selectedEntry?.clientId) ?? null;
     const calendarDays = useMemo(
         () => buildMonthCalendarDays(visibleMonth, range.horizonStart, range.horizonEnd),
         [range.horizonEnd, range.horizonStart, visibleMonth],
@@ -537,6 +524,7 @@ export function EmployeeScheduleManager({
     const handleEntrySelect = (entry: ScheduleEntry) => {
         setSelectedDateKey(entry.dateKey);
         setSelectedEntryId(entry.id);
+        setIsDetailOpen(true);
     };
 
     const handleToday = () => {
@@ -576,7 +564,7 @@ export function EmployeeScheduleManager({
                 </p>
             </header>
 
-            <div data-component={component("view-tabs")} data-slot="view-tabs" className="shrink-0">
+            <div data-component={component("view-tabs")} data-slot="view-tabs" aria-hidden={isDetailOpen && Boolean(selectedClient)} inert={isDetailOpen && Boolean(selectedClient) || undefined} className={cn("shrink-0", isDetailOpen && selectedClient && "invisible")}>
                 <DetailTabs
                     tabs={[...VIEW_TABS]}
                     activeTab={viewMode}
@@ -586,17 +574,24 @@ export function EmployeeScheduleManager({
                 />
             </div>
 
-            {VIEW_TABS.map((tab) => (
-                <div
-                    key={tab.key}
-                    id={`${dataComponent}-view-panel-${tab.key}`}
-                    role="tabpanel"
-                    aria-labelledby={`${dataComponent}-view-tab-${tab.key}`}
-                    hidden={viewMode !== tab.key}
-                    data-component={component(`view-panel_${tab.key}`)}
-                    className={viewMode === tab.key ? "flex min-h-0 flex-1 flex-col" : "hidden"}
-                >
-            {viewMode === tab.key && (isLoading ? (
+            <SlidingDetailPanel
+                data-component={component("sliding-detail")}
+                open={isDetailOpen && Boolean(selectedClient)}
+                onBack={() => setIsDetailOpen(false)}
+                backLabel="서비스 일정으로 돌아가기"
+                detail={selectedClient ? (
+                    <ClientDetailPanel
+                        key={selectedClient.id}
+                        client={selectedClient}
+                        trailing={null}
+                        dataComponentPrefix={component("sliding-detail_detail-pane_body_client")}
+                        messageHistoryDataComponentPrefix={component("sliding-detail_detail-pane_body_client_message-history")}
+                        idPrefix={`${dataComponent}-client-${selectedClient.id}`}
+                        tabsAriaLabel="고객 상세 정보"
+                    />
+                ) : null}
+                list={isLoading ? (
+
                 <div
                     data-component={component("loading")}
                     data-slot="schedule-loading"
@@ -638,26 +633,30 @@ export function EmployeeScheduleManager({
                         headerPadding="compact"
                         subHeader={viewMode === "calendar" ? monthControls : undefined}
                     >
-                        {viewMode === "calendar" ? (
-                            <CalendarGrid
-                                dataComponent={component("calendar")}
-                                visibleMonth={visibleMonth}
-                                today={today}
-                                calendarDays={calendarDays}
-                                entriesByDate={entriesByDate}
-                                selectedDateKey={selectedDateKey}
-                                onDateSelect={handleDateSelect}
-                            />
-                        ) : entries.length > 0 ? (
-                            <ScheduleEntryList
-                                dataComponent={component("list")}
-                                entries={entries}
-                                selectedEntryId={selectedEntryId}
-                                onEntrySelect={handleEntrySelect}
-                            />
-                        ) : (
-                            <ListEmptyState icon={Calendar} message="앞으로 30일 일정이 없습니다." />
-                        )}
+                        <DetailTabPanels
+                            data-component={component("view-panels")}
+                            activeTab={viewMode}
+                            idPrefix={`${dataComponent}-view`}
+                            panels={[
+                                { key: "calendar", children: (
+                                    <div key={monthKey(visibleMonth)} data-slot="schedule-content-enter" className="schedule-content-enter">
+                                        <CalendarGrid
+                                            dataComponent={component("calendar")}
+                                            visibleMonth={visibleMonth}
+                                            today={today}
+                                            calendarDays={calendarDays}
+                                            entriesByDate={entriesByDate}
+                                            selectedDateKey={selectedDateKey}
+                                            onDateSelect={handleDateSelect}
+                                        />
+                                    </div>
+                                ) },
+                                { key: "list", children: entries.length > 0 ? (
+                                    <ScheduleEntryList dataComponent={component("list")} entries={entries}
+                                        selectedEntryId={selectedEntryId} onEntrySelect={handleEntrySelect} />
+                                ) : <ListEmptyState icon={Calendar} message="앞으로 30일 일정이 없습니다." /> },
+                            ]}
+                        />
                     </ListPanel>
 
                     <DetailPanel
@@ -669,21 +668,10 @@ export function EmployeeScheduleManager({
                                 {selectedDateEntries.length}건
                             </span>
                         )}
-                        headerAction={selectedEntry ? (
-                            <Button
-                                type="button"
-                                variant="ghost"
-                                size="sm"
-                                data-component={component("agenda_back")}
-                                onClick={() => setSelectedEntryId(null)}
-                            >
-                                선택한 날짜 일정으로 돌아가기
-                            </Button>
-                        ) : undefined}
+                        mainAnimationKey={selectedDateKey}
                     >
-                        {selectedEntry ? (
-                            <ScheduleEntryDetail dataComponent={component("entry-detail")} entry={selectedEntry} />
-                        ) : selectedDateEntries.length > 0 ? (
+                        {selectedDateEntries.length > 0 ? (
+
                             <ScheduleEntryList
                                 dataComponent={component("agenda")}
                                 entries={selectedDateEntries}
@@ -695,9 +683,8 @@ export function EmployeeScheduleManager({
                         )}
                     </DetailPanel>
                 </div>
-            ))}
-                </div>
-            ))}
+            )}
+            />
         </section>
     );
 }

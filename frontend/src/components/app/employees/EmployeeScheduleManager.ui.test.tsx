@@ -11,6 +11,10 @@ jest.mock("@/hooks/useClients", () => ({
     useClients: jest.fn(),
 }));
 
+jest.mock("@/components/app/clients/ClientDetailPanel", () => ({
+    ClientDetailPanel: ({ client }: { client: Client }) => <section aria-label="고객 상세" data-testid="client-detail">{client.id} · {client.name}</section>,
+}));
+
 const mockedUseClients = jest.mocked(useClients);
 
 function makeClient(overrides: Partial<Client>): Client {
@@ -110,8 +114,14 @@ describe("EmployeeScheduleManager interactions", () => {
         expect(agendaRow).toBeInTheDocument();
         fireEvent.click(agendaRow!);
 
-        expect(screen.getByText("일정 유형")).toBeInTheDocument();
-        expect(screen.getByRole("button", { name: "선택한 날짜 일정으로 돌아가기" })).toBeInTheDocument();
+        expect(screen.getByRole("region", { name: "고객 상세" })).toHaveTextContent("1 · 박서연");
+        const back = screen.getByRole("button", { name: "서비스 일정으로 돌아가기" });
+        expect(back).toHaveFocus();
+        expect(container.querySelector('[data-slot="sliding-detail-list"]')).toHaveAttribute("inert");
+        fireEvent.click(back);
+        expect(container.querySelector('[data-slot="sliding-detail-panel"]')).toHaveAttribute("data-open", "false");
+        expect(dayButton).toHaveAttribute("aria-pressed", "true");
+        expect(container.querySelector('[data-slot="sliding-detail-content"]')).toHaveAttribute("inert");
     });
 
     it("switches between calendar and list views while keeping the same entry selection", () => {
@@ -125,13 +135,13 @@ describe("EmployeeScheduleManager interactions", () => {
         fireEvent.click(screen.getByRole("tab", { name: "목록" }));
         expect(screen.getByRole("tabpanel")).toHaveAttribute("id", "test_schedule_manager-view-panel-list");
 
-        expect(container.querySelector('[data-slot="calendar-grid"]')).not.toBeInTheDocument();
+        expect(container.querySelector('[data-panel="calendar"]')).toHaveAttribute("aria-hidden", "true");
         expect(container.querySelector('[data-slot="schedule-entry-list"]')).toBeInTheDocument();
 
         const listRow = container.querySelector('[data-component="test_schedule_manager_list_row"]');
         expect(listRow).toBeInTheDocument();
         fireEvent.click(listRow!);
-        expect(screen.getByText("일정 유형")).toBeInTheDocument();
+        expect(screen.getByRole("region", { name: "고객 상세" })).toHaveTextContent("1 · 박서연");
     });
 
     it("renders empty, loading, and retryable error states", () => {
