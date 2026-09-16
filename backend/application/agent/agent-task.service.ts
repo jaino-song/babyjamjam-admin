@@ -620,8 +620,13 @@ export class AgentTaskService {
             const normalizedPhone = normalizePhone(state.confirmed.phone);
             if (!normalizedPhone) {
                 addIssue("task.invalid", "phone", "A valid phone number is required");
-            } else if (targetStatus === "valid" && targetClientId !== undefined) {
-                const duplicateCheck = await this.duplicateCheck(principal, state, targetClientId, "update");
+            } else {
+                const duplicateCheck = await this.duplicateCheck(
+                    principal,
+                    state,
+                    targetStatus === "valid" ? targetClientId : undefined,
+                    "update",
+                );
                 if (duplicateCheck.status === "duplicate") addIssue("task.duplicate", "phone");
                 if (duplicateCheck.status === "failed") addIssue("task.invalid", "phone");
                 if (duplicateCheck.status === "not_checked" || duplicateCheck.status === "checking") {

@@ -427,6 +427,74 @@ describe("AgentTaskService", () => {
         expect(client.findByPhone).not.toHaveBeenCalled();
     });
 
+    it("checks update phone duplicates even when the target is missing", async () => {
+        const repository = new FakeTaskRepository();
+        const client = {
+            findByPhone: jest.fn().mockResolvedValue({ id: 7 }),
+            findById: jest.fn().mockResolvedValue(null),
+        };
+        const task = makeTask({
+            capabilityId: "clients.update",
+            draft: {
+                ...createEmptyAgentTaskDraft(randomUUID()),
+                confirmed: { phone: "010-9876-5432" },
+            },
+        });
+        repository.tasks.set(task.taskId, task);
+
+        const result = await buildService(repository, client).service.patch(owner, task.taskId, {
+            clientEventId: randomUUID(),
+            expectedRevision: task.revision,
+            operations: [{ op: "set", field: "phone", value: "010-9876-5432" }],
+        });
+
+        expect(result.snapshot.issues).toEqual(expect.arrayContaining([
+            expect.objectContaining({ code: "task.required" }),
+            expect.objectContaining({ code: "task.duplicate", field: "phone" }),
+        ]));
+        expect(client.findByPhone).toHaveBeenCalledWith(owner.branchId, "01098765432");
+        expect(client.findById).not.toHaveBeenCalled();
+    });
+
+    it("checks update phone duplicates without excluding a stale target", async () => {
+        const repository = new FakeTaskRepository();
+        const targetRef = randomUUID();
+        const client = {
+            findByPhone: jest.fn().mockResolvedValue({ id: 7 }),
+            findById: jest.fn().mockResolvedValue(null),
+        };
+        const task = makeTask({
+            capabilityId: "clients.update",
+            targetRef,
+            targetVersion: "a".repeat(64),
+            draft: {
+                ...createEmptyAgentTaskDraft(randomUUID()),
+                confirmed: { phone: "010-9876-5432" },
+                server: {
+                    references: {
+                        target: { targetRef: randomUUID(), clientId: 7 },
+                        choiceTargets: [],
+                        phoneCandidates: {},
+                    },
+                },
+            },
+        });
+        repository.tasks.set(task.taskId, task);
+
+        const result = await buildService(repository, client).service.patch(owner, task.taskId, {
+            clientEventId: randomUUID(),
+            expectedRevision: task.revision,
+            operations: [{ op: "set", field: "phone", value: "010-9876-5432" }],
+        });
+
+        expect(result.snapshot.issues).toEqual(expect.arrayContaining([
+            expect.objectContaining({ code: "task.stale" }),
+            expect.objectContaining({ code: "task.duplicate", field: "phone" }),
+        ]));
+        expect(client.findByPhone).toHaveBeenCalledWith(owner.branchId, "01098765432");
+        expect(client.findById).not.toHaveBeenCalled();
+    });
+
     it("records a stale target issue from the authoritative branch lookup", async () => {
         const repository = new FakeTaskRepository();
         const targetClient = makeClientRecord();
