@@ -12,11 +12,14 @@ import {
     AgentTaskSafeSnapshotSchema,
     AgentTaskSnapshotEnvelopeSchema,
     AgentTaskStateSchema,
+    AgentTaskDisplayedChoiceHintSchema,
+    AgentTaskStartUpdateCommandSchema,
     AgentTaskTargetVersionSchema,
     ClientInputOperationSchema,
     ClientClearedFieldsSchema,
     ClientWriteFieldsSchema,
     ClientTentativeValuesSchema,
+    ClientModelTaskOperationSchema,
     applyClientInputOperations,
     captureAgentTaskSnapshotRequest,
     createAgentTaskSnapshotState,
@@ -208,6 +211,47 @@ describe("conversational task contracts", () => {
         }).success).toBe(false);
         expect(AgentTaskCommandRequestSchema.safeParse({ clientEventId: IDS.event2, expectedRevision: 1, command: "approve" }).success).toBe(false);
         expect(AgentTaskPatchRequestSchema.safeParse({ clientEventId: IDS.event2, expectedRevision: "rev-1", operations: [{ op: "set", field: "name", value: "홍길동" }] }).success).toBe(false);
+    });
+
+    it("keeps rendered choice hints and start-update commands strict", () => {
+        expect(AgentTaskDisplayedChoiceHintSchema.parse({
+            taskId: IDS.task,
+            choiceSetRef: IDS.choiceSet,
+            revision: 2,
+        })).toEqual({ taskId: IDS.task, choiceSetRef: IDS.choiceSet, revision: 2 });
+        expect(AgentTaskDisplayedChoiceHintSchema.safeParse({
+            taskId: IDS.task,
+            choiceSetRef: IDS.choiceSet,
+            revision: 2,
+            label: "서울",
+        }).success).toBe(false);
+
+        const startUpdate = AgentTaskStartUpdateCommandSchema.safeParse({
+            clientEventId: IDS.event1,
+            expectedRevision: 2,
+            command: "start-update",
+            targetRef: IDS.phoneRef,
+            expectedTargetVersion: HASH,
+        });
+        expect(startUpdate.success).toBe(true);
+        expect(AgentTaskCommandRequestSchema.safeParse({
+            clientEventId: IDS.event1,
+            expectedRevision: 2,
+            command: "start-update",
+            targetRef: IDS.phoneRef,
+            expectedTargetVersion: HASH,
+            operations: [],
+        }).success).toBe(false);
+    });
+
+    it("restricts model task operations to finite literals or opaque references", () => {
+        expect(ClientModelTaskOperationSchema.safeParse({ op: "set", field: "duration", value: 10 }).success).toBe(true);
+        expect(ClientModelTaskOperationSchema.safeParse({ op: "mark-tentative", field: "startDate", value: "2026-03-01" }).success).toBe(true);
+        expect(ClientModelTaskOperationSchema.safeParse({ op: "set", field: "name", value: "홍길동" }).success).toBe(false);
+        expect(ClientModelTaskOperationSchema.safeParse({ op: "set", field: "name", valueRef: IDS.addressRef }).success).toBe(true);
+        expect(ClientModelTaskOperationSchema.safeParse({ op: "set", field: "fullPrice", value: "1000" }).success).toBe(false);
+        expect(ClientModelTaskOperationSchema.safeParse({ op: "set", field: "duration", value: 1, origin: "model" }).success).toBe(false);
+        expect(ClientModelTaskOperationSchema.safeParse({ op: "set", field: "noSend", value: true }).success).toBe(false);
     });
 
     it("mirrors confirmed provider validators while allowing bounded tentative wishes", () => {

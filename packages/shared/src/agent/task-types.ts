@@ -57,6 +57,21 @@ export const AgentTaskSnapshotRefSchema = AgentTaskReferenceSchema;
 export const AgentTaskEventHashSchema = z.string().regex(/^[a-f0-9]{64}$/i);
 export const AgentTaskIsoDateTimeSchema = z.iso.datetime();
 
+/**
+ * A server-issued rendering hint used to interpret ordinal/choice replies.
+ * The hint is advisory: ownership and freshness are rechecked against the
+ * current task before a selection is accepted.
+ */
+export const AgentTaskDisplayedChoiceHintSchema = z.object({
+    taskId: AgentTaskIdSchema,
+    choiceSetRef: AgentTaskReferenceSchema,
+    revision: AgentTaskRevisionSchema,
+}).strict();
+export type AgentTaskDisplayedChoiceHint = z.infer<typeof AgentTaskDisplayedChoiceHintSchema>;
+/** Short alias retained for callers that name the rendered value directly. */
+export const AgentDisplayedChoiceHintSchema = AgentTaskDisplayedChoiceHintSchema;
+export type AgentDisplayedChoiceHint = AgentTaskDisplayedChoiceHint;
+
 export const AgentTaskSourceSchema = z.enum(["user", "wizard", "server", "lookup", "model", "system"]);
 export const AgentTaskFieldProvenanceSchema = z.object({
     source: AgentTaskSourceSchema,
@@ -225,15 +240,25 @@ const SelectTargetByChoiceSetRefSchema = z.object({
     optionId: AgentTaskReferenceSchema,
 }).strict();
 export const AgentTaskSelectTargetCommandSchema = z.union([SelectTargetByChoiceSetIdSchema, SelectTargetByChoiceSetRefSchema]);
+const StartUpdateCommandSchema = z.object({
+    ...AgentTaskCommandBaseShape,
+    command: z.literal("start-update"),
+    /** Existing server-issued reference selected by the caller's UI. */
+    targetRef: AgentTaskReferenceSchema,
+    /** CAS version for the selected target, never an ownership assertion. */
+    expectedTargetVersion: AgentTaskEventHashSchema,
+}).strict();
+export const AgentTaskStartUpdateCommandSchema = StartUpdateCommandSchema;
 export const AgentTaskCommandRequestSchema = z.union([
     AgentTaskSelectTargetCommandSchema,
+    AgentTaskStartUpdateCommandSchema,
     z.object({ ...AgentTaskCommandBaseShape, command: z.literal("pause") }).strict(),
     z.object({ ...AgentTaskCommandBaseShape, command: z.literal("resume") }).strict(),
     z.object({ ...AgentTaskCommandBaseShape, command: z.literal("prepare-review") }).strict(),
     z.object({ ...AgentTaskCommandBaseShape, command: z.literal("cancel") }).strict(),
 ]);
 export type AgentTaskCommandRequest = z.infer<typeof AgentTaskCommandRequestSchema>;
-export const AgentTaskCommandNameSchema = z.enum(["select-target", "pause", "resume", "prepare-review", "cancel"]);
+export const AgentTaskCommandNameSchema = z.enum(["select-target", "start-update", "pause", "resume", "prepare-review", "cancel"]);
 export type AgentTaskCommandName = z.infer<typeof AgentTaskCommandNameSchema>;
 
 export const AgentTaskEventReceiptSchema = z.object({

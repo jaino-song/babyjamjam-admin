@@ -3,6 +3,7 @@ import { z } from "zod";
 
 import {
     AgentTaskCapabilityIdSchema,
+    AgentTaskDisplayedChoiceHintSchema,
     AgentTaskReferenceSchema,
     AgentTaskRevisionSchema,
     AgentTaskStateSchema,
@@ -200,3 +201,8 @@ export type BjjUITools = Record<string, {
 }>;
 
 export type BjjUIMessage = UIMessage<AgentMessageMetadata, AgentDataParts, BjjUITools>;
+
+export type AgentConversationMessage = BjjUIMessage & {
+    /** Optional server-issued hint retained for byte-for-byte retries. */
+    displayedChoice?: z.infer<typeof AgentTaskDisplayedChoiceHintSchema>;
+};

@@ -1,6 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.ClientAutomationInputFieldSchema = exports.ClientWriteFieldSchema = exports.AUTOMATION_CHOICE_DEFAULT = exports.CLIENT_CREATE_DEFAULTS = exports.isClientReadyForTask = exports.ClientReadinessResultSchema = exports.ClientReadinessIssueSchema = exports.ClientDuplicateCheckResultSchema = exports.ClientDuplicateCheckStatusSchema = exports.ClientInputOperationsSchema = exports.ClientInputOperationSchema = exports.ClientClearedFieldsSchema = exports.ClientClearableFieldSchema = exports.CLIENT_CLEARABLE_FIELD_NAMES = exports.AUTOMATION_INPUT_FIELD_NAMES = exports.AutomationConsentChoiceSchema = exports.AUTOMATION_CONSENT_CHOICES = exports.ClientTentativeValuesSchema = exports.ClientConfirmedValuesSchema = exports.ClientWriteFieldsSchema = exports.CLIENT_WRITE_FIELD_NAMES = void 0;
+exports.ClientModelInputOperationsSchema = exports.ClientModelInputOperationSchema = exports.ClientModelTaskOperationsSchema = exports.ClientModelTaskOperationSchema = exports.ClientModelReferenceFieldSchema = exports.ClientModelValueReferenceSchema = exports.ClientModelLiteralFieldSchema = exports.CLIENT_MODEL_LITERAL_FIELD_NAMES = exports.ClientAutomationInputFieldSchema = exports.ClientWriteFieldSchema = exports.AUTOMATION_CHOICE_DEFAULT = exports.CLIENT_CREATE_DEFAULTS = exports.isClientReadyForTask = exports.ClientReadinessResultSchema = exports.ClientReadinessIssueSchema = exports.ClientDuplicateCheckResultSchema = exports.ClientDuplicateCheckStatusSchema = exports.ClientInputOperationsSchema = exports.ClientInputOperationSchema = exports.ClientClearedFieldsSchema = exports.ClientClearableFieldSchema = exports.CLIENT_CLEARABLE_FIELD_NAMES = exports.AUTOMATION_INPUT_FIELD_NAMES = exports.AutomationConsentChoiceSchema = exports.AUTOMATION_CONSENT_CHOICES = exports.ClientTentativeValuesSchema = exports.ClientConfirmedValuesSchema = exports.ClientWriteFieldsSchema = exports.ClientServiceStatusSchema = exports.ClientDateInputValueSchema = exports.CLIENT_WRITE_FIELD_NAMES = void 0;
 exports.normalizeClientPhone = normalizeClientPhone;
 exports.applyClientInputOperations = applyClientInputOperations;
 exports.evaluateClientReadiness = evaluateClientReadiness;
@@ -34,7 +34,8 @@ const DateOnlyInput = zod_1.z.string().regex(/^\d{4}-\d{2}-\d{2}$/).refine((valu
     const parsed = new Date(`${value}T00:00:00Z`);
     return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value;
 }, "Invalid calendar date");
-const DateInputValue = zod_1.z.union([DateOnlyInput, zod_1.z.string().datetime({ offset: true })]);
+exports.ClientDateInputValueSchema = zod_1.z.union([DateOnlyInput, zod_1.z.string().datetime({ offset: true })]);
+const DateInputValue = exports.ClientDateInputValueSchema;
 const DateInput = DateInputValue.nullable().optional();
 const KoreanWonInput = zod_1.z.string().trim().regex(/^(?:\d+|\d{1,3}(?:,\d{3})+)(?:원)?$/u, "Amount must be a whole Korean-won value with no trailing text or decimals");
 function isCalendarValidYymmdd(value) {
@@ -53,7 +54,7 @@ const ClientBirthdaySchema = zod_1.z.string()
     .refine(isCalendarValidYymmdd, "Birthday must be a calendar-valid YYMMDD date")
     .nullable()
     .optional();
-const ServiceStatusSchema = zod_1.z.enum([
+exports.ClientServiceStatusSchema = zod_1.z.enum([
     "pre_booking",
     "waiting",
     "replacement_requested",
@@ -61,6 +62,7 @@ const ServiceStatusSchema = zod_1.z.enum([
     "completed",
     "terminated",
 ]);
+const ServiceStatusSchema = exports.ClientServiceStatusSchema;
 /** Confirmed values mirror the provider's shape and validators. */
 exports.ClientWriteFieldsSchema = zod_1.z.object({
     name: zod_1.z.string().trim().min(1).max(120).optional(),
@@ -379,3 +381,70 @@ function createClientInputState() {
 }
 exports.ClientWriteFieldSchema = zod_1.z.enum(exports.CLIENT_WRITE_FIELD_NAMES);
 exports.ClientAutomationInputFieldSchema = zod_1.z.enum(exports.AUTOMATION_INPUT_FIELD_NAMES);
+/**
+ * Model task edits use a deliberately smaller vocabulary than REST edits.
+ * Protected identity/PII fields can only be addressed by a server-issued
+ * value reference; the model never gets a free-form literal for those keys.
+ */
+exports.CLIENT_MODEL_LITERAL_FIELD_NAMES = [
+    "duration",
+    "startDate",
+    "endDate",
+    "dueDate",
+    "birthDate",
+    "careCenter",
+    "voucherClient",
+    "breastPump",
+    "serviceStatus",
+];
+exports.ClientModelLiteralFieldSchema = zod_1.z.enum(exports.CLIENT_MODEL_LITERAL_FIELD_NAMES);
+const MODEL_LITERAL_VALUE_SCHEMAS = {
+    duration: zod_1.z.number().int().nonnegative(),
+    startDate: DateInputValue,
+    endDate: DateInputValue,
+    dueDate: DateInputValue,
+    birthDate: DateInputValue,
+    careCenter: zod_1.z.boolean(),
+    voucherClient: zod_1.z.boolean(),
+    breastPump: zod_1.z.boolean(),
+    serviceStatus: ServiceStatusSchema,
+};
+/** Model references are opaque UUIDs resolved against the current task/turn. */
+exports.ClientModelValueReferenceSchema = zod_1.z.object({ valueRef: zod_1.z.uuid() }).strict();
+const MODEL_REFERENCE_FIELD_NAMES = exports.CLIENT_WRITE_FIELD_NAMES.filter((field) => !exports.CLIENT_MODEL_LITERAL_FIELD_NAMES.includes(field));
+exports.ClientModelReferenceFieldSchema = zod_1.z.enum(MODEL_REFERENCE_FIELD_NAMES);
+function modelLiteralVariants(operation) {
+    return exports.CLIENT_MODEL_LITERAL_FIELD_NAMES.map((field) => zod_1.z.object({
+        op: zod_1.z.literal(operation),
+        field: zod_1.z.literal(field),
+        value: MODEL_LITERAL_VALUE_SCHEMAS[field],
+    }).strict());
+}
+function modelReferenceVariants(operation) {
+    return MODEL_REFERENCE_FIELD_NAMES.map((field) => zod_1.z.object({
+        op: zod_1.z.literal(operation),
+        field: zod_1.z.literal(field),
+        valueRef: zod_1.z.uuid(),
+    }).strict());
+}
+const modelClearVariants = exports.CLIENT_CLEARABLE_FIELD_NAMES.map((field) => zod_1.z.object({
+    op: zod_1.z.literal("clear"),
+    field: zod_1.z.literal(field),
+}).strict());
+const modelDiscardVariants = exports.CLIENT_WRITE_FIELD_NAMES.map((field) => zod_1.z.object({
+    op: zod_1.z.literal("discard-change"),
+    field: zod_1.z.literal(field),
+}).strict());
+/** Independent finite schema used for model-facing task tools. */
+exports.ClientModelTaskOperationSchema = zod_1.z.union([
+    ...modelLiteralVariants("set"),
+    ...modelReferenceVariants("set"),
+    ...modelLiteralVariants("mark-tentative"),
+    ...modelReferenceVariants("mark-tentative"),
+    ...modelClearVariants,
+    ...modelDiscardVariants,
+]);
+exports.ClientModelTaskOperationsSchema = zod_1.z.array(exports.ClientModelTaskOperationSchema).max(100);
+/** Explicit aliases for callers that use the input-policy naming. */
+exports.ClientModelInputOperationSchema = exports.ClientModelTaskOperationSchema;
+exports.ClientModelInputOperationsSchema = exports.ClientModelTaskOperationsSchema;

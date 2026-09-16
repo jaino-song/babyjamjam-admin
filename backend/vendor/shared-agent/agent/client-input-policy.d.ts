@@ -5,6 +5,15 @@ import { z } from "zod";
  */
 export declare const CLIENT_WRITE_FIELD_NAMES: readonly ["name", "address", "phone", "type", "duration", "fullPrice", "grant", "actualPrice", "startDate", "endDate", "careCenter", "voucherClient", "birthday", "dueDate", "birthDate", "serviceStatus", "breastPump", "areaId"];
 export type ClientWriteField = (typeof CLIENT_WRITE_FIELD_NAMES)[number];
+export declare const ClientDateInputValueSchema: z.ZodUnion<readonly [z.ZodString, z.ZodString]>;
+export declare const ClientServiceStatusSchema: z.ZodEnum<{
+    pre_booking: "pre_booking";
+    waiting: "waiting";
+    replacement_requested: "replacement_requested";
+    active: "active";
+    completed: "completed";
+    terminated: "terminated";
+}>;
 /** Confirmed values mirror the provider's shape and validators. */
 export declare const ClientWriteFieldsSchema: z.ZodObject<{
     name: z.ZodOptional<z.ZodString>;
@@ -244,4 +253,47 @@ export declare const ClientAutomationInputFieldSchema: z.ZodEnum<{
     automationChoice: "automationChoice";
     noSend: "noSend";
 }>;
+/**
+ * Model task edits use a deliberately smaller vocabulary than REST edits.
+ * Protected identity/PII fields can only be addressed by a server-issued
+ * value reference; the model never gets a free-form literal for those keys.
+ */
+export declare const CLIENT_MODEL_LITERAL_FIELD_NAMES: readonly ["duration", "startDate", "endDate", "dueDate", "birthDate", "careCenter", "voucherClient", "breastPump", "serviceStatus"];
+export type ClientModelLiteralField = (typeof CLIENT_MODEL_LITERAL_FIELD_NAMES)[number];
+export declare const ClientModelLiteralFieldSchema: z.ZodEnum<{
+    duration: "duration";
+    startDate: "startDate";
+    endDate: "endDate";
+    careCenter: "careCenter";
+    voucherClient: "voucherClient";
+    dueDate: "dueDate";
+    birthDate: "birthDate";
+    serviceStatus: "serviceStatus";
+    breastPump: "breastPump";
+}>;
+/** Model references are opaque UUIDs resolved against the current task/turn. */
+export declare const ClientModelValueReferenceSchema: z.ZodObject<{
+    valueRef: z.ZodUUID;
+}, z.core.$strict>;
+export type ClientModelValueReference = z.infer<typeof ClientModelValueReferenceSchema>;
+export declare const ClientModelReferenceFieldSchema: z.ZodEnum<{
+    type: "type";
+    name: "name";
+    address: "address";
+    phone: "phone";
+    fullPrice: "fullPrice";
+    grant: "grant";
+    actualPrice: "actualPrice";
+    birthday: "birthday";
+    areaId: "areaId";
+}>;
+export type ClientModelReferenceField = z.infer<typeof ClientModelReferenceFieldSchema>;
+/** Independent finite schema used for model-facing task tools. */
+export declare const ClientModelTaskOperationSchema: z.ZodUnion<[z.ZodType<unknown, unknown, z.core.$ZodTypeInternals<unknown, unknown>>, z.ZodType<unknown, unknown, z.core.$ZodTypeInternals<unknown, unknown>>, ...z.ZodType<unknown, unknown, z.core.$ZodTypeInternals<unknown, unknown>>[]]>;
+export type ClientModelTaskOperation = z.infer<typeof ClientModelTaskOperationSchema>;
+export declare const ClientModelTaskOperationsSchema: z.ZodArray<z.ZodUnion<[z.ZodType<unknown, unknown, z.core.$ZodTypeInternals<unknown, unknown>>, z.ZodType<unknown, unknown, z.core.$ZodTypeInternals<unknown, unknown>>, ...z.ZodType<unknown, unknown, z.core.$ZodTypeInternals<unknown, unknown>>[]]>>;
+export type ClientModelTaskOperations = z.infer<typeof ClientModelTaskOperationsSchema>;
+/** Explicit aliases for callers that use the input-policy naming. */
+export declare const ClientModelInputOperationSchema: z.ZodUnion<[z.ZodType<unknown, unknown, z.core.$ZodTypeInternals<unknown, unknown>>, z.ZodType<unknown, unknown, z.core.$ZodTypeInternals<unknown, unknown>>, ...z.ZodType<unknown, unknown, z.core.$ZodTypeInternals<unknown, unknown>>[]]>;
+export declare const ClientModelInputOperationsSchema: z.ZodArray<z.ZodUnion<[z.ZodType<unknown, unknown, z.core.$ZodTypeInternals<unknown, unknown>>, z.ZodType<unknown, unknown, z.core.$ZodTypeInternals<unknown, unknown>>, ...z.ZodType<unknown, unknown, z.core.$ZodTypeInternals<unknown, unknown>>[]]>>;
 export {};

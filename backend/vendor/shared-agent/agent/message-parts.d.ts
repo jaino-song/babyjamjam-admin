@@ -1,5 +1,6 @@
 import type { UIMessage } from "ai";
 import { z } from "zod";
+import { AgentTaskDisplayedChoiceHintSchema } from "./task-types";
 export declare const AgentRendererNameSchema: z.ZodEnum<{
     error: "error";
     text: "text";
@@ -258,3 +259,7 @@ export type BjjUITools = Record<string, {
     output: unknown | undefined;
 }>;
 export type BjjUIMessage = UIMessage<AgentMessageMetadata, AgentDataParts, BjjUITools>;
+export type AgentConversationMessage = BjjUIMessage & {
+    /** Optional server-issued hint retained for byte-for-byte retries. */
+    displayedChoice?: z.infer<typeof AgentTaskDisplayedChoiceHintSchema>;
+};

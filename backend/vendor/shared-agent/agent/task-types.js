@@ -1,6 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.AgentTaskRestoreMetadataSchema = exports.AgentTaskMutationResponseSchema = exports.AgentTaskEventReceiptSchema = exports.AgentTaskCommandNameSchema = exports.AgentTaskCommandRequestSchema = exports.AgentTaskSelectTargetCommandSchema = exports.AgentTaskPatchRequestSchema = exports.AgentTaskCreateRequestSchema = exports.AgentTaskSchema = exports.AgentAutomationConsentInputSchema = exports.AgentAutomationConsentSchema = exports.AgentAutomationConsentBindingSchema = exports.AgentTaskTimesSchema = exports.AgentTaskActionLinkSchema = exports.AgentTaskChoiceSetSchema = exports.AgentTaskChoiceOptionSchema = exports.AgentTaskTargetSchema = exports.AgentTaskTargetVersionSchema = exports.AgentTaskConstraintsSchema = exports.AgentTaskIssueSchema = exports.AgentTaskIssueSeveritySchema = exports.AgentTaskIssueCodeSchema = exports.AGENT_TASK_ISSUE_CODES = exports.AgentTaskProvenanceSchema = exports.AgentTaskFieldProvenanceSchema = exports.AgentTaskSourceSchema = exports.AgentTaskIsoDateTimeSchema = exports.AgentTaskEventHashSchema = exports.AgentTaskSnapshotRefSchema = exports.AgentTaskEventIdSchema = exports.AgentTaskIdSchema = exports.AgentTaskReferenceSchema = exports.AgentActionRevisionTokenSchema = exports.AgentTaskRevisionSchema = exports.AgentTaskRestoreStatusSchema = exports.AgentTaskStateSchema = exports.AgentTaskKindSchema = exports.AgentTaskCapabilityIdSchema = exports.AgentTaskSchemaVersionSchema = exports.AGENT_TASK_SCHEMA_VERSION = void 0;
+exports.AgentTaskRestoreMetadataSchema = exports.AgentTaskMutationResponseSchema = exports.AgentTaskEventReceiptSchema = exports.AgentTaskCommandNameSchema = exports.AgentTaskCommandRequestSchema = exports.AgentTaskStartUpdateCommandSchema = exports.AgentTaskSelectTargetCommandSchema = exports.AgentTaskPatchRequestSchema = exports.AgentTaskCreateRequestSchema = exports.AgentTaskSchema = exports.AgentAutomationConsentInputSchema = exports.AgentAutomationConsentSchema = exports.AgentAutomationConsentBindingSchema = exports.AgentTaskTimesSchema = exports.AgentTaskActionLinkSchema = exports.AgentTaskChoiceSetSchema = exports.AgentTaskChoiceOptionSchema = exports.AgentTaskTargetSchema = exports.AgentTaskTargetVersionSchema = exports.AgentTaskConstraintsSchema = exports.AgentTaskIssueSchema = exports.AgentTaskIssueSeveritySchema = exports.AgentTaskIssueCodeSchema = exports.AGENT_TASK_ISSUE_CODES = exports.AgentTaskProvenanceSchema = exports.AgentTaskFieldProvenanceSchema = exports.AgentTaskSourceSchema = exports.AgentDisplayedChoiceHintSchema = exports.AgentTaskDisplayedChoiceHintSchema = exports.AgentTaskIsoDateTimeSchema = exports.AgentTaskEventHashSchema = exports.AgentTaskSnapshotRefSchema = exports.AgentTaskEventIdSchema = exports.AgentTaskIdSchema = exports.AgentTaskReferenceSchema = exports.AgentActionRevisionTokenSchema = exports.AgentTaskRevisionSchema = exports.AgentTaskRestoreStatusSchema = exports.AgentTaskStateSchema = exports.AgentTaskKindSchema = exports.AgentTaskCapabilityIdSchema = exports.AgentTaskSchemaVersionSchema = exports.AGENT_TASK_SCHEMA_VERSION = void 0;
 exports.createAgentTaskDefaults = createAgentTaskDefaults;
 const zod_1 = require("zod");
 const client_input_policy_1 = require("./client-input-policy");
@@ -40,6 +40,18 @@ exports.AgentTaskEventIdSchema = exports.AgentTaskReferenceSchema;
 exports.AgentTaskSnapshotRefSchema = exports.AgentTaskReferenceSchema;
 exports.AgentTaskEventHashSchema = zod_1.z.string().regex(/^[a-f0-9]{64}$/i);
 exports.AgentTaskIsoDateTimeSchema = zod_1.z.iso.datetime();
+/**
+ * A server-issued rendering hint used to interpret ordinal/choice replies.
+ * The hint is advisory: ownership and freshness are rechecked against the
+ * current task before a selection is accepted.
+ */
+exports.AgentTaskDisplayedChoiceHintSchema = zod_1.z.object({
+    taskId: exports.AgentTaskIdSchema,
+    choiceSetRef: exports.AgentTaskReferenceSchema,
+    revision: exports.AgentTaskRevisionSchema,
+}).strict();
+/** Short alias retained for callers that name the rendered value directly. */
+exports.AgentDisplayedChoiceHintSchema = exports.AgentTaskDisplayedChoiceHintSchema;
 exports.AgentTaskSourceSchema = zod_1.z.enum(["user", "wizard", "server", "lookup", "model", "system"]);
 exports.AgentTaskFieldProvenanceSchema = zod_1.z.object({
     source: exports.AgentTaskSourceSchema,
@@ -189,14 +201,24 @@ const SelectTargetByChoiceSetRefSchema = zod_1.z.object({
     optionId: exports.AgentTaskReferenceSchema,
 }).strict();
 exports.AgentTaskSelectTargetCommandSchema = zod_1.z.union([SelectTargetByChoiceSetIdSchema, SelectTargetByChoiceSetRefSchema]);
+const StartUpdateCommandSchema = zod_1.z.object({
+    ...AgentTaskCommandBaseShape,
+    command: zod_1.z.literal("start-update"),
+    /** Existing server-issued reference selected by the caller's UI. */
+    targetRef: exports.AgentTaskReferenceSchema,
+    /** CAS version for the selected target, never an ownership assertion. */
+    expectedTargetVersion: exports.AgentTaskEventHashSchema,
+}).strict();
+exports.AgentTaskStartUpdateCommandSchema = StartUpdateCommandSchema;
 exports.AgentTaskCommandRequestSchema = zod_1.z.union([
     exports.AgentTaskSelectTargetCommandSchema,
+    exports.AgentTaskStartUpdateCommandSchema,
     zod_1.z.object({ ...AgentTaskCommandBaseShape, command: zod_1.z.literal("pause") }).strict(),
     zod_1.z.object({ ...AgentTaskCommandBaseShape, command: zod_1.z.literal("resume") }).strict(),
     zod_1.z.object({ ...AgentTaskCommandBaseShape, command: zod_1.z.literal("prepare-review") }).strict(),
     zod_1.z.object({ ...AgentTaskCommandBaseShape, command: zod_1.z.literal("cancel") }).strict(),
 ]);
-exports.AgentTaskCommandNameSchema = zod_1.z.enum(["select-target", "pause", "resume", "prepare-review", "cancel"]);
+exports.AgentTaskCommandNameSchema = zod_1.z.enum(["select-target", "start-update", "pause", "resume", "prepare-review", "cancel"]);
 exports.AgentTaskEventReceiptSchema = zod_1.z.object({
     taskId: exports.AgentTaskIdSchema,
     eventId: exports.AgentTaskEventIdSchema,

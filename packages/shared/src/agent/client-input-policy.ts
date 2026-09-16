@@ -31,7 +31,8 @@ const DateOnlyInput = z.string().regex(/^\d{4}-\d{2}-\d{2}$/).refine((value) => 
     const parsed = new Date(`${value}T00:00:00Z`);
     return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value;
 }, "Invalid calendar date");
-const DateInputValue = z.union([DateOnlyInput, z.string().datetime({ offset: true })]);
+export const ClientDateInputValueSchema = z.union([DateOnlyInput, z.string().datetime({ offset: true })]);
+const DateInputValue = ClientDateInputValueSchema;
 const DateInput = DateInputValue.nullable().optional();
 const KoreanWonInput = z.string().trim().regex(
     /^(?:\d+|\d{1,3}(?:,\d{3})+)(?:원)?$/u,
@@ -56,7 +57,7 @@ const ClientBirthdaySchema = z.string()
     .nullable()
     .optional();
 
-const ServiceStatusSchema = z.enum([
+export const ClientServiceStatusSchema = z.enum([
     "pre_booking",
     "waiting",
     "replacement_requested",
@@ -64,6 +65,7 @@ const ServiceStatusSchema = z.enum([
     "completed",
     "terminated",
 ]);
+const ServiceStatusSchema = ClientServiceStatusSchema;
 
 /** Confirmed values mirror the provider's shape and validators. */
 export const ClientWriteFieldsSchema = z.object({
@@ -448,3 +450,86 @@ export function createClientInputState(): ClientInputState {
 
 export const ClientWriteFieldSchema = z.enum(CLIENT_WRITE_FIELD_NAMES);
 export const ClientAutomationInputFieldSchema = z.enum(AUTOMATION_INPUT_FIELD_NAMES);
+
+/**
+ * Model task edits use a deliberately smaller vocabulary than REST edits.
+ * Protected identity/PII fields can only be addressed by a server-issued
+ * value reference; the model never gets a free-form literal for those keys.
+ */
+export const CLIENT_MODEL_LITERAL_FIELD_NAMES = [
+    "duration",
+    "startDate",
+    "endDate",
+    "dueDate",
+    "birthDate",
+    "careCenter",
+    "voucherClient",
+    "breastPump",
+    "serviceStatus",
+] as const;
+export type ClientModelLiteralField = (typeof CLIENT_MODEL_LITERAL_FIELD_NAMES)[number];
+export const ClientModelLiteralFieldSchema = z.enum(CLIENT_MODEL_LITERAL_FIELD_NAMES);
+
+const MODEL_LITERAL_VALUE_SCHEMAS: Record<ClientModelLiteralField, z.ZodTypeAny> = {
+    duration: z.number().int().nonnegative(),
+    startDate: DateInputValue,
+    endDate: DateInputValue,
+    dueDate: DateInputValue,
+    birthDate: DateInputValue,
+    careCenter: z.boolean(),
+    voucherClient: z.boolean(),
+    breastPump: z.boolean(),
+    serviceStatus: ServiceStatusSchema,
+};
+
+/** Model references are opaque UUIDs resolved against the current task/turn. */
+export const ClientModelValueReferenceSchema = z.object({ valueRef: z.uuid() }).strict();
+export type ClientModelValueReference = z.infer<typeof ClientModelValueReferenceSchema>;
+
+const MODEL_REFERENCE_FIELD_NAMES = CLIENT_WRITE_FIELD_NAMES.filter(
+    (field): field is Exclude<ClientWriteField, ClientModelLiteralField> =>
+        !(CLIENT_MODEL_LITERAL_FIELD_NAMES as readonly string[]).includes(field),
+) as unknown as readonly [Exclude<ClientWriteField, ClientModelLiteralField>, ...Exclude<ClientWriteField, ClientModelLiteralField>[]];
+export const ClientModelReferenceFieldSchema = z.enum(MODEL_REFERENCE_FIELD_NAMES);
+export type ClientModelReferenceField = z.infer<typeof ClientModelReferenceFieldSchema>;
+
+function modelLiteralVariants(operation: "set" | "mark-tentative") {
+    return CLIENT_MODEL_LITERAL_FIELD_NAMES.map((field) => z.object({
+        op: z.literal(operation),
+        field: z.literal(field),
+        value: MODEL_LITERAL_VALUE_SCHEMAS[field],
+    }).strict()) as unknown as readonly [z.ZodTypeAny, ...z.ZodTypeAny[]];
+}
+
+function modelReferenceVariants(operation: "set" | "mark-tentative") {
+    return MODEL_REFERENCE_FIELD_NAMES.map((field) => z.object({
+        op: z.literal(operation),
+        field: z.literal(field),
+        valueRef: z.uuid(),
+    }).strict()) as unknown as readonly [z.ZodTypeAny, ...z.ZodTypeAny[]];
+}
+
+const modelClearVariants = CLIENT_CLEARABLE_FIELD_NAMES.map((field) => z.object({
+    op: z.literal("clear"),
+    field: z.literal(field),
+}).strict()) as unknown as readonly [z.ZodTypeAny, ...z.ZodTypeAny[]];
+const modelDiscardVariants = CLIENT_WRITE_FIELD_NAMES.map((field) => z.object({
+    op: z.literal("discard-change"),
+    field: z.literal(field),
+}).strict()) as unknown as readonly [z.ZodTypeAny, ...z.ZodTypeAny[]];
+
+/** Independent finite schema used for model-facing task tools. */
+export const ClientModelTaskOperationSchema = z.union([
+    ...modelLiteralVariants("set"),
+    ...modelReferenceVariants("set"),
+    ...modelLiteralVariants("mark-tentative"),
+    ...modelReferenceVariants("mark-tentative"),
+    ...modelClearVariants,
+    ...modelDiscardVariants,
+] as unknown as [z.ZodTypeAny, z.ZodTypeAny, ...z.ZodTypeAny[]]);
+export type ClientModelTaskOperation = z.infer<typeof ClientModelTaskOperationSchema>;
+export const ClientModelTaskOperationsSchema = z.array(ClientModelTaskOperationSchema).max(100);
+export type ClientModelTaskOperations = z.infer<typeof ClientModelTaskOperationsSchema>;
+/** Explicit aliases for callers that use the input-policy naming. */
+export const ClientModelInputOperationSchema = ClientModelTaskOperationSchema;
+export const ClientModelInputOperationsSchema = ClientModelTaskOperationsSchema;

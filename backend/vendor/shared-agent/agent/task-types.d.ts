@@ -47,6 +47,24 @@ export declare const AgentTaskEventIdSchema: z.ZodUUID;
 export declare const AgentTaskSnapshotRefSchema: z.ZodUUID;
 export declare const AgentTaskEventHashSchema: z.ZodString;
 export declare const AgentTaskIsoDateTimeSchema: z.ZodISODateTime;
+/**
+ * A server-issued rendering hint used to interpret ordinal/choice replies.
+ * The hint is advisory: ownership and freshness are rechecked against the
+ * current task before a selection is accepted.
+ */
+export declare const AgentTaskDisplayedChoiceHintSchema: z.ZodObject<{
+    taskId: z.ZodUUID;
+    choiceSetRef: z.ZodUUID;
+    revision: z.ZodNumber;
+}, z.core.$strict>;
+export type AgentTaskDisplayedChoiceHint = z.infer<typeof AgentTaskDisplayedChoiceHintSchema>;
+/** Short alias retained for callers that name the rendered value directly. */
+export declare const AgentDisplayedChoiceHintSchema: z.ZodObject<{
+    taskId: z.ZodUUID;
+    choiceSetRef: z.ZodUUID;
+    revision: z.ZodNumber;
+}, z.core.$strict>;
+export type AgentDisplayedChoiceHint = AgentTaskDisplayedChoiceHint;
 export declare const AgentTaskSourceSchema: z.ZodEnum<{
     user: "user";
     wizard: "wizard";
@@ -456,6 +474,13 @@ export declare const AgentTaskSelectTargetCommandSchema: z.ZodUnion<readonly [z.
     clientEventId: z.ZodUUID;
     expectedRevision: z.ZodNumber;
 }, z.core.$strict>]>;
+export declare const AgentTaskStartUpdateCommandSchema: z.ZodObject<{
+    command: z.ZodLiteral<"start-update">;
+    targetRef: z.ZodUUID;
+    expectedTargetVersion: z.ZodString;
+    clientEventId: z.ZodUUID;
+    expectedRevision: z.ZodNumber;
+}, z.core.$strict>;
 export declare const AgentTaskCommandRequestSchema: z.ZodUnion<readonly [z.ZodUnion<readonly [z.ZodObject<{
     command: z.ZodLiteral<"select-target">;
     choiceSetId: z.ZodUUID;
@@ -469,6 +494,12 @@ export declare const AgentTaskCommandRequestSchema: z.ZodUnion<readonly [z.ZodUn
     clientEventId: z.ZodUUID;
     expectedRevision: z.ZodNumber;
 }, z.core.$strict>]>, z.ZodObject<{
+    command: z.ZodLiteral<"start-update">;
+    targetRef: z.ZodUUID;
+    expectedTargetVersion: z.ZodString;
+    clientEventId: z.ZodUUID;
+    expectedRevision: z.ZodNumber;
+}, z.core.$strict>, z.ZodObject<{
     command: z.ZodLiteral<"pause">;
     clientEventId: z.ZodUUID;
     expectedRevision: z.ZodNumber;
@@ -488,6 +519,7 @@ export declare const AgentTaskCommandRequestSchema: z.ZodUnion<readonly [z.ZodUn
 export type AgentTaskCommandRequest = z.infer<typeof AgentTaskCommandRequestSchema>;
 export declare const AgentTaskCommandNameSchema: z.ZodEnum<{
     "select-target": "select-target";
+    "start-update": "start-update";
     pause: "pause";
     resume: "resume";
     "prepare-review": "prepare-review";
