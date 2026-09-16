@@ -71,6 +71,8 @@ describe("PrismaExceptionFilter database failover telemetry", () => {
 
     it.each(["P2003", "P2011", "P2006"])("captures %s once as a safe warning advisory", (code) => {
         const { host, response } = createHost("/clients/118?private=secret");
+        // A legitimate request UUID can contain the same digits as a customer ID.
+        response.locals["errorRequestId"] = "2c250bab-5658-4470-8557-1bb9329a8118";
         new PrismaExceptionFilter().catch(knownError(code, "PRIVATE_DATABASE_DETAIL"), host);
         expect(response.status).toHaveBeenCalledWith(400);
         expect(mockCaptureException).not.toHaveBeenCalled();
@@ -79,7 +81,10 @@ describe("PrismaExceptionFilter database failover telemetry", () => {
             level: "warning",
             tags: expect.objectContaining({ feature: "http-advisory", "error.code": code }),
         }));
-        expect(JSON.stringify(mockCaptureEvent.mock.calls)).not.toMatch(/PRIVATE|118|secret/);
+        const captured = mockCaptureEvent.mock.calls[0]?.[0];
+        expect(captured.tags.route).toBe("<unmatched>");
+        expect(captured.contexts.requestReference.requestId).toBe(response.locals["errorRequestId"]);
+        expect(JSON.stringify(captured)).not.toMatch(/PRIVATE|\/clients\/118|secret/);
     });
 
     it.each(["P1001", "P1017"])("captures %s as failover eligible on every API path", (code) => {
