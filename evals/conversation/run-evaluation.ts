@@ -1,3 +1,7 @@
+/**
+ * Run from the repository root with the backend ts-node compiler mode:
+ * pnpm --filter ./backend exec ts-node --compiler-options '{"module":"CommonJS"}' ../evals/conversation/run-evaluation.ts
+ */
 import {
     CONVERSATION_ASSERTION_DIGEST,
     CONVERSATION_DETERMINISTIC_CLOCK,
