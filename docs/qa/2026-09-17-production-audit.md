@@ -382,7 +382,10 @@ UI 작업 전 확인/완료 기록:
 
 - PR: https://github.com/jaino-song/babyjamjam-admin/pull/708 (draft, dev 대상). 병합·프로덕션 배포 없음.
 - 최종 코드 `a09953451`의 frontend/backend/mobile/shared/security, frontend auth lifecycle, backend auth e2e 및 preview 배포 검사가 통과했다.
-  참고용 Mobile Playwright real-backend는 확인 시점 실행 중이다.
+  참고용 Mobile Playwright real-backend는 143개 통과·22개 실패로 완료됐다.
+  기준 dev 및 앞선 수정 실행과 실패 제목 22개가 모두 동일하며, 최종 코드에만 있는 실패는 0개다.
+  최종 코드 실행: https://github.com/jaino-song/babyjamjam-admin/actions/runs/35149962994
+  이후 커밋은 이 검수 기록만 변경하며, 구현 소스는 검토·CI 대상 `a09953451`과 동일하다.
 - 이전 `025ef1828`의 필수 frontend/backend/mobile/shared/security 및 preview 배포 검사는 통과했다.
   참고용 Mobile Playwright real-backend는 143개 통과·22개 실패했다.
 - 기준 dev `ed849c286`의 동일 검사도 같은 22개 제목으로 실패한다. head에만 있는 실패는 0개다.
