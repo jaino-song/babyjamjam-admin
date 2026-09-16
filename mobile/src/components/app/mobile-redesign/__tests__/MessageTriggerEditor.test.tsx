@@ -60,6 +60,16 @@ describe("MessageTriggerEditor", () => {
     expect(onClose).toHaveBeenCalled();
   });
 
+  it("does not require a hidden time after switching to immediate sending", async () => {
+    render(<MessageTriggerEditor data-component="mobile_messages_automation_test_editor" rule={null} onClose={jest.fn()} />);
+    fireEvent.change(screen.getByLabelText("규칙 이름"), { target: { value: "즉시 안내" } });
+    fireEvent.change(screen.getByLabelText("발송 시각 (한국 시간)"), { target: { value: "" } });
+    fireEvent.change(screen.getByLabelText("발송 이벤트"), { target: { value: "CLIENT_CREATED" } });
+    expect(screen.queryByLabelText("발송 시각 (한국 시간)")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "규칙 저장" }));
+    await waitFor(() => expect(createRule).toHaveBeenCalledWith(expect.objectContaining({ offsetType: "IMMEDIATE", sendTime: "09:00" })));
+  });
+
   it("updates and deletes an existing rule", async () => {
     const onClose = jest.fn();
     render(<MessageTriggerEditor

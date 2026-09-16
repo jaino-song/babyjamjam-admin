@@ -129,7 +129,7 @@ export function MessageTriggerEditor({
 
   const handleSave = async () => {
     if (rule?.branchId === null) return;
-    if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(form.sendTime)) {
+    if (form.offsetType !== "IMMEDIATE" && !/^([01]\d|2[0-3]):[0-5]\d$/.test(form.sendTime)) {
       setError("발송 시각을 입력해 주세요 (한국 시간).");
       return;
     }
@@ -145,6 +145,7 @@ export function MessageTriggerEditor({
 
     const dto: CreateMessageTriggerRuleDto = {
       ...form,
+      sendTime: form.offsetType === "IMMEDIATE" ? "09:00" : form.sendTime,
       name,
       templateKey: selectedTemplateKey,
       offsetDays: needsDays ? Math.max(0, Number(form.offsetDays) || 0) : 0,

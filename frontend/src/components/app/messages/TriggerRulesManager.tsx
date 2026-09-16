@@ -259,6 +259,7 @@ function toFormState(rule: MessageTriggerRule | null): RuleFormState {
 function normalizeDto(dto: RuleFormState): CreateMessageTriggerRuleDto {
   return {
     ...dto,
+    sendTime: dto.offsetType === "IMMEDIATE" ? "09:00" : dto.sendTime,
     offsetDays:
       dto.offsetType === "BEFORE_DAYS" || dto.offsetType === "AFTER_DAYS"
         ? Number(dto.offsetDays || 0)
