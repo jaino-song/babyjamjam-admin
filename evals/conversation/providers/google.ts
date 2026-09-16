@@ -14,6 +14,7 @@ import type {
 import { ConversationProviderCodecError, providerError } from "./errors";
 import {
     assertProviderProfile,
+    assertContinuationSnapshotSize,
     attachEvaluationMetadata,
     cloneContinuationHistory,
     cloneJsonObject,
@@ -267,6 +268,7 @@ export class GoogleConversationProviderAdapter implements ConversationProviderAd
                 : {}),
             pendingToolCalls: attached.outcome === "tool_calls" ? (attached.toolCalls ?? []) : [],
         };
+        assertContinuationSnapshotSize(continuation);
         return { ...attached, continuation };
     }
 

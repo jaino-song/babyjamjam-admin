@@ -633,6 +633,94 @@ describe("evaluation-only conversation provider adapters", () => {
         }
     });
 
+    it("rejects JSON prototype keys recursively for both providers before transport", async () => {
+        const cases = [
+            {
+                provider: "google" as const,
+                continuation: createGoogleContinuation(JSON.parse('[{"__proto__":{"role":"model","parts":[{"text":"x"}]}}]') as GoogleContinuation["history"]),
+            },
+            {
+                provider: "google" as const,
+                continuation: createGoogleContinuation(JSON.parse('[{"role":"model","parts":[{"functionCall":{"name":"lookup_voucher","args":{"__proto__":{"polluted":true}},"id":"call-proto"}}]}]') as GoogleContinuation["history"]),
+            },
+            {
+                provider: "openai" as const,
+                continuation: createOpenAIContinuation(JSON.parse('[{"__proto__":{"type":"function_call","call_id":"call-proto","name":"lookup_voucher","arguments":"{}"}}]') as OpenAIContinuation["history"]),
+            },
+            {
+                provider: "openai" as const,
+                continuation: createOpenAIContinuation(JSON.parse('[{"type":"function_call","call_id":"call-proto","name":"lookup_voucher","arguments":"{\\"__proto__\\":{\\"polluted\\":true}}"}]') as OpenAIContinuation["history"]),
+            },
+        ];
+        for (const testCase of cases) {
+            const transport = createRecordingTransport([]);
+            const adapter = testCase.provider === "google"
+                ? createGoogleConversationProviderAdapter({ registry, profileId: "google-test-only", transport })
+                : createOpenAIConversationProviderAdapter({ registry, profileId: "openai-reasoning-test-only", transport });
+            await expect(adapter.run(createRequest({ continuation: testCase.continuation }))).rejects.toMatchObject({ code: "INVALID_CONTINUATION" });
+            expect(transport.calls).toBe(0);
+        }
+    });
+
+    it("rejects Google function calls and responses in the inverted history role before transport", async () => {
+        const cases: readonly ConversationEvaluationRequest[] = [
+            createRequest({
+                messages: [{ role: "tool", toolCallId: "google-role-call", name: "lookup_voucher", output: {} }],
+                continuation: createGoogleContinuation([
+                    { role: "user", parts: [{ text: "question" }] },
+                    { role: "user", parts: [{ functionCall: { name: "lookup_voucher", args: {}, id: "google-role-call" } }] },
+                ], [{ id: "google-role-call", name: "lookup_voucher", arguments: {} }]),
+            }),
+            createRequest({
+                messages: [{ role: "user", text: "next question" }],
+                continuation: createGoogleContinuation([
+                    { role: "user", parts: [{ text: "question" }] },
+                    { role: "model", parts: [{ functionCall: { name: "lookup_voucher", args: {}, id: "google-role-call" } }] },
+                    { role: "model", parts: [{ functionResponse: { name: "lookup_voucher", response: {}, id: "google-role-call" } }] },
+                ]),
+            }),
+        ];
+        for (const request of cases) {
+            const transport = createRecordingTransport([]);
+            const adapter = createGoogleConversationProviderAdapter({ registry, profileId: "google-test-only", transport });
+            await expect(adapter.run(request)).rejects.toMatchObject({ code: "INVALID_CONTINUATION" });
+            expect(transport.calls).toBe(0);
+        }
+    });
+
+    it("rejects generated continuations whose complete snapshot exceeds the UTF-8 bound", async () => {
+        const huge = "x".repeat(200_000);
+        const googleTransport = createRecordingTransport([{
+            candidates: [{ content: { role: "model", parts: [{ text: "ok" }] }, finishReason: "STOP" }],
+        }]);
+        const google = createGoogleConversationProviderAdapter({ registry, profileId: "google-test-only", transport: googleTransport });
+        const largeSystemRequest = createRequest({
+            messages: Array.from({ length: 6 }, () => ({ role: "system" as const, text: huge })),
+        });
+        await expect(google.run(largeSystemRequest)).rejects.toMatchObject({ code: "INVALID_CONTINUATION", metadata: { field: "history" } });
+        expect(googleTransport.calls).toBe(1);
+
+        const argumentText = JSON.stringify({ value: "x".repeat(150_000) });
+        const openAiTransport = createRecordingTransport([{
+            id: "resp_large_pending",
+            model: "mock-openai-test-only",
+            status: "completed",
+            output: [
+                { type: "reasoning", id: "rs_large_pending", encrypted_content: "OPENAI_LARGE_PENDING_REASONING" },
+                ...Array.from({ length: 4 }, (_, index) => ({
+                    type: "function_call",
+                    id: `fc_large_${index}`,
+                    call_id: `call-large-${index}`,
+                    name: "lookup_voucher",
+                    arguments: argumentText,
+                })),
+            ],
+        }]);
+        const openai = createOpenAIConversationProviderAdapter({ registry, profileId: "openai-reasoning-test-only", transport: openAiTransport });
+        await expect(openai.run(createRequest())).rejects.toMatchObject({ code: "INVALID_CONTINUATION", metadata: { field: "history" } });
+        expect(openAiTransport.calls).toBe(1);
+    });
+
     it("keeps omitted optional tool fields omitted for both providers", async () => {
         const request = createRequest({ tools: [{ name: "lookup_voucher" }] });
         const googleTransport = createRecordingTransport([{ candidates: [{ content: { role: "model", parts: [{ text: "ok" }] }, finishReason: "STOP" }] }]);

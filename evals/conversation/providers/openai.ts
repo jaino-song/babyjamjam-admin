@@ -11,6 +11,7 @@ import type {
 } from "./types";
 import {
     assertProviderProfile,
+    assertContinuationSnapshotSize,
     attachEvaluationMetadata,
     cloneContinuationHistory,
     cloneJsonObject,
@@ -189,6 +190,7 @@ export class OpenAIConversationProviderAdapter implements ConversationProviderAd
             history,
             pendingToolCalls: attached.outcome === "tool_calls" ? (attached.toolCalls ?? []) : [],
         };
+        assertContinuationSnapshotSize(continuation);
         return { ...attached, continuation };
     }
 

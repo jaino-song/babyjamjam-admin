@@ -25,6 +25,7 @@ const SAFE_PROFILE = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,63}$/;
 const SAFE_MODEL = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/;
 const SAFE_TOOL_NAME = /^[A-Za-z][A-Za-z0-9_-]{0,63}$/;
 const SAFE_JSON_KEY = /^[^\u0000-\u001F\u007F]{1,128}$/;
+const UNSAFE_JSON_KEYS = new Set(["__proto__", "constructor", "prototype"]);
 const SAFE_RESPONSE_ID = /^(?:resp|response|chatcmpl)[A-Za-z0-9_.:-]{1,96}$/;
 const SAFE_FINISH_REASONS = new Set([
     "STOP",
@@ -70,7 +71,7 @@ export function cloneJsonValue(value: unknown, code: ConversationProviderErrorCo
     if (prototype !== Object.prototype && prototype !== null) throw providerError(code);
     const clone: Record<string, JsonValue> = {};
     for (const [key, item] of Object.entries(value)) {
-        if (!SAFE_JSON_KEY.test(key)) throw providerError(code, { field: "json_key" });
+        if (!SAFE_JSON_KEY.test(key) || UNSAFE_JSON_KEYS.has(key)) throw providerError(code, { field: "json_key" });
         clone[key] = cloneJsonValue(item, code);
     }
     return clone;
@@ -200,6 +201,12 @@ function assertContinuationSize(value: unknown): void {
         throw providerError("INVALID_CONTINUATION", { field: "history" });
     }
     if (serialized === undefined || utf8ByteLength(serialized) > MAX_HISTORY_BYTES) throw providerError("INVALID_CONTINUATION", { field: "history" });
+}
+
+/** Validate the complete continuation snapshot before exposing it to callers. */
+export function assertContinuationSnapshotSize(continuation: ConversationProviderContinuation): void {
+    const history = cloneBoundedHistory(continuation.history);
+    assertContinuationSize({ ...continuation, history });
 }
 
 function validateContinuationBinding(
@@ -344,9 +351,15 @@ function validateGooglePart(part: JsonObject, declaredNames: ReadonlySet<string>
 
 function validateGoogleHistoryItem(item: JsonObject, declaredNames: ReadonlySet<string>): void {
     if (Object.keys(item).some((key) => !new Set(["role", "parts"]).has(key)) || (item["role"] !== "user" && item["role"] !== "model")) throw providerError("INVALID_CONTINUATION");
+    const role = item["role"];
     const parts = item["parts"];
     if (!Array.isArray(parts) || parts.length === 0) throw providerError("INVALID_CONTINUATION");
-    for (const rawPart of parts) validateGooglePart(cloneJsonObject(rawPart, "INVALID_CONTINUATION"), declaredNames);
+    for (const rawPart of parts) {
+        const part = cloneJsonObject(rawPart, "INVALID_CONTINUATION");
+        if (role === "model" && part["functionResponse"] !== undefined) throw providerError("INVALID_CONTINUATION");
+        if (role === "user" && part["functionCall"] !== undefined) throw providerError("INVALID_CONTINUATION");
+        validateGooglePart(part, declaredNames);
+    }
 }
 
 function validateGoogleSystemInstruction(value: unknown): void {
