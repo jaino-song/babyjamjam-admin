@@ -30,6 +30,7 @@ import {
 import { AgentTaskPolicyService } from "application/agent/agent-task-policy.service";
 import { clientAgentTargetVersion } from "application/usecases/client/client-agent-target";
 import { assertPhoneAvailable } from "application/usecases/client/client-write-validation";
+import { normalizePhone } from "application/utils/normalize-phone";
 import {
     createEmptyAgentTaskDraft,
     toAgentTaskContract,
@@ -390,9 +391,6 @@ export class AgentTaskService {
             }
             const now = new Date();
             const changedBeforeReviewDemotion = this.hasSemanticDraftChange(locked.task.draft, next.draft);
-            if (changedBeforeReviewDemotion && locked.task.status === "review_ready") {
-                next.status = await this.demotedStatus(principal, locked.task);
-            }
             const changed = changedBeforeReviewDemotion || next.status !== locked.task.status;
             if (!changed) {
                 const inserted = await transaction.insertEvent({
@@ -408,6 +406,19 @@ export class AgentTaskService {
                     );
                 }
                 return { status: "updated", task: locked.task, receipt: inserted.event };
+            }
+
+            // Review-only action metadata is cleared only after a genuine
+            // semantic edit has been established. Keeping it through the
+            // comparison prevents metadata cleanup from manufacturing a
+            // revision for a review-ready no-op.
+            next.draft.server = {
+                ...next.draft.server,
+                actionExpectedRevision: undefined,
+                actionProposalRevision: undefined,
+            };
+            if (locked.task.status === "review_ready") {
+                next.status = await this.demotedStatus(principal, locked.task);
             }
 
             next.draft.currentSnapshotRef = randomUUID();
@@ -464,7 +475,8 @@ export class AgentTaskService {
             automationChoice: task.draft.consent.choice,
             noSend: task.draft.constraints.noSend,
         });
-        if (state.automationChoice === "yes" && task.draft.consent.binding === null) {
+        const bindingRemainsValid = this.consentBindingRemainsValid(task, operations);
+        if (state.automationChoice === "yes" && !bindingRemainsValid) {
             throw new AgentTaskConflictException("consent_required", asAuthorizedTask(task));
         }
 
@@ -481,7 +493,7 @@ export class AgentTaskService {
         const choiceTargets = task.draft.server.references.choiceTargets.filter(
             (choiceTarget) => !discardedPhoneChoiceSetRefs.has(choiceTarget.choiceSetRef),
         );
-        const binding = state.automationChoice === task.draft.consent.choice && state.automationChoice === "yes"
+        const binding = state.automationChoice === "yes" && bindingRemainsValid
             ? task.draft.consent.binding
             : null;
         const draft: AgentTaskDraft = {
@@ -503,26 +515,56 @@ export class AgentTaskService {
                     choiceTargets,
                     phoneCandidates: discardsPhone ? {} : { ...task.draft.server.references.phoneCandidates },
                 },
-                actionExpectedRevision: undefined,
-                actionProposalRevision: undefined,
             },
         };
         return { draft, status: task.status };
     }
 
     /**
-     * Provenance references and snapshot refs are generated metadata. They do
-     * not constitute a business change by themselves, so exclude them when
-     * deciding whether a durable revision/TTL update is necessary.
+     * A previously issued yes binding remains usable only while the ordered
+     * patch keeps consent continuously at yes. Any intermediate no/unanswered
+     * state revokes that binding; a later yes therefore needs a fresh Phase7
+     * server-issued binding and is refused during Phase3.
+     */
+    private consentBindingRemainsValid(
+        task: AgentTaskEntity,
+        operations: readonly ClientInputOperation[],
+    ): boolean {
+        if (task.draft.consent.choice !== "yes" || task.draft.consent.binding === null) return false;
+        return operations.every((operation) => {
+            if (operation.op === "set" && operation.field === "automationChoice") return operation.value === "yes";
+            if (operation.op === "clear" && operation.field === "automationChoice") return false;
+            return true;
+        });
+    }
+
+    /**
+     * Compare persisted business state while ignoring only volatile metadata
+     * generated for each request. Provenance source and entry existence remain
+     * semantic: a model/lookup fact becoming an authoritative user fact is an
+     * accepted change, while another user confirmation of the same value is a
+     * no-op. Protected server mappings remain part of this comparison.
      */
     private hasSemanticDraftChange(previous: AgentTaskDraft, next: AgentTaskDraft): boolean {
-        const withoutGeneratedMetadata = (draft: AgentTaskDraft): string => {
-            const semantic = { ...draft } as Record<string, unknown>;
-            delete semantic["provenance"];
+        const semanticProvenance = (provenance: AgentTaskDraft["provenance"]) => ({
+            confirmed: Object.fromEntries(
+                Object.entries(provenance.confirmed).map(([field, value]) => [field, { source: value.source }]),
+            ),
+            tentative: Object.fromEntries(
+                Object.entries(provenance.tentative).map(([field, value]) => [field, { source: value.source }]),
+            ),
+        });
+        const semanticDraft = (draft: AgentTaskDraft): string => {
+            const semantic = {
+                ...draft,
+                provenance: semanticProvenance(draft.provenance),
+            } as Record<string, unknown>;
+            // This reference is generated for each accepted snapshot and is
+            // intentionally excluded from the business-state comparison.
             delete semantic["currentSnapshotRef"];
             return JSON.stringify(semantic);
         };
-        return withoutGeneratedMetadata(previous) !== withoutGeneratedMetadata(next);
+        return semanticDraft(previous) !== semanticDraft(next);
     }
 
     private async updateIssues(
@@ -575,11 +617,11 @@ export class AgentTaskService {
         if (!hasProposedChange) addIssue("task.required", undefined);
 
         if (Object.prototype.hasOwnProperty.call(state.confirmed, "phone")) {
-            const normalizedPhone = normalizeClientPhone(state.confirmed.phone);
-            if (!normalizedPhone || !/^\d{11}$/.test(normalizedPhone)) {
+            const normalizedPhone = normalizePhone(state.confirmed.phone);
+            if (!normalizedPhone) {
                 addIssue("task.invalid", "phone", "A valid phone number is required");
             } else if (targetStatus === "valid" && targetClientId !== undefined) {
-                const duplicateCheck = await this.duplicateCheck(principal, state, targetClientId);
+                const duplicateCheck = await this.duplicateCheck(principal, state, targetClientId, "update");
                 if (duplicateCheck.status === "duplicate") addIssue("task.duplicate", "phone");
                 if (duplicateCheck.status === "failed") addIssue("task.invalid", "phone");
                 if (duplicateCheck.status === "not_checked" || duplicateCheck.status === "checking") {
@@ -628,15 +670,25 @@ export class AgentTaskService {
         principal: VerifiedTenantPrincipal,
         state: ClientInputState,
         currentClientId: number | undefined,
+        mode: "create" | "update" = "create",
     ): Promise<ClientDuplicateCheckResult> {
-        const normalizedPhone = normalizeClientPhone(state.confirmed.phone);
-        if (!normalizedPhone || !/^\d{11}$/.test(normalizedPhone)) return { status: "not_checked" };
+        const normalizedPhone = mode === "update"
+            ? normalizePhone(state.confirmed.phone)
+            : normalizeClientPhone(state.confirmed.phone);
+        if (!normalizedPhone || (mode === "create" && !/^\d{11}$/.test(normalizedPhone))) return { status: "not_checked" };
         try {
             await assertPhoneAvailable(this.clientRepository, principal.branchId, normalizedPhone, currentClientId);
-            return { status: "clear", checkedPhone: normalizedPhone };
+            return {
+                status: "clear",
+                ...(normalizedPhone.length === 11 ? { checkedPhone: normalizedPhone } : {}),
+            };
         } catch (error) {
-            if (error instanceof ConflictException) return { status: "duplicate", checkedPhone: normalizedPhone };
-            if (error instanceof BadRequestException) return { status: "failed", checkedPhone: normalizedPhone };
+            if (error instanceof ConflictException) {
+                return { status: "duplicate", ...(normalizedPhone.length === 11 ? { checkedPhone: normalizedPhone } : {}) };
+            }
+            if (error instanceof BadRequestException) {
+                return { status: "failed", ...(normalizedPhone.length === 11 ? { checkedPhone: normalizedPhone } : {}) };
+            }
             if (error instanceof ServiceUnavailableException) throw error;
             throw storageUnavailable();
         }

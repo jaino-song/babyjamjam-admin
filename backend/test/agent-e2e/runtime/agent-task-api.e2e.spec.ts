@@ -2,7 +2,7 @@ import { INestApplication } from "@nestjs/common";
 import { JwtModule, JwtService } from "@nestjs/jwt";
 import { ConfigService } from "@nestjs/config";
 import { HttpAdapterHost } from "@nestjs/core";
-import { PrismaClient } from "@prisma/client";
+import { Prisma, PrismaClient } from "@prisma/client";
 import { PassportModule } from "@nestjs/passport";
 import { Test } from "@nestjs/testing";
 import request from "supertest";
@@ -459,6 +459,59 @@ describeAgentE2E("agent task API against the guarded local database", () => {
             .expect(409);
         expect(response.body).toMatchObject({ code: "AGENT_TASK_CONFLICT", message: "Task input conflict", reason: "active_task" });
         expect(response.body.snapshot).toEqual(expect.objectContaining({ taskId }));
+    });
+
+    it("persists provenance source changes and review metadata cleanup across a task reload", async () => {
+        const created = await request(httpApp.getHttpServer())
+            .post("/ai/agent/tasks")
+            .send({
+                sessionId,
+                capabilityId: "clients.create",
+                clientEventId: randomUUID(),
+                operations: [
+                    { op: "set", field: "name", value: "Persisted provenance test" },
+                    { op: "set", field: "phone", value: "010-1234-5678" },
+                ],
+            })
+            .expect(201);
+        const taskId = created.body.snapshot.taskId as string;
+        const row = await prisma.agent_task.findUnique({ where: { id: taskId } });
+        if (!row) throw new Error("Expected persisted task row");
+        const draft = JSON.parse(JSON.stringify(row.draft)) as {
+            provenance: { confirmed: Record<string, unknown> };
+            server: Record<string, unknown>;
+        };
+        draft.provenance.confirmed["name"] = {
+            source: "model",
+            capturedAt: "2026-01-01T00:00:00.000Z",
+            eventId: randomUUID(),
+            valueRef: randomUUID(),
+        };
+        draft.server["actionExpectedRevision"] = "review-only-v1";
+        draft.server["actionProposalRevision"] = 4;
+        await prisma.agent_task.update({
+            where: { id: taskId },
+            data: { status: "review_ready", draft: draft as Prisma.InputJsonValue },
+        });
+        const before = await prisma.agent_task.findUnique({ where: { id: taskId } });
+
+        const edited = await request(httpApp.getHttpServer())
+            .patch(`/ai/agent/tasks/${taskId}`)
+            .send({
+                clientEventId: randomUUID(),
+                expectedRevision: created.body.snapshot.revision,
+                operations: [{ op: "set", field: "name", value: "Persisted provenance test" }],
+            })
+            .expect(200);
+        expect(edited.body.snapshot.state).toBe("collecting");
+        expect(edited.body.snapshot.revision).toBe(created.body.snapshot.revision + 1);
+        expect(edited.body.snapshot.provenance.confirmed.name.source).toBe("user");
+
+        const after = await prisma.agent_task.findUnique({ where: { id: taskId } });
+        expect(after?.revision).toBe((before?.revision ?? 0) + 1);
+        const persistedDraft = after?.draft as { server?: Record<string, unknown> } | undefined;
+        expect(persistedDraft?.server?.["actionExpectedRevision"]).toBeUndefined();
+        expect(persistedDraft?.server?.["actionProposalRevision"]).toBeUndefined();
     });
 
     it("restores live, archived, and expired owned sessions without changing TTL", async () => {

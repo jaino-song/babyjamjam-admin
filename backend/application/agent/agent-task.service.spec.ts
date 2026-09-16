@@ -95,6 +95,16 @@ function makeClientRecord(id = 7): ClientEntity {
     } as unknown as ClientEntity;
 }
 
+function makeConsentBinding() {
+    return {
+        recipientRef: randomUUID(),
+        effectDigest: "a".repeat(64),
+        templateRef: randomUUID(),
+        policyDigest: "b".repeat(64),
+        consentEventId: randomUUID(),
+    };
+}
+
 class FakeTaskRepository {
     readonly tasks = new Map<string, AgentTaskEntity>();
     readonly events = new Map<string, AgentTaskEventEntity>();
@@ -477,6 +487,104 @@ describe("AgentTaskService", () => {
         expect(client.findByPhone).toHaveBeenCalledWith(owner.branchId, "01098765432");
     });
 
+    it.each([
+        ["9-digit", "02-123-4567", "021234567"],
+        ["10-digit", "02-1234-5678", "0212345678"],
+    ])("accepts a canonical provider %s update phone", async (_label, phone, normalizedPhone) => {
+        const repository = new FakeTaskRepository();
+        const targetClient = makeClientRecord();
+        const targetRef = randomUUID();
+        const client = {
+            findByPhone: jest.fn().mockResolvedValue(null),
+            findById: jest.fn().mockResolvedValue(targetClient),
+        };
+        const task = makeTask({
+            capabilityId: "clients.update",
+            targetRef,
+            targetVersion: clientAgentTargetVersion(targetClient),
+            draft: {
+                ...createEmptyAgentTaskDraft(randomUUID()),
+                server: { references: { target: { targetRef, clientId: targetClient.id }, choiceTargets: [], phoneCandidates: {} } },
+            },
+        });
+        repository.tasks.set(task.taskId, task);
+
+        const result = await buildService(repository, client).service.patch(owner, task.taskId, {
+            clientEventId: randomUUID(),
+            expectedRevision: task.revision,
+            operations: [{ op: "set", field: "phone", value: phone }],
+        });
+
+        expect(result.snapshot.confirmed.phone).toBe(normalizedPhone);
+        expect(result.snapshot.issues).not.toEqual(expect.arrayContaining([
+            expect.objectContaining({ field: "phone", code: "task.invalid" }),
+        ]));
+        expect(client.findByPhone).toHaveBeenCalledWith(owner.branchId, normalizedPhone);
+    });
+
+    it("allows an update target to retain its own canonical phone", async () => {
+        const repository = new FakeTaskRepository();
+        const targetClient = makeClientRecord();
+        targetClient.phone = "0212345678";
+        const targetRef = randomUUID();
+        const client = {
+            findByPhone: jest.fn().mockResolvedValue(targetClient),
+            findById: jest.fn().mockResolvedValue(targetClient),
+        };
+        const task = makeTask({
+            capabilityId: "clients.update",
+            targetRef,
+            targetVersion: clientAgentTargetVersion(targetClient),
+            draft: {
+                ...createEmptyAgentTaskDraft(randomUUID()),
+                server: { references: { target: { targetRef, clientId: targetClient.id }, choiceTargets: [], phoneCandidates: {} } },
+            },
+        });
+        repository.tasks.set(task.taskId, task);
+
+        const result = await buildService(repository, client).service.patch(owner, task.taskId, {
+            clientEventId: randomUUID(),
+            expectedRevision: task.revision,
+            operations: [{ op: "set", field: "phone", value: "02-1234-5678" }],
+        });
+
+        expect(result.snapshot.issues).not.toEqual(expect.arrayContaining([
+            expect.objectContaining({ field: "phone", code: "task.duplicate" }),
+        ]));
+        expect(client.findByPhone).toHaveBeenCalledWith(owner.branchId, "0212345678");
+    });
+
+    it("records a bounded invalid issue for an update phone rejected by the provider validator", async () => {
+        const repository = new FakeTaskRepository();
+        const targetClient = makeClientRecord();
+        const targetRef = randomUUID();
+        const client = {
+            findByPhone: jest.fn().mockResolvedValue(null),
+            findById: jest.fn().mockResolvedValue(targetClient),
+        };
+        const task = makeTask({
+            capabilityId: "clients.update",
+            targetRef,
+            targetVersion: clientAgentTargetVersion(targetClient),
+            draft: {
+                ...createEmptyAgentTaskDraft(randomUUID()),
+                server: { references: { target: { targetRef, clientId: targetClient.id }, choiceTargets: [], phoneCandidates: {} } },
+            },
+        });
+        repository.tasks.set(task.taskId, task);
+
+        const result = await buildService(repository, client).service.patch(owner, task.taskId, {
+            clientEventId: randomUUID(),
+            expectedRevision: task.revision,
+            operations: [{ op: "set", field: "phone", value: "12345" }],
+        });
+
+        expect(result.snapshot.issues).toEqual(expect.arrayContaining([
+            expect.objectContaining({ field: "phone", code: "task.invalid" }),
+        ]));
+        expect(client.findByPhone).not.toHaveBeenCalled();
+    });
+
     it("persists an explicit clear, treats a repeated clear as a no-op, and replays it after a later edit", async () => {
         const repository = new FakeTaskRepository();
         const service = buildService(repository).service;
@@ -521,11 +629,15 @@ describe("AgentTaskService", () => {
         const created = await service.create(owner, createInput());
         const task = repository.tasks.get(created.snapshot.taskId)!;
         task.status = "review_ready";
+        task.draft.server.actionExpectedRevision = "review-only-v1";
+        task.draft.server.actionProposalRevision = 4;
         const before = {
             revision: task.revision,
             status: task.status,
             snapshotRef: task.draft.currentSnapshotRef,
             expiresAt: task.expiresAt,
+            actionExpectedRevision: task.draft.server.actionExpectedRevision,
+            actionProposalRevision: task.draft.server.actionProposalRevision,
         };
 
         const result = await service.patch(owner, task.taskId, {
@@ -538,6 +650,10 @@ describe("AgentTaskService", () => {
         expect(result.snapshot.state).toBe(before.status);
         expect(result.snapshot.currentSnapshotRef).toBe(before.snapshotRef);
         expect(repository.tasks.get(task.taskId)!.expiresAt).toEqual(before.expiresAt);
+        expect(repository.tasks.get(task.taskId)!.draft.server).toMatchObject({
+            actionExpectedRevision: before.actionExpectedRevision,
+            actionProposalRevision: before.actionProposalRevision,
+        });
     });
 
     it("keeps review-ready discard and repeated-clear no-ops at the current revision", async () => {
@@ -551,6 +667,8 @@ describe("AgentTaskService", () => {
             const created = await service.create(owner, createInput());
             const task = repository.tasks.get(created.snapshot.taskId)!;
             task.status = "review_ready";
+            task.draft.server.actionExpectedRevision = "review-only-v1";
+            task.draft.server.actionProposalRevision = 4;
             if (operation.op === "clear") task.draft.clearedFields = ["address"];
             const beforeRevision = task.revision;
             const beforeSnapshotRef = task.draft.currentSnapshotRef;
@@ -566,7 +684,55 @@ describe("AgentTaskService", () => {
             expect(result.snapshot.state).toBe("review_ready");
             expect(result.snapshot.currentSnapshotRef).toBe(beforeSnapshotRef);
             expect(repository.tasks.get(task.taskId)!.expiresAt).toEqual(beforeExpiry);
+            expect(repository.tasks.get(task.taskId)!.draft.server).toMatchObject({
+                actionExpectedRevision: "review-only-v1",
+                actionProposalRevision: 4,
+            });
         }
+    });
+
+    it("records a same-value authoritative user confirmation as a semantic edit", async () => {
+        const repository = new FakeTaskRepository();
+        const service = buildService(repository).service;
+        const created = await service.create(owner, createInput());
+        const task = repository.tasks.get(created.snapshot.taskId)!;
+        task.draft.provenance.confirmed["name"] = {
+            source: "model",
+            capturedAt: "2026-01-01T00:00:00.000Z",
+            eventId: randomUUID(),
+            valueRef: randomUUID(),
+        };
+        task.expiresAt = new Date(Date.now() + 60 * 60 * 1000);
+        const beforeExpiry = task.expiresAt;
+
+        const result = await service.patch(owner, task.taskId, {
+            clientEventId: randomUUID(),
+            expectedRevision: task.revision,
+            operations: [{ op: "set", field: "name", value: "홍길동" }],
+        });
+
+        expect(result.snapshot.revision).toBe(created.snapshot.revision + 1);
+        expect(result.snapshot.provenance.confirmed["name"]?.source).toBe("user");
+        expect(repository.tasks.get(task.taskId)!.expiresAt.getTime()).toBeGreaterThan(beforeExpiry.getTime());
+    });
+
+    it("treats another same-value user confirmation as a semantic no-op", async () => {
+        const repository = new FakeTaskRepository();
+        const service = buildService(repository).service;
+        const created = await service.create(owner, createInput());
+        const task = repository.tasks.get(created.snapshot.taskId)!;
+        const beforeExpiry = task.expiresAt;
+        const beforeProvenance = { ...task.draft.provenance.confirmed["name"] };
+
+        const result = await service.patch(owner, task.taskId, {
+            clientEventId: randomUUID(),
+            expectedRevision: task.revision,
+            operations: [{ op: "set", field: "name", value: "홍길동" }],
+        });
+
+        expect(result.snapshot.revision).toBe(created.snapshot.revision);
+        expect(repository.tasks.get(task.taskId)!.expiresAt).toEqual(beforeExpiry);
+        expect(repository.tasks.get(task.taskId)!.draft.provenance.confirmed["name"]).toEqual(beforeProvenance);
     });
 
     it("discards only a proposed field and removes stale phone choices and readiness facts", async () => {
@@ -717,6 +883,70 @@ describe("AgentTaskService", () => {
         expect(unanswered.snapshot.consent.choice).toBe("unanswered");
     });
 
+    it.each([
+        [[{ op: "clear", field: "automationChoice" }, { op: "set", field: "automationChoice", value: "yes" }]],
+        [[{ op: "set", field: "automationChoice", value: "no" }, { op: "set", field: "automationChoice", value: "yes" }]],
+    ] as const)("refuses yes after an intermediate consent revocation", async (operations) => {
+        const repository = new FakeTaskRepository();
+        const service = buildService(repository).service;
+        const created = await service.create(owner, createInput());
+        const task = repository.tasks.get(created.snapshot.taskId)!;
+        task.draft.consent = { choice: "yes", binding: makeConsentBinding() };
+        const before = JSON.stringify(task);
+        const beforeEvents = repository.events.size;
+
+        await expect(service.patch(owner, task.taskId, {
+            clientEventId: randomUUID(),
+            expectedRevision: task.revision,
+            operations,
+        })).rejects.toMatchObject({ response: expect.objectContaining({ code: "AGENT_TASK_CONFLICT", reason: "consent_required" }) });
+
+        expect(JSON.stringify(repository.tasks.get(task.taskId))).toBe(before);
+        expect(repository.events.size).toBe(beforeEvents);
+    });
+
+    it("accepts a final revoked consent choice and preserves a continuously yes binding", async () => {
+        for (const operation of [
+            { op: "clear", field: "automationChoice" },
+            { op: "set", field: "automationChoice", value: "no" },
+        ] as const) {
+            const repository = new FakeTaskRepository();
+            const service = buildService(repository).service;
+            const created = await service.create(owner, createInput());
+            const task = repository.tasks.get(created.snapshot.taskId)!;
+            task.draft.consent = { choice: "yes", binding: makeConsentBinding() };
+
+            const result = await service.patch(owner, task.taskId, {
+                clientEventId: randomUUID(),
+                expectedRevision: task.revision,
+                operations: [operation],
+            });
+
+            expect(result.snapshot.consent.choice).toBe(operation.op === "clear" ? "unanswered" : "no");
+            expect(result.snapshot.consent.binding).toBeNull();
+        }
+
+        const repository = new FakeTaskRepository();
+        const service = buildService(repository).service;
+        const created = await service.create(owner, createInput());
+        const task = repository.tasks.get(created.snapshot.taskId)!;
+        const binding = makeConsentBinding();
+        task.draft.consent = { choice: "yes", binding };
+
+        const result = await service.patch(owner, task.taskId, {
+            clientEventId: randomUUID(),
+            expectedRevision: task.revision,
+            operations: [
+                { op: "set", field: "automationChoice", value: "yes" },
+                { op: "set", field: "address", value: "서울" },
+            ],
+        });
+
+        expect(result.snapshot.consent.choice).toBe("yes");
+        expect(result.snapshot.consent.binding).toEqual(binding);
+        expect(result.snapshot.confirmed.address).toBe("서울");
+    });
+
     it("allows replay of an owned expired task within the replay window but rejects a fresh event", async () => {
         const repository = new FakeTaskRepository();
         const service = buildService(repository).service;
@@ -800,6 +1030,8 @@ describe("AgentTaskService", () => {
             ...createEmptyAgentTaskDraft(randomUUID()),
             server: { references: { target: { targetRef: randomUUID(), clientId: 7 }, choiceTargets: [], phoneCandidates: {} } },
         } });
+        task.draft.server.actionExpectedRevision = "review-only-v1";
+        task.draft.server.actionProposalRevision = 4;
         repository.tasks.set(task.taskId, task);
         const service = buildService(repository, client).service;
 
@@ -810,6 +1042,8 @@ describe("AgentTaskService", () => {
         });
         expect(result.snapshot.state).toBe("confirming_target");
         expect(client.findById).toHaveBeenCalledWith(owner.branchId, 7);
+        expect(repository.tasks.get(task.taskId)!.draft.server.actionExpectedRevision).toBeUndefined();
+        expect(repository.tasks.get(task.taskId)!.draft.server.actionProposalRevision).toBeUndefined();
     });
 
     it("maps storage failure and foreign ownership to bounded errors", async () => {
