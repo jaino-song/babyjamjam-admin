@@ -9,6 +9,7 @@ import { PrismaService } from '../database/prisma.service';
 import { TenantContext, VerifiedTenantPrincipal } from './tenant.context';
 import { tenantContextStore } from './tenant-context.store';
 import { runSystemScope } from './run-system-scope';
+import { codeOnlyProblemBody } from 'application/utils/problem-bodies';
 
 @Injectable()
 export class TenantGuard implements CanActivate {
@@ -24,7 +25,9 @@ export class TenantGuard implements CanActivate {
 
         if (!user?.branchId) {
             this.logDenial(user?.userId, undefined, "branch_not_selected");
-            throw new ForbiddenException('Branch selection required');
+            // Registered ACCESS_DENIED problem (403): the public body carries only
+            // the code — the denial reason stays in the structured log above.
+            throw new ForbiddenException(codeOnlyProblemBody("ACCESS_DENIED"));
         }
 
         // Owners have access to all branches without membership check
@@ -36,7 +39,7 @@ export class TenantGuard implements CanActivate {
 
             if (!org?.isActive) {
                 this.logDenial(user.userId, user.branchId, "branch_inactive");
-                throw new ForbiddenException('Branch not found');
+                throw new ForbiddenException(codeOnlyProblemBody("ACCESS_DENIED"));
             }
 
             this.assignPrincipal(request, {
@@ -75,7 +78,7 @@ export class TenantGuard implements CanActivate {
 
         if (!membership?.branch.isActive) {
             this.logDenial(user.userId, user.branchId, "membership_missing");
-            throw new ForbiddenException('Access denied to this branch');
+            throw new ForbiddenException(codeOnlyProblemBody("ACCESS_DENIED"));
         }
 
         this.assignPrincipal(request, {
