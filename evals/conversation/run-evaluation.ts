@@ -84,7 +84,7 @@ export function formatConversationEvaluationReport(input: ConversationEvaluation
         ...(adapter.mode === "product"
             ? [
                 "evidence source: injected AgentRuntimeService + AgentTaskService with deterministic in-memory state/events",
-                "observed fields: completion, currentState, acceptedDraftState, structuredEvents, assistantMessages, transport",
+                "projection fields (only when supported by observed evidence): completion, currentState, acceptedDraftState, structuredEvents, assistantMessages, transport",
                 "unavailable fields: actionExecutionLedger and sends (later execution owners); authorityOutcomes (current host authority instrumentation unavailable)",
                 "state evidence: task snapshots and accepted event receipts; protected values, random IDs, and wall-clock timestamps are omitted",
                 `observed structured events: ${observedStructuredEvents}`,
