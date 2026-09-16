@@ -15,10 +15,10 @@ import { ConversationProviderCodecError, providerError } from "./errors";
 import {
     assertProviderProfile,
     attachEvaluationMetadata,
+    cloneContinuationHistory,
     cloneJsonObject,
     cloneJsonValue,
     isRecord,
-    outcomeMetadata,
     readTransportResult,
     responseMetadata,
     requireSafeReference,
@@ -29,21 +29,23 @@ import {
     validateConversationProviderProfile,
     validateConversationRequest,
 } from "./shared";
-import { GOOGLE_GENERATE_CONTENT_ENDPOINT } from "./types";
+import { CONVERSATION_PROVIDER_CODEC_VERSION, GOOGLE_GENERATE_CONTENT_ENDPOINT } from "./types";
+
+const MAX_TEXT_LENGTH = 200_000;
 
 interface GoogleFunctionCall {
     readonly name: string;
     readonly args: JsonValue;
-    readonly id: string;
+    readonly id?: string;
     readonly thoughtSignature?: string;
 }
 
 interface GooglePart {
     readonly text?: string;
     readonly functionCall?: GoogleFunctionCall;
-    readonly functionResponse?: { readonly name: string; readonly response: unknown; readonly id: string };
     readonly thoughtSignature?: string;
     readonly thought?: boolean;
+    readonly native: JsonObject;
 }
 
 function mapToolDeclaration(request: ConversationEvaluationRequest): readonly JsonObject[] {
@@ -54,7 +56,7 @@ function mapToolDeclaration(request: ConversationEvaluationRequest): readonly Js
     }));
 }
 
-function mapMessage(message: ConversationMessage, signatures: Readonly<Record<string, string>>): { readonly role: "user" | "model"; readonly parts: readonly JsonObject[] } | null {
+function mapMessage(message: ConversationMessage): { readonly role: "user" | "model"; readonly parts: readonly JsonObject[] } | null {
     if (message.role === "system") return null;
     if (message.role === "user") return { role: "user", parts: [{ text: message.text }] };
     if (message.role === "tool") {
@@ -72,14 +74,12 @@ function mapMessage(message: ConversationMessage, signatures: Readonly<Record<st
     const parts: JsonObject[] = [];
     if (message.text !== undefined) parts.push({ text: message.text });
     for (const call of "toolCalls" in message ? message.toolCalls : []) {
-        const signature = signatures[call.id];
         parts.push({
             functionCall: {
                 name: call.name,
                 args: call.arguments,
                 id: call.id,
             },
-            ...(signature === undefined ? {} : { thoughtSignature: signature }),
         });
     }
     return { role: "model", parts };
@@ -87,26 +87,21 @@ function mapMessage(message: ConversationMessage, signatures: Readonly<Record<st
 
 function buildGoogleBody(request: ConversationEvaluationRequest): JsonObject {
     const continuation = request.continuation?.provider === "google" ? request.continuation : undefined;
-    const signatures = continuation?.thoughtSignatures ?? {};
-    const usedSignatures = new Set<string>();
     const systemParts: JsonObject[] = [];
-    const contents: Array<{ readonly role: "user" | "model"; readonly parts: readonly JsonObject[] }> = [];
+    const contents: Array<{ readonly role: "user" | "model"; readonly parts: readonly JsonObject[] }> = continuation
+        ? continuation.history.map((item) => cloneJsonObject(item)) as Array<{ readonly role: "user" | "model"; readonly parts: readonly JsonObject[] }>
+        : [];
     for (const message of request.messages) {
-        if (message.role === "system") {
+        if (!continuation && message.role === "system") {
             systemParts.push({ text: message.text });
             continue;
         }
-        if (message.role === "assistant" && "toolCalls" in message) {
-            for (const call of message.toolCalls) {
-                if (signatures[call.id] !== undefined) usedSignatures.add(call.id);
-            }
-        }
-        const mapped = mapMessage(message, signatures);
+        const mapped = mapMessage(message);
         if (mapped) contents.push(mapped);
     }
-    if (Object.keys(signatures).some((id) => !usedSignatures.has(id))) throw providerError("INVALID_CONTINUATION");
     const body: Record<string, unknown> = { contents };
-    if (systemParts.length > 0) body["systemInstruction"] = { parts: systemParts };
+    if (continuation?.systemInstruction !== undefined) body["systemInstruction"] = cloneJsonObject(continuation.systemInstruction);
+    else if (systemParts.length > 0) body["systemInstruction"] = { parts: systemParts };
     if (request.tools !== undefined) body["tools"] = request.tools.length === 0 ? [] : [{ functionDeclarations: mapToolDeclaration(request) }];
     return cloneJsonObject(body);
 }
@@ -120,51 +115,84 @@ function isIncompleteFinishReason(reason: unknown): boolean {
 }
 
 function safePart(value: unknown): GooglePart {
-    if (!isRecord(value)) throw providerError("MALFORMED_RESPONSE");
-    const keys = Object.keys(value);
-    const allowed = new Set(["text", "functionCall", "functionResponse", "thoughtSignature", "thought"]);
+    const source = cloneJsonObject(value, "MALFORMED_RESPONSE");
+    const keys = Object.keys(source);
+    const allowed = new Set(["text", "functionCall", "thoughtSignature", "thought"]);
     if (keys.some((key) => !allowed.has(key))) throw providerError("MALFORMED_RESPONSE");
-    const text = value["text"];
-    if (text !== undefined && typeof text !== "string") throw providerError("MALFORMED_RESPONSE");
-    const signature = value["thoughtSignature"];
-    if (signature !== undefined && (typeof signature !== "string" || signature.length === 0)) throw providerError("MALFORMED_RESPONSE");
-    const thought = value["thought"];
+    const text = source["text"];
+    if (text !== undefined && (typeof text !== "string" || text.length > MAX_TEXT_LENGTH)) throw providerError("MALFORMED_RESPONSE");
+    const signature = source["thoughtSignature"];
+    if (signature !== undefined && (typeof signature !== "string" || signature.length === 0 || signature.length > MAX_TEXT_LENGTH)) throw providerError("MALFORMED_RESPONSE");
+    const thought = source["thought"];
     if (thought !== undefined && typeof thought !== "boolean") throw providerError("MALFORMED_RESPONSE");
-    const functionCall = value["functionCall"];
+    const functionCall = source["functionCall"];
     if (functionCall !== undefined) {
-        if (!isRecord(functionCall)
-            || typeof functionCall["name"] !== "string"
-            || typeof functionCall["id"] !== "string"
-            || functionCall["id"].length === 0
-            || !Object.prototype.hasOwnProperty.call(functionCall, "args")) {
-            throw providerError("MALFORMED_RESPONSE");
-        }
-        requireSafeReference(functionCall["id"], "toolCallId", "MALFORMED_RESPONSE");
-        requireSafeToolName(functionCall["name"], "MALFORMED_RESPONSE");
-        const callSignature = functionCall["thoughtSignature"];
-        if (callSignature !== undefined && (typeof callSignature !== "string" || callSignature.length === 0)) throw providerError("MALFORMED_RESPONSE");
-        const args = cloneJsonValue(functionCall["args"], "INVALID_TOOL_ARGUMENTS");
+        const call = cloneJsonObject(functionCall, "MALFORMED_RESPONSE");
+        if (Object.keys(call).some((key) => !new Set(["name", "args", "id", "thoughtSignature"]).has(key))
+            || typeof call["name"] !== "string"
+            || !Object.prototype.hasOwnProperty.call(call, "args")) throw providerError("MALFORMED_RESPONSE");
+        const callSignature = call["thoughtSignature"];
+        if (callSignature !== undefined && (typeof callSignature !== "string" || callSignature.length === 0 || callSignature.length > MAX_TEXT_LENGTH)) throw providerError("MALFORMED_RESPONSE");
+        const callId = call["id"] === undefined ? undefined : requireSafeReference(call["id"], "toolCallId", "MALFORMED_RESPONSE");
+        const args = cloneJsonValue(call["args"], "INVALID_TOOL_ARGUMENTS");
         if (!isRecord(args)) throw providerError("INVALID_TOOL_ARGUMENTS");
+        const nativeCall: Record<string, JsonValue> = {
+            name: call["name"],
+            args,
+            ...(callId === undefined ? {} : { id: callId }),
+            ...(callSignature === undefined ? {} : { thoughtSignature: callSignature }),
+        };
+        const native: Record<string, JsonValue> = {
+            functionCall: nativeCall,
+            ...(text === undefined ? {} : { text }),
+            ...(signature === undefined ? {} : { thoughtSignature: signature }),
+            ...(thought === undefined ? {} : { thought }),
+        };
         return {
             text: text as string | undefined,
             functionCall: {
-                name: functionCall["name"],
+                name: call["name"],
                 args,
-                id: functionCall["id"],
+                ...(callId === undefined ? {} : { id: callId }),
                 ...(callSignature === undefined ? {} : { thoughtSignature: callSignature }),
             },
-            ...(signature === undefined ? (callSignature === undefined ? {} : { thoughtSignature: callSignature }) : { thoughtSignature: signature }),
+            ...(signature === undefined ? {} : { thoughtSignature: signature }),
             ...(thought === undefined ? {} : { thought }),
+            native,
         };
     }
-    const functionResponse = value["functionResponse"];
-    if (functionResponse !== undefined) throw providerError("MALFORMED_RESPONSE");
-    if (text === undefined && signature === undefined && thought !== true) throw providerError("MALFORMED_RESPONSE");
+    if (source["text"] === undefined && signature === undefined && thought !== true) throw providerError("MALFORMED_RESPONSE");
     return {
         text: text as string | undefined,
         ...(signature === undefined ? {} : { thoughtSignature: signature }),
         ...(thought === undefined ? {} : { thought }),
+        native: source,
     };
+}
+
+function fallbackCallId(history: readonly JsonObject[], currentIds: ReadonlySet<string>, index: number): string {
+    const used = new Set<string>(currentIds);
+    for (const item of history) {
+        const parts = item["parts"];
+        if (!Array.isArray(parts)) continue;
+        for (const rawPart of parts) {
+            if (!isRecord(rawPart)) continue;
+            for (const field of ["functionCall", "functionResponse"] as const) {
+                const value = rawPart[field];
+                if (isRecord(value) && typeof value["id"] === "string") used.add(value["id"]);
+            }
+        }
+    }
+    const base = `local-call-${history.length}-${index + 1}`;
+    let candidate = base;
+    let suffix = 1;
+    while (used.has(candidate)) candidate = `${base}-${suffix++}`;
+    return candidate;
+}
+
+interface ParsedGoogleResponse {
+    readonly response: ConversationProviderResponse;
+    readonly modelContent?: JsonObject;
 }
 
 export class GoogleConversationProviderAdapter implements ConversationProviderAdapter {
@@ -194,7 +222,7 @@ export class GoogleConversationProviderAdapter implements ConversationProviderAd
     }
 
     encodeRequest(request: ConversationEvaluationRequest): EncodedProviderRequest {
-        validateConversationRequest(request, "google", this.profile.reasoningContinuation);
+        validateConversationRequest(request, "google", this.profile);
         const body = buildGoogleBody(request);
         const headers: Record<string, string> = { "content-type": "application/json" };
         if (this.apiKey !== undefined) headers["x-goog-api-key"] = this.apiKey;
@@ -214,10 +242,39 @@ export class GoogleConversationProviderAdapter implements ConversationProviderAd
         }
         const response = readTransportResult(result);
         throwForHttpStatus(response.status);
-        return attachEvaluationMetadata(this.parseResponse(response.body, new Set((request.tools ?? []).map((tool) => tool.name))), request);
+        let encodedBody: unknown;
+        try {
+            encodedBody = JSON.parse(encoded.init.body) as unknown;
+        } catch {
+            throw providerError("MALFORMED_RESPONSE");
+        }
+        const priorHistory = isRecord(encodedBody) && Array.isArray(encodedBody["contents"])
+            ? encodedBody["contents"].map((item) => cloneJsonObject(item, "MALFORMED_RESPONSE"))
+            : [];
+        const parsed = this.parseResponseInternal(response.body, new Set((request.tools ?? []).map((tool) => tool.name)), priorHistory);
+        const attached = attachEvaluationMetadata(parsed.response, request);
+        if (parsed.modelContent === undefined || (attached.outcome !== "text" && attached.outcome !== "tool_calls")) return attached;
+        const history = cloneContinuationHistory([...priorHistory, parsed.modelContent]);
+        const continuation: GoogleContinuation = {
+            provider: "google",
+            codecVersion: CONVERSATION_PROVIDER_CODEC_VERSION,
+            profileId: this.profile.profileId,
+            profileVersion: this.profile.profileVersion,
+            modelId: this.profile.modelId,
+            history,
+            ...(isRecord(encodedBody) && encodedBody["systemInstruction"] !== undefined
+                ? { systemInstruction: cloneJsonObject(encodedBody["systemInstruction"], "MALFORMED_RESPONSE") }
+                : {}),
+            pendingToolCalls: attached.outcome === "tool_calls" ? (attached.toolCalls ?? []) : [],
+        };
+        return { ...attached, continuation };
     }
 
     parseResponse(response: unknown, declaredToolNames?: ReadonlySet<string>): ConversationProviderResponse {
+        return this.parseResponseInternal(response, declaredToolNames, []).response;
+    }
+
+    private parseResponseInternal(response: unknown, declaredToolNames: ReadonlySet<string> | undefined, priorHistory: readonly JsonObject[]): ParsedGoogleResponse {
         if (!isRecord(response)) throw providerError("MALFORMED_RESPONSE");
         const usage = usageMetadata(response["usageMetadata"], { input: "promptTokenCount", output: "candidatesTokenCount", total: "totalTokenCount" });
         const candidates = response["candidates"];
@@ -225,7 +282,7 @@ export class GoogleConversationProviderAdapter implements ConversationProviderAd
         if (!Array.isArray(candidates) || candidates.length === 0) {
             if (isRecord(promptFeedback) && typeof promptFeedback["blockReason"] === "string") {
                 const metadata = responseMetadata({ provider: "google", profile: this.profile, modelVersion: response["modelVersion"], finishReason: promptFeedback["blockReason"], usage });
-                return { outcome: "blocked", metadata };
+                return { response: { outcome: "blocked", metadata } };
             }
             throw providerError("MALFORMED_RESPONSE");
         }
@@ -233,40 +290,34 @@ export class GoogleConversationProviderAdapter implements ConversationProviderAd
         if (!isRecord(candidate)) throw providerError("MALFORMED_RESPONSE");
         const finishReason = candidate["finishReason"];
         const metadata = responseMetadata({ provider: "google", profile: this.profile, modelVersion: response["modelVersion"], finishReason, usage });
-        if (isBlockedFinishReason(finishReason)) return { outcome: "blocked", metadata };
-        if (isIncompleteFinishReason(finishReason)) return { outcome: "incomplete", metadata };
+        if (isBlockedFinishReason(finishReason)) return { response: { outcome: "blocked", metadata } };
+        if (isIncompleteFinishReason(finishReason)) return { response: { outcome: "incomplete", metadata } };
         const content = candidate["content"];
-        if (!isRecord(content) || !Array.isArray(content["parts"])) throw providerError("MALFORMED_RESPONSE");
-        if (content["role"] !== "model") throw providerError("MALFORMED_RESPONSE");
+        if (!isRecord(content) || !Array.isArray(content["parts"]) || content["role"] !== "model") throw providerError("MALFORMED_RESPONSE");
         let text = "";
         const toolCalls: ConversationToolCall[] = [];
-        const signatures: Record<string, string> = {};
-        for (const rawPart of content["parts"]) {
-            const part = safePart(rawPart);
+        const nativeParts: JsonObject[] = [];
+        const currentIds = new Set<string>();
+        for (let index = 0; index < content["parts"].length; index += 1) {
+            const part = safePart(content["parts"][index]);
+            nativeParts.push(part.native);
             if (part.text !== undefined && part.thought !== true) text += part.text;
             if (part.functionCall) {
                 if (declaredToolNames !== undefined && !declaredToolNames.has(part.functionCall.name)) throw providerError("INVALID_TOOL_ARGUMENTS", { field: "toolName" });
-                const call = {
-                    id: part.functionCall.id,
-                    name: part.functionCall.name,
-                    arguments: part.functionCall.args,
-                };
-                if (toolCalls.some((existing) => existing.id === call.id)) throw providerError("MALFORMED_RESPONSE");
-                toolCalls.push(call);
-                const signature = part.thoughtSignature ?? part.functionCall.thoughtSignature;
-                if (signature !== undefined) signatures[call.id] = signature;
-            } else if (part.thoughtSignature !== undefined && part.thought !== true) {
-                throw providerError("MALFORMED_RESPONSE");
+                const id = part.functionCall.id ?? fallbackCallId(priorHistory, currentIds, index);
+                requireSafeReference(id, "toolCallId", "MALFORMED_RESPONSE");
+                if (currentIds.has(id)) throw providerError("MALFORMED_RESPONSE");
+                currentIds.add(id);
+                toolCalls.push({ id, name: part.functionCall.name, arguments: part.functionCall.args });
             }
         }
-        if (toolCalls.length > 0) {
-            const continuation: GoogleContinuation | undefined = Object.keys(signatures).length > 0
-                ? { provider: "google", thoughtSignatures: signatures }
-                : undefined;
-            return outcomeMetadata({ outcome: "tool_calls", metadata, toolCalls, continuation }, "tool_calls", { text: text || undefined, toolCalls, continuation });
-        }
-        if (text.length > 0) return { outcome: "text", text, metadata };
-        return { outcome: "incomplete", metadata };
+        const modelContent: JsonObject = { role: "model", parts: nativeParts };
+        if (toolCalls.length > 0) return {
+            response: { outcome: "tool_calls", text: text || undefined, toolCalls, metadata },
+            modelContent,
+        };
+        if (text.length > 0) return { response: { outcome: "text", text, metadata }, modelContent };
+        return { response: { outcome: "incomplete", metadata } };
     }
 }
 

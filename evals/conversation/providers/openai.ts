@@ -12,6 +12,7 @@ import type {
 import {
     assertProviderProfile,
     attachEvaluationMetadata,
+    cloneContinuationHistory,
     cloneJsonObject,
     cloneJsonValue,
     isRecord,
@@ -27,15 +28,17 @@ import {
     validateConversationProviderProfile,
     validateConversationRequest,
 } from "./shared";
-import { OPENAI_RESPONSES_ENDPOINT } from "./types";
+import { CONVERSATION_PROVIDER_CODEC_VERSION, OPENAI_RESPONSES_ENDPOINT } from "./types";
 import { ConversationProviderCodecError, providerError } from "./errors";
+
+const MAX_TEXT_LENGTH = 200_000;
 
 function mapTextContent(message: { readonly role: "system" | "user"; readonly text: string }): JsonObject {
     const type: "input_text" = "input_text";
     return { role: message.role, content: [{ type, text: message.text }] };
 }
 
-function mapMessage(message: ConversationMessage, continuationCallIds: ReadonlySet<string> = new Set()): readonly JsonObject[] {
+function mapMessage(message: ConversationMessage): readonly JsonObject[] {
     if (message.role === "system" || message.role === "user") return [mapTextContent({ role: message.role, text: message.text })];
     if (message.role === "tool") {
         return [{ type: "function_call_output", call_id: message.toolCallId, output: serializeJsonValue(message.output) }];
@@ -43,7 +46,6 @@ function mapMessage(message: ConversationMessage, continuationCallIds: ReadonlyS
     const items: JsonObject[] = [];
     if (message.text !== undefined) items.push({ role: "assistant", content: [{ type: "output_text", text: message.text }] });
     for (const call of "toolCalls" in message ? message.toolCalls : []) {
-        if (continuationCallIds.has(call.id)) continue;
         items.push({
             type: "function_call",
             call_id: call.id,
@@ -66,12 +68,10 @@ function mapToolDeclaration(request: ConversationEvaluationRequest): readonly Js
 
 function buildOpenAIInput(request: ConversationEvaluationRequest): JsonObject[] {
     const continuation = request.continuation?.provider === "openai" ? request.continuation : undefined;
-    const input: JsonObject[] = [];
-    if (continuation) input.push(...continuation.outputItems.map((item) => cloneJsonObject(item)));
-    const continuationCallIds = new Set((continuation?.outputItems ?? [])
-        .filter((item) => item["type"] === "function_call" && typeof item["call_id"] === "string")
-        .map((item) => item["call_id"] as string));
-    for (const message of request.messages) input.push(...mapMessage(message, continuationCallIds));
+    const input: JsonObject[] = continuation
+        ? continuation.history.map((item) => cloneJsonObject(item))
+        : [];
+    for (const message of request.messages) input.push(...mapMessage(message));
     return input;
 }
 
@@ -87,18 +87,21 @@ function buildOpenAIBody(request: ConversationEvaluationRequest, profile: Conver
 }
 
 function parseOutputText(content: unknown): { readonly text: string; readonly refusal: boolean } {
-    if (!Array.isArray(content)) throw providerError("MALFORMED_RESPONSE");
+    if (!Array.isArray(content) || content.length === 0) throw providerError("MALFORMED_RESPONSE");
     let text = "";
     let refusal = false;
     for (const rawPart of content) {
-        if (!isRecord(rawPart) || typeof rawPart["type"] !== "string") throw providerError("MALFORMED_RESPONSE");
-        if (rawPart["type"] === "output_text") {
-            if (typeof rawPart["text"] !== "string") throw providerError("MALFORMED_RESPONSE");
-            text += rawPart["text"];
+        const part = cloneJsonObject(rawPart, "MALFORMED_RESPONSE");
+        const type = part["type"];
+        if (type === "output_text") {
+            if (Object.keys(part).some((key) => !new Set(["type", "text", "annotations", "logprobs"]).has(key))) throw providerError("MALFORMED_RESPONSE");
+            if (typeof part["text"] !== "string" || part["text"].length > MAX_TEXT_LENGTH) throw providerError("MALFORMED_RESPONSE");
+            text += part["text"];
             continue;
         }
-        if (rawPart["type"] === "refusal") {
-            if (typeof rawPart["refusal"] !== "string") throw providerError("MALFORMED_RESPONSE");
+        if (type === "refusal") {
+            if (Object.keys(part).some((key) => !new Set(["type", "refusal"]).has(key))) throw providerError("MALFORMED_RESPONSE");
+            if (typeof part["refusal"] !== "string" || part["refusal"].length > MAX_TEXT_LENGTH) throw providerError("MALFORMED_RESPONSE");
             refusal = true;
             continue;
         }
@@ -109,6 +112,11 @@ function parseOutputText(content: unknown): { readonly text: string; readonly re
 
 function isIncompleteStatus(status: unknown): boolean {
     return status === "incomplete" || status === "failed" || status === "cancelled";
+}
+
+interface ParsedOpenAIResponse {
+    readonly response: ConversationProviderResponse;
+    readonly outputItems?: readonly JsonObject[];
 }
 
 export class OpenAIConversationProviderAdapter implements ConversationProviderAdapter {
@@ -138,7 +146,7 @@ export class OpenAIConversationProviderAdapter implements ConversationProviderAd
     }
 
     encodeRequest(request: ConversationEvaluationRequest): EncodedProviderRequest {
-        validateConversationRequest(request, "openai", this.profile.reasoningContinuation);
+        validateConversationRequest(request, "openai", this.profile);
         const body = buildOpenAIBody(request, this.profile);
         const headers: Record<string, string> = { "content-type": "application/json" };
         if (this.apiKey !== undefined) headers["Authorization"] = `Bearer ${this.apiKey}`;
@@ -158,10 +166,37 @@ export class OpenAIConversationProviderAdapter implements ConversationProviderAd
         }
         const response = readTransportResult(result);
         throwForHttpStatus(response.status);
-        return attachEvaluationMetadata(this.parseResponse(response.body, new Set((request.tools ?? []).map((tool) => tool.name))), request);
+        const parsed = this.parseResponseInternal(response.body, new Set((request.tools ?? []).map((tool) => tool.name)));
+        const attached = attachEvaluationMetadata(parsed.response, request);
+        if (parsed.outputItems === undefined || (attached.outcome !== "text" && attached.outcome !== "tool_calls")) return attached;
+        let encodedBody: unknown;
+        try {
+            encodedBody = JSON.parse(encoded.init.body) as unknown;
+        } catch {
+            throw providerError("MALFORMED_RESPONSE");
+        }
+        if (!isRecord(encodedBody) || !Array.isArray(encodedBody["input"])) throw providerError("MALFORMED_RESPONSE");
+        const history = cloneContinuationHistory([
+            ...encodedBody["input"].map((item) => cloneJsonObject(item, "MALFORMED_RESPONSE")),
+            ...parsed.outputItems,
+        ]);
+        const continuation: OpenAIContinuation = {
+            provider: "openai",
+            codecVersion: CONVERSATION_PROVIDER_CODEC_VERSION,
+            profileId: this.profile.profileId,
+            profileVersion: this.profile.profileVersion,
+            modelId: this.profile.modelId,
+            history,
+            pendingToolCalls: attached.outcome === "tool_calls" ? (attached.toolCalls ?? []) : [],
+        };
+        return { ...attached, continuation };
     }
 
     parseResponse(response: unknown, declaredToolNames?: ReadonlySet<string>): ConversationProviderResponse {
+        return this.parseResponseInternal(response, declaredToolNames).response;
+    }
+
+    private parseResponseInternal(response: unknown, declaredToolNames?: ReadonlySet<string>): ParsedOpenAIResponse {
         if (!isRecord(response)) throw providerError("MALFORMED_RESPONSE");
         const usage = usageMetadata(response["usage"], { input: "input_tokens", output: "output_tokens", total: "total_tokens" });
         const metadata = responseMetadata({
@@ -173,58 +208,74 @@ export class OpenAIConversationProviderAdapter implements ConversationProviderAd
             usage,
         });
         const status = response["status"];
-        if (isIncompleteStatus(status)) return { outcome: "incomplete", metadata };
+        if (isIncompleteStatus(status)) return { response: { outcome: "incomplete", metadata } };
         const output = response["output"];
         if (!Array.isArray(output)) throw providerError("MALFORMED_RESPONSE");
-        if (output.length === 0) return { outcome: "incomplete", metadata };
+        if (output.length === 0) return { response: { outcome: "incomplete", metadata } };
 
         let text = "";
         let refusal = false;
         let missingEncryptedReasoning = false;
-        const calls: Array<{ readonly id: string; readonly name: string; readonly arguments: ReturnType<typeof cloneJsonValue>; readonly raw: JsonObject }> = [];
-        const continuationItems: JsonObject[] = [];
+        const calls: Array<{ readonly id: string; readonly name: string; readonly arguments: ReturnType<typeof cloneJsonValue> }> = [];
+        const outputItems: JsonObject[] = [];
         for (const rawItem of output) {
-            if (!isRecord(rawItem) || typeof rawItem["type"] !== "string") throw providerError("MALFORMED_RESPONSE");
-            const type = rawItem["type"];
+            const item = cloneJsonObject(rawItem, "MALFORMED_RESPONSE");
+            const type = item["type"];
             if (type === "message") {
-                const parsed = parseOutputText(rawItem["content"]);
+                if (Object.keys(item).some((key) => !new Set(["type", "id", "status", "role", "content"]).has(key))) throw providerError("MALFORMED_RESPONSE");
+                if (item["id"] !== undefined) requireSafeReference(item["id"], "responseId", "MALFORMED_RESPONSE");
+                if (item["role"] !== undefined && item["role"] !== "assistant") throw providerError("MALFORMED_RESPONSE");
+                const parsed = parseOutputText(item["content"]);
                 text += parsed.text;
                 refusal = refusal || parsed.refusal;
+                outputItems.push(item);
                 continue;
             }
             if (type === "reasoning") {
-                if (typeof rawItem["encrypted_content"] !== "string" || rawItem["encrypted_content"].length === 0 || rawItem["encrypted_content"].length > 200_000) {
-                    missingEncryptedReasoning = missingEncryptedReasoning || this.profile.reasoningContinuation;
+                if (Object.keys(item).some((key) => !new Set(["type", "id", "status", "encrypted_content", "summary"]).has(key))) throw providerError("MALFORMED_RESPONSE");
+                if (item["id"] !== undefined) requireSafeReference(item["id"], "responseId", "MALFORMED_RESPONSE");
+                if (typeof item["encrypted_content"] !== "string" || item["encrypted_content"].length === 0 || item["encrypted_content"].length > MAX_TEXT_LENGTH) {
+                    if (this.profile.reasoningContinuation) throw providerError("MISSING_CONTINUATION");
+                    missingEncryptedReasoning = true;
                     continue;
                 }
-                continuationItems.push(cloneJsonObject(rawItem));
+                if (item["summary"] !== undefined) cloneJsonValue(item["summary"], "MALFORMED_RESPONSE");
+                outputItems.push(item);
                 continue;
             }
             if (type === "function_call") {
-                if (typeof rawItem["call_id"] !== "string" || typeof rawItem["name"] !== "string" || typeof rawItem["arguments"] !== "string") throw providerError("MALFORMED_RESPONSE");
-                requireSafeReference(rawItem["call_id"], "toolCallId", "MALFORMED_RESPONSE");
-                requireSafeToolName(rawItem["name"], "MALFORMED_RESPONSE");
-                if (declaredToolNames !== undefined && !declaredToolNames.has(rawItem["name"])) throw providerError("INVALID_TOOL_ARGUMENTS", { field: "toolName" });
-                const args = parseJsonObject(rawItem["arguments"], "INVALID_TOOL_ARGUMENTS");
+                if (Object.keys(item).some((key) => !new Set(["type", "id", "status", "call_id", "name", "arguments"]).has(key))) throw providerError("MALFORMED_RESPONSE");
+                if (typeof item["call_id"] !== "string" || typeof item["name"] !== "string" || typeof item["arguments"] !== "string") throw providerError("MALFORMED_RESPONSE");
+                requireSafeReference(item["call_id"], "toolCallId", "MALFORMED_RESPONSE");
+                requireSafeToolName(item["name"], "MALFORMED_RESPONSE");
+                if (item["id"] !== undefined) requireSafeReference(item["id"], "responseId", "MALFORMED_RESPONSE");
+                if (declaredToolNames !== undefined && !declaredToolNames.has(item["name"])) throw providerError("INVALID_TOOL_ARGUMENTS", { field: "toolName" });
+                const args = parseJsonObject(item["arguments"], "INVALID_TOOL_ARGUMENTS");
                 if (!isRecord(args)) throw providerError("INVALID_TOOL_ARGUMENTS");
-                const cloned = cloneJsonObject(rawItem, "MALFORMED_RESPONSE");
-                if (calls.some((existing) => existing.id === rawItem["call_id"])) throw providerError("MALFORMED_RESPONSE");
-                calls.push({ id: rawItem["call_id"], name: rawItem["name"], arguments: args, raw: cloned });
-                continuationItems.push(cloned);
+                if (calls.some((existing) => existing.id === item["call_id"])) throw providerError("MALFORMED_RESPONSE");
+                calls.push({ id: item["call_id"], name: item["name"], arguments: args });
+                outputItems.push(item);
                 continue;
             }
             throw providerError("MALFORMED_RESPONSE");
         }
-        if (refusal) return { outcome: "refusal", text: text || undefined, metadata };
+        if (refusal) return { response: { outcome: "refusal", text: text || undefined, metadata } };
         if (calls.length > 0) {
-            if (this.profile.reasoningContinuation && (missingEncryptedReasoning || !continuationItems.some((item) => item["type"] === "reasoning" && typeof item["encrypted_content"] === "string" && item["encrypted_content"].length > 0 && item["encrypted_content"].length <= 200_000))) {
+            if (this.profile.reasoningContinuation && (missingEncryptedReasoning || !outputItems.some((item) => item["type"] === "reasoning" && typeof item["encrypted_content"] === "string" && item["encrypted_content"].length > 0 && item["encrypted_content"].length <= MAX_TEXT_LENGTH))) {
                 throw providerError("MISSING_CONTINUATION");
             }
-            const continuation: OpenAIContinuation = { provider: "openai", outputItems: continuationItems };
-            return { outcome: "tool_calls", text: text || undefined, toolCalls: calls.map((call) => ({ id: call.id, name: call.name, arguments: call.arguments })), continuation, metadata };
+            return {
+                response: {
+                    outcome: "tool_calls",
+                    text: text || undefined,
+                    toolCalls: calls.map((call) => ({ id: call.id, name: call.name, arguments: call.arguments })),
+                    metadata,
+                },
+                outputItems,
+            };
         }
-        if (text.length > 0) return { outcome: "text", text, metadata };
-        return { outcome: "incomplete", metadata };
+        if (text.length > 0) return { response: { outcome: "text", text, metadata }, outputItems };
+        return { response: { outcome: "incomplete", metadata } };
     }
 }
 

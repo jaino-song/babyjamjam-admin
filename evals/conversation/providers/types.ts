@@ -48,14 +48,37 @@ export type ConversationMessage =
     | ConversationAssistantToolCallMessage
     | ConversationToolResultMessage;
 
+/**
+ * A continuation is an untrusted, provider-bound snapshot of the complete
+ * native conversation. The adapter only returns one after `run()` has paired
+ * the encoded request with a successful provider response. `parseResponse()`
+ * deliberately does not expose this shape because a response fragment alone
+ * cannot resume a stateless conversation.
+ */
 export interface GoogleContinuation {
     readonly provider: "google";
-    readonly thoughtSignatures: Readonly<Record<string, string>>;
+    readonly codecVersion: typeof CONVERSATION_PROVIDER_CODEC_VERSION;
+    readonly profileId: string;
+    readonly profileVersion: string;
+    readonly modelId: string;
+    /** Native `contents` in chronological order, including model output. */
+    readonly history: readonly JsonObject[];
+    /** Native systemInstruction retained separately from `contents`. */
+    readonly systemInstruction?: JsonObject;
+    /** Tool calls in the latest model output that still await results. */
+    readonly pendingToolCalls: readonly ConversationToolCall[];
 }
 
 export interface OpenAIContinuation {
     readonly provider: "openai";
-    readonly outputItems: readonly JsonObject[];
+    readonly codecVersion: typeof CONVERSATION_PROVIDER_CODEC_VERSION;
+    readonly profileId: string;
+    readonly profileVersion: string;
+    readonly modelId: string;
+    /** Native Responses `input` items in chronological order. */
+    readonly history: readonly JsonObject[];
+    /** Function calls in the latest response that still await outputs. */
+    readonly pendingToolCalls: readonly ConversationToolCall[];
 }
 
 export type ConversationProviderContinuation = GoogleContinuation | OpenAIContinuation;

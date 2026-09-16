@@ -18,6 +18,7 @@ import type {
     JsonValue,
     UnavailableNumber,
 } from "./types";
+import { CONVERSATION_PROVIDER_CODEC_VERSION } from "./types";
 
 const SAFE_REFERENCE = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/;
 const SAFE_PROFILE = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,63}$/;
@@ -44,6 +45,8 @@ const SAFE_FINISH_REASONS = new Set([
 const MAX_TEXT_LENGTH = 200_000;
 const MAX_JSON_LENGTH = 200_000;
 const MAX_STEPS = 100;
+const MAX_HISTORY_ITEMS = 512;
+const MAX_HISTORY_BYTES = 1024 * 1024;
 
 export function isRecord(value: unknown): value is Record<string, unknown> {
     return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -58,8 +61,13 @@ function isJsonPrimitive(value: unknown): value is null | boolean | number | str
 
 export function cloneJsonValue(value: unknown, code: ConversationProviderErrorCode = "INVALID_REQUEST"): JsonValue {
     if (isJsonPrimitive(value)) return value;
-    if (Array.isArray(value)) return value.map((item) => cloneJsonValue(item, code));
+    if (Array.isArray(value)) {
+        if (Object.getPrototypeOf(value) !== Array.prototype) throw providerError(code);
+        return value.map((item) => cloneJsonValue(item, code));
+    }
     if (!isRecord(value)) throw providerError(code);
+    const prototype = Object.getPrototypeOf(value);
+    if (prototype !== Object.prototype && prototype !== null) throw providerError(code);
     const clone: Record<string, JsonValue> = {};
     for (const [key, item] of Object.entries(value)) {
         if (!SAFE_JSON_KEY.test(key)) throw providerError(code, { field: "json_key" });
@@ -163,62 +171,322 @@ function validateMessage(message: ConversationMessage): void {
     throw providerError("INVALID_REQUEST", { field: "messageRole" });
 }
 
-function validateGoogleContinuation(continuation: Extract<ConversationProviderContinuation, { provider: "google" }>): void {
-    if (!isRecord(continuation.thoughtSignatures)) throw providerError("INVALID_CONTINUATION");
-    for (const [callId, signature] of Object.entries(continuation.thoughtSignatures)) {
-        if (!SAFE_REFERENCE.test(callId) || typeof signature !== "string" || signature.length === 0 || signature.length > MAX_TEXT_LENGTH) {
-            throw providerError("INVALID_CONTINUATION");
+function utf8ByteLength(value: string): number {
+    return new TextEncoder().encode(value).byteLength;
+}
+
+function cloneBoundedHistory(value: unknown): readonly JsonObject[] {
+    if (!Array.isArray(value) || value.length === 0 || value.length > MAX_HISTORY_ITEMS) throw providerError("INVALID_CONTINUATION", { field: "history" });
+    const history = value.map((item) => cloneJsonObject(item, "INVALID_CONTINUATION"));
+    let serialized: string;
+    try {
+        serialized = JSON.stringify(history);
+    } catch {
+        throw providerError("INVALID_CONTINUATION", { field: "history" });
+    }
+    if (serialized === undefined || utf8ByteLength(serialized) > MAX_HISTORY_BYTES) throw providerError("INVALID_CONTINUATION", { field: "history" });
+    return history;
+}
+
+export function cloneContinuationHistory(history: readonly JsonObject[]): readonly JsonObject[] {
+    return cloneBoundedHistory(history);
+}
+
+function assertContinuationSize(value: unknown): void {
+    let serialized: string;
+    try {
+        serialized = JSON.stringify(value);
+    } catch {
+        throw providerError("INVALID_CONTINUATION", { field: "history" });
+    }
+    if (serialized === undefined || utf8ByteLength(serialized) > MAX_HISTORY_BYTES) throw providerError("INVALID_CONTINUATION", { field: "history" });
+}
+
+function validateContinuationBinding(
+    continuation: ConversationProviderContinuation,
+    provider: ConversationProvider,
+    profile: ConversationProviderProfile,
+): void {
+    if (continuation.provider !== provider) throw providerError("PROVIDER_MISMATCH", { provider });
+    if (continuation.codecVersion !== CONVERSATION_PROVIDER_CODEC_VERSION
+        || continuation.profileId !== profile.profileId
+        || continuation.profileVersion !== profile.profileVersion
+        || continuation.modelId !== profile.modelId) {
+        throw providerError("INVALID_CONTINUATION", { field: "profile" });
+    }
+    requireSafeProfileId(continuation.profileId);
+    requireSafeReference(continuation.profileVersion, "profileVersion", "INVALID_CONTINUATION");
+    requireSafeModelId(continuation.modelId);
+}
+
+function validatePendingToolCalls(
+    pendingToolCalls: unknown,
+    declaredNames: ReadonlySet<string>,
+): readonly ConversationToolCall[] {
+    if (!Array.isArray(pendingToolCalls) || pendingToolCalls.length > 128) throw providerError("INVALID_CONTINUATION", { field: "pendingToolCalls" });
+    const ids = new Set<string>();
+    const normalized: ConversationToolCall[] = [];
+    for (const rawCall of pendingToolCalls) {
+        if (!isRecord(rawCall)) throw providerError("INVALID_CONTINUATION", { field: "pendingToolCalls" });
+        const id = requireSafeReference(rawCall["id"], "toolCallId", "INVALID_CONTINUATION");
+        const name = requireSafeToolName(rawCall["name"], "INVALID_CONTINUATION");
+        if (!declaredNames.has(name)) throw providerError("INVALID_CONTINUATION", { field: "toolName" });
+        if (ids.has(id)) throw providerError("INVALID_CONTINUATION", { field: "toolCallId" });
+        ids.add(id);
+        normalized.push({ id, name, arguments: cloneJsonValue(rawCall["arguments"], "INVALID_CONTINUATION") });
+    }
+    return normalized;
+}
+
+function validateOpenAIHistoryItem(item: JsonObject, declaredNames: ReadonlySet<string>): void {
+    const type = item["type"];
+    const role = item["role"];
+    if (type === "function_call_output") {
+        const keys = Object.keys(item);
+        if (keys.some((key) => !new Set(["type", "call_id", "output"]).has(key))) throw providerError("INVALID_CONTINUATION");
+        requireSafeReference(item["call_id"], "toolCallId", "INVALID_CONTINUATION");
+        if (typeof item["output"] !== "string" || item["output"].length > MAX_JSON_LENGTH) throw providerError("INVALID_CONTINUATION");
+        return;
+    }
+    if (type === "function_call") {
+        const keys = Object.keys(item);
+        if (keys.some((key) => !new Set(["type", "id", "call_id", "name", "arguments", "status"]).has(key))) throw providerError("INVALID_CONTINUATION");
+        requireSafeReference(item["call_id"], "toolCallId", "INVALID_CONTINUATION");
+        requireSafeToolName(item["name"], "INVALID_CONTINUATION");
+        if (!declaredNames.has(item["name"] as string)) throw providerError("INVALID_CONTINUATION", { field: "toolName" });
+        if (item["id"] !== undefined) requireSafeReference(item["id"], "responseId", "INVALID_CONTINUATION");
+        if (typeof item["arguments"] !== "string" || item["arguments"].length === 0 || item["arguments"].length > MAX_JSON_LENGTH) throw providerError("INVALID_CONTINUATION");
+        const parsed = parseJsonObject(item["arguments"], "INVALID_CONTINUATION");
+        if (!isRecord(parsed)) throw providerError("INVALID_CONTINUATION");
+        return;
+    }
+    if (type === "reasoning") {
+        const keys = Object.keys(item);
+        if (keys.some((key) => !new Set(["type", "id", "status", "encrypted_content", "summary"]).has(key))) throw providerError("INVALID_CONTINUATION");
+        if (item["id"] !== undefined) requireSafeReference(item["id"], "responseId", "INVALID_CONTINUATION");
+        if (typeof item["encrypted_content"] !== "string" || item["encrypted_content"].length === 0 || item["encrypted_content"].length > MAX_TEXT_LENGTH) throw providerError("INVALID_CONTINUATION");
+        if (item["summary"] !== undefined) cloneJsonValue(item["summary"], "INVALID_CONTINUATION");
+        return;
+    }
+    if (type === "message") {
+        const keys = Object.keys(item);
+        if (keys.some((key) => !new Set(["type", "id", "status", "role", "content"]).has(key))) throw providerError("INVALID_CONTINUATION");
+        if (item["id"] !== undefined) requireSafeReference(item["id"], "responseId", "INVALID_CONTINUATION");
+        if (item["role"] !== undefined && item["role"] !== "assistant") throw providerError("INVALID_CONTINUATION");
+        validateOpenAIMessageContent(item["content"]);
+        return;
+    }
+    if (role === "system" || role === "user" || role === "assistant") {
+        const keys = Object.keys(item);
+        if (keys.some((key) => !new Set(["role", "content"]).has(key))) throw providerError("INVALID_CONTINUATION");
+        const content = item["content"];
+        if (!Array.isArray(content) || content.length === 0) throw providerError("INVALID_CONTINUATION");
+        for (const rawPart of content) {
+            const part = cloneJsonObject(rawPart, "INVALID_CONTINUATION");
+            if (Object.keys(part).some((key) => !new Set(["type", "text"]).has(key)) || part["type"] !== (role === "assistant" ? "output_text" : "input_text") || typeof part["text"] !== "string" || part["text"].length > MAX_TEXT_LENGTH) {
+                throw providerError("INVALID_CONTINUATION");
+            }
+        }
+        return;
+    }
+    throw providerError("INVALID_CONTINUATION");
+}
+
+function validateOpenAIMessageContent(value: unknown): void {
+    if (!Array.isArray(value) || value.length === 0) throw providerError("INVALID_CONTINUATION");
+    for (const rawPart of value) {
+        const part = cloneJsonObject(rawPart, "INVALID_CONTINUATION");
+        const type = part["type"];
+        if (type === "output_text") {
+            if (Object.keys(part).some((key) => !new Set(["type", "text", "annotations", "logprobs"]).has(key))) throw providerError("INVALID_CONTINUATION");
+            if (typeof part["text"] !== "string" || part["text"].length > MAX_TEXT_LENGTH) throw providerError("INVALID_CONTINUATION");
+            if (part["annotations"] !== undefined) cloneJsonValue(part["annotations"], "INVALID_CONTINUATION");
+            if (part["logprobs"] !== undefined) cloneJsonValue(part["logprobs"], "INVALID_CONTINUATION");
+            continue;
+        }
+        if (type === "refusal") {
+            if (Object.keys(part).some((key) => !new Set(["type", "refusal"]).has(key))) throw providerError("INVALID_CONTINUATION");
+            if (typeof part["refusal"] !== "string" || part["refusal"].length > MAX_TEXT_LENGTH) throw providerError("INVALID_CONTINUATION");
+            continue;
+        }
+        throw providerError("INVALID_CONTINUATION");
+    }
+}
+
+function validateGooglePart(part: JsonObject, declaredNames: ReadonlySet<string>): void {
+    const keys = Object.keys(part);
+    if (keys.some((key) => !new Set(["text", "functionCall", "functionResponse", "thoughtSignature", "thought"]).has(key))) throw providerError("INVALID_CONTINUATION");
+    if (part["text"] !== undefined && (typeof part["text"] !== "string" || part["text"].length > MAX_TEXT_LENGTH)) throw providerError("INVALID_CONTINUATION");
+    if (part["thoughtSignature"] !== undefined && (typeof part["thoughtSignature"] !== "string" || part["thoughtSignature"].length === 0 || part["thoughtSignature"].length > MAX_TEXT_LENGTH)) throw providerError("INVALID_CONTINUATION");
+    if (part["thought"] !== undefined && typeof part["thought"] !== "boolean") throw providerError("INVALID_CONTINUATION");
+    if (part["functionCall"] !== undefined) {
+        const call = cloneJsonObject(part["functionCall"], "INVALID_CONTINUATION");
+        if (Object.keys(call).some((key) => !new Set(["name", "args", "id", "thoughtSignature"]).has(key))) throw providerError("INVALID_CONTINUATION");
+        const name = requireSafeToolName(call["name"], "INVALID_CONTINUATION");
+        if (!declaredNames.has(name) || !Object.prototype.hasOwnProperty.call(call, "args")) throw providerError("INVALID_CONTINUATION", { field: "toolName" });
+        cloneJsonValue(call["args"], "INVALID_CONTINUATION");
+        if (call["id"] !== undefined) requireSafeReference(call["id"], "toolCallId", "INVALID_CONTINUATION");
+        if (call["thoughtSignature"] !== undefined && (typeof call["thoughtSignature"] !== "string" || call["thoughtSignature"].length === 0 || call["thoughtSignature"].length > MAX_TEXT_LENGTH)) throw providerError("INVALID_CONTINUATION");
+    }
+    if (part["functionResponse"] !== undefined) {
+        const response = cloneJsonObject(part["functionResponse"], "INVALID_CONTINUATION");
+        if (Object.keys(response).some((key) => !new Set(["name", "response", "id"]).has(key))) throw providerError("INVALID_CONTINUATION");
+        const name = requireSafeToolName(response["name"], "INVALID_CONTINUATION");
+        if (!declaredNames.has(name) || !Object.prototype.hasOwnProperty.call(response, "response")) throw providerError("INVALID_CONTINUATION", { field: "toolName" });
+        cloneJsonValue(response["response"], "INVALID_CONTINUATION");
+        if (response["id"] !== undefined) requireSafeReference(response["id"], "toolCallId", "INVALID_CONTINUATION");
+    }
+    if (part["functionCall"] !== undefined && part["functionResponse"] !== undefined) throw providerError("INVALID_CONTINUATION");
+    if (part["text"] === undefined && part["functionCall"] === undefined && part["functionResponse"] === undefined && part["thoughtSignature"] === undefined && part["thought"] !== true) {
+        throw providerError("INVALID_CONTINUATION");
+    }
+}
+
+function validateGoogleHistoryItem(item: JsonObject, declaredNames: ReadonlySet<string>): void {
+    if (Object.keys(item).some((key) => !new Set(["role", "parts"]).has(key)) || (item["role"] !== "user" && item["role"] !== "model")) throw providerError("INVALID_CONTINUATION");
+    const parts = item["parts"];
+    if (!Array.isArray(parts) || parts.length === 0) throw providerError("INVALID_CONTINUATION");
+    for (const rawPart of parts) validateGooglePart(cloneJsonObject(rawPart, "INVALID_CONTINUATION"), declaredNames);
+}
+
+function validateGoogleSystemInstruction(value: unknown): void {
+    const system = cloneJsonObject(value, "INVALID_CONTINUATION");
+    if (Object.keys(system).some((key) => key !== "parts") || !Array.isArray(system["parts"]) || system["parts"].length === 0) throw providerError("INVALID_CONTINUATION", { field: "systemInstruction" });
+    for (const rawPart of system["parts"] as readonly JsonValue[]) {
+        const part = cloneJsonObject(rawPart, "INVALID_CONTINUATION");
+        if (Object.keys(part).some((key) => key !== "text") || typeof part["text"] !== "string" || part["text"].length > MAX_TEXT_LENGTH) throw providerError("INVALID_CONTINUATION", { field: "systemInstruction" });
+    }
+}
+
+function validateOpenAIPendingConsistency(history: readonly JsonObject[], pending: readonly ConversationToolCall[]): void {
+    const calls = new Map<string, { readonly name: string; readonly arguments: string }>();
+    const outputs = new Set<string>();
+    for (const item of history) {
+        if (item["type"] === "function_call") {
+            const id = item["call_id"] as string;
+            if (calls.has(id)) throw providerError("INVALID_CONTINUATION", { field: "toolCallId" });
+            calls.set(id, { name: item["name"] as string, arguments: item["arguments"] as string });
+            continue;
+        }
+        if (item["type"] === "function_call_output") {
+            const id = item["call_id"] as string;
+            if (!calls.has(id) || outputs.has(id)) throw providerError("INVALID_CONTINUATION", { field: "toolCallId" });
+            outputs.add(id);
+        }
+    }
+    const unpaired = [...calls.entries()].filter(([id]) => !outputs.has(id));
+    if (unpaired.length !== pending.length) throw providerError("INVALID_CONTINUATION", { field: "pendingToolCalls" });
+    const pendingById = new Map(pending.map((call) => [call.id, call]));
+    for (const [id, call] of unpaired) {
+        const expected = pendingById.get(id);
+        if (!expected || expected.name !== call.name) throw providerError("INVALID_CONTINUATION", { field: "pendingToolCalls" });
+        const args = parseJsonObject(call.arguments, "INVALID_CONTINUATION");
+        if (serializeJsonValue(args, "INVALID_CONTINUATION") !== serializeJsonValue(expected.arguments, "INVALID_CONTINUATION")) {
+            throw providerError("INVALID_CONTINUATION", { field: "pendingToolCalls" });
         }
     }
 }
 
-/**
- * A stateless continuation request carries the provider's opaque output items
- * and exactly one normalized tool result for each returned function call. New
- * user/system messages may accompany that round; prior assistant call items
- * with matching call IDs are retained by the opaque continuation and omitted
- * from the rebuilt input.
- */
-function validateOpenAIContinuation(
-    continuation: Extract<ConversationProviderContinuation, { provider: "openai" }>,
+function validateGooglePendingConsistency(history: readonly JsonObject[], pending: readonly ConversationToolCall[]): void {
+    const calls = new Map<string, string>();
+    const outputs = new Set<string>();
+    // Google does not require functionCall.id. The adapter assigns a local ID
+    // while normalizing such calls; reconstruct the same deterministic ID from
+    // the retained item/part position so the continuation can pair its later
+    // functionResponse without mutating the native part.
+    const usedIds = new Set<string>();
+    for (let itemIndex = 0; itemIndex < history.length; itemIndex += 1) {
+        const item = history[itemIndex]!;
+        const parts = item["parts"];
+        if (!Array.isArray(parts)) continue;
+        for (let partIndex = 0; partIndex < parts.length; partIndex += 1) {
+            const rawPart = parts[partIndex];
+            const part = cloneJsonObject(rawPart, "INVALID_CONTINUATION");
+            const call = isRecord(part["functionCall"]) ? part["functionCall"] : undefined;
+            if (call) {
+                const nativeId = typeof call["id"] === "string" ? call["id"] : undefined;
+                const base = `local-call-${itemIndex}-${partIndex + 1}`;
+                let id = nativeId ?? base;
+                let suffix = 1;
+                while (nativeId === undefined && usedIds.has(id)) id = `${base}-${suffix++}`;
+                if (usedIds.has(id)) throw providerError("INVALID_CONTINUATION", { field: "toolCallId" });
+                calls.set(id, call["name"] as string);
+                usedIds.add(id);
+            }
+            const response = isRecord(part["functionResponse"]) ? part["functionResponse"] : undefined;
+            if (response) {
+                if (typeof response["id"] !== "string") throw providerError("INVALID_CONTINUATION", { field: "toolCallId" });
+                const id = response["id"];
+                if (calls.has(id)) {
+                    if (outputs.has(id)) throw providerError("INVALID_CONTINUATION", { field: "toolCallId" });
+                    if (calls.get(id) !== response["name"]) throw providerError("INVALID_CONTINUATION", { field: "toolCallId" });
+                    outputs.add(id);
+                } else {
+                    throw providerError("INVALID_CONTINUATION", { field: "toolCallId" });
+                }
+            }
+        }
+    }
+    const explicitUnpaired = [...calls.entries()].filter(([id]) => !outputs.has(id));
+    const pendingExplicit = pending.filter((call) => calls.has(call.id));
+    if (explicitUnpaired.length !== pendingExplicit.length) throw providerError("INVALID_CONTINUATION", { field: "pendingToolCalls" });
+    for (const [id, name] of explicitUnpaired) {
+        const expected = pending.find((call) => call.id === id);
+        if (!expected || expected.name !== name) throw providerError("INVALID_CONTINUATION", { field: "pendingToolCalls" });
+    }
+    if (pending.length !== explicitUnpaired.length) throw providerError("INVALID_CONTINUATION", { field: "pendingToolCalls" });
+}
+
+function validateContinuation(
+    continuation: ConversationProviderContinuation,
+    provider: ConversationProvider,
+    profile: ConversationProviderProfile,
     declaredNames: ReadonlySet<string>,
     messages: readonly ConversationMessage[],
 ): void {
-    if (!Array.isArray(continuation.outputItems) || continuation.outputItems.length > 32) throw providerError("INVALID_CONTINUATION");
-    const continuationCalls = new Map<string, string>();
-    for (const item of continuation.outputItems) {
-        const clone = cloneJsonObject(item);
-        const type = clone["type"];
-        if (type !== "reasoning" && type !== "function_call") throw providerError("INVALID_CONTINUATION");
-        if (type === "reasoning" && (typeof clone["encrypted_content"] !== "string" || clone["encrypted_content"].length === 0 || clone["encrypted_content"].length > MAX_TEXT_LENGTH)) {
-            throw providerError("INVALID_CONTINUATION");
+    validateContinuationBinding(continuation, provider, profile);
+    const pending = validatePendingToolCalls(continuation.pendingToolCalls, declaredNames);
+    const history = cloneBoundedHistory(continuation.history);
+    if (provider === "openai") {
+        for (const item of history) validateOpenAIHistoryItem(item, declaredNames);
+        validateOpenAIPendingConsistency(history, pending);
+        if (profile.reasoningContinuation && pending.length > 0 && !history.some((item) => item["type"] === "reasoning" && typeof item["encrypted_content"] === "string" && item["encrypted_content"].length > 0 && item["encrypted_content"].length <= MAX_TEXT_LENGTH)) {
+            throw providerError("MISSING_CONTINUATION");
         }
-        if (type === "function_call" && (typeof clone["call_id"] !== "string" || typeof clone["name"] !== "string" || typeof clone["arguments"] !== "string")) {
-            throw providerError("INVALID_CONTINUATION");
+    } else {
+        for (const item of history) validateGoogleHistoryItem(item, declaredNames);
+        validateGooglePendingConsistency(history, pending);
+        const googleContinuation = continuation.provider === "google" ? continuation : undefined;
+        if (googleContinuation?.systemInstruction !== undefined) validateGoogleSystemInstruction(googleContinuation.systemInstruction);
+    }
+    assertContinuationSize({
+        provider: continuation.provider,
+        codecVersion: continuation.codecVersion,
+        profileId: continuation.profileId,
+        profileVersion: continuation.profileVersion,
+        modelId: continuation.modelId,
+        history,
+        pendingToolCalls: pending,
+        ...(continuation.provider === "google" && continuation.systemInstruction === undefined ? {} : continuation.provider === "google" ? { systemInstruction: continuation.systemInstruction } : {}),
+    });
+    if (pending.length > 0) {
+        const outputs = new Map<string, string>();
+        for (const message of messages) {
+            if (message.role !== "tool") throw providerError("INVALID_CONTINUATION", { field: "messages" });
+            if (outputs.has(message.toolCallId)) throw providerError("INVALID_CONTINUATION", { field: "toolCallId" });
+            const expected = pending.find((call) => call.id === message.toolCallId);
+            if (!expected || expected.name !== message.name) throw providerError("INVALID_CONTINUATION", { field: "toolCallId" });
+            outputs.set(message.toolCallId, message.name);
         }
-        if (type === "function_call") {
-            const callId = requireSafeReference(clone["call_id"], "toolCallId", "INVALID_CONTINUATION");
-            const name = requireSafeToolName(clone["name"], "INVALID_CONTINUATION");
-            if (!declaredNames.has(name)) throw providerError("INVALID_CONTINUATION", { field: "toolName" });
-            if (continuationCalls.has(callId)) throw providerError("INVALID_CONTINUATION", { field: "toolCallId" });
-            continuationCalls.set(callId, name);
+        if (outputs.size !== pending.length) throw providerError("INVALID_CONTINUATION", { field: "toolCallId" });
+    } else {
+        for (const message of messages) {
+            if (message.role !== "user") throw providerError("INVALID_CONTINUATION", { field: "messages" });
         }
     }
-
-    const toolOutputs = new Map<string, string>();
-    for (const message of messages) {
-        if (message.role !== "tool") continue;
-        if (toolOutputs.has(message.toolCallId)) throw providerError("INVALID_CONTINUATION", { field: "toolCallId" });
-        const continuationName = continuationCalls.get(message.toolCallId);
-        if (continuationName === undefined || continuationName !== message.name) {
-            throw providerError("INVALID_CONTINUATION", { field: "toolCallId" });
-        }
-        toolOutputs.set(message.toolCallId, message.name);
-    }
-    if (continuationCalls.size !== toolOutputs.size) throw providerError("INVALID_CONTINUATION", { field: "toolCallId" });
 }
 
-export function validateConversationRequest(request: ConversationEvaluationRequest, provider: ConversationProvider, reasoningContinuation: boolean): void {
+export function validateConversationRequest(request: ConversationEvaluationRequest, provider: ConversationProvider, profile: ConversationProviderProfile): void {
     if (!isRecord(request)) throw providerError("INVALID_REQUEST");
     requireSafeReference(request.fixtureVersion, "fixtureVersion");
     requireSafeReference(request.promptVersion, "promptVersion");
@@ -245,19 +513,7 @@ export function validateConversationRequest(request: ConversationEvaluationReque
         }
         if (message.role === "tool" && !declaredNames.has(message.name)) throw providerError("INVALID_REQUEST", { field: "toolName" });
     }
-    if (request.continuation !== undefined) {
-        if (request.continuation.provider !== provider) throw providerError("PROVIDER_MISMATCH", { provider });
-        if (request.continuation.provider === "google") validateGoogleContinuation(request.continuation);
-        else validateOpenAIContinuation(request.continuation, declaredNames, request.messages);
-    } else if (provider === "openai" && request.messages.some((message) => message.role === "tool")) {
-        throw providerError(reasoningContinuation ? "MISSING_CONTINUATION" : "INVALID_CONTINUATION");
-    }
-    if (provider === "openai" && reasoningContinuation && request.messages.some((message) => message.role === "tool")) {
-        if (request.continuation?.provider !== "openai") throw providerError("MISSING_CONTINUATION");
-        if (!request.continuation.outputItems.some((item) => item["type"] === "reasoning" && typeof item["encrypted_content"] === "string" && item["encrypted_content"].length > 0 && item["encrypted_content"].length <= MAX_TEXT_LENGTH)) {
-            throw providerError("MISSING_CONTINUATION");
-        }
-    }
+    if (request.continuation !== undefined) validateContinuation(request.continuation, provider, profile, declaredNames, request.messages);
 }
 
 function profileClone(profile: ConversationProviderProfile): ConversationProviderProfile {
