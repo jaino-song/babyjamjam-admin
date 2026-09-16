@@ -193,7 +193,7 @@ export class OpenAIConversationProviderAdapter implements ConversationProviderAd
                 continue;
             }
             if (type === "reasoning") {
-                if (typeof rawItem["encrypted_content"] !== "string" || rawItem["encrypted_content"].length === 0) {
+                if (typeof rawItem["encrypted_content"] !== "string" || rawItem["encrypted_content"].length === 0 || rawItem["encrypted_content"].length > 200_000) {
                     missingEncryptedReasoning = missingEncryptedReasoning || this.profile.reasoningContinuation;
                     continue;
                 }
@@ -217,7 +217,7 @@ export class OpenAIConversationProviderAdapter implements ConversationProviderAd
         }
         if (refusal) return { outcome: "refusal", text: text || undefined, metadata };
         if (calls.length > 0) {
-            if (this.profile.reasoningContinuation && (missingEncryptedReasoning || !continuationItems.some((item) => item["type"] === "reasoning" && typeof item["encrypted_content"] === "string"))) {
+            if (this.profile.reasoningContinuation && (missingEncryptedReasoning || !continuationItems.some((item) => item["type"] === "reasoning" && typeof item["encrypted_content"] === "string" && item["encrypted_content"].length > 0 && item["encrypted_content"].length <= 200_000))) {
                 throw providerError("MISSING_CONTINUATION");
             }
             const continuation: OpenAIContinuation = { provider: "openai", outputItems: continuationItems };

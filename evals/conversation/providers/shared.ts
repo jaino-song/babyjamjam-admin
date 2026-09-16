@@ -172,21 +172,50 @@ function validateGoogleContinuation(continuation: Extract<ConversationProviderCo
     }
 }
 
-function validateOpenAIContinuation(continuation: Extract<ConversationProviderContinuation, { provider: "openai" }>): void {
+/**
+ * A stateless continuation request carries the provider's opaque output items
+ * and exactly one normalized tool result for each returned function call. New
+ * user/system messages may accompany that round; prior assistant call items
+ * with matching call IDs are retained by the opaque continuation and omitted
+ * from the rebuilt input.
+ */
+function validateOpenAIContinuation(
+    continuation: Extract<ConversationProviderContinuation, { provider: "openai" }>,
+    declaredNames: ReadonlySet<string>,
+    messages: readonly ConversationMessage[],
+): void {
     if (!Array.isArray(continuation.outputItems) || continuation.outputItems.length > 32) throw providerError("INVALID_CONTINUATION");
+    const continuationCalls = new Map<string, string>();
     for (const item of continuation.outputItems) {
         const clone = cloneJsonObject(item);
         const type = clone["type"];
         if (type !== "reasoning" && type !== "function_call") throw providerError("INVALID_CONTINUATION");
-        if (type === "reasoning" && (typeof clone["encrypted_content"] !== "string" || clone["encrypted_content"].length > MAX_TEXT_LENGTH)) throw providerError("INVALID_CONTINUATION");
+        if (type === "reasoning" && (typeof clone["encrypted_content"] !== "string" || clone["encrypted_content"].length === 0 || clone["encrypted_content"].length > MAX_TEXT_LENGTH)) {
+            throw providerError("INVALID_CONTINUATION");
+        }
         if (type === "function_call" && (typeof clone["call_id"] !== "string" || typeof clone["name"] !== "string" || typeof clone["arguments"] !== "string")) {
             throw providerError("INVALID_CONTINUATION");
         }
         if (type === "function_call") {
-            requireSafeReference(clone["call_id"], "toolCallId", "INVALID_CONTINUATION");
-            requireSafeToolName(clone["name"], "INVALID_CONTINUATION");
+            const callId = requireSafeReference(clone["call_id"], "toolCallId", "INVALID_CONTINUATION");
+            const name = requireSafeToolName(clone["name"], "INVALID_CONTINUATION");
+            if (!declaredNames.has(name)) throw providerError("INVALID_CONTINUATION", { field: "toolName" });
+            if (continuationCalls.has(callId)) throw providerError("INVALID_CONTINUATION", { field: "toolCallId" });
+            continuationCalls.set(callId, name);
         }
     }
+
+    const toolOutputs = new Map<string, string>();
+    for (const message of messages) {
+        if (message.role !== "tool") continue;
+        if (toolOutputs.has(message.toolCallId)) throw providerError("INVALID_CONTINUATION", { field: "toolCallId" });
+        const continuationName = continuationCalls.get(message.toolCallId);
+        if (continuationName === undefined || continuationName !== message.name) {
+            throw providerError("INVALID_CONTINUATION", { field: "toolCallId" });
+        }
+        toolOutputs.set(message.toolCallId, message.name);
+    }
+    if (continuationCalls.size !== toolOutputs.size) throw providerError("INVALID_CONTINUATION", { field: "toolCallId" });
 }
 
 export function validateConversationRequest(request: ConversationEvaluationRequest, provider: ConversationProvider, reasoningContinuation: boolean): void {
@@ -219,11 +248,13 @@ export function validateConversationRequest(request: ConversationEvaluationReque
     if (request.continuation !== undefined) {
         if (request.continuation.provider !== provider) throw providerError("PROVIDER_MISMATCH", { provider });
         if (request.continuation.provider === "google") validateGoogleContinuation(request.continuation);
-        else validateOpenAIContinuation(request.continuation);
+        else validateOpenAIContinuation(request.continuation, declaredNames, request.messages);
+    } else if (provider === "openai" && request.messages.some((message) => message.role === "tool")) {
+        throw providerError(reasoningContinuation ? "MISSING_CONTINUATION" : "INVALID_CONTINUATION");
     }
     if (provider === "openai" && reasoningContinuation && request.messages.some((message) => message.role === "tool")) {
         if (request.continuation?.provider !== "openai") throw providerError("MISSING_CONTINUATION");
-        if (!request.continuation.outputItems.some((item) => item["type"] === "reasoning" && typeof item["encrypted_content"] === "string")) {
+        if (!request.continuation.outputItems.some((item) => item["type"] === "reasoning" && typeof item["encrypted_content"] === "string" && item["encrypted_content"].length > 0 && item["encrypted_content"].length <= MAX_TEXT_LENGTH)) {
             throw providerError("MISSING_CONTINUATION");
         }
     }

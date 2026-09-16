@@ -6,6 +6,7 @@ import {
     createOpenAIConversationProviderAdapter,
     serializeProviderEvaluationReport,
     type ConversationEvaluationRequest,
+    type OpenAIContinuation,
     type ConversationProviderProfile,
 } from "../../../evals/conversation/providers";
 
@@ -73,6 +74,10 @@ function createRequest(overrides: Partial<ConversationEvaluationRequest> = {}): 
         }],
         ...overrides,
     };
+}
+
+function createOpenAIContinuation(outputItems: OpenAIContinuation["outputItems"]): OpenAIContinuation {
+    return { provider: "openai", outputItems };
 }
 
 const googleToolResponse = {
@@ -211,6 +216,113 @@ describe("evaluation-only conversation provider adapters", () => {
             { type: "function_call", id: "fc_1", call_id: "call-openai-1", name: "lookup_voucher", arguments: '{"token":"SYN_VOUCHER_K"}' },
             { type: "function_call_output", call_id: "call-openai-1", output: '{"voucher":"SYN_VOUCHER_K"}' },
         ]);
+    });
+
+    it("preserves parallel OpenAI calls and requires exact continuation output pairing before transport", async () => {
+        const transport = createRecordingTransport([{
+            id: "resp_parallel",
+            model: "mock-openai-test-only",
+            status: "completed",
+            output: [{ type: "message", content: [{ type: "output_text", text: "완료" }] }],
+        }]);
+        const adapter = createOpenAIConversationProviderAdapter({ registry, profileId: "openai-reasoning-test-only", transport });
+        const continuation = createOpenAIContinuation([
+            { type: "reasoning", id: "rs_parallel", encrypted_content: "OPENAI_PARALLEL_REASONING_SENTINEL", summary: [] },
+            { type: "function_call", id: "fc_a", call_id: "call-a", name: "lookup_voucher", arguments: '{"token":"A"}' },
+            { type: "function_call", id: "fc_b", call_id: "call-b", name: "lookup_account", arguments: '{"token":"B"}' },
+        ]);
+        await adapter.run(createRequest({
+            tools: [{ name: "lookup_voucher" }, { name: "lookup_account" }],
+            messages: [
+                { role: "tool", toolCallId: "call-b", name: "lookup_account", output: { account: "B" } },
+                { role: "tool", toolCallId: "call-a", name: "lookup_voucher", output: { voucher: "A" } },
+            ],
+            continuation,
+        }));
+        expect(transport.calls).toBe(1);
+        const body = JSON.parse(String((transport.requests[0]?.init as { body: string }).body)) as Record<string, unknown>;
+        expect(body["input"]).toEqual([
+            { type: "reasoning", id: "rs_parallel", encrypted_content: "OPENAI_PARALLEL_REASONING_SENTINEL", summary: [] },
+            { type: "function_call", id: "fc_a", call_id: "call-a", name: "lookup_voucher", arguments: '{"token":"A"}' },
+            { type: "function_call", id: "fc_b", call_id: "call-b", name: "lookup_account", arguments: '{"token":"B"}' },
+            { type: "function_call_output", call_id: "call-b", output: '{"account":"B"}' },
+            { type: "function_call_output", call_id: "call-a", output: '{"voucher":"A"}' },
+        ]);
+    });
+
+    it.each([
+        {
+            label: "empty encrypted continuation",
+            request: createRequest({
+                messages: [{ role: "tool", toolCallId: "call-empty", name: "lookup_voucher", output: {} }],
+                continuation: createOpenAIContinuation([
+                    { type: "reasoning", id: "rs_empty", encrypted_content: "" },
+                    { type: "function_call", id: "fc_empty", call_id: "call-empty", name: "lookup_voucher", arguments: "{}" },
+                ]),
+            }),
+        },
+        {
+            label: "mismatched call id",
+            request: createRequest({
+                messages: [{ role: "tool", toolCallId: "call-output", name: "lookup_voucher", output: {} }],
+                continuation: createOpenAIContinuation([
+                    { type: "reasoning", id: "rs_id", encrypted_content: "OPENAI_REASONING_SENTINEL" },
+                    { type: "function_call", id: "fc_id", call_id: "call-continuation", name: "lookup_voucher", arguments: "{}" },
+                ]),
+            }),
+        },
+        {
+            label: "mismatched tool name",
+            request: createRequest({
+                tools: [{ name: "lookup_voucher" }, { name: "lookup_account" }],
+                messages: [{ role: "tool", toolCallId: "call-name", name: "lookup_account", output: {} }],
+                continuation: createOpenAIContinuation([
+                    { type: "reasoning", id: "rs_name", encrypted_content: "OPENAI_REASONING_SENTINEL" },
+                    { type: "function_call", id: "fc_name", call_id: "call-name", name: "lookup_voucher", arguments: "{}" },
+                ]),
+            }),
+        },
+        {
+            label: "undeclared continuation tool",
+            request: createRequest({
+                continuation: createOpenAIContinuation([
+                    { type: "reasoning", id: "rs_undeclared", encrypted_content: "OPENAI_REASONING_SENTINEL" },
+                    { type: "function_call", id: "fc_undeclared", call_id: "call-undeclared", name: "delete_everything", arguments: "{}" },
+                ]),
+            }),
+        },
+        {
+            label: "duplicate continuation call id",
+            request: createRequest({
+                tools: [{ name: "lookup_voucher" }, { name: "lookup_account" }],
+                continuation: createOpenAIContinuation([
+                    { type: "reasoning", id: "rs_duplicate", encrypted_content: "OPENAI_REASONING_SENTINEL" },
+                    { type: "function_call", id: "fc_duplicate_a", call_id: "call-duplicate", name: "lookup_voucher", arguments: "{}" },
+                    { type: "function_call", id: "fc_duplicate_b", call_id: "call-duplicate", name: "lookup_account", arguments: "{}" },
+                ]),
+            }),
+        },
+        {
+            label: "orphan continuation call",
+            request: createRequest({
+                continuation: createOpenAIContinuation([
+                    { type: "reasoning", id: "rs_orphan_call", encrypted_content: "OPENAI_REASONING_SENTINEL" },
+                    { type: "function_call", id: "fc_orphan_call", call_id: "call-orphan-call", name: "lookup_voucher", arguments: "{}" },
+                ]),
+            }),
+        },
+        {
+            label: "orphan tool output",
+            request: createRequest({
+                messages: [{ role: "tool", toolCallId: "call-orphan-output", name: "lookup_voucher", output: {} }],
+                continuation: createOpenAIContinuation([{ type: "reasoning", id: "rs_orphan_output", encrypted_content: "OPENAI_REASONING_SENTINEL" }]),
+            }),
+        },
+    ])("rejects $label without making a transport call", async ({ request }) => {
+        const transport = createRecordingTransport([{ id: "should_not_be_used", status: "completed", output: [] }]);
+        const adapter = createOpenAIConversationProviderAdapter({ registry, profileId: "openai-reasoning-test-only", transport });
+        await expect(adapter.run(request)).rejects.toMatchObject({ code: expect.stringMatching(/^(INVALID_CONTINUATION|MISSING_CONTINUATION)$/) });
+        expect(transport.calls).toBe(0);
     });
 
     it("keeps omitted optional tool fields omitted for both providers", async () => {
