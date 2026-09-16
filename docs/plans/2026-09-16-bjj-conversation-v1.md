@@ -39,7 +39,7 @@ The user approved the detailed implementation plan on 2026-09-16 and requested i
 | --- | --- | --- | --- |
 | 0 | Baseline, policies, ADR | complete | base above; ADR-013; 121 existing unit tests passed |
 | 1 | Shared contracts + 48-case evaluator (parallel) | complete | source close: 76d0445babb87f46ecab3a754323695cef9d0203; SOL SHIP; 19 shared tests, 8 evaluator tests, 48 harness cases |
-| 2 | Additive persistence + evaluation providers (parallel) | in progress | start538a87f5e0fff9f450967cdd083fb40979eb514f; two isolated Luna units, reviewed briefs |
+| 2 | Additive persistence + evaluation providers (parallel) | complete | source close d19ef533619f87add609767cc23e99ea447308bf; SOL SHIP; guarded DB14/14, final provider/evaluator39/39, migration compatibility |
 | 3 | Task create/read/patch, protected inputs, replay | pending | |
 | 4 | Commands, retention, session lifecycle | pending | |
 | 5 | TurnContext, conversation policy, routing | pending | |
@@ -133,3 +133,15 @@ The existing `AgentFlagsService` reads `agent.flags`, including open-ended capab
 - Parent additionally found a stateless history-order concern: prepending opaque model output ahead of full prior user history (or supplying only delta messages without retaining the original input) can alter context. Official OpenAI [function-calling guide](https://developers.openai.com/api/docs/guides/function-calling) demonstrates chronological accumulated input, output items, then matching tool results. SOL is checking the minimal equivalent continuation contract for both evaluation providers before Phase2 close. No live model request or quality conclusion is involved.
 
 - SOL confirmed the history gap affects both providers and approved the concrete correction contract: initial input then delta-only messages; run-bound full chronological native history; continuation after text and tool outcomes; profile/model/version binding; bounded native-shape validation and exact multi-round mock tests. Direct parseResponse cannot claim resumable history. The single provider unit is implementing this correction before Phase2 closure.
+
+### Phase2 history correction re-review
+
+- Full chronological continuation integrated at `a38c4a19129c8bb678bf9fe648ce98c54677082b` (unit `abd0356cc55c2e84cb61b76c7bb57d3dd926b49d`). Parent verification: focused36/36; integrated5suites166tests; pure backendTypeScript; targetedzero-warningESLint; offlineharness48/48 andzerotransport; diffcheck allpassed.
+- FINAL SOL re-review at exacta38c4a191 closed the earlier OpenAI pairing blocker and accepted the continuation architecture, but returned FIX_REQUIRED for three localized validation gaps: recursive prototype-mutating JSONkeys, Google role/partownership, and the complete serializedsize of newlygeneratedcontinuations including system/binding/pendingcall data. Correction unit remains confined to provider codecs andtheir tests; Phase2 remainsopen.
+- Separate Phase3 readiness inspection confirmed explicit optional-field clear currently removes a key and becomes indistinguishable from omission after persistence. A narrow additive clearedFields contract/JSONcodec correction is in PLAN review before the API unit; no new Prisma schema, dependency or buildconfiguration is proposed. Product clear semantics are not yet implemented or claimed verified.
+
+### Phase2 close and Phase3 dispatch
+
+- Localized final fixes integrated at `d19ef533619f87add609767cc23e99ea447308bf` (unit `7d59b3829f287aee8c1045012a20ff40f9ad45cf`). Parent independently verified focused39/39, backendTypeScript, zero-warningfocusedESLint anddiffcheck; integrationfocused39/39 andTypeScript passed. No source changes tostorage since its verifiedunusedhelpercleanup. Earlier realDB14/14, legacyrecordequality, migrationparity and166-test integration remain applicable tounchangedscope.
+- FINAL SOL returned SHIP/HIGH at exactd19ef5336, no blockers, nonblockingfindings or missingverification inPhase2scope. Phase2 isclosed. This doesnot establishliveproviderquality orproductruntimebehavior.
+- Phase3 corrected API brief and additiveclear amendment both receivedPLANAPPROVE/HIGH. One isolatedLuna/maxunit will implement sharedclear markers/safeprojection/JSONcodec first, followedbyownedcreate/read/patch APIs, protectedinput, durable replay andsessionrestore. Sharedvendorrefresh isparent-owned betweencontractcheckpoint andAPIcompilation. No newPrismaschema, migration, dependency, buildsetting orauthcorechange isrequired.
