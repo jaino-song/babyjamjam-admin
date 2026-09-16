@@ -121,7 +121,9 @@ describe("EmployeeScheduleManager interactions", () => {
         mockClients([makeClient({ startDate: tomorrowKey })]);
 
         const { container } = renderManager();
+        expect(screen.getByRole("tabpanel")).toHaveAttribute("aria-labelledby", "test_schedule_manager-view-tab-calendar");
         fireEvent.click(screen.getByRole("tab", { name: "목록" }));
+        expect(screen.getByRole("tabpanel")).toHaveAttribute("id", "test_schedule_manager-view-panel-list");
 
         expect(container.querySelector('[data-slot="calendar-grid"]')).not.toBeInTheDocument();
         expect(container.querySelector('[data-slot="schedule-entry-list"]')).toBeInTheDocument();

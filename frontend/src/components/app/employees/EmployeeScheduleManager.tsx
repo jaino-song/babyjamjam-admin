@@ -586,7 +586,17 @@ export function EmployeeScheduleManager({
                 />
             </div>
 
-            {isLoading ? (
+            {VIEW_TABS.map((tab) => (
+                <div
+                    key={tab.key}
+                    id={`${dataComponent}-view-panel-${tab.key}`}
+                    role="tabpanel"
+                    aria-labelledby={`${dataComponent}-view-tab-${tab.key}`}
+                    hidden={viewMode !== tab.key}
+                    data-component={component(`view-panel_${tab.key}`)}
+                    className={viewMode === tab.key ? "flex min-h-0 flex-1 flex-col" : "hidden"}
+                >
+            {viewMode === tab.key && (isLoading ? (
                 <div
                     data-component={component("loading")}
                     data-slot="schedule-loading"
@@ -685,7 +695,9 @@ export function EmployeeScheduleManager({
                         )}
                     </DetailPanel>
                 </div>
-            )}
+            ))}
+                </div>
+            ))}
         </section>
     );
 }
