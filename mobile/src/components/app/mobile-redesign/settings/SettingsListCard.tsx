@@ -96,6 +96,8 @@ export interface SettingsListItemProps {
   icon: LucideIcon;
   title: string;
   subtitle: ReactNode;
+  /** Accessible action label for rows whose visible title is not an action description. */
+  ariaLabel?: string;
   isSelected?: boolean;
   onSelect?: () => void;
   isDisabled?: boolean;
@@ -109,6 +111,7 @@ export function SettingsListItem({
   icon: Icon,
   title,
   subtitle,
+  ariaLabel,
   isSelected = false,
   onSelect,
   isDisabled = false,
@@ -187,7 +190,7 @@ export function SettingsListItem({
         <button
           data-component={`${dataComponent}_button`}
           type="button"
-          aria-label={`${title} 설정`}
+          aria-label={ariaLabel ?? `${title} 설정`}
           aria-current={isSelected ? "true" : undefined}
           disabled={isDisabled}
           className={rowClassName}

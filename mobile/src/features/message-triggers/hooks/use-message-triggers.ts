@@ -111,6 +111,18 @@ export function useMessageHistory(limit = 200) {
     });
 }
 
+export function useRetryMessageHistory() {
+    const queryClient = useQueryClient();
+
+    return useMutation({
+        mutationFn: (id: number) =>
+            messageTriggersApi.retryHistory(id).then((response) => response.data),
+        onSuccess: async () => {
+            await queryClient.invalidateQueries({ queryKey: messageTriggerKeys.history() });
+        },
+    });
+}
+
 export function useCreateMessageTriggerRule() {
     const queryClient = useQueryClient();
 

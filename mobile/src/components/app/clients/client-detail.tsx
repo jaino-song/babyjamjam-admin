@@ -3,7 +3,7 @@ import { getUserErrorMessage } from "@babyjamjam/shared";
 
 
 import { useState, type KeyboardEvent, type ReactNode } from "react";
-import { CalendarDays, CircleAlert, FileCheck2, MessageCircle, MoreVertical, RotateCcw, SquarePen, Trash2, User } from "lucide-react";
+import { CalendarDays, CircleAlert, FileCheck2, MessageCircle, MoreVertical, RotateCcw, Send, SquarePen, Trash2, User } from "lucide-react";
 
 import { Client } from "@/lib/client/types";
 import { getMobileClientBadges } from "@/lib/client/badges";
@@ -50,6 +50,7 @@ import { ClientServiceRecords } from "@/components/app/clients/client-service-re
 import { ServiceRecordLinkResetResultModal } from "@/components/app/clients/ServiceRecordLinkResetResultModal";
 import { ServiceScheduleChangeModal } from "@/components/app/clients/ServiceScheduleChangeModal";
 import { getScheduleChangeErrorMessage } from "@/lib/service-records/schedule-change-error";
+import { useSendClientReceipt } from "@/hooks/use-send-client-receipt";
 
 type UnknownRecord = Record<string, unknown>;
 
@@ -632,6 +633,8 @@ export function ClientDetailContent({
   const [isPreparingScheduleChange, setIsPreparingScheduleChange] = useState(false);
   const [isApplyingScheduleChange, setIsApplyingScheduleChange] = useState(false);
   const [isScheduleChangeDecisionPending, setIsScheduleChangeDecisionPending] = useState(false);
+  const [receiptSendConfirmOpen, setReceiptSendConfirmOpen] = useState(false);
+  const { isSending: isSendingReceipt, sendReceipt } = useSendClientReceipt();
 
   const handleResetServiceRecordLink = async () => {
     setIsResettingLink(true);
@@ -734,6 +737,11 @@ export function ClientDetailContent({
         variant: "destructive",
       });
     }
+  };
+
+  const handleConfirmReceiptSend = async () => {
+    await sendReceipt(client.id);
+    setReceiptSendConfirmOpen(false);
   };
 
   const handleScheduleChangeDecision = async (decision: "approve" | "reject") => {
@@ -1054,6 +1062,15 @@ export function ClientDetailContent({
                 수정
               </DropdownMenuItem>
               <DropdownMenuItem
+                disabled={isSendingReceipt}
+                onClick={() => setReceiptSendConfirmOpen(true)}
+                className="min-h-[44px] gap-2 rounded-md px-3 py-2 text-[0.82rem] leading-none"
+                data-component={`${dataComponent}_header_menu_send-copayment-receipt`}
+              >
+                <Send className="size-[15px]" strokeWidth={2} />
+                {isSendingReceipt ? "영수증 발송 중..." : "본인부담금 영수증 발송"}
+              </DropdownMenuItem>
+              <DropdownMenuItem
                 disabled={isPreparingScheduleChange}
                 onClick={() => void handleOpenServiceScheduleChange()}
                 className="min-h-[44px] gap-2 rounded-md px-3 py-2 text-[0.82rem] leading-none"
@@ -1119,6 +1136,23 @@ export function ClientDetailContent({
         pendingLabel="재설정 중..."
         isPending={isResettingLink}
         onApprove={() => void handleResetServiceRecordLink()}
+      />
+
+      <ApprovalTwoButtonModal
+        open={receiptSendConfirmOpen}
+        onOpenChange={(open) => {
+          if (!open && !isSendingReceipt) {
+            setReceiptSendConfirmOpen(false);
+          }
+        }}
+        data-component={`${dataComponent}_receipt-send-approval-modal`}
+        title="본인부담금 영수증 전송"
+        description={`${client.name} 산모님께 본인부담금 영수증 안내 메시지를 보낼까요?`}
+        isDescriptionVisuallyHidden={false}
+        approvalLabel="발송하기"
+        pendingLabel="발송 중..."
+        isPending={isSendingReceipt}
+        onApprove={() => void handleConfirmReceiptSend()}
       />
 
       <ServiceRecordLinkResetResultModal

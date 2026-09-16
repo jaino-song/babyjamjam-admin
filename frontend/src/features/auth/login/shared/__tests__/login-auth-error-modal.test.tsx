@@ -4,17 +4,23 @@ import { LoginAuthErrorModal } from "../login-auth-error-modal";
 
 const mockReplace = jest.fn();
 let authError: string | null = null;
+let returnTo: string | null = null;
 
 jest.mock("next/navigation", () => ({
   useRouter: () => ({ replace: mockReplace }),
   useSearchParams: () => ({
-    get: (key: string) => (key === "authError" ? authError : null),
+    get: (key: string) => {
+      if (key === "authError") return authError;
+      if (key === "returnTo") return returnTo;
+      return null;
+    },
   }),
 }));
 
 beforeEach(() => {
   jest.clearAllMocks();
   authError = null;
+  returnTo = null;
 });
 
 describe("LoginAuthErrorModal", () => {
@@ -24,6 +30,16 @@ describe("LoginAuthErrorModal", () => {
     expect(screen.getByRole("dialog", { name: "관리자 승인 대기 중입니다." })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "확인" }));
     expect(mockReplace).toHaveBeenCalledWith("/login");
+  });
+
+  it("preserves a safe editor return path when dismissing an auth error", () => {
+    authError = "PENDING_APPROVAL";
+    returnTo = "/service-record-admin/client-1";
+    render(<LoginAuthErrorModal />);
+    fireEvent.click(screen.getByRole("button", { name: "확인" }));
+    expect(mockReplace).toHaveBeenCalledWith(
+      "/login?returnTo=%2Fservice-record-admin%2Fclient-1",
+    );
   });
 
   it.each([

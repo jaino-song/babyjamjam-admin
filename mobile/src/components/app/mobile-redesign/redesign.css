@@ -644,6 +644,42 @@ main[data-slot="main-content"]:has([data-slot="dashboard-page"]) > [data-slot="d
   font-weight: 500;
   color: hsl(var(--v3-text-muted));
 }
+.list-filter-toggle {
+  min-height: 30px;
+  margin-left: auto;
+  padding: 4px 8px;
+  border: 0;
+  border-radius: 999px;
+  color: hsl(var(--v3-text-muted));
+  background: transparent;
+  font: inherit;
+  font-size: 0.7rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+.list-filter-toggle:hover,
+.list-filter-toggle[aria-expanded="true"] {
+  color: hsl(var(--v3-primary));
+  background: transparent;
+}
+.message-history-filter-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 0 0 2px;
+}
+.message-history-filter-controls {
+  display: flex;
+  gap: 6px;
+}
+.message-history-filter-controls > * {
+  min-width: 0;
+  flex: 1 1 0;
+}
+.message-history-filter-actions {
+  display: flex;
+  gap: 8px;
+}
 .list-action {
   position: relative;
   min-width: 44px;

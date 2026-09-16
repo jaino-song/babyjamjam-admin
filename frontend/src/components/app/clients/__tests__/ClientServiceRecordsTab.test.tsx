@@ -100,6 +100,18 @@ describe("ClientServiceRecordsTab", () => {
         jest.restoreAllMocks();
     });
 
+    it("presents mobile link controls before basic information and sessions without sending on render", () => {
+        render(<ClientServiceRecordsTab data-component={TEST_COMPONENT}
+            layout="mobile" clientId={100} isLoading={false} isError={false}
+            overview={{ assignments: [createAssignment(1, "none")] }} />);
+        const headings = screen.getAllByRole("heading").map((heading) => heading.textContent);
+        expect(headings.slice(0, 3)).toEqual(["제공기록지 작성 링크", "서비스 기본정보", "회차별 제공기록"]);
+        expect(screen.getByRole("link", { name: "제공기록지 수정" })).toHaveAttribute("href", "/service-record-admin/100");
+        expect(screen.getByRole("button", { name: "제공기록지 링크 발송" })).toBeEnabled();
+        expect(screen.queryByText("수정 이력")).not.toBeInTheDocument();
+        expect(mutateAsync).not.toHaveBeenCalled();
+    });
+
     it("keeps the service-record card containers mounted while loading", () => {
         const { container } = render(
             <ClientServiceRecordsTab data-component={TEST_COMPONENT}

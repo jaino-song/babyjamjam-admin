@@ -23,6 +23,7 @@ import { AllSettingsRedesign } from "@/components/app/mobile-redesign/AllSetting
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import type { MenuGroup } from "@/components/app/mobile-redesign/mockup-data";
+import { useInitialUser } from "@/providers/UserProvider";
 
 /** Canonical data-component base for the /all route. */
 const ALL_PAGE_BASE = "mobile_all_page";
@@ -39,6 +40,8 @@ function safeArrayPayload<T>(payload: unknown): T[] {
 }
 
 export default function AllMenuPage() {
+  const initialUser = useInitialUser();
+  const isOwner = initialUser?.role === "owner";
   const clientsQuery = useAllClients();
   const employeesQuery = useEmployees();
   const messageTemplatesQuery = useMessageTemplates();
@@ -116,11 +119,9 @@ export default function AllMenuPage() {
           },
           {
             label: "통계 보고서",
-            href: "/dashboard/analytics",
+            href: "/stats",
             icon: BarChart3,
             tone: "green",
-            disabled: true,
-            statusLabel: "출시 예정",
           },
         ],
       },
@@ -159,6 +160,22 @@ export default function AllMenuPage() {
             valueLoading: pushNotification.isLoading,
             valueSkeletonWidth: "38px",
           },
+          ...(isOwner
+            ? [
+                {
+                  label: "오너 관리자",
+                  href: "/system-admin",
+                  icon: UserCheck,
+                  tone: "purple" as const,
+                },
+                {
+                  label: "홈페이지 관리",
+                  href: "/website-admin",
+                  icon: FileText,
+                  tone: "green" as const,
+                },
+              ]
+            : []),
         ],
       },
     ];
@@ -173,6 +190,7 @@ export default function AllMenuPage() {
     isUnreadInitialLoading,
     pushNotification.isLoading,
     pushNotification.isSubscribed,
+    isOwner,
   ]);
 
   return (
