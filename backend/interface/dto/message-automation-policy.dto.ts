@@ -150,7 +150,7 @@ export class MessageAutomationPoliciesResponseDto {
                     {
                         id: "send-time",
                         label: "발송 시각",
-                        value: `${formatKstHour(SEND_HOUR_KST)} KST`,
+                        value: `규칙별 설정 (기본 ${formatKstHour(SEND_HOUR_KST)} KST)`,
                     },
                 ],
             },

@@ -199,7 +199,8 @@ function getTriggerRuleSummary(rule: MessageTriggerRule) {
   const eventLabel = TRIGGER_EVENT_LABELS[rule.eventType] ?? rule.eventType;
   const recipientLabel = TRIGGER_RECIPIENT_LABELS[rule.recipientType] ?? rule.recipientType;
 
-  return `${eventLabel} · ${formatTriggerOffset(rule)} · ${recipientLabel}`;
+  const timeLabel = rule.offsetType === "IMMEDIATE" ? "" : ` ${rule.sendTime ?? "09:00"} (한국 시간)`;
+  return `${eventLabel} · ${formatTriggerOffset(rule)}${timeLabel} · ${recipientLabel}`;
 }
 
 function getOrderedTriggerRules(rules: MessageTriggerRule[], orderIds: string[]) {

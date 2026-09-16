@@ -978,6 +978,27 @@ describe("MessageTriggerService", () => {
         expect(jobRepository.upsertPendingForRuleGeneration).not.toHaveBeenCalled();
     });
 
+    it.each([undefined, "16:09"])("uses the locked rule time unless a new time is requested (%s)", async (sendTime) => {
+        const { service, ruleRepository } = createService();
+        const staleRule = createRule({ id: "rule-send-time-lock", isActive: false });
+        staleRule.sendTime = "10:00";
+        const rule = createRule({ id: "rule-send-time-lock", isActive: false });
+        rule.sendTime = "14:37";
+        ruleRepository.findById.mockResolvedValueOnce(staleRule).mockResolvedValue(rule);
+        ruleRepository.update.mockImplementation(async (
+            _branchId: string,
+            persisted: MessageTriggerRuleEntity,
+        ) => persisted);
+
+        await service.updateRule(branchId, rule.id, { name: "Changed under lock", sendTime });
+
+        expect(ruleRepository.update).toHaveBeenCalledWith(
+            branchId,
+            expect.objectContaining({ id: rule.id, sendTime: sendTime ?? "14:37", isActive: false }),
+            expect.any(Object),
+        );
+    });
+
     it("clamps a metadata-only update to the locked inactive row after a concurrent parent-off fence", async () => {
         const { service, ruleRepository } = createService();
         const staleActiveRule = createRule({
@@ -1398,6 +1419,17 @@ describe("MessageTriggerService", () => {
         },
     );
 
+    it.each([undefined, "23:59"])("preserves or updates sendTime without losing the generation fence (%s)", async (sendTime) => {
+        const { service, ruleRepository, jobRepository } = createService();
+        const rule = createRule();
+        rule.sendTime = "14:37";
+        ruleRepository.findById.mockResolvedValue(rule);
+        ruleRepository.update.mockImplementation(async (_branch, updated) => updated);
+        await service.updateRule(branchId, rule.id, { name: "시간 검증", ...(sendTime === undefined ? {} : { sendTime }) });
+        expect(ruleRepository.update).toHaveBeenCalledWith(branchId, expect.objectContaining({ sendTime: sendTime ?? "14:37" }), expect.any(Object));
+        expect(jobRepository.cancelPendingByRuleId).toHaveBeenCalledWith(rule.id, "Rule updated");
+    });
+
     it("updateRule cancels the old generation and reconciles the new generation before returning", async () => {
         const { service, internals, ruleRepository, jobRepository } = createService();
         const existingRule = createRule({
@@ -1491,6 +1523,7 @@ describe("MessageTriggerService", () => {
             eventType: existingRule.eventType,
             offsetType: existingRule.offsetType,
             offsetDays: existingRule.offsetDays,
+            sendTime: existingRule.sendTime,
             recipientType: existingRule.recipientType,
             templateKey: existingRule.templateKey,
             isDefault: existingRule.isDefault,
@@ -1537,6 +1570,7 @@ describe("MessageTriggerService", () => {
             eventType: existingRule.eventType,
             offsetType: existingRule.offsetType,
             offsetDays: existingRule.offsetDays,
+            sendTime: existingRule.sendTime,
             recipientType: existingRule.recipientType,
             templateKey: existingRule.templateKey,
             isDefault: existingRule.isDefault,
@@ -4051,6 +4085,31 @@ describe("MessageTriggerService", () => {
             clientId: 1,
             templateKey: MessageTriggerTemplateKey.SERVICE_INFO,
         });
+        } finally {
+            jest.useRealTimers();
+        }
+    });
+
+    it.each([
+        [MessageTriggerOffsetType.SAME_DAY, 0, "00:00", "2026-07-14T15:00:00.000Z"],
+        [MessageTriggerOffsetType.BEFORE_DAYS, 1, "10:37", "2026-07-14T01:37:00.000Z"],
+        [MessageTriggerOffsetType.AFTER_DAYS, 2, "23:59", "2026-07-17T14:59:00.000Z"],
+    ])("schedules %s at configured KST time %s %s", async (offsetType, offsetDays, sendTime, expected) => {
+        jest.useFakeTimers().setSystemTime(new Date("2026-07-09T00:00:00.000Z"));
+        try {
+            const rule = createRule({
+                id: "rule-configured-time",
+                eventType: MessageTriggerEventType.SERVICE_START,
+                offsetType, offsetDays,
+                templateKey: MessageTriggerTemplateKey.SERVICE_INFO,
+            });
+            Object.assign(rule, { sendTime });
+            const sync = createSyncService({ startDate: new Date("2026-07-14T16:30:00.000Z") });
+            sync.ruleRepository.findActiveByEventTypes.mockResolvedValue([rule]);
+            await sync.service.syncClientRulesForClient(branchId, 1, false);
+            const job = sync.jobRepository.upsertPending.mock.calls[0][0];
+            expect(job.scheduledFor.toISOString()).toBe(expected);
+            expect(job.dedupeKey).toContain(expected);
         } finally {
             jest.useRealTimers();
         }

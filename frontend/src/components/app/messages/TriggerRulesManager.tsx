@@ -135,6 +135,7 @@ function getDefaultFormState(isActive = true): RuleFormState {
     eventType: "SERVICE_START",
     offsetType: "BEFORE_DAYS",
     offsetDays: 7,
+    sendTime: "09:00",
     recipientType: "CLIENT",
     templateKey: "SERVICE_INFO",
   };
@@ -257,6 +258,7 @@ function toFormState(rule: MessageTriggerRule | null, isActiveOverride?: boolean
     eventType: rule.eventType,
     offsetType: rule.offsetType,
     offsetDays: rule.offsetDays,
+    sendTime: rule.sendTime ?? "09:00",
     recipientType: rule.recipientType,
     templateKey: rule.templateKey,
   };
@@ -265,6 +267,7 @@ function toFormState(rule: MessageTriggerRule | null, isActiveOverride?: boolean
 function normalizeDto(dto: RuleFormState): CreateMessageTriggerRuleDto {
   return {
     ...dto,
+    sendTime: dto.offsetType === "IMMEDIATE" ? "09:00" : dto.sendTime,
     offsetDays:
       dto.offsetType === "BEFORE_DAYS" || dto.offsetType === "AFTER_DAYS"
         ? Number(dto.offsetDays || 0)
@@ -281,7 +284,8 @@ function getRuleSummary(rule: RuleFormState) {
     timingLabel = `${timingLabel.replace("N", String(rule.offsetDays || 0))}`;
   }
 
-  return `${eventLabel} · ${timingLabel} · ${recipientLabel}`;
+  const timeLabel = rule.offsetType === "IMMEDIATE" ? "" : ` ${rule.sendTime ?? "09:00"} (한국 시간)`;
+  return `${eventLabel} · ${timingLabel}${timeLabel} · ${recipientLabel}`;
 }
 
 function getRuleIcon(eventType: TriggerEventType) {
@@ -871,6 +875,11 @@ export function TriggerRulesManager({
       return;
     }
 
+    if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(dto.sendTime ?? "")) {
+      toast({ variant: "destructive", description: "발송 시각을 입력해 주세요 (한국 시간)." });
+      return;
+    }
+
     if (!dto.name.trim()) {
       toast({ variant: "destructive", description: getUserErrorMessage("규칙 이름을 입력해 주세요") });
       return;
@@ -1204,6 +1213,20 @@ export function TriggerRulesManager({
                           dataComponent={component("trigger-rules-offset")}
                           triggerDataComponent={component("trigger-rules-offset-select")}
                         />
+
+                        {formState.offsetType !== "IMMEDIATE" && (
+                          <TitleTextInputMolecule
+                            id="trigger-rule-send-time"
+                            label="발송 시각 (한국 시간)"
+                            type="time"
+                            step={60}
+                            value={formState.sendTime ?? "09:00"}
+                            disabled={isSelectedSystemRule}
+                            onValueChange={(sendTime) => setFormState((current) => ({ ...current, sendTime }))}
+                            dataComponent={component("trigger-rules-send-time")}
+                            inputDataComponent={component("trigger-rules-send-time_input")}
+                          />
+                        )}
 
                         <TitleSelectMolecule
                           id="trigger-rule-recipient"

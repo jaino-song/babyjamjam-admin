@@ -21,6 +21,7 @@ export class MessageTriggerRuleEntity {
         public isDefault = false,
         public jobsStale = false,
         public isLockedByGlobal = false,
+        public sendTime = "09:00",
     ) {}
 
     static create(params: {
@@ -30,6 +31,7 @@ export class MessageTriggerRuleEntity {
         eventType: MessageTriggerEventType;
         offsetType: MessageTriggerOffsetType;
         offsetDays?: number;
+        sendTime?: string;
         recipientType: MessageTriggerRecipientType;
         templateKey: MessageTriggerTemplateKey;
         isDefault?: boolean;
@@ -50,6 +52,8 @@ export class MessageTriggerRuleEntity {
             now,
             params.isDefault ?? false,
             params.jobsStale ?? false,
+            false,
+            params.sendTime ?? "09:00",
         );
     }
 
@@ -67,6 +71,7 @@ export class MessageTriggerRuleEntity {
         updatedAt: Date,
         isDefault = false,
         jobsStale = false,
+        sendTime = "09:00",
     ): MessageTriggerRuleEntity {
         return new MessageTriggerRuleEntity(
             id,
@@ -82,6 +87,8 @@ export class MessageTriggerRuleEntity {
             updatedAt,
             isDefault,
             jobsStale,
+            false,
+            sendTime,
         );
     }
 
@@ -91,6 +98,7 @@ export class MessageTriggerRuleEntity {
         eventType?: MessageTriggerEventType;
         offsetType?: MessageTriggerOffsetType;
         offsetDays?: number;
+        sendTime?: string;
         recipientType?: MessageTriggerRecipientType;
         templateKey?: MessageTriggerTemplateKey;
     }): void {
@@ -99,6 +107,7 @@ export class MessageTriggerRuleEntity {
         this.eventType = params.eventType ?? this.eventType;
         this.offsetType = params.offsetType ?? this.offsetType;
         this.offsetDays = params.offsetDays ?? this.offsetDays;
+        this.sendTime = params.sendTime ?? this.sendTime;
         this.recipientType = params.recipientType ?? this.recipientType;
         this.templateKey = params.templateKey ?? this.templateKey;
         this.updatedAt = new Date();

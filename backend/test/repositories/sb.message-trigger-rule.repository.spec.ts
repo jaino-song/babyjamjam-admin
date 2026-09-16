@@ -25,6 +25,7 @@ describe("SbMessageTriggerRuleRepository", () => {
         eventType: string;
         offsetType: string;
         offsetDays: number;
+        sendTime: string;
         recipientType: string;
         templateKey: string;
         isDefault: boolean;
@@ -56,6 +57,7 @@ describe("SbMessageTriggerRuleRepository", () => {
         eventType: MessageTriggerEventType.SERVICE_START,
         offsetType: MessageTriggerOffsetType.BEFORE_DAYS,
         offsetDays: 7,
+        sendTime: "09:00",
         recipientType: MessageTriggerRecipientType.CLIENT,
         templateKey: MessageTriggerTemplateKey.SERVICE_INFO,
         isDefault: true,
@@ -90,6 +92,19 @@ describe("SbMessageTriggerRuleRepository", () => {
 
     afterEach(() => {
         jest.clearAllMocks();
+    });
+
+    it("reads and persists the configured send time", async () => {
+        const row = createRow({ sendTime: "14:37" });
+        messageTriggerRuleModel.findFirst.mockResolvedValue(row);
+        messageTriggerRuleModel.update.mockResolvedValue(row);
+        const rule = await repository.findById("branch-1", row.id);
+        expect(rule?.sendTime).toBe("14:37");
+        const saved = await repository.update("branch-1", rule!);
+        expect(saved.sendTime).toBe("14:37");
+        expect(messageTriggerRuleModel.update).toHaveBeenCalledWith(expect.objectContaining({
+            data: expect.objectContaining({ sendTime: "14:37" }),
+        }));
     });
 
     it("findAll includes the fixed global automation alongside branch rules", async () => {
@@ -255,6 +270,7 @@ describe("SbMessageTriggerRuleRepository", () => {
                 eventType: MessageTriggerEventType.SERVICE_END,
                 offsetType: MessageTriggerOffsetType.SAME_DAY,
                 offsetDays: 0,
+                sendTime: "09:00",
                 recipientType: MessageTriggerRecipientType.CLIENT,
                 templateKey: MessageTriggerTemplateKey.SERVICE_END_NOTICE,
                 isDefault: false,
