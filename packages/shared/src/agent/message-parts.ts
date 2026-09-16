@@ -1,6 +1,13 @@
 import type { UIMessage } from "ai";
 import { z } from "zod";
 
+import {
+    AgentTaskOpaqueRefSchema,
+    AgentTaskRevisionSchema,
+    AgentTaskStateSchema,
+} from "./task-types";
+import { CLIENT_WRITE_FIELD_NAMES, AUTOMATION_INPUT_FIELD_NAMES } from "./client-input-policy";
+
 export const AgentRendererNameSchema = z.enum([
     "text",
     "activity",
@@ -12,6 +19,9 @@ export const AgentRendererNameSchema = z.enum([
     "attachment",
     "form",
     "feedback",
+    "task-snapshot",
+    "entity-select",
+    "task-patch",
 ]);
 
 export type AgentRendererName = z.infer<typeof AgentRendererNameSchema>;
@@ -127,6 +137,54 @@ export const AgentFeedbackPartSchema = z.object({
     prompt: z.string().min(1).default("도움이 되었나요?"),
 });
 
+/** Safe reference/status payload for `data-task-snapshot`. */
+export const AgentTaskSnapshotPartSchema = z.object({
+    taskId: AgentTaskOpaqueRefSchema,
+    snapshotRef: AgentTaskOpaqueRefSchema,
+    revision: AgentTaskRevisionSchema,
+    state: AgentTaskStateSchema,
+    fieldStatus: z.array(z.object({
+        field: z.string().min(1),
+        status: z.enum(["missing", "confirmed", "tentative", "confirmed-and-tentative"]),
+    }).strict()),
+}).strict();
+
+/** Structured, server-issued choice payload for `data-entity-select`. */
+export const AgentEntitySelectPartSchema = z.object({
+    taskId: AgentTaskOpaqueRefSchema,
+    choiceSetRef: AgentTaskOpaqueRefSchema,
+    prompt: z.string().trim().min(1).max(500),
+    options: z.array(z.object({
+        optionId: AgentTaskOpaqueRefSchema,
+        label: z.string().trim().min(1).max(300),
+        description: z.string().trim().max(1000).optional(),
+    }).strict()).min(1).max(100),
+}).strict();
+
+export const AgentTaskPatchPartOperationSchema = z.object({
+    op: z.enum(["set", "clear", "mark-tentative"]),
+    field: z.enum([...CLIENT_WRITE_FIELD_NAMES, ...AUTOMATION_INPUT_FIELD_NAMES] as [string, ...string[]]),
+    operationRef: AgentTaskOpaqueRefSchema.optional(),
+    valueRef: AgentTaskOpaqueRefSchema.optional(),
+}).strict();
+
+/**
+ * Chat parts carry an event reference or redacted operation references.  Raw
+ * protected values are intentionally absent from this schema.
+ */
+export const AgentTaskPatchPartSchema = z.object({
+    taskId: AgentTaskOpaqueRefSchema,
+    eventId: AgentTaskOpaqueRefSchema.optional(),
+    expectedRevision: AgentTaskRevisionSchema.optional(),
+    acceptedRevision: AgentTaskRevisionSchema.optional(),
+    currentSnapshotRef: AgentTaskOpaqueRefSchema.optional(),
+    operations: z.array(AgentTaskPatchPartOperationSchema).max(100).optional(),
+}).strict().superRefine((value, context) => {
+    if (!value.eventId && (!value.operations || value.operations.length === 0)) {
+        context.addIssue({ code: "custom", path: ["eventId"], message: "A task patch part needs an event reference or operations" });
+    }
+});
+
 export type AgentDataParts = {
     activity: z.infer<typeof AgentActivityPartSchema>;
     "entity-choice": z.infer<typeof AgentEntityChoicePartSchema>;
@@ -138,6 +196,9 @@ export type AgentDataParts = {
     form: z.infer<typeof AgentFormPartSchema>;
     "form-submit": z.infer<typeof AgentFormSubmitPartSchema>;
     feedback: z.infer<typeof AgentFeedbackPartSchema>;
+    "task-snapshot": z.infer<typeof AgentTaskSnapshotPartSchema>;
+    "entity-select": z.infer<typeof AgentEntitySelectPartSchema>;
+    "task-patch": z.infer<typeof AgentTaskPatchPartSchema>;
 };
 
 export type BjjUITools = Record<string, {
