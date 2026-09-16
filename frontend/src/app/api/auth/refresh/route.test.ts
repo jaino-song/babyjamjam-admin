@@ -111,6 +111,9 @@ describe("POST /api/auth/refresh", () => {
         expect(response.status).toBe(503);
         const body = await response.json();
         expect(body).toMatchObject({ code: "DEPENDENCY_UNAVAILABLE", status: 503 });
+        // EM-STATE-01: an upstream 5xx cannot prove the rotation was not applied.
+        expect(body).toMatchObject({ outcome: "UNKNOWN" });
+        expect(body.recovery).toMatchObject({ action: "CHECK_STATUS" });
         expect(cookieStore.delete).not.toHaveBeenCalled();
     });
 

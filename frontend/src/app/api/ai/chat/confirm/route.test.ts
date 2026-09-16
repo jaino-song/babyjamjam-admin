@@ -4,6 +4,8 @@
 import { cookies } from "next/headers";
 import { NextRequest } from "next/server";
 
+import { createProblemDetails } from "@babyjamjam/shared";
+
 import { POST } from "./route";
 
 jest.mock("next/headers", () => ({
@@ -103,6 +105,53 @@ describe("POST /api/ai/chat/confirm", () => {
             code: "UPSTREAM_INVALID_RESPONSE",
             status: 502,
             outcome: "UNKNOWN",
+        });
+        expect(body.recovery).toMatchObject({ action: "CHECK_STATUS" });
+    });
+
+    it("never claims NOT_APPLIED for an upstream 5xx on this mutation route (EM-STATE-01)", async () => {
+        (globalThis.fetch as jest.Mock).mockResolvedValue(
+            new Response("upstream unavailable", { status: 503 }),
+        );
+
+        const response = await POST(request({ intentId: "intent-1", nonce: "nonce-1" }));
+
+        expect(response.status).toBe(503);
+        expect(response.headers.get("Content-Type")).toBe("application/problem+json");
+        const body = await response.json();
+        expect(body).toMatchObject({
+            code: "DEPENDENCY_UNAVAILABLE",
+            status: 503,
+            outcome: "UNKNOWN",
+        });
+        expect(body.recovery).toMatchObject({ action: "CHECK_STATUS" });
+        expect(JSON.stringify(body)).not.toContain("upstream unavailable");
+    });
+
+    it("propagates a faithful upstream problem body with its registered code and outcome", async () => {
+        const upstreamProblem = createProblemDetails({
+            code: "REQUEST_CONFLICT",
+            requestId: "upstream-confirm-1",
+            outcome: "UNKNOWN",
+        });
+        (globalThis.fetch as jest.Mock).mockResolvedValue(
+            new Response(JSON.stringify(upstreamProblem), {
+                status: 409,
+                headers: { "Content-Type": "application/problem+json" },
+            }),
+        );
+
+        const response = await POST(request({ intentId: "intent-1", nonce: "nonce-1" }));
+
+        expect(response.status).toBe(409);
+        expect(response.headers.get("Content-Type")).toBe("application/problem+json");
+        expect(response.headers.get("X-Request-Id")).toBe("upstream-confirm-1");
+        const body = await response.json();
+        expect(body).toMatchObject({
+            code: "REQUEST_CONFLICT",
+            status: 409,
+            outcome: "UNKNOWN",
+            requestId: "upstream-confirm-1",
         });
         expect(body.recovery).toMatchObject({ action: "CHECK_STATUS" });
     });

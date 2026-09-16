@@ -26,14 +26,6 @@ function isAutoLoginEnabled(value: string | undefined): boolean {
     return value !== "0" && value !== "false";
 }
 
-function hasUpstreamResponse(error: unknown): boolean {
-    return Boolean(
-        error
-        && typeof error === "object"
-        && (error as { response?: unknown }).response,
-    );
-}
-
 export async function POST(request: NextRequest) {
     const refreshToken = request.cookies.get(AUTH_COOKIE_NAMES.refreshToken)?.value;
     if (!refreshToken) {
@@ -73,11 +65,12 @@ export async function POST(request: NextRequest) {
             clearAuthSessionCookies(cookieStore);
         }
 
-        // An upstream rejection is a known non-application (NOT_APPLIED); a
-        // transport failure leaves the rotation result unconfirmable (UNKNOWN,
-        // which carries CHECK_STATUS recovery in the problem contract).
-        const outcome = hasUpstreamResponse(error) ? "NOT_APPLIED" : "UNKNOWN";
-        const result = upstreamStatusProblemResponse(status, "refresh app session", outcome);
+        // EM-STATE-01: an explicit upstream 4xx rejection is a known
+        // non-application (NOT_APPLIED), but an upstream 5xx or a transport
+        // failure leaves the rotation result unconfirmable (UNKNOWN, which
+        // carries CHECK_STATUS recovery in the problem contract). The helper
+        // derives the outcome from the status; the route must not pre-stamp it.
+        const result = upstreamStatusProblemResponse(status, "refresh app session", undefined, "mutation");
         result.headers.set("Cache-Control", "no-store, max-age=0");
         return result;
     }
