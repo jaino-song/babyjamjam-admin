@@ -24,6 +24,7 @@ import {
 } from "./evaluation-policy";
 import { createHarnessValidationAdapter, createNoNetworkMockTransport } from "./mock-transport";
 import { spawnSync } from "node:child_process";
+import { createRequire } from "node:module";
 import { delimiter, resolve } from "node:path";
 
 export interface ConversationEvaluationRunOptions {
@@ -66,12 +67,17 @@ export interface ConversationEvaluationReportInput {
 
 export function formatConversationEvaluationReport(input: ConversationEvaluationReportInput): string {
     const { summary, adapter, transport } = input;
+    const observedStructuredEvents = summary.results.reduce((total, result) => total + result.observed.structuredEvents, 0);
     const lines = [
         adapter.mode === "product" ? "Deterministic product runtime evaluation" : "Deterministic harness validation",
         `adapter mode: ${adapter.mode}`,
         ...(adapter.mode === "product"
             ? [
                 "evidence source: injected AgentRuntimeService + AgentTaskService with deterministic in-memory state/events",
+                "observed fields: completion, currentState, acceptedDraftState, structuredEvents, assistantMessages, transport",
+                "unavailable fields: actionExecutionLedger, sends, authorityOutcomes (Phase 6/7 product instrumentation is not connected)",
+                "state evidence: task snapshots and accepted event receipts; protected values, random IDs, and wall-clock timestamps are omitted",
+                `observed structured events: ${observedStructuredEvents}`,
                 "future lifecycle ledgers and paid provider quality: not_evaluated",
             ]
             : ["real product/model quality not evaluated"]),
@@ -110,18 +116,19 @@ export async function runDeterministicHarness(): Promise<string> {
  */
 function configureBackendModuleAliases(): void {
     const backendRoot = resolve(__dirname, "../../backend");
+    const moduleRequire = createRequire(__filename);
     const current = process.env["NODE_PATH"]?.trim();
     process.env["NODE_PATH"] = current ? `${backendRoot}${delimiter}${current}` : backendRoot;
     // Node's supported NODE_PATH lookup handles the backend's existing
     // application/domain/infrastructure/interface/module aliases. Keep the
     // evaluator isolated to this invocation instead of monkey-patching the
     // private Module._resolveFilename hook.
-    const moduleApi = require("node:module") as { _initPaths?: () => void };
+    const moduleApi = moduleRequire("node:module") as { _initPaths?: () => void };
     moduleApi._initPaths?.();
     // The repository intentionally does not depend on tsconfig-paths. Register
     // a narrow transpile-only hook for backend classes loaded by this CLI after
     // the alias resolver is installed; the normal harness remains untouched.
-    const tsNodeApi = require(require.resolve("ts-node", { paths: [backendRoot] })) as {
+    const tsNodeApi = moduleRequire(moduleRequire.resolve("ts-node", { paths: [backendRoot] })) as {
         register: (options: { transpileOnly: boolean; compilerOptions: Record<string, unknown> }) => void;
     };
     // ts-node's CLI service is type-checking the entrypoint. Replace only its

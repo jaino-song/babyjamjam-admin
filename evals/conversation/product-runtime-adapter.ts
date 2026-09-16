@@ -42,8 +42,10 @@ import type {
     ConversationRuntimeObservation,
     ConversationTransport,
     RuntimeSafetyError,
+    RuntimeStructuredEvent,
 } from "./evaluation-policy";
 import type { ConversationScenario, ConversationTurn, InputEvent } from "./cases";
+import { isQuestionLike, conversationMessageEventId, conversationMessageHash } from "../../backend/application/agent/conversation-task-policy";
 
 /**
  * The product projection intentionally excludes `scenario.oracle`.  A driver
@@ -141,7 +143,7 @@ function transportSafetyError(transport: ConversationTransport, observedAt: stri
     // Deterministic product runs are intentionally offline. Read the injected
     // counter after all driver calls; do not trust a driver-supplied observation
     // field to claim that no network request occurred.
-    if (transport.networkCalls === 0 && transport.calls >= transport.networkCalls) return undefined;
+    if (transport.networkCalls === 0 && transport.calls === 0) return undefined;
     return {
         code: "other",
         message: `Deterministic product bridge observed ${transport.networkCalls} network calls across ${transport.calls} transport calls`,
@@ -252,6 +254,177 @@ function cloneEvent(event: AgentTaskEventEntity): AgentTaskEventEntity {
 
 function activeSlotForProductStatus(status: ProductTaskStatus): number | null {
     return ["collecting", "confirming_target", "review_ready"].includes(status) ? 1 : null;
+}
+
+const PRODUCT_LIVE_TASK_STATES = new Set<ProductTaskStatus>([
+    "collecting",
+    "confirming_target",
+    "review_ready",
+    "awaiting_approval",
+    "paused",
+    "executing",
+    "reconciling",
+]);
+
+/**
+ * Keep product evidence structural.  The task entity itself contains
+ * protected customer values, so every observation is made from the safe task
+ * projection and never copies confirmed/tentative values into an evaluation
+ * record.
+ */
+function safeProductTask(task: AgentTaskEntity) {
+    const confirmed = new Set(Object.keys(task.draft.confirmed));
+    const tentative = new Set(Object.keys(task.draft.tentative));
+    const cleared = new Set(task.draft.clearedFields);
+    const fields = [...new Set([...confirmed, ...tentative, ...cleared])].sort().map((field) => ({
+        field,
+        status: confirmed.has(field) && tentative.has(field)
+            ? "confirmed-and-tentative" as const
+            : confirmed.has(field)
+                ? "confirmed" as const
+                : tentative.has(field)
+                    ? "tentative" as const
+                    : "missing" as const,
+    }));
+    return {
+        fieldStatus: fields,
+        clearedFields: [...cleared],
+        revision: task.revision,
+        issues: task.draft.issues.map(({ code, field, severity }) => ({ code, field, severity })),
+        choiceSets: task.draft.choiceSets.map(() => ({})),
+        target: task.targetRef !== null && task.targetVersion !== null ? {} : null,
+    };
+}
+
+function draftStatusForProductTask(status: ProductTaskStatus): "pending" | "accepted" | "rejected" {
+    if (status === "completed") return "accepted";
+    if (status === "failed" || status === "cancelled") return "rejected";
+    return "pending";
+}
+
+function draftObservationForProductTask(task: AgentTaskEntity, observedAt: string) {
+    const safe = safeProductTask(task);
+    const fields: Record<string, string> = {};
+    for (const field of safe.fieldStatus) {
+        if (field.status !== "missing") fields[field.field] = field.status;
+    }
+    // A clear marker is safe structural evidence and differs from an omitted
+    // field without exposing the value that was cleared.
+    for (const field of safe.clearedFields) fields[field] = "cleared";
+    return {
+        status: draftStatusForProductTask(task.status),
+        fields,
+        // Revision is the stable server version.  Snapshot UUIDs and wall
+        // clock values are intentionally excluded from semantic evidence.
+        version: String(safe.revision),
+        observedAt,
+    } as const;
+}
+
+function activeProductTask(tasks: readonly AgentTaskEntity[]): AgentTaskEntity | null {
+    return tasks
+        .filter((task) => task.purgedAt === null && task.expiresAt.getTime() > Date.now() && PRODUCT_LIVE_TASK_STATES.has(task.status) && task.activeSlot === 1)
+        .sort((left, right) => right.revision - left.revision || right.updatedAt.getTime() - left.updatedAt.getTime() || left.taskId.localeCompare(right.taskId))[0] ?? null;
+}
+
+function latestProductTask(tasks: readonly AgentTaskEntity[]): AgentTaskEntity | null {
+    return tasks
+        .filter((task) => task.purgedAt === null && task.expiresAt.getTime() > Date.now())
+        .sort((left, right) => right.updatedAt.getTime() - left.updatedAt.getTime() || right.revision - left.revision || left.taskId.localeCompare(right.taskId))[0] ?? null;
+}
+
+function currentStateObservationForProductTasks(
+    tasks: readonly AgentTaskEntity[],
+    observedAt: string,
+    streamCompleted: boolean,
+): ConversationRuntimeObservation["currentState"] {
+    const visibleTasks = tasks.filter((task) => task.purgedAt === null && task.expiresAt.getTime() > Date.now());
+    const task = activeProductTask(visibleTasks) ?? latestProductTask(visibleTasks);
+    if (!task) {
+        return {
+            phase: streamCompleted ? "answered" : "blocked",
+            version: streamCompleted ? "runtime" : "runtime-error",
+            facts: {
+                taskCount: String(visibleTasks.length),
+                runtime: streamCompleted ? "answered" : "blocked",
+            },
+            requiredTokens: [],
+            observedAt,
+        };
+    }
+
+    const safe = safeProductTask(task);
+    const requiredTokens = safe.issues
+        .flatMap((issue) => issue.field ? [issue.field] : [])
+        .sort();
+    return {
+        phase: task.status,
+        version: String(task.revision),
+        facts: {
+            capabilityId: task.capabilityId,
+            taskState: task.status,
+            taskRevision: String(task.revision),
+            taskCount: String(visibleTasks.length),
+            activeSlot: task.activeSlot === null ? "none" : String(task.activeSlot),
+            target: safe.target ? "present" : "absent",
+            choiceSetCount: String(safe.choiceSets.length),
+            issueCount: String(safe.issues.length),
+        },
+        requiredTokens,
+        observedAt,
+    };
+}
+
+function completionForProductTask(
+    task: AgentTaskEntity | null,
+    streamCompleted: boolean,
+): ConversationRuntimeObservation["completion"] {
+    if (!streamCompleted) return "blocked";
+    if (!task) return "completed";
+    if (task.status === "completed") return "completed";
+    if (task.status === "failed" || task.status === "cancelled") return "blocked";
+    return "awaiting_user";
+}
+
+function structuredEventType(operation: string, turnText: string): RuntimeStructuredEvent["type"] | undefined {
+    if (operation === "create") return "draft_requested";
+    if (operation === "patch") return "correction_applied";
+    if (operation === "conversation:intake") return isQuestionLike(turnText) ? "question_asked" : "fact_observed";
+    if (operation.startsWith("choices:") && operation.endsWith(":empty")) return "result_unknown";
+    if (operation.startsWith("choices:")) return "target_choice_required";
+    if (operation === "command:select-target") return "fact_observed";
+    if (operation.startsWith("command:")) return "checkpoint_reloaded";
+    return undefined;
+}
+
+function structuredObservationsForEvents(
+    events: readonly AgentTaskEventEntity[],
+    turnText: string,
+    observedAt: string,
+): ConversationRuntimeObservation["structuredEvents"] {
+    return events.flatMap((event) => {
+        const type = structuredEventType(event.operation, turnText);
+        return type ? [{ type, value: event.operation, observedAt }] : [];
+    });
+}
+
+function textFromStreamChunk(chunk: unknown): string {
+    if (!chunk || typeof chunk !== "object" || Array.isArray(chunk)) return "";
+    const value = chunk as Record<string, unknown>;
+    if (value["type"] === "text-delta" && typeof value["delta"] === "string") return value["delta"];
+    if (value["type"] === "text" && typeof value["text"] === "string") return value["text"];
+    return "";
+}
+
+function textFromPersistedAssistant(message: unknown): string {
+    if (!message || typeof message !== "object" || Array.isArray(message)) return "";
+    const parts = (message as Record<string, unknown>)["parts"];
+    if (!Array.isArray(parts)) return "";
+    return parts.flatMap((part) => {
+        if (!part || typeof part !== "object" || Array.isArray(part)) return [];
+        const value = part as Record<string, unknown>;
+        return value["type"] === "text" && typeof value["text"] === "string" ? [value["text"]] : [];
+    }).join("");
 }
 
 function productTaskTombstone(task: AgentTaskEntity) {
@@ -634,7 +807,13 @@ class DeterministicProductSessionRepository implements IAgentSessionRepository {
     async list(owner: AgentSessionOwner) {
         return [...this.sessions.values()]
             .filter((session) => session.userId === owner.userId && session.branchId === owner.branchId && !session.archivedAt && session.expiresAt > new Date())
-            .map(({ messages: _messages, selectedEntities: _selectedEntities, summary: _summary, ...summary }) => summary);
+            .map((session) => {
+                const { messages, selectedEntities, summary, ...rest } = session;
+                void messages;
+                void selectedEntities;
+                void summary;
+                return rest;
+            });
     }
 
     async findOwned(id: string, owner: AgentSessionOwner): Promise<AgentSessionEntity | null> {
@@ -752,7 +931,6 @@ type ProductCapabilityDefinition = {
 };
 
 function productCapability(name: ProductCapabilityDefinition["meta"]["name"]): ProductCapabilityDefinition {
-    const write = name === "clients.create" || name === "clients.update";
     if (name === "clients.search") {
         return {
             meta: { name, domain: "clients", version: "1.0.0", description: "Search clients", risk: "read", requiredRoles: ["owner", "admin", "manager"], renderer: "activity", flagKey: "agent.capability.clients.search", sideEffect: false },
@@ -785,6 +963,7 @@ export interface DeterministicProductRuntimeEvidence {
     readonly eventCount: number;
     readonly replayedMessageIds: readonly string[];
     readonly runtimeErrors: readonly string[];
+    readonly runtimeRestarts: number;
 }
 
 const PRODUCT_PRINCIPAL: VerifiedTenantPrincipal = {
@@ -803,17 +982,19 @@ export class DeterministicProductRuntimeHost implements ProductRuntimeDriver {
     readonly taskRepository = new DeterministicProductTaskRepository();
     readonly sessionRepository = new DeterministicProductSessionRepository(this.taskRepository);
     readonly taskService: AgentTaskService;
-    readonly runtimeService: AgentRuntimeService;
+    runtimeService: AgentRuntimeService;
     readonly principal = PRODUCT_PRINCIPAL;
 
-    private sessionService: AgentSessionService;
+    private sessionService!: AgentSessionService;
+    private readonly buildRuntimeService: () => AgentRuntimeService;
     private sessionId: string | null = null;
     private runtimeInvocations = 0;
     private modelInvocations = 0;
     private taskServiceReads = 0;
-    private readonly seenMessageIds = new Set<string>();
     private readonly replayedMessageIds = new Set<string>();
     private readonly runtimeErrors: string[] = [];
+    private runtimeRestarts = 0;
+    private lastStreamCompleted = false;
 
     constructor() {
         const capabilities = (["clients.create", "clients.update", "clients.search", "clients.get"] as const).map(productCapability);
@@ -822,7 +1003,10 @@ export class DeterministicProductRuntimeHost implements ProductRuntimeDriver {
             get: (name: string) => capabilities.find((capability) => capability.meta.name === name) ?? (() => { throw new Error(`Unknown product capability ${name}`); })(),
         };
         const config = {
-            get: <T>(_key: string): T | undefined => undefined,
+            get: <T>(key: string): T | undefined => {
+                void key;
+                return undefined;
+            },
         };
         const flags = {
             getSnapshot: async () => ({
@@ -856,26 +1040,44 @@ export class DeterministicProductRuntimeHost implements ProductRuntimeDriver {
             start: async () => ({ id: randomUUID(), startedAt: Date.now(), userId: this.principal.userId, branchId: this.principal.branchId }),
             finish: async () => undefined,
         };
-        this.sessionService = new AgentSessionService(
-            this.sessionRepository,
-            config as never,
-            { holdsLease: () => true } as never,
-            this.taskRepository,
-        );
-        const orchestrator = new ConversationTaskOrchestratorService(this.taskService, policy);
-        const contextAssembler = new ConversationContextAssemblerService(this.taskService);
-        this.runtimeService = new AgentRuntimeService(
-            registry as never,
-            flags as never,
-            this.sessionService,
-            modelFactory as never,
-            router as never,
-            traces as never,
-            undefined,
-            undefined,
-            contextAssembler,
-            orchestrator,
-        );
+        this.buildRuntimeService = () => {
+            // AgentRuntimeService and its task orchestrator are process-local
+            // collaborators. Recreate them on a host restart while retaining
+            // the repository/session maps that hold durable evidence.
+            this.sessionService = new AgentSessionService(
+                this.sessionRepository,
+                config as never,
+                { holdsLease: () => true } as never,
+                this.taskRepository,
+            );
+            const orchestrator = new ConversationTaskOrchestratorService(this.taskService, policy);
+            const contextAssembler = new ConversationContextAssemblerService(this.taskService);
+            return new AgentRuntimeService(
+                registry as never,
+                flags as never,
+                this.sessionService,
+                modelFactory as never,
+                router as never,
+                traces as never,
+                undefined,
+                undefined,
+                contextAssembler,
+                orchestrator,
+            );
+        };
+        this.runtimeService = this.buildRuntimeService();
+    }
+
+    /** Simulate a process restart without deleting durable task/session state. */
+    restart(): void {
+        this.runtimeService = this.buildRuntimeService();
+        this.runtimeRestarts += 1;
+        this.lastStreamCompleted = false;
+    }
+
+    /** Alias used by restart-oriented product tests. */
+    restartProcess(): void {
+        this.restart();
     }
 
     getEvidence(): DeterministicProductRuntimeEvidence {
@@ -883,30 +1085,55 @@ export class DeterministicProductRuntimeHost implements ProductRuntimeDriver {
             runtimeInvocations: this.runtimeInvocations,
             modelInvocations: this.modelInvocations,
             taskServiceReads: this.taskServiceReads,
-            acceptedTaskIds: this.taskRepository.snapshotTasks({ ...this.principal, sessionId: this.sessionId ?? "" }).filter((task) => task.purgedAt === null).map((task) => task.taskId),
+            acceptedTaskIds: this.taskRepository.snapshotTasks({ ...this.principal, sessionId: this.sessionId ?? "" }).filter((task) => task.purgedAt === null && task.expiresAt.getTime() > Date.now()).map((task) => task.taskId),
             eventCount: this.taskRepository.snapshotEvents(this.sessionId ? { ...this.principal, sessionId: this.sessionId } : undefined).length,
             replayedMessageIds: [...this.replayedMessageIds],
             runtimeErrors: [...this.runtimeErrors],
+            runtimeRestarts: this.runtimeRestarts,
         };
     }
 
-    async reset(_context?: Parameters<NonNullable<ProductRuntimeDriver["reset"]>>[0]): Promise<void> {
+    async reset(context?: Parameters<NonNullable<ProductRuntimeDriver["reset"]>>[0]): Promise<void> {
+        void context;
         this.taskRepository.clear();
         this.sessionRepository.clear();
         this.sessionId = (await this.sessionService.create(this.principal, "ko", "deterministic-product-v1", "conversation-product-v1")).id;
         this.runtimeInvocations = 0;
         this.modelInvocations = 0;
         this.taskServiceReads = 0;
-        this.seenMessageIds.clear();
         this.replayedMessageIds.clear();
         this.runtimeErrors.length = 0;
+        this.runtimeRestarts = 0;
+        this.lastStreamCompleted = false;
+        // Reset starts a fresh deterministic session; construct the runtime
+        // against that session service before the first turn.
+        this.runtimeService = this.buildRuntimeService();
     }
 
     async runTurn(context: ProductRuntimeTurnContext): Promise<ConversationRuntimeObservation | void> {
         const messageEvent = context.turn.inputEvents.find((event): event is Extract<InputEvent, { type: "user_message" }> => event.type === "user_message");
         if (!messageEvent || !this.sessionId) return undefined;
         this.runtimeInvocations += 1;
-        const replayAttempt = this.seenMessageIds.has(context.turn.id);
+        if (context.turn.inputEvents.some((event) => event.type === "reload")) this.restart();
+        const scope = { ...this.principal, sessionId: this.sessionId };
+        const intakeEventId = conversationMessageEventId({
+            userId: this.principal.userId,
+            branchId: this.principal.branchId,
+            sessionId: this.sessionId,
+            messageId: context.turn.id,
+        });
+        const requestHash = conversationMessageHash({
+            userId: this.principal.userId,
+            branchId: this.principal.branchId,
+            sessionId: this.sessionId,
+            messageId: context.turn.id,
+            text: messageEvent.text,
+        });
+        const beforeEvents = this.taskRepository.snapshotEvents(scope);
+        const beforeEventIds = new Set(beforeEvents.map((event) => event.id));
+        const priorIntake = beforeEvents.find((event) => event.clientEventId === intakeEventId);
+        const replayAttempt = priorIntake?.requestHash === requestHash;
+        const observedAt = context.clock.now;
         try {
             const streamResult = await this.runtimeService.stream({
                 principal: this.principal,
@@ -915,32 +1142,72 @@ export class DeterministicProductRuntimeHost implements ProductRuntimeDriver {
                 messages: [{ id: context.turn.id, role: "user", parts: [{ type: "text", text: messageEvent.text }] }] as never,
             });
             const reader = streamResult.stream.getReader();
-            while (!(await reader.read()).done) {
+            const chunks: unknown[] = [];
+            while (true) {
+                const next = await reader.read();
+                if (next.done) break;
+                chunks.push(next.value);
                 // Drain the actual UI stream so the runtime's onFinish persists
                 // its assistant message and finalizes the trace.
             }
             this.taskServiceReads += 1;
-            const tasks = await this.taskService.listForConversation(this.principal, this.sessionId);
+            await this.taskService.listForConversation(this.principal, this.sessionId);
+            const tasks = this.taskRepository.snapshotTasks(scope);
+            const afterEvents = this.taskRepository.snapshotEvents(scope);
+            const acceptedEvents = afterEvents.filter((event) => !beforeEventIds.has(event.id));
+            const session = this.sessionRepository.sessions.get(this.sessionId);
+            const persistedAssistant = [...(session?.messages ?? [])]
+                .reverse()
+                .find((message) => message.role === "assistant");
+            const streamedText = chunks.map(textFromStreamChunk).join("");
+            const assistantText = streamedText || textFromPersistedAssistant(persistedAssistant);
             if (replayAttempt) this.replayedMessageIds.add(context.turn.id);
-            this.seenMessageIds.add(context.turn.id);
-            // The evaluator intentionally leaves lifecycle outcomes absent until
-            // a future-phase ledger is connected. This assistant message proves
-            // only that the real deterministic stream completed.
+            this.lastStreamCompleted = true;
+            const task = activeProductTask(tasks) ?? latestProductTask(tasks);
             return {
-                assistantMessages: [{ turnId: context.turn.id, text: `product runtime stream (${tasks.length} task${tasks.length === 1 ? "" : "s"})` }],
+                completion: completionForProductTask(task, true),
+                currentState: currentStateObservationForProductTasks(tasks, observedAt, true),
+                acceptedDraftState: task ? draftObservationForProductTask(task, observedAt) : null,
+                structuredEvents: structuredObservationsForEvents(acceptedEvents, messageEvent.text, observedAt),
+                ...(assistantText ? { assistantMessages: [{ turnId: context.turn.id, text: assistantText }] } : {}),
             };
         } catch (error) {
-            const message = error instanceof Error ? error.message : String(error);
-            this.runtimeErrors.push(message);
-            return { assistantMessages: [{ turnId: context.turn.id, text: "product runtime refused the turn" }] };
+            // Preserve only a bounded error class in evidence. Runtime text is
+            // read from the real stream/persisted message on success and is
+            // never replaced with adapter-authored prose on failure.
+            const errorCode = error instanceof Error ? error.name : "UnknownError";
+            this.runtimeErrors.push(errorCode);
+            this.lastStreamCompleted = false;
+            const tasks = this.taskRepository.snapshotTasks(scope);
+            const afterEvents = this.taskRepository.snapshotEvents(scope);
+            const acceptedEvents = afterEvents.filter((event) => !beforeEventIds.has(event.id));
+            const task = activeProductTask(tasks) ?? latestProductTask(tasks);
+            return {
+                completion: completionForProductTask(task, false),
+                currentState: currentStateObservationForProductTasks(tasks, observedAt, false),
+                acceptedDraftState: task ? draftObservationForProductTask(task, observedAt) : null,
+                structuredEvents: structuredObservationsForEvents(acceptedEvents, messageEvent.text, observedAt),
+                safetyErrors: [{ code: "other", message: `Product runtime failed with ${errorCode}`, observedAt }],
+            };
         }
     }
 
-    async inspect(): Promise<ConversationRuntimeObservation | void> {
+    async inspect(context: {
+        readonly scenario: ProductScenarioProjection;
+        readonly clock: ConversationRuntimeContext["clock"];
+        readonly transport: ConversationTransport;
+    }): Promise<ConversationRuntimeObservation | void> {
         if (!this.sessionId) return undefined;
         this.taskServiceReads += 1;
         await this.taskService.listForConversation(this.principal, this.sessionId);
-        return undefined;
+        const scope = { ...this.principal, sessionId: this.sessionId };
+        const tasks = this.taskRepository.snapshotTasks(scope);
+        const task = activeProductTask(tasks) ?? latestProductTask(tasks);
+        return {
+            completion: completionForProductTask(task, this.lastStreamCompleted),
+            currentState: currentStateObservationForProductTasks(tasks, context.clock.now, this.lastStreamCompleted),
+            acceptedDraftState: task ? draftObservationForProductTask(task, context.clock.now) : null,
+        };
     }
 }
 

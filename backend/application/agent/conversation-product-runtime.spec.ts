@@ -1,4 +1,4 @@
-import { CONVERSATION_EVAL_CASES } from "../../../evals/conversation/cases";
+import { CONVERSATION_EVAL_CASES, type ConversationScenario } from "../../../evals/conversation/cases";
 import { createDeterministicClock, evaluateConversationCase } from "../../../evals/conversation/evaluation-policy";
 import { createNoNetworkMockTransport } from "../../../evals/conversation/mock-transport";
 import {
@@ -112,21 +112,69 @@ describe("deterministic product runtime bridge", () => {
             transport,
         };
 
-        await driver.runTurn(context);
+        const firstObservation = await driver.runTurn(context);
         const first = driver.getEvidence();
         expect(first.runtimeInvocations).toBe(1);
         expect(first.modelInvocations).toBe(1);
         expect(first.taskServiceReads).toBeGreaterThan(0);
         expect(first.acceptedTaskIds).toHaveLength(1);
         expect(first.eventCount).toBe(1);
+        expect(firstObservation?.currentState).toEqual(expect.objectContaining({
+            phase: "collecting",
+            facts: expect.objectContaining({ taskState: "collecting", taskRevision: "1" }),
+        }));
+        expect(firstObservation?.acceptedDraftState).toEqual(expect.objectContaining({
+            status: "pending",
+            fields: expect.objectContaining({ name: "confirmed", phone: "confirmed" }),
+            version: "1",
+        }));
+        expect(firstObservation?.structuredEvents).toEqual([
+            expect.objectContaining({ type: "draft_requested", value: "create" }),
+        ]);
+        expect(firstObservation?.assistantMessages).toEqual([
+            expect.objectContaining({ turnId: turn.id, text: expect.stringContaining("결정론적 제품 런타임 응답") }),
+        ]);
 
-        await driver.runTurn(context);
+        // Recreate process-local runtime collaborators while retaining the
+        // repository/session maps. The durable intake receipt must still
+        // classify the retry as a replay and avoid a second task/event.
+        driver.restart();
+        const replayObservation = await driver.runTurn(context);
         const replay = driver.getEvidence();
         expect(replay.runtimeInvocations).toBe(2);
         expect(replay.modelInvocations).toBe(2);
         expect(replay.acceptedTaskIds).toEqual(first.acceptedTaskIds);
         expect(replay.eventCount).toBe(first.eventCount);
         expect(replay.replayedMessageIds).toEqual([turn.id]);
+        expect(replay.runtimeRestarts).toBe(1);
+        expect(replayObservation?.structuredEvents).toEqual([]);
+        expect(replayObservation?.acceptedDraftState).toEqual(firstObservation?.acceptedDraftState);
         expect(transport.networkCalls).toBe(0);
+    });
+
+    it("keeps semantic product observations invariant when fixture oracle text changes", async () => {
+        const base = CONVERSATION_EVAL_CASES[8]!;
+        const changed = {
+            ...base,
+            oracle: {
+                ...base.oracle,
+                completion: base.oracle.completion === "completed" ? "blocked" as const : "completed" as const,
+                currentState: {
+                    ...base.oracle.currentState,
+                    phase: "oracle-perturbed",
+                },
+                requiredEvents: [],
+            },
+        };
+        const run = async (scenario: ConversationScenario) => {
+            const transport = createNoNetworkMockTransport();
+            const driver = createDeterministicProductRuntimeDriver();
+            const adapter = createProductRuntimeAdapter({ driver });
+            return adapter.run({ case: scenario, clock: createDeterministicClock(), transport });
+        };
+
+        const originalObservation = await run(base);
+        const changedObservation = await run(changed);
+        expect(changedObservation).toEqual(originalObservation);
     });
 });

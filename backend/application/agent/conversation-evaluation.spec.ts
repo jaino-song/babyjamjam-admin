@@ -92,6 +92,37 @@ describe("deterministic multi-turn conversation evaluation foundation", () => {
         ]));
     });
 
+    it("fails when supplied state mismatches even if a future ledger is unavailable", async () => {
+        const { scenario, observation } = await harnessObservation(8);
+        const result = evaluateConversationCase(scenario, {
+            ...observation,
+            currentState: {
+                ...observation.currentState!,
+                phase: "unexpected-state",
+            },
+            actionExecutionLedger: undefined,
+        });
+
+        expect(result.status).toBe("failed");
+        expect(result.failures).toEqual(expect.arrayContaining([
+            expect.objectContaining({ code: "current_state_mismatch" }),
+            expect.objectContaining({ code: "missing_observation" }),
+        ]));
+    });
+
+    it("reports not_evaluated when only future-phase evidence is unavailable", async () => {
+        const { scenario, observation } = await harnessObservation(8);
+        const result = evaluateConversationCase(scenario, {
+            ...observation,
+            actionExecutionLedger: undefined,
+            sends: undefined,
+            authorityOutcomes: undefined,
+        });
+
+        expect(result.status).toBe("not_evaluated");
+        expect(result.failures.every((failure) => failure.code === "missing_observation")).toBe(true);
+    });
+
     it("fails a no-consent send even when the assistant claims success", async () => {
         const { scenario, observation } = await harnessObservation(36);
         const result = evaluateConversationCase(scenario, {
