@@ -486,12 +486,29 @@ const MODEL_LITERAL_VALUE_SCHEMAS: Record<ClientModelLiteralField, z.ZodTypeAny>
 export const ClientModelValueReferenceSchema = z.object({ valueRef: z.uuid() }).strict();
 export type ClientModelValueReference = z.infer<typeof ClientModelValueReferenceSchema>;
 
-const MODEL_REFERENCE_FIELD_NAMES = CLIENT_WRITE_FIELD_NAMES.filter(
-    (field): field is Exclude<ClientWriteField, ClientModelLiteralField> =>
-        !(CLIENT_MODEL_LITERAL_FIELD_NAMES as readonly string[]).includes(field),
-) as unknown as readonly [Exclude<ClientWriteField, ClientModelLiteralField>, ...Exclude<ClientWriteField, ClientModelLiteralField>[]];
-export const ClientModelReferenceFieldSchema = z.enum(MODEL_REFERENCE_FIELD_NAMES);
-export type ClientModelReferenceField = z.infer<typeof ClientModelReferenceFieldSchema>;
+/**
+ * Explicitly frozen reference vocabulary. Date fields appear here as well as
+ * in the literal vocabulary so a server-captured approximate date (for
+ * example, “3월 초”) can remain a protected reference while exact dates use
+ * the constrained literal schema above.
+ */
+export const CLIENT_MODEL_REFERENCE_FIELD_NAMES = [
+    "name",
+    "address",
+    "phone",
+    "type",
+    "fullPrice",
+    "grant",
+    "actualPrice",
+    "startDate",
+    "endDate",
+    "birthday",
+    "dueDate",
+    "birthDate",
+    "areaId",
+] as const;
+export type ClientModelReferenceField = (typeof CLIENT_MODEL_REFERENCE_FIELD_NAMES)[number];
+export const ClientModelReferenceFieldSchema = z.enum(CLIENT_MODEL_REFERENCE_FIELD_NAMES);
 
 function modelLiteralVariants(operation: "set" | "mark-tentative") {
     return CLIENT_MODEL_LITERAL_FIELD_NAMES.map((field) => z.object({
@@ -502,7 +519,7 @@ function modelLiteralVariants(operation: "set" | "mark-tentative") {
 }
 
 function modelReferenceVariants(operation: "set" | "mark-tentative") {
-    return MODEL_REFERENCE_FIELD_NAMES.map((field) => z.object({
+    return CLIENT_MODEL_REFERENCE_FIELD_NAMES.map((field) => z.object({
         op: z.literal(operation),
         field: z.literal(field),
         valueRef: z.uuid(),
@@ -518,8 +535,17 @@ const modelDiscardVariants = CLIENT_WRITE_FIELD_NAMES.map((field) => z.object({
     field: z.literal(field),
 }).strict()) as unknown as readonly [z.ZodTypeAny, ...z.ZodTypeAny[]];
 
+/** Publicly useful narrow shape; runtime Zod validation remains authoritative. */
+export type ClientModelTaskOperation =
+    | { op: "set"; field: ClientModelLiteralField; value: string | number | boolean }
+    | { op: "mark-tentative"; field: ClientModelLiteralField; value: string | number | boolean }
+    | { op: "set"; field: ClientModelReferenceField; valueRef: string }
+    | { op: "mark-tentative"; field: ClientModelReferenceField; valueRef: string }
+    | { op: "clear"; field: ClientClearableField }
+    | { op: "discard-change"; field: ClientWriteField };
+
 /** Independent finite schema used for model-facing task tools. */
-export const ClientModelTaskOperationSchema = z.union([
+const ClientModelTaskOperationRawSchema = z.union([
     ...modelLiteralVariants("set"),
     ...modelReferenceVariants("set"),
     ...modelLiteralVariants("mark-tentative"),
@@ -527,9 +553,9 @@ export const ClientModelTaskOperationSchema = z.union([
     ...modelClearVariants,
     ...modelDiscardVariants,
 ] as unknown as [z.ZodTypeAny, z.ZodTypeAny, ...z.ZodTypeAny[]]);
-export type ClientModelTaskOperation = z.infer<typeof ClientModelTaskOperationSchema>;
+export const ClientModelTaskOperationSchema = ClientModelTaskOperationRawSchema as unknown as z.ZodType<ClientModelTaskOperation>;
 export const ClientModelTaskOperationsSchema = z.array(ClientModelTaskOperationSchema).max(100);
-export type ClientModelTaskOperations = z.infer<typeof ClientModelTaskOperationsSchema>;
+export type ClientModelTaskOperations = ClientModelTaskOperation[];
 /** Explicit aliases for callers that use the input-policy naming. */
 export const ClientModelInputOperationSchema = ClientModelTaskOperationSchema;
 export const ClientModelInputOperationsSchema = ClientModelTaskOperationsSchema;

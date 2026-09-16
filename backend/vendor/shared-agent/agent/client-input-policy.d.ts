@@ -276,6 +276,14 @@ export declare const ClientModelValueReferenceSchema: z.ZodObject<{
     valueRef: z.ZodUUID;
 }, z.core.$strict>;
 export type ClientModelValueReference = z.infer<typeof ClientModelValueReferenceSchema>;
+/**
+ * Explicitly frozen reference vocabulary. Date fields appear here as well as
+ * in the literal vocabulary so a server-captured approximate date (for
+ * example, “3월 초”) can remain a protected reference while exact dates use
+ * the constrained literal schema above.
+ */
+export declare const CLIENT_MODEL_REFERENCE_FIELD_NAMES: readonly ["name", "address", "phone", "type", "fullPrice", "grant", "actualPrice", "startDate", "endDate", "birthday", "dueDate", "birthDate", "areaId"];
+export type ClientModelReferenceField = (typeof CLIENT_MODEL_REFERENCE_FIELD_NAMES)[number];
 export declare const ClientModelReferenceFieldSchema: z.ZodEnum<{
     type: "type";
     name: "name";
@@ -284,16 +292,41 @@ export declare const ClientModelReferenceFieldSchema: z.ZodEnum<{
     fullPrice: "fullPrice";
     grant: "grant";
     actualPrice: "actualPrice";
+    startDate: "startDate";
+    endDate: "endDate";
     birthday: "birthday";
+    dueDate: "dueDate";
+    birthDate: "birthDate";
     areaId: "areaId";
 }>;
-export type ClientModelReferenceField = z.infer<typeof ClientModelReferenceFieldSchema>;
-/** Independent finite schema used for model-facing task tools. */
-export declare const ClientModelTaskOperationSchema: z.ZodUnion<[z.ZodType<unknown, unknown, z.core.$ZodTypeInternals<unknown, unknown>>, z.ZodType<unknown, unknown, z.core.$ZodTypeInternals<unknown, unknown>>, ...z.ZodType<unknown, unknown, z.core.$ZodTypeInternals<unknown, unknown>>[]]>;
-export type ClientModelTaskOperation = z.infer<typeof ClientModelTaskOperationSchema>;
-export declare const ClientModelTaskOperationsSchema: z.ZodArray<z.ZodUnion<[z.ZodType<unknown, unknown, z.core.$ZodTypeInternals<unknown, unknown>>, z.ZodType<unknown, unknown, z.core.$ZodTypeInternals<unknown, unknown>>, ...z.ZodType<unknown, unknown, z.core.$ZodTypeInternals<unknown, unknown>>[]]>>;
-export type ClientModelTaskOperations = z.infer<typeof ClientModelTaskOperationsSchema>;
+/** Publicly useful narrow shape; runtime Zod validation remains authoritative. */
+export type ClientModelTaskOperation = {
+    op: "set";
+    field: ClientModelLiteralField;
+    value: string | number | boolean;
+} | {
+    op: "mark-tentative";
+    field: ClientModelLiteralField;
+    value: string | number | boolean;
+} | {
+    op: "set";
+    field: ClientModelReferenceField;
+    valueRef: string;
+} | {
+    op: "mark-tentative";
+    field: ClientModelReferenceField;
+    valueRef: string;
+} | {
+    op: "clear";
+    field: ClientClearableField;
+} | {
+    op: "discard-change";
+    field: ClientWriteField;
+};
+export declare const ClientModelTaskOperationSchema: z.ZodType<ClientModelTaskOperation>;
+export declare const ClientModelTaskOperationsSchema: z.ZodArray<z.ZodType<ClientModelTaskOperation, unknown, z.core.$ZodTypeInternals<ClientModelTaskOperation, unknown>>>;
+export type ClientModelTaskOperations = ClientModelTaskOperation[];
 /** Explicit aliases for callers that use the input-policy naming. */
-export declare const ClientModelInputOperationSchema: z.ZodUnion<[z.ZodType<unknown, unknown, z.core.$ZodTypeInternals<unknown, unknown>>, z.ZodType<unknown, unknown, z.core.$ZodTypeInternals<unknown, unknown>>, ...z.ZodType<unknown, unknown, z.core.$ZodTypeInternals<unknown, unknown>>[]]>;
-export declare const ClientModelInputOperationsSchema: z.ZodArray<z.ZodUnion<[z.ZodType<unknown, unknown, z.core.$ZodTypeInternals<unknown, unknown>>, z.ZodType<unknown, unknown, z.core.$ZodTypeInternals<unknown, unknown>>, ...z.ZodType<unknown, unknown, z.core.$ZodTypeInternals<unknown, unknown>>[]]>>;
+export declare const ClientModelInputOperationSchema: z.ZodType<ClientModelTaskOperation, unknown, z.core.$ZodTypeInternals<ClientModelTaskOperation, unknown>>;
+export declare const ClientModelInputOperationsSchema: z.ZodArray<z.ZodType<ClientModelTaskOperation, unknown, z.core.$ZodTypeInternals<ClientModelTaskOperation, unknown>>>;
 export {};

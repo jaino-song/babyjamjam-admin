@@ -249,9 +249,12 @@ describe("conversational task contracts", () => {
         expect(ClientModelTaskOperationSchema.safeParse({ op: "mark-tentative", field: "startDate", value: "2026-03-01" }).success).toBe(true);
         expect(ClientModelTaskOperationSchema.safeParse({ op: "set", field: "name", value: "홍길동" }).success).toBe(false);
         expect(ClientModelTaskOperationSchema.safeParse({ op: "set", field: "name", valueRef: IDS.addressRef }).success).toBe(true);
+        expect(ClientModelTaskOperationSchema.safeParse({ op: "mark-tentative", field: "startDate", valueRef: IDS.addressRef }).success).toBe(true);
         expect(ClientModelTaskOperationSchema.safeParse({ op: "set", field: "fullPrice", value: "1000" }).success).toBe(false);
         expect(ClientModelTaskOperationSchema.safeParse({ op: "set", field: "duration", value: 1, origin: "model" }).success).toBe(false);
         expect(ClientModelTaskOperationSchema.safeParse({ op: "set", field: "noSend", value: true }).success).toBe(false);
+        expect(ClientModelTaskOperationSchema.safeParse({ op: "mark-tentative", field: "startDate", valueRef: "not-a-uuid" }).success).toBe(false);
+        expect(ClientModelTaskOperationSchema.safeParse({ op: "mark-tentative", field: "startDate", valueRef: IDS.addressRef, extra: true }).success).toBe(false);
     });
 
     it("mirrors confirmed provider validators while allowing bounded tentative wishes", () => {
