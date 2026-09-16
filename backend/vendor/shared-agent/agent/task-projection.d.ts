@@ -394,7 +394,7 @@ export declare function resetAgentTaskSnapshotState(current: AgentTaskClientSnap
  * context to this function when the response returns; capturing after the
  * response would defeat stale-response rejection.
  */
-export declare function acceptAgentTaskSnapshot(current: AgentTaskClientSnapshotState | null, incoming: AgentTaskSnapshotEnvelope, request: AgentTaskSnapshotRequestContext): AgentTaskSnapshotAcceptance;
+export declare function acceptAgentTaskSnapshot(current: AgentTaskClientSnapshotState, incoming: AgentTaskSnapshotEnvelope, request: AgentTaskSnapshotRequestContext): AgentTaskSnapshotAcceptance;
 /** Authorized REST callers receive the protected editing snapshot. */
 export declare function projectTaskForAuthorizedRest(task: AgentTask): AgentTask;
 /** Safe model/chat projection never copies values or presentation labels. */

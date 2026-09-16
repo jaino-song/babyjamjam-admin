@@ -148,19 +148,6 @@ function resetAgentTaskSnapshotState(current, nextIdentityEpoch = current.identi
 function acceptAgentTaskSnapshot(current, incoming, request) {
     assertSafeCounter(request.identityEpoch, "identityEpoch");
     assertSafeCounter(request.requestGeneration, "requestGeneration");
-    if (!current) {
-        if (incoming.identityEpoch < request.identityEpoch) {
-            const state = createAgentTaskSnapshotState(request.identityEpoch);
-            return { accepted: false, autoMerged: false, reason: "stale-identity", state, needsReconciliation: false };
-        }
-        return {
-            accepted: true,
-            autoMerged: false,
-            reason: "accepted",
-            state: initialClientSnapshotState(incoming, request.requestGeneration),
-            needsReconciliation: Boolean(incoming.conflict),
-        };
-    }
     if (request.identityEpoch !== current.identityEpoch
         || request.requestGeneration !== current.requestGeneration) {
         return { accepted: false, autoMerged: false, reason: "stale-generation", state: current, needsReconciliation: false };

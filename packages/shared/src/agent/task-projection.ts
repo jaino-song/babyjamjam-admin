@@ -209,26 +209,12 @@ export function resetAgentTaskSnapshotState(
  * response would defeat stale-response rejection.
  */
 export function acceptAgentTaskSnapshot(
-    current: AgentTaskClientSnapshotState | null,
+    current: AgentTaskClientSnapshotState,
     incoming: AgentTaskSnapshotEnvelope,
     request: AgentTaskSnapshotRequestContext,
 ): AgentTaskSnapshotAcceptance {
     assertSafeCounter(request.identityEpoch, "identityEpoch");
     assertSafeCounter(request.requestGeneration, "requestGeneration");
-
-    if (!current) {
-        if (incoming.identityEpoch < request.identityEpoch) {
-            const state = createAgentTaskSnapshotState(request.identityEpoch);
-            return { accepted: false, autoMerged: false, reason: "stale-identity", state, needsReconciliation: false };
-        }
-        return {
-            accepted: true,
-            autoMerged: false,
-            reason: "accepted",
-            state: initialClientSnapshotState(incoming, request.requestGeneration),
-            needsReconciliation: Boolean(incoming.conflict),
-        };
-    }
 
     if (
         request.identityEpoch !== current.identityEpoch
