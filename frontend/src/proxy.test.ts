@@ -80,6 +80,8 @@ describe("admin gateway proxy", () => {
   it.each([
     "/login?returnTo=%2Fservice-record-admin%2Fclient-1",
     "/select-branch?returnTo=%2Fservice-record-admin%2Fclient-1",
+    "/onboarding?returnTo=%2Fservice-record-admin%2Fclient-1",
+    "/kakao/onboarding?returnTo=%2Fservice-record-admin%2Fclient-1",
   ])("keeps a desktop-host auth handoff route when it carries a safe return path (%s)", (path) => {
     const redirectUrl = getMobileGatewayRedirectUrl(
       new URL(`https://admin.babyjamjam.com${path}`),
@@ -107,6 +109,12 @@ describe("admin gateway proxy", () => {
     expect(redirectUrl?.href).toBe(
       "https://m.admin.babyjamjam.com/login?returnTo=https%3A%2F%2Fevil.example",
     );
+  });
+
+  it.each(["/onboarding", "/kakao/onboarding"])("keeps normal and unsafe onboarding on the mobile gateway (%s)", (path) => {
+    for (const query of ["", "?returnTo=https%3A%2F%2Fevil.example"]) {
+      expect(getMobileGatewayRedirectUrl(new URL(`https://admin.babyjamjam.com${path}${query}`), IPHONE_USER_AGENT)?.origin).toBe("https://m.admin.babyjamjam.com");
+    }
   });
 
   it("carries an unauthenticated editor request through the desktop login route", async () => {

@@ -3,7 +3,7 @@
  */
 
 const mockRedirect = jest.fn();
-const mockCreateServerApiUrl = jest.fn(() => "https://api.example.com/auth/kakao");
+const mockCreateServerApiUrl = jest.fn((pathname: string) => `https://api.example.com${pathname}`);
 
 jest.mock("next/navigation", () => ({
   redirect: (url: string) => mockRedirect(url),

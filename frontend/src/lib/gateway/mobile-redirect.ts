@@ -24,7 +24,7 @@ function keepsDesktopGatewayRoute(requestUrl: URL): boolean {
     return true;
   }
 
-  if (requestUrl.pathname !== "/login" && requestUrl.pathname !== "/select-branch") {
+  if (!["/login", "/select-branch", "/onboarding", "/kakao/onboarding"].includes(requestUrl.pathname)) {
     return false;
   }
 
