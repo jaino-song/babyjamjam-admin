@@ -7,13 +7,14 @@
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { createProblemDetails } from "@babyjamjam/shared";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { StrictMode, Suspense, startTransition, useLayoutEffect, useState, type ReactNode } from "react";
+import { StrictMode, Suspense, startTransition, useLayoutEffect, useState, type ComponentProps, type ReactNode } from "react";
 
 import type { MessageLogRecord } from "@/features/message-triggers/types";
 import { messageTriggerKeys } from "@/features/message-triggers/hooks/keys";
 import { useMessageHistory } from "@/features/message-triggers/hooks/use-message-triggers";
 import { serviceRecordsApi } from "@/features/service-records/api/service-records.api";
 import { useToast } from "@/hooks/use-toast";
+import type { Client } from "@/lib/client/types";
 import { eformsignApi, messageDeliveryApi } from "@/services/api";
 import { useFormStore } from "@/stores/form-store";
 
@@ -24,23 +25,32 @@ import { TemplateSendForm } from "../TemplateSendForm";
 // ---------------------------------------------------------------------------
 
 // Mock ClientAutocomplete so we don't need to fight Radix Popover in JSDOM.
-// Renders a plain <input> that calls onManualValueChange on change.
+// Preserve both manual input and existing-customer selection callbacks.
 jest.mock("@/components/app/clients/ClientAutocomplete", () => ({
   ClientAutocomplete: ({
     label,
     manualValue,
     onManualValueChange,
-  }: {
-    label: string;
-    manualValue?: string;
-    onManualValueChange?: (v: string) => void;
-  }) => (
-    <input
-      aria-label={label}
-      value={manualValue ?? ""}
-      onChange={(e) => onManualValueChange?.(e.target.value)}
-      data-testid={`autocomplete-${label}`}
-    />
+    onChange,
+  }: ComponentProps<typeof import("@/components/app/clients/ClientAutocomplete").ClientAutocomplete>) => (
+    <>
+      <input
+        aria-label={label}
+        value={manualValue ?? ""}
+        onChange={(e) => onManualValueChange?.(e.target.value)}
+        data-testid={`autocomplete-${label}`}
+      />
+      <button
+        type="button"
+        onClick={() => onChange(42, {
+          id: 42,
+          name: "검수고객",
+          phone: "010-1111-2222",
+        } as Client)}
+      >
+        기존 고객 선택
+      </button>
+    </>
   ),
 }));
 
@@ -349,11 +359,44 @@ afterEach(() => {
 // Recipient phone input layout
 // ---------------------------------------------------------------------------
 describe("recipient phone input layout", () => {
-  it("uses a plain phone input for the greeting template phone-only form", () => {
+  it.each([
+    ["greeting", renderGreetingPhoneOnlyForm],
+    ["service info", renderInfoForm],
+  ])("pins the selected %s recipient to its customer id after searching by phone", async (_template, renderForm) => {
+    mockedSendSms.mockResolvedValue(buildSendSuccess());
+    renderForm();
+
+    fireEvent.change(screen.getByRole("textbox", { name: "휴대 전화번호" }), {
+      target: { value: "01011112222" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "기존 고객 선택" }));
+    const sendButton = screen.getByRole("button", { name: /즉시 발송/ });
+    await waitFor(() => expect(sendButton).toBeEnabled());
+    fireEvent.click(sendButton);
+
+    await waitFor(() => expect(mockedSendSms).toHaveBeenCalledWith(
+      expect.objectContaining({ receiver: "010-1111-2222", clientId: 42 }),
+      "branch-a",
+    ));
+    expect(mockedSendSms).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not attach the previous customer id to a manually added greeting recipient", async () => {
+    mockedSendSms.mockResolvedValue(buildSendSuccess());
     renderGreetingPhoneOnlyForm();
 
-    expect(screen.getByTestId("contact-input-phone")).toBeInTheDocument();
-    expect(screen.queryByTestId("autocomplete-휴대 전화번호")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "기존 고객 선택" }));
+    fireEvent.change(screen.getByRole("textbox", { name: "휴대 전화번호" }), {
+      target: { value: "01033334444" },
+    });
+    const sendButton = screen.getByRole("button", { name: /즉시 발송/ });
+    await waitFor(() => expect(sendButton).toBeEnabled());
+    fireEvent.click(sendButton);
+
+    await waitFor(() => expect(mockedSendSms).toHaveBeenCalledTimes(2));
+    const manualRecipient = mockedSendSms.mock.calls.find(([payload]) => payload.receiver === "010-3333-4444");
+    expect(manualRecipient).toBeDefined();
+    expect(manualRecipient?.[0]).not.toHaveProperty("clientId");
   });
 
   it("keeps the client autocomplete for the service info template", () => {

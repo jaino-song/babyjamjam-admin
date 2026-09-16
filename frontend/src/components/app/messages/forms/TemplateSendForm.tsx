@@ -544,10 +544,9 @@ export function TemplateSendForm({
         return [...currentQueue, currentQueueItem];
       }
 
-      // For requiresRecipientName templates, update the queued entry in place so
-      // a name correction always propagates (instead of being silently dropped).
-      // For phone-only templates, the phone is the full identity — skip as before.
-      if (requiresRecipientName) {
+      // Searching a complete phone can queue it before a customer is selected.
+      // Keep that later identity choice, as well as recipient-name corrections.
+      if (requiresRecipientName || currentQueue[existingIndex].clientId !== currentQueueItem.clientId) {
         const updated = [...currentQueue];
         updated[existingIndex] = currentQueueItem;
         return updated;
@@ -1169,15 +1168,7 @@ export function TemplateSendForm({
               data-component="desktop_messages_sections_template-send-form_phone-field"
               className="min-w-0 w-full"
             >
-              {templateId === "builtin:greeting" ? (
-                <ContactInput
-                  phone={phone}
-                  setPhone={handlePhoneChange}
-                  label="휴대 전화번호"
-                  placeholder="010-0000-0000"
-                  required
-                />
-              ) : phoneAutocompleteField}
+              {phoneAutocompleteField}
             </div>
             {children ? <TemplateFieldGrid layout="stack">{children}</TemplateFieldGrid> : null}
           </>
