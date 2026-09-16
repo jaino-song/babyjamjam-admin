@@ -8,7 +8,7 @@ import { createSchedulerLeaseMock } from "../../test/utils/mocks/scheduler-lease
 describe("AgentSessionService", () => {
     const owner = { userId: "user-a", branchId: "branch-a" };
     const repository = {
-        create: jest.fn(), list: jest.fn(), findOwned: jest.fn(), updateOwned: jest.fn(),
+        create: jest.fn(), list: jest.fn(), findOwned: jest.fn(), findOwnedForRestore: jest.fn(), updateOwned: jest.fn(),
         archiveOwned: jest.fn(), unarchiveOwned: jest.fn(), deleteOwned: jest.fn(), appendMessages: jest.fn(),
         upsertActionResultMessage: jest.fn(), deleteExpired: jest.fn(),
     } as jest.Mocked<IAgentSessionRepository>;
@@ -28,6 +28,27 @@ describe("AgentSessionService", () => {
 
         await expect(service.assertActive("session-a", owner)).rejects.toBeInstanceOf(NotFoundException);
         expect(repository.findOwned).toHaveBeenCalledWith("session-a", owner);
+    });
+
+    it("reads archived and expired owned sessions through the restore-only seam", async () => {
+        const session = {
+            id: "session-a", ...owner, locale: "ko", title: null, summary: null, selectedEntities: {},
+            model: "stub", agentVersion: "v1", createdAt: new Date(), updatedAt: new Date(),
+            expiresAt: new Date(Date.now() - 1_000), archivedAt: null, messages: [],
+        };
+        repository.findOwnedForRestore.mockResolvedValue(session);
+        const service = new AgentSessionService(repository, new ConfigService(), createSchedulerLeaseMock());
+
+        await expect(service.getForRestore("session-a", owner)).resolves.toBe(session);
+        expect(repository.findOwnedForRestore).toHaveBeenCalledWith("session-a", owner);
+        expect(repository.findOwned).not.toHaveBeenCalled();
+    });
+
+    it("keeps restore ownership failures indistinguishable from missing sessions", async () => {
+        repository.findOwnedForRestore.mockResolvedValue(null);
+        const service = new AgentSessionService(repository, new ConfigService(), createSchedulerLeaseMock());
+
+        await expect(service.getForRestore("session-a", owner)).rejects.toBeInstanceOf(NotFoundException);
     });
 
     it("uses configurable retention and clears entity memory without moving branches", async () => {

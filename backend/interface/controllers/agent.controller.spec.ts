@@ -24,7 +24,8 @@ describe("AgentController emergency disable", () => {
 describe("AgentController task restore composition", () => {
     it("adds server-derived task restore fields after the owned session succeeds", async () => {
         const sessions = {
-            get: jest.fn().mockResolvedValue({ id: "session-1", messages: [] }),
+            get: jest.fn(),
+            getForRestore: jest.fn().mockResolvedValue({ id: "session-1", messages: [] }),
         };
         const tasks = {
             restoreSession: jest.fn().mockResolvedValue({
@@ -56,7 +57,8 @@ describe("AgentController task restore composition", () => {
             pausedTaskIds: ["task-2"],
             taskRestoreStatus: "available",
         });
-        expect(sessions.get).toHaveBeenCalledWith("session-1", { userId: "user-1", branchId: "branch-1" });
+        expect(sessions.getForRestore).toHaveBeenCalledWith("session-1", { userId: "user-1", branchId: "branch-1" });
+        expect(sessions.get).not.toHaveBeenCalled();
         expect(tasks.restoreSession).toHaveBeenCalledWith(tenant, "session-1");
         expect(response.setHeader).toHaveBeenCalledWith("Cache-Control", "no-store");
     });

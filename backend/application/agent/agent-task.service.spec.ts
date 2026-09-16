@@ -1,7 +1,9 @@
 import { randomUUID } from "node:crypto";
 
 import { AgentTaskConflictException, AgentTaskService } from "./agent-task.service";
+import { clientAgentTargetVersion } from "../../application/usecases/client/client-agent-target";
 import { createEmptyAgentTaskDraft, type AgentTaskEntity, type AgentTaskEventEntity } from "domain/entities/agent-task.entity";
+import type { ClientEntity } from "domain/entities/client.entity";
 
 const owner = {
     userId: randomUUID(),
@@ -67,6 +69,30 @@ function makeTask(overrides: Partial<AgentTaskEntity> = {}): AgentTaskEntity {
         updatedAt: now,
         ...overrides,
     };
+}
+
+function makeClientRecord(id = 7): ClientEntity {
+    return {
+        id,
+        name: "기존 고객",
+        address: null,
+        phone: "01012345678",
+        type: null,
+        duration: null,
+        fullPrice: null,
+        grant: null,
+        actualPrice: null,
+        startDate: null,
+        endDate: null,
+        dueDate: null,
+        birthDate: null,
+        careCenter: null,
+        voucherClient: false,
+        birthday: null,
+        serviceStatus: "pre_booking",
+        breastPump: false,
+        areaId: null,
+    } as unknown as ClientEntity;
 }
 
 class FakeTaskRepository {
@@ -336,6 +362,121 @@ describe("AgentTaskService", () => {
         })).rejects.toMatchObject({ status: 400 });
     });
 
+    it("keeps update drafts partial and does not require create identifiers", async () => {
+        const repository = new FakeTaskRepository();
+        const result = await buildService(repository).service.create(owner, {
+            sessionId,
+            capabilityId: "clients.update",
+            clientEventId: randomUUID(),
+            operations: [{ op: "set", field: "dueDate", value: "2026-03-05" }],
+        });
+
+        expect(result.snapshot.confirmed).toEqual({ dueDate: "2026-03-05" });
+        expect(result.snapshot.issues).toEqual(expect.arrayContaining([
+            expect.objectContaining({ code: "task.required" }),
+        ]));
+        expect(result.snapshot.issues).not.toEqual(expect.arrayContaining([
+            expect.objectContaining({ field: "name" }),
+            expect.objectContaining({ field: "phone" }),
+        ]));
+    });
+
+    it("validates an update target and keeps due-date-only readiness scoped", async () => {
+        const repository = new FakeTaskRepository();
+        const targetClient = makeClientRecord();
+        const targetRef = randomUUID();
+        const task = makeTask({
+            capabilityId: "clients.update",
+            targetRef,
+            targetVersion: clientAgentTargetVersion(targetClient),
+            draft: {
+                ...createEmptyAgentTaskDraft(randomUUID()),
+                server: { references: { target: { targetRef, clientId: targetClient.id }, choiceTargets: [], phoneCandidates: {} } },
+            },
+        });
+        repository.tasks.set(task.taskId, task);
+        const client = {
+            findByPhone: jest.fn().mockResolvedValue(null),
+            findById: jest.fn().mockResolvedValue(targetClient),
+        };
+
+        const result = await buildService(repository, client).service.patch(owner, task.taskId, {
+            clientEventId: randomUUID(),
+            expectedRevision: task.revision,
+            operations: [{ op: "set", field: "dueDate", value: "2026-03-05" }],
+        });
+
+        expect(result.snapshot.confirmed).toEqual({ dueDate: "2026-03-05" });
+        expect(result.snapshot.issues).not.toEqual(expect.arrayContaining([
+            expect.objectContaining({ field: "name" }),
+            expect.objectContaining({ field: "phone" }),
+        ]));
+        expect(result.snapshot.issues).not.toEqual(expect.arrayContaining([
+            expect.objectContaining({ code: "task.stale" }),
+        ]));
+        expect(client.findByPhone).not.toHaveBeenCalled();
+    });
+
+    it("records a stale target issue from the authoritative branch lookup", async () => {
+        const repository = new FakeTaskRepository();
+        const targetClient = makeClientRecord();
+        const targetRef = randomUUID();
+        const task = makeTask({
+            capabilityId: "clients.update",
+            targetRef,
+            targetVersion: "a".repeat(64),
+            draft: {
+                ...createEmptyAgentTaskDraft(randomUUID()),
+                server: { references: { target: { targetRef, clientId: targetClient.id }, choiceTargets: [], phoneCandidates: {} } },
+            },
+        });
+        repository.tasks.set(task.taskId, task);
+
+        const result = await buildService(repository, {
+            findByPhone: jest.fn().mockResolvedValue(null),
+            findById: jest.fn().mockResolvedValue(targetClient),
+        }).service.patch(owner, task.taskId, {
+            clientEventId: randomUUID(),
+            expectedRevision: task.revision,
+            operations: [{ op: "set", field: "dueDate", value: "2026-03-05" }],
+        });
+
+        expect(result.snapshot.issues).toEqual(expect.arrayContaining([
+            expect.objectContaining({ code: "task.stale" }),
+        ]));
+    });
+
+    it("checks duplicate phones only for a proposed update field and excludes its target client", async () => {
+        const repository = new FakeTaskRepository();
+        const targetClient = makeClientRecord();
+        const targetRef = randomUUID();
+        const task = makeTask({
+            capabilityId: "clients.update",
+            targetRef,
+            targetVersion: clientAgentTargetVersion(targetClient),
+            draft: {
+                ...createEmptyAgentTaskDraft(randomUUID()),
+                server: { references: { target: { targetRef, clientId: targetClient.id }, choiceTargets: [], phoneCandidates: {} } },
+            },
+        });
+        repository.tasks.set(task.taskId, task);
+        const client = {
+            findByPhone: jest.fn().mockResolvedValue({ id: 99 }),
+            findById: jest.fn().mockResolvedValue(targetClient),
+        };
+
+        const result = await buildService(repository, client).service.patch(owner, task.taskId, {
+            clientEventId: randomUUID(),
+            expectedRevision: task.revision,
+            operations: [{ op: "set", field: "phone", value: "010-9876-5432" }],
+        });
+
+        expect(result.snapshot.issues).toEqual(expect.arrayContaining([
+            expect.objectContaining({ code: "task.duplicate", field: "phone" }),
+        ]));
+        expect(client.findByPhone).toHaveBeenCalledWith(owner.branchId, "01098765432");
+    });
+
     it("persists an explicit clear, treats a repeated clear as a no-op, and replays it after a later edit", async () => {
         const repository = new FakeTaskRepository();
         const service = buildService(repository).service;
@@ -372,6 +513,60 @@ describe("AgentTaskService", () => {
         expect(replay.snapshot.confirmed.address).toBe("서울");
         expect(replay.snapshot.revision).toBe(later.snapshot.revision);
         expect(replay.receipt.acceptedRevision).toBe(cleared.snapshot.revision);
+    });
+
+    it("keeps an unlinked review-ready task unchanged for a same-value set", async () => {
+        const repository = new FakeTaskRepository();
+        const service = buildService(repository).service;
+        const created = await service.create(owner, createInput());
+        const task = repository.tasks.get(created.snapshot.taskId)!;
+        task.status = "review_ready";
+        const before = {
+            revision: task.revision,
+            status: task.status,
+            snapshotRef: task.draft.currentSnapshotRef,
+            expiresAt: task.expiresAt,
+        };
+
+        const result = await service.patch(owner, task.taskId, {
+            clientEventId: randomUUID(),
+            expectedRevision: task.revision,
+            operations: [{ op: "set", field: "name", value: "홍길동" }],
+        });
+
+        expect(result.snapshot.revision).toBe(before.revision);
+        expect(result.snapshot.state).toBe(before.status);
+        expect(result.snapshot.currentSnapshotRef).toBe(before.snapshotRef);
+        expect(repository.tasks.get(task.taskId)!.expiresAt).toEqual(before.expiresAt);
+    });
+
+    it("keeps review-ready discard and repeated-clear no-ops at the current revision", async () => {
+        const operations = [
+            { op: "discard-change", field: "address" },
+            { op: "clear", field: "address" },
+        ] as const;
+        for (const operation of operations) {
+            const repository = new FakeTaskRepository();
+            const service = buildService(repository).service;
+            const created = await service.create(owner, createInput());
+            const task = repository.tasks.get(created.snapshot.taskId)!;
+            task.status = "review_ready";
+            if (operation.op === "clear") task.draft.clearedFields = ["address"];
+            const beforeRevision = task.revision;
+            const beforeSnapshotRef = task.draft.currentSnapshotRef;
+            const beforeExpiry = task.expiresAt;
+
+            const result = await service.patch(owner, task.taskId, {
+                clientEventId: randomUUID(),
+                expectedRevision: task.revision,
+                operations: [operation],
+            });
+
+            expect(result.snapshot.revision).toBe(beforeRevision);
+            expect(result.snapshot.state).toBe("review_ready");
+            expect(result.snapshot.currentSnapshotRef).toBe(beforeSnapshotRef);
+            expect(repository.tasks.get(task.taskId)!.expiresAt).toEqual(beforeExpiry);
+        }
     });
 
     it("discards only a proposed field and removes stale phone choices and readiness facts", async () => {
@@ -419,11 +614,12 @@ describe("AgentTaskService", () => {
     it("preserves a resolved update target while discarding proposed identifiers", async () => {
         const repository = new FakeTaskRepository();
         const targetRef = randomUUID();
-        const client = { findByPhone: jest.fn().mockResolvedValue(null), findById: jest.fn().mockResolvedValue({ id: 7 }) };
+        const targetClient = makeClientRecord();
+        const client = { findByPhone: jest.fn().mockResolvedValue(null), findById: jest.fn().mockResolvedValue(targetClient) };
         const task = makeTask({
             capabilityId: "clients.update",
             targetRef,
-            targetVersion: "a".repeat(64),
+            targetVersion: clientAgentTargetVersion(targetClient),
             draft: {
                 ...createEmptyAgentTaskDraft(randomUUID()),
                 confirmed: { name: "제안 이름", phone: "01012345678" },
@@ -443,8 +639,8 @@ describe("AgentTaskService", () => {
         });
 
         expect(result.snapshot.confirmed).toEqual({});
-        expect(result.snapshot.target).toEqual({ targetRef, version: "a".repeat(64) });
-        expect(client.findById).not.toHaveBeenCalled();
+        expect(result.snapshot.target).toEqual({ targetRef, version: clientAgentTargetVersion(targetClient) });
+        expect(client.findById).toHaveBeenCalledWith(owner.branchId, 7);
     });
 
     it("treats repeated discard as a durable no-op with unchanged retention", async () => {
@@ -483,6 +679,42 @@ describe("AgentTaskService", () => {
             operations: [{ op: "set", field: "automationChoice", value: "yes" }],
         })).rejects.toMatchObject({ response: expect.objectContaining({ code: "AGENT_TASK_CONFLICT", reason: "consent_required" }) });
         expect(JSON.stringify(repository.tasks.get(created.snapshot.taskId))).toBe(before);
+    });
+
+    it("evaluates ordered consent against the final choice", async () => {
+        const repository = new FakeTaskRepository();
+        const service = buildService(repository).service;
+        const created = await service.create(owner, createInput());
+
+        const noConsent = await service.patch(owner, created.snapshot.taskId, {
+            clientEventId: randomUUID(),
+            expectedRevision: created.snapshot.revision,
+            operations: [
+                { op: "set", field: "automationChoice", value: "yes" },
+                { op: "set", field: "automationChoice", value: "no" },
+            ],
+        });
+        expect(noConsent.snapshot.consent.choice).toBe("no");
+
+        const before = JSON.stringify(repository.tasks.get(created.snapshot.taskId));
+        const beforeEvents = repository.events.size;
+        await expect(service.patch(owner, created.snapshot.taskId, {
+            clientEventId: randomUUID(),
+            expectedRevision: noConsent.snapshot.revision,
+            operations: [{ op: "set", field: "automationChoice", value: "yes" }],
+        })).rejects.toMatchObject({ response: expect.objectContaining({ code: "AGENT_TASK_CONFLICT", reason: "consent_required" }) });
+        expect(JSON.stringify(repository.tasks.get(created.snapshot.taskId))).toBe(before);
+        expect(repository.events.size).toBe(beforeEvents);
+
+        const unanswered = await service.patch(owner, created.snapshot.taskId, {
+            clientEventId: randomUUID(),
+            expectedRevision: noConsent.snapshot.revision,
+            operations: [
+                { op: "set", field: "automationChoice", value: "yes" },
+                { op: "clear", field: "automationChoice" },
+            ],
+        });
+        expect(unanswered.snapshot.consent.choice).toBe("unanswered");
     });
 
     it("allows replay of an owned expired task within the replay window but rejects a fresh event", async () => {

@@ -31,6 +31,12 @@ export class AgentSessionService {
         return session;
     }
 
+    async getForRestore(id: string, owner: AgentSessionOwner) {
+        const session = await this.repository.findOwnedForRestore(id, owner);
+        if (!session) throw new NotFoundException("Agent session not found");
+        return session;
+    }
+
     async assertActive(id: string, owner: AgentSessionOwner): Promise<void> {
         await this.get(id, owner);
     }

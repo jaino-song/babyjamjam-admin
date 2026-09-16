@@ -106,7 +106,7 @@ export class AgentController {
     ) {
         const principal = this.requirePrincipal(request);
         response?.setHeader("Cache-Control", "no-store");
-        const session = await this.sessions.get(id, { userId: principal.userId, branchId: principal.branchId });
+        const session = await this.sessions.getForRestore(id, { userId: principal.userId, branchId: principal.branchId });
         if (!this.tasks) throw new ServiceUnavailableException("Agent task service unavailable");
         const restore = await this.tasks.restoreSession(principal, id);
         return { ...session, ...restore };

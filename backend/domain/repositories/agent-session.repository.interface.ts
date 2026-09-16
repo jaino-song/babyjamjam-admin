@@ -22,6 +22,11 @@ export interface IAgentSessionRepository {
     create(input: CreateAgentSessionInput): Promise<AgentSessionEntity>;
     list(owner: AgentSessionOwner): Promise<AgentSessionSummary[]>;
     findOwned(id: string, owner: AgentSessionOwner): Promise<AgentSessionEntity | null>;
+    /**
+     * Read an owned session for restore classification without applying the
+     * live/active guards used by runtime and mutation paths.
+     */
+    findOwnedForRestore(id: string, owner: AgentSessionOwner): Promise<AgentSessionEntity | null>;
     updateOwned(id: string, owner: AgentSessionOwner, patch: AgentSessionPatch): Promise<AgentSessionEntity | null>;
     archiveOwned(id: string, owner: AgentSessionOwner, archivedAt: Date): Promise<AgentSessionArchiveResult>;
     unarchiveOwned(id: string, owner: AgentSessionOwner): Promise<AgentSessionUnarchiveResult>;

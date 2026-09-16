@@ -24,6 +24,21 @@ describe("protected phone input", () => {
         ]);
     });
 
+    it("does not auto-select a valid number when an incomplete correction is present", () => {
+        const result = captureProtectedPhoneCandidates("기존 010-1234-5678, 정정 010-123");
+
+        expect(result.selectionNeeded).toBe(true);
+        expect(result.normalizedPhone).toBeUndefined();
+        expect(result.selectedCandidateRef).toBeUndefined();
+        expect(result.candidates.map((candidate) => candidate.normalizedPhone)).toEqual(["01012345678"]);
+    });
+
+    it("does not extract an eleven-digit substring from an overlong numeric token", () => {
+        const result = captureProtectedPhoneCandidates("연락처 010123456789");
+
+        expect(result).toEqual({ candidates: [], selectionNeeded: true });
+    });
+
     it("does not persist or return raw text for unsupported input", () => {
         expect(captureProtectedPhoneCandidates("전화번호는 비공개입니다")).toEqual({
             candidates: [],

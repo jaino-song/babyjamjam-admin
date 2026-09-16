@@ -5,6 +5,42 @@ import { PrismaAgentSessionRepository } from "./prisma-agent-session.repository"
 describe("PrismaAgentSessionRepository", () => {
     const owner = { userId: "user-a", branchId: "branch-a" };
 
+    it("reads an owned archived or expired session for restore without live predicates or writes", async () => {
+        const expiresAt = new Date("2026-01-01T00:00:00.000Z");
+        const archivedAt = new Date("2026-01-02T00:00:00.000Z");
+        const prisma = {
+            agent_session: {
+                findFirst: jest.fn().mockResolvedValue({
+                    id: "session-a",
+                    ...owner,
+                    locale: "ko",
+                    title: null,
+                    summary: null,
+                    selectedEntities: {},
+                    model: "stub",
+                    agentVersion: "v1",
+                    createdAt: new Date("2025-12-01T00:00:00.000Z"),
+                    updatedAt: new Date("2025-12-01T00:00:00.000Z"),
+                    expiresAt,
+                    archivedAt,
+                    messages: [],
+                }),
+            },
+        };
+        const repository = new PrismaAgentSessionRepository(prisma as never);
+
+        await expect(repository.findOwnedForRestore("session-a", owner)).resolves.toMatchObject({
+            id: "session-a",
+            ...owner,
+            expiresAt,
+            archivedAt,
+        });
+        expect(prisma.agent_session.findFirst).toHaveBeenCalledWith({
+            where: { id: "session-a", ...owner },
+            include: { messages: true },
+        });
+    });
+
     it("blocks physical deletion while a nonterminal action exists", async () => {
         const prisma = {
             agent_session: {

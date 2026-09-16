@@ -28,6 +28,7 @@ import {
 } from "@babyjamjam/shared";
 
 import { AgentTaskPolicyService } from "application/agent/agent-task-policy.service";
+import { clientAgentTargetVersion } from "application/usecases/client/client-agent-target";
 import { assertPhoneAvailable } from "application/usecases/client/client-write-validation";
 import {
     createEmptyAgentTaskDraft,
@@ -50,7 +51,7 @@ import type { VerifiedTenantPrincipal } from "infrastructure/tenant/tenant.conte
 
 const TASK_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
 const REPLAY_RETENTION_MS = TASK_RETENTION_MS;
-const DYNAMIC_ISSUE_CODES = new Set(["task.required", "task.invalid", "task.duplicate"]);
+const DYNAMIC_ISSUE_CODES = new Set(["task.required", "task.invalid", "task.duplicate", "task.stale"]);
 const TERMINAL_STATES = new Set(["completed", "failed", "cancelled"]);
 
 export type AgentTaskConflictReason = "revision" | "event_payload" | "state" | "active_task" | "consent_required";
@@ -308,8 +309,12 @@ export class AgentTaskService {
             noSend: false,
         });
         const provenance = this.applyProvenance({ confirmed: {}, tentative: {} }, input.operations, input.clientEventId);
-        const duplicateCheck = await this.duplicateCheck(principal, state, undefined);
-        const issues = this.issues([], state, duplicateCheck);
+        const duplicateCheck = input.capabilityId === "clients.update"
+            ? { status: "not_checked" as const }
+            : await this.duplicateCheck(principal, state, undefined);
+        const issues = input.capabilityId === "clients.update"
+            ? await this.updateIssues(principal, state, null, [])
+            : this.issues([], state, duplicateCheck);
         if (state.automationChoice === "yes") {
             throw new AgentTaskConflictException("consent_required");
         }
@@ -384,7 +389,11 @@ export class AgentTaskService {
                 throw error;
             }
             const now = new Date();
-            const changed = JSON.stringify(next.draft) !== JSON.stringify(locked.task.draft) || next.status !== locked.task.status;
+            const changedBeforeReviewDemotion = this.hasSemanticDraftChange(locked.task.draft, next.draft);
+            if (changedBeforeReviewDemotion && locked.task.status === "review_ready") {
+                next.status = await this.demotedStatus(principal, locked.task);
+            }
+            const changed = changedBeforeReviewDemotion || next.status !== locked.task.status;
             if (!changed) {
                 const inserted = await transaction.insertEvent({
                     clientEventId: input.clientEventId,
@@ -455,13 +464,14 @@ export class AgentTaskService {
             automationChoice: task.draft.consent.choice,
             noSend: task.draft.constraints.noSend,
         });
-        if (operations.some((operation) => operation.op === "set" && operation.field === "automationChoice" && operation.value === "yes")) {
+        if (state.automationChoice === "yes" && task.draft.consent.binding === null) {
             throw new AgentTaskConflictException("consent_required", asAuthorizedTask(task));
         }
 
-        const duplicateCheck = await this.duplicateCheck(principal, state, task.draft.server.references.target?.clientId);
         const provenance = this.applyProvenance(task.draft.provenance, operations, clientEventId);
-        const issues = this.issues(task.draft.issues, state, duplicateCheck);
+        const issues = task.capabilityId === "clients.update"
+            ? await this.updateIssues(principal, state, task, task.draft.issues)
+            : this.issues(task.draft.issues, state, await this.duplicateCheck(principal, state, undefined));
         const discardsPhone = operations.some((operation) => operation.op === "discard-change" && operation.field === "phone");
         const discardedPhoneChoiceSetRefs = discardsPhone
             ? new Set(Object.keys(task.draft.server.references.phoneCandidates))
@@ -471,9 +481,6 @@ export class AgentTaskService {
         const choiceTargets = task.draft.server.references.choiceTargets.filter(
             (choiceTarget) => !discardedPhoneChoiceSetRefs.has(choiceTarget.choiceSetRef),
         );
-        const status = task.status === "review_ready"
-            ? await this.demotedStatus(principal, task)
-            : task.status;
         const binding = state.automationChoice === task.draft.consent.choice && state.automationChoice === "yes"
             ? task.draft.consent.binding
             : null;
@@ -500,7 +507,88 @@ export class AgentTaskService {
                 actionProposalRevision: undefined,
             },
         };
-        return { draft, status };
+        return { draft, status: task.status };
+    }
+
+    /**
+     * Provenance references and snapshot refs are generated metadata. They do
+     * not constitute a business change by themselves, so exclude them when
+     * deciding whether a durable revision/TTL update is necessary.
+     */
+    private hasSemanticDraftChange(previous: AgentTaskDraft, next: AgentTaskDraft): boolean {
+        const withoutGeneratedMetadata = (draft: AgentTaskDraft): string => {
+            const semantic = { ...draft } as Record<string, unknown>;
+            delete semantic["provenance"];
+            delete semantic["currentSnapshotRef"];
+            return JSON.stringify(semantic);
+        };
+        return withoutGeneratedMetadata(previous) !== withoutGeneratedMetadata(next);
+    }
+
+    private async updateIssues(
+        principal: VerifiedTenantPrincipal,
+        state: ClientInputState,
+        task: AgentTaskEntity | null,
+        existing: AgentTaskEntity["draft"]["issues"],
+    ): Promise<AgentTaskEntity["draft"]["issues"]> {
+        const issues = existing.filter((issue) => !DYNAMIC_ISSUE_CODES.has(issue.code));
+        const addIssue = (
+            code: AgentTask["issues"][number]["code"],
+            field?: AgentTask["issues"][number]["field"],
+            message = "Additional task information is required",
+        ) => {
+            if (issues.some((issue) => issue.code === code && issue.field === field)) return;
+            issues.push({ code, ...(field ? { field } : {}), severity: "error", message });
+        };
+
+        let targetStatus: "missing" | "stale" | "valid" = "missing";
+        let targetClientId: number | undefined;
+        if (task) {
+            const target = task.draft.server.references.target;
+            const targetRef = task.targetRef;
+            const targetVersion = task.targetVersion;
+            if (target && (!targetRef || !targetVersion || target.targetRef !== targetRef)) {
+                targetStatus = "stale";
+            } else if (target && targetRef && targetVersion) {
+                let client: Awaited<ReturnType<IClientRepository["findById"]>>;
+                try {
+                    client = await this.clientRepository.findById(principal.branchId, target.clientId);
+                } catch (error) {
+                    if (error instanceof ServiceUnavailableException) throw error;
+                    throw storageUnavailable();
+                }
+                if (client && clientAgentTargetVersion(client) === targetVersion) {
+                    targetStatus = "valid";
+                    targetClientId = client.id;
+                } else {
+                    targetStatus = "stale";
+                }
+            }
+        }
+        if (targetStatus === "missing") {
+            addIssue("task.required", undefined, "A customer target is required");
+        } else if (targetStatus === "stale") {
+            addIssue("task.stale", undefined, "The customer target is stale");
+        }
+
+        const hasProposedChange = Object.keys(state.confirmed).length > 0 || state.clearedFields.length > 0;
+        if (!hasProposedChange) addIssue("task.required", undefined);
+
+        if (Object.prototype.hasOwnProperty.call(state.confirmed, "phone")) {
+            const normalizedPhone = normalizeClientPhone(state.confirmed.phone);
+            if (!normalizedPhone || !/^\d{11}$/.test(normalizedPhone)) {
+                addIssue("task.invalid", "phone", "A valid phone number is required");
+            } else if (targetStatus === "valid" && targetClientId !== undefined) {
+                const duplicateCheck = await this.duplicateCheck(principal, state, targetClientId);
+                if (duplicateCheck.status === "duplicate") addIssue("task.duplicate", "phone");
+                if (duplicateCheck.status === "failed") addIssue("task.invalid", "phone");
+                if (duplicateCheck.status === "not_checked" || duplicateCheck.status === "checking") {
+                    addIssue("task.invalid", "phone");
+                }
+            }
+        }
+
+        return issues;
     }
 
     private async demotedStatus(principal: VerifiedTenantPrincipal, task: AgentTaskEntity): Promise<AgentTaskEntity["status"]> {

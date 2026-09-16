@@ -100,6 +100,14 @@ export class PrismaAgentSessionRepository implements IAgentSessionRepository {
         return record ? toEntity(record) : null;
     }
 
+    async findOwnedForRestore(id: string, owner: AgentSessionOwner): Promise<AgentSessionEntity | null> {
+        const record = await this.prisma.agent_session.findFirst({
+            where: { id, ...owner },
+            include: { messages: true },
+        });
+        return record ? toEntity(record) : null;
+    }
+
     async updateOwned(
         id: string,
         owner: AgentSessionOwner,

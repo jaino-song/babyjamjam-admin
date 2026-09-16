@@ -175,7 +175,7 @@ describeAgentE2E("Release A runtime with Postgres, Valkey, and the deterministic
             .expect(403);
     });
 
-    it("does not revive an expired owned session", async () => {
+    it("restores an expired owned session without reviving mutations", async () => {
         const expired = await prisma.agent_session.create({
             data: {
                 userId: USER_ID,
@@ -186,7 +186,17 @@ describeAgentE2E("Release A runtime with Postgres, Valkey, and the deterministic
                 expiresAt: new Date(Date.now() - 1_000),
             },
         });
-        await request(app.getHttpServer()).get(`/ai/agent/sessions/${expired.id}`).expect(404);
+        const restored = await request(app.getHttpServer())
+            .get(`/ai/agent/sessions/${expired.id}`)
+            .expect(200)
+            .expect(({ body }) => {
+                expect(body).toMatchObject({
+                    activeTaskId: null,
+                    pausedTaskIds: [],
+                    taskRestoreStatus: "session_expired",
+                });
+            });
+        expect(restored.headers["cache-control"]).toBe("no-store");
         await request(app.getHttpServer())
             .post("/ai/agent/chat")
             .send({
