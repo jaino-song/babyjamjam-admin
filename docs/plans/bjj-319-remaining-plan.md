@@ -698,3 +698,9 @@ TL;DR: 배정(4b-1 백엔드: 역할·자격·동시 변경 코드 전환 / 4b-2
 **Task 6a 실행 결과 (2026-09-16):** worker unit `8db72a46b`(base `c80fa1d53`) → 통합 `157bbc29d`(16 files, +618/−88). agent 5 + ai-chat 2 파일 49+ throw 전환(전부 기존 코드 재사용, 카탈로그·vendor 불변), tool-executor 가산 code/outcome. red-first 22F→246 focused; full backend 358/5,115. 감사 **SHIP**.
 - carried: runtime L364 403 의미 긴장, confirmation-mismatch 단일 body(안티프로빙), tool-executor outcome 기본값(read NOT_APPLIED vs mutation UNKNOWN), persistResultPart L855 미전환(범위 외).
 - 기록: `agent-chat-contract` finding. unit 정리. **Phase 6 계속: 다음 배치 = 백엔드 controllers/services 잔여 → 프론트/모바일 라우트 → UI.**
+
+**Task 6b: 공유 파서·인증 가드 전환** — base `e36210d03`
+- 대상: `backend/interface/parse-integer.ts`(parseInteger/parseOptionalInteger), `backend/interface/parse-boolean.ts`, `backend/infrastructure/auth/{call-ingest.guard,jwt.strategy,local.strategy,service-record.guard,rate-limit.guard}.ts`, `backend/infrastructure/tenant/tenant.guard.ts`.
+- 매핑: 파서 → `VALIDATION_FAILED`(pointer `/<name>`, min/max 위반 OUT_OF_RANGE·그 외 INVALID_FORMAT, location 생략 — path/query 혼용) 해요체, 400 유지. auth Unauthorized raw → `AUTH_REQUIRED`(401). rate-limit `{code:AUTH_RATE_LIMITED}` → 기존 `REQUEST_RATE_LIMITED`(429) 재사용. tenant.guard Forbidden → `ACCESS_DENIED`(403).
+- 범위 밖: `prisma-exception.filter.ts`(6c 별도), ParseUUIDPipe(Nest 내장 — carried), 컨트롤러/서비스 잔여.
+- Dispatch: worker(glm) · `Paths: 위 파일 + 대응 spec` · `Audit: SOL`
