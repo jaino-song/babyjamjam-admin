@@ -1,52 +1,25 @@
 --- a/backend/prisma/schema.prisma
 +++ b/backend/prisma/schema.prisma
-@@ -103,6 +103,9 @@
- }
- 
- model agent_session {
+@@ -105,0 +106,3 @@
 +  tasks          agent_task[]
 +  taskEvents     agent_task_event[]
 +
-   id               String           @id @default(dbgenerated("(gen_random_uuid())::text"))
-   userId           String           @map("user_id") @db.Uuid
-   branchId         String           @map("branch_id") @db.Uuid
-@@ -144,6 +147,12 @@
- }
- 
- model agent_action {
+@@ -146,0 +150,6 @@
 +  taskId         String? @map("task_id")
 +  taskRevision   Int? @map("task_revision")
 +  task           agent_task? @relation(fields: [taskId], references: [id], onDelete: NoAction)
 +
 +  @@index([taskId], map: "idx_agent_action_task")
 +
-   id                    String        @id @default(dbgenerated("(gen_random_uuid())::text"))
-   sessionId             String        @map("session_id")
-   userId                String        @map("user_id") @db.Uuid
-@@ -591,6 +600,9 @@
- }
- 
- model branch {
+@@ -593,0 +603,3 @@
 +  agentTasks     agent_task[]
 +  agentTaskEvents agent_task_event[]
 +
-   id                            String                            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-   name                          String
-   slug                          String                            @unique
-@@ -742,6 +754,9 @@
- }
- 
- model user {
+@@ -744,0 +757,3 @@
 +  agentTasks     agent_task[]
 +  agentTaskEvents agent_task_event[]
 +
-   id                            String                            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-   email                         String?                           @unique @db.VarChar
-   name                          String?                           @db.VarChar
-@@ -1543,3 +1558,56 @@
-   @@index([outcome, createdAt], map: "idx_eformsign_webhook_event_outcome_created")
-   @@index([createdAt], map: "idx_eformsign_webhook_event_created")
- }
+@@ -1545,0 +1561,53 @@
 +
 +
 +/// Protected task draft; expiry clears draft JSON while ownership tombstones remain.
