@@ -260,7 +260,8 @@ describeE2E("admin service-record HTTP authorization", () => {
             .set("Authorization", `Bearer ${token}`);
 
         expect(response.status).toBe(404);
-        expect(response.body.message).toBe("Client not found");
+        expect(response.body.code).toBe("RESOURCE_NOT_FOUND");
+        expect(response.body.message).toBe("요청한 정보를 찾을 수 없어요.");
     });
 
     it("does not expose service internals on an unauthorized request", async () => {

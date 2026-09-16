@@ -1,6 +1,7 @@
 import { BadRequestException, ConflictException, Inject, Injectable, NotFoundException } from "@nestjs/common";
 import { createHash, randomUUID } from "node:crypto";
 
+import { codeOnlyProblemBody, problemBody } from "application/utils/problem-bodies";
 import {
     validateServiceRecordAnswers,
     validateServiceRecordEditText,
@@ -96,7 +97,9 @@ function jsonValue(value: unknown): ServiceRecordEditJsonValue {
                 .map(([key, item]) => [key, jsonValue(item)]),
         );
     }
-    throw new BadRequestException({ code: "SERVICE_RECORD_SOURCE_INVALID" });
+    // 저장된 원본 스냅숏이 JSON으로 정준화되지 못하는 데이터 무결성 거절이므로
+    // 요청 필드 사유 없이 등록 코드만 응답해요.
+    throw new BadRequestException(codeOnlyProblemBody("VALIDATION_FAILED"));
 }
 
 function stableStringify(value: ServiceRecordEditJsonValue): string {
@@ -298,8 +301,11 @@ function buildFutureContentSession(
         || typeof projected.provenanceVersion !== "string"
         || projected.provenanceVersion.length === 0
     ) {
+        // 향후 회차 근거(배정·일정 투영)를 확인할 수 없는 상태 충돌이므로 등록 코드로
+        // 응답해요. sessionIndex는 실행시점 데이터라 카탈로그에 넣지 않고(EM-CAT-04)
+        // 호환 별칭으로만 유지해요.
         throw new ConflictException({
-            code: "SERVICE_RECORD_FUTURE_SESSION_PROVENANCE_UNAVAILABLE",
+            ...codeOnlyProblemBody("REQUEST_CONFLICT"),
             sessionIndex: projected.sessionIndex,
         });
     }
@@ -469,7 +475,14 @@ export class AdminServiceRecordEditService {
     ): Promise<AdminServiceRecordEditStateDto> {
         const target = await this.resolveDraftTarget(branchId, draftId);
         const validatedChanges = this.validateChanges(dto.changes, target.loaded.source);
-        if (!validatedChanges) throw new BadRequestException("Draft changes are required");
+        if (!validatedChanges) {
+            throw new BadRequestException(problemBody("VALIDATION_FAILED", {
+                pointer: "/changes",
+                code: "REQUIRED",
+                detail: "저장할 변경 내용을 입력해 주세요.",
+                location: "body",
+            }));
+        }
         let changes: ServiceRecordEditJsonObject;
         try {
             changes = normalizeServiceRecordEditChanges(
@@ -480,7 +493,18 @@ export class AdminServiceRecordEditService {
             ).changes;
         } catch (error) {
             if (error instanceof ServiceRecordScheduleValidationError) {
-                throw new BadRequestException({ code: error.code, message: error.message, sessionIndex: error.sessionIndex });
+                // 일정 벡터 사유 코드는 카탈로그에 없는 실행시점 표기라서(EM-CAT-01)
+                // 등록된 검증 코드로 응답하고 원인 텍스트는 호환 message로만 남겨요.
+                throw new BadRequestException({
+                    ...problemBody("VALIDATION_FAILED", {
+                        pointer: "/changes",
+                        code: "INVALID_VALUE",
+                        detail: "제공기록 일정 변경을 적용할 수 없어요.",
+                        location: "body",
+                    }),
+                    message: error.message,
+                    sessionIndex: error.sessionIndex,
+                });
             }
             throw error;
         }
@@ -512,7 +536,7 @@ export class AdminServiceRecordEditService {
     ) {
         const target = await this.resolveDraftTarget(branchId, draftId);
         if (target.draft.status !== "ACTIVE") {
-            throw new ConflictException({ code: "SERVICE_RECORD_DRAFT_CLOSED" });
+            throw new ConflictException(codeOnlyProblemBody("REQUEST_NOT_PENDING"));
         }
         if (target.draft.draftVersion !== dto.expectedDraftVersion) {
             await this.throwConflictWithLatest(
@@ -523,8 +547,10 @@ export class AdminServiceRecordEditService {
             );
         }
         if (target.draft.sourceFingerprint !== target.loaded.fingerprint) {
+            // 원본이 임시 저장 이후 바뀐 충돌은 등록된 대상 변경 코드로 응답하고
+            // 화면 복구에 쓰이는 최신 상태는 호환 별칭으로 유지해요.
             throw new ConflictException({
-                code: "SERVICE_RECORD_SOURCE_CHANGED",
+                ...codeOnlyProblemBody("SERVICE_RECORD_WRITE_TARGET_CHANGED"),
                 sourceChanged: true,
                 sourceCaseVersion: target.loaded.source.caseVersion,
                 sourceFingerprint: target.loaded.fingerprint,
@@ -560,13 +586,23 @@ export class AdminServiceRecordEditService {
         dto: ConfirmServiceRecordEditDraftDto,
     ): Promise<ServiceRecordEditConfirmResponse> {
         if (!UUID_PATTERN.test(draftId) || !UUID_PATTERN.test(dto.idempotencyKey)) {
-            throw new NotFoundException("Service-record draft not found");
+            throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
         }
         if (!Number.isInteger(dto.expectedDraftVersion) || dto.expectedDraftVersion < 1) {
-            throw new BadRequestException("expectedDraftVersion must be a positive integer");
+            throw new BadRequestException(problemBody("VALIDATION_FAILED", {
+                pointer: "/expectedDraftVersion",
+                code: "INVALID_FORMAT",
+                detail: "임시 저장 버전은 1 이상의 정수여야 해요.",
+                location: "body",
+            }));
         }
         if (typeof dto.previewId !== "string" || !/^srp_[0-9a-f]{64}$/i.test(dto.previewId)) {
-            throw new BadRequestException("previewId is invalid");
+            throw new BadRequestException(problemBody("VALIDATION_FAILED", {
+                pointer: "/previewId",
+                code: "INVALID_FORMAT",
+                detail: "미리보기 식별자가 올바르지 않아요.",
+                location: "body",
+            }));
         }
 
         const requestFingerprint = createHash("sha256")
@@ -600,7 +636,9 @@ export class AdminServiceRecordEditService {
         } catch (error) {
             if (error instanceof ServiceRecordEditNotFoundError) this.throwRepositoryNotFound(error);
             if (error instanceof ServiceRecordEditConflictError) {
-                throw new ConflictException({ code: error.code, message: error.message });
+                // 저장소 충돌 전체(버전 경합·문서 상태 경합)는 "작업 대상 변경"의
+                // 동일 원인이라 등록된 코드를 재사용해요(EM-CAT-02).
+                throw new ConflictException(codeOnlyProblemBody("SERVICE_RECORD_WRITE_TARGET_CHANGED"));
             }
             throw error;
         }
@@ -617,13 +655,13 @@ export class AdminServiceRecordEditService {
     }): ServiceRecordEditConfirmPlan {
         const { draft, source, revisionFactsSource, branchId, draftId, actorUserId, previewId } = args;
         if (draft.status !== "ACTIVE") {
-            throw new ConflictException({ code: "SERVICE_RECORD_DRAFT_CLOSED" });
+            throw new ConflictException(codeOnlyProblemBody("REQUEST_NOT_PENDING"));
         }
 
         const fingerprint = sourceFingerprint(source);
         if (draft.sourceFingerprint !== fingerprint) {
             throw new ConflictException({
-                code: "SERVICE_RECORD_SOURCE_CHANGED",
+                ...codeOnlyProblemBody("SERVICE_RECORD_WRITE_TARGET_CHANGED"),
                 sourceChanged: true,
                 sourceCaseVersion: source.caseVersion,
                 sourceFingerprint: fingerprint,
@@ -645,8 +683,10 @@ export class AdminServiceRecordEditService {
             .update(stableStringify(jsonValue(previewValues)))
             .digest("hex")}`;
         if (computedPreviewId !== previewId) {
+            // 제출된 미리보기가 현재 원본/변경 내용과 어긋난 요청이라 등록된
+            // 요청-만료 코드로 응답해요(EM-CAT-03: 기존 REQUEST_STALE 재사용).
             throw new ConflictException({
-                code: "SERVICE_RECORD_PREVIEW_STALE",
+                ...codeOnlyProblemBody("REQUEST_STALE"),
                 previewId: computedPreviewId,
                 sourceCaseVersion: source.caseVersion,
                 sourceFingerprint: fingerprint,
@@ -654,7 +694,7 @@ export class AdminServiceRecordEditService {
         }
         if (provisional.blockingReasons.length > 0) {
             throw new ConflictException({
-                code: "SERVICE_RECORD_PREVIEW_BLOCKED",
+                ...codeOnlyProblemBody("REQUEST_CONFLICT"),
                 blockingReasons: provisional.blockingReasons,
             });
         }
@@ -701,7 +741,7 @@ export class AdminServiceRecordEditService {
             const projected = afterByIndex.get(patch.sessionIndex);
             if (!projected) {
                 throw new ConflictException({
-                    code: "SERVICE_RECORD_FUTURE_SESSION_PROVENANCE_UNAVAILABLE",
+                    ...codeOnlyProblemBody("REQUEST_CONFLICT"),
                     sessionIndex: patch.sessionIndex,
                 });
             }
@@ -1067,9 +1107,10 @@ export class AdminServiceRecordEditService {
         if (!(error instanceof ServiceRecordEditConflictError)) throw error;
         const latest = await this.repository.findDraft(branchId, caseId, draftId);
         const current = await this.loadSource(branchId, { caseId });
+        // 최신 임시 저장 상태는 409 복구 흐름에서 쓰이므로 호환 별칭으로 유지해요.
+        // 문제 본문 자체는 등록된 대상 변경 코드로 응답해요.
         throw new ConflictException({
-            code: error.code,
-            message: error.message,
+            ...codeOnlyProblemBody("SERVICE_RECORD_WRITE_TARGET_CHANGED"),
             latestDraft: latest ? mapDraft(latest) : null,
             sourceChanged: latest ? latest.sourceFingerprint !== current.fingerprint : false,
             sourceCaseVersion: current.source.caseVersion,
@@ -1079,7 +1120,7 @@ export class AdminServiceRecordEditService {
 
     private throwRepositoryNotFound(error: unknown): never {
         if (error instanceof ServiceRecordEditNotFoundError) {
-            throw new NotFoundException("Service-record edit resource was not found");
+            throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
         }
         throw error;
     }
@@ -1098,17 +1139,41 @@ export class AdminServiceRecordEditService {
         source: SourceSnapshot,
     ): ServiceRecordEditJsonObject | undefined {
         if (raw === undefined) return undefined;
-        if (!isPlainRecord(raw)) throw new BadRequestException("Draft changes must be an object");
+        if (!isPlainRecord(raw)) {
+            throw new BadRequestException(problemBody("VALIDATION_FAILED", {
+                pointer: "/changes",
+                code: "INVALID_FORMAT",
+                detail: "임시 저장 변경 내용은 객체여야 해요.",
+                location: "body",
+            }));
+        }
 
         const serialized = JSON.stringify(raw);
-        if (typeof serialized !== "string") throw new BadRequestException("Draft changes must be serializable");
+        if (typeof serialized !== "string") {
+            throw new BadRequestException(problemBody("VALIDATION_FAILED", {
+                pointer: "/changes",
+                code: "INVALID_VALUE",
+                detail: "임시 저장 변경 내용을 저장할 수 없어요.",
+                location: "body",
+            }));
+        }
         if (Buffer.byteLength(serialized, "utf8") > MAX_CHANGES_BYTES) {
-            throw new BadRequestException("제공기록 초안이 너무 큽니다.");
+            throw new BadRequestException(problemBody("VALIDATION_FAILED", {
+                pointer: "/changes",
+                code: "OUT_OF_RANGE",
+                detail: "제공기록 초안이 너무 커요.",
+                location: "body",
+            }));
         }
 
         const unknownRoot = Object.keys(raw).filter((key) => key !== "header" && key !== "sessions");
         if (unknownRoot.length > 0) {
-            throw new BadRequestException(`Unknown service-record draft field: ${unknownRoot[0]}`);
+            throw new BadRequestException(problemBody("VALIDATION_FAILED", {
+                pointer: `/changes/${unknownRoot[0]}`,
+                code: "UNEXPECTED_FIELD",
+                detail: `허용되지 않는 임시 저장 항목이에요: ${unknownRoot[0]}`,
+                location: "body",
+            }));
         }
 
         const rawRecord = raw as unknown as Record<string, unknown>;
@@ -1119,14 +1184,31 @@ export class AdminServiceRecordEditService {
     }
 
     private validateHeader(raw: unknown): ServiceRecordEditJsonValue {
-        if (!isPlainRecord(raw)) throw new BadRequestException("Draft header must be an object");
+        if (!isPlainRecord(raw)) {
+            throw new BadRequestException(problemBody("VALIDATION_FAILED", {
+                pointer: "/changes/header",
+                code: "INVALID_FORMAT",
+                detail: "임시 저장 헤더는 객체여야 해요.",
+                location: "body",
+            }));
+        }
         const output: Record<string, ServiceRecordEditJsonValue> = {};
         for (const [key, value] of Object.entries(raw)) {
             if (!EDITABLE_HEADER_KEYS.has(key)) {
-                throw new BadRequestException(`Unknown service-record header field: ${key}`);
+                throw new BadRequestException(problemBody("VALIDATION_FAILED", {
+                    pointer: `/changes/header/${key}`,
+                    code: "UNEXPECTED_FIELD",
+                    detail: `허용되지 않는 헤더 항목이에요: ${key}`,
+                    location: "body",
+                }));
             }
             if (typeof value !== "string" || value.length > 120) {
-                throw new BadRequestException(`Invalid service-record header field: ${key}`);
+                throw new BadRequestException(problemBody("VALIDATION_FAILED", {
+                    pointer: `/changes/header/${key}`,
+                    code: "INVALID_FORMAT",
+                    detail: "헤더 항목은 120자 이하의 문자열이어야 해요.",
+                    location: "body",
+                }));
             }
             output[key] = value.trim();
         }
@@ -1134,8 +1216,22 @@ export class AdminServiceRecordEditService {
     }
 
     private validateSessions(raw: unknown, source: SourceSnapshot): ServiceRecordEditJsonValue {
-        if (!Array.isArray(raw)) throw new BadRequestException("Draft sessions must be an array");
-        if (raw.length > 100) throw new BadRequestException("Too many service-record sessions");
+        if (!Array.isArray(raw)) {
+            throw new BadRequestException(problemBody("VALIDATION_FAILED", {
+                pointer: "/changes/sessions",
+                code: "INVALID_FORMAT",
+                detail: "임시 저장 회차는 배열이어야 해요.",
+                location: "body",
+            }));
+        }
+        if (raw.length > 100) {
+            throw new BadRequestException(problemBody("VALIDATION_FAILED", {
+                pointer: "/changes/sessions",
+                code: "OUT_OF_RANGE",
+                detail: "회차 항목이 너무 많아요.",
+                location: "body",
+            }));
+        }
 
         const maxSessionIndex = source.requiredSessionCount ?? source.sessions.reduce(
             (max, session) => Math.max(max, session.sessionIndex),
@@ -1144,19 +1240,48 @@ export class AdminServiceRecordEditService {
         const seen = new Set<number>();
         const sessions: ServiceRecordEditJsonValue[] = [];
         for (const value of raw) {
-            if (!isPlainRecord(value)) throw new BadRequestException("Draft session must be an object");
+            if (!isPlainRecord(value)) {
+                throw new BadRequestException(problemBody("VALIDATION_FAILED", {
+                    pointer: "/changes/sessions",
+                    code: "INVALID_FORMAT",
+                    detail: "각 회차는 객체여야 해요.",
+                    location: "body",
+                }));
+            }
             const unknownFields = Object.keys(value).filter((key) => !EDITABLE_SESSION_KEYS.has(key));
             if (unknownFields.length > 0) {
-                throw new BadRequestException(`Unknown service-record session field: ${unknownFields[0]}`);
+                throw new BadRequestException(problemBody("VALIDATION_FAILED", {
+                    pointer: `/changes/sessions/${unknownFields[0]}`,
+                    code: "UNEXPECTED_FIELD",
+                    detail: `허용되지 않는 회차 항목이에요: ${unknownFields[0]}`,
+                    location: "body",
+                }));
             }
             const sessionIndex = value["sessionIndex"];
             if (typeof sessionIndex !== "number" || !Number.isInteger(sessionIndex) || sessionIndex < 1 || sessionIndex > maxSessionIndex) {
-                throw new BadRequestException(`Session ${String(sessionIndex)} is outside the contracted range 1..${maxSessionIndex}`);
+                throw new BadRequestException(problemBody("VALIDATION_FAILED", {
+                    pointer: "/changes/sessions",
+                    code: "OUT_OF_RANGE",
+                    detail: "회차 번호가 계약 범위를 벗어났어요.",
+                    location: "body",
+                }));
             }
             if (source.sessions.some((session) => session.sessionIndex === sessionIndex && session.ambiguous)) {
-                throw new BadRequestException(`Session ${sessionIndex} has ambiguous legacy source rows`);
+                throw new BadRequestException(problemBody("VALIDATION_FAILED", {
+                    pointer: "/changes/sessions",
+                    code: "INVALID_VALUE",
+                    detail: "해당 회차는 계통이 불명확한 기존 데이터가 있어 수정할 수 없어요.",
+                    location: "body",
+                }));
             }
-            if (seen.has(sessionIndex)) throw new BadRequestException(`Duplicate service-record session: ${sessionIndex}`);
+            if (seen.has(sessionIndex)) {
+                throw new BadRequestException(problemBody("VALIDATION_FAILED", {
+                    pointer: "/changes/sessions",
+                    code: "INVALID_VALUE",
+                    detail: "같은 회차가 여러 번 있어요.",
+                    location: "body",
+                }));
+            }
             seen.add(sessionIndex);
 
             const session: Record<string, ServiceRecordEditJsonValue> = { sessionIndex };
@@ -1165,7 +1290,14 @@ export class AdminServiceRecordEditService {
             if (value["etcService"] !== undefined) session["etcService"] = validateServiceRecordEditText(value["etcService"], "etcService");
             if (value["notes"] !== undefined) session["notes"] = validateServiceRecordEditText(value["notes"], "notes");
             if (value["paymentConfirmed"] !== undefined) {
-                if (typeof value["paymentConfirmed"] !== "boolean") throw new BadRequestException("paymentConfirmed must be boolean");
+                if (typeof value["paymentConfirmed"] !== "boolean") {
+                    throw new BadRequestException(problemBody("VALIDATION_FAILED", {
+                        pointer: "/changes/sessions/paymentConfirmed",
+                        code: "INVALID_FORMAT",
+                        detail: "결제 확인 여부는 참·거짓 값이어야 해요.",
+                        location: "body",
+                    }));
+                }
                 session["paymentConfirmed"] = value["paymentConfirmed"];
             }
             sessions.push(session);
@@ -1175,7 +1307,12 @@ export class AdminServiceRecordEditService {
 
     private validateDate(value: unknown): string {
         if (typeof value !== "string" || !DATE_ONLY_PATTERN.test(value)) {
-            throw new BadRequestException("서비스 제공일자는 YYYY-MM-DD 형식이어야 합니다.");
+            throw new BadRequestException(problemBody("VALIDATION_FAILED", {
+                pointer: "/changes/sessions/serviceDate",
+                code: "INVALID_FORMAT",
+                detail: "서비스 제공일자는 YYYY-MM-DD 형식이어야 해요.",
+                location: "body",
+            }));
         }
         const parts = value.split("-").map(Number);
         const year = parts[0]!;
@@ -1183,7 +1320,12 @@ export class AdminServiceRecordEditService {
         const day = parts[2]!;
         const parsed = new Date(Date.UTC(year, month - 1, day));
         if (parsed.getUTCFullYear() !== year || parsed.getUTCMonth() !== month - 1 || parsed.getUTCDate() !== day) {
-            throw new BadRequestException("서비스 제공일자가 올바르지 않습니다.");
+            throw new BadRequestException(problemBody("VALIDATION_FAILED", {
+                pointer: "/changes/sessions/serviceDate",
+                code: "INVALID_VALUE",
+                detail: "서비스 제공일자가 올바르지 않아요.",
+                location: "body",
+            }));
         }
         return value;
     }
@@ -1192,17 +1334,17 @@ export class AdminServiceRecordEditService {
         branchId: string,
         draftId: string,
     ): Promise<{ loaded: LoadedSource; draft: ServiceRecordEditDraft }> {
-        if (!UUID_PATTERN.test(draftId)) throw new NotFoundException("Service-record draft not found");
+        if (!UUID_PATTERN.test(draftId)) throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
         if (typeof this.repository.loadDraftWithSource === "function") {
             const target = await this.repository.loadDraftWithSource(branchId, draftId);
-            if (!target) throw new NotFoundException("Service-record draft not found");
+            if (!target) throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
             return {
                 draft: target.draft,
                 loaded: { source: target.source, fingerprint: sourceFingerprint(target.source) },
             };
         }
         const draft = await this.repository.findDraftById(branchId, draftId);
-        if (!draft) throw new NotFoundException("Service-record draft not found");
+        if (!draft) throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
         return { draft, loaded: await this.loadSource(branchId, { caseId: draft.serviceRecordCaseId }) };
     }
 
@@ -1211,7 +1353,7 @@ export class AdminServiceRecordEditService {
         target: { clientId?: number; caseId?: string },
     ): Promise<LoadedSource> {
         const source = await this.repository.loadSource(branchId, target);
-        if (!source) throw new NotFoundException("Service-record source was not found");
+        if (!source) throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
         return { source, fingerprint: sourceFingerprint(source) };
     }
 }

@@ -9,6 +9,7 @@ import {
 } from "@nestjs/common";
 import { message_log, message_trigger_job, Prisma } from "@prisma/client";
 import { PrismaService } from "infrastructure/database/prisma.service";
+import { codeOnlyProblemBody } from "application/utils/problem-bodies";
 import {
     SERVICE_RECORD_LINK_RULE_ID,
     SERVICE_RECORD_LINK_SMS_LOG_TEMPLATE_KEY,
@@ -242,7 +243,7 @@ export class AdminServiceRecordService {
         await this.assertClientBelongsToBranch(branchId, clientId);
         const repository = this.getRevisionStatusRepository();
         const result = await repository.listRevisionHistory(branchId, clientId);
-        if (result === null) throw new NotFoundException("Service record case not found");
+        if (result === null) throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
         return normalizeRevisionHistoryResponse(result);
     }
 
@@ -258,8 +259,8 @@ export class AdminServiceRecordService {
         expectedGeneration: string,
         actorUserId: string,
     ): Promise<ServiceRecordRevisionDocumentSummary> {
-        const normalizedRevisionId = normalizePathIdentifier(revisionId, "revisionId");
-        const normalizedDocumentStateId = normalizePathIdentifier(documentStateId, "documentStateId");
+        const normalizedRevisionId = normalizePathIdentifier(revisionId);
+        const normalizedDocumentStateId = normalizePathIdentifier(documentStateId);
         const normalizedGeneration = normalizeGeneration(expectedGeneration);
         const repository = this.getRevisionStatusRepository();
         const state = await repository.findRevisionDocumentStateForBranch(
@@ -267,9 +268,10 @@ export class AdminServiceRecordService {
             normalizedRevisionId,
             normalizedDocumentStateId,
         );
-        if (state === null) throw new NotFoundException("Revision document not found");
+        if (state === null) throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
         if (state.generation !== normalizedGeneration) {
-            throw revisionDocumentConflict("REVISION_DOCUMENT_GENERATION_STALE");
+            // 세대 불일치는 대상 문서 상태가 요청 도중 바뀐 원인이므로 등록된 코드를 재사용해요(EM-CAT-02).
+            throw new ConflictException(codeOnlyProblemBody("SERVICE_RECORD_WRITE_TARGET_CHANGED"));
         }
 
         void actorUserId;
@@ -280,13 +282,14 @@ export class AdminServiceRecordService {
             stateId: normalizedDocumentStateId,
             expectedGeneration: normalizedGeneration,
         });
-        if (result === null) throw revisionDocumentConflict("REVISION_DOCUMENT_RETRY_CONFLICT");
+        if (result === null) throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
         return normalizeRevisionDocumentSummaryResult(result);
     }
 
     private getRevisionStatusRepository(): IServiceRecordEditRepository {
         if (!this.editRepository) {
-            throw new ConflictException({ code: "REVISION_DOCUMENT_STATE_UNAVAILABLE" });
+            // 편집 저장소 미바인딩은 모듈 구성 전제 위반이고 상태는 409를 유지해요.
+            throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
         }
         return this.editRepository;
     }
@@ -380,7 +383,7 @@ export class AdminServiceRecordService {
         actor?: ServiceRecordAdminActor,
     ): Promise<AdminServiceRecordResetLinkDto> {
         if (this.securityEventService && !actor?.userId) {
-            throw new ForbiddenException("Authenticated administrator required");
+            throw new ForbiddenException(codeOnlyProblemBody("ACCESS_DENIED"));
         }
         await this.assertScheduleBelongsToBranch(branchId, scheduleId);
         const reset = await this.serviceRecordLinkService.resetLink(scheduleId);
@@ -423,7 +426,7 @@ export class AdminServiceRecordService {
             select: { id: true },
         });
         if (!schedule) {
-            throw new NotFoundException("Assignment not found");
+            throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
         }
     }
 
@@ -433,7 +436,7 @@ export class AdminServiceRecordService {
             select: { id: true },
         });
         if (!client) {
-            throw new NotFoundException("Client not found");
+            throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
         }
     }
 
@@ -682,22 +685,20 @@ function normalizeIsoDate(value: unknown): string | null {
     return new Date(value).toISOString();
 }
 
-function normalizePathIdentifier(value: string, field: string): string {
+function normalizePathIdentifier(value: string): string {
     if (typeof value !== "string" || value.length === 0 || value.length > 255) {
-        throw new NotFoundException(`${field} not found`);
+        // 경로 식별자는 공개 메시지에 노출하지 않고 등록 코드만 응답해요.
+        throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
     }
     return value;
 }
 
 function normalizeGeneration(value: string): string {
     if (typeof value !== "string" || value.trim().length === 0 || value.length > 128) {
-        throw new ConflictException({ code: "REVISION_DOCUMENT_GENERATION_INVALID" });
+        // 상태는 409를 유지하고 등록된 충돌 코드로 응답해요.
+        throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
     }
     return value;
-}
-
-function revisionDocumentConflict(code: string): ConflictException {
-    return new ConflictException({ code });
 }
 
 function normalizeRevisionHistoryResponse(value: unknown): ServiceRecordRevisionHistoryResponse {
