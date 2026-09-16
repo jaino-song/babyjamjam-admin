@@ -11,4 +11,11 @@ describe("VoucherPriceTable filters", () => {
     expect(source).toContain("clearDurations()");
     expect(source).toContain("onClick={clearAllFilters}");
   });
+
+  it("exposes the existing image upload flow in a sliding sheet", () => {
+    expect(source).toContain('import { VoucherPriceUploadForm } from "./VoucherPriceUploadForm";');
+    expect(source).toContain('data-component="desktop_settings_voucher-price-table_header_upload"');
+    expect(source).toContain("<VoucherPriceUploadForm />");
+    expect(source).toContain("<Sheet open={isUploadOpen}");
+  });
 });

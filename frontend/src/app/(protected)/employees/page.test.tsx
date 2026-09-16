@@ -31,4 +31,9 @@ describe("EmployeesPage deletion conflicts", () => {
     expect(source).toContain('unavailable: allEmployees.filter((e: Employee) => e.status === "unavailable").length');
     expect(source).toContain("OPEN_TO_NEXT_WORK_LABELS");
   });
+
+  it("exposes the live employee schedule route from the list header", () => {
+    expect(source).toContain('label="서비스 일정"');
+    expect(source).toContain('href="/employees/schedule"');
+  });
 });

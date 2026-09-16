@@ -61,7 +61,7 @@ import { getEmployeeGradeBadgeStyle, normalizeEmployeeGrade } from "@/features/e
 import { formatDateForDisplay } from "@/lib/date/format-date-for-display";
 import { useLocale } from "@/providers/LocaleProvider";
 import { t } from "@/lib/i18n/translations";
-
+import { EmployeeDetailPanel } from "@/components/app/employees/EmployeeDetailPanel";
 const filterItems = [
     { label: "전체", value: "all" },
     { label: EMPLOYEE_STATUS_LABELS.available, value: "active" },
@@ -219,13 +219,13 @@ export default function EmployeesPage() {
                     searchPlaceholder="이름, 연락처, 지역으로 검색..."
                     isLoading={isLoading} subHeader={!isLoading && isError && employees.length > 0 ? <Alert variant="warning" data-component="desktop_employees_split-layout_list-panel_cached-data-error"><AlertTitle>직원 목록을 불러오지 못했습니다</AlertTitle><AlertDescription>현재 저장된 직원 목록을 표시하고 있습니다. 잠시 후 다시 시도해 주세요.<Button type="button" variant="outline" size="sm" data-component="desktop_employees_split-layout_list-panel_cached-data-error_retry" className="mt-3" aria-label="직원 목록 다시 시도" onClick={() => void refetch()}>다시 시도</Button></AlertDescription></Alert> : undefined}
                     headerActions={
-                        <HeaderActionButton
+                        <><HeaderActionButton
                             icon={Plus}
                             label="직원 추가"
                             onClick={handleAddNew}
                             data-component="desktop_employees_split-layout_list-panel_employees-header-add"
                             className="text-[calc(12px*var(--glint-ui-scale,1))]"
-                        />
+                        /><HeaderActionButton icon={Calendar} label="서비스 일정" href="/employees/schedule" variant="muted" data-component="desktop_employees_split-layout_list-panel_employees-header-schedule" /></>
                     }
                     emptyState={!isLoading && !isError && employees.length === 0 ? (
                         <ListEmptyState
@@ -334,7 +334,7 @@ export default function EmployeesPage() {
                         )}
                     />
                 ) : selectedEmployee ? (
-                    <EmployeeDetail
+                    <EmployeeDetailPanel key={selectedEmployee.id}
                         employee={selectedEmployee}
                         onEdit={handleEdit}
                         onDelete={handleDeleteRequest}
@@ -477,3 +477,7 @@ function EmployeeDetail({ employee, onEdit, onDelete }: EmployeeDetailProps) {
         </DetailPanel>
     );
 }
+
+// Kept as a baseline-compatible compatibility implementation while the
+// selected employee route uses EmployeeDetailPanel above.
+void EmployeeDetail;
