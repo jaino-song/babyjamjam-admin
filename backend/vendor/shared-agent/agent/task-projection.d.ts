@@ -27,18 +27,27 @@ export declare const AgentTaskSafeFieldStatusSchema: z.ZodObject<{
         missing: "missing";
         "confirmed-and-tentative": "confirmed-and-tentative";
     }>;
-    valueRef: z.ZodOptional<z.ZodString>;
+    valueRef: z.ZodOptional<z.ZodUUID>;
 }, z.core.$strict>;
 export type AgentTaskSafeFieldStatus = z.infer<typeof AgentTaskSafeFieldStatusSchema>;
 export declare const AgentTaskSafeChoiceSetSchema: z.ZodObject<{
-    choiceSetRef: z.ZodString;
-    optionIds: z.ZodArray<z.ZodString>;
+    choiceSetRef: z.ZodUUID;
+    optionIds: z.ZodArray<z.ZodUUID>;
 }, z.core.$strict>;
+/** Safe projection contains structural references/status only. */
 export declare const AgentTaskSafeSnapshotSchema: z.ZodObject<{
     schemaVersion: z.ZodLiteral<1>;
-    taskId: z.ZodString;
-    sessionId: z.ZodString;
-    revision: z.ZodUnion<readonly [z.ZodNumber, z.ZodString]>;
+    taskId: z.ZodUUID;
+    sessionId: z.ZodUUID;
+    kind: z.ZodEnum<{
+        "clients.create": "clients.create";
+        "clients.update": "clients.update";
+    }>;
+    capabilityId: z.ZodEnum<{
+        "clients.create": "clients.create";
+        "clients.update": "clients.update";
+    }>;
+    revision: z.ZodNumber;
     state: z.ZodEnum<{
         executing: "executing";
         failed: "failed";
@@ -78,28 +87,41 @@ export declare const AgentTaskSafeSnapshotSchema: z.ZodObject<{
             missing: "missing";
             "confirmed-and-tentative": "confirmed-and-tentative";
         }>;
-        valueRef: z.ZodOptional<z.ZodString>;
+        valueRef: z.ZodOptional<z.ZodUUID>;
     }, z.core.$strict>>;
     constraints: z.ZodObject<{
         noSend: z.ZodBoolean;
-        automationChoice: z.ZodEnum<{
-            unanswered: "unanswered";
-            yes: "yes";
-            no: "no";
-        }>;
     }, z.core.$strict>;
     target: z.ZodNullable<z.ZodObject<{
-        targetRef: z.ZodString;
-        version: z.ZodUnion<readonly [z.ZodNumber, z.ZodString]>;
+        targetRef: z.ZodUUID;
     }, z.core.$strict>>;
     choiceSets: z.ZodArray<z.ZodObject<{
-        choiceSetRef: z.ZodString;
-        optionIds: z.ZodArray<z.ZodString>;
+        choiceSetRef: z.ZodUUID;
+        optionIds: z.ZodArray<z.ZodUUID>;
     }, z.core.$strict>>;
-    orderedChoiceRefs: z.ZodArray<z.ZodString>;
+    orderedChoiceRefs: z.ZodArray<z.ZodUUID>;
     issues: z.ZodArray<z.ZodObject<{
         code: z.ZodString;
-        field: z.ZodOptional<z.ZodString>;
+        field: z.ZodOptional<z.ZodEnum<{
+            type: "type";
+            name: "name";
+            address: "address";
+            phone: "phone";
+            duration: "duration";
+            fullPrice: "fullPrice";
+            grant: "grant";
+            actualPrice: "actualPrice";
+            startDate: "startDate";
+            endDate: "endDate";
+            careCenter: "careCenter";
+            voucherClient: "voucherClient";
+            birthday: "birthday";
+            dueDate: "dueDate";
+            birthDate: "birthDate";
+            serviceStatus: "serviceStatus";
+            breastPump: "breastPump";
+            areaId: "areaId";
+        }>>;
         severity: z.ZodEnum<{
             error: "error";
             info: "info";
@@ -107,8 +129,7 @@ export declare const AgentTaskSafeSnapshotSchema: z.ZodObject<{
         }>;
     }, z.core.$strict>>;
     action: z.ZodNullable<z.ZodObject<{
-        actionId: z.ZodString;
-        expectedRevision: z.ZodUnion<readonly [z.ZodNumber, z.ZodString]>;
+        actionId: z.ZodUUID;
     }, z.core.$strict>>;
     consent: z.ZodObject<{
         choice: z.ZodEnum<{
@@ -123,21 +144,29 @@ export declare const AgentTaskSafeSnapshotSchema: z.ZodObject<{
         updatedAt: z.ZodISODateTime;
         expiresAt: z.ZodOptional<z.ZodISODateTime>;
     }, z.core.$strict>;
-    currentSnapshotRef: z.ZodString;
+    currentSnapshotRef: z.ZodUUID;
 }, z.core.$strict>;
 export type AgentTaskSafeSnapshot = z.infer<typeof AgentTaskSafeSnapshotSchema>;
 export declare const AgentTaskSnapshotConflictSchema: z.ZodObject<{
     status: z.ZodLiteral<409>;
-    latestRevision: z.ZodUnion<readonly [z.ZodNumber, z.ZodString]>;
-    latestSnapshotRef: z.ZodOptional<z.ZodString>;
+    latestRevision: z.ZodNumber;
+    latestSnapshotRef: z.ZodOptional<z.ZodUUID>;
 }, z.core.$strict>;
 export declare const AgentTaskSnapshotEnvelopeSchema: z.ZodObject<{
     identityEpoch: z.ZodNumber;
     task: z.ZodObject<{
         schemaVersion: z.ZodLiteral<1>;
-        taskId: z.ZodString;
-        sessionId: z.ZodString;
-        revision: z.ZodUnion<readonly [z.ZodNumber, z.ZodString]>;
+        taskId: z.ZodUUID;
+        sessionId: z.ZodUUID;
+        kind: z.ZodEnum<{
+            "clients.create": "clients.create";
+            "clients.update": "clients.update";
+        }>;
+        capabilityId: z.ZodEnum<{
+            "clients.create": "clients.create";
+            "clients.update": "clients.update";
+        }>;
+        revision: z.ZodNumber;
         state: z.ZodEnum<{
             executing: "executing";
             failed: "failed";
@@ -159,13 +188,13 @@ export declare const AgentTaskSnapshotEnvelopeSchema: z.ZodObject<{
             fullPrice: z.ZodOptional<z.ZodNullable<z.ZodString>>;
             grant: z.ZodOptional<z.ZodNullable<z.ZodString>>;
             actualPrice: z.ZodOptional<z.ZodNullable<z.ZodString>>;
-            startDate: z.ZodOptional<z.ZodNullable<z.ZodString>>;
-            endDate: z.ZodOptional<z.ZodNullable<z.ZodString>>;
+            startDate: z.ZodOptional<z.ZodNullable<z.ZodUnion<readonly [z.ZodString, z.ZodString]>>>;
+            endDate: z.ZodOptional<z.ZodNullable<z.ZodUnion<readonly [z.ZodString, z.ZodString]>>>;
             careCenter: z.ZodOptional<z.ZodNullable<z.ZodBoolean>>;
             voucherClient: z.ZodOptional<z.ZodBoolean>;
             birthday: z.ZodOptional<z.ZodNullable<z.ZodString>>;
-            dueDate: z.ZodOptional<z.ZodNullable<z.ZodString>>;
-            birthDate: z.ZodOptional<z.ZodNullable<z.ZodString>>;
+            dueDate: z.ZodOptional<z.ZodNullable<z.ZodUnion<readonly [z.ZodString, z.ZodString]>>>;
+            birthDate: z.ZodOptional<z.ZodNullable<z.ZodUnion<readonly [z.ZodString, z.ZodString]>>>;
             serviceStatus: z.ZodOptional<z.ZodNullable<z.ZodEnum<{
                 pre_booking: "pre_booking";
                 waiting: "waiting";
@@ -182,26 +211,19 @@ export declare const AgentTaskSnapshotEnvelopeSchema: z.ZodObject<{
             address: z.ZodOptional<z.ZodNullable<z.ZodString>>;
             phone: z.ZodOptional<z.ZodNullable<z.ZodString>>;
             type: z.ZodOptional<z.ZodNullable<z.ZodString>>;
-            duration: z.ZodOptional<z.ZodNullable<z.ZodNumber>>;
+            duration: z.ZodOptional<z.ZodNullable<z.ZodUnion<readonly [z.ZodNumber, z.ZodString]>>>;
             fullPrice: z.ZodOptional<z.ZodNullable<z.ZodString>>;
             grant: z.ZodOptional<z.ZodNullable<z.ZodString>>;
             actualPrice: z.ZodOptional<z.ZodNullable<z.ZodString>>;
             startDate: z.ZodOptional<z.ZodNullable<z.ZodString>>;
             endDate: z.ZodOptional<z.ZodNullable<z.ZodString>>;
-            careCenter: z.ZodOptional<z.ZodNullable<z.ZodBoolean>>;
-            voucherClient: z.ZodOptional<z.ZodBoolean>;
+            careCenter: z.ZodOptional<z.ZodNullable<z.ZodUnion<readonly [z.ZodBoolean, z.ZodString]>>>;
+            voucherClient: z.ZodOptional<z.ZodUnion<readonly [z.ZodBoolean, z.ZodString]>>;
             birthday: z.ZodOptional<z.ZodNullable<z.ZodString>>;
             dueDate: z.ZodOptional<z.ZodNullable<z.ZodString>>;
             birthDate: z.ZodOptional<z.ZodNullable<z.ZodString>>;
-            serviceStatus: z.ZodOptional<z.ZodNullable<z.ZodEnum<{
-                pre_booking: "pre_booking";
-                waiting: "waiting";
-                replacement_requested: "replacement_requested";
-                active: "active";
-                completed: "completed";
-                terminated: "terminated";
-            }>>>;
-            breastPump: z.ZodOptional<z.ZodBoolean>;
+            serviceStatus: z.ZodOptional<z.ZodNullable<z.ZodString>>;
+            breastPump: z.ZodOptional<z.ZodUnion<readonly [z.ZodBoolean, z.ZodString]>>;
             areaId: z.ZodOptional<z.ZodNullable<z.ZodString>>;
         }, z.core.$strict>;
         provenance: z.ZodObject<{
@@ -215,8 +237,8 @@ export declare const AgentTaskSnapshotEnvelopeSchema: z.ZodObject<{
                     system: "system";
                 }>;
                 capturedAt: z.ZodOptional<z.ZodISODateTime>;
-                eventId: z.ZodOptional<z.ZodString>;
-                valueRef: z.ZodOptional<z.ZodString>;
+                eventId: z.ZodOptional<z.ZodUUID>;
+                valueRef: z.ZodOptional<z.ZodUUID>;
             }, z.core.$strict>>;
             tentative: z.ZodRecord<z.ZodString, z.ZodObject<{
                 source: z.ZodEnum<{
@@ -228,13 +250,32 @@ export declare const AgentTaskSnapshotEnvelopeSchema: z.ZodObject<{
                     system: "system";
                 }>;
                 capturedAt: z.ZodOptional<z.ZodISODateTime>;
-                eventId: z.ZodOptional<z.ZodString>;
-                valueRef: z.ZodOptional<z.ZodString>;
+                eventId: z.ZodOptional<z.ZodUUID>;
+                valueRef: z.ZodOptional<z.ZodUUID>;
             }, z.core.$strict>>;
         }, z.core.$strict>;
         issues: z.ZodArray<z.ZodObject<{
             code: z.ZodString;
-            field: z.ZodOptional<z.ZodString>;
+            field: z.ZodOptional<z.ZodEnum<{
+                type: "type";
+                name: "name";
+                address: "address";
+                phone: "phone";
+                duration: "duration";
+                fullPrice: "fullPrice";
+                grant: "grant";
+                actualPrice: "actualPrice";
+                startDate: "startDate";
+                endDate: "endDate";
+                careCenter: "careCenter";
+                voucherClient: "voucherClient";
+                birthday: "birthday";
+                dueDate: "dueDate";
+                birthDate: "birthDate";
+                serviceStatus: "serviceStatus";
+                breastPump: "breastPump";
+                areaId: "areaId";
+            }>>;
             severity: z.ZodEnum<{
                 error: "error";
                 info: "info";
@@ -244,29 +285,23 @@ export declare const AgentTaskSnapshotEnvelopeSchema: z.ZodObject<{
         }, z.core.$strict>>;
         constraints: z.ZodObject<{
             noSend: z.ZodBoolean;
-            automationChoice: z.ZodEnum<{
-                unanswered: "unanswered";
-                yes: "yes";
-                no: "no";
-            }>;
         }, z.core.$strict>;
         choiceSets: z.ZodArray<z.ZodObject<{
-            choiceSetRef: z.ZodString;
+            choiceSetRef: z.ZodUUID;
             options: z.ZodArray<z.ZodObject<{
-                optionId: z.ZodString;
+                optionId: z.ZodUUID;
                 label: z.ZodString;
                 description: z.ZodOptional<z.ZodString>;
             }, z.core.$strict>>;
             issuedAt: z.ZodOptional<z.ZodISODateTime>;
             expiresAt: z.ZodOptional<z.ZodISODateTime>;
         }, z.core.$strict>>;
-        orderedChoiceRefs: z.ZodArray<z.ZodString>;
+        orderedChoiceRefs: z.ZodArray<z.ZodUUID>;
         target: z.ZodNullable<z.ZodObject<{
-            targetRef: z.ZodString;
-            version: z.ZodOptional<z.ZodUnion<readonly [z.ZodNumber, z.ZodString]>>;
-            targetVersion: z.ZodOptional<z.ZodUnion<readonly [z.ZodNumber, z.ZodString]>>;
-            choiceSetRef: z.ZodOptional<z.ZodString>;
-            optionId: z.ZodOptional<z.ZodString>;
+            targetRef: z.ZodUUID;
+            version: z.ZodNumber;
+            choiceSetRef: z.ZodOptional<z.ZodUUID>;
+            optionId: z.ZodOptional<z.ZodUUID>;
         }, z.core.$strict>>;
         consent: z.ZodObject<{
             choice: z.ZodEnum<{
@@ -275,17 +310,17 @@ export declare const AgentTaskSnapshotEnvelopeSchema: z.ZodObject<{
                 no: "no";
             }>;
             binding: z.ZodNullable<z.ZodObject<{
-                recipientRef: z.ZodString;
+                recipientRef: z.ZodUUID;
                 effectDigest: z.ZodString;
-                templateRef: z.ZodString;
+                templateRef: z.ZodUUID;
                 policyDigest: z.ZodString;
-                consentEventId: z.ZodString;
+                consentEventId: z.ZodUUID;
             }, z.core.$strict>>;
         }, z.core.$strict>;
         action: z.ZodNullable<z.ZodObject<{
-            actionId: z.ZodString;
-            expectedRevision: z.ZodUnion<readonly [z.ZodNumber, z.ZodString]>;
-            proposalRevision: z.ZodOptional<z.ZodUnion<readonly [z.ZodNumber, z.ZodString]>>;
+            actionId: z.ZodUUID;
+            expectedRevision: z.ZodString;
+            proposalRevision: z.ZodOptional<z.ZodNumber>;
         }, z.core.$strict>>;
         times: z.ZodObject<{
             createdAt: z.ZodISODateTime;
@@ -295,23 +330,23 @@ export declare const AgentTaskSnapshotEnvelopeSchema: z.ZodObject<{
             terminatedAt: z.ZodOptional<z.ZodISODateTime>;
             expiresAt: z.ZodOptional<z.ZodISODateTime>;
         }, z.core.$strict>;
-        currentSnapshotRef: z.ZodString;
+        currentSnapshotRef: z.ZodUUID;
     }, z.core.$strict>;
-    acknowledgedEventId: z.ZodOptional<z.ZodString>;
+    acknowledgedEventId: z.ZodOptional<z.ZodUUID>;
     conflict: z.ZodOptional<z.ZodObject<{
         status: z.ZodLiteral<409>;
-        latestRevision: z.ZodUnion<readonly [z.ZodNumber, z.ZodString]>;
-        latestSnapshotRef: z.ZodOptional<z.ZodString>;
+        latestRevision: z.ZodNumber;
+        latestSnapshotRef: z.ZodOptional<z.ZodUUID>;
     }, z.core.$strict>>;
 }, z.core.$strict>;
 export type AgentTaskSnapshotEnvelope = z.infer<typeof AgentTaskSnapshotEnvelopeSchema>;
 export interface AgentTaskClientSnapshotState {
     identityEpoch: number;
-    task: AgentTask;
+    task: AgentTask | null;
     acknowledgedEventIds: readonly string[];
     pendingEventIds: readonly string[];
 }
-export type AgentTaskSnapshotAcceptanceReason = "accepted" | "accepted-new-identity" | "acknowledged-event" | "same-revision" | "lower-revision" | "stale-identity" | "different-task" | "conflict-latest";
+export type AgentTaskSnapshotAcceptanceReason = "accepted" | "accepted-new-identity" | "acknowledged-event" | "same-revision" | "lower-revision" | "stale-identity" | "different-task" | "different-session" | "conflict-latest";
 export interface AgentTaskSnapshotAcceptance {
     accepted: boolean;
     autoMerged: false;
@@ -319,116 +354,15 @@ export interface AgentTaskSnapshotAcceptance {
     state: AgentTaskClientSnapshotState;
     needsReconciliation: boolean;
 }
+/** Clear task/ack/pending state while retaining the account identity epoch. */
+export declare function resetAgentTaskSnapshotState(identityEpoch: number): AgentTaskClientSnapshotState;
 /**
- * Accept a server snapshot monotonically.  A 409 response supplies the latest
- * server task, but pending client events remain pending; the reducer never
- * attempts to merge unsent edits into that latest state.
+ * Accept server snapshots monotonically. A newer identity epoch replaces the
+ * entire local task/ack/pending state; a 409 keeps unsent events pending and
+ * never attempts an automatic merge.
  */
 export declare function acceptAgentTaskSnapshot(current: AgentTaskClientSnapshotState | null, incoming: AgentTaskSnapshotEnvelope): AgentTaskSnapshotAcceptance;
-export declare const reduceTaskSnapshot: typeof acceptAgentTaskSnapshot;
-export declare const applyTaskSnapshot: typeof acceptAgentTaskSnapshot;
-export declare const acceptTaskSnapshot: typeof acceptAgentTaskSnapshot;
-/** Authorized REST callers receive the complete, protected editing snapshot. */
+/** Authorized REST callers receive the protected editing snapshot. */
 export declare function projectTaskForAuthorizedRest(task: AgentTask): AgentTask;
-export declare const projectAuthorizedTaskSnapshot: typeof projectTaskForAuthorizedRest;
-export declare const projectTaskForAuthorized: typeof projectTaskForAuthorizedRest;
-/**
- * Model/chat projection.  It intentionally never spreads `confirmed` or
- * `tentative`; protected values are represented by availability and opaque
- * provenance references only.
- */
+/** Safe model/chat projection never copies values or presentation labels. */
 export declare function projectTaskForSafeChat(task: AgentTask): AgentTaskSafeSnapshot;
-export declare const projectSafeTaskSnapshot: typeof projectTaskForSafeChat;
-export declare const projectTaskForModel: typeof projectTaskForSafeChat;
-export declare const projectTaskForChat: typeof projectTaskForSafeChat;
-export declare const AgentTaskSafeChatSnapshotSchema: z.ZodObject<{
-    schemaVersion: z.ZodLiteral<1>;
-    taskId: z.ZodString;
-    sessionId: z.ZodString;
-    revision: z.ZodUnion<readonly [z.ZodNumber, z.ZodString]>;
-    state: z.ZodEnum<{
-        executing: "executing";
-        failed: "failed";
-        cancelled: "cancelled";
-        completed: "completed";
-        collecting: "collecting";
-        confirming_target: "confirming_target";
-        review_ready: "review_ready";
-        awaiting_approval: "awaiting_approval";
-        paused: "paused";
-        reconciling: "reconciling";
-    }>;
-    fieldStatus: z.ZodArray<z.ZodObject<{
-        field: z.ZodEnum<{
-            type: "type";
-            name: "name";
-            address: "address";
-            phone: "phone";
-            duration: "duration";
-            fullPrice: "fullPrice";
-            grant: "grant";
-            actualPrice: "actualPrice";
-            startDate: "startDate";
-            endDate: "endDate";
-            careCenter: "careCenter";
-            voucherClient: "voucherClient";
-            birthday: "birthday";
-            dueDate: "dueDate";
-            birthDate: "birthDate";
-            serviceStatus: "serviceStatus";
-            breastPump: "breastPump";
-            areaId: "areaId";
-        }>;
-        status: z.ZodEnum<{
-            confirmed: "confirmed";
-            tentative: "tentative";
-            missing: "missing";
-            "confirmed-and-tentative": "confirmed-and-tentative";
-        }>;
-        valueRef: z.ZodOptional<z.ZodString>;
-    }, z.core.$strict>>;
-    constraints: z.ZodObject<{
-        noSend: z.ZodBoolean;
-        automationChoice: z.ZodEnum<{
-            unanswered: "unanswered";
-            yes: "yes";
-            no: "no";
-        }>;
-    }, z.core.$strict>;
-    target: z.ZodNullable<z.ZodObject<{
-        targetRef: z.ZodString;
-        version: z.ZodUnion<readonly [z.ZodNumber, z.ZodString]>;
-    }, z.core.$strict>>;
-    choiceSets: z.ZodArray<z.ZodObject<{
-        choiceSetRef: z.ZodString;
-        optionIds: z.ZodArray<z.ZodString>;
-    }, z.core.$strict>>;
-    orderedChoiceRefs: z.ZodArray<z.ZodString>;
-    issues: z.ZodArray<z.ZodObject<{
-        code: z.ZodString;
-        field: z.ZodOptional<z.ZodString>;
-        severity: z.ZodEnum<{
-            error: "error";
-            info: "info";
-            warning: "warning";
-        }>;
-    }, z.core.$strict>>;
-    action: z.ZodNullable<z.ZodObject<{
-        actionId: z.ZodString;
-        expectedRevision: z.ZodUnion<readonly [z.ZodNumber, z.ZodString]>;
-    }, z.core.$strict>>;
-    consent: z.ZodObject<{
-        choice: z.ZodEnum<{
-            unanswered: "unanswered";
-            yes: "yes";
-            no: "no";
-        }>;
-        hasServerBinding: z.ZodBoolean;
-    }, z.core.$strict>;
-    times: z.ZodObject<{
-        createdAt: z.ZodISODateTime;
-        updatedAt: z.ZodISODateTime;
-        expiresAt: z.ZodOptional<z.ZodISODateTime>;
-    }, z.core.$strict>;
-    currentSnapshotRef: z.ZodString;
-}, z.core.$strict>;

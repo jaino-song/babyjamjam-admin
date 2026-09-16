@@ -1,17 +1,11 @@
 import { z } from "zod";
 /**
- * Fields that the existing client write provider accepts.  Keep this list
- * deliberately closed: conversational input is allowed to edit only these
- * business fields plus the two explicit automation controls below.
+ * Fields accepted by the existing client write provider. Conversational input
+ * is closed over this list plus the explicit automation controls below.
  */
 export declare const CLIENT_WRITE_FIELD_NAMES: readonly ["name", "address", "phone", "type", "duration", "fullPrice", "grant", "actualPrice", "startDate", "endDate", "careCenter", "voucherClient", "birthday", "dueDate", "birthDate", "serviceStatus", "breastPump", "areaId"];
 export type ClientWriteField = (typeof CLIENT_WRITE_FIELD_NAMES)[number];
-/**
- * This mirrors the existing provider's write surface without importing
- * backend code into the shared package.  Nullable values are represented in
- * the full value snapshot, while conversational `set` operations intentionally
- * require a non-null value; `clear` is the only deletion operation.
- */
+/** Confirmed values mirror the provider's shape and validators. */
 export declare const ClientWriteFieldsSchema: z.ZodObject<{
     name: z.ZodOptional<z.ZodString>;
     address: z.ZodOptional<z.ZodNullable<z.ZodString>>;
@@ -21,13 +15,40 @@ export declare const ClientWriteFieldsSchema: z.ZodObject<{
     fullPrice: z.ZodOptional<z.ZodNullable<z.ZodString>>;
     grant: z.ZodOptional<z.ZodNullable<z.ZodString>>;
     actualPrice: z.ZodOptional<z.ZodNullable<z.ZodString>>;
-    startDate: z.ZodOptional<z.ZodNullable<z.ZodString>>;
-    endDate: z.ZodOptional<z.ZodNullable<z.ZodString>>;
+    startDate: z.ZodOptional<z.ZodNullable<z.ZodUnion<readonly [z.ZodString, z.ZodString]>>>;
+    endDate: z.ZodOptional<z.ZodNullable<z.ZodUnion<readonly [z.ZodString, z.ZodString]>>>;
     careCenter: z.ZodOptional<z.ZodNullable<z.ZodBoolean>>;
     voucherClient: z.ZodOptional<z.ZodBoolean>;
     birthday: z.ZodOptional<z.ZodNullable<z.ZodString>>;
-    dueDate: z.ZodOptional<z.ZodNullable<z.ZodString>>;
-    birthDate: z.ZodOptional<z.ZodNullable<z.ZodString>>;
+    dueDate: z.ZodOptional<z.ZodNullable<z.ZodUnion<readonly [z.ZodString, z.ZodString]>>>;
+    birthDate: z.ZodOptional<z.ZodNullable<z.ZodUnion<readonly [z.ZodString, z.ZodString]>>>;
+    serviceStatus: z.ZodOptional<z.ZodNullable<z.ZodEnum<{
+        pre_booking: "pre_booking";
+        waiting: "waiting";
+        replacement_requested: "replacement_requested";
+        active: "active";
+        completed: "completed";
+        terminated: "terminated";
+    }>>>;
+    breastPump: z.ZodOptional<z.ZodBoolean>;
+    areaId: z.ZodOptional<z.ZodNullable<z.ZodString>>;
+}, z.core.$strict>;
+export declare const ClientConfirmedValuesSchema: z.ZodObject<{
+    name: z.ZodOptional<z.ZodString>;
+    address: z.ZodOptional<z.ZodNullable<z.ZodString>>;
+    phone: z.ZodOptional<z.ZodNullable<z.ZodString>>;
+    type: z.ZodOptional<z.ZodNullable<z.ZodString>>;
+    duration: z.ZodOptional<z.ZodNullable<z.ZodNumber>>;
+    fullPrice: z.ZodOptional<z.ZodNullable<z.ZodString>>;
+    grant: z.ZodOptional<z.ZodNullable<z.ZodString>>;
+    actualPrice: z.ZodOptional<z.ZodNullable<z.ZodString>>;
+    startDate: z.ZodOptional<z.ZodNullable<z.ZodUnion<readonly [z.ZodString, z.ZodString]>>>;
+    endDate: z.ZodOptional<z.ZodNullable<z.ZodUnion<readonly [z.ZodString, z.ZodString]>>>;
+    careCenter: z.ZodOptional<z.ZodNullable<z.ZodBoolean>>;
+    voucherClient: z.ZodOptional<z.ZodBoolean>;
+    birthday: z.ZodOptional<z.ZodNullable<z.ZodString>>;
+    dueDate: z.ZodOptional<z.ZodNullable<z.ZodUnion<readonly [z.ZodString, z.ZodString]>>>;
+    birthDate: z.ZodOptional<z.ZodNullable<z.ZodUnion<readonly [z.ZodString, z.ZodString]>>>;
     serviceStatus: z.ZodOptional<z.ZodNullable<z.ZodEnum<{
         pre_booking: "pre_booking";
         waiting: "waiting";
@@ -40,6 +61,29 @@ export declare const ClientWriteFieldsSchema: z.ZodObject<{
     areaId: z.ZodOptional<z.ZodNullable<z.ZodString>>;
 }, z.core.$strict>;
 export type ClientWriteFields = z.infer<typeof ClientWriteFieldsSchema>;
+export type ClientConfirmedValues = z.infer<typeof ClientConfirmedValuesSchema>;
+/** Tentative facts may be approximate wishes; they are never promoted here. */
+export declare const ClientTentativeValuesSchema: z.ZodObject<{
+    name: z.ZodOptional<z.ZodString>;
+    address: z.ZodOptional<z.ZodNullable<z.ZodString>>;
+    phone: z.ZodOptional<z.ZodNullable<z.ZodString>>;
+    type: z.ZodOptional<z.ZodNullable<z.ZodString>>;
+    duration: z.ZodOptional<z.ZodNullable<z.ZodUnion<readonly [z.ZodNumber, z.ZodString]>>>;
+    fullPrice: z.ZodOptional<z.ZodNullable<z.ZodString>>;
+    grant: z.ZodOptional<z.ZodNullable<z.ZodString>>;
+    actualPrice: z.ZodOptional<z.ZodNullable<z.ZodString>>;
+    startDate: z.ZodOptional<z.ZodNullable<z.ZodString>>;
+    endDate: z.ZodOptional<z.ZodNullable<z.ZodString>>;
+    careCenter: z.ZodOptional<z.ZodNullable<z.ZodUnion<readonly [z.ZodBoolean, z.ZodString]>>>;
+    voucherClient: z.ZodOptional<z.ZodUnion<readonly [z.ZodBoolean, z.ZodString]>>;
+    birthday: z.ZodOptional<z.ZodNullable<z.ZodString>>;
+    dueDate: z.ZodOptional<z.ZodNullable<z.ZodString>>;
+    birthDate: z.ZodOptional<z.ZodNullable<z.ZodString>>;
+    serviceStatus: z.ZodOptional<z.ZodNullable<z.ZodString>>;
+    breastPump: z.ZodOptional<z.ZodUnion<readonly [z.ZodBoolean, z.ZodString]>>;
+    areaId: z.ZodOptional<z.ZodNullable<z.ZodString>>;
+}, z.core.$strict>;
+export type ClientTentativeValues = z.infer<typeof ClientTentativeValuesSchema>;
 export declare const AUTOMATION_CONSENT_CHOICES: readonly ["unanswered", "yes", "no"];
 export declare const AutomationConsentChoiceSchema: z.ZodEnum<{
     unanswered: "unanswered";
@@ -63,7 +107,7 @@ type ClearOperation = {
     op: "clear";
     field: Exclude<ClientWriteField, "name" | "phone"> | AutomationInputField;
 };
-/** A bounded, path-free, field-level conversational edit. */
+/** A bounded, field-level conversational edit. */
 export type ClientInputOperation = SetOperation | MarkTentativeOperation | ClearOperation;
 export declare const ClientInputOperationSchema: z.ZodType<ClientInputOperation>;
 export type ClientSetOperation = SetOperation;
@@ -112,37 +156,17 @@ export declare const ClientReadinessResultSchema: z.ZodObject<{
 export type ClientReadinessResult = z.infer<typeof ClientReadinessResultSchema>;
 export interface ClientInputState {
     confirmed: ClientWriteFields;
-    tentative: ClientWriteFields;
+    tentative: ClientTentativeValues;
     automationChoice: AutomationConsentChoice;
     noSend: boolean;
 }
-/**
- * Remove presentation punctuation only where the input is unambiguous.  An
- * unexpected character returns null so callers retain the original input and
- * readiness can report a concrete validation issue instead of guessing.
- */
+/** Remove presentation punctuation only when unambiguous. */
 export declare function normalizeClientPhone(value: unknown): string | null;
-export declare const normalizeClientPhoneInput: typeof normalizeClientPhone;
-/**
- * Apply only validated operations.  `mark-tentative` never writes to
- * `confirmed`, and omission is naturally a no-op because operations are the
- * only input accepted by this helper.
- */
+/** Apply only validated operations; tentative values never promote themselves. */
 export declare function applyClientInputOperations(operations: readonly unknown[], initial?: Partial<ClientInputState>): ClientInputState;
-export declare const applyClientInputPatch: typeof applyClientInputOperations;
-export declare const ClientTaskInputOperationSchema: z.ZodType<ClientInputOperation, unknown, z.core.$ZodTypeInternals<ClientInputOperation, unknown>>;
-export declare const AgentTaskInputOperationSchema: z.ZodType<ClientInputOperation, unknown, z.core.$ZodTypeInternals<ClientInputOperation, unknown>>;
-export declare const ClientInputPatchOperationSchema: z.ZodType<ClientInputOperation, unknown, z.core.$ZodTypeInternals<ClientInputOperation, unknown>>;
-/**
- * Readiness deliberately requires a server result.  The helper never treats a
- * syntactically valid phone as duplicate-free and never manufactures a check.
- */
+/** Readiness requires a matching server duplicate-check result. */
 export declare function evaluateClientReadiness(values: Partial<ClientWriteFields> | null | undefined, duplicateCheck: ClientDuplicateCheckResult | null | undefined): ClientReadinessResult;
-export declare const getClientReadiness: typeof evaluateClientReadiness;
-export declare const validateClientReadiness: typeof evaluateClientReadiness;
-export declare const getTaskReadiness: typeof evaluateClientReadiness;
 export declare const isClientReadyForTask: (values: Partial<ClientWriteFields> | null | undefined, duplicateCheck: ClientDuplicateCheckResult | null | undefined) => boolean;
-export declare const isReadyForTask: (values: Partial<ClientWriteFields> | null | undefined, duplicateCheck: ClientDuplicateCheckResult | null | undefined) => boolean;
 export declare const CLIENT_CREATE_DEFAULTS: {
     readonly voucherClient: false;
     readonly serviceStatus: "pre_booking";
@@ -191,5 +215,4 @@ export declare const ClientAutomationInputFieldSchema: z.ZodEnum<{
     automationChoice: "automationChoice";
     noSend: "noSend";
 }>;
-export declare const normalizeTaskPhone: typeof normalizeClientPhone;
 export {};

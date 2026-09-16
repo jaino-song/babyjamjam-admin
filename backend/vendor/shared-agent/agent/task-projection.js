@@ -1,6 +1,7 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.AgentTaskSafeChatSnapshotSchema = exports.projectTaskForChat = exports.projectTaskForModel = exports.projectSafeTaskSnapshot = exports.projectTaskForAuthorized = exports.projectAuthorizedTaskSnapshot = exports.acceptTaskSnapshot = exports.applyTaskSnapshot = exports.reduceTaskSnapshot = exports.AgentTaskSnapshotEnvelopeSchema = exports.AgentTaskSnapshotConflictSchema = exports.AgentTaskSafeSnapshotSchema = exports.AgentTaskSafeChoiceSetSchema = exports.AgentTaskSafeFieldStatusSchema = void 0;
+exports.AgentTaskSnapshotEnvelopeSchema = exports.AgentTaskSnapshotConflictSchema = exports.AgentTaskSafeSnapshotSchema = exports.AgentTaskSafeChoiceSetSchema = exports.AgentTaskSafeFieldStatusSchema = void 0;
+exports.resetAgentTaskSnapshotState = resetAgentTaskSnapshotState;
 exports.acceptAgentTaskSnapshot = acceptAgentTaskSnapshot;
 exports.projectTaskForAuthorizedRest = projectTaskForAuthorizedRest;
 exports.projectTaskForSafeChat = projectTaskForSafeChat;
@@ -11,38 +12,32 @@ const SafeFieldStatusSchema = zod_1.z.enum(["missing", "confirmed", "tentative",
 exports.AgentTaskSafeFieldStatusSchema = zod_1.z.object({
     field: zod_1.z.enum(client_input_policy_1.CLIENT_WRITE_FIELD_NAMES),
     status: SafeFieldStatusSchema,
-    valueRef: task_types_1.AgentTaskOpaqueRefSchema.optional(),
+    valueRef: task_types_1.AgentTaskReferenceSchema.optional(),
 }).strict();
 exports.AgentTaskSafeChoiceSetSchema = zod_1.z.object({
-    choiceSetRef: task_types_1.AgentTaskOpaqueRefSchema,
-    optionIds: zod_1.z.array(task_types_1.AgentTaskOpaqueRefSchema),
+    choiceSetRef: task_types_1.AgentTaskReferenceSchema,
+    optionIds: zod_1.z.array(task_types_1.AgentTaskReferenceSchema),
 }).strict();
+/** Safe projection contains structural references/status only. */
 exports.AgentTaskSafeSnapshotSchema = zod_1.z.object({
     schemaVersion: zod_1.z.literal(1),
-    taskId: task_types_1.AgentTaskOpaqueRefSchema,
-    sessionId: task_types_1.AgentTaskOpaqueRefSchema,
+    taskId: task_types_1.AgentTaskReferenceSchema,
+    sessionId: task_types_1.AgentTaskReferenceSchema,
+    kind: task_types_1.AgentTaskCapabilityIdSchema,
+    capabilityId: task_types_1.AgentTaskCapabilityIdSchema,
     revision: task_types_1.AgentTaskRevisionSchema,
     state: task_types_1.AgentTaskStateSchema,
     fieldStatus: zod_1.z.array(exports.AgentTaskSafeFieldStatusSchema),
-    constraints: zod_1.z.object({
-        noSend: zod_1.z.boolean(),
-        automationChoice: zod_1.z.enum(["unanswered", "yes", "no"]),
-    }).strict(),
-    target: zod_1.z.object({
-        targetRef: task_types_1.AgentTaskOpaqueRefSchema,
-        version: task_types_1.AgentTaskRevisionSchema,
-    }).strict().nullable(),
+    constraints: zod_1.z.object({ noSend: zod_1.z.boolean() }).strict(),
+    target: zod_1.z.object({ targetRef: task_types_1.AgentTaskReferenceSchema }).strict().nullable(),
     choiceSets: zod_1.z.array(exports.AgentTaskSafeChoiceSetSchema),
-    orderedChoiceRefs: zod_1.z.array(task_types_1.AgentTaskOpaqueRefSchema),
+    orderedChoiceRefs: zod_1.z.array(task_types_1.AgentTaskReferenceSchema),
     issues: zod_1.z.array(zod_1.z.object({
-        code: zod_1.z.string().min(1),
-        field: zod_1.z.string().min(1).optional(),
+        code: task_types_1.AgentTaskIssueCodeSchema,
+        field: zod_1.z.enum(client_input_policy_1.CLIENT_WRITE_FIELD_NAMES).optional(),
         severity: zod_1.z.enum(["info", "warning", "error"]),
     }).strict()),
-    action: zod_1.z.object({
-        actionId: task_types_1.AgentTaskOpaqueRefSchema,
-        expectedRevision: task_types_1.AgentTaskRevisionSchema,
-    }).strict().nullable(),
+    action: zod_1.z.object({ actionId: task_types_1.AgentTaskReferenceSchema }).strict().nullable(),
     consent: zod_1.z.object({
         choice: zod_1.z.enum(["unanswered", "yes", "no"]),
         hasServerBinding: zod_1.z.boolean(),
@@ -52,46 +47,36 @@ exports.AgentTaskSafeSnapshotSchema = zod_1.z.object({
         updatedAt: task_types_1.AgentTaskIsoDateTimeSchema,
         expiresAt: task_types_1.AgentTaskIsoDateTimeSchema.optional(),
     }).strict(),
-    currentSnapshotRef: task_types_1.AgentTaskOpaqueRefSchema,
-}).strict();
+    currentSnapshotRef: task_types_1.AgentTaskReferenceSchema,
+}).strict().superRefine((value, context) => {
+    if (value.kind !== value.capabilityId) {
+        context.addIssue({ code: "custom", path: ["kind"], message: "Safe task kind must match capabilityId" });
+    }
+});
 exports.AgentTaskSnapshotConflictSchema = zod_1.z.object({
     status: zod_1.z.literal(409),
     latestRevision: task_types_1.AgentTaskRevisionSchema,
-    latestSnapshotRef: task_types_1.AgentTaskOpaqueRefSchema.optional(),
+    latestSnapshotRef: task_types_1.AgentTaskReferenceSchema.optional(),
 }).strict();
 exports.AgentTaskSnapshotEnvelopeSchema = zod_1.z.object({
-    identityEpoch: zod_1.z.number().int().nonnegative(),
+    identityEpoch: zod_1.z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
     task: task_types_1.AgentTaskSchema,
-    acknowledgedEventId: task_types_1.AgentTaskOpaqueRefSchema.optional(),
+    acknowledgedEventId: task_types_1.AgentTaskReferenceSchema.optional(),
     conflict: exports.AgentTaskSnapshotConflictSchema.optional(),
 }).strict();
-function revisionNumber(value) {
-    if (typeof value === "number")
-        return value;
-    if (/^\d+$/.test(value))
-        return Number(value);
-    const suffix = value.match(/(?:^|[^\d])(\d+)$/)?.[1];
-    return suffix ? Number(suffix) : null;
-}
 function compareRevisions(left, right) {
-    const leftNumber = revisionNumber(left);
-    const rightNumber = revisionNumber(right);
-    if (leftNumber !== null && rightNumber !== null && leftNumber !== rightNumber) {
-        return leftNumber > rightNumber ? 1 : -1;
-    }
-    if (String(left) === String(right))
-        return 0;
-    // Opaque revisions are intentionally not guessed.  Treat them as equal so
-    // an untrusted client cannot replace a snapshot solely through ordering.
-    return 0;
+    return left === right ? 0 : left > right ? 1 : -1;
 }
 function stateWithAck(current, acknowledgedEventId) {
-    if (!acknowledgedEventId || current.acknowledgedEventIds.includes(acknowledgedEventId))
+    if (!acknowledgedEventId)
         return current;
-    return {
-        ...current,
-        acknowledgedEventIds: [...current.acknowledgedEventIds, acknowledgedEventId],
-    };
+    const acknowledgedEventIds = current.acknowledgedEventIds.includes(acknowledgedEventId)
+        ? current.acknowledgedEventIds
+        : [...current.acknowledgedEventIds, acknowledgedEventId];
+    const pendingEventIds = current.pendingEventIds.filter((eventId) => eventId !== acknowledgedEventId);
+    if (acknowledgedEventIds === current.acknowledgedEventIds && pendingEventIds.length === current.pendingEventIds.length)
+        return current;
+    return { ...current, acknowledgedEventIds, pendingEventIds };
 }
 function initialClientSnapshotState(envelope) {
     return {
@@ -101,10 +86,17 @@ function initialClientSnapshotState(envelope) {
         pendingEventIds: [],
     };
 }
+/** Clear task/ack/pending state while retaining the account identity epoch. */
+function resetAgentTaskSnapshotState(identityEpoch) {
+    if (!Number.isSafeInteger(identityEpoch) || identityEpoch < 0) {
+        throw new RangeError("identityEpoch must be a non-negative safe integer");
+    }
+    return { identityEpoch, task: null, acknowledgedEventIds: [], pendingEventIds: [] };
+}
 /**
- * Accept a server snapshot monotonically.  A 409 response supplies the latest
- * server task, but pending client events remain pending; the reducer never
- * attempts to merge unsent edits into that latest state.
+ * Accept server snapshots monotonically. A newer identity epoch replaces the
+ * entire local task/ack/pending state; a 409 keeps unsent events pending and
+ * never attempts an automatic merge.
  */
 function acceptAgentTaskSnapshot(current, incoming) {
     if (!current) {
@@ -116,9 +108,6 @@ function acceptAgentTaskSnapshot(current, incoming) {
             needsReconciliation: Boolean(incoming.conflict),
         };
     }
-    if (incoming.task.taskId !== current.task.taskId) {
-        return { accepted: false, autoMerged: false, reason: "different-task", state: current, needsReconciliation: false };
-    }
     if (incoming.identityEpoch < current.identityEpoch) {
         return { accepted: false, autoMerged: false, reason: "stale-identity", state: current, needsReconciliation: false };
     }
@@ -127,12 +116,24 @@ function acceptAgentTaskSnapshot(current, incoming) {
             accepted: true,
             autoMerged: false,
             reason: "accepted-new-identity",
-            state: {
-                ...initialClientSnapshotState(incoming),
-                pendingEventIds: current.pendingEventIds,
-            },
+            state: initialClientSnapshotState(incoming),
             needsReconciliation: Boolean(incoming.conflict),
         };
+    }
+    if (!current.task) {
+        return {
+            accepted: true,
+            autoMerged: false,
+            reason: "accepted",
+            state: initialClientSnapshotState(incoming),
+            needsReconciliation: Boolean(incoming.conflict),
+        };
+    }
+    if (incoming.task.taskId !== current.task.taskId) {
+        return { accepted: false, autoMerged: false, reason: "different-task", state: current, needsReconciliation: false };
+    }
+    if (incoming.task.sessionId !== current.task.sessionId) {
+        return { accepted: false, autoMerged: false, reason: "different-session", state: current, needsReconciliation: false };
     }
     const revisionComparison = compareRevisions(incoming.task.revision, current.task.revision);
     if (revisionComparison < 0) {
@@ -165,15 +166,10 @@ function acceptAgentTaskSnapshot(current, incoming) {
         needsReconciliation: false,
     };
 }
-exports.reduceTaskSnapshot = acceptAgentTaskSnapshot;
-exports.applyTaskSnapshot = acceptAgentTaskSnapshot;
-exports.acceptTaskSnapshot = acceptAgentTaskSnapshot;
-/** Authorized REST callers receive the complete, protected editing snapshot. */
+/** Authorized REST callers receive the protected editing snapshot. */
 function projectTaskForAuthorizedRest(task) {
     return task_types_1.AgentTaskSchema.parse(task);
 }
-exports.projectAuthorizedTaskSnapshot = projectTaskForAuthorizedRest;
-exports.projectTaskForAuthorized = projectTaskForAuthorizedRest;
 function fieldStatus(field, task) {
     const hasConfirmed = Object.prototype.hasOwnProperty.call(task.confirmed, field);
     const hasTentative = Object.prototype.hasOwnProperty.call(task.tentative, field);
@@ -187,40 +183,28 @@ function fieldStatus(field, task) {
     const valueRef = task.provenance.tentative[field]?.valueRef ?? task.provenance.confirmed[field]?.valueRef;
     return { field, status, ...(valueRef ? { valueRef } : {}) };
 }
-/**
- * Model/chat projection.  It intentionally never spreads `confirmed` or
- * `tentative`; protected values are represented by availability and opaque
- * provenance references only.
- */
+/** Safe model/chat projection never copies values or presentation labels. */
 function projectTaskForSafeChat(task) {
     const parsedTask = task_types_1.AgentTaskSchema.parse(task);
     return exports.AgentTaskSafeSnapshotSchema.parse({
         schemaVersion: parsedTask.schemaVersion,
         taskId: parsedTask.taskId,
         sessionId: parsedTask.sessionId,
+        kind: parsedTask.kind,
+        capabilityId: parsedTask.capabilityId,
         revision: parsedTask.revision,
         state: parsedTask.state,
         fieldStatus: client_input_policy_1.CLIENT_WRITE_FIELD_NAMES.map((field) => fieldStatus(field, parsedTask)),
         constraints: parsedTask.constraints,
-        target: parsedTask.target
-            ? {
-                targetRef: parsedTask.target.targetRef,
-                version: parsedTask.target.version ?? parsedTask.target.targetVersion,
-            }
-            : null,
+        target: parsedTask.target ? { targetRef: parsedTask.target.targetRef } : null,
         choiceSets: parsedTask.choiceSets.map((choiceSet) => ({
             choiceSetRef: choiceSet.choiceSetRef,
             optionIds: choiceSet.options.map((option) => option.optionId),
         })),
         orderedChoiceRefs: parsedTask.orderedChoiceRefs,
         issues: parsedTask.issues.map(({ code, field, severity }) => ({ code, ...(field ? { field } : {}), severity })),
-        action: parsedTask.action
-            ? { actionId: parsedTask.action.actionId, expectedRevision: parsedTask.action.expectedRevision }
-            : null,
-        consent: {
-            choice: parsedTask.consent.choice,
-            hasServerBinding: parsedTask.consent.binding !== null,
-        },
+        action: parsedTask.action ? { actionId: parsedTask.action.actionId } : null,
+        consent: { choice: parsedTask.consent.choice, hasServerBinding: parsedTask.consent.binding !== null },
         times: {
             createdAt: parsedTask.times.createdAt,
             updatedAt: parsedTask.times.updatedAt,
@@ -229,7 +213,3 @@ function projectTaskForSafeChat(task) {
         currentSnapshotRef: parsedTask.currentSnapshotRef,
     });
 }
-exports.projectSafeTaskSnapshot = projectTaskForSafeChat;
-exports.projectTaskForModel = projectTaskForSafeChat;
-exports.projectTaskForChat = projectTaskForSafeChat;
-exports.AgentTaskSafeChatSnapshotSchema = exports.AgentTaskSafeSnapshotSchema;

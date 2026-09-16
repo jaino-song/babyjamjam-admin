@@ -2,11 +2,12 @@ import type { UIMessage } from "ai";
 import { z } from "zod";
 
 import {
-    AgentTaskOpaqueRefSchema,
+    AgentTaskCapabilityIdSchema,
+    AgentTaskReferenceSchema,
     AgentTaskRevisionSchema,
     AgentTaskStateSchema,
 } from "./task-types";
-import { CLIENT_WRITE_FIELD_NAMES, AUTOMATION_INPUT_FIELD_NAMES } from "./client-input-policy";
+import { CLIENT_WRITE_FIELD_NAMES } from "./client-input-policy";
 
 export const AgentRendererNameSchema = z.enum([
     "text",
@@ -139,49 +140,41 @@ export const AgentFeedbackPartSchema = z.object({
 
 /** Safe reference/status payload for `data-task-snapshot`. */
 export const AgentTaskSnapshotPartSchema = z.object({
-    taskId: AgentTaskOpaqueRefSchema,
-    snapshotRef: AgentTaskOpaqueRefSchema,
+    taskId: AgentTaskReferenceSchema,
+    snapshotRef: AgentTaskReferenceSchema,
+    kind: AgentTaskCapabilityIdSchema,
+    capabilityId: AgentTaskCapabilityIdSchema,
     revision: AgentTaskRevisionSchema,
     state: AgentTaskStateSchema,
     fieldStatus: z.array(z.object({
-        field: z.string().min(1),
+        field: z.enum(CLIENT_WRITE_FIELD_NAMES),
         status: z.enum(["missing", "confirmed", "tentative", "confirmed-and-tentative"]),
     }).strict()),
-}).strict();
+}).strict().superRefine((value, context) => {
+    if (value.kind !== value.capabilityId) {
+        context.addIssue({ code: "custom", path: ["kind"], message: "Task kind must match capabilityId" });
+    }
+});
 
-/** Structured, server-issued choice payload for `data-entity-select`. */
+/** Structured, server-issued reference payload for `data-entity-select`. */
 export const AgentEntitySelectPartSchema = z.object({
-    taskId: AgentTaskOpaqueRefSchema,
-    choiceSetRef: AgentTaskOpaqueRefSchema,
-    prompt: z.string().trim().min(1).max(500),
-    options: z.array(z.object({
-        optionId: AgentTaskOpaqueRefSchema,
-        label: z.string().trim().min(1).max(300),
-        description: z.string().trim().max(1000).optional(),
-    }).strict()).min(1).max(100),
-}).strict();
-
-export const AgentTaskPatchPartOperationSchema = z.object({
-    op: z.enum(["set", "clear", "mark-tentative"]),
-    field: z.enum([...CLIENT_WRITE_FIELD_NAMES, ...AUTOMATION_INPUT_FIELD_NAMES] as [string, ...string[]]),
-    operationRef: AgentTaskOpaqueRefSchema.optional(),
-    valueRef: AgentTaskOpaqueRefSchema.optional(),
+    taskId: AgentTaskReferenceSchema,
+    choiceSetRef: AgentTaskReferenceSchema,
+    optionIds: z.array(AgentTaskReferenceSchema).min(1).max(100),
 }).strict();
 
 /**
- * Chat parts carry an event reference or redacted operation references.  Raw
- * protected values are intentionally absent from this schema.
+ * Persisted chat parts carry only the server acceptance receipt reference.
+ * Actual validated operations remain in the REST request contract.
  */
 export const AgentTaskPatchPartSchema = z.object({
-    taskId: AgentTaskOpaqueRefSchema,
-    eventId: AgentTaskOpaqueRefSchema.optional(),
-    expectedRevision: AgentTaskRevisionSchema.optional(),
-    acceptedRevision: AgentTaskRevisionSchema.optional(),
-    currentSnapshotRef: AgentTaskOpaqueRefSchema.optional(),
-    operations: z.array(AgentTaskPatchPartOperationSchema).max(100).optional(),
+    taskId: AgentTaskReferenceSchema,
+    eventId: AgentTaskReferenceSchema,
+    acceptedRevision: AgentTaskRevisionSchema,
+    currentSnapshotRef: AgentTaskReferenceSchema,
 }).strict().superRefine((value, context) => {
-    if (!value.eventId && (!value.operations || value.operations.length === 0)) {
-        context.addIssue({ code: "custom", path: ["eventId"], message: "A task patch part needs an event reference or operations" });
+    if (!value.eventId) {
+        context.addIssue({ code: "custom", path: ["eventId"], message: "A task patch part needs a server event reference" });
     }
 });
 

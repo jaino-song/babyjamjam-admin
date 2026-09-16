@@ -170,9 +170,17 @@ export declare const AgentFeedbackPartSchema: z.ZodObject<{
 }, z.core.$strip>;
 /** Safe reference/status payload for `data-task-snapshot`. */
 export declare const AgentTaskSnapshotPartSchema: z.ZodObject<{
-    taskId: z.ZodString;
-    snapshotRef: z.ZodString;
-    revision: z.ZodUnion<readonly [z.ZodNumber, z.ZodString]>;
+    taskId: z.ZodUUID;
+    snapshotRef: z.ZodUUID;
+    kind: z.ZodEnum<{
+        "clients.create": "clients.create";
+        "clients.update": "clients.update";
+    }>;
+    capabilityId: z.ZodEnum<{
+        "clients.create": "clients.create";
+        "clients.update": "clients.update";
+    }>;
+    revision: z.ZodNumber;
     state: z.ZodEnum<{
         executing: "executing";
         failed: "failed";
@@ -186,7 +194,26 @@ export declare const AgentTaskSnapshotPartSchema: z.ZodObject<{
         reconciling: "reconciling";
     }>;
     fieldStatus: z.ZodArray<z.ZodObject<{
-        field: z.ZodString;
+        field: z.ZodEnum<{
+            type: "type";
+            name: "name";
+            address: "address";
+            phone: "phone";
+            duration: "duration";
+            fullPrice: "fullPrice";
+            grant: "grant";
+            actualPrice: "actualPrice";
+            startDate: "startDate";
+            endDate: "endDate";
+            careCenter: "careCenter";
+            voucherClient: "voucherClient";
+            birthday: "birthday";
+            dueDate: "dueDate";
+            birthDate: "birthDate";
+            serviceStatus: "serviceStatus";
+            breastPump: "breastPump";
+            areaId: "areaId";
+        }>;
         status: z.ZodEnum<{
             confirmed: "confirmed";
             tentative: "tentative";
@@ -195,51 +222,21 @@ export declare const AgentTaskSnapshotPartSchema: z.ZodObject<{
         }>;
     }, z.core.$strict>>;
 }, z.core.$strict>;
-/** Structured, server-issued choice payload for `data-entity-select`. */
+/** Structured, server-issued reference payload for `data-entity-select`. */
 export declare const AgentEntitySelectPartSchema: z.ZodObject<{
-    taskId: z.ZodString;
-    choiceSetRef: z.ZodString;
-    prompt: z.ZodString;
-    options: z.ZodArray<z.ZodObject<{
-        optionId: z.ZodString;
-        label: z.ZodString;
-        description: z.ZodOptional<z.ZodString>;
-    }, z.core.$strict>>;
-}, z.core.$strict>;
-export declare const AgentTaskPatchPartOperationSchema: z.ZodObject<{
-    op: z.ZodEnum<{
-        set: "set";
-        "mark-tentative": "mark-tentative";
-        clear: "clear";
-    }>;
-    field: z.ZodEnum<{
-        [x: string]: string;
-    }>;
-    operationRef: z.ZodOptional<z.ZodString>;
-    valueRef: z.ZodOptional<z.ZodString>;
+    taskId: z.ZodUUID;
+    choiceSetRef: z.ZodUUID;
+    optionIds: z.ZodArray<z.ZodUUID>;
 }, z.core.$strict>;
 /**
- * Chat parts carry an event reference or redacted operation references.  Raw
- * protected values are intentionally absent from this schema.
+ * Persisted chat parts carry only the server acceptance receipt reference.
+ * Actual validated operations remain in the REST request contract.
  */
 export declare const AgentTaskPatchPartSchema: z.ZodObject<{
-    taskId: z.ZodString;
-    eventId: z.ZodOptional<z.ZodString>;
-    expectedRevision: z.ZodOptional<z.ZodUnion<readonly [z.ZodNumber, z.ZodString]>>;
-    acceptedRevision: z.ZodOptional<z.ZodUnion<readonly [z.ZodNumber, z.ZodString]>>;
-    currentSnapshotRef: z.ZodOptional<z.ZodString>;
-    operations: z.ZodOptional<z.ZodArray<z.ZodObject<{
-        op: z.ZodEnum<{
-            set: "set";
-            "mark-tentative": "mark-tentative";
-            clear: "clear";
-        }>;
-        field: z.ZodEnum<{
-            [x: string]: string;
-        }>;
-        operationRef: z.ZodOptional<z.ZodString>;
-        valueRef: z.ZodOptional<z.ZodString>;
-    }, z.core.$strict>>>;
+    taskId: z.ZodUUID;
+    eventId: z.ZodUUID;
+    acceptedRevision: z.ZodNumber;
+    currentSnapshotRef: z.ZodUUID;
 }, z.core.$strict>;
 export type AgentDataParts = {
     activity: z.infer<typeof AgentActivityPartSchema>;

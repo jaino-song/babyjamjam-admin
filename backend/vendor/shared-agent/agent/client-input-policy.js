@@ -1,15 +1,14 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.normalizeTaskPhone = exports.ClientAutomationInputFieldSchema = exports.ClientClearableFieldSchema = exports.ClientWriteFieldSchema = exports.AUTOMATION_CHOICE_DEFAULT = exports.CLIENT_CREATE_DEFAULTS = exports.isReadyForTask = exports.isClientReadyForTask = exports.getTaskReadiness = exports.validateClientReadiness = exports.getClientReadiness = exports.ClientInputPatchOperationSchema = exports.AgentTaskInputOperationSchema = exports.ClientTaskInputOperationSchema = exports.applyClientInputPatch = exports.normalizeClientPhoneInput = exports.ClientReadinessResultSchema = exports.ClientReadinessIssueSchema = exports.ClientDuplicateCheckResultSchema = exports.ClientDuplicateCheckStatusSchema = exports.ClientInputOperationsSchema = exports.ClientInputOperationSchema = exports.AUTOMATION_INPUT_FIELD_NAMES = exports.AutomationConsentChoiceSchema = exports.AUTOMATION_CONSENT_CHOICES = exports.ClientWriteFieldsSchema = exports.CLIENT_WRITE_FIELD_NAMES = void 0;
+exports.ClientAutomationInputFieldSchema = exports.ClientClearableFieldSchema = exports.ClientWriteFieldSchema = exports.AUTOMATION_CHOICE_DEFAULT = exports.CLIENT_CREATE_DEFAULTS = exports.isClientReadyForTask = exports.ClientReadinessResultSchema = exports.ClientReadinessIssueSchema = exports.ClientDuplicateCheckResultSchema = exports.ClientDuplicateCheckStatusSchema = exports.ClientInputOperationsSchema = exports.ClientInputOperationSchema = exports.AUTOMATION_INPUT_FIELD_NAMES = exports.AutomationConsentChoiceSchema = exports.AUTOMATION_CONSENT_CHOICES = exports.ClientTentativeValuesSchema = exports.ClientConfirmedValuesSchema = exports.ClientWriteFieldsSchema = exports.CLIENT_WRITE_FIELD_NAMES = void 0;
 exports.normalizeClientPhone = normalizeClientPhone;
 exports.applyClientInputOperations = applyClientInputOperations;
 exports.evaluateClientReadiness = evaluateClientReadiness;
 exports.createClientInputState = createClientInputState;
 const zod_1 = require("zod");
 /**
- * Fields that the existing client write provider accepts.  Keep this list
- * deliberately closed: conversational input is allowed to edit only these
- * business fields plus the two explicit automation controls below.
+ * Fields accepted by the existing client write provider. Conversational input
+ * is closed over this list plus the explicit automation controls below.
  */
 exports.CLIENT_WRITE_FIELD_NAMES = [
     "name",
@@ -31,40 +30,81 @@ exports.CLIENT_WRITE_FIELD_NAMES = [
     "breastPump",
     "areaId",
 ];
-const DATE_VALUE_SCHEMA = zod_1.z.string().trim().min(1).max(100);
-const NON_EMPTY_STRING_SCHEMA = zod_1.z.string().trim().min(1);
-/**
- * This mirrors the existing provider's write surface without importing
- * backend code into the shared package.  Nullable values are represented in
- * the full value snapshot, while conversational `set` operations intentionally
- * require a non-null value; `clear` is the only deletion operation.
- */
+const DateOnlyInput = zod_1.z.string().regex(/^\d{4}-\d{2}-\d{2}$/).refine((value) => {
+    const parsed = new Date(`${value}T00:00:00Z`);
+    return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value;
+}, "Invalid calendar date");
+const DateInputValue = zod_1.z.union([DateOnlyInput, zod_1.z.string().datetime({ offset: true })]);
+const DateInput = DateInputValue.nullable().optional();
+const KoreanWonInput = zod_1.z.string().trim().regex(/^(?:\d+|\d{1,3}(?:,\d{3})+)(?:원)?$/u, "Amount must be a whole Korean-won value with no trailing text or decimals");
+function isCalendarValidYymmdd(value) {
+    if (!/^\d{6}$/.test(value))
+        return false;
+    const year = Number(value.slice(0, 2));
+    const month = Number(value.slice(2, 4));
+    const day = Number(value.slice(4, 6));
+    if (month < 1 || month > 12 || day < 1)
+        return false;
+    const daysInMonth = [31, year % 4 === 0 ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+    return day <= (daysInMonth[month - 1] ?? 0);
+}
+const ClientBirthdaySchema = zod_1.z.string()
+    .regex(/^\d{6}$/, "Birthday must be six numeric YYMMDD digits")
+    .refine(isCalendarValidYymmdd, "Birthday must be a calendar-valid YYMMDD date")
+    .nullable()
+    .optional();
+const ServiceStatusSchema = zod_1.z.enum([
+    "pre_booking",
+    "waiting",
+    "replacement_requested",
+    "active",
+    "completed",
+    "terminated",
+]);
+/** Confirmed values mirror the provider's shape and validators. */
 exports.ClientWriteFieldsSchema = zod_1.z.object({
     name: zod_1.z.string().trim().min(1).max(120).optional(),
     address: zod_1.z.string().trim().max(300).nullable().optional(),
     phone: zod_1.z.string().trim().max(40).nullable().optional(),
     type: zod_1.z.string().trim().max(40).nullable().optional(),
     duration: zod_1.z.number().int().nonnegative().nullable().optional(),
-    fullPrice: zod_1.z.string().trim().max(40).nullable().optional(),
-    grant: zod_1.z.string().trim().max(80).nullable().optional(),
-    actualPrice: zod_1.z.string().trim().max(40).nullable().optional(),
-    startDate: DATE_VALUE_SCHEMA.nullable().optional(),
-    endDate: DATE_VALUE_SCHEMA.nullable().optional(),
+    fullPrice: KoreanWonInput.max(40).nullable().optional(),
+    grant: KoreanWonInput.max(80).nullable().optional(),
+    actualPrice: KoreanWonInput.max(40).nullable().optional(),
+    startDate: DateInput,
+    endDate: DateInput,
     careCenter: zod_1.z.boolean().nullable().optional(),
     voucherClient: zod_1.z.boolean().optional(),
-    birthday: zod_1.z.string().regex(/^\d{6}$/).nullable().optional(),
-    dueDate: DATE_VALUE_SCHEMA.nullable().optional(),
-    birthDate: DATE_VALUE_SCHEMA.nullable().optional(),
-    serviceStatus: zod_1.z.enum([
-        "pre_booking",
-        "waiting",
-        "replacement_requested",
-        "active",
-        "completed",
-        "terminated",
-    ]).nullable().optional(),
+    birthday: ClientBirthdaySchema,
+    dueDate: DateInput,
+    birthDate: DateInput,
+    serviceStatus: ServiceStatusSchema.nullable().optional(),
     breastPump: zod_1.z.boolean().optional(),
     areaId: zod_1.z.string().max(100).nullable().optional(),
+}).strict();
+exports.ClientConfirmedValuesSchema = exports.ClientWriteFieldsSchema;
+const TentativeText = (max) => zod_1.z.string().trim().min(1).max(max);
+const TentativeDate = TentativeText(100);
+/** Tentative facts may be approximate wishes; they are never promoted here. */
+exports.ClientTentativeValuesSchema = zod_1.z.object({
+    name: TentativeText(120).optional(),
+    address: TentativeText(300).nullable().optional(),
+    phone: TentativeText(40).nullable().optional(),
+    type: TentativeText(40).nullable().optional(),
+    duration: zod_1.z.union([zod_1.z.number().int().nonnegative(), TentativeText(40)]).nullable().optional(),
+    fullPrice: TentativeText(40).nullable().optional(),
+    grant: TentativeText(80).nullable().optional(),
+    actualPrice: TentativeText(40).nullable().optional(),
+    startDate: TentativeDate.nullable().optional(),
+    endDate: TentativeDate.nullable().optional(),
+    careCenter: zod_1.z.union([zod_1.z.boolean(), TentativeText(40)]).nullable().optional(),
+    voucherClient: zod_1.z.union([zod_1.z.boolean(), TentativeText(40)]).optional(),
+    birthday: TentativeText(40).nullable().optional(),
+    dueDate: TentativeDate.nullable().optional(),
+    birthDate: TentativeDate.nullable().optional(),
+    serviceStatus: TentativeText(80).nullable().optional(),
+    breastPump: zod_1.z.union([zod_1.z.boolean(), TentativeText(40)]).optional(),
+    areaId: TentativeText(100).nullable().optional(),
 }).strict();
 const CLIENT_OPERATION_VALUE_SCHEMAS = {
     name: zod_1.z.string().trim().min(1).max(120),
@@ -72,26 +112,39 @@ const CLIENT_OPERATION_VALUE_SCHEMAS = {
     phone: zod_1.z.string().trim().min(1).max(40),
     type: zod_1.z.string().trim().max(40),
     duration: zod_1.z.number().int().nonnegative(),
-    fullPrice: zod_1.z.string().trim().max(40),
-    grant: zod_1.z.string().trim().max(80),
-    actualPrice: zod_1.z.string().trim().max(40),
-    startDate: DATE_VALUE_SCHEMA,
-    endDate: DATE_VALUE_SCHEMA,
+    fullPrice: KoreanWonInput.max(40),
+    grant: KoreanWonInput.max(80),
+    actualPrice: KoreanWonInput.max(40),
+    startDate: DateInputValue,
+    endDate: DateInputValue,
     careCenter: zod_1.z.boolean(),
     voucherClient: zod_1.z.boolean(),
-    birthday: zod_1.z.string().regex(/^\d{6}$/),
-    dueDate: DATE_VALUE_SCHEMA,
-    birthDate: DATE_VALUE_SCHEMA,
-    serviceStatus: zod_1.z.enum([
-        "pre_booking",
-        "waiting",
-        "replacement_requested",
-        "active",
-        "completed",
-        "terminated",
-    ]),
+    birthday: zod_1.z.string().regex(/^\d{6}$/).refine(isCalendarValidYymmdd),
+    dueDate: DateInputValue,
+    birthDate: DateInputValue,
+    serviceStatus: ServiceStatusSchema,
     breastPump: zod_1.z.boolean(),
     areaId: zod_1.z.string().max(100),
+};
+const CLIENT_TENTATIVE_OPERATION_VALUE_SCHEMAS = {
+    name: TentativeText(120),
+    address: TentativeText(300),
+    phone: TentativeText(40),
+    type: TentativeText(40),
+    duration: zod_1.z.union([zod_1.z.number().int().nonnegative(), TentativeText(40)]),
+    fullPrice: TentativeText(40),
+    grant: TentativeText(80),
+    actualPrice: TentativeText(40),
+    startDate: TentativeDate,
+    endDate: TentativeDate,
+    careCenter: zod_1.z.union([zod_1.z.boolean(), TentativeText(40)]),
+    voucherClient: zod_1.z.union([zod_1.z.boolean(), TentativeText(40)]),
+    birthday: TentativeText(40),
+    dueDate: TentativeDate,
+    birthDate: TentativeDate,
+    serviceStatus: TentativeText(80),
+    breastPump: zod_1.z.union([zod_1.z.boolean(), TentativeText(40)]),
+    areaId: TentativeText(100),
 };
 exports.AUTOMATION_CONSENT_CHOICES = ["unanswered", "yes", "no"];
 exports.AutomationConsentChoiceSchema = zod_1.z.enum(exports.AUTOMATION_CONSENT_CHOICES);
@@ -105,23 +158,15 @@ function strictSetVariants() {
     }).strict());
     return [
         ...clientVariants,
-        zod_1.z.object({
-            op: zod_1.z.literal("set"),
-            field: zod_1.z.literal("automationChoice"),
-            value: exports.AutomationConsentChoiceSchema,
-        }).strict(),
-        zod_1.z.object({
-            op: zod_1.z.literal("set"),
-            field: zod_1.z.literal("noSend"),
-            value: zod_1.z.boolean(),
-        }).strict(),
+        zod_1.z.object({ op: zod_1.z.literal("set"), field: zod_1.z.literal("automationChoice"), value: exports.AutomationConsentChoiceSchema }).strict(),
+        zod_1.z.object({ op: zod_1.z.literal("set"), field: zod_1.z.literal("noSend"), value: zod_1.z.boolean() }).strict(),
     ];
 }
 function strictTentativeVariants() {
     return exports.CLIENT_WRITE_FIELD_NAMES.map((field) => zod_1.z.object({
         op: zod_1.z.literal("mark-tentative"),
         field: zod_1.z.literal(field),
-        value: CLIENT_OPERATION_VALUE_SCHEMAS[field],
+        value: CLIENT_TENTATIVE_OPERATION_VALUE_SCHEMAS[field],
     }).strict());
 }
 function strictClearVariants() {
@@ -135,19 +180,20 @@ function strictClearVariants() {
         zod_1.z.object({ op: zod_1.z.literal("clear"), field: zod_1.z.literal("noSend") }).strict(),
     ];
 }
-exports.ClientInputOperationSchema = zod_1.z.union([
+const ClientInputOperationRawSchema = zod_1.z.union([
     ...strictSetVariants(),
     ...strictTentativeVariants(),
     ...strictClearVariants(),
 ]);
+function normalizeParsedOperation(operation) {
+    if ((operation.op === "set" || operation.op === "mark-tentative") && operation.field === "phone") {
+        return { ...operation, value: normalizeClientPhone(operation.value) ?? operation.value };
+    }
+    return operation;
+}
+exports.ClientInputOperationSchema = ClientInputOperationRawSchema.transform((operation) => normalizeParsedOperation(operation));
 exports.ClientInputOperationsSchema = zod_1.z.array(exports.ClientInputOperationSchema).max(100);
-exports.ClientDuplicateCheckStatusSchema = zod_1.z.enum([
-    "not_checked",
-    "checking",
-    "clear",
-    "duplicate",
-    "failed",
-]);
+exports.ClientDuplicateCheckStatusSchema = zod_1.z.enum(["not_checked", "checking", "clear", "duplicate", "failed"]);
 exports.ClientDuplicateCheckResultSchema = zod_1.z.object({
     status: exports.ClientDuplicateCheckStatusSchema,
     checkedPhone: zod_1.z.string().regex(/^\d{11}$/).optional(),
@@ -165,17 +211,7 @@ exports.ClientReadinessResultSchema = zod_1.z.object({
     issues: zod_1.z.array(exports.ClientReadinessIssueSchema),
     normalizedPhone: zod_1.z.string().regex(/^\d{11}$/).optional(),
 }).strict();
-const EMPTY_CLIENT_INPUT_STATE = {
-    confirmed: {},
-    tentative: {},
-    automationChoice: "unanswered",
-    noSend: false,
-};
-/**
- * Remove presentation punctuation only where the input is unambiguous.  An
- * unexpected character returns null so callers retain the original input and
- * readiness can report a concrete validation issue instead of guessing.
- */
+/** Remove presentation punctuation only when unambiguous. */
 function normalizeClientPhone(value) {
     if (typeof value !== "string")
         return null;
@@ -187,28 +223,24 @@ function normalizeClientPhone(value) {
     const digits = trimmed.replace(/[\s().-]/g, "");
     return digits || null;
 }
-exports.normalizeClientPhoneInput = normalizeClientPhone;
 function normalizeOperationValue(field, value) {
-    if (field === "phone") {
-        const normalized = normalizeClientPhone(value);
-        return normalized ?? value;
-    }
+    if (field === "phone")
+        return normalizeClientPhone(value) ?? value;
     return value;
 }
-function cloneClientFields(values) {
+function cloneConfirmed(values) {
     return values ? { ...values } : {};
 }
-/**
- * Apply only validated operations.  `mark-tentative` never writes to
- * `confirmed`, and omission is naturally a no-op because operations are the
- * only input accepted by this helper.
- */
+function cloneTentative(values) {
+    return values ? { ...values } : {};
+}
+/** Apply only validated operations; tentative values never promote themselves. */
 function applyClientInputOperations(operations, initial = {}) {
     const state = {
-        confirmed: cloneClientFields(initial.confirmed),
-        tentative: cloneClientFields(initial.tentative),
-        automationChoice: initial.automationChoice ?? EMPTY_CLIENT_INPUT_STATE.automationChoice,
-        noSend: initial.noSend ?? EMPTY_CLIENT_INPUT_STATE.noSend,
+        confirmed: cloneConfirmed(initial.confirmed),
+        tentative: cloneTentative(initial.tentative),
+        automationChoice: initial.automationChoice ?? "unanswered",
+        noSend: initial.noSend ?? false,
     };
     for (const rawOperation of operations) {
         const operation = exports.ClientInputOperationSchema.parse(rawOperation);
@@ -242,29 +274,20 @@ function applyClientInputOperations(operations, initial = {}) {
     }
     return state;
 }
-exports.applyClientInputPatch = applyClientInputOperations;
-exports.ClientTaskInputOperationSchema = exports.ClientInputOperationSchema;
-exports.AgentTaskInputOperationSchema = exports.ClientInputOperationSchema;
-exports.ClientInputPatchOperationSchema = exports.ClientInputOperationSchema;
 function normalizeName(value) {
     return typeof value === "string" ? value.trim() : "";
 }
-/**
- * Readiness deliberately requires a server result.  The helper never treats a
- * syntactically valid phone as duplicate-free and never manufactures a check.
- */
+/** Readiness requires a matching server duplicate-check result. */
 function evaluateClientReadiness(values, duplicateCheck) {
     const issues = [];
     const name = normalizeName(values?.name);
     if (!name)
         issues.push("name_required");
     const normalizedPhone = normalizeClientPhone(values?.phone);
-    if (!normalizedPhone) {
+    if (!normalizedPhone)
         issues.push("phone_required");
-    }
-    else if (!/^\d{11}$/.test(normalizedPhone)) {
+    else if (!/^\d{11}$/.test(normalizedPhone))
         issues.push("phone_must_be_11_digits");
-    }
     if (!duplicateCheck || duplicateCheck.status === "not_checked" || duplicateCheck.status === "checking") {
         issues.push("phone_duplicate_check_required");
     }
@@ -274,10 +297,8 @@ function evaluateClientReadiness(values, duplicateCheck) {
     else if (duplicateCheck.status === "failed") {
         issues.push("phone_duplicate_check_failed");
     }
-    else if (duplicateCheck.status === "clear") {
-        if (!normalizedPhone || duplicateCheck.checkedPhone !== normalizedPhone) {
-            issues.push("phone_duplicate_check_required");
-        }
+    else if (duplicateCheck.status === "clear" && (!normalizedPhone || duplicateCheck.checkedPhone !== normalizedPhone)) {
+        issues.push("phone_duplicate_check_required");
     }
     return {
         ready: issues.length === 0,
@@ -285,26 +306,13 @@ function evaluateClientReadiness(values, duplicateCheck) {
         ...(normalizedPhone && /^\d{11}$/.test(normalizedPhone) ? { normalizedPhone } : {}),
     };
 }
-exports.getClientReadiness = evaluateClientReadiness;
-exports.validateClientReadiness = evaluateClientReadiness;
-exports.getTaskReadiness = evaluateClientReadiness;
 const isClientReadyForTask = (values, duplicateCheck) => evaluateClientReadiness(values, duplicateCheck).ready;
 exports.isClientReadyForTask = isClientReadyForTask;
-exports.isReadyForTask = exports.isClientReadyForTask;
-exports.CLIENT_CREATE_DEFAULTS = {
-    voucherClient: false,
-    serviceStatus: "pre_booking",
-};
+exports.CLIENT_CREATE_DEFAULTS = { voucherClient: false, serviceStatus: "pre_booking" };
 exports.AUTOMATION_CHOICE_DEFAULT = "unanswered";
 function createClientInputState() {
-    return {
-        confirmed: { ...exports.CLIENT_CREATE_DEFAULTS },
-        tentative: {},
-        automationChoice: exports.AUTOMATION_CHOICE_DEFAULT,
-        noSend: false,
-    };
+    return { confirmed: { ...exports.CLIENT_CREATE_DEFAULTS }, tentative: {}, automationChoice: exports.AUTOMATION_CHOICE_DEFAULT, noSend: false };
 }
 exports.ClientWriteFieldSchema = zod_1.z.enum(exports.CLIENT_WRITE_FIELD_NAMES);
 exports.ClientClearableFieldSchema = zod_1.z.enum(CLIENT_CLEARABLE_FIELD_NAMES);
 exports.ClientAutomationInputFieldSchema = zod_1.z.enum(exports.AUTOMATION_INPUT_FIELD_NAMES);
-exports.normalizeTaskPhone = normalizeClientPhone;
