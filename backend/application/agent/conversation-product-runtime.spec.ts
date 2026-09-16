@@ -5,6 +5,7 @@ import {
     createDeterministicProductRuntimeDriver,
     createProductRuntimeAdapter,
     projectScenarioForProduct,
+    structuredObservationsForEvents,
 } from "../../../evals/conversation/product-runtime-adapter";
 
 describe("deterministic product runtime bridge", () => {
@@ -88,6 +89,65 @@ describe("deterministic product runtime bridge", () => {
             expect.objectContaining({ code: "other", message: expect.stringContaining("network calls") }),
         ]));
         expect(observation.transport).toEqual({ networkCalls: 2, calls: 2 });
+    });
+
+    it("does not infer business completion from a normal taskless stream", async () => {
+        const transport = createNoNetworkMockTransport();
+        const driver = createDeterministicProductRuntimeDriver();
+        const scenario = projectScenarioForProduct(CONVERSATION_EVAL_CASES[0]!);
+        await driver.reset?.({ scenario, clock: createDeterministicClock(), transport });
+        const turn = {
+            id: "taskless-runtime-turn",
+            userText: "고객 상태를 알려줘.",
+            inputEvents: [{ type: "user_message" as const, text: "고객 상태를 알려줘." }],
+        };
+        const observation = await driver.runTurn({ scenario, turn, turnIndex: 0, clock: createDeterministicClock(), transport });
+
+        expect(observation?.completion).toBeUndefined();
+        expect(observation?.currentState).toEqual(expect.objectContaining({
+            phase: "runtime_observed",
+            facts: { taskCount: "0", stream: "completed" },
+        }));
+        expect(observation?.currentState).not.toEqual(expect.objectContaining({ phase: "answered" }));
+    });
+
+    it("does not label generic patch, question, empty-result, or non-reload command receipts", async () => {
+        const transport = createNoNetworkMockTransport();
+        const driver = createDeterministicProductRuntimeDriver();
+        const scenario = projectScenarioForProduct(CONVERSATION_EVAL_CASES[0]!);
+        await driver.reset?.({ scenario, clock: createDeterministicClock(), transport });
+        const explicit = "고객 등록해줘. 이름: SYN_PRODUCT, 전화번호: 01012345678";
+        const context = (id: string, text: string) => ({
+            scenario,
+            turn: { id, userText: text, inputEvents: [{ type: "user_message" as const, text }] },
+            turnIndex: 0,
+            clock: createDeterministicClock(),
+            transport,
+        });
+
+        await driver.runTurn(context("semantic-turn-1", explicit));
+        const patch = await driver.runTurn(context("semantic-turn-2", "이름: SYN_CHANGED"));
+        const question = await driver.runTurn(context("semantic-turn-3", "필수 정보가 더 있나요?"));
+
+        expect(patch?.structuredEvents).toEqual([]);
+        expect(question?.structuredEvents).toEqual([]);
+
+        type ProductEvent = Parameters<typeof structuredObservationsForEvents>[0][number];
+        const event = (operation: string) => ({
+            id: "event",
+            sessionId: "session",
+            userId: "user",
+            branchId: "branch",
+            clientEventId: "client-event",
+            taskId: "task",
+            operation,
+            requestHash: "request-hash",
+            acceptedRevision: 1,
+            resultActionId: null,
+            acceptedAt: new Date("2026-01-15T09:00:00.000Z"),
+        } as ProductEvent);
+        expect(structuredObservationsForEvents([event("choices:client-target:empty")], false, "2026-01-15T09:00:00.000Z")).toEqual([]);
+        expect(structuredObservationsForEvents([event("command:start-update")], false, "2026-01-15T09:00:00.000Z")).toEqual([]);
     });
 
     it("drives the real runtime and task service, then replays the same intake without a second task", async () => {
@@ -176,5 +236,71 @@ describe("deterministic product runtime bridge", () => {
         const originalObservation = await run(base);
         const changedObservation = await run(changed);
         expect(changedObservation).toEqual(originalObservation);
+    });
+
+    it("carries an explicit registration through evaluation while replaying after restart", async () => {
+        const text = "고객 등록해줘. 이름: SYN_PRODUCT, 전화번호: 01012345678";
+        const base = CONVERSATION_EVAL_CASES[8]!;
+        const firstTurn = {
+            id: "explicit-product-eval-turn",
+            userText: text,
+            inputEvents: [{ type: "user_message" as const, text }],
+        };
+        const scenario: ConversationScenario = {
+            ...base,
+            id: "explicit-product-eval",
+            syntheticTokens: ["SYN_PRODUCT"],
+            turns: [
+                firstTurn,
+                {
+                    ...firstTurn,
+                    inputEvents: [
+                        { type: "reload" as const, checkpoint: "synthetic-reload" },
+                        { type: "user_message" as const, text },
+                    ],
+                },
+            ],
+            oracle: {
+                completion: "awaiting_user",
+                currentState: {
+                    phase: "collecting",
+                    version: "1",
+                    facts: {
+                        capabilityId: "clients.create",
+                        taskState: "collecting",
+                        taskRevision: "1",
+                        taskCount: "1",
+                        activeSlot: "1",
+                        target: "absent",
+                        choiceSetCount: "0",
+                        issueCount: "0",
+                    },
+                    requiredTokens: [],
+                },
+                requiredEvents: [{ type: "draft_requested", value: "create" }],
+                acceptedDraftState: {
+                    status: "pending",
+                    fields: { name: "confirmed", phone: "confirmed", serviceStatus: "confirmed", voucherClient: "confirmed" },
+                    version: "1",
+                },
+                ledger: [],
+                sends: [],
+                authority: [],
+                allowSafetyErrors: false,
+            },
+            digest: "explicit-product-eval-digest",
+        };
+        const transport = createNoNetworkMockTransport();
+        const driver = createDeterministicProductRuntimeDriver();
+        const adapter = createProductRuntimeAdapter({ driver });
+        const observation = await adapter.run({ case: scenario, clock: createDeterministicClock(), transport });
+        const result = evaluateConversationCase(scenario, observation);
+
+        expect(result.status).toBe("not_evaluated");
+        expect(result.observed.structuredEvents).toBe(1);
+        expect(result.failures.every((failure) => failure.code === "missing_observation")).toBe(true);
+        expect(driver.getEvidence().eventCount).toBe(1);
+        expect(driver.getEvidence().runtimeRestarts).toBe(1);
+        expect(transport.networkCalls).toBe(0);
     });
 });

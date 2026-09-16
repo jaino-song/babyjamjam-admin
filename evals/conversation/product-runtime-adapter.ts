@@ -45,7 +45,7 @@ import type {
     RuntimeStructuredEvent,
 } from "./evaluation-policy";
 import type { ConversationScenario, ConversationTurn, InputEvent } from "./cases";
-import { isQuestionLike, conversationMessageEventId, conversationMessageHash } from "../../backend/application/agent/conversation-task-policy";
+import { conversationMessageEventId, conversationMessageHash } from "../../backend/application/agent/conversation-task-policy";
 
 /**
  * The product projection intentionally excludes `scenario.oracle`.  A driver
@@ -342,11 +342,14 @@ function currentStateObservationForProductTasks(
     const task = activeProductTask(visibleTasks) ?? latestProductTask(visibleTasks);
     if (!task) {
         return {
-            phase: streamCompleted ? "answered" : "blocked",
-            version: streamCompleted ? "runtime" : "runtime-error",
+            // A completed model stream with no task/result is only a runtime
+            // observation. It does not establish that a business/read goal
+            // was answered, so keep the phase explicitly structural.
+            phase: streamCompleted ? "runtime_observed" : "runtime_error",
+            version: streamCompleted ? "stream" : "stream-error",
             facts: {
                 taskCount: String(visibleTasks.length),
-                runtime: streamCompleted ? "answered" : "blocked",
+                stream: streamCompleted ? "completed" : "error",
             },
             requiredTokens: [],
             observedAt,
@@ -380,30 +383,32 @@ function completionForProductTask(
     streamCompleted: boolean,
 ): ConversationRuntimeObservation["completion"] {
     if (!streamCompleted) return "blocked";
-    if (!task) return "completed";
+    // Stream completion alone is not business completion. A task terminal
+    // state is required before this bridge emits a completion assertion.
+    if (!task) return undefined;
     if (task.status === "completed") return "completed";
     if (task.status === "failed" || task.status === "cancelled") return "blocked";
     return "awaiting_user";
 }
 
-function structuredEventType(operation: string, turnText: string): RuntimeStructuredEvent["type"] | undefined {
+function structuredEventType(operation: string, hasReload: boolean): RuntimeStructuredEvent["type"] | undefined {
     if (operation === "create") return "draft_requested";
-    if (operation === "patch") return "correction_applied";
-    if (operation === "conversation:intake") return isQuestionLike(turnText) ? "question_asked" : "fact_observed";
-    if (operation.startsWith("choices:") && operation.endsWith(":empty")) return "result_unknown";
+    // A generic patch/intake receipt proves a server transition, but its
+    // semantic intent is not observable from this event alone.
+    if (operation === "patch" || operation === "conversation:intake") return undefined;
+    if (operation.startsWith("choices:") && operation.endsWith(":empty")) return undefined;
     if (operation.startsWith("choices:")) return "target_choice_required";
-    if (operation === "command:select-target") return "fact_observed";
-    if (operation.startsWith("command:")) return "checkpoint_reloaded";
+    if (operation.startsWith("command:") && hasReload) return "checkpoint_reloaded";
     return undefined;
 }
 
-function structuredObservationsForEvents(
+export function structuredObservationsForEvents(
     events: readonly AgentTaskEventEntity[],
-    turnText: string,
+    hasReload: boolean,
     observedAt: string,
 ): ConversationRuntimeObservation["structuredEvents"] {
     return events.flatMap((event) => {
-        const type = structuredEventType(event.operation, turnText);
+        const type = structuredEventType(event.operation, hasReload);
         return type ? [{ type, value: event.operation, observedAt }] : [];
     });
 }
@@ -1134,6 +1139,7 @@ export class DeterministicProductRuntimeHost implements ProductRuntimeDriver {
         const priorIntake = beforeEvents.find((event) => event.clientEventId === intakeEventId);
         const replayAttempt = priorIntake?.requestHash === requestHash;
         const observedAt = context.clock.now;
+        const hasReload = context.turn.inputEvents.some((event) => event.type === "reload");
         try {
             const streamResult = await this.runtimeService.stream({
                 principal: this.principal,
@@ -1168,7 +1174,7 @@ export class DeterministicProductRuntimeHost implements ProductRuntimeDriver {
                 completion: completionForProductTask(task, true),
                 currentState: currentStateObservationForProductTasks(tasks, observedAt, true),
                 acceptedDraftState: task ? draftObservationForProductTask(task, observedAt) : null,
-                structuredEvents: structuredObservationsForEvents(acceptedEvents, messageEvent.text, observedAt),
+                structuredEvents: structuredObservationsForEvents(acceptedEvents, hasReload, observedAt),
                 ...(assistantText ? { assistantMessages: [{ turnId: context.turn.id, text: assistantText }] } : {}),
             };
         } catch (error) {
@@ -1186,7 +1192,7 @@ export class DeterministicProductRuntimeHost implements ProductRuntimeDriver {
                 completion: completionForProductTask(task, false),
                 currentState: currentStateObservationForProductTasks(tasks, observedAt, false),
                 acceptedDraftState: task ? draftObservationForProductTask(task, observedAt) : null,
-                structuredEvents: structuredObservationsForEvents(acceptedEvents, messageEvent.text, observedAt),
+                structuredEvents: structuredObservationsForEvents(acceptedEvents, hasReload, observedAt),
                 safetyErrors: [{ code: "other", message: `Product runtime failed with ${errorCode}`, observedAt }],
             };
         }

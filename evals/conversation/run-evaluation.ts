@@ -65,9 +65,19 @@ export interface ConversationEvaluationReportInput {
     transport: ConversationTransport;
 }
 
+/** Failed supplied evidence is a command failure; missing future evidence is
+ * explicitly reported as not_evaluated and remains a nonfailure exit. */
+export function conversationEvaluationExitCode(status: ConversationEvaluationSummary["status"]): 0 | 1 {
+    return status === "failed" ? 1 : 0;
+}
+
 export function formatConversationEvaluationReport(input: ConversationEvaluationReportInput): string {
     const { summary, adapter, transport } = input;
     const observedStructuredEvents = summary.results.reduce((total, result) => total + result.observed.structuredEvents, 0);
+    const failures = summary.results.flatMap((result) => result.failures);
+    const missingEvidenceFailures = failures.filter((failure) => failure.code === "missing_observation").length;
+    const suppliedMismatchFailures = failures.filter((failure) => failure.code !== "missing_observation" && failure.code !== "safety_error").length;
+    const safetyFailures = failures.filter((failure) => failure.code === "safety_error").length;
     const lines = [
         adapter.mode === "product" ? "Deterministic product runtime evaluation" : "Deterministic harness validation",
         `adapter mode: ${adapter.mode}`,
@@ -75,16 +85,19 @@ export function formatConversationEvaluationReport(input: ConversationEvaluation
             ? [
                 "evidence source: injected AgentRuntimeService + AgentTaskService with deterministic in-memory state/events",
                 "observed fields: completion, currentState, acceptedDraftState, structuredEvents, assistantMessages, transport",
-                "unavailable fields: actionExecutionLedger, sends, authorityOutcomes (Phase 6/7 product instrumentation is not connected)",
+                "unavailable fields: actionExecutionLedger and sends (later execution owners); authorityOutcomes (current host authority instrumentation unavailable)",
                 "state evidence: task snapshots and accepted event receipts; protected values, random IDs, and wall-clock timestamps are omitted",
                 `observed structured events: ${observedStructuredEvents}`,
-                "future lifecycle ledgers and paid provider quality: not_evaluated",
+                "fixture/input limitation: four registration fixtures use unlabelled synthetic-token prose; strict deterministic intake accepts explicit labels such as '이름:'",
+                "read limitation: the injected deterministic model has no read-tool results, so read scenarios cannot supply read outcome evidence",
+                "later product limitation: action/provider lifecycle outcomes await their product owners and instrumentation",
             ]
             : ["real product/model quality not evaluated"]),
         `fixture version: ${CONVERSATION_FIXTURE_VERSION}`,
         `deterministic clock: ${CONVERSATION_DETERMINISTIC_CLOCK}`,
         `cases: ${summary.counts.total} (development ${CONVERSATION_DEVELOPMENT_CASES.length}, holdout ${CONVERSATION_HOLDOUT_CASES.length})`,
         `results: passed ${summary.counts.passed}, failed ${summary.counts.failed}, not_evaluated ${summary.counts.notEvaluated}`,
+        `evaluation evidence: supplied mismatches ${suppliedMismatchFailures}, missing observations ${missingEvidenceFailures}, safety failures ${safetyFailures}`,
         `fixture digest: ${CONVERSATION_EVAL_DIGEST}`,
         `assertion digest: ${CONVERSATION_ASSERTION_DIGEST}`,
         `network calls: ${transport.networkCalls}`,
@@ -148,14 +161,19 @@ function configureBackendModuleAliases(): void {
     });
 }
 
-export async function runDeterministicProduct(): Promise<string> {
+async function runDeterministicProductEvaluation(): Promise<ConversationEvaluationReportInput> {
     configureBackendModuleAliases();
     const { createDeterministicProductRuntimeDriver, createProductRuntimeAdapter } = await import("./product-runtime-adapter");
     const transport = createNoNetworkMockTransport();
     const driver = createDeterministicProductRuntimeDriver();
     const adapter = createProductRuntimeAdapter({ driver });
     const summary = await runConversationEvaluation({ adapter, transport });
-    return formatConversationEvaluationReport({ summary, adapter, transport });
+    return { summary, adapter, transport };
+}
+
+export async function runDeterministicProduct(): Promise<string> {
+    const input = await runDeterministicProductEvaluation();
+    return formatConversationEvaluationReport(input);
 }
 
 function runProductCliChild(): number {
@@ -180,7 +198,13 @@ async function main(): Promise<void> {
         process.exitCode = runProductCliChild();
         return;
     }
-    const report = productMode ? await runDeterministicProduct() : await runDeterministicHarness();
+    if (productMode) {
+        const input = await runDeterministicProductEvaluation();
+        process.stdout.write(`${formatConversationEvaluationReport(input)}\n`);
+        process.exitCode = conversationEvaluationExitCode(input.summary.status);
+        return;
+    }
+    const report = await runDeterministicHarness();
     process.stdout.write(`${report}\n`);
 }
 

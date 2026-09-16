@@ -11,6 +11,7 @@ import {
     evaluateConversationCase,
 } from "../../../evals/conversation/evaluation-policy";
 import {
+    conversationEvaluationExitCode,
     formatConversationEvaluationReport,
     runConversationEvaluation,
 } from "../../../evals/conversation/run-evaluation";
@@ -69,6 +70,12 @@ describe("deterministic multi-turn conversation evaluation foundation", () => {
         expect(report).toContain("network calls: 0");
         expect(report).toContain(CONVERSATION_EVAL_DIGEST);
         expect(report).toContain(CONVERSATION_ASSERTION_DIGEST);
+    });
+
+    it("uses a nonzero command exit only for failed supplied evidence", () => {
+        expect(conversationEvaluationExitCode("passed")).toBe(0);
+        expect(conversationEvaluationExitCode("not_evaluated")).toBe(0);
+        expect(conversationEvaluationExitCode("failed")).toBe(1);
     });
 
     it("does not let success prose pass when current state and structured evidence are absent", async () => {
