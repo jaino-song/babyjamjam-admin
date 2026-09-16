@@ -2483,6 +2483,11 @@ export class MessageTriggerService {
             if (job.status === "processing") {
                 job.markFailed("Provider disabled or delivery failed");
                 await this.persistTriggerJobStatus(job, "persist unsupported trigger delivery");
+            } else if (job.status === "canceled") {
+                // Delivery policy skips can cancel in memory without writing
+                // the job. Persist through the claim-token fence so the row
+                // cannot remain processing or overwrite a newer claim.
+                await this.persistTriggerJobStatus(job, "persist canceled trigger preparation");
             }
             return;
         }
