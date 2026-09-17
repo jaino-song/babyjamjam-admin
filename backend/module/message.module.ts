@@ -42,6 +42,10 @@ import { MessageExternalAgentCapabilitiesProvider } from "application/usecases/m
 import { ClientAutomationSourceReader } from "application/services/client-automation-source.reader";
 import { ClientAutomationImpactService } from "application/services/client-automation-impact.service";
 import { CLIENT_AUTOMATION_IMPACT } from "domain/ports/client-automation-impact.port";
+import { AgentAutomationRecordStoreService } from "application/agent/agent-automation-record-store.service";
+import { AgentAutomationAuthorityService } from "application/agent/agent-automation-authority.service";
+import { AgentAutomationJobAuthorityService } from "application/services/agent-automation-job-authority.service";
+import { AgentAutomationDeliveryGateService } from "application/services/agent-automation-delivery-gate.service";
 
 @Module({
     imports: [
@@ -79,6 +83,10 @@ import { CLIENT_AUTOMATION_IMPACT } from "domain/ports/client-automation-impact.
         MessageTriggerSchedulerService,
         MessageExternalAgentCapabilitiesProvider,
         ClientAutomationSourceReader,
+        AgentAutomationRecordStoreService,
+        AgentAutomationAuthorityService,
+        AgentAutomationJobAuthorityService,
+        AgentAutomationDeliveryGateService,
         ClientAutomationImpactService,
         { provide: CLIENT_AUTOMATION_IMPACT, useExisting: ClientAutomationImpactService },
     ],

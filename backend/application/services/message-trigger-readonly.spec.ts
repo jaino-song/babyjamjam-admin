@@ -1,3 +1,4 @@
+import { createLegacyAutomationDeliveryGate } from "../../test/fixtures/legacy-automation-delivery-gate";
 import { ClientAutomationSourceReader } from "./client-automation-source.reader";
 import { MessageTriggerService } from "./message-trigger.service";
 import { MessageExternalAgentCapabilitiesProvider } from "application/usecases/message/message-external-agent-capabilities.provider";
@@ -32,7 +33,7 @@ function setup(rules: MessageTriggerRuleEntity[], parentEnabled = true, schemaPr
     jest.spyOn(sources, "hasTriggerSchema").mockResolvedValue(schemaPresent);
     const trigger = new MessageTriggerService(prisma as never, {} as never, senderApproval as never,
         ruleRepository as never, jobRepository as never, {} as never, {} as never, {} as never,
-        undefined, overrides as never, activation as never, undefined, sources);
+        undefined, overrides as never, activation as never, undefined, sources, createLegacyAutomationDeliveryGate(prisma as never, undefined));
     const provider = new MessageExternalAgentCapabilitiesProvider(prisma as never, trigger,
         jobRepository as never, {} as never, senderApproval as never);
     const capability = provider.getCapabilities().find(({ meta }) => meta.name === "automation.list")!;

@@ -1,3 +1,4 @@
+import { createLegacyAutomationDeliveryGate } from "../../test/fixtures/legacy-automation-delivery-gate";
 import { MessageTriggerEventType, MessageTriggerOffsetType, MessageTriggerRecipientType, MessageTriggerTemplateKey } from "domain/constants/message-trigger-catalog";
 import { MessageTriggerRuleEntity } from "domain/entities/message-trigger-rule.entity";
 import { DEFAULT_MESSAGE_AUTOMATION_PAST_TRIGGER_CONFIG } from "domain/entities/system-setting.entity";
@@ -28,7 +29,7 @@ function setup() {
     const aligo = { sendSms: jest.fn() };
     const logs = { save: jest.fn(), update: jest.fn() };
     const enrichers = { enrich: jest.fn() };
-    const delivery = new SmsTriggerDeliveryService(aligo as never, templates as never, logs as never, undefined, enrichers as never);
+    const delivery = new SmsTriggerDeliveryService(aligo as never, templates as never, logs as never, undefined, enrichers as never, createLegacyAutomationDeliveryGate());
     const input = { branchId, subject: { kind: "task-client" as const, taskId }, client, rule, policy, now,
         change: "create" as const, delivery };
     return { input, template, templates, aligo, logs, enrichers };

@@ -1,3 +1,4 @@
+import { createLegacyAutomationDeliveryGate } from "../../test/fixtures/legacy-automation-delivery-gate";
 import { MessageTriggerEventType, MessageTriggerOffsetType, MessageTriggerRecipientType, MessageTriggerTemplateKey } from "domain/constants/message-trigger-catalog";
 import { MessageTriggerRuleEntity } from "domain/entities/message-trigger-rule.entity";
 import { MessageTriggerJobEntity } from "domain/entities/message-trigger-job.entity";
@@ -40,7 +41,7 @@ function setup() {
     const aligo = { sendSms: jest.fn() };
     const logs = { save: jest.fn(), update: jest.fn() };
     const enrichers = { enrich: jest.fn() };
-    const delivery = new SmsTriggerDeliveryService(aligo as never, templates as never, logs as never, undefined, enrichers as never);
+    const delivery = new SmsTriggerDeliveryService(aligo as never, templates as never, logs as never, undefined, enrichers as never, createLegacyAutomationDeliveryGate());
     const sender = new AligoDefaultSenderPolicyService(new E2eAligoApiStub());
     const service = new ClientAutomationImpactService(sources as never, delivery, sender, repository as never);
     const create: ClientAutomationWrite = { kind: "create", taskId, values: { name: client.name, phone: client.phone, startDate: client.startDate } };

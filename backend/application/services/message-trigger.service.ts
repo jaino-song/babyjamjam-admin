@@ -1,4 +1,6 @@
 import { ClientAutomationSourceReader, type ClientAutomationSettingsSnapshot } from "./client-automation-source.reader";
+import { AgentAutomationDeliveryGateService } from "./agent-automation-delivery-gate.service";
+import { AgentAutomationDispatchUncertainError } from "domain/errors/agent-automation-dispatch-uncertain.error";
 import { DEFAULT_SERVICE_INFO_TRIGGER, DEFAULT_CLIENT_GREETING_TRIGGER, matchesTriggerDefaults, type MessageTriggerRuleDefaults as UpsertRuleParams } from "./message-trigger-defaults";
 import {
     BadRequestException,
@@ -353,6 +355,7 @@ export class MessageTriggerService {
         @Optional()
         private readonly messageAutomationBranchLockService?: MessageAutomationBranchLockService,
         @Optional() automationSources?: ClientAutomationSourceReader,
+        @Optional() private readonly automationDeliveryGate?: AgentAutomationDeliveryGateService,
     ) {
         // Preserve constructor-based callers while sharing exactly the same read
         // implementation; the production module injects its registered reader.
@@ -1504,7 +1507,7 @@ export class MessageTriggerService {
         const automaticJob = this.isAutomaticMessageJob(job);
         if (
             automaticJob
-            && (!this.messageAutomationActivationService || !this.messageAutomationBranchLockService || !job.branchId)
+            && (!this.messageAutomationActivationService || !this.messageAutomationBranchLockService || !this.automationDeliveryGate || !job.branchId)
         ) {
             throw new ServiceUnavailableException("Message automation activation is not configured");
         }
@@ -1514,7 +1517,7 @@ export class MessageTriggerService {
                 const enabled = await this.messageAutomationActivationService!.getTriggerDispatchEnabled(job.branchId, transaction);
                 if (!enabled) return null;
             }
-            return transaction
+            const persisted = await (transaction
                 ? this.jobRepository.upsertPendingForRuleGeneration(
                     job,
                     rule.updatedAt,
@@ -1533,7 +1536,13 @@ export class MessageTriggerService {
                         job,
                         rule.updatedAt,
                         expectedJobsStale,
-                    );
+                    ));
+            if (automaticJob && persisted?.status === "pending") {
+                if (!transaction || !this.automationDeliveryGate) throw new ServiceUnavailableException("Message automation authority is not configured");
+                await this.automationDeliveryGate.bindMaterialization(transaction, persisted,
+                    (candidate, tx) => this.deliveryService.resolveCanonicalDeliverySnapshot(candidate, tx));
+            }
+            return persisted;
         };
         const persisted = automaticJob
             ? await this.messageAutomationBranchLockService!.runExclusive(
@@ -2267,7 +2276,9 @@ export class MessageTriggerService {
             return this.fenceClaimTokenBeforeProviderSend(job, transaction);
         };
         if (automaticJob) {
-            return this.messageAutomationBranchLockService!.runExclusive(job.branchId!, authorize);
+            if (!this.automationDeliveryGate) throw new ServiceUnavailableException("Message automation authority is not configured");
+            return this.automationDeliveryGate.authorizePreparation(job,
+                (candidate, tx) => this.deliveryService.resolveCanonicalDeliverySnapshot(candidate, tx), authorize);
         }
         return this.prisma.$transaction(authorize, {
             maxWait: CLAIM_DISPATCH_AUTHORIZATION_TIMEOUT_MS,
@@ -2407,7 +2418,11 @@ export class MessageTriggerService {
             return authorized.length === 1 ? { kind: "allow" as const } : { kind: "lost" as const };
         };
         if (this.isAutomaticMessageJob(job)) {
-            return this.messageAutomationBranchLockService!.runExclusive(job.branchId!, authorize);
+            // Automatic delivery has no one-step compatibility bypass.
+            if (!preparation) return { kind: "stale", reason: "문자 발송 준비를 다시 확인해야 합니다" };
+            if (!this.automationDeliveryGate) throw new ServiceUnavailableException("Message automation authority is not configured");
+            return this.automationDeliveryGate.authorizeDispatch(job, preparation,
+                (candidate, tx) => this.deliveryService.resolveCanonicalDeliverySnapshot(candidate, tx), authorize);
         }
         return this.prisma.$transaction(authorize, {
             maxWait: CLAIM_DISPATCH_AUTHORIZATION_TIMEOUT_MS,
@@ -2669,6 +2684,7 @@ export class MessageTriggerService {
                 job.markFailed("Provider disabled or delivery failed");
             }
         } catch (error) {
+            if (error instanceof AgentAutomationDispatchUncertainError) return;
             if (error instanceof TriggerJobDeferredError) {
                 job.defer(error.kind, error.message);
             } else {

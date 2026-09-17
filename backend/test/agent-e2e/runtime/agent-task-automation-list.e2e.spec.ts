@@ -1,3 +1,4 @@
+import { AgentAutomationDeliveryGateService } from "../../../application/services/agent-automation-delivery-gate.service";
 import { ClientAutomationSourceReader } from "../../../application/services/client-automation-source.reader";
 import { AgentAutomationJobAuthorityService } from "../../../application/services/agent-automation-job-authority.service";
 import { AgentAutomationAuthorityService } from "../../../application/agent/agent-automation-authority.service";
@@ -482,6 +483,29 @@ describeAgentE2E("real automation.list with two eligible clients and missing def
         expect(await storedAutomation()).toEqual(before);
         expect(await prisma.client.findMany({ where: { branchId }, orderBy: { id: "asc" } })).toEqual(beforeClients);
         expect(send).not.toHaveBeenCalled(); expect(createModel).not.toHaveBeenCalled(); send.mockRestore();
+    });
+
+    it("uses the shared real gate for automatic preparation and one stub provider crossing", async () => {
+        const trigger = app.get(MessageTriggerService); const sms = app.get(SmsTriggerDeliveryService);
+        const gate = app.get(AgentAutomationDeliveryGateService); const sources = app.get(ClientAutomationSourceReader);
+        expect((trigger as unknown as { automationDeliveryGate: unknown }).automationDeliveryGate).toBe(gate);
+        expect((sms as unknown as { automationDeliveryGate: unknown }).automationDeliveryGate).toBe(gate);
+        const send = jest.spyOn(app.get(AligoService), "sendSms");
+        await tenantContextStore.run({ origin: "http", branchId }, async () => {
+            const settings = await sources.readClientAutomationSettings(branchId);
+            const client = await sources.readClientAutomationSource(branchId, clientIds[0]!);
+            if (settings.status !== "available" || !client) throw new Error("Missing synthetic legacy source");
+            const rule = settings.rules.find(({ templateKey }) => templateKey === "CLIENT_GREETING")!;
+            const recipe = buildClientMessageRecipe(rule, client, new Date())!;
+            const row = await prisma.message_trigger_job.create({ data: { ...recipe, payload: recipe.payload as unknown as Prisma.InputJsonValue } });
+            await Promise.allSettled([1, 2].map(() => trigger.dispatchPendingJobNow(row.id, { expectedBranchId: branchId })));
+            expect((await prisma.message_trigger_job.findUniqueOrThrow({ where: { id: row.id } })).status).toBe("sent");
+            expect(send).toHaveBeenCalledTimes(1);
+            const logs = await prisma.message_log.findMany({ where: { triggerJobId: row.id } });
+            expect(logs).toHaveLength(1);
+            expect(logs[0]!.providerAcceptanceState).toBe("accepted");
+        });
+        expect(createModel).not.toHaveBeenCalled(); send.mockRestore();
     });
 
 });

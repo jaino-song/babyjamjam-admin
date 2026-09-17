@@ -25,6 +25,8 @@ import {
 import { MessageTriggerJobEntity } from "domain/entities/message-trigger-job.entity";
 import { SMS_DELIVERY_SNAPSHOT_VARIABLE } from "domain/constants/sms-delivery-snapshot";
 import { isReservedAutomationJob } from "domain/constants/agent-automation-storage";
+import { AgentAutomationDispatchUncertainError } from "domain/errors/agent-automation-dispatch-uncertain.error";
+import { AgentAutomationDeliveryGateService } from "./agent-automation-delivery-gate.service";
 import { TriggerJobDeferredError } from "domain/errors/trigger-job-deferred.error";
 import {
     MessageLogEntity,
@@ -197,6 +199,8 @@ export class SmsTriggerDeliveryService {
         private readonly acceptanceService?: SmsProviderAcceptanceService,
         @Optional()
         private readonly enricherRegistry?: SmsTriggerPayloadEnricherRegistry,
+        @Optional()
+        private readonly automationDeliveryGate?: AgentAutomationDeliveryGateService,
     ) {}
 
     canHandle(templateKey: MessageTriggerTemplateKey): boolean {
@@ -336,6 +340,11 @@ export class SmsTriggerDeliveryService {
 
     async sendJob(job: MessageTriggerJobEntity): Promise<boolean> {
         this.assertDeliveryJob(job);
+        if (!this.automationDeliveryGate || !await this.automationDeliveryGate.permitsDirectManualJob(job)) {
+            if (job.status === "dispatching") throw new AgentAutomationDispatchUncertainError();
+            job.cancel("문자 동의 또는 발송 대상 확인이 필요합니다");
+            return false;
+        }
         if (!job.branchId) {
             throw new Error(`SMS trigger job ${job.id} is missing branchId`);
         }
@@ -396,6 +405,10 @@ export class SmsTriggerDeliveryService {
      */
     async prepareJob(job: MessageTriggerJobEntity): Promise<SmsTriggerDeliveryPreparation | null> {
         this.assertDeliveryJob(job);
+        if (!this.automationDeliveryGate || !await this.automationDeliveryGate.consumePreparation(job)) {
+            job.cancel("문자 동의 또는 발송 대상 확인이 필요합니다");
+            return null;
+        }
         if (!job.branchId) {
             throw new Error(`SMS trigger job ${job.id} is missing branchId`);
         }
@@ -473,6 +486,8 @@ export class SmsTriggerDeliveryService {
         preparation: SmsTriggerDeliveryPreparation,
     ): Promise<boolean> {
         this.assertDeliveryJob(job);
+        if (!this.automationDeliveryGate) throw new AgentAutomationDispatchUncertainError();
+        await this.automationDeliveryGate.consumeDispatch(job, preparation);
         if (!job.branchId) {
             throw new Error(`SMS trigger job ${job.id} is missing branchId`);
         }
@@ -481,7 +496,7 @@ export class SmsTriggerDeliveryService {
             return false;
         }
         if (job.payload.templateVariables[SMS_DELIVERY_SNAPSHOT_VARIABLE] !== preparation.serializedSnapshot) {
-            throw new Error("SMS prepared delivery snapshot changed before provider dispatch");
+            throw new AgentAutomationDispatchUncertainError();
         }
         return this.sendSmsJob(job, config, preparation.snapshot);
     }

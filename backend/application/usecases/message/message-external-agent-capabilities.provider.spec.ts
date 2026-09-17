@@ -1,3 +1,4 @@
+import { createLegacyAutomationDeliveryGate } from "../../../test/fixtures/legacy-automation-delivery-gate";
 import { NotFoundException } from "@nestjs/common";
 
 import { AligoService } from "application/services/aligo.service";
@@ -113,7 +114,7 @@ describe("MessageExternalAgentCapabilitiesProvider", () => {
             aligoService as unknown as AligoService,
             { getByKey: jest.fn() } as never,
             { save: jest.fn() } as never,
-        );
+        undefined, undefined, createLegacyAutomationDeliveryGate());
         const senderApproval = { ensureApproved: jest.fn().mockResolvedValue(undefined) };
         const provider = new MessageExternalAgentCapabilitiesProvider(
             prisma as never,
@@ -434,7 +435,7 @@ describe("MessageExternalAgentCapabilitiesProvider", () => {
             aligoService,
             systemTemplateService as never,
             { save: jest.fn().mockImplementation(async (log: unknown) => log) } as never,
-        );
+        undefined, undefined, createLegacyAutomationDeliveryGate());
         const triggerDelivery = new MessageTriggerDeliveryService(smsDelivery);
         const senderApproval = {
             getApprovedBranchIds: jest.fn().mockResolvedValue(new Set([principal.branchId])),
@@ -470,7 +471,22 @@ describe("MessageExternalAgentCapabilitiesProvider", () => {
                     transaction: unknown,
                 ) => work(transaction)),
             } as never,
-        );
+        undefined, undefined, undefined, undefined, undefined, createLegacyAutomationDeliveryGate({
+                $transaction: jest.fn().mockImplementation(async (work: (transaction: unknown) => Promise<unknown>) =>
+                    work({
+                        $queryRaw: jest.fn().mockImplementation(async () => [{
+                            status: "processing",
+                            claim_token: "claim-a",
+                            branch_id: principal.branchId,
+                            rule_id: source.ruleId,
+                            client_id: source.clientId,
+                            employee_schedule_id: source.employeeScheduleId,
+                            recipient_type: source.recipientType,
+                            template_key: source.templateKey,
+                            payload: stagedRetry?.payload ?? source.payload,
+                        }]),
+                    })),
+            } as never, undefined));
         const recipientPrisma = {
             client: {
                 findFirst: jest.fn().mockResolvedValue({ id: 1, name: "테스트 고객", phone: "01012345678" }),

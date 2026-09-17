@@ -1,3 +1,5 @@
+import { AgentAutomationDispatchUncertainError } from "../../domain/errors/agent-automation-dispatch-uncertain.error";
+import { createLegacyAutomationDeliveryGate } from "../fixtures/legacy-automation-delivery-gate";
 import { buildClientTemplateVariables } from "../../application/services/message-trigger-recipes";
 import { ConflictException, NotFoundException } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
@@ -345,7 +347,7 @@ describe("MessageTriggerService", () => {
             overrideRepository as never,
             messageAutomationActivationService as never,
             messageAutomationBranchLockService as never,
-        );
+        undefined, createLegacyAutomationDeliveryGate(prisma as never, messageAutomationBranchLockService as never));
 
         const internals = service as unknown as ServiceInternals;
         jest.spyOn(internals, "hasTriggerSchema").mockResolvedValue(true);
@@ -370,8 +372,14 @@ describe("MessageTriggerService", () => {
     const createDispatchService = (systemSettingService?: {
         getMessageSettingsPolicyEnabled: jest.Mock;
     }) => {
-        const deliveryService = {
-            sendJob: jest.fn().mockResolvedValue(true),
+        const sendJob = jest.fn().mockResolvedValue(true);
+        const deliveryService: { sendJob: jest.Mock; prepareJob: jest.Mock; sendPreparedJob: jest.Mock } = {
+            sendJob,
+            prepareJob: jest.fn(async (job: MessageTriggerJobEntity) => {
+                job.payload.templateVariables[SMS_DELIVERY_SNAPSHOT_VARIABLE] = "synthetic-trigger-prepared";
+                return { serializedSnapshot: "synthetic-trigger-prepared", snapshot: { snapshotHash: "synthetic" } };
+            }),
+            sendPreparedJob: jest.fn(async (job: MessageTriggerJobEntity) => sendJob(job)),
         };
         const jobRepository = {
             cancelOrphanedPending: jest.fn().mockResolvedValue(0),
@@ -414,7 +422,7 @@ describe("MessageTriggerService", () => {
             employee_schedule: { findFirst: jest.Mock };
         };
         const transaction: DispatchTransaction = {
-            $queryRaw: jest.fn().mockResolvedValue([{ status: "processing", claim_token: "claim-a" }]),
+            $queryRaw: jest.fn().mockResolvedValue([{ payload: { templateVariables: { [SMS_DELIVERY_SNAPSHOT_VARIABLE]: "synthetic-trigger-prepared" } }, status: "processing", claim_token: "claim-a" }]),
             message_trigger_job: {
                 findUnique: jest.fn().mockImplementation(async ({ where }: { where: { id: string } }) =>
                     claimedJobRead(where.id)),
@@ -449,7 +457,7 @@ describe("MessageTriggerService", () => {
             createOverrideRepository() as never,
             messageAutomationActivationService as never,
             messageAutomationBranchLockService as never,
-        );
+        undefined, createLegacyAutomationDeliveryGate(prisma as never, messageAutomationBranchLockService as never));
 
         jest.spyOn(service as unknown as ServiceInternals, "hasTriggerSchema").mockResolvedValue(true);
 
@@ -966,7 +974,7 @@ describe("MessageTriggerService", () => {
             overrideRepository as never,
             activationService as never,
             branchLock as never,
-        );
+        undefined, createLegacyAutomationDeliveryGate(prisma as never, branchLock as never));
         jest.spyOn(service as unknown as ServiceInternals, "hasTriggerSchema").mockResolvedValue(true);
         ruleRepository.findById.mockResolvedValue(createRule({ id: "rule-parent-off", isActive: false }));
 
@@ -1735,7 +1743,7 @@ describe("MessageTriggerService", () => {
             createOverrideRepository() as never,
             createAutomationActivationService() as never,
             createBranchLock() as never,
-        );
+        undefined, createLegacyAutomationDeliveryGate({} as never, createBranchLock() as never));
 
         const greetingRule = createRule({
             id: "rule-greeting-new",
@@ -1868,7 +1876,7 @@ describe("MessageTriggerService", () => {
         dispatcher.claimedJobRead.mockResolvedValue(job);
         dispatcher.transaction.$queryRaw
             .mockResolvedValueOnce([{ service_end_notice_sent_at: new Date("2026-09-15T03:00:00.000Z") }])
-            .mockResolvedValueOnce([{ status: "processing", claim_token: "claim-a" }])
+            .mockResolvedValueOnce([{ payload: { templateVariables: { [SMS_DELIVERY_SNAPSHOT_VARIABLE]: "synthetic-trigger-prepared" } }, status: "processing", claim_token: "claim-a" }])
             .mockResolvedValueOnce([{ id: job.id }]);
 
         await dispatcher.service.dispatchDueJobs();
@@ -1968,6 +1976,27 @@ describe("MessageTriggerService", () => {
             branchId,
             "past-trigger",
         );
+    });
+
+    it("keeps a post-CAS admission refusal dispatching for uncertain reconciliation", async () => {
+        const { service, deliveryService, jobRepository } = createDispatchService();
+        const job = createJob(); jobRepository.findDuePendingSystemScope.mockResolvedValue([job]);
+        deliveryService.sendPreparedJob.mockRejectedValue(new AgentAutomationDispatchUncertainError());
+        await service.dispatchDueJobs();
+        expect(job.status).toBe("dispatching");
+        expect(job.attempts).toBe(0); expect(job.nextAttemptAt).toBeNull();
+        expect(deliveryService.sendJob).not.toHaveBeenCalled();
+        expect(jobRepository.update).toHaveBeenLastCalledWith(job);
+    });
+
+    it("refuses the automatic one-step compatibility path before provider authorization", async () => {
+        const { service, deliveryService, jobRepository, transaction } = createDispatchService();
+        Object.assign(deliveryService, { prepareJob: undefined, sendPreparedJob: undefined });
+        const job = createJob(); jobRepository.findDuePendingSystemScope.mockResolvedValue([job]);
+        await service.dispatchDueJobs();
+        expect(job.status).toBe("canceled");
+        expect(deliveryService.sendJob).not.toHaveBeenCalled();
+        expect(transaction.$queryRaw).not.toHaveBeenCalled();
     });
 
     it("persists preparation before authorization and sends only the frozen snapshot", async () => {
@@ -2261,7 +2290,7 @@ describe("MessageTriggerService", () => {
         const job = createJob();
         jobRepository.findDuePendingSystemScope.mockResolvedValue([job]);
         jobRepository.claimPendingWithRuleFence.mockResolvedValue("claim-a");
-        transaction.$queryRaw.mockResolvedValueOnce([{
+        transaction.$queryRaw.mockResolvedValueOnce([{ payload: { templateVariables: { [SMS_DELIVERY_SNAPSHOT_VARIABLE]: "synthetic-trigger-prepared" } },
             status: "processing",
             claim_token: "claim-b",
         }]);
@@ -2289,10 +2318,11 @@ describe("MessageTriggerService", () => {
         let queryCount = 0;
         transaction.$queryRaw.mockImplementation(async () => {
             queryCount += 1;
-            if (queryCount === 1) {
+            if (queryCount === 1) { return [{ payload: { templateVariables: { [SMS_DELIVERY_SNAPSHOT_VARIABLE]: "synthetic-trigger-prepared" } }, status: "processing", claim_token: "claim-a" }]; }
+            if (queryCount === 2) {
                 authorizationReadStarted();
                 await authorizationReadReleased;
-                return [{ status: "processing", claim_token: "claim-a" }];
+                return [{ payload: { templateVariables: { [SMS_DELIVERY_SNAPSHOT_VARIABLE]: "synthetic-trigger-prepared" } }, status: "processing", claim_token: "claim-a" }];
             }
             return cancellationWon ? [] : [{ id: job.id }];
         });
@@ -2306,7 +2336,7 @@ describe("MessageTriggerService", () => {
         await dispatchPromise;
 
         expect(deliveryService.sendJob).not.toHaveBeenCalled();
-        expect(jobRepository.update).not.toHaveBeenCalled();
+        expect(jobRepository.update).toHaveBeenCalledTimes(1); // Only the pre-CAS snapshot write.
         expect(job.status).toBe("processing");
     });
 
@@ -2383,12 +2413,13 @@ describe("MessageTriggerService", () => {
         let queryCount = 0;
         dispatcher.transaction.$queryRaw.mockImplementation(async () => {
             queryCount += 1;
-            if (queryCount === 1) {
+            if (queryCount === 1) { return [{ payload: { templateVariables: { [SMS_DELIVERY_SNAPSHOT_VARIABLE]: "synthetic-trigger-prepared" } }, status: "processing", claim_token: "claim-a" }]; }
+            if (queryCount === 2) {
                 events.push("schedule-lock");
                 return [{ id: schedule.id }];
             }
-            if (queryCount === 2) {
-                return [{ status: "processing", claim_token: "claim-a" }];
+            if (queryCount === 3) {
+                return [{ payload: { templateVariables: { [SMS_DELIVERY_SNAPSHOT_VARIABLE]: "synthetic-trigger-prepared" } }, status: "processing", claim_token: "claim-a" }];
             }
             return [{ id: job.id }];
         });
@@ -2478,13 +2509,14 @@ describe("MessageTriggerService", () => {
         let queryCount = 0;
         dispatcher.transaction.$queryRaw.mockImplementation(async () => {
             queryCount += 1;
-            if (queryCount === 1) {
+            if (queryCount === 1) { return [{ payload: { templateVariables: { [SMS_DELIVERY_SNAPSHOT_VARIABLE]: "synthetic-trigger-prepared" } }, status: "processing", claim_token: "claim-a" }]; }
+            if (queryCount === 2) {
                 lockWaitStarted();
                 await replacementDone;
                 return [{ id: schedule.id }];
             }
-            if (queryCount === 2) {
-                return [{ status: "processing", claim_token: "claim-a" }];
+            if (queryCount === 3) {
+                return [{ payload: { templateVariables: { [SMS_DELIVERY_SNAPSHOT_VARIABLE]: "synthetic-trigger-prepared" } }, status: "processing", claim_token: "claim-a" }];
             }
             return [{ id: job.id }];
         });
@@ -2685,7 +2717,7 @@ describe("MessageTriggerService", () => {
 
         expect(dispatcher.deliveryService.sendJob).not.toHaveBeenCalled();
         expect(dispatcher.prisma.employee_schedule.findFirst).not.toHaveBeenCalled();
-        expect(dispatcher.jobRepository.update).not.toHaveBeenCalled();
+        expect(dispatcher.jobRepository.update).toHaveBeenCalledTimes(1); // Only the pre-CAS snapshot write.
     });
 
     it("leaves a claimed assignment retryable when the final schedule read fails", async () => {
@@ -2706,7 +2738,7 @@ describe("MessageTriggerService", () => {
         await dispatcher.service.dispatchDueJobs();
 
         expect(dispatcher.deliveryService.sendJob).not.toHaveBeenCalled();
-        expect(dispatcher.jobRepository.update).not.toHaveBeenCalled();
+        expect(dispatcher.jobRepository.update).toHaveBeenCalledTimes(1); // Only the pre-CAS snapshot write.
         expect(job.status).toBe("processing");
     });
 
@@ -2956,14 +2988,14 @@ describe("MessageTriggerService", () => {
         }).logger;
         jest.spyOn(logger, "error").mockImplementation(() => undefined);
         jobRepository.findDuePendingSystemScope.mockResolvedValue([firstJob, secondJob]);
-        jobRepository.update.mockRejectedValueOnce(new Error("write failed"));
+        jobRepository.update.mockResolvedValueOnce(undefined).mockRejectedValueOnce(new Error("write failed"));
 
         await service.dispatchDueJobs();
 
         expect(deliveryService.sendJob).toHaveBeenCalledTimes(2);
         expect(firstJob.status).toBe("sent");
         expect(secondJob.status).toBe("sent");
-        expect(jobRepository.update).toHaveBeenCalledTimes(2);
+        expect(jobRepository.update).toHaveBeenCalledTimes(4);
     });
 
     it("processStaleRuleRebuilds rebuilds an active stale rule and clears the flag when unchanged", async () => {
@@ -3084,7 +3116,7 @@ describe("MessageTriggerService", () => {
                 createOverrideRepository() as never,
                 createAutomationActivationService() as never,
                 createBranchLock(prisma) as never,
-            );
+            undefined, createLegacyAutomationDeliveryGate(prisma as never, createBranchLock(prisma) as never));
             const staleRule = createRule({
                 id: "rule-stale-past-cleanup",
                 jobsStale: true,
@@ -3530,7 +3562,7 @@ describe("MessageTriggerService", () => {
             createOverrideRepository() as never,
             messageAutomationActivationService as never,
             messageAutomationBranchLockService as never,
-        );
+        undefined, createLegacyAutomationDeliveryGate(prisma as never, messageAutomationBranchLockService as never));
         return {
             service,
             ruleRepository,
@@ -3622,7 +3654,7 @@ describe("MessageTriggerService", () => {
             createOverrideRepository() as never,
             messageAutomationActivationService as never,
             messageAutomationBranchLockService as never,
-        );
+        undefined, createLegacyAutomationDeliveryGate(prisma as never, messageAutomationBranchLockService as never));
         return {
             service,
             ruleRepository,
@@ -3871,7 +3903,7 @@ describe("MessageTriggerService", () => {
             createOverrideRepository() as never,
             createAutomationActivationService() as never,
             createBranchLock(prisma) as never,
-        );
+        undefined, createLegacyAutomationDeliveryGate(prisma as never, createBranchLock(prisma) as never));
         const serviceInfoRule = createRule({
             id: "rule-service-info",
             eventType: MessageTriggerEventType.SERVICE_START,
