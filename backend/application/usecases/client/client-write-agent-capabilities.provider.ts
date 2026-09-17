@@ -11,6 +11,14 @@ import type { AgentFormField } from "@babyjamjam/shared";
 import { clientAgentTargetSnapshot, clientAgentTargetVersion } from "./client-agent-target";
 import { AgentActionCertainFailureError } from "application/agent/action-coordinator.service";
 import { readAgentActionEffect, recordAgentActionEffect } from "application/agent/agent-action-effect-receipt";
+import type { AgentContext } from "application/agent/agent-context";
+import { AgentAutomationRecordRefusedError, AgentAutomationRecordStoreService, type AgentAutomationCommittedBatch, type AgentAutomationTaskMutation } from "application/agent/agent-automation-record-store.service";
+import type { AgentTaskAutomationArtifact } from "application/agent/agent-task-automation-artifact";
+import { canonicalTaskAutomationImpact } from "application/agent/agent-task-automation-artifact";
+import { agentAutomationGrandfatheredFingerprint } from "application/agent/agent-automation-coverage";
+import { agentAutomationScheduleIdentity } from "application/agent/agent-automation-consent";
+import { agentBindingHash } from "domain/repositories/agent-linked-action.types";
+import type { AgentAutomationCoverageScope, AgentAutomationEffect, AgentAutomationGrandfatheredScope } from "domain/entities/agent-automation-consent";
 import { normalizeClientPricing } from "domain/services/client-pricing";
 import { normalizeClientCreateInput, normalizeClientUpdateInput, normalizeMergedClientPricing } from "./client-write-normalization";
 import {
@@ -246,6 +254,7 @@ export class ClientWriteAgentCapabilitiesProvider implements AgentCapabilityProv
         @Optional() private readonly triggerService?: MessageTriggerService,
         @Optional() private readonly messageAutomationIntentService?: MessageAutomationIntentService,
         @Optional() @Inject(CLIENT_AUTOMATION_IMPACT) private readonly automationImpact?: ClientAutomationImpactPort,
+        @Optional() private readonly automationRecords?: AgentAutomationRecordStoreService,
     ) {}
 
     getCapabilities(): CapabilityDefinition[] {
@@ -320,6 +329,9 @@ export class ClientWriteAgentCapabilitiesProvider implements AgentCapabilityProv
                     const write = normalizeAgentClientWrite(() => normalizeClientCreateInput(input));
                     await validateClientWrite(this.prisma, this.clientRepository, context.principal.branchId, null, write);
                     try {
+                        if (context.taskAutomation) {
+                            return await this.executeTaskClientMutation(context, "clients.create", write);
+                        }
                         return await this.prisma.$transaction(async (transaction) => {
                             const client = await this.createClient.execute(context.principal.branchId, write, transaction);
                             await this.serviceRecordLifecycleService.ensureForClient(client.id, transaction);
@@ -438,30 +450,38 @@ export class ClientWriteAgentCapabilitiesProvider implements AgentCapabilityProv
                     const parsedUpdates = normalizeAgentClientWrite(() => normalizeClientUpdateInput(existing, updates));
                     await validateClientWrite(this.prisma, this.clientRepository, context.principal.branchId, existing, parsedUpdates);
                     try {
-                        const result = await this.prisma.$transaction(async (transaction) => {
-                            await validateClientServicePeriod(this.serviceRecordLifecycleService, {
-                                clientId: existing.id,
-                                startDate: parsedUpdates.startDate,
-                                endDate: parsedUpdates.endDate,
-                                duration: parsedUpdates.duration,
-                            }, transaction);
-                            const client = await this.updateClient.executeApprovedTarget(
+                        const result = context.taskAutomation
+                            ? await this.executeTaskClientMutation(context, "clients.update", parsedUpdates, expectedTargetVersion)
+                            : await this.prisma.$transaction(async (transaction) => {
+                                await validateClientServicePeriod(this.serviceRecordLifecycleService, {
+                                    clientId: existing.id,
+                                    startDate: parsedUpdates.startDate,
+                                    endDate: parsedUpdates.endDate,
+                                    duration: parsedUpdates.duration,
+                                }, transaction);
+                                const client = await this.updateClient.executeApprovedTarget(
+                                    context.principal.branchId,
+                                    id,
+                                    parsedUpdates,
+                                    expectedTargetVersion,
+                                    transaction,
+                                );
+                                await this.serviceRecordLifecycleService.ensureForClient(client.id, transaction);
+                                const result = { id: client.id, name: client.name, status: "updated" };
+                                await recordAgentActionEffect(transaction, context, "clients.update", "client", client.id, result);
+                                return result;
+                            });
+                        // Task-origin automation is staged through the reviewed
+                        // artifact. The legacy refresh path is intentionally
+                        // skipped so a declined task cannot rebuild assignment
+                        // jobs outside the authority transaction.
+                        if (!context.taskAutomation) {
+                            await this.refreshEmployeeAssignmentJobsAfterProfileChange(
                                 context.principal.branchId,
-                                id,
-                                parsedUpdates,
-                                expectedTargetVersion,
-                                transaction,
+                                existing.id,
+                                input.name !== undefined,
                             );
-                            await this.serviceRecordLifecycleService.ensureForClient(client.id, transaction);
-                            const result = { id: client.id, name: client.name, status: "updated" };
-                            await recordAgentActionEffect(transaction, context, "clients.update", "client", client.id, result);
-                            return result;
-                        });
-                        await this.refreshEmployeeAssignmentJobsAfterProfileChange(
-                            context.principal.branchId,
-                            existing.id,
-                            input.name !== undefined,
-                        );
+                        }
                         return result;
                     } catch (error) {
                         if (error instanceof ClientTargetVersionMismatchError) {
@@ -495,6 +515,202 @@ export class ClientWriteAgentCapabilitiesProvider implements AgentCapabilityProv
     private automationValues(values: ClientAutomationWriteValues): ClientAutomationWriteValues {
         const { name, phone, type, startDate, endDate, duration, fullPrice, grant, actualPrice, areaId } = values;
         return { name, phone, type, startDate, endDate, duration, fullPrice, grant, actualPrice, areaId };
+    }
+
+    /**
+     * Execute a customer mutation through the reviewed task artifact. The
+     * record store owns the branch lock, CAS receipt, append-only authority,
+     * and terminal evidence. This callback performs only the customer write
+     * and lifecycle repair; intent staging stays in the same transaction.
+     */
+    private async executeTaskClientMutation(
+        context: AgentContext,
+        capability: "clients.create" | "clients.update",
+        updates: ClientAutomationWriteValues,
+        expectedTargetVersion?: string,
+    ): Promise<Record<string, unknown>> {
+        const artifact = context.taskAutomation;
+        const records = this.automationRecords;
+        if (!artifact || artifact.capability !== capability || !records) {
+            throw new AgentActionCertainFailureError("Automation execution is unavailable; review the task again");
+        }
+
+        try {
+            let committedClientId: number | null = artifact.targetClientId;
+            const receipt = await records.runTaskMutation(
+                context,
+                artifact,
+                async (transaction): Promise<AgentAutomationTaskMutation> => {
+                    const impact = await this.planTaskAutomationImpact(transaction, context, artifact, updates);
+                    const reviewedImpact = canonicalTaskAutomationImpact(artifact.impact);
+                    if (agentBindingHash(impact) !== agentBindingHash(reviewedImpact)) {
+                        throw new AgentActionCertainFailureError("Automation changed; review the latest task question");
+                    }
+
+                    let client: { id: number; name: string };
+                    if (capability === "clients.create") {
+                        client = await this.createClient.execute(
+                            context.principal.branchId,
+                            updates as unknown as Parameters<CreateClientUsecase["execute"]>[1],
+                            transaction,
+                        );
+                    } else {
+                        if (!artifact.targetClientId || !expectedTargetVersion) {
+                            throw new AgentActionCertainFailureError("The approved customer target is unavailable");
+                        }
+                        await validateClientServicePeriod(this.serviceRecordLifecycleService, {
+                            clientId: artifact.targetClientId,
+                            startDate: updates.startDate,
+                            endDate: updates.endDate,
+                            duration: updates.duration,
+                        }, transaction);
+                        client = await this.updateClient.executeApprovedTarget(
+                            context.principal.branchId,
+                            artifact.targetClientId,
+                            updates as unknown as Parameters<UpdateClientUsecase["executeApprovedTarget"]>[2],
+                            expectedTargetVersion,
+                            transaction,
+                        );
+                    }
+                    await this.serviceRecordLifecycleService.ensureForClient(client.id, transaction);
+                    committedClientId = client.id;
+                    const committed = await transaction.client.findFirst({
+                        where: { id: client.id, branchId: context.principal.branchId },
+                        select: { id: true, createdAt: true },
+                    });
+                    if (!committed?.createdAt) {
+                        throw new AgentActionCertainFailureError("The customer write could not be verified");
+                    }
+                    const result = { id: client.id, name: client.name, status: capability === "clients.create" ? "created" : "updated" };
+                    return {
+                        clientId: client.id,
+                        result,
+                        coverages: await this.taskCoverageCandidates(transaction, artifact, committed.id, committed.createdAt),
+                    };
+                },
+                async (transaction, batch) => {
+                    await this.stageTaskAutomation(transaction, artifact, batch, committedClientId);
+                },
+            );
+            return receipt.result;
+        } catch (error) {
+            if (error instanceof AgentActionCertainFailureError) throw error;
+            if (error instanceof AgentAutomationRecordRefusedError) {
+                throw new AgentActionCertainFailureError("The approved automation task is no longer valid; review it again");
+            }
+            if (isClientBranchPhoneUniqueViolation(error)) throw clientPhoneConflictError();
+            throw error;
+        }
+    }
+
+    private async planTaskAutomationImpact(
+        transaction: Prisma.TransactionClient,
+        context: AgentContext,
+        artifact: AgentTaskAutomationArtifact,
+        values: ClientAutomationWriteValues,
+    ) {
+        const planner = this.automationImpact as (ClientAutomationImpactPort & {
+            planClientWriteInTransaction?: ClientAutomationImpactPort["planClientWriteInTransaction"];
+        }) | undefined;
+        if (!planner?.planClientWriteInTransaction) {
+            throw new AgentActionCertainFailureError("Automation source cannot be checked at the write boundary");
+        }
+        const write = artifact.capability === "clients.create"
+            ? { kind: "create" as const, taskId: artifact.taskId, values: this.automationValues(values) }
+            : { kind: "update" as const, clientId: artifact.targetClientId!, values: this.automationValues(values) };
+        return canonicalTaskAutomationImpact(await planner.planClientWriteInTransaction(
+            transaction,
+            context.principal.branchId,
+            write,
+        ));
+    }
+
+    private async taskCoverageCandidates(
+        transaction: Prisma.TransactionClient,
+        artifact: AgentTaskAutomationArtifact,
+        clientId: number,
+        createdAt: Date,
+    ): Promise<Array<{ scope: AgentAutomationCoverageScope; grandfatheredScopes: AgentAutomationGrandfatheredScope[] }>> {
+        const clientIdentity = agentBindingHash({ version: 1, resource: "client", id: clientId, createdAt: createdAt.toISOString() });
+        const effects = artifact.impact.effects.length > 0
+            ? artifact.impact.effects
+            : [{ kind: "client-rule", ruleId: "coverage-only", scheduleId: null, recipientType: "client" } as AgentAutomationEffect];
+        const grandfatheredEffects = artifact.impact.grandfatheredEffects ?? [];
+        const candidates: Array<{ scope: AgentAutomationCoverageScope; grandfatheredScopes: AgentAutomationGrandfatheredScope[] }> = [];
+        const seen = new Set<string>();
+        for (const effect of [...effects, ...grandfatheredEffects]) {
+            let scheduleIdentity: string | null = null;
+            if (effect.scheduleId !== null) {
+                const schedule = await transaction.employee_schedule.findFirst({
+                    where: { id: effect.scheduleId, branchId: artifact.branchId, clientId },
+                    select: { incarnationId: true },
+                });
+                if (!schedule) throw new AgentActionCertainFailureError("The automation schedule changed; review the task again");
+                scheduleIdentity = agentAutomationScheduleIdentity(schedule.incarnationId);
+            }
+            const scope: AgentAutomationCoverageScope = {
+                branchId: artifact.branchId,
+                clientId,
+                clientIdentity,
+                kind: effect.kind,
+                scheduleId: effect.scheduleId,
+                scheduleIdentity,
+                recipientType: effect.recipientType,
+            };
+            const key = agentBindingHash(scope);
+            if (seen.has(key)) continue;
+            seen.add(key);
+            const grandfatheredScopes = grandfatheredEffects
+                .filter((member) => member.kind === effect.kind && member.scheduleId === effect.scheduleId
+                    && member.recipientType === effect.recipientType)
+                .map((member) => ({
+                    scope: { ...scope, ruleId: member.ruleId },
+                    fingerprint: agentAutomationGrandfatheredFingerprint(member),
+                }));
+            candidates.push({ scope, grandfatheredScopes });
+        }
+        if (artifact.capability === "clients.create" && !candidates.some(({ scope }) => scope.kind === "client-rule")) {
+            candidates.push({ scope: { branchId: artifact.branchId, clientId, clientIdentity, kind: "client-rule", scheduleId: null, scheduleIdentity: null, recipientType: "client" }, grandfatheredScopes: [] });
+        }
+        return candidates;
+    }
+
+    private async stageTaskAutomation(
+        transaction: Prisma.TransactionClient,
+        artifact: AgentTaskAutomationArtifact,
+        _batch: AgentAutomationCommittedBatch,
+        clientId: number | null,
+    ): Promise<void> {
+        if (artifact.consent.choice !== "yes" || artifact.noSend) return;
+        if (!this.messageAutomationIntentService || clientId === null) {
+            throw new AgentActionCertainFailureError("Automation intent storage is unavailable; review the task again");
+        }
+        const intentAt = new Date();
+        const clientEffects = artifact.impact.effects.some((effect) => effect.kind === "client-rule" && effect.change !== "cancel");
+        if (clientEffects) {
+            await this.messageAutomationIntentService.persistClientIntent(transaction, {
+                branchId: artifact.branchId,
+                clientId,
+                includePast: true,
+                suppressGreeting: false,
+                intentAt,
+                taskOrigin: true,
+            });
+        }
+        const scheduleIds = [...new Set(artifact.impact.effects
+            .filter((effect) => effect.kind === "employee-assignment" && effect.scheduleId !== null && effect.change !== "cancel")
+            .map((effect) => effect.scheduleId!))].sort((left, right) => left - right);
+        for (const scheduleId of scheduleIds) {
+            await this.messageAutomationIntentService.persistScheduleIntent(transaction, {
+                branchId: artifact.branchId,
+                clientId,
+                scheduleId,
+                includePast: true,
+                intentAt,
+                replaceExisting: true,
+                taskOrigin: true,
+            });
+        }
     }
 
     private async refreshEmployeeAssignmentJobsAfterProfileChange(

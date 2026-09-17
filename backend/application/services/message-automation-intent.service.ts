@@ -62,6 +62,7 @@ export class MessageAutomationIntentService {
             includePast: boolean;
             suppressGreeting: boolean;
             intentAt: Date;
+            taskOrigin?: boolean;
         },
     ): Promise<void> {
         await persistClientMessageAutomationIntent(transaction, params);
@@ -76,6 +77,7 @@ export class MessageAutomationIntentService {
             includePast: boolean;
             intentAt: Date;
             replaceExisting?: boolean;
+            taskOrigin?: boolean;
         },
     ): Promise<void> {
         await persistScheduleMessageAutomationIntent(transaction, params);
@@ -108,6 +110,7 @@ export class MessageAutomationIntentService {
         clientId: number;
         includePast: boolean;
         suppressGreeting: boolean;
+        taskOrigin?: boolean;
     }): Promise<boolean> {
         return fulfillClientMessageAutomationIntent({
             prisma: this.prisma,
@@ -346,12 +349,14 @@ export class MessageAutomationIntentService {
         const kind = variables["intentKind"];
         const includePast = variables["includePast"] === "true";
         const replaceExisting = variables["replaceExisting"] === "true";
+        const taskOrigin = variables["taskOrigin"] === "true";
         if (kind === "client" && candidate.clientId !== null) {
             return this.fulfillClientIntent({
                 branchId: candidate.branchId,
                 clientId: candidate.clientId,
                 includePast,
                 suppressGreeting: variables["suppressGreeting"] === "true",
+                taskOrigin,
             });
         }
         if (kind === "schedule" && candidate.employeeScheduleId !== null) {

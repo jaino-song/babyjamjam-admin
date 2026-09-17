@@ -331,6 +331,27 @@ describe("MessageAutomationIntentService", () => {
         expect(prisma.message_trigger_job.deleteMany).not.toHaveBeenCalled();
     });
 
+    it("does not provision branch defaults when fulfilling a task-origin intent", async () => {
+        const { service, triggerService } = setup();
+
+        await expect(service.fulfillClientIntent({
+            branchId: "branch-1",
+            clientId: 31,
+            includePast: true,
+            suppressGreeting: false,
+            taskOrigin: true,
+        })).resolves.toBe(true);
+
+        expect(triggerService.ensureDefaultRulesForBranch).not.toHaveBeenCalled();
+        expect(triggerService.syncClientRulesForClient).toHaveBeenCalledWith(
+            "branch-1",
+            31,
+            true,
+            false,
+            expect.objectContaining({ preserveExisting: true }),
+        );
+    });
+
     it("atomically defers an unapproved due intent so it cannot starve the reconciliation batch", async () => {
         const { service, prisma, triggerService } = setup();
         prisma.$queryRaw.mockResolvedValue([]);

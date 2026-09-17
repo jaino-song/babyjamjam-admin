@@ -112,8 +112,9 @@ describe("read-only normalized client automation impact", () => {
         const f = setup();
         const job = f.pending();
         const snapshot = JSON.stringify(job);
-        expect(await f.service.planClientWrite(branchId, { kind: "update", clientId: 41, values: { fullPrice: "200000", actualPrice: "200000" } }))
-            .toMatchObject({ availability: "none", effects: [], affectedJobs: [], complete: true });
+        const result = await f.service.planClientWrite(branchId, { kind: "update", clientId: 41, values: { fullPrice: "200000", actualPrice: "200000" } });
+        expect(result).toMatchObject({ availability: "none", effects: [], affectedJobs: [], complete: true });
+        expect(result.grandfatheredEffects?.map(({ ruleId }) => ruleId)).toEqual(["greeting", "info"]);
         expect(JSON.stringify(job)).toBe(snapshot);
     });
 

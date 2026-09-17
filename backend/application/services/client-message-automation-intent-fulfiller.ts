@@ -17,6 +17,7 @@ export async function fulfillClientMessageAutomationIntent(params: {
     clientId: number;
     includePast: boolean;
     suppressGreeting: boolean;
+    taskOrigin?: boolean;
 }): Promise<boolean> {
     const dedupeKey = getClientAutomationIntentDedupeKey(params.branchId, params.clientId);
     // Internal intent rows start at attempts=0. The first approved claim promotes the row to 1
@@ -80,7 +81,12 @@ export async function fulfillClientMessageAutomationIntent(params: {
             await releaseClientIntent(params.prisma, claim.id, true);
             return false;
         }
-        await params.triggerService.ensureDefaultRulesForBranch(params.branchId);
+        // Task-origin intents may only consume rules that were present in the
+        // reviewed question. Provisioning branch defaults here would turn a
+        // later scheduler retry into an unreviewed expansion of scope.
+        if (!params.taskOrigin) {
+            await params.triggerService.ensureDefaultRulesForBranch(params.branchId);
+        }
         await params.triggerService.syncClientRulesForClient(
             params.branchId,
             params.clientId,

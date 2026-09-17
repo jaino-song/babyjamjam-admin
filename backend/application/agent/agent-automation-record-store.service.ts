@@ -17,7 +17,14 @@ import { agentAutomationRecordKey, agentAutomationRecordPrefix, createAgentAutom
     isCoverage, type AgentAutomationStoredRecord, type AgentAutomationTerminalRecord } from "./agent-automation-terminal-record";
 
 const MAX_CHAIN = 4096;
-function refuse(): never { throw new Error("Automation record transaction refused"); }
+export class AgentAutomationRecordRefusedError extends Error {
+    constructor() {
+        super("Automation record transaction refused");
+        this.name = AgentAutomationRecordRefusedError.name;
+    }
+}
+
+function refuse(): never { throw new AgentAutomationRecordRefusedError(); }
 
 export interface AgentAutomationTaskMutation {
     clientId: number;

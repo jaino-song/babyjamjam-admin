@@ -93,7 +93,7 @@ export class ClientAutomationImpactService implements ClientAutomationImpactPort
     }
 
     private unavailable(reason: NonNullable<ClientAutomationImpact["reason"]>): ClientAutomationImpact {
-        return { availability: "unavailable", reason, effects: [], complete: false, clientIdentity: null,
+        return { availability: "unavailable", reason, effects: [], grandfatheredEffects: [], complete: false, clientIdentity: null,
             sourceGuard: agentBindingHash({ version: VERSION, unavailable: reason }), affectedJobs: [] };
     }
 
@@ -132,6 +132,7 @@ export class ClientAutomationImpactService implements ClientAutomationImpactPort
         if (rules.length > 500 || jobs.length > 500 || jobs.some((job) => job.branchId !== branchId || job.clientId !== before!.id
             || typeof job.canceledByUser !== "boolean" || !rules.some((rule) => rule.id === job.ruleId))) return this.unavailable("source-unavailable");
         const effects: AgentAutomationEffect[] = [];
+        const grandfatheredEffects: AgentAutomationEffect[] = [];
         const affected = new Map<string, MessageTriggerJobReviewSnapshot>();
         let reason: ClientAutomationImpact["reason"] = !settings.defaultsPresent ? "missing-default-rules" : undefined;
         let complete = true;
@@ -141,7 +142,19 @@ export class ClientAutomationImpactService implements ClientAutomationImpactPort
             if (rule.recipientType !== MessageTriggerRecipientType.CLIENT) { noteUnavailable("source-unavailable"); complete = false; continue; }
             const oldRecipe = before ? buildClientMessageRecipe(rule, before, now) : null;
             const newRecipe = rule.isActive && settings.dispatchEnabled ? buildClientMessageRecipe(rule, after, now) : null;
-            if (before && recipeSource(oldRecipe, rule) === recipeSource(newRecipe, rule)) continue;
+            if (before && recipeSource(oldRecipe, rule) === recipeSource(newRecipe, rule)) {
+                // A task coverage record fences newly introduced rules, but it
+                // must not suppress an unchanged rule that was already
+                // independently authorized. Keep its exact current recipe as
+                // a grandfathered member of the same operation family.
+                if (oldRecipe) {
+                    const described = await describeClientMessageEffect({ branchId, subject, rule,
+                        client: before, change: "refresh", policy, now, delivery: transaction
+                            ? { resolveCanonicalDeliverySnapshot: (job) => this.delivery.resolveCanonicalDeliverySnapshot(job, transaction) } : this.delivery });
+                    if (described.status === "effect") grandfatheredEffects.push(described.effect);
+                }
+                continue;
+            }
             const scopeJobs = jobs.filter((job) => job.ruleId === rule.id && job.employeeScheduleId === null && !isManualMessageTriggerJob(job));
             const mutable = scopeJobs.filter((job) => job.status === "pending" || job.status === "processing");
             if (scopeJobs.some((job) => job.status === "dispatching")) { noteUnavailable("source-unavailable"); complete = false; continue; }
@@ -213,11 +226,12 @@ export class ClientAutomationImpactService implements ClientAutomationImpactPort
         if (effects.length > 500) return this.unavailable("source-unavailable");
         const canonical = canonicalAgentAutomationEffects(effects);
         return { availability: reason ? "unavailable" : canonical.length ? "available" : "none", ...(reason ? { reason } : {}),
-            effects: canonical, complete, clientIdentity,
+            effects: canonical, grandfatheredEffects: canonicalAgentAutomationEffects(grandfatheredEffects), complete, clientIdentity,
             sourceGuard: sourceHash({ version: VERSION, branchId, subject, before,
                 after: write.kind === "create" ? { ...after, createdAt: "committed-client-creation" } : after, policy,
                 rules: [...rules].sort((a, b) => a.id.localeCompare(b.id)),
-                jobs: jobs.map((job) => ({ id: job.id, version: jobVersion(job) })).sort((a, b) => a.id.localeCompare(b.id)), schedules }),
+                jobs: jobs.map((job) => ({ id: job.id, version: jobVersion(job) })).sort((a, b) => a.id.localeCompare(b.id)), schedules,
+                grandfatheredEffects: canonicalAgentAutomationEffects(grandfatheredEffects) }),
             affectedJobs: [...affected.values()].map((job) => ({ id: job.id, version: jobVersion(job) })).sort((a, b) => a.id.localeCompare(b.id)) };
     }
 

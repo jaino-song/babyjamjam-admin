@@ -28,6 +28,7 @@ interface PersistIntentParams {
     suppressGreeting: boolean;
     intentAt: Date;
     replaceExisting: boolean;
+    taskOrigin?: boolean;
 }
 
 export async function persistClientMessageAutomationIntent(
@@ -38,6 +39,7 @@ export async function persistClientMessageAutomationIntent(
         includePast: boolean;
         suppressGreeting: boolean;
         intentAt: Date;
+        taskOrigin?: boolean;
     },
 ): Promise<void> {
     await persistMessageAutomationIntent(transaction, {
@@ -48,6 +50,7 @@ export async function persistClientMessageAutomationIntent(
         dedupeKey: getClientAutomationIntentDedupeKey(params.branchId, params.clientId),
         kind: "client",
         replaceExisting: false,
+        taskOrigin: params.taskOrigin,
     });
 }
 
@@ -60,6 +63,7 @@ export async function persistScheduleMessageAutomationIntent(
         includePast: boolean;
         intentAt: Date;
         replaceExisting?: boolean;
+        taskOrigin?: boolean;
     },
 ): Promise<void> {
     await persistMessageAutomationIntent(transaction, {
@@ -74,6 +78,7 @@ export async function persistScheduleMessageAutomationIntent(
         suppressGreeting: false,
         intentAt: params.intentAt,
         replaceExisting: params.replaceExisting ?? false,
+        taskOrigin: params.taskOrigin,
     });
 }
 
@@ -151,6 +156,7 @@ async function persistMessageAutomationIntent(
             includePast: String(params.includePast),
             suppressGreeting: String(params.suppressGreeting),
             replaceExisting: String(params.replaceExisting),
+            ...(params.taskOrigin ? { taskOrigin: "true" } : {}),
         },
     } satisfies Prisma.InputJsonObject;
     await transaction.message_trigger_job.upsert({

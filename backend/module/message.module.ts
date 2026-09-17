@@ -94,6 +94,7 @@ import { AgentAutomationDeliveryGateService } from "application/services/agent-a
         MessageService,
         MessageTriggerService,
         CLIENT_AUTOMATION_IMPACT,
+        AgentAutomationRecordStoreService,
         MESSAGE_TRIGGER_JOB_REPOSITORY,
         MESSAGE_TRIGGER_RULE_BRANCH_OVERRIDE_REPOSITORY,
         SmsTriggerPayloadEnricherRegistry,

@@ -15,6 +15,7 @@ const impactSchema = z.object({
     availability: AgentAutomationQuestionSchema.shape.availability,
     reason: AgentAutomationQuestionSchema.shape.reason,
     effects: z.array(AgentAutomationEffectStorageSchema).max(500),
+    grandfatheredEffects: z.array(AgentAutomationEffectStorageSchema).max(500).default([]),
     complete: z.boolean(), clientIdentity: digest.nullable(), sourceGuard: digest,
     affectedJobs: z.array(z.object({ id: z.string().uuid(), version: digest }).strict()).max(500),
 }).strict();
@@ -34,6 +35,7 @@ export function canonicalTaskAutomationImpact(value: unknown): ClientAutomationI
     const parsed = impactSchema.parse(value);
     if (new Set(parsed.affectedJobs.map((job) => job.id)).size !== parsed.affectedJobs.length) throw new Error("Invalid automation impact");
     return { ...parsed, effects: canonicalAgentAutomationEffects(parsed.effects),
+        grandfatheredEffects: canonicalAgentAutomationEffects(parsed.grandfatheredEffects),
         affectedJobs: [...parsed.affectedJobs].sort((a, b) => a.id.localeCompare(b.id)) };
 }
 
@@ -51,7 +53,7 @@ export function parseTaskAutomationArtifact(value: unknown): AgentTaskAutomation
             consent: artifact.consent, previousNoSend: artifact.noSend, noSend: artifact.noSend });
         if (agentBindingHash(consent) !== agentBindingHash(artifact.consent)
             || (current.availability !== "none" && consent.choice === "unanswered")) return null;
-        return { ...artifact, impact };
+        return { ...artifact, impact: { ...impact, grandfatheredEffects: impact.grandfatheredEffects ?? [] } };
     } catch {
         return null;
     }
@@ -66,7 +68,8 @@ export function prepareTaskAutomationArtifact(task: AgentTaskEntity, actionId: s
         inputHash: agentBindingHash(normalizedInput), targetClientId: task.draft.server.references.target?.clientId ?? null,
         targetVersion: task.targetVersion, question: state.question,
         consent: task.draft.constraints.noSend ? { choice: "no", binding: null } : task.draft.consent,
-        noSend: task.draft.constraints.noSend, impact });
+        noSend: task.draft.constraints.noSend,
+        impact: { ...impact, grandfatheredEffects: impact.grandfatheredEffects ?? [] } });
     if (!artifact) throw new Error("Automation question changed or incomplete");
     return artifact;
 }

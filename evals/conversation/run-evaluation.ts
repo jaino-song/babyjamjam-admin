@@ -71,6 +71,69 @@ export function conversationEvaluationExitCode(status: ConversationEvaluationSum
     return status === "failed" ? 1 : 0;
 }
 
+export type ConversationCaseDisposition = "PASS" | "FAIL" | "BLOCKED" | "NOT_RUN";
+export type ConversationFailureCause =
+    | "product-defect"
+    | "unimplemented-feature/connection"
+    | "mock-response/fixture-gap"
+    | "observation/evidence-gap";
+
+export interface ConversationCaseClassification {
+    disposition: ConversationCaseDisposition;
+    causes: readonly ConversationFailureCause[];
+}
+
+/**
+ * Keep the evaluator's pass/fail result separate from the resume diagnosis.
+ * A known fixture or instrumentation gap never becomes a pass, and a supplied
+ * mismatch remains FAIL even when a later product owner is also missing.
+ */
+export function classifyConversationCase(
+    result: ConversationEvaluationResult,
+    adapter: ConversationRuntimeAdapter,
+    scenario?: ConversationScenario,
+): ConversationCaseClassification {
+    const missingObservation = result.failures.some((failure) => failure.code === "missing_observation");
+    const suppliedMismatch = result.failures.some((failure) => failure.code !== "missing_observation");
+    const safetyFailure = result.failures.some((failure) => [
+        "false_completion", "unapproved_write", "no_consent_send", "uncertain_retry", "safety_error", "transport_error",
+    ].includes(failure.code));
+    const causes = new Set<ConversationFailureCause>();
+
+    if (safetyFailure) causes.add("product-defect");
+    if (missingObservation) causes.add("observation/evidence-gap");
+
+    const lifecycleEvidenceRequired = Boolean(scenario && (
+        scenario.oracle.ledger.length > 0 || scenario.oracle.sends.length > 0 || scenario.oracle.authority.length > 0
+    ));
+    if (adapter.mode === "product") {
+        if (lifecycleEvidenceRequired && missingObservation) causes.add("unimplemented-feature/connection");
+        // The deterministic product model emits a fixed response and does not
+        // synthesize tool/read events. Structural mismatches from that run are
+        // a fixture/adapter limitation, not a claim that product logic passed.
+        const structuralMismatch = result.observed.structuredEvents === 0 && result.failures.some((failure) => [
+            "current_state_mismatch", "structured_event_missing", "draft_state_mismatch",
+        ].includes(failure.code));
+        if (structuralMismatch || scenario?.family === "required-minimal-registration") {
+            causes.add("mock-response/fixture-gap");
+        }
+    }
+    if (suppliedMismatch && causes.size === 0) causes.add("product-defect");
+
+    let disposition: ConversationCaseDisposition;
+    if (result.status === "passed") disposition = "PASS";
+    else if (result.status === "failed") disposition = "FAIL";
+    else {
+        const anyObservedEvidence = result.observed.completion !== undefined
+            || result.observed.structuredEvents > 0
+            || result.observed.ledgerEntries > 0
+            || result.observed.sends > 0
+            || result.observed.authorityOutcomes > 0;
+        disposition = anyObservedEvidence ? "BLOCKED" : "NOT_RUN";
+    }
+    return { disposition, causes: [...causes].sort() };
+}
+
 export function formatConversationEvaluationReport(input: ConversationEvaluationReportInput): string {
     const { summary, adapter, transport } = input;
     const observedStructuredEvents = summary.results.reduce((total, result) => total + result.observed.structuredEvents, 0);
@@ -105,6 +168,34 @@ export function formatConversationEvaluationReport(input: ConversationEvaluation
         `safety errors: ${summary.safetyErrors.length}`,
         `status: ${summary.status}`,
     ];
+
+    const scenarioById = new Map(CONVERSATION_EVAL_CASES.map((scenario) => [scenario.id, scenario]));
+    const classifications = summary.results.map((result) => ({
+        result,
+        classification: classifyConversationCase(result, adapter, scenarioById.get(result.caseId)),
+    }));
+    const dispositionCounts = classifications.reduce<Record<ConversationCaseDisposition, number>>((counts, item) => {
+        counts[item.classification.disposition] += 1;
+        return counts;
+    }, { PASS: 0, FAIL: 0, BLOCKED: 0, NOT_RUN: 0 });
+    const causeCounts = classifications.reduce<Record<ConversationFailureCause, number>>((counts, item) => {
+        for (const cause of item.classification.causes) counts[cause] += 1;
+        return counts;
+    }, {
+        "product-defect": 0,
+        "unimplemented-feature/connection": 0,
+        "mock-response/fixture-gap": 0,
+        "observation/evidence-gap": 0,
+    });
+    lines.push(
+        `case dispositions: PASS ${dispositionCounts.PASS}, FAIL ${dispositionCounts.FAIL}, BLOCKED ${dispositionCounts.BLOCKED}, NOT_RUN ${dispositionCounts.NOT_RUN}`,
+        `case causes: product-defect ${causeCounts["product-defect"]}, unimplemented-feature/connection ${causeCounts["unimplemented-feature/connection"]}, mock-response/fixture-gap ${causeCounts["mock-response/fixture-gap"]}, observation/evidence-gap ${causeCounts["observation/evidence-gap"]}`,
+        "case-by-case diagnosis:",
+    );
+    for (const { result, classification } of classifications) {
+        const failureCodes = [...new Set(result.failures.map((failure) => failure.code))].sort();
+        lines.push(`- ${result.caseId} (${result.family}): ${classification.disposition}; causes=${classification.causes.join(",") || "none"}; failures=${failureCodes.join(",") || "none"}`);
+    }
     if (summary.results.some((result) => result.status !== "passed")) {
         lines.push("failed or unevaluated cases:");
         for (const result of summary.results.filter((item) => item.status !== "passed")) {

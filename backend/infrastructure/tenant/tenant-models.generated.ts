@@ -7,6 +7,8 @@ export const TENANT_MODELS: ReadonlySet<string> = new Set([
     "agent_action",
     "agent_feedback",
     "agent_session",
+    "agent_task",
+    "agent_task_event",
     "agent_trace",
     "area",
     "call_ingest_token",
