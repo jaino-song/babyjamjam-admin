@@ -657,9 +657,10 @@ describe("useAgentChat", () => {
         expect(result.current.taskError).toBeNull();
     });
 
-    it("keeps the latest task snapshot and pending event after a 409 patch conflict", async () => {
+    it("retires a conflicted event while keeping the latest task snapshot", async () => {
         (useChat as jest.Mock).mockReturnValue({ messages: [], setMessages: jest.fn(), sendMessage: jest.fn(), regenerate: jest.fn(), stop: jest.fn(), status: "ready" });
         let taskReads = 0;
+        let patchCalls = 0;
         const latest = makeTask(2);
         global.fetch = jest.fn().mockImplementation(async (input: string | URL | Request, init?: RequestInit) => {
             const url = String(input);
@@ -669,6 +670,7 @@ describe("useAgentChat", () => {
                 return { ok: true, json: async () => makeTask(1) } as Response;
             }
             if (url.endsWith(`/tasks/${taskId}`) && init?.method === "PATCH") {
+                patchCalls += 1;
                 return {
                     ok: false,
                     status: 409,
@@ -690,17 +692,22 @@ describe("useAgentChat", () => {
         });
 
         expect(result.current.taskSnapshotState.task?.revision).toBe(2);
-        expect(result.current.taskSnapshotState.pendingEventIds).toContain(clientEventId);
+        expect(result.current.taskSnapshotState.pendingEventIds).toEqual([]);
+        expect(result.current.taskNeedsReconciliation).toBe(true);
         expect(result.current.taskError).toEqual(expect.objectContaining({ code: "task_conflict", latestRevision: 2 }));
+        await act(async () => { await result.current.retryPendingTaskEvent(taskId, clientEventId); });
+        expect(patchCalls).toBe(1);
+        expect(result.current.taskError).toEqual(expect.objectContaining({ code: "task_pending_event_unrecoverable", pendingEventId: clientEventId }));
         expect(global.fetch).toHaveBeenCalledWith(`/api/ai/agent/tasks/${taskId}`, expect.objectContaining({
             method: "PATCH",
             body: JSON.stringify({ clientEventId, expectedRevision: 1, operations: [{ op: "set", field: "name", value: "Dana" }] }),
         }));
     });
 
-    it("recovers an authorized same-revision read after a 409 while retaining exact-event recovery", async () => {
+    it("refreshes a 409 latest snapshot before reapplying with a new event", async () => {
         (useChat as jest.Mock).mockReturnValue({ messages: [], setMessages: jest.fn(), sendMessage: jest.fn(), regenerate: jest.fn(), stop: jest.fn(), status: "ready" });
         let taskReads = 0;
+        let patchCalls = 0;
         const latest = makeTask(2);
         const clientEventId = "44444444-4444-4444-8444-444444444444";
         global.fetch = jest.fn().mockImplementation(async (input: string | URL | Request, init?: RequestInit) => {
@@ -711,7 +718,11 @@ describe("useAgentChat", () => {
                 return { ok: true, json: async () => taskReads === 1 ? makeTask(1) : latest } as Response;
             }
             if (url.endsWith(`/tasks/${taskId}`) && init?.method === "PATCH") {
-                return { ok: false, status: 409, json: async () => ({ code: "AGENT_TASK_CONFLICT", reason: "revision", snapshot: latest }) } as Response;
+                patchCalls += 1;
+                if (patchCalls === 1) {
+                    return { ok: false, status: 409, json: async () => ({ code: "AGENT_TASK_CONFLICT", reason: "revision", snapshot: latest }) } as Response;
+                }
+                return { ok: true, status: 200, json: async () => makeMutationResponse(3, "55555555-5555-4555-8555-555555555555") } as Response;
             }
             return { ok: true, json: async () => [] } as Response;
         });
@@ -722,14 +733,34 @@ describe("useAgentChat", () => {
             await result.current.patchTask(taskId, [{ op: "set", field: "name", value: "Dana" }] as never, { expectedRevision: 1, clientEventId });
         });
         expect(result.current.taskError).toEqual(expect.objectContaining({ code: "task_conflict" }));
+        expect(result.current.taskSnapshotState.pendingEventIds).toEqual([]);
 
         await act(async () => { await result.current.loadTaskSnapshot(taskId); });
 
         expect(result.current.taskSnapshotState.task?.revision).toBe(2);
         expect(result.current.taskAccessState.status).toBe("authorized");
         expect(result.current.taskNeedsReconciliation).toBe(false);
-        expect(result.current.taskError).toEqual(expect.objectContaining({ code: "task_pending_event", pendingEventId: clientEventId }));
-        expect(result.current.taskSnapshotState.pendingEventIds).toEqual([clientEventId]);
+        expect(result.current.taskError).toBeNull();
+
+        const replacementEventId = "55555555-5555-4555-8555-555555555555";
+        await act(async () => {
+            await result.current.patchTask(taskId, [{ op: "set", field: "name", value: "Dana" }] as never, {
+                expectedRevision: 2,
+                clientEventId: replacementEventId,
+            });
+        });
+
+        expect(result.current.taskSnapshotState.task?.revision).toBe(3);
+        expect(patchCalls).toBe(2);
+        expect(result.current.taskSnapshotState.pendingEventIds).toEqual([]);
+        expect(result.current.taskError).toBeNull();
+        const patchBodies = (global.fetch as jest.Mock).mock.calls
+            .filter(([input, init]) => String(input).endsWith(`/tasks/${taskId}`) && (init as RequestInit | undefined)?.method === "PATCH")
+            .map(([, init]) => JSON.parse(String((init as RequestInit).body)));
+        expect(patchBodies).toEqual([
+            { clientEventId, expectedRevision: 1, operations: [{ op: "set", field: "name", value: "Dana" }] },
+            { clientEventId: replacementEventId, expectedRevision: 2, operations: [{ op: "set", field: "name", value: "Dana" }] },
+        ]);
     });
 
     it("keeps task mutation busy through response parsing and blocks a second event", async () => {

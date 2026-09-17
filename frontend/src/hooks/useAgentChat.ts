@@ -298,6 +298,16 @@ export function useAgentChat() {
         return false;
     }, []);
 
+    const retirePendingTaskMutation = useCallback((taskId: string, clientEventId: string) => {
+        pendingTaskMutationsRef.current.delete(clientEventId);
+        const state = taskSnapshotStateRef.current;
+        if (!state.task || state.task.taskId !== taskId || !state.pendingEventIds.includes(clientEventId)) return;
+        commitTaskSnapshotState({
+            ...state,
+            pendingEventIds: state.pendingEventIds.filter((eventId) => eventId !== clientEventId),
+        });
+    }, [commitTaskSnapshotState]);
+
     const setPendingTaskError = useCallback((taskId: string, message = "확인되지 않은 초안 변경이 있습니다. 최신 상태를 확인한 뒤 같은 변경을 다시 확인해 주세요."): boolean => {
         const state = taskSnapshotStateRef.current;
         const pendingEventId = state.pendingEventIds[0];
@@ -387,11 +397,17 @@ export function useAgentChat() {
 
     const handleTaskConflict = useCallback((
         taskId: string,
+        clientEventId: string,
         request: Parameters<typeof acceptAgentTaskSnapshot>[2],
         operationEpoch: number,
         body: unknown,
     ) => {
         if (!isCurrentTaskRequest(request, operationEpoch)) return taskSnapshotStateRef.current.task;
+        // A 409 is conclusive for this event: the server rejected the
+        // expected revision, so retaining its descriptor would allow a stale
+        // exact retry to loop forever. Keep the latest snapshot and let the
+        // user refresh before reapplying the intent with a new event id.
+        retirePendingTaskMutation(taskId, clientEventId);
         const latestTask = readAgentTask(body);
         if (latestTask && latestTask.taskId === taskId) {
             const envelope = {
@@ -403,7 +419,7 @@ export function useAgentChat() {
             if (!acceptance.accepted) return acceptance.state.task;
             commitTaskAccessState({ status: "authorized", taskId });
             commitTaskNeedsReconciliation(true);
-            setTaskError({ code: "task_conflict", taskId, latestRevision: latestTask.revision, message: "작업이 변경되었습니다. 최신 초안을 확인한 뒤 다시 시도해 주세요." });
+            setTaskError({ code: "task_conflict", taskId, latestRevision: latestTask.revision, message: "작업이 변경되었습니다. 최신 초안을 새로고침한 뒤 새 변경 요청으로 다시 적용해 주세요." });
             return acceptance.state.task;
         }
         quarantineTask(taskId, {
@@ -413,7 +429,7 @@ export function useAgentChat() {
             message: "작업 변경 결과를 확인하지 못했습니다. 최신 초안을 새로고침한 뒤 다시 시도해 주세요.",
         });
         return null;
-    }, [acceptTaskSnapshotEnvelope, commitTaskAccessState, commitTaskNeedsReconciliation, isCurrentTaskRequest, quarantineTask]);
+    }, [acceptTaskSnapshotEnvelope, commitTaskAccessState, commitTaskNeedsReconciliation, isCurrentTaskRequest, quarantineTask, retirePendingTaskMutation]);
 
     const patchTask = useCallback(async (
         taskId: string,
@@ -449,7 +465,7 @@ export function useAgentChat() {
             }
             const body = await readJsonBody(response);
             if (!isCurrentTaskRequest(request, operationEpoch)) return taskSnapshotStateRef.current.task;
-            if (response.status === 409) return handleTaskConflict(taskId, request, operationEpoch, body);
+            if (response.status === 409) return handleTaskConflict(taskId, options.clientEventId, request, operationEpoch, body);
             if (!response.ok) {
                 if (response.status === 401 || response.status === 403 || response.status === 404 || response.status === 410) {
                     quarantineTask(taskId, taskAccessFailure(response.status));
@@ -504,7 +520,7 @@ export function useAgentChat() {
             }
             const body = await readJsonBody(response);
             if (!isCurrentTaskRequest(request, operationEpoch)) return taskSnapshotStateRef.current.task;
-            if (response.status === 409) return handleTaskConflict(taskId, request, operationEpoch, body);
+            if (response.status === 409) return handleTaskConflict(taskId, options.clientEventId, request, operationEpoch, body);
             if (!response.ok) {
                 if (response.status === 401 || response.status === 403 || response.status === 404 || response.status === 410) {
                     quarantineTask(taskId, taskAccessFailure(response.status));

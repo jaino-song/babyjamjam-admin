@@ -3,13 +3,15 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { AgentShell } from "./AgentShell";
 
 const mockSendMessage = jest.fn();
+const mockLoadTaskSnapshot = jest.fn();
 const mockRenameSession = jest.fn().mockResolvedValue(true);
 const mockAgentChatState: {
     status: "ready" | "submitted" | "streaming";
     messages: Array<{ id: string; role: "assistant"; parts: Array<{ type: string; data?: unknown }> }>;
     error: Error | null;
     actionError: { code: string; message: string; effectState: "nothing-happened" | "succeeded-unconfirmed" | "partial" } | null;
-} = { status: "ready", messages: [], error: null, actionError: null };
+    taskError: { code: string; taskId?: string; message: string } | null;
+} = { status: "ready", messages: [], error: null, actionError: null, taskError: null };
 
 jest.mock("next/navigation", () => ({
     useRouter: () => ({ push: jest.fn() }),
@@ -22,6 +24,8 @@ jest.mock("@/hooks/useAgentChat", () => ({
         status: mockAgentChatState.status,
         error: mockAgentChatState.error,
         actionError: mockAgentChatState.actionError,
+        taskError: mockAgentChatState.taskError,
+        loadTaskSnapshot: mockLoadTaskSnapshot,
         stop: jest.fn(),
         regenerate: jest.fn(),
         resetBranch: jest.fn(),
@@ -39,11 +43,13 @@ jest.mock("@/hooks/useAgentChat", () => ({
 describe("AgentShell input composition", () => {
     beforeEach(() => {
         mockSendMessage.mockClear();
+        mockLoadTaskSnapshot.mockClear();
         mockRenameSession.mockClear();
         mockAgentChatState.status = "ready";
         mockAgentChatState.messages = [];
         mockAgentChatState.error = null;
         mockAgentChatState.actionError = null;
+        mockAgentChatState.taskError = null;
         const media = {
             matches: false,
             addEventListener: jest.fn(),
@@ -129,6 +135,22 @@ describe("AgentShell input composition", () => {
 
         expect(screen.getByRole("button", { name: "입력 제출" })).toBeEnabled();
         expect(screen.getByRole("heading", { name: "프로필" }).closest("form")).not.toHaveAttribute("aria-busy", "true");
+    });
+
+    it("offers a refresh action after a task conflict", async () => {
+        const taskId = "11111111-1111-4111-8111-111111111111";
+        mockAgentChatState.taskError = {
+            code: "task_conflict",
+            taskId,
+            message: "작업이 변경되었습니다. 최신 초안을 새로고침한 뒤 새 변경 요청으로 다시 적용해 주세요.",
+        };
+
+        render(<AgentShell />);
+
+        const retry = screen.getByRole("button", { name: "다시 시도" });
+        expect(retry).toBeEnabled();
+        fireEvent.click(retry);
+        await waitFor(() => expect(mockLoadTaskSnapshot).toHaveBeenCalledWith(taskId));
     });
 
     it("keeps stream and action errors in separate completed namespaces", () => {

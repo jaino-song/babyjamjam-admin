@@ -47,7 +47,11 @@ export function AgentShell() {
         || taskNeedsReconciliation === true
         || taskAccessState?.status !== "authorized"
         || (taskSnapshotState?.pendingEventIds.length ?? 0) > 0;
-    const retryTaskId = taskAccessState?.status === "unavailable" && typeof taskError?.taskId === "string" ? taskError.taskId : undefined;
+    const canRefreshTask = taskAccessState?.status === "unavailable"
+        || taskError?.code === "task_conflict"
+        || taskError?.code === "task_conflict_unresolved"
+        || taskError?.code === "task_reconciliation_required";
+    const retryTaskId = canRefreshTask && typeof taskError?.taskId === "string" ? taskError.taskId : undefined;
     const retryPendingTask = taskError?.code === "task_pending_event"
         && typeof taskError.taskId === "string"
         && typeof taskError.pendingEventId === "string"
