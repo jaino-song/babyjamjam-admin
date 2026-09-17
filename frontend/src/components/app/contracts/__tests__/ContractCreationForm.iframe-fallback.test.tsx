@@ -11,7 +11,7 @@
  * reopening the editor could create a second contract and is forbidden.
  */
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { useState } from "react";
 
 import { useFormStore } from "@/stores/form-store";
@@ -21,6 +21,8 @@ const mockOpenDocument = jest.fn();
 const mockDispatchHeadless = jest.fn();
 const mockGenerateDocument = jest.fn();
 const mockAuthenticate = jest.fn();
+const mockCreateClient = jest.fn();
+const mockUpdateClient = jest.fn();
 const mockAreaTemplates = [{
     id: "area-template-1",
     areaId: "인천",
@@ -59,11 +61,10 @@ jest.mock("@/services/api", () => ({
     },
 }));
 
-const idleMutation = () => ({ mutateAsync: jest.fn().mockResolvedValue({ id: 42 }), isPending: false });
 jest.mock("@/hooks/useClients", () => ({
-    useCreateClient: () => idleMutation(),
-    useUpdateClient: () => idleMutation(),
-    useDeleteClient: () => idleMutation(),
+    useCreateClient: () => ({ mutateAsync: mockCreateClient, isPending: false }),
+    useUpdateClient: () => ({ mutateAsync: mockUpdateClient, isPending: false }),
+    useDeleteClient: () => ({ mutateAsync: jest.fn().mockResolvedValue({ id: 42 }), isPending: false }),
 }));
 
 jest.mock("@/hooks/useEmployees", () => ({
@@ -150,6 +151,8 @@ describe("ContractCreationForm — eformsign iframe fallback on headless failure
     beforeEach(() => {
         jest.clearAllMocks();
         mockAuthenticate.mockResolvedValue({ success: true });
+        mockCreateClient.mockResolvedValue({ id: 42 });
+        mockUpdateClient.mockResolvedValue({ id: 42 });
         mockGenerateDocument.mockResolvedValue({ document: { id: "tpl-1" }, user_data: {} });
         seedValidContractForm();
     });
@@ -191,6 +194,54 @@ describe("ContractCreationForm — eformsign iframe fallback on headless failure
         fireEvent.click(screen.getByTestId("contract-creation-retry"));
         await waitFor(() => expect(mockDispatchHeadless).toHaveBeenCalledTimes(2));
         expect(mockOpenDocument).not.toHaveBeenCalled();
+        expect(mockCreateClient).not.toHaveBeenCalled();
+        expect(mockUpdateClient).toHaveBeenCalledTimes(1);
+    });
+
+    it("updates the retained client before retry when date and assignment values change", async () => {
+        mockDispatchHeadless
+            .mockResolvedValueOnce({
+                ok: false,
+                reason: "template_workflow_config_unavailable",
+                failedStep: "client-started",
+                durationMs: 1,
+            })
+            .mockResolvedValueOnce({ ok: true, documentId: "doc-retried", durationMs: 1 });
+
+        renderForm();
+        fireEvent.click(screen.getByTestId("contract-creation-submit"));
+        await waitFor(() => expect(screen.getByText(/이번 요청에서 계약서를 발송하지 않았어요/)).toBeInTheDocument());
+
+        act(() => {
+            useFormStore.setState({
+                employeeId: 8,
+                employeeName: "박수정",
+                employeePhone: "01011112222",
+                startDate: "2026-08-06",
+                endDate: "2026-08-26",
+            });
+        });
+
+        fireEvent.click(screen.getByTestId("contract-creation-retry"));
+        await waitFor(() => expect(mockDispatchHeadless).toHaveBeenCalledTimes(2));
+
+        expect(mockCreateClient).not.toHaveBeenCalled();
+        expect(mockUpdateClient).toHaveBeenCalledTimes(2);
+        expect(mockUpdateClient.mock.calls[1]?.[0]).toEqual(expect.objectContaining({
+            id: 42,
+            dto: expect.objectContaining({
+                primaryEmployeeId: 8,
+                startDate: "2026-08-06",
+            }),
+        }));
+        const updatedClientDto = mockUpdateClient.mock.calls[1]?.[0]?.dto as { endDate?: string };
+        expect(mockDispatchHeadless.mock.calls[1]?.[0]).toEqual(expect.objectContaining({
+            caretaker1Name: "박수정",
+            caretaker1Contact: "01011112222",
+            startDate: "2026-08-06",
+            endDate: updatedClientDto.endDate,
+        }));
+        expect(mockDispatchHeadless.mock.calls[1]?.[1]).toBe(42);
     });
 
     it("does not open the embedded iframe when the dispatch request itself fails", async () => {

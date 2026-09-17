@@ -348,6 +348,10 @@ function getKnownHeadlessProviderFailureMessage(reason: string | undefined): str
   }
 }
 
+function serializeClientPersistencePayload(payload: Record<string, unknown>): string {
+  return JSON.stringify(payload);
+}
+
 export const ContractCreationForm = ({
   onClose,
   onSuccess,
@@ -404,6 +408,7 @@ export const ContractCreationForm = ({
   const [unverifiedDispatchNotice, setUnverifiedDispatchNotice] = useState<string | null>(null);
   const [creationProgress, setCreationProgress] = useState<HeadlessProgressState>(INITIAL_CREATION_PROGRESS);
   const persistedClientIdRef = useRef<number | null>(null);
+  const persistedClientSnapshotRef = useRef<string | null>(null);
   const retryWithPersistedClientRef = useRef(false);
   const [dueDateInput, setDueDateInput] = useState("");
   const [birthDateInput, setBirthDateInput] = useState("");
@@ -606,6 +611,7 @@ export const ContractCreationForm = ({
     setUnverifiedDispatchNotice(null);
     setCreationProgress(INITIAL_CREATION_PROGRESS);
     persistedClientIdRef.current = null;
+    persistedClientSnapshotRef.current = null;
     retryWithPersistedClientRef.current = false;
   };
 
@@ -629,6 +635,7 @@ export const ContractCreationForm = ({
 
   const handleClientSelect = (selectedClientId: number | null, client: Client | null) => {
     persistedClientIdRef.current = null;
+    persistedClientSnapshotRef.current = null;
     retryWithPersistedClientRef.current = false;
     setClientId(selectedClientId);
     resetEmployeeFields();
@@ -860,6 +867,24 @@ export const ContractCreationForm = ({
           primaryEmployeeId: employeeId,
           secondaryEmployeeId: showEmployee2 ? employee2Id : null,
         };
+        const clientPersistenceSnapshot = serializeClientPersistencePayload({
+          ...assignment,
+          name,
+          phone,
+          birthday: birthday || null,
+          address: address || null,
+          dueDate: normalizedDueDate || null,
+          birthDate: normalizedBirthDate || null,
+          type: voucherType || null,
+          duration: parseOptionalInteger(voucherDuration),
+          fullPrice: fullPrice || null,
+          grant: grant || null,
+          actualPrice: actualPrice || null,
+          startDate: startDate || null,
+          endDate: endDate || null,
+          voucherClient: hasPositivePrice(grant),
+          areaId: area || null,
+        });
 
         if (!reusePersistedClient && !clientId) {
           const autoRegistrationPayload = {
@@ -903,7 +928,11 @@ export const ContractCreationForm = ({
           finalClientId = newClient.id;
           if (!reusedExistingClient) autoRegisteredClientId = newClient.id;
           setClientId(newClient.id);
-        } else if (!reusePersistedClient) {
+        }
+        const shouldUpdatePersistedClient = reusePersistedClient
+          ? persistedClientSnapshotRef.current !== clientPersistenceSnapshot
+          : clientId !== null;
+        if (shouldUpdatePersistedClient) {
           if (finalClientId === null) {
             throw new Error("고객 정보를 먼저 선택하거나 등록해 주세요.");
           }
@@ -932,7 +961,10 @@ export const ContractCreationForm = ({
         if (finalClientId === null) {
           throw new Error("고객 정보를 먼저 선택하거나 등록해 주세요.");
         }
-        if (!reusePersistedClient) persistedClientIdRef.current = finalClientId;
+        if (!reusePersistedClient || shouldUpdatePersistedClient) {
+          persistedClientIdRef.current = finalClientId;
+          persistedClientSnapshotRef.current = clientPersistenceSnapshot;
+        }
 
         const start = dayjs(startDate);
         const end = endDate ? dayjs(endDate) : null;

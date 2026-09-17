@@ -268,6 +268,7 @@ export default function ContractCreationPage() {
   const progressSourceRef = useRef<EventSource | null>(null);
   const selectedClientRef = useRef<Pick<Client, "id" | "name"> | null>(null);
   const persistedClientIdRef = useRef<number | null>(null);
+  const persistedClientSnapshotRef = useRef<string | null>(null);
   const retryWithPersistedClientRef = useRef(false);
   const defaultPaymentDate = useMemo(() => todayIsoDate(), []);
   const hasAppliedPaymentStepDefaultRef = useRef(false);
@@ -538,6 +539,7 @@ export default function ContractCreationPage() {
 
   const handleClientSelect = (selectedClientId: number | null, client: Client | null) => {
     persistedClientIdRef.current = null;
+    persistedClientSnapshotRef.current = null;
     retryWithPersistedClientRef.current = false;
     setClientId(selectedClientId);
     selectedClientRef.current = client;
@@ -595,6 +597,7 @@ export default function ContractCreationPage() {
     const isNameChanging = nextName !== name;
     if (isNameChanging) {
       persistedClientIdRef.current = null;
+      persistedClientSnapshotRef.current = null;
       retryWithPersistedClientRef.current = false;
     }
     setName(nextName);
@@ -613,6 +616,7 @@ export default function ContractCreationPage() {
 
   const handleClientManualEntry = (query: string) => {
     persistedClientIdRef.current = null;
+    persistedClientSnapshotRef.current = null;
     retryWithPersistedClientRef.current = false;
     setClientId(null);
     selectedClientRef.current = null;
@@ -855,6 +859,7 @@ export default function ContractCreationPage() {
         endDate: effectiveEndDate || null,
         areaId: area || null,
       };
+      const clientPersistenceSnapshot = JSON.stringify(clientData);
       if (!reusePersistedClient && !finalClientId && isManualEntry) {
         const autoRegistrationPayload = {
           ...clientData,
@@ -899,7 +904,10 @@ export default function ContractCreationPage() {
         showErrorToast("고객 정보를 먼저 선택하거나 등록해 주세요.");
         return;
       }
-      if (!reusePersistedClient && (clientId !== null || storedClientByIdentity || storedClientByPhone)) {
+      const shouldUpdatePersistedClient = reusePersistedClient
+        ? persistedClientSnapshotRef.current !== clientPersistenceSnapshot
+        : clientId !== null || storedClientByIdentity || storedClientByPhone;
+      if (shouldUpdatePersistedClient) {
         try {
           await updateClientMutation.mutateAsync({
             id: finalClientId,
@@ -910,7 +918,10 @@ export default function ContractCreationPage() {
           return;
         }
       }
-      if (!reusePersistedClient) persistedClientIdRef.current = finalClientId;
+      if (!reusePersistedClient || shouldUpdatePersistedClient) {
+        persistedClientIdRef.current = finalClientId;
+        persistedClientSnapshotRef.current = clientPersistenceSnapshot;
+      }
 
       // Provider identity remains server-owned; this page sends only contract data.
       // 2. Build contract data for the server-mediated dispatch operation.

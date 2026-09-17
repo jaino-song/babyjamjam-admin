@@ -178,7 +178,7 @@ function installEventSourceStub() {
 
 function installFormState(overrides: Record<string, unknown> = {}) {
   const setter = () => jest.fn();
-  mockUseFormStore.mockReturnValue({
+  const state = {
     clientId: 7,
     isManualEntry: false,
     name: "테스트 고객",
@@ -232,7 +232,9 @@ function installFormState(overrides: Record<string, unknown> = {}) {
     setArea: setter(),
     setPreservePrefilledPrices: setter(),
     ...overrides,
-  });
+  };
+  mockUseFormStore.mockReturnValue(state);
+  return state;
 }
 
 async function renderReadyPage() {
@@ -326,6 +328,50 @@ describe("contract creation mutation lifecycle", () => {
     expect(mockCreateClient).not.toHaveBeenCalled();
     expect(mockUpdateClient).toHaveBeenCalledTimes(1);
     expect(mockOpenDocument).not.toHaveBeenCalled();
+  });
+
+  it("updates the retained client before retry when date and assignment values change", async () => {
+    const formState = installFormState();
+    mockDispatchHeadless
+      .mockResolvedValueOnce({
+        ok: false,
+        reason: "template_workflow_config_unavailable",
+        failedStep: "client-started",
+        durationMs: 1,
+      })
+      .mockResolvedValueOnce({ ok: true, documentId: "doc-retried", durationMs: 1 });
+
+    const submit = await renderReadyPage();
+    fireEvent.click(submit);
+    await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent("이번 요청에서 계약서를 발송하지 않았어요."));
+
+    formState.employeeId = 12;
+    formState.employeeName = "박수정";
+    formState.employeePhone = "01011112222";
+    formState.startDate = "2026-09-11";
+    formState.endDate = "2026-09-17";
+    fireEvent.change(getDateInput("시작일"), { target: { value: "260911" } });
+
+    fireEvent.click(submit);
+    await waitFor(() => expect(mockDispatchHeadless).toHaveBeenCalledTimes(2));
+
+    expect(mockCreateClient).not.toHaveBeenCalled();
+    expect(mockUpdateClient).toHaveBeenCalledTimes(2);
+    expect(mockUpdateClient.mock.calls[1]?.[0]).toEqual(expect.objectContaining({
+      id: 7,
+      dto: expect.objectContaining({
+        primaryEmployeeId: 12,
+        startDate: "2026-09-11",
+        endDate: "2026-09-17",
+      }),
+    }));
+    expect(mockDispatchHeadless.mock.calls[1]?.[0]).toEqual(expect.objectContaining({
+      caretaker1Name: "박수정",
+      caretaker1Contact: "01011112222",
+      startDate: "2026-09-11",
+      endDate: "2026-09-17",
+    }));
+    expect(mockDispatchHeadless.mock.calls[1]?.[1]).toBe(7);
   });
 
   it("retains an auto-registered client id across a known pre-send retry", async () => {
