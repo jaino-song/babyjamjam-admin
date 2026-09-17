@@ -15,6 +15,7 @@ import { agentBindingHash } from "domain/repositories/agent-linked-action.types"
 import { createAgentAutomationQuestion } from "application/agent/agent-automation-question";
 import type { AgentTaskAutomationPort, AgentTaskAutomationSource } from "application/agent/agent-task-automation.service";
 import type { AgentAutomationEffect } from "domain/entities/agent-automation-consent";
+import type { CapabilityDefinition } from "application/agent/capability.types";
 import { assertApprovedAgentTaskPersistenceDatabaseTarget, createApprovedAgentTaskPersistenceClient } from "./agent-task-persistence.helper";
 
 const describeDb = process.env["AGENT_E2E"] === "1" ? describe : describe.skip;
@@ -68,13 +69,15 @@ describeDb("atomic task review and execution on guarded PostgreSQL", () => {
         flagKey: "agent.capability.clients.create", approvalPolicy: "structured" as "structured" | "strong", idempotencyPolicy: "action-id" as const };
     const definition = { meta, inputSchema: z.object({ name: z.string(), phone: z.string() }).passthrough(),
         outputSchema: z.object({ status: z.string(), protectedName: z.string().optional() }), inspect, revalidate,
-        execute, executeApprovedTarget: execute, reconcile };
+        execute, executeApprovedTarget: execute, reconcile,
+        planAutomationImpact: undefined as CapabilityDefinition["planAutomationImpact"] };
+    const flags = { isCapabilityEnabled: jest.fn().mockResolvedValue(true) };
     const policy = { assertCanCreate: jest.fn().mockResolvedValue(meta), assertCanPatch: jest.fn().mockReturnValue(meta),
         assertCanPrepareReview: jest.fn().mockResolvedValue(meta) };
     const clients = { findByPhone: jest.fn().mockResolvedValue(null), findById: jest.fn().mockResolvedValue(null) };
     function coordinator(repository = tasks) {
         return new ActionCoordinatorService(db as never, { get: () => definition } as never,
-            { isCapabilityEnabled: async () => true } as never, {} as never,
+            flags as never, {} as never,
             new AgentSessionService(sessions, new ConfigService(), { holdsLease: () => true } as never),
             new PrismaAgentActionRepository(db as never), { holdsLease: () => true } as never, repository);
     }
@@ -102,9 +105,17 @@ describeDb("atomic task review and execution on guarded PostgreSQL", () => {
                 question: createAgentAutomationQuestion({ effects, availability: "available", previous: task.draft.server.automation?.question }) };
         });
         const automation: AgentTaskAutomationPort = { evaluate };
+        inspect.mockImplementation(async () => ({ title: "Synthetic customer review", summary: "Synthetic customer write" }));
+        definition.planAutomationImpact = async (_context, input, taskId) => {
+            const result = await tasks.findOwned(taskId, owner);
+            if (result.status !== "found") throw new Error("Synthetic task missing");
+            const impact = await evaluate(result.task);
+            return { availability: impact.question.availability, effects: impact.effects,
+                complete: true, clientIdentity: null, sourceGuard: agentBindingHash(input), affectedJobs: [] };
+        };
         const instance = (repository = tasks) => new AgentTaskService(repository, policy as never, clients as never, actions, automation);
         service = instance();
-        return { evaluate, instance, changePolicy: () => { policyVersion++; } };
+        return { evaluate, instance, changePolicy: () => { policyVersion++; }, restorePolicy: () => { policyVersion = 1; } };
     }
     async function answer(taskId: string, expectedRevision: number, choice: "yes" | "no" = "yes") {
         return service.patch(principal, taskId, { clientEventId: randomUUID(), expectedRevision,
@@ -135,6 +146,8 @@ describeDb("atomic task review and execution on guarded PostgreSQL", () => {
         actions = coordinator();
         service = new AgentTaskService(tasks, policy as never, clients as never, actions);
         meta.approvalPolicy = "structured";
+        definition.planAutomationImpact = undefined;
+        flags.isCapabilityEnabled.mockReset().mockResolvedValue(true);
         inspect.mockReset().mockImplementation(async () => ({ targetVersion: (await db.branch.findUniqueOrThrow({ where: { id: branchId } })).name,
             targetSnapshot: { label: "SYN_PRIVATE_ADDRESS" }, title: "SYN_PRIVATE_NAME", summary: "SYN_PRIVATE_ADDRESS" }));
         revalidate.mockReset().mockResolvedValue({ valid: true, currentVersion: "phase6-target" });
@@ -534,7 +547,10 @@ describeDb("atomic task review and execution on guarded PostgreSQL", () => {
             operations: [{ op: "set", field: "automationChoice", value: "yes" }] });
         const assertion = expect(request).rejects.toMatchObject({ status: 409 });
         await entered.promise;
-        const approval = actions.approve(review.snapshot.action!.actionId, principal, review.snapshot.action!.expectedRevision);
+        automation.restorePolicy();
+        const approvedAction = await actions.get(review.snapshot.action!.actionId, owner);
+        const approval = actions.approve(approvedAction.id, principal, approvedAction.proposalRevision,
+            actions.strongAcknowledgementToken(approvedAction));
         await executing.promise;
         const claimed = await state(review.snapshot.taskId);
         release.resolve(); await assertion;
@@ -558,6 +574,47 @@ describeDb("atomic task review and execution on guarded PostgreSQL", () => {
         expect((await orchestrator.handleUserTurn({ principal, sessionId, message })).replayed).toBe(true);
         expect(execute).not.toHaveBeenCalled();
         expect(await db.agent_action.count({ where: { sessionId } })).toBe(0);
+    });
+
+    it("binds positive automation to strong approval, both risk gates and the current impact before the real claim", async () => {
+        const automation = automationFixture();
+        const review = await automationPrepared();
+        const action = await actions.get(review.snapshot.action!.actionId, owner);
+        expect(action.risk).toBe("external-side-effect");
+        expect(action.authorizationContext["approvalPolicy"]).toBe("strong");
+        expect(action.proposal["_taskAutomation"]).toMatchObject({ taskId: review.snapshot.taskId,
+            taskRevision: review.snapshot.revision, actionId: action.id, consent: { choice: "yes" } });
+        const publicAction = actions.publicAction(action);
+        expect(JSON.stringify(publicAction)).not.toMatch(/_taskAutomation|sourceGuard|affectedJobs|consentEventId/);
+        const approve = () => actions.approve(action.id, principal, action.proposalRevision, publicAction.acknowledgementToken);
+        await expect(actions.approve(action.id, principal, action.proposalRevision)).rejects.toMatchObject({ status: 409 });
+        for (const blocked of ["reversible-write", "external-side-effect"]) {
+            flags.isCapabilityEnabled.mockImplementation(async (capability: { risk: string }) => capability.risk !== blocked);
+            await expect(approve()).rejects.toMatchObject({ status: 403 });
+        }
+        flags.isCapabilityEnabled.mockResolvedValue(true);
+        automation.changePolicy();
+        await expect(approve()).rejects.toMatchObject({ status: 409 });
+        expect((await actions.get(action.id, owner)).executionAttemptCount).toBe(0);
+        expect(execute).not.toHaveBeenCalled();
+        automation.restorePolicy();
+        expect((await approve()).action.status).toBe("succeeded");
+        expect(execute).toHaveBeenCalledTimes(1);
+        expect(execute.mock.calls[0]![0].taskAutomation).toEqual(action.proposal["_taskAutomation"]);
+    });
+
+    it.each(["no", "noSend"] as const)("keeps %s customer reviews on write approval with a bound suppression artifact", async (choice) => {
+        automationFixture();
+        const created = await create();
+        const answered = await service.patch(principal, created.snapshot.taskId, { clientEventId: randomUUID(), expectedRevision: created.snapshot.revision,
+            operations: [{ op: "set", field: choice === "no" ? "automationChoice" : "noSend", value: choice === "no" ? "no" : true }] });
+        const review = await service.command(principal, answered.snapshot.taskId, { clientEventId: randomUUID(),
+            expectedRevision: answered.snapshot.revision, command: "prepare-review" });
+        const action = await actions.get(review.snapshot.action!.actionId, owner);
+        expect(action).toMatchObject({ risk: "reversible-write", authorizationContext: { approvalPolicy: "structured" } });
+        expect(action.proposal["_taskAutomation"]).toMatchObject({ consent: { choice: "no", binding: null }, noSend: choice === "noSend" });
+        expect((await actions.approve(action.id, principal, action.proposalRevision)).action.status).toBe("succeeded");
+        expect(execute.mock.calls[0]![0].taskAutomation.consent.choice).toBe("no");
     });
 
 });

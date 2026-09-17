@@ -11,7 +11,7 @@ import { Prisma } from "@prisma/client";
 import { createHash, randomUUID } from "node:crypto";
 import { Cron, CronExpression } from "@nestjs/schedule";
 
-import type { AgentActionRisk, AgentActionStatus } from "@babyjamjam/shared";
+import type { AgentActionRisk, AgentActionStatus, AgentCapabilityMeta } from "@babyjamjam/shared";
 import type { BjjUIMessage } from "@babyjamjam/shared";
 import type { AgentActionEntity, AgentActionOwner } from "domain/entities/agent-action.entity";
 import { AGENT_ACTION_REPOSITORY, type IAgentActionRepository } from "domain/repositories/agent-action.repository.interface";
@@ -27,6 +27,9 @@ import { AGENT_TASK_REPOSITORY, type IAgentTaskRepository } from "domain/reposit
 import { agentBindingHash, agentTaskSourceHash, agentLinkedProposalRevision, type PreparedAgentTaskReview, type AgentLinkedActionRecoveryOutcome } from "domain/repositories/agent-linked-action.types";
 import type { AgentTaskReviewPort } from "./agent-task-review.port";
 import type { AgentReconciliationOutcome } from "./capability.types";
+import { canonicalTaskAutomationImpact, prepareTaskAutomationArtifact, TASK_AUTOMATION_ARTIFACT_KEY,
+    taskAutomationEffectiveMeta, taskAutomationFromAction, taskAutomationPublicSummary,
+    type AgentTaskAutomationArtifact } from "./agent-task-automation-artifact";
 
 const APPROVAL_PENDING_STATUSES: AgentActionStatus[] = ["proposed", "approved"];
 const TERMINAL_STATUSES: AgentActionStatus[] = ["succeeded", "failed", "uncertain", "rejected", "expired", "cancelled"];
@@ -188,39 +191,52 @@ export class ActionCoordinatorService implements AgentTaskReviewPort {
         if (task.capabilityId === "clients.update" && inspection?.targetVersion !== task.targetVersion) {
             throw new ConflictException("Task target changed; confirm the target again");
         }
+        const id = randomUUID();
+        let taskAutomation: AgentTaskAutomationArtifact | undefined;
+        if (capability.planAutomationImpact || task.draft.server.automation) {
+            try {
+                if (!capability.planAutomationImpact) throw new Error("Missing automation planner");
+                taskAutomation = prepareTaskAutomationArtifact(task, id, normalized,
+                    await capability.planAutomationImpact(context, normalized, task.taskId));
+            } catch {
+                throw new ConflictException("Automation changed; review the latest task question");
+            }
+        }
+        const effectiveMeta = taskAutomation ? taskAutomationEffectiveMeta(capability.meta, taskAutomation) : capability.meta;
+        if (!await this.flags.isCapabilityEnabled(effectiveMeta, principal)) throw new ForbiddenException("Capability disabled");
         const proposal = {
             capability: task.capabilityId, title: inspection?.title ?? capability.meta.description,
             summary: inspection?.summary ?? capability.meta.description, input: normalized,
             targetSnapshot: inspection?.targetSnapshot ?? null, targetVersion: inspection?.targetVersion ?? null,
             provider: inspection?.provider ?? null, estimatedCost: inspection?.estimatedCost ?? null, locale: "ko",
+            ...(taskAutomation ? { [TASK_AUTOMATION_ARTIFACT_KEY]: taskAutomation, automation: taskAutomationPublicSummary(taskAutomation) } : {}),
         };
         const inputHash = agentBindingHash(normalized);
         const reviewedRevision = task.revision + 1;
         const proposalRevision = agentLinkedProposalRevision(task.taskId, reviewedRevision,
-            { capability: task.capabilityId, capabilityVersion: capability.meta.version, risk: capability.meta.risk, proposal });
+            { capability: task.capabilityId, capabilityVersion: capability.meta.version, risk: effectiveMeta.risk, proposal });
         const now = new Date();
-        const id = randomUUID();
         return structuredClone({ taskId: task.taskId, sourceRevision: task.revision, sourceHash: agentTaskSourceHash(task),
             action: { id, sessionId: task.sessionId, userId: task.userId, branchId: task.branchId,
-                capability: task.capabilityId, capabilityVersion: capability.meta.version, risk: capability.meta.risk,
+                capability: task.capabilityId, capabilityVersion: capability.meta.version, risk: effectiveMeta.risk,
                 proposal, proposalRevision, inputHash, targetSnapshot: proposal.targetSnapshot, targetVersion: proposal.targetVersion,
                 authorizationContext: { userId: principal.userId, branchId: principal.branchId, globalRole: principal.globalRole,
-                    branchRole: principal.branchRole, traceId, approvalPolicy: capability.meta.approvalPolicy },
+                    branchRole: principal.branchRole, traceId, approvalPolicy: effectiveMeta.approvalPolicy },
                 expiresAt: new Date(now.getTime() + DEFAULT_ACTION_TTL_MS), idempotencyKey: `agent-action:${id}`,
                 requestDedupeKey: agentBindingHash({ sessionId: task.sessionId, taskId: task.taskId, reviewedRevision, inputHash }),
                 dedupeExpiresAt: new Date(now.getTime() + REQUEST_DEDUPE_WINDOW_MS) } });
     }
 
     private async claimLinkedAction(action: AgentActionEntity, principal: VerifiedTenantPrincipal,
-        acknowledgementToken?: string): Promise<boolean> {
+        effectiveMeta: AgentCapabilityMeta, acknowledgementToken?: string): Promise<boolean> {
         if (!this.tasks || !action.taskId || !action.taskRevision) throw new ConflictException("Task action binding unavailable");
         const capability = this.registry.get(action.capability);
         const evidence = {
             actionId: action.id, taskId: action.taskId, taskRevision: action.taskRevision,
             proposalRevision: action.proposalRevision, inputHash: action.inputHash,
             targetHash: agentBindingHash({ snapshot: action.targetSnapshot, version: action.targetVersion }),
-            capability: action.capability, capabilityVersion: capability.meta.version, risk: capability.meta.risk,
-            acknowledgement: capability.meta.approvalPolicy === "strong" ? { token: acknowledgementToken ?? "" } : "standard" as const,
+            capability: action.capability, capabilityVersion: capability.meta.version, risk: effectiveMeta.risk,
+            acknowledgement: effectiveMeta.approvalPolicy === "strong" ? { token: acknowledgementToken ?? "" } : "standard" as const,
             actorId: principal.userId,
         };
         const result = await this.tasks.withTransaction({ sessionId: action.sessionId, userId: principal.userId, branchId: principal.branchId }, async (tx) => {
@@ -458,6 +474,28 @@ export class ActionCoordinatorService implements AgentTaskReviewPort {
         return records.map(toEntity);
     }
 
+    /** Owned UI projection. Execution receipts and private consent recipes never cross REST. */
+    publicAction(action: AgentActionEntity) {
+        const proposalKeys = ["capability", "title", "summary", "input", "targetSnapshot", "targetVersion", "provider", "estimatedCost", "locale", "automation"];
+        const authorizationKeys = ["userId", "branchId", "globalRole", "branchRole", "traceId", "approvalPolicy"];
+        return { ...action,
+            proposal: Object.fromEntries(proposalKeys.filter((key) => key in action.proposal).map((key) => [key, action.proposal[key]])),
+            authorizationContext: Object.fromEntries(authorizationKeys.filter((key) => key in action.authorizationContext)
+                .map((key) => [key, action.authorizationContext[key]])),
+            ...(action.authorizationContext["approvalPolicy"] === "strong" && APPROVAL_PENDING_STATUSES.includes(action.status)
+                ? { acknowledgementToken: this.strongAcknowledgementToken(action) } : {}),
+        };
+    }
+
+    private automationForAction(action: AgentActionEntity): AgentTaskAutomationArtifact | undefined {
+        const capability = this.registry.get(action.capability);
+        const present = TASK_AUTOMATION_ARTIFACT_KEY in action.proposal;
+        if (!present && (!action.taskId || !capability.planAutomationImpact)) return undefined;
+        const artifact = taskAutomationFromAction(action, capability.meta);
+        if (!artifact || !capability.planAutomationImpact) throw new ConflictException("Task automation binding changed; create a new review");
+        return artifact;
+    }
+
     async approve(
         id: string,
         principal: VerifiedTenantPrincipal,
@@ -489,11 +527,14 @@ export class ActionCoordinatorService implements AgentTaskReviewPort {
         if (hasTargetVersion && !capability.executeApprovedTarget) {
             throw new ConflictException("Versioned action cannot be executed safely; create a new proposal");
         }
-        if (capability.meta.approvalPolicy === "strong"
+        const taskAutomation = this.automationForAction(action);
+        const effectiveMeta = taskAutomation ? taskAutomationEffectiveMeta(capability.meta, taskAutomation) : capability.meta;
+        if (effectiveMeta.approvalPolicy === "strong"
             && acknowledgementToken !== this.strongAcknowledgementToken(action)) {
             throw new ConflictException("Strong acknowledgement is required for this action");
         }
-        if (!await this.flags.isCapabilityEnabled(capability.meta, principal)) {
+        if (!await this.flags.isCapabilityEnabled(capability.meta, principal)
+            || !await this.flags.isCapabilityEnabled(effectiveMeta, principal)) {
             throw new ForbiddenException("Capability disabled");
         }
         const proposal = jsonObject(action.proposal);
@@ -507,7 +548,17 @@ export class ActionCoordinatorService implements AgentTaskReviewPort {
             locale: typeof proposal["locale"] === "string" ? proposal["locale"] : "ko",
             ...(hasTargetVersion ? { approvedTargetVersion: targetVersion } : {}),
             ...(action.targetSnapshot ? { approvedTargetSnapshot: action.targetSnapshot } : {}),
+            ...(taskAutomation ? { taskAutomation } : {}),
         };
+        if (taskAutomation) {
+            try {
+                const current = canonicalTaskAutomationImpact(await capability.planAutomationImpact!(actionContext,
+                    capability.inputSchema.parse(proposal["input"]), taskAutomation.taskId));
+                if (agentBindingHash(current) !== agentBindingHash(taskAutomation.impact)) throw new Error("Changed automation impact");
+            } catch {
+                throw new ConflictException("Automation changed; review the latest task question");
+            }
+        }
         if (hasTargetVersion) {
             if (!capability.revalidate) {
                 throw new ConflictException("Target cannot be safely revalidated; create a new proposal");
@@ -519,7 +570,7 @@ export class ActionCoordinatorService implements AgentTaskReviewPort {
         }
         if (action.taskId) {
             if (action.inputHash !== agentBindingHash(proposal["input"])) throw new ConflictException("Action input changed");
-            if (!await this.claimLinkedAction(action, principal, acknowledgementToken)) {
+            if (!await this.claimLinkedAction(action, principal, effectiveMeta, acknowledgementToken)) {
                 const latest = await this.get(id, owner);
                 return { action: latest, result: latest.result };
             }
@@ -722,6 +773,7 @@ export class ActionCoordinatorService implements AgentTaskReviewPort {
         const capability = this.registry.get(action.capability);
         if (!capability.reconcile) throw new ConflictException("Provider reconciliation is unavailable");
         const proposal = jsonObject(action.proposal);
+        const taskAutomation = this.automationForAction(action);
         const actionContext = {
             principal,
             sessionId: action.sessionId,
@@ -730,6 +782,7 @@ export class ActionCoordinatorService implements AgentTaskReviewPort {
                 ? action.authorizationContext["traceId"]
                 : randomUUID(),
             locale: typeof proposal["locale"] === "string" ? proposal["locale"] : "ko",
+            ...(taskAutomation ? { taskAutomation } : {}),
         };
         const uncertainty = action.error ? jsonObject(action.error["details"]) : null;
         await capability.recover?.(actionContext, proposal["input"], uncertainty);
