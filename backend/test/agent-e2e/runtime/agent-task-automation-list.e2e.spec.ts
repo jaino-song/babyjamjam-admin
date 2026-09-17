@@ -492,6 +492,7 @@ describeAgentE2E("real automation.list with two eligible clients and missing def
         expect((sms as unknown as { automationDeliveryGate: unknown }).automationDeliveryGate).toBe(gate);
         const send = jest.spyOn(app.get(AligoService), "sendSms");
         await tenantContextStore.run({ origin: "http", branchId }, async () => {
+            await trigger.listRules(branchId);
             const settings = await sources.readClientAutomationSettings(branchId);
             const client = await sources.readClientAutomationSource(branchId, clientIds[0]!);
             if (settings.status !== "available" || !client) throw new Error("Missing synthetic legacy source");
@@ -527,6 +528,7 @@ describeAgentE2E("real automation.list with two eligible clients and missing def
         });
         try {
             await tenantContextStore.run({ origin: "http", branchId }, async () => {
+                await trigger.listRules(branchId);
                 const settings = await sources.readClientAutomationSettings(branchId);
                 const client = await sources.readClientAutomationSource(branchId, clientIds[0]!);
                 if (settings.status !== "available" || !client) throw new Error("Missing synthetic legacy source");
