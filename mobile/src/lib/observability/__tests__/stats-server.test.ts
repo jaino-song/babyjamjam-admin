@@ -3,7 +3,7 @@
  */
 
 const originalFetch = global.fetch;
-const envKeys = ["POSTHOG_HOST", "POSTHOG_API_KEY", "POSTHOG_PROJECT_ID"] as const;
+const envKeys = ["POSTHOG_HOST", "POSTHOG_API_KEY", "POSTHOG_PROJECT_ID", "SENTRY_AUTH_TOKEN", "SENTRY_ORG"] as const;
 const originalEnv = Object.fromEntries(envKeys.map((key) => [key, process.env[key]]));
 
 describe("stats tenant scoping and conversion semantics", () => {
@@ -12,6 +12,8 @@ describe("stats tenant scoping and conversion semantics", () => {
     process.env.POSTHOG_HOST = "https://posthog.example";
     process.env.POSTHOG_API_KEY = "test-key";
     process.env.POSTHOG_PROJECT_ID = "test-project";
+    delete process.env.SENTRY_AUTH_TOKEN;
+    delete process.env.SENTRY_ORG;
   });
 
   afterEach(() => {
@@ -75,5 +77,32 @@ describe("stats tenant scoping and conversion semantics", () => {
       .find((query) => query.includes("event = 'pricing_viewed'"));
     expect(pricingQuery).toBeDefined();
     expect(pricingQuery).not.toContain("properties.branch_slug");
+  });
+
+  it.each([7, 30] as const)("forwards the selected period to every PostHog stats view (%dd)", async (period) => {
+    const fetchMock = jest.fn(async () => ({ ok: true, json: async () => ({ results: [] }) }));
+    global.fetch = fetchMock as unknown as typeof fetch;
+
+    const { getStatsView } = await import("../stats-server");
+    for (const view of ["overview", "inquiries", "funnel", "traffic"] as const) {
+      fetchMock.mockClear();
+      await getStatsView(view, null, period);
+      const queries = (fetchMock.mock.calls as unknown as Array<[unknown, RequestInit?]>).map(([, init]) => {
+        const body = JSON.parse(String(init?.body)) as { query: { query: string } };
+        return body.query.query;
+      });
+      expect(queries.some((query) => query.includes(`INTERVAL ${period} DAY`))).toBe(true);
+    }
+  });
+
+  it.each(["7d", "30d"] as const)("forwards the selected period to Sentry (%s)", async (statsPeriod) => {
+    process.env.SENTRY_AUTH_TOKEN = "sentry-token";
+    process.env.SENTRY_ORG = "babyjamjam";
+    const fetchMock = jest.fn(async () => ({ ok: true, json: async () => [] }));
+    global.fetch = fetchMock as unknown as typeof fetch;
+
+    const { getStatsView } = await import("../stats-server");
+    await getStatsView("errors", null, statsPeriod === "30d" ? 30 : 7);
+    expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining(`statsPeriod=${statsPeriod}`), expect.anything());
   });
 });
