@@ -13,6 +13,17 @@ import { ErrorPart } from "./parts/ErrorPart";
 import { useAgentChat } from "@/hooks/useAgentChat";
 
 const MOBILE_MEDIA_QUERY = "(max-width: 767px)";
+const REFRESHABLE_TASK_ERROR_CODES = new Set([
+    "task_conflict",
+    "task_conflict_unresolved",
+    "task_reconciliation_required",
+    "task_mutation_unconfirmed",
+    "task_command_unconfirmed",
+    "task_patch_failed",
+    "task_patch_invalid",
+    "task_command_failed",
+    "task_command_invalid",
+]);
 
 function subscribeMobileViewport(onChange: () => void) {
     const media = window.matchMedia(MOBILE_MEDIA_QUERY);
@@ -48,9 +59,7 @@ export function AgentShell() {
         || taskAccessState?.status !== "authorized"
         || (taskSnapshotState?.pendingEventIds.length ?? 0) > 0;
     const canRefreshTask = taskAccessState?.status === "unavailable"
-        || taskError?.code === "task_conflict"
-        || taskError?.code === "task_conflict_unresolved"
-        || taskError?.code === "task_reconciliation_required";
+        || REFRESHABLE_TASK_ERROR_CODES.has(taskError?.code ?? "");
     const retryTaskId = canRefreshTask && typeof taskError?.taskId === "string" ? taskError.taskId : undefined;
     const retryPendingTask = taskError?.code === "task_pending_event"
         && typeof taskError.taskId === "string"

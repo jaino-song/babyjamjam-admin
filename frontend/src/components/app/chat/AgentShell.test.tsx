@@ -4,13 +4,14 @@ import { AgentShell } from "./AgentShell";
 
 const mockSendMessage = jest.fn();
 const mockLoadTaskSnapshot = jest.fn();
+const mockRetryPendingTaskEvent = jest.fn();
 const mockRenameSession = jest.fn().mockResolvedValue(true);
 const mockAgentChatState: {
     status: "ready" | "submitted" | "streaming";
     messages: Array<{ id: string; role: "assistant"; parts: Array<{ type: string; data?: unknown }> }>;
     error: Error | null;
     actionError: { code: string; message: string; effectState: "nothing-happened" | "succeeded-unconfirmed" | "partial" } | null;
-    taskError: { code: string; taskId?: string; message: string } | null;
+    taskError: { code: string; taskId?: string; latestRevision?: number; pendingEventId?: string; message: string } | null;
 } = { status: "ready", messages: [], error: null, actionError: null, taskError: null };
 
 jest.mock("next/navigation", () => ({
@@ -26,6 +27,7 @@ jest.mock("@/hooks/useAgentChat", () => ({
         actionError: mockAgentChatState.actionError,
         taskError: mockAgentChatState.taskError,
         loadTaskSnapshot: mockLoadTaskSnapshot,
+        retryPendingTaskEvent: mockRetryPendingTaskEvent,
         stop: jest.fn(),
         regenerate: jest.fn(),
         resetBranch: jest.fn(),
@@ -43,7 +45,8 @@ jest.mock("@/hooks/useAgentChat", () => ({
 describe("AgentShell input composition", () => {
     beforeEach(() => {
         mockSendMessage.mockClear();
-        mockLoadTaskSnapshot.mockClear();
+        mockLoadTaskSnapshot.mockReset();
+        mockRetryPendingTaskEvent.mockReset();
         mockRenameSession.mockClear();
         mockAgentChatState.status = "ready";
         mockAgentChatState.messages = [];
@@ -151,6 +154,41 @@ describe("AgentShell input composition", () => {
         expect(retry).toBeEnabled();
         fireEvent.click(retry);
         await waitFor(() => expect(mockLoadTaskSnapshot).toHaveBeenCalledWith(taskId));
+    });
+
+    it("recovers an uncertain mutation through refresh and one exact retry", async () => {
+        const taskId = "11111111-1111-4111-8111-111111111111";
+        const eventId = "44444444-4444-4444-8444-444444444444";
+        mockAgentChatState.taskError = {
+            code: "task_mutation_unconfirmed",
+            taskId,
+            pendingEventId: eventId,
+            message: "초안 변경 요청의 최종 결과를 확인하지 못했습니다.",
+        };
+        mockLoadTaskSnapshot.mockImplementation(async () => {
+            mockAgentChatState.taskError = {
+                code: "task_pending_event",
+                taskId,
+                latestRevision: 2,
+                pendingEventId: eventId,
+                message: "확인되지 않은 초안 변경이 있습니다.",
+            };
+        });
+        mockRetryPendingTaskEvent.mockImplementation(async () => {
+            mockAgentChatState.taskError = null;
+        });
+
+        const view = render(<AgentShell />);
+        fireEvent.click(screen.getByRole("button", { name: "다시 시도" }));
+        await waitFor(() => expect(mockLoadTaskSnapshot).toHaveBeenCalledTimes(1));
+
+        view.rerender(<AgentShell />);
+        fireEvent.click(screen.getByRole("button", { name: "다시 시도" }));
+        await waitFor(() => expect(mockRetryPendingTaskEvent).toHaveBeenCalledWith(taskId, eventId));
+        expect(mockRetryPendingTaskEvent).toHaveBeenCalledTimes(1);
+
+        view.rerender(<AgentShell />);
+        expect(screen.queryByRole("alert")).not.toBeInTheDocument();
     });
 
     it("keeps stream and action errors in separate completed namespaces", () => {
