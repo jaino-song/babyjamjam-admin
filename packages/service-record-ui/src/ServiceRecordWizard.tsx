@@ -586,13 +586,13 @@ export function ServiceRecordWizard({
                         <div data-component={child("body_day-title")} data-slot="step-title" className="step-title">{currentDayPage.title}</div>
                         {isMomConfirmationPage ? (
                             <>
-                                {editing && (
+                                {editing && !adminMode && (
                                     <div data-component={child("body_resign-notice")} data-slot="notice" className="notice">
                                         <span>이미 제출된 회차입니다.</span>
                                     </div>
                                 )}
                                 <div data-component={child("body_handover-banner")} data-slot="handover" className="handover">
-                                    <b>최종 기록을 확인해 주세요.</b>
+                                    <b>{adminMode ? "관리자 수정 내용을 확인해 주세요." : "최종 기록을 확인해 주세요."}</b>
                                 </div>
                                 <MomConfirmationReview
                                     dataComponent={child("body_review")}
