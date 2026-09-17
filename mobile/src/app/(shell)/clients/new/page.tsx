@@ -1177,7 +1177,7 @@ export default function NewClientPage() {
                   </div>
 
                   <div className={styles.formCard} data-component="mobile_clients-new_screen_root_page_wizard_form-scroll_basic-details-card">
-                    <Field data-component="mobile_clients-new_screen_root_page_wizard_form-scroll_basic-details-card_birthday-field" label="생년월일" htmlFor="birthday">
+                    <Field data-component="mobile_clients-new_screen_root_page_wizard_form-scroll_basic-details-card_birthday-field" label="생년월일" htmlFor="birthday" required>
                       <Input
                         id="birthday"
                         data-component="mobile_clients-new_screen_root_page_wizard_form-scroll_basic-details-card_birthday-field_birthday-input"

@@ -1249,6 +1249,7 @@ function ClientFormContent({
                     data-component={`${base}_basic-grid_field-birthday`}
                     htmlFor="birthday"
                     label={t(locale, "clients.form.birthday")}
+                    required
                 >
                     <FormTextInput
                         id="birthday"
@@ -1687,6 +1688,7 @@ function ClientFormContent({
                 data-component={`${base}_birthday-input`}
                 htmlFor="birthday"
                 label={t(locale, "clients.form.birthday")}
+                required
             >
                 <FormTextInput
                     id="birthday"
