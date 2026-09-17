@@ -155,7 +155,13 @@ export default function EmployeeSchedulePage() {
                 data-kind={entry.kind}
                 key={entry.id}
               >
-                <div className={`list-avatar ${KIND_TONE[entry.kind]}`}>{entry.dateLabel}</div>
+                <div
+                  aria-label={entry.dateLabel}
+                  className={`list-avatar ${KIND_TONE[entry.kind]}`}
+                  title={entry.dateLabel}
+                >
+                  {entry.dateLabel.slice(-2)}
+                </div>
                 <div className="list-info">
                   <div className="list-name">{entry.title}</div>
                   <div className="list-meta">
