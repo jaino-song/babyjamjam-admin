@@ -1,3 +1,4 @@
+import { ConflictException } from "@nestjs/common";
 import { DispatchDocumentHeadlessUsecase } from "application/usecases/eformsign-doc/dispatch-document-headless.usecase";
 import { EformsignOperationAlreadyRunningError } from "infrastructure/locking/eformsign-operation-lock.service";
 
@@ -380,6 +381,7 @@ describe("DispatchDocumentHeadlessUsecase", () => {
             dispatchBoundary?: Record<string, jest.Mock>;
             eformsignService?: Record<string, jest.Mock>;
             workflowClient?: Record<string, jest.Mock>;
+            progressService?: Record<string, jest.Mock>;
             areaTemplate?: unknown;
         }) => new DispatchDocumentHeadlessUsecase(
             (overrides.eformsignService ?? {
@@ -393,7 +395,7 @@ describe("DispatchDocumentHeadlessUsecase", () => {
             {
                 execute: overrides.fetchOne ?? jest.fn().mockRejectedValue(new Error("not found")),
             } as never,
-            { emit: jest.fn() } as never,
+            (overrides.progressService ?? { emit: jest.fn() }) as never,
             { findById: jest.fn().mockResolvedValue(null) } as never,
             { assertLiveAssignedProvider: jest.fn().mockResolvedValue({ scheduleId: 1 }) } as never,
             { findByClientId: jest.fn().mockResolvedValue([]) } as never,
@@ -515,6 +517,98 @@ describe("DispatchDocumentHeadlessUsecase", () => {
             );
             expect(claim).not.toHaveBeenCalled();
             expect(dispatchCreation).not.toHaveBeenCalled();
+        });
+
+        it("returns a stable manual-review result for a dispatch claim conflict before generation", async () => {
+            const dispatchCreation = jest.fn();
+            const generateDocumentOptions = jest.fn();
+            const claim = jest.fn().mockRejectedValue(
+                new ConflictException("전자문서 작업 요청이 기존 작업과 충돌합니다."),
+            );
+            const releaseBeforeSend = jest.fn();
+            const markAccepted = jest.fn();
+            const markUncertain = jest.fn();
+            const reconcile = jest.fn();
+            const findById = jest.fn();
+            const emit = jest.fn();
+            const usecase = buildUsecase({
+                dispatchCreation,
+                dispatchBoundary: {
+                    claim,
+                    releaseBeforeSend,
+                    markAccepted,
+                    markUncertain,
+                    reconcile,
+                    findById,
+                },
+                eformsignService: {
+                    resolveEffectiveTemplateId: jest.fn(resolveEffectiveTemplateId),
+                    generateDocumentOptions,
+                },
+                progressService: { emit },
+            });
+
+            const result = await usecase.execute("branch-1", {
+                ...params,
+                progressId: "progress-1",
+            }, TEST_PRINCIPAL);
+
+            expect(result).toEqual(expect.objectContaining({
+                ok: false,
+                reason: "dispatch_conflict_manual_review_required",
+                fallbackHint: "manual_check",
+            }));
+            expect(claim).toHaveBeenCalledTimes(1);
+            expect(generateDocumentOptions).not.toHaveBeenCalled();
+            expect(dispatchCreation).not.toHaveBeenCalled();
+            expect(releaseBeforeSend).not.toHaveBeenCalled();
+            expect(markAccepted).not.toHaveBeenCalled();
+            expect(markUncertain).not.toHaveBeenCalled();
+            expect(reconcile).not.toHaveBeenCalled();
+            expect(findById).not.toHaveBeenCalled();
+            expect(emit).toHaveBeenCalledWith(
+                "progress-1",
+                "failed",
+                "dispatch_conflict_manual_review_required",
+                undefined,
+            );
+        });
+
+        it("retains the existing fallback for non-conflict claim errors", async () => {
+            const dispatchCreation = jest.fn();
+            const generateDocumentOptions = jest.fn();
+            const claim = jest.fn().mockRejectedValue(new Error("claim unavailable"));
+            const releaseBeforeSend = jest.fn();
+            const markAccepted = jest.fn();
+            const markUncertain = jest.fn();
+            const emit = jest.fn();
+            const usecase = buildUsecase({
+                dispatchCreation,
+                dispatchBoundary: { claim, releaseBeforeSend, markAccepted, markUncertain },
+                eformsignService: {
+                    resolveEffectiveTemplateId: jest.fn(resolveEffectiveTemplateId),
+                    generateDocumentOptions,
+                },
+                progressService: { emit },
+            });
+
+            const result = await usecase.execute("branch-1", {
+                ...params,
+                progressId: "progress-2",
+            }, TEST_PRINCIPAL);
+
+            expect(result).toEqual(expect.objectContaining({
+                ok: false,
+                reason: "claim unavailable",
+                fallbackHint: "iframe",
+            }));
+            expect(claim).toHaveBeenCalledTimes(1);
+            expect(generateDocumentOptions).not.toHaveBeenCalled();
+            expect(dispatchCreation).not.toHaveBeenCalled();
+            expect(releaseBeforeSend).not.toHaveBeenCalled();
+            expect(markAccepted).not.toHaveBeenCalled();
+            expect(markUncertain).not.toHaveBeenCalled();
+            expect(emit).toHaveBeenCalledWith("progress-2", "failed", "claim unavailable", undefined);
         });
 
         it("still offers the iframe when the run failed before reaching 전송", async () => {

@@ -1,4 +1,4 @@
-import { Inject, Injectable, Logger, Optional } from "@nestjs/common";
+import { ConflictException, Inject, Injectable, Logger, Optional } from "@nestjs/common";
 import { createHash } from "node:crypto";
 import { ContractDataDto } from "application/dto/contract.dto";
 import { EformsignService } from "application/services/eformsign.service";
@@ -45,6 +45,7 @@ const CREATED_DOCUMENT_RETRY_DELAYS_MS = [0, 500, 1_000, 2_000, 4_000, 8_000] as
 // persistence after a remote document has been identified.
 const HEADLESS_CREATE_RECONCILIATION_DEADLINE_MS = 130_000;
 const CREATED_DOCUMENT_DETAIL_READ_TIMEOUT_MS = 5_000;
+const DISPATCH_CONFLICT_MANUAL_REVIEW_REASON = "dispatch_conflict_manual_review_required";
 
 class CreatedDocumentReconciliationDeadlineError extends Error {}
 
@@ -249,16 +250,36 @@ export class DispatchDocumentHeadlessUsecase {
                 const fingerprint = createHash("sha256")
                     .update(JSON.stringify({ contractData: params.contractData, templateId, generation }))
                     .digest("hex");
-                const claim = await this.dispatchBoundary.claim({
-                    branchId,
-                    clientId: params.clientId,
-                    localDocumentId: latestLocalDocument?.id ?? null,
-                    assignmentId: assignment?.scheduleId ?? null,
-                    templateId: templateId ?? null,
-                    action: "create",
-                    generation,
-                    fingerprint,
-                });
+                let claim: Awaited<ReturnType<EformsignDispatchBoundaryService["claim"]>>;
+                try {
+                    claim = await this.dispatchBoundary.claim({
+                        branchId,
+                        clientId: params.clientId,
+                        localDocumentId: latestLocalDocument?.id ?? null,
+                        assignmentId: assignment?.scheduleId ?? null,
+                        templateId: templateId ?? null,
+                        action: "create",
+                        generation,
+                        fingerprint,
+                    });
+                } catch (error) {
+                    if (error instanceof ConflictException) {
+                        this.progressService.emit(
+                            params.progressId,
+                            "failed",
+                            DISPATCH_CONFLICT_MANUAL_REVIEW_REASON,
+                            latestProgressStep,
+                        );
+                        return {
+                            ok: false,
+                            reason: DISPATCH_CONFLICT_MANUAL_REVIEW_REASON,
+                            fallbackHint: "manual_check",
+                            durationMs: Date.now() - start,
+                            failedStep: latestProgressStep,
+                        };
+                    }
+                    throw error;
+                }
                 if (claim.disposition === "already_accepted") {
                     return {
                         ok: false,
