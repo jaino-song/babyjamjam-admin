@@ -9,6 +9,8 @@ const TEST_PRINCIPAL = {
     branchRole: "owner",
 };
 
+const PUBLIC_STREAM_FAILURE_MESSAGE = "대화를 처리하는 중 문제가 발생했어요. 잠시 후 다시 시도해 주세요.";
+
 describe("AIChatService.chatStream", () => {
     test("uses direct dashboard tool path for employee count query", async () => {
         const geminiGateway = {
@@ -195,5 +197,96 @@ describe("AIChatService.chatStream", () => {
         const geminiMessages = geminiGateway.chatStream.mock.calls[0][0] as Array<{ role: string; content: string }>;
         expect(geminiMessages).toHaveLength(25); // system + last 24 messages
         expect(geminiMessages[0]?.role).toBe("system");
+    });
+
+    test("answers an unknown session with a registered RESOURCE_NOT_FOUND problem body", async () => {
+        const sessionRepository = {
+            findById: jest.fn().mockResolvedValue(null),
+            create: jest.fn(),
+            update: jest.fn(),
+        } as any;
+        const service = new AIChatService({ chatStream: jest.fn() } as any, { execute: jest.fn() } as any, sessionRepository);
+
+        const rejection = (async () => {
+            for await (const _ of service.chatStream("missing-session", "user-1", "hello", "org-1")) {
+                // no events expected
+            }
+        })();
+        await expect(rejection).rejects.toMatchObject({
+            status: 404,
+            response: expect.objectContaining({
+                code: "RESOURCE_NOT_FOUND",
+                params: {},
+                outcome: "NOT_APPLIED",
+                recovery: { action: "NONE", retry: { mode: "NEVER" } },
+            }),
+        });
+    });
+
+    test("emits the public failure sentence instead of raw gateway errors in the SSE error event", async () => {
+        const geminiGateway = {
+            chatStream: jest.fn().mockImplementation(
+                async function* (): AsyncGenerator<GeminiStreamChunk> {
+                    throw new Error("Postgres connection refused at 10.0.0.3:5432");
+                },
+            ),
+        } as any;
+
+        const service = new AIChatService(
+            geminiGateway,
+            { execute: jest.fn() } as any,
+            {
+                findById: jest.fn().mockResolvedValue(null),
+                create: jest.fn().mockImplementation(async (session: ChatSessionEntity) => {
+                    (session as any).id = "test-session";
+                    return session;
+                }),
+                update: jest.fn(),
+            } as any,
+        );
+
+        const events: any[] = [];
+        for await (const evt of service.chatStream(undefined, "user-1", "hello", "org-1")) {
+            events.push(evt);
+        }
+
+        const errorEvent = events.find((e) => e.type === "error");
+        expect(errorEvent).toBeDefined();
+        expect(errorEvent.error).toBe(PUBLIC_STREAM_FAILURE_MESSAGE);
+        expect(errorEvent.error).not.toContain("Postgres");
+        expect(errorEvent.error).not.toContain("10.0.0.3");
+    });
+
+    test("replaces upstream chunk error text with the public failure sentence", async () => {
+        const geminiGateway = {
+            chatStream: jest.fn().mockReturnValue(
+                (async function* (): AsyncGenerator<GeminiStreamChunk> {
+                    yield { type: "error", error: "upstream quota exceeded for project internal-prod" };
+                })(),
+            ),
+        } as any;
+
+        const service = new AIChatService(
+            geminiGateway,
+            { execute: jest.fn() } as any,
+            {
+                findById: jest.fn().mockResolvedValue(null),
+                create: jest.fn().mockImplementation(async (session: ChatSessionEntity) => {
+                    (session as any).id = "test-session";
+                    return session;
+                }),
+                update: jest.fn(),
+            } as any,
+        );
+
+        const events: any[] = [];
+        for await (const evt of service.chatStream(undefined, "user-1", "hello", "org-1")) {
+            events.push(evt);
+        }
+
+        const errorEvent = events.find((e) => e.type === "error");
+        expect(errorEvent).toBeDefined();
+        expect(errorEvent.error).toBe(PUBLIC_STREAM_FAILURE_MESSAGE);
+        expect(errorEvent.error).not.toContain("quota");
     });
 });

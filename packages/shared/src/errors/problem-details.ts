@@ -84,7 +84,17 @@ export type ProblemCode =
     | "DOCUMENT_FINALIZE_IN_PROGRESS"
     | "EFORMSIGN_TERMINAL_FAILURE"
     | "DOCUMENT_FINALIZE_UNCONFIRMED"
-    | "DOCUMENT_FINALIZE_FAILED";
+    | "DOCUMENT_FINALIZE_FAILED"
+    // Registered account-state and reset-link codes (EM-CAT-03; shipped auth
+    // identifiers formalized — frontend/mobile login modals and the shared
+    // reset-password error map already key on these). BJJ-319 phase 6d2.
+    | "PENDING_APPROVAL"
+    | "ACCOUNT_REJECTED"
+    | "ACCOUNT_PROFILE_INCOMPLETE"
+    | "NO_ACCESSIBLE_BRANCH"
+    | "AUTH_RESET_TOKEN_INVALID"
+    | "AUTH_RESET_TOKEN_EXPIRED"
+    | "AUTH_RESET_TOKEN_USED";
 
 export type ProblemOutcome =
     | "NOT_APPLIED"
@@ -275,6 +285,14 @@ const PROBLEM_CODES: readonly ProblemCode[] = [
     "EFORMSIGN_TERMINAL_FAILURE",
     "DOCUMENT_FINALIZE_UNCONFIRMED",
     "DOCUMENT_FINALIZE_FAILED",
+    // Registered account-state and reset-link codes (EM-CAT-03; shipped auth identifiers). BJJ-319 phase 6d2.
+    "PENDING_APPROVAL",
+    "ACCOUNT_REJECTED",
+    "ACCOUNT_PROFILE_INCOMPLETE",
+    "NO_ACCESSIBLE_BRANCH",
+    "AUTH_RESET_TOKEN_INVALID",
+    "AUTH_RESET_TOKEN_EXPIRED",
+    "AUTH_RESET_TOKEN_USED",
 ];
 
 const PROBLEM_ERROR_CODES: readonly ProblemErrorCode[] = [
@@ -1063,6 +1081,83 @@ const PROBLEM_DEFINITIONS: Readonly<
         detail: {
             "ko-KR": "백엔드 자동 완료 처리에 실패했어요. 재시도하거나 화면에서 직접 완료 처리해 주세요.",
             "en-US": "The automated backend finalize failed. Retry or finish the step manually.",
+        },
+    },
+    PENDING_APPROVAL: {
+        status: 403,
+        title: {
+            "ko-KR": "승인 대기 중이에요",
+            "en-US": "Awaiting approval",
+        },
+        detail: {
+            "ko-KR": "관리자 승인 대기 중이에요. 승인된 후에 로그인할 수 있어요.",
+            "en-US": "Your account is awaiting admin approval. You can sign in once it is approved.",
+        },
+    },
+    ACCOUNT_REJECTED: {
+        status: 403,
+        title: {
+            "ko-KR": "가입이 거부되었어요",
+            "en-US": "Sign-up rejected",
+        },
+        detail: {
+            "ko-KR": "가입이 거부되었어요. 자세한 내용은 관리자에게 문의해 주세요.",
+            "en-US": "This sign-up was rejected. Contact an administrator for details.",
+        },
+    },
+    ACCOUNT_PROFILE_INCOMPLETE: {
+        status: 403,
+        title: {
+            "ko-KR": "가입 정보가 누락되었어요",
+            "en-US": "Sign-up details incomplete",
+        },
+        detail: {
+            "ko-KR": "가입 정보가 누락되었어요. 오너에게 문의해 주세요.",
+            "en-US": "Required sign-up details are missing. Contact an administrator.",
+        },
+    },
+    NO_ACCESSIBLE_BRANCH: {
+        status: 403,
+        title: {
+            "ko-KR": "접근 가능한 지점이 없어요",
+            "en-US": "No accessible branch",
+        },
+        detail: {
+            "ko-KR": "접근 가능한 지점이 없어요. 관리자에게 문의해 주세요.",
+            "en-US": "There is no branch you can access. Contact an administrator.",
+        },
+    },
+    AUTH_RESET_TOKEN_INVALID: {
+        status: 400,
+        title: {
+            "ko-KR": "재설정 링크가 올바르지 않아요",
+            "en-US": "Reset link is invalid",
+        },
+        detail: {
+            "ko-KR": "이 재설정 링크는 유효하지 않아요. 새 재설정 이메일을 요청해 주세요.",
+            "en-US": "This reset link is not valid. Request a new reset email.",
+        },
+    },
+    AUTH_RESET_TOKEN_EXPIRED: {
+        status: 400,
+        title: {
+            "ko-KR": "재설정 링크가 만료되었어요",
+            "en-US": "Reset link expired",
+        },
+        detail: {
+            "ko-KR": "재설정 링크가 만료되었어요. 새 재설정 이메일을 요청해 주세요.",
+            "en-US": "This reset link has expired. Request a new reset email.",
+        },
+    },
+    AUTH_RESET_TOKEN_USED: {
+        status: 400,
+        title: {
+            "ko-KR": "이미 사용된 재설정 링크예요",
+            "en-US": "Reset link already used",
+        },
+        detail: {
+            "ko-KR": "이미 사용된 재설정 링크예요. 새 재설정 이메일을 요청해 주세요.",
+            "en-US": "This reset link has already been used. Request a new reset email.",
         },
     },
 };
