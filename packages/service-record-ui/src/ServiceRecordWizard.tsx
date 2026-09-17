@@ -9,9 +9,11 @@ import {
     formatMonthDayKo,
     formatReviewFieldValue,
     formatShortDate,
+    getServiceRecordNumericErrors,
     hasDisplayValue,
     isDailyItemComplete,
     isServiceRecordHeaderComplete,
+    type ServiceRecordNumericErrors,
 } from "./form-definition";
 import type {
     ServiceRecordWizardSlots,
@@ -87,6 +89,7 @@ function DailyField({
     onFieldChange,
     onToggleMulti,
     readOnly = false,
+    numericErrors = {},
 }: {
     dataComponent: string;
     item: (typeof DAILY_ITEMS)[number];
@@ -94,6 +97,7 @@ function DailyField({
     onFieldChange: (key: string, value: unknown) => void;
     onToggleMulti: (key: string, option: string) => void;
     readOnly?: boolean;
+    numericErrors?: ServiceRecordNumericErrors;
 }) {
     const value = draft[item.key];
 
@@ -138,23 +142,33 @@ function DailyField({
     if (item.type === "counts") {
         return (
             <div data-component={`${dataComponent}_count-options`} data-slot="segrow" className="segrow">
-                {item.counts?.map((count) => (
-                    <div data-component={`${dataComponent}_count-options_row`} data-slot="segnum" className="segnum" key={count.k}>
-                        <span>{count.label}</span>
-                        <input
-                            data-slot="segnum-input"
-                            type="number"
-                            aria-label={count.label}
-                            inputMode={count.k === "temp" ? "decimal" : "numeric"}
-                            min="0"
-                            step={count.k === "temp" ? "0.1" : "1"}
-                            value={(draft[`${item.key}_${count.k}`] as string) ?? ""}
-                            disabled={readOnly}
-                            onChange={(event) => onFieldChange(`${item.key}_${count.k}`, event.target.value)}
-                        />
-                        <span>{count.unit}</span>
-                    </div>
-                ))}
+                {item.counts?.map((count) => {
+                    const fieldKey = `${item.key}_${count.k}`;
+                    const error = numericErrors[fieldKey];
+                    const errorId = `${dataComponent}-${item.key}-${count.k}-error`;
+                    return (
+                        <div data-slot="segnum-field" className="segnum-field" key={count.k}>
+                            <div data-component={`${dataComponent}_count-options_row`} data-slot="segnum" className="segnum">
+                                <span>{count.label}</span>
+                                <input
+                                    data-slot="segnum-input"
+                                    type="number"
+                                    aria-label={count.label}
+                                    aria-invalid={error ? "true" : undefined}
+                                    aria-describedby={error ? errorId : undefined}
+                                    inputMode={count.k === "temp" ? "decimal" : "numeric"}
+                                    min={count.min ?? 0}
+                                    step={count.step ?? 1}
+                                    value={(draft[fieldKey] as string) ?? ""}
+                                    disabled={readOnly}
+                                    onChange={(event) => onFieldChange(fieldKey, event.target.value)}
+                                />
+                                <span>{count.unit}</span>
+                            </div>
+                            {error ? <p id={errorId} data-component={`${dataComponent}_${item.key}-${count.k}-error`} data-slot="err" className="err" role="alert">{error}</p> : null}
+                        </div>
+                    );
+                })}
             </div>
         );
     }
@@ -352,6 +366,8 @@ export function ServiceRecordWizard({
     const signatureValue = currentSession?.clientSignature ?? clientSignature;
     const isSignatureLocked = Boolean(currentSession?.clientSignature);
     const isHeaderComplete = isServiceRecordHeaderComplete(header);
+    const numericErrors = getServiceRecordNumericErrors(draft);
+    const hasInvalidNumericAnswers = Object.keys(numericErrors).length > 0;
     const plannedDateForSession = (sessionIndex: number): string | undefined => plannedDateBySession?.get(sessionIndex);
     const displayDateForSession = (sessionIndex: number, session?: { serviceDate: string }): string => (
         session?.serviceDate?.slice(0, 10)
@@ -360,7 +376,14 @@ export function ServiceRecordWizard({
     );
     const isCurrentPageComplete = currentDayPage.items.every((index) => {
         const item = DAILY_ITEMS[index];
-        return item ? isDailyItemComplete(item, draft) : false;
+        if (!item || !isDailyItemComplete(item, draft)) return false;
+        if (item.type !== "counts") return true;
+        return (item.counts ?? []).every((count) => !numericErrors[`${item.key}_${count.k}`]);
+    });
+    const hasInvalidNumericAnswersOnCurrentPage = currentDayPage.items.some((index) => {
+        const item = DAILY_ITEMS[index];
+        return item?.type === "counts"
+            && (item.counts ?? []).some((count) => numericErrors[`${item.key}_${count.k}`]);
     });
     const renderServiceDateDisplay = (
         sessionIndex: number,
@@ -658,6 +681,7 @@ export function ServiceRecordWizard({
                                                 onFieldChange={onFieldChange}
                                                 onToggleMulti={onToggleMulti}
                                                 readOnly={readOnly}
+                                                numericErrors={numericErrors}
                                             />
                                         </div>
                                     );
@@ -666,14 +690,18 @@ export function ServiceRecordWizard({
                         )}
                         {isMomConfirmationPage ? (
                             <div data-component={child("body_confirmation-action")} data-slot="nav" className="nav confirmation-nav">
-                                {adminMode && slots?.adminSessionAction ? slots.adminSessionAction : <button data-slot="btn" className="btn submit" disabled={readOnly || busy || (!adminMode && !signatureValue)} onClick={onOpenSubmitModal}>{readOnly ? "조회 전용" : adminMode ? (busy ? "저장 중…" : "초안 저장") : "확인"}</button>}
+                                {adminMode && slots?.adminSessionAction
+                                    ? typeof slots.adminSessionAction === "function"
+                                        ? slots.adminSessionAction({ hasInvalidNumericAnswers })
+                                        : slots.adminSessionAction
+                                    : <button data-slot="btn" className="btn submit" disabled={readOnly || busy || (!adminMode && !signatureValue) || hasInvalidNumericAnswers} onClick={onOpenSubmitModal}>{readOnly ? "조회 전용" : adminMode ? (busy ? "저장 중…" : "초안 저장") : "확인"}</button>}
                             </div>
                         ) : (
                             <div data-component={child("body_nav")} data-slot="nav" className="nav">
                                 <button
                                     data-slot="btn"
                                     className="btn primary"
-                                    disabled={!readOnly && !adminMode && !isCurrentPageComplete}
+                                    disabled={!readOnly && (adminMode ? hasInvalidNumericAnswersOnCurrentPage : !isCurrentPageComplete)}
                                     onClick={onNextPage}
                                 >
                                     {readOnly || adminMode ? "다음" : editing ? "저장" : "다음"}

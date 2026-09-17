@@ -466,6 +466,34 @@ describe("per-session administrator editing", () => {
         expect(adminServiceRecordEditApi.confirmDraft).not.toHaveBeenCalled();
     });
 
+    it("disables the administrator final confirmation for invalid numeric answers without mutating the draft", () => {
+        const invalidOverview = {
+            ...sessionOverview,
+            record: {
+                ...sessionOverview.record,
+                sessions: (sessionOverview.record?.sessions ?? []).map((session, index) => index === 0
+                    ? { ...session, answers: { ...session.answers, meals_meal: "-1" } }
+                    : session),
+            },
+        } as unknown as AdminServiceRecordEditorOverview;
+        const { container } = render(
+            <ServiceRecordAdminWizard
+                clientId="42"
+                overview={invalidOverview}
+                initialDraftState={{ ...makeDraftState(), draft: null }}
+            />,
+        );
+        fireEvent.click(container.querySelectorAll('[data-slot="day"]')[0]);
+
+        const confirm = screen.getByRole("button", { name: "확인" });
+        expect(confirm).toBeDisabled();
+        fireEvent.click(confirm);
+        expect(adminServiceRecordEditApi.startDraft).not.toHaveBeenCalled();
+        expect(adminServiceRecordEditApi.updateDraft).not.toHaveBeenCalled();
+        expect(adminServiceRecordEditApi.confirmDraft).not.toHaveBeenCalled();
+        expect(container).toHaveTextContent("식사 -1회");
+    });
+
     it("saves only after 수정 확인 and returns to the overview", async () => {
         const { container } = open();
         editNote(container);

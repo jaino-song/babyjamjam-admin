@@ -8,6 +8,7 @@ import {
     ServiceRecordWizard,
     formatShortDate,
     getServiceRecordHeaderErrors,
+    hasInvalidServiceRecordNumericAnswers,
     isServiceRecordHeaderComplete,
 } from "@babyjamjam/service-record-ui";
 import type {
@@ -477,6 +478,7 @@ export function ServiceRecordAdminWizard({
         babyWeight: headerPatch.babyWeight,
     });
     const hasHeaderErrors = Object.keys(headerErrors).length > 0;
+    const hasInvalidNumericAnswers = hasInvalidServiceRecordNumericAnswers(draft);
     const changed = !priorChanges && !supplemental && (editingHeader
         ? Object.keys(headerPatch).length > 0 : Object.keys(patch).length > 1 || Boolean(dateMove));
     const locked = busy || saveStarted || needsReload || priorChanges || Boolean(supplemental);
@@ -563,6 +565,10 @@ export function ServiceRecordAdminWizard({
         if (priorChanges && !recover) { resetLocal(); return; }
         if (!recover && !changed && !saveStarted) { resetLocal(); return; }
         if (needsReload) return;
+        if (!recover && !editingHeader && hasInvalidNumericAnswers) {
+            setError("숫자 입력값을 확인해 주세요.");
+            return;
+        }
         if (!recover && editingHeader) {
             if (!isServiceRecordHeaderComplete(headerDraft)) {
                 setError("필수 기본정보를 모두 입력해 주세요.");
@@ -782,9 +788,9 @@ export function ServiceRecordAdminWizard({
                     serviceDateEditor: ({ "data-component": component, disabled, onOpen }) => (
                         <button data-component={component} data-slot="sec-edit" type="button" className="sec-edit" disabled={disabled || Boolean(baseView.scheduleProjectionBlockingReasons.length)} onClick={onOpen}>수정</button>
                     ),
-                    adminSessionAction: (
+                    adminSessionAction: ({ hasInvalidNumericAnswers: slotHasInvalidNumericAnswers }) => (
                         <Button data-component={`${ADMIN_WIZARD_COMPONENT}_body_confirmation-action_confirm`} type="button" className="btn submit"
-                            disabled={busy || (priorChanges && saveStarted) || (needsReload && (changed || saveStarted))}
+                            disabled={busy || slotHasInvalidNumericAnswers || (priorChanges && saveStarted) || (needsReload && (changed || saveStarted))}
                             onClick={() => supplemental ? resetLocal() : void confirm()}>
                             {busy ? "저장 중…" : changed || saveStarted ? "수정 확인" : "확인"}
                         </Button>

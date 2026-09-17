@@ -12,16 +12,21 @@ export {
     formatShortDate,
     getServiceRecordHeaderErrors,
     getServiceRecordHeaderFieldError,
+    getServiceRecordNumericErrors,
+    getServiceRecordNumericFieldError,
     hasDisplayValue,
+    hasInvalidServiceRecordNumericAnswers,
     isDailyItemComplete,
     isServiceRecordHeaderComplete,
 } from "./form-definition";
 export type {
     DailyItem,
+    DailyItemCount,
     DayPage,
     ItemType,
     ServiceRecordHeaderErrors,
     ServiceRecordHeaderValidationKey,
+    ServiceRecordNumericErrors,
 } from "./form-definition";
 export type {
     PendingServiceDate,
@@ -29,6 +34,7 @@ export type {
     ScheduleChangePreview,
     ServiceDateDisplaySlotProps,
     ServiceDateEditorSlotProps,
+    ServiceRecordAdminSessionActionProps,
     ServiceRecordContext,
     ServiceRecordScreen,
     ServiceRecordSession,

@@ -65,6 +65,10 @@ export interface SignatureSlotProps {
     locked: boolean;
 }
 
+export interface ServiceRecordAdminSessionActionProps {
+    hasInvalidNumericAnswers: boolean;
+}
+
 export interface ServiceDateDisplaySlotProps {
     "data-component": string;
     sessionIndex: number;
@@ -84,7 +88,7 @@ export interface ServiceRecordWizardSlots {
     /** Administrator confirm action rendered at the same overview action position as the public schedule button. */
     adminConfirmAction?: ReactNode;
     /** Per-session administrator save/return action. */
-    adminSessionAction?: ReactNode;
+    adminSessionAction?: ReactNode | ((props: ServiceRecordAdminSessionActionProps) => ReactNode);
     /** Administrator-only basic-information confirmation. */
     adminHeaderAction?: (props: {
         isHeaderComplete: boolean;
