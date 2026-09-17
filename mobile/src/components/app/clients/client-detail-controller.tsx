@@ -12,6 +12,7 @@ import { useLocale } from "@/providers/LocaleProvider";
 import { eformsignApi } from "@/services/api";
 import { todayIsoDate } from "@/lib/contracts/date-input";
 import { getStatusCategory } from "@/lib/eformsign/status-codes";
+import { t } from "@/lib/i18n/translations";
 import { toast } from "@/hooks/use-toast";
 import { useFormStore } from "@/stores/form-store";
 import { MobileTwoButtonModal } from "@/components/app/ui/MobileTwoButtonModal";
@@ -66,6 +67,7 @@ export interface UseClientDetailControllerOptions {
   clientId?: number | null;
   dataComponent: string;
   onClientUpdated?: (client: Client) => void;
+  onClientDeleted?: (clientId: number) => void;
 }
 
 export interface ClientDetailControllerResult {
@@ -90,6 +92,7 @@ export function useClientDetailController({
   clientId,
   dataComponent,
   onClientUpdated,
+  onClientDeleted,
 }: UseClientDetailControllerOptions): ClientDetailControllerResult {
   const locale = useLocale();
   const router = useRouter();
@@ -107,14 +110,20 @@ export function useClientDetailController({
   const [detailRefreshError, setDetailRefreshError] = useState(false);
   const [deleteTargetClientId, setDeleteTargetClientId] = useState<number | null>(null);
   const onClientUpdatedRef = useRef(onClientUpdated);
+  const onClientDeletedRef = useRef(onClientDeleted);
   const resolvedClientIdRef = useRef(resolvedClientId);
   const detailRequestRef = useRef(0);
   const previousDetailIdRef = useRef<number | null>(resolvedClientId);
   const initialDetailIdRef = useRef<number | null>(null);
+  const deletedDetailIdRef = useRef<number | null>(null);
 
   useEffect(() => {
     onClientUpdatedRef.current = onClientUpdated;
   }, [onClientUpdated]);
+
+  useEffect(() => {
+    onClientDeletedRef.current = onClientDeleted;
+  }, [onClientDeleted]);
 
   useEffect(() => {
     resolvedClientIdRef.current = resolvedClientId;
@@ -123,33 +132,32 @@ export function useClientDetailController({
   useEffect(() => {
     if (previousDetailIdRef.current === resolvedClientId) return;
     previousDetailIdRef.current = resolvedClientId;
-
-    if (client) {
-      /* eslint-disable-next-line react-hooks/set-state-in-effect -- selected-row prop changes reset the controller state. */
-      setDetailClient(client);
-      setDetailSheetTab(client.pendingScheduleChange ? "scheduleChange" : "basic");
-      setDetailRefreshError(false);
-      return;
-    }
-
-    if (resolvedClientId === null) {
-      detailRequestRef.current += 1;
-      initialDetailIdRef.current = null;
-      setDetailClient(null);
-      setDetailSheetTab("basic");
-      setDetailRefreshError(false);
-    }
+    detailRequestRef.current += 1;
+    initialDetailIdRef.current = null;
+    if (deletedDetailIdRef.current !== resolvedClientId) deletedDetailIdRef.current = null;
+    /* eslint-disable-next-line react-hooks/set-state-in-effect -- selected-row or URL identity changes reset controller state. */
+    setDetailClient(client ?? null);
+    setDetailSheetTab(client?.pendingScheduleChange ? "scheduleChange" : "basic");
+    setIsDetailRefreshing(false);
+    setDetailRefreshError(false);
+    setDeleteTargetClientId(null);
   }, [client, resolvedClientId]);
 
   useEffect(() => {
-    if (client || resolvedClientId === null || !detailQuery.data || detailClient) return;
+    if (
+      client ||
+      resolvedClientId === null ||
+      deletedDetailIdRef.current === resolvedClientId ||
+      !detailQuery.data ||
+      detailClient
+    ) return;
     /* eslint-disable-next-line react-hooks/set-state-in-effect -- query completion supplies the URL-selected client. */
     setDetailClient(detailQuery.data);
     setDetailSheetTab(detailQuery.data.pendingScheduleChange ? "scheduleChange" : "basic");
   }, [client, detailClient, detailQuery.data, resolvedClientId]);
 
   const retryDetail = useCallback(() => {
-    if (resolvedClientId === null) return;
+    if (resolvedClientId === null || deletedDetailIdRef.current === resolvedClientId) return;
 
     const requestId = detailRequestRef.current + 1;
     detailRequestRef.current = requestId;
@@ -157,8 +165,8 @@ export function useClientDetailController({
     setIsDetailRefreshing(true);
     setDetailRefreshError(false);
     void queryClient.fetchQuery({
-      queryKey: clientQueryKeys.detail(resolvedClientId),
-      queryFn: () => fetchClient(resolvedClientId),
+      queryKey: clientQueryKeys.detail(targetClientId),
+      queryFn: () => fetchClient(targetClientId),
       staleTime: 0,
     }).then((freshClient) => {
       if (detailRequestRef.current !== requestId || resolvedClientIdRef.current !== targetClientId) return;
@@ -198,7 +206,9 @@ export function useClientDetailController({
   });
 
   const localDetailClient = useMemo(() => {
-    if (!detailClient) return null;
+    if (!detailClient || detailClient.id !== resolvedClientId) {
+      return null;
+    }
 
     const documentStatus = documentStatusFromStatusType(detailContractDocument?.current_status?.status_type);
     if (!documentStatus || detailContractDocument?.id !== detailClient.eDocId) return detailClient;
@@ -208,10 +218,13 @@ export function useClientDetailController({
       documentStatus,
       hasSigned: documentStatus === "completed" ? true : detailClient.hasSigned,
     };
-  }, [detailClient, detailContractDocument]);
+  }, [detailClient, detailContractDocument, resolvedClientId]);
 
   const handleClientUpdated = useCallback((updatedClient: Client) => {
+    detailRequestRef.current += 1;
     setDetailClient(updatedClient);
+    setIsDetailRefreshing(false);
+    setDetailRefreshError(false);
     queryClient.setQueryData(clientQueryKeys.detail(updatedClient.id), updatedClient);
     void queryClient.invalidateQueries({ queryKey: clientQueryKeys.lists() });
     void queryClient.invalidateQueries({ queryKey: clientQueryKeys.detail(updatedClient.id) });
@@ -256,26 +269,34 @@ export function useClientDetailController({
 
   const handleDeleteConfirm = async () => {
     if (deleteTargetClientId == null) return;
+    const targetClientId = deleteTargetClientId;
 
     try {
-      await deleteClient.mutateAsync(deleteTargetClientId);
-      if (localDetailClient?.id === deleteTargetClientId) setDetailClient(null);
+      await deleteClient.mutateAsync(targetClientId);
+      deletedDetailIdRef.current = targetClientId;
+      detailRequestRef.current += 1;
+      initialDetailIdRef.current = targetClientId;
+      queryClient.removeQueries({ queryKey: clientQueryKeys.detail(targetClientId) });
+      if (detailClient?.id === targetClientId) setDetailClient(null);
+      setIsDetailRefreshing(false);
+      setDetailRefreshError(false);
       setDeleteTargetClientId(null);
+      onClientDeletedRef.current?.(targetClientId);
       toast({
         variant: "success",
-        title: locale === "ko" ? "삭제했어요" : "Deleted",
-        description: locale === "ko" ? "고객을 삭제했어요." : "The client was deleted.",
+        title: t(locale, "clients.delete-success"),
+        description: t(locale, "clients.delete-success-description"),
       });
     } catch {
       toast({
-        title: locale === "ko" ? "삭제하지 못했어요" : "Delete failed",
-        description: getUserErrorMessage(locale === "ko" ? "고객을 삭제하지 못했어요." : "The client could not be deleted."),
+        title: t(locale, "clients.delete-fail"),
+        description: getUserErrorMessage(t(locale, "clients.delete-fail-description")),
         variant: "destructive",
       });
     }
   };
 
-  const detail = localDetailClient ? (
+  const detail = (
     <>
       {isDetailRefreshing ? (
         <div
@@ -305,36 +326,38 @@ export function useClientDetailController({
           </Button>
         </div>
       ) : null}
-      <ClientDetailContent
-        data-component={dataComponent}
-        client={localDetailClient}
-        contractDocument={detailContractDocument ?? null}
-        activeTab={detailSheetTab}
-        notificationLogs={detailNotificationLogs as ClientNotificationLogRecord[]}
-        isNotificationLogsLoading={isNotificationLogsLoading}
-        isNotificationLogsError={isNotificationLogsError}
-        onRetryNotificationLogs={() => {
-          void refetchNotificationLogs();
-        }}
-        isIssuingContract={false}
-        onTabChange={setDetailSheetTab}
-        onMessage={handleMessage}
-        onIssueContract={handleIssueContract}
-        onEdit={handleEdit}
-        onDelete={setDeleteTargetClientId}
-        onClientUpdated={handleClientUpdated}
-      />
+      {localDetailClient ? (
+        <ClientDetailContent
+          data-component={dataComponent}
+          client={localDetailClient}
+          contractDocument={detailContractDocument ?? null}
+          activeTab={detailSheetTab}
+          notificationLogs={detailNotificationLogs as ClientNotificationLogRecord[]}
+          isNotificationLogsLoading={isNotificationLogsLoading}
+          isNotificationLogsError={isNotificationLogsError}
+          onRetryNotificationLogs={() => {
+            void refetchNotificationLogs();
+          }}
+          isIssuingContract={false}
+          onTabChange={setDetailSheetTab}
+          onMessage={handleMessage}
+          onIssueContract={handleIssueContract}
+          onEdit={handleEdit}
+          onDelete={setDeleteTargetClientId}
+          onClientUpdated={handleClientUpdated}
+        />
+      ) : null}
     </>
-  ) : null;
+  );
 
   const deleteModal = (
     <MobileTwoButtonModal
       data-component={`${dataComponent}_delete-confirm-modal`}
       open={deleteTargetClientId != null}
-      title={locale === "ko" ? "삭제" : "Delete"}
-      description={locale === "ko" ? "이 고객을 삭제할까요?" : "Delete this client?"}
-      cancelLabel={locale === "ko" ? "취소" : "Cancel"}
-      confirmLabel={locale === "ko" ? "삭제" : "Delete"}
+      title={t(locale, "common.delete")}
+      description={t(locale, "clients.delete-confirm")}
+      cancelLabel={t(locale, "common.cancel")}
+      confirmLabel={t(locale, "common.delete")}
       loading={deleteClient.isPending}
       onOpenChange={(open) => {
         if (!open && !deleteClient.isPending) setDeleteTargetClientId(null);

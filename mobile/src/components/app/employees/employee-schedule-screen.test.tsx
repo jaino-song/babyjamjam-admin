@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen } from "@testing-library/react";
 
 import type { Client } from "@/lib/client/types";
 import { useInfiniteClients } from "@/hooks/useInfiniteClients";
@@ -132,5 +132,21 @@ describe("EmployeeScheduleScreen", () => {
     expect(screen.getByRole("alert")).toHaveTextContent("일정을 불러오지 못했습니다");
     fireEvent.click(screen.getByRole("button", { name: "다시 시도" }));
     expect(refetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("closes the selected schedule detail when the controller reports a deleted client", () => {
+    const client = makeClient(1, { startDate: "2026-09-18" });
+    mockClients([client]);
+    render(<EmployeeScheduleScreen />);
+
+    fireEvent.click(screen.getByRole("button", { name: /2026년 9월 18일/ }));
+    fireEvent.click(screen.getByRole("button", { name: /고객 1/ }));
+    expect(screen.getByRole("region", { name: "고객 상세" })).toBeInTheDocument();
+
+    const latestControllerOptions = mockedUseClientDetailController.mock.calls.at(-1)?.[0];
+    expect(latestControllerOptions?.onClientDeleted).toEqual(expect.any(Function));
+    act(() => latestControllerOptions?.onClientDeleted?.(client.id));
+
+    expect(screen.queryByRole("region", { name: "고객 상세" })).not.toBeInTheDocument();
   });
 });

@@ -307,11 +307,18 @@ export function EmployeeScheduleScreen({
       ? detailClientOverride
       : allClients.find((client) => client.id === selectedEntry.clientId) ?? null
     : null;
+
+  const handleBack = () => {
+    setSelectedEntry(null);
+    setDetailClientOverride(null);
+  };
+
   const detailController = useClientDetailController({
     client: selectedClient,
     clientId: selectedEntry?.clientId ?? null,
     dataComponent: `${dataComponent}_sliding-card_stage_detail-pane_body_client`,
     onClientUpdated: setDetailClientOverride,
+    onClientDeleted: handleBack,
   });
   const calendarDays = useMemo(
     () => buildMonthCalendarDays(visibleMonth, range.horizonStart, range.horizonEnd),
@@ -328,11 +335,6 @@ export function EmployeeScheduleScreen({
   const handleEntrySelect = (entry: ScheduleEntry) => {
     setSelectedDateKey(entry.dateKey);
     setSelectedEntry(entry);
-    setDetailClientOverride(null);
-  };
-
-  const handleBack = () => {
-    setSelectedEntry(null);
     setDetailClientOverride(null);
   };
 
@@ -492,7 +494,7 @@ export function EmployeeScheduleScreen({
       ) : (
         <SlidingCard
           data-component={`${dataComponent}_sliding-card`}
-          open={Boolean(selectedEntry && detailController.detailClient)}
+          open={Boolean(selectedEntry)}
           onBack={handleBack}
           backLabel="서비스 일정"
           detailKey={selectedEntry?.id ?? null}
