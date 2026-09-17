@@ -733,5 +733,7 @@ TL;DR: 배정(4b-1 백엔드: 역할·자격·동시 변경 코드 전환 / 4b-2
 
 **pdfjs 환경 플레이크 (2026-09-17):** `receipt-pdf-verifier.service.spec.ts` 1테스트가 통합·고립·base `582e806a1` 프로브 워크트리에서 모두 실패(`capability_unverified`) — 환경성 기존 이슈 확정(웨이브1·보정 무관). Phase 9 증거 실행에서 재확인 필요.
 
-**웨이브1 확정 (2026-09-17):** 6d1+6g1+6h1 → 초안 3건 FIX_REQUIRED(B1: 백엔드 충돌 extras 유실·FE 5xx-mutation outcome 위반·MO login 누락) → 보정 `b099ecb2e`/`cf6929a72`/`fdd2dad1a` → 재감사 **3건 SHIP**. 통합 `5f205c805`(병합+보정): BE 362/5159(+pdfjs 환성), FE 267/1685, MO 252/1701. 기록: 126행 migrated, findings wave1-{backend-services,fe-bff,mo-bff}. 유닛 워크트리 정리 예정. 6.1 잔여 130행.
+**웨이브1 확정 (2026-09-17):** 6d1+6g1+6h1 → 초안 3건 FIX_REQUIRED(B1: 백엔드 충돌 extras 유실·FE 5xx-mutation outcome 위반·MO login 누락) → 보정 `b099ecb2e`/`cf6929a72`/`fdd2dad1a` → 재감사 **3건 SHIP**. 통합 `5f205c805`(병합+보정): BE 362/5159(+pdfjs 환성), FE 267/1685, MO 252/1701. 기록: 66행 migrated 확정(wave1: BE 5 + FE 32 + MO 29, 부모 대비 기계 대조 완료). 유닛 워크트리 정리 예정. 6.1 잔여는 wave2 확정 후 재산정.
+
+**기록 정정 (2026-09-17 19:4x KST):** 당초 "126행 migrated"·"6.1 잔여 130행"은 과대/미검증이었다 — 126행 중 60행(FE 31 + MO 29)은 wave2 리스트(`/tmp/em-6/wave2-{fe,mo}.txt`)와 정확히 일치하는 미병합분 선반영이었으므로 본 정정에서 parent 기준으로 legacy 복원했다(복원 후 부모 대비 migrated delta 정확히 66행, wave2 잔류 0행 기계 확인). wave2 유닛 `40d05d558`(FE 59파일)/`9d5bb5ae2`(MO 52파일)는 각 워크트리 HEAD에 존재하고 재감사 **2건 SHIP**(6g2b/6h2b) 확보 — 병합 후 해당 60행을 migrated로 확정 예정. 6d2(auth4, dirty 12파일 보존)는 z.ai 5시간 한도(리셋 22:05 KST)로 중단, 재개 대기.
 - carried: 6d1 gated e2e 2건(live DB), 6g1 N2~N6(json 10파일·check-phone·area-templates read·stream boundary), 6h1 N4(agent passthrough)·AUTH_REFRESH_REPLAY_CONCURRENT 카탈로그 등록, pdfjs 환경 플레이크.
