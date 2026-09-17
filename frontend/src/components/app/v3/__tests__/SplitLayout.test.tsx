@@ -1,7 +1,63 @@
-import { render } from "@testing-library/react";
+import { act, render } from "@testing-library/react";
 import { SplitLayout } from "../SplitLayout";
 
 describe("SplitLayout", () => {
+  it("remeasures panels when the shell width changes after a window resize", () => {
+    jest.useFakeTimers();
+    const originalObserver = global.ResizeObserver;
+    let notifyResize: ResizeObserverCallback = () => undefined;
+    const disconnect = jest.fn();
+    const observer = { observe: jest.fn(), unobserve: jest.fn(), disconnect };
+    global.ResizeObserver = jest.fn((callback: ResizeObserverCallback) => {
+      notifyResize = callback;
+      return observer;
+    }) as unknown as typeof ResizeObserver;
+    let availableWidth = 298.5625;
+    const originalRect = HTMLElement.prototype.getBoundingClientRect;
+    const rectSpy = jest.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
+      const width = this.dataset.testid === "split-parent"
+        ? availableWidth
+        : this.dataset.panel === "detail"
+          ? Number.parseFloat(this.closest<HTMLElement>('[data-slot="split-layout"]')?.style.getPropertyValue("--compact-detail-width") ?? "0")
+          : 0;
+      return width ? { ...originalRect.call(this), width } as DOMRect : originalRect.call(this);
+    });
+    const frameSpy = jest.spyOn(window, "requestAnimationFrame").mockImplementation((callback) => window.setTimeout(() => callback(0), 0));
+    const cancelSpy = jest.spyOn(window, "cancelAnimationFrame").mockImplementation(window.clearTimeout);
+
+    try {
+      const { container, unmount } = render(
+        <main data-slot="main-content">
+          <section data-testid="split-parent">
+            <SplitLayout data-component="desktop_v3_tests_split-layout-resize" hasSelection>
+              <div>목록</div>
+              <div>상세</div>
+            </SplitLayout>
+          </section>
+        </main>,
+      );
+      const root = container.querySelector<HTMLElement>('[data-slot="split-layout"]')!;
+      expect(root.style.getPropertyValue("--compact-detail-width")).toBe("298.5625px");
+
+      act(() => {
+        availableWidth = 288;
+        notifyResize([], observer as ResizeObserver);
+        jest.runOnlyPendingTimers();
+      });
+
+      expect(root.style.getPropertyValue("--compact-detail-width")).toBe("288px");
+      expect(root.style.getPropertyValue("--compact-list-offset")).toBe("304px");
+      unmount();
+      expect(disconnect).toHaveBeenCalled();
+    } finally {
+      global.ResizeObserver = originalObserver;
+      rectSpy.mockRestore();
+      frameSpy.mockRestore();
+      cancelSpy.mockRestore();
+      jest.useRealTimers();
+    }
+  });
+
   it("animates each panel once when it mounts", () => {
     const { container } = render(
       <SplitLayout data-component="desktop_v3_tests_split-layout" hasSelection>
