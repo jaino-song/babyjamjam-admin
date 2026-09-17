@@ -516,7 +516,7 @@ export function SystemAdminPage(): ReactElement {
     const query = accountSearch.trim().toLowerCase();
     return (accountFilter === "all" || accountFilter === category) && (!query || [user.name, user.email, user.phone, user.role, ...user.branches.map((branch) => branch.name)].some((value) => value?.toLowerCase().includes(query)));
   }), [accountFilter, accountSearch, users]);
-  const isOpen = itemParam !== null && (itemParam === NEW_BRANCH_ID || (activeSection === "branches" ? filteredBranches.some((branch) => branch.id === itemParam) : filteredUsers.some((user) => user.id === itemParam)));
+  const isOpen = itemParam !== null && (itemParam === NEW_BRANCH_ID || (activeSection === "branches" ? branches.some((branch) => branch.id === itemParam) : filteredUsers.some((user) => user.id === itemParam)));
   const selectedBranch = branches.find((branch) => branch.id === itemParam) ?? null;
   const selectedUser = users.find((user) => user.id === itemParam) ?? null;
 

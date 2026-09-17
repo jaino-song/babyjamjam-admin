@@ -86,8 +86,9 @@ beforeAll(() => {
   });
 });
 
-function renderPage(item: string) {
-  mockSearchParams = new URLSearchParams({ section: "branches", item });
+function renderPage(item?: string) {
+  mockSearchParams = new URLSearchParams({ section: "branches" });
+  if (item) mockSearchParams.set("item", item);
   const queryClient = new QueryClient({
     defaultOptions: {
       mutations: { retry: false },
@@ -109,6 +110,17 @@ function renderPage(item: string) {
         </QueryClientProvider>,
       ),
   };
+}
+
+async function openCreation(view: { rerenderPage: () => void }) {
+  fireEvent.click(screen.getByRole("button", { name: "지점 추가" }));
+  expect(mockPush).toHaveBeenCalledWith(
+    "/system-admin?section=branches&item=new-branch",
+    { scroll: false },
+  );
+  mockSearchParams = new URLSearchParams({ section: "branches", item: "new-branch" });
+  view.rerenderPage();
+  await screen.findByLabelText("이메일");
 }
 
 function fillRequiredFields() {
@@ -159,6 +171,52 @@ describe("SystemAdminPage branch creation navigation", () => {
     mockSearchParams = new URLSearchParams({ section: "branches", item: createdBranch.id });
     view.rerenderPage();
     expect(await screen.findByRole("heading", { name: createdBranch.name })).toBeInTheDocument();
+  });
+
+  it("keeps the created detail open when the active search excludes the branch", async () => {
+    const view = renderPage();
+    await screen.findByLabelText("지점 검색");
+    fireEvent.change(screen.getByLabelText("지점 검색"), {
+      target: { value: "없는 지점" },
+    });
+    await openCreation(view);
+    fillRequiredFields();
+
+    fireEvent.click(screen.getByRole("button", { name: "지점 저장" }));
+
+    await waitFor(() =>
+      expect(mockReplace).toHaveBeenCalledWith(
+        "/system-admin?section=branches&item=branch-created",
+        { scroll: false },
+      ),
+    );
+    mockSearchParams = new URLSearchParams({ section: "branches", item: createdBranch.id });
+    view.rerenderPage();
+
+    expect(document.querySelector('[data-slot="detail-pane"]')).toHaveAttribute("aria-hidden", "false");
+    expect(screen.getByRole("heading", { name: createdBranch.name })).toBeInTheDocument();
+  });
+
+  it("keeps the created detail open when the active status filter excludes the branch", async () => {
+    const view = renderPage();
+    await screen.findByLabelText("지점 검색");
+    fireEvent.click(screen.getByRole("button", { name: /승인 완료/ }));
+    await openCreation(view);
+    fillRequiredFields();
+
+    fireEvent.click(screen.getByRole("button", { name: "지점 저장" }));
+
+    await waitFor(() =>
+      expect(mockReplace).toHaveBeenCalledWith(
+        "/system-admin?section=branches&item=branch-created",
+        { scroll: false },
+      ),
+    );
+    mockSearchParams = new URLSearchParams({ section: "branches", item: createdBranch.id });
+    view.rerenderPage();
+
+    expect(document.querySelector('[data-slot="detail-pane"]')).toHaveAttribute("aria-hidden", "false");
+    expect(screen.getByRole("heading", { name: createdBranch.name })).toBeInTheDocument();
   });
 
   it("closes the creation detail safely when the response has no branch id", async () => {
