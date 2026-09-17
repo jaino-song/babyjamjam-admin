@@ -133,7 +133,7 @@ export class MessageAutomationPoliciesResponseDto {
             {
                 id: "trigger-dispatch",
                 title: "자동 전송 실행",
-                description: "승인된 지점의 자동 전송 잡을 주기적으로 확인하고, 원자적 잡 클레임과 발송 이력 확인으로 중복 발송을 막습니다.",
+                description: "승인된 지점의 자동 전송을 주기적으로 확인하고, 처리 중인 작업과 발송 이력을 확인해 같은 메시지가 중복 발송되지 않도록 합니다.",
                 active: policyActivations["trigger-dispatch"],
                 requiresApproval: true,
                 rows: [
@@ -145,7 +145,7 @@ export class MessageAutomationPoliciesResponseDto {
                     {
                         id: "duplicate-protection",
                         label: "중복 방지",
-                        value: "원자적 잡 클레임 + 발송 이력 확인",
+                        value: "처리 중인 작업 확인 + 발송 이력 확인",
                     },
                     {
                         id: "send-time",
