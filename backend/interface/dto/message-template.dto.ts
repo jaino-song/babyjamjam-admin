@@ -1,5 +1,6 @@
-import { IsString, IsArray, IsBoolean, ValidateNested, IsOptional, IsEnum, IsNumber } from "class-validator";
+import { IsString, IsArray, IsBoolean, ValidateNested, IsOptional, IsEnum, IsNumber, Matches } from "class-validator";
 import { Type } from "class-transformer";
+import { MESSAGE_TEMPLATE_REQUIRED_FIELD_MESSAGES } from "domain/entities/message-template.entity";
 
 export class TemplateVariableDto {
     @IsString()
@@ -46,9 +47,11 @@ export class TemplateVariableDto {
 
 export class CreateMessageTemplateDto {
     @IsString()
+    @Matches(/\S/, { message: MESSAGE_TEMPLATE_REQUIRED_FIELD_MESSAGES.name })
     name!: string;
 
     @IsString()
+    @Matches(/\S/, { message: MESSAGE_TEMPLATE_REQUIRED_FIELD_MESSAGES.content })
     content!: string;
 
     @IsArray()
@@ -60,10 +63,12 @@ export class CreateMessageTemplateDto {
 export class UpdateMessageTemplateDto {
     @IsString()
     @IsOptional()
+    @Matches(/\S/, { message: MESSAGE_TEMPLATE_REQUIRED_FIELD_MESSAGES.name })
     name?: string;
 
     @IsString()
     @IsOptional()
+    @Matches(/\S/, { message: MESSAGE_TEMPLATE_REQUIRED_FIELD_MESSAGES.content })
     content?: string;
 
     @IsArray()
