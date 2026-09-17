@@ -316,6 +316,7 @@ export function EmployeeDirectoryManager({ dataComponent }: { dataComponent: str
                 open={formDialogOpen}
                 onClose={handleFormDialogClose}
                 employee={editingEmployee}
+                onSuccess={handleFormPanelSuccess}
             />
 
             <TwoButtonModal

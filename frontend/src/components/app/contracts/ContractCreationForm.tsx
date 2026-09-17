@@ -120,6 +120,11 @@ const AREA_TEMPLATE_DISPLAY_LABELS: Record<string, string> = {
   Seogu: "서구",
 };
 
+const AREA_TEMPLATES_LOADING_MESSAGE = "계약서 유형을 불러오는 중입니다...";
+const AREA_TEMPLATES_ERROR_MESSAGE = "계약서 유형을 불러오지 못했습니다. 잠시 후 다시 시도해 주세요.";
+const AREA_TEMPLATES_EMPTY_MESSAGE = "설정된 계약서 유형이 없습니다. 관리자에게 계약서 유형을 설정해 달라고 요청해 주세요.";
+const AREA_TEMPLATE_SELECTION_INVALID_MESSAGE = "계약서 선택을 다시 확인해 주세요.";
+
 function getAreaTemplateDisplayLabel(areaId: string, templateName?: string | null): string {
   const mappedLabel = AREA_TEMPLATE_DISPLAY_LABELS[areaId];
   if (mappedLabel) return mappedLabel;
@@ -474,7 +479,19 @@ export const ContractCreationForm = ({
     voucherType,
     voucherYear
   );
-  const { data: areaTemplates = [], isLoading: isAreaTemplatesLoading } = useAreaTemplates();
+  const {
+    data: areaTemplates = [],
+    isError: isAreaTemplatesError,
+    isFetching: isAreaTemplatesFetching,
+    isLoading: isAreaTemplatesLoading,
+    refetch: refetchAreaTemplates,
+  } = useAreaTemplates();
+  const isAreaTemplatesEmpty = !isAreaTemplatesLoading && !isAreaTemplatesError && areaTemplates.length === 0;
+  const isAreaTemplateSelectDisabled = isAreaTemplatesLoading || isAreaTemplatesError || isAreaTemplatesEmpty;
+  const isAreaTemplateSelectionValid =
+    !isAreaTemplatesLoading &&
+    !isAreaTemplatesError &&
+    areaTemplates.some((template) => template.areaId === area);
   const { data: voucherYears = [], isLoading: isVoucherYearsLoading } = useVoucherYears();
   const { data: employees } = useEmployees();
   const createClientMutation = useCreateClient();
@@ -715,6 +732,18 @@ export const ContractCreationForm = ({
 
   const handleContractCreation = async ({ mode = "auto" }: ContractCreationRunOptions = {}) => {
     if (isSubmittingRef.current) return;
+    if (!isAreaTemplateSelectionValid) {
+      const areaTemplateMessage = isAreaTemplatesLoading
+        ? AREA_TEMPLATES_LOADING_MESSAGE
+        : isAreaTemplatesError
+          ? AREA_TEMPLATES_ERROR_MESSAGE
+          : areaTemplates.length === 0
+            ? AREA_TEMPLATES_EMPTY_MESSAGE
+            : AREA_TEMPLATE_SELECTION_INVALID_MESSAGE;
+      setSubmitError(getUserErrorMessage(areaTemplateMessage));
+      setActiveStep(0);
+      return;
+    }
     isSubmittingRef.current = true;
     onSubmissionStateChange?.(true);
     try {
@@ -1119,7 +1148,7 @@ export const ContractCreationForm = ({
     }
   };
 
-  const isStep1Valid = Boolean(name.trim() && phone.trim() && area);
+  const isStep1Valid = Boolean(name.trim() && phone.trim() && isAreaTemplateSelectionValid);
   const isBirthdayValid = !birthday || isValidClientBirthdayInput(birthday);
   const isEmployee1Valid = employeeId !== null;
   const isEmployee2Valid = !showEmployee2 || employee2Id !== null;
@@ -1265,7 +1294,7 @@ export const ContractCreationForm = ({
             <Select
               value={area}
               onValueChange={setArea}
-              disabled={isAreaTemplatesLoading}
+              disabled={isAreaTemplateSelectDisabled}
               data-component="desktop_contracts_creation_doc-type-field_select"
             >
               <SelectTrigger
@@ -1287,6 +1316,45 @@ export const ContractCreationForm = ({
                 ))}
               </SelectContent>
             </Select>
+            {isAreaTemplatesLoading && (
+              <Alert
+                data-component="desktop_contracts_creation_doc-type-field_status_loading"
+                variant="info"
+              >
+                <AlertDescription>{AREA_TEMPLATES_LOADING_MESSAGE}</AlertDescription>
+              </Alert>
+            )}
+            {isAreaTemplatesError && (
+              <Alert
+                data-component="desktop_contracts_creation_doc-type-field_status_error"
+                variant="destructive"
+              >
+                <AlertDescription>
+                  {AREA_TEMPLATES_ERROR_MESSAGE}
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    data-component="desktop_contracts_creation_doc-type-field_status_error_retry"
+                    className="mt-3"
+                    onClick={() => void refetchAreaTemplates()}
+                    disabled={isAreaTemplatesFetching}
+                  >
+                    {isAreaTemplatesFetching ? "재시도 중..." : "다시 시도"}
+                  </Button>
+                </AlertDescription>
+              </Alert>
+            )}
+            {isAreaTemplatesEmpty && (
+              <Alert
+                data-component="desktop_contracts_creation_doc-type-field_status_empty"
+                variant="warning"
+              >
+                <AlertDescription>
+                  {AREA_TEMPLATES_EMPTY_MESSAGE}
+                </AlertDescription>
+              </Alert>
+            )}
           </div>
         </div>
       ),

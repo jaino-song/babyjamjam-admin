@@ -60,6 +60,7 @@ interface ClientServiceRecordsTabProps {
     revisionHistory?: ServiceRecordRevisionHistoryResponse;
     isRevisionHistoryLoading?: boolean;
     isRevisionHistoryError?: boolean;
+    revisionHistoryErrorStatus?: number;
     isRevisionHistoryRefreshing?: boolean;
     onRefreshRevisionHistory?: () => void;
     onRetryRevisionDocument?: (
@@ -128,6 +129,7 @@ function ClientServiceRecordsTabContent({
     revisionHistory,
     isRevisionHistoryLoading = false,
     isRevisionHistoryError = false,
+    revisionHistoryErrorStatus,
     isRevisionHistoryRefreshing = false,
     onRefreshRevisionHistory,
     onRetryRevisionDocument,
@@ -140,6 +142,17 @@ function ClientServiceRecordsTabContent({
     const record = overview?.record ?? null;
     const scheduleProjection = overview?.scheduleProjection;
     const hasAuthoritativeProjection = scheduleProjection !== undefined;
+    const isServiceRecordSourceUnavailable = scheduleProjection?.blockingReasons.some(
+        (reason) => reason.code === "SERVICE_RECORD_SOURCE_UNAVAILABLE",
+    ) ?? false;
+    const isNoServiceRecordCase = !isLoading
+        && !isError
+        && overview?.record === null
+        && assignments.length === 0
+        && isServiceRecordSourceUnavailable;
+    const isRevisionHistoryEmpty = isNoServiceRecordCase
+        && isRevisionHistoryError
+        && revisionHistoryErrorStatus === 404;
     const projectionEntries = scheduleProjection && scheduleProjection.blockingReasons.length === 0
         ? scheduleProjection.entries
         : [];
@@ -366,6 +379,7 @@ function ClientServiceRecordsTabContent({
                     history={revisionHistory}
                     isLoading={isRevisionHistoryLoading}
                     isError={isRevisionHistoryError}
+                    isEmpty={isRevisionHistoryEmpty}
                     isRefreshing={isRevisionHistoryRefreshing}
                     onRefresh={onRefreshRevisionHistory}
                     onRetry={onRetryRevisionDocument}
@@ -663,6 +677,7 @@ function RevisionHistoryCard({
     history,
     isLoading,
     isError,
+    isEmpty,
     isRefreshing,
     onRefresh,
     onRetry,
@@ -671,6 +686,7 @@ function RevisionHistoryCard({
     history?: ServiceRecordRevisionHistoryResponse;
     isLoading: boolean;
     isError: boolean;
+    isEmpty: boolean;
     isRefreshing: boolean;
     onRefresh?: () => void;
     onRetry?: (
@@ -693,6 +709,19 @@ function RevisionHistoryCard({
                 {["현재 확정본", "사용 가능 문서", "문서 작업"].map((label) => (
                     <ServiceRecordInfoRowSkeleton key={label} label={label} />
                 ))}
+            </InfoCard>
+        );
+    }
+
+    if (isEmpty) {
+        return (
+            <InfoCard data-component={dataComponent} title="수정본·문서 이력">
+                <div
+                    data-component={`${dataComponent}_empty`}
+                    className="py-[calc(12px*var(--glint-ui-scale,1))] text-[calc(12px*var(--glint-ui-scale,1))] text-v3-text-muted"
+                >
+                    아직 제공기록지 이력이 없습니다.
+                </div>
             </InfoCard>
         );
     }

@@ -127,3 +127,52 @@
 - MESSAGE-TEMPLATE-READ-001: `/messages/system-templates` → `/messages/templates` 리다이렉트 확인. 미선택 안내, 기존 템플릿 선택 후 이름/내용 렌더, 변경 전 `저장` 비활성 확인. screenshot에서 입력/본문/버튼 잘림 없음. `돌아가기` 후 `/messages` URL과 메시지 전송 화면 렌더 확인. 생성/저장/삭제는 실행하지 않음.
 - 위 항목은 해당 조회/탐색 하위 시나리오만 통과다. 각 기능의 쓰기·오류·작은 화면 전체 통과를 의미하지 않는다.
 - 운영 DB 연결 차단 추가 조사: Supabase CLI v2.95.4 공식 소스에서 `db query --linked`의 Management API 호출 전에 root persistent pre-run이 DB 연결 설정/직접 TCP 검사를 수행함을 확인. 관찰된 IPv6 오류는 SQL 실행 전 단계이며 운영 DB 확인 성공이 아니다. 토큰 추출, 새 인증, 권한 확대, CLI 수정/업그레이드는 수행하지 않음. 운영 프로젝트 식별과 계약 자동 연결 후보 조회는 계속 미완료.
+
+
+## Dev QA continuation — customer validation and template prerequisite
+
+- Environment: local frontend :3100 / backend :3001 against the previously verified dev DB; QA branch `qa-local-20260917`, customer 162 only. Not production proof.
+- PASS: editing birthday to `1990-02-30` and saving displays a valid-date error and keeps the dialog open. Cancelling preserves original birthday `1990-01-15` in customer details.
+- PASS (empty state only): customer contract tab shows no-contract information; notification tab shows no-send-history information.
+- OBSERVED: service-record tab for this unscheduled customer displays unavailable source/history warnings and says to retry later, with no visible retry control. Cause not yet established; do not classify as a confirmed backend defect.
+- CONFIRMED PREREQUISITE: dev QA branch has zero document-template rows (dev total two). Contract type selector appears blank without explanation. Source also drops template-query error state, conflating empty and failed results.
+- FIX BLOCKED: assigned Luna max worker in `unit-qa-contract-template-states` hit its usage limit. It left an untracked `ContractCreationForm.area-template-states.test.tsx`; no implementation commit or integration, and no passing verification claimed. Preserve for resumption on the same required model.
+- OBSERVED: one fresh local settings tab showed Incheon after an earlier QA selection; reselected QA before writes. Root cause remains unverified.
+- Remaining: QA area/template and employee fixtures, configured contract wizard/send flow, service-record diagnosis, template-state fix and regression verification, and remaining inventory coverage.
+
+
+## Dev QA continuation — employee creation/edit and schedule
+
+- Created QA-only employee `QA 개발 직원 20260917` in the dev QA branch using the approved controlled recipient, standard grade, Yeonsu work area, and assignment availability OFF. No send action performed.
+- PASS: phone availability check, required-field progress, creation, list count/detail display.
+- PASS (persistence through browser reload): renamed to `QA 개발 직원 수정 20260917`; the new name survives reload and detail reselection.
+- FAIL EMPLOYEE-DETAIL-STALE: immediately after editing, list shows new name while selected detail title/basic info retain old name; switching tabs does not repair it. Read-only scout traced missing `onSuccess={handleFormPanelSuccess}` on EmployeeDirectoryManager's edit dialog; list refetch alone does not update selectedEmployee local state. No fix integrated yet.
+- PASS: empty work-history message. Assigned-customer tab inspected but final empty-state text not separately verified.
+- PASS (empty schedule only): calendar loads, selecting Sept 18 updates detail date, list view displays zero records and explicit empty-state message. Populated schedule and mutations remain untested.
+- Luna template worker was resumed on the same required model; final result pending at this checkpoint.
+
+
+## 2026-09-18 continuation — further bounded checks
+
+- PASS: customer duplicate-number message appears for the existing QA recipient; after filling all four required fields, Next remains disabled. Cancelled without creating another customer.
+- PASS: consultation read/unread empty filters render explicit empty result.
+- PASS (inspection only): file repository empty state and upload dialog open/cancel. Actual upload not executed: owner dialog explicitly says files are shared to all branches.
+- PASS: 2026 price table duration/type filters, no-match state, reset (81 data rows), and arithmetic consistency of all 81 rendered rows (total equals subsidy plus copay). This does not validate against official source pricing.
+- LIVE EVIDENCE: QA162 service-record overview returned 200; revision history returned 404 repeatedly. Combined with source trace, no-case is being displayed as transient history failure. Local UI-only fix delegated with strict 404 plus successful no-case-overview criteria; 500/network/permission errors must remain errors.
+- Template correction review requested final retry entry guard as well as disabled wizard controls. New fixture personal contact/name requested to be replaced with synthetic data before integration.
+
+- STATS local blocker identified: server log contains sanitized `PostHog statistics are not configured`; source throws this when POSTHOG_API_KEY or POSTHOG_PROJECT_ID is absent. UI generic error and retry were exercised, but successful statistics rendering is blocked by local configuration. No env changes performed and no production failure inferred.
+- Dev QA employee persistent ID is 132; DB read confirms edited name, availability false, and work area.
+
+
+## Integrated correction verification — 2026-09-18
+
+- All implementation delegated to Luna max fast/priority in isolated unit worktrees; main reviewed and integrated the final net changes. Execution DELEGATE / Audit SELF: local UI state and display only, no API/auth/schema/persistence contract changes.
+- Contract template states: browser confirmed disabled selector plus explicit unconfigured message. Loading/error/retry, stale selection, retry-time mutation blocking and input preservation covered by component tests. No live provider failure was injected.
+- Employee detail: browser renamed dev employee132 to `QA 개발 직원 확인 20260918`; list, selected detail title and basic info all changed immediately without reload/reselection. Availability stays false.
+- No-case service-record revision history: browser now shows `아직 제공기록지 이력이 없습니다.` for QA162. Existing missing source schedule warning remains truthful. Tests ensure 500/network/401/403/other404 and overview failures are not concealed.
+- Integrated frontend verification: 255 suites / 1797 tests PASS; type-check PASS; scoped ESLint 0 errors / 1 existing exhaustive-deps warning; UI architecture gate PASS; production build PASS. Dev frontend was stopped for build and restarted with approved qa:fe launcher afterward.
+- Security review: dependency audit reports 0 vulnerabilities; staged added-line checks found no private key/live key/embedded DB URL/unsafe execution/controlled recipient. No dependency, schema, env or auth changes.
+- Created dev-only QA area `QA20260917Namdonggu` and one document-template metadata row, linked to existing dev Namdonggu 2-step template. Guarded by verified dev DB fingerprint and QA branch ownership in one transaction. No provider calls or sends. This enables subsequent wizard checks; no contract has been issued yet.
+- Evidence logs: `/tmp/bjj-qa-20260918-{tests,types,lint,ui,build}.log`, `/tmp/bjj-qa-20260918-audit.json`.
+- No dev/main merge or deployment performed. Full QA remains incomplete: configured contract flows, delivery/PDF, populated schedules/records, mobile parity, role boundaries and broader write cases remain.

@@ -89,6 +89,22 @@ function createPlannedSession(
     };
 }
 
+function createSourceUnavailableOverview(
+    blockerCode = "SERVICE_RECORD_SOURCE_UNAVAILABLE",
+): ServiceRecordOverview {
+    return {
+        record: null,
+        assignments: [],
+        scheduleProjection: {
+            entries: [],
+            blockingReasons: [{
+                code: blockerCode,
+                message: "서비스 예정 회차 근거를 확인할 수 없습니다.",
+            }],
+        },
+    };
+}
+
 describe("ClientServiceRecordsTab", () => {
     beforeEach(() => {
         mutateAsync.mockReset();
@@ -293,6 +309,84 @@ describe("ClientServiceRecordsTab", () => {
 
         fireEvent.click(screen.getByRole("button", { name: "다시 시도" }));
         await waitFor(() => expect(onRetry).toHaveBeenCalledWith("revision-1", "state-1", "generation-1"));
+    });
+
+    it("renders a truthful empty state for an intentional no-case revision 404", () => {
+        render(
+            <ClientServiceRecordsTab
+                data-component={TEST_COMPONENT}
+                overview={createSourceUnavailableOverview()}
+                clientId={100}
+                isLoading={false}
+                isError={false}
+                isRevisionHistoryError
+                revisionHistoryErrorStatus={404}
+            />,
+        );
+
+        expect(screen.getByText("아직 제공기록지 이력이 없습니다.")).toBeInTheDocument();
+        expect(screen.queryByText("문서 이력을 확인할 수 없습니다")).not.toBeInTheDocument();
+        expect(screen.queryByText("잠시 후 다시 조회해 주세요.")).not.toBeInTheDocument();
+    });
+
+    it.each([
+        ["500", 500],
+        ["network", undefined],
+    ] as const)("keeps the overview error when the overview request failed (%s)", (_label, status) => {
+        render(
+            <ClientServiceRecordsTab
+                data-component={TEST_COMPONENT}
+                overview={createSourceUnavailableOverview()}
+                clientId={100}
+                isLoading={false}
+                isError
+                isRevisionHistoryError
+                revisionHistoryErrorStatus={status}
+            />,
+        );
+
+        expect(screen.getByText("제공기록지 정보를 불러오지 못했습니다")).toBeInTheDocument();
+        expect(screen.queryByText("문서 이력을 확인할 수 없습니다")).not.toBeInTheDocument();
+        expect(screen.queryByText("아직 제공기록지 이력이 없습니다.")).not.toBeInTheDocument();
+    });
+
+    it.each([
+        ["500", 500],
+        ["network", undefined],
+        ["401", 401],
+        ["403", 403],
+    ] as const)("keeps the revision error for a successful no-case overview (%s)", (_label, status) => {
+        render(
+            <ClientServiceRecordsTab
+                data-component={TEST_COMPONENT}
+                overview={createSourceUnavailableOverview()}
+                clientId={100}
+                isLoading={false}
+                isError={false}
+                isRevisionHistoryError
+                revisionHistoryErrorStatus={status}
+            />,
+        );
+
+        expect(screen.getByText("문서 이력을 확인할 수 없습니다")).toBeInTheDocument();
+        expect(screen.queryByText("아직 제공기록지 이력이 없습니다.")).not.toBeInTheDocument();
+    });
+
+    it("keeps the revision error for a different 404 state", () => {
+        render(
+            <ClientServiceRecordsTab
+                data-component={TEST_COMPONENT}
+                overview={createSourceUnavailableOverview("OTHER_SOURCE_BLOCKER")}
+                clientId={100}
+                isLoading={false}
+                isError={false}
+                isRevisionHistoryError
+                revisionHistoryErrorStatus={404}
+            />,
+        );
+
+        expect(screen.getByText("문서 이력을 확인할 수 없습니다")).toBeInTheDocument();
+        expect(screen.queryByText("아직 제공기록지 이력이 없습니다.")).not.toBeInTheDocument();
     });
 
     it("shows a failure toast when manual sending resolves without a sent job", async () => {
