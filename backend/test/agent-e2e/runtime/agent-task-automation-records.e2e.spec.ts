@@ -290,8 +290,8 @@ describeDb("committed task automation terminal record transactions", () => {
 
     it("persists multiple schedule/client scopes in deterministic coverage-before-exact order and refuses recreated schedules", async () => {
         const client = await db.client.create({ data: { id: clientId, branchId, name: "합성 일정 고객", voucherClient: false, phone: "01000000001" } });
-        await db.employee.createMany({ data: [97901, 97902].map((id) => ({ id, branchId, name: "합성 담당자", phone: "01000000002", workArea: [], grade: "test" })) });
-        const scheduleInput = { id: clientId + 1, branchId, clientId, primaryEmployeeId: 97901, secondaryEmployeeId: 97902,
+        await db.employee.createMany({ data: [31991, 31992].map((id) => ({ id, branchId, name: "합성 담당자", phone: "01000000002", workArea: [], grade: "test" })) });
+        const scheduleInput = { id: clientId + 1, branchId, clientId, primaryEmployeeId: 31991, secondaryEmployeeId: 31992,
             workAddress: "합성 일정 주소", startDate: new Date("2030-01-01"), endDate: new Date("2030-01-10") };
         const schedule = await db.employee_schedule.create({ data: scheduleInput });
         const base: AgentAutomationEffect = { kind: "client-rule", ruleId: "rule-z", scheduleId: null, recipientType: "client", templateKey: "CLIENT_GREETING",
