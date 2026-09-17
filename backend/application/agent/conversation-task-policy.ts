@@ -359,6 +359,13 @@ export function isQuestionLike(text: string): boolean {
         || /(?:알려|조회|확인|가능|어떻게|무엇|언제|어디|왜|찾아|보여|정리해|답해)/u.test(normalized);
 }
 
+/** A topic-labelled answer is grounded in the original text, never in model output. */
+export function explicitAutomationAnswer(text: string): ClientInputOperation[] {
+    const match = /^\s*자동\s*문자(?:\s*적용)?\s*[:：]\s*(예|네|아니요|아니오)\s*[.!]?\s*$/u.exec(text);
+    if (!match) return [];
+    return [{ op: "set", field: "automationChoice", value: match[1] === "예" || match[1] === "네" ? "yes" : "no" }];
+}
+
 export function displayedChoiceMatches(
     hint: unknown,
     expected: { taskId: string; choiceSetRef: string; revision: number },

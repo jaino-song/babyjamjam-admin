@@ -2,6 +2,7 @@ import type { AgentCapabilityMeta, AgentFormField } from "@babyjamjam/shared";
 import type { z } from "zod";
 
 import type { AgentContext } from "./agent-context";
+import type { ClientAutomationImpact } from "domain/ports/client-automation-impact.port";
 
 export type AgentReconciliationOutcome =
     | { status: "succeeded"; result: unknown; reason?: string }
@@ -36,6 +37,8 @@ export interface CapabilityDefinition<TInput = unknown, TOutput = unknown> {
     formFields?: AgentFormField[];
     /** Normalize proposal input before it contributes to hashes or persistence. */
     canonicalizeInput?(context: AgentContext, input: TInput): Promise<TInput> | TInput;
+    /** Read-only impact of this canonical customer input; never provisions rules or jobs. */
+    planAutomationImpact?(context: AgentContext, input: TInput, taskId: string): Promise<ClientAutomationImpact>;
     /** Resolve immutable review details before the durable proposal is created. */
     inspect?(context: AgentContext, input: TInput): Promise<AgentProposalInspection>;
     execute(context: AgentContext, input: TInput): Promise<TOutput>;

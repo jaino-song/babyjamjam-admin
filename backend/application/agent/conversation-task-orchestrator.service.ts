@@ -24,6 +24,7 @@ import {
     conversationMessageHash,
     conversationText,
     extractExplicitUserOperations,
+    explicitAutomationAnswer,
     isQuestionLike,
     displayedChoiceMatches,
     type ConversationCanonicalMessage,
@@ -274,6 +275,9 @@ export class ConversationTaskOrchestratorService {
         ];
         const tasks = await this.tasks.listForConversation(input.principal, input.sessionId);
         const current = activeTask(tasks);
+        if (current?.automation && current.orderedChoiceRefs.length === 0) {
+            operations.push(...explicitAutomationAnswer(text));
+        }
         if (current && !mutableCurrentTask(current)) {
             return { canonical, eventId, requestHash, text, isQuestion: isQuestionLike(text), task: current,
                 mutated: false, replayed: false, operations: [], refusal: "unsupported-input", mutationBlocked: true };

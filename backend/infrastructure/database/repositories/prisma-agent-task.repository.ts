@@ -464,6 +464,47 @@ class PrismaAgentTaskTransaction implements AgentTaskTransaction {
         if (task.purgedAt || task.expiresAt <= now || this.sessionResult.session.expiresAt <= now) {
             return { status: "state_conflict" };
         }
+        if (operation.kind === "refresh-automation-question") {
+            const automation = parseAgentTaskAutomationState(operation.automation);
+            if (task.activeSlot !== 1 || !["collecting", "confirming_target", "review_ready", "awaiting_approval"].includes(task.status)
+                || operation.expectedRevision !== task.revision || operation.sourceHash !== agentTaskSourceHash(task)
+                || !automation || automation.noSendAtPresentation !== task.draft.constraints.noSend
+                || agentBindingHash(automation.question) === agentBindingHash(task.draft.server.automation?.question)) {
+                return { status: "binding_mismatch" };
+            }
+            // This operation never accepts a replacement draft or a caller-selected
+            // lifecycle transition. It can refresh only the question and its answer.
+            if (task.activeActionId) {
+                const action = await this.lockCurrentAction();
+                if (!action || task.status !== "awaiting_approval" || action.taskRevision !== task.revision
+                    || action.proposalRevision !== task.draft.server.actionExpectedRevision
+                    || action.proposalRevision !== agentLinkedProposalRevision(task.taskId, task.revision, action)
+                    || !["proposed", "approved"].includes(action.status)) return { status: "binding_mismatch" };
+                const cancelled = await this.transaction.agent_action.updateMany({
+                    where: { id: action.id, status: action.status, proposalRevision: action.proposalRevision },
+                    data: { status: "cancelled", error: { code: "task_review_invalidated", message: "Task review is no longer current" },
+                        requestDedupeKey: agentBindingHash({ released: action.requestDedupeKey, actionId: action.id }), resultPartPersistedAt: null },
+                });
+                if (cancelled.count !== 1) return this.abort({ status: "storage_failure" });
+            } else if (task.status === "awaiting_approval") return { status: "binding_mismatch" };
+            const draft = structuredClone(task.draft);
+            draft.server.automation = automation;
+            draft.consent = { choice: "unanswered", binding: null };
+            delete draft.server.actionExpectedRevision;
+            delete draft.server.actionProposalRevision;
+            draft.currentSnapshotRef = randomUUID();
+            const status = draft.orderedChoiceRefs.length > 0
+                || (task.capabilityId === "clients.update" && !draft.server.references.target)
+                ? "confirming_target" : "collecting";
+            const updated = await this.updateTask({ expectedRevision: task.revision, draft, status,
+                activeActionId: null, preserveLastAcceptedAt: true });
+            if (updated.status !== "updated") return this.abort({ status: "storage_failure" });
+            const inserted = await this.insertEvent({ clientEventId: operation.clientEventId,
+                operation: "consent:question-refreshed", requestHash: operation.requestHash,
+                acceptedRevision: updated.task.revision, acceptedAt: now });
+            if (inserted.status !== "inserted") return this.abort({ status: "storage_failure" });
+            return { status: "question_refreshed", task: updated.task, event: inserted.event };
+        }
         let action: AgentActionEntity;
         let update: UpdateAgentTaskInput;
         let event: AgentTaskEventInput;

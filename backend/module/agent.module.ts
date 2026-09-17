@@ -29,6 +29,7 @@ import { AgentReleaseEvidenceService } from "application/agent/agent-release-evi
 import { AgentFeedbackService } from "application/agent/agent-feedback.service";
 import { AGENT_TASK_REVIEW } from "application/agent/agent-task-review.port";
 import { AgentTaskService } from "application/agent/agent-task.service";
+import { AGENT_TASK_AUTOMATION, AgentTaskAutomationService } from "application/agent/agent-task-automation.service";
 import { AgentTaskPolicyService } from "application/agent/agent-task-policy.service";
 import { ConversationContextAssemblerService } from "application/agent/conversation-context-assembler.service";
 import { ConversationTaskOrchestratorService } from "application/agent/conversation-task-orchestrator.service";
@@ -58,6 +59,8 @@ import { SbClientRepository } from "infrastructure/database/repositories/sb.clie
         AgentReleaseEvidenceService,
         AgentFeedbackService,
         AgentTaskService,
+        AgentTaskAutomationService,
+        { provide: AGENT_TASK_AUTOMATION, useExisting: AgentTaskAutomationService },
         AgentTaskPolicyService,
         ConversationContextAssemblerService,
         ConversationTaskOrchestratorService,

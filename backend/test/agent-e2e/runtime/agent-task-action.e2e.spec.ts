@@ -12,6 +12,9 @@ import { PrismaAgentActionRepository } from "infrastructure/database/repositorie
 import { PrismaAgentSessionRepository } from "infrastructure/database/repositories/prisma-agent-session.repository";
 import type { VerifiedTenantPrincipal } from "infrastructure/tenant/tenant.context";
 import { agentBindingHash } from "domain/repositories/agent-linked-action.types";
+import { createAgentAutomationQuestion } from "application/agent/agent-automation-question";
+import type { AgentTaskAutomationPort, AgentTaskAutomationSource } from "application/agent/agent-task-automation.service";
+import type { AgentAutomationEffect } from "domain/entities/agent-automation-consent";
 import { assertApprovedAgentTaskPersistenceDatabaseTarget, createApprovedAgentTaskPersistenceClient } from "./agent-task-persistence.helper";
 
 const describeDb = process.env["AGENT_E2E"] === "1" ? describe : describe.skip;
@@ -88,6 +91,31 @@ describeDb("atomic task review and execution on guarded PostgreSQL", () => {
         return service.patch(principal, taskId, { clientEventId: randomUUID(), expectedRevision, operations: [{ op: "set", field: "name", value }] });
     }
     async function state(taskId: string) { return db.agent_task.findUniqueOrThrow({ where: { id: taskId } }); }
+    function automationFixture() {
+        let policyVersion = 1;
+        const evaluate = jest.fn(async (task: AgentTaskAutomationSource) => {
+            const effects: AgentAutomationEffect[] = [{ kind: "client-rule", ruleId: "synthetic-rule", scheduleId: null,
+                recipientType: "client", templateKey: "SERVICE_INFO", change: "create",
+                recipientDigest: agentBindingHash(task.draft.confirmed.phone), sourceDigest: agentBindingHash(task.draft.confirmed.name),
+                templateDigest: "c".repeat(64), policyDigest: agentBindingHash(policyVersion), recipeDigest: "e".repeat(64) }];
+            return { version: 1 as const, effects, noSendAtPresentation: task.draft.constraints.noSend,
+                question: createAgentAutomationQuestion({ effects, availability: "available", previous: task.draft.server.automation?.question }) };
+        });
+        const automation: AgentTaskAutomationPort = { evaluate };
+        const instance = (repository = tasks) => new AgentTaskService(repository, policy as never, clients as never, actions, automation);
+        service = instance();
+        return { evaluate, instance, changePolicy: () => { policyVersion++; } };
+    }
+    async function answer(taskId: string, expectedRevision: number, choice: "yes" | "no" = "yes") {
+        return service.patch(principal, taskId, { clientEventId: randomUUID(), expectedRevision,
+            operations: [{ op: "set", field: "automationChoice", value: choice }] });
+    }
+    async function automationPrepared() {
+        const created = await create();
+        const answered = await answer(created.snapshot.taskId, created.snapshot.revision);
+        return service.command(principal, answered.snapshot.taskId,
+            { command: "prepare-review", expectedRevision: answered.snapshot.revision, clientEventId: randomUUID() });
+    }
 
     beforeAll(async () => {
         assertApprovedAgentTaskPersistenceDatabaseTarget();
@@ -417,6 +445,119 @@ describeDb("atomic task review and execution on guarded PostgreSQL", () => {
         expect(cancelReplay.commandAccepted).toBe("cancel"); expect(cancelReplay.replayed).toBe(true);
         expect(execute).not.toHaveBeenCalled();
         expect(await db.agent_task.count({ where: { sessionId } })).toBe(1);
+    });
+
+    it("persists stale-answer refusal, invalidates the old review and replays after restart without accepting accompanying edits or renewing retention", async () => {
+        const automation = automationFixture();
+        const review = await automationPrepared();
+        const before = await state(review.snapshot.taskId);
+        const sessionBefore = await db.agent_session.findUniqueOrThrow({ where: { id: sessionId } });
+        automation.changePolicy();
+        const request = { clientEventId: randomUUID(), expectedRevision: before.revision, operations: [
+            { op: "set", field: "name", value: "SYN_MUST_NOT_ACCEPT" },
+            { op: "set", field: "automationChoice", value: "yes" },
+        ] };
+        await expect(service.patch(principal, before.id, request)).rejects.toMatchObject({ status: 409,
+            response: { reason: "consent_changed", snapshot: { revision: before.revision + 1, confirmed: { name: "SYN_PRIVATE_NAME" }, consent: { choice: "unanswered" } } } });
+        const after = await state(before.id);
+        expect(after).toMatchObject({ lastAcceptedAt: before.lastAcceptedAt, expiresAt: before.expiresAt, activeActionId: null, status: "collecting" });
+        expect((after.draft as any).confirmed).toEqual((before.draft as any).confirmed);
+        expect((after.draft as any).provenance).toEqual((before.draft as any).provenance);
+        expect(await db.agent_session.findUniqueOrThrow({ where: { id: sessionId } })).toEqual(sessionBefore);
+        expect((await actions.get(review.snapshot.action!.actionId, owner)).status).toBe("cancelled");
+        const event = await db.agent_task_event.findFirstOrThrow({ where: { sessionId, clientEventId: request.clientEventId } });
+        expect(event.operation).toBe("consent:question-refreshed");
+        expect(JSON.stringify(event)).not.toMatch(/SYN_PRIVATE|01012345678|SYN_MUST_NOT_ACCEPT/);
+        const count = await db.agent_task_event.count({ where: { sessionId } });
+        await expect(automation.instance().patch(principal, before.id, request)).rejects.toMatchObject({ status: 409,
+            response: { reason: "consent_changed", snapshot: { revision: after.revision } } });
+        await expect(service.replayConversationIntake(principal, sessionId, request.clientEventId, event.requestHash))
+            .rejects.toMatchObject({ response: { reason: "consent_changed" } });
+        expect(await state(before.id)).toEqual(after);
+        expect(await db.agent_task_event.count({ where: { sessionId } })).toBe(count);
+        await expect(service.patch(principal, before.id, { ...request, expectedRevision: after.revision }))
+            .rejects.toMatchObject({ response: { reason: "event_payload" } });
+        await expect(actions.approve(review.snapshot.action!.actionId, principal, review.snapshot.action!.expectedRevision))
+            .rejects.toMatchObject({ status: 409 });
+        expect(execute).not.toHaveBeenCalled();
+        const accepted = await answer(before.id, after.revision);
+        expect(accepted.snapshot.consent.choice).toBe("yes");
+        expect(accepted.snapshot.consent.binding!.policyDigest).not.toBe(review.snapshot.consent.binding!.policyDigest);
+    });
+
+    it("refreshes a changed question before preparing any proposal, preserving draft and session deadlines", async () => {
+        const automation = automationFixture();
+        const created = await create();
+        await expect(service.command(principal, created.snapshot.taskId, { command: "prepare-review", clientEventId: randomUUID(), expectedRevision: 1 }))
+            .rejects.toMatchObject({ response: { reason: "consent_required" } });
+        const before = await state(created.snapshot.taskId);
+        automation.changePolicy();
+        const request = { command: "prepare-review", expectedRevision: before.revision, clientEventId: randomUUID() };
+        for (const instance of [service, automation.instance()]) {
+            await expect(instance.command(principal, before.id, request)).rejects.toMatchObject({ response: { reason: "consent_changed" } });
+        }
+        expect(await state(before.id)).toMatchObject({ revision: before.revision + 1, expiresAt: before.expiresAt, lastAcceptedAt: before.lastAcceptedAt });
+        expect(await db.agent_action.count({ where: { sessionId } })).toBe(0);
+        expect(inspect).not.toHaveBeenCalled();
+        const declined = await answer(before.id, before.revision + 1, "no");
+        await expect(service.command(principal, before.id, { command: "prepare-review", expectedRevision: declined.snapshot.revision, clientEventId: randomUUID() }))
+            .resolves.toMatchObject({ snapshot: { state: "awaiting_approval" } });
+    });
+
+    it.each([ ["agent_action", "updateMany"], ["agent_task", "updateMany"], ["agent_task_event", "create"] ])(
+        "rolls back the complete stale-question refresh after %s.%s writes", async (delegate, method) => {
+            const automation = automationFixture();
+            const review = await automationPrepared();
+            const before = await state(review.snapshot.taskId);
+            const oldActions = await db.agent_action.findMany({ where: { sessionId } });
+            const oldEvents = await db.agent_task_event.findMany({ where: { sessionId } });
+            const oldSession = await db.agent_session.findUniqueOrThrow({ where: { id: sessionId } });
+            automation.changePolicy();
+            const faulty = automation.instance(new PrismaAgentTaskRepository(failAfterWrite(db, delegate!, method!) as never));
+            await expect(faulty.patch(principal, before.id, { clientEventId: randomUUID(), expectedRevision: before.revision,
+                operations: [{ op: "set", field: "automationChoice", value: "yes" }] })).rejects.toMatchObject({ status: 503 });
+            expect(await state(before.id)).toEqual(before);
+            expect(await db.agent_action.findMany({ where: { sessionId } })).toEqual(oldActions);
+            expect(await db.agent_task_event.findMany({ where: { sessionId } })).toEqual(oldEvents);
+            expect(await db.agent_session.findUniqueOrThrow({ where: { id: sessionId } })).toEqual(oldSession);
+        });
+
+    it("refuses a stale-question refresh after execution claims the task", async () => {
+        const automation = automationFixture();
+        const review = await automationPrepared();
+        automation.changePolicy();
+        const entered = deferred(); const release = deferred(); const executing = deferred(); const finish = deferred();
+        const evaluate = automation.evaluate.getMockImplementation()!;
+        automation.evaluate.mockImplementationOnce(async (task) => { const result = await evaluate(task); entered.resolve(); await release.promise; return result; });
+        execute.mockImplementationOnce(async () => { executing.resolve(); await finish.promise; return { status: "saved" }; });
+        const request = service.patch(principal, review.snapshot.taskId, { clientEventId: randomUUID(), expectedRevision: review.snapshot.revision,
+            operations: [{ op: "set", field: "automationChoice", value: "yes" }] });
+        const assertion = expect(request).rejects.toMatchObject({ status: 409 });
+        await entered.promise;
+        const approval = actions.approve(review.snapshot.action!.actionId, principal, review.snapshot.action!.expectedRevision);
+        await executing.promise;
+        const claimed = await state(review.snapshot.taskId);
+        release.resolve(); await assertion;
+        expect(await state(claimed.id)).toEqual(claimed);
+        finish.resolve(); await approval;
+        expect(await db.agent_task_event.count({ where: { sessionId, operation: "consent:question-refreshed" } })).toBe(0);
+    });
+
+    it("grounds labelled original user answers and rejects model-only yes without a write", async () => {
+        automationFixture();
+        const created = await create();
+        const orchestrator = new ConversationTaskOrchestratorService(service, policy as never);
+        const original = await state(created.snapshot.taskId);
+        await expect(orchestrator.applyModelMutation({ principal, sessionId, capabilityId: "clients.create", taskId: original.id,
+            intakeEventId: randomUUID(), expectedRevision: original.revision, operations: [{ op: "set", field: "automationChoice", value: "yes" }] }))
+            .rejects.toMatchObject({ response: { reason: "consent_required" } });
+        expect(await state(original.id)).toEqual(original);
+        const message = { id: randomUUID(), role: "user" as const, parts: [{ type: "text", text: "자동 문자 적용: 예" }] };
+        const answered = await orchestrator.handleUserTurn({ principal, sessionId, message });
+        expect(answered.task?.consent.choice).toBe("yes");
+        expect((await orchestrator.handleUserTurn({ principal, sessionId, message })).replayed).toBe(true);
+        expect(execute).not.toHaveBeenCalled();
+        expect(await db.agent_action.count({ where: { sessionId } })).toBe(0);
     });
 
 });

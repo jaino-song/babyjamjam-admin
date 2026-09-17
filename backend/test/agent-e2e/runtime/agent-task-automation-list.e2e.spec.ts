@@ -12,6 +12,8 @@ import { AligoDefaultSenderPolicyService } from "../../../application/services/a
 import { describeClientMessageEffect } from "../../../application/services/client-message-effect-recipe";
 import { agentBindingHash } from "../../../domain/repositories/agent-linked-action.types";
 import { CLIENT_AUTOMATION_IMPACT, type ClientAutomationImpactPort } from "../../../domain/ports/client-automation-impact.port";
+import { AgentTaskAutomationService, type AgentTaskAutomationSource } from "../../../application/agent/agent-task-automation.service";
+import { createEmptyAgentTaskDraft } from "../../../domain/entities/agent-task.entity";
 import { buildClientMessageRecipe } from "../../../application/services/message-trigger-recipes";
 import { createApprovedAgentTaskPersistenceClient, assertApprovedAgentTaskPersistenceDatabaseTarget } from "./agent-task-persistence.helper";
 
@@ -94,6 +96,13 @@ describeAgentE2E("real automation.list with two eligible clients and missing def
                 kind: "create", taskId: context.sessionId, values: { name: "합성 초안", phone: "01000000003" },
             }));
         expect(impact).toMatchObject({ availability: "unavailable", reason: "missing-default-rules", effects: [], complete: true });
+        const draft = createEmptyAgentTaskDraft(context.sessionId);
+        draft.confirmed = { name: "합성 초안", phone: "01000000003", voucherClient: false, serviceStatus: "pre_booking" };
+        const source: AgentTaskAutomationSource = { ...context.principal, sessionId: context.sessionId, taskId: context.sessionId,
+            capabilityId: "clients.create", targetRef: null, targetVersion: null, draft };
+        const question = await tenantContextStore.run({ origin: "http", branchId }, () =>
+            app.get(AgentTaskAutomationService).evaluate(source, context.principal));
+        expect(question.question).toMatchObject({ availability: "unavailable", reason: "missing-default-rules" });
         expect(await storedAutomation()).toEqual(before);
         expect(createModel).not.toHaveBeenCalled();
     });
@@ -109,6 +118,23 @@ describeAgentE2E("real automation.list with two eligible clients and missing def
         expect(jobs.length).toBeGreaterThanOrEqual(2);
         expect(jobs.every((job) => job.status === "pending")).toBe(true);
         expect(await prisma.message_log.count({ where: { branchId } })).toBe(0);
+        expect(createModel).not.toHaveBeenCalled();
+    });
+
+    it("uses the real discovered client capability and injected planner to present a stable task question", async () => {
+        const before = await storedAutomation();
+        const draft = createEmptyAgentTaskDraft(context.sessionId);
+        draft.confirmed = { name: "합성 초안", phone: "01000000003", voucherClient: false, serviceStatus: "pre_booking" };
+        const source: AgentTaskAutomationSource = { ...context.principal, sessionId: context.sessionId, taskId: context.sessionId,
+            capabilityId: "clients.create", targetRef: null, targetVersion: null, draft };
+        const service = app.get(AgentTaskAutomationService);
+        const initial = await tenantContextStore.run({ origin: "http", branchId }, () => service.evaluate(source, context.principal));
+        expect(initial.question.availability).toBe("available");
+        expect(initial.effects.length).toBeGreaterThan(0);
+        source.draft.server.automation = initial;
+        expect(await tenantContextStore.run({ origin: "http", branchId }, () => service.evaluate(source, context.principal))).toEqual(initial);
+        expect(JSON.stringify(initial)).not.toMatch(/합성 초안|01000000003/);
+        expect(await storedAutomation()).toEqual(before);
         expect(createModel).not.toHaveBeenCalled();
     });
 

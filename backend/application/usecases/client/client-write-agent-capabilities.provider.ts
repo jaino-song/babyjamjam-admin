@@ -31,6 +31,7 @@ import {
 } from "application/usecases/voucher-price-info/resolve-voucher-service-selection.usecase";
 import { MessageTriggerService } from "application/services/message-trigger.service";
 import { MessageAutomationIntentService } from "application/services/message-automation-intent.service";
+import { CLIENT_AUTOMATION_IMPACT, type ClientAutomationImpactPort, type ClientAutomationWriteValues } from "domain/ports/client-automation-impact.port";
 
 const DateOnlyInput = z.string().regex(/^\d{4}-\d{2}-\d{2}$/).refine((value) => {
     const parsed = new Date(`${value}T00:00:00Z`);
@@ -244,6 +245,7 @@ export class ClientWriteAgentCapabilitiesProvider implements AgentCapabilityProv
         @Optional() private readonly voucherServiceSelection?: ResolveVoucherServiceSelectionUsecase,
         @Optional() private readonly triggerService?: MessageTriggerService,
         @Optional() private readonly messageAutomationIntentService?: MessageAutomationIntentService,
+        @Optional() @Inject(CLIENT_AUTOMATION_IMPACT) private readonly automationImpact?: ClientAutomationImpactPort,
     ) {}
 
     getCapabilities(): CapabilityDefinition[] {
@@ -268,6 +270,13 @@ export class ClientWriteAgentCapabilitiesProvider implements AgentCapabilityProv
                 inputSchema: CreateClientSchema,
                 outputSchema: ClientWriteOutputSchema,
                 formFields: CLIENT_FORM_FIELDS,
+                planAutomationImpact: async (context, rawInput, taskId) => {
+                    if (!this.automationImpact) throw new Error("Automation planning unavailable");
+                    const input = CreateClientSchema.parse(rawInput);
+                    const values = normalizeClientCreateInput(input);
+                    return this.automationImpact.planClientWrite(context.principal.branchId,
+                        { kind: "create", taskId, values: this.automationValues(values) });
+                },
                 canonicalizeInput: (_context, input: CreateClientInput) => {
                     assertAgentClientPhone(input.phone);
                     if (isVoucherServiceLabel(input.type)) {
@@ -336,6 +345,17 @@ export class ClientWriteAgentCapabilitiesProvider implements AgentCapabilityProv
                 inputSchema: UpdateClientSchema,
                 outputSchema: ClientWriteOutputSchema,
                 formFields: CLIENT_UPDATE_FORM_FIELDS,
+                planAutomationImpact: async (context, rawInput) => {
+                    if (!this.automationImpact) throw new Error("Automation planning unavailable");
+                    const input = UpdateClientSchema.parse(rawInput);
+                    const existing = await this.findClient.execute(context.principal.branchId, input.id);
+                    if (!existing || !input.targetVersion || clientAgentTargetVersion(existing) !== input.targetVersion) {
+                        throw new Error("Automation target unavailable");
+                    }
+                    const values = normalizeClientUpdateInput(existing, input);
+                    return this.automationImpact.planClientWrite(context.principal.branchId,
+                        { kind: "update", clientId: input.id, values: this.automationValues(values) });
+                },
                 canonicalizeInput: async (context, input: UpdateClientInput) => {
                     assertAgentClientPhone(input.phone);
                     const existing = await this.findClient.execute(context.principal.branchId, input.id);
@@ -470,6 +490,11 @@ export class ClientWriteAgentCapabilitiesProvider implements AgentCapabilityProv
                 },
             },
         ];
+    }
+
+    private automationValues(values: ClientAutomationWriteValues): ClientAutomationWriteValues {
+        const { name, phone, type, startDate, endDate, duration, fullPrice, grant, actualPrice, areaId } = values;
+        return { name, phone, type, startDate, endDate, duration, fullPrice, grant, actualPrice, areaId };
     }
 
     private async refreshEmployeeAssignmentJobsAfterProfileChange(

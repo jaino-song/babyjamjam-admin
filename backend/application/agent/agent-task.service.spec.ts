@@ -4,6 +4,10 @@ import { AgentTaskConflictException, AgentTaskService } from "./agent-task.servi
 import { clientAgentTargetVersion } from "../../application/usecases/client/client-agent-target";
 import { createEmptyAgentTaskDraft, type AgentTaskEntity, type AgentTaskEventEntity } from "domain/entities/agent-task.entity";
 import type { ClientEntity } from "domain/entities/client.entity";
+import { agentBindingHash } from "domain/repositories/agent-linked-action.types";
+import type { AgentAutomationEffect } from "domain/entities/agent-automation-consent";
+import type { AgentTaskAutomationPort } from "./agent-task-automation.service";
+import { createAgentAutomationQuestion } from "./agent-automation-question";
 
 const owner = {
     userId: randomUUID(),
@@ -326,6 +330,80 @@ function createInput(eventId: string = randomUUID(), operations: unknown[] = [
 function commandInput(command: string, expectedRevision: number, clientEventId = randomUUID(), extra: Record<string, unknown> = {}) {
     return { command, expectedRevision, clientEventId, ...extra };
 }
+
+function automationService(repository: FakeTaskRepository) {
+    const { policy, client } = buildService(repository);
+    const automation: AgentTaskAutomationPort = { evaluate: jest.fn(async (task) => {
+        const effects: AgentAutomationEffect[] = [{ kind: "client-rule", ruleId: "rule-a", scheduleId: null,
+            recipientType: "client", templateKey: "SERVICE_INFO", change: "create",
+            recipientDigest: agentBindingHash(task.draft.confirmed.phone), sourceDigest: agentBindingHash(task.draft.confirmed.name),
+            templateDigest: "c".repeat(64), policyDigest: "d".repeat(64), recipeDigest: "e".repeat(64) }];
+        return { version: 1 as const, noSendAtPresentation: task.draft.constraints.noSend, effects,
+            question: createAgentAutomationQuestion({ effects, availability: "available", previous: task.draft.server.automation?.question }) };
+    }) };
+    return { service: new AgentTaskService(repository as never, policy as never, client as never, undefined, automation), automation };
+}
+
+describe("task automation answers", () => {
+    it("binds explicit yes to the full displayed question, preserves unrelated corrections and resets changed effects", async () => {
+        const repository = new FakeTaskRepository();
+        const { service } = automationService(repository);
+        const created = await service.create(owner, createInput());
+        expect(created.snapshot.automation?.availability).toBe("available");
+        const eventId = randomUUID();
+        const answer = await service.patch(owner, created.snapshot.taskId, { clientEventId: eventId,
+            expectedRevision: created.snapshot.revision, operations: [{ op: "set", field: "automationChoice", value: "yes" }] });
+        expect(answer.snapshot.consent.binding).toMatchObject({ consentEventId: eventId,
+            effectDigest: created.snapshot.automation!.effectDigest, recipientRef: created.snapshot.automation!.recipientSetRef });
+        const unchanged = await service.patch(owner, answer.snapshot.taskId, { clientEventId: randomUUID(),
+            expectedRevision: answer.snapshot.revision, operations: [{ op: "set", field: "address", value: "합성 주소" }] });
+        expect(unchanged.snapshot.consent).toEqual(answer.snapshot.consent);
+        const changed = await service.patch(owner, answer.snapshot.taskId, { clientEventId: randomUUID(),
+            expectedRevision: unchanged.snapshot.revision, operations: [{ op: "set", field: "name", value: "합성 수정" }] });
+        expect(changed.snapshot.consent).toEqual({ choice: "unanswered", binding: null });
+        expect(changed.snapshot.automation!.questionRef).not.toBe(created.snapshot.automation!.questionRef);
+    });
+
+    it("requires original user provenance, rejects unseen accompanying edits and ordered revocations atomically", async () => {
+        const repository = new FakeTaskRepository();
+        const { service } = automationService(repository);
+        const created = await service.create(owner, createInput());
+        const before = JSON.stringify(repository.tasks.get(created.snapshot.taskId));
+        const patch = (operations: unknown[], origin: "model" | "user" = "user", origins?: ("model" | "user")[]) => service.patch(owner,
+            created.snapshot.taskId, { clientEventId: randomUUID(), expectedRevision: created.snapshot.revision, operations }, origin, undefined, origins);
+        const yes = { op: "set", field: "automationChoice", value: "yes" };
+        for (const request of [
+            () => patch([yes], "model"),
+            () => patch([yes], "user", ["model"]),
+            () => patch([{ op: "set", field: "name", value: "다른 이름" }, yes]),
+            () => patch([{ op: "set", field: "automationChoice", value: "no" }, yes]),
+            () => patch([{ op: "clear", field: "automationChoice" }, yes]),
+            () => patch([{ op: "set", field: "noSend", value: false }, yes]),
+        ]) {
+            await expect(request()).rejects.toMatchObject({ response: expect.objectContaining({ reason: "consent_required" }) });
+            expect(JSON.stringify(repository.tasks.get(created.snapshot.taskId))).toBe(before);
+        }
+        expect(repository.events.size).toBe(1);
+        await expect(patch([yes], "model", ["user"])).resolves.toMatchObject({ snapshot: { consent: { choice: "yes" } } });
+    });
+
+    it("never restores an old yes after noSend is removed or briefly enabled", async () => {
+        const repository = new FakeTaskRepository();
+        const { service } = automationService(repository);
+        let { snapshot } = await service.create(owner, createInput());
+        const patch = async (operations: unknown[]) => {
+            ({ snapshot } = await service.patch(owner, snapshot.taskId, { clientEventId: randomUUID(), expectedRevision: snapshot.revision, operations }));
+        };
+        await patch([{ op: "set", field: "automationChoice", value: "yes" }]);
+        await patch([{ op: "set", field: "noSend", value: true }]);
+        expect(snapshot.consent).toEqual({ choice: "no", binding: null });
+        await patch([{ op: "clear", field: "noSend" }]);
+        expect(snapshot.consent).toEqual({ choice: "unanswered", binding: null });
+        await patch([{ op: "set", field: "automationChoice", value: "yes" }]);
+        await patch([{ op: "set", field: "noSend", value: true }, { op: "clear", field: "noSend" }]);
+        expect(snapshot.consent).toEqual({ choice: "unanswered", binding: null });
+    });
+});
 
 describe("AgentTaskService", () => {
     it("creates a scoped task and replays the same receipt after a fresh service instance", async () => {

@@ -33,11 +33,15 @@ import {
 } from "@babyjamjam/shared";
 import {
     canonicalChoiceDigest,
+    isExplicitUserOrigin,
     type ConversationMutationOrigin,
 } from "./conversation-task-policy";
 
 import { AGENT_TASK_REVIEW, type AgentTaskReviewPort } from "./agent-task-review.port";
-import { agentTaskSourceHash, type PreparedAgentTaskReview } from "domain/repositories/agent-linked-action.types";
+import { AGENT_TASK_AUTOMATION, type AgentTaskAutomationPort } from "./agent-task-automation.service";
+import { answerAgentAutomationQuestion, createAgentAutomationQuestion, reconcileAgentAutomationConsent } from "./agent-automation-question";
+import type { AgentTaskAutomationState } from "domain/entities/agent-automation-consent";
+import { agentBindingHash, agentTaskSourceHash, type PreparedAgentTaskReview } from "domain/repositories/agent-linked-action.types";
 import { AgentTaskPolicyService } from "application/agent/agent-task-policy.service";
 import { clientAgentTargetVersion } from "application/usecases/client/client-agent-target";
 import { assertPhoneAvailable } from "application/usecases/client/client-write-validation";
@@ -68,7 +72,7 @@ const REPLAY_RETENTION_MS = TASK_RETENTION_MS;
 const DYNAMIC_ISSUE_CODES = new Set(["task.required", "task.invalid", "task.duplicate", "task.stale"]);
 const TERMINAL_STATES = new Set(["completed", "failed", "cancelled"]);
 
-export type AgentTaskConflictReason = "revision" | "event_payload" | "state" | "active_task" | "consent_required";
+export type AgentTaskConflictReason = "revision" | "event_payload" | "state" | "active_task" | "consent_required" | "consent_changed";
 
 export type AgentTaskMutationOrigin = ConversationMutationOrigin;
 
@@ -194,6 +198,7 @@ export class AgentTaskService {
         private readonly policy: AgentTaskPolicyService,
         @Inject(CLIENT_REPOSITORY) private readonly clientRepository: IClientRepository,
         @Optional() @Inject(AGENT_TASK_REVIEW) private readonly reviews?: AgentTaskReviewPort,
+        @Optional() @Inject(AGENT_TASK_AUTOMATION) private readonly automation?: AgentTaskAutomationPort,
     ) {}
 
     async create(
@@ -224,6 +229,10 @@ export class AgentTaskService {
         const taskId = randomUUID();
         const snapshotRef = randomUUID();
         const draft = await this.createDraft(principal, input, snapshotRef, origin);
+        if (this.automation) {
+            draft.server.automation = await this.automation.evaluate({ ...scope, taskId, capabilityId: input.capabilityId,
+                targetRef: null, targetVersion: null, draft }, principal);
+        }
         const result = await this.repository.createWithEvent(scope, {
             taskId,
             capabilityId: input.capabilityId,
@@ -303,6 +312,12 @@ export class AgentTaskService {
             throw new AgentTaskConflictException("state", asAuthorizedTask(initial.task));
         }
         // Business validation and target reads finish before session/task/action locks.
+        if (this.automation && input.operations.some((operation) => operation.field === "automationChoice")) {
+            const current = await this.automation.evaluate(initial.task, principal);
+            if (agentBindingHash(current.question) !== agentBindingHash(initial.task.draft.server.automation?.question)) {
+                return this.refreshAutomationQuestion(scope, initial.task, current, input.clientEventId, requestHash);
+            }
+        }
         const preparedNext = await this.nextDraft(principal, initial.task, input.operations, input.clientEventId, origin, operationOrigins);
         const demoted = initial.task.status === "review_ready" || initial.task.status === "awaiting_approval"
             ? await this.demotedStatus(principal, initial.task) : preparedNext.status;
@@ -336,6 +351,22 @@ export class AgentTaskService {
             origin,
         });
         if (input.command === "prepare-review") return this.prepareReview(principal, scope, parsedTaskId.data, input, requestHash, origin);
+        if (input.command === "select-target" && this.automation) {
+            const prior = await this.lookupCreateEvent(scope, input.clientEventId, requestHash);
+            if (prior.status !== "new") return this.mapCreateLookup(prior);
+            if (initial.status !== "found") this.throwReadResult(initial);
+            if (initial.task.revision !== input.expectedRevision) throw new AgentTaskConflictException("revision", asAuthorizedTask(initial.task));
+            this.policy.assertCanPatch(principal, initial.task.capabilityId);
+            if (!this.commandStateAllowed(initial.task.status, input.command)) throw new AgentTaskConflictException("state", asAuthorizedTask(initial.task));
+            const transition = await this.nextCommand(principal, initial.task, input, origin);
+            const source = { ...initial.task, draft: transition.draft,
+                targetRef: transition.targetRef ?? initial.task.targetRef,
+                targetVersion: transition.targetVersion ?? initial.task.targetVersion };
+            transition.draft = await this.refreshDraftAutomation(principal, initial.task, source.draft, [], input.clientEventId, origin,
+                undefined, source);
+            return this.mapInternalMutation(await this.runCommandTransaction(principal, scope, parsedTaskId.data, input,
+                requestHash, origin, undefined, { sourceHash: agentTaskSourceHash(initial.task), transition }));
+        }
         const result = await this.runCommandTransaction(principal, scope, parsedTaskId.data, input, requestHash, origin);
         return this.mapInternalMutation(result);
     }
@@ -351,6 +382,17 @@ export class AgentTaskService {
         if (task.revision !== input.expectedRevision) throw new AgentTaskConflictException("revision", asAuthorizedTask(task));
         await this.policy.assertCanPrepareReview(principal, task.capabilityId);
         if ((task.status === "awaiting_approval" && !task.activeActionId) || !this.commandStateAllowed(task.status, "prepare-review")) throw new AgentTaskConflictException("state", asAuthorizedTask(task));
+        if (this.automation) {
+            const current = await this.automation.evaluate(task, principal);
+            if (agentBindingHash(current.question) !== agentBindingHash(task.draft.server.automation?.question)) {
+                return this.refreshAutomationQuestion(scope, task, current, input.clientEventId, requestHash);
+            }
+            const consent = reconcileAgentAutomationConsent({ previous: current.question, current: current.question,
+                consent: task.draft.consent, previousNoSend: task.draft.constraints.noSend, noSend: task.draft.constraints.noSend });
+            if (current.question.availability !== "none" && consent.choice === "unanswered") {
+                throw new AgentTaskConflictException("consent_required", asAuthorizedTask(task));
+            }
+        }
         let prepared: PreparedAgentTaskReview | undefined;
         if (!task.activeActionId) {
             const readiness = await this.reviewReadiness(principal, task);
@@ -570,6 +612,7 @@ export class AgentTaskService {
         if (value.status === "event_hash_conflict") throw new AgentTaskConflictException("event_payload", value.task ? asAuthorizedTask(value.task) : undefined);
         if (value.status === "event_replay") {
             if (!isReplayWithinRetention(value.event) || !isTaskLiveForReplay(value.task)) throw taskGone();
+            if (value.event.operation === "consent:question-refreshed") throw new AgentTaskConflictException("consent_changed", asAuthorizedTask(value.task));
             const commandAccepted = value.event.operation === "command:prepare-review" ? "prepare-review" as const
                 : value.event.operation === "command:cancel" ? "cancel" as const : undefined;
             return { ...this.responseFromReceipt(eventReceipt(value.event, value.task), value.task),
@@ -849,6 +892,7 @@ export class AgentTaskService {
         }
         if (lookup.status === "event_replay") {
             if (!isReplayWithinRetention(lookup.event)) throw taskGone();
+            if (lookup.event.operation === "consent:question-refreshed") throw new AgentTaskConflictException("consent_changed", asAuthorizedTask(lookup.task));
             return this.responseFromReceipt(eventReceipt(lookup.event, lookup.task), lookup.task) as never;
         }
         if (lookup.status === "task_expired") throw taskGone();
@@ -1041,6 +1085,7 @@ export class AgentTaskService {
         requestHash: string,
         origin: AgentTaskMutationOrigin = "user",
         prepared?: PreparedAgentTaskReview,
+        preparedTransition?: { sourceHash: string; transition: CommandTransition },
     ): Promise<InternalMutation> {
         const operation = `command:${input.command}`;
         const raw = await this.repository.withTransaction(scope, async (transaction): Promise<InternalMutation> => {
@@ -1138,7 +1183,10 @@ export class AgentTaskService {
 
             let transition: CommandTransition;
             try {
-                transition = await this.nextCommand(principal, locked.task, input, origin);
+                if (preparedTransition && preparedTransition.sourceHash !== agentTaskSourceHash(locked.task)) {
+                    return { status: "stale_revision", currentTask: locked.task };
+                }
+                transition = preparedTransition?.transition ?? await this.nextCommand(principal, locked.task, input, origin);
             } catch (error) {
                 if (error instanceof AgentTaskConflictException) {
                     return transaction.abort<InternalMutation>({ status: "state_conflict", reason: "state", task: locked.task });
@@ -1624,7 +1672,7 @@ export class AgentTaskService {
             noSend: task.draft.constraints.noSend,
         });
         const bindingRemainsValid = this.consentBindingRemainsValid(task, operations);
-        if (state.automationChoice === "yes" && !bindingRemainsValid) {
+        if (!this.automation && state.automationChoice === "yes" && !bindingRemainsValid) {
             throw new AgentTaskConflictException("consent_required", asAuthorizedTask(task));
         }
 
@@ -1665,7 +1713,77 @@ export class AgentTaskService {
                 },
             },
         };
-        return { draft, status: task.status };
+        return { draft: await this.refreshDraftAutomation(principal, task, draft, operations, clientEventId, origin, operationOrigins), status: task.status };
+    }
+
+    private async refreshDraftAutomation(
+        principal: VerifiedTenantPrincipal, previous: AgentTaskEntity, draft: AgentTaskDraft,
+        operations: readonly ClientInputOperation[], clientEventId: string, origin: AgentTaskMutationOrigin,
+        operationOrigins?: readonly AgentTaskMutationOrigin[], source = { ...previous, draft },
+    ): Promise<AgentTaskDraft> {
+        if (!this.automation) return draft;
+        const automation = await this.automation.evaluate(source, principal);
+        const previousState = previous.draft.server.automation;
+        if (previous.draft.server.references.target?.clientId !== source.draft.server.references.target?.clientId) {
+            automation.question = createAgentAutomationQuestion({ effects: automation.effects,
+                availability: automation.question.availability, reason: automation.question.reason, forceNew: true });
+        }
+        const answerOperations = operations.filter((operation) => operation.field === "automationChoice");
+        const affirmativeIndex = operations.findIndex((operation) => operation.op === "set"
+            && operation.field === "automationChoice" && operation.value === "yes");
+        const revokedWithinEvent = operations.some((operation, index) => operation.op === "set"
+            && operation.field === "automationChoice" && operation.value === "yes"
+            && operations.slice(0, index).some((earlier) => earlier.field === "noSend"
+                || (earlier.field === "automationChoice" && (earlier.op !== "set" || earlier.value !== "yes"))));
+        if (operations.some((operation, index) => operation.op === "set" && operation.field === "automationChoice"
+            && operation.value === "yes" && !isExplicitUserOrigin(operationOrigins?.[index] ?? origin))
+            || (previous.draft.constraints.noSend && !draft.constraints.noSend
+                && operations.some((operation, index) => operation.field === "noSend" && !isExplicitUserOrigin(operationOrigins?.[index] ?? origin)))
+            || revokedWithinEvent || (affirmativeIndex >= 0 && operations.some((operation) => operation.field === "noSend"))) {
+            throw new AgentTaskConflictException("consent_required", asAuthorizedTask(previous));
+        }
+        const touchedNoSend = operations.some((operation) => operation.field === "noSend");
+        let consent = reconcileAgentAutomationConsent({ previous: previousState?.question, current: automation.question,
+            consent: previous.draft.consent,
+            previousNoSend: previous.draft.constraints.noSend || (touchedNoSend && operations.some((operation) => operation.op === "set" && operation.field === "noSend" && operation.value)),
+            noSend: draft.constraints.noSend });
+        if (answerOperations.length > 0) {
+            const answer = answerAgentAutomationQuestion({ presented: previousState?.question, current: automation.question,
+                choice: draft.consent.choice, noSend: draft.constraints.noSend, clientEventId });
+            if (answer.status !== "accepted") throw new AgentTaskConflictException("consent_required", asAuthorizedTask(previous));
+            consent = answer.consent;
+        }
+        return { ...draft, consent, server: { ...draft.server, automation } };
+    }
+
+    /** A stale answer rejects every input operation and records only a question refresh. */
+    private async refreshAutomationQuestion(
+        scope: AgentTaskSessionScope, source: AgentTaskEntity, automation: AgentTaskAutomationState,
+        clientEventId: string, requestHash: string,
+    ): Promise<never> {
+        const result = await this.repository.withTransaction(scope, async (transaction): Promise<InternalMutation> => {
+            const session = await transaction.lockSession();
+            if (session.status !== "locked") return { status: session.status };
+            const existing = await transaction.findEvent(clientEventId);
+            if (existing.status === "storage_failure") return existing;
+            if (existing.status === "found") {
+                const current = await transaction.readTask(existing.event.taskId);
+                if (existing.event.requestHash !== requestHash) return { status: "event_hash_conflict" };
+                if (current.status === "found" || current.status === "task_expired") return { status: "event_replay", task: current.task, receipt: existing.event };
+                return { status: current.status };
+            }
+            const locked = await transaction.lockTask(source.taskId);
+            if (locked.status !== "locked") return locked;
+            if (locked.task.revision !== source.revision || agentTaskSourceHash(locked.task) !== agentTaskSourceHash(source)) {
+                return { status: "stale_revision", currentTask: locked.task };
+            }
+            const refreshed = await transaction.applyLinkedAction({ kind: "refresh-automation-question",
+                expectedRevision: source.revision, sourceHash: agentTaskSourceHash(source), automation, clientEventId, requestHash });
+            if (refreshed.status !== "question_refreshed") return transaction.abort<InternalMutation>({ status: "state_conflict", reason: "state", task: locked.task });
+            return { status: "updated", task: refreshed.task, receipt: refreshed.event };
+        });
+        if (result.status === "ok" || result.status === "aborted") return this.mapInternalMutation(result.value);
+        throw storageUnavailable();
     }
 
     /**
@@ -1903,6 +2021,7 @@ export class AgentTaskService {
     private mapInternalMutation(result: InternalMutation): never {
         if (result.status === "updated" || result.status === "created" || result.status === "event_replay") {
             if (result.status === "event_replay" && !isReplayWithinRetention(result.receipt)) throw taskGone();
+            if (result.receipt.operation === "consent:question-refreshed") throw new AgentTaskConflictException("consent_changed", asAuthorizedTask(result.task));
             return this.responseFromReceipt(eventReceipt(result.receipt, result.task), result.task) as never;
         }
         if (result.status === "forbidden") throw new ForbiddenException(result.message);

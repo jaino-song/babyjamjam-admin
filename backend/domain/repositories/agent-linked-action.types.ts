@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import type { AgentActionEntity } from "domain/entities/agent-action.entity";
 import type { AgentTaskEntity, AgentTaskEventEntity } from "domain/entities/agent-task.entity";
+import type { AgentTaskAutomationState } from "domain/entities/agent-automation-consent";
 import type { CreateAgentActionInput } from "./agent-action.repository.interface";
 import type {
     AgentTaskEventInput, AgentTaskSessionMetadata, AgentTaskSessionScope, UpdateAgentTaskInput,
@@ -57,12 +58,15 @@ export interface AgentActionClaimEvidence {
 
 export type AgentLinkedActionLiveOperation =
     | { kind: "attach-review"; prepared: PreparedAgentTaskReview; event: AgentTaskEventInput }
+    | { kind: "refresh-automation-question"; sourceHash: string; expectedRevision: number;
+        automation: AgentTaskAutomationState; clientEventId: string; requestHash: string }
     | { kind: "invalidate-review"; sourceHash: string; next: Pick<UpdateAgentTaskInput, "expectedRevision" | "draft" | "status" | "acceptedAt" | "expiresAt">; event: AgentTaskEventInput }
     | { kind: "cancel-task"; sourceHash: string; event: AgentTaskEventInput }
     | { kind: "claim-execution"; evidence: AgentActionClaimEvidence; transitionAt: Date };
 
 export type AgentLinkedActionLiveResult =
     | { status: "applied"; action: AgentActionEntity; task: AgentTaskEntity; event: AgentTaskEventEntity }
+    | { status: "question_refreshed"; task: AgentTaskEntity; event: AgentTaskEventEntity }
     | { status: "already_applied"; action: AgentActionEntity; task: AgentTaskEntity }
     | { status: "binding_mismatch" | "state_conflict" | "storage_failure" };
 
