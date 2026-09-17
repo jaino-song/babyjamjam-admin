@@ -73,6 +73,11 @@ const branch: SystemAdminBranchRequest = {
   },
 };
 
+const branchWithEmail: SystemAdminBranchRequest = {
+  ...branch,
+  email: "branch@example.com",
+};
+
 const users: SystemAdminUser[] = [];
 
 beforeAll(() => {
@@ -149,21 +154,30 @@ describe("SystemAdminPage branch email payloads", () => {
     expect(payload).not.toHaveProperty("email");
   });
 
-  it("omits a blank email from the actual update request", async () => {
-    mockedGetBranches.mockResolvedValue([branch]);
+  it("sends null to clear a persisted email and displays the reread value", async () => {
+    const clearedBranch = { ...branchWithEmail, email: null };
+    mockedGetBranches
+      .mockResolvedValueOnce([branchWithEmail])
+      .mockResolvedValueOnce([clearedBranch]);
+    mockedUpdateBranch.mockResolvedValue(clearedBranch);
     renderPage(branch.id);
-    await screen.findByLabelText("이메일");
+    const emailInput = await screen.findByLabelText("이메일");
+    expect(emailInput).toHaveValue("branch@example.com");
+
+    fireEvent.change(emailInput, { target: { value: "" } });
 
     fireEvent.click(screen.getByRole("button", { name: "지점 저장" }));
 
     await waitFor(() => expect(mockedUpdateBranch).toHaveBeenCalledTimes(1));
     expect(mockedUpdateBranch).toHaveBeenCalledWith(branch.id, expect.any(Object));
     const payload = branchFormPayload();
-    expect(payload).not.toHaveProperty("email");
+    expect(payload).toEqual(expect.objectContaining({ email: null }));
+    await waitFor(() => expect(mockedGetBranches).toHaveBeenCalledTimes(2));
+    expect(screen.getByLabelText("이메일")).toHaveValue("");
   });
 
   it("preserves a supplied email in the actual update request", async () => {
-    mockedGetBranches.mockResolvedValue([{ ...branch, email: "branch@example.com" }]);
+    mockedGetBranches.mockResolvedValue([branchWithEmail]);
     renderPage(branch.id);
     await screen.findByLabelText("이메일");
 
@@ -189,5 +203,25 @@ describe("SystemAdminPage branch email payloads", () => {
     expect(screen.getByLabelText("지점명")).toHaveValue("강남점");
     expect(screen.getByLabelText("식별자")).toHaveValue("gangnam");
     expect(screen.getByLabelText("이메일")).toHaveValue("entered@example.com");
+  });
+
+  it("retains edited values after a failed update request", async () => {
+    mockedGetBranches.mockResolvedValue([branchWithEmail]);
+    mockedUpdateBranch.mockRejectedValueOnce(new Error("update failed"));
+    renderPage(branch.id);
+    await screen.findByLabelText("이메일");
+    fireEvent.change(screen.getByLabelText("지점명"), {
+      target: { value: "변경된 강남점" },
+    });
+    fireEvent.change(screen.getByLabelText("이메일"), {
+      target: { value: "edited@example.com" },
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "지점 저장" }));
+
+    await waitFor(() => expect(mockedUpdateBranch).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(mockToast).toHaveBeenCalled());
+    expect(screen.getByLabelText("지점명")).toHaveValue("변경된 강남점");
+    expect(screen.getByLabelText("이메일")).toHaveValue("edited@example.com");
   });
 });

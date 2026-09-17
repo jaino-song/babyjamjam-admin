@@ -84,11 +84,15 @@ const DEFAULT_BRANCH_FORM: SystemAdminBranchInput = {
   isActive: true,
 };
 
+type BranchFormMode = "create" | "update";
+
 function normalizeSystemAdminBranchInput(
   input: SystemAdminBranchInput,
+  mode: BranchFormMode,
 ): SystemAdminBranchInput {
   const email = input.email?.trim();
   if (email) return { ...input, email };
+  if (mode === "update") return { ...input, email: null };
 
   const inputWithoutEmail = { ...input };
   delete inputWithoutEmail.email;
@@ -277,11 +281,13 @@ function FormField({
 }
 
 function BranchForm({
+  mode,
   initial,
   managers,
   isSaving,
   onSave,
 }: {
+  mode: BranchFormMode;
   initial: SystemAdminBranchInput;
   managers: readonly { id: string; label: string }[];
   isSaving: boolean;
@@ -334,7 +340,7 @@ function BranchForm({
         width="lg"
         className="mt-1"
         disabled={!canSave || isSaving}
-        onClick={() => onSave(normalizeSystemAdminBranchInput({ ...form, name: form.name.trim(), slug: form.slug.trim() }))}
+        onClick={() => onSave(normalizeSystemAdminBranchInput({ ...form, name: form.name.trim(), slug: form.slug.trim() }, mode))}
         data-component="mobile_system-admin_branch-form_save"
       >
         <Save className="h-4 w-4" />
@@ -558,7 +564,7 @@ export function SystemAdminPage(): ReactElement {
     detailStatus = itemParam === NEW_BRANCH_ID ? { label: "새 지점", variant: "info" } : approvalLabel(selectedBranch?.messageSenderApproval.approvalStatus);
     detail = <DetailContent data-component={`${DETAIL_BASE}_branch`} icon={Building2} title={itemParam === NEW_BRANCH_ID ? "지점 추가" : selectedBranch?.name ?? "지점 관리"} description="지점 운영 정보와 메시지 발신번호 상태를 관리합니다.">
       {selectedBranch && selectedBranch.messageSenderApproval.approvalStatus === "pending" ? <section data-component={`${DETAIL_BASE}_branch_sender-approval`} className="flex flex-col gap-3 rounded-[calc(18px*var(--glint-ui-scale,1))] border border-amber-200 bg-amber-50 p-4"><div className="flex items-center gap-2"><MessageCircle className="h-4 w-4 text-amber-700" /><strong className="text-[calc(0.8rem*var(--glint-ui-scale,1))] text-amber-900">메시지 발신번호 승인 신청</strong></div><PolicyInfoRows data-component={`${DETAIL_BASE}_branch_sender-approval_info`} title="신청 정보" rows={[{ id: "requester", label: "신청자", value: selectedBranch.messageSenderApproval.requestedBy?.name ?? "-" }, { id: "requested-at", label: "신청일", value: dateLabel(selectedBranch.messageSenderApproval.requestedAt) }, { id: "purpose", label: "요청 기능", value: "SMS/LMS 발송" }]} /><Button type="button" variant="v3" size="md" width="lg" disabled={approveSenderMutation.isPending} onClick={() => approveSenderMutation.mutate(selectedBranch.id)} data-component={`${DETAIL_BASE}_branch_sender-approval_approve`}>{approveSenderMutation.isPending ? "승인 중…" : "메시지 신청 승인"}</Button></section> : null}
-      <BranchForm key={`branch-form-${itemParam ?? "new"}`} initial={branchInput} managers={managerOptions} isSaving={createBranchMutation.isPending || updateBranchMutation.isPending} onSave={(input) => itemParam === NEW_BRANCH_ID ? createBranchMutation.mutate(input) : selectedBranch ? updateBranchMutation.mutate({ branchId: selectedBranch.id, input }) : undefined} />
+      <BranchForm key={`branch-form-${itemParam ?? "new"}`} mode={itemParam === NEW_BRANCH_ID ? "create" : "update"} initial={branchInput} managers={managerOptions} isSaving={createBranchMutation.isPending || updateBranchMutation.isPending} onSave={(input) => itemParam === NEW_BRANCH_ID ? createBranchMutation.mutate(input) : selectedBranch ? updateBranchMutation.mutate({ branchId: selectedBranch.id, input }) : undefined} />
       {selectedBranch ? <PolicyInfoRows data-component={`${DETAIL_BASE}_branch_info`} title="운영 정보" rows={[{ id: "location", label: "지역", value: locationLabel(selectedBranch) }, { id: "owner", label: "지점장", value: selectedBranch.owner?.name ?? selectedBranch.owner?.email ?? "미지정" }, { id: "updated", label: "수정일", value: dateLabel(selectedBranch.updatedAt) }, { id: "sender-status", label: "발신번호", value: approvalLabel(selectedBranch.messageSenderApproval.approvalStatus).label }]} /> : null}
     </DetailContent>;
   } else if (activeSection === "accounts" && selectedUser) {
