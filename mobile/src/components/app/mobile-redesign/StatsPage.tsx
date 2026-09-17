@@ -159,7 +159,7 @@ export function StatsPage({ view = "overview" }: { view?: keyof StatsViewData })
   const requestedDetailView: DetailView | null = view !== "overview" ? view : (STATS_LIST.some((item) => item.id === params.get("item")) ? params.get("item") as DetailView : null);
   const detailView: DetailView | null = requestedDetailView && visibleStats.some((item) => item.id === requestedDetailView) ? requestedDetailView : null;
   const didPushDetailRef = useRef(false);
-  const overviewQuery = useQuery({ queryKey: ["stats", "overview"], queryFn: () => getStatsView("overview"), enabled: isOwner && detailView === null, staleTime: 60_000 });
+  const overviewQuery = useQuery({ queryKey: ["stats", "overview"], queryFn: () => getStatsView("overview"), enabled: isOwner, staleTime: 60_000 });
   const detailQuery = useQuery({ queryKey: ["stats", detailView], queryFn: () => getStatsView(detailView as DetailView), enabled: detailView !== null, staleTime: 60_000 });
   const overview = isOwner ? overviewQuery.data?.data : undefined;
   const list = <SettingsListCard data-component={LIST_BASE} title="운영 통계" count={visibleStats.length} subtitle="실시간 운영 지표를 한눈에 확인할 수 있어요.">
