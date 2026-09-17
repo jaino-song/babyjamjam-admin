@@ -100,7 +100,10 @@ export function MobileAgentPartRegistry({ "data-component": dataComponent, part,
         const choiceSet = task?.taskId === parsed.data.taskId
             ? task.choiceSets.find((candidate) => candidate.choiceSetRef === parsed.data.choiceSetRef)
             : undefined;
-        return <div data-component={dataComponent} data-slot="entity-select" className="flex flex-col gap-2" role="group" aria-label="대상 선택"><p className="text-sm font-medium">대상을 선택해 주세요.</p>{parsed.data.optionIds.map((optionId, index) => { const option = choiceSet?.options.find((candidate) => candidate.optionId === optionId); return <Button key={optionId} type="button" variant="outline" className="h-auto min-h-11 justify-start whitespace-normal py-2" disabled={!onTaskEntitySelect} onClick={() => onTaskEntitySelect?.(parsed.data.taskId, parsed.data.choiceSetRef, optionId)}>{option?.label ?? `선택 ${index + 1}`}{option?.description ? ` · ${option.description}` : ""}</Button>; })}</div>;
+        const hasAllOptions = Boolean(choiceSet)
+            && parsed.data.optionIds.every((optionId) => choiceSet?.options.some((option) => option.optionId === optionId));
+        const canSelect = Boolean(onTaskEntitySelect && task?.taskId === parsed.data.taskId && hasAllOptions);
+        return <div data-component={dataComponent} data-slot="entity-select" className="flex flex-col gap-2" role="group" aria-label="대상 선택"><p className="text-sm font-medium">대상을 선택해 주세요.</p>{parsed.data.optionIds.map((optionId, index) => { const option = choiceSet?.options.find((candidate) => candidate.optionId === optionId); return <Button key={optionId} type="button" variant="outline" className="h-auto min-h-11 justify-start whitespace-normal py-2" disabled={!canSelect} onClick={() => { if (canSelect) onTaskEntitySelect?.(parsed.data.taskId, parsed.data.choiceSetRef, optionId); }}>{option?.label ?? `선택 ${index + 1}`}{option?.description ? ` · ${option.description}` : ""}</Button>; })}</div>;
     }
     if (part.type === "data-task-patch") {
         const parsed = AgentTaskPatchPartSchema.safeParse(part.data);

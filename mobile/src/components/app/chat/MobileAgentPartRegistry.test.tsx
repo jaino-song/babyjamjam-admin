@@ -1,4 +1,5 @@
 import { fireEvent, render, screen } from "@testing-library/react";
+import { AgentTaskSchema, type AgentTask } from "@babyjamjam/shared/agent";
 
 import { MobileAgentPartRegistry } from "./MobileAgentPartRegistry";
 
@@ -10,6 +11,42 @@ if (typeof globalThis.ResizeObserver === "undefined") {
             unobserve() {}
             disconnect() {}
         },
+    });
+}
+
+const TASK_IDS = {
+    task: "11111111-1111-4111-8111-111111111111",
+    session: "22222222-2222-4222-8222-222222222222",
+    snapshot: "55555555-5555-4555-8555-555555555555",
+    choiceSet: "77777777-7777-4777-8777-777777777777",
+    option: "88888888-8888-4888-8888-888888888888",
+};
+
+function makeTask(overrides: Partial<AgentTask> = {}): AgentTask {
+    return AgentTaskSchema.parse({
+        schemaVersion: 1,
+        taskId: TASK_IDS.task,
+        sessionId: TASK_IDS.session,
+        kind: "clients.create",
+        capabilityId: "clients.create",
+        revision: 2,
+        state: "confirming_target",
+        confirmed: { name: "홍길동", phone: "01012345678" },
+        tentative: {},
+        provenance: {
+            confirmed: { name: { source: "user" }, phone: { source: "user" } },
+            tentative: {},
+        },
+        issues: [],
+        constraints: { noSend: false },
+        choiceSets: [],
+        orderedChoiceRefs: [],
+        target: null,
+        consent: { choice: "unanswered", binding: null },
+        action: null,
+        times: { createdAt: "2026-09-16T00:00:00.000Z", updatedAt: "2026-09-16T00:00:01.000Z" },
+        currentSnapshotRef: TASK_IDS.snapshot,
+        ...overrides,
     });
 }
 
@@ -362,12 +399,16 @@ describe("MobileAgentPartRegistry", () => {
             }}
             onEntitySelect={jest.fn()}
             onTaskEntitySelect={onTaskEntitySelect}
+            task={makeTask({
+                choiceSets: [{ choiceSetRef: TASK_IDS.choiceSet, options: [{ optionId: TASK_IDS.option, label: "서울 보호자" }] }],
+                orderedChoiceRefs: [TASK_IDS.choiceSet],
+            })}
             onApproveAction={jest.fn()}
             onRejectAction={jest.fn()}
             onSubmitForm={jest.fn()}
         />);
 
-        const option = screen.getByRole("button", { name: "선택 1" });
+        const option = screen.getByRole("button", { name: "서울 보호자" });
         expect(option).toHaveClass("min-h-11", "whitespace-normal");
         fireEvent.click(option);
         expect(onTaskEntitySelect).toHaveBeenCalledWith(
@@ -375,6 +416,36 @@ describe("MobileAgentPartRegistry", () => {
             "77777777-7777-4777-8777-777777777777",
             "88888888-8888-4888-8888-888888888888",
         );
+    });
+
+    it.each([
+        ["mismatched task", makeTask({ taskId: "99999999-9999-4999-8999-999999999999" }), "선택 1"],
+        ["missing choice set", makeTask(), "선택 1"],
+        ["stale option", makeTask({ choiceSets: [{ choiceSetRef: TASK_IDS.choiceSet, options: [{ optionId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", label: "다른 대상" }] }] }), "선택 1"],
+    ] as const)("disables structured selection for %s", (_reason, task, label) => {
+        const onTaskEntitySelect = jest.fn();
+        render(<MobileAgentPartRegistry
+            data-component="mobile_chat_tests_agent-part-registry_task-entity-select-invalid"
+            part={{
+                type: "data-entity-select",
+                data: {
+                    taskId: TASK_IDS.task,
+                    choiceSetRef: TASK_IDS.choiceSet,
+                    optionIds: [TASK_IDS.option],
+                },
+            }}
+            onEntitySelect={jest.fn()}
+            onTaskEntitySelect={onTaskEntitySelect}
+            task={task}
+            onApproveAction={jest.fn()}
+            onRejectAction={jest.fn()}
+            onSubmitForm={jest.fn()}
+        />);
+
+        const option = screen.getByRole("button", { name: label });
+        expect(option).toBeDisabled();
+        fireEvent.click(option);
+        expect(onTaskEntitySelect).not.toHaveBeenCalled();
     });
 
     it("renders the server receipt for a task patch", () => {

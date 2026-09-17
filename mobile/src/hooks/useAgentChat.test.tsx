@@ -6,10 +6,14 @@ import { useAgentChat, useAgentShellEnabled } from "./useAgentChat";
 
 const TASK_IDS = {
     task: "11111111-1111-4111-8111-111111111111",
+    oldTask: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+    newTask: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
     session: "22222222-2222-4222-8222-222222222222",
     event: "33333333-3333-4333-8333-333333333333",
+    oldSnapshot: "44444444-4444-4444-8444-444444444444",
     snapshot2: "55555555-5555-4555-8555-555555555555",
     snapshot3: "66666666-6666-4666-8666-666666666666",
+    newSnapshot: "77777777-7777-4777-8777-777777777777",
 };
 
 function makeTask(overrides: Partial<AgentTask> = {}): AgentTask {
@@ -48,6 +52,21 @@ function jsonResponse(payload: unknown, options: { ok?: boolean; status?: number
     } as Response;
 }
 
+function taskSnapshotPart(taskId: string, snapshotRef: string, revision: number) {
+    return {
+        type: "data-task-snapshot",
+        data: {
+            taskId,
+            snapshotRef,
+            kind: "clients.create",
+            capabilityId: "clients.create",
+            revision,
+            state: "collecting",
+            fieldStatus: [],
+        },
+    };
+}
+
 describe("mobile useAgentChat", () => {
     beforeAll(() => {
         Object.defineProperty(globalThis, "TextDecoder", { configurable: true, value: NodeTextDecoder });
@@ -73,6 +92,130 @@ describe("mobile useAgentChat", () => {
         const { result } = renderHook(() => useAgentChat());
 
         await waitFor(() => expect(result.current.messages).toEqual(restoredMessages));
+    });
+
+    it("restores only the server-authoritative active task when an older completed task has a higher revision", async () => {
+        const oldTask = makeTask({ taskId: TASK_IDS.oldTask, revision: 99, state: "completed", currentSnapshotRef: TASK_IDS.oldSnapshot });
+        const activeTask = makeTask({ taskId: TASK_IDS.newTask, revision: 1, currentSnapshotRef: TASK_IDS.newSnapshot });
+        const fetchMock = jest.fn().mockImplementation(async (input: string | URL | Request, init?: RequestInit) => {
+            const url = String(input);
+            if (url.endsWith("/sessions/session-active") && !init?.method) {
+                return jsonResponse({
+                    id: "session-active",
+                    title: "활성 업무",
+                    updatedAt: "2026-09-18",
+                    activeTaskId: TASK_IDS.newTask,
+                    pausedTaskIds: [],
+                    taskRestoreStatus: "available",
+                    recoveryTaskIds: [],
+                    messages: [{
+                        id: "restore-message",
+                        role: "assistant",
+                        parts: [
+                            taskSnapshotPart(TASK_IDS.oldTask, TASK_IDS.oldSnapshot, 99),
+                            taskSnapshotPart(TASK_IDS.newTask, TASK_IDS.newSnapshot, 1),
+                        ],
+                    }],
+                });
+            }
+            if (url.endsWith(`/tasks/${TASK_IDS.oldTask}`)) return jsonResponse(oldTask);
+            if (url.endsWith(`/tasks/${TASK_IDS.newTask}`)) return jsonResponse(activeTask);
+            return jsonResponse([]);
+        });
+        global.fetch = fetchMock;
+
+        const { result } = renderHook(() => useAgentChat());
+        await act(async () => { await result.current.selectSession("session-active"); });
+        await waitFor(() => expect(result.current.task?.taskId).toBe(TASK_IDS.newTask));
+
+        expect(result.current.taskSnapshot?.taskId).toBe(TASK_IDS.newTask);
+        expect(result.current.taskSnapshot?.revision).toBe(1);
+        expect(fetchMock.mock.calls.some(([input]) => String(input).endsWith(`/tasks/${TASK_IDS.oldTask}`))).toBe(false);
+    });
+
+    it("resets task identity when the same session reports a newly active task", async () => {
+        const oldTask = makeTask({ taskId: TASK_IDS.oldTask, revision: 8, currentSnapshotRef: TASK_IDS.oldSnapshot });
+        const activeTask = makeTask({ taskId: TASK_IDS.newTask, revision: 1, currentSnapshotRef: TASK_IDS.newSnapshot });
+        let restoreCount = 0;
+        const fetchMock = jest.fn().mockImplementation(async (input: string | URL | Request, init?: RequestInit) => {
+            const url = String(input);
+            if (url.endsWith("/sessions/session-transition") && !init?.method) {
+                restoreCount += 1;
+                const isNew = restoreCount > 1;
+                return jsonResponse({
+                    id: "session-transition",
+                    title: "업무 전환",
+                    updatedAt: "2026-09-18",
+                    activeTaskId: isNew ? TASK_IDS.newTask : TASK_IDS.oldTask,
+                    pausedTaskIds: isNew ? [TASK_IDS.oldTask] : [],
+                    taskRestoreStatus: "available",
+                    recoveryTaskIds: [],
+                    messages: [{
+                        id: isNew ? "restore-new" : "restore-old",
+                        role: "assistant",
+                        parts: isNew
+                            ? [taskSnapshotPart(TASK_IDS.oldTask, TASK_IDS.oldSnapshot, 8), taskSnapshotPart(TASK_IDS.newTask, TASK_IDS.newSnapshot, 1)]
+                            : [taskSnapshotPart(TASK_IDS.oldTask, TASK_IDS.oldSnapshot, 8)],
+                    }],
+                });
+            }
+            if (url.endsWith(`/tasks/${TASK_IDS.oldTask}`)) return jsonResponse(oldTask);
+            if (url.endsWith(`/tasks/${TASK_IDS.newTask}`)) return jsonResponse(activeTask);
+            return jsonResponse([]);
+        });
+        global.fetch = fetchMock;
+
+        const { result } = renderHook(() => useAgentChat());
+        await act(async () => { await result.current.selectSession("session-transition"); });
+        await waitFor(() => expect(result.current.task?.taskId).toBe(TASK_IDS.oldTask));
+        expect(result.current.taskSnapshot?.revision).toBe(8);
+
+        await act(async () => { await result.current.selectSession("session-transition"); });
+        await waitFor(() => expect(result.current.task?.taskId).toBe(TASK_IDS.newTask));
+
+        expect(result.current.taskSnapshot?.taskId).toBe(TASK_IDS.newTask);
+        expect(result.current.taskSnapshot?.revision).toBe(1);
+    });
+
+    it("resets identity when start-update returns the newly active task", async () => {
+        const sourceTask = makeTask({ taskId: TASK_IDS.oldTask, revision: 8, currentSnapshotRef: TASK_IDS.oldSnapshot });
+        const destinationTask = makeTask({ taskId: TASK_IDS.newTask, revision: 1, capabilityId: "clients.update", kind: "clients.update", currentSnapshotRef: TASK_IDS.newSnapshot });
+        const fetchMock = jest.fn().mockImplementation(async (input: string | URL | Request, init?: RequestInit) => {
+            const url = String(input);
+            if (url.endsWith(`/tasks/${TASK_IDS.oldTask}`) && !init?.method) return jsonResponse(sourceTask);
+            if (url.endsWith(`/tasks/${TASK_IDS.oldTask}/commands`) && init?.method === "POST") {
+                return jsonResponse({
+                    receipt: {
+                        taskId: TASK_IDS.newTask,
+                        eventId: TASK_IDS.event,
+                        eventHash: "a".repeat(64),
+                        acceptedRevision: 1,
+                        currentSnapshotRef: TASK_IDS.newSnapshot,
+                    },
+                    snapshot: destinationTask,
+                });
+            }
+            return jsonResponse([]);
+        });
+        global.fetch = fetchMock;
+
+        const { result } = renderHook(() => useAgentChat());
+        await act(async () => { await result.current.refreshTask(TASK_IDS.oldTask); });
+        expect(result.current.task?.taskId).toBe(TASK_IDS.oldTask);
+
+        let mutation;
+        await act(async () => {
+            mutation = await result.current.commandTask(
+                TASK_IDS.oldTask,
+                { command: "start-update", targetRef: TASK_IDS.oldSnapshot, expectedTargetVersion: "b".repeat(64) },
+                { expectedRevision: 8, clientEventId: TASK_IDS.event },
+            );
+        });
+
+        expect(mutation).toEqual(expect.objectContaining({ status: "applied", task: destinationTask }));
+        expect(result.current.task?.taskId).toBe(TASK_IDS.newTask);
+        expect(result.current.taskSnapshot?.taskId).toBe(TASK_IDS.newTask);
+        expect(result.current.taskSnapshot?.revision).toBe(1);
     });
 
     it("keeps the server-issued assistant message id from the UI message stream", async () => {
@@ -755,6 +898,42 @@ describe("mobile useAgentChat", () => {
             expectedRevision: 2,
             operations: [{ op: "set", field: "name", value: "새 이름" }],
         });
+    });
+
+    it("keeps one conflict notice until an authoritative refresh succeeds", async () => {
+        const latestTask = makeTask({ revision: 3, currentSnapshotRef: TASK_IDS.snapshot3 });
+        let taskReadCount = 0;
+        global.fetch = jest.fn().mockImplementation(async (input: string | URL | Request, init?: RequestInit) => {
+            const url = String(input);
+            if (url.endsWith(`/tasks/${TASK_IDS.task}`) && !init?.method) {
+                taskReadCount += 1;
+                return jsonResponse(taskReadCount === 1 ? makeTask() : latestTask);
+            }
+            if (url.endsWith(`/tasks/${TASK_IDS.task}`) && init?.method === "PATCH") {
+                return jsonResponse({ code: "AGENT_TASK_CONFLICT", reason: "revision-mismatch", snapshot: latestTask }, { ok: false, status: 409 });
+            }
+            return jsonResponse([]);
+        });
+
+        const { result } = renderHook(() => useAgentChat());
+        await act(async () => { await result.current.refreshTask(TASK_IDS.task); });
+        await act(async () => {
+            await result.current.patchTask(
+                TASK_IDS.task,
+                [{ op: "set", field: "name", value: "충돌 입력" }],
+                { clientEventId: TASK_IDS.event },
+            );
+        });
+        expect(result.current.taskNeedsReconciliation).toBe(true);
+        expect(result.current.errorState?.code).toBe("task_conflict");
+
+        let refreshed = false;
+        await act(async () => { refreshed = await result.current.refreshTask(); });
+
+        expect(refreshed).toBe(true);
+        expect(result.current.taskNeedsReconciliation).toBe(false);
+        expect(result.current.errorState).toBeNull();
+        expect(result.current.taskSnapshot?.revision).toBe(3);
     });
 });
 

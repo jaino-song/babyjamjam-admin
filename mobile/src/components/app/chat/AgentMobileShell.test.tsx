@@ -99,6 +99,7 @@ describe("AgentMobileShell drawer accessibility", () => {
 
         render(<AgentMobileShell />);
 
+        expect(screen.getAllByRole("alert")).toHaveLength(1);
         expect(screen.getByRole("alert")).toHaveTextContent("최신 초안을 확인한 뒤 다시 수정해 주세요.");
         fireEvent.click(screen.getByRole("button", { name: "최신 초안 불러오기" }));
         expect(mockRefreshTask).toHaveBeenCalledTimes(1);
