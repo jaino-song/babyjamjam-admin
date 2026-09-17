@@ -17,6 +17,8 @@ interface MockChipEditorProps {
     onChange: (value: string) => void;
     variables: { key: string }[];
     onVariableClick?: (key: string) => void;
+    ariaDescribedBy?: string;
+    ariaInvalid?: boolean;
 }
 
 jest.mock("next/navigation", () => ({ useRouter: () => ({ push: mockPush, back: mockBack }) }));
@@ -44,6 +46,8 @@ jest.mock("../variable-chip-editor", () => {
                     id: props.id,
                     placeholder: props.placeholder,
                     value: props.value,
+                    "aria-describedby": props.ariaDescribedBy,
+                    "aria-invalid": props.ariaInvalid ? "true" : undefined,
                     onChange: (e: ChangeEvent<HTMLTextAreaElement>) => props.onChange(e.target.value),
                 }),
                 props.variables.map((v) =>
@@ -169,5 +173,75 @@ describe("TemplateEditor", () => {
         await waitFor(() => {
             expect(document.querySelectorAll("#label-phone").length).toBe(0);
         });
+    });
+
+    it.each([
+        ["create", undefined],
+        ["update", INITIAL],
+    ])("blocks whitespace-only name and content in %s mode without an API call", (_mode, initialData) => {
+        render(<TemplateEditor initialData={initialData} />);
+
+        const name = " \t";
+        const content = " \n\t";
+        const nameInput = document.getElementById("template-name") as HTMLInputElement;
+        const contentInput = document.getElementById("template-content") as HTMLTextAreaElement;
+        fireEvent.change(nameInput, { target: { value: name } });
+        fireEvent.change(contentInput, { target: { value: content } });
+        fireEvent.click(screen.getByRole("button", { name: "저장" }));
+
+        expect(mockCreate).not.toHaveBeenCalled();
+        expect(mockUpdate).not.toHaveBeenCalled();
+        expect(nameInput).toHaveValue(name);
+        expect(contentInput).toHaveValue(content);
+        expect(nameInput).toHaveAttribute("aria-invalid", "true");
+        expect(nameInput).toHaveAttribute("aria-describedby", "template-name-error");
+        expect(contentInput).toHaveAttribute("aria-invalid", "true");
+        expect(contentInput).toHaveAttribute("aria-describedby", "template-content-error");
+        expect(screen.getByText("템플릿 이름은 공백 이외의 문자를 포함해야 합니다.")).toBeInTheDocument();
+        expect(screen.getByText("템플릿 내용은 공백 이외의 문자를 포함해야 합니다.")).toBeInTheDocument();
+        expect(screen.getByText("입력한 템플릿 이름과 내용을 확인해 주세요.")).toBeInTheDocument();
+    });
+
+    it("clears name and content validation errors independently", () => {
+        render(<TemplateEditor />);
+
+        const nameInput = document.getElementById("template-name") as HTMLInputElement;
+        const contentInput = document.getElementById("template-content") as HTMLTextAreaElement;
+        fireEvent.change(nameInput, { target: { value: "   " } });
+        fireEvent.change(contentInput, { target: { value: "\n" } });
+        fireEvent.click(screen.getByRole("button", { name: "저장" }));
+
+        fireEvent.change(nameInput, { target: { value: "유효한 이름" } });
+        expect(screen.queryByText("템플릿 이름은 공백 이외의 문자를 포함해야 합니다.")).not.toBeInTheDocument();
+        expect(screen.getByText("템플릿 내용은 공백 이외의 문자를 포함해야 합니다.")).toBeInTheDocument();
+
+        fireEvent.change(contentInput, { target: { value: "유효한 본문" } });
+        expect(screen.queryByText("템플릿 내용은 공백 이외의 문자를 포함해야 합니다.")).not.toBeInTheDocument();
+        expect(screen.queryByText("입력한 템플릿 이름과 내용을 확인해 주세요.")).not.toBeInTheDocument();
+    });
+
+    it.each([
+        ["create", undefined],
+        ["update", INITIAL],
+    ])("preserves valid multiline name and content in %s mode", (_mode, initialData) => {
+        render(<TemplateEditor initialData={initialData} />);
+
+        const name = "  유효한 템플릿  ";
+        const content = "첫 줄\n둘째 줄\n\t셋째 줄  ";
+        fireEvent.change(document.getElementById("template-name") as HTMLInputElement, { target: { value: name } });
+        fireEvent.change(document.getElementById("template-content") as HTMLTextAreaElement, { target: { value: content } });
+        fireEvent.click(screen.getByRole("button", { name: "저장" }));
+
+        if (initialData) {
+            expect(mockUpdate).toHaveBeenCalledWith(
+                { id: INITIAL.id, request: { name, content, variables: INITIAL.variables } },
+                expect.objectContaining({ onSuccess: expect.any(Function) }),
+            );
+        } else {
+            expect(mockCreate).toHaveBeenCalledWith(
+                { name, content, variables: [] },
+                expect.objectContaining({ onSuccess: expect.any(Function) }),
+            );
+        }
     });
 });

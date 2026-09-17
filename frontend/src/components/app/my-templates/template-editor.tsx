@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { FormHelperText } from "@/components/app/ui/form-section";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { ContentPaper } from "../root/content-paper";
 import { useCreateMessageTemplate, useUpdateMessageTemplate } from "@/hooks/use-message-templates";
@@ -23,6 +24,14 @@ interface TemplateEditorProps {
     initialData?: MessageTemplate;
 }
 
+const TEMPLATE_NAME_ERROR = "템플릿 이름은 공백 이외의 문자를 포함해야 합니다.";
+const TEMPLATE_CONTENT_ERROR = "템플릿 내용은 공백 이외의 문자를 포함해야 합니다.";
+
+interface TemplateFieldErrors {
+    name?: string;
+    content?: string;
+}
+
 export const TemplateEditor = ({ initialData }: TemplateEditorProps) => {
     const router = useRouter();
     const locale = useLocale();
@@ -34,6 +43,7 @@ export const TemplateEditor = ({ initialData }: TemplateEditorProps) => {
     const [content, setContent] = useState(initialData?.content || "");
     const [variables, setVariables] = useState<TemplateVariable[]>(initialData?.variables || []);
     const [detectedKeys, setDetectedKeys] = useState<string[]>([]);
+    const [fieldErrors, setFieldErrors] = useState<TemplateFieldErrors>({});
     const chipEditorRef = useRef<TemplateContentEditorHandle>(null);
 
     useEffect(() => {
@@ -59,6 +69,21 @@ export const TemplateEditor = ({ initialData }: TemplateEditorProps) => {
     }, [content]);
 
     const handleSave = () => {
+        const nextFieldErrors: TemplateFieldErrors = {
+            name: name.trim().length > 0 ? undefined : TEMPLATE_NAME_ERROR,
+            content: content.trim().length > 0 ? undefined : TEMPLATE_CONTENT_ERROR,
+        };
+        setFieldErrors(nextFieldErrors);
+
+        if (
+            name.trim().length === 0
+            || content.trim().length === 0
+            || isPending
+            || isOverBodyLimit
+        ) {
+            return;
+        }
+
         const data = { name, content, variables };
         if (initialData) {
             updateTemplate({ id: initialData.id, request: data }, {
@@ -101,6 +126,10 @@ export const TemplateEditor = ({ initialData }: TemplateEditorProps) => {
     }, [variables]);
 
     const isOverBodyLimit = content.length > MAX_BODY_LENGTH;
+    const hasValidationErrors = Boolean(fieldErrors.name || fieldErrors.content);
+    const nameErrorId = "template-name-error";
+    const contentErrorId = "template-content-error";
+    const validationSummaryId = "template-validation-summary";
 
     return (
         <div className="flex flex-col gap-6">
@@ -112,11 +141,28 @@ export const TemplateEditor = ({ initialData }: TemplateEditorProps) => {
                             <span className="text-destructive ml-1">*</span>
                         </Label>
                         <Input
+                            data-component="desktop_my-templates_editor_name-input"
                             id="template-name"
                             value={name}
-                            onChange={(e) => setName(e.target.value)}
+                            onChange={(e) => {
+                                setName(e.target.value);
+                                setFieldErrors((current) => ({ ...current, name: undefined }));
+                            }}
                             placeholder={t(locale, "template-editor.name-placeholder")}
+                            error={Boolean(fieldErrors.name)}
+                            aria-invalid={fieldErrors.name ? "true" : undefined}
+                            aria-describedby={fieldErrors.name ? nameErrorId : undefined}
                         />
+                        {fieldErrors.name ? (
+                            <FormHelperText
+                                id={nameErrorId}
+                                role="alert"
+                                tone="error"
+                                data-component="desktop_my-templates_editor_name-error"
+                            >
+                                {fieldErrors.name}
+                            </FormHelperText>
+                        ) : null}
                     </div>
 
                     <TemplateContentEditor
@@ -126,13 +172,39 @@ export const TemplateEditor = ({ initialData }: TemplateEditorProps) => {
                         label={<>{t(locale, "template-editor.content-label")}<span className="text-destructive ml-1">*</span></>}
                         quickInsert={<VariableInserter onInsert={handleInsertVariable} />}
                         content={content}
-                        onContentChange={setContent}
+                        onContentChange={(nextContent) => {
+                            setContent(nextContent);
+                            setFieldErrors((current) => ({ ...current, content: undefined }));
+                        }}
                         variables={chipVariables}
                         popoverVariables={variables}
                         onVariableChange={handleVariableChange}
                         placeholder={t(locale, "template-editor.content-placeholder")}
+                        ariaInvalid={Boolean(fieldErrors.content)}
+                        ariaDescribedBy={fieldErrors.content ? contentErrorId : undefined}
+                        error={Boolean(fieldErrors.content)}
+                        hint={fieldErrors.content ? (
+                            <FormHelperText
+                                id={contentErrorId}
+                                role="alert"
+                                tone="error"
+                                data-component="desktop_my-templates_editor_content-error"
+                            >
+                                {fieldErrors.content}
+                            </FormHelperText>
+                        ) : undefined}
                     />
                 </div>
+                {hasValidationErrors ? (
+                    <FormHelperText
+                        id={validationSummaryId}
+                        role="alert"
+                        aria-live="polite"
+                        data-component="desktop_my-templates_editor_validation-summary"
+                    >
+                        입력한 템플릿 이름과 내용을 확인해 주세요.
+                    </FormHelperText>
+                ) : null}
             </ContentPaper>
 
             {variables.length > 0 && (
@@ -169,7 +241,8 @@ export const TemplateEditor = ({ initialData }: TemplateEditorProps) => {
                 </Button>
                 <Button
                     onClick={handleSave}
-                    disabled={!name || !content || isPending || isOverBodyLimit}
+                    disabled={isPending || isOverBodyLimit}
+                    aria-describedby={hasValidationErrors ? validationSummaryId : undefined}
                 >
                     {isPending ? t(locale, "common.saving") : t(locale, "common.save")}
                 </Button>

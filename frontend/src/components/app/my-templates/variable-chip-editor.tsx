@@ -190,11 +190,14 @@ export interface VariableChipEditorProps {
     /** Owning content-editor path for the visible field. */
     dataComponent?: string;
     ariaLabelledBy?: string;
+    ariaDescribedBy?: string;
+    ariaInvalid?: boolean;
+    error?: boolean;
     disabled?: boolean;
 }
 
 export const VariableChipEditor = forwardRef<VariableChipEditorHandle, VariableChipEditorProps>(
-    ({ value, onChange, variables, onVariableClick, placeholder, id, dataComponent, ariaLabelledBy, disabled = false }, ref) => {
+    ({ value, onChange, variables, onVariableClick, placeholder, id, dataComponent, ariaLabelledBy, ariaDescribedBy, ariaInvalid, error, disabled = false }, ref) => {
         const variablesRef = useRef(variables);
         const onVariableClickRef = useRef(onVariableClick);
         const onChangeRef = useRef(onChange);
@@ -262,9 +265,12 @@ export const VariableChipEditor = forwardRef<VariableChipEditorHandle, VariableC
                         ...(ariaLabelledBy
                             ? { "aria-labelledby": ariaLabelledBy }
                             : { "aria-label": placeholder ?? "메시지 본문" }),
+                        ...(ariaDescribedBy ? { "aria-describedby": ariaDescribedBy } : {}),
+                        ...(ariaInvalid ? { "aria-invalid": "true" } : {}),
                         ...(dataComponent ? { "data-component": `${dataComponent}_control` } : {}),
                         class: cn(
                             "min-h-[240px] w-full rounded-[13px] border-[1.35px] border-input bg-white px-3.5 py-2 text-[0.8rem] font-[Pretendard] text-v3-dark shadow-none transition-all duration-200",
+                            error && "border-destructive focus-visible:border-destructive focus-visible:ring-destructive",
                             "focus-visible:border-v3-primary focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-inset focus-visible:ring-v3-primary/10 focus-visible:ring-offset-0 focus-visible:shadow-none"
                         ),
                     },
