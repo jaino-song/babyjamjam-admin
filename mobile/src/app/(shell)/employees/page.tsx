@@ -344,11 +344,14 @@ export default function EmployeesPage() {
   const [formOpen, setFormOpen] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<number | null>(null);
 
-  const { filteredEmployees, isLoading } = useInfiniteEmployees({
+  const { allEmployees, filteredEmployees, isLoading } = useInfiniteEmployees({
     filter: "all",
     search: searchQuery,
   });
   const isEmployeesFetching = isLoading && filteredEmployees.length === 0;
+  const selectedEmployee = selected
+    ? allEmployees.find((employee) => employee.id === selected.id) ?? selected
+    : null;
 
   const deleteEmployee = useDeleteEmployee();
 
@@ -593,13 +596,13 @@ export default function EmployeesPage() {
           </div>
         }
         detail={
-          selected ? (
+          selectedEmployee ? (
             <EmployeeDetailContent
-              employee={selected}
+              employee={selectedEmployee}
               activeTab={detailSheetTab}
               onTabChange={setDetailSheetTab}
-              onEdit={() => handleEdit(selected)}
-              onDelete={() => handleDeleteRequest(selected.id)}
+              onEdit={() => handleEdit(selectedEmployee)}
+              onDelete={() => handleDeleteRequest(selectedEmployee.id)}
             />
           ) : (
             <div className="detail-body" data-component="mobile_employees_detail-sheet_stack_detail-page_empty" />

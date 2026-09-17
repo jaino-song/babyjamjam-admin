@@ -186,9 +186,10 @@ function renderPage() {
     isPending: false,
   } as unknown as ReturnType<typeof useDeleteEmployee>);
 
-  render(<EmployeesPage />);
+  const view = render(<EmployeesPage />);
   fireEvent.click(screen.getByRole("button", { name: employee.name }));
   fireEvent.click(screen.getByRole("button", { name: "근무 내역" }));
+  return view;
 }
 
 describe("EmployeesPage work history query states", () => {
@@ -231,5 +232,23 @@ describe("EmployeesPage work history query states", () => {
     expect(screen.getByText("잠시 후 다시 시도해 주세요.")).toBeInTheDocument();
     expect(screen.getByRole("alert")).toBeInTheDocument();
     expect(screen.queryByRole("status")).not.toBeInTheDocument();
+  });
+
+  it("updates an open detail from fresh employees even when an edit removes the search match", () => {
+    const view = renderPage();
+    const updated = { ...employee, name: "수정된 제공인력", workArea: ["인천 남동구", "인천 연수구"] };
+    mockedUseInfiniteEmployees.mockReturnValue({
+      allEmployees: [updated],
+      filteredEmployees: [],
+      isLoading: false,
+    } as unknown as ReturnType<typeof useInfiniteEmployees>);
+
+    view.rerender(<EmployeesPage />);
+
+    expect(screen.getByRole("heading", { name: updated.name, level: 1 })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: employee.name, level: 1 })).not.toBeInTheDocument();
+    expect(screen.getByText("근무 내역이 없습니다.")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "제공인력 정보" }));
+    expect(screen.getByText(/근무 지역:.*인천 남동구.*인천 연수구/)).toBeInTheDocument();
   });
 });
