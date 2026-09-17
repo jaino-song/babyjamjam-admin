@@ -283,6 +283,7 @@ interface MessageHistoryCandidate {
 
 const MESSAGE_HISTORY_CURSOR_VERSION = 1;
 const MESSAGE_HISTORY_MAX_LIMIT = 500;
+const MESSAGE_HISTORY_JOB_UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 interface MessageHistoryCursorPayload {
     v: typeof MESSAGE_HISTORY_CURSOR_VERSION;
@@ -330,6 +331,8 @@ function decodeMessageHistoryCursor(cursor: string, branchId: string): MessageHi
             if (!Number.isSafeInteger(numericId) || numericId <= 0 || String(numericId) !== decoded.nativeId) {
                 throw new Error("invalid log cursor id");
             }
+        } else if (!MESSAGE_HISTORY_JOB_UUID_PATTERN.test(decoded.nativeId)) {
+            throw new Error("invalid job cursor id");
         }
         return {
             branchId,

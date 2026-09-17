@@ -4820,13 +4820,16 @@ describe("MessageTriggerService", () => {
                 createLog({ id: 40 }),
             ]);
             jobRepository.findHistoryPageByBranch.mockResolvedValue([
-                createJob({ id: "uuid-z", status: "failed" }),
-                createJob({ id: "uuid-a", status: "canceled" }),
+                createJob({ id: "00000000-0000-4000-8000-0000000000f0", status: "failed" }),
+                createJob({ id: "00000000-0000-4000-8000-0000000000a0", status: "canceled" }),
             ]);
 
             const result = await service.listHistoryPage(branchId, 2);
 
-            expect(result.items.map((item) => item.id)).toEqual([40, "job:uuid-z"]);
+            expect(result.items.map((item) => item.id)).toEqual([
+                40,
+                "job:00000000-0000-4000-8000-0000000000f0",
+            ]);
             expect(result.page.hasMore).toBe(true);
             expect(messageLogRepository.findHistoryPageByBranch).toHaveBeenCalledWith(
                 branchId,
@@ -4880,15 +4883,15 @@ describe("MessageTriggerService", () => {
             ruleRepository.findAll.mockResolvedValue([]);
             messageLogRepository.findHistoryPageByBranch.mockResolvedValue([]);
             jobRepository.findHistoryPageByBranch.mockResolvedValue([
-                createJob({ id: "00000000-0000-0000-0000-0000000000ff", status: "failed" }),
-                createJob({ id: "ffffffff-ffff-ffff-ffff-ffffffffffff", status: "failed" }),
-                createJob({ id: "00000000-0000-0000-0000-000000000001", status: "failed" }),
+                createJob({ id: "00000000-0000-4000-8000-0000000000ff", status: "failed" }),
+                createJob({ id: "ffffffff-ffff-4fff-8fff-ffffffffffff", status: "failed" }),
+                createJob({ id: "00000000-0000-4000-8000-000000000001", status: "failed" }),
             ]);
 
             const firstPage = await service.listHistoryPage(branchId, 2);
             expect(firstPage.items.map((item) => item.id)).toEqual([
-                "job:00000000-0000-0000-0000-0000000000ff",
-                "job:ffffffff-ffff-ffff-ffff-ffffffffffff",
+                "job:00000000-0000-4000-8000-0000000000ff",
+                "job:ffffffff-ffff-4fff-8fff-ffffffffffff",
             ]);
             expect(firstPage.page.nextCursor).toBeTruthy();
 
@@ -4902,7 +4905,7 @@ describe("MessageTriggerService", () => {
                 expect.objectContaining({
                     after: {
                         source: "job",
-                        nativeId: "ffffffff-ffff-ffff-ffff-ffffffffffff",
+                        nativeId: "ffffffff-ffff-4fff-8fff-ffffffffffff",
                     },
                     limit: 3,
                 }),
@@ -4916,12 +4919,29 @@ describe("MessageTriggerService", () => {
                 branchId,
                 snapshotAt: new Date(Date.now() + 60_000).toISOString(),
                 source: "job",
-                nativeId: "job-1",
+                nativeId: "00000000-0000-4000-8000-000000000001",
             })).toString("base64url");
 
             await expect(service.listHistoryPage(branchId, 2, futureCursor)).rejects.toThrow(
                 "메시지 발송 기록 페이지 커서가 올바르지 않습니다.",
             );
+        });
+
+        it("rejects a malformed terminal-job cursor before querying either source", async () => {
+            const { service, messageLogRepository, jobRepository } = createService();
+            const malformedCursor = Buffer.from(JSON.stringify({
+                v: 1,
+                branchId,
+                snapshotAt: new Date(Date.now() - 60_000).toISOString(),
+                source: "job",
+                nativeId: "not-a-uuid",
+            })).toString("base64url");
+
+            await expect(service.listHistoryPage(branchId, 2, malformedCursor)).rejects.toThrow(
+                "메시지 발송 기록 페이지 커서가 올바르지 않습니다.",
+            );
+            expect(messageLogRepository.findHistoryPageByBranch).not.toHaveBeenCalled();
+            expect(jobRepository.findHistoryPageByBranch).not.toHaveBeenCalled();
         });
     });
 });
