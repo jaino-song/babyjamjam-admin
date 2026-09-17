@@ -842,7 +842,7 @@ export default function ContractsPage() {
                   renderLayout={({ content, footer, footerClassName }) => (
                     <DetailPanel data-component="desktop_contracts_sections_section-content_maternity-section_split-layout_creation-session_detail-panel"
                       title="전자계약서 작성"
-                      subtitle="고객에게 전자계약서를 발송합니다"
+                      subtitle="고객에게 전자계약서를 발송합니다" stepperPlacement="below-title"
                       avatar={
                         <div
                           data-component="desktop_contracts_sections_section-content_maternity-section_split-layout_creation-session_detail-panel_avatar"
