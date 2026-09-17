@@ -26,7 +26,7 @@ function setup() {
     const rules = [greeting, info];
     const settings = { status: "available" as const, rules, defaultsPresent: true, dispatchEnabled: true,
         senderApproved: true, senderApprovedAt: now, pastTriggerEnabled: true, pastTriggerConfig: DEFAULT_MESSAGE_AUTOMATION_PAST_TRIGGER_CONFIG };
-    const triggers = {
+    const sources = {
         readClientAutomationSettings: jest.fn().mockImplementation(async () => settings),
         readClientAutomationSource: jest.fn().mockImplementation(async () => client),
         readClientAutomationArea: jest.fn().mockResolvedValue({ bankAccountInfo: { bankName: "합성 은행", accNum: "000000041" } }),
@@ -42,14 +42,14 @@ function setup() {
     const enrichers = { enrich: jest.fn() };
     const delivery = new SmsTriggerDeliveryService(aligo as never, templates as never, logs as never, undefined, enrichers as never);
     const sender = new AligoDefaultSenderPolicyService(new E2eAligoApiStub());
-    const service = new ClientAutomationImpactService(triggers as never, delivery, sender, repository as never);
+    const service = new ClientAutomationImpactService(sources as never, delivery, sender, repository as never);
     const create: ClientAutomationWrite = { kind: "create", taskId, values: { name: client.name, phone: client.phone, startDate: client.startDate } };
     function pending(rule = info) {
         const job = Object.assign(MessageTriggerJobEntity.create(buildClientMessageRecipe(rule, client, now)!), { id: `job-${rule.id}`, canceledByUser: false });
         jobs.push(job);
         return job;
     }
-    return { service, client, create, settings, triggers, repository, jobs, rules, greeting, info, pending, sender,
+    return { service, client, create, settings, sources, repository, jobs, rules, greeting, info, pending, sender,
         template, templates, aligo, logs, enrichers };
 }
 
@@ -63,7 +63,7 @@ describe("read-only normalized client automation impact", () => {
         expect(result).toMatchObject({ availability: "available", complete: true, clientIdentity: null, affectedJobs: [] });
         expect(result.effects.map(({ ruleId, change }) => [ruleId, change])).toEqual([["greeting", "create"], ["info", "create"]]);
         for (const raw of [fixture.client.name, fixture.client.phone, "합성 안내"]) expect(JSON.stringify(result)).not.toContain(raw);
-        for (const fn of [fixture.triggers.ensureDefaultRulesForBranch, fixture.triggers.syncClientRulesForClient,
+        for (const fn of [fixture.sources.ensureDefaultRulesForBranch, fixture.sources.syncClientRulesForClient,
             fixture.repository.update, fixture.repository.upsertPending, fixture.aligo.sendSms, fixture.logs.save, fixture.enrichers.enrich]) expect(fn).not.toHaveBeenCalled();
         expect(fixture.repository.findForClientAutomationReview).not.toHaveBeenCalled();
     });
@@ -104,7 +104,7 @@ describe("read-only normalized client automation impact", () => {
         const result = await f.service.planClientWrite(branchId, f.create);
         expect(result).toMatchObject({ availability: "unavailable", reason: "missing-default-rules", complete: true });
         expect(result.effects).toHaveLength(2);
-        expect(f.triggers.ensureDefaultRulesForBranch).not.toHaveBeenCalled();
+        expect(f.sources.ensureDefaultRulesForBranch).not.toHaveBeenCalled();
     });
 
     it("preserves pending jobs when changed fields are irrelevant to their recipes", async () => {
@@ -193,9 +193,9 @@ describe("read-only normalized client automation impact", () => {
         const result = await f.service.planClientWrite(branchId, write);
         expect(result).toMatchObject({ availability: "available", complete: true });
         expect(result.effects).toHaveLength(1);
-        expect(f.triggers.readClientAutomationArea).toHaveBeenCalledWith(branchId, "synthetic-area");
+        expect(f.sources.readClientAutomationArea).toHaveBeenCalledWith(branchId, "synthetic-area");
         expect(JSON.stringify(result)).not.toContain("000000041");
-        f.triggers.readClientAutomationArea.mockResolvedValue(undefined);
+        f.sources.readClientAutomationArea.mockResolvedValue(undefined);
         expect(await f.service.planClientWrite(branchId, write)).toMatchObject({ availability: "unavailable", reason: "source-unavailable", complete: false });
     });
 
@@ -222,9 +222,9 @@ describe("read-only normalized client automation impact", () => {
         expect(await f.service.planClientWrite(branchId, write)).toMatchObject({ availability: "unavailable", complete: false, affectedJobs: [] });
         f.repository.findForClientAutomationReview.mockResolvedValue(Array(501).fill(job));
         expect(await f.service.planClientWrite(branchId, write)).toMatchObject({ availability: "unavailable", complete: false });
-        f.triggers.readClientAutomationSource.mockResolvedValue(null);
+        f.sources.readClientAutomationSource.mockResolvedValue(null);
         expect(await f.service.planClientWrite(branchId, write)).toMatchObject({ availability: "unavailable", complete: false });
-        f.triggers.readClientAutomationSettings.mockRejectedValue(new Error("private raw source"));
+        f.sources.readClientAutomationSettings.mockRejectedValue(new Error("private raw source"));
         const failed = await f.service.planClientWrite(branchId, write);
         expect(failed).toMatchObject({ availability: "unavailable", complete: false });
         expect(JSON.stringify(failed)).not.toContain("private raw source");
@@ -260,7 +260,7 @@ describe("read-only normalized client automation impact", () => {
         const schedule = { id: 17, incarnationId: taskId, branchId, clientId: 41, client: { id: 41, name: f.client.name },
             workAddress: "합성 주소", startDate: f.client.startDate, endDate: f.client.endDate, replaced: false, terminatedAt: null,
             primaryEmployeeId: 71, secondaryEmployeeId: null, primaryEmployee: { id: 71, name: "합성 관리사", phone: "01000000071" }, secondaryEmployee: null };
-        f.triggers.readClientAutomationSchedules.mockResolvedValue([schedule]);
+        f.sources.readClientAutomationSchedules.mockResolvedValue([schedule]);
         const write = { kind: "update" as const, clientId: 41, values: { name: "정정 합성 고객" } };
         const first = await f.service.planClientWrite(branchId, write);
         expect(first).toMatchObject({ availability: "unavailable", reason: "unsupported-content", complete: true });

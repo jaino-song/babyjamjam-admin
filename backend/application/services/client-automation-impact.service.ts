@@ -10,7 +10,7 @@ import { isManualMessageTriggerJob } from "domain/constants/message-trigger-job-
 import { agentAutomationScheduleIdentity, canonicalAgentAutomationEffects } from "application/agent/agent-automation-consent";
 import { normalizePhone } from "application/utils/normalize-phone";
 import { AligoDefaultSenderPolicyService } from "./aligo-default-sender-policy.service";
-import { MessageTriggerService } from "./message-trigger.service";
+import { ClientAutomationSourceReader } from "./client-automation-source.reader";
 import { SmsTriggerDeliveryService } from "./sms-trigger-delivery.service";
 import { describeClientMessageEffect, type ClientMessageEffectPolicy, type ClientMessageLogicalSubject } from "./client-message-effect-recipe";
 import { buildClientMessageRecipe, buildEmployeeAssignmentMessageRecipe, isMessageRecipeWithinMaterializationWindow,
@@ -71,7 +71,7 @@ function unavailableEffect(input: {
 @Injectable()
 export class ClientAutomationImpactService implements ClientAutomationImpactPort {
     constructor(
-        private readonly triggers: MessageTriggerService,
+        private readonly sources: ClientAutomationSourceReader,
         private readonly delivery: SmsTriggerDeliveryService,
         private readonly sender: AligoDefaultSenderPolicyService,
         @Inject(MESSAGE_TRIGGER_JOB_REPOSITORY) private readonly jobs: IMessageTriggerJobRepository,
@@ -98,15 +98,15 @@ export class ClientAutomationImpactService implements ClientAutomationImpactPort
     }
 
     private async readPlan(branchId: string, write: ClientAutomationWrite, now: Date, transaction?: Prisma.TransactionClient): Promise<ClientAutomationImpact> {
-        const settings = transaction ? await this.triggers.readClientAutomationSettings(branchId, transaction)
-            : await this.triggers.readClientAutomationSettings(branchId);
+        const settings = transaction ? await this.sources.readClientAutomationSettings(branchId, transaction)
+            : await this.sources.readClientAutomationSettings(branchId);
         if (settings.status !== "available") return this.unavailable("source-unavailable");
         // Dedicated system/manual producers have separate owners. Any other
         // active global rule cannot be silently omitted from a customer preview.
         if (settings.rules.some((rule) => rule.branchId === null && rule.isActive
             && !rule.id.startsWith("system:") && !rule.id.startsWith("agent-sms:"))) return this.unavailable("source-unavailable");
-        const before = write.kind === "update" ? (transaction ? await this.triggers.readClientAutomationSource(branchId, write.clientId, transaction)
-            : await this.triggers.readClientAutomationSource(branchId, write.clientId)) : null;
+        const before = write.kind === "update" ? (transaction ? await this.sources.readClientAutomationSource(branchId, write.clientId, transaction)
+            : await this.sources.readClientAutomationSource(branchId, write.clientId)) : null;
         if (write.kind === "update" && (!before || before.id !== write.clientId || !before.createdAt)) return this.unavailable("source-unavailable");
         const clientIdentity = before ? sourceHash({ version: 1, resource: "client", id: before.id, createdAt: before.createdAt }) : null;
         const subject: ClientMessageLogicalSubject = write.kind === "create"
@@ -115,8 +115,8 @@ export class ClientAutomationImpactService implements ClientAutomationImpactPort
         const after = this.mergeSource(before, write.values, now);
         if (!after.name || !after.phone) return this.unavailable("missing-input");
         if (write.values.areaId !== undefined) {
-            after.area = write.values.areaId === null ? null : (transaction ? await this.triggers.readClientAutomationArea(branchId, write.values.areaId, transaction)
-                : await this.triggers.readClientAutomationArea(branchId, write.values.areaId));
+            after.area = write.values.areaId === null ? null : (transaction ? await this.sources.readClientAutomationArea(branchId, write.values.areaId, transaction)
+                : await this.sources.readClientAutomationArea(branchId, write.values.areaId));
             if (write.values.areaId !== null && after.area === undefined) return this.unavailable("source-unavailable");
         }
         const sender = this.sender.read();
@@ -178,12 +178,12 @@ export class ClientAutomationImpactService implements ClientAutomationImpactPort
 
         // A client-name correction refreshes existing active schedule recipes. It
         // never changes the source fingerprint format of legacy assignment jobs.
-        let schedules: Awaited<ReturnType<MessageTriggerService["readClientAutomationSchedules"]>> = [];
+        let schedules: Awaited<ReturnType<ClientAutomationSourceReader["readClientAutomationSchedules"]>> = [];
         const nameChanged = before && before.name !== after.name;
         const periodChanged = before && sourceHash([before.startDate, before.endDate]) !== sourceHash([after.startDate, after.endDate]);
         if (before && (nameChanged || periodChanged)) {
-            schedules = transaction ? await this.triggers.readClientAutomationSchedules(branchId, before.id, transaction)
-                : await this.triggers.readClientAutomationSchedules(branchId, before.id);
+            schedules = transaction ? await this.sources.readClientAutomationSchedules(branchId, before.id, transaction)
+                : await this.sources.readClientAutomationSchedules(branchId, before.id);
             if (schedules.length > 500 || schedules.some((schedule) => schedule.branchId !== branchId || schedule.clientId !== before.id
                 || !/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(schedule.incarnationId))) {
                 return this.unavailable("source-unavailable");

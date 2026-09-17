@@ -38,6 +38,7 @@ import { MESSAGE_AUTOMATION_DATABASE } from "domain/repositories/message-automat
         MessageAutomationActivationService,
     ],
     exports: [
+        MESSAGE_AUTOMATION_DATABASE,
         GetSettingUsecase,
         UpdateSettingUsecase,
         SystemSettingService,

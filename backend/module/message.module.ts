@@ -39,6 +39,7 @@ import { SbMessageTriggerRuleBranchOverrideRepository } from "infrastructure/dat
 import { MessageController } from "interface/controllers/message.controller";
 import { MessageTriggerController } from "interface/controllers/message-trigger.controller";
 import { MessageExternalAgentCapabilitiesProvider } from "application/usecases/message/message-external-agent-capabilities.provider";
+import { ClientAutomationSourceReader } from "application/services/client-automation-source.reader";
 import { ClientAutomationImpactService } from "application/services/client-automation-impact.service";
 import { CLIENT_AUTOMATION_IMPACT } from "domain/ports/client-automation-impact.port";
 
@@ -77,6 +78,7 @@ import { CLIENT_AUTOMATION_IMPACT } from "domain/ports/client-automation-impact.
         MessageTriggerService,
         MessageTriggerSchedulerService,
         MessageExternalAgentCapabilitiesProvider,
+        ClientAutomationSourceReader,
         ClientAutomationImpactService,
         { provide: CLIENT_AUTOMATION_IMPACT, useExisting: ClientAutomationImpactService },
     ],

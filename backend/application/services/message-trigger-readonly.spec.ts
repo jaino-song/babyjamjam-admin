@@ -1,3 +1,4 @@
+import { ClientAutomationSourceReader } from "./client-automation-source.reader";
 import { MessageTriggerService } from "./message-trigger.service";
 import { MessageExternalAgentCapabilitiesProvider } from "application/usecases/message/message-external-agent-capabilities.provider";
 import { MessageTriggerRuleEntity } from "domain/entities/message-trigger-rule.entity";
@@ -25,10 +26,13 @@ function setup(rules: MessageTriggerRuleEntity[], parentEnabled = true, schemaPr
     const senderApproval = { isApproved: jest.fn().mockResolvedValue(true),
         getApprovedBranches: jest.fn().mockResolvedValue(new Map([[branchId, new Date("2026-09-01T00:00:00Z")]])) };
     const overrides = { findAllByBranch: jest.fn().mockResolvedValue([{ ruleId: "global-disabled-in-branch", isActive: false }]) };
+    const activation = { getTriggerDispatchEnabled: jest.fn().mockResolvedValue(parentEnabled) };
+    const sources = new ClientAutomationSourceReader(prisma as never, ruleRepository as never, overrides as never, senderApproval as never,
+        undefined, activation as never);
+    jest.spyOn(sources, "hasTriggerSchema").mockResolvedValue(schemaPresent);
     const trigger = new MessageTriggerService(prisma as never, {} as never, senderApproval as never,
         ruleRepository as never, jobRepository as never, {} as never, {} as never, {} as never,
-        undefined, overrides as never, { getTriggerDispatchEnabled: jest.fn().mockResolvedValue(parentEnabled) } as never);
-    jest.spyOn(trigger as unknown as { hasTriggerSchema(): Promise<boolean> }, "hasTriggerSchema").mockResolvedValue(schemaPresent);
+        undefined, overrides as never, activation as never, undefined, sources);
     const provider = new MessageExternalAgentCapabilitiesProvider(prisma as never, trigger,
         jobRepository as never, {} as never, senderApproval as never);
     const capability = provider.getCapabilities().find(({ meta }) => meta.name === "automation.list")!;

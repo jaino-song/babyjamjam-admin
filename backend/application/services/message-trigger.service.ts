@@ -1,3 +1,5 @@
+import { ClientAutomationSourceReader, type ClientAutomationSettingsSnapshot } from "./client-automation-source.reader";
+import { DEFAULT_SERVICE_INFO_TRIGGER, DEFAULT_CLIENT_GREETING_TRIGGER, matchesTriggerDefaults, type MessageTriggerRuleDefaults as UpsertRuleParams } from "./message-trigger-defaults";
 import {
     BadRequestException,
     ConflictException,
@@ -52,7 +54,6 @@ import {
     MESSAGE_TRIGGER_RULE_BRANCH_OVERRIDE_REPOSITORY,
     IMessageTriggerRuleBranchOverrideRepository,
 } from "domain/repositories/message-trigger-rule-branch-override.repository.interface";
-import { isRuleActiveForBranch } from "domain/utils/message-trigger-rule-activation";
 import { isManualMessageTriggerJob, isManualMessageTriggerRule } from "domain/constants/message-trigger-job-ownership";
 import { SERVICE_END_NOTICE_ALREADY_SENT_CANCEL_REASON } from "domain/constants/service-end-notice-message";
 import {
@@ -89,20 +90,8 @@ import {
 import { AdminAuditActor } from "./admin-audit-event.service";
 import { MANUAL_DEDUPE_MARKER } from "domain/constants/service-end-notice-message";
 import {
-    DEFAULT_MESSAGE_AUTOMATION_PAST_TRIGGER_CONFIG,
     MessageAutomationPastTriggerConfig,
 } from "domain/entities/system-setting.entity";
-
-interface UpsertRuleParams {
-    name: string;
-    isActive?: boolean;
-    eventType: MessageTriggerEventType;
-    offsetType: MessageTriggerOffsetType;
-    offsetDays?: number;
-    sendTime?: string;
-    recipientType: MessageTriggerRecipientType;
-    templateKey: MessageTriggerTemplateKey;
-}
 
 export interface MessageTriggerIntentSyncOptions {
     stableBatchAt: Date;
@@ -114,43 +103,7 @@ type MessageTriggerRuleValidationParams = Pick<
     "eventType" | "offsetType" | "offsetDays" | "sendTime" | "recipientType" | "templateKey"
 >;
 
-const DEFAULT_SERVICE_INFO_TRIGGER: UpsertRuleParams = {
-    name: "서비스 시작 7일 전 서비스 안내",
-    isActive: true,
-    eventType: MessageTriggerEventType.SERVICE_START,
-    offsetType: MessageTriggerOffsetType.BEFORE_DAYS,
-    offsetDays: 7,
-    recipientType: MessageTriggerRecipientType.CLIENT,
-    templateKey: MessageTriggerTemplateKey.SERVICE_INFO,
-};
-
-const DEFAULT_CLIENT_GREETING_TRIGGER: UpsertRuleParams = {
-    name: "신규 고객 인사 메시지",
-    isActive: true,
-    eventType: MessageTriggerEventType.CLIENT_CREATED,
-    offsetType: MessageTriggerOffsetType.IMMEDIATE,
-    offsetDays: 0,
-    recipientType: MessageTriggerRecipientType.CLIENT,
-    templateKey: MessageTriggerTemplateKey.CLIENT_GREETING,
-};
-
-function matchesTriggerDefaults(rule: MessageTriggerRuleEntity, defaults: UpsertRuleParams, templateOnly: boolean): boolean {
-    if (templateOnly) return rule.templateKey === defaults.templateKey;
-    return rule.eventType === defaults.eventType && rule.offsetType === defaults.offsetType
-        && rule.offsetDays === (defaults.offsetDays ?? 0) && rule.recipientType === defaults.recipientType
-        && rule.templateKey === defaults.templateKey;
-}
-
-export type ClientAutomationSettingsSnapshot = {
-    status: "available";
-    rules: MessageTriggerRuleEntity[];
-    defaultsPresent: boolean;
-    dispatchEnabled: boolean;
-    senderApproved: boolean;
-    senderApprovedAt: Date | null;
-    pastTriggerEnabled: boolean;
-    pastTriggerConfig: MessageAutomationPastTriggerConfig;
-} | { status: "unavailable" };
+export type { ClientAutomationSettingsSnapshot } from "./client-automation-source.reader";
 
 const ORPHANED_TRIGGER_JOB_CANCEL_REASON = "Related client or schedule deleted";
 const EXPIRED_PENDING_JOB_CANCEL_REASON = "기존 발송 예정 24시간 경과";
@@ -376,6 +329,7 @@ function revisionDocumentJobFacts(
 @Injectable()
 export class MessageTriggerService {
     private readonly logger = new Logger(MessageTriggerService.name);
+    private readonly automationSources: ClientAutomationSourceReader;
 
     constructor(
         private readonly prisma: PrismaService,
@@ -398,7 +352,13 @@ export class MessageTriggerService {
         private readonly messageAutomationActivationService?: MessageAutomationActivationService,
         @Optional()
         private readonly messageAutomationBranchLockService?: MessageAutomationBranchLockService,
-    ) {}
+        @Optional() automationSources?: ClientAutomationSourceReader,
+    ) {
+        // Preserve constructor-based callers while sharing exactly the same read
+        // implementation; the production module injects its registered reader.
+        this.automationSources = automationSources ?? new ClientAutomationSourceReader(prisma, ruleRepository,
+            overrideRepository, messageSenderApprovalService, systemSettingService, messageAutomationActivationService);
+    }
 
     async listRules(branchId: string): Promise<MessageTriggerRuleEntity[]> {
         const { rules, parentEnabled } = await this.resolvePersistedRules(branchId);
@@ -413,49 +373,13 @@ export class MessageTriggerService {
         return (await this.resolvePersistedRules(branchId)).rules;
     }
 
-    /** Server-only preview input. Reads neither provision defaults nor materialize delivery jobs. */
+    /** Read-only compatibility entrypoints; all consumers share the source owner. */
     async readClientAutomationSettings(branchId: string, transaction?: Prisma.TransactionClient): Promise<ClientAutomationSettingsSnapshot> {
-        const { rules, parentEnabled, schemaReady } = await this.resolvePersistedRules(branchId, transaction);
-        if (!schemaReady) return { status: "unavailable" };
-        const [approvedBranches, pastTriggerEnabled, pastTriggerConfig] = await Promise.all([
-            transaction ? this.messageSenderApprovalService.getApprovedBranches([branchId], transaction)
-                : this.messageSenderApprovalService.getApprovedBranches([branchId]),
-            this.getMessagePolicyEnabled(branchId, "past-trigger", transaction),
-            this.getRetroactiveSendConfig(branchId, transaction),
-        ]);
-        const defaultsPresent = [DEFAULT_SERVICE_INFO_TRIGGER, DEFAULT_CLIENT_GREETING_TRIGGER]
-            .every((defaults) => rules.some((rule) => rule.branchId === branchId && matchesTriggerDefaults(rule, defaults, true)));
-        return { status: "available", rules, defaultsPresent, dispatchEnabled: parentEnabled,
-            senderApproved: approvedBranches.has(branchId), senderApprovedAt: approvedBranches.get(branchId) ?? null,
-            pastTriggerEnabled, pastTriggerConfig };
+        return this.automationSources.readClientAutomationSettings(branchId, transaction);
     }
 
-    private async resolvePersistedRules(branchId: string, transaction?: Prisma.TransactionClient): Promise<{
-        rules: MessageTriggerRuleEntity[];
-        parentEnabled: boolean;
-        schemaReady: boolean;
-    }> {
-        if (!(await this.hasTriggerSchema(transaction))) {
-            return { rules: [], parentEnabled: false, schemaReady: false };
-        }
-        const parentEnabled = await this.isMessageAutomationParentEnabled(branchId, transaction);
-        const rules = transaction ? await this.ruleRepository.findAll(branchId, transaction) : await this.ruleRepository.findAll(branchId);
-        // The pure override port remains Prisma-free; this existing aggregate owns
-        // the transaction-bound projection of the same three stored columns.
-        const overrides = transaction ? await transaction.message_trigger_rule_branch_override.findMany({
-            where: { branchId }, select: { branchId: true, ruleId: true, isActive: true },
-        }) : await this.overrideRepository.findAllByBranch(branchId);
-        const overrideMap = new Map(overrides.map((override) => [override.ruleId, override]));
-        for (const rule of rules) {
-            if (rule.branchId === null) {
-                rule.isLockedByGlobal = !rule.isActive;
-                rule.isActive = isRuleActiveForBranch(rule.isActive, overrideMap.get(rule.id)?.isActive);
-            }
-        }
-        if (!parentEnabled) {
-            for (const rule of rules) rule.isActive = false;
-        }
-        return { rules, parentEnabled, schemaReady: true };
+    private async resolvePersistedRules(branchId: string, transaction?: Prisma.TransactionClient) {
+        return this.automationSources.resolvePersistedRules(branchId, transaction);
     }
 
     async ensureDefaultRulesForBranch(branchId: string): Promise<void> {
@@ -1120,53 +1044,16 @@ export class MessageTriggerService {
         return { id, status: "canceled" };
     }
 
-    /** The same branch-scoped source is used by preview and by job materialization. */
-    async readClientAutomationSource(branchId: string, clientId: number, transaction?: Prisma.TransactionClient): Promise<ClientTriggerSource | null> {
-        const supportsCreatedAt = await hasColumn(transaction ?? this.prisma, "client", "created_at");
-        const supportsAreaId = await hasColumn(transaction ?? this.prisma, "client", "area_id");
-        // Prisma's type inference does not correctly narrow the `area` relation type when
-        // the select key is inside a conditional spread; cast to ClientTriggerSource explicitly.
-        return await (transaction ?? this.prisma).client.findFirst({
-            where: { id: clientId, branchId },
-            select: {
-                id: true,
-                name: true,
-                phone: true,
-                type: true,
-                startDate: true,
-                endDate: true,
-                serviceEndNoticeSentAt: true,
-                duration: true,
-                fullPrice: true,
-                grant: true,
-                actualPrice: true,
-                ...(supportsAreaId ? { area: { select: { bankAccountInfo: { select: { bankName: true, accNum: true } } } } } : {}),
-                ...(supportsCreatedAt ? { createdAt: true } : {}),
-            },
-        }) as ClientTriggerSource | null;
+    async readClientAutomationSource(branchId: string, clientId: number, transaction?: Prisma.TransactionClient) {
+        return this.automationSources.readClientAutomationSource(branchId, clientId, transaction);
     }
 
-    /** Normal client writes permit branch-owned and global areas; preview uses the same scope. */
-    async readClientAutomationArea(branchId: string, areaId: string, transaction?: Prisma.TransactionClient): Promise<ClientTriggerSource["area"] | undefined> {
-        return (await (transaction ?? this.prisma).area.findFirst({
-            where: { id: areaId, OR: [{ branchId }, { branchId: null }] },
-            select: { bankAccountInfo: { select: { bankName: true, accNum: true } } },
-        })) ?? undefined;
+    async readClientAutomationArea(branchId: string, areaId: string, transaction?: Prisma.TransactionClient) {
+        return this.automationSources.readClientAutomationArea(branchId, areaId, transaction);
     }
 
-    /** IDs are not creation identities. Include the immutable incarnation for task consent. */
-    async readClientAutomationSchedules(branchId: string, clientId: number, transaction?: Prisma.TransactionClient): Promise<(EmployeeAssignmentScheduleSource & { incarnationId: string })[]> {
-        return (transaction ?? this.prisma).employee_schedule.findMany({
-            where: { branchId, clientId, replaced: false, terminatedAt: null },
-            select: {
-                id: true, incarnationId: true, branchId: true, clientId: true, workAddress: true,
-                startDate: true, endDate: true, replaced: true, terminatedAt: true,
-                primaryEmployeeId: true, secondaryEmployeeId: true,
-                client: { select: { id: true, name: true } },
-                primaryEmployee: { select: { id: true, name: true, phone: true } },
-                secondaryEmployee: { select: { id: true, name: true, phone: true } },
-            }, orderBy: { id: "asc" }, take: 501,
-        });
+    async readClientAutomationSchedules(branchId: string, clientId: number, transaction?: Prisma.TransactionClient) {
+        return this.automationSources.readClientAutomationSchedules(branchId, clientId, transaction);
     }
 
     async syncClientRulesForClient(
@@ -1711,43 +1598,16 @@ export class MessageTriggerService {
         return [...orderedDueCandidates, ...futureCandidates];
     }
 
-    private async getRetroactiveSendConfig(
-        branchId: string,
-        transaction?: Prisma.TransactionClient,
-    ): Promise<MessageAutomationPastTriggerConfig> {
-        if (!this.systemSettingService) {
-            return DEFAULT_MESSAGE_AUTOMATION_PAST_TRIGGER_CONFIG;
-        }
-        return transaction ? this.systemSettingService.getMessageAutomationPastTriggerConfig(branchId, this.transactionSettingReader(transaction))
-            : this.systemSettingService.getMessageAutomationPastTriggerConfig(branchId);
+    private async getRetroactiveSendConfig(branchId: string, transaction?: Prisma.TransactionClient): Promise<MessageAutomationPastTriggerConfig> {
+        return this.automationSources.getRetroactiveSendConfig(branchId, transaction);
     }
 
-    private async getMessagePolicyEnabled(
-        branchId: string,
-        policyId: "trigger-dispatch" | "trigger-job-retry" | "past-trigger",
-        transaction?: Prisma.TransactionClient,
-    ): Promise<boolean> {
-        if (policyId === "trigger-dispatch") {
-            if (!this.messageAutomationActivationService) return false;
-            return transaction ? this.messageAutomationActivationService.getTriggerDispatchEnabled(branchId, transaction)
-                : this.messageAutomationActivationService.getTriggerDispatchEnabled(branchId);
-        }
-        if (
-            !this.systemSettingService
-            || typeof this.systemSettingService.getMessageSettingsPolicyEnabled !== "function"
-        ) return true;
-        return transaction ? this.systemSettingService.getMessageSettingsPolicyEnabled(branchId, policyId, this.transactionSettingReader(transaction))
-            : this.systemSettingService.getMessageSettingsPolicyEnabled(branchId, policyId);
+    private async getMessagePolicyEnabled(branchId: string, policyId: "trigger-dispatch" | "trigger-job-retry" | "past-trigger", transaction?: Prisma.TransactionClient): Promise<boolean> {
+        return this.automationSources.getMessagePolicyEnabled(branchId, policyId, transaction);
     }
 
     private async isMessageAutomationParentEnabled(branchId: string, transaction?: Prisma.TransactionClient): Promise<boolean> {
-        if (!this.messageAutomationActivationService) return false;
-        return transaction ? this.messageAutomationActivationService.getTriggerDispatchEnabled(branchId, transaction)
-            : this.messageAutomationActivationService.getTriggerDispatchEnabled(branchId);
-    }
-
-    private transactionSettingReader(transaction: Prisma.TransactionClient): (key: string) => Promise<string | null> {
-        return async (key) => (await transaction.system_setting.findUnique({ where: { key }, select: { value: true } }))?.value ?? null;
+        return this.automationSources.isMessageAutomationParentEnabled(branchId, transaction);
     }
 
     private isAutomaticMessageJob(job: Pick<MessageTriggerJobEntity, "templateKey" | "ruleId" | "dedupeKey">): boolean {
@@ -3325,12 +3185,7 @@ export class MessageTriggerService {
     }
 
     private async hasTriggerSchema(transaction?: Prisma.TransactionClient): Promise<boolean> {
-        const [hasRuleTable, hasJobTable, hasSendTime] = await Promise.all([
-            hasTable(transaction ?? this.prisma, "message_trigger_rule"),
-            hasTable(transaction ?? this.prisma, "message_trigger_job"),
-            hasColumn(transaction ?? this.prisma, "message_trigger_rule", "send_time"),
-        ]);
-        return hasRuleTable && hasJobTable && hasSendTime;
+        return this.automationSources.hasTriggerSchema(transaction);
     }
 
     private async ensureTriggerSchemaReady(): Promise<void> {

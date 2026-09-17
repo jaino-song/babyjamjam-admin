@@ -1,5 +1,14 @@
+import { ClientAutomationSourceReader } from "../../../application/services/client-automation-source.reader";
+import { AgentAutomationJobAuthorityService } from "../../../application/services/agent-automation-job-authority.service";
+import { AgentAutomationAuthorityService } from "../../../application/agent/agent-automation-authority.service";
+import { AgentAutomationRecordStoreService } from "../../../application/agent/agent-automation-record-store.service";
+import { createAgentAutomationQuestion, answerAgentAutomationQuestion } from "../../../application/agent/agent-automation-question";
+import { parseTaskAutomationArtifact, TASK_AUTOMATION_ARTIFACT_KEY } from "../../../application/agent/agent-task-automation-artifact";
+import { AGENT_AUTOMATION_JOB_SEAL_PAYLOAD_KEY } from "../../../domain/constants/agent-automation-storage";
+import { MessageTriggerJobEntity } from "../../../domain/entities/message-trigger-job.entity";
 import type { INestApplication } from "@nestjs/common";
-import type { Prisma, PrismaClient } from "@prisma/client";
+import { Prisma, type PrismaClient } from "@prisma/client";
+import { randomUUID } from "node:crypto";
 import { Test } from "@nestjs/testing";
 import { AppModule } from "../../../app.module";
 import { AgentModelFactory } from "../../../infrastructure/agent/agent-model.factory";
@@ -329,4 +338,87 @@ describeAgentE2E("real automation.list with two eligible clients and missing def
         expect(await prisma.branch.findUniqueOrThrow({ where: { id: branchId } })).toEqual(beforeBranch);
         expect(createModel).not.toHaveBeenCalled();
     });
+    it("checks real source recipes and templates against committed authority without generating or sending jobs", async () => {
+        const before = await storedAutomation();
+        const beforeClients = await prisma.client.findMany({ where: { branchId }, orderBy: { id: "asc" } });
+        const sourceReader = app.get(ClientAutomationSourceReader);
+        const sender = app.get(AligoDefaultSenderPolicyService);
+        const sms = app.get(SmsTriggerDeliveryService);
+        const lock = new MessageAutomationBranchLockService(prisma as never);
+        const records = new AgentAutomationRecordStoreService(lock);
+        const adapter = new AgentAutomationJobAuthorityService(new AgentAutomationAuthorityService(records), sourceReader, sender);
+        const planner = app.get<ClientAutomationImpactService>(CLIENT_AUTOMATION_IMPACT);
+        const send = jest.spyOn(app.get(AligoService), "sendSms");
+        await expect(tenantContextStore.run({ origin: "http", branchId }, () => lock.runExclusive(branchId, async (tx) => {
+            const taskId = randomUUID(); const sessionId = randomUUID(); const actionId = randomUUID();
+            const createdId = 971000090; const userId = context.principal.userId;
+            const values = { name: "합성 동의 고객", phone: "01000000009" };
+            const impact = await planner.planClientWriteInTransaction(tx, branchId, { kind: "create", taskId, values });
+            expect(impact).toMatchObject({ complete: true, availability: "available" });
+            expect(impact.effects.length).toBeGreaterThan(0);
+            const question = createAgentAutomationQuestion(impact);
+            const answer = answerAgentAutomationQuestion({ choice: "yes", presented: question, current: question, noSend: false, clientEventId: randomUUID() });
+            if (answer.status !== "accepted") throw new Error("Missing synthetic answer");
+            const artifact = parseTaskAutomationArtifact({ version: 1, actionId, sessionId, taskId, taskRevision: 2, userId, branchId,
+                capability: "clients.create", inputHash: agentBindingHash(values), targetClientId: null, targetVersion: null,
+                question, consent: answer.consent, noSend: false, impact });
+            if (!artifact) throw new Error("Missing synthetic artifact");
+            const expiresAt = new Date("2099-01-01");
+            await tx.user.upsert({ where: { id: userId }, update: {}, create: { id: userId, role: "admin", email: "source-authority@example.invalid" } });
+            await tx.agent_session.create({ data: { id: sessionId, userId, branchId, model: "synthetic", agentVersion: "phase7", expiresAt } });
+            await tx.agent_task.create({ data: { id: taskId, sessionId, userId, branchId, capabilityId: "clients.create", revision: 2,
+                status: "executing", draft: {}, activeActionId: actionId, expiresAt } });
+            await tx.agent_action.create({ data: { id: actionId, sessionId, userId, branchId, taskId, taskRevision: 2, capability: "clients.create",
+                capabilityVersion: "phase7", risk: "external-side-effect", status: "executing", inputHash: artifact.inputHash,
+                proposal: { [TASK_AUTOMATION_ARTIFACT_KEY]: artifact } as unknown as Prisma.InputJsonValue, proposalRevision: agentBindingHash("proposal"),
+                authorizationContext: {}, expiresAt, idempotencyKey: randomUUID(), requestDedupeKey: randomUUID(), dedupeExpiresAt: expiresAt } });
+            await records.runTaskMutation({ ...context, sessionId, actionId }, artifact, async (transaction) => {
+                const client = await transaction.client.create({ data: { id: createdId, branchId, ...values, voucherClient: false, serviceStatus: "pre_booking" } });
+                return { clientId: createdId, result: { id: createdId, status: "created" }, coverages: [{ scope: {
+                    branchId, clientId: createdId, clientIdentity: agentBindingHash({ version: 1, resource: "client", id: createdId, createdAt: client.createdAt!.toISOString() }),
+                    kind: "client-rule", scheduleId: null, scheduleIdentity: null, recipientType: "client",
+                }, grandfatheredScopes: [] }] };
+            }, async () => {}, tx);
+            const client = await sourceReader.readClientAutomationSource(branchId, createdId, tx);
+            const settings = await sourceReader.readClientAutomationSettings(branchId, tx);
+            if (!client || settings.status !== "available") throw new Error("Missing synthetic source");
+            const rule = settings.rules.find(({ templateKey }) => templateKey === "CLIENT_GREETING")!;
+            const recipe = buildClientMessageRecipe(rule, client, new Date())!;
+            const job = MessageTriggerJobEntity.create(recipe);
+            const render = (candidate: MessageTriggerJobEntity, transaction: Prisma.TransactionClient) => sms.resolveCanonicalDeliverySnapshot(candidate, transaction);
+            const allowed = await adapter.checkAutomaticJob(tx, job, "materialize", render);
+            expect(allowed.status).toBe("allowed"); if (allowed.status !== "allowed") throw new Error("Missing current source seal");
+            job.payload = { ...job.payload, [AGENT_AUTOMATION_JOB_SEAL_PAYLOAD_KEY]: allowed.seal };
+            const snapshot = await render(job, tx);
+            expect(await adapter.checkAutomaticJob(tx, job, "dispatch", render, snapshot.snapshotHash)).toEqual(allowed);
+            expect(await adapter.checkAutomaticJob(tx, job, "dispatch", render, agentBindingHash("wrong-frozen-body"))).toMatchObject({ status: "refused" });
+            const originalPayload = structuredClone(job.payload);
+            job.payload.recipientPhone = "01000000008";
+            expect(await adapter.checkAutomaticJob(tx, job, "dispatch", render)).toMatchObject({ status: "refused" });
+            job.payload = structuredClone(originalPayload);
+            job.payload.templateVariables = { ...job.payload.templateVariables, name: "합성 위조 이름" };
+            job.payload.recipientName = "합성 위조 이름";
+            expect(await adapter.checkAutomaticJob(tx, job, "dispatch", render)).toMatchObject({ status: "refused" });
+            job.payload = structuredClone(originalPayload);
+            await tx.client.update({ where: { id: createdId }, data: { phone: "01000000008" } });
+            expect(await adapter.checkAutomaticJob(tx, job, "dispatch", render)).toMatchObject({ status: "refused" });
+            await tx.client.update({ where: { id: createdId }, data: { phone: values.phone } });
+            const beforeBranch = await tx.branch.findUniqueOrThrow({ where: { id: branchId } });
+            const key = SMS_TEMPLATE_DELIVERY.CLIENT_GREETING!.systemTemplateKey!;
+            const at = "2026-09-17T00:00:00.000Z";
+            await tx.branch.update({ where: { id: branchId }, data: { systemTemplateSnapshot: { version: 1, createdAt: at, createdBy: "synthetic",
+                templates: { [key]: { id: "synthetic-authority-template", content: "합성 변경 문구", createdAt: at, updatedAt: at, customVariables: [] } } } } });
+            expect(await adapter.checkAutomaticJob(tx, job, "dispatch", render)).toMatchObject({ status: "refused" });
+            await tx.branch.update({ where: { id: branchId }, data: { systemTemplateSnapshot: beforeBranch.systemTemplateSnapshot === null ? Prisma.DbNull : beforeBranch.systemTemplateSnapshot as Prisma.InputJsonValue } });
+            await tx.system_setting.update({ where: { key: `branch:${branchId}:message_policy:trigger-dispatch:enabled` }, data: { value: "false" } });
+            expect(await adapter.checkAutomaticJob(tx, job, "dispatch", render)).toMatchObject({ status: "refused" });
+            expect(await tx.message_log.count({ where: { branchId } })).toBe(0);
+            expect(await tx.message_trigger_job.count({ where: { branchId, clientId: createdId } })).toBe(0);
+            throw new Error("SYNTHETIC_ROLLBACK");
+        }))).rejects.toThrow("SYNTHETIC_ROLLBACK");
+        expect(await storedAutomation()).toEqual(before);
+        expect(await prisma.client.findMany({ where: { branchId }, orderBy: { id: "asc" } })).toEqual(beforeClients);
+        expect(send).not.toHaveBeenCalled(); expect(createModel).not.toHaveBeenCalled(); send.mockRestore();
+    });
+
 });
