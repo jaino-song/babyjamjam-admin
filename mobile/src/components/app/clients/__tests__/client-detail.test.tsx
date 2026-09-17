@@ -5,6 +5,7 @@ import type { ReactNode } from "react";
 import {
   ClientDetailContent,
   type ClientNotificationLogRecord,
+  type DetailTabId,
 } from "../client-detail";
 import type { Client } from "@/lib/client/types";
 import type { EformsignDocument } from "@/lib/eformsign/types";
@@ -115,13 +116,14 @@ const client: Client = {
 function renderDetail(
   contractDocument: EformsignDocument | null = null,
   detailClient: Client = client,
+  activeTab: DetailTabId = "basic",
 ) {
   return render(
     <ClientDetailContent
       data-component="mobile_clients_detail-sheet_stack_detail-page_content"
       client={detailClient}
       contractDocument={contractDocument}
-      activeTab="basic"
+      activeTab={activeTab}
       onTabChange={jest.fn()}
       onMessage={jest.fn()}
       onIssueContract={jest.fn()}
@@ -133,6 +135,52 @@ function renderDetail(
 }
 
 describe("ClientDetailContent", () => {
+  it.each([
+    ["unsigned", false, "고객 (고객)"],
+    ["signed while provider review is pending", true, "-"],
+  ])("uses hasSigned to show the %s pending signer", (_state, hasSigned, pendingSigner) => {
+    const detailClient = {
+      ...client,
+      eDocId: "document-1",
+      hasSigned,
+      documentStatus: "requested" as const,
+    };
+    const contractDocument = {
+      id: "document-1",
+      current_status: {
+        status_type: "070",
+        step_type: "06",
+        step_name: "제공기관 확인",
+      },
+    } as EformsignDocument;
+
+    renderDetail(contractDocument, detailClient, "contracts");
+
+    expect(screen.getByText("서명 대기자").closest("div")).toHaveTextContent(pendingSigner);
+  });
+
+  it("keeps the completed contract badge for completed documents", () => {
+    const detailClient = {
+      ...client,
+      eDocId: "document-1",
+      hasSigned: true,
+      documentStatus: "completed" as const,
+    };
+    const contractDocument = {
+      id: "document-1",
+      current_status: {
+        status_type: "003",
+        step_type: "",
+        step_name: "",
+      },
+    } as EformsignDocument;
+
+    renderDetail(contractDocument, detailClient, "contracts");
+
+    expect(screen.getAllByText("계약 완료").length).toBeGreaterThan(0);
+    expect(screen.getByText("서명 대기자").closest("div")).toHaveTextContent("-");
+  });
+
   it("should show the currently assigned employee phone when the contract has no phone", () => {
     renderDetail();
 

@@ -57,6 +57,10 @@ import {
     SERVICE_STATUS,
     ServiceStatusType,
 } from "domain/value-objects/service-status.vo";
+import {
+    isProviderReviewWorkflowStep,
+    normalizeEformsignStatusCode,
+} from "domain/utils/eformsign-status-code";
 import { MessageTriggerService } from "./message-trigger.service";
 import { MessageAutomationIntentService } from "./message-automation-intent.service";
 import { ServiceRecordLinkService } from "./service-record-link.service";
@@ -180,6 +184,37 @@ interface LatestContractSignal {
     stepType: string | null;
     stepName: string | null;
     detailPayload: unknown;
+}
+
+/**
+ * Derive whether the customer has completed their signing step from the
+ * latest contract mirror. An eDocId only proves that a document was created;
+ * it says nothing about which workflow participant has acted. Completed
+ * documents are authoritative on their status code. For an in-progress
+ * document, the provider review step is the only trusted signal that the
+ * customer has signed. Dead, unknown, and missing documents fail closed.
+ */
+function hasCustomerSigned(latestContract: LatestContractSignal | undefined): boolean {
+    if (!latestContract || latestContract.permanentPurgeRequestedAt != null) {
+        return false;
+    }
+
+    const statusType = normalizeEformsignStatusCode(latestContract.statusType);
+    if (COMPLETED_DOCUMENT_STATUS_TYPES.has(statusType)) {
+        return true;
+    }
+
+    const isInProgress = CREATED_DOCUMENT_STATUS_TYPES.has(statusType)
+        || OPENED_DOCUMENT_STATUS_TYPES.has(statusType)
+        || REQUESTED_DOCUMENT_STATUS_TYPES.has(statusType);
+    if (!isInProgress) {
+        return false;
+    }
+
+    return isProviderReviewWorkflowStep({
+        stepType: latestContract.stepType,
+        stepName: latestContract.stepName,
+    });
 }
 
 export interface ClientActionRequiredAlert extends ClientActionRequired {
@@ -1483,7 +1518,7 @@ export class ClientService {
                     breastPump: client.breastPump,
                     eDocId: client.eDocId,
                     areaId: client.areaId,
-                    hasSigned: client.eDocId !== null,
+                    hasSigned: hasCustomerSigned(latestContract),
                     documentStatus,
                     badges,
                     actionRequired,
@@ -1608,8 +1643,8 @@ export class ClientService {
     }
 
     private mapStatusTypeToDocumentStatus(statusType?: string): DocumentStatusType {
-        const normalized = statusType?.trim().padStart(3, "0");
-        if (!normalized) return null;
+        const normalized = normalizeEformsignStatusCode(statusType);
+        if (normalized === "000") return null;
 
         if (COMPLETED_DOCUMENT_STATUS_TYPES.has(normalized)) return "completed";
         if (REJECTED_DOCUMENT_STATUS_TYPES.has(normalized)) return "rejected";

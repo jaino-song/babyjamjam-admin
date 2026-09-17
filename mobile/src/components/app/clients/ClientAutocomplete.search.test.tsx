@@ -10,7 +10,9 @@ const clients: Client[] = [
     name: "박서연",
     phone: "01077778888",
     address: "인천 연수구",
-    hasSigned: false,
+    hasSigned: true,
+    eDocId: "document-1",
+    documentStatus: "requested",
   } as Client,
   {
     id: 8,
@@ -30,7 +32,8 @@ jest.mock("@/providers/LocaleProvider", () => ({
 }));
 
 jest.mock("@/lib/i18n/translations", () => ({
-  t: (_locale: string, key: string) => key,
+  t: (_locale: string, key: string) =>
+    key === "contract-msg.client-signed" ? "서명 완료" : key,
 }));
 
 jest.mock("@/stores/client-dialog-store", () => ({
@@ -64,5 +67,17 @@ describe("ClientAutocomplete shared search", () => {
 
     const dropdown = screen.getByTestId("mobile_messages_recipient_search_dropdown");
     expect(within(dropdown).getByText(expectedName)).toBeInTheDocument();
+  });
+
+  it("shows the signed status as 서명 완료 in search results", () => {
+    renderAutocomplete();
+
+    const input = within(screen.getByTestId("mobile_messages_recipient_search")).getByRole("textbox");
+    fireEvent.focus(input);
+    fireEvent.change(input, { target: { value: "박서연" } });
+
+    const dropdown = screen.getByTestId("mobile_messages_recipient_search_dropdown");
+    expect(within(dropdown).getByText("서명 완료")).toBeInTheDocument();
+    expect(within(dropdown).queryByText("계약완료")).not.toBeInTheDocument();
   });
 });

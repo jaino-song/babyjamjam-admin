@@ -18,7 +18,11 @@ import {
   buildAllClientRowsForList,
   groupForClient,
 } from "@/lib/client/list-helpers";
-import { getStatusCategory } from "@/lib/eformsign/status-codes";
+import {
+  getStatusCategory,
+  isProviderReviewWorkflowStep,
+  normalizeEformsignStatusCode,
+} from "@/lib/eformsign/status-codes";
 import { useLocale } from "@/providers/LocaleProvider";
 import { eformsignApi } from "@/services/api";
 import { t } from "@/lib/i18n/translations";
@@ -133,8 +137,8 @@ function clientMeta(c: Client) {
 }
 
 function documentStatusFromStatusType(statusType: string | null | undefined): Client["documentStatus"] {
-  const normalized = statusType?.trim().padStart(3, "0");
-  if (!normalized) return null;
+  const normalized = normalizeEformsignStatusCode(statusType);
+  if (normalized === "000") return null;
 
   const category = getStatusCategory(normalized);
   if (category === "completed") return "completed";
@@ -211,17 +215,21 @@ export default function ClientsPage() {
   const localDetailClient = useMemo(() => {
     if (!detailClient) return null;
 
-    const documentStatus = documentStatusFromStatusType(
-      detailContractDocument?.current_status?.status_type,
-    );
-    if (!documentStatus || detailContractDocument?.id !== detailClient.eDocId) {
+    if (!detailContractDocument || detailContractDocument.id !== detailClient.eDocId) {
       return detailClient;
     }
+
+    const currentStatus = detailContractDocument.current_status;
+    const documentStatus = documentStatusFromStatusType(currentStatus?.status_type);
+    const statusCategory = getStatusCategory(currentStatus?.status_type);
+    const hasCustomerSigned = documentStatus === "completed"
+      || (statusCategory === "in-progress"
+        && isProviderReviewWorkflowStep(currentStatus));
 
     return {
       ...detailClient,
       documentStatus,
-      hasSigned: documentStatus === "completed" ? true : detailClient.hasSigned,
+      hasSigned: hasCustomerSigned,
     };
   }, [detailClient, detailContractDocument]);
 

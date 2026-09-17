@@ -86,6 +86,31 @@ describe("ClientAutocomplete", () => {
     expect(await screen.findByRole("dialog", { name: "새 고객 등록" })).toBeInTheDocument();
   });
 
+  it("labels a signed client as 서명 완료 while provider review is pending", async () => {
+    mockClients = [{
+      ...client,
+      eDocId: "document-1",
+      hasSigned: true,
+      documentStatus: "requested",
+    }];
+
+    render(
+      <ClientAutocomplete
+        value={null}
+        onChange={jest.fn()}
+        label="고객 선택"
+      />
+    );
+
+    fireEvent.click(screen.getByRole("combobox", { name: "고객 선택" }));
+    fireEvent.change(screen.getByPlaceholderText("이름, 연락처 또는 주소로 검색"), {
+      target: { value: "송진호" },
+    });
+
+    expect(await screen.findByText("서명 완료")).toBeInTheDocument();
+    expect(screen.queryByText("계약완료")).not.toBeInTheDocument();
+  });
+
   it("renders the trigger with the shared compact input shape", async () => {
     render(
       <ClientAutocomplete
