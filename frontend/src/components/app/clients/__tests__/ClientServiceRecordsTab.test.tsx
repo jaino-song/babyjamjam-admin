@@ -295,6 +295,22 @@ describe("ClientServiceRecordsTab", () => {
                             documentVersion: 2,
                             canRetry: true,
                             reasonCode: "PROVIDER_TIMEOUT",
+                        }, {
+                            id: "state-2",
+                            operation: "record_snapshot",
+                            generation: "generation-2",
+                            status: "waiting_for_completion",
+                            documentVersion: null,
+                            canRetry: false,
+                            reasonCode: "SERVICE_RECORD_REVISION_WAITING_FOR_COMPLETION",
+                        }, {
+                            id: "state-3",
+                            operation: "record_snapshot",
+                            generation: "generation-3",
+                            status: "pending",
+                            documentVersion: 3,
+                            canRetry: true,
+                            reasonCode: "UNRECOGNIZED_REASON",
                         }],
                     }],
                 }}
@@ -303,11 +319,17 @@ describe("ClientServiceRecordsTab", () => {
         );
 
         expect(screen.queryByText("문서 이력을 확인할 수 없습니다")).not.toBeInTheDocument();
-        expect(screen.queryByText("기록 완료 대기")).not.toBeInTheDocument();
+        expect(screen.getByText("기록 완료 대기")).toBeInTheDocument();
         expect(screen.getByText("실패")).toBeInTheDocument();
-        expect(screen.getByText("PROVIDER_TIMEOUT")).toBeInTheDocument();
+        expect(screen.getByText("문서 처리 응답을 확인하지 못했습니다.")).toBeInTheDocument();
+        expect(screen.queryByText("PROVIDER_TIMEOUT")).not.toBeInTheDocument();
+        expect(screen.getByText("모든 회차의 기록이 완료되면 문서를 생성합니다.")).toBeInTheDocument();
+        expect(screen.queryByText("SERVICE_RECORD_REVISION_WAITING_FOR_COMPLETION")).not.toBeInTheDocument();
+        expect(screen.getByText("처리 대기")).toBeInTheDocument();
+        expect(screen.queryByText("UNRECOGNIZED_REASON")).not.toBeInTheDocument();
+        expect(screen.getAllByRole("button", { name: "다시 시도" })).toHaveLength(2);
 
-        fireEvent.click(screen.getByRole("button", { name: "다시 시도" }));
+        fireEvent.click(screen.getAllByRole("button", { name: "다시 시도" })[0]);
         await waitFor(() => expect(onRetry).toHaveBeenCalledWith("revision-1", "state-1", "generation-1"));
     });
 

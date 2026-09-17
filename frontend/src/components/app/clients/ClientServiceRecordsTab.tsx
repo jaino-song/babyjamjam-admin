@@ -673,6 +673,16 @@ const REVISION_DOCUMENT_OPERATION_LABELS: Record<ServiceRecordRevisionDocumentOp
     receipt_refresh: "영수증 연결",
 };
 
+const REVISION_DOCUMENT_REASON_LABELS: Record<string, string> = {
+    SERVICE_RECORD_REVISION_WAITING_FOR_COMPLETION: "모든 회차의 기록이 완료되면 문서를 생성합니다.",
+    PROVIDER_TIMEOUT: "문서 처리 응답을 확인하지 못했습니다.",
+};
+
+function getRevisionDocumentReasonLabel(reasonCode: string | null): string | null {
+    if (!reasonCode) return null;
+    return REVISION_DOCUMENT_REASON_LABELS[reasonCode] ?? null;
+}
+
 function RevisionHistoryCard({
     history,
     isLoading,
@@ -839,6 +849,7 @@ function RevisionDocumentRow({
     onRetryError: () => void;
 }) {
     const statusMeta = REVISION_DOCUMENT_STATUS_META[document.status];
+    const reasonLabel = getRevisionDocumentReasonLabel(document.reasonCode);
     const documentKey = `${revisionId}:${document.id}`;
     const isRetrying = retryingDocumentKey === documentKey;
     const retryable = document.canRetry && document.generation !== "unknown" && Boolean(onRetry);
@@ -858,9 +869,9 @@ function RevisionDocumentRow({
                     {REVISION_DOCUMENT_OPERATION_LABELS[document.operation]}
                     {document.documentVersion ? ` · v${document.documentVersion}` : ""}
                 </div>
-                {document.reasonCode && (
+                {reasonLabel && (
                     <div className="mt-0.5 text-[calc(10.8px*var(--glint-ui-scale,1))] text-v3-text-muted">
-                        {document.reasonCode}
+                        {reasonLabel}
                     </div>
                 )}
             </div>
