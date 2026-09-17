@@ -7,10 +7,10 @@ const now = new Date("2026-09-07T12:00:00+09:00");
 
 describe("mobile contract birthday prefill", () => {
   it.each([
-    ["1990.1.2", "900102"],
-    ["19900102", "900102"],
-    ["90-01-02", "900102"],
-    ["90/1/2", "900102"],
+    ["1990.1.2", "1990-01-02"],
+    ["19900102", "1990-01-02"],
+    ["90-01-02", "1990-01-02"],
+    ["90/1/2", "1990-01-02"],
   ])("normalizes %s to %s", (raw, expected) => {
     const clientPrefill = buildContractClientPrefill({
       name: "홍길동",

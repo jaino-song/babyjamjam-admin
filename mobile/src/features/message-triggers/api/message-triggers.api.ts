@@ -36,6 +36,8 @@ export const messageTriggersApi = {
         api.get<MessageLogRecord[]>("/message-logs", {
             params: { limit },
         }),
+    retryHistory: (id: number) =>
+        api.post<MessageLogRecord>(`/message-logs/${id}/retry`),
     cancelJob: (id: string) =>
         api.post<{ id: string; status: "canceled" }>(`/message-trigger-jobs/${id}/cancel`, {}),
 };

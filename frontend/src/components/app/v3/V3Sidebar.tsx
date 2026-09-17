@@ -110,7 +110,6 @@ export const V3Sidebar = () => {
 
   const isActive = (href: string) => {
     if (href === "/dashboard" && pathname === "/dashboard/analytics") return false;
-    if (href === "/employees" && pathname === "/employees/schedule") return false;
     return pathname.startsWith(href);
   };
 

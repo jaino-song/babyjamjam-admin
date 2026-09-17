@@ -11,6 +11,7 @@ import {
     type ProblemError,
     type ProblemOutcome,
 } from "@babyjamjam/shared";
+import { isValidBirthdayIsoDate, normalizeBirthdayIsoDate } from "@babyjamjam/shared/utils/birthday";
 import { useCreateClient, useUpdateClient } from "@/hooks/useClients";
 import { useClientPhoneDuplicateCheck } from "@/hooks/useClientPhoneDuplicateCheck";
 import {
@@ -764,6 +765,7 @@ function ClientFormContent({
 
             nextFormData = {
                 ...nextFormData,
+                birthday: normalizeBirthdayIsoDate(nextFormData.birthday) ?? nextFormData.birthday,
                 startDate: normalizeDateForCompactState(nextFormData.startDate),
                 endDate: normalizeDateForCompactState(nextFormData.endDate),
             };
@@ -947,7 +949,7 @@ function ClientFormContent({
             setErrorAndScroll(t(locale, "clients.form.error-name-required"));
             return;
         }
-        if (!formData.birthday?.trim()) {
+        if (!isValidBirthdayIsoDate(formData.birthday ?? "")) {
             setErrorAndScroll(t(locale, "clients.form.error-birthday-required"));
             return;
         }
@@ -1079,7 +1081,7 @@ function ClientFormContent({
 
     const isBasicStepValid = isLegacyNoopEdit || Boolean(
         formData.name.trim()
-        && formData.birthday?.trim()
+        && isValidBirthdayIsoDate(formData.birthday ?? "")
         && (!formData.dueDate?.trim() || isValidIsoDateInput(formData.dueDate))
         && formData.address?.trim()
         && isPhoneCheckReady
@@ -1098,7 +1100,7 @@ function ClientFormContent({
     const requiredFieldProgressText = `필수 항목 4개 중 ${
         [
             Boolean(formData.name.trim()),
-            isValidCompactDateInput(formData.birthday ?? ""),
+            isValidBirthdayIsoDate(formData.birthday ?? ""),
             Boolean(formData.address?.trim()),
             Boolean(formData.phone?.trim()),
         ].filter(Boolean).length
@@ -1250,10 +1252,11 @@ function ClientFormContent({
                 >
                     <FormTextInput
                         id="birthday"
-                        placeholder="YYMMDD"
+                        placeholder="YYYY-MM-DD"
+                        inputMode="numeric"
                         value={formData.birthday ?? ""}
-                        onChange={(e) => handleChange("birthday", e.target.value)}
-                        maxLength={6}
+                        onChange={(e) => handleChange("birthday", formatIsoDateInput(e.target.value))}
+                        maxLength={10}
                     />
                     <FormHelperText data-component={`${base}_basic-grid_field-birthday_helper`}>
                         {t(locale, "clients.form.birthday-helper")}
@@ -1687,10 +1690,11 @@ function ClientFormContent({
             >
                 <FormTextInput
                     id="birthday"
-                    placeholder="YYMMDD"
+                    placeholder="YYYY-MM-DD"
+                    inputMode="numeric"
                     value={formData.birthday ?? ""}
-                    onChange={(event) => handleChange("birthday", event.target.value)}
-                    maxLength={6}
+                    onChange={(event) => handleChange("birthday", formatIsoDateInput(event.target.value))}
+                    maxLength={10}
                 />
             </FormField>
 

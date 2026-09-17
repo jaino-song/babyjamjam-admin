@@ -3,6 +3,8 @@ import { IsArray, IsBoolean, IsDateString, IsIn, IsNotEmpty, IsOptional, IsStrin
 import { EMPLOYEE_GRADES, normalizeEmployeeGrade } from "domain/constants/employee-grade.constants";
 import { IsCanonicalPhone } from "./canonical-phone.validator";
 
+import { IsBirthdayDate } from "./birthday.validator";
+
 export class CreateEmployeeDto {
     @IsString()
     name!: string;
@@ -30,6 +32,8 @@ export class CreateEmployeeDto {
 
     @IsOptional()
     @IsString()
+    @ValidateIf((_, value) => value !== "")
+    @IsBirthdayDate()
     birthday?: string;
 }
 
@@ -61,6 +65,8 @@ export class UpdateEmployeeDto {
 
     @IsOptional()
     @IsString()
+    @ValidateIf((_, value) => value !== "")
+    @IsBirthdayDate()
     birthday?: string;
 }
 

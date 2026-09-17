@@ -68,6 +68,116 @@ describe("admin gateway proxy", () => {
     expect(redirectUrl).toBeNull();
   });
 
+  it("keeps the authenticated desktop editor path on the desktop host for mobile browsers", () => {
+    const redirectUrl = getMobileGatewayRedirectUrl(
+      new URL("https://admin.babyjamjam.com/service-record-admin/client-1"),
+      IPHONE_USER_AGENT,
+    );
+
+    expect(redirectUrl).toBeNull();
+  });
+
+  it.each([
+    "/login?returnTo=%2Fservice-record-admin%2Fclient-1",
+    "/select-branch?returnTo=%2Fservice-record-admin%2Fclient-1",
+    "/onboarding?returnTo=%2Fservice-record-admin%2Fclient-1",
+    "/kakao/onboarding?returnTo=%2Fservice-record-admin%2Fclient-1",
+  ])("keeps a desktop-host auth handoff route when it carries a safe return path (%s)", (path) => {
+    const redirectUrl = getMobileGatewayRedirectUrl(
+      new URL(`https://admin.babyjamjam.com${path}`),
+      IPHONE_USER_AGENT,
+    );
+
+    expect(redirectUrl).toBeNull();
+  });
+
+  it("keeps the OAuth callback on the desktop host for session-storage continuity", () => {
+    const redirectUrl = getMobileGatewayRedirectUrl(
+      new URL("https://admin.babyjamjam.com/callback?code=oauth-code"),
+      IPHONE_USER_AGENT,
+    );
+
+    expect(redirectUrl).toBeNull();
+  });
+
+  it("continues mobile gateway routing for an unsafe return path", () => {
+    const redirectUrl = getMobileGatewayRedirectUrl(
+      new URL("https://admin.babyjamjam.com/login?returnTo=https%3A%2F%2Fevil.example"),
+      IPHONE_USER_AGENT,
+    );
+
+    expect(redirectUrl?.href).toBe(
+      "https://m.admin.babyjamjam.com/login?returnTo=https%3A%2F%2Fevil.example",
+    );
+  });
+
+  it.each(["/onboarding", "/kakao/onboarding"])("keeps normal and unsafe onboarding on the mobile gateway (%s)", (path) => {
+    for (const query of ["", "?returnTo=https%3A%2F%2Fevil.example"]) {
+      expect(getMobileGatewayRedirectUrl(new URL(`https://admin.babyjamjam.com${path}${query}`), IPHONE_USER_AGENT)?.origin).toBe("https://m.admin.babyjamjam.com");
+    }
+  });
+
+  it("carries an unauthenticated editor request through the desktop login route", async () => {
+    const response = await proxy(new NextRequest(
+      "https://admin.babyjamjam.com/service-record-admin/client-1",
+      { headers: { "user-agent": IPHONE_USER_AGENT } },
+    ));
+
+    expect(response.status).toBe(307);
+    expect(response.headers.get("location")).toBe(
+      "https://admin.babyjamjam.com/login?returnTo=%2Fservice-record-admin%2Fclient-1",
+    );
+  });
+
+  it("carries an unauthenticated branch-selection handoff through login", async () => {
+    const response = await proxy(new NextRequest(
+      "https://admin.babyjamjam.com/select-branch?returnTo=%2Fservice-record-admin%2Fclient-1",
+      { headers: { "user-agent": IPHONE_USER_AGENT } },
+    ));
+
+    expect(response.status).toBe(307);
+    expect(response.headers.get("location")).toBe(
+      "https://admin.babyjamjam.com/login?returnTo=%2Fservice-record-admin%2Fclient-1",
+    );
+  });
+
+  it("carries an editor return path through branch selection", async () => {
+    mockJwtDecode.mockReturnValue({
+      sub: "user-1",
+      sid: "session-1",
+      role: "admin",
+      type: "access",
+      exp: Math.floor(Date.now() / 1000) + 60,
+    });
+
+    const response = await proxy(new NextRequest(
+      "https://admin.babyjamjam.com/service-record-admin/client-1",
+      {
+        headers: {
+          cookie: "auth_token=valid",
+          "user-agent": IPHONE_USER_AGENT,
+        },
+      },
+    ));
+
+    expect(response.status).toBe(307);
+    expect(response.headers.get("location")).toBe(
+      "https://admin.babyjamjam.com/select-branch?returnTo=%2Fservice-record-admin%2Fclient-1",
+    );
+  });
+
+  it("does not carry an encoded or malformed editor path to login", async () => {
+    const response = await proxy(new NextRequest(
+      "https://admin.babyjamjam.com/service-record-admin/client-1%2F..%2Fother",
+      { headers: { "user-agent": DESKTOP_USER_AGENT } },
+    ));
+
+    expect(response.status).toBe(307);
+    expect(response.headers.get("location")).toBe(
+      "https://admin.babyjamjam.com/login",
+    );
+  });
+
   it("rotates an expired desktop auth session instead of forcing login", async () => {
     mockJwtDecode.mockImplementation((token: string) => token === "new-access"
       ? {
@@ -145,6 +255,51 @@ describe("admin gateway proxy", () => {
     expect(response.status).toBe(307);
     expect(response.headers.get("location")).toBe("http://localhost/");
     expect(response.headers.get("set-cookie")).toContain("auth_token=new-access");
+    fetchMock.mockRestore();
+  });
+
+  it("returns to the editor after refreshing an expired session on a login handoff", async () => {
+    mockJwtDecode.mockImplementation((token: string) => token === "new-access"
+      ? {
+        sub: "user-1",
+        sid: "session-1",
+        role: "admin",
+        branchId: "branch-1",
+        type: "access",
+        exp: Math.floor(Date.now() / 1000) + 60,
+      }
+      : {
+        sub: "user-1",
+        sid: "session-1",
+        role: "admin",
+        type: "access",
+        exp: Math.floor(Date.now() / 1000) - 60,
+      });
+    const fetchMock = jest.spyOn(global, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({
+        accessToken: "new-access",
+        refreshToken: "next-refresh",
+      }), {
+        status: 201,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+
+    const response = await proxy(new NextRequest(
+      "https://admin.babyjamjam.com/login?returnTo=%2Fservice-record-admin%2Fclient-1",
+      {
+        method: "GET",
+        headers: {
+          cookie: "auth_token=expired; refresh_token=current",
+          "user-agent": IPHONE_USER_AGENT,
+        },
+      },
+    ));
+
+    expect(response.status).toBe(307);
+    expect(response.headers.get("location")).toBe(
+      "https://admin.babyjamjam.com/service-record-admin/client-1",
+    );
     fetchMock.mockRestore();
   });
 

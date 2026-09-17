@@ -1,3 +1,4 @@
+import { normalizeBirthdayIsoDate } from "@babyjamjam/shared/utils/birthday";
 import type { EformsignDocument } from "@/lib/eformsign/types";
 import { formatKoreanPhoneNumber, isValidKoreanPhoneNumber, normalizeKoreanPhoneDigits } from "@/lib/phone";
 
@@ -283,7 +284,7 @@ export function buildClientEditPrefillFromEformsignDocument(
   const values = {
     name,
     phone: formatPhone(documentFieldValue(doc, ["이용자 연락처", "연락처", "휴대폰", "전화번호", "customerContact", "customerPhone"])),
-    birthday: normalizeDateToYymmdd(
+    birthday: normalizeBirthdayIsoDate(
       documentFieldValue(doc, ["이용자 생년월일", "생년월일", "주민번호 앞자리", "customerDOB", "customerBirthDate", "birthday"]),
     ),
     dueDate: normalizeDateToYymmdd(documentFieldValue(doc, ["출산 예정일", "출산예정일", "dueDate", "expectedBirthDate"])),

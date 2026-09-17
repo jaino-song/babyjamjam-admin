@@ -14,6 +14,7 @@ import { Alert } from "@/components/ui/alert";
 import { Spinner } from "@/components/ui/spinner";
 import { REGISTERABLE_ROLE_OPTIONS } from "@/lib/constants/roles";
 import { kakaoOnboardingSchema, type KakaoOnboardingFormData } from "@/lib/validations/auth";
+import { appendSafeReturnPath } from "@/lib/auth/safe-return-path";
 import { completeKakaoOnboarding } from "./actions";
 
 const PANEL_CLASS_NAME = "gap-5 !p-5 sm:!p-6 [&_[data-component='auth-kakao-onboarding-title']]:!text-[1.72rem] md:[&_[data-component='auth-kakao-onboarding-title']]:!text-[1.5rem] [&_[data-component='auth-kakao-onboarding-subtitle']]:!max-w-[34ch] [&_[data-component='auth-kakao-onboarding-subtitle']]:!text-[0.82rem] md:[&_[data-component='auth-kakao-onboarding-subtitle']]:!text-[0.76rem]";
@@ -28,6 +29,7 @@ interface OnboardingFormProps {
     role?: KakaoOnboardingFormData["role"];
     title?: string;
     subtitle?: string;
+    returnPath?: string | null;
 }
 
 function formatBirthDateInput(value: string) {
@@ -83,6 +85,7 @@ export function OnboardingForm({
     role,
     title = "카카오 가입 마무리",
     subtitle = "카카오에서 받은 계정 정보는 그대로 사용하고, 추가 정보만 입력해 주세요.",
+    returnPath,
 }: OnboardingFormProps) {
     const router = useRouter();
     const [formData, setFormData] = useState<Partial<KakaoOnboardingFormData>>({
@@ -123,7 +126,7 @@ export function OnboardingForm({
                 return;
             }
 
-            router.replace("/login?authError=PENDING_APPROVAL");
+            router.replace(appendSafeReturnPath("/login?authError=PENDING_APPROVAL", returnPath));
         });
     };
 

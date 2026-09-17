@@ -673,9 +673,12 @@ describe("ClientWriteAgentCapabilitiesProvider", () => {
     });
 
     it.each([
-        ["leap day", "240229"],
-        ["century leap day", "000229"],
-    ])("accepts a calendar-valid YYMMDD birthday for create and update (%s)", async (_label, birthday) => {
+        ["leap day", "2024-02-29"],
+        ["century leap day", "2000-02-29"],
+        ["nineteen hundreds", "1905-01-01"],
+        ["two thousands", "2005-01-01"],
+        ["original reported year", "1958-03-03"],
+    ])("accepts a calendar-valid YYYY-MM-DD birthday for create and update (%s)", async (_label, birthday) => {
         const { capabilities, createClient, updateClient, transaction } = setup();
         const create = capabilities.find((entry) => entry.meta.name === "clients.create")!;
         const update = capabilities.find((entry) => entry.meta.name === "clients.update")!;

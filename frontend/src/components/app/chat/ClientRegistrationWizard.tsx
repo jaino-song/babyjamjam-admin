@@ -1,4 +1,5 @@
 "use client";
+import { formatBirthdayInput, isValidBirthdayIsoDate, normalizeBirthdayIsoDate } from "@babyjamjam/shared/utils/birthday";
 import { getUserErrorMessage } from "@babyjamjam/shared";
 
 
@@ -78,7 +79,7 @@ export function ClientRegistrationWizard({
 
     const [name, setName] = useState(initialDraft?.name ?? "");
     const [phone, setPhone] = useState(initialDraft?.phone ? formatKoreanPhoneNumber(initialDraft.phone) : "");
-    const [birthday, setBirthday] = useState(initialDraft?.birthday ?? "");
+    const [birthday, setBirthday] = useState(normalizeBirthdayIsoDate(initialDraft?.birthday) ?? initialDraft?.birthday ?? "");
     const [address, setAddress] = useState(initialDraft?.address ?? "");
     const [dueDate, setDueDate] = useState(initialDraft?.dueDate ?? "");
 
@@ -165,7 +166,7 @@ export function ClientRegistrationWizard({
 
     const canGoNext = useMemo(() => {
         if (activeStep === 0) {
-            return Boolean(name.trim() && phone.trim() && birthday.trim() && address.trim())
+            return Boolean(name.trim() && phone.trim() && isValidBirthdayIsoDate(birthday) && address.trim())
                 && (isValidCompactDateInput(dueDate) || initialDraft?.skippedFields?.includes("dueDate"))
                 && !isEmployeeLookupBlocked
                 && !hasAmbiguousEmployeeMatch;
@@ -381,9 +382,10 @@ export function ClientRegistrationWizard({
                             <Input
                                 id="birthday"
                                 value={birthday}
-                                onChange={(e) => setBirthday(parseCompactDateInput(e.target.value))}
-                                placeholder="YYMMDD"
-                                maxLength={6}
+                                onChange={(e) => setBirthday(formatBirthdayInput(e.target.value))}
+                                placeholder="YYYY-MM-DD"
+                                inputMode="numeric"
+                                maxLength={10}
                             />
                         </div>
                         <div className="space-y-2">

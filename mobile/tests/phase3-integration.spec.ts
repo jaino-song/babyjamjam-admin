@@ -13,9 +13,9 @@ import {
 } from "./helpers/phase3-fixtures";
 
 const UPCOMING_ZONE_HEADER =
-  "mobile_messages_history_detail-sheet_stack_list-page_shell_content_list-card_body_zone-upcoming_header";
+  "mobile_messages_history_detail-sheet_screen_content_sliding-card_stage_list-pane_history-list_content_list-card_body_zone-upcoming_header";
 const PAST_ZONE_HEADER =
-  "mobile_messages_history_detail-sheet_stack_list-page_shell_content_list-card_body_zone-past_header";
+  "mobile_messages_history_detail-sheet_screen_content_sliding-card_stage_list-pane_history-list_content_list-card_body_zone-past_header";
 
 const createMessageLog = (name: string) => ({
   id: 102,
@@ -80,14 +80,17 @@ test.describe("Phase 3.1 functional integration matrix", () => {
   test("1. confirms a changed service period once, posts duration 15, and blocks duplicate confirmation", async ({ page }) => {
     let createCalls = 0;
     let createdPayload: Record<string, unknown> | null = null;
+    let releaseCreate!: () => void;
+    const createResponseGate = new Promise<void>((resolve) => {
+      releaseCreate = resolve;
+    });
 
     await installPhase3WizardFixture(page, {
       onCreate: async (route) => {
         createCalls += 1;
         createdPayload = route.request().postDataJSON() as Record<string, unknown>;
-        // Leave the first response open long enough for a second click to race
-        // the request; the page's submission guard must still keep one POST.
-        await new Promise((resolve) => setTimeout(resolve, 100));
+        // Keep submission pending until both click events have been delivered.
+        await createResponseGate;
       },
     });
 
@@ -118,8 +121,16 @@ test.describe("Phase 3.1 functional integration matrix", () => {
     await submit.click();
     await expect(confirmation).toBeVisible();
     const confirmButton = confirmation.locator(selector("mobile_clients-new_screen_root_duration-confirmation_confirm-button"));
-    await Promise.allSettled([confirmButton.click(), confirmButton.click()]);
-    await expect.poll(() => createCalls, { timeout: 10_000 }).toBe(1);
+    try {
+      // One double-click action delivers both clicks without a second locator
+      // waiting for the confirmation button after submission removes it.
+      await confirmButton.dblclick();
+      await expect.poll(() => createCalls, { timeout: 10_000 }).toBe(1);
+    } finally {
+      releaseCreate();
+    }
+    await expect(page).toHaveURL(/\/clients(?:\?.*)?$/);
+    expect(createCalls).toBe(1);
     expect(createdPayload).toEqual(
       expect.objectContaining({
         duration: 15,
@@ -248,7 +259,7 @@ test.describe("Phase 3.1 functional integration matrix", () => {
     // already-populated end date. This handshake makes hydration ordering
     // deterministic and avoids timing-based sleeps.
     await eformDocumentRequest;
-    await expect(page.locator(phase3Selectors.birthday)).toHaveValue("950414");
+    await expect(page.locator(phase3Selectors.birthday)).toHaveValue("1995-04-14");
     await expect(page.locator(phase3Selectors.dueDate)).toHaveValue("2026-09-15");
     await advanceWizardStep(page);
     await advanceWizardStep(page);

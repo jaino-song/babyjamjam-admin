@@ -1,9 +1,4 @@
-/**
- * Formats a 6-digit `YYMMDD` client birthday as `YYYY.MM.DD`.
- *
- * Returns `raw` unchanged when it is not exactly 6 digits or does not
- * resolve to a real calendar date (e.g. `"991332"` or non-numeric input).
- */
+/** 기존 6자리와 YYYY-MM-DD 생년월일을 네 자리 연도로 표시한다. */
 export declare function formatBirthdayYYMMDD(raw: string): string;
 /**
  * 계약서의 연-월-일 순서 생년월일을 검증하여 YYMMDD로 정규화한다.
@@ -12,3 +7,9 @@ export declare function formatBirthdayYYMMDD(raw: string): string;
  * 한국 날짜 기준 오늘 이후이거나 1900년 이전인 날짜는 추측하지 않고 null을 반환한다.
  */
 export declare function normalizeContractBirthday(raw: string | null | undefined, now?: Date): string | null;
+/** 기존 생년월일을 읽되 명시된 네 자리 연도를 보존한다. 신규 입력 검증과는 구분한다. */
+export declare function normalizeBirthdayIsoDate(raw: string | null | undefined, now?: Date): string | null;
+/** 신규 생년월일은 세기를 추측하지 않는 YYYY-MM-DD 형식만 허용한다. */
+export declare function isValidBirthdayIsoDate(raw: string, now?: Date): boolean;
+/** 입력 중에는 일부 값도 유지하고, 여덟 자리 숫자에 날짜 구분자를 붙인다. */
+export declare function formatBirthdayInput(value: string): string;

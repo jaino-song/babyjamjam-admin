@@ -61,3 +61,5 @@ export { DetailTabs } from './DetailTabs';
 export type { DetailTab } from './DetailTabs';
 export { DetailTabPanels } from './DetailTabPanels';
 export type { DetailTabPanelItem, DetailTabPanelsProps } from './DetailTabPanels';
+
+export { SlidingDetailPanel } from './SlidingDetailPanel';

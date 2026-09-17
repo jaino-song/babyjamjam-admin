@@ -6,6 +6,11 @@ import { jwtDecode } from "jwt-decode";
 import { createServerApiUrl } from "@/lib/api/server-base-url";
 import { setAuthSessionCookies } from "@/lib/auth/session-cookies";
 import { getMobileGatewayRedirectUrl } from "@/lib/gateway/mobile-redirect";
+import {
+  getSafeReturnPathFromSearchParams,
+  getSafeServiceRecordAdminReturnPath,
+  RETURN_TO_QUERY_PARAM,
+} from "@/lib/auth/safe-return-path";
 
 interface TokenPayload {
   sub: string;
@@ -75,6 +80,37 @@ function clearAuthCookies(response: NextResponse): void {
   response.cookies.delete("refresh_token");
   response.cookies.delete("selected_branch_id");
   response.cookies.delete("auto_login");
+}
+
+function getSafeReturnPathForRequest(request: NextRequest): string | null {
+  const directReturnPath = getSafeServiceRecordAdminReturnPath(request.nextUrl.pathname);
+  if (directReturnPath) {
+    return directReturnPath;
+  }
+
+  if (request.nextUrl.pathname === "/login" || request.nextUrl.pathname === "/select-branch") {
+    return getSafeReturnPathFromSearchParams(request.nextUrl.searchParams);
+  }
+
+  return null;
+}
+
+function createLoginUrl(request: NextRequest): URL {
+  const loginUrl = new URL("/login", request.url);
+  const returnPath = getSafeReturnPathForRequest(request);
+  if (returnPath) {
+    loginUrl.searchParams.set(RETURN_TO_QUERY_PARAM, returnPath);
+  }
+  return loginUrl;
+}
+
+function createSelectBranchUrl(request: NextRequest): URL {
+  const selectBranchUrl = new URL("/select-branch", request.url);
+  const returnPath = getSafeReturnPathForRequest(request);
+  if (returnPath) {
+    selectBranchUrl.searchParams.set(RETURN_TO_QUERY_PARAM, returnPath);
+  }
+  return selectBranchUrl;
 }
 
 function isAutoLoginEnabled(value: string | undefined): boolean {
@@ -185,7 +221,11 @@ export async function proxy(request: NextRequest) {
       if (loginRefreshToken) {
         const refreshAttempt = await tryRefreshAuthSession(loginRefreshToken);
         if (refreshAttempt?.kind === "success") {
-          const response = NextResponse.redirect(new URL("/", request.url));
+          const returnPath = getSafeReturnPathForRequest(request);
+          const target = returnPath
+            ? new URL(returnPath, request.url)
+            : new URL("/", request.url);
+          const response = NextResponse.redirect(target);
           setAuthSessionCookies(response.cookies, {
             accessToken: refreshAttempt.accessToken,
             refreshToken: refreshAttempt.refreshToken,
@@ -238,7 +278,7 @@ export async function proxy(request: NextRequest) {
   }
 
   if (!authToken || isAccessTokenExpiredOrInvalid(authToken)) {
-    const loginUrl = new URL("/login", request.url);
+    const loginUrl = createLoginUrl(request);
     const response = NextResponse.redirect(loginUrl);
     clearAuthCookies(response);
     return response;
@@ -269,7 +309,7 @@ export async function proxy(request: NextRequest) {
 
     // No branch selected - redirect to select-branch
     if (!decoded.branchId && !decoded.organizationId) {
-      const selectBranchUrl = new URL("/select-branch", request.url);
+      const selectBranchUrl = createSelectBranchUrl(request);
       return NextResponse.redirect(selectBranchUrl);
     }
 
@@ -290,7 +330,7 @@ export async function proxy(request: NextRequest) {
     return response;
   } catch {
     // Invalid token - redirect to login
-    const loginUrl = new URL("/login", request.url);
+    const loginUrl = createLoginUrl(request);
     const response = NextResponse.redirect(loginUrl);
     clearAuthCookies(response);
     return response;

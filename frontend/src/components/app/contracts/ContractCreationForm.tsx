@@ -1,4 +1,5 @@
 "use client";
+import { formatBirthdayInput, normalizeBirthdayIsoDate } from "@babyjamjam/shared/utils/birthday";
 import { getUserErrorMessage } from "@babyjamjam/shared";
 
 import dayjs from "dayjs";
@@ -554,7 +555,7 @@ export const ContractCreationForm = ({
     if (client) {
       setName(client.name);
       setPhone(client.phone || "");
-      setBirthday(client.birthday || "");
+      setBirthday(normalizeBirthdayIsoDate(client.birthday) ?? client.birthday ?? "");
       setAddress(client.address || "");
       setDueDate(client.dueDate || "");
       setDueDateInput(formatIsoDateToYymmdd(client.dueDate || ""));
@@ -1162,7 +1163,7 @@ export const ContractCreationForm = ({
       return "고객 정보와 계약서를 선택해 주세요.";
     }
     if (step === 0 && !isBirthdayValid) {
-      return "생년월일은 유효한 YYMMDD 6자리여야 합니다.";
+      return "생년월일을 YYYY-MM-DD 형식의 유효한 날짜로 입력해 주세요.";
     }
     if (step === 1 && !isStep2Valid) {
       return "제공인력 정보를 모두 입력해 주세요.";
@@ -1220,8 +1221,10 @@ export const ContractCreationForm = ({
           <TitleTextInputMolecule
             label={t(locale, "contract-msg.birthday-label")}
             value={birthday}
-            onValueChange={setBirthday}
-            placeholder="예: YYMMDD"
+            onValueChange={(value) => setBirthday(formatBirthdayInput(value))}
+            placeholder="YYYY-MM-DD"
+            inputMode="numeric"
+            maxLength={10}
             dataComponent="desktop_contracts_creation_client-birthday-input"
           />
           <TitleTextInputMolecule

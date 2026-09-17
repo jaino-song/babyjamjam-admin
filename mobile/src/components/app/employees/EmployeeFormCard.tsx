@@ -1,4 +1,5 @@
 "use client";
+import { formatBirthdayInput } from "@babyjamjam/shared/utils/birthday";
 
 import { ChevronDown } from "lucide-react";
 import { useLocale } from "@/providers/LocaleProvider";
@@ -159,9 +160,9 @@ export function EmployeeFormCard({
             id="employee-form-birthday"
             className={styles.control}
             value={formData.birthday}
-            onChange={(event) => setField("birthday", event.target.value.replace(/[^\d]/g, ""))}
-            placeholder="YYMMDD"
-            maxLength={6}
+            onChange={(event) => setField("birthday", formatBirthdayInput(event.target.value))}
+            placeholder="YYYY-MM-DD"
+            maxLength={10}
             inputMode="numeric"
             disabled={disabled}
           />

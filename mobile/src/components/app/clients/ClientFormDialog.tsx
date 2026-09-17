@@ -1,4 +1,5 @@
 "use client";
+import { formatBirthdayInput, isValidBirthdayIsoDate, normalizeBirthdayIsoDate } from "@babyjamjam/shared/utils/birthday";
 import { useState, useEffect, useMemo, useRef } from "react";
 import {
     findOutOfPocketPriceInfo,
@@ -266,7 +267,7 @@ export function ClientFormDialog({ open, onClose, client, onSuccess }: ClientFor
         const nextFormData = client
             ? {
                 name: client.name,
-                birthday: client.birthday || "",
+                birthday: normalizeBirthdayIsoDate(client.birthday) ?? client.birthday ?? "",
                 dueDate: formatDateForInput(client.dueDate),
                 address: client.address || "",
                 phone: client.phone || "",
@@ -350,7 +351,7 @@ export function ClientFormDialog({ open, onClose, client, onSuccess }: ClientFor
             setErrorAndScroll(t(locale, "clients.form.error-name-required"));
             return;
         }
-        if (!formData.birthday?.trim()) {
+        if (!isValidBirthdayIsoDate(formData.birthday ?? "")) {
             setErrorAndScroll(t(locale, "clients.form.error-birthday-required"));
             return;
         }
@@ -600,10 +601,11 @@ export function ClientFormDialog({ open, onClose, client, onSuccess }: ClientFor
                                 <Label htmlFor="birthday">{t(locale, "clients.form.birthday")}</Label>
                                 <Input
                                     id="birthday"
-                                    placeholder="YYMMDD"
+                                    placeholder="YYYY-MM-DD"
+                                    inputMode="numeric"
                                     value={formData.birthday ?? ""}
-                                    onChange={(e) => handleChange("birthday", e.target.value)}
-                                    maxLength={6}
+                                    onChange={(e) => handleChange("birthday", formatBirthdayInput(e.target.value))}
+                                    maxLength={10}
                                 />
                                 <p className="text-xs text-muted-foreground">
                                     {t(locale, "clients.form.birthday-helper")}

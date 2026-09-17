@@ -1,4 +1,5 @@
 "use client";
+import { formatBirthdayInput, isValidBirthdayIsoDate, normalizeBirthdayIsoDate } from "@babyjamjam/shared/utils/birthday";
 import { getUserErrorMessage } from "@babyjamjam/shared";
 
 
@@ -228,17 +229,8 @@ const clientBirthdayValue = (client: ClientWithBirthdayAliases | null | undefine
   client?.customerBirthDate ??
   client?.customerDOB;
 
-const normalizeBirthdayInput = (value: string | null | undefined): string => {
-  if (!value) return "";
-
-  const isoValue = isoToYymmdd(value);
-  if (isoValue) return isoValue;
-
-  const digits = value.replace(/\D/g, "");
-  if (digits.length === 6) return digits;
-  if (digits.length === 8) return digits.slice(2);
-  return digits.slice(0, 6);
-};
+const normalizeBirthdayInput = (value: string | null | undefined): string =>
+  normalizeBirthdayIsoDate(value) ?? value ?? "";
 
 export const formatContractCreationPrice = (price: number | string): string => {
   if (!price && price !== 0) return "";
@@ -749,7 +741,8 @@ export function useContractCreationFlow(): ContractCreationFlow {
   };
 
   const isStep1Valid = Boolean(
-    (clientId !== null || (isManualEntry && name.trim() && phone.trim())) && area,
+    (clientId !== null || (isManualEntry && name.trim() && phone.trim())) && area
+      && (!birthday || isValidBirthdayIsoDate(birthday)),
   );
   const isEmployee1Valid = Boolean(
     employeeName.trim() && employeePhone.trim() && (employeeId !== null || isEmployeeManualEntry),
@@ -1108,7 +1101,7 @@ export function useContractCreationFlow(): ContractCreationFlow {
       changeClientName: handleClientNameInputChange,
       useManualClient: handleClientManualEntry,
       changePhone: (value) => setPhone(formatPhoneNumber(value)),
-      changeBirthday: (value) => setBirthday(value.replace(/\D/g, "").slice(0, 6)),
+      changeBirthday: (value) => setBirthday(formatBirthdayInput(value)),
       changeAddress: setAddress,
       changeArea: (option) => setArea(option?.value ?? ""),
       selectEmployee: handleEmployeeSelect,

@@ -91,8 +91,8 @@ test.describe("clients edit wizard hydration", () => {
         status: 200,
         contentType: "application/json",
         body: JSON.stringify([
-          { id: 1, name: "김정인", status: "active" },
-          { id: 2, name: "박지영", status: "active" },
+          { id: 1, name: "김정인", status: "active", workArea: [] },
+          { id: 2, name: "박지영", status: "active", workArea: [] },
         ]),
       });
     });
@@ -117,11 +117,9 @@ test.describe("clients edit wizard hydration", () => {
     await expect(nameInput).toHaveValue(MOCK_CLIENT.name);
     const phoneInput = page.locator('input[placeholder="010-1234-5678"]');
     await expect(phoneInput).toHaveValue(MOCK_CLIENT.phone);
-    // Pinned to the field's own data-component rather than an index into the
-    // YYMMDD placeholders: only 생년월일 carries that placeholder now, the
-    // three real dates hydrate as ISO.
+    // Existing six-digit birthdays normalize to the same ISO input as new entries.
     const birthdayInput = page.locator('[data-component="mobile_clients-new_screen_root_page_wizard_form-scroll_basic-details-card_birthday-field_birthday-input"]');
-    await expect(birthdayInput).toHaveValue("950414");
+    await expect(birthdayInput).toHaveValue("1995-04-14");
     const dueDateInput = page.locator('[data-component="mobile_clients-new_screen_root_page_wizard_form-scroll_basic-details-card_due-date-field_due-date-input"]');
     await expect(dueDateInput).toHaveValue("2026-06-11");
     const addressInput = page.locator('input[placeholder="서울시 강남구..."]');
@@ -196,7 +194,7 @@ test.describe("clients edit wizard hydration", () => {
 
     await page.goto("/clients/new");
     await page.locator('[data-component="mobile_clients-new_screen_root_page_wizard_form-scroll_basic-contact-card_name-field_name-input"]').fill("자부담 신규 고객");
-    await page.locator('[data-component="mobile_clients-new_screen_root_page_wizard_form-scroll_basic-details-card_birthday-field_birthday-input"]').fill("900101");
+    await page.locator('[data-component="mobile_clients-new_screen_root_page_wizard_form-scroll_basic-details-card_birthday-field_birthday-input"]').fill("19900101");
     await page.locator('[data-component="mobile_clients-new_screen_root_page_wizard_form-scroll_basic-details-card_due-date-field_due-date-input"]').fill("2026-09-01");
     await page.locator('[data-component="mobile_clients-new_screen_root_page_wizard_form-scroll_basic-contact-card_phone-field_phone-input"]').fill("01012345678");
 

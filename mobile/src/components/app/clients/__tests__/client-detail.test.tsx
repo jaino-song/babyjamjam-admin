@@ -1,4 +1,5 @@
 import { render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import type { ReactNode } from "react";
 
 import {
@@ -27,6 +28,14 @@ jest.mock("@/hooks/useClients", () => ({
 
 jest.mock("@/hooks/use-toast", () => ({
   toast: jest.fn(),
+  useToast: () => ({ toast: jest.fn() }),
+}));
+
+jest.mock("@/hooks/use-send-client-receipt", () => ({
+  useSendClientReceipt: () => ({
+    isSending: false,
+    sendReceipt: jest.fn(),
+  }),
 }));
 
 jest.mock("@/components/app/mobile-redesign/detail-sheet", () => ({
@@ -44,7 +53,7 @@ jest.mock("@/components/app/mobile-redesign/detail-sheet", () => ({
     </div>
   ),
   MobileDetailActions: () => null,
-  MobileDetailHeader: () => null,
+  MobileDetailHeader: ({ menu }: { menu?: ReactNode }) => <header>{menu}</header>,
   MobileDetailPage: ({ children }: { children: ReactNode }) => <main>{children}</main>,
   MobileDetailTabPanel: ({
     activeTab,
@@ -154,6 +163,17 @@ describe("ClientDetailContent", () => {
     });
 
     expect(screen.getByText("010-2770-0718")).toBeInTheDocument();
+  });
+
+  it("confirms the exact receipt-send copy from the customer overflow menu", async () => {
+    const user = userEvent.setup();
+    renderDetail();
+
+    await user.click(screen.getByRole("button", { name: "고객 옵션" }));
+    await user.click(screen.getByRole("menuitem", { name: /본인부담금 영수증 발송/ }));
+
+    expect(screen.getByRole("dialog", { name: "본인부담금 영수증 전송" })).toBeInTheDocument();
+    expect(screen.getByText("고객 산모님께 본인부담금 영수증 안내 메시지를 보낼까요?")).toBeInTheDocument();
   });
 
   it("should show employee phone rows with a dash when phone numbers are missing", () => {

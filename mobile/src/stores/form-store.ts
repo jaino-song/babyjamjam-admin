@@ -1,3 +1,4 @@
+import { normalizeBirthdayIsoDate } from "@babyjamjam/shared/utils/birthday";
 import { create } from "zustand";
 
 import { todayIsoDate } from "@/lib/contracts/date-input";
@@ -220,7 +221,7 @@ export const useFormStore = create<FormStore>((set) => {
             isManualEntry: false,
             name: client.name,
             phone: formatKoreanPhoneNumber(client.phone),
-            birthday: client.birthday || "",
+            birthday: normalizeBirthdayIsoDate(client.birthday) ?? client.birthday ?? "",
             dueDate: client.dueDate || "",
             address: client.address || "",
             voucherType: client.type || "",
@@ -242,7 +243,7 @@ export const useFormStore = create<FormStore>((set) => {
             isManualEntry: prefill.clientId == null,
             name: prefill.name ?? "",
             phone: formatKoreanPhoneNumber(prefill.phone),
-            birthday: prefill.birthday ?? "",
+            birthday: normalizeBirthdayIsoDate(prefill.birthday) ?? prefill.birthday ?? "",
             dueDate: prefill.dueDate ?? "",
             address: prefill.address ?? "",
             employeeId: prefill.employeeId ?? null,

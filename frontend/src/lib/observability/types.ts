@@ -1,4 +1,10 @@
+import type { StatsPeriod } from "./stats-period";
+
 export type SentryLevel = "fatal" | "error" | "warning" | "info";
+
+export interface SelectedStatsRange {
+  days: StatsPeriod;
+}
 
 export interface SentryIssue {
   id: string;
@@ -28,6 +34,11 @@ export interface SentrySummary {
   affectedUsers: number;
   lastErrorAt: string | null;
   sparkline7d: number[];
+  selectedRange: SelectedStatsRange & {
+    totalEvents: number;
+    affectedUsers: number;
+    sparkline: number[];
+  };
 }
 
 export interface InquiriesSummary {
@@ -38,6 +49,11 @@ export interface InquiriesSummary {
   thirtyDayTotal: number;
   lastSubmissionAt: string | null;
   conversionRate: number;
+  selectedRange: SelectedStatsRange & {
+    total: number;
+    average: number;
+    conversionRate: number;
+  };
 }
 
 export interface InquiryDailyPoint {
@@ -109,6 +125,11 @@ export interface TrafficSummary {
   sevenDayTotal: { pv: number; unique: number };
   avgSessionSeconds: number;
   bounceRate: number;
+  selectedRange: SelectedStatsRange & {
+    total: { pv: number; unique: number };
+    avgSessionSeconds: number;
+    bounceRate: number;
+  };
 }
 
 export interface TrafficTrendPoint {

@@ -3,17 +3,25 @@ import { getUserErrorMessage } from "@babyjamjam/shared";
 
 
 import { useEffect, useMemo, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 
 import { resendVerificationEmail } from "@/features/auth/shared/auth-api";
 import { useNavigationPending } from "@/lib/hooks/use-navigation-pending";
 import { loginSchema, type LoginFormData } from "@/lib/validations/auth";
 import { safeStorageGetItem, safeStorageRemoveItem, safeStorageSetItem } from "@/lib/safe-storage";
 import { resetAuthorityState } from "@/lib/auth/authority-state";
+import {
+  appendSafeReturnPath,
+  getSafeReturnPathFromSearchParams,
+  OAUTH_RETURN_PATH_STORAGE_KEY,
+  serializeSafeReturnPathForStorage,
+} from "@/lib/auth/safe-return-path";
 import { loginWithEmail } from "@/app/(auth)/login/actions";
 
 export function useLoginPageController() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const returnPath = getSafeReturnPathFromSearchParams(searchParams);
   const [autoLogin, setAutoLogin] = useState(false);
   const [rememberId, setRememberId] = useState(false);
   const [formData, setFormData] = useState<Partial<LoginFormData>>({
@@ -26,6 +34,15 @@ export function useLoginPageController() {
   const [emailVerificationRequired, setEmailVerificationRequired] = useState(false);
   const [isResendingVerification, setIsResendingVerification] = useState(false);
   const { isPending: isLoginPending, beginNavigation } = useNavigationPending(isLoading);
+
+  useEffect(() => {
+    const serializedReturnPath = serializeSafeReturnPathForStorage(returnPath);
+    if (serializedReturnPath) {
+      safeStorageSetItem("session", OAUTH_RETURN_PATH_STORAGE_KEY, serializedReturnPath);
+    } else {
+      safeStorageRemoveItem("session", OAUTH_RETURN_PATH_STORAGE_KEY);
+    }
+  }, [returnPath]);
 
   useEffect(() => {
     const savedAutoLogin = safeStorageGetItem("local", "login:autoLogin") === "true";
@@ -94,21 +111,26 @@ export function useLoginPageController() {
       if (response.success) {
         if (response.onboardingRequired) {
           beginNavigation();
-          router.replace(response.onboardingRoute || "/onboarding");
+          router.replace(appendSafeReturnPath(response.onboardingRoute || "/onboarding", returnPath));
+          safeStorageRemoveItem("session", OAUTH_RETURN_PATH_STORAGE_KEY);
           return;
         }
 
         beginNavigation();
+        safeStorageRemoveItem("session", OAUTH_RETURN_PATH_STORAGE_KEY);
         if (response.requiresBranchSelection) {
-          router.replace("/select-branch");
+          router.replace(appendSafeReturnPath("/select-branch", returnPath));
         } else {
-          router.replace("/dashboard");
+          router.replace(returnPath || "/dashboard");
         }
         return;
       }
 
       if (response.authErrorCode) {
-        router.replace(`/login?authError=${encodeURIComponent(response.authErrorCode)}`);
+        router.replace(appendSafeReturnPath(
+          `/login?authError=${encodeURIComponent(response.authErrorCode)}`,
+          returnPath,
+        ));
         return;
       }
 
