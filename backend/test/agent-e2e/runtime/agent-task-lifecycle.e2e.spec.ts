@@ -363,9 +363,9 @@ describeAgentE2E("agent task lifecycle against the guarded local database", () =
         expect(created.status).toBe("created");
         const beforePurge = await prisma.agent_task.findUnique({ where: { id: taskId } });
         const eventBefore = await prisma.agent_task_event.findFirst({ where: { taskId }, orderBy: { acceptedAt: "asc" } });
-        const expiredAt = new Date(Date.now() - 1000);
+        const cleanupAt = new Date(Date.now());
+        const expiredAt = new Date(cleanupAt.getTime() - 1000);
         await prisma.agent_task.update({ where: { id: taskId }, data: { expiresAt: expiredAt } });
-        const cleanupAt = new Date("2026-09-17T00:00:00.000Z");
         expect(await repository.purgeExpired(cleanupAt)).toBe(1);
         const stored = await prisma.agent_task.findUnique({ where: { id: taskId } });
         expect(stored).toEqual(expect.objectContaining({

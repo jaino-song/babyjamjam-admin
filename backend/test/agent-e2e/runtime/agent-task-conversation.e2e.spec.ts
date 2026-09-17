@@ -4,14 +4,17 @@ import { PrismaClient } from "@prisma/client";
 import { Test } from "@nestjs/testing";
 import request from "supertest";
 import { randomUUID } from "node:crypto";
+import { z } from "zod";
 
 import {
+    AgentEntitySelectPartSchema,
     AgentTaskCommandRequestSchema,
     type AgentTask,
 } from "@babyjamjam/shared";
 import { AgentTaskController } from "interface/controllers/agent-task.controller";
 import { AgentTaskService } from "application/agent/agent-task.service";
 import { ConversationTaskOrchestratorService } from "application/agent/conversation-task-orchestrator.service";
+import { AgentRuntimeService } from "application/agent/agent-runtime.service";
 import { clientAgentTargetVersion } from "application/usecases/client/client-agent-target";
 import { createEmptyAgentTaskDraft, type AgentTaskDraft, type AgentTaskEntity } from "domain/entities/agent-task.entity";
 import type { ClientEntity } from "domain/entities/client.entity";
@@ -30,6 +33,7 @@ import {
     conversationMessageEventId,
     conversationMessageHash,
 } from "application/agent/conversation-task-policy";
+import { DeterministicAgentLanguageModel } from "infrastructure/agent/deterministic-agent-language-model";
 
 /**
  * These are real database and HTTP checks. They are opt-in through the same
@@ -507,7 +511,7 @@ describeAgentE2E("conversation task runtime against the guarded local database",
                 role: "user",
                 parts: [{ type: "text", text: protectedText }],
             },
-            formSubmission: { formId: "client-intake", values: { address: protectedAddress } },
+            formSubmission: { formId: `clients.create-${sessionId}`, values: { address: protectedAddress } },
         });
         if (!result.task) throw new Error("Expected captured task");
         const row = await prisma.agent_task.findUnique({ where: { id: result.task.taskId } });
@@ -519,6 +523,115 @@ describeAgentE2E("conversation task runtime against the guarded local database",
         expect(JSON.stringify(events)).not.toContain(protectedText);
         expect(JSON.stringify(events)).not.toContain("01024681357");
         expect(await prisma.agent_message.count({ where: { sessionId } })).toBe(0);
+    });
+
+    it("round-trips a runtime entity-select through the persisted choice mapping", async () => {
+        const taskService = service();
+        const created = await taskService.create(principal, {
+            sessionId,
+            capabilityId: "clients.create",
+            clientEventId: randomUUID(),
+            operations: [{ op: "set", field: "name", value: "선택 대상" }],
+        });
+        const target = makeClient(777, "보호된 검색 고객");
+        clientsById.set(target.id, target);
+        const createCapability = {
+            meta: capability,
+            inputSchema: z.object({ name: z.string().optional() }),
+            outputSchema: z.object({ status: z.string() }),
+            execute: jest.fn(),
+        };
+        const searchCapability = {
+            meta: {
+                name: "clients.search",
+                domain: "clients",
+                version: "1.0.0",
+                description: "Search clients",
+                risk: "read" as const,
+                requiredRoles: ["owner", "admin", "manager"],
+                renderer: "entity-choice" as const,
+                flagKey: "agent.capability.clients.search",
+                sideEffect: false,
+            },
+            inputSchema: z.object({ query: z.string().optional() }),
+            outputSchema: z.object({
+                kind: z.literal("entity"),
+                entity: z.object({ id: z.number().int().positive(), name: z.string(), serviceStatus: z.string().nullable() }),
+            }),
+            execute: jest.fn().mockResolvedValue({
+                kind: "entity",
+                entity: { id: target.id, name: target.name, serviceStatus: target.serviceStatus },
+            }),
+        };
+        const taskOrchestrator = new ConversationTaskOrchestratorService(taskService, policyStub() as never);
+        const sessions = {
+            get: jest.fn().mockResolvedValue({ id: sessionId, selectedEntities: {}, messages: [] }),
+            update: jest.fn().mockResolvedValue(undefined),
+            appendMessages: jest.fn().mockResolvedValue(undefined),
+        };
+        const model = new DeterministicAgentLanguageModel([
+            { type: "tool-call", toolName: "clients_search", input: { query: "보호된 검색 고객" } },
+            { type: "text", text: "선택지를 표시했습니다." },
+        ]);
+        const runtime = new AgentRuntimeService(
+            { list: () => [createCapability, searchCapability] } as never,
+            { isCapabilityEnabled: jest.fn().mockResolvedValue(true) } as never,
+            sessions as never,
+            { modelId: "deterministic-agent-v1", create: () => model } as never,
+            { route: jest.fn().mockResolvedValue({ domains: ["clients"], capabilities: [createCapability, searchCapability] }) } as never,
+            { start: jest.fn().mockResolvedValue({ id: "trace-choice-roundtrip", startedAt: Date.now() }), finish: jest.fn().mockResolvedValue(undefined) } as never,
+            undefined,
+            undefined,
+            undefined,
+            taskOrchestrator,
+        );
+
+        const result = await runtime.stream({
+            principal,
+            sessionId,
+            locale: "ko",
+            messages: [{ id: "message-choice-roundtrip", role: "user", parts: [{ type: "text", text: "고객 검색" }] }] as never,
+        });
+        const chunks: unknown[] = [];
+        const reader = result.stream.getReader();
+        while (true) {
+            const next = await reader.read();
+            if (next.done) break;
+            chunks.push(next.value);
+        }
+
+        const selectionChunk = chunks.find((chunk): chunk is { type: string; data: unknown } => (
+            typeof chunk === "object" && chunk !== null && (chunk as { type?: unknown }).type === "data-entity-select"
+        ));
+        expect(selectionChunk).toBeDefined();
+        const selection = AgentEntitySelectPartSchema.parse(selectionChunk?.data);
+        expect(selection.taskId).toBe(created.snapshot.taskId);
+        expect(selection.optionIds).toHaveLength(1);
+
+        const attached = await taskService.get(principal, selection.taskId);
+        expect(attached.choiceSets).toEqual(expect.arrayContaining([
+            expect.objectContaining({
+                choiceSetRef: selection.choiceSetRef,
+                options: expect.arrayContaining([expect.objectContaining({ optionId: selection.optionIds[0] })]),
+            }),
+        ]));
+        const selected = await taskService.command(principal, selection.taskId, {
+            clientEventId: randomUUID(),
+            expectedRevision: attached.revision,
+            command: "select-target",
+            choiceSetRef: selection.choiceSetRef,
+            optionId: selection.optionIds[0],
+        });
+        expect(selected.snapshot.target).toEqual({
+            targetRef: selection.choiceSetRef,
+            version: clientAgentTargetVersion(target),
+        });
+        const persisted = await prisma.agent_task.findUnique({ where: { id: selection.taskId } });
+        expect(persisted?.targetRef).toBe(selection.choiceSetRef);
+        const persistedDraft = persisted?.draft as { server?: { references?: { choiceTargets?: unknown } } } | null | undefined;
+        expect(persistedDraft?.server?.references?.choiceTargets).toEqual([
+            expect.objectContaining({ choiceSetRef: selection.choiceSetRef, optionId: selection.optionIds[0], clientId: target.id }),
+        ]);
     });
 
     it("rejects the same model event when only resolved authority origin changes", async () => {
