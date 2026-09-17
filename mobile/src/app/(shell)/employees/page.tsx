@@ -233,7 +233,7 @@ function EmployeeDetailContent({
                 key={`${client.clientId}:${client.role}`}
                 initial={employeeInitial(client.clientName)}
                 title={client.clientName}
-                meta={`${client.startDate} ~ ${client.endDate}`}
+                meta={`${formatDateForDisplay(client.startDate)} ~ ${formatDateForDisplay(client.endDate)}`}
                 badge={client.role === "primary" ? "주담당" : "부담당"}
                 tone={client.role === "primary" ? "green" : "primary"}
               />
