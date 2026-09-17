@@ -508,4 +508,43 @@ describeAgentE2E("real automation.list with two eligible clients and missing def
         expect(createModel).not.toHaveBeenCalled(); send.mockRestore();
     });
 
+    it.each(["failed", "sent"])("does not overwrite a concurrent %s result after dispatch admission refuses", async (status) => {
+        const trigger = app.get(MessageTriggerService);
+        const gate = app.get(AgentAutomationDeliveryGateService);
+        const sources = app.get(ClientAutomationSourceReader);
+        const send = jest.spyOn(app.get(AligoService), "sendSms");
+        const consume = gate.consumeDispatch.bind(gate);
+        const take = jest.spyOn(gate, "consumeDispatch").mockImplementationOnce(async (job, preparation) => {
+            // Simulate a recovery owner finishing this same claim after the
+            // dispatch CAS commits, before the final provider admission read.
+            const current = await prisma.message_trigger_job.findUniqueOrThrow({ where: { id: job.id } });
+            expect(current.status).toBe("dispatching");
+            expect(current.claimToken).toBe(job.claimToken);
+            await prisma.message_trigger_job.update({ where: { id: job.id }, data: {
+                status, sentAt: status === "sent" ? new Date() : null,
+            } });
+            return consume(job, preparation);
+        });
+        try {
+            await tenantContextStore.run({ origin: "http", branchId }, async () => {
+                const settings = await sources.readClientAutomationSettings(branchId);
+                const client = await sources.readClientAutomationSource(branchId, clientIds[0]!);
+                if (settings.status !== "available" || !client) throw new Error("Missing synthetic legacy source");
+                const rule = settings.rules.find(({ templateKey }) => templateKey === "CLIENT_GREETING")!;
+                const recipe = buildClientMessageRecipe(rule, client, new Date())!;
+                const row = await prisma.message_trigger_job.create({ data: { ...recipe, payload: recipe.payload as unknown as Prisma.InputJsonValue } });
+                await trigger.dispatchPendingJobNow(row.id, { expectedBranchId: branchId });
+                const persisted = await prisma.message_trigger_job.findUniqueOrThrow({ where: { id: row.id } });
+                expect(persisted.status).toBe(status);
+                expect(persisted.attempts).toBe(0);
+                expect(persisted.nextAttemptAt).toBeNull();
+                if (status === "sent") expect(persisted.sentAt).not.toBeNull();
+                expect(take).toHaveBeenCalledTimes(1);
+                expect(send).not.toHaveBeenCalled();
+                expect(await prisma.message_log.count({ where: { triggerJobId: row.id } })).toBe(0);
+            });
+            expect(createModel).not.toHaveBeenCalled();
+        } finally { take.mockRestore(); send.mockRestore(); }
+    });
+
 });
