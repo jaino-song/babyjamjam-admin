@@ -1,8 +1,9 @@
-import { Injectable } from "@nestjs/common";
+import { Injectable, Optional } from "@nestjs/common";
+import { ConfigService } from "@nestjs/config";
 import type { Prisma } from "@prisma/client";
 import { AgentAutomationAuthorityService, type AgentAutomationAuthorityCheck, type DescribeCurrentAutomationEffect } from "application/agent/agent-automation-authority.service";
 import { AGENT_AUTOMATION_JOB_SEAL_PAYLOAD_KEY, isReservedAutomationJob } from "domain/constants/agent-automation-storage";
-import { MessageTriggerRecipientType } from "domain/constants/message-trigger-catalog";
+import { MessageTriggerEventType, MessageTriggerOffsetType, MessageTriggerRecipientType, MessageTriggerTemplateKey } from "domain/constants/message-trigger-catalog";
 import { isManualMessageTriggerJob } from "domain/constants/message-trigger-job-ownership";
 import { SERVICE_RECORD_LINK_RULE_ID } from "domain/constants/service-record-link-message";
 import type { MessageTriggerJobEntity } from "domain/entities/message-trigger-job.entity";
@@ -11,6 +12,12 @@ import { AligoDefaultSenderPolicyService } from "./aligo-default-sender-policy.s
 import { ClientAutomationSourceReader } from "./client-automation-source.reader";
 import { describeClientMessageEffect } from "./client-message-effect-recipe";
 import { buildEmployeeAssignmentMessageEffect } from "./employee-assignment-message-effect-recipe";
+import {
+    describeServiceRecordLinkEffect,
+    type ServiceRecordLinkCaseSource,
+    type ServiceRecordLinkScheduleSource,
+    type ServiceRecordLinkTokenSource,
+} from "./service-record-link-automation-effect-recipe";
 import type { SmsTriggerDeliverySnapshot } from "./sms-trigger-delivery.service";
 import { agentAutomationConcreteJobDigest, agentAutomationSourcePayload } from "./agent-automation-job-binding";
 import { buildClientMessageRecipe, buildEmployeeAssignmentMessageRecipe, buildMessageRecipeDedupeKey } from "./message-trigger-recipes";
@@ -40,6 +47,8 @@ export class AgentAutomationJobAuthorityService {
         private readonly authority: AgentAutomationAuthorityService,
         private readonly sources: ClientAutomationSourceReader,
         private readonly sender: AligoDefaultSenderPolicyService,
+        @Optional()
+        private readonly configService?: ConfigService,
     ) {}
 
     async checkAutomaticJob(
@@ -88,8 +97,9 @@ export class AgentAutomationJobAuthorityService {
         if (input.scope.kind === "employee-assignment") {
             return this.describeCurrentEmployeeAssignmentEffect(transaction, job, input, render, preparedSnapshotHash);
         }
-        // service-record-link intentionally remains unsupported until its
-        // token/link owner supplies a bounded authority adapter.
+        if (input.scope.kind === "service-record-link") {
+            return this.describeCurrentServiceRecordLinkEffect(transaction, job, input, render, preparedSnapshotHash);
+        }
         if (input.scope.kind !== "client-rule") return null;
         const settings = await this.sources.readClientAutomationSettings(input.scope.branchId, transaction);
         if (settings.status !== "available") return null;
@@ -142,6 +152,12 @@ export class AgentAutomationJobAuthorityService {
         return described.status === "effect" ? described.effect : null;
     }
 
+    /**
+     * Resolve the dedicated link owner under the caller's transaction. The
+     * token service has write-oriented APIs and a non-transactional resolver;
+     * this path deliberately reads only the rows needed to prove the exact
+     * current assignment and URL, then asks the delivery owner for its snapshot.
+     */
     private async describeCurrentEmployeeAssignmentEffect(
         transaction: Prisma.TransactionClient,
         job: MessageTriggerJobEntity,
@@ -199,6 +215,181 @@ export class AgentAutomationJobAuthorityService {
             change: input.change,
             policy,
         });
+    }
+
+
+    private async describeCurrentServiceRecordLinkEffect(
+        transaction: Prisma.TransactionClient,
+        job: MessageTriggerJobEntity,
+        input: Parameters<DescribeCurrentAutomationEffect>[0],
+        render: CanonicalAutomationRenderer,
+        preparedSnapshotHash?: string,
+    ) {
+        if (input.scope.scheduleId === null || job.employeeScheduleId !== input.scope.scheduleId
+            || job.ruleId !== SERVICE_RECORD_LINK_RULE_ID
+            || job.recipientType !== MessageTriggerRecipientType.PRIMARY_EMPLOYEE
+            || job.templateKey !== MessageTriggerTemplateKey.SERVICE_RECORD_LINK) return null;
+
+        const settings = await this.sources.readClientAutomationSettings(input.scope.branchId, transaction);
+        if (settings.status !== "available") return null;
+        const rule = settings.rules.find(({ id, branchId }) => id === SERVICE_RECORD_LINK_RULE_ID && branchId === null);
+        if (!rule || rule.eventType !== MessageTriggerEventType.SERVICE_START
+            || rule.offsetType !== MessageTriggerOffsetType.SAME_DAY || rule.offsetDays !== 0
+            || rule.recipientType !== MessageTriggerRecipientType.PRIMARY_EMPLOYEE
+            || rule.templateKey !== MessageTriggerTemplateKey.SERVICE_RECORD_LINK || !rule.isActive
+            || !settings.dispatchEnabled) return null;
+
+        const schedule = await transaction.employee_schedule.findFirst({
+            where: {
+                id: input.scope.scheduleId,
+                branchId: input.scope.branchId,
+                clientId: input.scope.clientId,
+                replaced: false,
+                terminatedAt: null,
+            },
+            select: {
+                id: true,
+                incarnationId: true,
+                branchId: true,
+                clientId: true,
+                startDate: true,
+                endDate: true,
+                replaced: true,
+                terminatedAt: true,
+                primaryEmployeeId: true,
+                client: {
+                    select: {
+                        id: true,
+                        name: true,
+                        branchId: true,
+                        createdAt: true,
+                        serviceStatus: true,
+                    },
+                },
+                primaryEmployee: {
+                    select: {
+                        id: true,
+                        name: true,
+                        phone: true,
+                        branchId: true,
+                        deletedAt: true,
+                    },
+                },
+            },
+        });
+        if (!schedule || !schedule.primaryEmployee || !schedule.client) return null;
+
+        // ServiceRecordTokenService.currentProvider selects the latest active
+        // assignment for the client. Mirror that check inside this transaction
+        // so an older schedule cannot inherit a newer assignment's link.
+        const latestSchedule = await transaction.employee_schedule.findFirst({
+            where: { branchId: input.scope.branchId, clientId: input.scope.clientId, replaced: false, terminatedAt: null },
+            orderBy: { id: "desc" },
+            select: { id: true },
+        });
+        if (!latestSchedule || latestSchedule.id !== schedule.id) return null;
+
+        const serviceRecordCase = await transaction.service_record_case.findFirst({
+            where: { branchId: input.scope.branchId, clientId: input.scope.clientId },
+            select: {
+                id: true,
+                branchId: true,
+                clientId: true,
+                status: true,
+                startDate: true,
+                endDate: true,
+                requiredSessionCount: true,
+                formVersion: true,
+                version: true,
+                finalizedAt: true,
+                updatedAt: true,
+            },
+        });
+
+        const payload = agentAutomationSourcePayload(job.payload);
+        const variables = payload["templateVariables"];
+        if (!variables || typeof variables !== "object" || Array.isArray(variables)) return null;
+        const buttonUrl = payload["buttonUrl"];
+        const serviceRecordUrl = (variables as Record<string, unknown>)["serviceRecordUrl"];
+        if (typeof buttonUrl !== "string" || typeof serviceRecordUrl !== "string"
+            || buttonUrl.length === 0 || buttonUrl !== serviceRecordUrl) return null;
+
+        const tokenValue = this.readServiceRecordLinkToken(buttonUrl);
+        if (!tokenValue || !this.matchesConfiguredServiceRecordBase(buttonUrl, tokenValue)) return null;
+        const token = await transaction.service_record_token.findFirst({
+            where: { branchId: input.scope.branchId, linkTokenHash: tokenValue },
+            select: {
+                id: true,
+                branchId: true,
+                scheduleId: true,
+                employeeId: true,
+                serviceRecordCaseId: true,
+                linkTokenHash: true,
+                expectedPhoneHash: true,
+                expiresAt: true,
+                active: true,
+                revokedAt: true,
+                lockedAt: true,
+                failedAttempts: true,
+                createdAt: true,
+            },
+        });
+        if (!token) return null;
+
+        let snapshot: Readonly<SmsTriggerDeliverySnapshot>;
+        try {
+            snapshot = await render(job, transaction);
+        } catch {
+            return null;
+        }
+        if (preparedSnapshotHash !== undefined && snapshot.snapshotHash !== preparedSnapshotHash) return null;
+
+        const sender = this.sender.read();
+        const policy = {
+            dispatchEnabled: settings.dispatchEnabled,
+            senderApproved: settings.senderApproved,
+            senderIdentityDigest: sender.availability === "available" ? sender.identityDigest : null,
+            senderApprovedAt: settings.senderApprovedAt?.toISOString() ?? null,
+            pastTriggerEnabled: settings.pastTriggerEnabled,
+            pastTriggerConfig: settings.pastTriggerConfig,
+        };
+        return describeServiceRecordLinkEffect({
+            branchId: input.scope.branchId,
+            subject: input.subject,
+            rule,
+            schedule: schedule as ServiceRecordLinkScheduleSource,
+            serviceRecordCase: serviceRecordCase as ServiceRecordLinkCaseSource | null,
+            token: token as ServiceRecordLinkTokenSource,
+            scheduleIdentity: input.scope.scheduleIdentity ?? "",
+            serviceRecordUrl,
+            sourcePayload: payload,
+            scheduledFor: job.scheduledFor,
+            dedupeKey: job.dedupeKey,
+            snapshot,
+            change: input.change,
+            policy,
+            now: new Date(),
+        });
+    }
+
+    private readServiceRecordLinkToken(value: string): string | null {
+        try {
+            const parsed = new URL(value);
+            const prefix = "/service-record/";
+            if (parsed.protocol !== "https:" || parsed.username || parsed.password || parsed.search || parsed.hash
+                || !parsed.pathname.startsWith(prefix)) return null;
+            const token = parsed.pathname.slice(prefix.length);
+            return token && !token.includes("/") ? token : null;
+        } catch {
+            return null;
+        }
+    }
+
+    private matchesConfiguredServiceRecordBase(value: string, token: string): boolean {
+        const configured = this.configService?.get<string>("MOBILE_SERVICE_RECORD_BASE_URL");
+        if (!configured) return true;
+        const base = configured.trim().replace(/\/+$/, "");
+        return base.length > 0 && value === `${base}/service-record/${token}`;
     }
 
     private async hasCanonicalCatchUpPredecessorChain(
