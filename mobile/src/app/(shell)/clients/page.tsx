@@ -348,6 +348,9 @@ export default function ClientsPage() {
     () => allFilteredClients.filter(hasContractRequiredBadge),
     [allFilteredClients],
   );
+  const displayedClientCount = searchQuery.trim()
+    ? allFilteredClients.length
+    : total ?? allClients.length;
 
   const filterItems = useMemo(() => {
     if (isClientsFetching) {
@@ -361,7 +364,7 @@ export default function ClientsPage() {
     const items = [
       {
         label: ALL_FILTER,
-        count: String(total ?? allClients.length),
+        count: String(displayedClientCount),
       },
       {
         label: CONTRACT_REQUIRED_FILTER,
@@ -375,7 +378,7 @@ export default function ClientsPage() {
       });
     }
     return items;
-  }, [allClients.length, contractRequiredClients.length, grouped.counts, isClientsFetching, total]);
+  }, [contractRequiredClients.length, displayedClientCount, grouped.counts, isClientsFetching]);
 
   const sectionsFull = useMemo(() => {
     type Section = {
@@ -480,7 +483,7 @@ export default function ClientsPage() {
                       data-component="mobile_clients_detail-sheet_stack_list-page_content_list-card_header_count-skeleton"
                     />
                   )
-                  : `${total ?? allClients.length}명`
+                  : `${displayedClientCount}명`
               }
               actionLabel="+ 추가"
               actionHref="/clients/new"

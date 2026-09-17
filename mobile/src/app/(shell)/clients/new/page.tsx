@@ -1459,6 +1459,7 @@ export default function NewClientPage() {
                     <div className={styles.formCardTitle} data-component="mobile_clients-new_screen_root_page_wizard_form-scroll_contract-status-card_card-title">계약 상태</div>
                     <FormNativeSelect
                       id="serviceStatus"
+                      aria-label="계약 상태"
                       data-component="mobile_clients-new_screen_root_page_wizard_form-scroll_contract-status-card_select-wrap"
                       value={store.serviceStatus}
                       onValueChange={(value) => setField("serviceStatus", value as ServiceStatus)}
