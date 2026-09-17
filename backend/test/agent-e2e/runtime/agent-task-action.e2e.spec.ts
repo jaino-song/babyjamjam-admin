@@ -25,7 +25,7 @@ function deferred() {
 }
 
 /** Injection happens after a real DB write; rollback assertions use an independent read. */
-function failAfterWrite(base: PrismaClient, delegate: string, method: string): PrismaClient {
+function failAfterWrite(base: PrismaClient, delegate: string, method: string, refuse = false): PrismaClient {
     return new Proxy(base, { get(target, key, receiver) {
         if (key !== "$transaction") return Reflect.get(target, key, receiver);
         return (callback: (tx: Prisma.TransactionClient) => Promise<unknown>) => base.$transaction(async (tx) => callback(new Proxy(tx, {
@@ -35,7 +35,11 @@ function failAfterWrite(base: PrismaClient, delegate: string, method: string): P
                 return new Proxy(value, { get(model, operation) {
                     const fn = Reflect.get(model, operation);
                     if (operation !== method) return typeof fn === "function" ? fn.bind(model) : fn;
-                    return async (...args: unknown[]) => { await fn.apply(model, args); throw new Error("SYNTHETIC_POSTWRITE_INTERRUPTION"); };
+                    return async (...args: unknown[]) => {
+                        await fn.apply(model, args);
+                        if (refuse) return { count: 0 };
+                        throw new Error("SYNTHETIC_POSTWRITE_INTERRUPTION");
+                    };
                 } });
             },
         })));
@@ -362,5 +366,19 @@ describeDb("atomic task review and execution on guarded PostgreSQL", () => {
         expect(await state(before.id)).toEqual(before);
     });
 
+
+    it("rolls back a postwrite CAS refusal and returns a bounded service error", async () => {
+        const review = await prepared();
+        const before = await state(review.snapshot.taskId);
+        const oldAction = await actions.get(review.snapshot.action!.actionId, owner);
+        const count = await db.agent_task_event.count({ where: { sessionId } });
+        const faulty = new AgentTaskService(new PrismaAgentTaskRepository(failAfterWrite(db, "agent_task", "updateMany", true) as never),
+            policy as never, clients as never, actions);
+        await expect(faulty.patch(principal, before.id, { clientEventId: randomUUID(), expectedRevision: before.revision,
+            operations: [{ op: "set", field: "name", value: "SYN_POSTWRITE" }] })).rejects.toMatchObject({ status: 503 });
+        expect(await state(before.id)).toEqual(before);
+        expect(await actions.get(oldAction.id, owner)).toEqual(oldAction);
+        expect(await db.agent_task_event.count({ where: { sessionId } })).toBe(count);
+    });
 
 });

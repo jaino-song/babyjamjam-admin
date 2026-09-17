@@ -531,7 +531,7 @@ class PrismaAgentTaskTransaction implements AgentTaskTransaction {
                     data: { status: "executing", approvedBy: action.approvedBy ?? proof.actorId,
                         approvedAt: action.approvedAt ?? now, executionAttemptCount: { increment: 1 } },
                 });
-                if (claimed.count !== 1) return this.abort({ status: "binding_mismatch" });
+                if (claimed.count !== 1) return this.abort({ status: "storage_failure" });
                 update = { expectedRevision: task.revision, draft, status: "executing", preserveLastAcceptedAt: true };
                 event = { clientEventId: randomUUID(), operation: "action:claim", requestHash: agentBindingHash(proof),
                     acceptedRevision: task.revision + 1, acceptedAt: now };
@@ -546,7 +546,7 @@ class PrismaAgentTaskTransaction implements AgentTaskTransaction {
                     data: { status: "cancelled", error: { code: "task_review_invalidated", message: "Task review is no longer current" },
                         requestDedupeKey: agentBindingHash({ released: action.requestDedupeKey, actionId: action.id }), resultPartPersistedAt: null },
                 });
-                if (cancelled.count !== 1) return this.abort({ status: "binding_mismatch" });
+                if (cancelled.count !== 1) return this.abort({ status: "storage_failure" });
                 const nextDraft = operation.kind === "invalidate-review" ? structuredClone(operation.next.draft!) : draft;
                 delete nextDraft.server.actionExpectedRevision;
                 delete nextDraft.server.actionProposalRevision;
@@ -562,7 +562,7 @@ class PrismaAgentTaskTransaction implements AgentTaskTransaction {
             return this.abort({ status: "storage_failure" });
         }
         const updated = await this.updateTask(update);
-        if (updated.status !== "updated") return this.abort({ status: "state_conflict" });
+        if (updated.status !== "updated") return this.abort({ status: "storage_failure" });
         const inserted = await this.insertEvent({ ...event, acceptedRevision: updated.task.revision, resultActionId: action.id });
         if (inserted.status !== "inserted") return this.abort({ status: "storage_failure" });
         const final = await this.transaction.agent_action.findUnique({ where: { id: action.id } });
