@@ -24,6 +24,12 @@ const COMPONENT_SUFFIX = {
     body: "body",
 } as const;
 
+const HEADER_FIELD_ERROR_COMPONENT_SUFFIX = {
+    momBirth: "mom-birth",
+    babyBirth: "baby-birth",
+    babyWeight: "baby-weight",
+} as const;
+
 function TextInput({
     value,
     onChange,
@@ -288,6 +294,7 @@ export function ServiceRecordWizard({
     editing,
     readOnly = false,
     adminMode = false,
+    headerErrors = {},
     changedSessionIndexes,
     clientSignature,
     busy,
@@ -374,6 +381,9 @@ export function ServiceRecordWizard({
                 : screen === "service"
                     ? 12
                     : 5;
+    const babyWeightInputId = "service-record-header-babyWeight";
+    const babyWeightErrorId = `${babyWeightInputId}-error`;
+    const babyWeightError = headerErrors.babyWeight;
 
     const handlePhoneChange = (event: ChangeEvent<HTMLInputElement>) => onPhoneChange(event.target.value);
 
@@ -443,12 +453,27 @@ export function ServiceRecordWizard({
                         <div data-component={child("body_service-title")} data-slot="step-title" className="step-title">서비스 기본정보</div>
                         <div data-component={child("body_readonly-row")} data-slot="ro" className="ro"><span>제공인력</span><b>{context.employee?.name ?? "정보 없음"}</b></div>
                         <div data-component={child("body_readonly-row-2")} data-slot="ro" className="ro"><span>제공기관</span><b>{context.org?.name ?? "인천 아이미래로"}</b></div>
-                        {HEADER_FIELDS.slice(0, 4).map((field) => (
-                            <div data-component={child("body_field")} data-slot="fld" className="fld" key={field.k}>
-                                <label data-slot="lab" className="lab">{field.label}</label>
-                                <TextInput placeholder={field.ph} value={header[field.k] ?? ""} disabled={readOnly} onChange={(event) => onHeaderChange(field.k, event.target.value)} />
-                            </div>
-                        ))}
+                        {HEADER_FIELDS.slice(0, 4).map((field) => {
+                            const inputId = `service-record-header-${field.k}`;
+                            const errorId = `${inputId}-error`;
+                            const fieldError = headerErrors[field.k as keyof typeof headerErrors];
+                            const errorComponentSuffix = HEADER_FIELD_ERROR_COMPONENT_SUFFIX[field.k as keyof typeof HEADER_FIELD_ERROR_COMPONENT_SUFFIX];
+                            return (
+                                <div data-component={child("body_field")} data-slot="fld" className="fld" key={field.k}>
+                                    <label data-slot="lab" className="lab" htmlFor={inputId}>{field.label}</label>
+                                    <TextInput
+                                        id={inputId}
+                                        placeholder={field.ph}
+                                        value={header[field.k] ?? ""}
+                                        disabled={readOnly}
+                                        aria-invalid={fieldError ? "true" : undefined}
+                                        aria-describedby={fieldError ? errorId : undefined}
+                                        onChange={(event) => onHeaderChange(field.k, event.target.value)}
+                                    />
+                                    {fieldError ? <p id={errorId} data-component={child(`body_field-${errorComponentSuffix}-error`)} data-slot="err" className="err" role="alert">{fieldError}</p> : null}
+                                </div>
+                            );
+                        })}
                         <div data-component={child("body_delivery-field")} data-slot="fld" className="fld">
                             <label data-slot="lab" className="lab">분만형태</label>
                             <FieldOptions
@@ -461,10 +486,19 @@ export function ServiceRecordWizard({
                             />
                         </div>
                         <div data-component={child("body_field-2")} data-slot="fld" className="fld">
-                            <label data-slot="lab" className="lab">{HEADER_FIELDS[4].label}</label>
-                            <TextInput placeholder={HEADER_FIELDS[4].ph} value={header.babyWeight ?? ""} disabled={readOnly} onChange={(event) => onHeaderChange(HEADER_FIELDS[4].k, event.target.value)} />
+                            <label data-slot="lab" className="lab" htmlFor={babyWeightInputId}>{HEADER_FIELDS[4].label}</label>
+                            <TextInput
+                                id={babyWeightInputId}
+                                placeholder={HEADER_FIELDS[4].ph}
+                                value={header.babyWeight ?? ""}
+                                disabled={readOnly}
+                                aria-invalid={babyWeightError ? "true" : undefined}
+                                aria-describedby={babyWeightError ? babyWeightErrorId : undefined}
+                                onChange={(event) => onHeaderChange(HEADER_FIELDS[4].k, event.target.value)}
+                            />
+                            {babyWeightError ? <p id={babyWeightErrorId} data-component={child("body_field-baby-weight-error")} data-slot="err" className="err" role="alert">{babyWeightError}</p> : null}
                         </div>
-                        {adminMode && slots?.adminHeaderAction ? slots.adminHeaderAction({ isHeaderComplete }) : (
+                        {adminMode && slots?.adminHeaderAction ? slots.adminHeaderAction({ isHeaderComplete, headerErrors }) : (
                             <button data-slot="btn" className="btn primary" disabled={readOnly || busy || !isHeaderComplete} onClick={() => onSaveHeader()}>{busy ? "저장 중…" : adminMode ? "초안 저장" : "다음"}</button>
                         )}
                     </>

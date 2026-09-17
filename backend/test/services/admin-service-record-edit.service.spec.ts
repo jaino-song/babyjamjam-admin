@@ -404,6 +404,67 @@ describe("AdminServiceRecordEditService", () => {
         expect(harness.repository.createOrResumeDraft).not.toHaveBeenCalled();
     });
 
+    it.each([
+        ["momBirth", "260230", "SERVICE_RECORD_HEADER_DATE_INVALID"],
+        ["babyBirth", "2402290", "SERVICE_RECORD_HEADER_DATE_INVALID"],
+        ["babyBirth", "260919", "SERVICE_RECORD_HEADER_DATE_INVALID"],
+        ["babyWeight", "-1", "SERVICE_RECORD_HEADER_WEIGHT_INVALID"],
+        ["babyWeight", "0", "SERVICE_RECORD_HEADER_WEIGHT_INVALID"],
+        ["babyWeight", "0.0", "SERVICE_RECORD_HEADER_WEIGHT_INVALID"],
+        ["babyWeight", "NaN", "SERVICE_RECORD_HEADER_WEIGHT_INVALID"],
+        ["babyWeight", "Infinity", "SERVICE_RECORD_HEADER_WEIGHT_INVALID"],
+        ["babyWeight", "0x10", "SERVICE_RECORD_HEADER_WEIGHT_INVALID"],
+        ["babyWeight", "1e2", "SERVICE_RECORD_HEADER_WEIGHT_INVALID"],
+    ] as const)("rejects invalid changed header %s=%s before persistence", async (key, value, code) => {
+        const harness = createHarness();
+
+        await expect(harness.service.startDraft(BRANCH_ID, CLIENT_ID, ACTOR_ID, {
+            changes: { header: { [key]: value } },
+        })).rejects.toMatchObject({ response: { code } });
+        expect(harness.repository.createOrResumeDraft).not.toHaveBeenCalled();
+    });
+
+    it("accepts valid leap-day dates and finite positive decimal weights", async () => {
+        const harness = createHarness();
+
+        await harness.service.startDraft(BRANCH_ID, CLIENT_ID, ACTOR_ID, {
+            changes: { header: { momBirth: "240229", babyBirth: "260917", babyWeight: "3.2" } },
+        });
+
+        expect(harness.repository.createOrResumeDraft).toHaveBeenCalledWith(expect.objectContaining({
+            changes: { header: { momBirth: "240229", babyBirth: "260917", babyWeight: "3.2" } },
+        }));
+    });
+
+    it("keeps blank header values and session-only partial patches compatible", async () => {
+        const blankHeaderHarness = createHarness();
+        await blankHeaderHarness.service.startDraft(BRANCH_ID, CLIENT_ID, ACTOR_ID, {
+            changes: { header: { momBirth: "", babyBirth: " ", babyWeight: "" } },
+        });
+        expect(blankHeaderHarness.repository.createOrResumeDraft).toHaveBeenCalledWith(expect.objectContaining({
+            changes: { header: { momBirth: "", babyBirth: "", babyWeight: "" } },
+        }));
+
+        const sessionOnlyHarness = createHarness();
+        await sessionOnlyHarness.service.startDraft(BRANCH_ID, CLIENT_ID, ACTOR_ID, {
+            changes: { sessions: [{ sessionIndex: 1, notes: "회차 메모" }] },
+        });
+        expect(sessionOnlyHarness.repository.createOrResumeDraft).toHaveBeenCalled();
+    });
+
+    it("rejects invalid header updates before the repository update and omits the raw value", async () => {
+        const harness = createHarness();
+
+        await expect(harness.service.updateDraft(BRANCH_ID, DRAFT_ID, ACTOR_ID, {
+            expectedDraftVersion: 1,
+            changes: { header: { babyBirth: "260230" } },
+        })).rejects.toMatchObject({ response: {
+            code: "SERVICE_RECORD_HEADER_DATE_INVALID",
+            message: expect.not.stringContaining("260230"),
+        } });
+        expect(harness.repository.updateDraft).not.toHaveBeenCalled();
+    });
+
     it("rejects authority fields, duplicate sessions, and invalid dates before persistence", async () => {
         const harness = createHarness();
         const forbidden = {

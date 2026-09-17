@@ -10,11 +10,19 @@ export {
     formatMonthDayKo,
     formatReviewFieldValue,
     formatShortDate,
+    getServiceRecordHeaderErrors,
+    getServiceRecordHeaderFieldError,
     hasDisplayValue,
     isDailyItemComplete,
     isServiceRecordHeaderComplete,
 } from "./form-definition";
-export type { DailyItem, DayPage, ItemType } from "./form-definition";
+export type {
+    DailyItem,
+    DayPage,
+    ItemType,
+    ServiceRecordHeaderErrors,
+    ServiceRecordHeaderValidationKey,
+} from "./form-definition";
 export type {
     PendingServiceDate,
     ProviderSlotProps,

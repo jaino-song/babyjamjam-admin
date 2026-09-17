@@ -2,6 +2,7 @@ import { adminServiceRecordEditApi } from "@/features/service-records/api/admin-
 import { AdminServiceRecordEditApiError } from "@/features/service-records/types";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 
+import { getServiceRecordHeaderFieldError } from "@babyjamjam/service-record-ui";
 import {
     buildAdminServiceRecordContext,
     buildAdminServiceRecordView,
@@ -245,6 +246,42 @@ const confirmResult = {
     documentStatus: "waiting_for_completion",
     confirmedAt: "2026-09-08T01:02:03.000Z",
 };
+
+describe("service-record header validation", () => {
+    const now = new Date("2026-09-18T00:00:00.000Z");
+
+    it.each([
+        ["momBirth", "240229", false],
+        ["babyBirth", "260917", false],
+        ["momBirth", "260230", true],
+        ["babyBirth", "2402290", true],
+        ["babyBirth", "260919", true],
+    ] as const)("validates %s=%s with the strict six-digit calendar contract", (key, value, invalid) => {
+        const error = getServiceRecordHeaderFieldError(key, value, now);
+        expect(Boolean(error)).toBe(invalid);
+    });
+
+    it.each([
+        ["3.2", false],
+        [".5", false],
+        ["-1", true],
+        ["0", true],
+        ["0.0", true],
+        ["NaN", true],
+        ["Infinity", true],
+        ["0x10", true],
+        ["1e2", true],
+    ] as const)("validates babyWeight=%s as a finite positive decimal", (value, invalid) => {
+        const error = getServiceRecordHeaderFieldError("babyWeight", value, now);
+        expect(Boolean(error)).toBe(invalid);
+    });
+
+    it("keeps blank values compatible with partial draft edits", () => {
+        expect(getServiceRecordHeaderFieldError("momBirth", "", now)).toBeNull();
+        expect(getServiceRecordHeaderFieldError("babyBirth", "   ", now)).toBeNull();
+        expect(getServiceRecordHeaderFieldError("babyWeight", undefined, now)).toBeNull();
+    });
+});
 
 describe("ServiceRecordAdminWizard", () => {
     it("keeps an assignment collision as a selectable supplemental record", () => {
@@ -492,6 +529,46 @@ describe("per-session administrator editing", () => {
         fireEvent.click(screen.getByRole("button", { name: "수정 확인" }));
         await waitFor(() => expect(adminServiceRecordEditApi.confirmDraft).toHaveBeenCalledTimes(1));
         expect(adminServiceRecordEditApi.updateDraft).toHaveBeenCalledWith("draft-1", 1, { header: { momName: "새 산모 이름" } }, undefined);
+    });
+
+    it("shows the date reason inline, preserves the typed value, and blocks confirmation", () => {
+        render(<ServiceRecordAdminWizard clientId="42" overview={sessionOverview} initialDraftState={{ ...makeDraftState(), draft: null }} />);
+        fireEvent.click(screen.getByRole("button", { name: "기본정보 수정" }));
+
+        const input = screen.getByLabelText(/^신생아 출생일자/);
+        fireEvent.change(input, { target: { value: "260230" } });
+
+        expect(input).toHaveValue("260230");
+        expect(input).toHaveAttribute("aria-invalid", "true");
+        expect(input).toHaveAttribute("aria-describedby");
+        const errorId = input.getAttribute("aria-describedby");
+        expect(errorId).toBeTruthy();
+        expect(document.getElementById(errorId!)).toHaveTextContent("유효한 날짜");
+        expect(document.getElementById(errorId!)).toHaveAttribute("data-component", expect.stringContaining("baby-birth"));
+
+        const confirm = screen.getByRole("button", { name: "수정 확인" });
+        expect(confirm).toBeDisabled();
+        fireEvent.click(confirm);
+        expect(adminServiceRecordEditApi.startDraft).not.toHaveBeenCalled();
+        expect(adminServiceRecordEditApi.updateDraft).not.toHaveBeenCalled();
+        expect(adminServiceRecordEditApi.confirmDraft).not.toHaveBeenCalled();
+        expect(screen.getByDisplayValue("260230")).toBeInTheDocument();
+    });
+
+    it("shows the weight reason inline and keeps a nonpositive entry from confirmation", () => {
+        render(<ServiceRecordAdminWizard clientId="42" overview={sessionOverview} initialDraftState={{ ...makeDraftState(), draft: null }} />);
+        fireEvent.click(screen.getByRole("button", { name: "기본정보 수정" }));
+
+        const input = screen.getByLabelText("신생아 몸무게 (kg)");
+        fireEvent.change(input, { target: { value: "-1" } });
+
+        expect(input).toHaveValue("-1");
+        expect(input).toHaveAttribute("aria-invalid", "true");
+        const errorId = input.getAttribute("aria-describedby");
+        expect(errorId).toBeTruthy();
+        expect(document.getElementById(errorId!)).toHaveTextContent("몸무게는 0보다 큰 숫자");
+        expect(document.getElementById(errorId!)).toHaveAttribute("data-component", expect.stringContaining("baby-weight"));
+        expect(screen.getByRole("button", { name: "수정 확인" })).toBeDisabled();
     });
 
     it.each(["김산모", "900101", "김아기", "260714", "3.2"])("does not save when a required header value (%s) is blank", (value) => {

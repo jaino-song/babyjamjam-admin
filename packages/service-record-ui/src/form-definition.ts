@@ -1,3 +1,5 @@
+import { normalizeContractBirthday } from "../../shared/src/utils/birthday";
+
 export type ItemType = "multi" | "radio" | "counts" | "stool" | "textarea" | "confirm";
 
 export interface DailyItem {
@@ -75,6 +77,54 @@ export const HEADER_FIELDS = [
     { k: "babyBirth", label: "신생아 출생일자 (YYMMDD)", ph: "예) 260615" },
     { k: "babyWeight", label: "신생아 몸무게 (kg)", ph: "예) 3.2" },
 ] as const;
+
+export type ServiceRecordHeaderValidationKey = "momBirth" | "babyBirth" | "babyWeight";
+export type ServiceRecordHeaderErrors = Partial<Record<ServiceRecordHeaderValidationKey, string>>;
+
+const SERVICE_RECORD_HEADER_DATE_PATTERN = /^\d{6}$/;
+const SERVICE_RECORD_HEADER_WEIGHT_PATTERN = /^(?:\d+(?:\.\d+)?|\.\d+)$/;
+
+const SERVICE_RECORD_HEADER_ERROR_MESSAGES: Record<ServiceRecordHeaderValidationKey, string> = {
+    momBirth: "산모 생년월일은 YYMMDD 6자리의 유효한 날짜로 입력해 주세요.",
+    babyBirth: "신생아 출생일자는 YYMMDD 6자리의 유효한 날짜로 입력해 주세요.",
+    babyWeight: "신생아 몸무게는 0보다 큰 숫자로 입력해 주세요.",
+};
+
+function isPositiveDecimal(value: string): boolean {
+    if (!SERVICE_RECORD_HEADER_WEIGHT_PATTERN.test(value)) return false;
+    const numeric = Number(value);
+    return Number.isFinite(numeric) && numeric > 0;
+}
+
+export function getServiceRecordHeaderFieldError(
+    key: ServiceRecordHeaderValidationKey,
+    rawValue: unknown,
+    now: Date = new Date(),
+): string | null {
+    const value = typeof rawValue === "string" ? rawValue.trim() : "";
+    if (!value) return null;
+
+    if (key === "babyWeight") {
+        return isPositiveDecimal(value) ? null : SERVICE_RECORD_HEADER_ERROR_MESSAGES[key];
+    }
+
+    return SERVICE_RECORD_HEADER_DATE_PATTERN.test(value)
+        && normalizeContractBirthday(value, now) !== null
+        ? null
+        : SERVICE_RECORD_HEADER_ERROR_MESSAGES[key];
+}
+
+export function getServiceRecordHeaderErrors(
+    header: Record<string, unknown>,
+    now: Date = new Date(),
+): ServiceRecordHeaderErrors {
+    const errors: ServiceRecordHeaderErrors = {};
+    for (const key of ["momBirth", "babyBirth", "babyWeight"] as const) {
+        const error = getServiceRecordHeaderFieldError(key, header[key], now);
+        if (error) errors[key] = error;
+    }
+    return errors;
+}
 
 export const REVIEW_EMPTY_LABEL = "입력 없음";
 

@@ -1,5 +1,7 @@
 import type { ReactNode } from "react";
 
+import type { ServiceRecordHeaderErrors } from "./form-definition";
+
 export type ServiceRecordScreen = "loading" | "invalid" | "phone" | "service" | "overview" | "day" | "done";
 
 export interface ServiceRecordSession {
@@ -84,7 +86,10 @@ export interface ServiceRecordWizardSlots {
     /** Per-session administrator save/return action. */
     adminSessionAction?: ReactNode;
     /** Administrator-only basic-information confirmation. */
-    adminHeaderAction?: (props: { isHeaderComplete: boolean }) => ReactNode;
+    adminHeaderAction?: (props: {
+        isHeaderComplete: boolean;
+        headerErrors: ServiceRecordHeaderErrors;
+    }) => ReactNode;
     /** Optional administrator-only date display override; public defaults stay unchanged. */
     serviceDateDisplay?: (props: ServiceDateDisplaySlotProps) => ReactNode;
     /** Optional administrator-only date editor trigger; public date input stays unchanged. */
@@ -103,6 +108,8 @@ export interface ServiceRecordWizardProps {
     phoneError: string | null;
     context: ServiceRecordContext | null;
     header: Record<string, string>;
+    /** Optional administrator-only validation messages for editable header fields. */
+    headerErrors?: ServiceRecordHeaderErrors;
     day: number;
     pageIdx: number;
     draft: Record<string, unknown>;
