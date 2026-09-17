@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 
-import { errorResponse, getAuthHeaders, getAuthToken } from "@/lib/api/route-utils";
+import { authRequiredResponse, errorResponse, getAuthHeaders, getAuthToken } from "@/lib/api/route-utils";
 import { serverAPIClient } from "@/lib/api/server";
 
 export async function PATCH(
@@ -10,7 +10,7 @@ export async function PATCH(
     try {
         const token = getAuthToken(request);
         if (!token) {
-            return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+            return authRequiredResponse();
         }
 
         const { id } = await params;

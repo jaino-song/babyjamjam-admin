@@ -146,7 +146,7 @@ describe("file-storage API routes", () => {
     await expect(response.json()).resolves.toEqual({ error: expect.stringMatching(/[가-힣].*요[.!]?$/) });
   });
 
-  it("rejects non-string upload metadata before proxying", async () => {
+  it("rejects non-string upload metadata with a structured VALIDATION_FAILED problem", async () => {
     const response = await uploadFile(
       createUploadRequest({
         categoryId: new File(["x"], "sneaky.txt", { type: "text/plain" }),
@@ -154,7 +154,8 @@ describe("file-storage API routes", () => {
     );
 
     expect(response.status).toBe(400);
-    await expect(response.json()).resolves.toEqual({ error: "Invalid upload metadata" });
+    const body = await response.json();
+    expect(body).toMatchObject({ code: "VALIDATION_FAILED", status: 400 });
     expect(mockPost).not.toHaveBeenCalled();
   });
 
@@ -167,11 +168,12 @@ describe("file-storage API routes", () => {
     expect(mockPost).not.toHaveBeenCalled();
   });
 
-  it("rejects a non-file form value without raising an internal error", async () => {
+  it("answers a missing file form value with a structured VALIDATION_FAILED problem", async () => {
     const response = await uploadFile(createUploadRequest({ file: "not-a-file" }));
 
     expect(response.status).toBe(400);
-    await expect(response.json()).resolves.toEqual({ error: "File is required" });
+    const body = await response.json();
+    expect(body).toMatchObject({ code: "VALIDATION_FAILED", status: 400 });
     expect(mockPost).not.toHaveBeenCalled();
   });
 
@@ -468,39 +470,51 @@ describe("file-storage API routes", () => {
       return new NextRequest(`http://localhost${path}`, { method });
     }
 
-    it("rejects file listing without auth_token", async () => {
+    it("rejects file listing without auth_token with a registered problem body", async () => {
       const response = await listFiles(noAuthRequest("/api/file-storage/files"));
       expect(response.status).toBe(401);
+      await expect(response.json()).resolves.toMatchObject({ code: "AUTH_REQUIRED", status: 401 });
       expect(mockGet).not.toHaveBeenCalled();
     });
 
-    it("rejects file upload without auth_token", async () => {
+    it("rejects file upload without auth_token with a registered problem body", async () => {
       const response = await uploadFile(noAuthRequest("/api/file-storage/files", "POST"));
       expect(response.status).toBe(401);
+      await expect(response.json()).resolves.toMatchObject({ code: "AUTH_REQUIRED", status: 401 });
       expect(mockPost).not.toHaveBeenCalled();
     });
 
-    it("rejects file detail GET without auth_token", async () => {
+    it("rejects capability reads without auth_token with a registered problem body", async () => {
+      const response = await getCapabilities(noAuthRequest("/api/file-storage/capabilities"));
+      expect(response.status).toBe(401);
+      await expect(response.json()).resolves.toMatchObject({ code: "AUTH_REQUIRED", status: 401 });
+      expect(mockGet).not.toHaveBeenCalled();
+    });
+
+    it("rejects file detail GET without auth_token with a registered problem body", async () => {
       const response = await getFile(noAuthRequest("/api/file-storage/files/file_123"), {
         params: Promise.resolve({ fileId: "file_123" }),
       });
       expect(response.status).toBe(401);
+      await expect(response.json()).resolves.toMatchObject({ code: "AUTH_REQUIRED", status: 401 });
       expect(mockGet).not.toHaveBeenCalled();
     });
 
-    it("rejects file update without auth_token", async () => {
+    it("rejects file update without auth_token with a registered problem body", async () => {
       const response = await updateFile(noAuthRequest("/api/file-storage/files/file_123", "PUT"), {
         params: Promise.resolve({ fileId: "file_123" }),
       });
       expect(response.status).toBe(401);
+      await expect(response.json()).resolves.toMatchObject({ code: "AUTH_REQUIRED", status: 401 });
       expect(mockPut).not.toHaveBeenCalled();
     });
 
-    it("rejects file delete without auth_token", async () => {
+    it("rejects file delete without auth_token with a registered problem body", async () => {
       const response = await deleteFile(noAuthRequest("/api/file-storage/files/file_123", "DELETE"), {
         params: Promise.resolve({ fileId: "file_123" }),
       });
       expect(response.status).toBe(401);
+      await expect(response.json()).resolves.toMatchObject({ code: "AUTH_REQUIRED", status: 401 });
       expect(mockDelete).not.toHaveBeenCalled();
     });
 

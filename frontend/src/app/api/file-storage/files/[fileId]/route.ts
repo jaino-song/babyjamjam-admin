@@ -3,11 +3,11 @@ import { z } from "zod";
 
 import { serverAPIClient } from "@/lib/api/server";
 import {
+    authRequiredResponse,
     backendJsonResponse,
     getAuthHeaders,
     getAuthToken,
     parseBody,
-    unauthorizedResponse,
 } from "@/lib/api/route-utils";
 // Deliberately the shared sanitizing errorResponse: the local
 // "@/lib/api/route-utils" binds errorResponse to legacy-message mode, which
@@ -38,7 +38,7 @@ export async function GET(
 ) {
     const token = getAuthToken(request);
     if (!token) {
-        return unauthorizedResponse("unauthorized");
+        return authRequiredResponse();
     }
 
     const { fileId } = await params;
@@ -62,7 +62,7 @@ export async function PUT(
 ) {
     const token = getAuthToken(request);
     if (!token) {
-        return unauthorizedResponse("unauthorized");
+        return authRequiredResponse();
     }
 
     const { fileId } = await params;
@@ -91,7 +91,7 @@ export async function DELETE(
 ) {
     const token = getAuthToken(request);
     if (!token) {
-        return unauthorizedResponse("unauthorized");
+        return authRequiredResponse();
     }
 
     const { fileId } = await params;

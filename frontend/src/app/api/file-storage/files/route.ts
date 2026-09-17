@@ -1,17 +1,19 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest } from "next/server";
 import { z } from "zod";
 
 import { serverAPIClient } from "@/lib/api/server";
 import {
+    authRequiredResponse,
     backendJsonResponse,
     getAuthHeaders,
     getAuthToken,
-    unauthorizedResponse,
+    localValidationProblemResponse,
 } from "@/lib/api/route-utils";
 // Deliberately the shared sanitizing errorResponse: the local
 // "@/lib/api/route-utils" binds errorResponse to legacy-message mode, which
 // forwards upstream error text (e.g. class-validator messages) to the
 // browser. File-storage mirrors mobile's sanitized error behaviour.
+import type { ProblemErrorCode } from "@babyjamjam/shared";
 import { errorResponse } from "@babyjamjam/shared/api";
 import { validateDocumentUploadCandidate } from "@babyjamjam/shared/file-storage";
 
@@ -30,7 +32,7 @@ export async function GET(request: NextRequest) {
     try {
         const token = getAuthToken(request);
         if (!token) {
-            return unauthorizedResponse("Unauthorized");
+            return authRequiredResponse();
         }
 
         const { searchParams } = new URL(request.url);
@@ -53,22 +55,33 @@ export async function POST(request: NextRequest) {
     try {
         const token = getAuthToken(request);
         if (!token) {
-            return unauthorizedResponse("Unauthorized");
+            return authRequiredResponse();
         }
 
         const formData = await request.formData();
         const file = formData.get("file");
 
         if (!(file instanceof File)) {
-            return NextResponse.json(
-                { error: "File is required" },
-                { status: 400 }
-            );
+            return localValidationProblemResponse([
+                {
+                    pointer: "/file",
+                    code: "REQUIRED",
+                    detail: "업로드할 파일이 필요해요.",
+                    location: "body",
+                },
+            ]);
         }
 
         const fileValidationError = validateDocumentUploadCandidate(file);
         if (fileValidationError) {
-            return NextResponse.json({ error: fileValidationError }, { status: 400 });
+            return localValidationProblemResponse([
+                {
+                    pointer: "/file",
+                    code: "INVALID_VALUE",
+                    detail: fileValidationError,
+                    location: "body",
+                },
+            ]);
         }
 
         const arrayBuffer = await file.arrayBuffer();
@@ -84,9 +97,15 @@ export async function POST(request: NextRequest) {
             tags: formData.get("tags") ?? undefined,
         });
         if (!metadataResult.success) {
-            return NextResponse.json(
-                { error: "Invalid upload metadata" },
-                { status: 400 }
+            return localValidationProblemResponse(
+                metadataResult.error.issues.map((issue) => ({
+                    pointer: `/${issue.path.join("/")}`,
+                    code: (issue.code === "too_small" || issue.code === "too_big"
+                        ? "OUT_OF_RANGE"
+                        : "INVALID_FORMAT") as ProblemErrorCode,
+                    detail: "Invalid input",
+                    location: "body" as const,
+                })),
             );
         }
 

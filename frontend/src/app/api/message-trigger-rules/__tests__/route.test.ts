@@ -68,9 +68,13 @@ describe("frontend message trigger rule API routes", () => {
         body: JSON.stringify({}),
       })),
     ],
-  ])("requires authentication before proxying %s", async (_method, invoke) => {
+  ])("requires authentication before proxying %s with a registered 401 problem body", async (_method, invoke) => {
     const response = await invoke();
     expect(response.status).toBe(401);
+    await expect(response.json()).resolves.toMatchObject({
+      code: "AUTH_REQUIRED",
+      status: 401,
+    });
     expect(mockGet).not.toHaveBeenCalled();
     expect(mockPost).not.toHaveBeenCalled();
   });
@@ -129,7 +133,7 @@ describe("frontend message trigger rule API routes", () => {
   });
 
   it.each([400, 403, 409, 422])(
-    "preserves upstream %s status with one sanitized trigger error contract",
+    "propagates upstream %s through the sanitized error contract without the UPSTREAM_ERROR fallacy",
     async (status) => {
       mockGet.mockRejectedValue({
         response: {
@@ -145,14 +149,36 @@ describe("frontend message trigger rule API routes", () => {
 
       expect(response.status).toBe(status);
       const body = await response.json();
-      expect(body).toEqual({
-        error: "Failed to fetch message trigger rules",
-        code: "UPSTREAM_ERROR",
-      });
+      expect(typeof body.error).toBe("string");
+      expect(body.code).not.toBe("UPSTREAM_ERROR");
       expect(JSON.stringify(body)).not.toContain("upstream-secret");
       expect(JSON.stringify(body)).not.toContain("member@example.com");
     },
   );
+
+  it("propagates a registered upstream problem body with its status and code", async () => {
+    mockGet.mockRejectedValue({
+      response: {
+        status: 422,
+        data: {
+          type: "https://github.com/jaino-song/babyjamjam-admin/blob/main/docs/error-management.md#validation-failed",
+          title: "Validation failed",
+          status: 422,
+          detail: "입력 정보가 처리 조건에 맞지 않아요.",
+          code: "VALIDATION_FAILED",
+          requestId: "req-trigger-1",
+          params: {},
+        },
+      },
+    });
+
+    const response = await listRules(createRequest("/api/message-trigger-rules"));
+
+    expect(response.status).toBe(422);
+    const body = await response.json();
+    expect(body).toMatchObject({ code: "VALIDATION_FAILED", status: 422, requestId: "req-trigger-1" });
+    expect(response.headers.get("content-type")).toContain("application/problem+json");
+  });
 
   it("encodes system trigger IDs before proxying", async () => {
     mockGet.mockResolvedValue({ status: 200, data: { id: "rule_123" } });
