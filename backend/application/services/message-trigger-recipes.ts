@@ -3,9 +3,23 @@ import { MessageTriggerEventType, MessageTriggerOffsetType, MessageTriggerRecipi
 import type { MessageTriggerRuleEntity } from "domain/entities/message-trigger-rule.entity";
 import type { MessageTriggerJobEntity } from "domain/entities/message-trigger-job.entity";
 import { buildSmsClientVariables } from "./sms-client-variables";
+import { PAST_OCCURRENCE_GRACE_MS } from "domain/constants/message-automation-policy";
 
 /** Pure recipe input shared by preview and the existing delivery-job materializer. */
 export type MessageTriggerJobRecipe = Parameters<typeof MessageTriggerJobEntity.create>[0];
+
+/** The ordinary materializer and task preview must apply the same live/past gate. */
+export function isMessageRecipeWithinMaterializationWindow(
+    job: Pick<MessageTriggerJobRecipe, "scheduledFor">,
+    rule: Pick<MessageTriggerRuleEntity, "offsetType">,
+    includePast: boolean,
+    now: Date,
+): boolean {
+    if (includePast) return true;
+    const scheduledFor = job.scheduledFor.getTime();
+    return scheduledFor >= now.getTime() - PAST_OCCURRENCE_GRACE_MS
+        && !(rule.offsetType === MessageTriggerOffsetType.IMMEDIATE && scheduledFor <= now.getTime());
+}
 
 export interface ClientTriggerSource {
     id: number;

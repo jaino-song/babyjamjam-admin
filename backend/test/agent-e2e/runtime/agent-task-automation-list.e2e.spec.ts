@@ -11,6 +11,7 @@ import { AligoService } from "../../../application/services/aligo.service";
 import { AligoDefaultSenderPolicyService } from "../../../application/services/aligo-default-sender-policy.service";
 import { describeClientMessageEffect } from "../../../application/services/client-message-effect-recipe";
 import { agentBindingHash } from "../../../domain/repositories/agent-linked-action.types";
+import { CLIENT_AUTOMATION_IMPACT, type ClientAutomationImpactPort } from "../../../domain/ports/client-automation-impact.port";
 import { createApprovedAgentTaskPersistenceClient, assertApprovedAgentTaskPersistenceDatabaseTarget } from "./agent-task-persistence.helper";
 
 const describeAgentE2E = process.env["AGENT_E2E"] === "1" ? describe : describe.skip;
@@ -87,6 +88,11 @@ describeAgentE2E("real automation.list with two eligible clients and missing def
         const settings = await tenantContextStore.run({ origin: "http", branchId },
             () => app.get(MessageTriggerService).readClientAutomationSettings(branchId));
         expect(settings).toMatchObject({ status: "available", defaultsPresent: false, dispatchEnabled: true, senderApproved: true });
+        const impact = await tenantContextStore.run({ origin: "http", branchId }, () =>
+            app.get<ClientAutomationImpactPort>(CLIENT_AUTOMATION_IMPACT).planClientWrite(branchId, {
+                kind: "create", taskId: context.sessionId, values: { name: "합성 초안", phone: "01000000003" },
+            }));
+        expect(impact).toMatchObject({ availability: "unavailable", reason: "missing-default-rules", effects: [], complete: true });
         expect(await storedAutomation()).toEqual(before);
         expect(createModel).not.toHaveBeenCalled();
     });
@@ -140,6 +146,34 @@ describeAgentE2E("real automation.list with two eligible clients and missing def
         expect(await prisma.client.findMany({ where: { branchId }, orderBy: { id: "asc" } })).toEqual(clientsBefore);
         expect(createModel).not.toHaveBeenCalled();
         expect(send).not.toHaveBeenCalled();
+        send.mockRestore();
+    });
+
+    it("plans the actual scoped pending delta without changing either customer's jobs or source rows", async () => {
+        const before = await storedAutomation();
+        const clientsBefore = await prisma.client.findMany({ where: { branchId }, orderBy: { id: "asc" } });
+        const send = jest.spyOn(app.get(AligoService), "sendSms");
+        const planner = app.get<ClientAutomationImpactPort>(CLIENT_AUTOMATION_IMPACT);
+        const impact = await tenantContextStore.run({ origin: "http", branchId }, () => planner.planClientWrite(branchId, {
+            kind: "update", clientId: clientIds[0]!, values: { phone: "01000000003" },
+        }));
+        expect(impact.complete).toBe(true);
+        expect(impact.effects.length).toBeGreaterThan(0);
+        const affectedIds = new Set(impact.affectedJobs.map(({ id }) => id));
+        expect(affectedIds.size).toBeGreaterThan(0);
+        expect(before.jobs.filter(({ id }) => affectedIds.has(id)).every(({ clientId }) => clientId === clientIds[0])).toBe(true);
+        for (const client of clientsBefore) {
+            expect(JSON.stringify(impact)).not.toContain(client.name);
+            expect(JSON.stringify(impact)).not.toContain(client.phone);
+        }
+        const missing = await tenantContextStore.run({ origin: "http", branchId }, () => planner.planClientWrite(branchId, {
+            kind: "update", clientId: 971000099, values: { phone: "01000000003" },
+        }));
+        expect(missing).toMatchObject({ availability: "unavailable", complete: false, affectedJobs: [], effects: [] });
+        expect(await storedAutomation()).toEqual(before);
+        expect(await prisma.client.findMany({ where: { branchId }, orderBy: { id: "asc" } })).toEqual(clientsBefore);
+        expect(send).not.toHaveBeenCalled();
+        expect(createModel).not.toHaveBeenCalled();
         send.mockRestore();
     });
 });

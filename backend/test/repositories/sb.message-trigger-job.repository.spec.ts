@@ -260,6 +260,30 @@ describe("SbMessageTriggerJobRepository", () => {
         jest.useRealTimers();
     });
 
+    it("reads a bounded tenant/client/rule review snapshot with terminal rows and explicit cancellation intact", async () => {
+        messageTriggerJobModel.findMany.mockResolvedValue([
+            createRow({ id: "job-1", status: "sent" }),
+            createRow({ id: "job-2", status: "canceled", canceledByUser: true }),
+        ]);
+        const result = await repository.findForClientAutomationReview("branch-1", 1, ["rule-1"]);
+        expect(messageTriggerJobModel.findMany).toHaveBeenCalledWith({
+            where: { branchId: "branch-1", clientId: 1, ruleId: { in: ["rule-1"] } },
+            orderBy: { id: "asc" }, take: 501,
+        });
+        expect(result).toEqual([
+            expect.objectContaining({ id: "job-1", status: "sent", canceledByUser: false }),
+            expect.objectContaining({ id: "job-2", status: "canceled", canceledByUser: true }),
+        ]);
+        expect(messageTriggerJobModel.updateMany).not.toHaveBeenCalled();
+        expect(messageTriggerJobModel.create).not.toHaveBeenCalled();
+        expect(prisma.$transaction).not.toHaveBeenCalled();
+    });
+
+    it("does not broaden an empty rule set into a customer history query", async () => {
+        expect(await repository.findForClientAutomationReview("branch-1", 1, [])).toEqual([]);
+        expect(messageTriggerJobModel.findMany).not.toHaveBeenCalled();
+    });
+
     it("claimPendingWithRuleFence atomically locks the rule and claims the pending job", async () => {
         queryRaw.mockResolvedValueOnce([{ id: "job-1", claim_token: "claim-a" }]);
 

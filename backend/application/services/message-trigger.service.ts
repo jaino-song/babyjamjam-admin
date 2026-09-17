@@ -72,6 +72,7 @@ import { hasColumn, hasTable } from "infrastructure/database/schema-capabilities
 import { MessageSenderApprovalService } from "./message-sender-approval.service";
 import {
     buildClientMessageRecipe, buildEmployeeAssignmentMessageRecipe,
+    isMessageRecipeWithinMaterializationWindow,
     buildMessageRecipeDedupeKey, employeeAssignmentScheduleFingerprint, formatMessageRecipeDate, getKstCalendarDate,
     type ClientTriggerSource, type EmployeeAssignmentScheduleSource,
 } from "./message-trigger-recipes";
@@ -1139,6 +1140,29 @@ export class MessageTriggerService {
         }) as ClientTriggerSource | null;
     }
 
+    /** Normal client writes permit branch-owned and global areas; preview uses the same scope. */
+    async readClientAutomationArea(branchId: string, areaId: string): Promise<ClientTriggerSource["area"] | undefined> {
+        return (await this.prisma.area.findFirst({
+            where: { id: areaId, OR: [{ branchId }, { branchId: null }] },
+            select: { bankAccountInfo: { select: { bankName: true, accNum: true } } },
+        })) ?? undefined;
+    }
+
+    /** IDs are not creation identities. Include the immutable incarnation for task consent. */
+    async readClientAutomationSchedules(branchId: string, clientId: number): Promise<(EmployeeAssignmentScheduleSource & { incarnationId: string })[]> {
+        return this.prisma.employee_schedule.findMany({
+            where: { branchId, clientId, replaced: false, terminatedAt: null },
+            select: {
+                id: true, incarnationId: true, branchId: true, clientId: true, workAddress: true,
+                startDate: true, endDate: true, replaced: true, terminatedAt: true,
+                primaryEmployeeId: true, secondaryEmployeeId: true,
+                client: { select: { id: true, name: true } },
+                primaryEmployee: { select: { id: true, name: true, phone: true } },
+                secondaryEmployee: { select: { id: true, name: true, phone: true } },
+            }, orderBy: { id: "asc" }, take: 501,
+        });
+    }
+
     async syncClientRulesForClient(
         branchId: string,
         clientId: number,
@@ -1589,21 +1613,7 @@ export class MessageTriggerService {
         ) {
             throw new ServiceUnavailableException("Message automation activation is not configured");
         }
-        if (!includePast) {
-            const now = Date.now();
-            const scheduledForTime = job.scheduledFor.getTime();
-            if (scheduledForTime < now - PAST_OCCURRENCE_GRACE_MS) {
-                return true;
-            }
-
-            // IMMEDIATE jobs must fire only on the live create/assign path (includePast=true).
-            if (
-                rule.offsetType === MessageTriggerOffsetType.IMMEDIATE &&
-                scheduledForTime <= now
-            ) {
-                return true;
-            }
-        }
+        if (!isMessageRecipeWithinMaterializationWindow(job, rule, includePast, new Date())) return true;
         const persist = async (transaction?: Prisma.TransactionClient): Promise<MessageTriggerJobEntity | null> => {
             if (automaticJob && job.branchId) {
                 const enabled = await this.messageAutomationActivationService!.getTriggerDispatchEnabled(job.branchId, transaction);

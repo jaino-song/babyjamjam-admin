@@ -7,6 +7,9 @@ export interface MessageTriggerJobCancellationScope {
     scheduledBefore?: Date;
 }
 
+/** Internal review read; user cancellation is needed to match the existing upsert fence. */
+export type MessageTriggerJobReviewSnapshot = MessageTriggerJobEntity & { readonly canceledByUser: boolean };
+
 export interface IMessageTriggerJobRepository {
     create(job: MessageTriggerJobEntity): Promise<MessageTriggerJobEntity>;
     update(job: MessageTriggerJobEntity): Promise<MessageTriggerJobEntity>;
@@ -56,6 +59,8 @@ export interface IMessageTriggerJobRepository {
     /** Whether a rule still has active jobs persisted before its current version fence. */
     hasActiveJobsBefore(branchId: string, ruleId: string, before: Date): Promise<boolean>;
     findPendingByRuleIdsAndClientId(ruleIds: string[], clientId: number): Promise<MessageTriggerJobEntity[]>;
+    /** Bounded, ordered read of actual automation generations, including terminal dedupe rows. */
+    findForClientAutomationReview(branchId: string, clientId: number, ruleIds: string[]): Promise<MessageTriggerJobReviewSnapshot[]>;
     findPendingByRuleIdsAndEmployeeScheduleId(
         ruleIds: string[],
         employeeScheduleId: number,
