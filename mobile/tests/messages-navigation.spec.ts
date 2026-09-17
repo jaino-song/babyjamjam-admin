@@ -1,7 +1,7 @@
 import { expect, test, type Page, type Route } from "@playwright/test";
 
 const LIST_SHELL =
-  "mobile_messages_history_detail-sheet_stack_list-page_shell_content_list-card_body";
+  "mobile_messages_history_detail-sheet_screen_content_sliding-card_stage_list-pane_history-list_content_list-card_body";
 const UPCOMING_ZONE_HEADER = `${LIST_SHELL}_zone-upcoming_header`;
 const PAST_ZONE_HEADER = `${LIST_SHELL}_zone-past_header`;
 
