@@ -322,6 +322,9 @@ export class AgentRuntimeService {
                 offered = offered.filter((capability) => capability.meta.risk === "read" && capability.meta.sideEffect === false);
                 taskMode = false;
             }
+            if (conversationTask?.commandAccepted || conversationTask?.mutationBlocked) {
+                offered = offered.filter((capability) => capability.meta.risk === "read" && capability.meta.sideEffect === false);
+            }
             if (conversationTask?.isQuestion && conversationTask.operations.length === 0 && !conversationTask.replayed) {
                 // A question may use an owned task as context and execute read
                 // dependencies, but it must never expose a write or
@@ -458,6 +461,8 @@ export class AgentRuntimeService {
             .map((capability) => capability.meta.name.replaceAll(".", "_")));
         const taskToolsEnabled = taskMode
             && this.taskOrchestrator
+            && !conversationTask?.commandAccepted
+            && !conversationTask?.mutationBlocked
             && !(conversationTask?.isQuestion && conversationTask.operations.length === 0);
         if (taskToolsEnabled && this.taskOrchestrator) {
             writeToolNames.add("clients_create");

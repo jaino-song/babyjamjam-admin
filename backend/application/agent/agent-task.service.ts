@@ -418,14 +418,18 @@ export class AgentTaskService {
         return this.patch(principal, taskId, rawInput, origin, requestHash, operationOrigins);
     }
 
-    commandFromConversation(
+    async commandFromConversation(
         principal: VerifiedTenantPrincipal,
         taskId: string,
         rawInput: unknown,
         origin: AgentTaskMutationOrigin,
         requestHash: string,
     ) {
-        return this.command(principal, taskId, rawInput, origin, requestHash);
+        const input = this.parseCommand(rawInput);
+        const response = await this.command(principal, taskId, input, origin, requestHash);
+        const committed = await this.replayConversationIntake(principal, response.snapshot.sessionId, input.clientEventId, requestHash);
+        if (!committed) throw storageUnavailable();
+        return { ...response, ...(committed.commandAccepted ? { commandAccepted: committed.commandAccepted } : {}) };
     }
 
     /** Return all still-live tasks for the conversation context assembler. */
@@ -531,7 +535,7 @@ export class AgentTaskService {
         sessionId: string,
         clientEventId: string,
         requestHash: string,
-    ): Promise<{ receipt: AgentTaskEventReceipt; snapshot: AgentTask } | null> {
+    ): Promise<{ receipt: AgentTaskEventReceipt; snapshot: AgentTask; commandAccepted?: "prepare-review" | "cancel" } | null> {
         const owner = taskOwner(principal);
         const raw = await this.repository.withTransaction({ ...owner, sessionId }, async (transaction): Promise<CreateEventLookup> => {
             const session = await transaction.lockSession();
@@ -566,7 +570,10 @@ export class AgentTaskService {
         if (value.status === "event_hash_conflict") throw new AgentTaskConflictException("event_payload", value.task ? asAuthorizedTask(value.task) : undefined);
         if (value.status === "event_replay") {
             if (!isReplayWithinRetention(value.event) || !isTaskLiveForReplay(value.task)) throw taskGone();
-            return this.responseFromReceipt(eventReceipt(value.event, value.task), value.task);
+            const commandAccepted = value.event.operation === "command:prepare-review" ? "prepare-review" as const
+                : value.event.operation === "command:cancel" ? "cancel" as const : undefined;
+            return { ...this.responseFromReceipt(eventReceipt(value.event, value.task), value.task),
+                ...(commandAccepted ? { commandAccepted } : {}) };
         }
         if (value.status === "task_expired" || value.status === "task_purged" || value.status === "session_archived" || value.status === "session_expired") throw taskGone();
         if (value.status === "not_found") throw new NotFoundException("Agent session not found");

@@ -56,3 +56,12 @@ Detailed accepted decisions, phase audits and correction history: [implementatio
 - A narrow evaluation adapter compatibility change explicitly refuses unsupported action persistence instead of fabricating evidence. No fixture/oracle/score changes.
 - Local read-only scout E: Luna/medium/configured fast, exit0. No global config edits.
 - Candidate is not Phase6 close: frozen checks, guarded PostgreSQL barriers, cumulative independent SOL FINAL remain pending. Later Phase7–9 and paid quality/activation remain pending.
+
+### Phase6 conversation bridge amendment
+
+- Additional SOL PLAN APPROVE/HIGH at `09f03f9d489c4a939e3f4ce20ee318b57db85b8c`: awaiting-review corrections and bounded explicit review/task-cancel utterances. No model command/approval tool.
+- Internal command marker is reconstructed only from committed `command:prepare-review` / `command:cancel` receipts, including first responses and retries; historical intake receipts never gain new command authority.
+- Busy/malformed task and command turns suppress model writes while retaining safe task references and read tools. Model task selection checks current session/capability before resolving references.
+- Candidate2 gates: shared25/backend502 across31 suites, all app types/build/manifest47/vendor PASS; lint0errors93baselinewarnings0changed. DB9suites112 passed. CI partition6task+3other covers9 with no overlap.
+- First DB run recorded94passed/10failed:8 test owner-shape errors and one stale test barrier corrected. A separate HTTP426 was not explained by current source; baseline runtime14 and later current full112 tests passed. No speculative version-header/product fix was applied. Preserve this transient verification limitation.
+- Postwrite-refusal correction at `c64d9f3d6c80929556a4cae49585a614988abadf`: focused real DB20/20 passed. Latest conversation bridge now awaits integrated frozen checks, DB and SOL FINAL. Phase6 remains OPEN.

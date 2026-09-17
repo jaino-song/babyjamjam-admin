@@ -2,6 +2,8 @@ import { ConfigService } from "@nestjs/config";
 import { PrismaClient, Prisma } from "@prisma/client";
 import { createHash, randomUUID } from "node:crypto";
 import { z } from "zod";
+import { ConversationTaskOrchestratorService } from "application/agent/conversation-task-orchestrator.service";
+import { conversationMessageEventId, conversationMessageHash } from "application/agent/conversation-task-policy";
 import { AgentTaskService } from "application/agent/agent-task.service";
 import { AgentSessionService } from "application/agent/agent-session.service";
 import { ActionCoordinatorService, AgentActionCertainFailureError, AgentActionUncertainError } from "application/agent/action-coordinator.service";
@@ -177,6 +179,10 @@ describeDb("atomic task review and execution on guarded PostgreSQL", () => {
         expect(running.status).toBe("executing");
         expect(running.lastAcceptedAt.toISOString()).toBe(review.snapshot.times.acceptedAt);
         await expect(patch(review.snapshot.taskId, running.revision)).rejects.toMatchObject({ status: 409 });
+        const busyTurn = await new ConversationTaskOrchestratorService(service, policy as never).handleUserTurn({ principal, sessionId,
+            message: { id: randomUUID(), role: "user", parts: [{ type: "text", text: "이름: 합성수정" }] }, capabilityId: "clients.create" });
+        expect(busyTurn.mutationBlocked).toBe(true); expect(busyTurn.mutated).toBe(false);
+        expect(await db.agent_task.count({ where: { sessionId } })).toBe(1);
         const duplicate = await actions.approve(claimed.id, principal, claimed.proposalRevision);
         expect(duplicate.action.status).toBe("executing");
         release.resolve(); const done = await approval;
@@ -379,6 +385,38 @@ describeDb("atomic task review and execution on guarded PostgreSQL", () => {
         expect(await state(before.id)).toEqual(before);
         expect(await actions.get(oldAction.id, owner)).toEqual(oldAction);
         expect(await db.agent_task_event.count({ where: { sessionId } })).toBe(count);
+    });
+
+    it("round-trips conversational preparation, correction and cancellation through committed operations", async () => {
+        const created = await create();
+        const orchestrator = new ConversationTaskOrchestratorService(service, policy as never);
+        const message = (text: string, id = randomUUID()) => ({ id, role: "user" as const, parts: [{ type: "text", text }] });
+        const oldMessage = message("검토안 준비해 줘");
+        const identity = { userId, branchId, sessionId, messageId: oldMessage.id };
+        await service.recordConversationIntake(principal, created.snapshot.taskId, conversationMessageEventId(identity),
+            conversationMessageHash({ ...identity, text: "검토안 준비해 줘" }));
+        const historical = await orchestrator.handleUserTurn({ principal, sessionId, message: oldMessage });
+        expect(historical.replayed).toBe(true); expect(historical.commandAccepted).toBeUndefined();
+        expect(await db.agent_action.count({ where: { sessionId } })).toBe(0);
+        const reviewMessage = message("검토안 준비해주세요");
+        const preparedTurn = await orchestrator.handleUserTurn({ principal, sessionId, message: reviewMessage });
+        expect(preparedTurn.commandAccepted).toBe("prepare-review"); expect(preparedTurn.task!.state).toBe("awaiting_approval");
+        const replay = await orchestrator.handleUserTurn({ principal, sessionId, message: reviewMessage });
+        expect(replay.commandAccepted).toBe("prepare-review"); expect(replay.replayed).toBe(true);
+        expect(await db.agent_action.count({ where: { sessionId } })).toBe(1); expect(execute).not.toHaveBeenCalled();
+        await expect(orchestrator.handleUserTurn({ principal, sessionId, message: message("현재 작업 취소해 줘", reviewMessage.id) }))
+            .rejects.toMatchObject({ status: 409 });
+        const corrected = await orchestrator.handleUserTurn({ principal, sessionId, message: message("이름: 합성정정") });
+        expect(corrected.task!.action).toBeNull(); expect(corrected.task!.confirmed.name).toBe("합성정정");
+        expect((await actions.get(preparedTurn.task!.action!.actionId, owner)).status).toBe("cancelled");
+        await orchestrator.handleUserTurn({ principal, sessionId, message: message("검토안 만들어 줘") });
+        const cancelMessage = message("이 작업 취소해 주세요");
+        const cancelled = await orchestrator.handleUserTurn({ principal, sessionId, message: cancelMessage });
+        expect(cancelled.commandAccepted).toBe("cancel"); expect(cancelled.task!.state).toBe("cancelled");
+        const cancelReplay = await orchestrator.handleUserTurn({ principal, sessionId, message: cancelMessage });
+        expect(cancelReplay.commandAccepted).toBe("cancel"); expect(cancelReplay.replayed).toBe(true);
+        expect(execute).not.toHaveBeenCalled();
+        expect(await db.agent_task.count({ where: { sessionId } })).toBe(1);
     });
 
 });

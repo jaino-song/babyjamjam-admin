@@ -1861,7 +1861,14 @@ describe("AgentRuntimeService", () => {
         expect(protectedValuesForConversation).toHaveBeenCalledTimes(2);
     });
 
-    it("offers only side-effect-free reads for an existing-task pure question", async () => {
+    it.each([
+        { isQuestion: true },
+        { isQuestion: false, commandAccepted: "prepare-review" },
+        { isQuestion: false, commandAccepted: "cancel" },
+        { isQuestion: false, commandAccepted: "prepare-review", replayed: true },
+        { isQuestion: false, commandAccepted: "cancel", replayed: true },
+        { isQuestion: false, mutationBlocked: true },
+    ])("offers only reads after a question, command or blocked task: %j", async (turn) => {
         const write = (name: string, domain: string) => ({
             meta: {
                 name,
@@ -1890,7 +1897,7 @@ describe("AgentRuntimeService", () => {
         };
         const task = runtimeTaskSnapshot({ taskId: "123e4567-e89b-42d3-a456-426614174101" });
         const taskOrchestrator = {
-            handleUserTurn: jest.fn().mockResolvedValue({ task, operations: [], replayed: false, isQuestion: true, eventId: "question-event" }),
+            handleUserTurn: jest.fn().mockResolvedValue({ task, operations: [], replayed: false, eventId: "question-event", ...turn }),
             filterWriteCapabilities: jest.fn().mockResolvedValue({ capabilities: [search, clientCreate, employeeCreate, messageSend], taskMode: true }),
             taskModeEnabled: jest.fn().mockResolvedValue(true),
             protectedValuesForConversation: jest.fn().mockResolvedValue([]),
@@ -1930,6 +1937,8 @@ describe("AgentRuntimeService", () => {
         expect(call).not.toContain("employees_create");
         expect(call).not.toContain("messages_send");
         expect(sessions.appendMessages).toHaveBeenCalled();
+        const persisted = JSON.stringify(sessions.appendMessages.mock.calls);
+        expect(persisted).not.toContain("data-action-proposal");
     });
 
     it("keeps a replayed task lookup read-only without attaching fresh choices", async () => {

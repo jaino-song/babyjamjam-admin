@@ -53,6 +53,9 @@ export interface ConversationTaskTurnResult {
     replayed: boolean;
     operations: readonly ClientInputOperation[];
     refusal?: "feature-disabled" | "unsupported-input";
+    /** Derived only from a trusted committed event operation, never from text. */
+    commandAccepted?: "prepare-review" | "cancel";
+    mutationBlocked?: boolean;
 }
 
 export interface ConversationUserCorrectionEvidence {
@@ -114,8 +117,22 @@ function submittedFormCapability(form: ConversationTaskTurnInput["formSubmission
 
 function activeTask(tasks: readonly AgentTask[]): AgentTask | null {
     return tasks
-        .filter((task) => ["collecting", "confirming_target", "review_ready"].includes(task.state))
+        .filter((task) => ["collecting", "confirming_target", "review_ready", "awaiting_approval", "executing", "reconciling"].includes(task.state))
         .sort((left, right) => right.revision - left.revision || left.taskId.localeCompare(right.taskId))[0] ?? null;
+}
+
+function mutableCurrentTask(task: AgentTask): boolean {
+    return task.state === "awaiting_approval" ? Boolean(task.action)
+        : ["collecting", "confirming_target", "review_ready"].includes(task.state) && !task.action;
+}
+
+/** A finite full-utterance grammar; it grants no approval/execution authority. */
+export function explicitConversationTaskCommand(text: string): "prepare-review" | "cancel" | undefined {
+    if (isQuestionLike(text) || /[?？]/u.test(text)) return undefined;
+    const normalized = text.trim().replace(/\s+/gu, " ").replace(/[.!！。]+$/u, "").trim();
+    if (/^검토안 (?:준비해 ?|만들어 ?)(?:줘|주세요)$/u.test(normalized)) return "prepare-review";
+    if (/^(?:현재|이) 작업 취소해 ?(?:줘|주세요)$/u.test(normalized)) return "cancel";
+    return undefined;
 }
 
 function safeTaskInput(input: ConversationTaskTurnInput): ConversationCanonicalMessage {
@@ -213,6 +230,7 @@ export class ConversationTaskOrchestratorService {
                     mutated: false,
                     replayed: true,
                     operations: [],
+                    ...(replay.commandAccepted ? { commandAccepted: replay.commandAccepted } : {}),
                     refusal: "feature-disabled",
                 };
             }
@@ -226,6 +244,7 @@ export class ConversationTaskOrchestratorService {
                 mutated: false,
                 replayed: true,
                 operations: [],
+                ...(replay.commandAccepted ? { commandAccepted: replay.commandAccepted } : {}),
             };
         }
 
@@ -255,6 +274,10 @@ export class ConversationTaskOrchestratorService {
         ];
         const tasks = await this.tasks.listForConversation(input.principal, input.sessionId);
         const current = activeTask(tasks);
+        if (current && !mutableCurrentTask(current)) {
+            return { canonical, eventId, requestHash, text, isQuestion: isQuestionLike(text), task: current,
+                mutated: false, replayed: false, operations: [], refusal: "unsupported-input", mutationBlocked: true };
+        }
         // A form id binds only a capability and session.  Without a task id
         // and expected revision it cannot safely target whichever task is now
         // active.  Exact replay was handled above, so refuse every new form
@@ -278,6 +301,21 @@ export class ConversationTaskOrchestratorService {
         // follow-up question, but it must not retarget the existing task.
         const capabilityId = current?.capabilityId ?? input.capabilityId;
 
+        const command = !input.formSubmission && operations.length === 0 ? explicitConversationTaskCommand(text) : undefined;
+        if (command) {
+            if (!current) return { canonical, eventId, requestHash, text, isQuestion: false, task: null,
+                mutated: false, replayed: false, operations: [], refusal: "unsupported-input", mutationBlocked: true };
+            if (!await this.taskModeEnabled(input.principal, current.capabilityId)) return {
+                canonical, eventId, requestHash, text, isQuestion: false, task: current,
+                mutated: false, replayed: false, operations: [], refusal: "feature-disabled", mutationBlocked: true };
+            const result = await this.tasks.commandFromConversation(input.principal, current.taskId,
+                { command, clientEventId: eventId, expectedRevision: current.revision }, "user", requestHash);
+            return { canonical, eventId, requestHash, text, isQuestion: false, task: result.snapshot,
+                mutated: Boolean(result.commandAccepted), replayed: false, operations: [],
+                ...(result.commandAccepted ? { commandAccepted: result.commandAccepted } : {}),
+                // Even a raced historical no-op must not acquire fresh model authority.
+                mutationBlocked: true };
+        }
         if (operations.length === 0) {
             const index = ordinalIndex(text);
             if (current && input.message.displayedChoice && index !== null
@@ -395,13 +433,14 @@ export class ConversationTaskOrchestratorService {
         if (input.allowMutation === false) throw new ConflictException("Question turn is read-only");
         const parsed = ClientModelTaskOperationsSchema.safeParse(input.operations);
         if (!parsed.success) throw new BadRequestException("Unsupported task operation");
-        const resolved = await this.resolveModelOperations(input, parsed.data);
-        const operations = resolved.operations;
-        if (operations.length === 0) throw new BadRequestException("No task operation supplied");
         const resolvedTask = input.taskId
             ? await this.tasks.get(input.principal, input.taskId)
-            : (await this.tasks.listForConversation(input.principal, input.sessionId))
-                .find((task) => task.capabilityId === input.capabilityId && ["collecting", "confirming_target", "review_ready"].includes(task.state));
+            : activeTask(await this.tasks.listForConversation(input.principal, input.sessionId));
+        if (resolvedTask && (resolvedTask.sessionId !== input.sessionId || resolvedTask.capabilityId !== input.capabilityId
+            || !mutableCurrentTask(resolvedTask))) throw new ConflictException("Task context is not editable");
+        const resolved = await this.resolveModelOperations(input, parsed.data, resolvedTask);
+        const operations = resolved.operations;
+        if (operations.length === 0) throw new BadRequestException("No task operation supplied");
         const taskId = resolvedTask?.taskId;
         const requestHash = conversationMessageHash({
             userId: input.principal.userId,
@@ -453,10 +492,8 @@ export class ConversationTaskOrchestratorService {
     private async resolveModelOperations(
         input: ConversationModelMutationInput,
         operations: readonly ClientModelTaskOperation[],
+        task: AgentTask | null,
     ): Promise<{ operations: ClientInputOperation[]; origins: AgentTaskMutationOrigin[] }> {
-        const task = input.taskId
-            ? (await this.tasks.get(input.principal, input.taskId))
-            : (await this.tasks.listForConversation(input.principal, input.sessionId)).find((candidate) => candidate.capabilityId === input.capabilityId && ["collecting", "confirming_target", "review_ready"].includes(candidate.state));
         if (!task && operations.some((operation) => "valueRef" in operation)) throw new ConflictException("Task reference is unavailable");
         const correctionEvidence = new Set((input.userCorrectionEvidence ?? []).map((evidence) => `${evidence.operation}:${evidence.field}`));
         const origins: AgentTaskMutationOrigin[] = [];
