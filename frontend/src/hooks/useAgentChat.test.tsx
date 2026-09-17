@@ -35,6 +35,16 @@ describe("useAgentChat", () => {
         times: { createdAt: "2026-08-03T00:00:00.000Z", updatedAt: "2026-08-03T00:00:00.000Z" },
         currentSnapshotRef: snapshotRef(revision),
     });
+    const makeMutationResponse = (revision: number, eventId = "44444444-4444-4444-8444-444444444444") => ({
+        receipt: {
+            taskId,
+            eventId,
+            eventHash: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            acceptedRevision: revision,
+            currentSnapshotRef: snapshotRef(revision),
+        },
+        snapshot: makeTask(revision),
+    });
 
     beforeEach(() => {
         window.sessionStorage.clear();
@@ -561,6 +571,73 @@ describe("useAgentChat", () => {
         expect(result.current.taskSnapshotState.task?.revision).toBe(2);
     });
 
+    it.each([
+        [401, "auth-required", "task_auth_required"],
+        [403, "forbidden", "task_forbidden"],
+        [404, "not-found", "task_not_found"],
+        [410, "expired", "task_expired"],
+        [500, "unavailable", "task_snapshot_unavailable"],
+    ] as const)("quarantines a task after an inaccessible %s snapshot GET", async (status, accessStatus, errorCode) => {
+        (useChat as jest.Mock).mockReturnValue({ messages: [], setMessages: jest.fn(), sendMessage: jest.fn(), regenerate: jest.fn(), stop: jest.fn(), status: "ready" });
+        let taskReads = 0;
+        global.fetch = jest.fn().mockImplementation(async (input: string | URL | Request) => {
+            const url = String(input);
+            if (url === "/api/ai/agent/sessions") return { ok: false } as Response;
+            if (url.endsWith(`/tasks/${taskId}`)) {
+                taskReads += 1;
+                if (taskReads === 1) return { ok: true, json: async () => makeTask(1) } as Response;
+                return { ok: false, status, json: async () => ({ error: "redacted" }) } as Response;
+            }
+            return { ok: true, json: async () => [] } as Response;
+        });
+        const { result } = renderHook(() => useAgentChat());
+
+        await act(async () => { await result.current.loadTaskSnapshot(taskId); });
+        expect(result.current.taskSnapshotState.task?.revision).toBe(1);
+        expect(result.current.taskAccessState.status).toBe("authorized");
+
+        await act(async () => { await result.current.loadTaskSnapshot(taskId); });
+
+        expect(result.current.taskSnapshotState.task).toBeNull();
+        expect(result.current.taskAccessState).toEqual(expect.objectContaining({ status: accessStatus, taskId, httpStatus: status }));
+        expect(result.current.taskError).toEqual(expect.objectContaining({ code: errorCode, taskId }));
+    });
+
+    it("ignores a stale inaccessible task response and clears no current error", async () => {
+        (useChat as jest.Mock).mockReturnValue({ messages: [], setMessages: jest.fn(), sendMessage: jest.fn(), regenerate: jest.fn(), stop: jest.fn(), status: "ready" });
+        let taskReads = 0;
+        let releaseFirst: (() => void) | undefined;
+        global.fetch = jest.fn().mockImplementation(async (input: string | URL | Request) => {
+            const url = String(input);
+            if (url === "/api/ai/agent/sessions") return { ok: false } as Response;
+            if (url.endsWith(`/tasks/${taskId}`)) {
+                taskReads += 1;
+                if (taskReads === 1) {
+                    await new Promise<void>((resolve) => { releaseFirst = resolve; });
+                    return { ok: false, status: 403, json: async () => ({}) } as Response;
+                }
+                return { ok: true, json: async () => makeTask(2) } as Response;
+            }
+            return { ok: true, json: async () => [] } as Response;
+        });
+        const { result } = renderHook(() => useAgentChat());
+
+        let first!: Promise<AgentTask | null>;
+        act(() => { first = result.current.loadTaskSnapshot(taskId); });
+        await waitFor(() => expect(taskReads).toBe(1));
+        let second!: Promise<AgentTask | null>;
+        act(() => { second = result.current.loadTaskSnapshot(taskId); });
+        await act(async () => {
+            await second;
+            releaseFirst?.();
+            await first;
+        });
+
+        expect(result.current.taskSnapshotState.task?.revision).toBe(2);
+        expect(result.current.taskAccessState.status).toBe("authorized");
+        expect(result.current.taskError).toBeNull();
+    });
+
     it("keeps the latest task snapshot and pending event after a 409 patch conflict", async () => {
         (useChat as jest.Mock).mockReturnValue({ messages: [], setMessages: jest.fn(), sendMessage: jest.fn(), regenerate: jest.fn(), stop: jest.fn(), status: "ready" });
         let taskReads = 0;
@@ -600,6 +677,174 @@ describe("useAgentChat", () => {
             method: "PATCH",
             body: JSON.stringify({ clientEventId, expectedRevision: 1, operations: [{ op: "set", field: "name", value: "Dana" }] }),
         }));
+    });
+
+    it("keeps task mutation busy through response parsing and blocks a second event", async () => {
+        (useChat as jest.Mock).mockReturnValue({ messages: [], setMessages: jest.fn(), sendMessage: jest.fn(), regenerate: jest.fn(), stop: jest.fn(), status: "ready" });
+        let releaseBody: (() => void) | undefined;
+        let patchCalls = 0;
+        const eventA = "44444444-4444-4444-8444-444444444444";
+        const eventB = "55555555-5555-4555-8555-555555555555";
+        global.fetch = jest.fn().mockImplementation(async (input: string | URL | Request, init?: RequestInit) => {
+            const url = String(input);
+            if (url === "/api/ai/agent/sessions") return { ok: false } as Response;
+            if (url.endsWith(`/tasks/${taskId}`) && !init?.method) return { ok: true, json: async () => makeTask(1) } as Response;
+            if (url.endsWith(`/tasks/${taskId}`) && init?.method === "PATCH") {
+                patchCalls += 1;
+                return { ok: true, status: 200, json: async () => {
+                    await new Promise<void>((resolve) => { releaseBody = resolve; });
+                    return makeMutationResponse(2, eventA);
+                } } as Response;
+            }
+            return { ok: true, json: async () => [] } as Response;
+        });
+        const { result } = renderHook(() => useAgentChat());
+        await act(async () => { await result.current.loadTaskSnapshot(taskId); });
+
+        let first!: Promise<AgentTask | null>;
+        act(() => {
+            first = result.current.patchTask(taskId, [{ op: "set", field: "name", value: "Dana" }] as never, { expectedRevision: 1, clientEventId: eventA });
+        });
+        await waitFor(() => expect(result.current.taskMutationInFlight).toBe(true));
+        expect(result.current.taskSnapshotState.pendingEventIds).toContain(eventA);
+
+        let second: AgentTask | null | undefined;
+        await act(async () => {
+            second = await result.current.patchTask(taskId, [{ op: "set", field: "name", value: "Eunji" }] as never, { expectedRevision: 1, clientEventId: eventB });
+        });
+        expect(second).toBeNull();
+        expect(patchCalls).toBe(1);
+        expect(result.current.taskError).toEqual(expect.objectContaining({ code: "task_mutation_in_flight" }));
+
+        releaseBody?.();
+        await act(async () => { await first; });
+        expect(result.current.taskMutationInFlight).toBe(false);
+        expect(result.current.taskSnapshotState.pendingEventIds).toEqual([]);
+    });
+
+    it("requires reconciliation before another event after an unresolved mutation", async () => {
+        (useChat as jest.Mock).mockReturnValue({ messages: [], setMessages: jest.fn(), sendMessage: jest.fn(), regenerate: jest.fn(), stop: jest.fn(), status: "ready" });
+        const eventA = "44444444-4444-4444-8444-444444444444";
+        const eventB = "55555555-5555-4555-8555-555555555555";
+        let patchCalls = 0;
+        let taskReads = 0;
+        global.fetch = jest.fn().mockImplementation(async (input: string | URL | Request, init?: RequestInit) => {
+            const url = String(input);
+            if (url === "/api/ai/agent/sessions") return { ok: false } as Response;
+            if (url.endsWith(`/tasks/${taskId}`) && !init?.method) {
+                taskReads += 1;
+                return { ok: true, json: async () => makeTask(taskReads === 1 ? 1 : 2) } as Response;
+            }
+            if (url.endsWith(`/tasks/${taskId}`) && init?.method === "PATCH") {
+                patchCalls += 1;
+                throw new Error("connection dropped");
+            }
+            return { ok: true, json: async () => [] } as Response;
+        });
+        const { result } = renderHook(() => useAgentChat());
+        await act(async () => { await result.current.loadTaskSnapshot(taskId); });
+
+        await act(async () => {
+            await result.current.patchTask(taskId, [{ op: "set", field: "name", value: "Dana" }] as never, { expectedRevision: 1, clientEventId: eventA });
+        });
+        expect(result.current.taskMutationInFlight).toBe(false);
+        expect(result.current.taskSnapshotState.pendingEventIds).toEqual([eventA]);
+        expect(result.current.taskNeedsReconciliation).toBe(true);
+
+        await act(async () => {
+            await result.current.patchTask(taskId, [{ op: "set", field: "name", value: "Eunji" }] as never, { expectedRevision: 1, clientEventId: eventB });
+        });
+        expect(patchCalls).toBe(1);
+        expect(result.current.taskError).toEqual(expect.objectContaining({ code: "task_reconciliation_required" }));
+
+        await act(async () => { await result.current.loadTaskSnapshot(taskId); });
+        expect(result.current.taskNeedsReconciliation).toBe(false);
+        expect(result.current.taskError).toBeNull();
+        expect(result.current.taskSnapshotState.pendingEventIds).toEqual([eventA]);
+
+        await act(async () => {
+            await result.current.patchTask(taskId, [{ op: "set", field: "name", value: "Eunji" }] as never, { expectedRevision: 2, clientEventId: eventB });
+        });
+        expect(patchCalls).toBe(1);
+        expect(result.current.taskError).toEqual(expect.objectContaining({ code: "task_pending_event" }));
+    });
+
+    it("does not publish a stale 409 conflict after the session changes", async () => {
+        (useChat as jest.Mock).mockReturnValue({ messages: [], setMessages: jest.fn(), sendMessage: jest.fn(), regenerate: jest.fn(), stop: jest.fn(), status: "ready" });
+        let releasePatch: (() => void) | undefined;
+        const latest = makeTask(2);
+        const eventA = "44444444-4444-4444-8444-444444444444";
+        global.fetch = jest.fn().mockImplementation(async (input: string | URL | Request, init?: RequestInit) => {
+            const url = String(input);
+            if (url === "/api/ai/agent/sessions") return { ok: false } as Response;
+            if (url.endsWith(`/tasks/${taskId}`) && !init?.method) return { ok: true, json: async () => makeTask(1) } as Response;
+            if (url.endsWith(`/tasks/${taskId}`) && init?.method === "PATCH") {
+                await new Promise<void>((resolve) => { releasePatch = resolve; });
+                return { ok: false, status: 409, json: async () => ({ code: "AGENT_TASK_CONFLICT", reason: "revision", snapshot: latest }) } as Response;
+            }
+            return { ok: true, json: async () => [] } as Response;
+        });
+        const { result } = renderHook(() => useAgentChat());
+        await act(async () => { await result.current.loadTaskSnapshot(taskId); });
+        let patch!: Promise<AgentTask | null>;
+        act(() => { patch = result.current.patchTask(taskId, [{ op: "set", field: "name", value: "Dana" }] as never, { expectedRevision: 1, clientEventId: eventA }); });
+        await waitFor(() => expect(result.current.taskMutationInFlight).toBe(true));
+        act(() => { result.current.resetBranch(); });
+        releasePatch?.();
+        await act(async () => { await patch; });
+
+        expect(result.current.taskSnapshotState.task).toBeNull();
+        expect(result.current.taskAccessState.status).toBe("idle");
+        expect(result.current.taskError).toBeNull();
+    });
+
+    it("does not let a stale mutation clear a newer task mutation busy state", async () => {
+        (useChat as jest.Mock).mockReturnValue({ messages: [], setMessages: jest.fn(), sendMessage: jest.fn(), regenerate: jest.fn(), stop: jest.fn(), status: "ready" });
+        let patchCalls = 0;
+        let releaseFirst: (() => void) | undefined;
+        let releaseSecond: (() => void) | undefined;
+        const eventA = "44444444-4444-4444-8444-444444444444";
+        const eventB = "55555555-5555-4555-8555-555555555555";
+        global.fetch = jest.fn().mockImplementation(async (input: string | URL | Request, init?: RequestInit) => {
+            const url = String(input);
+            if (url === "/api/ai/agent/sessions") return { ok: false } as Response;
+            if (url.endsWith(`/tasks/${taskId}`) && !init?.method) return { ok: true, json: async () => makeTask(1) } as Response;
+            if (url.endsWith(`/tasks/${taskId}`) && init?.method === "PATCH") {
+                patchCalls += 1;
+                if (patchCalls === 1) {
+                    await new Promise<void>((resolve) => { releaseFirst = resolve; });
+                    return { ok: true, json: async () => makeMutationResponse(2, eventA) } as Response;
+                }
+                await new Promise<void>((resolve) => { releaseSecond = resolve; });
+                return { ok: true, json: async () => makeMutationResponse(3, eventB) } as Response;
+            }
+            return { ok: true, json: async () => [] } as Response;
+        });
+        const { result } = renderHook(() => useAgentChat());
+        await act(async () => { await result.current.loadTaskSnapshot(taskId); });
+
+        let first!: Promise<AgentTask | null>;
+        act(() => {
+            first = result.current.patchTask(taskId, [{ op: "set", field: "name", value: "Dana" }] as never, { expectedRevision: 1, clientEventId: eventA });
+        });
+        await waitFor(() => expect(result.current.taskMutationInFlight).toBe(true));
+
+        act(() => { result.current.resetBranch(); });
+        await act(async () => { await result.current.loadTaskSnapshot(taskId); });
+        let second!: Promise<AgentTask | null>;
+        act(() => {
+            second = result.current.patchTask(taskId, [{ op: "set", field: "name", value: "Eunji" }] as never, { expectedRevision: 1, clientEventId: eventB });
+        });
+        await waitFor(() => expect(patchCalls).toBe(2));
+        expect(result.current.taskMutationInFlight).toBe(true);
+
+        releaseFirst?.();
+        await act(async () => { await first; });
+        expect(result.current.taskMutationInFlight).toBe(true);
+
+        releaseSecond?.();
+        await act(async () => { await second; });
+        expect(result.current.taskMutationInFlight).toBe(false);
     });
 });
 

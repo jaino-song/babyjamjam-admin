@@ -1,6 +1,6 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import type { UIMessage } from "ai";
-import type { AgentTask } from "@babyjamjam/shared";
+import { CLIENT_WRITE_FIELD_NAMES, type AgentTask } from "@babyjamjam/shared";
 
 import { AgentPartRegistry } from "./AgentPartRegistry";
 
@@ -159,6 +159,34 @@ describe("AgentPartRegistry", () => {
 
         fireEvent.click(screen.getByRole("button", { name: "홍길동" }));
         expect(onTaskEntitySelect).toHaveBeenCalledWith(task.taskId, "33333333-3333-4333-8333-333333333333", "44444444-4444-4444-8444-444444444444");
+    });
+
+    it("describes a complete client snapshot without implying missing fields are required", () => {
+        const message = {
+            id: "assistant-task-full-fields",
+            role: "assistant",
+            parts: [{ type: "data-task-snapshot", data: {
+                taskId: "11111111-1111-4111-8111-111111111111",
+                snapshotRef: "22222222-2222-4222-8222-222222222222",
+                kind: "clients.create",
+                capabilityId: "clients.create",
+                revision: 7,
+                state: "review_ready",
+                fieldStatus: CLIENT_WRITE_FIELD_NAMES.map((field) => ({
+                    field,
+                    status: field === "startDate" || field === "endDate" ? "tentative" : "confirmed",
+                })),
+            } }],
+        } as unknown as UIMessage;
+
+        render(<AgentPartRegistry data-component={dataComponent} message={message} />);
+
+        expect(document.querySelectorAll(`[data-component^="${dataComponent}_task-snapshot_field-status_"]`)).toHaveLength(CLIENT_WRITE_FIELD_NAMES.length);
+        expect(screen.queryByText("아직 입력되지 않은 항목 0개")).not.toBeInTheDocument();
+        expect(screen.queryByText(/필수 확인이 필요한 항목/)).not.toBeInTheDocument();
+        expect(screen.getByText("희망값 2개")).toBeInTheDocument();
+        expect(screen.getByText(/서비스 기간/)).toBeInTheDocument();
+        expect(screen.getByText(/지역/)).toBeInTheDocument();
     });
 
     it("does not turn action-result URLs into external or javascript links", () => {

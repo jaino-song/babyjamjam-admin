@@ -98,7 +98,7 @@ export function TaskSnapshotPart({ "data-component": dataComponent, data }: Task
                 </div>
                 {(missingCount > 0 || tentativeCount > 0) && (
                     <p data-component={`${dataComponent}_attention`} data-slot="attention" className="mt-3 text-sm text-muted-foreground">
-                        {missingCount > 0 ? `필수 확인이 필요한 항목 ${missingCount}개` : ""}
+                        {missingCount > 0 ? `아직 입력되지 않은 항목 ${missingCount}개` : ""}
                         {missingCount > 0 && tentativeCount > 0 ? " · " : ""}
                         {tentativeCount > 0 ? `희망값 ${tentativeCount}개` : ""}
                     </p>

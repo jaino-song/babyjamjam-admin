@@ -55,6 +55,12 @@ export type AgentTaskClientError = {
     latestRevision?: number;
 };
 
+export type AgentTaskAccessState = {
+    status: "idle" | "loading" | "authorized" | "auth-required" | "forbidden" | "not-found" | "expired" | "unavailable";
+    taskId?: string;
+    httpStatus?: number;
+};
+
 export type AgentTaskMutationOptions = {
     expectedRevision: number;
     clientEventId: string;
@@ -91,6 +97,14 @@ function readAgentTask(value: unknown): AgentTask | undefined {
 function readMutationResponse(value: unknown): AgentTaskMutationResponse | undefined {
     const parsed = AgentTaskMutationResponseSchema.safeParse(value);
     return parsed.success ? parsed.data : undefined;
+}
+
+function taskAccessFailure(status: number | undefined): Pick<AgentTaskAccessState, "status" | "httpStatus"> & Pick<AgentTaskClientError, "code" | "message"> {
+    if (status === 401) return { status: "auth-required", httpStatus: status, code: "task_auth_required", message: "로그인이 만료되었습니다. 다시 로그인한 뒤 새 작업을 시작해 주세요." };
+    if (status === 403) return { status: "forbidden", httpStatus: status, code: "task_forbidden", message: "현재 계정 또는 지점에서 이 작업에 접근할 권한이 없습니다. 권한을 확인한 뒤 새 작업을 시작해 주세요." };
+    if (status === 404) return { status: "not-found", httpStatus: status, code: "task_not_found", message: "작업 초안을 찾을 수 없습니다. 새 작업을 시작해 주세요." };
+    if (status === 410) return { status: "expired", httpStatus: status, code: "task_expired", message: "작업 초안이 만료되었습니다. 새 작업을 시작해 주세요." };
+    return { status: "unavailable", ...(status === undefined ? {} : { httpStatus: status }), code: "task_snapshot_unavailable", message: "작업 초안을 확인할 수 없습니다. 새로고침한 뒤 다시 시도하거나 새 작업을 시작해 주세요." };
 }
 
 function readActionErrorCode(error: unknown): string | undefined {
@@ -171,6 +185,9 @@ export function useAgentChat() {
     const [actionError, setActionError] = useState<AgentClientError | null>(null);
     const [taskSnapshotState, setTaskSnapshotState] = useState<AgentTaskClientSnapshotState>(() => createAgentTaskSnapshotState());
     const [taskError, setTaskError] = useState<AgentTaskClientError | null>(null);
+    const [taskAccessState, setTaskAccessState] = useState<AgentTaskAccessState>({ status: "idle" });
+    const [taskMutationInFlight, setTaskMutationInFlight] = useState(false);
+    const [taskNeedsReconciliation, setTaskNeedsReconciliation] = useState(false);
     const restoredSession = useRef(false);
     const activeSessionIdRef = useRef<string | null>(readAgentSessionId());
     const sessionSelectionGenerationRef = useRef(new Map<string, number>());
@@ -180,19 +197,42 @@ export function useAgentChat() {
     const structuredFormSubmissionInFlightRef = useRef(false);
     const taskSnapshotStateRef = useRef(taskSnapshotState);
     const handledTaskSnapshotRef = useRef(new Map<string, string>());
+    const taskAccessStateRef = useRef(taskAccessState);
+    const taskMutationInFlightRef = useRef(false);
+    const taskMutationTokenRef = useRef(0);
+    const taskNeedsReconciliationRef = useRef(false);
 
     const commitTaskSnapshotState = useCallback((next: AgentTaskClientSnapshotState) => {
         taskSnapshotStateRef.current = next;
         setTaskSnapshotState(next);
     }, []);
 
+    const commitTaskAccessState = useCallback((next: AgentTaskAccessState) => {
+        taskAccessStateRef.current = next;
+        setTaskAccessState(next);
+    }, []);
+
+    const commitTaskNeedsReconciliation = useCallback((next: boolean) => {
+        taskNeedsReconciliationRef.current = next;
+        setTaskNeedsReconciliation(next);
+    }, []);
+
+    const commitTaskMutationInFlight = useCallback((next: boolean) => {
+        taskMutationInFlightRef.current = next;
+        setTaskMutationInFlight(next);
+    }, []);
+
     const resetTaskSnapshot = useCallback((nextIdentityEpoch?: number) => {
         const current = taskSnapshotStateRef.current;
         const next = resetAgentTaskSnapshotState(current, nextIdentityEpoch ?? current.identityEpoch + 1);
+        taskMutationTokenRef.current += 1;
         handledTaskSnapshotRef.current.clear();
         commitTaskSnapshotState(next);
+        commitTaskAccessState({ status: "idle" });
+        commitTaskNeedsReconciliation(false);
+        commitTaskMutationInFlight(false);
         setTaskError(null);
-    }, [commitTaskSnapshotState]);
+    }, [commitTaskAccessState, commitTaskMutationInFlight, commitTaskNeedsReconciliation, commitTaskSnapshotState]);
 
     const beginTaskSnapshotRequest = useCallback(() => {
         const current = taskSnapshotStateRef.current;
@@ -203,6 +243,49 @@ export function useAgentChat() {
         commitTaskSnapshotState(next);
         return captureAgentTaskSnapshotRequest(next);
     }, [commitTaskSnapshotState]);
+
+    const isCurrentTaskRequest = useCallback((
+        request: Parameters<typeof acceptAgentTaskSnapshot>[2],
+        expectedOperationEpoch: number,
+    ): boolean => (
+        request.identityEpoch === taskSnapshotStateRef.current.identityEpoch
+        && request.requestGeneration === taskSnapshotStateRef.current.requestGeneration
+        && expectedOperationEpoch === sessionOperationEpoch.read()
+    ), [sessionOperationEpoch]);
+
+    const quarantineTask = useCallback((
+        taskId: string,
+        failure: Pick<AgentTaskAccessState, "status" | "httpStatus"> & Pick<AgentTaskClientError, "code" | "message">,
+    ) => {
+        const current = taskSnapshotStateRef.current;
+        const reset = resetAgentTaskSnapshotState(current, current.identityEpoch + 1);
+        handledTaskSnapshotRef.current.clear();
+        commitTaskSnapshotState({ ...reset, pendingEventIds: current.pendingEventIds });
+        commitTaskAccessState({ status: failure.status, taskId, ...(failure.httpStatus === undefined ? {} : { httpStatus: failure.httpStatus }) });
+        commitTaskNeedsReconciliation(true);
+        setTaskError({ code: failure.code, taskId, message: failure.message });
+    }, [commitTaskAccessState, commitTaskNeedsReconciliation, commitTaskSnapshotState]);
+
+    const taskMutationBlocked = useCallback((taskId: string, clientEventId: string): boolean => {
+        const state = taskSnapshotStateRef.current;
+        if (taskAccessStateRef.current.status !== "authorized" || !state.task || state.task.taskId !== taskId) {
+            setTaskError({ code: "task_not_authorized", taskId, message: "현재 권한이 확인된 작업 초안이 없습니다. 최신 초안을 불러온 뒤 다시 시도해 주세요." });
+            return true;
+        }
+        if (taskMutationInFlightRef.current) {
+            setTaskError({ code: "task_mutation_in_flight", taskId, message: "이전 초안 변경을 처리 중입니다. 결과를 확인한 뒤 다시 시도해 주세요." });
+            return true;
+        }
+        if (taskNeedsReconciliationRef.current) {
+            setTaskError({ code: "task_reconciliation_required", taskId, latestRevision: state.task.revision, message: "최신 작업 초안을 새로고침해 변경 결과를 확인한 뒤 다시 시도해 주세요." });
+            return true;
+        }
+        if (state.pendingEventIds.length > 0 && !state.pendingEventIds.includes(clientEventId)) {
+            setTaskError({ code: "task_pending_event", taskId, latestRevision: state.task.revision, message: "확인되지 않은 초안 변경이 있습니다. 같은 요청의 결과를 확인한 뒤 새 변경을 시도해 주세요." });
+            return true;
+        }
+        return false;
+    }, []);
 
     const acceptTaskSnapshotEnvelope = useCallback((
         envelope: Parameters<typeof acceptAgentTaskSnapshot>[1],
@@ -215,20 +298,25 @@ export function useAgentChat() {
 
     const loadTaskSnapshot = useCallback(async (taskId: string, expectedOperationEpoch?: number): Promise<AgentTask | null> => {
         if (!AgentTaskReferenceSchema.safeParse(taskId).success) return null;
+        const operationEpoch = sessionOperationEpoch.read();
+        if (expectedOperationEpoch !== undefined && expectedOperationEpoch !== operationEpoch) return null;
+        const currentTaskId = taskSnapshotStateRef.current.task?.taskId ?? taskAccessStateRef.current.taskId;
+        if (currentTaskId !== undefined && currentTaskId !== taskId) resetTaskSnapshot();
         const request = beginTaskSnapshotRequest();
+        commitTaskAccessState({ status: "loading", taskId });
         let response: Response;
         try {
             response = await fetch(`/api/ai/agent/tasks/${encodeURIComponent(taskId)}`, { credentials: "same-origin" });
         } catch {
-            setTaskError({ code: "task_snapshot_unavailable", taskId, message: "작업 초안을 불러오지 못했습니다." });
+            if (isCurrentTaskRequest(request, operationEpoch)) quarantineTask(taskId, taskAccessFailure(undefined));
             return null;
         }
-        if (expectedOperationEpoch !== undefined && expectedOperationEpoch !== sessionOperationEpoch.read()) return null;
+        if (!isCurrentTaskRequest(request, operationEpoch)) return null;
         const body = await readJsonBody(response);
+        if (!isCurrentTaskRequest(request, operationEpoch)) return null;
         const task = readAgentTask(body);
         if (!response.ok || !task) {
-            if (response.status === 410) setTaskError({ code: "task_gone", taskId, message: "이 작업 초안은 더 이상 사용할 수 없습니다.", });
-            else if (response.ok) setTaskError({ code: "task_snapshot_invalid", taskId, message: "작업 초안 형식을 확인하지 못했습니다." });
+            quarantineTask(taskId, taskAccessFailure(response.status));
             return null;
         }
         const envelope = {
@@ -236,17 +324,24 @@ export function useAgentChat() {
             task,
         } as Parameters<typeof acceptAgentTaskSnapshot>[1];
         const acceptance = acceptTaskSnapshotEnvelope(envelope, request);
-        if (acceptance.accepted && acceptance.needsReconciliation) {
+        if (!acceptance.accepted) return acceptance.state.task;
+        commitTaskAccessState({ status: "authorized", taskId });
+        commitTaskNeedsReconciliation(acceptance.needsReconciliation);
+        if (acceptance.needsReconciliation) {
             setTaskError({ code: "task_reconciliation_required", taskId, latestRevision: task.revision, message: "최신 작업 초안을 확인한 뒤 변경 내용을 다시 검토해 주세요." });
+        } else {
+            setTaskError(null);
         }
         return acceptance.state.task;
-    }, [acceptTaskSnapshotEnvelope, beginTaskSnapshotRequest, sessionOperationEpoch]);
+    }, [acceptTaskSnapshotEnvelope, beginTaskSnapshotRequest, commitTaskAccessState, commitTaskNeedsReconciliation, isCurrentTaskRequest, quarantineTask, resetTaskSnapshot, sessionOperationEpoch]);
 
     const applyTaskMutationResponse = useCallback((
         taskId: string,
         request: Parameters<typeof acceptAgentTaskSnapshot>[2],
+        operationEpoch: number,
         body: unknown,
     ): AgentTask | null => {
+        if (!isCurrentTaskRequest(request, operationEpoch)) return taskSnapshotStateRef.current.task;
         const mutation = readMutationResponse(body);
         if (!mutation || mutation.snapshot.taskId !== taskId) return null;
         const envelope = {
@@ -255,15 +350,21 @@ export function useAgentChat() {
             acknowledgedEventId: mutation.receipt.eventId,
         } as Parameters<typeof acceptAgentTaskSnapshot>[1];
         const acceptance = acceptTaskSnapshotEnvelope(envelope, request);
-        if (acceptance.accepted) setTaskError(null);
+        if (acceptance.accepted) {
+            commitTaskAccessState({ status: "authorized", taskId });
+            commitTaskNeedsReconciliation(acceptance.needsReconciliation);
+            if (!acceptance.needsReconciliation) setTaskError(null);
+        }
         return acceptance.state.task;
-    }, [acceptTaskSnapshotEnvelope]);
+    }, [acceptTaskSnapshotEnvelope, commitTaskAccessState, commitTaskNeedsReconciliation, isCurrentTaskRequest]);
 
     const handleTaskConflict = useCallback((
         taskId: string,
         request: Parameters<typeof acceptAgentTaskSnapshot>[2],
+        operationEpoch: number,
         body: unknown,
     ) => {
+        if (!isCurrentTaskRequest(request, operationEpoch)) return taskSnapshotStateRef.current.task;
         const latestTask = readAgentTask(body);
         if (latestTask && latestTask.taskId === taskId) {
             const envelope = {
@@ -271,13 +372,21 @@ export function useAgentChat() {
                 task: latestTask,
                 conflict: { status: 409, latestRevision: latestTask.revision },
             } as Parameters<typeof acceptAgentTaskSnapshot>[1];
-            acceptTaskSnapshotEnvelope(envelope, request);
+            const acceptance = acceptTaskSnapshotEnvelope(envelope, request);
+            if (!acceptance.accepted) return acceptance.state.task;
+            commitTaskAccessState({ status: "authorized", taskId });
+            commitTaskNeedsReconciliation(true);
             setTaskError({ code: "task_conflict", taskId, latestRevision: latestTask.revision, message: "작업이 변경되었습니다. 최신 초안을 확인한 뒤 다시 시도해 주세요." });
-            return latestTask;
+            return acceptance.state.task;
         }
-        setTaskError({ code: "task_conflict", taskId, message: "작업이 변경되었습니다. 최신 초안을 불러와 확인해 주세요." });
+        quarantineTask(taskId, {
+            status: "unavailable",
+            httpStatus: 409,
+            code: "task_conflict_unresolved",
+            message: "작업 변경 결과를 확인하지 못했습니다. 최신 초안을 새로고침한 뒤 다시 시도해 주세요.",
+        });
         return null;
-    }, [acceptTaskSnapshotEnvelope]);
+    }, [acceptTaskSnapshotEnvelope, commitTaskAccessState, commitTaskNeedsReconciliation, isCurrentTaskRequest, quarantineTask]);
 
     const patchTask = useCallback(async (
         taskId: string,
@@ -285,33 +394,53 @@ export function useAgentChat() {
         options: AgentTaskMutationOptions,
     ): Promise<AgentTask | null> => {
         if (!AgentTaskReferenceSchema.safeParse(taskId).success) return null;
+        if (taskMutationBlocked(taskId, options.clientEventId)) return null;
+        const operationEpoch = sessionOperationEpoch.read();
         const request = beginTaskSnapshotRequest();
+        const mutationToken = ++taskMutationTokenRef.current;
         const pending = taskSnapshotStateRef.current.pendingEventIds.includes(options.clientEventId)
             ? taskSnapshotStateRef.current.pendingEventIds
             : [...taskSnapshotStateRef.current.pendingEventIds, options.clientEventId];
         commitTaskSnapshotState({ ...taskSnapshotStateRef.current, pendingEventIds: pending });
-        let response: Response;
+        commitTaskMutationInFlight(true);
         try {
-            response = await fetch(`/api/ai/agent/tasks/${encodeURIComponent(taskId)}`, {
-                method: "PATCH",
-                credentials: "same-origin",
-                headers: { "content-type": "application/json" },
-                body: JSON.stringify({ clientEventId: options.clientEventId, expectedRevision: options.expectedRevision, operations }),
-            });
-        } catch {
-            setTaskError({ code: "task_mutation_unconfirmed", taskId, message: "초안 변경 요청의 최종 결과를 확인하지 못했습니다. 같은 요청을 다시 보내지 마세요." });
-            return null;
+            let response: Response;
+            try {
+                response = await fetch(`/api/ai/agent/tasks/${encodeURIComponent(taskId)}`, {
+                    method: "PATCH",
+                    credentials: "same-origin",
+                    headers: { "content-type": "application/json" },
+                    body: JSON.stringify({ clientEventId: options.clientEventId, expectedRevision: options.expectedRevision, operations }),
+                });
+            } catch {
+                if (isCurrentTaskRequest(request, operationEpoch)) {
+                    commitTaskNeedsReconciliation(true);
+                    setTaskError({ code: "task_mutation_unconfirmed", taskId, message: "초안 변경 요청의 최종 결과를 확인하지 못했습니다. 새로고침으로 결과를 확인한 뒤 같은 요청을 다시 보내지 마세요." });
+                }
+                return null;
+            }
+            const body = await readJsonBody(response);
+            if (!isCurrentTaskRequest(request, operationEpoch)) return taskSnapshotStateRef.current.task;
+            if (response.status === 409) return handleTaskConflict(taskId, request, operationEpoch, body);
+            if (!response.ok) {
+                if (response.status === 401 || response.status === 403 || response.status === 404 || response.status === 410) {
+                    quarantineTask(taskId, taskAccessFailure(response.status));
+                } else {
+                    commitTaskNeedsReconciliation(true);
+                    setTaskError({ code: "task_patch_failed", taskId, message: "초안 변경을 적용하지 못했습니다. 최신 초안을 확인한 뒤 다시 시도해 주세요." });
+                }
+                return null;
+            }
+            const next = applyTaskMutationResponse(taskId, request, operationEpoch, body);
+            if (!next && isCurrentTaskRequest(request, operationEpoch)) {
+                commitTaskNeedsReconciliation(true);
+                setTaskError({ code: "task_patch_invalid", taskId, message: "초안 변경 응답을 확인하지 못했습니다. 최신 초안을 새로고침해 확인해 주세요." });
+            }
+            return next;
+        } finally {
+            if (taskMutationTokenRef.current === mutationToken) commitTaskMutationInFlight(false);
         }
-        const body = await readJsonBody(response);
-        if (response.status === 409) return handleTaskConflict(taskId, request, body);
-        if (!response.ok) {
-            setTaskError({ code: "task_patch_failed", taskId, message: "초안 변경을 적용하지 못했습니다." });
-            return null;
-        }
-        const next = applyTaskMutationResponse(taskId, request, body);
-        if (!next) setTaskError({ code: "task_patch_invalid", taskId, message: "초안 변경 응답을 확인하지 못했습니다." });
-        return next;
-    }, [applyTaskMutationResponse, beginTaskSnapshotRequest, commitTaskSnapshotState, handleTaskConflict]);
+    }, [applyTaskMutationResponse, beginTaskSnapshotRequest, commitTaskMutationInFlight, commitTaskNeedsReconciliation, commitTaskSnapshotState, handleTaskConflict, isCurrentTaskRequest, quarantineTask, sessionOperationEpoch, taskMutationBlocked]);
 
     const commandTask = useCallback(async (
         taskId: string,
@@ -319,33 +448,53 @@ export function useAgentChat() {
         options: AgentTaskMutationOptions,
     ): Promise<AgentTask | null> => {
         if (!AgentTaskReferenceSchema.safeParse(taskId).success) return null;
+        if (taskMutationBlocked(taskId, options.clientEventId)) return null;
+        const operationEpoch = sessionOperationEpoch.read();
         const request = beginTaskSnapshotRequest();
+        const mutationToken = ++taskMutationTokenRef.current;
         const pending = taskSnapshotStateRef.current.pendingEventIds.includes(options.clientEventId)
             ? taskSnapshotStateRef.current.pendingEventIds
             : [...taskSnapshotStateRef.current.pendingEventIds, options.clientEventId];
         commitTaskSnapshotState({ ...taskSnapshotStateRef.current, pendingEventIds: pending });
-        let response: Response;
+        commitTaskMutationInFlight(true);
         try {
-            response = await fetch(`/api/ai/agent/tasks/${encodeURIComponent(taskId)}/commands`, {
-                method: "POST",
-                credentials: "same-origin",
-                headers: { "content-type": "application/json" },
-                body: JSON.stringify({ ...command, clientEventId: options.clientEventId, expectedRevision: options.expectedRevision }),
-            });
-        } catch {
-            setTaskError({ code: "task_command_unconfirmed", taskId, message: "작업 명령의 최종 결과를 확인하지 못했습니다. 같은 요청을 다시 보내지 마세요." });
-            return null;
+            let response: Response;
+            try {
+                response = await fetch(`/api/ai/agent/tasks/${encodeURIComponent(taskId)}/commands`, {
+                    method: "POST",
+                    credentials: "same-origin",
+                    headers: { "content-type": "application/json" },
+                    body: JSON.stringify({ ...command, clientEventId: options.clientEventId, expectedRevision: options.expectedRevision }),
+                });
+            } catch {
+                if (isCurrentTaskRequest(request, operationEpoch)) {
+                    commitTaskNeedsReconciliation(true);
+                    setTaskError({ code: "task_command_unconfirmed", taskId, message: "작업 명령의 최종 결과를 확인하지 못했습니다. 새로고침으로 결과를 확인한 뒤 같은 요청을 다시 보내지 마세요." });
+                }
+                return null;
+            }
+            const body = await readJsonBody(response);
+            if (!isCurrentTaskRequest(request, operationEpoch)) return taskSnapshotStateRef.current.task;
+            if (response.status === 409) return handleTaskConflict(taskId, request, operationEpoch, body);
+            if (!response.ok) {
+                if (response.status === 401 || response.status === 403 || response.status === 404 || response.status === 410) {
+                    quarantineTask(taskId, taskAccessFailure(response.status));
+                } else {
+                    commitTaskNeedsReconciliation(true);
+                    setTaskError({ code: "task_command_failed", taskId, message: "작업 명령을 적용하지 못했습니다. 최신 초안을 확인한 뒤 다시 시도해 주세요." });
+                }
+                return null;
+            }
+            const next = applyTaskMutationResponse(taskId, request, operationEpoch, body);
+            if (!next && isCurrentTaskRequest(request, operationEpoch)) {
+                commitTaskNeedsReconciliation(true);
+                setTaskError({ code: "task_command_invalid", taskId, message: "작업 명령 응답을 확인하지 못했습니다. 최신 초안을 새로고침해 확인해 주세요." });
+            }
+            return next;
+        } finally {
+            if (taskMutationTokenRef.current === mutationToken) commitTaskMutationInFlight(false);
         }
-        const body = await readJsonBody(response);
-        if (response.status === 409) return handleTaskConflict(taskId, request, body);
-        if (!response.ok) {
-            setTaskError({ code: "task_command_failed", taskId, message: "작업 명령을 적용하지 못했습니다." });
-            return null;
-        }
-        const next = applyTaskMutationResponse(taskId, request, body);
-        if (!next) setTaskError({ code: "task_command_invalid", taskId, message: "작업 명령 응답을 확인하지 못했습니다." });
-        return next;
-    }, [applyTaskMutationResponse, beginTaskSnapshotRequest, commitTaskSnapshotState, handleTaskConflict]);
+    }, [applyTaskMutationResponse, beginTaskSnapshotRequest, commitTaskMutationInFlight, commitTaskNeedsReconciliation, commitTaskSnapshotState, handleTaskConflict, isCurrentTaskRequest, quarantineTask, sessionOperationEpoch, taskMutationBlocked]);
 
     const refreshSessions = useCallback(async () => {
         const requestGeneration = ++sessionListGenerationRef.current;
@@ -603,6 +752,9 @@ export function useAgentChat() {
         actionError,
         taskSnapshotState,
         taskError,
+        taskAccessState,
+        taskMutationInFlight,
+        taskNeedsReconciliation,
         createTaskEventId: createClientEventId,
         loadTaskSnapshot,
         patchTask,
