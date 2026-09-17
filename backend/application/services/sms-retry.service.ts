@@ -1,7 +1,10 @@
 import { ConflictException, Inject, Injectable, Logger, NotFoundException, Optional, ServiceUnavailableException } from "@nestjs/common";
+import type { Prisma } from "@prisma/client";
 import { AligoService } from "application/services/aligo.service";
 import { MessageSenderApprovalService } from "application/services/message-sender-approval.service";
 import { MessageAutomationActivationService } from "application/services/message-automation-activation.service";
+import { AgentAutomationJobAuthorityService } from "application/services/agent-automation-job-authority.service";
+import { SmsTriggerDeliveryService } from "application/services/sms-trigger-delivery.service";
 import { parseKstSchedule } from "application/utils/kst-schedule";
 import { maskPhone } from "application/utils/mask";
 import {
@@ -25,11 +28,17 @@ import {
     classifySmsProviderOutcome,
     countSmsRecipients,
 } from "./sms-provider-outcome.service";
+import { readAutomationRetrySeal, type AutomationRetrySealState } from "./automation-retry-seal";
+import { MessageTriggerJobEntity, type MessageTriggerJobPayload, type MessageTriggerJobStatus } from "domain/entities/message-trigger-job.entity";
+import { MessageTriggerRecipientType, MessageTriggerTemplateKey } from "domain/constants/message-trigger-catalog";
+import { agentBindingHash } from "domain/repositories/agent-linked-action.types";
 
 const INVALID_RETRY_SCHEDULE_REASON =
     "예약 발송 일시 형식이 올바르지 않아 재시도하지 않았습니다. 예약일과 예약시간을 확인해 주세요.";
 const PARTIAL_RETRY_SUPERSEDED_REASON =
     "부분 발송 결과의 실패 수신자를 식별할 수 없어 자동 재전송을 중단했습니다. 수신자별로 확인 후 수동 발송해 주세요.";
+const AUTOMATION_RETRY_SEAL_INVALID_REASON =
+    "자동 문자 권한 증거가 현재 작업과 일치하지 않아 자동 재전송을 중단했습니다. 작업을 다시 검토해 주세요.";
 
 interface RetrySchedule {
     scheduledDate?: string;
@@ -60,6 +69,10 @@ export class SmsRetryService {
         private readonly acceptanceService?: SmsProviderAcceptanceService,
         @Optional()
         private readonly messageAutomationActivationService?: MessageAutomationActivationService,
+        @Optional()
+        private readonly automationAuthority?: AgentAutomationJobAuthorityService,
+        @Optional()
+        private readonly smsTriggerDeliveryService?: SmsTriggerDeliveryService,
     ) {}
 
     async retryById(branchId: string, logId: number): Promise<MessageLogEntity> {
@@ -138,6 +151,13 @@ export class SmsRetryService {
                     if (retryStart.kind === "lost") return { kind: "claimed", log: null };
                     if (retryStart.kind === "suppressed") return { kind: "terminal", log: retryStart.log };
                     const retryLog = retryStart.log;
+
+                    const retryAuthority = await this.verifyAutomaticRetryAuthority(transaction, sourceLog);
+                    if (retryAuthority.kind === "invalid") {
+                        retryLog.markRetrySuperseded(AUTOMATION_RETRY_SEAL_INVALID_REASON);
+                        await this.logRepository.update(retryLog, transaction);
+                        return { kind: "terminal", log: retryLog };
+                    }
 
                     try {
                         await this.messageSenderApprovalService.ensureApproved(retryLog.branchId ?? sourceLog.branchId!);
@@ -232,6 +252,70 @@ export class SmsRetryService {
             : this.beginProviderCallWithoutBoundary(retryLog);
 
         return this.sendRetryAttempt(schedule, retryLog, providerAttempt, invocation);
+    }
+
+    /**
+     * Automatic task-owned retries must prove the same persisted job, seal and
+     * provider snapshot that produced the failed log. Legacy rows without a
+     * job seal retain the existing retry path for backward compatibility.
+     */
+    private async verifyAutomaticRetryAuthority(
+        transaction: Prisma.TransactionClient,
+        sourceLog: MessageLogEntity,
+    ): Promise<AutomationRetrySealState> {
+        if (!sourceLog.branchId || !sourceLog.triggerJobId) return { kind: "legacy" };
+        try {
+            const row = await transaction.message_trigger_job.findUnique({ where: { id: sourceLog.triggerJobId } });
+            if (!row || row.branchId !== sourceLog.branchId) {
+                return { kind: "invalid", reason: "retry source job is missing or cross-branch" };
+            }
+            const job = MessageTriggerJobEntity.reconstitute(
+                row.id,
+                row.branchId,
+                row.ruleId,
+                row.status as MessageTriggerJobStatus,
+                row.scheduledFor,
+                row.sentAt,
+                row.canceledAt,
+                row.cancelReason,
+                row.clientId,
+                row.employeeScheduleId,
+                row.recipientType as MessageTriggerRecipientType,
+                row.recipientPhone,
+                row.templateKey as MessageTriggerTemplateKey,
+                row.dedupeKey,
+                (row.payload as unknown as MessageTriggerJobPayload) ?? {
+                    memberId: "",
+                    recipientName: "",
+                    recipientPhone: "",
+                    templateVariables: {},
+                },
+                row.createdAt,
+                row.updatedAt,
+                row.attempts,
+                row.nextAttemptAt,
+                row.claimToken,
+            );
+            const seal = readAutomationRetrySeal(job, sourceLog.variables);
+            if (seal.kind !== "valid") return seal;
+            if (!this.automationAuthority || !this.smsTriggerDeliveryService) {
+                return { kind: "invalid", reason: "automatic retry authority is not configured" };
+            }
+            const authority = await this.automationAuthority.checkAutomaticJob(
+                transaction,
+                job,
+                "dispatch",
+                (current, tx) => this.smsTriggerDeliveryService!.resolveCanonicalDeliverySnapshot(current, tx),
+                seal.snapshotHash,
+            );
+            if (authority.status !== "allowed" || agentBindingHash(authority.seal) !== seal.sealDigest) {
+                return { kind: "invalid", reason: "retry authority no longer matches current source" };
+            }
+            return seal;
+        } catch (error) {
+            this.logger.warn(`[Retry] Automatic authority verification failed: ${error instanceof Error ? error.message : String(error)}`);
+            return { kind: "invalid", reason: "retry authority could not be verified" };
+        }
     }
 
     private async sendRetryAttempt(

@@ -44,6 +44,7 @@ import {
     SmsProviderAcceptanceService,
 } from "./sms-provider-acceptance.service";
 import { SmsTriggerDeliverySkipError, SmsTriggerPayloadEnricherRegistry } from "./sms-trigger-payload-enricher.registry";
+import { buildAutomationRetrySealVariables } from "./automation-retry-seal";
 
 export interface SmsTemplateDeliveryConfig {
     smsLogTemplateKey: string;
@@ -783,6 +784,7 @@ export class SmsTriggerDeliveryService {
         if (params.config.systemTemplateKey) {
             variables["systemTemplateKey"] = params.config.systemTemplateKey;
         }
+        Object.assign(variables, buildAutomationRetrySealVariables(params.job, params.snapshot.snapshotHash));
 
         const providerAcceptanceKey = buildSmsProviderAcceptanceKey(
             "automation",
