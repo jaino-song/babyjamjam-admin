@@ -544,15 +544,18 @@ export function TemplateSendForm({
         return [...currentQueue, currentQueueItem];
       }
 
-      // Searching a complete phone can queue it before a customer is selected.
-      // Keep that later identity choice, as well as recipient-name corrections.
-      if (requiresRecipientName || currentQueue[existingIndex].clientId !== currentQueueItem.clientId) {
-        const updated = [...currentQueue];
-        updated[existingIndex] = currentQueueItem;
-        return updated;
-      }
+      const existingItem = currentQueue[existingIndex];
+      const shouldUpdateIdentity = requiresRecipientName
+        || existingItem.clientId !== currentQueueItem.clientId;
+      const shouldUpdateMessage = existingItem.message !== currentQueueItem.message;
 
-      return currentQueue;
+      if (!shouldUpdateIdentity && !shouldUpdateMessage) return currentQueue;
+
+      const updated = [...currentQueue];
+      updated[existingIndex] = shouldUpdateIdentity
+        ? currentQueueItem
+        : { ...existingItem, message: currentQueueItem.message };
+      return updated;
     });
   }, [currentQueueItem, requiresRecipientName]);
 
