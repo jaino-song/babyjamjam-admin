@@ -21,6 +21,17 @@ export function isMessageRecipeWithinMaterializationWindow(
         && !(rule.offsetType === MessageTriggerOffsetType.IMMEDIATE && scheduledFor <= now.getTime());
 }
 
+/** A pre-start notice is no longer meaningful once the Korean service-start day arrives. */
+export function shouldSkipClientPreStartCatchUp(
+    rule: Pick<MessageTriggerRuleEntity, "eventType" | "offsetType">,
+    client: Pick<ClientTriggerSource, "startDate">,
+    now: Date,
+): boolean {
+    return rule.eventType === MessageTriggerEventType.SERVICE_START
+        && rule.offsetType === MessageTriggerOffsetType.BEFORE_DAYS && client.startDate !== null
+        && getKstCalendarDate(now, 0) >= getKstCalendarDate(client.startDate, 0);
+}
+
 export interface ClientTriggerSource {
     id: number;
     name: string;

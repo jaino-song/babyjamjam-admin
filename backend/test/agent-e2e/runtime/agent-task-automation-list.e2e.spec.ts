@@ -12,6 +12,7 @@ import { AligoDefaultSenderPolicyService } from "../../../application/services/a
 import { describeClientMessageEffect } from "../../../application/services/client-message-effect-recipe";
 import { agentBindingHash } from "../../../domain/repositories/agent-linked-action.types";
 import { CLIENT_AUTOMATION_IMPACT, type ClientAutomationImpactPort } from "../../../domain/ports/client-automation-impact.port";
+import { buildClientMessageRecipe } from "../../../application/services/message-trigger-recipes";
 import { createApprovedAgentTaskPersistenceClient, assertApprovedAgentTaskPersistenceDatabaseTarget } from "./agent-task-persistence.helper";
 
 const describeAgentE2E = process.env["AGENT_E2E"] === "1" ? describe : describe.skip;
@@ -175,5 +176,45 @@ describeAgentE2E("real automation.list with two eligible clients and missing def
         expect(send).not.toHaveBeenCalled();
         expect(createModel).not.toHaveBeenCalled();
         send.mockRestore();
+    });
+
+    it("omits pre-start catch-up after service begins using actual branch rules", async () => {
+        const before = await storedAutomation();
+        const impact = await tenantContextStore.run({ origin: "http", branchId }, () =>
+            app.get<ClientAutomationImpactPort>(CLIENT_AUTOMATION_IMPACT).planClientWrite(branchId, {
+                kind: "create", taskId: context.sessionId, values: { name: "합성 시작 고객", phone: "01000000003",
+                    startDate: new Date(Date.now() - 86_400_000) },
+            }));
+        expect(impact.effects.some(({ templateKey }) => templateKey === "SERVICE_INFO")).toBe(false);
+        expect(impact.effects.some(({ templateKey }) => templateKey === "CLIENT_GREETING")).toBe(true);
+        expect(await storedAutomation()).toEqual(before);
+    });
+
+    it("distinguishes a real immediate pending refresh from a processing-claim cancellation", async () => {
+        const planner = app.get<ClientAutomationImpactPort>(CLIENT_AUTOMATION_IMPACT);
+        await tenantContextStore.run({ origin: "http", branchId }, async () => {
+            const trigger = app.get(MessageTriggerService);
+            const source = await trigger.readClientAutomationSource(branchId, clientIds[0]!);
+            const rule = (await trigger.listRulesReadOnly(branchId)).find(({ templateKey }) => templateKey === "CLIENT_GREETING");
+            if (!rule || !source) throw new Error("Missing synthetic immediate source");
+            const recipe = buildClientMessageRecipe(rule, source, new Date());
+            if (!recipe) throw new Error("Missing synthetic immediate recipe");
+            const row = await prisma.message_trigger_job.create({ data: {
+                branchId, ruleId: rule.id, status: "pending", scheduledFor: recipe.scheduledFor,
+                clientId: source.id, employeeScheduleId: null, recipientType: recipe.recipientType,
+                recipientPhone: recipe.recipientPhone, templateKey: recipe.templateKey, dedupeKey: recipe.dedupeKey,
+                payload: JSON.parse(JSON.stringify(recipe.payload)),
+            } });
+            const write = { kind: "update" as const, clientId: source.id, values: { phone: "01000000003" } };
+            const pending = await planner.planClientWrite(branchId, write);
+            expect(pending.effects.find(({ ruleId }) => ruleId === rule.id)).toMatchObject({ change: "refresh" });
+            await prisma.message_trigger_job.update({ where: { id: row.id }, data: { status: "processing", claimToken: "synthetic-planner-claim" } });
+            const before = await storedAutomation();
+            const processing = await planner.planClientWrite(branchId, write);
+            expect(processing.effects.find(({ ruleId }) => ruleId === rule.id)).toMatchObject({ change: "cancel" });
+            expect(processing.affectedJobs.find(({ id }) => id === row.id)?.version).not.toBe(pending.affectedJobs.find(({ id }) => id === row.id)?.version);
+            expect(await storedAutomation()).toEqual(before);
+        });
+        expect(createModel).not.toHaveBeenCalled();
     });
 });

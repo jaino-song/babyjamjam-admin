@@ -8,7 +8,7 @@ import type { MessageTriggerJobReviewSnapshot } from "domain/repositories/messag
 import { AligoDefaultSenderPolicyService } from "./aligo-default-sender-policy.service";
 import { ClientAutomationImpactService } from "./client-automation-impact.service";
 import { SmsTriggerDeliveryService } from "./sms-trigger-delivery.service";
-import { buildClientMessageRecipe, type ClientTriggerSource } from "./message-trigger-recipes";
+import { buildClientMessageRecipe, buildEmployeeAssignmentMessageRecipe, type ClientTriggerSource } from "./message-trigger-recipes";
 
 const branchId = "76000000-0000-4000-8000-000000000001";
 const taskId = "76000000-0000-4000-8000-000000000002";
@@ -76,6 +76,28 @@ describe("read-only normalized client automation impact", () => {
         expect(await f.service.planClientWrite(branchId, f.create)).toEqual(first);
     });
 
+    it("shares ordinary pre-start catch-up suppression, including the Korean start-day boundary", async () => {
+        const f = setup();
+        const write = { ...f.create, values: { ...f.create.values, startDate: new Date("2026-09-18T00:00:00Z") } };
+        expect((await f.service.planClientWrite(branchId, write)).effects.some(({ ruleId }) => ruleId === "info")).toBe(true);
+        for (const startDate of [new Date("2026-09-16T00:00:00Z"), new Date("2026-09-17T08:00:00Z")]) {
+            const result = await f.service.planClientWrite(branchId, { ...write, values: { ...write.values, startDate } });
+            expect(result.effects.map(({ ruleId }) => ruleId)).toEqual(["greeting"]);
+        }
+    });
+
+    it.each(["sender-unavailable", "unsupported-content"])("keeps delayed creation %s descriptors stable across preview days", async (reason) => {
+        const f = setup();
+        f.greeting.offsetType = MessageTriggerOffsetType.AFTER_DAYS;
+        f.greeting.offsetDays = 2;
+        if (reason === "sender-unavailable") f.settings.senderApproved = false;
+        else Object.assign(f.template, { requiredVariables: [{ key: "opaqueFutureLink", required: true }] });
+        const first = await f.service.planClientWrite(branchId, f.create);
+        expect(first).toMatchObject({ availability: "unavailable", reason });
+        jest.setSystemTime(new Date(now.getTime() + 86_400_000));
+        expect(await f.service.planClientWrite(branchId, f.create)).toEqual(first);
+    });
+
     it("reports missing defaults without creating them or omitting known effects", async () => {
         const f = setup();
         f.settings.defaultsPresent = false;
@@ -134,6 +156,23 @@ describe("read-only normalized client automation impact", () => {
         const result = await f.service.planClientWrite(branchId, { kind: "update", clientId: 41, values: { name: "정정 합성 고객" } });
         expect(result.effects.find(({ ruleId }) => ruleId === "greeting")).toMatchObject({ change: "refresh" });
         expect(JSON.stringify(job)).toBe(copy);
+    });
+
+    it("describes a claimed immediate job as cancellation and binds its claim generation", async () => {
+        const f = setup();
+        const job = f.pending(f.greeting);
+        const write = { kind: "update" as const, clientId: 41, values: { name: "정정 합성 고객" } };
+        const pending = await f.service.planClientWrite(branchId, write);
+        expect(pending.effects.find(({ ruleId }) => ruleId === "greeting")).toMatchObject({ change: "refresh" });
+        job.status = "processing";
+        job.claimToken = "synthetic-claim";
+        const processing = await f.service.planClientWrite(branchId, write);
+        expect(processing).toMatchObject({ availability: "available", complete: true });
+        expect(processing.effects.find(({ ruleId }) => ruleId === "greeting")).toMatchObject({ change: "cancel" });
+        expect(processing.affectedJobs).not.toEqual(pending.affectedJobs);
+        expect(job.status).toBe("processing");
+        f.pending(f.greeting);
+        expect(await f.service.planClientWrite(branchId, write)).toMatchObject({ availability: "unavailable", complete: false });
     });
 
     it("distinguishes an eligible system-canceled occurrence from an explicit user cancellation", async () => {
@@ -231,6 +270,11 @@ describe("read-only normalized client automation impact", () => {
         expect((await f.service.planClientWrite(branchId, write)).effects.find(({ kind }) => kind === "employee-assignment")).not.toEqual(effect);
         expect(await f.service.planClientWrite(branchId, { ...write, values: { startDate: new Date("2026-10-02T00:00:00Z") } }))
             .toMatchObject({ availability: "unavailable", complete: false });
+        const canceled = Object.assign(MessageTriggerJobEntity.create(buildEmployeeAssignmentMessageRecipe(assignment, schedule as never, now)!),
+            { id: "canceled-assignment", canceledByUser: true });
+        canceled.status = "canceled";
+        f.jobs.push(canceled);
+        expect((await f.service.planClientWrite(branchId, write)).effects.some(({ kind }) => kind === "employee-assignment")).toBe(false);
         schedule.incarnationId = "";
         expect(await f.service.planClientWrite(branchId, write)).toMatchObject({ availability: "unavailable", complete: false });
     });

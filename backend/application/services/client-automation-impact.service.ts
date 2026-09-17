@@ -13,6 +13,7 @@ import { MessageTriggerService } from "./message-trigger.service";
 import { SmsTriggerDeliveryService } from "./sms-trigger-delivery.service";
 import { describeClientMessageEffect, type ClientMessageEffectPolicy, type ClientMessageLogicalSubject } from "./client-message-effect-recipe";
 import { buildClientMessageRecipe, buildEmployeeAssignmentMessageRecipe, isMessageRecipeWithinMaterializationWindow,
+    shouldSkipClientPreStartCatchUp,
     type ClientTriggerSource, type MessageTriggerJobRecipe } from "./message-trigger-recipes";
 
 const VERSION = "client-automation-impact-v1";
@@ -25,10 +26,12 @@ function sourceHash(value: unknown): string {
 }
 
 /** A materialization timestamp and numeric create placeholder are not business source changes. */
-function recipeSource(recipe: MessageTriggerJobRecipe | null, rule: MessageTriggerRuleEntity): string {
+function recipeSource(recipe: MessageTriggerJobRecipe | null, rule: MessageTriggerRuleEntity, subject?: ClientMessageLogicalSubject): string {
     return agentBindingHash(recipe ? {
         phone: normalizePhone(recipe.recipientPhone), name: recipe.payload.recipientName, variables: recipe.payload.templateVariables,
-        scheduling: rule.offsetType === MessageTriggerOffsetType.IMMEDIATE ? "materialization-time" : recipe.scheduledFor.toISOString(),
+        scheduling: rule.offsetType === MessageTriggerOffsetType.IMMEDIATE ? "materialization-time"
+            : subject?.kind === "task-client" && rule.eventType === MessageTriggerEventType.CLIENT_CREATED ? "committed-client-creation"
+                : recipe.scheduledFor.toISOString(),
         fingerprint: recipe.payload.employeeScheduleFingerprint ?? null,
     } : null);
 }
@@ -51,7 +54,7 @@ function unavailableEffect(input: {
     return { kind: input.kind, ruleId: rule.id, scheduleId: recipe.employeeScheduleId ?? null,
         recipientType, templateKey: rule.templateKey as AgentAutomationEffect["templateKey"], change: input.change,
         recipientDigest: agentBindingHash({ subject: input.subject, branchId: input.branchId, type: rule.recipientType, receiver: normalizePhone(recipe.recipientPhone) }),
-        sourceDigest: agentBindingHash({ subject: input.subject, recipe: recipeSource(recipe, rule), scheduleIdentity: input.scheduleIdentity ?? null }),
+        sourceDigest: agentBindingHash({ subject: input.subject, recipe: recipeSource(recipe, rule, input.subject), scheduleIdentity: input.scheduleIdentity ?? null }),
         templateDigest: agentBindingHash({ version: VERSION, unavailable: input.reason, templateKey: rule.templateKey }),
         policyDigest: agentBindingHash({ version: VERSION, ...input.policy }),
         recipeDigest: agentBindingHash({ version: VERSION, eventType: rule.eventType, offsetType: rule.offsetType,
@@ -131,11 +134,17 @@ export class ClientAutomationImpactService implements ClientAutomationImpactPort
             const scopeJobs = jobs.filter((job) => job.ruleId === rule.id && job.employeeScheduleId === null && !isManualMessageTriggerJob(job));
             const mutable = scopeJobs.filter((job) => job.status === "pending" || job.status === "processing");
             if (scopeJobs.some((job) => job.status === "dispatching")) { noteUnavailable("source-unavailable"); complete = false; continue; }
+            const processingImmediate = rule.offsetType === MessageTriggerOffsetType.IMMEDIATE && mutable.some((job) => job.status === "processing");
+            if (processingImmediate && mutable.some((job) => job.status === "pending")) {
+                // One operation cannot claim both refresh and cancellation in the
+                // current public summary; refuse the mixed transition explicitly.
+                noteUnavailable("source-unavailable"); complete = false; continue;
+            }
             const terminalDedupe = newRecipe && scopeJobs.some((job) => job.dedupeKey === newRecipe.dedupeKey
                 && (["sent", "failed"].includes(job.status) || job.canceledByUser));
             const eligible = newRecipe && !terminalDedupe && (write.kind === "create"
-                ? settings.pastTriggerEnabled || newRecipe.scheduledFor > now
-                : mutable.length > 0 && rule.offsetType === MessageTriggerOffsetType.IMMEDIATE
+                ? !shouldSkipClientPreStartCatchUp(rule, after, now) && (settings.pastTriggerEnabled || newRecipe.scheduledFor > now)
+                : !processingImmediate && mutable.some((job) => job.status === "pending") && rule.offsetType === MessageTriggerOffsetType.IMMEDIATE
                     || isMessageRecipeWithinMaterializationWindow(newRecipe, rule, false, now));
             if (!eligible && mutable.length === 0) continue;
             const change: AgentAutomationEffect["change"] = !eligible ? "cancel" : mutable.length ? "refresh" : "create";
@@ -175,6 +184,7 @@ export class ClientAutomationImpactService implements ClientAutomationImpactPort
                 const recipe = buildEmployeeAssignmentMessageRecipe(rule, { ...schedule, client: { ...schedule.client, name: after.name } }, now);
                 if (!recipe) continue;
                 const previousJobs = jobs.filter((job) => job.ruleId === rule.id && job.employeeScheduleId === schedule.id);
+                if (previousJobs.some((job) => job.canceledByUser && job.dedupeKey === recipe.dedupeKey)) continue;
                 if (previousJobs.some((job) => job.status === "sent" && job.payload.employeeId === recipe.payload.employeeId && job.recipientType === recipe.recipientType)) continue;
                 if (previousJobs.some((job) => job.status === "dispatching" || job.status === "failed")) { noteUnavailable("source-unavailable"); complete = false; continue; }
                 const mutable = previousJobs.filter((job) => job.status === "pending" || job.status === "processing");

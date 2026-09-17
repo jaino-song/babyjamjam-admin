@@ -73,7 +73,8 @@ import { MessageSenderApprovalService } from "./message-sender-approval.service"
 import {
     buildClientMessageRecipe, buildEmployeeAssignmentMessageRecipe,
     isMessageRecipeWithinMaterializationWindow,
-    buildMessageRecipeDedupeKey, employeeAssignmentScheduleFingerprint, formatMessageRecipeDate, getKstCalendarDate,
+    shouldSkipClientPreStartCatchUp,
+    buildMessageRecipeDedupeKey, employeeAssignmentScheduleFingerprint, formatMessageRecipeDate,
     type ClientTriggerSource, type EmployeeAssignmentScheduleSource,
 } from "./message-trigger-recipes";
 import { normalizePhone } from "application/utils/normalize-phone";
@@ -3079,16 +3080,7 @@ export class MessageTriggerService {
         rule: MessageTriggerRuleEntity,
         client: ClientTriggerSource,
     ): boolean {
-        if (
-            rule.eventType !== MessageTriggerEventType.SERVICE_START ||
-            rule.offsetType !== MessageTriggerOffsetType.BEFORE_DAYS ||
-            !client.startDate
-        ) {
-            return false;
-        }
-
-        return getKstCalendarDate(new Date(), 0) >=
-            getKstCalendarDate(client.startDate, 0);
+        return shouldSkipClientPreStartCatchUp(rule, client, new Date());
     }
 
     private async postponeCatchUpJobUntilPredecessorCompletes(
