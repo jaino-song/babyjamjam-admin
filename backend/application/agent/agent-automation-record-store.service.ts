@@ -29,6 +29,11 @@ export interface AgentAutomationCommittedBatch {
     authorities: AgentAutomationAuthority[];
     coverages: AgentAutomationCoverage[];
 }
+export interface AgentAutomationLineageEvidence {
+    batch: AgentAutomationCommittedBatch;
+    /** Logical create subjects are established by the physical commit, never by job JSON. */
+    creationSubjects: Array<{ authorityId: string; taskId: string }>;
+}
 
 /**
  * Owns the terminal namespace. It exposes no generic append/update/delete operation.
@@ -140,13 +145,19 @@ export class AgentAutomationRecordStoreService {
 
     /** Call from the current branch transaction; strict physical decoding precedes any resolver. */
     async readLineages(transaction: Prisma.TransactionClient, scope: AgentAutomationScope): Promise<AgentAutomationCommittedBatch> {
+        return (await this.readLineageEvidence(transaction, scope)).batch;
+    }
+
+    async readLineageEvidence(transaction: Prisma.TransactionClient, scope: AgentAutomationScope): Promise<AgentAutomationLineageEvidence> {
         const valid = AgentAutomationScopeStorageSchema.parse(scope);
         const coverages = await this.load(transaction, "coverage", agentAutomationCoverageScope(valid));
         const authorities = await this.load(transaction, "authority", valid);
         this.head(coverages, agentAutomationCoverageScope(valid));
         this.head(authorities, valid);
-        return { coverages: coverages.map(({ record }) => record as AgentAutomationCoverage),
-            authorities: authorities.map(({ record }) => record as AgentAutomationAuthority) };
+        return { batch: { coverages: coverages.map(({ record }) => record as AgentAutomationCoverage),
+            authorities: authorities.map(({ record }) => record as AgentAutomationAuthority) },
+            creationSubjects: authorities.filter(({ commit }) => commit.capability === "clients.create")
+                .map(({ record, commit }) => ({ authorityId: record.id, taskId: commit.taskId })) };
     }
 
     private async load(tx: Prisma.TransactionClient, kind: "coverage" | "authority", scope: AgentAutomationScope | AgentAutomationCoverageScope) {

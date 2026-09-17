@@ -1,0 +1,100 @@
+import { Injectable } from "@nestjs/common";
+import type { Prisma } from "@prisma/client";
+import type { AgentAutomationEffect, AgentAutomationJobSeal, AgentAutomationScope } from "domain/entities/agent-automation-consent";
+import { agentBindingHash } from "domain/repositories/agent-linked-action.types";
+import type { ClientMessageLogicalSubject } from "application/services/client-message-effect-recipe";
+import { AgentAutomationRecordStoreService } from "./agent-automation-record-store.service";
+import { agentAutomationEffectDigest, agentAutomationScheduleIdentity, resolveAgentAutomationAuthority } from "./agent-automation-consent";
+import { agentAutomationCoverageScope, agentAutomationGrandfatheredFingerprint, resolveAgentAutomationCoverageHead } from "./agent-automation-coverage";
+import { AgentAutomationEffectStorageSchema, AgentAutomationScopeStorageSchema, parseAgentAutomationJobSeal } from "./agent-automation-storage.schema";
+
+export type AgentAutomationCurrentTarget = Omit<AgentAutomationScope, "clientIdentity" | "scheduleIdentity">;
+export type AgentAutomationAuthorityCheck =
+    | { status: "legacy" }
+    | { status: "allowed"; seal: AgentAutomationJobSeal }
+    | { status: "refused"; reason: "automation-authority-unavailable" | "automation-consent-denied" | "automation-consent-changed" };
+
+/** The source owner reads current rule/recipient/template/policy under the supplied transaction. */
+export type DescribeCurrentAutomationEffect = (input: {
+    scope: AgentAutomationScope;
+    subject: ClientMessageLogicalSubject;
+    change: AgentAutomationEffect["change"];
+}) => Promise<AgentAutomationEffect | null>;
+
+/**
+ * Internal resolver, not a public permission endpoint. Callers hold the existing
+ * branch automation lock and keep it through generation/dispatch CAS. The recipe
+ * callback belongs to the source owner; neither a model nor job JSON supplies it.
+ * This service performs no provider, enrichment, source write or independent TX.
+ */
+@Injectable()
+export class AgentAutomationAuthorityService {
+    constructor(private readonly records: AgentAutomationRecordStoreService) {}
+
+    async check(
+        transaction: Prisma.TransactionClient,
+        input: { target: AgentAutomationCurrentTarget; mode: "materialize" | "dispatch"; seal?: unknown },
+        describe: DescribeCurrentAutomationEffect,
+    ): Promise<AgentAutomationAuthorityCheck> {
+        const refuse = (reason: Extract<AgentAutomationAuthorityCheck, { status: "refused" }>["reason"] = "automation-authority-unavailable"): AgentAutomationAuthorityCheck => ({ status: "refused", reason });
+        try {
+            if (input.mode !== "materialize" && input.mode !== "dispatch") return refuse();
+            const suppliedSeal = input.seal === undefined ? undefined : parseAgentAutomationJobSeal(input.seal);
+            if (suppliedSeal === null) return refuse();
+            const { target } = input;
+            const client = await transaction.client.findFirst({ where: { id: target.clientId, branchId: target.branchId }, select: { id: true, createdAt: true } });
+            if (!client?.createdAt) return refuse();
+            const clientIdentity = agentBindingHash({ version: 1, resource: "client", id: client.id, createdAt: client.createdAt.toISOString() });
+            const schedule = target.scheduleId === null ? null : await transaction.employee_schedule.findFirst({
+                where: { id: target.scheduleId, clientId: client.id, branchId: target.branchId }, select: { incarnationId: true, replaced: true, terminatedAt: true },
+            });
+            if (target.scheduleId !== null && (!schedule || schedule.replaced || schedule.terminatedAt)) return refuse();
+            const scope = AgentAutomationScopeStorageSchema.parse({ ...target, clientIdentity,
+                scheduleIdentity: schedule ? agentAutomationScheduleIdentity(schedule.incarnationId) : null });
+            const { batch, creationSubjects } = await this.records.readLineageEvidence(transaction, scope);
+            const coverage = resolveAgentAutomationCoverageHead({ records: batch.coverages, scope: agentAutomationCoverageScope(scope), knownProvenance: batch.coverages.length > 0 });
+            if (coverage.status === "refused") return refuse();
+            if (!batch.authorities.length) {
+                // An orphaned seal never becomes evidence that the scope was legacy.
+                if (suppliedSeal) return refuse();
+                if (coverage.status === "absent") return { status: "legacy" };
+                const current = await describe({ scope: { ...scope }, subject: { kind: "client", clientId: client.id, clientIdentity }, change: "create" });
+                if (!current) return refuse();
+                const effect = AgentAutomationEffectStorageSchema.parse(current);
+                if (!this.matchesScope(effect, scope)) return refuse();
+                const fingerprint = agentAutomationGrandfatheredFingerprint(effect);
+                return coverage.coverage.grandfatheredScopes.some((member) => agentBindingHash(member.scope) === agentBindingHash(scope)
+                    && member.fingerprint === fingerprint) ? { status: "legacy" } : refuse("automation-consent-denied");
+            }
+            // Coverage is mandatory for task-created exact authority. It cannot
+            // be removed while leaving an otherwise well-formed exact row.
+            if (coverage.status !== "head") return refuse();
+            const head = batch.authorities.at(-1)!;
+            if (head.decision !== "allow" || head.noSend) return refuse("automation-consent-denied");
+            if (head.effects.length !== 1) return refuse();
+            const creation = creationSubjects.find(({ authorityId }) => authorityId === head.id);
+            const subject: ClientMessageLogicalSubject = creation ? { kind: "task-client", taskId: creation.taskId }
+                : { kind: "client", clientId: client.id, clientIdentity };
+            const current = await describe({ scope: { ...scope }, subject, change: head.effects[0]!.change });
+            if (!current) return refuse();
+            const effect = AgentAutomationEffectStorageSchema.parse(current);
+            if (!this.matchesScope(effect, scope)) return refuse();
+            const resolution = resolveAgentAutomationAuthority({ records: batch.authorities, scope, effect,
+                currentScopeEffectDigest: agentAutomationEffectDigest([effect]), knownTaskOrigin: true });
+            if (resolution.status !== "allowed") return refuse("automation-consent-changed");
+            const seal: AgentAutomationJobSeal = { version: 1, authorityId: head.id, authorityDigest: head.recordDigest, scope,
+                memberDigest: agentAutomationEffectDigest([effect]), reviewedEffectDigest: head.reviewedEffectDigest };
+            if (suppliedSeal && agentBindingHash(suppliedSeal) !== agentBindingHash(seal)) return refuse("automation-consent-changed");
+            if (input.mode === "dispatch" && !suppliedSeal) return refuse();
+            return { status: "allowed", seal };
+        } catch {
+            // Database/renderer failures do not imply legacy behavior or expose PII.
+            return refuse();
+        }
+    }
+
+    private matchesScope(effect: AgentAutomationEffect, scope: AgentAutomationScope): boolean {
+        return effect.kind === scope.kind && effect.ruleId === scope.ruleId && effect.scheduleId === scope.scheduleId
+            && effect.recipientType === scope.recipientType;
+    }
+}

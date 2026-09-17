@@ -1,12 +1,15 @@
 import { Prisma, type PrismaClient } from "@prisma/client";
 import { randomUUID } from "node:crypto";
+import type { AgentAutomationEffect, AgentAutomationScope } from "../../../domain/entities/agent-automation-consent";
+import { AgentAutomationAuthorityService, type AgentAutomationCurrentTarget } from "../../../application/agent/agent-automation-authority.service";
+import { agentAutomationScheduleIdentity } from "../../../application/agent/agent-automation-consent";
 import { AgentAutomationRecordStoreService, type AgentAutomationCommittedBatch, type AgentAutomationTaskMutation } from "../../../application/agent/agent-automation-record-store.service";
 import { MessageAutomationBranchLockService } from "../../../application/services/message-automation-branch-lock.service";
 import { persistClientMessageAutomationIntent } from "../../../application/services/message-automation-intent-writer";
 import { createAgentAutomationQuestion, answerAgentAutomationQuestion } from "../../../application/agent/agent-automation-question";
 import { parseTaskAutomationArtifact, TASK_AUTOMATION_ARTIFACT_KEY, type AgentTaskAutomationArtifact } from "../../../application/agent/agent-task-automation-artifact";
-import { decodeAgentAutomationTerminalRow, agentAutomationRecordKey } from "../../../application/agent/agent-automation-terminal-record";
-import { agentAutomationCoverageRecordDigest } from "../../../application/agent/agent-automation-coverage";
+import { decodeAgentAutomationTerminalRow, agentAutomationRecordKey, agentAutomationRecordPrefix } from "../../../application/agent/agent-automation-terminal-record";
+import { agentAutomationCoverageRecordDigest, agentAutomationGrandfatheredFingerprint } from "../../../application/agent/agent-automation-coverage";
 import { agentBindingHash } from "../../../domain/repositories/agent-linked-action.types";
 import type { AgentContext } from "../../../application/agent/agent-context";
 import { AGENT_AUTOMATION_RECORD_DEDUPE_PREFIX, AGENT_AUTOMATION_RECORD_PAYLOAD_KEY } from "../../../domain/constants/agent-automation-storage";
@@ -51,7 +54,9 @@ describeDb("committed task automation terminal record transactions", () => {
         await db.agent_action.deleteMany({ where: { branchId } });
         await db.agent_task.deleteMany({ where: { branchId } });
         await db.agent_session.deleteMany({ where: { branchId } });
+        await db.employee_schedule.deleteMany({ where: { branchId } });
         await db.client.deleteMany({ where: { branchId } });
+        await db.employee.deleteMany({ where: { branchId } });
     }
     beforeAll(async () => {
         assertApprovedAgentTaskPersistenceDatabaseTarget();
@@ -76,19 +81,22 @@ describeDb("committed task automation terminal record transactions", () => {
     });
     afterAll(async () => { if (db) { await cleanup(); await db.branch.delete({ where: { id: branchId } }); await db.user.delete({ where: { id: userId } }); await db.$disconnect(); } });
 
-    async function seed(choice: "yes" | "no" | "noSend" | "none" = "yes") {
+    async function seed(choice: "yes" | "no" | "noSend" | "none" = "yes", options: {
+        effects?: AgentAutomationEffect[]; existingClient?: { id: number; createdAt: Date | null };
+    } = {}) {
         const impact = { availability: choice === "none" ? "none" as const : "available" as const,
-            complete: true, clientIdentity: null, sourceGuard: hash("source"), affectedJobs: [],
-            effects: choice === "none" ? [] : [{ kind: "client-rule" as const, ruleId: "synthetic-rule", scheduleId: null,
+            complete: true, clientIdentity: options.existingClient ? agentBindingHash({ version: 1, resource: "client", id: options.existingClient.id,
+                createdAt: options.existingClient.createdAt!.toISOString() }) : null, sourceGuard: hash("source"), affectedJobs: [],
+            effects: options.effects ?? (choice === "none" ? [] : [{ kind: "client-rule" as const, ruleId: "synthetic-rule", scheduleId: null,
                 recipientType: "client" as const, templateKey: "CLIENT_GREETING" as const, change: "create" as const,
-                recipientDigest: hash("recipient"), sourceDigest: hash("source"), templateDigest: hash("template"), policyDigest: hash("policy"), recipeDigest: hash("recipe") }] };
+                recipientDigest: hash("recipient"), sourceDigest: hash("source"), templateDigest: hash("template"), policyDigest: hash("policy"), recipeDigest: hash("recipe") }]) };
         const question = createAgentAutomationQuestion(impact);
         const answer = answerAgentAutomationQuestion({ choice: choice === "yes" ? "yes" : choice === "none" ? "unanswered" : "no",
             presented: question, current: question, noSend: choice === "noSend", clientEventId: randomUUID() });
         if (answer.status !== "accepted") throw new Error("Invalid synthetic answer");
         const parsed = parseTaskAutomationArtifact({ version: 1, actionId: randomUUID(), taskId: randomUUID(), taskRevision: 2,
-            sessionId: randomUUID(), userId, branchId, capability: "clients.create", inputHash: hash("input"),
-            targetClientId: null, targetVersion: null, question, consent: answer.consent, noSend: choice === "noSend", impact });
+            sessionId: randomUUID(), userId, branchId, capability: options.existingClient ? "clients.update" : "clients.create", inputHash: hash("input"),
+            targetClientId: options.existingClient?.id ?? null, targetVersion: options.existingClient ? hash("target") : null, question, consent: answer.consent, noSend: choice === "noSend", impact });
         if (!parsed) throw new Error("Invalid synthetic artifact");
         artifact = parsed;
         context = { actionId: artifact.actionId, sessionId: artifact.sessionId, principal: { userId, branchId, globalRole: "admin", branchRole: "admin" }, traceId: "synthetic-terminal-record", locale: "ko" };
@@ -196,4 +204,166 @@ describeDb("committed task automation terminal record transactions", () => {
         await expect(store.runTaskMutation(context, artifact, prepare, stage)).rejects.toThrow();
         expect(prepare).toHaveBeenCalledTimes(1);
     });
+    function resolverTarget(scope: AgentAutomationScope = captured.authorities[0]!.scope): AgentAutomationCurrentTarget {
+        return { branchId: scope.branchId, clientId: scope.clientId, kind: scope.kind, ruleId: scope.ruleId,
+            scheduleId: scope.scheduleId, recipientType: scope.recipientType };
+    }
+    const locks = () => new MessageAutomationBranchLockService(db as never);
+
+    it.each(["missing", "corrupted"])("refuses replay with a %s receipt-referenced record without rerunning callbacks", async (mode) => {
+        await seed(); await store.runTaskMutation(context, artifact, prepare, stage);
+        const beforeReceipt = (await db.agent_action.findUniqueOrThrow({ where: { id: artifact.actionId } })).effectReceipt;
+        const id = captured.authorities[0]!.id;
+        if (mode === "missing") await db.message_trigger_job.delete({ where: { id } });
+        else await db.message_trigger_job.update({ where: { id }, data: { cancelReason: "synthetic-corruption" } });
+        await expect(store.runTaskMutation(context, artifact, prepare, stage)).rejects.toThrow();
+        expect(prepare).toHaveBeenCalledTimes(1); expect(stage).toHaveBeenCalledTimes(1);
+        expect((await db.agent_action.findUniqueOrThrow({ where: { id: artifact.actionId } })).effectReceipt).toEqual(beforeReceipt);
+    });
+
+    it("derives a materialized seal from committed creation provenance and requires the same seal at dispatch", async () => {
+        await seed(); await store.runTaskMutation(context, artifact, prepare, stage);
+        const resolver = new AgentAutomationAuthorityService(store);
+        const target = resolverTarget();
+        const describe = jest.fn(async () => artifact.impact.effects[0]!);
+        const allowed = await locks().runExclusive(branchId, (tx) => resolver.check(tx, { target, mode: "materialize" }, describe));
+        expect(allowed.status).toBe("allowed"); if (allowed.status !== "allowed") throw new Error("Missing synthetic seal");
+        expect(describe).toHaveBeenCalledWith({ scope: captured.authorities[0]!.scope,
+            subject: { kind: "task-client", taskId: artifact.taskId }, change: "create" });
+        expect(await locks().runExclusive(branchId, (tx) => resolver.check(tx, { target, mode: "dispatch" }, describe))).toMatchObject({ status: "refused" });
+        expect(await locks().runExclusive(branchId, (tx) => resolver.check(tx, { target, mode: "dispatch", seal: allowed.seal }, describe))).toEqual(allowed);
+        await db.agent_action.delete({ where: { id: artifact.actionId } });
+        await db.agent_task.delete({ where: { id: artifact.taskId } });
+        await db.agent_session.delete({ where: { id: artifact.sessionId } });
+        expect(await locks().runExclusive(branchId, (tx) => resolver.check(tx, { target, mode: "dispatch", seal: allowed.seal }, describe))).toEqual(allowed);
+        const sources = ["recipientDigest", "sourceDigest", "templateDigest", "policyDigest", "recipeDigest"] as const;
+        for (const field of sources) {
+            expect(await locks().runExclusive(branchId, (tx) => resolver.check(tx, { target, mode: "dispatch", seal: allowed.seal },
+                async () => ({ ...artifact.impact.effects[0]!, [field]: hash(`changed-${field}`) })))).toMatchObject({ status: "refused", reason: "automation-consent-changed" });
+        }
+        expect(await locks().runExclusive(branchId, (tx) => resolver.check(tx, { target, mode: "dispatch", seal: { ...allowed.seal, authorityId: randomUUID() } }, describe))).toMatchObject({ status: "refused" });
+        expect(await locks().runExclusive(branchId, (tx) => resolver.check(tx, { target, mode: "materialize", seal: null }, describe))).toMatchObject({ status: "refused" });
+        expect(await locks().runExclusive(branchId, (tx) => resolver.check(tx, { target: { ...target, branchId: randomUUID() }, mode: "materialize" }, describe))).toMatchObject({ status: "refused" });
+        await db.message_trigger_job.deleteMany({ where: { branchId, status: "failed" } });
+        await db.client.delete({ where: { id: clientId } });
+        expect(await locks().runExclusive(branchId, (tx) => resolver.check(tx, { target, mode: "dispatch", seal: allowed.seal }, describe))).toMatchObject({ status: "refused" });
+        await db.client.create({ data: { id: clientId, branchId, name: "합성 재생성", voucherClient: false, phone: "01000000001", createdAt: new Date("2090-01-01") } });
+        expect(await locks().runExclusive(branchId, (tx) => resolver.check(tx, { target, mode: "materialize" }, describe))).toMatchObject({ status: "refused" });
+    });
+
+    it.each(["no", "noSend", "none"] as const)("keeps %s covered scopes closed to new rules and never describes denied exact work", async (choice) => {
+        await seed(choice); await store.runTaskMutation(context, artifact, prepare, stage);
+        const resolver = new AgentAutomationAuthorityService(store);
+        const target: AgentAutomationCurrentTarget = { branchId, clientId, kind: "client-rule", ruleId: "synthetic-rule", scheduleId: null, recipientType: "client" };
+        const describe = jest.fn(async () => artifact.impact.effects[0] ?? null);
+        expect(await locks().runExclusive(branchId, (tx) => resolver.check(tx, { target, mode: "materialize" }, describe))).toMatchObject({ status: "refused" });
+        if (choice !== "none") expect(describe).not.toHaveBeenCalled();
+        expect(await locks().runExclusive(branchId, (tx) => resolver.check(tx, { target: { ...target, ruleId: "new-rule" }, mode: "materialize" }, describe))).toMatchObject({ status: "refused" });
+    });
+
+    it("refuses missing coverage or exact evidence rather than reopening legacy behavior", async () => {
+        await seed(); await store.runTaskMutation(context, artifact, prepare, stage);
+        const resolver = new AgentAutomationAuthorityService(store);
+        const target = resolverTarget(); const describe = async () => artifact.impact.effects[0]!;
+        const allowed = await locks().runExclusive(branchId, (tx) => resolver.check(tx, { target, mode: "materialize" }, describe));
+        if (allowed.status !== "allowed") throw new Error("Missing synthetic seal");
+        await db.message_trigger_job.delete({ where: { id: captured.authorities[0]!.id } });
+        expect(await locks().runExclusive(branchId, (tx) => resolver.check(tx, { target, mode: "dispatch", seal: allowed.seal }, describe))).toMatchObject({ status: "refused" });
+        expect(await locks().runExclusive(branchId, (tx) => resolver.check(tx, { target, mode: "materialize" }, describe))).toMatchObject({ status: "refused" });
+        await cleanup(); await seed(); await store.runTaskMutation(context, artifact, prepare, stage);
+        await db.message_trigger_job.delete({ where: { id: captured.coverages[0]!.id } });
+        expect(await locks().runExclusive(branchId, (tx) => resolver.check(tx, { target: resolverTarget(), mode: "materialize" }, async () => artifact.impact.effects[0]!))).toMatchObject({ status: "refused" });
+    });
+
+    it("keeps genuinely absent provenance legacy but refuses a copied seal", async () => {
+        await seed(); await store.runTaskMutation(context, artifact, prepare, stage);
+        const resolver = new AgentAutomationAuthorityService(store);
+        const first = await locks().runExclusive(branchId, (tx) => resolver.check(tx, { target: resolverTarget(), mode: "materialize" }, async () => artifact.impact.effects[0]!));
+        if (first.status !== "allowed") throw new Error("Missing synthetic seal");
+        const other = await db.client.create({ data: { branchId, name: "합성 독립 고객", voucherClient: false, phone: "01000000002" } });
+        const target = { ...resolverTarget(), clientId: other.id };
+        const describe = jest.fn(async () => null);
+        expect(await locks().runExclusive(branchId, (tx) => resolver.check(tx, { target, mode: "dispatch" }, describe))).toEqual({ status: "legacy" });
+        expect(describe).not.toHaveBeenCalled();
+        expect(await locks().runExclusive(branchId, (tx) => resolver.check(tx, { target, mode: "dispatch", seal: first.seal }, describe))).toMatchObject({ status: "refused" });
+    });
+
+    it("persists multiple schedule/client scopes in deterministic coverage-before-exact order and refuses recreated schedules", async () => {
+        const client = await db.client.create({ data: { id: clientId, branchId, name: "합성 일정 고객", voucherClient: false, phone: "01000000001" } });
+        await db.employee.createMany({ data: [97901, 97902].map((id) => ({ id, branchId, name: "합성 담당자", phone: "01000000002", workArea: [], grade: "test" })) });
+        const scheduleInput = { id: clientId + 1, branchId, clientId, primaryEmployeeId: 97901, secondaryEmployeeId: 97902,
+            workAddress: "합성 일정 주소", startDate: new Date("2030-01-01"), endDate: new Date("2030-01-10") };
+        const schedule = await db.employee_schedule.create({ data: scheduleInput });
+        const base: AgentAutomationEffect = { kind: "client-rule", ruleId: "rule-z", scheduleId: null, recipientType: "client", templateKey: "CLIENT_GREETING",
+            change: "refresh", recipientDigest: hash("recipient"), sourceDigest: hash("source"), templateDigest: hash("template"), policyDigest: hash("policy"), recipeDigest: hash("recipe") };
+        await seed("yes", { existingClient: client, effects: [base, { ...base, ruleId: "rule-a" },
+            ...(["secondary-employee", "primary-employee"] as const).map((recipientType) => ({ ...base, kind: "employee-assignment" as const,
+                scheduleId: schedule.id, ruleId: "schedule-rule", recipientType, templateKey: "EMPLOYEE_ASSIGNED" as const }))] });
+        const identity = artifact.impact.clientIdentity!;
+        prepare.mockImplementation(async (tx) => {
+            await tx.client.update({ where: { id: clientId }, data: { name: "합성 정정" } });
+            return { clientId, result: { id: clientId, status: "updated" }, coverages: [
+                ...(["secondary-employee", "primary-employee"] as const).map((recipientType) => ({ scope: { branchId, clientId, clientIdentity: identity,
+                    kind: "employee-assignment" as const, scheduleId: schedule.id, scheduleIdentity: agentAutomationScheduleIdentity(schedule.incarnationId), recipientType }, grandfatheredScopes: [] })),
+                { scope: { branchId, clientId, clientIdentity: identity, kind: "client-rule", scheduleId: null, scheduleIdentity: null, recipientType: "client" }, grandfatheredScopes: [] },
+            ] };
+        });
+        const written: string[] = [];
+        const observed = new Proxy(db, { get(target, key, receiver) {
+            if (key !== "$transaction") return Reflect.get(target, key, receiver);
+            return (callback: (tx: Prisma.TransactionClient) => Promise<unknown>) => db.$transaction(async (tx) => callback(new Proxy(tx, {
+                get(transaction, table, proxy) {
+                    const value = Reflect.get(transaction, table, proxy);
+                    if (table !== "message_trigger_job") return value;
+                    return new Proxy(value, { get(model, method) {
+                        const fn = Reflect.get(model, method);
+                        if (method !== "create") return typeof fn === "function" ? fn.bind(model) : fn;
+                        return async (args: Prisma.message_trigger_jobCreateArgs) => { written.push(args.data.dedupeKey); return model.create(args); };
+                    } });
+                },
+            })));
+        } });
+        store = new AgentAutomationRecordStoreService(new MessageAutomationBranchLockService(observed as never));
+        await store.runTaskMutation(context, artifact, prepare, stage);
+        expect(captured.coverages).toHaveLength(3); expect(captured.authorities).toHaveLength(4);
+        const coverageKeys = captured.coverages.map(({ scope }) => agentAutomationRecordPrefix("coverage", scope));
+        expect(coverageKeys).toEqual([...coverageKeys].sort((a, b) => a.localeCompare(b)));
+        expect(written).toEqual([...captured.coverages, ...captured.authorities].map(agentAutomationRecordKey));
+        const resolver = new AgentAutomationAuthorityService(store);
+        const authority = captured.authorities.find(({ scope }) => scope.recipientType === "primary-employee")!;
+        const target = resolverTarget(authority.scope);
+        const describe = jest.fn(async () => authority.effects[0]!);
+        const allowed = await locks().runExclusive(branchId, (tx) => resolver.check(tx, { target, mode: "materialize" }, describe));
+        expect(allowed.status).toBe("allowed");
+        expect(describe).toHaveBeenCalledWith({ scope: authority.scope, subject: { kind: "client", clientId, clientIdentity: identity }, change: "refresh" });
+        // Terminal storage has no FK that prevents ordinary schedule deletion.
+        await db.employee_schedule.delete({ where: { id: schedule.id } });
+        const recreated = await db.employee_schedule.create({ data: scheduleInput });
+        expect(recreated.incarnationId).not.toBe(schedule.incarnationId);
+        expect(await locks().runExclusive(branchId, (tx) => resolver.check(tx, { target, mode: "materialize" }, describe))).toMatchObject({ status: "refused" });
+        expect(prepare).toHaveBeenCalledTimes(1);
+    });
+
+    it("preserves only the exact unchanged independently authorized grandfathered fingerprint", async () => {
+        const client = await db.client.create({ data: { id: clientId, branchId, name: "합성 기존 고객", voucherClient: false, phone: "01000000001" } });
+        await seed("yes", { existingClient: client });
+        const identity = artifact.impact.clientIdentity!;
+        const prior = { ...artifact.impact.effects[0]!, ruleId: "independent-rule" };
+        const scope = { branchId, clientId, clientIdentity: identity, kind: "client-rule" as const, recipientType: "client" as const, scheduleId: null, scheduleIdentity: null };
+        prepare.mockImplementation(async (tx) => {
+            await tx.client.update({ where: { id: clientId }, data: { name: "합성 정정" } });
+            return { clientId, result: { id: clientId, status: "updated" }, coverages: [{ scope, grandfatheredScopes: [{
+                scope: { ...scope, ruleId: prior.ruleId }, fingerprint: agentAutomationGrandfatheredFingerprint(prior),
+            }] }] };
+        });
+        await store.runTaskMutation(context, artifact, prepare, stage);
+        const resolver = new AgentAutomationAuthorityService(store);
+        const target = { ...resolverTarget(), ruleId: prior.ruleId };
+        expect(await locks().runExclusive(branchId, (tx) => resolver.check(tx, { target, mode: "materialize" }, async () => prior))).toEqual({ status: "legacy" });
+        expect(await locks().runExclusive(branchId, (tx) => resolver.check(tx, { target, mode: "dispatch" }, async () => ({ ...prior, change: "refresh" })))).toEqual({ status: "legacy" });
+        expect(await locks().runExclusive(branchId, (tx) => resolver.check(tx, { target, mode: "dispatch" }, async () => ({ ...prior, sourceDigest: hash("new-source") })))).toMatchObject({ status: "refused" });
+        expect(await locks().runExclusive(branchId, (tx) => resolver.check(tx, { target: { ...target, ruleId: "new-rule" }, mode: "materialize" }, async () => ({ ...prior, ruleId: "new-rule" })))).toMatchObject({ status: "refused" });
+        expect(await locks().runExclusive(branchId, (tx) => resolver.check(tx, { target, mode: "dispatch" }, async () => { throw new Error("SYNTHETIC_PRIVATE_EXCEPTION"); }))).toEqual({ status: "refused", reason: "automation-authority-unavailable" });
+    });
+
 });
