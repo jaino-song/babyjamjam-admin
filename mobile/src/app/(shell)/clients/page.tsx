@@ -130,23 +130,24 @@ export default function ClientsPage() {
   });
   const isClientsFetching = isLoading || (isFetching && allClients.length === 0);
 
-  const detailController = useClientDetailController({
-    client: selectedClient,
-    clientId: selectedClientIdFromParam,
-    dataComponent: "mobile_clients_detail-sheet_stack_detail-page_content",
-    onClientUpdated: setSelectedClient,
-  });
-  const detailClient = detailController.detailClient;
-
-  const handleSelectClient = (client: Client) => {
-    setSelectedClient(client);
-  };
-
   const handleCloseDetailSheet = () => {
     setSelectedClient(null);
     if (selectedClientIdFromParam !== null) {
       router.replace("/clients");
     }
+  };
+
+  const detailController = useClientDetailController({
+    client: selectedClient,
+    clientId: selectedClientIdFromParam,
+    dataComponent: "mobile_clients_detail-sheet_stack_detail-page_content",
+    onClientUpdated: setSelectedClient,
+    onClientDeleted: handleCloseDetailSheet,
+  });
+  const detailClient = detailController.detailClient;
+
+  const handleSelectClient = (client: Client) => {
+    setSelectedClient(client);
   };
 
   const grouped = useMemo(() => {
@@ -269,7 +270,7 @@ export default function ClientsPage() {
         data-component="mobile_clients_detail-sheet"
         name="clients"
         sheetTitle={detailClient?.name}
-        isOpen={Boolean(detailClient)}
+        isOpen={Boolean(detailClient || selectedClientIdFromParam !== null || detailController.isDetailRefreshing || detailController.detailRefreshError)}
         onClose={handleCloseDetailSheet}
         list={
           <div
@@ -393,7 +394,7 @@ export default function ClientsPage() {
           </div>
         }
         detail={
-          detailClient
+          detailClient || selectedClientIdFromParam !== null || detailController.isDetailRefreshing || detailController.detailRefreshError
             ? detailController.detail
             : <div className="detail-body" data-component="mobile_clients_detail-sheet_stack_detail-page_empty" />
         }
