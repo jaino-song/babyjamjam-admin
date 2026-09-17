@@ -4,7 +4,9 @@ import type { ReactNode, RefObject } from "react";
 
 import type { DashboardAnalytic, SectionRows } from "./mockup-data";
 import { ListCard, ListRowsSkeleton, SectionedList } from "./primitives";
-import { StatsBar } from "@/components/app/v3";
+import { ListEmptyState, StatsBar } from "@/components/app/v3";
+import { Alert } from "@/components/ui/alert";
+import { Button } from "@/components/ui/button";
 
 const DASHBOARD_SOURCE_COMPONENT = "DashboardRedesign";
 
@@ -34,6 +36,12 @@ export interface DashboardRedesignProps {
   onFilterChange?: (label: string) => void;
   analyticsLoading?: boolean;
   loading?: boolean;
+  isError?: boolean;
+  isAnalyticsError?: boolean;
+  isRetrying?: boolean;
+  isRetryingAnalytics?: boolean;
+  onRetry?: () => void;
+  onRetryAnalytics?: () => void;
   /** Forwarded to ListCard — undefined/true shows the default load-more button, false/null hides it. */
   loadMore?: boolean | null;
   /** Forwarded to ListCard — click handler for the default load-more button. */
@@ -52,11 +60,24 @@ export function DashboardRedesign({
   onFilterChange,
   analyticsLoading = false,
   loading = false,
+  isError = false,
+  isAnalyticsError = false,
+  isRetrying = false,
+  isRetryingAnalytics = false,
+  onRetry,
+  onRetryAnalytics,
   loadMore,
   onLoadMore,
   loadMoreSentinel,
   scrollRef,
 }: DashboardRedesignProps) {
+  const emptyMessage = activeFilter === "조치 필요"
+    ? "조치가 필요한 고객이 없습니다."
+    : activeFilter === "시작 예정"
+      ? "서비스 시작 예정 고객이 없습니다."
+      : activeFilter === "종료 예정"
+        ? "서비스 종료 예정 고객이 없습니다."
+        : "최근 현황이 없습니다.";
   return (
     <section
       data-component={DASHBOARD_BASE}
@@ -64,12 +85,29 @@ export function DashboardRedesign({
       data-source-component={DASHBOARD_SOURCE_COMPONENT}
       className="flex h-full min-h-0 flex-col"
     >
-      <StatsBar
+      {isAnalyticsError ? (
+        <div className="stats-grid" data-component={DASHBOARD_ANALYTICS_BASE} data-slot="stats-grid">
+          <Alert
+            data-component={`${DASHBOARD_ANALYTICS_BASE}_error`}
+            variant="destructive" className="col-span-full"
+            contentClassName="flex flex-col items-start gap-2"
+          >
+            <p>요약 정보를 불러오지 못했습니다.</p>
+            <Button
+              data-component={`${DASHBOARD_ANALYTICS_BASE}_error_retry`}
+              variant="outline" size="sm" type="button"
+              disabled={isRetryingAnalytics} onClick={onRetryAnalytics}
+            >
+              {isRetryingAnalytics ? "다시 시도 중…" : "다시 시도"}
+            </Button>
+          </Alert>
+        </div>
+      ) : <StatsBar
         data-component={DASHBOARD_ANALYTICS_BASE}
         items={analytics}
         isLoading={analyticsLoading}
         variant="compact"
-      />
+      />}
 
       <div
         className="shell-content"
@@ -80,18 +118,31 @@ export function DashboardRedesign({
           data-component={DASHBOARD_LIST_CARD_BASE}
           title="최근 현황"
           count=""
-          filters={filters}
+          filters={isError ? filters.map((filter) => ({ ...filter, count: "—" })) : filters}
           activeFilter={activeFilter}
           onFilterChange={onFilterChange}
           scrollRef={scrollRef}
-          loadMore={loadMore}
+          loadMore={isError || loading ? false : loadMore}
           onLoadMore={onLoadMore}
         >
-          {loading ? (
+          {isError ? (
+            <Alert data-component={`${DASHBOARD_LIST_BODY_BASE}_error`} variant="destructive" contentClassName="flex flex-col items-start gap-2">
+              <p>최근 현황을 불러오지 못했습니다.</p>
+              <Button
+                data-component={`${DASHBOARD_LIST_BODY_BASE}_error_retry`}
+                variant="outline" size="sm" type="button"
+                disabled={isRetrying} onClick={onRetry}
+              >
+                {isRetrying ? "다시 시도 중…" : "다시 시도"}
+              </Button>
+            </Alert>
+          ) : loading ? (
             <ListRowsSkeleton
               data-component={DASHBOARD_LIST_SKELETON_BASE}
               rowCount={4}
             />
+          ) : sections.every((section) => section.rows.length === 0) ? (
+            <ListEmptyState name={`${DASHBOARD_LIST_BODY_BASE}_empty`} message={emptyMessage} />
           ) : (
             <>
               <SectionedList

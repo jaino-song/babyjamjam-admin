@@ -179,10 +179,16 @@ export default function DashboardPage() {
   // 60s staleTime: dashboard revisits within the window reuse the cache
   // instead of re-firing analytics + clients (and the eformsign sync burst
   // their invalidations cascade into) on every mount.
-  const { data: analytics, isLoading: analyticsLoading } = useDashboardAnalytics({
+  const {
+    data: analytics, isLoading: analyticsLoading, isError: analyticsError,
+    isFetching: analyticsFetching, refetch: refetchAnalytics,
+  } = useDashboardAnalytics({
     staleTime: 60_000,
   });
-  const { data: clientsData, isLoading: clientsLoading } = useClients(1, 50, undefined, {
+  const {
+    data: clientsData, isLoading: clientsLoading, isError: clientsError,
+    isFetching: clientsFetching, refetch: refetchClients,
+  } = useClients(1, 50, undefined, {
     staleTime: 60_000,
   });
   const user = useInitialUser();
@@ -475,6 +481,12 @@ export default function DashboardPage() {
             onFilterChange={setActiveFilter}
             analyticsLoading={(analyticsLoading || clientsLoading) && !analytics}
             loading={dashboardData.loading}
+            isError={clientsError}
+            isAnalyticsError={analyticsError}
+            isRetrying={clientsFetching}
+            isRetryingAnalytics={analyticsFetching}
+            onRetry={() => { void refetchClients(); }}
+            onRetryAnalytics={() => { void refetchAnalytics(); }}
             scrollRef={scrollContainerRef}
             loadMore={isInitialLoad && hasMore}
             onLoadMore={loadMore}
