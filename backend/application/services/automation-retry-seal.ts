@@ -56,7 +56,13 @@ export function readAutomationRetrySeal(
     variables: Record<string, string>,
 ): AutomationRetrySealState {
     const rawSeal = (job.payload as unknown as Record<string, unknown>)[AGENT_AUTOMATION_JOB_SEAL_PAYLOAD_KEY];
-    if (rawSeal === undefined) return { kind: "legacy" };
+    if (rawSeal === undefined) {
+        const hasResidualAssociation = Object.values(AUTOMATION_RETRY_SEAL_VARIABLES)
+            .some((key) => variables[key] !== undefined);
+        return hasResidualAssociation
+            ? { kind: "invalid", reason: "retry job seal is missing from durable source" }
+            : { kind: "legacy" };
+    }
     const expectedSnapshotHash = variables[AUTOMATION_RETRY_SEAL_VARIABLES.snapshotHash];
     let expected: Record<string, string>;
     try {

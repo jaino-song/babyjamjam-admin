@@ -4,7 +4,7 @@ import { AligoService } from "application/services/aligo.service";
 import { MessageSenderApprovalService } from "application/services/message-sender-approval.service";
 import { MessageAutomationActivationService } from "application/services/message-automation-activation.service";
 import { AgentAutomationJobAuthorityService } from "application/services/agent-automation-job-authority.service";
-import { SmsTriggerDeliveryService } from "application/services/sms-trigger-delivery.service";
+import { SmsTriggerDeliveryService, type SmsTriggerDeliverySnapshot } from "application/services/sms-trigger-delivery.service";
 import { parseKstSchedule } from "application/utils/kst-schedule";
 import { maskPhone } from "application/utils/mask";
 import {
@@ -54,7 +54,14 @@ type AutomaticRetryBoundary =
         schedule: RetrySchedule;
         retryLog: MessageLogEntity;
         providerAttempt: MessageLogEntity;
+        authorizedSnapshot?: Readonly<SmsTriggerDeliverySnapshot>;
     };
+
+type AutomaticRetryAuthorityState =
+    | Extract<AutomationRetrySealState, { kind: "legacy" | "invalid" }>
+    | (Extract<AutomationRetrySealState, { kind: "valid" }> & {
+        snapshot: Readonly<SmsTriggerDeliverySnapshot>;
+    });
 
 @Injectable()
 export class SmsRetryService {
@@ -158,6 +165,9 @@ export class SmsRetryService {
                         await this.logRepository.update(retryLog, transaction);
                         return { kind: "terminal", log: retryLog };
                     }
+                    if (retryAuthority.kind === "valid") {
+                        this.applyAuthorizedSnapshot(retryLog, retryAuthority.snapshot);
+                    }
 
                     try {
                         await this.messageSenderApprovalService.ensureApproved(retryLog.branchId ?? sourceLog.branchId!);
@@ -178,7 +188,13 @@ export class SmsRetryService {
                     if (!this.acceptanceService) {
                         await this.logRepository.update(providerAttempt, transaction);
                     }
-                    return { kind: "ready", schedule, retryLog, providerAttempt };
+                    return {
+                        kind: "ready",
+                        schedule,
+                        retryLog,
+                        providerAttempt,
+                        ...(retryAuthority.kind === "valid" ? { authorizedSnapshot: retryAuthority.snapshot } : {}),
+                    };
                 },
             );
             if (!boundary.applies) {
@@ -193,6 +209,7 @@ export class SmsRetryService {
                     boundary.value.retryLog,
                     boundary.value.providerAttempt,
                     invocation,
+                    boundary.value.authorizedSnapshot,
                 );
             }
         }
@@ -262,7 +279,7 @@ export class SmsRetryService {
     private async verifyAutomaticRetryAuthority(
         transaction: Prisma.TransactionClient,
         sourceLog: MessageLogEntity,
-    ): Promise<AutomationRetrySealState> {
+    ): Promise<AutomaticRetryAuthorityState> {
         if (!sourceLog.branchId || !sourceLog.triggerJobId) return { kind: "legacy" };
         try {
             const row = await transaction.message_trigger_job.findUnique({ where: { id: sourceLog.triggerJobId } });
@@ -301,21 +318,50 @@ export class SmsRetryService {
             if (!this.automationAuthority || !this.smsTriggerDeliveryService) {
                 return { kind: "invalid", reason: "automatic retry authority is not configured" };
             }
+            let canonicalSnapshot: Readonly<SmsTriggerDeliverySnapshot> | undefined;
             const authority = await this.automationAuthority.checkAutomaticJob(
                 transaction,
                 job,
                 "dispatch",
-                (current, tx) => this.smsTriggerDeliveryService!.resolveCanonicalDeliverySnapshot(current, tx),
+                async (current, tx) => {
+                    canonicalSnapshot = await this.smsTriggerDeliveryService!.resolveCanonicalDeliverySnapshot(current, tx);
+                    return canonicalSnapshot;
+                },
                 seal.snapshotHash,
             );
-            if (authority.status !== "allowed" || agentBindingHash(authority.seal) !== seal.sealDigest) {
+            if (authority.status !== "allowed" || agentBindingHash(authority.seal) !== seal.sealDigest
+                || !canonicalSnapshot || canonicalSnapshot.snapshotHash !== seal.snapshotHash) {
                 return { kind: "invalid", reason: "retry authority no longer matches current source" };
             }
-            return seal;
+            return { ...seal, snapshot: canonicalSnapshot };
         } catch (error) {
             this.logger.warn(`[Retry] Automatic authority verification failed: ${error instanceof Error ? error.message : String(error)}`);
             return { kind: "invalid", reason: "retry authority could not be verified" };
         }
+    }
+
+    private applyAuthorizedSnapshot(
+        log: MessageLogEntity,
+        snapshot: Readonly<SmsTriggerDeliverySnapshot>,
+    ): void {
+        log.receiver = snapshot.receiver;
+        log.recipientName = snapshot.recipientName;
+        log.recipientPhone = snapshot.receiver;
+        log.messageBody = snapshot.message;
+        log.variables = {
+            ...log.variables,
+            title: snapshot.title,
+            msgType: snapshot.requestedDeliveryType,
+        };
+        log.providerAcceptanceFingerprint = buildSmsProviderAcceptanceFingerprint({
+            branchId: log.branchId,
+            triggerJobId: log.triggerJobId,
+            templateKey: log.templateKey,
+            receiver: snapshot.receiver,
+            message: snapshot.message,
+            variables: log.variables,
+            retryAttempt: log.attempts,
+        });
     }
 
     private async sendRetryAttempt(
@@ -323,6 +369,7 @@ export class SmsRetryService {
         retryLog: MessageLogEntity,
         providerAttempt: MessageLogEntity,
         invocation: MessageRetryInvocation,
+        authorizedSnapshot?: Readonly<SmsTriggerDeliverySnapshot>,
     ): Promise<MessageLogEntity> {
         const isScheduledInFuture = schedule.scheduledAtMs !== null && schedule.scheduledAtMs > Date.now();
         const scheduledDate = isScheduledInFuture ? schedule.scheduledDate : undefined;
@@ -331,17 +378,23 @@ export class SmsRetryService {
         try {
             const result = await this.aligoService.sendSms({
                 senderPhone: this.stringVariable(retryLog, "senderPhone"),
-                receiver: providerAttempt.receiver,
-                message: providerAttempt.messageBody,
-                recipientName: providerAttempt.recipientName ?? this.stringVariable(providerAttempt, "recipientName") ?? undefined,
-                title: this.stringVariable(providerAttempt, "title") ?? undefined,
-                msgType: this.smsMessageTypeVariable(providerAttempt, "msgType"),
+                receiver: authorizedSnapshot?.receiver ?? providerAttempt.receiver,
+                message: authorizedSnapshot?.message ?? providerAttempt.messageBody,
+                recipientName: authorizedSnapshot?.recipientName
+                    ?? providerAttempt.recipientName
+                    ?? this.stringVariable(providerAttempt, "recipientName")
+                    ?? undefined,
+                title: authorizedSnapshot?.title ?? this.stringVariable(providerAttempt, "title") ?? undefined,
+                msgType: authorizedSnapshot?.requestedDeliveryType ?? this.smsMessageTypeVariable(providerAttempt, "msgType"),
                 ...(scheduledDate ? { scheduledDate } : {}),
                 ...(scheduledTime ? { scheduledTime } : {}),
                 ...(this.booleanVariable(retryLog, "testMode") ? { testMode: true } : {}),
             });
 
-            const providerOutcome = classifySmsProviderOutcome(result, countSmsRecipients(providerAttempt.receiver));
+            const providerOutcome = classifySmsProviderOutcome(
+                result,
+                countSmsRecipients(authorizedSnapshot?.receiver ?? providerAttempt.receiver),
+            );
             if (providerOutcome === "rejected") {
                 this.markSmsRetryRejected(providerAttempt, this.providerResponseMessage(result), invocation);
                 await this.logRepository.update(providerAttempt);

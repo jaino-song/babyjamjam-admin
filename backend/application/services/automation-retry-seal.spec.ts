@@ -65,6 +65,13 @@ describe("automation retry seal", () => {
         expect(readAutomationRetrySeal(job(false), {})).toEqual({ kind: "legacy" });
     });
 
+    it("fails closed when a sealed job loses its source seal but keeps durable association fields", () => {
+        const current = job();
+        const variables = buildAutomationRetrySealVariables(current, digest);
+        delete current.payload.agentAutomationSeal;
+        expect(readAutomationRetrySeal(current, variables)).toEqual(expect.objectContaining({ kind: "invalid" }));
+    });
+
     it("round-trips only digest-only fields for a sealed job", () => {
         const current = job();
         const variables = buildAutomationRetrySealVariables(current, digest);

@@ -690,6 +690,28 @@ describe("SmsRetryService", () => {
         sourceLog.variables = { ...sourceLog.variables, ...buildAutomationRetrySealVariables(job, snapshotHash) };
         expect(readAutomationRetrySeal(job, sourceLog.variables)).toEqual(expect.objectContaining({ kind: "valid" }));
 
+        const canonicalSnapshot = {
+            templateKey: MessageTriggerTemplateKey.CLIENT_GREETING,
+            receiver: "01012345678",
+            maskedReceiver: "010****5678",
+            recipientName: "김지니",
+            message: "정규화된 안내 문구",
+            title: "정규화된 인사",
+            requestedDeliveryType: "AUTO" as const,
+            deliveryType: "LMS" as const,
+            estimatedCost: "1",
+            templateVersion: "synthetic-template-v1",
+            templateHash: "f".repeat(64),
+            configVersion: "synthetic-config-v1",
+            configHash: "0".repeat(64),
+            snapshotHash,
+        };
+        // The historical log is mutable; a retry must use the verified
+        // canonical snapshot even if provider-bound fields were changed later.
+        sourceLog.receiver = "01099999999";
+        sourceLog.messageBody = "변조된 문구";
+        sourceLog.variables = { ...sourceLog.variables, title: "변조된 제목", msgType: "LMS" };
+
         const transaction = { message_trigger_job: { findUnique: jest.fn().mockResolvedValue(job) } };
         const activationService = {
             runAutomaticRetryIfEnabled: jest.fn().mockImplementation(async (_branch: string, _id: string, work: (tx: unknown) => Promise<unknown>) => ({
@@ -705,7 +727,7 @@ describe("SmsRetryService", () => {
             }),
         };
         const deliveryService = {
-            resolveCanonicalDeliverySnapshot: jest.fn().mockResolvedValue({ snapshotHash }),
+            resolveCanonicalDeliverySnapshot: jest.fn().mockResolvedValue(canonicalSnapshot),
         };
         const retryService = new SmsRetryService(
             logRepository as unknown as IMessageLogRepository,
@@ -717,7 +739,7 @@ describe("SmsRetryService", () => {
             deliveryService as never,
         );
         aligoService.sendSms.mockResolvedValue({
-            request: { senderPhone: "0212345678", receiver: sourceLog.receiver, msgType: "LMS", testModeYn: "N" },
+            request: { senderPhone: "0212345678", receiver: canonicalSnapshot.receiver, msgType: "LMS", testModeYn: "N" },
             response: { result_code: 1, message: "성공적으로 전송요청 하였습니다.", msg_id: 321, success_cnt: 1, error_cnt: 0, msg_type: "LMS" },
         });
 
@@ -726,6 +748,13 @@ describe("SmsRetryService", () => {
         expect(authorityService.checkAutomaticJob).toHaveBeenCalledTimes(1);
         expect(deliveryService.resolveCanonicalDeliverySnapshot).toHaveBeenCalledTimes(1);
         expect(aligoService.sendSms).toHaveBeenCalledTimes(1);
+        expect(aligoService.sendSms).toHaveBeenCalledWith(expect.objectContaining({
+            receiver: canonicalSnapshot.receiver,
+            message: canonicalSnapshot.message,
+            recipientName: canonicalSnapshot.recipientName,
+            title: canonicalSnapshot.title,
+            msgType: canonicalSnapshot.requestedDeliveryType,
+        }));
     });
 
     it("stops an automatic retry when the durable log copied a different task seal", async () => {
