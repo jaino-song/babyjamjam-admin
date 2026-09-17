@@ -337,3 +337,38 @@ Task-origin intent payloads now carry a strict digest-only task commit reference
 The ordinary client-write path now appends an immutable ordinary successor record under the existing branch lock in the same transaction as the client update and planner impact. Same mutation/operation/digest replay is idempotent and does not send or create a message log. Declined/noSend task records remain scoped and cannot be superseded by this path. The schedule-write successor writer is not connected here because the existing schedule mutation owner was outside this bounded slice; schedule/link provenance remains open for a dedicated owner integration.
 
 Focused unit, repository and backend type/build/lint checks passed. Guarded PostgreSQL coverage includes positive client successor, replay/idempotency, missing/stale/cross-branch task reference refusal and zero external sends, but requires the approved synthetic database environment to execute. This closes only the client ordinary-successor wiring slice; Phase7 and the three completion flags remain **not complete**.
+
+### Current integrated bounded slices (2026-09-18)
+
+The detailed implementation plan remains the source of truth. This dated section records the bounded work that is actually integrated on `/Users/jaino/Development/babyjamjam-admin/bjj-conversation-v1`, branch `codex/bjj-conversation-v1`. The integration head before this documentation commit is `809178e7f`; this entry deliberately distinguishes deterministic implementation evidence from model-quality and operational evidence.
+
+Integrated slices and independent review decisions:
+
+- **Durable retry seal:** `508decef6`, `a629831b3`, `e459821c1`. The retry payload is canonicalized and sealed to the task-owned job/snapshot before claim; legacy no-seal recovery remains compatible and mismatches fail closed. Focused helper/retry coverage was 33/33. The final scoped SOL review at `e459821c1` was **SHIP / HIGH**.
+- **Employee-assignment automation authority:** `ce41ffe90`. Task-origin assignment refresh is authorized only through the reviewed branch/task/action path; unsupported `EMPLOYEE_ASSIGNED` delivery remains fail-closed because no generic production SMS renderer exists. Verification was 6/6 unit cases, 223/223 message-trigger regressions, and 6/6 guarded stub cases. Independent SOL was **SHIP / HIGH**.
+- **Service-record link effects:** `c24da638a`, `f8d25dbf2`, `54d9a37c7`. The adapter mirrors the current assignment lookup and validates a canonical HTTPS origin/path; empty, HTTP, foreign-origin, query, userinfo and malformed values refuse before token/provider/write work. Focused coverage was 25 tests plus 15 delivery-gate cases. Independent SOL was **SHIP / HIGH**.
+- **Ordinary client-successor provenance:** `080b4be6d`, `809178e7f` (reviewed source `3e384ae4ec3c2dc9f05ca674fdb2ce951103e59d`). Digest-only task references now flow through intent, fulfillment and materialization; strict branch/task/action/revision/digest checks quarantine invalid carriers, and the ordinary client successor is idempotent with no duplicate send. The schedule-write successor owner is still unconnected. Worker evidence covered 8 suites/624 tests; guarded PostgreSQL execution was unavailable. Independent SOL was **SHIP / HIGH**.
+- **Desktop task snapshots and mutation recovery:** `b34ad22b9`, `d3d3ab357`, `3e68ff8f5`, `105e94ab5`, `97d4ec88f`. The desktop UI ignores stale snapshots, preserves task identity across refreshes, reconciles 409 conflicts and busy/uncertain mutations, and retires conflicts without overwriting newer server state. Final scoped SOL at `4ad2640baf7ecb1dc52d0763f1c605bd61abc23c` was **SHIP / HIGH**. Pending mutation descriptors remain memory-only across a full page reload; authenticated browser QA was not run.
+- **Mobile task snapshots and lifecycle identity:** `582cef532`, `4ee99053d`, `82349a240`. The mobile hook and shell consume the same task snapshot contract, reconcile active identity, and release terminal tasks. Focused coverage was 3 suites/50 tests. Independent SOL was **SHIP / HIGH**.
+
+Integrated verification on 2026-09-18:
+
+- Full backend Jest: **391 passed suites, 1 skipped (392 total); 5,548 passed tests, 44 skipped (5,592 total); 1 snapshot passed; exit 0**. The skipped suite is environment-gated; the run completed successfully.
+- Conversation-related backend focus: **10 suites / 381 tests passed**. Backend type-check, Nest build, shared type-check, backend-runtime vendor build and changed-file lint passed.
+- Deterministic conversation harness: **48/48 passed** (development 32, holdout 16), fixture digest `d983a554e420507006c4859a45062247a57ac5fe13df7e4d0262c73381b791ba`, assertion digest `e86ecc5a491a2c6a97cf67288be4763208d857553773ce837d9a6bf8eb5b7ea9`.
+- Current product adapter diagnostic: **0/48 passed, 48 failed** with no safety/network/transport errors. The failures are classified as unimplemented-feature/connection, mock-response/fixture-gap and observation/evidence-gap; this is a readiness diagnostic and is not an actual model-quality score.
+- Frontend focused tests: **3 suites / 62 tests passed**; frontend type-check, production build and UI-architecture lint passed. Full frontend lint exited 0 with warnings only.
+- Mobile focused tests: **3 suites / 50 tests passed**; mobile type-check and changed-file lint passed. The production build passed with a one-off loopback `NEXT_PUBLIC_API_BASE_URL` process value; no environment file was changed. Full mobile lint exited 0 with warnings only.
+- Capability manifest/drift check: **47 capabilities plus provider/desktop/mobile digests passed**. No vendor source change was required.
+- Targeted guarded agent E2E: **2 suites / 38 tests skipped** because the approved synthetic database/environment was unavailable; no live sender or provider call was used.
+- Security review: ignored environment/key files remain protected, changed-slice secret and dangerous-pattern scans were clean, `git diff --check` passed, and `pnpm audit --prod --ignore-registry-errors` reported no known vulnerabilities.
+
+Open scope and completion boundaries:
+
+- Phase7 remains **OPEN** at plan level. The schedule-write successor owner, complete cumulative real PostgreSQL/AppModule task-provider matrix, and final consent/provider coverage still require implementation and an approved database environment. The integrated slices do not claim Phase7 close.
+- Phase8 has bounded desktop/mobile integration, but authenticated browser QA, keyboard/IME/focus/scroll verification and final cross-screen acceptance are still pending.
+- Phase9 integration QA, release/rollback evidence and final independent cumulative review are still pending.
+- Actual Google/OpenAI conversation-quality evaluation remains deferred. The deterministic 48-case harness is a functional guard only; paid evaluation, repeated model comparison, human review and cost/latency thresholds are not complete.
+- No real SMS, production data change, merge to `dev`/`main`, deployment or operational activation was performed.
+
+The three completion flags therefore remain separate and **not complete**: (1) implementation/deterministic verification of the full plan, (2) actual conversation quality validation, and (3) operational application. The bullets above record only the integrated bounded slices and their evidence.
