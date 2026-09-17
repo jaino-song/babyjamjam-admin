@@ -94,10 +94,15 @@ import { MANUAL_DEDUPE_MARKER } from "domain/constants/service-end-notice-messag
 import {
     MessageAutomationPastTriggerConfig,
 } from "domain/entities/system-setting.entity";
+import type { AgentAutomationTaskCommitReference } from "domain/entities/agent-automation-consent";
 
 export interface MessageTriggerIntentSyncOptions {
     stableBatchAt: Date;
     preserveExisting: boolean;
+    /** Internal provenance marker; a reference without this marker is ignored. */
+    taskOrigin?: boolean;
+    /** Digest-only reference to the task records reviewed for this materialization. */
+    taskAutomationReference?: AgentAutomationTaskCommitReference;
 }
 
 type MessageTriggerRuleValidationParams = Pick<
@@ -1145,6 +1150,8 @@ export class MessageTriggerService {
                 includePast,
                 false,
                 intentOptions?.preserveExisting === true,
+                undefined,
+                intentOptions?.taskOrigin ? intentOptions.taskAutomationReference : undefined,
             );
         }
     }
@@ -1217,7 +1224,7 @@ export class MessageTriggerService {
         branchId: string,
         employeeScheduleId: number,
         includePast: boolean,
-        intentOptions?: Pick<MessageTriggerIntentSyncOptions, "preserveExisting">,
+        intentOptions?: Pick<MessageTriggerIntentSyncOptions, "preserveExisting" | "taskOrigin" | "taskAutomationReference">,
     ): Promise<boolean> {
         if (!(await this.hasTriggerSchema())) {
             return false;
@@ -1269,6 +1276,8 @@ export class MessageTriggerService {
                 includePast,
                 false,
                 intentOptions?.preserveExisting === true,
+                undefined,
+                intentOptions?.taskOrigin ? intentOptions.taskAutomationReference : undefined,
             );
             if (!persisted) retryable = true;
         }
@@ -1502,24 +1511,37 @@ export class MessageTriggerService {
         expectedJobsStale: boolean,
         preserveExisting = false,
         transaction?: Prisma.TransactionClient,
+        taskAutomationReference?: AgentAutomationTaskCommitReference,
     ): Promise<boolean> {
         if (!job) return true;
-        const automaticJob = this.isAutomaticMessageJob(job);
+        // The reference is carried only in the materialized job payload. It is
+        // digest-only and does not alter the source recipe, so callers without
+        // a task-origin intent retain the exact legacy object and expectations.
+        const materializedJob = taskAutomationReference
+            ? {
+                ...job,
+                payload: {
+                    ...job.payload,
+                    taskAutomationReference,
+                },
+            } as MessageTriggerJobEntity
+            : job;
+        const automaticJob = this.isAutomaticMessageJob(materializedJob);
         if (
             automaticJob
-            && (!this.messageAutomationActivationService || !this.messageAutomationBranchLockService || !this.automationDeliveryGate || !job.branchId)
+            && (!this.messageAutomationActivationService || !this.messageAutomationBranchLockService || !this.automationDeliveryGate || !materializedJob.branchId)
         ) {
             throw new ServiceUnavailableException("Message automation activation is not configured");
         }
-        if (!isMessageRecipeWithinMaterializationWindow(job, rule, includePast, new Date())) return true;
+        if (!isMessageRecipeWithinMaterializationWindow(materializedJob, rule, includePast, new Date())) return true;
         const persist = async (transaction?: Prisma.TransactionClient): Promise<MessageTriggerJobEntity | null> => {
-            if (automaticJob && job.branchId) {
-                const enabled = await this.messageAutomationActivationService!.getTriggerDispatchEnabled(job.branchId, transaction);
+            if (automaticJob && materializedJob.branchId) {
+                const enabled = await this.messageAutomationActivationService!.getTriggerDispatchEnabled(materializedJob.branchId, transaction);
                 if (!enabled) return null;
             }
             const persisted = await (transaction
                 ? this.jobRepository.upsertPendingForRuleGeneration(
-                    job,
+                    materializedJob,
                     rule.updatedAt,
                     expectedJobsStale,
                     preserveExisting,
@@ -1527,13 +1549,13 @@ export class MessageTriggerService {
                 )
                 : preserveExisting
                     ? this.jobRepository.upsertPendingForRuleGeneration(
-                        job,
+                        materializedJob,
                         rule.updatedAt,
                         expectedJobsStale,
                         true,
                     )
                     : this.jobRepository.upsertPendingForRuleGeneration(
-                        job,
+                        materializedJob,
                         rule.updatedAt,
                         expectedJobsStale,
                     ));
@@ -1546,7 +1568,7 @@ export class MessageTriggerService {
         };
         const persisted = automaticJob
             ? await this.messageAutomationBranchLockService!.runExclusive(
-                job.branchId!,
+                materializedJob.branchId!,
                 (lockTransaction) => persist(lockTransaction),
                 transaction,
             )

@@ -33,6 +33,7 @@ import {
     SERVICE_RECORD_LINK_SCHEDULING_RETRY_REASON,
 } from "domain/constants/service-record-link-message";
 import { SMS_DELIVERY_SNAPSHOT_VARIABLE } from "application/services/sms-trigger-delivery.service";
+import { createAgentAutomationTaskCommitReference } from "application/agent/agent-automation-storage.schema";
 
 jest.mock("infrastructure/database/schema-capabilities", () => ({
     hasColumn: jest.fn().mockResolvedValue(true),
@@ -3877,6 +3878,34 @@ describe("MessageTriggerService", () => {
         await sync.service.syncClientRulesForClient(branchId, 1, true);
 
         expect(sync.jobRepository.upsertPending).not.toHaveBeenCalled();
+    });
+
+    it("stamps a task commit reference on every materialized task-origin client job", async () => {
+        const greetingRule = createRule({
+            id: "rule-task-reference",
+            eventType: MessageTriggerEventType.CLIENT_CREATED,
+            offsetType: MessageTriggerOffsetType.IMMEDIATE,
+            templateKey: MessageTriggerTemplateKey.CLIENT_GREETING,
+        });
+        const sync = createSyncService();
+        sync.ruleRepository.findActiveByEventTypes.mockResolvedValue([greetingRule]);
+        const taskAutomationReference = createAgentAutomationTaskCommitReference({
+            actionId: "70000000-0000-4000-8000-000000000004",
+            taskId: "70000000-0000-4000-8000-000000000005",
+            taskRevision: 4,
+            authorities: [{ id: "70000000-0000-4000-8000-000000000001", recordDigest: "a".repeat(64), scopeDigest: "b".repeat(64) }],
+            coverages: [],
+        });
+
+        await sync.service.syncClientRulesForClient(branchId, 1, true, false, {
+            stableBatchAt: new Date("2026-06-27T00:00:00.000Z"),
+            preserveExisting: true,
+            taskOrigin: true,
+            taskAutomationReference,
+        });
+
+        const materialized = sync.jobRepository.upsertPending.mock.calls[0]?.[0] as MessageTriggerJobEntity | undefined;
+        expect(materialized?.payload.taskAutomationReference).toEqual(taskAutomationReference);
     });
 
     it("rebuildJobsForRule is a no-op for an unapproved branch", async () => {

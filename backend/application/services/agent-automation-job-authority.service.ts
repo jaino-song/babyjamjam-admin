@@ -23,6 +23,8 @@ import type { SmsTriggerDeliverySnapshot } from "./sms-trigger-delivery.service"
 import { agentAutomationConcreteJobDigest, agentAutomationSourcePayload } from "./agent-automation-job-binding";
 import { buildClientMessageRecipe, buildEmployeeAssignmentMessageRecipe, buildMessageRecipeDedupeKey } from "./message-trigger-recipes";
 import { z } from "zod";
+import { parseAgentAutomationTaskCommitReference } from "application/agent/agent-automation-storage.schema";
+import type { AgentAutomationTaskCommitReference } from "domain/entities/agent-automation-consent";
 
 const catchUpSchema = z.object({ batchId: z.string(), sequence: z.number().int().positive(),
     intervalMinutes: z.number().int().nonnegative(), originalScheduledFor: z.iso.datetime(),
@@ -71,6 +73,12 @@ export class AgentAutomationJobAuthorityService {
             const payload = job.payload as unknown as Record<string, unknown>;
             const seal = Object.prototype.hasOwnProperty.call(payload, AGENT_AUTOMATION_JOB_SEAL_PAYLOAD_KEY)
                 ? payload[AGENT_AUTOMATION_JOB_SEAL_PAYLOAD_KEY] : undefined;
+            const hasTaskReference = Object.prototype.hasOwnProperty.call(payload, "taskAutomationReference");
+            const parsedTaskReference = hasTaskReference
+                ? parseAgentAutomationTaskCommitReference(payload["taskAutomationReference"])
+                : undefined;
+            if (hasTaskReference && !parsedTaskReference) return refuse();
+            const taskReference: AgentAutomationTaskCommitReference | undefined = parsedTaskReference ?? undefined;
             const concreteJobDigest = agentAutomationConcreteJobDigest(job);
             // A transient/copied object cannot authorize another row. Materializers
             // insert/upsert, validate, then stamp within their existing transaction.
@@ -79,8 +87,8 @@ export class AgentAutomationJobAuthorityService {
             if (mode === "dispatch" && agentBindingHash((stored.payload as Record<string, unknown>)[AGENT_AUTOMATION_JOB_SEAL_PAYLOAD_KEY]) !== agentBindingHash(seal)) return refuse();
             return this.authority.check(transaction, {
                 target: { branchId: job.branchId, clientId: job.clientId, kind, ruleId: job.ruleId, scheduleId: job.employeeScheduleId, recipientType },
-                mode, seal, concreteJobDigest,
-            }, async (input) => this.describeCurrentClientEffect(transaction, job, input, render, preparedSnapshotHash));
+                mode, seal, concreteJobDigest, taskReference,
+            }, async (input) => this.describeCurrentClientEffect(transaction, job, input, render, preparedSnapshotHash, taskReference));
         } catch {
             return refuse();
         }
@@ -92,6 +100,7 @@ export class AgentAutomationJobAuthorityService {
         input: Parameters<DescribeCurrentAutomationEffect>[0],
         render: CanonicalAutomationRenderer,
         preparedSnapshotHash?: string,
+        taskReference?: AgentAutomationTaskCommitReference,
     ) {
         // Dedicated schedule/link owners require their bounded recipe adapters;
         // a known task scope cannot acquire authority from a generic substitute.
@@ -131,6 +140,9 @@ export class AgentAutomationJobAuthorityService {
             concrete.scheduledFor = job.scheduledFor;
             concrete.dedupeKey = buildMessageRecipeDedupeKey(rule.id, `client:${client.id}`, job.scheduledFor, rule.recipientType);
             concrete.payload = { ...concrete.payload, catchUp };
+        }
+        if (taskReference) {
+            concrete.payload = { ...concrete.payload, taskAutomationReference: taskReference };
         }
         if (job.scheduledFor.getTime() !== concrete.scheduledFor.getTime() || job.dedupeKey !== concrete.dedupeKey
             || job.recipientPhone !== concrete.recipientPhone || agentBindingHash(source) !== agentBindingHash(concrete.payload)) return null;

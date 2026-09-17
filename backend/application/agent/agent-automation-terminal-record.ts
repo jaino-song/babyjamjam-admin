@@ -15,12 +15,19 @@ const taskCommitSchema = z.object({
     capability: z.enum(["clients.create", "clients.update"]), resourceId: z.number().int().positive(),
     receiptDigest: digest, recordedAt: z.iso.datetime(),
 }).strict();
+const ordinaryCommitSchema = z.object({
+    version: z.literal(1), kind: z.literal("ordinary"), mutationId: z.uuid(),
+    operation: z.enum(["client-write", "schedule-write", "manual-message", "agent-message-retry"]),
+    resourceId: z.number().int().positive(), recordedAt: z.iso.datetime(),
+}).strict();
 const terminalSchema = z.object({
     version: z.literal(1), record: z.union([AgentAutomationAuthorityStorageSchema, AgentAutomationCoverageStorageSchema]),
-    commit: taskCommitSchema, commitDigest: digest,
+    commit: z.union([taskCommitSchema, ordinaryCommitSchema]), commitDigest: digest,
 }).strict();
 const payloadSchema = z.object({ [AGENT_AUTOMATION_RECORD_PAYLOAD_KEY]: terminalSchema }).strict();
 export type AgentAutomationTaskCommit = z.infer<typeof taskCommitSchema>;
+export type AgentAutomationOrdinaryCommit = z.infer<typeof ordinaryCommitSchema>;
+export type AgentAutomationCommit = AgentAutomationTaskCommit | AgentAutomationOrdinaryCommit;
 export type AgentAutomationTerminalRecord = z.infer<typeof terminalSchema>;
 export type AgentAutomationStoredRecord = AgentAutomationAuthority | AgentAutomationCoverage;
 
@@ -34,18 +41,21 @@ export function agentAutomationRecordPrefix(kind: "authority" | "coverage", scop
 export function agentAutomationRecordKey(record: AgentAutomationStoredRecord): string {
     return `${agentAutomationRecordPrefix(isCoverage(record) ? "coverage" : "authority", record.scope)}${record.sequence}`;
 }
-export function createAgentAutomationTerminalRecord(record: AgentAutomationStoredRecord, commit: AgentAutomationTaskCommit): AgentAutomationTerminalRecord {
+export function createAgentAutomationTerminalRecord(record: AgentAutomationStoredRecord, commit: AgentAutomationCommit): AgentAutomationTerminalRecord {
     const value = terminalSchema.parse({ version: 1, record, commit,
         commitDigest: agentBindingHash({ recordDigest: record.recordDigest, commit }) });
-    if (!hasTaskCommitBinding(value)) throw new Error("Invalid committed automation record");
+    if (!hasCommitBinding(value)) throw new Error("Invalid committed automation record");
     return value;
 }
-function hasTaskCommitBinding(value: AgentAutomationTerminalRecord): boolean {
+function hasCommitBinding(value: AgentAutomationTerminalRecord): boolean {
     const { record, commit } = value;
     const origin = record.origin;
-    return origin.kind === "task" && origin.actionId === commit.actionId && origin.userId === commit.userId
-        && origin.taskId === commit.taskId && origin.taskRevision === commit.taskRevision
-        && record.scope.clientId === commit.resourceId && record.recordedAt === commit.recordedAt
+    const binding = commit.kind === "task"
+        ? origin.kind === "task" && origin.actionId === commit.actionId && origin.userId === commit.userId
+            && origin.taskId === commit.taskId && origin.taskRevision === commit.taskRevision
+        : origin.kind === "ordinary" && origin.mutationId === commit.mutationId
+            && origin.operation === commit.operation;
+    return binding && record.scope.clientId === commit.resourceId && record.recordedAt === commit.recordedAt
         && value.commitDigest === agentBindingHash({ recordDigest: record.recordDigest, commit });
 }
 
@@ -62,7 +72,7 @@ export function decodeAgentAutomationTerminalRow(row: {
     const value = parsed.data[AGENT_AUTOMATION_RECORD_PAYLOAD_KEY];
     const { record } = value;
     const recordedAt = new Date(record.recordedAt).getTime();
-    return hasTaskCommitBinding(value) && row.id === record.id && row.branchId === record.scope.branchId
+    return hasCommitBinding(value) && row.id === record.id && row.branchId === record.scope.branchId
         && row.ruleId === MESSAGE_AUTOMATION_INTENT_RULE_ID && row.dedupeKey === agentAutomationRecordKey(record)
         && row.status === "canceled" && row.cancelReason === AGENT_AUTOMATION_RECORD_CANCEL_REASON
         && row.canceledAt?.getTime() === recordedAt && row.scheduledFor.getTime() === recordedAt && row.sentAt === null

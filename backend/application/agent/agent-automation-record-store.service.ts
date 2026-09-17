@@ -1,7 +1,7 @@
 import { Injectable } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
 import { randomUUID } from "node:crypto";
-import type { AgentAutomationAuthority, AgentAutomationCoverage, AgentAutomationCoverageScope, AgentAutomationGrandfatheredScope, AgentAutomationScope } from "domain/entities/agent-automation-consent";
+import { isAgentAutomationOperationValid, type AgentAutomationAuthority, type AgentAutomationCoverage, type AgentAutomationCoverageScope, type AgentAutomationEffect, type AgentAutomationGrandfatheredScope, type AgentAutomationScope, type AgentAutomationTaskCommitReference } from "domain/entities/agent-automation-consent";
 import { AGENT_AUTOMATION_RECORD_CANCEL_REASON, AGENT_AUTOMATION_RECORD_PAYLOAD_KEY, AGENT_AUTOMATION_TASK_SCOPE_CANCEL_REASON } from "domain/constants/agent-automation-storage";
 import { MESSAGE_AUTOMATION_INTENT_RULE_ID } from "domain/constants/message-automation-intent";
 import { MessageTriggerEventType, MessageTriggerOffsetType, MessageTriggerRecipientType, MessageTriggerTemplateKey } from "domain/constants/message-trigger-catalog";
@@ -10,11 +10,11 @@ import { MessageAutomationBranchLockService } from "application/services/message
 import type { AgentContext } from "./agent-context";
 import { recordAgentActionEffect, readAgentActionEffect, type AgentActionEffectReceipt } from "./agent-action-effect-receipt";
 import { parseTaskAutomationArtifact, TASK_AUTOMATION_ARTIFACT_KEY, type AgentTaskAutomationArtifact } from "./agent-task-automation-artifact";
-import { agentAutomationEffectDigest, agentAutomationRecordDigest, agentAutomationScheduleIdentity } from "./agent-automation-consent";
-import { agentAutomationCoverageRecordDigest, agentAutomationCoverageScope, canonicalAgentAutomationGrandfatheredScopes } from "./agent-automation-coverage";
-import { AgentAutomationCoverageScopeStorageSchema, AgentAutomationReceiptMetadataSchema, AgentAutomationScopeStorageSchema } from "./agent-automation-storage.schema";
+import { agentAutomationEffectDigest, agentAutomationRecordDigest, agentAutomationScheduleIdentity, canonicalAgentAutomationEffects } from "./agent-automation-consent";
+import { agentAutomationCoverageRecordDigest, agentAutomationCoverageScope, agentAutomationGrandfatheredFingerprint, canonicalAgentAutomationGrandfatheredScopes } from "./agent-automation-coverage";
+import { AgentAutomationCoverageScopeStorageSchema, AgentAutomationReceiptMetadataSchema, AgentAutomationScopeStorageSchema, AgentAutomationTaskCommitReferenceSchema, parseAgentAutomationTaskCommitReference } from "./agent-automation-storage.schema";
 import { agentAutomationRecordKey, agentAutomationRecordPrefix, createAgentAutomationTerminalRecord, decodeAgentAutomationTerminalRow,
-    isCoverage, type AgentAutomationStoredRecord, type AgentAutomationTerminalRecord } from "./agent-automation-terminal-record";
+    isCoverage, type AgentAutomationCommit, type AgentAutomationStoredRecord, type AgentAutomationTerminalRecord } from "./agent-automation-terminal-record";
 
 const MAX_CHAIN = 4096;
 const MAX_AFFECTED_JOBS = 500;
@@ -69,6 +69,29 @@ export interface AgentAutomationTaskMutation {
 export interface AgentAutomationCommittedBatch {
     authorities: AgentAutomationAuthority[];
     coverages: AgentAutomationCoverage[];
+}
+
+export function agentAutomationTaskCommitReference(input: {
+    actionId: string;
+    taskId: string;
+    taskRevision: number;
+    batch: AgentAutomationCommittedBatch;
+}): AgentAutomationTaskCommitReference {
+    const authorities = input.batch.authorities.map(({ id, recordDigest, scope }) => ({
+        id, recordDigest, scopeDigest: agentBindingHash(scope),
+    }));
+    const coverages = input.batch.coverages.map(({ id, recordDigest, scope }) => ({
+        id, recordDigest, scopeDigest: agentBindingHash(scope),
+    }));
+    const canonical = {
+        version: 1 as const,
+        actionId: input.actionId,
+        taskId: input.taskId,
+        taskRevision: input.taskRevision,
+        authorities: [...authorities].sort((a, b) => a.scopeDigest.localeCompare(b.scopeDigest)),
+        coverages: [...coverages].sort((a, b) => a.scopeDigest.localeCompare(b.scopeDigest)),
+    };
+    return AgentAutomationTaskCommitReferenceSchema.parse({ ...canonical, commitDigest: agentBindingHash(canonical) });
 }
 export interface AgentAutomationLineageEvidence {
     batch: AgentAutomationCommittedBatch;
@@ -174,12 +197,7 @@ export class AgentAutomationRecordStoreService {
                     userId: artifact.userId, taskId: artifact.taskId, taskRevision: artifact.taskRevision, questionRef: artifact.question.questionRef,
                     inputHash: artifact.inputHash, capability: artifact.capability, resourceId: client.id,
                     receiptDigest: agentBindingHash(receipt), recordedAt });
-                await tx.message_trigger_job.create({ data: { id: record.id, branchId: artifact.branchId, ruleId: MESSAGE_AUTOMATION_INTENT_RULE_ID,
-                    dedupeKey: agentAutomationRecordKey(record), status: "canceled", scheduledFor: new Date(recordedAt), canceledAt: new Date(recordedAt),
-                    cancelReason: AGENT_AUTOMATION_RECORD_CANCEL_REASON, clientId: null, employeeScheduleId: null, recipientPhone: null,
-                    recipientType: MessageTriggerRecipientType.CLIENT, templateKey: MessageTriggerTemplateKey.CLIENT_GREETING,
-                    nextAttemptAt: null, claimToken: null, attempts: 0, canceledByUser: false,
-                    payload: { [AGENT_AUTOMATION_RECORD_PAYLOAD_KEY]: terminal } as unknown as Prisma.InputJsonValue } });
+                await this.persistTerminalRecord(tx, record, terminal.commit);
             }
             return receipt;
         }, transaction);
@@ -190,6 +208,197 @@ export class AgentAutomationRecordStoreService {
         return (await this.readLineageEvidence(transaction, scope)).batch;
     }
 
+    /**
+     * Verify that a task-origin intent carrier points at the exact terminal
+     * records committed by that task.  The reference is intentionally small;
+     * all authority still comes from strict physical rows in this transaction.
+     */
+    async verifyTaskCommitReference(
+        transaction: Prisma.TransactionClient,
+        reference: AgentAutomationTaskCommitReference,
+        branchId: string,
+    ): Promise<boolean> {
+        const parsed = parseAgentAutomationTaskCommitReference(reference);
+        if (!parsed) return false;
+        const refs = [
+            ...parsed.authorities.map((value) => ({ ...value, kind: "authority" as const })),
+            ...parsed.coverages.map((value) => ({ ...value, kind: "coverage" as const })),
+        ];
+        if (!refs.length) return false;
+        const rows = await transaction.message_trigger_job.findMany({
+            where: { branchId, id: { in: refs.map(({ id }) => id) } },
+        });
+        if (rows.length !== refs.length) return false;
+        const byId = new Map(rows.map((row) => [row.id, row]));
+        for (const ref of refs) {
+            const row = byId.get(ref.id);
+            if (!row) return false;
+            const terminal = decodeAgentAutomationTerminalRow(row);
+            if (!terminal || (isCoverage(terminal.record) ? ref.kind !== "coverage" : ref.kind !== "authority")
+                || terminal.commit.kind !== "task"
+                || terminal.commit.actionId !== parsed.actionId
+                || terminal.commit.taskId !== parsed.taskId
+                || terminal.commit.taskRevision !== parsed.taskRevision
+                || terminal.record.recordDigest !== ref.recordDigest
+                || agentBindingHash(terminal.record.scope) !== ref.scopeDigest
+                || terminal.record.scope.branchId !== branchId) return false;
+        }
+        return true;
+    }
+
+    /**
+     * Append a trusted ordinary replacement for an already-known task scope.
+     * The caller must pass the same transaction that owns the ordinary source
+     * mutation.  Legacy scopes remain untouched; only a task-rooted exact or
+     * coverage lineage can be superseded here.
+     */
+    async appendOrdinarySuccessors(
+        transaction: Prisma.TransactionClient,
+        params: {
+            branchId: string;
+            clientId: number;
+            mutationId: string;
+            operation: "client-write" | "schedule-write";
+            effects: readonly AgentAutomationEffect[];
+        },
+    ): Promise<void> {
+        if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(params.mutationId)
+            || !["client-write", "schedule-write"].includes(params.operation)
+            || !Number.isSafeInteger(params.clientId) || params.clientId < 1 || !Array.isArray(params.effects)
+            || params.effects.length > MAX_AFFECTED_JOBS) {
+            throw new AgentAutomationRecordRefusedError();
+        }
+        let effects: AgentAutomationEffect[];
+        try {
+            effects = canonicalAgentAutomationEffects(params.effects);
+        } catch {
+            throw new AgentAutomationRecordRefusedError();
+        }
+        if (!effects.length) return;
+        await this.branchLocks.runExclusive(params.branchId, async (tx) => {
+            const client = await tx.client.findFirst({
+                where: { id: params.clientId, branchId: params.branchId },
+                select: { id: true, createdAt: true },
+            });
+            if (!client?.createdAt) throw new AgentAutomationRecordRefusedError();
+            const clientIdentity = agentBindingHash({ version: 1, resource: "client", id: client.id, createdAt: client.createdAt.toISOString() });
+            const pendingCoverages: Array<{ record: AgentAutomationCoverage; commit: AgentAutomationCommit }> = [];
+            const pendingAuthorities: Array<{ record: AgentAutomationAuthority; commit: AgentAutomationCommit }> = [];
+            for (const effect of effects) {
+                if (!isAgentAutomationOperationValid(effect)
+                    || (params.operation === "client-write" && effect.kind !== "client-rule")
+                    || (params.operation === "schedule-write" && !["employee-assignment", "service-record-link"].includes(effect.kind))) {
+                    throw new AgentAutomationRecordRefusedError();
+                }
+                const schedule = effect.scheduleId === null ? null : await tx.employee_schedule.findFirst({
+                    where: { id: effect.scheduleId, branchId: params.branchId, clientId: params.clientId },
+                    select: { incarnationId: true },
+                });
+                if (effect.scheduleId !== null && !schedule) throw new AgentAutomationRecordRefusedError();
+                const scope = AgentAutomationScopeStorageSchema.parse({
+                    branchId: params.branchId,
+                    clientId: params.clientId,
+                    clientIdentity,
+                    kind: effect.kind,
+                    ruleId: effect.ruleId,
+                    scheduleId: effect.scheduleId,
+                    scheduleIdentity: schedule ? agentAutomationScheduleIdentity(schedule.incarnationId) : null,
+                    recipientType: effect.recipientType,
+                });
+                const evidence = await this.readLineageEvidence(tx, scope);
+                const exactHead = evidence.batch.authorities.at(-1);
+                const coverageScope = agentAutomationCoverageScope(scope);
+                const coverageHead = evidence.batch.coverages.at(-1);
+                if (!exactHead && !coverageHead) continue;
+
+                const effectDigest = agentAutomationEffectDigest([effect]);
+                const mutationDigest = agentBindingHash({ version: 1, mutationId: params.mutationId,
+                    operation: params.operation, scope: agentBindingHash(scope), effectDigest });
+                const recordedAt = new Date().toISOString();
+                const commit: AgentAutomationCommit = {
+                    version: 1,
+                    kind: "ordinary",
+                    mutationId: params.mutationId,
+                    operation: params.operation,
+                    resourceId: params.clientId,
+                    recordedAt,
+                };
+
+                if (exactHead) {
+                    // A declined/noSend task is an explicit user decision. An
+                    // ordinary source write cannot silently turn that denial
+                    // into an allow; a new task review is required.
+                    if (exactHead.origin.kind === "task" && (exactHead.decision !== "allow" || exactHead.noSend)) {
+                        throw new AgentAutomationRecordRefusedError();
+                    }
+                    if (exactHead.origin.kind === "ordinary"
+                        && exactHead.origin.mutationId === params.mutationId
+                        && exactHead.origin.operation === params.operation) {
+                        if (exactHead.scopeEffectDigest !== effectDigest) throw new AgentAutomationRecordRefusedError();
+                        continue;
+                    }
+                    const record: AgentAutomationAuthority = {
+                        version: 1,
+                        id: randomUUID(),
+                        scope,
+                        sequence: exactHead.sequence + 1,
+                        previousId: exactHead.id,
+                        origin: { kind: "ordinary", mutationId: params.mutationId, operation: params.operation },
+                        decision: effect.change === "cancel" ? "deny" : "allow",
+                        noSend: effect.change === "cancel",
+                        effects: [effect],
+                        scopeEffectDigest: effectDigest,
+                        reviewedEffectDigest: effectDigest,
+                        reviewedPolicyDigest: effect.policyDigest,
+                        recordedAt,
+                        recordDigest: "",
+                    };
+                    record.recordDigest = agentAutomationRecordDigest(record);
+                    pendingAuthorities.push({ record, commit });
+                    continue;
+                }
+
+                // A coverage-only scope can be superseded only when the
+                // ordinary mutation reproduces one of its explicitly
+                // grandfathered exact fingerprints.  It may not grant a new
+                // future rule through the coverage family.
+                const sameOrdinaryMutation = coverageHead!.origin.kind === "ordinary"
+                    && coverageHead!.origin.mutationId === params.mutationId
+                    && coverageHead!.origin.operation === params.operation;
+                if (sameOrdinaryMutation) {
+                    if (coverageHead!.mutationDigest !== mutationDigest) throw new AgentAutomationRecordRefusedError();
+                    continue;
+                }
+                const fingerprint = agentAutomationGrandfatheredFingerprint(effect);
+                if (!coverageHead!.grandfatheredScopes.some((member) =>
+                    agentBindingHash(member.scope) === agentBindingHash(scope) && member.fingerprint === fingerprint)) {
+                    continue;
+                }
+                const record: AgentAutomationCoverage = {
+                    kind: "coverage",
+                    version: 1,
+                    id: randomUUID(),
+                    scope: coverageScope,
+                    sequence: coverageHead!.sequence + 1,
+                    previousId: coverageHead!.id,
+                    origin: { kind: "ordinary", mutationId: params.mutationId, operation: params.operation },
+                    mutationDigest,
+                    grandfatheredScopes: canonicalAgentAutomationGrandfatheredScopes(coverageScope, [{ scope, fingerprint }]),
+                    recordedAt,
+                    recordDigest: "",
+                };
+                record.recordDigest = agentAutomationCoverageRecordDigest(record);
+                pendingCoverages.push({ record, commit });
+            }
+            for (const entry of pendingCoverages.sort((left, right) => agentAutomationRecordKey(left.record).localeCompare(agentAutomationRecordKey(right.record)))) {
+                await this.persistTerminalRecord(tx, entry.record, entry.commit);
+            }
+            for (const entry of pendingAuthorities.sort((left, right) => agentAutomationRecordKey(left.record).localeCompare(agentAutomationRecordKey(right.record)))) {
+                await this.persistTerminalRecord(tx, entry.record, entry.commit);
+            }
+        }, transaction);
+    }
+
     async readLineageEvidence(transaction: Prisma.TransactionClient, scope: AgentAutomationScope): Promise<AgentAutomationLineageEvidence> {
         const valid = AgentAutomationScopeStorageSchema.parse(scope);
         const coverages = await this.load(transaction, "coverage", agentAutomationCoverageScope(valid));
@@ -198,8 +407,10 @@ export class AgentAutomationRecordStoreService {
         this.head(authorities, valid);
         return { batch: { coverages: coverages.map(({ record }) => record as AgentAutomationCoverage),
             authorities: authorities.map(({ record }) => record as AgentAutomationAuthority) },
-            creationSubjects: authorities.filter(({ commit }) => commit.capability === "clients.create")
-                .map(({ record, commit }) => ({ authorityId: record.id, taskId: commit.taskId })) };
+            creationSubjects: authorities.flatMap(({ record, commit }) =>
+                commit.kind === "task" && commit.capability === "clients.create"
+                    ? [{ authorityId: record.id, taskId: commit.taskId }]
+                    : []) };
     }
 
     private async load(tx: Prisma.TransactionClient, kind: "coverage" | "authority", scope: AgentAutomationScope | AgentAutomationCoverageScope) {
@@ -293,7 +504,7 @@ export class AgentAutomationRecordStoreService {
         for (const row of rows) {
             const terminal = decodeAgentAutomationTerminalRow(row);
             const ref = refs.find(({ id }) => id === row.id)!;
-            if (!terminal || terminal.commit.receiptDigest !== agentBindingHash(receipt) || terminal.commit.actionId !== artifact.actionId
+            if (!terminal || terminal.commit.kind !== "task" || terminal.commit.receiptDigest !== agentBindingHash(receipt) || terminal.commit.actionId !== artifact.actionId
                 || terminal.record.recordDigest !== ref.recordDigest || agentBindingHash(terminal.record.scope) !== ref.scopeDigest) refuse();
         }
     }
@@ -304,5 +515,20 @@ export class AgentAutomationRecordStoreService {
             eventType: MessageTriggerEventType.CLIENT_CREATED, offsetType: MessageTriggerOffsetType.IMMEDIATE, offsetDays: 0,
             recipientType: MessageTriggerRecipientType.CLIENT, templateKey: MessageTriggerTemplateKey.CLIENT_GREETING, isDefault: false, jobsStale: false,
         } });
+    }
+
+    private async persistTerminalRecord(
+        tx: Prisma.TransactionClient,
+        record: AgentAutomationStoredRecord,
+        commit: AgentAutomationCommit,
+    ): Promise<void> {
+        const terminal = createAgentAutomationTerminalRecord(record, commit);
+        const recordedAt = new Date(record.recordedAt);
+        await tx.message_trigger_job.create({ data: { id: record.id, branchId: record.scope.branchId, ruleId: MESSAGE_AUTOMATION_INTENT_RULE_ID,
+            dedupeKey: agentAutomationRecordKey(record), status: "canceled", scheduledFor: recordedAt, canceledAt: recordedAt,
+            cancelReason: AGENT_AUTOMATION_RECORD_CANCEL_REASON, clientId: null, employeeScheduleId: null, recipientPhone: null,
+            recipientType: MessageTriggerRecipientType.CLIENT, templateKey: MessageTriggerTemplateKey.CLIENT_GREETING,
+            nextAttemptAt: null, claimToken: null, attempts: 0, canceledByUser: false,
+            payload: { [AGENT_AUTOMATION_RECORD_PAYLOAD_KEY]: terminal } as unknown as Prisma.InputJsonValue } });
     }
 }

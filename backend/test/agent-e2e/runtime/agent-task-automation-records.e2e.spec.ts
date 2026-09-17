@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import type { AgentAutomationEffect, AgentAutomationScope } from "../../../domain/entities/agent-automation-consent";
 import { AgentAutomationAuthorityService, type AgentAutomationCurrentTarget } from "../../../application/agent/agent-automation-authority.service";
 import { agentAutomationScheduleIdentity } from "../../../application/agent/agent-automation-consent";
-import { AgentAutomationRecordStoreService, type AgentAutomationCommittedBatch, type AgentAutomationTaskMutation } from "../../../application/agent/agent-automation-record-store.service";
+import { AgentAutomationRecordStoreService, agentAutomationTaskCommitReference, type AgentAutomationCommittedBatch, type AgentAutomationTaskMutation } from "../../../application/agent/agent-automation-record-store.service";
 import { MessageAutomationBranchLockService } from "../../../application/services/message-automation-branch-lock.service";
 import { persistClientMessageAutomationIntent } from "../../../application/services/message-automation-intent-writer";
 import { createAgentAutomationQuestion, answerAgentAutomationQuestion } from "../../../application/agent/agent-automation-question";
@@ -196,6 +196,73 @@ describeDb("committed task automation terminal record transactions", () => {
         expect(await terminals()).toEqual(rows);
     });
 
+    it.each(["no", "noSend"] as const)("does not supersede a declined or noSend task authority (%s)", async (choice) => {
+        await seed(choice);
+        await store.runTaskMutation(context, artifact, prepare, stage);
+        const effect = captured.authorities[0]!.effects[0]!;
+        await expect(db.$transaction((tx) => store.appendOrdinarySuccessors(tx, {
+            branchId, clientId, mutationId: randomUUID(), operation: "client-write", effects: [effect],
+        }))).rejects.toThrow("Automation record transaction refused");
+        expect(await terminals()).toHaveLength(2);
+    });
+
+    it("stamps an ordinary successor under the branch lock and replays it idempotently without sending", async () => {
+        await seed();
+        await store.runTaskMutation(context, artifact, prepare, stage);
+        const effect = captured.authorities[0]!.effects[0]!;
+        const mutationId = randomUUID();
+        const beforeMessages = await db.message_log.count({ where: { branchId } });
+
+        await db.$transaction((tx) => store.appendOrdinarySuccessors(tx, {
+            branchId,
+            clientId,
+            mutationId,
+            operation: "client-write",
+            effects: [effect],
+        }));
+        const afterFirst = await terminals();
+        const ordinary = afterFirst
+            .map((row) => decodeAgentAutomationTerminalRow(row))
+            .find((value) => value?.commit.kind === "ordinary");
+        expect(afterFirst).toHaveLength(3);
+        expect(ordinary?.commit).toMatchObject({ kind: "ordinary", mutationId, operation: "client-write", resourceId: clientId });
+        const resolver = new AgentAutomationAuthorityService(store);
+        const target = resolverTarget(captured.authorities[0]!.scope);
+        await expect(db.$transaction((tx) => resolver.check(tx, {
+            concreteJobDigest: hash("synthetic-ordinary-successor-job"),
+            target,
+            mode: "materialize",
+        }, async () => effect))).resolves.toMatchObject({ status: "allowed" });
+
+        await db.$transaction((tx) => store.appendOrdinarySuccessors(tx, {
+            branchId,
+            clientId,
+            mutationId,
+            operation: "client-write",
+            effects: [effect],
+        }));
+        expect(await terminals()).toEqual(afterFirst);
+        expect(await db.message_log.count({ where: { branchId } })).toBe(beforeMessages);
+    });
+
+    it("rejects missing, stale and cross-branch task commit references", async () => {
+        await seed();
+        await store.runTaskMutation(context, artifact, prepare, stage);
+        const reference = agentAutomationTaskCommitReference({
+            actionId: artifact.actionId,
+            taskId: artifact.taskId,
+            taskRevision: artifact.taskRevision,
+            batch: captured,
+        });
+        await expect(db.$transaction((tx) => store.verifyTaskCommitReference(tx, reference, branchId))).resolves.toBe(true);
+        await expect(db.$transaction((tx) => store.verifyTaskCommitReference(tx,
+            { ...reference, commitDigest: hash("stale") }, branchId))).resolves.toBe(false);
+        await expect(db.$transaction((tx) => store.verifyTaskCommitReference(tx, reference, randomUUID()))).resolves.toBe(false);
+
+        await db.message_trigger_job.delete({ where: { id: reference.authorities[0]!.id } });
+        await expect(db.$transaction((tx) => store.verifyTaskCommitReference(tx, reference, branchId))).resolves.toBe(false);
+    });
+
     it.each([["client", "create"], ["message_trigger_job", "upsert"], ["agent_action", "updateMany"], ["message_trigger_job", "create"]])(
         "rolls back all effects after %s.%s is written", async (delegate, method) => {
             await seed();
@@ -276,6 +343,14 @@ describeDb("committed task automation terminal record transactions", () => {
         return { branchId: scope.branchId, clientId: scope.clientId, kind: scope.kind, ruleId: scope.ruleId,
             scheduleId: scope.scheduleId, recipientType: scope.recipientType };
     }
+    function taskAutomationReference() {
+        return agentAutomationTaskCommitReference({
+            actionId: artifact.actionId,
+            taskId: artifact.taskId,
+            taskRevision: artifact.taskRevision,
+            batch: captured,
+        });
+    }
     const locks = () => new MessageAutomationBranchLockService(db as never);
 
     it.each(["missing", "corrupted"])("refuses replay with a %s receipt-referenced record without rerunning callbacks", async (mode) => {
@@ -294,19 +369,19 @@ describeDb("committed task automation terminal record transactions", () => {
         const resolver = new AgentAutomationAuthorityService(store);
         const target = resolverTarget();
         const describe = jest.fn(async () => artifact.impact.effects[0]!);
-        const allowed = await locks().runExclusive(branchId, (tx) => resolver.check(tx, { concreteJobDigest: hash("synthetic-concrete-job"), target, mode: "materialize" }, describe));
+        const allowed = await locks().runExclusive(branchId, (tx) => resolver.check(tx, { concreteJobDigest: hash("synthetic-concrete-job"), target, mode: "materialize", taskReference: taskAutomationReference() }, describe));
         expect(allowed.status).toBe("allowed"); if (allowed.status !== "allowed") throw new Error("Missing synthetic seal");
         expect(describe).toHaveBeenCalledWith({ scope: captured.authorities[0]!.scope,
             subject: { kind: "task-client", taskId: artifact.taskId }, change: "create" });
         expect(await locks().runExclusive(branchId, (tx) => resolver.check(tx, { concreteJobDigest: hash("synthetic-concrete-job"), target, mode: "dispatch" }, describe))).toMatchObject({ status: "refused" });
-        expect(await locks().runExclusive(branchId, (tx) => resolver.check(tx, { concreteJobDigest: hash("synthetic-concrete-job"), target, mode: "dispatch", seal: allowed.seal }, describe))).toEqual(allowed);
+        expect(await locks().runExclusive(branchId, (tx) => resolver.check(tx, { concreteJobDigest: hash("synthetic-concrete-job"), target, mode: "dispatch", seal: allowed.seal, taskReference: taskAutomationReference() }, describe))).toEqual(allowed);
         await db.agent_action.delete({ where: { id: artifact.actionId } });
         await db.agent_task.delete({ where: { id: artifact.taskId } });
         await db.agent_session.delete({ where: { id: artifact.sessionId } });
-        expect(await locks().runExclusive(branchId, (tx) => resolver.check(tx, { concreteJobDigest: hash("synthetic-concrete-job"), target, mode: "dispatch", seal: allowed.seal }, describe))).toEqual(allowed);
+        expect(await locks().runExclusive(branchId, (tx) => resolver.check(tx, { concreteJobDigest: hash("synthetic-concrete-job"), target, mode: "dispatch", seal: allowed.seal, taskReference: taskAutomationReference() }, describe))).toEqual(allowed);
         const sources = ["recipientDigest", "sourceDigest", "templateDigest", "policyDigest", "recipeDigest"] as const;
         for (const field of sources) {
-            expect(await locks().runExclusive(branchId, (tx) => resolver.check(tx, { concreteJobDigest: hash("synthetic-concrete-job"), target, mode: "dispatch", seal: allowed.seal },
+            expect(await locks().runExclusive(branchId, (tx) => resolver.check(tx, { concreteJobDigest: hash("synthetic-concrete-job"), target, mode: "dispatch", seal: allowed.seal, taskReference: taskAutomationReference() },
                 async () => ({ ...artifact.impact.effects[0]!, [field]: hash(`changed-${field}`) })))).toMatchObject({ status: "refused", reason: "automation-consent-changed" });
         }
         expect(await locks().runExclusive(branchId, (tx) => resolver.check(tx, { concreteJobDigest: hash("synthetic-concrete-job"), target, mode: "dispatch", seal: { ...allowed.seal, authorityId: randomUUID() } }, describe))).toMatchObject({ status: "refused" });
@@ -333,26 +408,29 @@ describeDb("committed task automation terminal record transactions", () => {
         await seed(); await store.runTaskMutation(context, artifact, prepare, stage);
         const resolver = new AgentAutomationAuthorityService(store);
         const target = resolverTarget(); const describe = async () => artifact.impact.effects[0]!;
-        const allowed = await locks().runExclusive(branchId, (tx) => resolver.check(tx, { concreteJobDigest: hash("synthetic-concrete-job"), target, mode: "materialize" }, describe));
+        const allowed = await locks().runExclusive(branchId, (tx) => resolver.check(tx, { concreteJobDigest: hash("synthetic-concrete-job"), target, mode: "materialize", taskReference: taskAutomationReference() }, describe));
         if (allowed.status !== "allowed") throw new Error("Missing synthetic seal");
         await db.message_trigger_job.delete({ where: { id: captured.authorities[0]!.id } });
         expect(await locks().runExclusive(branchId, (tx) => resolver.check(tx, { concreteJobDigest: hash("synthetic-concrete-job"), target, mode: "dispatch", seal: allowed.seal }, describe))).toMatchObject({ status: "refused" });
         expect(await locks().runExclusive(branchId, (tx) => resolver.check(tx, { concreteJobDigest: hash("synthetic-concrete-job"), target, mode: "materialize" }, describe))).toMatchObject({ status: "refused" });
         await cleanup(); await seed(); await store.runTaskMutation(context, artifact, prepare, stage);
         await db.message_trigger_job.delete({ where: { id: captured.coverages[0]!.id } });
-        expect(await locks().runExclusive(branchId, (tx) => resolver.check(tx, { concreteJobDigest: hash("synthetic-concrete-job"), target: resolverTarget(), mode: "materialize" }, async () => artifact.impact.effects[0]!))).toMatchObject({ status: "refused" });
+        expect(await locks().runExclusive(branchId, (tx) => resolver.check(tx, { concreteJobDigest: hash("synthetic-concrete-job"), target: resolverTarget(), mode: "materialize", taskReference: taskAutomationReference() }, async () => artifact.impact.effects[0]!))).toMatchObject({ status: "refused" });
     });
 
     it("keeps genuinely absent provenance legacy but refuses a copied seal", async () => {
         await seed(); await store.runTaskMutation(context, artifact, prepare, stage);
         const resolver = new AgentAutomationAuthorityService(store);
-        const first = await locks().runExclusive(branchId, (tx) => resolver.check(tx, { concreteJobDigest: hash("synthetic-concrete-job"), target: resolverTarget(), mode: "materialize" }, async () => artifact.impact.effects[0]!));
+        const first = await locks().runExclusive(branchId, (tx) => resolver.check(tx, { concreteJobDigest: hash("synthetic-concrete-job"), target: resolverTarget(), mode: "materialize", taskReference: taskAutomationReference() }, async () => artifact.impact.effects[0]!));
         if (first.status !== "allowed") throw new Error("Missing synthetic seal");
         const other = await db.client.create({ data: { branchId, name: "합성 독립 고객", voucherClient: false, phone: "01000000002" } });
         const target = { ...resolverTarget(), clientId: other.id };
         const describe = jest.fn(async () => null);
         expect(await locks().runExclusive(branchId, (tx) => resolver.check(tx, { concreteJobDigest: hash("synthetic-concrete-job"), target, mode: "dispatch" }, describe))).toEqual({ status: "legacy" });
         expect(describe).not.toHaveBeenCalled();
+        expect(await locks().runExclusive(branchId, (tx) => resolver.check(tx, {
+            concreteJobDigest: hash("synthetic-concrete-job"), target, mode: "materialize", taskReference: taskAutomationReference(),
+        }, describe))).toMatchObject({ status: "refused" });
         expect(await locks().runExclusive(branchId, (tx) => resolver.check(tx, { concreteJobDigest: hash("synthetic-concrete-job"), target, mode: "dispatch", seal: first.seal }, describe))).toMatchObject({ status: "refused" });
     });
 
@@ -401,7 +479,7 @@ describeDb("committed task automation terminal record transactions", () => {
         const authority = captured.authorities.find(({ scope }) => scope.recipientType === "primary-employee")!;
         const target = resolverTarget(authority.scope);
         const describe = jest.fn(async () => authority.effects[0]!);
-        const allowed = await locks().runExclusive(branchId, (tx) => resolver.check(tx, { concreteJobDigest: hash("synthetic-concrete-job"), target, mode: "materialize" }, describe));
+        const allowed = await locks().runExclusive(branchId, (tx) => resolver.check(tx, { concreteJobDigest: hash("synthetic-concrete-job"), target, mode: "materialize", taskReference: taskAutomationReference() }, describe));
         expect(allowed.status).toBe("allowed");
         expect(describe).toHaveBeenCalledWith({ scope: authority.scope, subject: { kind: "client", clientId, clientIdentity: identity }, change: "refresh" });
         // Terminal storage has no FK that prevents ordinary schedule deletion.
@@ -427,8 +505,8 @@ describeDb("committed task automation terminal record transactions", () => {
         await store.runTaskMutation(context, artifact, prepare, stage);
         const resolver = new AgentAutomationAuthorityService(store);
         const target = { ...resolverTarget(), ruleId: prior.ruleId };
-        expect(await locks().runExclusive(branchId, (tx) => resolver.check(tx, { concreteJobDigest: hash("synthetic-concrete-job"), target, mode: "materialize" }, async () => prior))).toEqual({ status: "legacy" });
-        expect(await locks().runExclusive(branchId, (tx) => resolver.check(tx, { concreteJobDigest: hash("synthetic-concrete-job"), target, mode: "dispatch" }, async () => ({ ...prior, change: "refresh" })))).toEqual({ status: "legacy" });
+        expect(await locks().runExclusive(branchId, (tx) => resolver.check(tx, { concreteJobDigest: hash("synthetic-concrete-job"), target, mode: "materialize", taskReference: taskAutomationReference() }, async () => prior))).toEqual({ status: "legacy" });
+        expect(await locks().runExclusive(branchId, (tx) => resolver.check(tx, { concreteJobDigest: hash("synthetic-concrete-job"), target, mode: "dispatch", taskReference: taskAutomationReference() }, async () => ({ ...prior, change: "refresh" })))).toEqual({ status: "legacy" });
         expect(await locks().runExclusive(branchId, (tx) => resolver.check(tx, { concreteJobDigest: hash("synthetic-concrete-job"), target, mode: "dispatch" }, async () => ({ ...prior, sourceDigest: hash("new-source") })))).toMatchObject({ status: "refused" });
         expect(await locks().runExclusive(branchId, (tx) => resolver.check(tx, { concreteJobDigest: hash("synthetic-concrete-job"), target: { ...target, ruleId: "new-rule" }, mode: "materialize" }, async () => ({ ...prior, ruleId: "new-rule" })))).toMatchObject({ status: "refused" });
         expect(await locks().runExclusive(branchId, (tx) => resolver.check(tx, { concreteJobDigest: hash("synthetic-concrete-job"), target, mode: "dispatch" }, async () => { throw new Error("SYNTHETIC_PRIVATE_EXCEPTION"); }))).toEqual({ status: "refused", reason: "automation-authority-unavailable" });

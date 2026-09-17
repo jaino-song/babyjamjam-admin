@@ -18,6 +18,8 @@ import { fulfillClientMessageAutomationIntent } from "./client-message-automatio
 import { MessageTriggerService } from "./message-trigger.service";
 import { ServiceRecordLinkService } from "./service-record-link.service";
 import { SchedulerLeaseService } from "./scheduler-lease.service";
+import type { AgentAutomationTaskCommitReference } from "domain/entities/agent-automation-consent";
+import { parseAgentAutomationTaskCommitReference } from "application/agent/agent-automation-storage.schema";
 
 const CLAIM_LEASE_MINUTES = 10;
 const RETRY_DELAY_MS = 5 * 60 * 1000;
@@ -63,6 +65,7 @@ export class MessageAutomationIntentService {
             suppressGreeting: boolean;
             intentAt: Date;
             taskOrigin?: boolean;
+            taskAutomationReference?: AgentAutomationTaskCommitReference;
         },
     ): Promise<void> {
         await persistClientMessageAutomationIntent(transaction, params);
@@ -78,6 +81,7 @@ export class MessageAutomationIntentService {
             intentAt: Date;
             replaceExisting?: boolean;
             taskOrigin?: boolean;
+            taskAutomationReference?: AgentAutomationTaskCommitReference;
         },
     ): Promise<void> {
         await persistScheduleMessageAutomationIntent(transaction, params);
@@ -111,6 +115,7 @@ export class MessageAutomationIntentService {
         includePast: boolean;
         suppressGreeting: boolean;
         taskOrigin?: boolean;
+        taskAutomationReference?: AgentAutomationTaskCommitReference;
     }): Promise<boolean> {
         return fulfillClientMessageAutomationIntent({
             prisma: this.prisma,
@@ -125,6 +130,8 @@ export class MessageAutomationIntentService {
         includePast: boolean;
         replaceExisting?: boolean;
         intentAt?: Date;
+        taskOrigin?: boolean;
+        taskAutomationReference?: AgentAutomationTaskCommitReference;
     }): Promise<boolean> {
         const dedupeKey = getScheduleAutomationIntentDedupeKey(params.branchId, params.scheduleId);
         const claim = await this.claimIntent(dedupeKey, params.intentAt);
@@ -139,7 +146,13 @@ export class MessageAutomationIntentService {
                 params.branchId,
                 params.scheduleId,
                 params.includePast,
-                { preserveExisting: params.replaceExisting !== true },
+                {
+                    preserveExisting: params.replaceExisting !== true,
+                    ...(params.taskOrigin ? { taskOrigin: true } : {}),
+                    ...(params.taskAutomationReference
+                        ? { taskAutomationReference: params.taskAutomationReference }
+                        : {}),
+                },
             );
             if (refreshed === false) {
                 await this.releaseIntent(claim);
@@ -350,6 +363,21 @@ export class MessageAutomationIntentService {
         const includePast = variables["includePast"] === "true";
         const replaceExisting = variables["replaceExisting"] === "true";
         const taskOrigin = variables["taskOrigin"] === "true";
+        const taskReference = this.readTaskAutomationReference(candidate.payload);
+        // Task-origin retries must carry a strict digest-only pointer to the
+        // terminal records committed by the task. An unexpected or malformed
+        // carrier is quarantined instead of reaching rule materialization.
+        if (
+            (taskOrigin && !taskReference)
+            || taskReference === null
+            // A digest-only task pointer is meaningful only for a task-origin
+            // intent. Reject an ordinary intent that attempts to smuggle one
+            // through the materializer payload.
+            || (taskReference !== undefined && !taskOrigin)
+        ) {
+            await this.quarantineInvalidIntent(candidate.id, expectedVersion);
+            return false;
+        }
         if (kind === "client" && candidate.clientId !== null) {
             return this.fulfillClientIntent({
                 branchId: candidate.branchId,
@@ -357,6 +385,7 @@ export class MessageAutomationIntentService {
                 includePast,
                 suppressGreeting: variables["suppressGreeting"] === "true",
                 taskOrigin,
+                ...(taskReference ? { taskAutomationReference: taskReference } : {}),
             });
         }
         if (kind === "schedule" && candidate.employeeScheduleId !== null) {
@@ -366,6 +395,8 @@ export class MessageAutomationIntentService {
                 includePast,
                 replaceExisting,
                 intentAt: candidate.scheduledFor,
+                taskOrigin,
+                ...(taskReference ? { taskAutomationReference: taskReference } : {}),
             });
         }
         if (kind === "employee") {
@@ -446,5 +477,20 @@ export class MessageAutomationIntentService {
         return typeof employeeId === "number" && Number.isSafeInteger(employeeId) && employeeId > 0
             ? employeeId
             : null;
+    }
+
+    /**
+     * Return undefined for a legacy payload with no carrier, null for an
+     * explicitly supplied but invalid carrier, and the strict parsed value for
+     * a valid task-origin reference. Keeping these cases separate lets legacy
+     * ordinary intents continue to reconcile while malformed task intents fail
+     * closed.
+     */
+    private readTaskAutomationReference(
+        payload: Prisma.JsonValue,
+    ): AgentAutomationTaskCommitReference | null | undefined {
+        if (!payload || Array.isArray(payload) || typeof payload !== "object") return undefined;
+        if (!Object.prototype.hasOwnProperty.call(payload, "taskAutomationReference")) return undefined;
+        return parseAgentAutomationTaskCommitReference(payload["taskAutomationReference"]);
     }
 }

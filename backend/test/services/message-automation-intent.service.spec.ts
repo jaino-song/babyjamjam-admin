@@ -6,6 +6,7 @@ import {
     MESSAGE_AUTOMATION_INTENT_RULE_ID,
 } from "domain/constants/message-automation-intent";
 import { MessageTriggerTemplateKey } from "domain/constants/message-trigger-catalog";
+import { createAgentAutomationTaskCommitReference } from "application/agent/agent-automation-storage.schema";
 import { createSchedulerLeaseMock } from "../utils/mocks/scheduler-lease.mock";
 
 describe("MessageAutomationIntentService", () => {
@@ -94,6 +95,37 @@ describe("MessageAutomationIntentService", () => {
                 }),
             }),
         );
+    });
+
+    it("carries only a digest-only task commit reference into the durable intent", async () => {
+        const { service, transaction } = setup();
+        const taskAutomationReference = createAgentAutomationTaskCommitReference({
+            actionId: "70000000-0000-4000-8000-000000000004",
+            taskId: "70000000-0000-4000-8000-000000000005",
+            taskRevision: 4,
+            authorities: [{
+                id: "70000000-0000-4000-8000-000000000001",
+                recordDigest: "a".repeat(64),
+                scopeDigest: "b".repeat(64),
+            }],
+            coverages: [],
+        });
+
+        await service.persistClientIntent(transaction as never, {
+            branchId: "branch-1",
+            clientId: 31,
+            includePast: true,
+            suppressGreeting: false,
+            intentAt: new Date("2026-08-20T01:02:03.000Z"),
+            taskOrigin: true,
+            taskAutomationReference,
+        });
+
+        const call = transaction.message_trigger_job.upsert.mock.calls.at(-1)?.[0] as {
+            create: { payload: Record<string, unknown> };
+        };
+        expect(call.create.payload["taskAutomationReference"]).toEqual(taskAutomationReference);
+        expect(JSON.stringify(call.create.payload["taskAutomationReference"])).not.toMatch(/010|recipientPhone|messageBody/);
     });
 
     it("stores an employee profile refresh intent with a branch-scoped dedupe key and JSON employee id", async () => {
@@ -895,6 +927,68 @@ describe("MessageAutomationIntentService", () => {
             },
         });
         expect(prisma.$queryRaw).not.toHaveBeenCalled();
+    });
+
+    it("quarantines task-origin intents whose commit reference is missing", async () => {
+        const { service, prisma, triggerService } = setup();
+        prisma.message_trigger_job.findMany.mockResolvedValue([{
+            id: "task-intent-missing-reference",
+            branchId: "branch-1",
+            clientId: 31,
+            employeeScheduleId: null,
+            scheduledFor: new Date("2026-08-20T01:02:03.000Z"),
+            updatedAt: new Date("2026-08-20T01:02:04.000Z"),
+            payload: { templateVariables: {
+                intentKind: "client",
+                includePast: "true",
+                suppressGreeting: "false",
+                taskOrigin: "true",
+            } },
+        }]);
+        await expect(service.reconcilePendingIntents(new Date("2026-08-20T01:05:00.000Z"))).resolves.toBe(0);
+        expect(triggerService.syncClientRulesForClient).not.toHaveBeenCalled();
+        expect(prisma.message_trigger_job.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+            where: expect.objectContaining({ id: "task-intent-missing-reference" }),
+            data: { cancelReason: MESSAGE_AUTOMATION_INTENT_INVALID_REASON, nextAttemptAt: null },
+        }));
+    });
+
+    it("quarantines an ordinary intent that carries a task commit reference", async () => {
+        const { service, prisma, triggerService } = setup();
+        const taskAutomationReference = createAgentAutomationTaskCommitReference({
+            actionId: "70000000-0000-4000-8000-000000000014",
+            taskId: "70000000-0000-4000-8000-000000000015",
+            taskRevision: 4,
+            authorities: [{
+                id: "70000000-0000-4000-8000-000000000011",
+                recordDigest: "a".repeat(64),
+                scopeDigest: "b".repeat(64),
+            }],
+            coverages: [],
+        });
+        prisma.message_trigger_job.findMany.mockResolvedValue([{
+            id: "ordinary-intent-with-task-reference",
+            branchId: "branch-1",
+            clientId: 31,
+            employeeScheduleId: null,
+            scheduledFor: new Date("2026-08-20T01:02:03.000Z"),
+            updatedAt: new Date("2026-08-20T01:02:04.000Z"),
+            payload: {
+                taskAutomationReference,
+                templateVariables: {
+                    intentKind: "client",
+                    includePast: "true",
+                    suppressGreeting: "false",
+                },
+            },
+        }]);
+
+        await expect(service.reconcilePendingIntents(new Date("2026-08-20T01:05:00.000Z"))).resolves.toBe(0);
+        expect(triggerService.syncClientRulesForClient).not.toHaveBeenCalled();
+        expect(prisma.message_trigger_job.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+            where: expect.objectContaining({ id: "ordinary-intent-with-task-reference" }),
+            data: { cancelReason: MESSAGE_AUTOMATION_INTENT_INVALID_REASON, nextAttemptAt: null },
+        }));
     });
 
     it("skips the run when the scheduler lease is not held", async () => {

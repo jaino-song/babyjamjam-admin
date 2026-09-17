@@ -14,6 +14,7 @@ import {
     MessageTriggerRecipientType,
     MessageTriggerTemplateKey,
 } from "domain/constants/message-trigger-catalog";
+import type { AgentAutomationTaskCommitReference } from "domain/entities/agent-automation-consent";
 
 interface PersistIntentParams {
     branchId: string;
@@ -29,6 +30,7 @@ interface PersistIntentParams {
     intentAt: Date;
     replaceExisting: boolean;
     taskOrigin?: boolean;
+    taskAutomationReference?: AgentAutomationTaskCommitReference;
 }
 
 export async function persistClientMessageAutomationIntent(
@@ -40,6 +42,7 @@ export async function persistClientMessageAutomationIntent(
         suppressGreeting: boolean;
         intentAt: Date;
         taskOrigin?: boolean;
+        taskAutomationReference?: AgentAutomationTaskCommitReference;
     },
 ): Promise<void> {
     await persistMessageAutomationIntent(transaction, {
@@ -51,6 +54,7 @@ export async function persistClientMessageAutomationIntent(
         kind: "client",
         replaceExisting: false,
         taskOrigin: params.taskOrigin,
+        taskAutomationReference: params.taskAutomationReference,
     });
 }
 
@@ -64,6 +68,7 @@ export async function persistScheduleMessageAutomationIntent(
         intentAt: Date;
         replaceExisting?: boolean;
         taskOrigin?: boolean;
+        taskAutomationReference?: AgentAutomationTaskCommitReference;
     },
 ): Promise<void> {
     await persistMessageAutomationIntent(transaction, {
@@ -79,6 +84,7 @@ export async function persistScheduleMessageAutomationIntent(
         intentAt: params.intentAt,
         replaceExisting: params.replaceExisting ?? false,
         taskOrigin: params.taskOrigin,
+        taskAutomationReference: params.taskAutomationReference,
     });
 }
 
@@ -145,6 +151,9 @@ async function persistMessageAutomationIntent(
         },
         update: {},
     });
+    const taskAutomationReference = params.taskAutomationReference
+        ? JSON.parse(JSON.stringify(params.taskAutomationReference)) as Prisma.InputJsonObject
+        : undefined;
     const payload = {
         ...(params.clientId === null ? {} : { clientId: params.clientId }),
         ...(params.employeeId === undefined ? {} : { employeeId: params.employeeId }),
@@ -158,6 +167,7 @@ async function persistMessageAutomationIntent(
             replaceExisting: String(params.replaceExisting),
             ...(params.taskOrigin ? { taskOrigin: "true" } : {}),
         },
+        ...(taskAutomationReference ? { taskAutomationReference } : {}),
     } satisfies Prisma.InputJsonObject;
     await transaction.message_trigger_job.upsert({
         where: { dedupeKey: params.dedupeKey },

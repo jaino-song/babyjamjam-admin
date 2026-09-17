@@ -41,6 +41,28 @@ export type AgentAutomationOrigin =
     | { kind: "task"; userId: string; actionId: string; taskId: string; taskRevision: number; consentEventId: string | null }
     | { kind: "ordinary"; mutationId: string; operation: "client-write" | "schedule-write" | "manual-message" | "agent-message-retry" };
 
+/**
+ * Digest-only association carried from a committed task mutation to the
+ * transient automation intent/materialization path.  The physical terminal
+ * records remain the source of truth; this value is only a bounded lookup
+ * reference and never contains customer, recipient or rendered-message data.
+ */
+export interface AgentAutomationRecordReference {
+    id: string;
+    recordDigest: string;
+    scopeDigest: string;
+}
+
+export interface AgentAutomationTaskCommitReference {
+    version: 1;
+    actionId: string;
+    taskId: string;
+    taskRevision: number;
+    authorities: AgentAutomationRecordReference[];
+    coverages: AgentAutomationRecordReference[];
+    commitDigest: string;
+}
+
 /** Appended in the same transaction as the customer/schedule mutation. */
 export interface AgentAutomationAuthority {
     version: 1;

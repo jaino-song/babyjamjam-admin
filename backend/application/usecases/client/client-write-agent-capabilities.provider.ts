@@ -12,7 +12,7 @@ import { clientAgentTargetSnapshot, clientAgentTargetVersion } from "./client-ag
 import { AgentActionCertainFailureError } from "application/agent/action-coordinator.service";
 import { readAgentActionEffect, recordAgentActionEffect } from "application/agent/agent-action-effect-receipt";
 import type { AgentContext } from "application/agent/agent-context";
-import { AgentAutomationRecordRefusedError, AgentAutomationRecordStoreService, type AgentAutomationCommittedBatch, type AgentAutomationTaskMutation } from "application/agent/agent-automation-record-store.service";
+import { AgentAutomationRecordRefusedError, AgentAutomationRecordStoreService, agentAutomationTaskCommitReference, type AgentAutomationCommittedBatch, type AgentAutomationTaskMutation } from "application/agent/agent-automation-record-store.service";
 import type { AgentTaskAutomationArtifact } from "application/agent/agent-task-automation-artifact";
 import { canonicalTaskAutomationImpact } from "application/agent/agent-task-automation-artifact";
 import { agentAutomationGrandfatheredFingerprint } from "application/agent/agent-automation-coverage";
@@ -679,7 +679,7 @@ export class ClientWriteAgentCapabilitiesProvider implements AgentCapabilityProv
     private async stageTaskAutomation(
         transaction: Prisma.TransactionClient,
         artifact: AgentTaskAutomationArtifact,
-        _batch: AgentAutomationCommittedBatch,
+        batch: AgentAutomationCommittedBatch,
         clientId: number | null,
     ): Promise<void> {
         if (artifact.consent.choice !== "yes" || artifact.noSend) return;
@@ -687,6 +687,12 @@ export class ClientWriteAgentCapabilitiesProvider implements AgentCapabilityProv
             throw new AgentActionCertainFailureError("Automation intent storage is unavailable; review the task again");
         }
         const intentAt = new Date();
+        const taskAutomationReference = agentAutomationTaskCommitReference({
+            actionId: artifact.actionId,
+            taskId: artifact.taskId,
+            taskRevision: artifact.taskRevision,
+            batch,
+        });
         const clientEffects = artifact.impact.effects.some((effect) => effect.kind === "client-rule" && effect.change !== "cancel");
         if (clientEffects) {
             await this.messageAutomationIntentService.persistClientIntent(transaction, {
@@ -696,6 +702,7 @@ export class ClientWriteAgentCapabilitiesProvider implements AgentCapabilityProv
                 suppressGreeting: false,
                 intentAt,
                 taskOrigin: true,
+                taskAutomationReference,
             });
         }
         const scheduleIds = [...new Set(artifact.impact.effects
@@ -710,6 +717,7 @@ export class ClientWriteAgentCapabilitiesProvider implements AgentCapabilityProv
                 intentAt,
                 replaceExisting: true,
                 taskOrigin: true,
+                taskAutomationReference,
             });
         }
     }

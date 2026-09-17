@@ -1,6 +1,6 @@
 import { Injectable } from "@nestjs/common";
 import type { Prisma } from "@prisma/client";
-import type { AgentAutomationEffect, AgentAutomationJobSeal, AgentAutomationScope } from "domain/entities/agent-automation-consent";
+import type { AgentAutomationEffect, AgentAutomationJobSeal, AgentAutomationScope, AgentAutomationTaskCommitReference } from "domain/entities/agent-automation-consent";
 import { agentBindingHash } from "domain/repositories/agent-linked-action.types";
 import type { ClientMessageLogicalSubject } from "application/services/client-message-effect-recipe";
 import { AgentAutomationRecordStoreService } from "./agent-automation-record-store.service";
@@ -33,7 +33,7 @@ export class AgentAutomationAuthorityService {
 
     async check(
         transaction: Prisma.TransactionClient,
-        input: { target: AgentAutomationCurrentTarget; mode: "materialize" | "dispatch"; concreteJobDigest: string; seal?: unknown },
+        input: { target: AgentAutomationCurrentTarget; mode: "materialize" | "dispatch"; concreteJobDigest: string; seal?: unknown; taskReference?: AgentAutomationTaskCommitReference },
         describe: DescribeCurrentAutomationEffect,
     ): Promise<AgentAutomationAuthorityCheck> {
         const refuse = (reason: Extract<AgentAutomationAuthorityCheck, { status: "refused" }>["reason"] = "automation-authority-unavailable"): AgentAutomationAuthorityCheck => ({ status: "refused", reason });
@@ -53,6 +53,27 @@ export class AgentAutomationAuthorityService {
             const scope = AgentAutomationScopeStorageSchema.parse({ ...target, clientIdentity,
                 scheduleIdentity: schedule ? agentAutomationScheduleIdentity(schedule.incarnationId) : null });
             const { batch, creationSubjects } = await this.records.readLineageEvidence(transaction, scope);
+            // An ordinary successor deliberately supersedes the task record for
+            // this exact scope. Require the task carrier only while the current
+            // effective head is still task-rooted; historical task rows remain
+            // part of the chain but must not block an explicitly authorized
+            // ordinary replacement or force a new materialized row to copy a
+            // transient intent carrier.
+            const effectiveHead = batch.authorities.at(-1) ?? batch.coverages.at(-1);
+            const taskHead = effectiveHead?.origin.kind === "task";
+            if (taskHead && !input.taskReference) return refuse();
+            if (input.taskReference) {
+                const scopeDigest = agentBindingHash(scope);
+                const scopeIsBound = [...input.taskReference.authorities, ...input.taskReference.coverages]
+                    .some((reference) => reference.scopeDigest === scopeDigest);
+                // A valid ordinary successor owns the current scope. Its job
+                // may still carry a preserved task carrier from an earlier
+                // materialization, but that transient pointer must not keep a
+                // superseded task record alive or block the ordinary head after
+                // task retention/purge. Scope binding is still checked so a
+                // copied carrier cannot cross into another operation.
+                if (!scopeIsBound || (taskHead && !await this.records.verifyTaskCommitReference(transaction, input.taskReference, scope.branchId))) return refuse();
+            }
             const coverage = resolveAgentAutomationCoverageHead({ records: batch.coverages, scope: agentAutomationCoverageScope(scope), knownProvenance: batch.coverages.length > 0 });
             if (coverage.status === "refused") return refuse();
             if (!batch.authorities.length) {

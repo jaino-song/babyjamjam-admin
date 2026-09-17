@@ -1134,7 +1134,23 @@ describe("ClientWriteAgentCapabilitiesProvider", () => {
                 stage: (tx: typeof transaction, batch: { authorities: unknown[]; coverages: unknown[] }) => Promise<void>,
             ) => {
                 preparedMutation = await prepare(transaction);
-                await stage(transaction, { authorities: [], coverages: [] });
+                await stage(transaction, {
+                    authorities: [{
+                        id: "70000000-0000-4000-8000-000000000021",
+                        recordDigest: "a".repeat(64),
+                        scope: {
+                            branchId: "branch-a",
+                            clientId: 7,
+                            clientIdentity: "b".repeat(64),
+                            kind: "client-rule",
+                            ruleId: "rule-client",
+                            scheduleId: null,
+                            scheduleIdentity: null,
+                            recipientType: "client",
+                        },
+                    }],
+                    coverages: [],
+                });
                 return {
                     actionId: "action-a",
                     capability: "clients.create",
@@ -1162,7 +1178,11 @@ describe("ClientWriteAgentCapabilitiesProvider", () => {
         const result = await capability.execute({
             principal: { userId: "user-a", branchId: "branch-a", globalRole: "admin", branchRole: "admin" },
             sessionId: "session-a", traceId: "trace-a", locale: "ko", actionId: "action-a",
-            taskAutomation: { capability: "clients.create", taskId: "task-a", branchId: "branch-a", targetClientId: null, impact,
+            taskAutomation: {
+                actionId: "70000000-0000-4000-8000-000000000022",
+                taskId: "70000000-0000-4000-8000-000000000023",
+                taskRevision: 1,
+                capability: "clients.create", branchId: "branch-a", targetClientId: null, impact,
                 consent: { choice: "yes", binding: { recipientRef: "recipient-a", templateRef: "template-a", effectDigest: "1".repeat(64), policyDigest: "2".repeat(64), consentEventId: "event-a" } }, noSend: false },
         } as never, { name: "합성고객", phone: "01012345678" });
 

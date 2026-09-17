@@ -329,3 +329,11 @@ Verification on the integration worktree:
 - Independent scoped SOL FINAL for `9934ed5b55a507bb60068a5c3d02ab56e4e7175b..b586eb540c5a93a08e76b7190357c948a45ce1ed`: **SHIP / HIGH**, no findings.
 
 This closes only the bounded catch-up predecessor canonicality slice. The two-row E2E does not independently exercise every status or the 500-link limit; those remain residual coverage. Ordinary successor provenance, schedule/link adapters, durable log/retry seals, cumulative task-provider scenarios, Phase8/9, paid model evaluation, real SMS, production data, merge, deployment and operational activation remain open. The three completion flags remain **not complete**.
+
+### Phase7 ordinary successor provenance (2026-09-18)
+
+Task-origin intent payloads now carry a strict digest-only task commit reference through intent fulfillment and client-rule materialization. The reference binds the action/task revision to the committed authority and coverage record digests; it contains no customer, recipient or message values. Materialization preserves the carrier when an existing job is rebuilt, and ordinary intents that carry a task carrier or task-origin marker without a valid reference are quarantined before trigger sync. Authority checks fail closed on missing, stale or cross-branch references while legacy ordinary intents without a carrier remain compatible.
+
+The ordinary client-write path now appends an immutable ordinary successor record under the existing branch lock in the same transaction as the client update and planner impact. Same mutation/operation/digest replay is idempotent and does not send or create a message log. Declined/noSend task records remain scoped and cannot be superseded by this path. The schedule-write successor writer is not connected here because the existing schedule mutation owner was outside this bounded slice; schedule/link provenance remains open for a dedicated owner integration.
+
+Focused unit, repository and backend type/build/lint checks passed. Guarded PostgreSQL coverage includes positive client successor, replay/idempotency, missing/stale/cross-branch task reference refusal and zero external sends, but requires the approved synthetic database environment to execute. This closes only the client ordinary-successor wiring slice; Phase7 and the three completion flags remain **not complete**.

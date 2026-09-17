@@ -1,6 +1,13 @@
 import type { AgentAutomationAuthority, AgentAutomationEffect } from "domain/entities/agent-automation-consent";
 import { agentAutomationEffectDigest, agentAutomationPolicyDigest, agentAutomationRecordDigest } from "./agent-automation-consent";
-import { AgentAutomationEffectStorageSchema, AgentAutomationScopeStorageSchema, parseAgentAutomationAuthority, parseAgentAutomationJobSeal } from "./agent-automation-storage.schema";
+import {
+    AgentAutomationEffectStorageSchema,
+    AgentAutomationScopeStorageSchema,
+    createAgentAutomationTaskCommitReference,
+    parseAgentAutomationAuthority,
+    parseAgentAutomationJobSeal,
+    parseAgentAutomationTaskCommitReference,
+} from "./agent-automation-storage.schema";
 
 const id = (n: number) => `70000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
 const hash = "a".repeat(64);
@@ -84,5 +91,26 @@ describe("strict private automation storage", () => {
             { ...linkScope, scheduleIdentity: null }, { ...linkScope, kind: "employee-assignment" }]) {
             expect(AgentAutomationScopeStorageSchema.safeParse(invalid).success).toBe(false);
         }
+    });
+
+    it("round-trips task commit references without allowing PII or stale/tampered carriers", () => {
+        const reference = createAgentAutomationTaskCommitReference({
+            actionId: id(4),
+            taskId: id(5),
+            taskRevision: 4,
+            authorities: [{ id: id(1), recordDigest: hash, scopeDigest: hash }],
+            coverages: [{ id: id(7), recordDigest: hash, scopeDigest: hash }],
+        });
+        expect(parseAgentAutomationTaskCommitReference(JSON.parse(JSON.stringify(reference)))).toEqual(reference);
+        expect(JSON.stringify(reference)).not.toMatch(/01012345678|SYNTHETIC_PRIVATE_NAME|recipientPhone|messageBody/);
+
+        const invalid = [
+            { ...reference, commitDigest: "b".repeat(64) },
+            { ...reference, phone: "01012345678" },
+            { ...reference, authorities: [], coverages: [] },
+            { ...reference, authorities: [{ ...reference.authorities[0]!, id: reference.coverages[0]!.id }] },
+            { ...reference, authorities: [{ ...reference.authorities[0]!, scopeDigest: "b".repeat(64) }] },
+        ];
+        for (const candidate of invalid) expect(parseAgentAutomationTaskCommitReference(candidate)).toBeNull();
     });
 });

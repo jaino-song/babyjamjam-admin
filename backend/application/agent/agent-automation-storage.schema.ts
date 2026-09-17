@@ -1,13 +1,15 @@
 import { z } from "zod";
 import { AgentAutomationEffectSummarySchema } from "@babyjamjam/shared";
-import type { AgentAutomationAuthority, AgentAutomationCoverage, AgentAutomationJobSeal } from "domain/entities/agent-automation-consent";
+import type { AgentAutomationAuthority, AgentAutomationCoverage, AgentAutomationJobSeal, AgentAutomationTaskCommitReference } from "domain/entities/agent-automation-consent";
 import { isAgentAutomationCoverageScopeValid, isAgentAutomationEffectVariantValid, isAgentAutomationOperationValid } from "domain/entities/agent-automation-consent";
 import { agentAutomationEffectDigest, agentAutomationRecordDigest } from "./agent-automation-consent";
 import { agentAutomationCoverageRecordDigest } from "./agent-automation-coverage";
+import { agentBindingHash } from "domain/repositories/agent-linked-action.types";
 
 const digest = z.string().regex(/^[a-f0-9]{64}$/);
 const positiveId = z.number().int().positive().max(Number.MAX_SAFE_INTEGER);
 const ruleId = z.string().min(1).max(200).regex(/^[A-Za-z0-9:_-]+$/);
+const recordReference = z.object({ id: z.uuid(), recordDigest: digest, scopeDigest: digest }).strict();
 
 export const AgentAutomationEffectStorageSchema = AgentAutomationEffectSummarySchema
     .omit({ effectRef: true, recipientRef: true })
@@ -105,6 +107,52 @@ export const AgentAutomationReceiptMetadataSchema = z.object({
     }
 });
 
+/**
+ * A task-origin intent may outlive the task/session/action rows that created
+ * it.  Keep only the immutable terminal-record references needed to resolve
+ * that commit again; the terminal rows remain the authoritative source.
+ */
+export const AgentAutomationTaskCommitReferenceSchema = z.object({
+    version: z.literal(1), actionId: z.uuid(), taskId: z.uuid(), taskRevision: positiveId,
+    authorities: z.array(recordReference).max(500),
+    coverages: z.array(recordReference).max(500),
+    commitDigest: digest,
+}).strict().superRefine((reference, context) => {
+    const all = [...reference.authorities, ...reference.coverages];
+    const canonical = {
+        version: reference.version,
+        actionId: reference.actionId,
+        taskId: reference.taskId,
+        taskRevision: reference.taskRevision,
+        authorities: [...reference.authorities].sort((a, b) => a.scopeDigest.localeCompare(b.scopeDigest)),
+        coverages: [...reference.coverages].sort((a, b) => a.scopeDigest.localeCompare(b.scopeDigest)),
+    };
+    if (!all.length || new Set(all.map(({ id }) => id)).size !== all.length
+        || new Set(reference.authorities.map(({ scopeDigest }) => scopeDigest)).size !== reference.authorities.length
+        || new Set(reference.coverages.map(({ scopeDigest }) => scopeDigest)).size !== reference.coverages.length
+        || reference.commitDigest !== agentBindingHash(canonical)) {
+        context.addIssue({ code: "custom", message: "Invalid task automation commit reference" });
+    }
+});
+
+export function createAgentAutomationTaskCommitReference(input: {
+    actionId: string;
+    taskId: string;
+    taskRevision: number;
+    authorities: readonly { id: string; recordDigest: string; scopeDigest: string }[];
+    coverages: readonly { id: string; recordDigest: string; scopeDigest: string }[];
+}): AgentAutomationTaskCommitReference {
+    const canonical = {
+        version: 1 as const,
+        actionId: input.actionId,
+        taskId: input.taskId,
+        taskRevision: input.taskRevision,
+        authorities: [...input.authorities].sort((a, b) => a.scopeDigest.localeCompare(b.scopeDigest)).map((value) => ({ ...value })),
+        coverages: [...input.coverages].sort((a, b) => a.scopeDigest.localeCompare(b.scopeDigest)).map((value) => ({ ...value })),
+    };
+    return AgentAutomationTaskCommitReferenceSchema.parse({ ...canonical, commitDigest: agentBindingHash(canonical) });
+}
+
 export function parseAgentAutomationAuthority(value: unknown): AgentAutomationAuthority | null {
     const result = AgentAutomationAuthorityStorageSchema.safeParse(value);
     return result.success ? result.data : null;
@@ -117,5 +165,10 @@ export function parseAgentAutomationJobSeal(value: unknown): AgentAutomationJobS
 
 export function parseAgentAutomationCoverage(value: unknown): AgentAutomationCoverage | null {
     const result = AgentAutomationCoverageStorageSchema.safeParse(value);
+    return result.success ? result.data : null;
+}
+
+export function parseAgentAutomationTaskCommitReference(value: unknown): AgentAutomationTaskCommitReference | null {
+    const result = AgentAutomationTaskCommitReferenceSchema.safeParse(value);
     return result.success ? result.data : null;
 }

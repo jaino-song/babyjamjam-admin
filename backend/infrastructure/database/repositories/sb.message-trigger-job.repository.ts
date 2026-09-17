@@ -800,7 +800,17 @@ export class SbMessageTriggerJobRepository implements IMessageTriggerJobReposito
                 recipient_type = EXCLUDED.recipient_type,
                 recipient_phone = EXCLUDED.recipient_phone,
                 template_key = EXCLUDED.template_key,
-                payload = EXCLUDED.payload,
+                payload = CASE
+                    WHEN "message_trigger_job"."payload" ? 'taskAutomationReference'
+                      AND NOT (EXCLUDED.payload ? 'taskAutomationReference')
+                    THEN jsonb_set(
+                        EXCLUDED.payload,
+                        '{taskAutomationReference}',
+                        "message_trigger_job"."payload"->'taskAutomationReference',
+                        true
+                    )
+                    ELSE EXCLUDED.payload
+                END,
                 attempts = 0,
                 next_attempt_at = NULL,
                 claim_token = NULL,
@@ -817,7 +827,17 @@ export class SbMessageTriggerJobRepository implements IMessageTriggerJobReposito
                 recipient_type = EXCLUDED.recipient_type,
                 recipient_phone = EXCLUDED.recipient_phone,
                 template_key = EXCLUDED.template_key,
-                payload = EXCLUDED.payload,
+                payload = CASE
+                    WHEN "message_trigger_job"."payload" ? 'taskAutomationReference'
+                      AND NOT (EXCLUDED.payload ? 'taskAutomationReference')
+                    THEN jsonb_set(
+                        EXCLUDED.payload,
+                        '{taskAutomationReference}',
+                        "message_trigger_job"."payload"->'taskAutomationReference',
+                        true
+                    )
+                    ELSE EXCLUDED.payload
+                END,
                 attempts = 0,
                 next_attempt_at = NULL,
                 claim_token = NULL,
