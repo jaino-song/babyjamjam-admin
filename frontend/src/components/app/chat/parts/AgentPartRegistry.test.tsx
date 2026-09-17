@@ -1,5 +1,6 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import type { UIMessage } from "ai";
+import type { AgentTask } from "@babyjamjam/shared";
 
 import { AgentPartRegistry } from "./AgentPartRegistry";
 
@@ -81,18 +82,83 @@ describe("AgentPartRegistry", () => {
                 { type: "data-form-submit", data: { formId: "form-1", values: {} } },
                 { type: "data-attachment", data: { id: "file-1", name: "보고서.pdf", mediaType: "application/pdf", size: 12 } },
                 { type: "data-feedback", data: { messageId: "assistant-structured", prompt: "도움이 되었나요?" } },
+                { type: "data-task-snapshot", data: {
+                    taskId: "11111111-1111-4111-8111-111111111111",
+                    snapshotRef: "22222222-2222-4222-8222-222222222222",
+                    kind: "clients.create",
+                    capabilityId: "clients.create",
+                    revision: 2,
+                    state: "collecting",
+                    fieldStatus: [{ field: "name", status: "confirmed" }, { field: "phone", status: "missing" }],
+                } },
+                { type: "data-entity-select", data: {
+                    taskId: "11111111-1111-4111-8111-111111111111",
+                    choiceSetRef: "33333333-3333-4333-8333-333333333333",
+                    optionIds: ["44444444-4444-4444-8444-444444444444", "55555555-5555-4555-8555-555555555555"],
+                } },
+                { type: "data-task-patch", data: {
+                    taskId: "11111111-1111-4111-8111-111111111111",
+                    eventId: "66666666-6666-4666-8666-666666666666",
+                    acceptedRevision: 3,
+                    currentSnapshotRef: "77777777-7777-4777-8777-777777777777",
+                } },
                 { type: "data-unknown", data: { html: "<b>unsafe</b>" } },
             ],
         } as unknown as UIMessage;
 
         render(<AgentPartRegistry data-component={dataComponent} message={message} />);
 
-        for (const suffix of ["text", "activity", "navigation", "error", "action-result", "form-submit", "attachment-part", "feedback", "fallback"]) {
+        for (const suffix of ["text", "activity", "navigation", "error", "action-result", "form-submit", "attachment-part", "feedback", "task-snapshot", "entity-select", "task-patch", "fallback"]) {
             expect(document.querySelector(`[data-component="${dataComponent}_${suffix}"]`)).toBeInTheDocument();
         }
         expect(document.querySelector(`[data-component="${dataComponent}_error_message"]`)).toBeInTheDocument();
         expect(document.querySelector(`[data-component="${dataComponent}_action-result_summary"]`)).toBeInTheDocument();
         expect(document.querySelector(`[data-component="${dataComponent}_attachment-part_metadata"]`)).toBeInTheDocument();
+    });
+
+    it("renders task entity choices with server labels and emits structured selection", () => {
+        const onTaskEntitySelect = jest.fn();
+        const task = {
+            schemaVersion: 1,
+            taskId: "11111111-1111-4111-8111-111111111111",
+            sessionId: "88888888-8888-4888-8888-888888888888",
+            kind: "clients.update",
+            capabilityId: "clients.update",
+            revision: 2,
+            state: "confirming_target",
+            confirmed: {},
+            tentative: {},
+            clearedFields: [],
+            provenance: { confirmed: {}, tentative: {} },
+            issues: [],
+            constraints: { noSend: false },
+            choiceSets: [{
+                choiceSetRef: "33333333-3333-4333-8333-333333333333",
+                options: [
+                    { optionId: "44444444-4444-4444-8444-444444444444", label: "홍길동" },
+                    { optionId: "55555555-5555-4555-8555-555555555555", label: "김영희" },
+                ],
+            }],
+            orderedChoiceRefs: ["33333333-3333-4333-8333-333333333333"],
+            target: null,
+            consent: { choice: "unanswered", binding: null },
+            action: null,
+            times: { createdAt: "2026-08-03T00:00:00.000Z", updatedAt: "2026-08-03T00:00:00.000Z" },
+            currentSnapshotRef: "77777777-7777-4777-8777-777777777777",
+        } as AgentTask;
+        const message = {
+            id: "assistant-task-choice",
+            role: "assistant",
+            parts: [{ type: "data-entity-select", data: {
+                taskId: task.taskId,
+                choiceSetRef: "33333333-3333-4333-8333-333333333333",
+                optionIds: ["44444444-4444-4444-8444-444444444444", "55555555-5555-4555-8555-555555555555"],
+            } }],
+        } as unknown as UIMessage;
+        render(<AgentPartRegistry data-component={dataComponent} message={message} task={task} onTaskEntitySelect={onTaskEntitySelect} />);
+
+        fireEvent.click(screen.getByRole("button", { name: "홍길동" }));
+        expect(onTaskEntitySelect).toHaveBeenCalledWith(task.taskId, "33333333-3333-4333-8333-333333333333", "44444444-4444-4444-8444-444444444444");
     });
 
     it("does not turn action-result URLs into external or javascript links", () => {

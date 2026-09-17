@@ -2,6 +2,7 @@ import { StrictMode, type ReactNode } from "react";
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { useChat } from "@ai-sdk/react";
 import { DefaultChatTransport } from "ai";
+import type { AgentTask } from "@babyjamjam/shared";
 
 import { useAgentChat, useAgentShellEnabled } from "./useAgentChat";
 
@@ -9,6 +10,32 @@ jest.mock("ai", () => ({ DefaultChatTransport: jest.fn() }));
 jest.mock("@ai-sdk/react", () => ({ useChat: jest.fn() }));
 
 describe("useAgentChat", () => {
+    const taskId = "11111111-1111-4111-8111-111111111111";
+    const sessionId = "22222222-2222-4222-8222-222222222222";
+    const snapshotRef = (revision: number) => `33333333-3333-4333-8333-${revision.toString().padStart(4, "0")}33333333`;
+    const makeTask = (revision: number): AgentTask => ({
+        schemaVersion: 1,
+        taskId,
+        sessionId,
+        kind: "clients.create",
+        capabilityId: "clients.create",
+        revision,
+        state: "collecting",
+        confirmed: {},
+        tentative: {},
+        clearedFields: [],
+        provenance: { confirmed: {}, tentative: {} },
+        issues: [],
+        constraints: { noSend: false },
+        choiceSets: [],
+        orderedChoiceRefs: [],
+        target: null,
+        consent: { choice: "unanswered", binding: null },
+        action: null,
+        times: { createdAt: "2026-08-03T00:00:00.000Z", updatedAt: "2026-08-03T00:00:00.000Z" },
+        currentSnapshotRef: snapshotRef(revision),
+    });
+
     beforeEach(() => {
         window.sessionStorage.clear();
         jest.resetAllMocks();
@@ -499,6 +526,80 @@ describe("useAgentChat", () => {
 
         expect(stop).toHaveBeenCalled();
         expect(window.sessionStorage.getItem("agent_session_id")).toBeNull();
+    });
+
+    it("ignores a stale task snapshot response from an overlapping request", async () => {
+        (useChat as jest.Mock).mockReturnValue({ messages: [], setMessages: jest.fn(), sendMessage: jest.fn(), regenerate: jest.fn(), stop: jest.fn(), status: "ready" });
+        let releaseFirst: (() => void) | undefined;
+        let taskReads = 0;
+        global.fetch = jest.fn().mockImplementation(async (input: string | URL | Request) => {
+            const url = String(input);
+            if (url === "/api/ai/agent/sessions") return { ok: false } as Response;
+            if (url.endsWith(`/tasks/${taskId}`)) {
+                taskReads += 1;
+                if (taskReads === 1) {
+                    await new Promise<void>((resolve) => { releaseFirst = resolve; });
+                    return { ok: true, json: async () => makeTask(1) } as Response;
+                }
+                return { ok: true, json: async () => makeTask(2) } as Response;
+            }
+            return { ok: true, json: async () => [] } as Response;
+        });
+        const { result } = renderHook(() => useAgentChat());
+
+        let first!: Promise<AgentTask | null>;
+        act(() => { first = result.current.loadTaskSnapshot(taskId); });
+        await waitFor(() => expect(taskReads).toBe(1));
+        let second!: Promise<AgentTask | null>;
+        act(() => { second = result.current.loadTaskSnapshot(taskId); });
+        await act(async () => {
+            await second;
+            releaseFirst?.();
+            await first;
+        });
+
+        expect(result.current.taskSnapshotState.task?.revision).toBe(2);
+    });
+
+    it("keeps the latest task snapshot and pending event after a 409 patch conflict", async () => {
+        (useChat as jest.Mock).mockReturnValue({ messages: [], setMessages: jest.fn(), sendMessage: jest.fn(), regenerate: jest.fn(), stop: jest.fn(), status: "ready" });
+        let taskReads = 0;
+        const latest = makeTask(2);
+        global.fetch = jest.fn().mockImplementation(async (input: string | URL | Request, init?: RequestInit) => {
+            const url = String(input);
+            if (url === "/api/ai/agent/sessions") return { ok: false } as Response;
+            if (url.endsWith(`/tasks/${taskId}`) && !init?.method) {
+                taskReads += 1;
+                return { ok: true, json: async () => makeTask(1) } as Response;
+            }
+            if (url.endsWith(`/tasks/${taskId}`) && init?.method === "PATCH") {
+                return {
+                    ok: false,
+                    status: 409,
+                    json: async () => ({ code: "AGENT_TASK_CONFLICT", reason: "revision", snapshot: latest }),
+                } as Response;
+            }
+            return { ok: true, json: async () => [] } as Response;
+        });
+        const { result } = renderHook(() => useAgentChat());
+        await act(async () => { await result.current.loadTaskSnapshot(taskId); });
+        expect(taskReads).toBe(1);
+
+        const clientEventId = "44444444-4444-4444-8444-444444444444";
+        await act(async () => {
+            await result.current.patchTask(taskId, [{ op: "set", field: "name", value: "Dana" }] as never, {
+                expectedRevision: 1,
+                clientEventId,
+            });
+        });
+
+        expect(result.current.taskSnapshotState.task?.revision).toBe(2);
+        expect(result.current.taskSnapshotState.pendingEventIds).toContain(clientEventId);
+        expect(result.current.taskError).toEqual(expect.objectContaining({ code: "task_conflict", latestRevision: 2 }));
+        expect(global.fetch).toHaveBeenCalledWith(`/api/ai/agent/tasks/${taskId}`, expect.objectContaining({
+            method: "PATCH",
+            body: JSON.stringify({ clientEventId, expectedRevision: 1, operations: [{ op: "set", field: "name", value: "Dana" }] }),
+        }));
     });
 });
 
