@@ -24,7 +24,7 @@ import { AgentSessionService } from "./agent-session.service";
 import { SchedulerLeaseService } from "application/services/scheduler-lease.service";
 import type { AgentTaskEntity } from "domain/entities/agent-task.entity";
 import { AGENT_TASK_REPOSITORY, type IAgentTaskRepository } from "domain/repositories/agent-task.repository.interface";
-import { agentBindingHash, agentTaskSourceHash, type PreparedAgentTaskReview, type AgentLinkedActionRecoveryOutcome } from "domain/repositories/agent-linked-action.types";
+import { agentBindingHash, agentTaskSourceHash, agentLinkedProposalRevision, type PreparedAgentTaskReview, type AgentLinkedActionRecoveryOutcome } from "domain/repositories/agent-linked-action.types";
 import type { AgentTaskReviewPort } from "./agent-task-review.port";
 import type { AgentReconciliationOutcome } from "./capability.types";
 
@@ -196,8 +196,8 @@ export class ActionCoordinatorService implements AgentTaskReviewPort {
         };
         const inputHash = agentBindingHash(normalized);
         const reviewedRevision = task.revision + 1;
-        const proposalRevision = agentBindingHash({ taskId: task.taskId, taskRevision: reviewedRevision,
-            capability: task.capabilityId, capabilityVersion: capability.meta.version, risk: capability.meta.risk, proposal });
+        const proposalRevision = agentLinkedProposalRevision(task.taskId, reviewedRevision,
+            { capability: task.capabilityId, capabilityVersion: capability.meta.version, risk: capability.meta.risk, proposal });
         const now = new Date();
         const id = randomUUID();
         return structuredClone({ taskId: task.taskId, sourceRevision: task.revision, sourceHash: agentTaskSourceHash(task),
@@ -471,6 +471,7 @@ export class ActionCoordinatorService implements AgentTaskReviewPort {
             await this.persistResultPart(action.id, action, action.status as Parameters<ActionCoordinatorService["persistResultPart"]>[2]);
             return { action, result: action.result };
         }
+        if ((action.taskId == null) !== (action.taskRevision == null)) throw new ConflictException("Task action binding is incomplete");
         if (!["proposed", "approved"].includes(action.status)) throw new ConflictException("Action is no longer pending approval");
         if (action.expiresAt.getTime() <= Date.now()) {
             await this.expire(id, owner);

@@ -16,6 +16,7 @@ const describeDb = process.env["AGENT_E2E"] === "1" ? describe : describe.skip;
 const userId = "b6100000-0000-4000-8000-000000000001";
 const branchId = "b6200000-0000-4000-8000-000000000001";
 const principal: VerifiedTenantPrincipal = { userId, branchId, globalRole: "admin", branchRole: "manager" };
+const owner = { userId, branchId };
 const DAY = 86400000;
 function deferred() {
     let resolve!: () => void;
@@ -157,7 +158,7 @@ describeDb("atomic task review and execution on guarded PostgreSQL", () => {
         const changed = await patch(review.snapshot.taskId, review.snapshot.revision);
         expect(changed.snapshot.action).toBeNull(); release.resolve(); await assertion;
         expect(execute).not.toHaveBeenCalled();
-        expect((await actions.get(review.snapshot.action!.actionId, principal)).status).toBe("cancelled");
+        expect((await actions.get(review.snapshot.action!.actionId, owner)).status).toBe("cancelled");
     });
 
     it("claims once with approval audit, refuses later edits, and keeps result transcript free of protected values", async () => {
@@ -165,7 +166,7 @@ describeDb("atomic task review and execution on guarded PostgreSQL", () => {
         execute.mockImplementationOnce(async () => { entered.resolve(); await release.promise; return { status: "saved", protectedName: "SYN_PRIVATE_NAME" }; });
         const approval = actions.approve(review.snapshot.action!.actionId, principal, review.snapshot.action!.expectedRevision);
         await entered.promise;
-        const claimed = await actions.get(review.snapshot.action!.actionId, principal);
+        const claimed = await actions.get(review.snapshot.action!.actionId, owner);
         expect(claimed).toMatchObject({ status: "executing", approvedBy: userId, executionAttemptCount: 1, taskRevision: review.snapshot.revision });
         expect(claimed.approvedAt).toBeInstanceOf(Date);
         const running = await state(review.snapshot.taskId);
@@ -197,18 +198,18 @@ describeDb("atomic task review and execution on guarded PostgreSQL", () => {
         const renewed = await service.command(principal, rejected.taskId, { command: "prepare-review", expectedRevision: rejected.revision, clientEventId: randomUUID() });
         const cancelled = await service.command(principal, renewed.snapshot.taskId, { command: "cancel", expectedRevision: renewed.snapshot.revision, clientEventId: randomUUID() });
         expect(cancelled.snapshot.state).toBe("cancelled");
-        expect((await actions.get(renewed.snapshot.action!.actionId, principal)).status).toBe("cancelled");
+        expect((await actions.get(renewed.snapshot.action!.actionId, owner)).status).toBe("cancelled");
     });
 
     it.each([["agent_action", "updateMany"], ["agent_task", "updateMany"], ["agent_task_event", "create"]])(
         "rolls back every claim write after injected %s.%s failure", async (delegate, method) => {
             const review = await prepared(); const before = await state(review.snapshot.taskId);
-            const originalAction = await actions.get(review.snapshot.action!.actionId, principal);
+            const originalAction = await actions.get(review.snapshot.action!.actionId, owner);
             const count = await db.agent_task_event.count({ where: { sessionId } });
             const faulty = coordinator(new PrismaAgentTaskRepository(failAfterWrite(db, delegate, method) as never));
             await expect(faulty.approve(originalAction.id, principal, originalAction.proposalRevision)).rejects.toMatchObject({ status: 409 });
             expect(await state(review.snapshot.taskId)).toEqual(before);
-            expect(await actions.get(originalAction.id, principal)).toEqual(originalAction);
+            expect(await actions.get(originalAction.id, owner)).toEqual(originalAction);
             expect(await db.agent_task_event.count({ where: { sessionId } })).toBe(count);
             expect(execute).not.toHaveBeenCalled();
         });
@@ -234,7 +235,7 @@ describeDb("atomic task review and execution on guarded PostgreSQL", () => {
         expect((await db.agent_session.findUniqueOrThrow({ where: { id: sessionId } })).expiresAt).toEqual(inactiveAt);
         await sessions.deleteExpired(new Date(terminal.expiresAt.getTime() - 1));
         expect(await db.agent_session.findUnique({ where: { id: sessionId } })).not.toBeNull();
-        expect((await actions.get(uncertain.action.id, principal)).status).toBe("succeeded");
+        expect((await actions.get(uncertain.action.id, owner)).status).toBe("succeeded");
         await sessions.deleteExpired(terminal.expiresAt);
         expect(await db.agent_session.findUnique({ where: { id: sessionId } })).toBeNull();
     });
@@ -252,7 +253,7 @@ describeDb("atomic task review and execution on guarded PostgreSQL", () => {
 
     it("refuses forged revisions, wrong owner, and missing strong acknowledgement", async () => {
         meta.approvalPolicy = "strong";
-        const review = await prepared(); const action = await actions.get(review.snapshot.action!.actionId, principal);
+        const review = await prepared(); const action = await actions.get(review.snapshot.action!.actionId, owner);
         await expect(actions.approve(action.id, principal, "forged")).rejects.toMatchObject({ status: 409 });
         await expect(actions.approve(action.id, { ...principal, userId: randomUUID() }, action.proposalRevision)).rejects.toMatchObject({ status: 404 });
         await expect(actions.approve(action.id, principal, action.proposalRevision)).rejects.toMatchObject({ status: 409 });
@@ -261,4 +262,105 @@ describeDb("atomic task review and execution on guarded PostgreSQL", () => {
         expect(done.action.status).toBe("succeeded");
         expect(action.inputHash).toBe(agentBindingHash(action.proposal["input"]));
     });
+    it.each(["attach", "invalidate", "cancel"])("rolls back correlated %s writes and receipt on task write failure", async (operation) => {
+        const initial = operation === "attach" ? await create() : await prepared();
+        const before = await state(initial.snapshot.taskId);
+        const beforeActions = await db.agent_action.findMany({ where: { sessionId } });
+        const beforeEvents = await db.agent_task_event.findMany({ where: { sessionId } });
+        const beforeSession = await db.agent_session.findUniqueOrThrow({ where: { id: sessionId } });
+        const faulty = new AgentTaskService(new PrismaAgentTaskRepository(failAfterWrite(db, "agent_task", "updateMany") as never),
+            policy as never, clients as never, actions);
+        const request = operation === "invalidate"
+            ? faulty.patch(principal, initial.snapshot.taskId, { clientEventId: randomUUID(), expectedRevision: initial.snapshot.revision,
+                operations: [{ op: "set", field: "name", value: "SYN_EDIT" }] })
+            : faulty.command(principal, initial.snapshot.taskId, { command: operation === "attach" ? "prepare-review" : "cancel",
+                clientEventId: randomUUID(), expectedRevision: initial.snapshot.revision });
+        await expect(request).rejects.toMatchObject({ status: 503 });
+        expect(await state(initial.snapshot.taskId)).toEqual(before);
+        expect(await db.agent_action.findMany({ where: { sessionId } })).toEqual(beforeActions);
+        expect(await db.agent_task_event.findMany({ where: { sessionId } })).toEqual(beforeEvents);
+        expect(await db.agent_session.findUniqueOrThrow({ where: { id: sessionId } })).toEqual(beforeSession);
+    });
+
+    it("expires an inactive review and releases its slot without reviving its draft", async () => {
+        const review = await prepared();
+        const inactiveAt = new Date(Date.now() - DAY);
+        await db.agent_action.update({ where: { id: review.snapshot.action!.actionId }, data: { expiresAt: inactiveAt } });
+        await db.agent_session.update({ where: { id: sessionId }, data: { expiresAt: inactiveAt } });
+        const before = await state(review.snapshot.taskId);
+        await actions.expire(review.snapshot.action!.actionId, owner);
+        const after = await state(review.snapshot.taskId);
+        expect(after).toMatchObject({ status: before.status, activeSlot: null, activeActionId: null,
+            expiresAt: before.expiresAt, lastAcceptedAt: before.lastAcceptedAt, terminalAt: before.terminalAt, revision: before.revision + 1 });
+        await expect(patch(after.id, after.revision)).rejects.toMatchObject({ status: 410 });
+        await expect(service.command(principal, after.id, { command: "prepare-review", expectedRevision: after.revision, clientEventId: randomUUID() }))
+            .rejects.toMatchObject({ status: 410 });
+        expect((await db.agent_session.findUniqueOrThrow({ where: { id: sessionId } })).expiresAt).toEqual(inactiveAt);
+    });
+
+    it("moves a stranded inactive execution to reconciling without executing again", async () => {
+        const review = await prepared(); const entered = deferred(); const release = deferred();
+        execute.mockImplementationOnce(async () => { entered.resolve(); await release.promise; throw new AgentActionUncertainError("interrupted"); });
+        const approval = actions.approve(review.snapshot.action!.actionId, principal, review.snapshot.action!.expectedRevision);
+        await entered.promise;
+        const staleAt = new Date(Date.now() - 31 * 60000);
+        await db.agent_action.update({ where: { id: review.snapshot.action!.actionId }, data: { updatedAt: staleAt } });
+        await db.agent_session.update({ where: { id: sessionId }, data: { expiresAt: staleAt } });
+        await actions.expirePending(new Date());
+        const recovering = await state(review.snapshot.taskId);
+        expect(recovering.status).toBe("reconciling");
+        const uncertain = await actions.approve(review.snapshot.action!.actionId, principal, review.snapshot.action!.expectedRevision);
+        expect(uncertain.action.status).toBe("uncertain");
+        release.resolve(); await approval;
+        expect(await state(review.snapshot.taskId)).toEqual(recovering);
+        expect(execute).toHaveBeenCalledTimes(1);
+    });
+
+    it("repairs historical results while preserving the current review and after payload purge", async () => {
+        const original = await prepared();
+        const changed = await patch(original.snapshot.taskId, original.snapshot.revision);
+        const current = await service.command(principal, changed.snapshot.taskId, { command: "prepare-review",
+            clientEventId: randomUUID(), expectedRevision: changed.snapshot.revision });
+        const before = await state(current.snapshot.taskId);
+        await actions.repairTerminalResultParts();
+        expect(await state(current.snapshot.taskId)).toEqual(before);
+        expect((await actions.get(original.snapshot.action!.actionId, owner)).resultPartPersistedAt).not.toBeNull();
+        await service.command(principal, current.snapshot.taskId, { command: "cancel", expectedRevision: current.snapshot.revision, clientEventId: randomUUID() });
+        await actions.repairTerminalResultParts();
+        const cancelled = await state(current.snapshot.taskId);
+        await tasks.purgeExpired(cancelled.expiresAt);
+        const purged = await state(current.snapshot.taskId);
+        expect(purged.purgedAt).not.toBeNull();
+        await db.agent_action.update({ where: { id: original.snapshot.action!.actionId }, data: { resultPartPersistedAt: null } });
+        await actions.repairTerminalResultParts();
+        expect(await state(current.snapshot.taskId)).toEqual(purged);
+    });
+
+    it("rolls back a recovery task failure and refuses foreign or inconsistent reverse links", async () => {
+        const review = await prepared(); const original = await actions.get(review.snapshot.action!.actionId, owner);
+        const before = await state(review.snapshot.taskId);
+        const scope = { ...owner, sessionId, taskId: review.snapshot.taskId, actionId: original.id };
+        const faulty = new PrismaAgentTaskRepository(failAfterWrite(db, "agent_task", "updateMany") as never);
+        expect((await faulty.withLinkedActionRecoveryTransaction(scope, (tx) => tx.applyOutcome({ kind: "review-rejected", transitionAt: new Date(), actorId: userId }))).status)
+            .toBe("storage_failure");
+        expect(await state(before.id)).toEqual(before); expect(await actions.get(original.id, owner)).toEqual(original);
+        expect((await tasks.withLinkedActionRecoveryTransaction({ ...scope, branchId: randomUUID() }, async () => "should not run")).status).toBe("not_found");
+        await db.agent_action.update({ where: { id: original.id }, data: { taskId: null } });
+        expect((await tasks.withLinkedActionRecoveryTransaction(scope, async () => "should not run")).status).toBe("binding_mismatch");
+    });
+
+    it("reopens result repair after a stale uncertain message races with a settled result marker", async () => {
+        const review = await prepared();
+        await actions.approve(review.snapshot.action!.actionId, principal, review.snapshot.action!.expectedRevision);
+        const before = await state(review.snapshot.taskId);
+        const scope = { ...owner, sessionId, taskId: before.id, actionId: review.snapshot.action!.actionId };
+        const marked = await tasks.withLinkedActionRecoveryTransaction(scope, (tx) => tx.markResultPartPersisted({ expectedStatus: "uncertain", persistedAt: new Date() }));
+        expect(marked).toEqual({ status: "ok", value: false });
+        expect((await actions.get(scope.actionId, owner)).resultPartPersistedAt).toBeNull();
+        await actions.repairTerminalResultParts();
+        expect((await actions.get(scope.actionId, owner)).resultPartPersistedAt).not.toBeNull();
+        expect(await state(before.id)).toEqual(before);
+    });
+
+
 });

@@ -27,6 +27,12 @@ export function agentTaskSourceHash(task: AgentTaskEntity): string {
     });
 }
 
+export function agentLinkedProposalRevision(taskId: string, taskRevision: number, action: Pick<AgentActionEntity,
+    "capability" | "capabilityVersion" | "risk" | "proposal">): string {
+    return agentBindingHash({ taskId, taskRevision, capability: action.capability,
+        capabilityVersion: action.capabilityVersion, risk: action.risk, proposal: action.proposal });
+}
+
 export interface PreparedAgentTaskReview {
     taskId: string;
     sourceRevision: number;

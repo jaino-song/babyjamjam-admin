@@ -634,7 +634,9 @@ describeAgentE2E("agent task lifecycle against the guarded local database", () =
         const cleanupAt = futureDate(2);
         await prisma.agent_task.update({ where: { id: created.snapshot.taskId }, data: { expiresAt } });
 
-        const editBarrier = transactionBarrier(prisma, 1);
+        // The first transaction is a read-only replay check. Hold the second
+        // transaction's session lock, where the edit actually commits.
+        const editBarrier = transactionBarrier(prisma, 2);
         // Candidate discovery is raw query 1; notify before raw query 2 so
         // cleanup is demonstrably waiting on the session row held by edit.
         const cleanupBarrier = transactionBarrier(prisma, undefined, 2);

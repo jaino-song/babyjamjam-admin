@@ -50,7 +50,7 @@ import {
 } from "domain/repositories/agent-task.repository.interface";
 import type { AgentActionEntity } from "domain/entities/agent-action.entity";
 import {
-    agentBindingHash, agentTaskSourceHash,
+    agentBindingHash, agentTaskSourceHash, agentLinkedProposalRevision,
     type AgentLinkedActionLiveOperation, type AgentLinkedActionLiveResult,
     type AgentLinkedActionRecoveryScope, type AgentLinkedActionRecoveryTransaction,
     type AgentLinkedActionRecoveryContext, type AgentLinkedActionRecoveryResult,
@@ -468,7 +468,8 @@ class PrismaAgentTaskTransaction implements AgentTaskTransaction {
                 || task.activeSlot !== 1 || prepared.taskId !== task.taskId || prepared.sourceRevision !== task.revision
                 || prepared.sourceHash !== agentTaskSourceHash(task) || candidate.capability !== task.capabilityId
                 || candidate.sessionId !== task.sessionId || candidate.userId !== task.userId || candidate.branchId !== task.branchId
-                || candidate.expiresAt <= now || candidate.inputHash !== agentBindingHash(candidate.proposal["input"])) {
+                || candidate.expiresAt <= now || candidate.inputHash !== agentBindingHash(candidate.proposal["input"])
+                || candidate.proposalRevision !== agentLinkedProposalRevision(task.taskId, task.revision + 1, candidate)) {
                 return { status: "binding_mismatch" };
             }
             const record = await this.transaction.agent_action.create({ data: {
@@ -504,6 +505,9 @@ class PrismaAgentTaskTransaction implements AgentTaskTransaction {
             if (action.taskRevision !== task.revision || task.status !== "awaiting_approval"
                 || task.draft.server.actionExpectedRevision !== action.proposalRevision
                 || action.inputHash !== agentBindingHash(action.proposal["input"])
+                || action.proposalRevision !== agentLinkedProposalRevision(task.taskId, task.revision, action)
+                || agentBindingHash({ snapshot: action.targetSnapshot, version: action.targetVersion })
+                    !== agentBindingHash({ snapshot: action.proposal["targetSnapshot"], version: action.proposal["targetVersion"] })
                 || !["proposed", "approved"].includes(action.status)) return { status: "binding_mismatch" };
             const draft = structuredClone(task.draft);
             draft.currentSnapshotRef = randomUUID();

@@ -306,7 +306,7 @@ export class AgentTaskService {
         const preparedNext = await this.nextDraft(principal, initial.task, input.operations, input.clientEventId, origin, operationOrigins);
         const demoted = initial.task.status === "review_ready" || initial.task.status === "awaiting_approval"
             ? await this.demotedStatus(principal, initial.task) : preparedNext.status;
-        const result = await this.runPatchTransaction(principal, scope, parsedTaskId.data, input, requestHash, origin, operationOrigins,
+        const result = await this.runPatchTransaction(principal, scope, parsedTaskId.data, input, requestHash,
             { sourceHash: agentTaskSourceHash(initial.task), next: preparedNext, demoted });
         return this.mapInternalMutation(result);
     }
@@ -893,8 +893,6 @@ export class AgentTaskService {
         taskId: string,
         input: AgentTaskPatchRequest,
         requestHash: string,
-        origin: AgentTaskMutationOrigin = "user",
-        operationOrigins?: readonly AgentTaskMutationOrigin[],
         prepared?: { sourceHash: string; next: { draft: AgentTaskDraft; status: AgentTaskEntity["status"] }; demoted: AgentTaskEntity["status"] },
     ): Promise<InternalMutation> {
         const raw = await this.repository.withTransaction(scope, async (transaction): Promise<InternalMutation> => {
