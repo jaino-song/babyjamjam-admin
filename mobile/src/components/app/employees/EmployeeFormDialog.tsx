@@ -475,7 +475,7 @@ export function EmployeeFormDialog({
             open={open}
             onClose={handleClose}
             title={dialogTitle}
-            closeLabel="새 제공인력 등록 닫기"
+            closeLabel={`${dialogTitle} 닫기`}
             closeDisabled={isLoading}
             secondaryAction={{
                 label: t(locale, "common.cancel"),

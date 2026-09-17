@@ -174,6 +174,7 @@ function makeWorkHistoryResult(overrides: Record<string, unknown> = {}) {
 function renderPage() {
   mockedUseInfiniteEmployees.mockReturnValue({
     allEmployees: [employee],
+    filteredEmployees: [employee],
     isLoading: false,
   } as unknown as ReturnType<typeof useInfiniteEmployees>);
   mockedUseEmployeeActiveClients.mockReturnValue({
