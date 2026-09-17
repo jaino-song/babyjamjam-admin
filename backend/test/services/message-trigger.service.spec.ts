@@ -4919,26 +4919,58 @@ describe("MessageTriggerService", () => {
         ])("detects a %s to %s transition through the real page/probe repositories", async (initialStatus, currentStatus) => {
             const { service, prisma, ruleRepository } = createService();
             ruleRepository.findAll.mockResolvedValue([]);
+            const terminalAt = new Date("2026-09-01T00:00:00.000Z");
             const firstJob = createJob({
                 id: "00000000-0000-4000-8000-0000000000f0",
                 status: initialStatus as MessageTriggerJobStatus,
+                canceledAt: initialStatus === "canceled" ? terminalAt : null,
             });
             const lookaheadJob = createJob({
                 id: "00000000-0000-4000-8000-0000000000a0",
                 status: initialStatus as MessageTriggerJobStatus,
+                canceledAt: initialStatus === "canceled" ? terminalAt : null,
             });
-            const currentJob = createJob({
-                id: firstJob.id,
-                status: currentStatus as MessageTriggerJobStatus,
-            });
+            type HistoryJobQuery = {
+                where: {
+                    branchId?: string;
+                    status?: string;
+                    createdAt?: { lte?: Date };
+                    updatedAt?: { lte?: Date; gte?: Date; gt?: Date };
+                    logs?: { none?: { branchId?: string; createdAt?: { lte?: Date } } };
+                    OR?: unknown[];
+                    AND?: Array<{ id?: { lt?: string } }>;
+                };
+                take?: number;
+            };
+            const rows = [firstJob, lookaheadJob];
             let pageReads = 0;
-            let probeReads = 0;
-            prisma.message_trigger_job.findMany.mockImplementation(async (query: {
-                where: Record<string, unknown>;
-            }) => {
-                if ("OR" in query.where) {
+            prisma.message_trigger_job.findMany.mockImplementation(async (query: HistoryJobQuery) => {
+                const cutoff = query.where.createdAt?.lte ?? query.where.updatedAt?.gte;
+                const afterId = query.where.AND?.[0]?.id?.lt;
+                const candidates = rows.filter((row) => {
+                    if (row.branchId !== query.where.branchId) return false;
+                    if (afterId !== undefined && row.id >= afterId) return false;
+                    if (cutoff !== undefined && row.createdAt > cutoff) return false;
+                    if (query.where.status !== undefined && row.status !== query.where.status) return false;
+                    if (query.where.OR) {
+                        return (row.status === "failed" && row.updatedAt <= cutoff!)
+                            || (row.status === "canceled"
+                                && row.canceledAt !== null
+                                && row.canceledAt <= cutoff!);
+                    }
+                    if (query.where.updatedAt?.gte !== undefined && row.updatedAt < query.where.updatedAt.gte) {
+                        return false;
+                    }
+                    if (query.where.updatedAt?.gt !== undefined && row.updatedAt <= query.where.updatedAt.gt) {
+                        return false;
+                    }
+                    return true;
+                });
+                if (query.where.OR) {
                     pageReads += 1;
-                    return pageReads === 1 ? [firstJob, lookaheadJob] : [];
+                    return candidates
+                        .sort((left, right) => right.id.localeCompare(left.id))
+                        .slice(0, query.take ?? candidates.length);
                 }
                 expect(query.where).toEqual(expect.objectContaining({
                     branchId,
@@ -4947,8 +4979,7 @@ describe("MessageTriggerService", () => {
                     logs: { none: { branchId, createdAt: { lte: expect.any(Date) } } },
                 }));
                 expect(query.where).not.toHaveProperty("status");
-                probeReads += 1;
-                return probeReads === 1 ? [] : [{ id: currentJob.id }];
+                return candidates.slice(0, query.take ?? 1).map((row) => ({ id: row.id }));
             });
 
             const serviceInternals = service as unknown as {
@@ -4960,6 +4991,9 @@ describe("MessageTriggerService", () => {
 
             const firstPage = await service.listHistoryPage(branchId, 1);
             expect(firstPage.page.hasMore).toBe(true);
+            const snapshotAt = new Date(firstPage.page.snapshotAt);
+            lookaheadJob.status = currentStatus as MessageTriggerJobStatus;
+            lookaheadJob.updatedAt = snapshotAt;
             await expect(
                 service.listHistoryPage(branchId, 1, firstPage.page.nextCursor ?? undefined),
             ).rejects.toMatchObject({
@@ -4970,7 +5004,6 @@ describe("MessageTriggerService", () => {
                 }),
             });
             expect(pageReads).toBe(2);
-            expect(probeReads).toBe(2);
         });
 
         it("walks older-created logs exactly once through the real service and repositories", async () => {
