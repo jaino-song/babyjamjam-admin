@@ -91,7 +91,7 @@
 - 수정: 정상 빈 결과는 전체/조치 필요/시작 예정/종료 예정별 안내를 표시한다. 목록 조회 실패는 숫자 대신 `—`와 오류/재시도, 요약 조회 실패는 추정 수치 대신 별도 오류/재시도를 표시한다. 서로 성공한 영역은 계속 사용할 수 있다.
 - 기존 `ListEmptyState`, `Alert`, `Button`, `StatsBar`, `ListCard`, `ListRowsSkeleton` 조합. 새 custom UI 컴포넌트, page-local 컴포넌트, page의 시각 스타일 추가 없음.
 - 회귀 RED: 5 failed / 2 passed. 최종 화면·페이지 상태 테스트 10 passed; 전체 모바일 262 suites / 1786 tests passed. typecheck 및 UI architecture 통과. 변경 파일 lint 0 errors / 기존 경고 1개.
-- 로컬 production build는 기존 `NEXT_PUBLIC_API_BASE_URL` 미설정으로 실패. 환경 파일을 바꾸거나 값을 발명하지 않았다. CI build 결과는 별도 기록한다.
+- 로컬 production build는 기존 `NEXT_PUBLIC_API_BASE_URL` 미설정으로 실패. 환경 파일을 바꾸거나 값을 발명하지 않았다. 구현 `d161f3070`의 [Mobile CI](https://github.com/jaino-song/babyjamjam-admin/actions/runs/35223082803)는 type/lint/test/build까지 통과했다. 이번 실행의 실제 backend Playwright job은 skipped이며 이전 E2E 증거로 대신하지 않는다. 전체 모바일 lint는 0 errors / 기존 378 warnings.
 - 실제 Chrome의 인증된 로컬 QA 경로 `127.0.0.1:3102/dashboard`, 390×844에서 빈 안내 screenshot/DOM/computed style 확인: `mobile_dashboard_page_content_list-card_body_empty`, display block, font-size 13.6px, width 322px.
 - 로컬 탭에서 고객·요약 요청을 임시 차단해 오류 화면을 직접 확인했다. 요약/목록 오류의 폰트 14px, 요약 영역은 기존 stats-grid 여백 적용. 차단 해제 → 목록 다시 시도 → 목록만 복구/요약 오류 유지 → 요약 다시 시도 → 둘 다 정상 복구 확인. 차단·viewport 해제, 검수 탭 닫음. 운영 장애나 외부 발송 없음.
 - 보안 점검: 추가 diff의 시크릿/위험 실행 패턴 0, 환경 파일 ignore 확인, 의존성 audit 0건. 인증/권한·스키마·의존성·환경 파일 변경 없음.
@@ -102,4 +102,5 @@
 - PC 고객 중복 요청은 쿠키를 쓰지 않는 경로다. 지점 선택과 인증 갱신의 쓰기 경로를 확인했지만 TENANT-001의 원인은 아직 미확정이다. 인증 코어 변경 없음.
 - 본점 계약 목록은 20개 단위/총 64개 응답과 다음 페이지 로딩을 확인했다. 목록 projection에는 전화·상세 동기화 정보가 없고 산모 계약 section은 템플릿 필터가 있으므로, 모든 페이지를 읽더라도 자동 연결 후보 없음의 증거가 되지 않는다.
 - 저장된 운영 runbook에는 DB identity/status/SELECT 1 경로만 있고 승인된 임의 후보 조회 경로는 발견하지 못했다. 로컬 DB를 운영으로 간주하거나 제한된 서버 역할을 우회하지 않았다. 운영 후보 조회와 지점 원인 확인 후 고객 저장·계약 전송 QA를 재개해야 한다.
+- 추가로 기기에 이미 인증된 Supabase CLI를 발견해 프로젝트 목록 조회까지 수행했다. 연결된 계정의 프로젝트와 로컬 backend 프로젝트는 다르다. 임시 작업 디렉터리의 읽기 전용 schema probe는 IPv6 연결 불가로 실패해 프로젝트의 운영 여부나 QA 지점 존재를 검증하지 못했다. 연결을 성공한 운영 DB 조회로 기록하지 않는다. 추가 인증 발급·권한 변경·DB 변경 없음.
 - 전체 QA 완료, 수정 운영 반영, 실제 수신 완료로 판정하지 않는다.
