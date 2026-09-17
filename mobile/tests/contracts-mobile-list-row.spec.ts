@@ -1254,7 +1254,7 @@ test.describe("Mobile contracts list rows", () => {
     await page.getByRole("button", { name: "계약서 정보" }).click();
 
     const contractInfo = page.locator(".info-card", { hasText: "계약 정보" });
-    await expect(contractInfo).toContainText("계약서 종류");
+    await expect(contractInfo).toContainText("문서번호");
     await expect(contractInfo).not.toContainText("계약 번호");
     await expect(contractInfo).not.toContainText("계약서 유형");
     await expect(contractInfo).toContainText("생성일");
