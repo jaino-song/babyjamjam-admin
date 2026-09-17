@@ -11,7 +11,7 @@ Integration: `codex/bjj-conversation-v1`. Local implementation, deterministic ve
 | 3 — owned draft APIs | Closed | Authenticated HTTP/DB replay, conflicts and scope tests; SOL SHIP |
 | 4 — lifecycle and retention | Closed | Source `3b094cdfa13b20f1c08762b916c2f2f20ffcef9c`; shared23/backend436/DB73; SOL SHIP/HIGH |
 | 5 — conversation intake and context | Closed | Source `2d114d147b88fc208c86ed12679cf6f9101aca56`; shared25/backend498/DB93; cumulative SOL SHIP/HIGH |
-| 6 — atomic task/action approval | Not implemented | Prepared recovery/locking contract; new source exploration needs DeepSeek availability |
+| 6 — atomic task/action approval | Blocked before implementation | Fresh direct DeepSeek scout failed402/insufficient balance at09:51KST; no source findings or fallback |
 | 7 — client writes and automation consent | Not implemented | Consent must survive intent materialization and temporary-task purge through actual dispatch/retry |
 | 8 — desktop and mobile | Not implemented | Both renderers, protected forms and authenticated browser QA pending |
 | 9 — cumulative QA and release preparation | Not implemented | Full acceptance evidence and independent cumulative review pending |
@@ -40,7 +40,7 @@ Four stock registration fixtures use unlabelled synthetic-token input unsupporte
 
 ## Next step and completion boundaries
 
-At2026-09-17 06:29KST, new read-only DeepSeek exploration failed with provider402/insufficient balance. No fallback role/model was selected. Known Phase5 corrections have now been completed; a fresh same-provider availability check is the next step before Phase6 discovery. The supplied Explorer Model Policy requires fail-closed handling if that provider remains unavailable.
+At2026-09-17 09:51KST, a fresh approved direct-DeepSeek read-only scout at the Phase5 close commit `a5409c55a9c596df9d3cd84a209432bd44934846` again failed with `402 Payment Required: Insufficient Balance` after its built-in retries. The scout returned no source findings and reported inner explorer exit1. An ancillary Context7 authentication warning also appeared; the model request itself failed for insufficient balance. No fallback role/model or main-agent source exploration was used. The supplied Explorer Model Policy requires fail-closed handling. Resume Phase6 discovery after this provider is restored; then reconcile the prepared action/task transaction contract and obtain its independent plan review before implementation.
 
 - Full implementation and deterministic acceptance: **not complete**; Phases6–9 remain.
 - Actual Google/OpenAI conversation quality evaluation: **deferred**; no paid product-model evaluation performed.
