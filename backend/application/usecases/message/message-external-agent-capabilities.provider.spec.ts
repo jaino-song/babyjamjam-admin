@@ -69,6 +69,7 @@ describe("MessageExternalAgentCapabilitiesProvider", () => {
         const delivery = {
             dispatchPendingJobNow: jest.fn().mockResolvedValue({ status: "sent" }),
             listRules: jest.fn().mockResolvedValue([rule]),
+            listRulesReadOnly: jest.fn().mockResolvedValue([rule]),
             getRule: jest.fn().mockResolvedValue(rule),
             createRule: jest.fn().mockResolvedValue(rule),
             updateRule: jest.fn().mockImplementation(async (_branchId, _id, updates) => Object.assign(rule, updates)),
@@ -650,7 +651,8 @@ describe("MessageExternalAgentCapabilitiesProvider", () => {
         const inspection = await setActive!.inspect!(context, { id: "rule-a", isActive: false });
         const updated = await setActive!.execute(context, { id: "rule-a", isActive: false }) as { isActive: boolean };
 
-        expect(delivery.listRules).toHaveBeenCalledWith(principal.branchId);
+        expect(delivery.listRulesReadOnly).toHaveBeenCalledWith(principal.branchId);
+        expect(delivery.listRules).not.toHaveBeenCalled();
         expect(listed.rules).toEqual([expect.objectContaining({ id: "rule-a" })]);
         expect(inspection.targetVersion).toHaveLength(64);
         expect(setActive!.meta.approvalPolicy).toBe("strong");

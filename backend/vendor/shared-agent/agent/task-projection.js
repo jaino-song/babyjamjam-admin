@@ -45,6 +45,13 @@ exports.AgentTaskSafeSnapshotSchema = zod_1.z.object({
         choice: zod_1.z.enum(["unanswered", "yes", "no"]),
         hasServerBinding: zod_1.z.boolean(),
     }).strict(),
+    automation: zod_1.z.object({
+        questionRef: task_types_1.AgentTaskReferenceSchema,
+        availability: task_types_1.AgentAutomationQuestionAvailabilitySchema,
+        reason: task_types_1.AgentAutomationUnavailableReasonSchema.optional(),
+        effectCount: zod_1.z.number().int().min(0).max(500),
+        recipientCount: zod_1.z.number().int().min(0).max(500),
+    }).strict().optional(),
     times: zod_1.z.object({
         createdAt: task_types_1.AgentTaskIsoDateTimeSchema,
         updatedAt: task_types_1.AgentTaskIsoDateTimeSchema,
@@ -253,6 +260,13 @@ function projectTaskForSafeChat(task) {
         issues: parsedTask.issues.map(({ code, field, severity }) => ({ code, ...(field ? { field } : {}), severity })),
         action: parsedTask.action ? { actionId: parsedTask.action.actionId } : null,
         consent: { choice: parsedTask.consent.choice, hasServerBinding: parsedTask.consent.binding !== null },
+        ...(parsedTask.automation ? { automation: {
+                questionRef: parsedTask.automation.questionRef,
+                availability: parsedTask.automation.availability,
+                ...(parsedTask.automation.reason ? { reason: parsedTask.automation.reason } : {}),
+                effectCount: parsedTask.automation.effects.length,
+                recipientCount: new Set(parsedTask.automation.effects.map(({ recipientRef }) => recipientRef)).size,
+            } } : {}),
         times: {
             createdAt: parsedTask.times.createdAt,
             updatedAt: parsedTask.times.updatedAt,

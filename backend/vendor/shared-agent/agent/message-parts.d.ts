@@ -84,13 +84,13 @@ export declare const AgentErrorPartSchema: z.ZodObject<{
     code: z.ZodString;
     category: z.ZodEnum<{
         model: "model";
+        client: "client";
         capability: "capability";
         provider: "provider";
         routing: "routing";
         validation: "validation";
         authorization: "authorization";
         persistence: "persistence";
-        client: "client";
     }>;
     message: z.ZodString;
     retryable: z.ZodBoolean;
@@ -119,10 +119,10 @@ export declare const AgentFormFieldSchema: z.ZodObject<{
     required: z.ZodOptional<z.ZodBoolean>;
     inputMode: z.ZodOptional<z.ZodEnum<{
         search: "search";
+        none: "none";
         email: "email";
         url: "url";
         text: "text";
-        none: "none";
         tel: "tel";
         numeric: "numeric";
         decimal: "decimal";
@@ -148,10 +148,10 @@ export declare const AgentFormPartSchema: z.ZodObject<{
         required: z.ZodOptional<z.ZodBoolean>;
         inputMode: z.ZodOptional<z.ZodEnum<{
             search: "search";
+            none: "none";
             email: "email";
             url: "url";
             text: "text";
-            none: "none";
             tel: "tel";
             numeric: "numeric";
             decimal: "decimal";

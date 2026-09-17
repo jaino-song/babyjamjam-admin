@@ -1,6 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.AgentTaskRestoreMetadataSchema = exports.AgentTaskMutationResponseSchema = exports.AgentTaskEventReceiptSchema = exports.AgentTaskCommandNameSchema = exports.AgentTaskCommandRequestSchema = exports.AgentTaskStartUpdateCommandSchema = exports.AgentTaskSelectTargetCommandSchema = exports.AgentTaskPatchRequestSchema = exports.AgentTaskCreateRequestSchema = exports.AgentTaskSchema = exports.AgentAutomationConsentInputSchema = exports.AgentAutomationConsentSchema = exports.AgentAutomationConsentBindingSchema = exports.AgentTaskTimesSchema = exports.AgentTaskActionLinkSchema = exports.AgentTaskChoiceSetSchema = exports.AgentTaskChoiceOptionSchema = exports.AgentTaskTargetSchema = exports.AgentTaskTargetVersionSchema = exports.AgentTaskConstraintsSchema = exports.AgentTaskIssueSchema = exports.AgentTaskIssueSeveritySchema = exports.AgentTaskIssueCodeSchema = exports.AGENT_TASK_ISSUE_CODES = exports.AgentTaskProvenanceSchema = exports.AgentTaskFieldProvenanceSchema = exports.AgentTaskSourceSchema = exports.AgentDisplayedChoiceHintSchema = exports.AgentTaskDisplayedChoiceHintSchema = exports.AgentTaskIsoDateTimeSchema = exports.AgentTaskEventHashSchema = exports.AgentTaskSnapshotRefSchema = exports.AgentTaskEventIdSchema = exports.AgentTaskIdSchema = exports.AgentTaskReferenceSchema = exports.AgentActionRevisionTokenSchema = exports.AgentTaskRevisionSchema = exports.AgentTaskRestoreStatusSchema = exports.AgentTaskStateSchema = exports.AgentTaskKindSchema = exports.AgentTaskCapabilityIdSchema = exports.AgentTaskSchemaVersionSchema = exports.AGENT_TASK_SCHEMA_VERSION = void 0;
+exports.AgentTaskRestoreMetadataSchema = exports.AgentTaskMutationResponseSchema = exports.AgentTaskEventReceiptSchema = exports.AgentTaskCommandNameSchema = exports.AgentTaskCommandRequestSchema = exports.AgentTaskStartUpdateCommandSchema = exports.AgentTaskSelectTargetCommandSchema = exports.AgentTaskPatchRequestSchema = exports.AgentTaskCreateRequestSchema = exports.AgentTaskSchema = exports.AgentAutomationQuestionSchema = exports.AgentAutomationEffectSummarySchema = exports.AgentAutomationUnavailableReasonSchema = exports.AgentAutomationQuestionAvailabilitySchema = exports.AgentAutomationEffectKindSchema = exports.AgentAutomationConsentInputSchema = exports.AgentAutomationConsentSchema = exports.AgentAutomationConsentBindingSchema = exports.AgentTaskTimesSchema = exports.AgentTaskActionLinkSchema = exports.AgentTaskChoiceSetSchema = exports.AgentTaskChoiceOptionSchema = exports.AgentTaskTargetSchema = exports.AgentTaskTargetVersionSchema = exports.AgentTaskConstraintsSchema = exports.AgentTaskIssueSchema = exports.AgentTaskIssueSeveritySchema = exports.AgentTaskIssueCodeSchema = exports.AGENT_TASK_ISSUE_CODES = exports.AgentTaskProvenanceSchema = exports.AgentTaskFieldProvenanceSchema = exports.AgentTaskSourceSchema = exports.AgentDisplayedChoiceHintSchema = exports.AgentTaskDisplayedChoiceHintSchema = exports.AgentTaskIsoDateTimeSchema = exports.AgentTaskEventHashSchema = exports.AgentTaskSnapshotRefSchema = exports.AgentTaskEventIdSchema = exports.AgentTaskIdSchema = exports.AgentTaskReferenceSchema = exports.AgentActionRevisionTokenSchema = exports.AgentTaskRevisionSchema = exports.AgentTaskRestoreStatusSchema = exports.AgentTaskStateSchema = exports.AgentTaskKindSchema = exports.AgentTaskCapabilityIdSchema = exports.AgentTaskSchemaVersionSchema = exports.AGENT_TASK_SCHEMA_VERSION = void 0;
 exports.createAgentTaskDefaults = createAgentTaskDefaults;
 const zod_1 = require("zod");
 const client_input_policy_1 = require("./client-input-policy");
@@ -137,6 +137,45 @@ exports.AgentAutomationConsentSchema = zod_1.z.object({
     }
 });
 exports.AgentAutomationConsentInputSchema = zod_1.z.object({ choice: client_input_policy_1.AutomationConsentChoiceSchema }).strict();
+/** Delivery descriptions contain references, never phone/name/body preimages. */
+exports.AgentAutomationEffectKindSchema = zod_1.z.enum(["client-rule", "employee-assignment", "service-record-link"]);
+exports.AgentAutomationQuestionAvailabilitySchema = zod_1.z.enum(["available", "none", "unavailable"]);
+exports.AgentAutomationUnavailableReasonSchema = zod_1.z.enum([
+    "missing-input", "missing-default-rules", "sender-unavailable", "unsupported-content", "source-unavailable",
+]);
+exports.AgentAutomationEffectSummarySchema = zod_1.z.object({
+    effectRef: exports.AgentTaskReferenceSchema,
+    recipientRef: exports.AgentTaskReferenceSchema,
+    kind: exports.AgentAutomationEffectKindSchema,
+    recipientType: zod_1.z.enum(["client", "primary-employee", "secondary-employee"]),
+    change: zod_1.z.enum(["create", "refresh", "cancel"]),
+    templateKey: zod_1.z.enum([
+        "SERVICE_INFO", "CLIENT_GREETING", "PRICE_INFO", "REMINDER", "THANKS", "SURVEY", "INFO",
+        "SERVICE_END_NOTICE", "EMPLOYEE_ASSIGNED", "SERVICE_RECORD_LINK",
+    ]),
+}).strict();
+exports.AgentAutomationQuestionSchema = zod_1.z.object({
+    questionRef: exports.AgentTaskReferenceSchema,
+    availability: exports.AgentAutomationQuestionAvailabilitySchema,
+    reason: exports.AgentAutomationUnavailableReasonSchema.optional(),
+    /** These refs designate the complete canonical sets, not representative members. */
+    recipientSetRef: exports.AgentTaskReferenceSchema,
+    templateSetRef: exports.AgentTaskReferenceSchema,
+    effectDigest: exports.AgentTaskEventHashSchema,
+    policyDigest: exports.AgentTaskEventHashSchema,
+    effects: zod_1.z.array(exports.AgentAutomationEffectSummarySchema).max(500),
+}).strict().superRefine((value, context) => {
+    if ((value.availability === "none" && value.effects.length !== 0)
+        || (value.availability === "available" && value.effects.length === 0)) {
+        context.addIssue({ code: "custom", path: ["effects"], message: "Effect availability does not match the described effects" });
+    }
+    if ((value.availability === "unavailable") !== (value.reason !== undefined)) {
+        context.addIssue({ code: "custom", path: ["reason"], message: "Only unavailable effects require a finite reason" });
+    }
+    if (new Set(value.effects.map(({ effectRef }) => effectRef)).size !== value.effects.length) {
+        context.addIssue({ code: "custom", path: ["effects"], message: "Effect references must be unique" });
+    }
+});
 exports.AgentTaskSchema = zod_1.z.object({
     schemaVersion: exports.AgentTaskSchemaVersionSchema,
     taskId: exports.AgentTaskIdSchema,
@@ -155,6 +194,8 @@ exports.AgentTaskSchema = zod_1.z.object({
     orderedChoiceRefs: zod_1.z.array(exports.AgentTaskReferenceSchema),
     target: exports.AgentTaskTargetSchema.nullable(),
     consent: exports.AgentAutomationConsentSchema,
+    /** Absent on legacy tasks until the server has evaluated automation. */
+    automation: exports.AgentAutomationQuestionSchema.optional(),
     action: exports.AgentTaskActionLinkSchema.nullable(),
     times: exports.AgentTaskTimesSchema,
     currentSnapshotRef: exports.AgentTaskSnapshotRefSchema,

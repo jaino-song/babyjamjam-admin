@@ -12,7 +12,7 @@ Integration: `codex/bjj-conversation-v1`. Local implementation, deterministic ve
 | 4 — lifecycle and retention | Closed | Source `3b094cdfa13b20f1c08762b916c2f2f20ffcef9c`; shared23/backend436/DB73; SOL SHIP/HIGH |
 | 5 — conversation intake and context | Closed | Source `2d114d147b88fc208c86ed12679cf6f9101aca56`; shared25/backend498/DB93; cumulative SOL SHIP/HIGH |
 | 6 — atomic task/action approval | Closed | Source `4dd69251ebde09ed1a2eaf8228c2a08080a73bef`; shared25/backend535/DB114; cumulative SOL SHIP/HIGH |
-| 7 — client writes and automation consent | Source reconciliation complete; concrete PLAN review next | Durable consent across job rebuilding, intent deletion, dispatch and retry; implementation pending |
+| 7 — client writes and automation consent | Implementation in progress; PLAN APPROVE/HIGH | Shared consent contracts, pure recipes, read-only rule listing and private receipt foundation added; complete transaction/delivery integration and FINAL pending |
 | 8 — desktop and mobile | Not implemented | Both renderers, protected forms and authenticated browser QA pending |
 | 9 — cumulative QA and release preparation | Not implemented | Full acceptance evidence and independent cumulative review pending |
 
@@ -77,3 +77,15 @@ Review covers immutable task/action review binding, atomic correction/cancel/cla
 The transient earlier HTTP426 remains unexplained; unchanged baseline runtime14 and latest cumulative114 pass. No speculative protocol fix was made. The product CLI still honestly exits1 at0/48 passed: fixture grammar, no-tool driver and missing action/authority/provider instrumentation remain disclosed; it is not Phase6 acceptance or model-quality evidence.
 
 Phase7 proceeds as DIRECT main / heavy / local / SOL. Luna medium configured-fast read-only scouts identified existing private rule recipes, intent deletion, payload-replacement/retry boundaries and scheduler regeneration. Task-specific no/noSend must cover subsequent task-caused scheduling without imposing a global customer messaging ban. No Phase7 implementation or operational activation is claimed yet.
+
+### Phase7 foundation checkpoint (2026-09-17, not a phase close)
+
+Phase base `caffb18f1599e36dfe3bf63c36d92044fdad4394`. Concrete [Phase7 contract](2026-09-17-bjj-conversation-phase7.md) and its narrow read-capability amendment received SOL PLAN APPROVE/HIGH. The implementation remains DIRECT main/local; independent SOL FINAL is still required.
+
+Implemented foundation: strict aggregate automation-question contracts and safe count-only transcript projection; digest-only effect/append-only-chain validation and strict storage parsers; optional private effect-receipt references constrained to the executing action's reviewed task/revision. Hashes provide integrity only; these helpers do not independently establish send authority. The customer/task planner, durable record writer, strong review policy and materialization/dispatch/retry enforcement are not wired yet.
+
+Extracted existing client/assignment recipes without changing recipient, calendar, variable-minimization or schedule-fingerprint semantics. Preview can reuse these pure recipes; the existing materializer already does. `automation.list` now resolves persisted rules and effective overrides without default provisioning. Ordinary management listing retains default provisioning. New real-AppModule two-client DB regression includes a positive ordinary-provisioning control; execution evidence will be recorded after source freeze.
+
+Development checks: shared28; agent/client/message/read/recipe group528 across32 suites; existing messaging/retry363 across8 suites; backend types passed. Initial recipe regression exposed12 tests calling the removed private variable builder; those tests now call the extracted real builder with unchanged assertions and pass. No runtime compatibility shim was added solely for the tests. A removed shared calendar helper call was found by type checking and corrected. Full frozen checks/DB proof/FINAL remain pending. Generated declaration ordering changed with the emitter; installed vendor parity will be rechecked at freeze.
+
+Task-specific user authorization continues Luna/medium/read-only exploration (native role, configured fast/priority); no global settings changed. Vault search still fails because the local vault CLI cannot resolve `@covenant-labs/vault-contracts`; no successful retrieval/capture is claimed or vault files edited. No paid product-model calls, external messages, environment merge or activation.

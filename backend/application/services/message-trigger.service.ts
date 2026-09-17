@@ -70,7 +70,11 @@ import {
 } from "./sms-trigger-delivery.service";
 import { hasColumn, hasTable } from "infrastructure/database/schema-capabilities";
 import { MessageSenderApprovalService } from "./message-sender-approval.service";
-import { buildSmsClientVariables } from "./sms-client-variables";
+import {
+    buildClientMessageRecipe, buildEmployeeAssignmentMessageRecipe,
+    buildMessageRecipeDedupeKey, employeeAssignmentScheduleFingerprint, formatMessageRecipeDate, getKstCalendarDate,
+    type ClientTriggerSource, type EmployeeAssignmentScheduleSource,
+} from "./message-trigger-recipes";
 import { normalizePhone } from "application/utils/normalize-phone";
 import { SystemSettingService } from "./system-setting.service";
 import { SystemTemplateService } from "./system-template.service";
@@ -264,94 +268,6 @@ export interface MessageLogRecordView {
     employeeName: string | null;
 }
 
-interface ClientTriggerSource {
-    id: number;
-    name: string;
-    phone: string | null;
-    type: string | null;
-    startDate: Date | null;
-    endDate: Date | null;
-    serviceEndNoticeSentAt: Date | null;
-    createdAt?: Date | null;
-    duration?: number | null;
-    fullPrice?: string | null;
-    grant?: string | null;
-    actualPrice?: string | null;
-    area?: { bankAccountInfo: { bankName: string | null; accNum: string | null } | null } | null;
-}
-
-interface EmployeeAssignmentScheduleSource {
-    id: number;
-    branchId: string | null;
-    clientId: number;
-    workAddress: string;
-    startDate: Date;
-    endDate: Date;
-    replaced: boolean;
-    /**
-     * Deliberately absent from the fingerprint Pick below. Termination is checked
-     * explicitly in the pre-send fence instead, because widening the fingerprint
-     * would change every schedule's hash at once and cancel every already-pending
-     * assignment job on its next dispatch.
-     */
-    terminatedAt: Date | null;
-    primaryEmployeeId: number;
-    secondaryEmployeeId: number | null;
-    client: { id: number; name: string };
-    primaryEmployee: { id: number; name: string; phone: string } | null;
-    secondaryEmployee: { id: number; name: string; phone: string } | null;
-}
-
-type EmployeeAssignmentScheduleFingerprintSource = Pick<
-    EmployeeAssignmentScheduleSource,
-    | "id"
-    | "branchId"
-    | "clientId"
-    | "workAddress"
-    | "startDate"
-    | "endDate"
-    | "replaced"
-    | "primaryEmployeeId"
-    | "secondaryEmployeeId"
-> & Partial<Pick<EmployeeAssignmentScheduleSource, "client" | "primaryEmployee" | "secondaryEmployee">>;
-
-function employeeAssignmentEmployeeFingerprint(
-    employee: EmployeeAssignmentScheduleSource["primaryEmployee"] | undefined,
-): { id: number; name: string; phone: string } | null {
-    if (!employee) return null;
-    return { id: employee.id, name: employee.name, phone: employee.phone };
-}
-
-/**
- * A schedule has no version column. Persisting this opaque source fingerprint
- * in the assignment job lets the dispatcher reject a claimed job built from
- * any older schedule/assignment generation without copying address data into
- * the provider payload.
- */
-function employeeAssignmentScheduleFingerprint(
-    schedule: EmployeeAssignmentScheduleFingerprintSource,
-    recipientType: MessageTriggerRecipientType,
-): string {
-    return createHash("sha256").update(JSON.stringify({
-        version: "employee-assignment-source-v1",
-        recipientType,
-        id: schedule.id,
-        branchId: schedule.branchId,
-        clientId: schedule.clientId,
-        client: schedule.client
-            ? { id: schedule.client.id, name: schedule.client.name }
-            : null,
-        workAddress: schedule.workAddress,
-        startDate: schedule.startDate.toISOString(),
-        endDate: schedule.endDate.toISOString(),
-        replaced: schedule.replaced,
-        primaryEmployeeId: schedule.primaryEmployeeId,
-        secondaryEmployeeId: schedule.secondaryEmployeeId,
-        primaryEmployee: employeeAssignmentEmployeeFingerprint(schedule.primaryEmployee),
-        secondaryEmployee: employeeAssignmentEmployeeFingerprint(schedule.secondaryEmployee),
-    })).digest("hex");
-}
-
 type ClientRuleJobCandidate = {
     rule: MessageTriggerRuleEntity;
     job: MessageTriggerJobEntity;
@@ -465,8 +381,24 @@ export class MessageTriggerService {
     ) {}
 
     async listRules(branchId: string): Promise<MessageTriggerRuleEntity[]> {
+        const { rules, parentEnabled } = await this.resolvePersistedRules(branchId);
+        if (!parentEnabled || !(await this.messageSenderApprovalService.isApproved(branchId))) {
+            return rules;
+        }
+        return this.ensureDefaultServiceInfoTrigger(branchId, rules);
+    }
+
+    /** Resolve persisted rules for read capabilities without provisioning defaults or jobs. */
+    async listRulesReadOnly(branchId: string): Promise<MessageTriggerRuleEntity[]> {
+        return (await this.resolvePersistedRules(branchId)).rules;
+    }
+
+    private async resolvePersistedRules(branchId: string): Promise<{
+        rules: MessageTriggerRuleEntity[];
+        parentEnabled: boolean;
+    }> {
         if (!(await this.hasTriggerSchema())) {
-            return [];
+            return { rules: [], parentEnabled: false };
         }
         const parentEnabled = await this.isMessageAutomationParentEnabled(branchId);
         const rules = await this.ruleRepository.findAll(branchId);
@@ -480,12 +412,8 @@ export class MessageTriggerService {
         }
         if (!parentEnabled) {
             for (const rule of rules) rule.isActive = false;
-            return rules;
         }
-        if (!(await this.messageSenderApprovalService.isApproved(branchId))) {
-            return rules;
-        }
-        return this.ensureDefaultServiceInfoTrigger(branchId, rules);
+        return { rules, parentEnabled };
     }
 
     async ensureDefaultRulesForBranch(branchId: string): Promise<void> {
@@ -1718,7 +1646,7 @@ export class MessageTriggerService {
             );
             job.scheduledFor = scheduledFor;
             if (job.clientId !== null) {
-                job.dedupeKey = this.buildDedupeKey(
+                job.dedupeKey = buildMessageRecipeDedupeKey(
                     rule.id,
                     `client:${job.clientId}`,
                     scheduledFor,
@@ -1838,78 +1766,16 @@ export class MessageTriggerService {
         rule: MessageTriggerRuleEntity,
         client: ClientTriggerSource,
     ): MessageTriggerJobEntity | null {
-        if (!client.phone) return null;
-        if (
-            rule.templateKey === MessageTriggerTemplateKey.SERVICE_END_NOTICE
-            && client.serviceEndNoticeSentAt !== null
-        ) {
-            return null;
-        }
-
-        const anchorDate = this.getClientAnchorDate(rule.eventType, client);
-        if (!anchorDate) return null;
-
-        const scheduledFor = this.computeScheduledFor(anchorDate, rule);
-        const payload = {
-            clientId: client.id,
-            clientName: client.name,
-            memberId: client.id.toString(),
-            recipientName: client.name,
-            recipientPhone: client.phone,
-            templateVariables: this.buildClientTemplateVariables(rule, client),
-        };
-
-        return MessageTriggerJobEntity.create({
-            branchId: rule.branchId ?? undefined,
-            ruleId: rule.id,
-            scheduledFor,
-            clientId: client.id,
-            recipientType: rule.recipientType,
-            recipientPhone: client.phone,
-            templateKey: rule.templateKey,
-            dedupeKey: this.buildDedupeKey(rule.id, `client:${client.id}`, scheduledFor, rule.recipientType),
-            payload,
-        });
+        const recipe = buildClientMessageRecipe(rule, client, new Date());
+        return recipe ? MessageTriggerJobEntity.create(recipe) : null;
     }
 
     private buildEmployeeAssignmentJob(
         rule: MessageTriggerRuleEntity,
         schedule: EmployeeAssignmentScheduleSource,
     ): MessageTriggerJobEntity | null {
-        const employee =
-            rule.recipientType === MessageTriggerRecipientType.PRIMARY_EMPLOYEE
-                ? schedule.primaryEmployee
-                : schedule.secondaryEmployee;
-        if (!employee?.phone) return null;
-
-        const scheduledFor = new Date();
-        const memberId = `employee:${employee.id}`;
-        return MessageTriggerJobEntity.create({
-            branchId: rule.branchId ?? undefined,
-            ruleId: rule.id,
-            scheduledFor,
-            clientId: schedule.clientId,
-            employeeScheduleId: schedule.id,
-            recipientType: rule.recipientType,
-            recipientPhone: employee.phone,
-            templateKey: rule.templateKey,
-            dedupeKey: `${rule.id}:schedule:${schedule.id}:employee:${employee.id}:${rule.recipientType}`,
-            payload: {
-                clientId: schedule.clientId,
-                clientName: schedule.client.name,
-                employeeId: employee.id,
-                employeeName: employee.name,
-                employeeScheduleFingerprint: employeeAssignmentScheduleFingerprint(schedule, rule.recipientType),
-                memberId,
-                recipientName: employee.name,
-                recipientPhone: employee.phone,
-                templateVariables: {
-                    employeeName: employee.name,
-                    clientName: schedule.client.name,
-                    serviceStartDate: this.formatDate(schedule.startDate),
-                },
-            },
-        });
+        const recipe = buildEmployeeAssignmentMessageRecipe(rule, schedule, new Date());
+        return recipe ? MessageTriggerJobEntity.create(recipe) : null;
     }
 
     private async hasSentEmployeeAssignmentJobForSameEmployee(
@@ -1943,91 +1809,6 @@ export class MessageTriggerService {
         );
     }
 
-    private buildClientTemplateVariables(
-        rule: MessageTriggerRuleEntity,
-        client: ClientTriggerSource,
-    ): Record<string, string> {
-        switch (rule.templateKey) {
-            case MessageTriggerTemplateKey.PRICE_INFO:
-                // PRICE_INFO is the only SMS template that renders price/bank fields,
-                // so it is the only one that carries them into the job payload (data minimization).
-                return buildSmsClientVariables(client);
-            case MessageTriggerTemplateKey.SERVICE_INFO:
-            case MessageTriggerTemplateKey.CLIENT_GREETING:
-            case MessageTriggerTemplateKey.REMINDER:
-            case MessageTriggerTemplateKey.THANKS:
-            case MessageTriggerTemplateKey.SURVEY:
-            case MessageTriggerTemplateKey.INFO:
-            case MessageTriggerTemplateKey.SERVICE_END_NOTICE:
-                return { name: client.name, clientName: client.name, phone: client.phone ?? "" };
-            default:
-                return {};
-        }
-    }
-
-    private getClientAnchorDate(
-        eventType: MessageTriggerEventType,
-        client: Pick<ClientTriggerSource, "createdAt" | "startDate" | "endDate">,
-    ): Date | null {
-        switch (eventType) {
-            case MessageTriggerEventType.CLIENT_CREATED:
-                return client.createdAt ?? null;
-            case MessageTriggerEventType.SERVICE_START:
-                return client.startDate;
-            case MessageTriggerEventType.SERVICE_END:
-                return client.endDate;
-            default:
-                return null;
-        }
-    }
-
-    private computeScheduledFor(anchorDate: Date, rule: MessageTriggerRuleEntity): Date {
-        if (rule.offsetType === MessageTriggerOffsetType.IMMEDIATE) {
-            return new Date();
-        }
-
-        let offsetDays = 0;
-        if (rule.offsetType === MessageTriggerOffsetType.BEFORE_DAYS) {
-            offsetDays = -rule.offsetDays;
-        } else if (rule.offsetType === MessageTriggerOffsetType.AFTER_DAYS) {
-            offsetDays = rule.offsetDays;
-        }
-
-        const targetDate = this.getKstCalendarDate(anchorDate, offsetDays);
-        return new Date(`${targetDate}T${rule.sendTime}:00+09:00`);
-    }
-
-    private getKstCalendarDate(referenceDate: Date, offsetDays: number): string {
-        const formatter = new Intl.DateTimeFormat("en-CA", {
-            timeZone: "Asia/Seoul",
-            year: "numeric",
-            month: "2-digit",
-            day: "2-digit",
-        });
-        const parts = new Map(
-            formatter.formatToParts(referenceDate).map((part) => [part.type, part.value]),
-        );
-        const year = Number(parts.get("year"));
-        const month = Number(parts.get("month"));
-        const day = Number(parts.get("day"));
-        const date = new Date(Date.UTC(year, month - 1, day));
-        date.setUTCDate(date.getUTCDate() + offsetDays);
-        return [
-            date.getUTCFullYear(),
-            String(date.getUTCMonth() + 1).padStart(2, "0"),
-            String(date.getUTCDate()).padStart(2, "0"),
-        ].join("-");
-    }
-
-    private buildDedupeKey(
-        ruleId: string,
-        sourceKey: string,
-        scheduledFor: Date,
-        recipientType: MessageTriggerRecipientType,
-    ): string {
-        return `${ruleId}:${sourceKey}:${recipientType}:${scheduledFor.toISOString()}`;
-    }
-
     private describeTiming(rule: MessageTriggerRuleEntity, anchorLabel: string): string {
         switch (rule.offsetType) {
             case MessageTriggerOffsetType.SAME_DAY:
@@ -2041,14 +1822,6 @@ export class MessageTriggerService {
             default:
                 return "알림 안내";
         }
-    }
-
-    private formatDate(date: Date | null): string {
-        if (!date) return "";
-        const year = date.getFullYear();
-        const month = String(date.getMonth() + 1).padStart(2, "0");
-        const day = String(date.getDate()).padStart(2, "0");
-        return `${year}-${month}-${day}`;
     }
 
     private normalizeOffsetDays(
@@ -3160,7 +2933,7 @@ export class MessageTriggerService {
         }
 
         const expectedStartDate = job.payload.templateVariables["serviceStartDate"];
-        if (expectedStartDate && this.formatDate(schedule.startDate) !== expectedStartDate) {
+        if (expectedStartDate && formatMessageRecipeDate(schedule.startDate) !== expectedStartDate) {
             return {
                 kind: "stale",
                 reason: EMPLOYEE_ASSIGNMENT_AUTOMATION_CHANGED_CANCEL_REASON,
@@ -3171,7 +2944,7 @@ export class MessageTriggerService {
         // snapshots. Compare them when present; old payloads without these
         // keys remain compatible but are protected by the checks above.
         const expectedEndDate = job.payload.templateVariables["serviceEndDate"];
-        if (expectedEndDate && this.formatDate(schedule.endDate) !== expectedEndDate) {
+        if (expectedEndDate && formatMessageRecipeDate(schedule.endDate) !== expectedEndDate) {
             return {
                 kind: "stale",
                 reason: EMPLOYEE_ASSIGNMENT_AUTOMATION_CHANGED_CANCEL_REASON,
@@ -3276,8 +3049,8 @@ export class MessageTriggerService {
             return false;
         }
 
-        return this.getKstCalendarDate(new Date(), 0) >=
-            this.getKstCalendarDate(client.startDate, 0);
+        return getKstCalendarDate(new Date(), 0) >=
+            getKstCalendarDate(client.startDate, 0);
     }
 
     private async postponeCatchUpJobUntilPredecessorCompletes(

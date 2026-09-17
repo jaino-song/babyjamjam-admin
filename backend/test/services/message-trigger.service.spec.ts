@@ -1,3 +1,4 @@
+import { buildClientTemplateVariables } from "../../application/services/message-trigger-recipes";
 import { ConflictException, NotFoundException } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
 import { createHash } from "node:crypto";
@@ -68,22 +69,6 @@ describe("MessageTriggerService", () => {
         ) => Promise<Array<{ rule: MessageTriggerRuleEntity; job: MessageTriggerJobEntity }>>;
         recoverApprovedBranches: () => Promise<void>;
         processStaleRuleRebuilds: () => Promise<void>;
-        buildClientTemplateVariables: (
-            rule: MessageTriggerRuleEntity,
-            client: {
-                name: string;
-                phone: string | null;
-                type?: string | null;
-                startDate?: Date | null;
-                endDate?: Date | null;
-                createdAt?: Date | null;
-                duration?: number | null;
-                fullPrice?: string | null;
-                grant?: string | null;
-                actualPrice?: string | null;
-                area?: { bankAccountInfo: { bankName: string | null; accNum: string | null } | null } | null;
-            },
-        ) => Record<string, string>;
         buildEmployeeAssignmentJob: (
             rule: MessageTriggerRuleEntity,
             schedule: EmployeeAssignmentScheduleSource,
@@ -3297,7 +3282,6 @@ describe("MessageTriggerService", () => {
     });
 
     it("maps the service information name variable from the client name", () => {
-        const { internals } = createService();
         const rule = createRule({
             eventType: MessageTriggerEventType.SERVICE_START,
             offsetType: MessageTriggerOffsetType.BEFORE_DAYS,
@@ -3305,7 +3289,7 @@ describe("MessageTriggerService", () => {
             templateKey: MessageTriggerTemplateKey.SERVICE_INFO,
         });
 
-        const variables = internals.buildClientTemplateVariables(rule, {
+        const variables = buildClientTemplateVariables(rule, {
             name: "김지니",
             phone: "010-1234-5678",
             type: "A가1형",
@@ -3322,7 +3306,6 @@ describe("MessageTriggerService", () => {
     });
 
     it("maps CLIENT_GREETING template variables from the client", () => {
-        const { internals } = createService();
         const rule = createRule({
             eventType: MessageTriggerEventType.CLIENT_CREATED,
             offsetType: MessageTriggerOffsetType.IMMEDIATE,
@@ -3330,7 +3313,7 @@ describe("MessageTriggerService", () => {
             templateKey: MessageTriggerTemplateKey.CLIENT_GREETING,
         });
 
-        const variables = internals.buildClientTemplateVariables(rule, {
+        const variables = buildClientTemplateVariables(rule, {
             name: "김산모",
             phone: "010-9999-0000",
             type: null,
@@ -3347,7 +3330,6 @@ describe("MessageTriggerService", () => {
     });
 
     it("maps PRICE_INFO template variables including price/bank fields (data-minimization scoping)", () => {
-        const { internals } = createService();
         const rule = createRule({
             eventType: MessageTriggerEventType.SERVICE_START,
             offsetType: MessageTriggerOffsetType.BEFORE_DAYS,
@@ -3355,7 +3337,7 @@ describe("MessageTriggerService", () => {
             templateKey: MessageTriggerTemplateKey.PRICE_INFO,
         });
 
-        const variables = internals.buildClientTemplateVariables(rule, {
+        const variables = buildClientTemplateVariables(rule, {
             name: "이고객",
             phone: "010-5555-6666",
             type: "B형",
@@ -3395,7 +3377,6 @@ describe("MessageTriggerService", () => {
     // payload). If a future change makes the builder start supplying it, this must fail
     // so DELIVERY_TIME_VARIABLES above is consciously updated rather than silently stale.
     it("does not derive receiptUrl for SERVICE_END_NOTICE from the client record today", () => {
-        const { internals } = createService();
         const rule = createRule({
             eventType: MessageTriggerEventType.SERVICE_START,
             offsetType: MessageTriggerOffsetType.BEFORE_DAYS,
@@ -3403,7 +3384,7 @@ describe("MessageTriggerService", () => {
             templateKey: MessageTriggerTemplateKey.SERVICE_END_NOTICE,
         });
 
-        const variables = internals.buildClientTemplateVariables(rule, {
+        const variables = buildClientTemplateVariables(rule, {
             name: "자동발송 테스트",
             phone: "010-6621-1878",
             type: "A가1형",
@@ -3423,15 +3404,14 @@ describe("MessageTriggerService", () => {
     it.each(CONFIGURABLE_SMS_TRIGGER_TEMPLATE_KEYS)(
         "builds every required %s variable from a complete client record",
         (templateKey) => {
-            const { internals } = createService();
-            const rule = createRule({
+                const rule = createRule({
                 eventType: MessageTriggerEventType.SERVICE_START,
                 offsetType: MessageTriggerOffsetType.BEFORE_DAYS,
                 offsetDays: 7,
                 templateKey,
             });
 
-            const variables = internals.buildClientTemplateVariables(rule, {
+            const variables = buildClientTemplateVariables(rule, {
                 name: "자동발송 테스트",
                 phone: "010-6621-1878",
                 type: "A가1형",

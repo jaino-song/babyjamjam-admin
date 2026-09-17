@@ -8,6 +8,8 @@ import {
     AgentTaskRevisionSchema,
     AgentTaskSchema,
     AgentTaskStateSchema,
+    AgentAutomationQuestionAvailabilitySchema,
+    AgentAutomationUnavailableReasonSchema,
     type AgentTask,
     type AgentTaskRevision,
 } from "./task-types";
@@ -52,6 +54,13 @@ export const AgentTaskSafeSnapshotSchema = z.object({
         choice: z.enum(["unanswered", "yes", "no"]),
         hasServerBinding: z.boolean(),
     }).strict(),
+    automation: z.object({
+        questionRef: AgentTaskReferenceSchema,
+        availability: AgentAutomationQuestionAvailabilitySchema,
+        reason: AgentAutomationUnavailableReasonSchema.optional(),
+        effectCount: z.number().int().min(0).max(500),
+        recipientCount: z.number().int().min(0).max(500),
+    }).strict().optional(),
     times: z.object({
         createdAt: AgentTaskIsoDateTimeSchema,
         updatedAt: AgentTaskIsoDateTimeSchema,
@@ -334,6 +343,13 @@ export function projectTaskForSafeChat(task: AgentTask): AgentTaskSafeSnapshot {
         issues: parsedTask.issues.map(({ code, field, severity }) => ({ code, ...(field ? { field } : {}), severity })),
         action: parsedTask.action ? { actionId: parsedTask.action.actionId } : null,
         consent: { choice: parsedTask.consent.choice, hasServerBinding: parsedTask.consent.binding !== null },
+        ...(parsedTask.automation ? { automation: {
+            questionRef: parsedTask.automation.questionRef,
+            availability: parsedTask.automation.availability,
+            ...(parsedTask.automation.reason ? { reason: parsedTask.automation.reason } : {}),
+            effectCount: parsedTask.automation.effects.length,
+            recipientCount: new Set(parsedTask.automation.effects.map(({ recipientRef }) => recipientRef)).size,
+        } } : {}),
         times: {
             createdAt: parsedTask.times.createdAt,
             updatedAt: parsedTask.times.updatedAt,

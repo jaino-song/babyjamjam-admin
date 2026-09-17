@@ -170,6 +170,48 @@ export const AgentAutomationConsentSchema = z.object({
 export const AgentAutomationConsentInputSchema = z.object({ choice: AutomationConsentChoiceSchema }).strict();
 export type AgentAutomationConsent = z.infer<typeof AgentAutomationConsentSchema>;
 
+/** Delivery descriptions contain references, never phone/name/body preimages. */
+export const AgentAutomationEffectKindSchema = z.enum(["client-rule", "employee-assignment", "service-record-link"]);
+export const AgentAutomationQuestionAvailabilitySchema = z.enum(["available", "none", "unavailable"]);
+export const AgentAutomationUnavailableReasonSchema = z.enum([
+    "missing-input", "missing-default-rules", "sender-unavailable", "unsupported-content", "source-unavailable",
+]);
+export const AgentAutomationEffectSummarySchema = z.object({
+    effectRef: AgentTaskReferenceSchema,
+    recipientRef: AgentTaskReferenceSchema,
+    kind: AgentAutomationEffectKindSchema,
+    recipientType: z.enum(["client", "primary-employee", "secondary-employee"]),
+    change: z.enum(["create", "refresh", "cancel"]),
+    templateKey: z.enum([
+        "SERVICE_INFO", "CLIENT_GREETING", "PRICE_INFO", "REMINDER", "THANKS", "SURVEY", "INFO",
+        "SERVICE_END_NOTICE", "EMPLOYEE_ASSIGNED", "SERVICE_RECORD_LINK",
+    ]),
+}).strict();
+export const AgentAutomationQuestionSchema = z.object({
+    questionRef: AgentTaskReferenceSchema,
+    availability: AgentAutomationQuestionAvailabilitySchema,
+    reason: AgentAutomationUnavailableReasonSchema.optional(),
+    /** These refs designate the complete canonical sets, not representative members. */
+    recipientSetRef: AgentTaskReferenceSchema,
+    templateSetRef: AgentTaskReferenceSchema,
+    effectDigest: AgentTaskEventHashSchema,
+    policyDigest: AgentTaskEventHashSchema,
+    effects: z.array(AgentAutomationEffectSummarySchema).max(500),
+}).strict().superRefine((value, context) => {
+    if ((value.availability === "none" && value.effects.length !== 0)
+        || (value.availability === "available" && value.effects.length === 0)) {
+        context.addIssue({ code: "custom", path: ["effects"], message: "Effect availability does not match the described effects" });
+    }
+    if ((value.availability === "unavailable") !== (value.reason !== undefined)) {
+        context.addIssue({ code: "custom", path: ["reason"], message: "Only unavailable effects require a finite reason" });
+    }
+    if (new Set(value.effects.map(({ effectRef }) => effectRef)).size !== value.effects.length) {
+        context.addIssue({ code: "custom", path: ["effects"], message: "Effect references must be unique" });
+    }
+});
+export type AgentAutomationQuestion = z.infer<typeof AgentAutomationQuestionSchema>;
+export type AgentAutomationEffectSummary = z.infer<typeof AgentAutomationEffectSummarySchema>;
+
 export const AgentTaskSchema = z.object({
     schemaVersion: AgentTaskSchemaVersionSchema,
     taskId: AgentTaskIdSchema,
@@ -188,6 +230,8 @@ export const AgentTaskSchema = z.object({
     orderedChoiceRefs: z.array(AgentTaskReferenceSchema),
     target: AgentTaskTargetSchema.nullable(),
     consent: AgentAutomationConsentSchema,
+    /** Absent on legacy tasks until the server has evaluated automation. */
+    automation: AgentAutomationQuestionSchema.optional(),
     action: AgentTaskActionLinkSchema.nullable(),
     times: AgentTaskTimesSchema,
     currentSnapshotRef: AgentTaskSnapshotRefSchema,

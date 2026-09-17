@@ -162,6 +162,23 @@ export declare const AgentTaskSafeSnapshotSchema: z.ZodObject<{
         }>;
         hasServerBinding: z.ZodBoolean;
     }, z.core.$strict>;
+    automation: z.ZodOptional<z.ZodObject<{
+        questionRef: z.ZodUUID;
+        availability: z.ZodEnum<{
+            available: "available";
+            none: "none";
+            unavailable: "unavailable";
+        }>;
+        reason: z.ZodOptional<z.ZodEnum<{
+            "missing-input": "missing-input";
+            "missing-default-rules": "missing-default-rules";
+            "sender-unavailable": "sender-unavailable";
+            "unsupported-content": "unsupported-content";
+            "source-unavailable": "source-unavailable";
+        }>>;
+        effectCount: z.ZodNumber;
+        recipientCount: z.ZodNumber;
+    }, z.core.$strict>>;
     times: z.ZodObject<{
         createdAt: z.ZodISODateTime;
         updatedAt: z.ZodISODateTime;
@@ -363,6 +380,56 @@ export declare const AgentTaskSnapshotEnvelopeSchema: z.ZodObject<{
                 consentEventId: z.ZodUUID;
             }, z.core.$strict>>;
         }, z.core.$strict>;
+        automation: z.ZodOptional<z.ZodObject<{
+            questionRef: z.ZodUUID;
+            availability: z.ZodEnum<{
+                available: "available";
+                none: "none";
+                unavailable: "unavailable";
+            }>;
+            reason: z.ZodOptional<z.ZodEnum<{
+                "missing-input": "missing-input";
+                "missing-default-rules": "missing-default-rules";
+                "sender-unavailable": "sender-unavailable";
+                "unsupported-content": "unsupported-content";
+                "source-unavailable": "source-unavailable";
+            }>>;
+            recipientSetRef: z.ZodUUID;
+            templateSetRef: z.ZodUUID;
+            effectDigest: z.ZodString;
+            policyDigest: z.ZodString;
+            effects: z.ZodArray<z.ZodObject<{
+                effectRef: z.ZodUUID;
+                recipientRef: z.ZodUUID;
+                kind: z.ZodEnum<{
+                    "client-rule": "client-rule";
+                    "employee-assignment": "employee-assignment";
+                    "service-record-link": "service-record-link";
+                }>;
+                recipientType: z.ZodEnum<{
+                    client: "client";
+                    "primary-employee": "primary-employee";
+                    "secondary-employee": "secondary-employee";
+                }>;
+                change: z.ZodEnum<{
+                    create: "create";
+                    refresh: "refresh";
+                    cancel: "cancel";
+                }>;
+                templateKey: z.ZodEnum<{
+                    SERVICE_INFO: "SERVICE_INFO";
+                    CLIENT_GREETING: "CLIENT_GREETING";
+                    PRICE_INFO: "PRICE_INFO";
+                    REMINDER: "REMINDER";
+                    THANKS: "THANKS";
+                    SURVEY: "SURVEY";
+                    INFO: "INFO";
+                    SERVICE_END_NOTICE: "SERVICE_END_NOTICE";
+                    EMPLOYEE_ASSIGNED: "EMPLOYEE_ASSIGNED";
+                    SERVICE_RECORD_LINK: "SERVICE_RECORD_LINK";
+                }>;
+            }, z.core.$strict>>;
+        }, z.core.$strict>>;
         action: z.ZodNullable<z.ZodObject<{
             actionId: z.ZodUUID;
             expectedRevision: z.ZodString;

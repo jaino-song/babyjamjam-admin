@@ -242,6 +242,107 @@ export declare const AgentAutomationConsentInputSchema: z.ZodObject<{
     }>;
 }, z.core.$strict>;
 export type AgentAutomationConsent = z.infer<typeof AgentAutomationConsentSchema>;
+/** Delivery descriptions contain references, never phone/name/body preimages. */
+export declare const AgentAutomationEffectKindSchema: z.ZodEnum<{
+    "client-rule": "client-rule";
+    "employee-assignment": "employee-assignment";
+    "service-record-link": "service-record-link";
+}>;
+export declare const AgentAutomationQuestionAvailabilitySchema: z.ZodEnum<{
+    available: "available";
+    none: "none";
+    unavailable: "unavailable";
+}>;
+export declare const AgentAutomationUnavailableReasonSchema: z.ZodEnum<{
+    "missing-input": "missing-input";
+    "missing-default-rules": "missing-default-rules";
+    "sender-unavailable": "sender-unavailable";
+    "unsupported-content": "unsupported-content";
+    "source-unavailable": "source-unavailable";
+}>;
+export declare const AgentAutomationEffectSummarySchema: z.ZodObject<{
+    effectRef: z.ZodUUID;
+    recipientRef: z.ZodUUID;
+    kind: z.ZodEnum<{
+        "client-rule": "client-rule";
+        "employee-assignment": "employee-assignment";
+        "service-record-link": "service-record-link";
+    }>;
+    recipientType: z.ZodEnum<{
+        client: "client";
+        "primary-employee": "primary-employee";
+        "secondary-employee": "secondary-employee";
+    }>;
+    change: z.ZodEnum<{
+        create: "create";
+        refresh: "refresh";
+        cancel: "cancel";
+    }>;
+    templateKey: z.ZodEnum<{
+        SERVICE_INFO: "SERVICE_INFO";
+        CLIENT_GREETING: "CLIENT_GREETING";
+        PRICE_INFO: "PRICE_INFO";
+        REMINDER: "REMINDER";
+        THANKS: "THANKS";
+        SURVEY: "SURVEY";
+        INFO: "INFO";
+        SERVICE_END_NOTICE: "SERVICE_END_NOTICE";
+        EMPLOYEE_ASSIGNED: "EMPLOYEE_ASSIGNED";
+        SERVICE_RECORD_LINK: "SERVICE_RECORD_LINK";
+    }>;
+}, z.core.$strict>;
+export declare const AgentAutomationQuestionSchema: z.ZodObject<{
+    questionRef: z.ZodUUID;
+    availability: z.ZodEnum<{
+        available: "available";
+        none: "none";
+        unavailable: "unavailable";
+    }>;
+    reason: z.ZodOptional<z.ZodEnum<{
+        "missing-input": "missing-input";
+        "missing-default-rules": "missing-default-rules";
+        "sender-unavailable": "sender-unavailable";
+        "unsupported-content": "unsupported-content";
+        "source-unavailable": "source-unavailable";
+    }>>;
+    recipientSetRef: z.ZodUUID;
+    templateSetRef: z.ZodUUID;
+    effectDigest: z.ZodString;
+    policyDigest: z.ZodString;
+    effects: z.ZodArray<z.ZodObject<{
+        effectRef: z.ZodUUID;
+        recipientRef: z.ZodUUID;
+        kind: z.ZodEnum<{
+            "client-rule": "client-rule";
+            "employee-assignment": "employee-assignment";
+            "service-record-link": "service-record-link";
+        }>;
+        recipientType: z.ZodEnum<{
+            client: "client";
+            "primary-employee": "primary-employee";
+            "secondary-employee": "secondary-employee";
+        }>;
+        change: z.ZodEnum<{
+            create: "create";
+            refresh: "refresh";
+            cancel: "cancel";
+        }>;
+        templateKey: z.ZodEnum<{
+            SERVICE_INFO: "SERVICE_INFO";
+            CLIENT_GREETING: "CLIENT_GREETING";
+            PRICE_INFO: "PRICE_INFO";
+            REMINDER: "REMINDER";
+            THANKS: "THANKS";
+            SURVEY: "SURVEY";
+            INFO: "INFO";
+            SERVICE_END_NOTICE: "SERVICE_END_NOTICE";
+            EMPLOYEE_ASSIGNED: "EMPLOYEE_ASSIGNED";
+            SERVICE_RECORD_LINK: "SERVICE_RECORD_LINK";
+        }>;
+    }, z.core.$strict>>;
+}, z.core.$strict>;
+export type AgentAutomationQuestion = z.infer<typeof AgentAutomationQuestionSchema>;
+export type AgentAutomationEffectSummary = z.infer<typeof AgentAutomationEffectSummarySchema>;
 export declare const AgentTaskSchema: z.ZodObject<{
     schemaVersion: z.ZodLiteral<1>;
     taskId: z.ZodUUID;
@@ -428,6 +529,56 @@ export declare const AgentTaskSchema: z.ZodObject<{
             consentEventId: z.ZodUUID;
         }, z.core.$strict>>;
     }, z.core.$strict>;
+    automation: z.ZodOptional<z.ZodObject<{
+        questionRef: z.ZodUUID;
+        availability: z.ZodEnum<{
+            available: "available";
+            none: "none";
+            unavailable: "unavailable";
+        }>;
+        reason: z.ZodOptional<z.ZodEnum<{
+            "missing-input": "missing-input";
+            "missing-default-rules": "missing-default-rules";
+            "sender-unavailable": "sender-unavailable";
+            "unsupported-content": "unsupported-content";
+            "source-unavailable": "source-unavailable";
+        }>>;
+        recipientSetRef: z.ZodUUID;
+        templateSetRef: z.ZodUUID;
+        effectDigest: z.ZodString;
+        policyDigest: z.ZodString;
+        effects: z.ZodArray<z.ZodObject<{
+            effectRef: z.ZodUUID;
+            recipientRef: z.ZodUUID;
+            kind: z.ZodEnum<{
+                "client-rule": "client-rule";
+                "employee-assignment": "employee-assignment";
+                "service-record-link": "service-record-link";
+            }>;
+            recipientType: z.ZodEnum<{
+                client: "client";
+                "primary-employee": "primary-employee";
+                "secondary-employee": "secondary-employee";
+            }>;
+            change: z.ZodEnum<{
+                create: "create";
+                refresh: "refresh";
+                cancel: "cancel";
+            }>;
+            templateKey: z.ZodEnum<{
+                SERVICE_INFO: "SERVICE_INFO";
+                CLIENT_GREETING: "CLIENT_GREETING";
+                PRICE_INFO: "PRICE_INFO";
+                REMINDER: "REMINDER";
+                THANKS: "THANKS";
+                SURVEY: "SURVEY";
+                INFO: "INFO";
+                SERVICE_END_NOTICE: "SERVICE_END_NOTICE";
+                EMPLOYEE_ASSIGNED: "EMPLOYEE_ASSIGNED";
+                SERVICE_RECORD_LINK: "SERVICE_RECORD_LINK";
+            }>;
+        }, z.core.$strict>>;
+    }, z.core.$strict>>;
     action: z.ZodNullable<z.ZodObject<{
         actionId: z.ZodUUID;
         expectedRevision: z.ZodString;
@@ -518,12 +669,12 @@ export declare const AgentTaskCommandRequestSchema: z.ZodUnion<readonly [z.ZodUn
 }, z.core.$strict>]>;
 export type AgentTaskCommandRequest = z.infer<typeof AgentTaskCommandRequestSchema>;
 export declare const AgentTaskCommandNameSchema: z.ZodEnum<{
+    cancel: "cancel";
     "select-target": "select-target";
     "start-update": "start-update";
     pause: "pause";
     resume: "resume";
     "prepare-review": "prepare-review";
-    cancel: "cancel";
 }>;
 export type AgentTaskCommandName = z.infer<typeof AgentTaskCommandNameSchema>;
 export declare const AgentTaskEventReceiptSchema: z.ZodObject<{
@@ -728,6 +879,56 @@ export declare const AgentTaskMutationResponseSchema: z.ZodObject<{
                 consentEventId: z.ZodUUID;
             }, z.core.$strict>>;
         }, z.core.$strict>;
+        automation: z.ZodOptional<z.ZodObject<{
+            questionRef: z.ZodUUID;
+            availability: z.ZodEnum<{
+                available: "available";
+                none: "none";
+                unavailable: "unavailable";
+            }>;
+            reason: z.ZodOptional<z.ZodEnum<{
+                "missing-input": "missing-input";
+                "missing-default-rules": "missing-default-rules";
+                "sender-unavailable": "sender-unavailable";
+                "unsupported-content": "unsupported-content";
+                "source-unavailable": "source-unavailable";
+            }>>;
+            recipientSetRef: z.ZodUUID;
+            templateSetRef: z.ZodUUID;
+            effectDigest: z.ZodString;
+            policyDigest: z.ZodString;
+            effects: z.ZodArray<z.ZodObject<{
+                effectRef: z.ZodUUID;
+                recipientRef: z.ZodUUID;
+                kind: z.ZodEnum<{
+                    "client-rule": "client-rule";
+                    "employee-assignment": "employee-assignment";
+                    "service-record-link": "service-record-link";
+                }>;
+                recipientType: z.ZodEnum<{
+                    client: "client";
+                    "primary-employee": "primary-employee";
+                    "secondary-employee": "secondary-employee";
+                }>;
+                change: z.ZodEnum<{
+                    create: "create";
+                    refresh: "refresh";
+                    cancel: "cancel";
+                }>;
+                templateKey: z.ZodEnum<{
+                    SERVICE_INFO: "SERVICE_INFO";
+                    CLIENT_GREETING: "CLIENT_GREETING";
+                    PRICE_INFO: "PRICE_INFO";
+                    REMINDER: "REMINDER";
+                    THANKS: "THANKS";
+                    SURVEY: "SURVEY";
+                    INFO: "INFO";
+                    SERVICE_END_NOTICE: "SERVICE_END_NOTICE";
+                    EMPLOYEE_ASSIGNED: "EMPLOYEE_ASSIGNED";
+                    SERVICE_RECORD_LINK: "SERVICE_RECORD_LINK";
+                }>;
+            }, z.core.$strict>>;
+        }, z.core.$strict>>;
         action: z.ZodNullable<z.ZodObject<{
             actionId: z.ZodUUID;
             expectedRevision: z.ZodString;
