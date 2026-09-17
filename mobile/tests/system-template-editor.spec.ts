@@ -137,11 +137,14 @@ test.describe('System Template Detail', () => {
         buttonRight: buttonRect.right,
         availableWidth: footerRect.width - paddingLeft - paddingRight,
         buttonWidth: buttonRect.width,
+        buttonClientWidth: button.clientWidth,
+        buttonScrollWidth: button.scrollWidth,
         gridColumn: buttonStyle.gridColumn,
       };
     });
 
     expect(layout.documentScrollWidth).toBeLessThanOrEqual(layout.documentClientWidth);
+    expect(layout.buttonScrollWidth).toBeLessThanOrEqual(layout.buttonClientWidth);
     expect(layout.gridColumn).toBe('1 / -1');
     expect(layout.buttonWidth).toBeCloseTo(layout.availableWidth, 0);
     expect(layout.buttonLeft).toBeCloseTo(layout.footerLeft + 16, 0);
