@@ -17,7 +17,7 @@ export async function GET() {
         // registered 500 problem instead of a raw English body.
         if (!status) {
             logUpstreamError("fetch vapid key", error);
-            return upstreamStatusProblemResponse(500, "fetch vapid key");
+            return upstreamStatusProblemResponse(500, "fetch vapid key", "UNKNOWN");
         }
         // An upstream failure keeps its status; a problem+json body is
         // propagated faithfully, anything else is sanitized to the Korean

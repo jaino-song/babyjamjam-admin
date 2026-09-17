@@ -64,7 +64,7 @@ export async function POST(request: NextRequest) {
     // 500 problem instead of a raw Korean body.
     if (!status) {
       logUpstreamError("bulk update voucher price infos", error);
-      return upstreamStatusProblemResponse(500, "bulk update voucher price infos");
+      return upstreamStatusProblemResponse(500, "bulk update voucher price infos", "UNKNOWN");
     }
 
     // An upstream failure keeps its status; a problem+json body is propagated

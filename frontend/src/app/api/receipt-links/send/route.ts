@@ -32,7 +32,7 @@ export async function POST(request: NextRequest) {
       return invalidJson;
     }
     logUpstreamError("send receipt link", error);
-    return upstreamStatusProblemResponse(500, "send receipt link");
+    return upstreamStatusProblemResponse(500, "send receipt link", "UNKNOWN");
   }
 
   const documentId = body.documentId;
@@ -89,6 +89,6 @@ export async function POST(request: NextRequest) {
     // DB hosts, or other internal diagnostics from a 5xx body into the client response.
     // The 5xx boundary answers with the registered INTERNAL_ERROR problem instead.
     logUpstreamError("send receipt link", error);
-    return upstreamStatusProblemResponse(500, "send receipt link");
+    return upstreamStatusProblemResponse(500, "send receipt link", "UNKNOWN");
   }
 }
