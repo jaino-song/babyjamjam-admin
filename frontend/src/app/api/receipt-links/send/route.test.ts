@@ -85,10 +85,14 @@ describe("POST /api/receipt-links/send", () => {
     expect(mockPost).not.toHaveBeenCalled();
   });
 
-  it("requires authentication before forwarding", async () => {
+  it("requires authentication with a registered 401 problem body", async () => {
     const response = await POST(createRequest({ documentId: "doc-1" }, false));
 
     expect(response.status).toBe(401);
+    await expect(response.json()).resolves.toMatchObject({
+      code: "AUTH_REQUIRED",
+      status: 401,
+    });
     expect(mockPost).not.toHaveBeenCalled();
   });
 
@@ -199,7 +203,8 @@ describe("POST /api/receipt-links/send", () => {
     const payload = await response.json();
 
     expect(response.status).toBe(500);
-    expect(payload).toEqual({ error: expect.stringMatching(/[가-힣].*요[.!]?$/) });
+    expect(payload).toMatchObject({ code: "INTERNAL_ERROR", status: 500 });
+    expect(typeof payload.error).toBe("string");
     const serialized = JSON.stringify(payload);
     expect(serialized).not.toContain("DB_TIMEOUT");
     expect(serialized).not.toContain("db-primary.internal");
@@ -221,22 +226,24 @@ describe("POST /api/receipt-links/send", () => {
     const payload = await response.json();
 
     expect(response.status).toBe(500);
-    expect(payload).toEqual({ error: expect.stringMatching(/[가-힣].*요[.!]?$/) });
+    expect(payload).toMatchObject({ code: "INTERNAL_ERROR", status: 500 });
     const serialized = JSON.stringify(payload);
     expect(serialized).not.toContain("<html>");
     expect(serialized).not.toContain("internal only");
   });
 
-  it("falls back to the fixed 500 message for a non-Axios failure (never leaks error.message)", async () => {
+  it("falls back to the registered 500 problem for a non-Axios failure (never leaks error.message)", async () => {
     mockPost.mockRejectedValue(new Error("connect ECONNREFUSED db-primary.internal:5432"));
 
     const response = await POST(createRequest());
 
     expect(response.status).toBe(500);
-    expect(await response.json()).toEqual({ error: expect.stringMatching(/[가-힣].*요[.!]?$/) });
+    const payload = await response.json();
+    expect(payload).toMatchObject({ code: "INTERNAL_ERROR", status: 500 });
+    expect(JSON.stringify(payload)).not.toContain("ECONNREFUSED");
   });
 
-  it("falls back to the fixed 500 message when request.text() itself rejects (never leaks error.message) (M5)", async () => {
+  it("falls back to the registered 500 problem when request.text() itself rejects (never leaks error.message) (M5)", async () => {
     // invalidJsonResponse() only handles malformed-JSON bodies (InvalidJsonBodyError) —
     // a genuine transport/stream failure from request.text() is a different error type,
     // for which invalidJsonResponse() returns null. Before the fix, that fell through to
@@ -249,7 +256,7 @@ describe("POST /api/receipt-links/send", () => {
     const payload = await response.json();
 
     expect(response.status).toBe(500);
-    expect(payload).toEqual({ error: expect.stringMatching(/[가-힣].*요[.!]?$/) });
+    expect(payload).toMatchObject({ code: "INTERNAL_ERROR", status: 500 });
     expect(mockPost).not.toHaveBeenCalled();
     expect(JSON.stringify(payload)).not.toContain("db-primary.internal");
   });

@@ -1,31 +1,20 @@
 import { NextRequest, NextResponse } from "next/server";
 import { serverAPIClient } from "@/lib/api/server";
-
-function getAuthToken(request: NextRequest): string | null {
-    return request.cookies.get("auth_token")?.value || null;
-}
-
-function getAuthHeaders(token: string | null): Record<string, string> {
-    return token ? { Authorization: `Bearer ${token}` } : {};
-}
+import { authRequiredResponse, errorResponse, getAuthHeaders, getAuthToken } from "@/lib/api/route-utils";
 
 export async function GET(request: NextRequest) {
     try {
         const token = getAuthToken(request);
         if (!token) {
-            return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+            return authRequiredResponse();
         }
 
-        const response = await serverAPIClient.get("/message-templates", { 
+        const response = await serverAPIClient.get("/message-templates", {
             headers: getAuthHeaders(token),
         });
         return NextResponse.json(response.data);
     } catch (error) {
-        console.error("[API] Error fetching message templates:", error);
-        return NextResponse.json(
-            { error: "Failed to fetch message templates" },
-            { status: 500 }
-        );
+        return errorResponse(error, "fetch message templates", "read");
     }
 }
 
@@ -33,7 +22,7 @@ export async function POST(request: NextRequest) {
     try {
         const token = getAuthToken(request);
         if (!token) {
-            return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+            return authRequiredResponse();
         }
 
         const body = await request.json();
@@ -42,10 +31,6 @@ export async function POST(request: NextRequest) {
         });
         return NextResponse.json(response.data, { status: 201 });
     } catch (error) {
-        console.error("[API] Error creating message template:", error);
-        return NextResponse.json(
-            { error: "Failed to create message template" },
-            { status: 500 }
-        );
+        return errorResponse(error, "create message template", "mutation");
     }
 }

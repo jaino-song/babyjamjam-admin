@@ -1,12 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { serverAPIClient } from "@/lib/api/server";
-import { errorResponse, getAuthHeaders, getAuthToken } from "@/lib/api/route-utils";
+import { authRequiredResponse, errorResponse, getAuthHeaders, getAuthToken } from "@/lib/api/route-utils";
 
 export async function GET(request: NextRequest) {
     try {
         const token = getAuthToken(request);
         if (!token) {
-            return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+            return authRequiredResponse();
         }
 
         const response = await serverAPIClient.get("/notifications/unread/count", {
