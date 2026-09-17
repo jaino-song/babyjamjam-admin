@@ -60,7 +60,7 @@ export interface IMessageTriggerJobRepository {
     hasActiveJobsBefore(branchId: string, ruleId: string, before: Date): Promise<boolean>;
     findPendingByRuleIdsAndClientId(ruleIds: string[], clientId: number): Promise<MessageTriggerJobEntity[]>;
     /** Bounded, ordered read of actual automation generations, including terminal dedupe rows. */
-    findForClientAutomationReview(branchId: string, clientId: number, ruleIds: string[]): Promise<MessageTriggerJobReviewSnapshot[]>;
+    findForClientAutomationReview(branchId: string, clientId: number, ruleIds: string[], transaction?: Prisma.TransactionClient): Promise<MessageTriggerJobReviewSnapshot[]>;
     findPendingByRuleIdsAndEmployeeScheduleId(
         ruleIds: string[],
         employeeScheduleId: number,

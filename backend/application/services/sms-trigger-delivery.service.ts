@@ -1,3 +1,4 @@
+import type { Prisma } from "@prisma/client";
 import { Inject, Injectable, Logger, Optional } from "@nestjs/common";
 import { createHash } from "node:crypto";
 import { AligoService } from "application/services/aligo.service";
@@ -230,7 +231,7 @@ export class SmsTriggerDeliveryService {
     }
 
     /** Resolve the current provider-bound target without trusting staged data. */
-    async resolveCanonicalDeliverySnapshot(job: MessageTriggerJobEntity): Promise<Readonly<SmsTriggerDeliverySnapshot>> {
+    async resolveCanonicalDeliverySnapshot(job: MessageTriggerJobEntity, transaction?: Prisma.TransactionClient): Promise<Readonly<SmsTriggerDeliverySnapshot>> {
         this.assertDeliveryJob(job);
         if (!job.branchId) {
             throw new Error(`SMS trigger job ${job.id} is missing branchId`);
@@ -239,7 +240,7 @@ export class SmsTriggerDeliveryService {
         if (!config) {
             throw new Error(`SMS trigger template ${job.templateKey} is not supported`);
         }
-        return this.resolveCanonicalSnapshot(job, config);
+        return this.resolveCanonicalSnapshot(job, config, transaction);
     }
 
     /**
@@ -603,6 +604,7 @@ export class SmsTriggerDeliveryService {
     private async resolveCanonicalSnapshot(
         job: MessageTriggerJobEntity,
         config: SmsTemplateDeliveryConfig,
+        transaction?: Prisma.TransactionClient,
     ): Promise<Readonly<SmsTriggerDeliverySnapshot>> {
         const branchId = job.branchId;
         if (!branchId) {
@@ -620,7 +622,7 @@ export class SmsTriggerDeliveryService {
         const usesPayloadMessage = config.usePayloadMessage || payload.templateVariables["triggerType"] === "agent_scheduled";
         const template = usesPayloadMessage
             ? this.resolvePayloadTemplate(job)
-            : await this.resolveSystemTemplate(config.systemTemplateKey, branchId);
+            : await this.resolveSystemTemplate(config.systemTemplateKey, branchId, transaction);
         const missingVariableKeys = template.requiredVariableKeys.filter(
             (key) => !baseVariables[key]?.trim(),
         );
@@ -678,12 +680,14 @@ export class SmsTriggerDeliveryService {
     private async resolveSystemTemplate(
         systemTemplateKey: SystemTemplateKey | undefined,
         branchId: string,
+        transaction?: Prisma.TransactionClient,
     ): Promise<ResolvedSmsTemplate> {
         if (!systemTemplateKey) {
             throw new Error("systemTemplateKey is required for templated SMS delivery");
         }
         try {
-            const template = await this.systemTemplateService.getByKeyForBranch(branchId, systemTemplateKey);
+            const template = transaction ? await this.systemTemplateService.getByKeyForBranch(branchId, systemTemplateKey, transaction)
+                : await this.systemTemplateService.getByKeyForBranch(branchId, systemTemplateKey);
             const content = template.content;
             const hash = this.hash(content);
             const updatedAt = template.updatedAt instanceof Date && !Number.isNaN(template.updatedAt.getTime())

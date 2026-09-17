@@ -4,7 +4,7 @@ import { MessageTriggerRuleEntity } from "domain/entities/message-trigger-rule.e
 import type { Prisma } from "@prisma/client";
 
 export interface IMessageTriggerRuleRepository {
-    findAll(branchId: string): Promise<MessageTriggerRuleEntity[]>;
+    findAll(branchId: string, transaction?: Prisma.TransactionClient): Promise<MessageTriggerRuleEntity[]>;
     findById(
         branchId: string,
         id: string,

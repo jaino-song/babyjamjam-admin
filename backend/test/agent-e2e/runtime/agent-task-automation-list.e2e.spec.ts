@@ -1,12 +1,14 @@
 import type { INestApplication } from "@nestjs/common";
-import type { PrismaClient } from "@prisma/client";
+import type { Prisma, PrismaClient } from "@prisma/client";
 import { Test } from "@nestjs/testing";
 import { AppModule } from "../../../app.module";
 import { AgentModelFactory } from "../../../infrastructure/agent/agent-model.factory";
 import { tenantContextStore } from "../../../infrastructure/tenant/tenant-context.store";
 import { MessageExternalAgentCapabilitiesProvider } from "../../../application/usecases/message/message-external-agent-capabilities.provider";
 import { MessageTriggerService } from "../../../application/services/message-trigger.service";
-import { SmsTriggerDeliveryService } from "../../../application/services/sms-trigger-delivery.service";
+import { SMS_TEMPLATE_DELIVERY, SmsTriggerDeliveryService } from "../../../application/services/sms-trigger-delivery.service";
+import { ClientAutomationImpactService } from "../../../application/services/client-automation-impact.service";
+import { MessageAutomationBranchLockService } from "../../../application/services/message-automation-branch-lock.service";
 import { AligoService } from "../../../application/services/aligo.service";
 import { AligoDefaultSenderPolicyService } from "../../../application/services/aligo-default-sender-policy.service";
 import { describeClientMessageEffect } from "../../../application/services/client-message-effect-recipe";
@@ -241,6 +243,90 @@ describeAgentE2E("real automation.list with two eligible clients and missing def
             expect(processing.affectedJobs.find(({ id }) => id === row.id)?.version).not.toBe(pending.affectedJobs.find(({ id }) => id === row.id)?.version);
             expect(await storedAutomation()).toEqual(before);
         });
+        expect(createModel).not.toHaveBeenCalled();
+    });
+
+    it("reads uncommitted policy, sender, rule and global override values through the supplied transaction", async () => {
+        const trigger = app.get(MessageTriggerService);
+        const before = await storedAutomation();
+        const beforeBranch = await prisma.branch.findUniqueOrThrow({ where: { id: branchId } });
+        const lock = new MessageAutomationBranchLockService(prisma as never);
+        await expect(tenantContextStore.run({ origin: "http", branchId }, () => lock.runExclusive(branchId, async (tx) => {
+            const set = async (key: string, value: string) => tx.system_setting.upsert({ where: { key }, create: { key, value }, update: { value } });
+            await set(`branch:${branchId}:message_policy:past-trigger:enabled`, "false");
+            await set(`branch:${branchId}:message_automation:past_trigger`, JSON.stringify({ sendIntervalMinutes: 39, ruleOrder: ["synthetic-rule"] }));
+            await tx.branch.update({ where: { id: branchId }, data: { smsSenderApprovalApprovedAt: new Date("2026-01-02T00:00:00.000Z") } });
+            const base = await tx.message_trigger_rule.findFirstOrThrow({ where: { branchId, templateKey: "CLIENT_GREETING" } });
+            await tx.message_trigger_rule.update({ where: { id: base.id }, data: { name: "합성 트랜잭션 변경" } });
+            const global = await tx.message_trigger_rule.create({ data: { ...base, id: "synthetic-transaction-global", branchId: null, isDefault: false } });
+            await tx.message_trigger_rule_branch_override.create({ data: { branchId, ruleId: global.id, isActive: false } });
+            const inside = await trigger.readClientAutomationSettings(branchId, tx);
+            expect(inside).toMatchObject({ status: "available", dispatchEnabled: true, senderApproved: true,
+                senderApprovedAt: new Date("2026-01-02T00:00:00.000Z"), pastTriggerEnabled: false,
+                pastTriggerConfig: { sendIntervalMinutes: 39, ruleOrder: ["synthetic-rule"] } });
+            if (inside.status !== "available") throw new Error("Missing synthetic settings");
+            expect(inside.rules.find(({ id }) => id === base.id)?.name).toBe("합성 트랜잭션 변경");
+            expect(inside.rules.find(({ id }) => id === global.id)?.isActive).toBe(false);
+            await set(`branch:${branchId}:message_policy:trigger-dispatch:enabled`, "false");
+            await tx.branch.update({ where: { id: branchId }, data: { smsSenderApprovalStatus: "pending" } });
+            expect(await trigger.readClientAutomationSettings(branchId, tx)).toMatchObject({ dispatchEnabled: false, senderApproved: false });
+            throw new Error("SYNTHETIC_ROLLBACK");
+        }))).rejects.toThrow("SYNTHETIC_ROLLBACK");
+        expect(await storedAutomation()).toEqual(before);
+        expect(await prisma.branch.findUniqueOrThrow({ where: { id: branchId } })).toEqual(beforeBranch);
+    });
+
+    it("uses uncommitted client/job generations for the final planner and retains normal preview behavior", async () => {
+        const planner = app.get<ClientAutomationImpactService>(CLIENT_AUTOMATION_IMPACT);
+        const write = { kind: "update" as const, clientId: clientIds[0]!, values: { phone: "01000000003" } };
+        const before = await storedAutomation();
+        await tenantContextStore.run({ origin: "http", branchId }, async () => {
+            const baseline = await planner.planClientWrite(branchId, write);
+            expect(baseline.complete).toBe(true);
+            await expect(prisma.$transaction(async (tx) => {
+                await tx.client.update({ where: { id: clientIds[0]! }, data: { name: "합성 변경된 이름" } });
+                const affected = before.jobs.find(({ id }) => baseline.affectedJobs.some((job) => job.id === id));
+                if (!affected) throw new Error("Missing synthetic affected job");
+                await tx.message_trigger_job.update({ where: { id: affected.id }, data: { claimToken: "synthetic-final-check" } });
+                const inside = await planner.planClientWriteInTransaction(tx, branchId, write);
+                expect(inside.complete).toBe(true);
+                expect(inside.sourceGuard).not.toBe(baseline.sourceGuard);
+                expect(inside.effects.map(({ sourceDigest }) => sourceDigest)).not.toEqual(baseline.effects.map(({ sourceDigest }) => sourceDigest));
+                expect(inside.affectedJobs.find(({ id }) => id === affected.id)?.version).not.toBe(baseline.affectedJobs.find(({ id }) => id === affected.id)?.version);
+                expect(await planner.planClientWrite(branchId, write)).toEqual(baseline);
+                throw new Error("SYNTHETIC_ROLLBACK");
+            })).rejects.toThrow("SYNTHETIC_ROLLBACK");
+            expect(await planner.planClientWrite(branchId, write)).toEqual(baseline);
+        });
+        expect(await storedAutomation()).toEqual(before);
+    });
+
+    it("renders the uncommitted branch template without opening an independent template transaction", async () => {
+        const planner = app.get<ClientAutomationImpactService>(CLIENT_AUTOMATION_IMPACT);
+        const write = { kind: "create" as const, taskId: context.sessionId, values: { name: "합성 미리보기", phone: "01000000003" } };
+        const beforeBranch = await prisma.branch.findUniqueOrThrow({ where: { id: branchId } });
+        await tenantContextStore.run({ origin: "http", branchId }, async () => {
+            const baseline = await planner.planClientWrite(branchId, write);
+            const prior = baseline.effects.find(({ templateKey }) => templateKey === "CLIENT_GREETING");
+            expect(prior).toBeDefined();
+            await expect(prisma.$transaction(async (tx) => {
+                const key = SMS_TEMPLATE_DELIVERY.CLIENT_GREETING!.systemTemplateKey!;
+                const at = "2026-09-17T00:00:00.000Z";
+                await tx.branch.update({ where: { id: branchId }, data: { systemTemplateSnapshot: {
+                    version: 1, createdAt: at, createdBy: "synthetic", templates: { [key]: {
+                        id: "synthetic-template", content: "합성 변경 안내 {{name}}", createdAt: at, updatedAt: at, customVariables: [],
+                    } },
+                } as Prisma.InputJsonValue } });
+                const inside = await planner.planClientWriteInTransaction(tx, branchId, write);
+                const current = inside.effects.find(({ templateKey }) => templateKey === "CLIENT_GREETING");
+                expect(inside).toMatchObject({ complete: true, availability: "available" });
+                expect(current?.templateDigest).not.toBe(prior!.templateDigest);
+                expect(current?.sourceDigest).toBe(prior!.sourceDigest);
+                expect(await planner.planClientWrite(branchId, write)).toEqual(baseline);
+                throw new Error("SYNTHETIC_ROLLBACK");
+            })).rejects.toThrow("SYNTHETIC_ROLLBACK");
+        });
+        expect(await prisma.branch.findUniqueOrThrow({ where: { id: branchId } })).toEqual(beforeBranch);
         expect(createModel).not.toHaveBeenCalled();
     });
 });

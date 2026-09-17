@@ -32,8 +32,8 @@ type MessageTriggerRuleRawRow = {
 export class SbMessageTriggerRuleRepository implements IMessageTriggerRuleRepository {
     constructor(private readonly prisma: PrismaService) {}
 
-    async findAll(branchId: string): Promise<MessageTriggerRuleEntity[]> {
-        const rows = await this.prisma.message_trigger_rule.findMany({
+    async findAll(branchId: string, transaction?: Prisma.TransactionClient): Promise<MessageTriggerRuleEntity[]> {
+        const rows = await (transaction ?? this.prisma).message_trigger_rule.findMany({
             // Fixed system automations are global so every branch can see the
             // routine that is able to create its scheduled jobs.
             where: { OR: [{ branchId }, { branchId: null }] },

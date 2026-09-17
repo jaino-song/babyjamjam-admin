@@ -439,9 +439,9 @@ export class SbMessageTriggerJobRepository implements IMessageTriggerJobReposito
         return rows.map((row) => this.toDomain(row));
     }
 
-    async findForClientAutomationReview(branchId: string, clientId: number, ruleIds: string[]): Promise<MessageTriggerJobReviewSnapshot[]> {
+    async findForClientAutomationReview(branchId: string, clientId: number, ruleIds: string[], transaction?: Prisma.TransactionClient): Promise<MessageTriggerJobReviewSnapshot[]> {
         if (ruleIds.length === 0) return [];
-        const rows = await this.prisma.message_trigger_job.findMany({
+        const rows = await (transaction ?? this.prisma).message_trigger_job.findMany({
             where: { ...ordinaryAutomationJobWhere(), branchId, clientId, ruleId: { in: ruleIds } },
             orderBy: { id: "asc" }, take: 501,
         });
