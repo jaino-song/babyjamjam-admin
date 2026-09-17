@@ -5,7 +5,7 @@ import { logUpstreamError, upstreamStatusProblemResponse } from "@/lib/api/route
 export async function GET() {
     // Test 1: Check if backend URL is configured
     if (!serverAPIClient.defaults.baseURL) {
-        return upstreamStatusProblemResponse(500, "backend health check");
+        return upstreamStatusProblemResponse(500, "backend health check", "UNKNOWN");
     }
 
     // Test 2: Try to reach backend health endpoint
@@ -37,6 +37,6 @@ export async function GET() {
         // client: the registered DEPENDENCY_UNAVAILABLE problem body keeps the
         // 503 status while the diagnostics stay in the server log.
         logUpstreamError("backend health check", error);
-        return upstreamStatusProblemResponse(503, "backend health check");
+        return upstreamStatusProblemResponse(503, "backend health check", "UNKNOWN");
     }
 }

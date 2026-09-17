@@ -13,7 +13,7 @@ const BACKEND_URL = process.env.NEXT_PUBLIC_API_BASE_URL || process.env.DEVELOPM
 
 export async function POST(request: NextRequest) {
     if (process.env.NODE_ENV === 'production') {
-        return upstreamStatusProblemResponse(403, "send test broadcast");
+        return upstreamStatusProblemResponse(403, "send test broadcast", "NOT_APPLIED");
     }
 
     const token = getAuthToken(request);
@@ -22,7 +22,7 @@ export async function POST(request: NextRequest) {
     }
 
     if (!BACKEND_URL) {
-        return upstreamStatusProblemResponse(500, "send test broadcast");
+        return upstreamStatusProblemResponse(500, "send test broadcast", "UNKNOWN");
     }
 
     try {
@@ -41,6 +41,6 @@ export async function POST(request: NextRequest) {
         return NextResponse.json(data, { status: response.status });
     } catch (error) {
         logUpstreamError("send test broadcast", error);
-        return upstreamStatusProblemResponse(500, "send test broadcast");
+        return upstreamStatusProblemResponse(500, "send test broadcast", "UNKNOWN");
     }
 }
