@@ -37,6 +37,7 @@ export const EFORMSIGN_SDK_SEND_ACTION_CODE = EFORMSIGN_SDK_ACTION_CALLBACK_PROC
 
 const EFORMSIGN_DIAGNOSTIC_COUNT_CAP = 20;
 const EFORMSIGN_DIAGNOSTIC_ATTRIBUTE_TIMEOUT_MS = 250;
+const EFORMSIGN_DIAGNOSTIC_EVALUATE_TIMEOUT_MS = 250;
 
 export type EformsignDiagnosticGate = "creation" | "finalize";
 export type EformsignDiagnosticAction =
@@ -396,12 +397,17 @@ export async function readEformsignCallbackState(page: Page): Promise<EformsignC
  * payload crosses into Node, including non-terminal or action payloads.
  */
 export async function readEformsignSdkDiagnosticSummary(page: Page): Promise<EformsignSdkDiagnosticSummary> {
-    const projected = await page
-        .evaluate(() => {
+    let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
+    const projected = await Promise.race([
+        Promise.resolve().then(() => page.evaluate(() => {
             const w = window as unknown as { __eformsignDiagnostics?: unknown };
             return w.__eformsignDiagnostics;
-        })
-        .catch(() => undefined);
+        })),
+        new Promise<undefined>((resolve) => {
+            timeoutHandle = setTimeout(() => resolve(undefined), EFORMSIGN_DIAGNOSTIC_EVALUATE_TIMEOUT_MS);
+        }),
+    ]).catch(() => undefined);
+    if (timeoutHandle) clearTimeout(timeoutHandle);
     return readProjectedSdkSummary(projected);
 }
 

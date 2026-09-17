@@ -7,6 +7,7 @@ import {
     findVisibleEnabledLocatorWithSelection,
     getEformsignDialogPresence,
     getEformsignGateSnapshot,
+    readEformsignSdkDiagnosticSummary,
     tryClickGateLocator,
 } from "../../infrastructure/automation/eformsign-gate-utils";
 
@@ -145,5 +146,23 @@ describe("eformsign gate utils", () => {
             expect.objectContaining({ requestDialogSelector: "#requestWithInputCommentPopup" }),
             { timeout: 250 },
         );
+    });
+
+    it("returns an unknown SDK projection when page evaluation never resolves", async () => {
+        const page = {
+            evaluate: jest.fn().mockReturnValue(new Promise(() => undefined)),
+        } as never;
+        const startedAt = Date.now();
+
+        await expect(readEformsignSdkDiagnosticSummary(page)).resolves.toEqual({
+            actionPresent: false,
+            actionType: "unknown",
+            actionCode: "unknown",
+            successCountBucket: "unknown",
+            successCode: "unknown",
+            errorPresent: false,
+            bootErrorPresent: false,
+        });
+        expect(Date.now() - startedAt).toBeLessThan(1_000);
     });
 });

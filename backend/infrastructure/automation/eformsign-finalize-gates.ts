@@ -65,20 +65,24 @@ export async function runEformsignFinalizeGates(
         selection: GateLocatorSelection | null,
         selectedCategory: EformsignDiagnosticSelectedCategory,
     ): Promise<void> => {
-        const dialogPresence = await getEformsignDialogPresence(
-            eformsignFrame,
-            FINALIZE_REQUEST_SEND_DIALOG_SELECTOR,
-        );
-        const sdkSummary = await readEformsignSdkDiagnosticSummary(page).catch(() => undefined);
-        const diagnostic = createGateDiagnostic(
-            "finalize",
-            action,
-            selectedCategory,
-            selection,
-            dialogPresence,
-            sdkSummary,
-        );
-        logMessage(`[finalize-gate] diagnostic ${JSON.stringify(diagnostic)}`);
+        try {
+            const dialogPresence = await getEformsignDialogPresence(
+                eformsignFrame,
+                FINALIZE_REQUEST_SEND_DIALOG_SELECTOR,
+            );
+            const sdkSummary = await readEformsignSdkDiagnosticSummary(page).catch(() => undefined);
+            const diagnostic = createGateDiagnostic(
+                "finalize",
+                action,
+                selectedCategory,
+                selection,
+                dialogPresence,
+                sdkSummary,
+            );
+            logMessage(`[finalize-gate] diagnostic ${JSON.stringify(diagnostic)}`);
+        } catch {
+            // Diagnostics are best-effort and must never alter the gate outcome.
+        }
     };
 
     const classifySelection = async (
@@ -147,6 +151,23 @@ export async function runEformsignFinalizeGates(
         return false;
     };
 
+    const tryPreSendClickWithDiagnostic = async (
+        locator: Locator,
+        clickAction: string,
+        diagnosticAction: EformsignDiagnosticAction,
+        selection: GateLocatorSelection,
+        selectedCategory: EformsignDiagnosticSelectedCategory,
+    ): Promise<boolean> => {
+        try {
+            const clicked = await tryPreSendClick(locator, clickAction);
+            await logActionDiagnostic(diagnosticAction, selection, selectedCategory);
+            return clicked;
+        } catch (error) {
+            await logActionDiagnostic(diagnosticAction, selection, selectedCategory);
+            throw error;
+        }
+    };
+
     try {
         while (Date.now() < deadline) {
             await throwIfEformsignErrorLatched(page);
@@ -171,14 +192,19 @@ export async function runEformsignFinalizeGates(
                 const selectedCategory = await classifySelection(requestSendButton);
                 // The durable fence must commit before any provider-side send.
                 await emitCreating();
-                if (!(await tryClickGateLocator(requestSendButton.locator))) {
+                let clicked = false;
+                try {
+                    clicked = await tryClickGateLocator(requestSendButton.locator);
+                } finally {
+                    await logActionDiagnostic("send_popup", requestSendButton, selectedCategory);
+                }
+                if (!clicked) {
                     lastAction = "popup 전송 click outcome ambiguous; reconciling";
                     const message =
                         "[finalize-gate] popup 전송 click outcome is ambiguous; reconciling without retry";
                     logMessage(message);
                     return "request-send-attempted";
                 }
-                await logActionDiagnostic("send_popup", requestSendButton, selectedCategory);
                 return "request-send-clicked";
             }
 
@@ -207,13 +233,18 @@ export async function runEformsignFinalizeGates(
                 topLevelSendClickCount += 1;
                 topLevelSendPopupWaitPolls = 0;
                 await emitCreating();
-                if (!(await tryClickGateLocator(topLevelSendButton.locator))) {
+                let clicked = false;
+                try {
+                    clicked = await tryClickGateLocator(topLevelSendButton.locator);
+                } finally {
+                    await logActionDiagnostic("send_top_level", topLevelSendButton, selectedCategory);
+                }
+                if (!clicked) {
                     lastAction = "top-level 전송 click outcome ambiguous; waiting for popup";
                     noteAction(lastAction);
                     await page.waitForTimeout(EFORMSIGN_GATE_POLL_MS);
                     continue;
                 }
-                await logActionDiagnostic("send_top_level", topLevelSendButton, selectedCategory);
                 noteAction("send_top_level");
                 await page.waitForTimeout(250);
                 continue;
@@ -230,11 +261,16 @@ export async function runEformsignFinalizeGates(
             );
             if (confirmButton) {
                 const selectedCategory = await classifySelection(confirmButton);
-                if (!(await tryPreSendClick(confirmButton.locator, "confirm"))) {
+                if (!(await tryPreSendClickWithDiagnostic(
+                    confirmButton.locator,
+                    "confirm",
+                    "confirm",
+                    confirmButton,
+                    selectedCategory,
+                ))) {
                     await page.waitForTimeout(EFORMSIGN_GATE_POLL_MS);
                     continue;
                 }
-                await logActionDiagnostic("confirm", confirmButton, selectedCategory);
                 noteAction("confirm");
                 await page.waitForTimeout(250);
                 continue;

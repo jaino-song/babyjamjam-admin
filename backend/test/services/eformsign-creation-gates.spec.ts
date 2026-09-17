@@ -42,14 +42,25 @@ describe("runEformsignCreationGates", () => {
             getByText: jest.fn().mockReturnValue(locatorList([])),
         } as unknown as FrameLocator;
         const page = {
-            evaluate: jest
-                .fn()
-                .mockResolvedValueOnce({ hasSuccess: false, hasError: false })
-                .mockResolvedValueOnce(false)
-                .mockResolvedValueOnce({ hasSuccess: false, hasError: false })
-                .mockResolvedValueOnce(false)
-                .mockResolvedValueOnce({ hasSuccess: false, hasError: false })
-                .mockResolvedValueOnce(true),
+            evaluate: jest.fn().mockImplementation((fn: unknown) => {
+                const source = String(fn);
+                if (source.includes("__eformsignSuccess") && source.includes("__eformsignError")) {
+                    return Promise.resolve({ hasSuccess: false, hasError: false });
+                }
+                if (source.includes("__eformsignSuccess")) return Promise.resolve(false);
+                if (source.includes("__eformsignDiagnostics")) {
+                    return Promise.resolve({
+                        actionPresent: false,
+                        actionType: "unknown",
+                        actionCode: "unknown",
+                        successCountBucket: "0",
+                        successCode: "unknown",
+                        errorPresent: false,
+                        bootErrorPresent: false,
+                    });
+                }
+                return Promise.resolve(undefined);
+            }),
             waitForTimeout: jest.fn().mockResolvedValue(undefined),
         } as unknown as Page;
 
@@ -104,12 +115,15 @@ describe("runEformsignCreationGates", () => {
             getByRole: frameGetByRole,
         } as unknown as FrameLocator;
         const page = {
-            evaluate: jest
-                .fn()
-                .mockResolvedValueOnce({ hasSuccess: false, hasError: false })
-                .mockResolvedValueOnce(false)
-                .mockResolvedValueOnce({ hasSuccess: false, hasError: false })
-                .mockResolvedValueOnce(false),
+            evaluate: jest.fn().mockImplementation((fn: unknown) => {
+                const source = String(fn);
+                if (source.includes("__eformsignSuccess") && source.includes("__eformsignError")) {
+                    return Promise.resolve({ hasSuccess: false, hasError: false });
+                }
+                if (source.includes("__eformsignSuccess")) return Promise.resolve(false);
+                if (source.includes("__eformsignDiagnostics")) return new Promise(() => undefined);
+                return Promise.resolve(undefined);
+            }),
             waitForTimeout: jest.fn().mockResolvedValue(undefined),
         } as unknown as Page;
         const log = jest.fn();
@@ -123,10 +137,60 @@ describe("runEformsignCreationGates", () => {
         );
         expect(popupSendButton.click).toHaveBeenCalledTimes(1);
         expect(frameGetByRole).not.toHaveBeenCalledWith("button", { name: "전송" });
-        expect(log).toHaveBeenCalledTimes(1);
+        expect(log).toHaveBeenCalledTimes(2);
+        expect(log).toHaveBeenCalledWith(expect.stringContaining('"action":"send_popup"'));
+        expect(log).toHaveBeenCalledWith(expect.stringContaining('"candidateCount":1'));
+        expect(log).toHaveBeenCalledWith(expect.stringContaining('"selectedIndex":0'));
         expect(log).toHaveBeenCalledWith(
             "[creation-gate] popup 전송 click outcome is ambiguous; reconciling without retry",
         );
+    });
+
+    it("records an ambiguous top-level click and advances to popup without retrying it", async () => {
+        const topLevelSendButton = visibleLocator({
+            click: jest.fn().mockRejectedValue(new Error("Timeout 2000ms exceeded")),
+        });
+        const popupSendButton = visibleLocator();
+        let popupLookupCount = 0;
+        const requestSendDialog = visibleLocator({
+            isVisible: jest.fn().mockResolvedValue(false),
+            getByRole: jest.fn().mockImplementation(() => {
+                popupLookupCount += 1;
+                return popupLookupCount === 1 ? locatorList([]) : locatorList([popupSendButton]);
+            }),
+        });
+        const eformsignFrame = {
+            locator: jest.fn().mockReturnValue(requestSendDialog),
+            getByRole: jest.fn().mockImplementation(
+                (_role: string, options: { name: string }) =>
+                    options.name === "전송" ? locatorList([topLevelSendButton]) : locatorList([]),
+            ),
+            getByText: jest.fn().mockReturnValue(locatorList([])),
+        } as unknown as FrameLocator;
+        const page = {
+            evaluate: jest.fn().mockImplementation((fn: unknown) => {
+                const source = String(fn);
+                if (source.includes("__eformsignSuccess") && source.includes("__eformsignError")) {
+                    return Promise.resolve({ hasSuccess: false, hasError: false });
+                }
+                if (source.includes("__eformsignSuccess")) return Promise.resolve(false);
+                if (source.includes("__eformsignDiagnostics")) return new Promise(() => undefined);
+                return Promise.resolve(undefined);
+            }),
+            waitForTimeout: jest.fn().mockResolvedValue(undefined),
+        } as unknown as Page;
+        const log = jest.fn();
+        const logger = { log } as unknown as Console;
+
+        const result = await runEformsignCreationGates(page, eformsignFrame, logger);
+
+        expect(result).toBe("request-send-clicked");
+        expect(topLevelSendButton.click).toHaveBeenCalledTimes(1);
+        expect(popupSendButton.click).toHaveBeenCalledTimes(1);
+        expect(log).toHaveBeenCalledWith(expect.stringContaining('"action":"send_top_level"'));
+        expect(log).toHaveBeenCalledWith(expect.stringContaining('"action":"send_popup"'));
+        expect(log).toHaveBeenCalledWith(expect.stringContaining('"candidateCount":1'));
+        expect(log).toHaveBeenCalledWith(expect.stringContaining('"selectedIndex":0'));
     });
 
     it("keeps advancing to popup send when the SDK latches success after top-level send", async () => {
