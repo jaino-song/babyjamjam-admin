@@ -11,7 +11,8 @@ const ALL_FILTER = "전체";
 const DASHBOARD_ROUTE_BODY_CLASS = "mobile-dashboard-route";
 
 import { useDashboardAnalytics } from "@/hooks/useDashboardAnalytics";
-import { clientQueryKeys, useClients, useDeleteClient } from "@/hooks/useClients";
+import { clientQueryKeys, useDeleteClient } from "@/hooks/useClients";
+import { useInfiniteClients } from "@/hooks/useInfiniteClients";
 import { useClientMessageHistory } from "@/hooks/useClientMessageHistory";
 import { useListInfiniteScroll } from "@/hooks/useListInfiniteScroll";
 import type { Client } from "@/lib/client/types";
@@ -189,15 +190,17 @@ export default function DashboardPage() {
     staleTime: 60_000,
   });
   const {
-    data: clientsData, isLoading: clientsLoading, isError: clientsError,
-    isFetching: clientsFetching, refetch: refetchClients,
-  } = useClients(1, 50, undefined, {
+    allClients,
+    isLoading: clientsLoading,
+    isError: clientsError,
+    isFetching: clientsFetching,
+    refetch: refetchClients,
+  } = useInfiniteClients({
     staleTime: 60_000,
   });
   const user = useInitialUser();
   const [activeFilter, setActiveFilter] = useState<string>(ALL_FILTER);
 
-  const clients = useMemo<Client[]>(() => clientsData?.data ?? [], [clientsData?.data]);
   useEffect(() => {
     document.body.classList.add(DASHBOARD_ROUTE_BODY_CLASS);
     return () => {
@@ -272,7 +275,7 @@ export default function DashboardPage() {
     Omit<DashboardRedesignProps, "activeFilter" | "onFilterChange"> & { allRows: ListRow[] }
   >(() => {
     const now = new Date();
-    const derivedAnalytics = deriveDashboardAnalyticsFromClients(clients, now);
+    const derivedAnalytics = deriveDashboardAnalyticsFromClients(allClients, now);
     const active = analytics?.activeClients ?? derivedAnalytics.activeClients;
     const upcoming = analytics?.upcomingThisMonth ?? derivedAnalytics.upcomingThisMonth;
     const pendingReview =
@@ -315,16 +318,16 @@ export default function DashboardPage() {
     monthFromNow.setDate(today.getDate() + 30);
     monthFromNow.setHours(23, 59, 59, 999);
 
-    const actionRequired = clients
+    const actionRequired = allClients
       // Decided by the backend so this list matches the clients page badges.
       .filter((c) => Boolean(c.actionRequired))
       .sort((a, b) => (b.updatedAt ? new Date(b.updatedAt).getTime() : 0) - (a.updatedAt ? new Date(a.updatedAt).getTime() : 0) || b.id - a.id);
 
-    const upcomingClients = clients
+    const upcomingClients = allClients
       .filter((c) => isServiceStartingWithinWeek(c, now))
       .sort((a, b) => new Date(a.startDate!).getTime() - new Date(b.startDate!).getTime());
 
-    const endingSoon = clients
+    const endingSoon = allClients
       .filter((c) => {
         if (!c.endDate || c.serviceStatus !== "active") return false;
         const d = new Date(c.endDate);
@@ -426,7 +429,7 @@ export default function DashboardPage() {
     ];
 
     return { analytics: dashboardAnalytics, sections: allSections, filters, allRows, loading: false };
-  }, [analytics, clients, clientsLoading, openClient]);
+  }, [allClients, analytics, clientsLoading, openClient]);
 
   const sectionsFull = useMemo(() => {
     if (activeFilter === ALL_FILTER) {

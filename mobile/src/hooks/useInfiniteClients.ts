@@ -16,6 +16,7 @@ interface UseInfiniteClientsOptions {
   search?: string;
   filterFn?: (client: Client, filterValue: string) => boolean;
   searchFn?: (client: Client, query: string) => boolean;
+  staleTime?: number;
 }
 
 function resolveTotalPages(response: PaginatedResponse<Client>): number {
@@ -35,18 +36,31 @@ async function fetchClientPage(page: number): Promise<PaginatedResponse<Client>>
   return data;
 }
 
+function dedupeClientsById(clients: Client[]): Client[] {
+  const seenClientIds = new Set<number>();
+
+  return clients.filter((client) => {
+    if (seenClientIds.has(client.id)) return false;
+    seenClientIds.add(client.id);
+    return true;
+  });
+}
+
 async function fetchAllClientPages(): Promise<PaginatedResponse<Client>> {
   const firstPage = await fetchClientPage(1);
   const totalPages = resolveTotalPages(firstPage);
 
   if (totalPages <= 1) {
-    return firstPage;
+    return {
+      ...firstPage,
+      data: dedupeClientsById(firstPage.data),
+    };
   }
 
   const remainingPages = await Promise.all(
     Array.from({ length: totalPages - 1 }, (_, index) => fetchClientPage(index + 2)),
   );
-  const allData = [firstPage, ...remainingPages].flatMap((page) => page.data);
+  const allData = dedupeClientsById([firstPage, ...remainingPages].flatMap((page) => page.data));
 
   return {
     ...firstPage,
@@ -63,6 +77,7 @@ export function useInfiniteClients({
   search = "",
   filterFn,
   searchFn,
+  staleTime,
 }: UseInfiniteClientsOptions = {}) {
   const resetKey = `${filter}::${search}`;
   const [visibleState, setVisibleState] = useState({
@@ -73,7 +88,7 @@ export function useInfiniteClients({
   const query = useQuery<PaginatedResponse<Client>>({
     queryKey: [...clientQueryKeys.lists(), { scope: "all-pages", limit: API_PAGE_SIZE }] as const,
     queryFn: fetchAllClientPages,
-    staleTime: 1000 * 60 * 5,
+    staleTime: staleTime ?? 1000 * 60 * 5,
     gcTime: 1000 * 60 * 60,
   });
 
@@ -138,5 +153,7 @@ export function useInfiniteClients({
     totalCount: allFilteredClients.length,
     isInitialLoad,
     error: query.error,
+    isError: query.isError,
+    refetch: query.refetch,
   };
 }
