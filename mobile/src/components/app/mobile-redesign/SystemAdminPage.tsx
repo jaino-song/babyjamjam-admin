@@ -84,6 +84,17 @@ const DEFAULT_BRANCH_FORM: SystemAdminBranchInput = {
   isActive: true,
 };
 
+export function normalizeSystemAdminBranchInput(
+  input: SystemAdminBranchInput,
+): SystemAdminBranchInput {
+  const email = input.email?.trim();
+  if (email) return { ...input, email };
+
+  const inputWithoutEmail = { ...input };
+  delete inputWithoutEmail.email;
+  return inputWithoutEmail;
+}
+
 function roleLabel(role: string | null | undefined): string {
   return ROLE_LABELS[role ?? ""] ?? "미지정";
 }
@@ -323,7 +334,7 @@ function BranchForm({
         width="lg"
         className="mt-1"
         disabled={!canSave || isSaving}
-        onClick={() => onSave({ ...form, name: form.name.trim(), slug: form.slug.trim() })}
+        onClick={() => onSave(normalizeSystemAdminBranchInput({ ...form, name: form.name.trim(), slug: form.slug.trim() }))}
         data-component="mobile_system-admin_branch-form_save"
       >
         <Save className="h-4 w-4" />
