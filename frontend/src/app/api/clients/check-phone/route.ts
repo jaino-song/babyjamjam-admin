@@ -31,6 +31,6 @@ export async function GET(request: NextRequest) {
 
     return NextResponse.json({ exists: response.data?.exists === true });
   } catch (error) {
-    return errorResponse(error, "check client phone");
+    return errorResponse(error, "check client phone", "read");
   }
 }
