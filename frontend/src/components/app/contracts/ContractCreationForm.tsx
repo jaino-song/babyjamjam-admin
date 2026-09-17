@@ -976,7 +976,7 @@ export const ContractCreationForm = ({
           customerContact: phone,
           customerDOB: birthday,
           customerAddress: address,
-          // inputOutsiderNumber (이용자 연락처) prefill 용 — 현재 로그인 계정의 phone 사용
+          // inputOutsiderNumber (이용자 연락처) prefill 용 — 계약서 이용자인 고객의 phone 사용
           issuerPhone: authUser?.phone ?? undefined,
           caretaker1Name: employeeName,
           caretaker1Contact: employeePhone,

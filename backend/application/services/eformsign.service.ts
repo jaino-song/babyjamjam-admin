@@ -250,9 +250,8 @@ export class EformsignService {
                     { id: "이용자 성명", value: contractData.customerName, enabled: true },
                     { id: "이용자 생년월일", value: contractData.customerDOB || "", enabled: true },
                     { id: "이용자 주소", value: contractData.customerAddress, enabled: true },
-                    // inputOutsiderNumber (이용자 연락처) — 발급 staff (현재 로그인 계정)의 폰 번호로 prefill.
-                    // contractData.issuerPhone 미지정 시 customerContact 으로 fallback (test setup에서 둘이 동일).
-                    { id: "이용자 연락처", value: contractData.issuerPhone || contractData.customerContact, enabled: true },
+                    // inputOutsiderNumber (이용자 연락처) — 계약서 이용자인 고객의 연락처로 prefill.
+                    { id: "이용자 연락처", value: contractData.customerContact, enabled: true },
                     { id: "계약 시작 년도", value: contractData.startYear },
                     { id: "계약 시작 월", value: contractData.startMonth },
                     { id: "계약 시작 일", value: contractData.startDay },

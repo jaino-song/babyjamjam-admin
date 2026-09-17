@@ -34,6 +34,39 @@ function createConfigService(overrides: Record<string, string | undefined> = {})
     } as unknown as ConfigService;
 }
 
+const CUSTOMER_PHONE = "010-2222-3333";
+const ISSUER_PHONE = "010-4444-5555";
+
+function createContractData(overrides: Partial<ContractDataDto> = {}): ContractDataDto {
+    return {
+        customerName: "김고객",
+        customerContact: CUSTOMER_PHONE,
+        customerDOB: "900101",
+        customerAddress: "주소",
+        caretaker1Name: "이담당",
+        caretaker1Contact: "010-9999-8888",
+        type: "A",
+        days: "5",
+        area: "Seoul",
+        contractDuration: "2026-06-03 ~ 2026-06-07",
+        startYear: "26",
+        startMonth: "06",
+        startDay: "03",
+        startDate: "2026-06-03",
+        endYear: "26",
+        endMonth: "06",
+        endDay: "07",
+        endDate: "2026-06-07",
+        paymentYear: "26",
+        paymentMonth: "06",
+        paymentDay: "03",
+        fullPrice: "100000",
+        grant: "50000",
+        actualPrice: "50000",
+        ...overrides,
+    };
+}
+
 describe("EformsignService", () => {
     afterEach(() => {
         jest.useRealTimers();
@@ -471,6 +504,29 @@ describe("EformsignService", () => {
             },
         ]);
         expect(JSON.stringify(options.prefill.recipients)).not.toContain("이담당");
+    });
+
+    it.each([
+        ["a distinct issuer phone", ISSUER_PHONE],
+        ["no issuer phone", undefined],
+    ] as const)("prefills the customer phone in the PDF field with %s", (_caseName, issuerPhone) => {
+        const service = new EformsignService(createConfigService());
+        const options = service.generateDocumentOptions(
+            createContractData(issuerPhone ? { issuerPhone } : {}),
+            "access-token",
+            "refresh-token",
+        );
+
+        expect(options.prefill.fields).toEqual(expect.arrayContaining([
+            { id: "이용자 연락처", value: CUSTOMER_PHONE, enabled: true },
+        ]));
+        expect(options.prefill.recipients).toEqual(expect.arrayContaining([
+            expect.objectContaining({
+                name: "김고객",
+                sms: CUSTOMER_PHONE,
+                use_sms: true,
+            }),
+        ]));
     });
 
     it("round-trips formatted whole-won prices as canonical provider values", () => {

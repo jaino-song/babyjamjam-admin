@@ -9,6 +9,9 @@ const TEST_PRINCIPAL = {
     branchRole: "owner",
 } as const;
 
+const CUSTOMER_PHONE = "010-2222-3333";
+const CLIENT_FALLBACK_PHONE = "010-6666-7777";
+
 const TEMPLATE_WORKFLOW_CONFIG = {
     form_id: "template-1",
     config: {
@@ -164,7 +167,7 @@ describe("DispatchDocumentHeadlessUsecase", () => {
         const clientRepository = {
             findById: jest.fn().mockResolvedValue({
                 name: "김고객",
-                phone: "010-1234-5678",
+                phone: CLIENT_FALLBACK_PHONE,
             }),
         };
         const assignmentGuard = {
@@ -191,7 +194,7 @@ describe("DispatchDocumentHeadlessUsecase", () => {
             progressId: "progress-1",
             contractData: {
                 customerName: "김고객",
-                customerContact: "010-1234-5678",
+                customerContact: CUSTOMER_PHONE,
             } as never,
         }, TEST_PRINCIPAL)).resolves.toEqual({
             ok: true,
@@ -212,6 +215,7 @@ describe("DispatchDocumentHeadlessUsecase", () => {
                 stepName: "완료",
                 templateName: "서구 계약서 (검토 단계)",
                 customerName: "김고객",
+                stepRecipientSms: CUSTOMER_PHONE,
             }),
         );
     });
