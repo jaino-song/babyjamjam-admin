@@ -3,6 +3,22 @@ import fs from "node:fs";
 const source = fs.readFileSync(require.resolve("./ContractCreationForm"), "utf8");
 
 describe("ContractCreationForm compensation flows", () => {
+  it.each([
+    "template_workflow_config_invalid",
+    "template_workflow_unsupported",
+    "template_workflow_config_unavailable",
+  ])("handles %s before manual or unknown fallback", (reason) => {
+    const knownBranch = source.slice(
+      source.indexOf(`getKnownHeadlessProviderFailureMessage(headless.reason)`),
+      source.indexOf('headless.reason === "local_persist_failed"'),
+    );
+
+    expect(source).toContain(`case "${reason}"`);
+    expect(knownBranch).toContain("setAllowIframeFallback(false)");
+    expect(knownBranch).toContain("retryWithPersistedClientRef.current = true");
+    expect(knownBranch).not.toContain("openIframeFallback()");
+  });
+
   it("should show the conflict error and stop before document creation when automatic registration is off", () => {
     expect(source).toContain('error.response?.status !== 409');
     expect(source).toContain('throw new Error(getApiErrorMessage(error, "고객 자동 등록에 실패했어요."))');

@@ -172,6 +172,27 @@ describe("ContractCreationForm — eformsign iframe fallback on headless failure
         expect(mockGenerateDocument).toHaveBeenCalled();
     });
 
+    it.each([
+        "template_workflow_config_invalid",
+        "template_workflow_unsupported",
+        "template_workflow_config_unavailable",
+    ])("keeps %s on the retry path without opening the iframe", async (reason) => {
+        mockDispatchHeadless
+            .mockResolvedValueOnce({ ok: false, reason, failedStep: "client-started", durationMs: 1 })
+            .mockResolvedValueOnce({ ok: true, documentId: "doc-retried", durationMs: 1 });
+
+        renderForm();
+        fireEvent.click(screen.getByTestId("contract-creation-submit"));
+
+        await waitFor(() => expect(screen.getByText(/이번 요청에서 계약서를 발송하지 않았어요/)).toBeInTheDocument());
+        expect(mockOpenDocument).not.toHaveBeenCalled();
+        expect(screen.getByTestId("contract-creation-retry")).toBeEnabled();
+
+        fireEvent.click(screen.getByTestId("contract-creation-retry"));
+        await waitFor(() => expect(mockDispatchHeadless).toHaveBeenCalledTimes(2));
+        expect(mockOpenDocument).not.toHaveBeenCalled();
+    });
+
     it("does not open the embedded iframe when the dispatch request itself fails", async () => {
         mockDispatchHeadless.mockRejectedValue(new Error("timeout of 180000ms exceeded"));
 

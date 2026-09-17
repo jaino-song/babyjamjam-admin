@@ -58,6 +58,7 @@ import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import {
   buildContractSubmissionAlert,
+  buildHeadlessProviderFailureAlert,
   canUseContractIframeFallback,
   CONTRACT_OUTCOME_COPY,
   focusContractValidationErrors,
@@ -266,6 +267,8 @@ export default function ContractCreationPage() {
   const [progressErrorHint, setProgressErrorHint] = useState<string | null>(null);
   const progressSourceRef = useRef<EventSource | null>(null);
   const selectedClientRef = useRef<Pick<Client, "id" | "name"> | null>(null);
+  const persistedClientIdRef = useRef<number | null>(null);
+  const retryWithPersistedClientRef = useRef(false);
   const defaultPaymentDate = useMemo(() => todayIsoDate(), []);
   const hasAppliedPaymentStepDefaultRef = useRef(false);
 
@@ -534,6 +537,8 @@ export default function ContractCreationPage() {
   }, []);
 
   const handleClientSelect = (selectedClientId: number | null, client: Client | null) => {
+    persistedClientIdRef.current = null;
+    retryWithPersistedClientRef.current = false;
     setClientId(selectedClientId);
     selectedClientRef.current = client;
     setEmployeeSelection(null, "", "");
@@ -588,6 +593,10 @@ export default function ContractCreationPage() {
 
   const handleClientNameInputChange = (nextName: string) => {
     const isNameChanging = nextName !== name;
+    if (isNameChanging) {
+      persistedClientIdRef.current = null;
+      retryWithPersistedClientRef.current = false;
+    }
     setName(nextName);
     const matchesSelectedClient = clientId !== null && selectedClientRef.current?.name === nextName;
     const hasSelectedClientSnapshot = clientId !== null && selectedClientRef.current !== null;
@@ -603,6 +612,8 @@ export default function ContractCreationPage() {
   };
 
   const handleClientManualEntry = (query: string) => {
+    persistedClientIdRef.current = null;
+    retryWithPersistedClientRef.current = false;
     setClientId(null);
     selectedClientRef.current = null;
     setName(query.trim() || name);
@@ -819,7 +830,11 @@ export default function ContractCreationPage() {
     try {
       // 1. Manual-entry client creation. The confirmed id is retained in the
       // form store so an uncertain dispatch never suggests deleting it.
-      let finalClientId = clientId ?? storedClientByIdentity?.id ?? storedClientByPhone?.id ?? null;
+      const reusePersistedClient = retryWithPersistedClientRef.current;
+      retryWithPersistedClientRef.current = false;
+      let finalClientId = reusePersistedClient
+        ? persistedClientIdRef.current ?? clientId ?? storedClientByIdentity?.id ?? storedClientByPhone?.id ?? null
+        : clientId ?? storedClientByIdentity?.id ?? storedClientByPhone?.id ?? null;
       const assignment = {
         primaryEmployeeId: employeeId,
         secondaryEmployeeId: showEmployee2 ? employee2Id : null,
@@ -840,7 +855,7 @@ export default function ContractCreationPage() {
         endDate: effectiveEndDate || null,
         areaId: area || null,
       };
-      if (!finalClientId && isManualEntry) {
+      if (!reusePersistedClient && !finalClientId && isManualEntry) {
         const autoRegistrationPayload = {
           ...clientData,
           careCenter: false,
@@ -884,7 +899,7 @@ export default function ContractCreationPage() {
         showErrorToast("고객 정보를 먼저 선택하거나 등록해 주세요.");
         return;
       }
-      if (clientId !== null || storedClientByIdentity || storedClientByPhone) {
+      if (!reusePersistedClient && (clientId !== null || storedClientByIdentity || storedClientByPhone)) {
         try {
           await updateClientMutation.mutateAsync({
             id: finalClientId,
@@ -895,6 +910,7 @@ export default function ContractCreationPage() {
           return;
         }
       }
+      if (!reusePersistedClient) persistedClientIdRef.current = finalClientId;
 
       // Provider identity remains server-owned; this page sends only contract data.
       // 2. Build contract data for the server-mediated dispatch operation.
@@ -981,6 +997,23 @@ export default function ContractCreationPage() {
           operation: "mutation",
           locale: "ko-KR",
         });
+        const knownHeadlessFailure = !normalizedHeadless.verified
+          && isRecord(headless)
+          && headless.ok === false
+          ? buildHeadlessProviderFailureAlert(headless.reason)
+          : null;
+        if (knownHeadlessFailure) {
+          setCreationProgress((current) => resolveFailedHeadlessProgress(
+            current,
+            isRecord(headless) && typeof headless.failedStep === "string" ? headless.failedStep : undefined,
+            CONTRACT_CREATION_PROGRESS_STEPS,
+          ));
+          setProgressErrorHint(knownHeadlessFailure.message);
+          setSubmissionAlert(knownHeadlessFailure);
+          setIsProgressModalOpen(false);
+          retryWithPersistedClientRef.current = true;
+          return;
+        }
         if (normalizedHeadless.verified) {
           setProgressErrorHint(normalizedHeadless.message);
           showSubmissionFailure(headless, normalizedHeadless.problem?.outcome ?? "UNKNOWN");

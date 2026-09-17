@@ -299,6 +299,58 @@ describe("contract creation mutation lifecycle", () => {
     expect(mockDispatchHeadless).toHaveBeenCalledTimes(1);
   });
 
+  it.each([
+    "template_workflow_config_invalid",
+    "template_workflow_unsupported",
+    "template_workflow_config_unavailable",
+  ])("keeps %s unlocked for a safe retry without reopening the iframe or rewriting the client", async (reason) => {
+    mockDispatchHeadless
+      .mockResolvedValueOnce({ ok: false, reason, failedStep: "client-started", durationMs: 1 })
+      .mockResolvedValueOnce({ ok: true, documentId: "doc-retried", durationMs: 1 });
+
+    const submit = await renderReadyPage();
+    fireEvent.click(submit);
+
+    await waitFor(() => {
+      expect(screen.getByRole("alert")).toHaveTextContent("이번 요청에서 계약서를 발송하지 않았어요.");
+    });
+    expect(screen.getByRole("alert")).toHaveTextContent("입력한 고객 정보와 날짜는 그대로 남아 있어요.");
+    expect(submit).not.toBeDisabled();
+    expect(mockOpenDocument).not.toHaveBeenCalled();
+    expect(mockCreateClient).not.toHaveBeenCalled();
+    expect(mockUpdateClient).toHaveBeenCalledTimes(1);
+
+    fireEvent.click(submit);
+    await waitFor(() => expect(mockDispatchHeadless).toHaveBeenCalledTimes(2));
+    expect(mockDispatchHeadless.mock.calls[1]?.[1]).toBe(7);
+    expect(mockCreateClient).not.toHaveBeenCalled();
+    expect(mockUpdateClient).toHaveBeenCalledTimes(1);
+    expect(mockOpenDocument).not.toHaveBeenCalled();
+  });
+
+  it("retains an auto-registered client id across a known pre-send retry", async () => {
+    installFormState({
+      clientId: null,
+      isManualEntry: true,
+      name: "새로운 고객",
+      phone: "010-6621-1878",
+    });
+    mockCreateClient.mockResolvedValue({ id: 73 });
+    mockDispatchHeadless
+      .mockResolvedValueOnce({ ok: false, reason: "template_workflow_config_unavailable", durationMs: 1 })
+      .mockResolvedValueOnce({ ok: true, documentId: "doc-retried", durationMs: 1 });
+
+    const submit = await renderReadyPage();
+    fireEvent.click(submit);
+    await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent("이번 요청에서 계약서를 발송하지 않았어요."));
+
+    fireEvent.click(submit);
+    await waitFor(() => expect(mockDispatchHeadless).toHaveBeenCalledTimes(2));
+    expect(mockCreateClient).toHaveBeenCalledTimes(1);
+    expect(mockDispatchHeadless.mock.calls[0]?.[1]).toBe(73);
+    expect(mockDispatchHeadless.mock.calls[1]?.[1]).toBe(73);
+  });
+
   it("keeps a confirmed partial outcome locked with its request id", async () => {
     const problem = createProblemDetails({
       code: "MESSAGE_SEND_PARTIAL",

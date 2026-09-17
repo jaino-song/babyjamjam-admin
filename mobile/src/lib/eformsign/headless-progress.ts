@@ -34,6 +34,27 @@ export const INITIAL_HEADLESS_PROGRESS: HeadlessProgressState = {
     failed: false,
 };
 
+export type HeadlessProviderFailureCode =
+    | "template_workflow_config_invalid"
+    | "template_workflow_unsupported"
+    | "template_workflow_config_unavailable";
+
+export const HEADLESS_PROVIDER_FAILURE_MESSAGES: Readonly<Record<HeadlessProviderFailureCode, string>> = Object.freeze({
+    template_workflow_config_invalid:
+        "이번 요청에서 계약서를 발송하지 않았어요. 계약서 템플릿 설정이 올바르지 않아요. 관리자에게 템플릿 설정을 확인하고 수정해 달라고 요청한 뒤 다시 시도해 주세요. 입력한 고객 정보와 날짜는 그대로 남아 있어요.",
+    template_workflow_unsupported:
+        "이번 요청에서 계약서를 발송하지 않았어요. 현재 계약서 템플릿에서 지원하지 않는 항목이 있어요. 관리자에게 템플릿 설정을 확인하고 항목을 수정해 달라고 요청한 뒤 다시 시도해 주세요. 입력한 고객 정보와 날짜는 그대로 남아 있어요.",
+    template_workflow_config_unavailable:
+        "이번 요청에서 계약서를 발송하지 않았어요. 계약서 템플릿 설정을 잠시 불러오지 못했어요. 잠시 후 다시 시도해 주세요. 입력한 고객 정보와 날짜는 그대로 남아 있어요.",
+});
+
+export function getHeadlessProviderFailureMessage(reason: unknown): string | null {
+    if (typeof reason !== "string") return null;
+    return Object.prototype.hasOwnProperty.call(HEADLESS_PROVIDER_FAILURE_MESSAGES, reason)
+        ? HEADLESS_PROVIDER_FAILURE_MESSAGES[reason as HeadlessProviderFailureCode]
+        : null;
+}
+
 export function createHeadlessProgressId(prefix = "headless"): string {
     if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
         return crypto.randomUUID();
@@ -99,6 +120,8 @@ export function resolveFailedHeadlessProgress(
 }
 
 export function getSafeHeadlessFailureMessage(reason: string | undefined): string {
+    const knownProviderFailureMessage = getHeadlessProviderFailureMessage(reason);
+    if (knownProviderFailureMessage) return knownProviderFailureMessage;
     if (!reason) return "백엔드 자동 처리에 실패했어요. 잠시 후 다시 시도해 주세요";
     if (/timed out|timeout/i.test(reason)) return "백엔드 자동 처리 시간이 초과됐어요";
     if (/chromium|browser|executable/i.test(reason)) return "백엔드 브라우저를 실행하지 못했어요";
