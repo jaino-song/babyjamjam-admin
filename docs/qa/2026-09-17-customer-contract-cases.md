@@ -2,7 +2,7 @@
 
 ## 이 목록의 의미
 
-소스 조사로 확장한 **미실행 검수 목록**이다. 표의 행은 케이스 묶음이며 통과 건수나 검수율이 아니다.
+소스 조사로 확장한 **미완료 검수 목록**이다. 일부 화면/입력 분기의 실행 증거는 검수 원장에 별도로 기록했다. 표의 행은 케이스 묶음이며 통과 건수나 검수율이 아니다.
 각 묶음 안의 조작·오류·권한·장치 조건을 실제 실행할 때 하위 ID를 부여하고,
 대상 배포 SHA, QA entity ID, 입력, 예상/실제 결과, 화면·재조회 근거를 따로 남긴다.
 전체 서비스 목록은 [검수 원장](2026-09-17-production-audit.md)에 있다.
@@ -21,7 +21,7 @@
 - 오너·지점장·직원·비로그인과 지점 간 접근을 별도 하위 케이스로 실행한다.
 - 정상·빈값·잘못된 값·느린 응답·실패·재시도·중복 클릭·뒤로가기·미저장 취소를 구분한다.
 
-## 고객 — 모든 행 미실행
+## 고객 — 전체 케이스 묶음의 완료 판정 없음
 
 | ID | 조작과 확인점 | 필요한 상태 / 소스 |
 | --- | --- | --- |
@@ -50,7 +50,7 @@
 - C6: `frontend/src/components/app/clients/ClientDetailPanel.tsx` — 729행 일정 승인/거절, 820행 이후 탭.
 - C7: `frontend/src/app/(protected)/clients/page.tsx` — 831행 이후 상세 메뉴.
 
-## 계약 — 모든 행 미실행
+## 계약 — 전체 케이스 묶음의 완료 판정 없음
 
 | ID | 조작과 확인점 | 필요한 상태 / 소스 |
 | --- | --- | --- |
@@ -94,3 +94,35 @@
 프로덕션 QA 지점은 비활성 상태다. 활성화하면 공개 지점 목록에 나타나므로 사용자 선택을 기다린다.
 실제 데이터 변경을 포함한 위 케이스들은 지점과 QA 고객·직원·문서 준비 후 실행한다.
 이 목록만으로 고객·계약의 모든 상태 분기 수집이 끝났다고 판정하지 않는다.
+
+## 추가 누락 방지 케이스 — 모두 미실행
+
+2026-09-17 후속 소스 대조에서 구체화한 케이스다. 현재 작업 소스 기준이며 운영 백엔드 SHA와
+동일하다는 증거는 없다. guard 이름의 차이만으로 보안 결함을 단정하지 않는다. 역할별 허용 범위는
+기획/권한 계약과 먼저 대조하고, QA 데이터로 실제 응답·무변경·허용 동작을 확인한다.
+
+| ID | 조작과 확인점 | 준비와 실행 경계 |
+| --- | --- | --- |
+| GAP-AUTH-01 | 고객 수정·삭제·중단·교체 요청을 오너/관리자/지점장/직원 세션으로 실행. 허용 역할은 저장·재조회, 거부 역할은 오류 안내·무변경 확인 | 역할별 세션과 폐기 가능한 QA 고객. 실제 고객로 대체하지 않음. G1 |
+| GAP-AUTH-02 | 다른 지점 및 오래된 고객 ID에 같은 요청. 정보 노출·부분 수정·허용 범위 우회가 없는지 확인 | 격리된 QA 지점 2곳과 QA 고객. G1 |
+| GAP-EMP-01 | 직원 생성→수정→공개 상태 변경→삭제/취소. 역할별 허용 범위, 고객 배정 중 제약, 새로고침 결과 | QA 직원·고객·역할 세션. 실제 직원 상태 변경 금지. G2 |
+| GAP-EMP-02 | 중복/잘못된 번호, 저장 중 연결 오류·충돌 응답, 중복 클릭과 재시도. 입력 유지·원인 안내·중복 레코드 방지 | 로컬/격리 환경에서 실패 주입, 운영 장애를 인위적으로 만들지 않음. G2 |
+| GAP-RECORD-01 | 관리자 제공기록 초안 시작→입력→미리보기→확정, 중간 폐기, 재조회·문서 결과 비교 | QA 고객·배정 일정·제공기록. 기존 고객 초안 생성 금지. G3 |
+| GAP-RECORD-02 | 오래된 초안/버전 충돌, 문서 재생성 재시도, 링크 초기화와 발송 구분, 지점/역할 거부 | 제어된 QA 문서와 수신처. 이전 링크 무효화·외부 발송은 각각 기록. G3 |
+| GAP-SMS-01 | 실패/부분 적용/결과 미확인 이력의 재시도, 이중 클릭, 같은 요청 식별자, 제공업체 지연 뒤 목록 대조 | 승인 수신처 및 QA 이력. 결과 미확인 시 무조건 재발송하지 않음. G4 |
+| GAP-SMS-02 | 예약 최소 시각 경계, 예약 취소와 처리 시작의 경합, 지점 변경 중 발송 요청의 expectedBranchId 불일치 | 전용 QA 예약만 사용. 실제 고객 예약 취소·일괄 재처리 금지. G4 |
+| GAP-USER-01 | 지점 사용자 역할 변경 후 세션/메뉴/API 권한 갱신, 비허용 역할의 거부, 다른 지점 대상 접근 | 별도 QA 사용자·지점. 접근 권한 확대는 구체적 대상/범위 확인 후 실행. G5 |
+| GAP-USER-02 | 오너 권한 변경/삭제 제한, 확인 취소, 오류 복구, 감사 이력과 재조회 | 운영 오너로 테스트하지 않음. 삭제가 복구 불가하면 실행 시 확인 필요. G5 |
+| GAP-CONTRACT-01 | 생성/발송 결과 미확인 시 목록과 진행 상태를 먼저 대조한 뒤 재시도. PC↔모바일 상태·PDF·메타데이터 일치 | 기존 CONTRACT-020/026/028/030의 복구 분기 확장. QA 계약과 통제된 제공업체 작업 필요. G6 |
+
+추가 소스 기준점:
+
+- G1: `backend/interface/controllers/client.controller.ts:107-176`, `frontend/src/app/(protected)/clients/page.tsx:554-569`, `mobile/src/app/(shell)/clients/page.tsx:302-330`.
+- G2: `backend/interface/controllers/employee.controller.ts:18-21,92-124`, `frontend/src/components/app/employees/EmployeeFormDialog.tsx:539-602`, `frontend/src/components/app/employees/EmployeeDirectoryManager.tsx:117-145`, `mobile/src/app/(shell)/employees/page.tsx:353-389`.
+- G3: `backend/interface/controllers/admin-service-record.controller.ts:38-181` — 개요, 수정 초안, preview/confirm/discard/retry와 링크 작업 구분.
+- G4: `backend/interface/controllers/message-trigger.controller.ts:44-90`, `backend/interface/controllers/message-delivery.controller.ts:73-110`, `frontend/src/features/message-triggers/hooks/use-message-triggers.ts:108-128`.
+- G5: `backend/interface/controllers/branch-user.controller.ts:23-91` — 지점 경계와 역할 변경/삭제; `system-admin.controller.ts:14-39` — 시스템 관리자 작업의 별도 권한 경계.
+- G6: `frontend/src/components/app/contracts/ContractCreationForm.tsx:1010-1020`, `mobile/src/app/(shell)/contracts/new/page.tsx:885-930`, `backend/interface/controllers/eformsign.controller.ts:674-705`.
+
+위 분기는 목록/개요/기존 이력 GET까지 읽기 전용으로 준비할 수 있다. 저장·권한 변경·예약 취소·
+문서 확정·재시도·외부 발송의 통과 판정에는 격리된 QA 대상과 각각의 실제 실행 증거가 필요하다.
