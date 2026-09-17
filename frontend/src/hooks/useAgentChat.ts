@@ -53,6 +53,7 @@ export type AgentTaskClientError = {
     message: string;
     taskId?: string;
     latestRevision?: number;
+    pendingEventId?: string;
 };
 
 export type AgentTaskAccessState = {
@@ -74,6 +75,10 @@ export type AgentTaskCommand =
     | { command: "resume" }
     | { command: "prepare-review" }
     | { command: "cancel" };
+
+type PendingTaskMutation =
+    | { taskId: string; kind: "patch"; operations: AgentTaskPatchRequest["operations"]; options: AgentTaskMutationOptions }
+    | { taskId: string; kind: "command"; command: AgentTaskCommand; options: AgentTaskMutationOptions };
 
 function createClientEventId(): string {
     if (typeof globalThis.crypto?.randomUUID === "function") return globalThis.crypto.randomUUID();
@@ -201,6 +206,7 @@ export function useAgentChat() {
     const taskMutationInFlightRef = useRef(false);
     const taskMutationTokenRef = useRef(0);
     const taskNeedsReconciliationRef = useRef(false);
+    const pendingTaskMutationsRef = useRef(new Map<string, PendingTaskMutation>());
 
     const commitTaskSnapshotState = useCallback((next: AgentTaskClientSnapshotState) => {
         taskSnapshotStateRef.current = next;
@@ -226,6 +232,7 @@ export function useAgentChat() {
         const current = taskSnapshotStateRef.current;
         const next = resetAgentTaskSnapshotState(current, nextIdentityEpoch ?? current.identityEpoch + 1);
         taskMutationTokenRef.current += 1;
+        pendingTaskMutationsRef.current.clear();
         handledTaskSnapshotRef.current.clear();
         commitTaskSnapshotState(next);
         commitTaskAccessState({ status: "idle" });
@@ -281,10 +288,22 @@ export function useAgentChat() {
             return true;
         }
         if (state.pendingEventIds.length > 0 && !state.pendingEventIds.includes(clientEventId)) {
-            setTaskError({ code: "task_pending_event", taskId, latestRevision: state.task.revision, message: "확인되지 않은 초안 변경이 있습니다. 같은 요청의 결과를 확인한 뒤 새 변경을 시도해 주세요." });
+            setTaskError({ code: "task_pending_event", taskId, latestRevision: state.task.revision, pendingEventId: state.pendingEventIds[0], message: "확인되지 않은 초안 변경이 있습니다. 같은 변경의 결과를 확인한 뒤 새 변경을 시도해 주세요." });
+            return true;
+        }
+        if (state.pendingEventIds.includes(clientEventId) && !pendingTaskMutationsRef.current.has(clientEventId)) {
+            setTaskError({ code: "task_pending_event", taskId, latestRevision: state.task.revision, pendingEventId: clientEventId, message: "확인되지 않은 초안 변경이 있습니다. 최신 상태를 확인한 뒤 다시 시도해 주세요." });
             return true;
         }
         return false;
+    }, []);
+
+    const setPendingTaskError = useCallback((taskId: string, message = "확인되지 않은 초안 변경이 있습니다. 최신 상태를 확인한 뒤 같은 변경을 다시 확인해 주세요."): boolean => {
+        const state = taskSnapshotStateRef.current;
+        const pendingEventId = state.pendingEventIds[0];
+        if (!pendingEventId || !state.task || state.task.taskId !== taskId) return false;
+        setTaskError({ code: "task_pending_event", taskId, latestRevision: state.task.revision, pendingEventId, message });
+        return true;
     }, []);
 
     const acceptTaskSnapshotEnvelope = useCallback((
@@ -324,16 +343,23 @@ export function useAgentChat() {
             task,
         } as Parameters<typeof acceptAgentTaskSnapshot>[1];
         const acceptance = acceptTaskSnapshotEnvelope(envelope, request);
-        if (!acceptance.accepted) return acceptance.state.task;
+        if (!acceptance.accepted) {
+            if (acceptance.reason === "same-revision") {
+                commitTaskAccessState({ status: "authorized", taskId });
+                commitTaskNeedsReconciliation(false);
+                if (!setPendingTaskError(taskId)) setTaskError(null);
+            }
+            return acceptance.state.task;
+        }
         commitTaskAccessState({ status: "authorized", taskId });
         commitTaskNeedsReconciliation(acceptance.needsReconciliation);
         if (acceptance.needsReconciliation) {
             setTaskError({ code: "task_reconciliation_required", taskId, latestRevision: task.revision, message: "최신 작업 초안을 확인한 뒤 변경 내용을 다시 검토해 주세요." });
-        } else {
+        } else if (!setPendingTaskError(taskId)) {
             setTaskError(null);
         }
         return acceptance.state.task;
-    }, [acceptTaskSnapshotEnvelope, beginTaskSnapshotRequest, commitTaskAccessState, commitTaskNeedsReconciliation, isCurrentTaskRequest, quarantineTask, resetTaskSnapshot, sessionOperationEpoch]);
+    }, [acceptTaskSnapshotEnvelope, beginTaskSnapshotRequest, commitTaskAccessState, commitTaskNeedsReconciliation, isCurrentTaskRequest, quarantineTask, resetTaskSnapshot, sessionOperationEpoch, setPendingTaskError]);
 
     const applyTaskMutationResponse = useCallback((
         taskId: string,
@@ -351,12 +377,13 @@ export function useAgentChat() {
         } as Parameters<typeof acceptAgentTaskSnapshot>[1];
         const acceptance = acceptTaskSnapshotEnvelope(envelope, request);
         if (acceptance.accepted) {
+            pendingTaskMutationsRef.current.delete(mutation.receipt.eventId);
             commitTaskAccessState({ status: "authorized", taskId });
             commitTaskNeedsReconciliation(acceptance.needsReconciliation);
-            if (!acceptance.needsReconciliation) setTaskError(null);
+            if (!acceptance.needsReconciliation && !setPendingTaskError(taskId)) setTaskError(null);
         }
         return acceptance.state.task;
-    }, [acceptTaskSnapshotEnvelope, commitTaskAccessState, commitTaskNeedsReconciliation, isCurrentTaskRequest]);
+    }, [acceptTaskSnapshotEnvelope, commitTaskAccessState, commitTaskNeedsReconciliation, isCurrentTaskRequest, setPendingTaskError]);
 
     const handleTaskConflict = useCallback((
         taskId: string,
@@ -401,6 +428,7 @@ export function useAgentChat() {
         const pending = taskSnapshotStateRef.current.pendingEventIds.includes(options.clientEventId)
             ? taskSnapshotStateRef.current.pendingEventIds
             : [...taskSnapshotStateRef.current.pendingEventIds, options.clientEventId];
+        pendingTaskMutationsRef.current.set(options.clientEventId, { taskId, kind: "patch", operations, options });
         commitTaskSnapshotState({ ...taskSnapshotStateRef.current, pendingEventIds: pending });
         commitTaskMutationInFlight(true);
         try {
@@ -415,7 +443,7 @@ export function useAgentChat() {
             } catch {
                 if (isCurrentTaskRequest(request, operationEpoch)) {
                     commitTaskNeedsReconciliation(true);
-                    setTaskError({ code: "task_mutation_unconfirmed", taskId, message: "초안 변경 요청의 최종 결과를 확인하지 못했습니다. 새로고침으로 결과를 확인한 뒤 같은 요청을 다시 보내지 마세요." });
+                    setTaskError({ code: "task_mutation_unconfirmed", taskId, pendingEventId: options.clientEventId, message: "초안 변경 요청의 최종 결과를 확인하지 못했습니다. 새로고침으로 결과를 확인한 뒤 같은 변경을 다시 확인해 주세요." });
                 }
                 return null;
             }
@@ -434,7 +462,7 @@ export function useAgentChat() {
             const next = applyTaskMutationResponse(taskId, request, operationEpoch, body);
             if (!next && isCurrentTaskRequest(request, operationEpoch)) {
                 commitTaskNeedsReconciliation(true);
-                setTaskError({ code: "task_patch_invalid", taskId, message: "초안 변경 응답을 확인하지 못했습니다. 최신 초안을 새로고침해 확인해 주세요." });
+                setTaskError({ code: "task_patch_invalid", taskId, pendingEventId: options.clientEventId, message: "초안 변경 응답을 확인하지 못했습니다. 최신 초안을 새로고침해 확인해 주세요." });
             }
             return next;
         } finally {
@@ -455,6 +483,7 @@ export function useAgentChat() {
         const pending = taskSnapshotStateRef.current.pendingEventIds.includes(options.clientEventId)
             ? taskSnapshotStateRef.current.pendingEventIds
             : [...taskSnapshotStateRef.current.pendingEventIds, options.clientEventId];
+        pendingTaskMutationsRef.current.set(options.clientEventId, { taskId, kind: "command", command, options });
         commitTaskSnapshotState({ ...taskSnapshotStateRef.current, pendingEventIds: pending });
         commitTaskMutationInFlight(true);
         try {
@@ -469,7 +498,7 @@ export function useAgentChat() {
             } catch {
                 if (isCurrentTaskRequest(request, operationEpoch)) {
                     commitTaskNeedsReconciliation(true);
-                    setTaskError({ code: "task_command_unconfirmed", taskId, message: "작업 명령의 최종 결과를 확인하지 못했습니다. 새로고침으로 결과를 확인한 뒤 같은 요청을 다시 보내지 마세요." });
+                    setTaskError({ code: "task_command_unconfirmed", taskId, pendingEventId: options.clientEventId, message: "작업 명령의 최종 결과를 확인하지 못했습니다. 새로고침으로 결과를 확인한 뒤 같은 변경을 다시 확인해 주세요." });
                 }
                 return null;
             }
@@ -488,13 +517,28 @@ export function useAgentChat() {
             const next = applyTaskMutationResponse(taskId, request, operationEpoch, body);
             if (!next && isCurrentTaskRequest(request, operationEpoch)) {
                 commitTaskNeedsReconciliation(true);
-                setTaskError({ code: "task_command_invalid", taskId, message: "작업 명령 응답을 확인하지 못했습니다. 최신 초안을 새로고침해 확인해 주세요." });
+                setTaskError({ code: "task_command_invalid", taskId, pendingEventId: options.clientEventId, message: "작업 명령 응답을 확인하지 못했습니다. 최신 초안을 새로고침해 확인해 주세요." });
             }
             return next;
         } finally {
             if (taskMutationTokenRef.current === mutationToken) commitTaskMutationInFlight(false);
         }
     }, [applyTaskMutationResponse, beginTaskSnapshotRequest, commitTaskMutationInFlight, commitTaskNeedsReconciliation, commitTaskSnapshotState, handleTaskConflict, isCurrentTaskRequest, quarantineTask, sessionOperationEpoch, taskMutationBlocked]);
+
+    const retryPendingTaskEvent = useCallback(async (taskId: string, clientEventId: string): Promise<AgentTask | null> => {
+        const pending = pendingTaskMutationsRef.current.get(clientEventId);
+        if (!pending || pending.taskId !== taskId) {
+            setTaskError({ code: "task_pending_event_unrecoverable", taskId, pendingEventId: clientEventId, message: "확인되지 않은 변경 요청을 복원할 수 없습니다. 최신 초안을 확인한 뒤 새 작업을 시작해 주세요." });
+            return null;
+        }
+        if (taskNeedsReconciliationRef.current) {
+            const revision = taskSnapshotStateRef.current.task?.revision;
+            setTaskError({ code: "task_reconciliation_required", taskId, ...(revision === undefined ? {} : { latestRevision: revision }), pendingEventId: clientEventId, message: "최신 작업 초안을 새로고침해 변경 결과를 확인한 뒤 같은 변경을 다시 확인해 주세요." });
+            return null;
+        }
+        if (pending.kind === "patch") return patchTask(taskId, pending.operations, pending.options);
+        return commandTask(taskId, pending.command, pending.options);
+    }, [commandTask, patchTask]);
 
     const refreshSessions = useCallback(async () => {
         const requestGeneration = ++sessionListGenerationRef.current;
@@ -759,6 +803,7 @@ export function useAgentChat() {
         loadTaskSnapshot,
         patchTask,
         commandTask,
+        retryPendingTaskEvent,
         clearActionError: () => setActionError(null),
         clearTaskError: () => setTaskError(null),
         resetBranch,

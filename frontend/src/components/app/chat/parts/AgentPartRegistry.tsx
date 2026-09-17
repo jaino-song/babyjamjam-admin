@@ -38,9 +38,10 @@ type AgentPartRegistryProps = {
     onRetry?: () => void;
     terminalActionIds?: ReadonlySet<string>;
     isBusy?: boolean;
+    taskBusy?: boolean;
 };
 
-export function AgentPartRegistry({ "data-component": dataComponent, message, task, onTaskEntitySelect, onEntitySelect, onFeedback, onApproveAction, onRejectAction, onSubmitForm, onRetry, terminalActionIds, isBusy = false }: AgentPartRegistryProps) {
+export function AgentPartRegistry({ "data-component": dataComponent, message, task, onTaskEntitySelect, onEntitySelect, onFeedback, onApproveAction, onRejectAction, onSubmitForm, onRetry, terminalActionIds, isBusy = false, taskBusy = false }: AgentPartRegistryProps) {
     const component = (suffix: string) => `${dataComponent}_${suffix}`;
 
     return (
@@ -109,7 +110,7 @@ export function AgentPartRegistry({ "data-component": dataComponent, message, ta
                             data-component={component("entity-select")}
                             data={parsed.data}
                             task={task}
-                            disabled={isBusy || task?.taskId !== parsed.data.taskId}
+                            disabled={taskBusy || task?.taskId !== parsed.data.taskId}
                             onSelect={(optionId) => onTaskEntitySelect?.(parsed.data.taskId, parsed.data.choiceSetRef, optionId)}
                         />
                         : <SafePartFallback key={index} data-component={component("fallback")} />;

@@ -161,6 +161,23 @@ describe("AgentPartRegistry", () => {
         expect(onTaskEntitySelect).toHaveBeenCalledWith(task.taskId, "33333333-3333-4333-8333-333333333333", "44444444-4444-4444-8444-444444444444");
     });
 
+    it("does not let task busy state disable a generic form", () => {
+        const message = {
+            id: "assistant-form-ready",
+            role: "assistant",
+            parts: [{ type: "data-form", data: {
+                formId: "profile-form-ready",
+                title: "프로필",
+                schemaVersion: "1",
+                fields: [{ name: "name", label: "이름", type: "text" }],
+            } }],
+        } as unknown as UIMessage;
+
+        render(<AgentPartRegistry data-component={dataComponent} message={message} isBusy={false} taskBusy />);
+
+        expect(screen.getByRole("button", { name: "입력 제출" })).toBeEnabled();
+    });
+
     it("describes a complete client snapshot without implying missing fields are required", () => {
         const message = {
             id: "assistant-task-full-fields",

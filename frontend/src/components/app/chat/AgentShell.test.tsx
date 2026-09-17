@@ -110,6 +110,27 @@ describe("AgentShell input composition", () => {
         expect(screen.getByRole("heading", { name: "프로필" }).closest("form")).toHaveAttribute("aria-busy", "true");
     });
 
+    it("keeps a ready no-task form available for input", () => {
+        mockAgentChatState.messages = [{
+            id: "assistant-form-ready",
+            role: "assistant",
+            parts: [{
+                type: "data-form",
+                data: {
+                    formId: "profile-form-ready",
+                    title: "프로필",
+                    schemaVersion: "1",
+                    fields: [{ name: "name", label: "이름", type: "text" }],
+                },
+            }],
+        }];
+
+        render(<AgentShell />);
+
+        expect(screen.getByRole("button", { name: "입력 제출" })).toBeEnabled();
+        expect(screen.getByRole("heading", { name: "프로필" }).closest("form")).not.toHaveAttribute("aria-busy", "true");
+    });
+
     it("keeps stream and action errors in separate completed namespaces", () => {
         mockAgentChatState.error = new Error("stream failed");
         mockAgentChatState.actionError = { code: "action_failed", message: "작업 결과를 확인하세요.", effectState: "partial" };
