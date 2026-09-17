@@ -11,8 +11,8 @@ Integration: `codex/bjj-conversation-v1`. Local implementation, deterministic ve
 | 3 — owned draft APIs | Closed | Authenticated HTTP/DB replay, conflicts and scope tests; SOL SHIP |
 | 4 — lifecycle and retention | Closed | Source `3b094cdfa13b20f1c08762b916c2f2f20ffcef9c`; shared23/backend436/DB73; SOL SHIP/HIGH |
 | 5 — conversation intake and context | Closed | Source `2d114d147b88fc208c86ed12679cf6f9101aca56`; shared25/backend498/DB93; cumulative SOL SHIP/HIGH |
-| 6 — atomic task/action approval | Source reconciliation complete; PLAN review next | User-authorized Luna/medium/fast read-only scouts verified action/task, recovery and projection owners |
-| 7 — client writes and automation consent | Not implemented | Consent must survive intent materialization and temporary-task purge through actual dispatch/retry |
+| 6 — atomic task/action approval | Closed | Source `4dd69251ebde09ed1a2eaf8228c2a08080a73bef`; shared25/backend535/DB114; cumulative SOL SHIP/HIGH |
+| 7 — client writes and automation consent | Source reconciliation complete; concrete PLAN review next | Durable consent across job rebuilding, intent deletion, dispatch and retry; implementation pending |
 | 8 — desktop and mobile | Not implemented | Both renderers, protected forms and authenticated browser QA pending |
 | 9 — cumulative QA and release preparation | Not implemented | Full acceptance evidence and independent cumulative review pending |
 
@@ -42,7 +42,7 @@ Four stock registration fixtures use unlabelled synthetic-token input unsupporte
 
 At2026-09-17 09:51KST, a fresh approved direct-DeepSeek read-only scout at the Phase5 close commit `a5409c55a9c596df9d3cd84a209432bd44934846` again failed with `402 Payment Required: Insufficient Balance` after its built-in retries. The scout returned no source findings and reported inner explorer exit1. An ancillary Context7 authentication warning also appeared; the model request itself failed for insufficient balance. No fallback role/model or main-agent source exploration was used. The supplied Explorer Model Policy requires fail-closed handling. This was the prior blocking condition. The user subsequently authorized replacing exploration with Luna/medium/fast. Three native read-only Codex scouts at source `b79cea5faa8324a0ec78fe1d18834a4945316eb2` completed successfully, verifying action/task transaction seams, recovery/retention and protected action presentation. The task-local invocations explicitly selected gpt-5.6-luna, medium effort and fast service; provider-tier metadata was not separately exposed. Global agent configuration remains unchanged. Phase6 now proceeds to independent PLAN review and direct implementation after that gate.
 
-- Full implementation and deterministic acceptance: **not complete**; Phases6–9 remain.
+- Full implementation and deterministic acceptance: **not complete**; Phases7–9 remain.
 - Actual Google/OpenAI conversation quality evaluation: **deferred**; no paid product-model evaluation performed.
 - Environment-branch merge, deployment and operational activation: **not performed**.
 - No actual SMS or external business effects were performed. Local DB checks use isolated synthetic data and vendor stubs.
@@ -65,3 +65,15 @@ Detailed accepted decisions, phase audits and correction history: [implementatio
 - Candidate2 gates: shared25/backend502 across31 suites, all app types/build/manifest47/vendor PASS; lint0errors93baselinewarnings0changed. DB9suites112 passed. CI partition6task+3other covers9 with no overlap.
 - First DB run recorded94passed/10failed:8 test owner-shape errors and one stale test barrier corrected. A separate HTTP426 was not explained by current source; baseline runtime14 and later current full112 tests passed. No speculative version-header/product fix was applied. Preserve this transient verification limitation.
 - Postwrite-refusal correction at `c64d9f3d6c80929556a4cae49585a614988abadf`: focused real DB20/20 passed. Latest conversation bridge now awaits integrated frozen checks, DB and SOL FINAL. Phase6 remains OPEN.
+
+### Phase6 close (2026-09-17)
+
+Exact source `4dd69251ebde09ed1a2eaf8228c2a08080a73bef`, phase base `3b8ace335df3788b9a4d1eaf0426590657f4954a`, received independent cumulative SOL **SHIP/HIGH**, no blockers or required corrections. Earlier candidate/pending statements above are historical and superseded by this close.
+
+Frozen parent evidence: shared25; backend535 across32 suites; guarded real PostgreSQL/HTTP/AppModule9 suites114 tests (including21 task/action concurrency/recovery tests); all four app/shared type gates; backend build; manifest47; generated/installed vendor31; diff; lint0errors93baselinewarnings0changedwarnings. CI discovery6task+3other=9, complete and disjoint. Hosted CI not run.
+
+Review covers immutable task/action review binding, atomic correction/cancel/claim and audit attribution, inactive result recovery, seven-day terminal retention, safe linked transcript projection, and committed-operation conversational command replay. Provider effects remain outside task locks. Legacy unlinked actions remain compatible. No schema/dependency/auth-core/UI/provider/automation changes occurred in Phase6.
+
+The transient earlier HTTP426 remains unexplained; unchanged baseline runtime14 and latest cumulative114 pass. No speculative protocol fix was made. The product CLI still honestly exits1 at0/48 passed: fixture grammar, no-tool driver and missing action/authority/provider instrumentation remain disclosed; it is not Phase6 acceptance or model-quality evidence.
+
+Phase7 proceeds as DIRECT main / heavy / local / SOL. Luna medium configured-fast read-only scouts identified existing private rule recipes, intent deletion, payload-replacement/retry boundaries and scheduler regeneration. Task-specific no/noSend must cover subsequent task-caused scheduling without imposing a global customer messaging ban. No Phase7 implementation or operational activation is claimed yet.
