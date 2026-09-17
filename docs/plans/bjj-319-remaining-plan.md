@@ -730,3 +730,5 @@ TL;DR: 배정(4b-1 백엔드: 역할·자격·동시 변경 코드 전환 / 4b-2
 **인시던트 (2026-09-17 05:0x~05:5x KST):** z.ai 5시간 한도 소진("Usage limit reached for 5 hour", 리셋 04:52:25 베이징=05:52 KST 추정)으로 워커 6건(보정 3 + 웨이브2 3)이 rate-limit 중단. 추가로 opencode-go 폴백은 `--format json`에서 무출력(사실상 불가) → **폴백 무효** 확인. 교훈: 워커 디스패치에 `--fallback-model opencode-go/glm-5.3-flash` 필수(이번에 누락), 동시 실행 수 3 이하 유지.
 - 중단 시점 상태: 보정 워크트리 fe1(1파일 dirty)/mo1(6파일 dirty)/backend5(clean, 보정 미착수), 웨이브2 워크트리 auth4(4)/fe2(51)/mo2(33) dirty — 재개 워커가 이어서 완료해야 함.
 - 웨이브1은 이미 병합됨(`582e806a1`): BE 5153+1flaky(고립 52/52), FE 1679, MO 1696 — **보정 후 재감사 필요**(감사 3건 FIX_REQUIRED).
+
+**pdfjs 환경 플레이크 (2026-09-17):** `receipt-pdf-verifier.service.spec.ts` 1테스트가 통합·고립·base `582e806a1` 프로브 워크트리에서 모두 실패(`capability_unverified`) — 환경성 기존 이슈 확정(웨이브1·보정 무관). Phase 9 증거 실행에서 재확인 필요.
