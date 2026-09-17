@@ -131,6 +131,7 @@ export function useInfiniteClients({
     allFilteredClients,
     total,
     isLoading: query.isLoading,
+    isError: query.isError,
     isFetching: query.isFetching,
     isFetchingNextPage: false,
     hasNextPage,
@@ -138,5 +139,6 @@ export function useInfiniteClients({
     totalCount: allFilteredClients.length,
     isInitialLoad,
     error: query.error,
+    refetch: query.refetch,
   };
 }

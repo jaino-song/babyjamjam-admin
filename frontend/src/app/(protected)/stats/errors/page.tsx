@@ -1,13 +1,25 @@
 import { redirect } from "next/navigation";
 import { Block } from "@/components/app/v3/Block";
+import {
+  StatsPeriodNotice,
+  StatsPeriodSelector,
+  StatsPeriodProvider,
+  StatsSourceEmpty,
+  StatsSourceNotice,
+} from "@/components/app/stats/StatsPeriodSelector";
 import { getCurrentUser } from "@/lib/auth/cookies";
 import { ROLES } from "@/lib/constants/roles";
 import {
   getSummary as getSentrySummary,
-  get24hEventTrend,
+  getEventTrend,
   getOpenIssues,
   formatSentryRelativeTime,
+  isSentryConfigured,
 } from "@/lib/observability/sentry";
+import {
+  parseStatsPeriodParam,
+  statsPeriodLabel,
+} from "@/lib/observability/stats-period";
 import { StatsHero } from "../_components/StatsHero";
 import { KpiCard } from "../_components/KpiCard";
 
@@ -35,19 +47,30 @@ const LEVEL_TEXT_CLASS: Record<string, string> = {
   info: "text-blue-700",
 };
 
-export default async function ErrorsDetailPage() {
+interface ErrorsDetailPageProps {
+  searchParams?: Promise<Record<string, string | string[] | undefined>>;
+}
+
+export default async function ErrorsDetailPage({ searchParams }: ErrorsDetailPageProps) {
   const user = await getCurrentUser();
   if (user?.role !== ROLES.owner) {
     redirect("/stats/inquiries");
   }
 
+  const params = searchParams ? await searchParams : {};
+  const period = parseStatsPeriodParam(params.period);
+  if (period === null) {
+    return <StatsPeriodNotice title="오류 통계 기간을 확인해 주세요" dataComponent="desktop_stats-errors_page_period-error" />;
+  }
+  const sentryConfigured = isSentryConfigured();
+
   const [summary, trend, issues] = await Promise.all([
-    getSentrySummary(),
-    get24hEventTrend(),
-    getOpenIssues({ limit: 50, statsPeriod: "7d" }),
+    getSentrySummary({ statsPeriod: period === 30 ? "30d" : "7d" }),
+    getEventTrend(period),
+    getOpenIssues({ limit: 50, statsPeriod: period === 30 ? "30d" : "7d" }),
   ]);
 
-  // Build chart points from trend (24h, hourly buckets)
+  // Build chart points from the selected Sentry range.
   const maxCount = Math.max(1, ...trend.map((p) => p.count));
   const chartWidth = 1100;
   const chartHeight = 180;
@@ -73,21 +96,35 @@ export default async function ErrorsDetailPage() {
   const totalIssues = issues.length;
 
   return (
+    <StatsPeriodProvider key={period} initialPeriod={period}>
     <section data-component="desktop_stats-errors_page" className="flex flex-col gap-6 pb-10">
       <Block name="desktop_stats-errors_page_hero" className="shrink-0">
         <StatsHero
           title="오류 통계"
-          subtitle="Sentry · 미해결 이슈 · 24시간 이내 발생 추이"
-          rightLabel="실시간"
+          subtitle="Sentry · 미해결 이슈 · 선택 기간 발생 추이 · 24시간 신규 고정"
+          rightLabel="기간"
           rightValue={new Date().toLocaleTimeString("ko-KR", {
             hour: "2-digit",
             minute: "2-digit",
           })}
-          backHref="/stats"
+          backHref={`/stats?period=${period}`}
           backLabel="통계 overview로"
           dataComponent="desktop_stats-errors_page_hero_content"
         />
       </Block>
+
+      <StatsPeriodSelector
+        basePath="/stats/errors"
+        period={period}
+        dataComponent="desktop_stats-errors_page_period-selector"
+      />
+
+      {!sentryConfigured && (
+        <StatsSourceNotice
+          sources={["Sentry"]}
+          dataComponent="desktop_stats-errors_page_source-unavailable"
+        />
+      )}
 
       <Block name="desktop_stats-errors_page_kpi" className="shrink-0">
         <div
@@ -97,36 +134,36 @@ export default async function ErrorsDetailPage() {
           <KpiCard
             iconEmoji="⚠"
             label="미해결"
-            value={summary.openCount}
-            unit="건"
-            tone={summary.openCount > 0 ? "warn" : "success"}
+            value={sentryConfigured ? summary.openCount : "—"}
+            unit={sentryConfigured ? "건" : undefined}
+            tone={sentryConfigured && summary.openCount > 0 ? "warn" : "default"}
             dataComponent="desktop_stats-errors_page_kpi_grid_card-open"
           />
           <KpiCard
             iconEmoji="+"
-            label="24h 신규"
-            value={summary.newIn24h}
-            unit="건"
-            tone={summary.newIn24h > 0 ? "warn" : "default"}
+            label="24시간 신규"
+            value={sentryConfigured ? summary.newIn24h : "—"}
+            unit={sentryConfigured ? "건" : undefined}
+            tone={sentryConfigured && summary.newIn24h > 0 ? "warn" : "default"}
             dataComponent="desktop_stats-errors_page_kpi_grid_card-new"
           />
           <KpiCard
             iconEmoji="∑"
-            label="7일 발생"
-            value={summary.totalEvents7d.toLocaleString("ko-KR")}
+            label={`${statsPeriodLabel(period)} 발생`}
+            value={sentryConfigured ? summary.selectedRange.totalEvents.toLocaleString("ko-KR") : "—"}
             dataComponent="desktop_stats-errors_page_kpi_grid_card-events"
           />
           <KpiCard
             iconEmoji="👤"
             label="영향받은 사용자"
-            value={`~${summary.affectedUsers}`}
-            unit="명"
+            value={sentryConfigured ? `~${summary.selectedRange.affectedUsers}` : "—"}
+            unit={sentryConfigured ? "명" : undefined}
             dataComponent="desktop_stats-errors_page_kpi_grid_card-users"
           />
           <KpiCard
             iconEmoji="⏱"
             label="마지막 오류"
-            value={formatSentryRelativeTime(summary.lastErrorAt)}
+            value={sentryConfigured ? formatSentryRelativeTime(summary.lastErrorAt) : "—"}
             dataComponent="desktop_stats-errors_page_kpi_grid_card-last"
             valueSize="sm"
           />
@@ -139,17 +176,19 @@ export default async function ErrorsDetailPage() {
           className="animate-v3-slide-up bg-white rounded-[28px] shadow-v3 p-6"
         >
           <header className="flex items-center gap-2.5 pb-3.5 border-b border-v3-border mb-4">
-            <h3 className="text-[0.95rem] font-bold text-v3-text">이벤트 추이 (24시간)</h3>
+            <h3 className="text-[0.95rem] font-bold text-v3-text">이벤트 추이 ({statsPeriodLabel(period)})</h3>
             <span className="text-[0.6rem] font-bold uppercase tracking-wider rounded px-1.5 py-0.5 bg-red-100 text-red-700">
               Sentry
             </span>
             <span className="ml-auto text-[0.7rem] text-v3-text-muted">
-              총 {trend.reduce((s, p) => s + p.count, 0).toLocaleString("ko-KR")}건
+              {sentryConfigured ? `총 ${trend.reduce((s, p) => s + p.count, 0).toLocaleString("ko-KR")}건` : "—"}
             </span>
           </header>
-          {trend.length === 0 ? (
+          {!sentryConfigured ? (
+            <StatsSourceEmpty source="Sentry" dataComponent="desktop_stats-errors_page_chart-unavailable" />
+          ) : trend.length === 0 ? (
             <p className="text-center py-8 text-[0.85rem] text-v3-text-muted">
-              지난 24시간 동안 기록된 이벤트가 없어요.
+              {statsPeriodLabel(period)} 동안 기록된 이벤트가 없어요.
             </p>
           ) : (
             <svg
@@ -219,7 +258,7 @@ export default async function ErrorsDetailPage() {
                 fontSize={10}
                 fill="hsl(215 16% 47%)"
               >
-                24h ago
+                {period}d ago
               </text>
               <text
                 x={chartPadLeft + usableWidth}
@@ -241,13 +280,17 @@ export default async function ErrorsDetailPage() {
           className="animate-v3-slide-up bg-white rounded-[28px] shadow-v3 p-6 overflow-hidden"
         >
           <header className="flex items-center gap-2.5 pb-3.5 border-b border-v3-border mb-3">
-            <h3 className="text-[0.95rem] font-bold text-v3-text">미해결 이슈 ({totalIssues}건)</h3>
+            <h3 className="text-[0.95rem] font-bold text-v3-text">
+              {sentryConfigured ? `미해결 이슈 (${totalIssues}건)` : "미해결 이슈"}
+            </h3>
             <span className="text-[0.6rem] font-bold uppercase tracking-wider rounded px-1.5 py-0.5 bg-red-100 text-red-700">
               Sentry
             </span>
             <span className="ml-auto text-[0.7rem] text-v3-text-muted">최근 발생 순</span>
           </header>
-          {issues.length === 0 ? (
+          {!sentryConfigured ? (
+            <StatsSourceEmpty source="Sentry" dataComponent="desktop_stats-errors_page_issues-unavailable" />
+          ) : issues.length === 0 ? (
             <div className="py-10 text-center text-[0.85rem] text-v3-text-muted">
               열린 이슈가 없어요 🎉
             </div>
@@ -302,5 +345,6 @@ export default async function ErrorsDetailPage() {
         </div>
       </Block>
     </section>
+    </StatsPeriodProvider>
   );
 }

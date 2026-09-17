@@ -11,8 +11,9 @@ let mockSearchParams = new URLSearchParams();
 let mockUser: { role: string } | null = { role: "owner" };
 
 jest.mock("next/navigation", () => ({
-  useRouter: () => ({ push: jest.fn(), back: jest.fn() }),
+  useRouter: () => ({ push: jest.fn(), replace: jest.fn(), back: jest.fn() }),
   useSearchParams: () => mockSearchParams,
+  usePathname: () => "/stats",
 }));
 
 jest.mock("@/providers/UserProvider", () => ({
@@ -29,6 +30,12 @@ jest.mock("../sliding-card", () => ({
       {list}
       {open ? detail : null}
     </div>
+  ),
+}));
+
+jest.mock("../StatsPeriodSelector", () => ({
+  StatsPeriodSelector: ({ period }: { period: number }) => (
+    <output aria-label="선택 기간">{period}</output>
   ),
 }));
 
@@ -64,7 +71,7 @@ function renderPage(role: string, view: "overview" | "inquiries" = "overview") {
 describe("StatsPage visibility", () => {
   beforeEach(() => {
     mockGetStatsView.mockReset();
-    mockSearchParams = new URLSearchParams();
+    mockSearchParams = new URLSearchParams("period=7");
     mockUser = { role: "owner" };
   });
 
@@ -86,7 +93,7 @@ describe("StatsPage visibility", () => {
     expect(screen.getByText("상담")).toBeInTheDocument();
     expect(screen.getByText("페이지 이동")).toBeInTheDocument();
     expect(screen.getByText("트래픽")).toBeInTheDocument();
-    expect(mockGetStatsView).toHaveBeenCalledWith("overview");
+    expect(mockGetStatsView).toHaveBeenCalledWith("overview", 7);
   });
 
   it("keeps requesting the owner overview on detail routes", async () => {
@@ -97,21 +104,22 @@ describe("StatsPage visibility", () => {
     renderPage("owner", "inquiries");
 
     expect(await screen.findByText("4개")).toBeInTheDocument();
-    expect(mockGetStatsView).toHaveBeenCalledWith("overview");
-    expect(mockGetStatsView).toHaveBeenCalledWith("inquiries");
+    expect(mockGetStatsView).toHaveBeenCalledWith("overview", 7);
+    expect(mockGetStatsView).toHaveBeenCalledWith("inquiries", 7);
   });
 
-  it("renders only inquiries for non-owners without requesting the owner overview", () => {
+  it("renders only inquiries for non-owners without requesting the owner overview", async () => {
     mockGetStatsView.mockResolvedValue(OVERVIEW_RESPONSE);
 
     renderPage("admin");
 
     expect(screen.getByText("1개")).toBeInTheDocument();
-    expect(screen.getByText("상담")).toBeInTheDocument();
+    expect(await screen.findByText("상담")).toBeInTheDocument();
     expect(screen.queryByText("오류")).not.toBeInTheDocument();
     expect(screen.queryByText("페이지 이동")).not.toBeInTheDocument();
     expect(screen.queryByText("트래픽")).not.toBeInTheDocument();
-    expect(mockGetStatsView).not.toHaveBeenCalled();
+    expect(mockGetStatsView).toHaveBeenCalledWith("inquiries", 7);
+    expect(mockGetStatsView).not.toHaveBeenCalledWith("overview", 7);
   });
 
   it("keeps the branch inquiry detail available without owner entries", () => {
@@ -124,7 +132,7 @@ describe("StatsPage visibility", () => {
     expect(screen.queryByText("오류")).not.toBeInTheDocument();
     expect(screen.queryByText("페이지 이동")).not.toBeInTheDocument();
     expect(screen.queryByText("트래픽")).not.toBeInTheDocument();
-    expect(mockGetStatsView).toHaveBeenCalledWith("inquiries");
-    expect(mockGetStatsView).not.toHaveBeenCalledWith("overview");
+    expect(mockGetStatsView).toHaveBeenCalledWith("inquiries", 7);
+    expect(mockGetStatsView).not.toHaveBeenCalledWith("overview", 7);
   });
 });

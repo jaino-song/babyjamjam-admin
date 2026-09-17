@@ -1,4 +1,5 @@
 import type { SentryIssue, SentryLevel } from "./stats-types";
+import type { StatsPeriod } from "./stats-period";
 
 const POSTHOG_HOST = process.env.POSTHOG_HOST ?? "https://us.posthog.com";
 const POSTHOG_API_KEY = process.env.POSTHOG_API_KEY ?? "";
@@ -25,6 +26,12 @@ export interface InquirySummary {
   lastSubmissionAt: string | null;
   /** Null when the source does not carry enough dimensions to attribute conversion. */
   conversionRate: number | null;
+  selectedRange: {
+    days: StatsPeriod;
+    total: number;
+    average: number;
+    conversionRate: number | null;
+  };
 }
 
 export interface InquiryDailyPoint { day: string; count: number }
@@ -66,6 +73,12 @@ export interface TrafficSummary {
   sevenDayTotal: { pv: number; unique: number };
   avgSessionSeconds: number;
   bounceRate: number;
+  selectedRange: {
+    days: StatsPeriod;
+    total: { pv: number; unique: number };
+    avgSessionSeconds: number;
+    bounceRate: number;
+  };
 }
 export interface TrafficTrendPoint { day: string; pv: number; unique: number }
 export interface TopPageRow { path: string; pv: number; unique: number; avgTimeSeconds: number | null }
@@ -79,6 +92,12 @@ export interface ErrorSummary {
   severity: { critical: number; error: number; warning: number; info: number };
   sparkline7d: number[];
   topIssue: SentryIssue | null;
+  selectedRange: {
+    days: StatsPeriod;
+    totalEvents: number;
+    affectedUsers: number;
+    sparkline: number[];
+  };
 }
 export interface ErrorTrendPoint { timestamp: string; count: number }
 
@@ -99,6 +118,8 @@ export interface StatsViewData {
 
 export interface StatsViewResponse<TView extends keyof StatsViewData = keyof StatsViewData> {
   view: TView;
+  /** The selected historical range. Optional for callers that still deserialize a legacy response. */
+  period?: StatsPeriod;
   availability: StatsAvailability;
   state: StatsSourceState;
   data: StatsViewData[TView] | null;
@@ -116,7 +137,7 @@ interface RawSentryIssue {
   permalink: string;
   culprit?: string | null;
   metadata?: { filename?: string; function?: string };
-  stats?: { "24h"?: Array<[number, number]>; "30d"?: Array<[number, number]> };
+  stats?: { "24h"?: Array<[number, number]>; "7d"?: Array<[number, number]>; "30d"?: Array<[number, number]> };
 }
 
 function safeNumber(value: unknown): number {
@@ -174,21 +195,34 @@ function posthogAvailability(results: readonly { state: StatsSourceState }[]): S
   return "ready";
 }
 
-async function queryInquirySummary(branchSlug: string | null): Promise<{ value: InquirySummary | null; state: StatsSourceState }> {
+async function queryInquirySummary(branchSlug: string | null, days: StatsPeriod): Promise<{ value: InquirySummary | null; state: StatsSourceState }> {
   const filter = branchFilter(branchSlug);
-  const viewedQuery = branchSlug === null
-    ? hogQL<[number]>(`SELECT count() FROM events WHERE event = 'pricing_viewed' AND timestamp >= now() - INTERVAL 7 DAY`)
+  const submittedSevenQuery = hogQL<[number]>(`SELECT count() FROM events WHERE event = 'consultation_submitted' AND timestamp >= now() - INTERVAL 7 DAY ${filter}`);
+  const submittedSelectedQuery = days === 7
+    ? submittedSevenQuery
+    : hogQL<[number]>(`SELECT count() FROM events WHERE event = 'consultation_submitted' AND timestamp >= now() - INTERVAL ${days} DAY ${filter}`);
+  const viewedSevenQuery = branchSlug === null
+    ? hogQL<[number]>("SELECT count() FROM events WHERE event = 'pricing_viewed' AND timestamp >= now() - INTERVAL 7 DAY")
     : Promise.resolve({ rows: [] as [number][], state: "unavailable" as StatsSourceState });
-  const [summary, submitted, viewed] = await Promise.all([
+  const viewedSelectedQuery = days === 7
+    ? viewedSevenQuery
+    : branchSlug === null
+      ? hogQL<[number]>(`SELECT count() FROM events WHERE event = 'pricing_viewed' AND timestamp >= now() - INTERVAL ${days} DAY`)
+      : Promise.resolve({ rows: [] as [number][], state: "unavailable" as StatsSourceState });
+  const [summary, submittedSeven, submitted, viewedSeven, viewed] = await Promise.all([
     hogQL<[number, number, number, number, string | null]>(`SELECT countIf(toDate(timestamp) = today()), countIf(toDate(timestamp) = today() - 1), countIf(timestamp >= now() - INTERVAL 7 DAY), countIf(timestamp >= now() - INTERVAL 30 DAY), max(timestamp) FROM events WHERE event = 'consultation_submitted' AND timestamp >= now() - INTERVAL 30 DAY ${filter}`),
-    hogQL<[number]>(`SELECT count() FROM events WHERE event = 'consultation_submitted' AND timestamp >= now() - INTERVAL 7 DAY ${filter}`),
-    viewedQuery,
+    submittedSevenQuery,
+    submittedSelectedQuery,
+    viewedSevenQuery,
+    viewedSelectedQuery,
   ]);
-  const state = posthogAvailability(branchSlug === null ? [summary, submitted, viewed] : [summary, submitted]);
+  const state = posthogAvailability(branchSlug === null ? [summary, submittedSeven, submitted, viewedSeven, viewed] : [summary, submittedSeven, submitted]);
   if (state !== "ready") return { value: null, state };
   const row = summary.rows[0];
   const sevenDay = safeNumber(row?.[2]);
-  const views = safeNumber(viewed.rows[0]?.[0]);
+  const selectedTotal = days === 30 ? safeNumber(row?.[3]) : safeNumber(submitted.rows[0]?.[0]);
+  const views = safeNumber(viewedSeven.rows[0]?.[0]);
+  const selectedViews = safeNumber(viewed.rows[0]?.[0]);
   return {
     state,
     value: {
@@ -198,19 +232,25 @@ async function queryInquirySummary(branchSlug: string | null): Promise<{ value: 
       sevenDayAvg: sevenDay / 7,
       thirtyDayTotal: safeNumber(row?.[3]),
       lastSubmissionAt: safeString(row?.[4]),
-      conversionRate: branchSlug === null ? (views > 0 ? (safeNumber(submitted.rows[0]?.[0]) / views) * 100 : 0) : null,
+      conversionRate: branchSlug === null ? (views > 0 ? (safeNumber(submittedSeven.rows[0]?.[0]) / views) * 100 : 0) : null,
+      selectedRange: {
+        days,
+        total: selectedTotal,
+        average: selectedTotal / days,
+        conversionRate: branchSlug === null ? (selectedViews > 0 ? (selectedTotal / selectedViews) * 100 : 0) : null,
+      },
     },
   };
 }
 
-async function queryInquiries(branchSlug: string | null): Promise<{ data: StatsViewData["inquiries"] | null; state: StatsSourceState }> {
+async function queryInquiries(branchSlug: string | null, days: StatsPeriod): Promise<{ data: StatsViewData["inquiries"] | null; state: StatsSourceState }> {
   const filter = branchFilter(branchSlug);
   const [summary, daily, hourly, byBranch, recent] = await Promise.all([
-    queryInquirySummary(branchSlug),
-    hogQL<[string, number]>(`SELECT toDate(timestamp), count() FROM events WHERE event = 'consultation_submitted' AND timestamp >= now() - INTERVAL 30 DAY ${filter} GROUP BY toDate(timestamp) ORDER BY toDate(timestamp) ASC`),
+    queryInquirySummary(branchSlug, days),
+    hogQL<[string, number]>(`SELECT toDate(timestamp), count() FROM events WHERE event = 'consultation_submitted' AND timestamp >= now() - INTERVAL ${days} DAY ${filter} GROUP BY toDate(timestamp) ORDER BY toDate(timestamp) ASC`),
     hogQL<[number, number]>(`SELECT toHour(timestamp), count() FROM events WHERE event = 'consultation_submitted' AND toDate(timestamp) = today() ${filter} GROUP BY toHour(timestamp) ORDER BY toHour(timestamp) ASC`),
-    hogQL<[string, number]>(`SELECT properties.branch_slug, count() FROM events WHERE event = 'consultation_submitted' AND timestamp >= now() - INTERVAL 7 DAY AND properties.branch_slug IS NOT NULL ${filter} GROUP BY properties.branch_slug ORDER BY count() DESC`),
-    hogQL<[string, string | null, string | null, string | null, string | null, string]>(`SELECT distinct_id, properties.branch_slug, properties.source, properties.pathname, properties.$device_type, timestamp FROM events WHERE event = 'consultation_submitted' AND timestamp >= now() - INTERVAL 7 DAY ${filter} ORDER BY timestamp DESC LIMIT 10`),
+    hogQL<[string, number]>(`SELECT properties.branch_slug, count() FROM events WHERE event = 'consultation_submitted' AND timestamp >= now() - INTERVAL ${days} DAY AND properties.branch_slug IS NOT NULL ${filter} GROUP BY properties.branch_slug ORDER BY count() DESC`),
+    hogQL<[string, string | null, string | null, string | null, string | null, string]>(`SELECT distinct_id, properties.branch_slug, properties.source, properties.pathname, properties.$device_type, timestamp FROM events WHERE event = 'consultation_submitted' AND timestamp >= now() - INTERVAL ${days} DAY ${filter} ORDER BY timestamp DESC LIMIT 10`),
   ]);
   const states = [summary, daily, hourly, byBranch, recent];
   const state = summary.state === "unavailable" ? "unavailable" : posthogAvailability(states.map((item) => "state" in item ? item : { state: "ready" }));
@@ -249,16 +289,16 @@ async function queryFunnelSummary(days = 7): Promise<{ value: FunnelSummary | nu
   return { state, value: { steps, conversionRate: steps.at(-1)?.pct ?? 0, biggestDropStep, completedConversions: counts.at(-1) ?? 0, totalEntries: counts[0] ?? 0 } };
 }
 
-async function queryFunnel(): Promise<{ data: StatsViewData["funnel"] | null; state: StatsSourceState }> {
+async function queryFunnel(days: StatsPeriod): Promise<{ data: StatsViewData["funnel"] | null; state: StatsSourceState }> {
   const [summary, trend, nav, bounce, pages, entries, exits, transitions] = await Promise.all([
-    queryFunnelSummary(7),
-    hogQL<[string, number, number]>("SELECT toDate(timestamp), countIf(event = 'pricing_viewed'), countIf(event = 'consultation_submitted') FROM events WHERE event IN ('pricing_viewed', 'consultation_submitted') AND timestamp >= now() - INTERVAL 30 DAY GROUP BY toDate(timestamp) ORDER BY toDate(timestamp) ASC"),
-    hogQL<[number, number]>("SELECT uniq(properties.$pathname), count() FROM events WHERE event = '$pageview' AND timestamp >= now() - INTERVAL 7 DAY AND properties.$pathname IS NOT NULL"),
-    hogQL<[number, number]>("SELECT countIf(pv_count = 1), count() FROM (SELECT properties.$session_id, count() AS pv_count FROM events WHERE event = '$pageview' AND timestamp >= now() - INTERVAL 7 DAY AND properties.$session_id IS NOT NULL GROUP BY properties.$session_id)"),
-    hogQL<[string, number, number, number, number, number]>(`SELECT pages.path, pages.pv, pages.unique, entries.cnt, exits.cnt, bounces.cnt FROM (SELECT properties.$pathname AS path, count() AS pv, uniq(distinct_id) AS unique FROM events WHERE event = '$pageview' AND timestamp >= now() - INTERVAL 7 DAY AND properties.$pathname IS NOT NULL GROUP BY path) AS pages LEFT JOIN (SELECT first_path AS path, count() AS cnt FROM (SELECT argMin(properties.$pathname, timestamp) AS first_path FROM events WHERE event = '$pageview' AND timestamp >= now() - INTERVAL 7 DAY AND properties.$session_id IS NOT NULL AND properties.$pathname IS NOT NULL GROUP BY properties.$session_id) GROUP BY first_path) AS entries ON entries.path = pages.path LEFT JOIN (SELECT last_path AS path, count() AS cnt FROM (SELECT argMax(properties.$pathname, timestamp) AS last_path FROM events WHERE event = '$pageview' AND timestamp >= now() - INTERVAL 7 DAY AND properties.$session_id IS NOT NULL AND properties.$pathname IS NOT NULL GROUP BY properties.$session_id) GROUP BY last_path) AS exits ON exits.path = pages.path LEFT JOIN (SELECT first_path AS path, count() AS cnt FROM (SELECT argMin(properties.$pathname, timestamp) AS first_path, count() AS pv_in_session FROM events WHERE event = '$pageview' AND timestamp >= now() - INTERVAL 7 DAY AND properties.$session_id IS NOT NULL AND properties.$pathname IS NOT NULL GROUP BY properties.$session_id HAVING pv_in_session = 1) GROUP BY first_path) AS bounces ON bounces.path = pages.path ORDER BY pages.pv DESC LIMIT 20`),
-    hogQL<[string, number]>("SELECT first_path, count() FROM (SELECT argMin(properties.$pathname, timestamp) AS first_path FROM events WHERE event = '$pageview' AND timestamp >= now() - INTERVAL 7 DAY AND properties.$session_id IS NOT NULL AND properties.$pathname IS NOT NULL GROUP BY properties.$session_id) WHERE first_path IS NOT NULL GROUP BY first_path ORDER BY count() DESC LIMIT 8"),
-    hogQL<[string, number]>("SELECT last_path, count() FROM (SELECT argMax(properties.$pathname, timestamp) AS last_path FROM events WHERE event = '$pageview' AND timestamp >= now() - INTERVAL 7 DAY AND properties.$session_id IS NOT NULL AND properties.$pathname IS NOT NULL GROUP BY properties.$session_id) WHERE last_path IS NOT NULL GROUP BY last_path ORDER BY count() DESC LIMIT 8"),
-    hogQL<[string, string, number]>("SELECT pair.1, pair.2, count() FROM (SELECT arrayJoin(arrayMap(i -> tuple(paths[i], paths[i+1]), range(1, length(paths)))) AS pair FROM (SELECT arrayMap(x -> x.2, arraySort(x -> x.1, groupArray(tuple(timestamp, properties.$pathname)))) AS paths FROM events WHERE event = '$pageview' AND timestamp >= now() - INTERVAL 7 DAY AND properties.$session_id IS NOT NULL AND properties.$pathname IS NOT NULL GROUP BY properties.$session_id HAVING length(paths) >= 2)) WHERE pair.1 != pair.2 GROUP BY pair.1, pair.2 ORDER BY count() DESC LIMIT 12"),
+    queryFunnelSummary(days),
+    hogQL<[string, number, number]>(`SELECT toDate(timestamp), countIf(event = 'pricing_viewed'), countIf(event = 'consultation_submitted') FROM events WHERE event IN ('pricing_viewed', 'consultation_submitted') AND timestamp >= now() - INTERVAL ${days} DAY GROUP BY toDate(timestamp) ORDER BY toDate(timestamp) ASC`),
+    hogQL<[number, number]>(`SELECT uniq(properties.$pathname), count() FROM events WHERE event = '$pageview' AND timestamp >= now() - INTERVAL ${days} DAY AND properties.$pathname IS NOT NULL`),
+    hogQL<[number, number]>(`SELECT countIf(pv_count = 1), count() FROM (SELECT properties.$session_id, count() AS pv_count FROM events WHERE event = '$pageview' AND timestamp >= now() - INTERVAL ${days} DAY AND properties.$session_id IS NOT NULL GROUP BY properties.$session_id)`),
+    hogQL<[string, number, number, number, number, number]>(`SELECT pages.path, pages.pv, pages.unique, entries.cnt, exits.cnt, bounces.cnt FROM (SELECT properties.$pathname AS path, count() AS pv, uniq(distinct_id) AS unique FROM events WHERE event = '$pageview' AND timestamp >= now() - INTERVAL ${days} DAY AND properties.$pathname IS NOT NULL GROUP BY path) AS pages LEFT JOIN (SELECT first_path AS path, count() AS cnt FROM (SELECT argMin(properties.$pathname, timestamp) AS first_path FROM events WHERE event = '$pageview' AND timestamp >= now() - INTERVAL ${days} DAY AND properties.$session_id IS NOT NULL AND properties.$pathname IS NOT NULL GROUP BY properties.$session_id) GROUP BY first_path) AS entries ON entries.path = pages.path LEFT JOIN (SELECT last_path AS path, count() AS cnt FROM (SELECT argMax(properties.$pathname, timestamp) AS last_path FROM events WHERE event = '$pageview' AND timestamp >= now() - INTERVAL ${days} DAY AND properties.$session_id IS NOT NULL AND properties.$pathname IS NOT NULL GROUP BY properties.$session_id) GROUP BY last_path) AS exits ON exits.path = pages.path LEFT JOIN (SELECT first_path AS path, count() AS cnt FROM (SELECT argMin(properties.$pathname, timestamp) AS first_path, count() AS pv_in_session FROM events WHERE event = '$pageview' AND timestamp >= now() - INTERVAL ${days} DAY AND properties.$session_id IS NOT NULL AND properties.$pathname IS NOT NULL GROUP BY properties.$session_id HAVING pv_in_session = 1) GROUP BY first_path) AS bounces ON bounces.path = pages.path ORDER BY pages.pv DESC LIMIT 20`),
+    hogQL<[string, number]>(`SELECT first_path, count() FROM (SELECT argMin(properties.$pathname, timestamp) AS first_path FROM events WHERE event = '$pageview' AND timestamp >= now() - INTERVAL ${days} DAY AND properties.$session_id IS NOT NULL AND properties.$pathname IS NOT NULL GROUP BY properties.$session_id) WHERE first_path IS NOT NULL GROUP BY first_path ORDER BY count() DESC LIMIT 8`),
+    hogQL<[string, number]>(`SELECT last_path, count() FROM (SELECT argMax(properties.$pathname, timestamp) AS last_path FROM events WHERE event = '$pageview' AND timestamp >= now() - INTERVAL ${days} DAY AND properties.$session_id IS NOT NULL AND properties.$pathname IS NOT NULL GROUP BY properties.$session_id) WHERE last_path IS NOT NULL GROUP BY last_path ORDER BY count() DESC LIMIT 8`),
+    hogQL<[string, string, number]>(`SELECT pair.1, pair.2, count() FROM (SELECT arrayJoin(arrayMap(i -> tuple(paths[i], paths[i+1]), range(1, length(paths)))) AS pair FROM (SELECT arrayMap(x -> x.2, arraySort(x -> x.1, groupArray(tuple(timestamp, properties.$pathname)))) AS paths FROM events WHERE event = '$pageview' AND timestamp >= now() - INTERVAL ${days} DAY AND properties.$session_id IS NOT NULL AND properties.$pathname IS NOT NULL GROUP BY properties.$session_id HAVING length(paths) >= 2)) WHERE pair.1 != pair.2 GROUP BY pair.1, pair.2 ORDER BY count() DESC LIMIT 12`),
   ]);
   const queryResults = [trend, nav, bounce, pages, entries, exits, transitions];
   const state = summary.state === "unavailable" ? "unavailable" : posthogAvailability([summary, ...queryResults]);
@@ -272,28 +312,54 @@ async function queryFunnel(): Promise<{ data: StatsViewData["funnel"] | null; st
   return { state, data: { summary: summary.value, trend: trend.rows.map(([day, entriesCount, completions]) => { const e = safeNumber(entriesCount); return { day: safeString(day) ?? "", conversionRate: e > 0 ? (safeNumber(completions) / e) * 100 : 0 }; }), nav: { activePages, totalPv, avgPvPerPage: activePages > 0 ? totalPv / activePages : 0, avgBouncePct: totalSessions > 0 ? (safeNumber(bounce.rows[0]?.[0]) / totalSessions) * 100 : 0 }, pages: pageRows, entries: makeShare(entries.rows), exits: makeShare(exits.rows), transitions: transitions.rows.map(([fromPath, toPath, count]) => ({ fromPath: safeString(fromPath) ?? "(unknown)", toPath: safeString(toPath) ?? "(unknown)", count: safeNumber(count), pct: transitionsTotal > 0 ? (safeNumber(count) / transitionsTotal) * 100 : 0 })) } };
 }
 
-async function queryTrafficSummary(): Promise<{ value: TrafficSummary | null; state: StatsSourceState }> {
-  const [summary, bounce, sessions] = await Promise.all([
-    hogQL<[number, number, number, number, number, number]>("SELECT countIf(toDate(timestamp) = today()), uniqIf(distinct_id, toDate(timestamp) = today()), countIf(toDate(timestamp) = today() - 1), uniqIf(distinct_id, toDate(timestamp) = today() - 1), countIf(timestamp >= now() - INTERVAL 7 DAY), uniqIf(distinct_id, timestamp >= now() - INTERVAL 7 DAY) FROM events WHERE event = '$pageview' AND timestamp >= now() - INTERVAL 7 DAY"),
-    hogQL<[number, number]>("SELECT countIf(pv_count = 1), count() FROM (SELECT properties.$session_id, count() AS pv_count FROM events WHERE event = '$pageview' AND timestamp >= now() - INTERVAL 7 DAY AND properties.$session_id IS NOT NULL GROUP BY properties.$session_id)"),
-    hogQL<[number]>("SELECT avg(duration_s) FROM (SELECT properties.$session_id, dateDiff('second', min(timestamp), max(timestamp)) AS duration_s FROM events WHERE timestamp >= now() - INTERVAL 7 DAY AND properties.$session_id IS NOT NULL GROUP BY properties.$session_id HAVING count() >= 2)"),
+async function queryTrafficSummary(days: StatsPeriod): Promise<{ value: TrafficSummary | null; state: StatsSourceState }> {
+  const bounceSevenQuery = hogQL<[number, number]>("SELECT countIf(pv_count = 1), count() FROM (SELECT properties.$session_id, count() AS pv_count FROM events WHERE event = '$pageview' AND timestamp >= now() - INTERVAL 7 DAY AND properties.$session_id IS NOT NULL GROUP BY properties.$session_id)");
+  const bounceSelectedQuery = days === 7
+    ? bounceSevenQuery
+    : hogQL<[number, number]>(`SELECT countIf(pv_count = 1), count() FROM (SELECT properties.$session_id, count() AS pv_count FROM events WHERE event = '$pageview' AND timestamp >= now() - INTERVAL ${days} DAY AND properties.$session_id IS NOT NULL GROUP BY properties.$session_id)`);
+  const sessionsSevenQuery = hogQL<[number]>("SELECT avg(duration_s) FROM (SELECT properties.$session_id, dateDiff('second', min(timestamp), max(timestamp)) AS duration_s FROM events WHERE timestamp >= now() - INTERVAL 7 DAY AND properties.$session_id IS NOT NULL GROUP BY properties.$session_id HAVING count() >= 2)");
+  const sessionsSelectedQuery = days === 7
+    ? sessionsSevenQuery
+    : hogQL<[number]>(`SELECT avg(duration_s) FROM (SELECT properties.$session_id, dateDiff('second', min(timestamp), max(timestamp)) AS duration_s FROM events WHERE timestamp >= now() - INTERVAL ${days} DAY AND properties.$session_id IS NOT NULL GROUP BY properties.$session_id HAVING count() >= 2)`);
+  const [summary, bounceSeven, bounceSelected, sessionsSeven, sessionsSelected] = await Promise.all([
+    hogQL<[number, number, number, number, number, number, number, number]>(`SELECT countIf(toDate(timestamp) = today()), uniqIf(distinct_id, toDate(timestamp) = today()), countIf(toDate(timestamp) = today() - 1), uniqIf(distinct_id, toDate(timestamp) = today() - 1), countIf(timestamp >= now() - INTERVAL 7 DAY), uniqIf(distinct_id, timestamp >= now() - INTERVAL 7 DAY), countIf(timestamp >= now() - INTERVAL ${days} DAY), uniqIf(distinct_id, timestamp >= now() - INTERVAL ${days} DAY) FROM events WHERE event = '$pageview' AND timestamp >= now() - INTERVAL ${days} DAY`),
+    bounceSevenQuery,
+    bounceSelectedQuery,
+    sessionsSevenQuery,
+    sessionsSelectedQuery,
   ]);
-  const state = posthogAvailability([summary, bounce, sessions]);
+  const state = posthogAvailability([summary, bounceSeven, bounceSelected, sessionsSeven, sessionsSelected]);
   if (state !== "ready") return { value: null, state };
   const row = summary.rows[0];
-  const totalSessions = safeNumber(bounce.rows[0]?.[1]);
-  return { state, value: { today: { pv: safeNumber(row?.[0]), unique: safeNumber(row?.[1]) }, yesterday: { pv: safeNumber(row?.[2]), unique: safeNumber(row?.[3]) }, sevenDayTotal: { pv: safeNumber(row?.[4]), unique: safeNumber(row?.[5]) }, avgSessionSeconds: safeNumber(sessions.rows[0]?.[0]), bounceRate: totalSessions > 0 ? (safeNumber(bounce.rows[0]?.[0]) / totalSessions) * 100 : 0 } };
+  const sevenSessions = safeNumber(bounceSeven.rows[0]?.[1]);
+  const selectedSessions = safeNumber(bounceSelected.rows[0]?.[1]);
+  return {
+    state,
+    value: {
+      today: { pv: safeNumber(row?.[0]), unique: safeNumber(row?.[1]) },
+      yesterday: { pv: safeNumber(row?.[2]), unique: safeNumber(row?.[3]) },
+      sevenDayTotal: { pv: safeNumber(row?.[4]), unique: safeNumber(row?.[5]) },
+      avgSessionSeconds: safeNumber(sessionsSeven.rows[0]?.[0]),
+      bounceRate: sevenSessions > 0 ? (safeNumber(bounceSeven.rows[0]?.[0]) / sevenSessions) * 100 : 0,
+      selectedRange: {
+        days,
+        total: { pv: safeNumber(row?.[6]), unique: safeNumber(row?.[7]) },
+        avgSessionSeconds: safeNumber(sessionsSelected.rows[0]?.[0]),
+        bounceRate: selectedSessions > 0 ? (safeNumber(bounceSelected.rows[0]?.[0]) / selectedSessions) * 100 : 0,
+      },
+    },
+  };
 }
 
-async function queryTraffic(): Promise<{ data: StatsViewData["traffic"] | null; state: StatsSourceState }> {
+async function queryTraffic(days: StatsPeriod): Promise<{ data: StatsViewData["traffic"] | null; state: StatsSourceState }> {
   const [summary, trend, topPages, devices, browsers, sources, regions] = await Promise.all([
-    queryTrafficSummary(),
-    hogQL<[string, number, number]>("SELECT toDate(timestamp), count(), uniq(distinct_id) FROM events WHERE event = '$pageview' AND timestamp >= now() - INTERVAL 7 DAY GROUP BY toDate(timestamp) ORDER BY toDate(timestamp) ASC"),
-    hogQL<[string, number, number]>("SELECT properties.$pathname, count(), uniq(distinct_id) FROM events WHERE event = '$pageview' AND timestamp >= now() - INTERVAL 7 DAY AND properties.$pathname IS NOT NULL GROUP BY properties.$pathname ORDER BY count() DESC LIMIT 10"),
-    hogQL<[string, number]>("SELECT properties.$device_type, count() FROM events WHERE event = '$pageview' AND timestamp >= now() - INTERVAL 7 DAY AND properties.$device_type IS NOT NULL GROUP BY properties.$device_type ORDER BY count() DESC"),
-    hogQL<[string, number]>("SELECT coalesce(properties.$browser, 'Other'), count() FROM events WHERE event = '$pageview' AND timestamp >= now() - INTERVAL 7 DAY GROUP BY properties.$browser ORDER BY count() DESC LIMIT 6"),
-    hogQL<[string, number]>("SELECT coalesce(properties.$initial_referring_domain, 'direct'), count() FROM events WHERE event = '$pageview' AND timestamp >= now() - INTERVAL 7 DAY GROUP BY properties.$initial_referring_domain ORDER BY count() DESC LIMIT 8"),
-    hogQL<[string, number]>("SELECT coalesce(properties.$geoip_subdivision_1_name, 'Unknown'), count() FROM events WHERE event = '$pageview' AND timestamp >= now() - INTERVAL 7 DAY GROUP BY properties.$geoip_subdivision_1_name ORDER BY count() DESC LIMIT 10"),
+    queryTrafficSummary(days),
+    hogQL<[string, number, number]>(`SELECT toDate(timestamp), count(), uniq(distinct_id) FROM events WHERE event = '$pageview' AND timestamp >= now() - INTERVAL ${days} DAY GROUP BY toDate(timestamp) ORDER BY toDate(timestamp) ASC`),
+    hogQL<[string, number, number]>(`SELECT properties.$pathname, count(), uniq(distinct_id) FROM events WHERE event = '$pageview' AND timestamp >= now() - INTERVAL ${days} DAY AND properties.$pathname IS NOT NULL GROUP BY properties.$pathname ORDER BY count() DESC LIMIT 10`),
+    hogQL<[string, number]>(`SELECT properties.$device_type, count() FROM events WHERE event = '$pageview' AND timestamp >= now() - INTERVAL ${days} DAY AND properties.$device_type IS NOT NULL GROUP BY properties.$device_type ORDER BY count() DESC`),
+    hogQL<[string, number]>(`SELECT coalesce(properties.$browser, 'Other'), count() FROM events WHERE event = '$pageview' AND timestamp >= now() - INTERVAL ${days} DAY GROUP BY properties.$browser ORDER BY count() DESC LIMIT 6`),
+    hogQL<[string, number]>(`SELECT coalesce(properties.$initial_referring_domain, 'direct'), count() FROM events WHERE event = '$pageview' AND timestamp >= now() - INTERVAL ${days} DAY GROUP BY properties.$initial_referring_domain ORDER BY count() DESC LIMIT 8`),
+    hogQL<[string, number]>(`SELECT coalesce(properties.$geoip_subdivision_1_name, 'Unknown'), count() FROM events WHERE event = '$pageview' AND timestamp >= now() - INTERVAL ${days} DAY GROUP BY properties.$geoip_subdivision_1_name ORDER BY count() DESC LIMIT 10`),
   ]);
   const state = summary.state === "unavailable" ? "unavailable" : posthogAvailability([summary, trend, topPages, devices, browsers, sources, regions]);
   if (state !== "ready" || !summary.value) return { data: null, state };
@@ -316,53 +382,106 @@ async function sentryGet<T>(path: string): Promise<{ value: T | null; state: Sta
   }
 }
 
-async function queryErrors(): Promise<{ data: StatsViewData["errors"] | null; state: StatsSourceState }> {
-  const params = new URLSearchParams({ project: SENTRY_PROJECT_ID, query: "is:unresolved", limit: "100", sort: "freq", statsPeriod: "7d" });
-  const response = await sentryGet<RawSentryIssue[]>(`/organizations/${encodeURIComponent(SENTRY_ORG)}/issues/?${params.toString()}`);
-  if (response.state !== "ready" || !Array.isArray(response.value)) return { data: null, state: response.state };
-  const issues = response.value.map(normalizeIssue);
+type SentryStatsPeriod = "7d" | "30d";
+
+function rawStatsForPeriod(raw: RawSentryIssue, period: SentryStatsPeriod): Array<[number, number]> {
+  const direct = raw.stats?.[period];
+  if (direct?.length) return direct;
+  const fallback = raw.stats?.["30d"] ?? raw.stats?.["24h"] ?? [];
+  if (period === "30d") return fallback;
+  const cutoff = Date.now() / 1000 - 7 * 86_400;
+  return fallback.filter(([timestamp]) => timestamp >= cutoff);
+}
+
+function issueDailySeries(rawIssues: RawSentryIssue[], period: StatsPeriod): number[] {
+  const daily = new Map<string, number>();
+  const statsPeriod: SentryStatsPeriod = period === 30 ? "30d" : "7d";
+  for (const raw of rawIssues) {
+    for (const [timestamp, count] of rawStatsForPeriod(raw, statsPeriod)) {
+      const day = new Date(timestamp * 1000).toISOString().slice(0, 10);
+      daily.set(day, (daily.get(day) ?? 0) + safeNumber(count));
+    }
+  }
+  const values = [...daily.entries()].sort(([first], [second]) => first.localeCompare(second)).map(([, count]) => count).slice(-period);
+  while (values.length < period) values.unshift(0);
+  return values;
+}
+
+function issueTrend(rawIssues: RawSentryIssue[], period: StatsPeriod): ErrorTrendPoint[] {
+  const trend = new Map<number, number>();
+  const statsPeriod: SentryStatsPeriod = period === 30 ? "30d" : "7d";
+  for (const raw of rawIssues) {
+    for (const [timestamp, count] of rawStatsForPeriod(raw, statsPeriod)) trend.set(timestamp, (trend.get(timestamp) ?? 0) + safeNumber(count));
+  }
+  return [...trend.entries()].sort(([first], [second]) => first - second).map(([timestamp, count]) => ({ timestamp: new Date(timestamp * 1000).toISOString(), count }));
+}
+
+async function queryErrors(days: StatsPeriod): Promise<{ data: StatsViewData["errors"] | null; state: StatsSourceState }> {
+  const selectedStatsPeriod: SentryStatsPeriod = days === 30 ? "30d" : "7d";
+  const selectedParams = new URLSearchParams({ project: SENTRY_PROJECT_ID, query: "is:unresolved", limit: "100", sort: "freq", statsPeriod: selectedStatsPeriod });
+  const selectedResponse = await sentryGet<RawSentryIssue[]>(`/organizations/${encodeURIComponent(SENTRY_ORG)}/issues/?${selectedParams.toString()}`);
+  if (selectedResponse.state !== "ready" || !Array.isArray(selectedResponse.value)) return { data: null, state: selectedResponse.state };
+  const legacyResponse = days === 7
+    ? selectedResponse
+    : await sentryGet<RawSentryIssue[]>(`/organizations/${encodeURIComponent(SENTRY_ORG)}/issues/?${new URLSearchParams({ project: SENTRY_PROJECT_ID, query: "is:unresolved", limit: "100", sort: "freq", statsPeriod: "7d" }).toString()}`);
+  if (legacyResponse.state !== "ready" || !Array.isArray(legacyResponse.value)) return { data: null, state: legacyResponse.state };
+
+  const selectedRaw = selectedResponse.value;
+  const legacyRaw = legacyResponse.value;
+  const issues = selectedRaw.map(normalizeIssue);
   const now = Date.now();
   const newIn24h = issues.filter((issue) => now - new Date(issue.firstSeen).getTime() < 86_400_000).length;
   const severity = { critical: issues.filter((issue) => issue.level === "fatal").length, error: issues.filter((issue) => issue.level === "error").length, warning: issues.filter((issue) => issue.level === "warning").length, info: issues.filter((issue) => issue.level === "info").length };
-  const daily = new Map<string, number>();
-  for (const raw of response.value) for (const [timestamp, count] of raw.stats?.["30d"] ?? raw.stats?.["24h"] ?? []) { const day = new Date(timestamp * 1000).toISOString().slice(0, 10); daily.set(day, (daily.get(day) ?? 0) + count); }
-  const sparkline7d = Array.from(daily.values()).slice(-7); while (sparkline7d.length < 7) sparkline7d.unshift(0);
+  const sparkline7d = issueDailySeries(legacyRaw, 7);
+  const selectedSparkline = issueDailySeries(selectedRaw, days);
   const lastErrorAt = issues.reduce<string | null>((latest, issue) => !latest || new Date(issue.lastSeen).getTime() > new Date(latest).getTime() ? issue.lastSeen : latest, null);
-  const summary: ErrorSummary = { openCount: issues.length, newIn24h, totalEvents7d: issues.reduce((total, issue) => total + issue.count, 0), affectedUsers: issues.reduce((total, issue) => total + issue.userCount, 0), lastErrorAt, severity, sparkline7d, topIssue: issues[0] ?? null };
-  const trendMap = new Map<number, number>();
-  for (const raw of response.value) for (const [timestamp, count] of raw.stats?.["24h"] ?? []) trendMap.set(timestamp, (trendMap.get(timestamp) ?? 0) + count);
-  const trend = Array.from(trendMap.entries()).sort(([a], [b]) => a - b).map(([timestamp, count]) => ({ timestamp: new Date(timestamp * 1000).toISOString(), count }));
-  return { state: "ready", data: { summary, trend, issues } };
+  const summary: ErrorSummary = {
+    openCount: issues.length,
+    newIn24h,
+    totalEvents7d: legacyRaw.reduce((total, issue) => total + safeNumber(issue.count), 0),
+    affectedUsers: legacyRaw.reduce((total, issue) => total + safeNumber(issue.userCount), 0),
+    lastErrorAt,
+    severity,
+    sparkline7d,
+    topIssue: issues[0] ?? null,
+    selectedRange: {
+      days,
+      totalEvents: selectedRaw.reduce((total, issue) => total + safeNumber(issue.count), 0),
+      affectedUsers: selectedRaw.reduce((total, issue) => total + safeNumber(issue.userCount), 0),
+      sparkline: selectedSparkline,
+    },
+  };
+  return { state: "ready", data: { summary, trend: issueTrend(selectedRaw, days), issues } };
 }
 
-function unavailableResponse<TView extends keyof StatsViewData>(view: TView, availability: StatsAvailability): StatsViewResponse<TView> { return { view, availability, state: "unavailable", data: null }; }
+function unavailableResponse<TView extends keyof StatsViewData>(view: TView, availability: StatsAvailability, period: StatsPeriod): StatsViewResponse<TView> { return { view, period, availability, state: "unavailable", data: null }; }
 
-export async function getStatsView<TView extends keyof StatsViewData>(view: TView, branchSlug: string | null): Promise<StatsViewResponse<TView>> {
+export async function getStatsView<TView extends keyof StatsViewData>(view: TView, branchSlug: string | null, period: StatsPeriod = 7): Promise<StatsViewResponse<TView>> {
   const availability: StatsAvailability = { posthog: posthogConfigured() ? "ready" : "unavailable", sentry: SENTRY_AUTH_TOKEN && SENTRY_ORG ? "ready" : "unavailable" };
   if (view === "errors") {
-    const result = await queryErrors();
-    return { view, availability: { ...availability, sentry: result.state }, state: result.state, data: result.data as StatsViewData[TView] | null };
+    const result = await queryErrors(period);
+    return { view, period, availability: { ...availability, sentry: result.state }, state: result.state, data: result.data as StatsViewData[TView] | null };
   }
   if (view === "inquiries") {
-    const result = await queryInquiries(branchSlug);
-    return { view, availability: { ...availability, posthog: result.state }, state: result.state, data: result.data as StatsViewData[TView] | null };
+    const result = await queryInquiries(branchSlug, period);
+    return { view, period, availability: { ...availability, posthog: result.state }, state: result.state, data: result.data as StatsViewData[TView] | null };
   }
   if (view === "funnel") {
-    const result = await queryFunnel();
-    return { view, availability: { ...availability, posthog: result.state }, state: result.state, data: result.data as StatsViewData[TView] | null };
+    const result = await queryFunnel(period);
+    return { view, period, availability: { ...availability, posthog: result.state }, state: result.state, data: result.data as StatsViewData[TView] | null };
   }
   if (view === "traffic") {
-    const result = await queryTraffic();
-    return { view, availability: { ...availability, posthog: result.state }, state: result.state, data: result.data as StatsViewData[TView] | null };
+    const result = await queryTraffic(period);
+    return { view, period, availability: { ...availability, posthog: result.state }, state: result.state, data: result.data as StatsViewData[TView] | null };
   }
-  const [errors, inquiries, funnel, traffic] = await Promise.all([queryErrors(), queryInquirySummary(branchSlug), queryFunnelSummary(7), queryTrafficSummary()]);
-  const topPages = posthogConfigured() ? await hogQL<[string, number, number]>("SELECT properties.$pathname, count(), uniq(distinct_id) FROM events WHERE event = '$pageview' AND timestamp >= now() - INTERVAL 1 DAY AND properties.$pathname IS NOT NULL GROUP BY properties.$pathname ORDER BY count() DESC LIMIT 4") : { rows: [], state: "unavailable" as StatsSourceState };
-  const devices = posthogConfigured() ? await hogQL<[string, number]>("SELECT properties.$device_type, count() FROM events WHERE event = '$pageview' AND timestamp >= now() - INTERVAL 1 DAY AND properties.$device_type IS NOT NULL GROUP BY properties.$device_type ORDER BY count() DESC") : { rows: [], state: "unavailable" as StatsSourceState };
+  const [errors, inquiries, funnel, traffic] = await Promise.all([queryErrors(period), queryInquirySummary(branchSlug, period), queryFunnelSummary(period), queryTrafficSummary(period)]);
+  const topPages = posthogConfigured() ? await hogQL<[string, number, number]>(`SELECT properties.$pathname, count(), uniq(distinct_id) FROM events WHERE event = '$pageview' AND timestamp >= now() - INTERVAL ${period} DAY AND properties.$pathname IS NOT NULL GROUP BY properties.$pathname ORDER BY count() DESC LIMIT 4`) : { rows: [], state: "unavailable" as StatsSourceState };
+  const devices = posthogConfigured() ? await hogQL<[string, number]>(`SELECT properties.$device_type, count() FROM events WHERE event = '$pageview' AND timestamp >= now() - INTERVAL ${period} DAY AND properties.$device_type IS NOT NULL GROUP BY properties.$device_type ORDER BY count() DESC`) : { rows: [], state: "unavailable" as StatsSourceState };
   const posthogState = posthogAvailability([inquiries, funnel, traffic, topPages, devices]);
   const state: StatsSourceState = errors.state === "error" || posthogState === "error" ? "error" : errors.state === "ready" || posthogState === "ready" ? "ready" : "unavailable";
-  if (state === "unavailable") return unavailableResponse(view, { posthog: posthogState, sentry: errors.state });
+  if (state === "unavailable") return unavailableResponse(view, { posthog: posthogState, sentry: errors.state }, period);
   const toTopPages = topPages.rows.map(([path, pv, unique]) => ({ path: safeString(path) ?? "(unknown)", pv: safeNumber(pv), unique: safeNumber(unique), avgTimeSeconds: null }));
   const totalDevices = devices.rows.reduce((sum, [, count]) => sum + safeNumber(count), 0);
   const deviceRows = devices.rows.map(([label, count]) => ({ label: safeString(label) ?? "Unknown", count: safeNumber(count), pct: totalDevices > 0 ? (safeNumber(count) / totalDevices) * 100 : 0 }));
-  return { view, availability: { posthog: posthogState, sentry: errors.state }, state, data: { errors: errors.data?.summary ?? null, inquiries: inquiries.value ?? null, funnel: funnel.value ?? null, traffic: traffic.value ?? null, topPages: toTopPages, devices: deviceRows } as StatsViewData[TView] };
+  return { view, period, availability: { posthog: posthogState, sentry: errors.state }, state, data: { errors: errors.data?.summary ?? null, inquiries: inquiries.value ?? null, funnel: funnel.value ?? null, traffic: traffic.value ?? null, topPages: toTopPages, devices: deviceRows } as StatsViewData[TView] };
 }

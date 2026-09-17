@@ -1,5 +1,12 @@
 import { redirect } from "next/navigation";
 import { Block } from "@/components/app/v3/Block";
+import {
+  StatsPeriodNotice,
+  StatsPeriodSelector,
+  StatsPeriodProvider,
+  StatsSourceEmpty,
+  StatsSourceNotice,
+} from "@/components/app/stats/StatsPeriodSelector";
 import { getCurrentUser } from "@/lib/auth/cookies";
 import { ROLES } from "@/lib/constants/roles";
 import { formatDateForDisplay } from "@/lib/date/format-date-for-display";
@@ -10,14 +17,23 @@ import {
   getInquiriesByBranch,
   getRecentInquiries,
   formatRelativeKo,
+  isPostHogConfigured,
 } from "@/lib/observability/posthog";
+import {
+  parseStatsPeriodParam,
+  statsPeriodLabel,
+} from "@/lib/observability/stats-period";
 import { StatsHero } from "../_components/StatsHero";
 import { KpiCard } from "../_components/KpiCard";
 
 export const metadata = { title: "상담 신청 · 통계" };
 export const revalidate = 60;
 
-export default async function InquiriesDetailPage() {
+interface InquiriesDetailPageProps {
+  searchParams?: Promise<Record<string, string | string[] | undefined>>;
+}
+
+export default async function InquiriesDetailPage({ searchParams }: InquiriesDetailPageProps) {
   const user = await getCurrentUser();
   const isOwner = user?.role === ROLES.owner;
   const branchSlug = isOwner ? null : user?.branchSlug ?? null;
@@ -29,29 +45,37 @@ export default async function InquiriesDetailPage() {
     redirect("/dashboard");
   }
 
-  const [summary, daily, hourly, recent] = await Promise.all([
-    getInquiriesSummary(branchSlug),
-    getInquiriesDailyTrend(30, branchSlug),
-    getInquiriesHourlyToday(branchSlug),
-    getRecentInquiries(10, branchSlug),
-  ]);
-  const byBranch = isOwner ? await getInquiriesByBranch(7) : [];
+  const params = searchParams ? await searchParams : {};
+  const period = parseStatsPeriodParam(params.period);
+  if (period === null) {
+    return <StatsPeriodNotice title="상담 통계 기간을 확인해 주세요" dataComponent="desktop_stats-inquiries_page_period-error" />;
+  }
+  const posthogConfigured = isPostHogConfigured();
 
-  // Build last-30-day bar data
+  const [summary, daily, hourly, recent] = await Promise.all([
+    getInquiriesSummary(branchSlug, period),
+    getInquiriesDailyTrend(period, branchSlug),
+    getInquiriesHourlyToday(branchSlug),
+    getRecentInquiries(10, branchSlug, period),
+  ]);
+  const byBranch = isOwner ? await getInquiriesByBranch(period) : [];
+
+  // Build selected-range bar data
   const dailyMap = new Map(daily.map((p) => [p.day, p.count]));
   const today = new Date();
-  const last30 = Array.from({ length: 30 }, (_, i) => {
+  const selectedRange = Array.from({ length: period }, (_, i) => {
     const d = new Date(today);
-    d.setDate(d.getDate() - (29 - i));
+    d.setDate(d.getDate() - (period - 1 - i));
     const key = d.toISOString().slice(0, 10);
     return { date: d, count: dailyMap.get(key) ?? 0 };
   });
-  const maxDaily = Math.max(1, ...last30.map((p) => p.count));
+  const maxDaily = Math.max(1, ...selectedRange.map((p) => p.count));
 
   const maxHourly = Math.max(1, ...hourly.map((p) => p.count));
   const maxBranch = Math.max(1, ...byBranch.map((b) => b.count));
 
   return (
+    <StatsPeriodProvider key={period} initialPeriod={period}>
     <section data-component="desktop_stats-inquiries_page" className="flex flex-col gap-6 pb-10">
       <Block name="desktop_stats-inquiries_page_hero" className="shrink-0">
         <StatsHero
@@ -62,11 +86,24 @@ export default async function InquiriesDetailPage() {
               : "PostHog · 일별/시간대별/소스별 분석"
           }
           rightValue={formatDateForDisplay(today)}
-          backHref={isOwner ? "/stats" : undefined}
+          backHref={isOwner ? `/stats?period=${period}` : undefined}
           backLabel={isOwner ? "통계 overview로" : undefined}
           dataComponent="desktop_stats-inquiries_page_hero_content"
         />
       </Block>
+
+      <StatsPeriodSelector
+        basePath="/stats/inquiries"
+        period={period}
+        dataComponent="desktop_stats-inquiries_page_period-selector"
+      />
+
+      {!posthogConfigured && (
+        <StatsSourceNotice
+          sources={["PostHog"]}
+          dataComponent="desktop_stats-inquiries_page_source-unavailable"
+        />
+      )}
 
       <Block name="desktop_stats-inquiries_page_kpi" className="shrink-0">
         <div
@@ -76,37 +113,37 @@ export default async function InquiriesDetailPage() {
           <KpiCard
             iconEmoji="📝"
             label="오늘"
-            value={summary.today}
-            unit="건"
+            value={posthogConfigured ? summary.today : "—"}
+            unit={posthogConfigured ? "건" : undefined}
             tone="success"
             dataComponent="desktop_stats-inquiries_page_kpi_grid_card-today"
           />
           <KpiCard
             iconEmoji="📅"
             label="어제"
-            value={summary.yesterday}
-            unit="건"
+            value={posthogConfigured ? summary.yesterday : "—"}
+            unit={posthogConfigured ? "건" : undefined}
             dataComponent="desktop_stats-inquiries_page_kpi_grid_card-yesterday"
           />
           <KpiCard
             iconEmoji="📊"
-            label="7일 합계"
-            value={summary.sevenDayTotal}
-            unit="건"
-            meta={`평균 ${summary.sevenDayAvg.toFixed(1)}건/일`}
+            label={`${statsPeriodLabel(period)} 합계`}
+            value={posthogConfigured ? summary.selectedRange.total : "—"}
+            unit={posthogConfigured ? "건" : undefined}
+            meta={posthogConfigured ? `평균 ${summary.selectedRange.average.toFixed(1)}건/일` : undefined}
             dataComponent="desktop_stats-inquiries_page_kpi_grid_card-week"
           />
           <KpiCard
             iconEmoji="🔀"
-            label="전환율"
-            value={summary.conversionRate.toFixed(1)}
-            unit="%"
+            label={`전환율 (${statsPeriodLabel(period)})`}
+            value={posthogConfigured ? summary.selectedRange.conversionRate.toFixed(1) : "—"}
+            unit={posthogConfigured ? "%" : undefined}
             dataComponent="desktop_stats-inquiries_page_kpi_grid_card-conversion"
           />
           <KpiCard
             iconEmoji="⏱"
             label="최근 신청"
-            value={formatRelativeKo(summary.lastSubmissionAt)}
+            value={posthogConfigured ? formatRelativeKo(summary.lastSubmissionAt) : "—"}
             dataComponent="desktop_stats-inquiries_page_kpi_grid_card-last"
             valueSize="sm"
           />
@@ -119,24 +156,26 @@ export default async function InquiriesDetailPage() {
           className="animate-v3-slide-up bg-white rounded-[28px] shadow-v3 p-6"
         >
           <header className="flex items-center gap-2.5 pb-3.5 border-b border-v3-border mb-4">
-            <h3 className="text-[0.95rem] font-bold text-v3-text">일별 상담 신청 (최근 30일)</h3>
+            <h3 className="text-[0.95rem] font-bold text-v3-text">일별 상담 신청 ({statsPeriodLabel(period)})</h3>
             <span className="text-[0.6rem] font-bold uppercase tracking-wider rounded px-1.5 py-0.5 bg-purple-100 text-purple-700">
               PostHog
             </span>
             <span className="ml-auto text-[0.7rem] text-v3-text-muted">
-              총 {summary.thirtyDayTotal}건
+              {posthogConfigured ? `총 ${summary.selectedRange.total}건` : "—"}
             </span>
           </header>
-          {summary.thirtyDayTotal === 0 ? (
-            <p className="text-center py-10 text-[0.85rem] text-v3-text-muted">
-              최근 30일간 상담 신청이 없어요.
+          {!posthogConfigured ? (
+            <StatsSourceEmpty source="PostHog" dataComponent="desktop_stats-inquiries_page_daily-unavailable" />
+          ) : summary.selectedRange.total === 0 ? (
+              <p className="text-center py-10 text-[0.85rem] text-v3-text-muted">
+              {statsPeriodLabel(period)} 상담 신청이 없어요.
             </p>
           ) : (
             <>
               <div className="flex items-end gap-1.5 h-[160px]">
-                {last30.map((p, i) => {
+                {selectedRange.map((p, i) => {
                   const pct = (p.count / maxDaily) * 100;
-                  const isToday = i === 29;
+                  const isToday = i === period - 1;
                   return (
                     <div
                       key={i}
@@ -150,8 +189,8 @@ export default async function InquiriesDetailPage() {
                 })}
               </div>
               <div className="mt-2 flex justify-between text-[0.65rem] text-v3-text-muted">
-                <span>{formatDateForDisplay(last30[0].date)}</span>
-                <span>{formatDateForDisplay(last30[14].date)}</span>
+                <span>{formatDateForDisplay(selectedRange[0].date)}</span>
+                <span>{formatDateForDisplay(selectedRange[Math.floor((period - 1) / 2)].date)}</span>
                 <span className="text-v3-primary font-semibold">오늘 ({summary.today})</span>
               </div>
             </>
@@ -174,7 +213,9 @@ export default async function InquiriesDetailPage() {
               PostHog
             </span>
           </header>
-          {hourly.every((p) => p.count === 0) ? (
+          {!posthogConfigured ? (
+            <StatsSourceEmpty source="PostHog" dataComponent="desktop_stats-inquiries_page_breakdown_hourly-unavailable" />
+          ) : hourly.every((p) => p.count === 0) ? (
             <p className="text-center py-6 text-[0.85rem] text-v3-text-muted">
               오늘은 아직 상담 신청이 없어요.
             </p>
@@ -218,12 +259,14 @@ export default async function InquiriesDetailPage() {
             className="animate-v3-slide-up bg-white rounded-[28px] shadow-v3 p-6"
           >
             <header className="flex items-center gap-2.5 pb-3.5 border-b border-v3-border mb-3">
-              <h3 className="text-[0.95rem] font-bold text-v3-text">지점별 분포 (7일)</h3>
+              <h3 className="text-[0.95rem] font-bold text-v3-text">지점별 분포 ({statsPeriodLabel(period)})</h3>
               <span className="text-[0.6rem] font-bold uppercase tracking-wider rounded px-1.5 py-0.5 bg-purple-100 text-purple-700">
                 PostHog
               </span>
             </header>
-            {byBranch.length === 0 ? (
+            {!posthogConfigured ? (
+              <StatsSourceEmpty source="PostHog" dataComponent="desktop_stats-inquiries_page_breakdown_branch-unavailable" />
+            ) : byBranch.length === 0 ? (
               <p className="text-center py-6 text-[0.85rem] text-v3-text-muted">
                 지점별 데이터가 아직 없어요.
               </p>
@@ -265,9 +308,11 @@ export default async function InquiriesDetailPage() {
               PII 마스킹 적용
             </span>
           </header>
-          {recent.length === 0 ? (
+          {!posthogConfigured ? (
+            <StatsSourceEmpty source="PostHog" dataComponent="desktop_stats-inquiries_page_recent-unavailable" />
+          ) : recent.length === 0 ? (
             <p className="text-center py-8 text-[0.85rem] text-v3-text-muted">
-              최근 7일간 상담 신청이 없어요.
+              {statsPeriodLabel(period)} 상담 신청이 없어요.
             </p>
           ) : (
             <table className="w-full text-[0.82rem]">
@@ -316,5 +361,6 @@ export default async function InquiriesDetailPage() {
         </div>
       </Block>
     </section>
+    </StatsPeriodProvider>
   );
 }

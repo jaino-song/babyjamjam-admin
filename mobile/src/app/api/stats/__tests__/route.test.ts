@@ -59,6 +59,28 @@ describe("mobile stats authorization", () => {
     mockGetStatsView.mockResolvedValue({ view: "inquiries", state: "ready", availability: { posthog: "ready", sentry: "unavailable" }, data: null });
     const response = await GET(request("/api/stats/inquiries"), { params: Promise.resolve({ view: "inquiries" }) });
     expect(response.status).toBe(200);
-    expect(mockGetStatsView).toHaveBeenCalledWith("inquiries", "gangnam");
+    expect(mockGetStatsView).toHaveBeenCalledWith("inquiries", "gangnam", 7);
+  });
+
+  it("rejects an invalid period before loading a stats view", async () => {
+    mockCurrentUser.mockResolvedValue({ id: "user-1", role: "owner" });
+    const response = await GET(request("/api/stats/overview?period=14"), { params: Promise.resolve({ view: "overview" }) });
+    expect(response.status).toBe(400);
+    expect(mockGetStatsView).not.toHaveBeenCalled();
+  });
+
+  it("rejects duplicate period parameters instead of choosing one", async () => {
+    mockCurrentUser.mockResolvedValue({ id: "user-1", role: "owner" });
+    const response = await GET(request("/api/stats/overview?period=7&period=30"), { params: Promise.resolve({ view: "overview" }) });
+    expect(response.status).toBe(400);
+    expect(mockGetStatsView).not.toHaveBeenCalled();
+  });
+
+  it("forwards a valid thirty day period after authorization", async () => {
+    mockCurrentUser.mockResolvedValue({ id: "user-1", role: "owner" });
+    mockGetStatsView.mockResolvedValue({ view: "overview", period: 30, state: "ready", availability: { posthog: "ready", sentry: "unavailable" }, data: null });
+    const response = await GET(request("/api/stats/overview?period=30"), { params: Promise.resolve({ view: "overview" }) });
+    expect(response.status).toBe(200);
+    expect(mockGetStatsView).toHaveBeenCalledWith("overview", null, 30);
   });
 });

@@ -1,11 +1,19 @@
 import { redirect } from "next/navigation";
 import { Block } from "@/components/app/v3/Block";
+import {
+  StatsPeriodNotice,
+  StatsSourceEmpty,
+  StatsSourceNotice,
+  StatsPeriodSelector,
+  StatsUnavailableValue,
+} from "@/components/app/stats/StatsPeriodSelector";
 import { getCurrentUser } from "@/lib/auth/cookies";
 import { ROLES } from "@/lib/constants/roles";
 import { formatDateForDisplay } from "@/lib/date/format-date-for-display";
 import {
   getSummary as getSentrySummary,
   formatSentryRelativeTime,
+  isSentryConfigured,
 } from "@/lib/observability/sentry";
 import {
   getInquiriesSummary,
@@ -15,12 +23,18 @@ import {
   getTopPages,
   getDeviceBreakdown,
   formatRelativeKo,
+  isPostHogConfigured,
 } from "@/lib/observability/posthog";
+import {
+  parseStatsPeriodParam,
+  statsPeriodLabel,
+} from "@/lib/observability/stats-period";
 import { StatsHero } from "./_components/StatsHero";
 import { PanelCard } from "./_components/PanelCard";
 import { Sparkline } from "./_components/Sparkline";
 import { MiniBars } from "./_components/MiniBars";
 import { FunnelBars } from "./_components/FunnelBars";
+import { StatsPeriodProvider } from "@/components/app/stats/StatsPeriodSelector";
 
 export const metadata = {
   title: "통계 · 아가잼잼 관리자",
@@ -46,34 +60,47 @@ function formatDelta(today: number, yesterday: number): { label: string; tone: "
   };
 }
 
-export default async function StatsPage() {
+interface StatsPageProps {
+  searchParams?: Promise<Record<string, string | string[] | undefined>>;
+}
+
+export default async function StatsPage({ searchParams }: StatsPageProps) {
   const user = await getCurrentUser();
   if (user?.role !== ROLES.owner) {
     redirect("/stats/inquiries");
   }
 
+  const params = searchParams ? await searchParams : {};
+  const period = parseStatsPeriodParam(params.period);
+  if (period === null) {
+    return <StatsPeriodNotice title="통계 기간을 확인해 주세요" dataComponent="desktop_stats_page_period-error" />;
+  }
+
+  const sentryConfigured = isSentryConfigured();
+  const posthogConfigured = isPostHogConfigured();
+
   const [sentry, inquiries, inquiriesTrend, funnel, traffic, topPages, devices] =
     await Promise.all([
-      getSentrySummary(),
-      getInquiriesSummary(),
-      getInquiriesDailyTrend(7),
-      getFunnelSummary(7),
-      getTrafficSummary(),
-      getTopPages(1, 4),
-      getDeviceBreakdown(1),
+      getSentrySummary({ statsPeriod: period === 30 ? "30d" : "7d" }),
+      getInquiriesSummary(undefined, period),
+      getInquiriesDailyTrend(period),
+      getFunnelSummary(period),
+      getTrafficSummary(period),
+      getTopPages(period, 4),
+      getDeviceBreakdown(period),
     ]);
 
-  // Build 7-day labels + values for the inquiry mini-bars
+  // Build selected-range labels + values for the inquiry mini-bars
   const today = new Date();
-  const last7DayLabels: string[] = [];
-  const last7DayValues: number[] = [];
+  const selectedRangeLabels: string[] = [];
+  const selectedRangeValues: number[] = [];
   const trendMap = new Map(inquiriesTrend.map((p) => [p.day, p.count]));
-  for (let i = 6; i >= 0; i--) {
+  for (let i = period - 1; i >= 0; i--) {
     const d = new Date(today);
     d.setDate(d.getDate() - i);
     const key = d.toISOString().slice(0, 10);
-    last7DayValues.push(trendMap.get(key) ?? 0);
-    last7DayLabels.push(formatDateForDisplay(d));
+    selectedRangeValues.push(trendMap.get(key) ?? 0);
+    selectedRangeLabels.push(formatDateForDisplay(d));
   }
 
   const inquiryDelta = formatDelta(inquiries.today, inquiries.yesterday);
@@ -83,6 +110,7 @@ export default async function StatsPage() {
   const desktop = devices.find((d) => /desktop/i.test(d.deviceType))?.pct ?? 0;
 
   return (
+    <StatsPeriodProvider key={period} initialPeriod={period}>
     <section
       data-component="desktop_stats_page"
       className="flex flex-col gap-6 pb-10"
@@ -90,12 +118,28 @@ export default async function StatsPage() {
       <Block name="desktop_stats_page_hero" className="shrink-0">
         <StatsHero
           dataComponent="desktop_stats_page_hero_content"
-          title="오늘 통계"
-          subtitle="4개 패널 한눈에 — 오류, 상담, 페이지 이동, 트래픽"
+          title="운영 통계"
+          subtitle={`${statsPeriodLabel(period)} 추이와 오늘 고정 지표`}
           rightValue={formatDateForDisplay(today)}
           ariaLabel="통계 개요"
         />
       </Block>
+
+      <StatsPeriodSelector
+        basePath="/stats"
+        period={period}
+        dataComponent="desktop_stats_page_period-selector"
+      />
+
+      {(!sentryConfigured || !posthogConfigured) && (
+        <StatsSourceNotice
+          sources={[
+            ...(!sentryConfigured ? ["Sentry"] : []),
+            ...(!posthogConfigured ? ["PostHog"] : []),
+          ]}
+          dataComponent="desktop_stats_page_source-unavailable"
+        />
+      )}
 
       <Block name="desktop_stats_page_grid" className="flex-1 min-h-0">
         <div
@@ -107,7 +151,7 @@ export default async function StatsPage() {
             title="오류 통계"
             iconEmoji="⚠"
             source="Sentry"
-            detailHref="/stats/errors"
+            detailHref={`/stats/errors?period=${period}`}
             dataComponent="desktop_stats_page_grid_inner_panel-errors"
           >
             <div className="flex items-baseline gap-3">
@@ -115,21 +159,29 @@ export default async function StatsPage() {
                 data-component="desktop_stats_page_grid_inner_panel-errors-count"
                 className="text-[2.4rem] font-bold leading-none tabular-nums text-red-600"
               >
-                {sentry.openCount}
+                {sentryConfigured ? sentry.openCount : "—"}
               </span>
               <span className="text-[0.85rem] text-v3-text-muted">미해결 이슈</span>
-              <span
-                className={`ml-auto text-[0.7rem] font-semibold rounded-full px-2.5 py-1 ${
-                  sentry.newIn24h > 0
-                    ? "bg-red-100 text-red-700"
-                    : "bg-green-100 text-green-700"
-                }`}
-              >
-                {sentry.newIn24h > 0 ? `↑ ${sentry.newIn24h}건 (24시간)` : "신규 없음"}
-              </span>
+              {sentryConfigured ? (
+                <span
+                  className={`ml-auto text-[0.7rem] font-semibold rounded-full px-2.5 py-1 ${
+                    sentry.newIn24h > 0
+                      ? "bg-red-100 text-red-700"
+                      : "bg-green-100 text-green-700"
+                  }`}
+                >
+                  {sentry.newIn24h > 0 ? `↑ ${sentry.newIn24h}건 (24시간)` : "신규 없음"}
+                </span>
+              ) : (
+                <StatsUnavailableValue />
+              )}
             </div>
-            <Sparkline values={sentry.sparkline7d} color="hsl(0 84% 55%)" />
-            {sentry.topIssue ? (
+            {!sentryConfigured ? (
+              <StatsSourceEmpty source="Sentry" dataComponent="desktop_stats_page_grid_inner_panel-errors-unavailable" />
+            ) : (
+              <Sparkline values={sentry.selectedRange.sparkline} color="hsl(0 84% 55%)" />
+            )}
+            {sentryConfigured && sentry.topIssue ? (
               <div className="rounded-2xl bg-v3-dim-white p-3.5">
                 <div className="text-[0.62rem] font-bold uppercase tracking-wider text-v3-text-muted mb-1.5">
                   주요 오류
@@ -143,11 +195,11 @@ export default async function StatsPage() {
                   {sentry.topIssue.count}건 · {formatSentryRelativeTime(sentry.topIssue.lastSeen)}
                 </div>
               </div>
-            ) : (
+            ) : sentryConfigured ? (
               <div className="rounded-2xl bg-v3-dim-white p-3.5 text-[0.78rem] text-v3-text-muted">
                 미해결 이슈가 없어요 🎉
               </div>
-            )}
+            ) : null}
           </PanelCard>
 
           {/* Panel 2: 상담 신청 */}
@@ -155,7 +207,7 @@ export default async function StatsPage() {
             title="상담 신청"
             iconEmoji="📝"
             source="PostHog"
-            detailHref="/stats/inquiries"
+            detailHref={`/stats/inquiries?period=${period}`}
             dataComponent="desktop_stats_page_grid_inner_panel-inquiries"
           >
             <div className="flex items-baseline gap-3">
@@ -163,31 +215,39 @@ export default async function StatsPage() {
                 data-component="desktop_stats_page_grid_inner_panel-inquiries-count"
                 className="text-[2.4rem] font-bold leading-none tabular-nums text-v3-primary"
               >
-                {inquiries.today}
+                {posthogConfigured ? inquiries.today : "—"}
               </span>
               <span className="text-[0.85rem] text-v3-text-muted">건 (오늘)</span>
-              <span
-                className={`ml-auto text-[0.7rem] font-semibold rounded-full px-2.5 py-1 ${
-                  inquiryDelta.tone === "up"
-                    ? "bg-green-100 text-green-700"
-                    : inquiryDelta.tone === "down"
-                      ? "bg-red-100 text-red-700"
-                      : "bg-v3-dim-white text-v3-text-muted"
-                }`}
-              >
-                {inquiryDelta.label}
-              </span>
+              {posthogConfigured ? (
+                <span
+                  className={`ml-auto text-[0.7rem] font-semibold rounded-full px-2.5 py-1 ${
+                    inquiryDelta.tone === "up"
+                      ? "bg-green-100 text-green-700"
+                      : inquiryDelta.tone === "down"
+                        ? "bg-red-100 text-red-700"
+                        : "bg-v3-dim-white text-v3-text-muted"
+                  }`}
+                >
+                  {inquiryDelta.label}
+                </span>
+              ) : (
+                <StatsUnavailableValue />
+              )}
             </div>
-            <MiniBars values={last7DayValues} labels={last7DayLabels} />
+            {posthogConfigured ? <MiniBars data-component="desktop_stats_page_grid_inner_panel-inquiries_body_trend" values={selectedRangeValues} labels={selectedRangeLabels} /> : <StatsSourceEmpty source="PostHog" dataComponent="desktop_stats_page_grid_inner_panel-inquiries-unavailable" />}
             <div className="text-[0.78rem] text-v3-text-muted">
-              7일 평균{" "}
-              <strong className="text-v3-text tabular-nums">
-                {inquiries.sevenDayAvg.toFixed(1)}
-              </strong>
-              건 · 최근 신청{" "}
-              <strong className="text-v3-text">
-                {formatRelativeKo(inquiries.lastSubmissionAt)}
-              </strong>
+              {posthogConfigured ? (
+                <>
+                  {statsPeriodLabel(period)} 평균{" "}
+                  <strong className="text-v3-text tabular-nums">
+                    {inquiries.selectedRange.average.toFixed(1)}
+                  </strong>
+                  건 · 최근 신청{" "}
+                  <strong className="text-v3-text">
+                    {formatRelativeKo(inquiries.lastSubmissionAt)}
+                  </strong>
+                </>
+              ) : "—"}
             </div>
           </PanelCard>
 
@@ -196,16 +256,16 @@ export default async function StatsPage() {
             title="페이지 이동 통계"
             iconEmoji="🔀"
             source="PostHog"
-            detailHref="/stats/funnel"
+            detailHref={`/stats/funnel?period=${period}`}
             dataComponent="desktop_stats_page_grid_inner_panel-funnel"
           >
-            <FunnelBars
+            {posthogConfigured ? <FunnelBars
               dataComponent="desktop_stats_page_grid_panel-funnel_bars"
               steps={funnel.steps}
               biggestDropStep={funnel.biggestDropStep}
               variant="compact"
-            />
-            {funnel.biggestDropStep && funnel.steps[funnel.biggestDropStep - 1] ? (
+            /> : <StatsSourceEmpty source="PostHog" dataComponent="desktop_stats_page_grid_inner_panel-funnel-unavailable" />}
+            {posthogConfigured && funnel.biggestDropStep && funnel.steps[funnel.biggestDropStep - 1] ? (
               <div className="rounded-md border-l-[3px] border-red-500 bg-red-50 px-3 py-2 text-[0.78rem] text-red-700">
                 ⚠ {funnel.biggestDropStep}단계에서{" "}
                 <strong>
@@ -213,15 +273,15 @@ export default async function StatsPage() {
                 </strong>{" "}
                 감소 · 가장 큰 이탈
               </div>
-            ) : funnel.totalEntries === 0 ? (
+            ) : posthogConfigured && funnel.totalEntries === 0 ? (
               <div className="text-[0.78rem] text-v3-text-muted">
                 펀널 진입 이벤트가 아직 없어요.
               </div>
-            ) : (
+            ) : posthogConfigured ? (
               <div className="rounded-md border-l-[3px] border-green-500 bg-green-50 px-3 py-2 text-[0.78rem] text-green-700">
                 ✓ 전환율 {formatPct(funnel.conversionRate, 1)} · 단계별 이탈 안정적
               </div>
-            )}
+            ) : null}
           </PanelCard>
 
           {/* Panel 4: 사이트 트래픽 */}
@@ -229,27 +289,27 @@ export default async function StatsPage() {
             title="사이트 트래픽"
             iconEmoji="🌐"
             source="PostHog"
-            detailHref="/stats/traffic"
+            detailHref={`/stats/traffic?period=${period}`}
             dataComponent="desktop_stats_page_grid_inner_panel-traffic"
           >
             <div className="grid grid-cols-3 gap-3">
               <div data-component="desktop_stats_page_grid_inner_panel-traffic-pv">
                 <div className="text-[0.65rem] font-medium text-v3-text-muted">페이지뷰</div>
                 <div className="text-[1.55rem] font-bold tabular-nums leading-none mt-1">
-                  {traffic.today.pv.toLocaleString("ko-KR")}
+                  {posthogConfigured ? traffic.today.pv.toLocaleString("ko-KR") : "—"}
                 </div>
               </div>
               <div data-component="desktop_stats_page_grid_inner_panel-traffic-unique">
                 <div className="text-[0.65rem] font-medium text-v3-text-muted">방문자</div>
                 <div className="text-[1.55rem] font-bold tabular-nums leading-none mt-1">
-                  {traffic.today.unique.toLocaleString("ko-KR")}
+                  {posthogConfigured ? traffic.today.unique.toLocaleString("ko-KR") : "—"}
                 </div>
               </div>
               <div data-component="desktop_stats_page_grid_inner_panel-traffic-session">
                 <div className="text-[0.65rem] font-medium text-v3-text-muted">평균 방문 시간</div>
                 <div className="text-[1.55rem] font-bold tabular-nums leading-none mt-1">
-                  {traffic.today.pv === 0
-                    ? "-"
+                  {!posthogConfigured || traffic.today.pv === 0
+                    ? "—"
                     : `${Math.floor(traffic.avgSessionSeconds / 60)}:${String(Math.round(traffic.avgSessionSeconds % 60)).padStart(2, "0")}`}
                 </div>
               </div>
@@ -259,7 +319,9 @@ export default async function StatsPage() {
                 인기 페이지
               </div>
               <div data-component="desktop_stats_page_grid_inner_panel-traffic-top-pages">
-                {topPages.length === 0 ? (
+                {!posthogConfigured ? (
+                  <StatsSourceEmpty source="PostHog" dataComponent="desktop_stats_page_grid_inner_panel-traffic-top-pages-unavailable" />
+                ) : topPages.length === 0 ? (
                   <div className="py-2 text-[0.75rem] text-v3-text-muted">데이터 없음</div>
                 ) : (
                   topPages.map((p) => (
@@ -274,29 +336,34 @@ export default async function StatsPage() {
                 )}
               </div>
             </div>
-            <div>
-              <div className="flex h-2 rounded-full overflow-hidden bg-v3-dim-white">
-                <div
-                  className="bg-v3-primary"
-                  style={{ width: `${mobile}%` }}
-                />
-                <div
-                  className="bg-blue-400"
-                  style={{ width: `${desktop}%` }}
-                />
-              </div>
-              <div className="mt-1.5 flex justify-between text-[0.7rem] text-v3-text-muted">
-                <span>
-                  <strong className="text-v3-text">Mobile</strong> {mobile.toFixed(0)}%
-                </span>
-                <span>
-                  <strong className="text-v3-text">Desktop</strong> {desktop.toFixed(0)}%
-                </span>
-              </div>
-            </div>
+              {posthogConfigured ? (
+                <div>
+                  <div className="flex h-2 rounded-full overflow-hidden bg-v3-dim-white">
+                    <div
+                      className="bg-v3-primary"
+                      style={{ width: `${mobile}%` }}
+                    />
+                    <div
+                      className="bg-blue-400"
+                      style={{ width: `${desktop}%` }}
+                    />
+                  </div>
+                  <div className="mt-1.5 flex justify-between text-[0.7rem] text-v3-text-muted">
+                    <span>
+                      <strong className="text-v3-text">Mobile</strong> {mobile.toFixed(0)}%
+                    </span>
+                    <span>
+                      <strong className="text-v3-text">Desktop</strong> {desktop.toFixed(0)}%
+                    </span>
+                  </div>
+                </div>
+              ) : (
+                <StatsUnavailableValue variant="block" />
+              )}
           </PanelCard>
         </div>
       </Block>
     </section>
+    </StatsPeriodProvider>
   );
 }
