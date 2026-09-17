@@ -477,10 +477,11 @@ describe("SbMessageTriggerJobRepository", () => {
     it("findHistoryPageByBranch uses native UUID ordering and terminal cutoff guards", async () => {
         messageTriggerJobModel.findMany.mockResolvedValue([]);
         const snapshotAt = new Date("2026-07-09T00:00:00.123Z");
+        const afterId = "00000000-0000-4000-8000-000000000042";
 
         await repository.findHistoryPageByBranch("branch-1", {
             snapshotAt,
-            after: { source: "job", nativeId: "job-42" },
+            after: { source: "job", nativeId: afterId },
             limit: 11,
         });
 
@@ -494,10 +495,60 @@ describe("SbMessageTriggerJobRepository", () => {
                 ],
                 logs: { none: { branchId: "branch-1", createdAt: { lte: snapshotAt } } },
                 createdAt: { lte: snapshotAt },
-                AND: [{ id: { lt: "job-42" } }],
+                AND: [{ id: { lt: afterId } }],
             },
             orderBy: { id: "desc" },
             take: 11,
+        });
+    });
+
+    it("probes one branch-scoped failed candidate after the page read", async () => {
+        const snapshotAt = new Date("2026-07-09T00:00:00.123Z");
+        const afterId = "00000000-0000-4000-8000-000000000042";
+        messageTriggerJobModel.findMany.mockResolvedValueOnce([{ id: "candidate" }]);
+
+        await expect(repository.findHistoryPageSnapshotDriftByBranch("branch-1", {
+            snapshotAt,
+            after: { source: "job", nativeId: afterId },
+            limit: 11,
+        })).resolves.toBe(true);
+
+        expect(messageTriggerJobModel.findMany).toHaveBeenCalledWith({
+            where: {
+                branchId: "branch-1",
+                ruleId: { not: MESSAGE_AUTOMATION_INTENT_RULE_ID },
+                status: "failed",
+                createdAt: { lte: snapshotAt },
+                updatedAt: { gt: snapshotAt },
+                logs: { none: { branchId: "branch-1", createdAt: { lte: snapshotAt } } },
+                AND: [{ id: { lt: afterId } }],
+            },
+            select: { id: true },
+            take: 1,
+        });
+    });
+
+    it("keeps the drift probe bounded and excludes post-cutoff candidates", async () => {
+        const snapshotAt = new Date("2026-07-09T00:00:00.123Z");
+        messageTriggerJobModel.findMany.mockResolvedValueOnce([]);
+
+        await expect(repository.findHistoryPageSnapshotDriftByBranch("branch-1", {
+            snapshotAt,
+            after: null,
+            limit: 11,
+        })).resolves.toBe(false);
+
+        expect(messageTriggerJobModel.findMany).toHaveBeenCalledWith({
+            where: {
+                branchId: "branch-1",
+                ruleId: { not: MESSAGE_AUTOMATION_INTENT_RULE_ID },
+                status: "failed",
+                createdAt: { lte: snapshotAt },
+                updatedAt: { gt: snapshotAt },
+                logs: { none: { branchId: "branch-1", createdAt: { lte: snapshotAt } } },
+            },
+            select: { id: true },
+            take: 1,
         });
     });
 

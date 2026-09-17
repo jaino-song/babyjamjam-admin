@@ -371,6 +371,38 @@ export class SbMessageTriggerJobRepository implements IMessageTriggerJobReposito
         return rows.map((row) => this.toDomain(row));
     }
 
+    async findHistoryPageSnapshotDriftByBranch(
+        branchId: string,
+        query: MessageHistoryPageQuery,
+    ): Promise<boolean> {
+        const after = query.after;
+        const afterWhere = after?.source === "job"
+            ? { id: { lt: after.nativeId } }
+            : undefined;
+
+        // Failed jobs have no immutable terminal timestamp. A release claim
+        // can bump updatedAt while leaving status=failed, so a row that was
+        // eligible at the snapshot may disappear from the page predicate
+        // between requests. Probe only one branch-scoped candidate after the
+        // page read and force a fresh walk when one exists. The createdAt and
+        // log cutoff fences deliberately exclude post-snapshot rows and do
+        // not let a post-snapshot log suppress an eligible job.
+        const candidate = await this.prisma.message_trigger_job.findMany({
+            where: {
+                branchId,
+                ruleId: { not: MESSAGE_AUTOMATION_INTENT_RULE_ID },
+                status: "failed",
+                createdAt: { lte: query.snapshotAt },
+                updatedAt: { gt: query.snapshotAt },
+                logs: { none: { branchId, createdAt: { lte: query.snapshotAt } } },
+                ...(afterWhere ? { AND: [afterWhere] } : {}),
+            },
+            select: { id: true },
+            take: 1,
+        });
+        return candidate.length > 0;
+    }
+
     /**
      * Terminal jobs for a branch whose terminal transition landed at or
      * in `[since, until)` — `canceledAt` for a canceled row, `updatedAt` for a

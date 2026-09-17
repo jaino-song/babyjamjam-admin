@@ -2,6 +2,18 @@ import { MessageTriggerJobEntity } from "domain/entities/message-trigger-job.ent
 import type { Prisma } from "@prisma/client";
 import type { MessageHistoryPageQuery } from "domain/repositories/message-log.repository.interface";
 
+export const MESSAGE_HISTORY_SNAPSHOT_CHANGED_CODE = "MESSAGE_HISTORY_SNAPSHOT_CHANGED" as const;
+
+export class MessageHistorySnapshotChangedError extends Error {
+    readonly code = MESSAGE_HISTORY_SNAPSHOT_CHANGED_CODE;
+    readonly retryable = true;
+
+    constructor() {
+        super("메시지 발송 기록 스냅샷이 변경되어 다시 불러와야 합니다.");
+        this.name = "MessageHistorySnapshotChangedError";
+    }
+}
+
 export interface MessageTriggerJobCancellationScope {
     clientId?: number;
     employeeScheduleId?: number;
@@ -38,6 +50,15 @@ export interface IMessageTriggerJobRepository {
         branchId: string,
         query: MessageHistoryPageQuery,
     ): Promise<MessageTriggerJobEntity[]>;
+    /**
+     * Probe for a failed, pre-cutoff row whose mutable terminal timestamp moved
+     * after the page read. The implementation must remain branch-fenced and
+     * bounded to one candidate; a positive result forces a fresh walk.
+     */
+    findHistoryPageSnapshotDriftByBranch(
+        branchId: string,
+        query: MessageHistoryPageQuery,
+    ): Promise<boolean>;
     /**
      * Terminal (failed or canceled) jobs for a branch whose terminal
      * transition landed in `[since, until)` — `canceledAt` for a canceled

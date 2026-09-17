@@ -26,6 +26,7 @@ import {
 import { MessageLogEntity } from "domain/entities/message-log.entity";
 import { MessageTriggerRuleEntity } from "domain/entities/message-trigger-rule.entity";
 import { TriggerJobDeferredError } from "domain/errors/trigger-job-deferred.error";
+import { MESSAGE_HISTORY_SNAPSHOT_CHANGED_CODE } from "domain/repositories/message-trigger-job.repository.interface";
 import {
     SERVICE_RECORD_LINK_BRANCH_DISABLED_REASON,
     SERVICE_RECORD_LINK_SCHEDULING_RETRY_REASON,
@@ -322,6 +323,7 @@ describe("MessageTriggerService", () => {
             findUpcomingPendingByBranch: jest.fn().mockResolvedValue([]),
             findTerminalByBranch: jest.fn().mockResolvedValue([]),
             findHistoryPageByBranch: jest.fn().mockResolvedValue([]),
+            findHistoryPageSnapshotDriftByBranch: jest.fn().mockResolvedValue(false),
             hasActiveJobsBefore: jest.fn().mockResolvedValue(false),
             upsertPending: jest.fn().mockResolvedValue(undefined),
             cancelPendingByUser: jest.fn().mockResolvedValue(true),
@@ -4838,6 +4840,75 @@ describe("MessageTriggerService", () => {
             expect(jobRepository.findHistoryPageByBranch).toHaveBeenCalledWith(
                 branchId,
                 expect.objectContaining({ after: null, limit: 2 }),
+            );
+        });
+
+        it("fails closed with a retryable snapshot-drift error after reading terminal jobs", async () => {
+            const { service, ruleRepository, messageLogRepository, jobRepository } = createService();
+            ruleRepository.findAll.mockResolvedValue([]);
+            messageLogRepository.findHistoryPageByBranch.mockResolvedValue([]);
+            jobRepository.findHistoryPageByBranch.mockResolvedValue([
+                createJob({
+                    id: "00000000-0000-4000-8000-0000000000f0",
+                    status: "failed",
+                }),
+            ]);
+            jobRepository.findHistoryPageSnapshotDriftByBranch.mockResolvedValue(true);
+
+            await expect(service.listHistoryPage(branchId, 2)).rejects.toMatchObject({
+                status: 503,
+                response: expect.objectContaining({
+                    code: MESSAGE_HISTORY_SNAPSHOT_CHANGED_CODE,
+                    retryable: true,
+                }),
+            });
+            expect(jobRepository.findHistoryPageSnapshotDriftByBranch).toHaveBeenCalledWith(
+                branchId,
+                expect.objectContaining({ after: null, limit: 3 }),
+            );
+            expect(ruleRepository.findAll).not.toHaveBeenCalled();
+        });
+
+        it("rejects a failed row updated between page reads instead of silently omitting it", async () => {
+            const { service, ruleRepository, messageLogRepository, jobRepository } = createService();
+            ruleRepository.findAll.mockResolvedValue([]);
+            messageLogRepository.findHistoryPageByBranch.mockResolvedValue([]);
+            jobRepository.findHistoryPageByBranch
+                .mockResolvedValueOnce([
+                    createJob({
+                        id: "00000000-0000-4000-8000-0000000000f0",
+                        status: "failed",
+                    }),
+                    createJob({
+                        id: "00000000-0000-4000-8000-0000000000a0",
+                        status: "failed",
+                    }),
+                ])
+                .mockResolvedValueOnce([]);
+            jobRepository.findHistoryPageSnapshotDriftByBranch
+                .mockResolvedValueOnce(false)
+                .mockResolvedValueOnce(true);
+
+            const firstPage = await service.listHistoryPage(branchId, 1);
+            expect(firstPage.page.hasMore).toBe(true);
+            await expect(
+                service.listHistoryPage(branchId, 1, firstPage.page.nextCursor ?? undefined),
+            ).rejects.toMatchObject({
+                status: 503,
+                response: expect.objectContaining({
+                    code: MESSAGE_HISTORY_SNAPSHOT_CHANGED_CODE,
+                    retryable: true,
+                }),
+            });
+            expect(jobRepository.findHistoryPageSnapshotDriftByBranch).toHaveBeenNthCalledWith(
+                2,
+                branchId,
+                expect.objectContaining({
+                    after: {
+                        source: "job",
+                        nativeId: "00000000-0000-4000-8000-0000000000f0",
+                    },
+                }),
             );
         });
 

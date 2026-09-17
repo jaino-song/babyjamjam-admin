@@ -56,8 +56,10 @@ import { isRuleActiveForBranch } from "domain/utils/message-trigger-rule-activat
 import { isManualMessageTriggerJob, isManualMessageTriggerRule } from "domain/constants/message-trigger-job-ownership";
 import { SERVICE_END_NOTICE_ALREADY_SENT_CANCEL_REASON } from "domain/constants/service-end-notice-message";
 import {
+    MESSAGE_HISTORY_SNAPSHOT_CHANGED_CODE,
     MESSAGE_TRIGGER_JOB_REPOSITORY,
     IMessageTriggerJobRepository,
+    MessageHistorySnapshotChangedError,
 } from "domain/repositories/message-trigger-job.repository.interface";
 import {
     MESSAGE_LOG_REPOSITORY,
@@ -794,16 +796,35 @@ export class MessageTriggerService {
         const visibleLogs = logs.slice(0, limit);
         const logLookahead = logs.length > limit;
         const remainingSlots = Math.max(limit - visibleLogs.length, 0);
-        const terminalJobs = hasTriggerSchema && !logLookahead
-            ? await this.jobRepository.findHistoryPageByBranch(branchId, {
+        let terminalJobs: MessageTriggerJobEntity[] = [];
+        if (hasTriggerSchema && !logLookahead) {
+            // Read the terminal page first, then probe for a failed row whose
+            // mutable updatedAt moved after the snapshot while this page was
+            // being assembled. A positive probe fails closed so the caller
+            // restarts from a fresh cursor/snapshot instead of silently
+            // publishing a partial history walk.
+            const jobPageQuery = {
                 snapshotAt,
                 after,
                 // One extra row detects a job continuation when logs fill the
                 // page exactly; otherwise read only the remaining slots plus
                 // one lookahead row.
                 limit: remainingSlots + 1,
-            })
-            : [];
+            };
+            terminalJobs = await this.jobRepository.findHistoryPageByBranch(branchId, jobPageQuery);
+            const snapshotDrifted = await this.jobRepository.findHistoryPageSnapshotDriftByBranch(
+                branchId,
+                jobPageQuery,
+            );
+            if (snapshotDrifted) {
+                const error = new MessageHistorySnapshotChangedError();
+                throw new ServiceUnavailableException({
+                    code: MESSAGE_HISTORY_SNAPSHOT_CHANGED_CODE,
+                    retryable: error.retryable,
+                    message: error.message,
+                });
+            }
+        }
 
         const triggerJobIds = visibleLogs
             .map((log) => log.triggerJobId)

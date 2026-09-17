@@ -1,4 +1,4 @@
-import { renderHook, waitFor } from "@testing-library/react";
+import { act, renderHook, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactNode } from "react";
 
@@ -246,6 +246,31 @@ describe("useMessageHistory cursor pagination", () => {
       ),
     ).toBe(MESSAGE_HISTORY_REFRESH_INTERVAL_MS * 2);
     expect(mockListHistoryPage).toHaveBeenCalledTimes(2);
+  });
+
+  it("restarts a failed walk from the first cursor on the next refetch", async () => {
+    const firstRecord = createRecord(1);
+    const refreshedRecord = createRecord(2, { clientName: "새로 고친 기록" });
+    mockListHistoryPage
+      .mockResolvedValueOnce(page([firstRecord], { nextCursor: "cursor-1", hasMore: true }))
+      .mockRejectedValueOnce(new Error("snapshot changed"))
+      .mockResolvedValueOnce(page([refreshedRecord], { snapshot: "2026-09-17T03:00:00.000Z" }));
+
+    const { result } = renderHook(() => useMessageHistory(), { wrapper: createWrapper() });
+
+    await waitFor(() => expect(result.current.isError).toBe(true));
+    expect(result.current.data).toBeUndefined();
+
+    await act(async () => {
+      await result.current.refetch();
+    });
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+
+    expect(result.current.data).toEqual([refreshedRecord]);
+    expect(mockListHistoryPage).toHaveBeenCalledTimes(3);
+    expect(mockListHistoryPage.mock.calls[0][1]).toBeUndefined();
+    expect(mockListHistoryPage.mock.calls[1][1]).toBe("cursor-1");
+    expect(mockListHistoryPage.mock.calls[2][1]).toBeUndefined();
   });
 
   it("propagates the same abort signal through a later page", async () => {
