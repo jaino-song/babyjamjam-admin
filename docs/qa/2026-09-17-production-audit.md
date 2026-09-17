@@ -214,7 +214,7 @@ CLIENT-001은 확인한 중복 번호 시나리오 하나의 결과이며 모든
 | `/system-admin` | BRANCH-001/003/004 |
 | `/test` | 미실행 |
 | `/website-admin` | WEBSITE-001 조회만 |
-| `/service-record-admin/[clientId]` | 미실행 |
+| `/service-record-admin/[clientId]` | dev QA163 직접 경로·5일 목록·1회차 초안 확인/복귀 검수; 제출·서명 완료 아님 |
 | `/logout` | 미실행 |
 
 ### 모바일 배포 페이지 목록 (51)
@@ -244,32 +244,32 @@ CLIENT-001은 확인한 중복 번호 시나리오 하나의 결과이며 모든
 | `/clients` | MOBILE-001 초기 표시 확인 |
 | `/consultations` | 미실행 |
 | `/contracts/creation` | 미실행 |
-| `/contracts/new` | 미실행 |
-| `/contracts` | 미실행 |
-| `/dashboard/analytics` | 미실행 |
-| `/dashboard` | 미실행 |
+| `/contracts/new` | dev QA 사전 입력 4단계·이전/닫기 및 날짜 오류 검수; 실제 발급 미완료 — 쓰기 검수 기록 참조 |
+| `/contracts` | dev QA 실제 생성 문서 목록·서명 대기 필터·상세 3탭·PDF 표시·복귀 확인; 본문 연락처 오류, 모바일 다운로드 미확인 |
+| `/dashboard/analytics` | dev QA 시작 예정 집계 수정 후 1명 확인; 상세 차트는 준비 중 안내 |
+| `/dashboard` | dev QA 필터·빈 상태·고객 상세·집계 수정 검수; 카드/목록 1명 일치, 첫50명 제한 잔존 |
 | `/employees/new` | 미실행 |
 | `/employees` | 미실행 |
-| `/employees/schedule` | 미실행 |
+| `/employees/schedule` | dev QA 390px 날짜 배지 수정 후 일자21/전체 날짜 확인; 읽기 전용 목록 |
 | `/files` | 미실행 |
 | `/files/upload` | 미실행 |
 | `/logout` | 미실행 |
-| `/messages/automation` | 미실행 |
+| `/messages/automation` | dev QA 규칙 목록·상세·복귀 읽기 검수; 설정 저장·토글은 이 검수에서 실행하지 않음 |
 | `/messages/history` | MESSAGE-005 앱 성공 기록·본문·재조회 |
 | `/messages/new` | MOBILE-003, MESSAGE-005 |
 | `/messages` | 미실행 |
 | `/messages/scheduled` | 미실행 |
 | `/messages/sender-approval` | 미실행 |
 | `/messages/settings` | 미실행 |
-| `/messages/system-templates/[templateKey]` | 미실행 |
+| `/messages/system-templates/[templateKey]` | dev QA GREETING 본문·데스크톱 편집 안내·상세 닫기 확인; 나머지 템플릿 미검수 |
 | `/messages/system-templates` | 미실행 |
 | `/messages/templates/[id]/edit` | 미실행 |
 | `/messages/templates/new` | 미실행 |
-| `/messages/templates` | 미실행 |
-| `/notification` | 미실행 |
-| `/notifications` | 미실행 |
+| `/messages/templates` | dev QA 390px 목록·기본9/지점0·빈 필터·상세/복귀 읽기 검수; 생성/편집 미실행 |
+| `/notification` | dev QA390px 비활성 채널과 이유 표시 확인; 전체 디바이스 테스트 발송 제외 |
+| `/notifications` | dev QA /notification으로 정상 이동 확인 |
 | `/` | 미실행 |
-| `/prices` | 미실행 |
+| `/prices` | dev QA390px 연도·유형·빈 결과·필터 복원·A가1형 금액 확인; 업데이트/공식 가격 대조 미실행 |
 | `/privacy` | 미실행 |
 | `/select-branch` | 미실행 |
 | `/settings` | 미실행 |
