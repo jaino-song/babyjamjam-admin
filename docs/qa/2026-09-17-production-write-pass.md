@@ -208,3 +208,14 @@
 - Performed authenticated read-only GET of the exact QA-linked provider template with `is_include_config=true`; HTTP200. Credentials and raw member/group identities were not printed or persisted. No create/send request.
 - Confirmed workflow includes writer, two participant steps and completion. The latter participant has a pre-specified group recipient (`use_receipient_specified=true`) and mail/SMS/Alimtalk settings enabled; template alerts also enable mail/SMS for that step.
 - BLOCKED controlled issue: application payload supplies the controlled customer and non-notifying internal user, but precedence over the provider's fixed group settings is not proven. Need isolated QA provider template or verified provider behavior before issuance. Do not reinterpret the read-only metadata request as a document issue or delivery.
+
+
+## QA template isolation and requested entity writes — 2026-09-18
+
+- User explicitly authorized QA-only template separation and customer/provider creation/edit using newly supplied controlled contacts. Dev DB identity verified; UI branch remained `qa-local-20260917`. No code, env, auth or schema changes.
+- Created external template `QA 전용 산모 계약서 20260918` by cloning source `7a632a0c98a04bf38e678affcb73f815`, preserving source. New id `3868b1fc23aa4013a10e0415636da609`; title prefix QA_TEST. Removed inherited group recipient by making both participant recipients mandatory at send time. Existing single-owner template permissions retained. Saved and released only this QA copy.
+- Provider GET verification: enabled/released true; both participant steps have zero fixed recipients, specified-recipient false and outsider-auto-info false. Guarded dev transaction replaced only QA area `QA20260917Namdonggu` doc_template row `225bbc06-f32a-4472-b90f-95e457eff05d`; production bindings untouched. App selector now displays `QA 전용 산모`.
+- Created customer163 `테스트 고객` through UI. Synthetic required birthday1990-01-15 and QA-only address used. Before creation, dev mirror search found zero matching-phone documents. Message automation switch OFF before submit.
+- Updated customer address to `QA 테스트 전용 수정 주소` and enabled breast-pump rental; save, reload and reselection show both changes retained, original requested name/phone unchanged.
+- Created employee133 `테스트 제공인력` through UI with standard grade, Namdong work area and assignment available. Updated grade to best; reload/reselection shows best grade, exact requested name/phone and Namdong area retained.
+- Read-only DB verification confirms both new IDs belong to the QA branch; customer address/birthday and employee grade/workArea/availability match UI. No actual contract or message send invoked in this pass. Remaining broad QA is not complete.
