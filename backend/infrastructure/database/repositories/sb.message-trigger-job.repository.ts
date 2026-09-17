@@ -350,18 +350,17 @@ export class SbMessageTriggerJobRepository implements IMessageTriggerJobReposito
             where: {
                 branchId,
                 ruleId: { not: MESSAGE_AUTOMATION_INTENT_RULE_ID },
-                // Canceled and failed rows have different terminal clocks. A
-                // post-cutoff log must not hide a job that was already terminal
-                // in this snapshot; the relation filter suppresses only logs
-                // that were present at the same cutoff.
-                OR: [
-                    { status: "canceled", canceledAt: { not: null, lte: query.snapshotAt } },
-                    { status: "failed", updatedAt: { lte: query.snapshotAt } },
-                ],
+                // History is a current-state view. The application cutoff
+                // fences immutable creation only; current status changes may
+                // appear or disappear between page requests and are allowed
+                // to settle on the next poll.
+                status: { in: ["failed", "canceled"] },
+                // A post-cutoff log must not hide a job that is currently
+                // terminal; suppress only logs present at this cutoff.
                 logs: { none: { branchId, createdAt: { lte: query.snapshotAt } } },
-                // Native UUID ordering is the continuation key. The
-                // timestamptz(6) created-at cutoff is eligibility only; it is
-                // never serialized into or compared as a cursor position.
+                // Native UUID ordering is the continuation key. The createdAt
+                // cutoff is eligibility only; it is never serialized into or
+                // compared as a cursor position.
                 createdAt: { lte: query.snapshotAt },
                 ...(afterWhere ? { AND: [afterWhere] } : {}),
             },
@@ -369,37 +368,6 @@ export class SbMessageTriggerJobRepository implements IMessageTriggerJobReposito
             take: query.limit,
         });
         return rows.map((row) => this.toDomain(row));
-    }
-
-    async findHistoryPageSnapshotDriftByBranch(
-        branchId: string,
-        query: MessageHistoryPageQuery,
-    ): Promise<boolean> {
-        const after = query.after;
-        const afterWhere = after?.source === "job"
-            ? { id: { lt: after.nativeId } }
-            : undefined;
-
-        // A release claim or cancellation resurrection can bump updatedAt
-        // while changing a row out of the terminal page predicate. Probe any
-        // current state, not only failed rows, after the page read and force a
-        // fresh walk when one exists. The createdAt and log cutoff fences
-        // deliberately exclude post-cutoff rows and do not let a post-cutoff
-        // log suppress an eligible job. Equality is fail-closed because
-        // timestamp precision may differ between the database and JS Date.
-        const candidate = await this.prisma.message_trigger_job.findMany({
-            where: {
-                branchId,
-                ruleId: { not: MESSAGE_AUTOMATION_INTENT_RULE_ID },
-                createdAt: { lte: query.snapshotAt },
-                updatedAt: { gte: query.snapshotAt },
-                logs: { none: { branchId, createdAt: { lte: query.snapshotAt } } },
-                ...(afterWhere ? { AND: [afterWhere] } : {}),
-            },
-            select: { id: true },
-            take: 1,
-        });
-        return candidate.length > 0;
     }
 
     /**

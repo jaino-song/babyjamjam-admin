@@ -474,7 +474,7 @@ describe("SbMessageTriggerJobRepository", () => {
         });
     });
 
-    it("findHistoryPageByBranch uses native UUID ordering and terminal cutoff guards", async () => {
+    it("findHistoryPageByBranch uses current terminal status, UUID ordering, and cutoff log suppression", async () => {
         messageTriggerJobModel.findMany.mockResolvedValue([]);
         const snapshotAt = new Date("2026-07-09T00:00:00.123Z");
         const afterId = "00000000-0000-4000-8000-000000000042";
@@ -489,64 +489,13 @@ describe("SbMessageTriggerJobRepository", () => {
             where: {
                 branchId: "branch-1",
                 ruleId: { not: MESSAGE_AUTOMATION_INTENT_RULE_ID },
-                OR: [
-                    { status: "canceled", canceledAt: { not: null, lte: snapshotAt } },
-                    { status: "failed", updatedAt: { lte: snapshotAt } },
-                ],
+                status: { in: ["failed", "canceled"] },
                 logs: { none: { branchId: "branch-1", createdAt: { lte: snapshotAt } } },
                 createdAt: { lte: snapshotAt },
                 AND: [{ id: { lt: afterId } }],
             },
             orderBy: { id: "desc" },
             take: 11,
-        });
-    });
-
-    it("probes any branch-scoped state change after the page read", async () => {
-        const snapshotAt = new Date("2026-07-09T00:00:00.123Z");
-        const afterId = "00000000-0000-4000-8000-000000000042";
-        messageTriggerJobModel.findMany.mockResolvedValueOnce([{ id: "candidate" }]);
-
-        await expect(repository.findHistoryPageSnapshotDriftByBranch("branch-1", {
-            snapshotAt,
-            after: { source: "job", nativeId: afterId },
-            limit: 11,
-        })).resolves.toBe(true);
-
-        expect(messageTriggerJobModel.findMany).toHaveBeenCalledWith({
-            where: {
-                branchId: "branch-1",
-                ruleId: { not: MESSAGE_AUTOMATION_INTENT_RULE_ID },
-                createdAt: { lte: snapshotAt },
-                updatedAt: { gte: snapshotAt },
-                logs: { none: { branchId: "branch-1", createdAt: { lte: snapshotAt } } },
-                AND: [{ id: { lt: afterId } }],
-            },
-            select: { id: true },
-            take: 1,
-        });
-    });
-
-    it("keeps the drift probe bounded and excludes post-cutoff candidates", async () => {
-        const snapshotAt = new Date("2026-07-09T00:00:00.123Z");
-        messageTriggerJobModel.findMany.mockResolvedValueOnce([]);
-
-        await expect(repository.findHistoryPageSnapshotDriftByBranch("branch-1", {
-            snapshotAt,
-            after: null,
-            limit: 11,
-        })).resolves.toBe(false);
-
-        expect(messageTriggerJobModel.findMany).toHaveBeenCalledWith({
-            where: {
-                branchId: "branch-1",
-                ruleId: { not: MESSAGE_AUTOMATION_INTENT_RULE_ID },
-                createdAt: { lte: snapshotAt },
-                updatedAt: { gte: snapshotAt },
-                logs: { none: { branchId: "branch-1", createdAt: { lte: snapshotAt } } },
-            },
-            select: { id: true },
-            take: 1,
         });
     });
 

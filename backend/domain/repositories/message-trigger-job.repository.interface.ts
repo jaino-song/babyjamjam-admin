@@ -2,18 +2,6 @@ import { MessageTriggerJobEntity } from "domain/entities/message-trigger-job.ent
 import type { Prisma } from "@prisma/client";
 import type { MessageHistoryPageQuery } from "domain/repositories/message-log.repository.interface";
 
-export const MESSAGE_HISTORY_SNAPSHOT_CHANGED_CODE = "MESSAGE_HISTORY_SNAPSHOT_CHANGED" as const;
-
-export class MessageHistorySnapshotChangedError extends Error {
-    readonly code = MESSAGE_HISTORY_SNAPSHOT_CHANGED_CODE;
-    readonly retryable = true;
-
-    constructor() {
-        super("발송 기록이 변경되었습니다. 잠시 후 다시 확인해 주세요.");
-        this.name = "MessageHistorySnapshotChangedError";
-    }
-}
-
 export interface MessageTriggerJobCancellationScope {
     clientId?: number;
     employeeScheduleId?: number;
@@ -42,25 +30,14 @@ export interface IMessageTriggerJobRepository {
         limit?: number,
     ): Promise<MessageTriggerJobEntity[]>;
     /**
-     * Read failed/canceled history in the same immutable tuple order as
-     * message logs. Terminal eligibility uses its terminal timestamp only for
-     * the initial snapshot cutoff; createdAt remains the page cursor key.
+     * Read current failed/canceled history in the same immutable tuple order
+     * as message logs. The application cutoff fences immutable createdAt only;
+     * current status is intentionally read as of each request.
      */
     findHistoryPageByBranch(
         branchId: string,
         query: MessageHistoryPageQuery,
     ): Promise<MessageTriggerJobEntity[]>;
-    /**
-     * Probe for any pre-cutoff row whose mutable state timestamp reached the
-     * application cutoff while the page was being read. The implementation
-     * must remain branch-fenced and bounded to one candidate; a positive result
-     * forces a fresh walk. Equality is treated as drift because database and
-     * application clocks can differ in sub-millisecond precision.
-     */
-    findHistoryPageSnapshotDriftByBranch(
-        branchId: string,
-        query: MessageHistoryPageQuery,
-    ): Promise<boolean>;
     /**
      * Terminal (failed or canceled) jobs for a branch whose terminal
      * transition landed in `[since, until)` — `canceledAt` for a canceled

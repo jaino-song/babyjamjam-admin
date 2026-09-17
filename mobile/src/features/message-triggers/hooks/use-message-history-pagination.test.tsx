@@ -206,7 +206,7 @@ describe("useMessageHistory cursor pagination", () => {
     expect(mockListHistoryPage).toHaveBeenCalledTimes(3);
   });
 
-  it("rejects snapshot drift before exposing records", async () => {
+  it("rejects an inconsistent page cutoff before exposing records", async () => {
     mockListHistoryPage
       .mockResolvedValueOnce(page([createRecord(1)], { nextCursor: "cursor-1", hasMore: true }))
       .mockResolvedValueOnce(page([createRecord(2)], { snapshot: "2026-09-17T03:00:00.000Z" }));
@@ -253,7 +253,7 @@ describe("useMessageHistory cursor pagination", () => {
     const refreshedRecord = createRecord(2, { clientName: "새로 고친 기록" });
     mockListHistoryPage
       .mockResolvedValueOnce(page([firstRecord], { nextCursor: "cursor-1", hasMore: true }))
-      .mockRejectedValueOnce(new Error("snapshot changed"))
+      .mockRejectedValueOnce(new Error("history page unavailable"))
       .mockResolvedValueOnce(page([refreshedRecord], { snapshot: "2026-09-17T03:00:00.000Z" }));
 
     const { result } = renderHook(() => useMessageHistory(), { wrapper: createWrapper() });

@@ -56,10 +56,8 @@ import { isRuleActiveForBranch } from "domain/utils/message-trigger-rule-activat
 import { isManualMessageTriggerJob, isManualMessageTriggerRule } from "domain/constants/message-trigger-job-ownership";
 import { SERVICE_END_NOTICE_ALREADY_SENT_CANCEL_REASON } from "domain/constants/service-end-notice-message";
 import {
-    MESSAGE_HISTORY_SNAPSHOT_CHANGED_CODE,
     MESSAGE_TRIGGER_JOB_REPOSITORY,
     IMessageTriggerJobRepository,
-    MessageHistorySnapshotChangedError,
 } from "domain/repositories/message-trigger-job.repository.interface";
 import {
     MESSAGE_LOG_REPOSITORY,
@@ -756,10 +754,11 @@ export class MessageTriggerService {
     }
 
     /**
-     * Read history one bounded page at a time. The initial
-     * snapshot is an application-time eligibility cutoff, not a multi-request
+     * Read history one bounded page at a time. The initial snapshot is an
+     * application-time createdAt eligibility cutoff, not a multi-request
      * database MVCC transaction: rows created after it may be deferred to the
-     * next fresh walk, while state drift is detected and retried fail-closed.
+     * next fresh walk, while current status changes may appear or disappear
+     * as the view is read.
      * Each source is ordered by its immutable native id; mutable retry
      * timestamps remain presentation fields and never move a cursor, including
      * when database timestamps have microsecond precision.
@@ -797,35 +796,16 @@ export class MessageTriggerService {
         const visibleLogs = logs.slice(0, limit);
         const logLookahead = logs.length > limit;
         const remainingSlots = Math.max(limit - visibleLogs.length, 0);
-        let terminalJobs: MessageTriggerJobEntity[] = [];
-        if (hasTriggerSchema && !logLookahead) {
-            // Read the terminal page first, then probe for any pre-cutoff row
-            // whose mutable updatedAt reached the application cutoff while
-            // this page was assembled. A positive probe fails closed so the
-            // caller restarts from a fresh cursor/snapshot instead of silently
-            // publishing a partial history walk.
-            const jobPageQuery = {
+        const terminalJobs = hasTriggerSchema && !logLookahead
+            ? await this.jobRepository.findHistoryPageByBranch(branchId, {
                 snapshotAt,
                 after,
                 // One extra row detects a job continuation when logs fill the
                 // page exactly; otherwise read only the remaining slots plus
                 // one lookahead row.
                 limit: remainingSlots + 1,
-            };
-            terminalJobs = await this.jobRepository.findHistoryPageByBranch(branchId, jobPageQuery);
-            const snapshotDrifted = await this.jobRepository.findHistoryPageSnapshotDriftByBranch(
-                branchId,
-                jobPageQuery,
-            );
-            if (snapshotDrifted) {
-                const error = new MessageHistorySnapshotChangedError();
-                throw new ServiceUnavailableException({
-                    code: MESSAGE_HISTORY_SNAPSHOT_CHANGED_CODE,
-                    retryable: error.retryable,
-                    message: error.message,
-                });
-            }
-        }
+            })
+            : [];
 
         const triggerJobIds = visibleLogs
             .map((log) => log.triggerJobId)
