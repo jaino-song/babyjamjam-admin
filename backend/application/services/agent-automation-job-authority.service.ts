@@ -10,9 +10,10 @@ import { agentBindingHash } from "domain/repositories/agent-linked-action.types"
 import { AligoDefaultSenderPolicyService } from "./aligo-default-sender-policy.service";
 import { ClientAutomationSourceReader } from "./client-automation-source.reader";
 import { describeClientMessageEffect } from "./client-message-effect-recipe";
+import { buildEmployeeAssignmentMessageEffect } from "./employee-assignment-message-effect-recipe";
 import type { SmsTriggerDeliverySnapshot } from "./sms-trigger-delivery.service";
 import { agentAutomationConcreteJobDigest, agentAutomationSourcePayload } from "./agent-automation-job-binding";
-import { buildClientMessageRecipe, buildMessageRecipeDedupeKey } from "./message-trigger-recipes";
+import { buildClientMessageRecipe, buildEmployeeAssignmentMessageRecipe, buildMessageRecipeDedupeKey } from "./message-trigger-recipes";
 import { z } from "zod";
 
 const catchUpSchema = z.object({ batchId: z.string(), sequence: z.number().int().positive(),
@@ -84,6 +85,11 @@ export class AgentAutomationJobAuthorityService {
     ) {
         // Dedicated schedule/link owners require their bounded recipe adapters;
         // a known task scope cannot acquire authority from a generic substitute.
+        if (input.scope.kind === "employee-assignment") {
+            return this.describeCurrentEmployeeAssignmentEffect(transaction, job, input, render, preparedSnapshotHash);
+        }
+        // service-record-link intentionally remains unsupported until its
+        // token/link owner supplies a bounded authority adapter.
         if (input.scope.kind !== "client-rule") return null;
         const settings = await this.sources.readClientAutomationSettings(input.scope.branchId, transaction);
         if (settings.status !== "available") return null;
@@ -134,6 +140,65 @@ export class AgentAutomationJobAuthorityService {
                 return current;
             } } });
         return described.status === "effect" ? described.effect : null;
+    }
+
+    private async describeCurrentEmployeeAssignmentEffect(
+        transaction: Prisma.TransactionClient,
+        job: MessageTriggerJobEntity,
+        input: Parameters<DescribeCurrentAutomationEffect>[0],
+        render: CanonicalAutomationRenderer,
+        preparedSnapshotHash?: string,
+    ) {
+        const settings = await this.sources.readClientAutomationSettings(input.scope.branchId, transaction);
+        if (settings.status !== "available" || input.scope.scheduleId === null || job.employeeScheduleId !== input.scope.scheduleId) {
+            return null;
+        }
+        const rule = settings.rules.find(({ id, branchId }) => id === input.scope.ruleId && branchId === input.scope.branchId);
+        if (!rule) return null;
+
+        // The source reader is branch/client scoped and excludes replaced or
+        // terminated schedules. It also carries the immutable incarnation
+        // needed to keep numeric schedule-id reuse from inheriting authority.
+        const schedules = await this.sources.readClientAutomationSchedules(input.scope.branchId, input.scope.clientId, transaction);
+        const schedule = schedules.find(({ id }) => id === input.scope.scheduleId);
+        if (!schedule || rule.templateKey !== job.templateKey || rule.recipientType !== job.recipientType) return null;
+
+        const source = agentAutomationSourcePayload(job.payload);
+        const concrete = buildEmployeeAssignmentMessageRecipe(rule, schedule, job.scheduledFor);
+        if (!concrete || job.scheduledFor.getTime() !== concrete.scheduledFor.getTime()
+            || job.dedupeKey !== concrete.dedupeKey || job.recipientPhone !== concrete.recipientPhone
+            || agentBindingHash(source) !== agentBindingHash(concrete.payload)) return null;
+
+        const sender = this.sender.read();
+        const policy = {
+            dispatchEnabled: settings.dispatchEnabled,
+            senderApproved: settings.senderApproved,
+            senderIdentityDigest: sender.availability === "available" ? sender.identityDigest : null,
+            senderApprovedAt: settings.senderApprovedAt?.toISOString() ?? null,
+            pastTriggerEnabled: settings.pastTriggerEnabled,
+            pastTriggerConfig: settings.pastTriggerConfig,
+        };
+        let snapshot: Readonly<SmsTriggerDeliverySnapshot>;
+        try {
+            snapshot = await render(job, transaction);
+        } catch {
+            // EMPLOYEE_ASSIGNED currently has no generic SMS provider mapping;
+            // a future bounded delivery owner may supply one. Until then this
+            // path remains fail-closed, just like service-record-link.
+            return null;
+        }
+        if (preparedSnapshotHash !== undefined && snapshot.snapshotHash !== preparedSnapshotHash) return null;
+        return buildEmployeeAssignmentMessageEffect({
+            branchId: input.scope.branchId,
+            subject: input.subject,
+            rule,
+            schedule,
+            scheduleIdentity: input.scope.scheduleIdentity ?? "",
+            recipe: concrete,
+            snapshot,
+            change: input.change,
+            policy,
+        });
     }
 
     private async hasCanonicalCatchUpPredecessorChain(
