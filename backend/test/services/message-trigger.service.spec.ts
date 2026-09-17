@@ -5000,6 +5000,92 @@ describe("MessageTriggerService", () => {
             ]);
         });
 
+        it("walks more than 200 static records while an ordinary pending job becomes processing and sent", async () => {
+            const { service, prisma, ruleRepository } = createService();
+            ruleRepository.findAll.mockResolvedValue([]);
+            const logRows = Array.from({ length: 205 }, (_, index) => {
+                const id = 205 - index;
+                return createLog({
+                    id,
+                    createdAt: new Date(1_704_067_200_000 + index * 60_000),
+                    updatedAt: new Date(1_704_067_200_000 + index * 60_000),
+                });
+            });
+            const terminalRows = [
+                createJob({ id: "00000000-0000-4000-8000-0000000000f0", status: "failed" }),
+                createJob({ id: "00000000-0000-4000-8000-0000000000e0", status: "canceled" }),
+                createJob({ id: "00000000-0000-4000-8000-0000000000d0", status: "failed" }),
+            ];
+            const ordinaryJob = createJob({
+                id: "00000000-0000-4000-8000-0000000000b0",
+                status: "pending",
+            });
+            const jobRows = [...terminalRows, ordinaryJob];
+            type LogHistoryQuery = {
+                where?: { AND?: Array<{ id?: { lt?: number } }> };
+                take?: number;
+            };
+            type JobHistoryQuery = {
+                where: {
+                    branchId?: string;
+                    status?: { in?: string[] };
+                    createdAt?: { lte?: Date };
+                    AND?: Array<{ id?: { lt?: string } }>;
+                };
+                take?: number;
+            };
+            prisma.message_log.findMany.mockImplementation(async (query: LogHistoryQuery) => {
+                const afterId = query.where?.AND?.[0]?.id?.lt;
+                return logRows
+                    .filter((row) => afterId === undefined || row.id < afterId)
+                    .slice(0, query.take ?? logRows.length);
+            });
+            prisma.message_trigger_job.findMany.mockImplementation(async (query: JobHistoryQuery) => {
+                const afterId = query.where.AND?.[0]?.id?.lt;
+                const cutoff = query.where.createdAt?.lte;
+                return jobRows
+                    .filter((row) => row.branchId === query.where.branchId)
+                    .filter((row) => query.where.status?.in?.includes(row.status) ?? false)
+                    .filter((row) => cutoff === undefined || row.createdAt <= cutoff)
+                    .filter((row) => afterId === undefined || row.id < afterId)
+                    .sort((left, right) => right.id.localeCompare(left.id))
+                    .slice(0, query.take ?? terminalRows.length);
+            });
+
+            const serviceInternals = service as unknown as {
+                messageLogRepository: unknown;
+                jobRepository: unknown;
+            };
+            serviceInternals.messageLogRepository = new SbMessageLogRepository(prisma as never);
+            serviceInternals.jobRepository = new SbMessageTriggerJobRepository(prisma as never);
+
+            const ids: Array<number | string> = [];
+            let cursor: string | undefined;
+            for (let pageIndex = 0; pageIndex < 10; pageIndex += 1) {
+                ordinaryJob.status = pageIndex === 0
+                    ? "pending"
+                    : pageIndex === 1
+                        ? "processing"
+                        : "sent";
+                const result = await service.listHistoryPage(branchId, 50, cursor);
+                ids.push(...result.items.map((item) => item.id));
+                if (!result.page.hasMore) break;
+                cursor = result.page.nextCursor ?? undefined;
+            }
+
+            expect(ids).toHaveLength(208);
+            expect(new Set(ids.map(String)).size).toBe(208);
+            expect(ids.slice(0, 3)).toEqual([205, 204, 203]);
+            expect(ids.slice(-3)).toEqual([
+                "job:00000000-0000-4000-8000-0000000000f0",
+                "job:00000000-0000-4000-8000-0000000000e0",
+                "job:00000000-0000-4000-8000-0000000000d0",
+            ]);
+            expect(ids).not.toContain("job:00000000-0000-4000-8000-0000000000b0");
+            expect(ordinaryJob.status).toBe("sent");
+            expect(prisma.message_log.findMany).toHaveBeenCalledTimes(5);
+        });
+
         it("walks older-created logs exactly once through the real service and repositories", async () => {
             const { service, prisma, ruleRepository } = createService();
             ruleRepository.findAll.mockResolvedValue([]);
