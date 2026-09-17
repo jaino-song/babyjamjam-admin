@@ -34,6 +34,10 @@ import {
     conversationMessageHash,
 } from "application/agent/conversation-task-policy";
 import { DeterministicAgentLanguageModel } from "infrastructure/agent/deterministic-agent-language-model";
+import { createAgentAutomationQuestion } from "application/agent/agent-automation-question";
+import type { AgentTaskAutomationPort } from "application/agent/agent-task-automation.service";
+import type { AgentAutomationEffect } from "domain/entities/agent-automation-consent";
+import { agentBindingHash } from "domain/repositories/agent-linked-action.types";
 
 /**
  * These are real database and HTTP checks. They are opt-in through the same
@@ -123,8 +127,18 @@ describeAgentE2E("conversation task runtime against the guarded local database",
         findByIdForUpdate: jest.fn().mockImplementation(async (_branchId: string, id: number) => clientsById.get(id) ?? null),
     };
 
-    function service(): AgentTaskService {
-        return new AgentTaskService(repository as never, policyStub() as never, clients as never);
+    const automation: AgentTaskAutomationPort = { evaluate: jest.fn(async (task) => {
+        const effects: AgentAutomationEffect[] = [{ kind: "client-rule", ruleId: "synthetic-rule", scheduleId: null,
+            recipientType: "client", templateKey: "SERVICE_INFO", change: "refresh",
+            recipientDigest: agentBindingHash(task.draft.server.references.target?.clientId),
+            sourceDigest: agentBindingHash(task.draft.confirmed.name), templateDigest: "c".repeat(64),
+            policyDigest: "d".repeat(64), recipeDigest: "e".repeat(64) }];
+        return { version: 1 as const, effects, noSendAtPresentation: task.draft.constraints.noSend,
+            question: createAgentAutomationQuestion({ effects, availability: "available", previous: task.draft.server.automation?.question }) };
+    }) };
+
+    function service(automationPort?: AgentTaskAutomationPort): AgentTaskService {
+        return new AgentTaskService(repository as never, policyStub() as never, clients as never, undefined, automationPort);
     }
 
     /**
@@ -202,7 +216,16 @@ describeAgentE2E("conversation task runtime against the guarded local database",
         eventId?: string;
         draft?: AgentTaskDraft;
     }) {
-        const target = input.target ?? makeClient(401);
+        const values = input.target ?? makeClient(401);
+        const row = await prisma.client.create({ data: {
+            branchId: BRANCH_ID, name: values.name, phone: values.phone, address: values.address,
+            type: values.type, duration: values.duration, fullPrice: values.fullPrice, grant: values.grant,
+            actualPrice: values.actualPrice, startDate: values.startDate, endDate: values.endDate,
+            dueDate: values.dueDate, birthDate: values.birthDate, careCenter: values.careCenter,
+            voucherClient: values.voucherClient, birthday: values.birthday, serviceStatus: values.serviceStatus,
+            breastPump: values.breastPump, areaId: values.areaId,
+        } });
+        const target = row as unknown as ClientEntity;
         clientsById.set(target.id, target);
         const targetRef = input.targetRef ?? randomUUID();
         const targetVersion = clientAgentTargetVersion(target);
@@ -239,13 +262,14 @@ describeAgentE2E("conversation task runtime against the guarded local database",
         prisma = createApprovedAgentTaskPersistenceClient();
         await prisma.$connect();
         await prisma.agent_session.deleteMany({ where: { userId: USER_ID, branchId: BRANCH_ID } });
+        await prisma.client.deleteMany({ where: { branchId: BRANCH_ID } });
         await prisma.user.deleteMany({ where: { id: USER_ID } });
         await prisma.branch.deleteMany({ where: { id: BRANCH_ID } });
         await prisma.user.create({ data: { id: USER_ID, email: "agent-task-conversation@example.invalid", role: "admin", approvalStatus: "approved" } });
         await prisma.branch.create({ data: { id: BRANCH_ID, name: "Agent task conversation test branch", slug: "agent-task-conversation-test" } });
         repository = new PrismaAgentTaskRepository(prisma as never);
 
-        const taskService = service();
+        const taskService = service(automation);
         const moduleRef = await Test.createTestingModule({
             controllers: [AgentTaskController],
             providers: [{ provide: AgentTaskService, useValue: taskService }],
@@ -284,6 +308,7 @@ describeAgentE2E("conversation task runtime against the guarded local database",
         const ids = [...sessionIds];
         sessionIds.clear();
         for (const id of ids) await removeSession(id);
+        await prisma.client.deleteMany({ where: { branchId: BRANCH_ID } });
     });
 
     afterAll(async () => {
@@ -311,6 +336,8 @@ describeAgentE2E("conversation task runtime against the guarded local database",
         expect(response.headers["cache-control"]).toBe("no-store");
         expect(response.body.snapshot.capabilityId).toBe("clients.update");
         expect(response.body.snapshot.taskId).not.toBe(seeded.task.taskId);
+        expect(response.body.snapshot.automation.availability).toBe("available");
+        expect(response.body.snapshot.consent).toEqual({ choice: "unanswered", binding: null });
 
         const sourceRow = await prisma.agent_task.findUnique({ where: { id: seeded.task.taskId } });
         const destinationRow = await prisma.agent_task.findUnique({ where: { id: response.body.snapshot.taskId as string } });
@@ -323,10 +350,46 @@ describeAgentE2E("conversation task runtime against the guarded local database",
         expect(destinationRow?.lastAcceptedAt).toEqual(receiptRow?.acceptedAt);
         expect(sessionRow?.expiresAt).toEqual(destinationRow?.expiresAt);
 
+        const evaluations = jest.mocked(automation.evaluate).mock.calls.length;
+        const replay = await request(httpApp.getHttpServer())
+            .post(`/ai/agent/tasks/${seeded.task.taskId}/commands`).send(command).expect(201);
+        expect(replay.body).toEqual(response.body);
+        expect(automation.evaluate).toHaveBeenCalledTimes(evaluations);
+
+        const orchestrator = new ConversationTaskOrchestratorService(service(automation), policyStub() as never);
+        const message = { id: randomUUID(), role: "user" as const, parts: [{ type: "text", text: "자동 문자 적용: 예" }] };
+        const answered = await orchestrator.handleUserTurn({ principal, sessionId, message });
+        expect(answered.task?.taskId).toBe(destinationRow?.id);
+        expect(answered.task?.consent.choice).toBe("yes");
+        expect(answered.task?.consent.binding?.effectDigest).toBe(response.body.snapshot.automation.effectDigest);
+        expect((await orchestrator.handleUserTurn({ principal, sessionId, message })).replayed).toBe(true);
+        expect(await prisma.agent_action.count({ where: { sessionId } })).toBe(0);
+
         await request(httpApp.getHttpServer())
             .post(`/ai/agent/tasks/${seeded.task.taskId}/commands`)
             .send({ ...command, clientEventId: randomUUID(), targetRef: 17 })
             .expect(400);
+    });
+
+    it("refuses a prepared conversion when the persisted customer changes before commit", async () => {
+        const seeded = await seedResolvedCreate({ sessionId });
+        const beforeTasks = await prisma.agent_task.findMany({ where: { sessionId } });
+        const beforeEvents = await prisma.agent_task_event.findMany({ where: { sessionId } });
+        const beforeSession = await prisma.agent_session.findUniqueOrThrow({ where: { id: sessionId } });
+        const taskService = service({ evaluate: async (task, owner) => {
+            const question = await automation.evaluate(task, owner);
+            // This separate connection must finish while question preparation is
+            // still open; no task/client transaction lock may cover evaluation.
+            await prisma.client.update({ where: { id: seeded.target.id }, data: { name: "동시 수정 합성 고객" } });
+            return question;
+        } });
+        await expect(taskService.command(principal, seeded.task.taskId, {
+            clientEventId: randomUUID(), expectedRevision: seeded.task.revision,
+            command: "start-update", targetRef: seeded.targetRef, expectedTargetVersion: seeded.targetVersion,
+        })).rejects.toMatchObject({ status: 409 });
+        expect(await prisma.agent_task.findMany({ where: { sessionId } })).toEqual(beforeTasks);
+        expect(await prisma.agent_task_event.findMany({ where: { sessionId } })).toEqual(beforeEvents);
+        expect((await prisma.agent_session.findUniqueOrThrow({ where: { id: sessionId } })).expiresAt).toEqual(beforeSession.expiresAt);
     });
 
     it("replays the original conversation intake after another task becomes active and after service recreation", async () => {

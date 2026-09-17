@@ -134,6 +134,16 @@ type CommandTransition = {
     clearActionMetadata?: boolean;
 };
 
+type PreparedStartUpdate = {
+    sourceHash: string;
+    sourceRevision: number;
+    targetClientId: number;
+    targetVersion: string;
+    taskId: string;
+    targetRef: string;
+    draft: AgentTaskDraft;
+};
+
 type CreateEventLookup =
     | { status: "new" }
     | { status: "event_replay"; task: AgentTaskEntity; event: AgentTaskEventEntity }
@@ -351,6 +361,17 @@ export class AgentTaskService {
             origin,
         });
         if (input.command === "prepare-review") return this.prepareReview(principal, scope, parsedTaskId.data, input, requestHash, origin);
+        if (input.command === "start-update") {
+            const prior = await this.lookupCreateEvent(scope, input.clientEventId, requestHash);
+            if (prior.status !== "new") return this.mapCreateLookup(prior);
+            if (initial.status !== "found") this.throwReadResult(initial);
+            if (initial.task.revision !== input.expectedRevision) throw new AgentTaskConflictException("revision", asAuthorizedTask(initial.task));
+            await this.policy.assertCanCreate(principal, "clients.update");
+            this.policy.assertCanPatch(principal, initial.task.capabilityId);
+            const preparedStart = await this.prepareStartUpdate(principal, initial.task, input);
+            return this.mapInternalMutation(await this.runCommandTransaction(principal, scope, parsedTaskId.data, input,
+                requestHash, origin, undefined, undefined, preparedStart));
+        }
         if (input.command === "select-target" && this.automation) {
             const prior = await this.lookupCreateEvent(scope, input.clientEventId, requestHash);
             if (prior.status !== "new") return this.mapCreateLookup(prior);
@@ -1086,6 +1107,7 @@ export class AgentTaskService {
         origin: AgentTaskMutationOrigin = "user",
         prepared?: PreparedAgentTaskReview,
         preparedTransition?: { sourceHash: string; transition: CommandTransition },
+        preparedStart?: PreparedStartUpdate,
     ): Promise<InternalMutation> {
         const operation = `command:${input.command}`;
         const raw = await this.repository.withTransaction(scope, async (transaction): Promise<InternalMutation> => {
@@ -1153,7 +1175,7 @@ export class AgentTaskService {
             }
 
             if (input.command === "start-update") {
-                return this.runStartUpdateTransaction(principal, scope, locked.task, input, requestHash, transaction);
+                return this.runStartUpdateTransaction(locked.task, input, requestHash, transaction, preparedStart);
             }
 
             if (input.command === "prepare-review") {
@@ -1279,19 +1301,13 @@ export class AgentTaskService {
     }
 
     /**
-     * Convert an accepted duplicate registration draft into a scoped client
-     * update in the same task UoW. The source update is deliberately performed
-     * before createTask: the transaction adapter's locked-task cursor then
-     * points at the new task so the single receipt references that task.
+     * Prepare the destination, including its displayed automation question,
+     * before acquiring task locks. The commit rechecks both source and client.
      */
-    private async runStartUpdateTransaction(
-        principal: VerifiedTenantPrincipal,
-        scope: AgentTaskSessionScope,
-        source: AgentTaskEntity,
+    private async prepareStartUpdate(
+        principal: VerifiedTenantPrincipal, source: AgentTaskEntity,
         input: Extract<AgentTaskCommandRequest, { command: "start-update" }>,
-        requestHash: string,
-        transaction: AgentTaskTransaction,
-    ): Promise<InternalMutation> {
+    ): Promise<PreparedStartUpdate> {
         if (
             source.capabilityId !== "clients.create"
             || source.activeSlot !== 1
@@ -1300,15 +1316,15 @@ export class AgentTaskService {
             || source.targetRef === null
             || source.targetVersion === null
         ) {
-            return transaction.abort<InternalMutation>({ status: "state_conflict", reason: "state", task: source });
+            throw new AgentTaskConflictException("state", asAuthorizedTask(source));
         }
 
         const protectedTarget = source.draft.server.references.target;
         if (!protectedTarget || protectedTarget.targetRef !== source.targetRef) {
-            return transaction.abort<InternalMutation>({ status: "state_conflict", reason: "state", task: source });
+            throw new AgentTaskConflictException("state", asAuthorizedTask(source));
         }
         if (input.targetRef !== source.targetRef || input.expectedTargetVersion !== source.targetVersion) {
-            return transaction.abort<InternalMutation>({ status: "state_conflict", reason: "state", task: source });
+            throw new AgentTaskConflictException("state", asAuthorizedTask(source));
         }
         // A source with any client-target mapping has an unresolved target
         // choice (including an orphaned/malformed mapping), so it cannot be
@@ -1318,67 +1334,23 @@ export class AgentTaskService {
             this.validateChoiceProducerMappings(source, "client-target");
             this.validateChoiceProducerMappings(source, "phone-candidate");
         } catch {
-            return transaction.abort<InternalMutation>({ status: "state_conflict", reason: "state", task: source });
+            throw new AgentTaskConflictException("state", asAuthorizedTask(source));
         }
         if (source.draft.server.references.choiceTargets.length > 0) {
-            return transaction.abort<InternalMutation>({ status: "state_conflict", reason: "state", task: source });
+            throw new AgentTaskConflictException("state", asAuthorizedTask(source));
         }
 
         let targetClient: Awaited<ReturnType<IClientRepository["findById"]>>;
         try {
             targetClient = await this.clientRepository.findById(principal.branchId, protectedTarget.clientId);
-        } catch (error) {
-            if (error instanceof ServiceUnavailableException) throw error;
-            return transaction.abort<InternalMutation>({ status: "storage_failure" });
+        } catch {
+            throw storageUnavailable();
         }
         if (!targetClient || clientAgentTargetVersion(targetClient) !== source.targetVersion) {
-            return transaction.abort<InternalMutation>({ status: "state_conflict", reason: "state", task: source });
+            throw new AgentTaskConflictException("state", asAuthorizedTask(source));
         }
-
         const now = new Date();
-        const expiresAt = new Date(now.getTime() + TASK_RETENTION_MS);
-        if (!await this.ensureRetention(transaction, expiresAt)) {
-            return transaction.abort<InternalMutation>({ status: "storage_failure" });
-        }
-
-        const sourceDraft: AgentTaskDraft = {
-            ...source.draft,
-            currentSnapshotRef: randomUUID(),
-        };
-        const sourceUpdated = await transaction.updateTask({
-            expectedRevision: input.expectedRevision,
-            draft: sourceDraft,
-            status: "paused",
-            acceptedAt: now,
-            expiresAt,
-        });
-        if (sourceUpdated.status !== "updated") {
-            // Retention is extended before the source update so the
-            // conversion can keep both tasks alive.  Once that write has
-            // happened, every source-update refusal must abort the enclosing
-            // unit of work; returning directly would commit the retention
-            // change without the conversion receipt.
-            if (sourceUpdated.status === "stale_revision") {
-                return transaction.abort<InternalMutation>({
-                    status: "stale_revision",
-                    currentTask: sourceUpdated.currentTask,
-                });
-            }
-            if (sourceUpdated.status === "task_expired") {
-                return transaction.abort<InternalMutation>({ status: "task_expired", task: sourceUpdated.task });
-            }
-            if (sourceUpdated.status === "task_purged") {
-                return transaction.abort<InternalMutation>({ status: "task_purged" });
-            }
-            if (sourceUpdated.status === "active_task_conflict") {
-                return transaction.abort<InternalMutation>({ status: "state_conflict", reason: "active_task", task: source });
-            }
-            if (sourceUpdated.status === "not_found" || sourceUpdated.status === "session_archived" || sourceUpdated.status === "session_expired") {
-                return transaction.abort<InternalMutation>({ status: sourceUpdated.status });
-            }
-            return transaction.abort<InternalMutation>({ status: "storage_failure" });
-        }
-
+        const newTaskId = randomUUID();
         const transferredConfirmed: AgentTaskEntity["draft"]["confirmed"] = {};
         const transferredTentative: AgentTaskEntity["draft"]["tentative"] = {};
         const transferredProvenance: AgentTaskDraft["provenance"] = { confirmed: {}, tentative: {} };
@@ -1430,7 +1402,7 @@ export class AgentTaskService {
             state,
             {
                 ...source,
-                taskId: "conversion",
+                taskId: newTaskId,
                 capabilityId: "clients.update",
                 status: "collecting",
                 targetRef,
@@ -1441,15 +1413,86 @@ export class AgentTaskService {
             { targetRef, targetVersion: source.targetVersion, targetClient },
         );
 
-        const newTaskId = randomUUID();
+        if (this.automation) {
+            newTaskDraft.server.automation = await this.automation.evaluate({ ...source, taskId: newTaskId,
+                capabilityId: "clients.update", targetRef, targetVersion: source.targetVersion, draft: newTaskDraft }, principal);
+        }
+        return { sourceHash: agentTaskSourceHash(source), sourceRevision: source.revision,
+            targetClientId: targetClient.id, targetVersion: source.targetVersion,
+            taskId: newTaskId, targetRef, draft: newTaskDraft };
+    }
+
+    private async runStartUpdateTransaction(
+        source: AgentTaskEntity,
+        input: Extract<AgentTaskCommandRequest, { command: "start-update" }>,
+        requestHash: string,
+        transaction: AgentTaskTransaction,
+        prepared?: PreparedStartUpdate,
+    ): Promise<InternalMutation> {
+        if (!prepared || prepared.sourceRevision !== source.revision || prepared.sourceHash !== agentTaskSourceHash(source)
+            || prepared.targetVersion !== source.targetVersion || prepared.targetClientId !== source.draft.server.references.target?.clientId
+            || input.targetRef !== source.targetRef || input.expectedTargetVersion !== source.targetVersion) {
+            return { status: "state_conflict", reason: "state", task: source };
+        }
+        const target = await transaction.lockClientTargetVersion(prepared.targetClientId);
+        if (target.status === "storage_failure") return target;
+        if (target.status !== "found" || target.version !== prepared.targetVersion) {
+            return { status: "state_conflict", reason: "state", task: source };
+        }
+        const now = new Date();
+        const expiresAt = new Date(now.getTime() + TASK_RETENTION_MS);
+        if (!await this.ensureRetention(transaction, expiresAt)) {
+            return transaction.abort<InternalMutation>({ status: "storage_failure" });
+        }
+
+        const sourceDraft: AgentTaskDraft = {
+            ...source.draft,
+            currentSnapshotRef: randomUUID(),
+        };
+        // Release the source slot before creating the destination. The adapter's
+        // cursor then binds the single receipt to the newly created task.
+        const sourceUpdated = await transaction.updateTask({
+            expectedRevision: input.expectedRevision,
+            draft: sourceDraft,
+            status: "paused",
+            acceptedAt: now,
+            expiresAt,
+        });
+        if (sourceUpdated.status !== "updated") {
+            // Retention is extended before the source update so the
+            // conversion can keep both tasks alive.  Once that write has
+            // happened, every source-update refusal must abort the enclosing
+            // unit of work; returning directly would commit the retention
+            // change without the conversion receipt.
+            if (sourceUpdated.status === "stale_revision") {
+                return transaction.abort<InternalMutation>({
+                    status: "stale_revision",
+                    currentTask: sourceUpdated.currentTask,
+                });
+            }
+            if (sourceUpdated.status === "task_expired") {
+                return transaction.abort<InternalMutation>({ status: "task_expired", task: sourceUpdated.task });
+            }
+            if (sourceUpdated.status === "task_purged") {
+                return transaction.abort<InternalMutation>({ status: "task_purged" });
+            }
+            if (sourceUpdated.status === "active_task_conflict") {
+                return transaction.abort<InternalMutation>({ status: "state_conflict", reason: "active_task", task: source });
+            }
+            if (sourceUpdated.status === "not_found" || sourceUpdated.status === "session_archived" || sourceUpdated.status === "session_expired") {
+                return transaction.abort<InternalMutation>({ status: sourceUpdated.status });
+            }
+            return transaction.abort<InternalMutation>({ status: "storage_failure" });
+        }
+
         const created = await transaction.createTask({
-            taskId: newTaskId,
+            taskId: prepared.taskId,
             capabilityId: "clients.update",
-            draft: newTaskDraft,
+            draft: prepared.draft,
             status: "collecting",
             revision: 1,
-            targetRef,
-            targetVersion: source.targetVersion,
+            targetRef: prepared.targetRef,
+            targetVersion: prepared.targetVersion,
             lastAcceptedAt: now,
             expiresAt,
         });

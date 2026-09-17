@@ -59,6 +59,7 @@ import { toAgentActionEntity } from "./prisma-agent-action.repository";
 import { withLinkedActionRecovery } from "./prisma-agent-linked-action-recovery";
 import { PrismaService } from "infrastructure/database/prisma.service";
 import { parseAgentTaskAutomationState } from "application/agent/agent-automation-question";
+import { clientAgentTargetVersion } from "application/usecases/client/client-agent-target";
 import {
     lifecycleTaskActionEvidenceBlocks,
     type AgentTaskLifecycleActionEvidence,
@@ -442,6 +443,18 @@ class PrismaAgentTaskTransaction implements AgentTaskTransaction {
         private readonly transaction: Prisma.TransactionClient,
         private readonly scope: AgentTaskSessionScope,
     ) {}
+
+    async lockClientTargetVersion(clientId: number): Promise<{ status: "found"; version: string } | { status: "not_found" | "storage_failure" }> {
+        if (!this.lockedTask || this.sessionResult?.status !== "locked" || !Number.isSafeInteger(clientId) || clientId <= 0) {
+            return { status: "not_found" };
+        }
+        const rows = await this.transaction.$queryRaw<Array<{ id: number }>>(Prisma.sql`
+            SELECT id FROM client WHERE id = ${clientId} AND branch_id = CAST(${this.scope.branchId} AS uuid) FOR SHARE
+        `);
+        if (!rows.length) return { status: "not_found" };
+        const client = await this.transaction.client.findFirst({ where: { id: clientId, branchId: this.scope.branchId } });
+        return client ? { status: "found", version: clientAgentTargetVersion(client) } : { status: "not_found" };
+    }
 
     async lockCurrentAction(): Promise<AgentActionEntity | null> {
         const task = this.lockedTask;

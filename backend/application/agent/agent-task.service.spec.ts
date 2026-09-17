@@ -112,6 +112,8 @@ function makeConsentBinding() {
 class FakeTaskRepository {
     readonly tasks = new Map<string, AgentTaskEntity>();
     readonly events = new Map<string, AgentTaskEventEntity>();
+    readonly clientTargetVersions = new Map<number, string>();
+    transactionDepth = 0;
     readonly createInputs: any[] = [];
     session = { expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000), archivedAt: null as Date | null };
 
@@ -153,11 +155,14 @@ class FakeTaskRepository {
     }
 
     async withTransaction<T>(scope: { userId: string; branchId: string; sessionId: string }, operation: (transaction: any) => Promise<T>) {
+        this.transactionDepth++;
         try {
             return { status: "ok", value: await operation(this.transaction(scope)) } as const;
         } catch (error) {
             if (error instanceof TransactionAbort) return { status: "aborted", value: error.result as T } as const;
             return { status: "storage_failure" } as const;
+        } finally {
+            this.transactionDepth--;
         }
     }
 
@@ -199,6 +204,10 @@ class FakeTaskRepository {
             return { status: "found", task } as const;
         };
         return {
+            lockClientTargetVersion: async (clientId: number) => {
+                const version = this.clientTargetVersions.get(clientId);
+                return version ? { status: "found", version } as const : { status: "not_found" } as const;
+            },
             lockSession: async () => {
                 if (this.session.archivedAt) return { status: "session_archived", session: { ...scope, ...this.session } } as const;
                 if (this.session.expiresAt <= new Date()) return { status: "session_expired", session: { ...scope, ...this.session } } as const;
@@ -331,9 +340,10 @@ function commandInput(command: string, expectedRevision: number, clientEventId =
     return { command, expectedRevision, clientEventId, ...extra };
 }
 
-function automationService(repository: FakeTaskRepository) {
-    const { policy, client } = buildService(repository);
+function automationService(repository: FakeTaskRepository, providedClient?: Parameters<typeof buildService>[1]) {
+    const { policy, client } = buildService(repository, providedClient);
     const automation: AgentTaskAutomationPort = { evaluate: jest.fn(async (task) => {
+        expect(repository.transactionDepth).toBe(0);
         const effects: AgentAutomationEffect[] = [{ kind: "client-rule", ruleId: "rule-a", scheduleId: null,
             recipientType: "client", templateKey: "SERVICE_INFO", change: "create",
             recipientDigest: agentBindingHash(task.draft.confirmed.phone), sourceDigest: agentBindingHash(task.draft.confirmed.name),
@@ -341,7 +351,7 @@ function automationService(repository: FakeTaskRepository) {
         return { version: 1 as const, noSendAtPresentation: task.draft.constraints.noSend, effects,
             question: createAgentAutomationQuestion({ effects, availability: "available", previous: task.draft.server.automation?.question }) };
     }) };
-    return { service: new AgentTaskService(repository as never, policy as never, client as never, undefined, automation), automation };
+    return { service: new AgentTaskService(repository as never, policy as never, client as never, undefined, automation), automation, policy };
 }
 
 describe("task automation answers", () => {
@@ -1708,6 +1718,39 @@ describe("AgentTaskService", () => {
         await expect(buildService(unavailable).service.replayConversationIntake(owner, sessionId, randomUUID(), intakeHash)).rejects.toMatchObject({ status: 503 });
     });
 
+    it.each(["target", "source"] as const)("refuses conversion when %s changes during question preparation", async (changed) => {
+        const repository = new FakeTaskRepository();
+        const target = makeClientRecord();
+        const targetRef = randomUUID();
+        const targetVersion = clientAgentTargetVersion(target);
+        const draft = createEmptyAgentTaskDraft(randomUUID());
+        draft.confirmed = { name: "합성 수정" };
+        draft.provenance.confirmed["name"] = { source: "user", capturedAt: new Date().toISOString(),
+            eventId: randomUUID(), valueRef: randomUUID() };
+        draft.server.references.target = { targetRef, clientId: target.id };
+        const source = makeTask({ targetRef, targetVersion, draft });
+        repository.tasks.set(source.taskId, source);
+        repository.clientTargetVersions.set(target.id, targetVersion);
+        const { service, automation } = automationService(repository, {
+            findByPhone: jest.fn().mockResolvedValue(null), findById: jest.fn().mockResolvedValue(target),
+        });
+        const evaluate = jest.mocked(automation.evaluate).getMockImplementation()!;
+        jest.spyOn(automation, "evaluate").mockImplementation(async (task, principal) => {
+            const result = await evaluate(task, principal);
+            if (changed === "target") repository.clientTargetVersions.set(target.id, "changed");
+            else repository.tasks.set(source.taskId, { ...source, draft: { ...source.draft, currentSnapshotRef: randomUUID() } });
+            return result;
+        });
+        const expiry = repository.session.expiresAt;
+        await expect(service.command(owner, source.taskId, commandInput("start-update", source.revision,
+            randomUUID(), { targetRef, expectedTargetVersion: targetVersion }))).rejects.toMatchObject({ status: 409 });
+        expect(repository.tasks.size).toBe(1);
+        expect(repository.tasks.get(source.taskId)?.status).toBe("collecting");
+        expect(repository.session.expiresAt).toEqual(expiry);
+        expect(repository.events.size).toBe(0);
+        expect(repository.createInputs).toHaveLength(0);
+    });
+
     it("atomically converts a resolved create task into an update task with only explicit user facts", async () => {
         const repository = new FakeTaskRepository();
         const target = makeClientRecord(7);
@@ -1749,7 +1792,8 @@ describe("AgentTaskService", () => {
             findByPhone: jest.fn().mockResolvedValue(null),
             findById: jest.fn().mockResolvedValue(target),
         };
-        const { service, policy } = buildService(repository, client);
+        repository.clientTargetVersions.set(target.id, targetVersion);
+        const { service, policy, automation } = automationService(repository, client);
         const beforeSessionExpiry = repository.session.expiresAt;
         const conversionInput = commandInput("start-update", source.revision, sourceEventId, {
             targetRef,
@@ -1777,6 +1821,9 @@ describe("AgentTaskService", () => {
         expect(converted.snapshot.tentative).not.toHaveProperty("fullPrice");
         expect(converted.snapshot.constraints.noSend).toBe(true);
         expect(converted.snapshot.consent).toEqual({ choice: "unanswered", binding: null });
+        expect(converted.snapshot.automation?.availability).toBe("available");
+        expect(automation.evaluate).toHaveBeenCalledWith(expect.objectContaining({ taskId: newTaskId,
+            capabilityId: "clients.update", targetVersion, targetRef: newRow.targetRef }), owner);
         expect(converted.snapshot.provenance.confirmed["name"]?.source).toBe("user");
         expect(converted.snapshot.provenance.tentative["address"]?.source).toBe("wizard");
         expect(receiptEvent.taskId).toBe(newTaskId);
@@ -1791,6 +1838,7 @@ describe("AgentTaskService", () => {
         expect(replay.receipt).toEqual(converted.receipt);
         expect(replay.snapshot.taskId).toBe(newTaskId);
         expect(repository.tasks.size).toBe(2);
+        expect(automation.evaluate).toHaveBeenCalledTimes(1);
     });
 });
 

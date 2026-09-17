@@ -664,6 +664,7 @@ export class DeterministicProductTaskRepository implements IAgentTaskRepository 
         let lockedSession: ProductSessionMetadata | null = null;
         const eventKey = (clientEventId: string) => `${scope.sessionId}:${scope.userId}:${scope.branchId}:${clientEventId}`;
         return {
+            lockClientTargetVersion: async () => ({ status: "not_found" }),
             lockCurrentAction: async () => null,
             applyLinkedAction: async () => ({ status: "storage_failure" }),
             lockSession: async (): Promise<AgentTaskSessionLockResult> => {

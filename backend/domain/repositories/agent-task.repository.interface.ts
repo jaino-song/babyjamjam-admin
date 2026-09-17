@@ -162,6 +162,8 @@ export type AgentTaskMutationResult =
     | { status: "storage_failure" };
 
 export interface AgentTaskTransaction {
+    /** Branch-scoped client lock held until the prepared task conversion commits. */
+    lockClientTargetVersion(clientId: number): Promise<{ status: "found"; version: string } | { status: "not_found" | "storage_failure" }>;
     lockCurrentAction(): Promise<AgentActionEntity | null>;
     /** Closed operations only; owns correlated task, action and receipt writes. */
     applyLinkedAction(operation: AgentLinkedActionLiveOperation): Promise<AgentLinkedActionLiveResult>;
