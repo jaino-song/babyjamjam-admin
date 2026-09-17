@@ -178,7 +178,7 @@ export function useMessageHistory(limit = 200) {
         // as the previous single-page poll: two pages refresh every 10 seconds,
         // three pages every 15 seconds. Manual and mutation invalidations still
         // refetch immediately; a row can be stale for up to the scaled interval
-        // (plus request time), so only background freshness of older rows stretches.
+        // (plus request time); all rows share this background refresh cadence.
         refetchInterval: (query) =>
             getMessageHistoryRefetchInterval(query.state.data?.length, limit),
     });
