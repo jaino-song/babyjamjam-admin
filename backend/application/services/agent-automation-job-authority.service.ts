@@ -283,7 +283,7 @@ export class AgentAutomationJobAuthorityService {
         // assignment for the client. Mirror that check inside this transaction
         // so an older schedule cannot inherit a newer assignment's link.
         const latestSchedule = await transaction.employee_schedule.findFirst({
-            where: { branchId: input.scope.branchId, clientId: input.scope.clientId, replaced: false, terminatedAt: null },
+            where: { branchId: input.scope.branchId, clientId: input.scope.clientId, replaced: false },
             orderBy: { id: "desc" },
             select: { id: true },
         });
