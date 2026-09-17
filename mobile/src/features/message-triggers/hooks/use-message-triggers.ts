@@ -52,6 +52,75 @@ function normalizeSinglePayload<T>(payload: unknown): T | null {
     return null;
 }
 
+function normalizeMessageHistoryPage(payload: unknown): MessageLogRecord[] {
+    if (Array.isArray(payload)) {
+        return payload as MessageLogRecord[];
+    }
+
+    if (payload !== null && typeof payload === "object" && "data" in payload) {
+        const nestedData = (payload as Record<string, unknown>).data;
+        if (Array.isArray(nestedData)) {
+            return nestedData as MessageLogRecord[];
+        }
+    }
+
+    throw new Error("메시지 발송 기록 응답을 확인할 수 없습니다.");
+}
+
+export const MESSAGE_HISTORY_REFRESH_INTERVAL_MS = 5_000;
+
+export function getMessageHistoryRefetchInterval(
+    recordCount: number | undefined,
+    pageSize: number,
+): number {
+    const safePageSize = Math.max(pageSize, 1);
+    const safeRecordCount = Math.max(recordCount ?? 0, 0);
+    const estimatedPageRequests = Math.floor(safeRecordCount / safePageSize) + 1;
+
+    return MESSAGE_HISTORY_REFRESH_INTERVAL_MS * estimatedPageRequests;
+}
+
+async function fetchCompleteMessageHistory(
+    limit: number,
+    signal?: AbortSignal,
+): Promise<MessageLogRecord[]> {
+    const records: MessageLogRecord[] = [];
+    const seenIds = new Set<string>();
+    let skip = 0;
+
+    for (;;) {
+        if (signal?.aborted) {
+            const abortError = new Error("The message history request was aborted.");
+            abortError.name = "AbortError";
+            throw abortError;
+        }
+
+        const response = await messageTriggersApi.listHistory(limit, skip, signal);
+        const page = normalizeMessageHistoryPage(response.data);
+        let addedCount = 0;
+
+        for (const record of page) {
+            const recordId = String(record.id);
+            if (seenIds.has(recordId)) continue;
+
+            seenIds.add(recordId);
+            records.push(record);
+            addedCount += 1;
+        }
+
+        // An empty page is the server's explicit exhaustion signal. A
+        // non-empty page with no new IDs is different: treating it as the end
+        // would turn a repeated/unstable page into a false complete history.
+        if (page.length === 0) return records;
+        if (addedCount === 0) {
+            throw new Error("메시지 발송 기록 페이지가 중복되어 전체 기록을 확인할 수 없습니다.");
+        }
+        if (page.length < limit) return records;
+
+        skip += page.length;
+    }
+}
+
 export function useMessageTriggerRules() {
     return useQuery<MessageTriggerRule[]>({
         queryKey: messageTriggerKeys.list(),
@@ -101,13 +170,17 @@ export function useUpcomingMessageTriggerJobs(limit = 200) {
 export function useMessageHistory(limit = 200) {
     return useQuery<MessageLogRecord[]>({
         queryKey: messageTriggerKeys.history(limit),
-        queryFn: () =>
-            messageTriggersApi
-                .listHistory(limit)
-                .then((response) => normalizeArrayPayload<MessageLogRecord>(response.data)),
+        queryFn: ({ signal }) => fetchCompleteMessageHistory(limit, signal),
         staleTime: 0,
         refetchOnMount: "always",
-        refetchInterval: 5_000,
+        // Complete-history refreshes make one sequential request per page.
+        // Space a multi-page refresh across the same number of 5-second slots
+        // as the previous single-page poll: two pages refresh every 10 seconds,
+        // three pages every 15 seconds. Manual and mutation invalidations still
+        // refetch immediately; a row can be stale for up to the scaled interval
+        // (plus request time), so only background freshness of older rows stretches.
+        refetchInterval: (query) =>
+            getMessageHistoryRefetchInterval(query.state.data?.length, limit),
     });
 }
 
