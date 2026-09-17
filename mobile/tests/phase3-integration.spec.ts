@@ -392,11 +392,11 @@ test.describe("Phase 3.1 functional integration matrix", () => {
       network: await runAndReadCount("network"),
       server: await runAndReadCount("503"),
     };
-    // These are the exact browser request totals observed in this fixture.
-    // The 401 trace includes the existing auth-refresh path; 403 is a single
-    // request. Network and resolved-5xx totals remain explicit evidence rather
-    // than being normalized to a guessed mount model.
-    expect(attempts).toEqual({ unauthorized: 2, forbidden: 1, network: 4, server: 2 });
+    // React Query retry:false keeps page failures from adding query-level
+    // retries. The API client still retries one network transport failure,
+    // while a resolved 503 gets no transport retry; 401 adds one auth-refresh
+    // request and 403 remains a single request.
+    expect(attempts).toEqual({ unauthorized: 2, forbidden: 1, network: 2, server: 1 });
   });
 
   test("6. keeps legacy and unsafe mutation failures safe and prevents replay", async ({ page }) => {
