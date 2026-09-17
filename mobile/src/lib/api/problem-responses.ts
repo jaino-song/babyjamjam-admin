@@ -75,6 +75,11 @@ export function unauthorizedProblemResponse(): NextResponse {
     return localProblemResponse("AUTH_REQUIRED", "Unauthorized");
 }
 
+/** Local policy rejection before any upstream contact: a registered ACCESS_DENIED problem (403). */
+export function accessDeniedProblemResponse(legacyError: string): NextResponse {
+    return localProblemResponse("ACCESS_DENIED", legacyError);
+}
+
 /**
  * Local parameter/body rejection: a registered VALIDATION_FAILED problem
  * (400). `detail` values are re-stamped from the catalog locale copy by the

@@ -7,8 +7,8 @@ import {
     getAuthHeaders,
     getAuthToken,
     parseBody,
-    unauthorizedResponse,
 } from "@/lib/api/route-utils";
+import { unauthorizedProblemResponse } from "@/lib/api/problem-responses";
 
 // Mirrors backend CreateDocumentCategoryDto: `value`, `label`, `color` are all
 // required strings (@IsString, no @IsOptional). Other fields pass through to the
@@ -25,7 +25,7 @@ export async function GET(request: NextRequest) {
     try {
         const token = getAuthToken(request);
         if (!token) {
-            return unauthorizedResponse("Unauthorized");
+            return unauthorizedProblemResponse();
         }
 
         const response = await serverAPIClient.get("/document-categories", {
@@ -40,7 +40,7 @@ export async function GET(request: NextRequest) {
 export async function POST(request: NextRequest) {
     const token = getAuthToken(request);
     if (!token) {
-        return unauthorizedResponse("Unauthorized");
+        return unauthorizedProblemResponse();
     }
 
     const { data, response } = await parseBody(createDocumentCategorySchema, request);

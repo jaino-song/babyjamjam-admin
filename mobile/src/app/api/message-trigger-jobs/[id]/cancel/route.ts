@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest } from "next/server";
 
 import { serverAPIClient } from "@/lib/api/server";
 import {
@@ -6,9 +6,12 @@ import {
     errorResponse,
     getAuthHeaders,
     getAuthToken,
-    unauthorizedResponse,
     withNoStore,
 } from "@/lib/api/route-utils";
+import {
+    unauthorizedProblemResponse,
+    validationProblemResponse,
+} from "@/lib/api/problem-responses";
 
 type RouteParams = { params: Promise<{ id: string }> };
 
@@ -19,11 +22,13 @@ function isValidJobId(value: string): boolean {
 export async function POST(request: NextRequest, { params }: RouteParams) {
     try {
         const token = getAuthToken(request);
-        if (!token) return unauthorizedResponse("Unauthorized");
+        if (!token) return unauthorizedProblemResponse();
 
         const { id } = await params;
         if (!isValidJobId(id)) {
-            return NextResponse.json({ error: "Invalid message trigger job id" }, { status: 400 });
+            return validationProblemResponse("Invalid message trigger job id", [
+                { pointer: "/id", code: "INVALID_FORMAT", detail: "입력 형식이 올바르지 않아요.", location: "path" },
+            ]);
         }
 
         const response = await serverAPIClient.post(
