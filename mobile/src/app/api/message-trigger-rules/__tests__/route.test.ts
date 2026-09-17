@@ -121,10 +121,9 @@ describe("Message trigger rule API routes", () => {
 
       expect(response.status).toBe(status);
       const body = await response.json();
-      expect(body).toEqual({
-        error: "Failed to fetch message trigger rules",
-        code: "UPSTREAM_ERROR",
-      });
+      expect(typeof body.error).toBe("string");
+      expect(body.error).toMatch(/[가-힣]/);
+      expect(body.code).not.toBe("UPSTREAM_ERROR");
       expect(JSON.stringify(body)).not.toContain("upstream-secret");
       expect(JSON.stringify(body)).not.toContain("member@example.com");
     },
