@@ -201,3 +201,10 @@
 - Integrated verification at40dc: 256 suites /1807 tests PASS, type-check PASS, UI architecture PASS, production build PASS. Evidence `/tmp/bjj-qa-20260918-dates-{tests,types,ui,build}.log`.
 - Sol low accessibility observation (payment error association) corrected by Luna in `c7cf67ec9`; 10 focused tests and typecheck PASS. Correction production build PASS; fresh Sol FINAL SHIP for exact `40dc4e7d2..c7cf67ec9` (correction scope only). Existing broad start/end ARIA error flags and live assistive-technology checks remain outside this correction.
 - Remaining includes successful controlled provider issuance, actual recipient delivery/PDF, populated service-record/schedule flows, mobile parity and non-owner role checks. No dev/main merge or deployment.
+
+
+## Provider template recipient inspection
+
+- Performed authenticated read-only GET of the exact QA-linked provider template with `is_include_config=true`; HTTP200. Credentials and raw member/group identities were not printed or persisted. No create/send request.
+- Confirmed workflow includes writer, two participant steps and completion. The latter participant has a pre-specified group recipient (`use_receipient_specified=true`) and mail/SMS/Alimtalk settings enabled; template alerts also enable mail/SMS for that step.
+- BLOCKED controlled issue: application payload supplies the controlled customer and non-notifying internal user, but precedence over the provider's fixed group settings is not proven. Need isolated QA provider template or verified provider behavior before issuance. Do not reinterpret the read-only metadata request as a document issue or delivery.
