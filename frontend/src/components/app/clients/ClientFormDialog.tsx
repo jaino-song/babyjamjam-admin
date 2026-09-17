@@ -1300,6 +1300,7 @@ function ClientFormContent({
                     data-component={`${base}_basic-grid_field-phone`}
                     htmlFor="phone"
                     label={t(locale, "clients.form.phone")}
+                    required
                     labelAccessory={phoneInlineMessage ? (
                         <FormHelperText
                             id="clients-form-dialog-phone-helper"
@@ -1357,6 +1358,7 @@ function ClientFormContent({
                     data-component={`${base}_basic-grid_field-address`}
                     htmlFor="address"
                     label={t(locale, "clients.form.address")}
+                    required
                     className="sm:col-span-2"
                 >
                     <FormTextInput
@@ -1734,6 +1736,7 @@ function ClientFormContent({
                 data-component={`${base}_phone-input`}
                 htmlFor="phone"
                 label={t(locale, "clients.form.phone")}
+                required
                 labelAccessory={phoneInlineMessage ? (
                     <FormHelperText
                         id="clients-form-panel-phone-helper"
@@ -1791,6 +1794,7 @@ function ClientFormContent({
                 data-component={`${base}_address-input`}
                 htmlFor="address"
                 label={t(locale, "clients.form.address")}
+                required
                 className={PANEL_FULL_FIELD_CLASS_NAME}
             >
                 <FormTextInput
