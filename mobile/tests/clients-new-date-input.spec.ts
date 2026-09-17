@@ -5,8 +5,8 @@ import { expect, test, type Page } from "@playwright/test";
  * keyed in as YYYY-MM-DD now, matching the call review sheet, so a reviewer
  * confirming a draft and someone filling the form by hand type the same thing.
  *
- * 생년월일 is the exception and stays YYMMDD — it is stored that way
- * (client.birthday is a varchar(6)), not as a date.
+ * New birthdays use the same ISO input. Resolvable legacy six-digit values
+ * are normalized when an existing client is loaded.
  */
 
 const json = (body: unknown) => ({
@@ -68,16 +68,16 @@ test.describe("Client registration date inputs", () => {
     await expect(dueDate(page)).toHaveValue("2026-09-15");
   });
 
-  test("leaves 생년월일 as the six digits it is stored as", async ({ page }) => {
+  test("formats 생년월일 as YYYY-MM-DD", async ({ page }) => {
     await mockApi(page);
     await page.goto("/clients/new");
     await expect(birthday(page)).toBeVisible();
 
-    await expect(birthday(page)).toHaveAttribute("maxlength", "6");
-    await expect(birthday(page)).toHaveAttribute("placeholder", "YYMMDD");
+    await expect(birthday(page)).toHaveAttribute("maxlength", "10");
+    await expect(birthday(page)).toHaveAttribute("placeholder", "YYYY-MM-DD");
 
-    await birthday(page).pressSequentially("990315");
-    await expect(birthday(page)).toHaveValue("990315");
+    await birthday(page).pressSequentially("19990315");
+    await expect(birthday(page)).toHaveValue("1999-03-15");
   });
 
   test("offers 출산일 alongside 출산 예정일", async ({ page }) => {
@@ -123,7 +123,7 @@ test.describe("Client registration date inputs", () => {
 
     // Hydration used to convert down to YYMMDD; the store holds ISO now.
     await expect(dueDate(page)).toHaveValue("2026-09-15", { timeout: 10_000 });
-    await expect(birthday(page)).toHaveValue("990315");
+    await expect(birthday(page)).toHaveValue("1999-03-15");
     await expect(birthDate(page)).toHaveValue("2026-08-05");
   });
 });

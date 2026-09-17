@@ -13,9 +13,9 @@ import {
 } from "./helpers/phase3-fixtures";
 
 const UPCOMING_ZONE_HEADER =
-  "mobile_messages_history_detail-sheet_stack_list-page_shell_content_list-card_body_zone-upcoming_header";
+  "mobile_messages_history_detail-sheet_screen_content_sliding-card_stage_list-pane_history-list_content_list-card_body_zone-upcoming_header";
 const PAST_ZONE_HEADER =
-  "mobile_messages_history_detail-sheet_stack_list-page_shell_content_list-card_body_zone-past_header";
+  "mobile_messages_history_detail-sheet_screen_content_sliding-card_stage_list-pane_history-list_content_list-card_body_zone-past_header";
 
 const createMessageLog = (name: string) => ({
   id: 102,
@@ -248,7 +248,7 @@ test.describe("Phase 3.1 functional integration matrix", () => {
     // already-populated end date. This handshake makes hydration ordering
     // deterministic and avoids timing-based sleeps.
     await eformDocumentRequest;
-    await expect(page.locator(phase3Selectors.birthday)).toHaveValue("950414");
+    await expect(page.locator(phase3Selectors.birthday)).toHaveValue("1995-04-14");
     await expect(page.locator(phase3Selectors.dueDate)).toHaveValue("2026-09-15");
     await advanceWizardStep(page);
     await advanceWizardStep(page);
