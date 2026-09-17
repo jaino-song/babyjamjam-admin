@@ -6,15 +6,24 @@ import {
     EFORMSIGN_PRE_SEND_CLICK_TIMEOUT_LIMIT,
     EFORMSIGN_READY_TEXT,
     REQUEST_SEND_DIALOG_SELECTOR,
+    classifyGateLocator,
+    createGateDiagnostic,
     createGateErrorWithSnapshot,
-    findVisibleEnabledLocator,
+    findVisibleEnabledLocatorWithSelection,
     findVisibleLocator,
+    getEformsignDialogPresence,
     getGateClickOutcome,
     getEformsignGateSnapshot,
+    hasTerminalDocumentId,
     isSuccessLatched,
-    readEformsignCallbackState,
+    readEformsignSdkDiagnosticSummary,
     throwIfEformsignErrorLatched,
     tryClickGateLocator,
+} from "./eformsign-gate-utils";
+import type {
+    EformsignDiagnosticAction,
+    EformsignDiagnosticSelectedCategory,
+    GateLocatorSelection,
 } from "./eformsign-gate-utils";
 import type { EformsignHeadlessProgressStep } from "application/services/eformsign-headless-progress.service";
 
@@ -63,6 +72,32 @@ export async function runEformsignCreationGates(
         else console.log(message);
     };
 
+    const logActionDiagnostic = async (
+        action: EformsignDiagnosticAction,
+        selection: GateLocatorSelection | null,
+        selectedCategory: EformsignDiagnosticSelectedCategory,
+    ): Promise<void> => {
+        const dialogPresence = await getEformsignDialogPresence(
+            eformsignFrame,
+            REQUEST_SEND_DIALOG_SELECTOR,
+        );
+        const sdkSummary = await readEformsignSdkDiagnosticSummary(page).catch(() => undefined);
+        const diagnostic = createGateDiagnostic(
+            "creation",
+            action,
+            selectedCategory,
+            selection,
+            dialogPresence,
+            sdkSummary,
+        );
+        logMessage(`[creation-gate] diagnostic ${JSON.stringify(diagnostic)}`);
+    };
+
+    const classifySelection = async (
+        selection: GateLocatorSelection,
+    ): Promise<EformsignDiagnosticSelectedCategory> =>
+        classifyGateLocator(selection.locator).catch(() => "unknown" as const);
+
     // Records a *successful* gate click. The first one hands the sequence its own
     // budget so however long the editor took to appear, the clicks still get a
     // full window. Failed-click retries deliberately don't come through here.
@@ -77,12 +112,22 @@ export async function runEformsignCreationGates(
         if (Date.now() - lastDiagnosticAt < EFORMSIGN_GATE_DIAGNOSTIC_INTERVAL_MS) return;
         lastDiagnosticAt = Date.now();
         const snapshot = await getEformsignGateSnapshot(eformsignFrame, REQUEST_SEND_DIALOG_SELECTOR).catch(
-            (error: unknown) => `unavailable (${error instanceof Error ? error.message : String(error)})`,
+            () => null,
         );
-        const line =
-            `[creation-gate] waiting ${Date.now() - startedAt}ms; lastAction: ${lastAction}; ` +
-            `snapshot: ${JSON.stringify(snapshot)}`;
-        logMessage(line);
+        const sdkSummary = await readEformsignSdkDiagnosticSummary(page).catch(() => undefined);
+        const diagnostic = createGateDiagnostic(
+            "creation",
+            "other",
+            "unknown",
+            null,
+            snapshot ?? {
+                requestSendDialogVisible: "unknown",
+                inputCommentDialogVisible: "unknown",
+                anyDialogVisible: "unknown",
+            },
+            sdkSummary,
+        );
+        logMessage(`[creation-gate] diagnostic ${JSON.stringify(diagnostic)}`);
     };
 
     const emitInfoInserted = async () => {
@@ -123,16 +168,8 @@ export async function runEformsignCreationGates(
 
             if (await isSuccessLatched(page)) {
                 if (topLevelSendAttempted) {
-                    const callbackState = await readEformsignCallbackState(page).catch(() => null);
-                    const callbackDocumentId = callbackState?.success
-                        && typeof callbackState.success === "object"
-                        && "document_id" in callbackState.success
-                        ? (callbackState.success as { document_id?: unknown }).document_id
-                        : undefined;
-                    if (typeof callbackDocumentId === "string" && callbackDocumentId.trim()) {
-                        logMessage(
-                            `[creation-gate] terminal document ${callbackDocumentId} latched after top-level 전송`,
-                        );
+                    if (await hasTerminalDocumentId(page)) {
+                        logMessage("[creation-gate] terminal success latched after top-level send");
                         return "success-latched";
                     }
                     if (!ignoredPostTopLevelSuccessLogged) {
@@ -141,10 +178,7 @@ export async function runEformsignCreationGates(
                         logMessage(message);
                     }
                 } else {
-                    logMessage(
-                        `[creation-gate] terminal success latched after ${Date.now() - startedAt}ms; ` +
-                            `lastAction: ${lastAction}`,
-                    );
+                    logMessage("[creation-gate] terminal success latched");
                     return "success-latched";
                 }
             }
@@ -154,41 +188,43 @@ export async function runEformsignCreationGates(
             const requestSendDialog = eformsignFrame.locator(REQUEST_SEND_DIALOG_SELECTOR);
 
             // 회사 도장 dialog: appears 3 times, "확인" each time.
-            const confirmButton = await findVisibleEnabledLocator(
+            const confirmButton = await findVisibleEnabledLocatorWithSelection(
                 eformsignFrame.getByRole("button", { name: "확인" }),
             );
             if (confirmButton) {
-                if (!(await tryPreSendClick(confirmButton, "회사 도장 확인"))) {
+                const selectedCategory = await classifySelection(confirmButton);
+                if (!(await tryPreSendClick(confirmButton.locator, "confirm"))) {
                     await page.waitForTimeout(EFORMSIGN_GATE_POLL_MS);
                     continue;
                 }
-                logMessage("[creation-gate] clicked 회사 도장 확인");
+                await logActionDiagnostic("confirm", confirmButton, selectedCategory);
                 stampConfirmCount++;
                 if (stampConfirmCount >= 3) {
                     await emitInfoInserted();
                 }
-                noteAction("clicked 회사 도장 확인");
+                noteAction("confirm");
                 await page.waitForTimeout(250);
                 continue;
             }
 
             // popup-level 전송 inside #requestWithInputCommentPopup terminates the gate loop.
-            const requestSendButton = await findVisibleEnabledLocator(
+            const requestSendButton = await findVisibleEnabledLocatorWithSelection(
                 requestSendDialog.getByRole("button", { name: "전송" }),
             );
             if (requestSendButton) {
+                const selectedCategory = await classifySelection(requestSendButton);
                 // Persist the ambiguity fence before the provider can observe
                 // the click. If persistence fails, abort without submitting.
                 await emitInfoInserted();
                 await emitSendAttempted();
-                if (!(await tryClickGateLocator(requestSendButton))) {
+                if (!(await tryClickGateLocator(requestSendButton.locator))) {
                     lastAction = "popup 전송 click outcome ambiguous; reconciling";
                     const message =
                         "[creation-gate] popup 전송 click outcome is ambiguous; reconciling without retry";
                     logMessage(message);
                     return "request-send-attempted";
                 }
-                logMessage("[creation-gate] clicked popup 전송");
+                await logActionDiagnostic("send_popup", requestSendButton, selectedCategory);
                 return "request-send-clicked";
             }
 
@@ -210,8 +246,9 @@ export async function runEformsignCreationGates(
             const topLevelSendButton = requestSendDialogVisible
                 || (topLevelSendAttempted && !popupWaitExpired)
                 ? null
-                : await findVisibleEnabledLocator(eformsignFrame.getByRole("button", { name: "전송" }));
+                : await findVisibleEnabledLocatorWithSelection(eformsignFrame.getByRole("button", { name: "전송" }));
             if (topLevelSendButton) {
+                const selectedCategory = await classifySelection(topLevelSendButton);
                 const isFinalTopLevelSend = stampConfirmCount >= 3 || infoInsertedEmitted;
                 topLevelSendAttempted = true;
                 topLevelSendPopupWaitPolls = 0;
@@ -220,14 +257,14 @@ export async function runEformsignCreationGates(
                 }
                 await emitSendAttempted();
 
-                if (!(await tryClickGateLocator(topLevelSendButton))) {
+                if (!(await tryClickGateLocator(topLevelSendButton.locator))) {
                     lastAction = "top-level 전송 click outcome ambiguous; waiting for popup";
                     noteAction(lastAction);
                     await page.waitForTimeout(EFORMSIGN_GATE_POLL_MS);
                     continue;
                 }
-                logMessage("[creation-gate] clicked top-level 전송");
-                noteAction("clicked top-level 전송");
+                await logActionDiagnostic("send_top_level", topLevelSendButton, selectedCategory);
+                noteAction("send_top_level");
                 await page.waitForTimeout(250);
                 continue;
             }
@@ -237,28 +274,32 @@ export async function runEformsignCreationGates(
                 continue;
             }
 
-            const nextButton = await findVisibleEnabledLocator(eformsignFrame.getByRole("button", { name: "다음" }));
+            const nextButton = await findVisibleEnabledLocatorWithSelection(
+                eformsignFrame.getByRole("button", { name: "다음" }),
+            );
             if (nextButton) {
-                if (!(await tryPreSendClick(nextButton, "다음"))) {
+                const selectedCategory = await classifySelection(nextButton);
+                if (!(await tryPreSendClick(nextButton.locator, "다음"))) {
                     await page.waitForTimeout(EFORMSIGN_GATE_POLL_MS);
                     continue;
                 }
-                logMessage("[creation-gate] clicked 다음");
-                noteAction("clicked 다음");
+                await logActionDiagnostic("next", nextButton, selectedCategory);
+                noteAction("next");
                 await page.waitForTimeout(250);
                 continue;
             }
 
-            const startButton = await findVisibleEnabledLocator(
+            const startButton = await findVisibleEnabledLocatorWithSelection(
                 eformsignFrame.getByRole("button", { name: "입력 시작" }),
             );
             if (startButton) {
-                if (!(await tryPreSendClick(startButton, "입력 시작"))) {
+                const selectedCategory = await classifySelection(startButton);
+                if (!(await tryPreSendClick(startButton.locator, "start"))) {
                     await page.waitForTimeout(EFORMSIGN_GATE_POLL_MS);
                     continue;
                 }
-                logMessage("[creation-gate] clicked 입력 시작");
-                noteAction("clicked 입력 시작");
+                await logActionDiagnostic("start", startButton, selectedCategory);
+                noteAction("start");
                 await page.waitForTimeout(250);
                 continue;
             }

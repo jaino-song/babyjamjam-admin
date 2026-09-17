@@ -118,7 +118,9 @@ describe("runEformsignFinalizeGates", () => {
         );
         expect(popupSendButton.click).toHaveBeenCalledTimes(1);
         expect((eformsignFrame as unknown as { getByRole: jest.Mock }).getByRole).not.toHaveBeenCalled();
-        expect(log).toHaveBeenCalledWith("[finalize-gate] clicked popup 전송");
+        expect(log).toHaveBeenCalledWith(
+            expect.stringContaining('"action":"send_popup"'),
+        );
     });
 
     it("returns a success latch after top-level send for vendor-state reconciliation", async () => {
@@ -142,6 +144,15 @@ describe("runEformsignFinalizeGates", () => {
                 .fn()
                 .mockResolvedValueOnce({ hasSuccess: false, hasError: false })
                 .mockResolvedValueOnce(false)
+                .mockResolvedValueOnce({
+                    actionPresent: false,
+                    actionType: "unknown",
+                    actionCode: "unknown",
+                    successCountBucket: "0",
+                    successCode: "unknown",
+                    errorPresent: false,
+                    bootErrorPresent: false,
+                })
                 .mockResolvedValueOnce({ hasSuccess: true, hasError: false })
                 .mockResolvedValueOnce(true),
             waitForTimeout: jest.fn().mockResolvedValue(undefined),
@@ -197,10 +208,12 @@ describe("runEformsignFinalizeGates", () => {
 
     it("uses the finalize dialog selector in an abort snapshot", async () => {
         const snapshot = {
-            visibleButtons: ["전송"],
-            guideButtonLabel: null,
-            footerMessages: ["필수 입력 항목(1)"],
+            visibleButtonCount: 1,
+            guideButtonVisible: false,
+            headerButtonVisible: false,
             requestSendDialogVisible: true,
+            inputCommentDialogVisible: true,
+            anyDialogVisible: true,
         };
         const body = {
             evaluate: jest.fn().mockResolvedValue(snapshot),

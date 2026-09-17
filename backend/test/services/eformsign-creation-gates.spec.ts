@@ -152,13 +152,33 @@ describe("runEformsignCreationGates", () => {
             getByRole: frameGetByRole,
             getByText: jest.fn().mockReturnValue(locatorList([])),
         } as unknown as FrameLocator;
+        let callbackStateReads = 0;
+        let successLatchReads = 0;
         const page = {
-            evaluate: jest
-                .fn()
-                .mockResolvedValueOnce({ hasSuccess: false, hasError: false })
-                .mockResolvedValueOnce(false)
-                .mockResolvedValueOnce({ hasSuccess: true, hasError: false })
-                .mockResolvedValueOnce(true),
+            evaluate: jest.fn().mockImplementation((fn: unknown) => {
+                const source = String(fn);
+                if (source.includes("document_id")) return Promise.resolve(false);
+                if (source.includes("__eformsignDiagnostics")) {
+                    return Promise.resolve({
+                        actionPresent: false,
+                        actionType: "unknown",
+                        actionCode: "unknown",
+                        successCountBucket: "0",
+                        successCode: "unknown",
+                        errorPresent: false,
+                        bootErrorPresent: false,
+                    });
+                }
+                if (source.includes("__eformsignSuccess") && source.includes("__eformsignError")) {
+                    callbackStateReads += 1;
+                    return Promise.resolve({ hasSuccess: callbackStateReads > 1, hasError: false });
+                }
+                if (source.includes("__eformsignSuccess")) {
+                    successLatchReads += 1;
+                    return Promise.resolve(successLatchReads > 1);
+                }
+                return Promise.resolve(undefined);
+            }),
             waitForTimeout: jest.fn().mockResolvedValue(undefined),
         } as unknown as Page;
         const log = jest.fn();
@@ -194,13 +214,18 @@ describe("runEformsignCreationGates", () => {
             evaluate: jest.fn()
                 .mockResolvedValueOnce({ hasSuccess: false, hasError: false })
                 .mockResolvedValueOnce(false)
+                .mockResolvedValueOnce({
+                    actionPresent: false,
+                    actionType: "unknown",
+                    actionCode: "unknown",
+                    successCountBucket: "0",
+                    successCode: "unknown",
+                    errorPresent: false,
+                    bootErrorPresent: false,
+                })
                 .mockResolvedValueOnce({ hasSuccess: true, hasError: false })
                 .mockResolvedValueOnce(true)
-                .mockResolvedValueOnce({
-                    hasSuccess: true,
-                    hasError: false,
-                    success: { code: "-1", document_id: "created-directly" },
-                }),
+                .mockResolvedValueOnce(true),
             waitForTimeout: jest.fn().mockResolvedValue(undefined),
         } as unknown as Page;
 
@@ -246,6 +271,15 @@ describe("runEformsignCreationGates", () => {
                 .fn()
                 .mockResolvedValueOnce({ hasSuccess: false, hasError: false })
                 .mockResolvedValueOnce(false)
+                .mockResolvedValueOnce({
+                    actionPresent: false,
+                    actionType: "unknown",
+                    actionCode: "unknown",
+                    successCountBucket: "0",
+                    successCode: "unknown",
+                    errorPresent: false,
+                    bootErrorPresent: false,
+                })
                 .mockResolvedValueOnce({ hasSuccess: false, hasError: false })
                 .mockResolvedValueOnce(false)
                 .mockResolvedValueOnce({ hasSuccess: false, hasError: false })
@@ -264,10 +298,12 @@ describe("runEformsignCreationGates", () => {
 
     it("adds a gate snapshot when an SDK error aborts creation", async () => {
         const snapshot = {
-            visibleButtons: ["전송"],
-            guideButtonLabel: null,
-            footerMessages: ["필수 입력 항목(1)"],
+            visibleButtonCount: 1,
+            guideButtonVisible: false,
+            headerButtonVisible: false,
             requestSendDialogVisible: true,
+            inputCommentDialogVisible: false,
+            anyDialogVisible: true,
         };
         const body = {
             evaluate: jest.fn().mockResolvedValue(snapshot),
