@@ -65,11 +65,12 @@ describe("conversation context assembler", () => {
                 version: "stale-summary",
                 sourceMessageCount: 0,
                 selectedEntities: { clients: { id: 7, name: "요약 고객" } },
-                goals: ["전화번호 01012345678 확인"],
+                goals: ["비정규이름 확인: 비정규주소"],
             },
             tasks: [live],
             displayedChoice: hint,
             actionOutcomes: [{ capability: "clients.create", status: "saved", actionId: randomUUID() }],
+            protectedValues: ["비정규이름", "비정규주소"],
         });
 
         const serialized = JSON.stringify(context);
@@ -85,6 +86,8 @@ describe("conversation context assembler", () => {
         ]);
         expect(serialized).not.toContain("보호된 이름");
         expect(serialized).not.toContain("01012345678");
+        expect(serialized).not.toContain("비정규이름");
+        expect(serialized).not.toContain("비정규주소");
         expect(serialized).not.toContain("보호된 선택 라벨");
         expect(serialized).not.toContain("요약 고객");
         expect(context.actionOutcomes).toEqual(expect.arrayContaining([

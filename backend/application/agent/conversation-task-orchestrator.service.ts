@@ -106,6 +106,12 @@ function formOperations(form: ConversationTaskTurnInput["formSubmission"]): Clie
     return operations;
 }
 
+function submittedFormCapability(form: ConversationTaskTurnInput["formSubmission"], sessionId: string): string | undefined {
+    if (!form) return undefined;
+    const suffix = `-${sessionId}`;
+    return form.formId.endsWith(suffix) ? form.formId.slice(0, -suffix.length) : undefined;
+}
+
 function activeTask(tasks: readonly AgentTask[]): AgentTask | null {
     return tasks
         .filter((task) => ["collecting", "confirming_target", "review_ready"].includes(task.state))
@@ -224,12 +230,49 @@ export class ConversationTaskOrchestratorService {
         }
 
         const text = conversationText(input.message);
+        const submittedCapability = submittedFormCapability(input.formSubmission, input.sessionId);
+        // Structured forms outside the client task contract stay on the
+        // runtime's legacy proposal path.  They must never be interpreted as
+        // client task operations, even when their values happen to use the
+        // same field names.
+        if (input.formSubmission && submittedCapability !== "clients.create" && submittedCapability !== "clients.update") {
+            return {
+                canonical,
+                eventId,
+                requestHash,
+                text,
+                isQuestion: isQuestionLike(text),
+                task: null,
+                mutated: false,
+                replayed: false,
+                operations: [],
+                refusal: "unsupported-input",
+            };
+        }
         const operations = [
             ...formOperations(input.formSubmission),
             ...extractExplicitUserOperations(text),
         ];
         const tasks = await this.tasks.listForConversation(input.principal, input.sessionId);
         const current = activeTask(tasks);
+        // A form id binds only a capability and session.  Without a task id
+        // and expected revision it cannot safely target whichever task is now
+        // active.  Exact replay was handled above, so refuse every new form
+        // while preserving the current task snapshot for bounded UI state.
+        if (input.formSubmission && current) {
+            return {
+                canonical,
+                eventId,
+                requestHash,
+                text,
+                isQuestion: isQuestionLike(text),
+                task: current,
+                mutated: false,
+                replayed: false,
+                operations: [],
+                refusal: "unsupported-input",
+            };
+        }
         // A live task owns the continuation capability. Router output can
         // contain a different client write capability after compaction or a
         // follow-up question, but it must not retarget the existing task.

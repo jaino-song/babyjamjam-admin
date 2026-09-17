@@ -10,7 +10,7 @@ import {
 import type { AgentSessionEntity } from "domain/entities/agent-session.entity";
 import type { VerifiedTenantPrincipal } from "infrastructure/tenant/tenant.context";
 import { AgentTaskService } from "./agent-task.service";
-import { redactFreeText } from "./agent-model-redaction";
+import { redactFreeText, redactKnownValues } from "./agent-model-redaction";
 import {
     conversationText,
     extractExplicitUserOperations,
@@ -48,7 +48,7 @@ export interface ConversationContext {
     };
 }
 
-function safeSummary(summary: unknown): Record<string, unknown> {
+export function safeSummary(summary: unknown, protectedValues: readonly unknown[] = []): Record<string, unknown> {
     if (!summary || typeof summary !== "object" || Array.isArray(summary)) return {};
     const value = summary as Record<string, unknown>;
     const selectedEntities = value["selectedEntities"];
@@ -68,7 +68,14 @@ function safeSummary(summary: unknown): Record<string, unknown> {
     return {
         ...(typeof value["version"] === "string" ? { version: value["version"] } : {}),
         ...(typeof value["sourceMessageCount"] === "number" ? { sourceMessageCount: value["sourceMessageCount"] } : {}),
-        ...(Array.isArray(value["goals"]) ? { goals: value["goals"].filter((item): item is string => typeof item === "string").map(redactFreeText).slice(-5) } : {}),
+        ...(Array.isArray(value["goals"])
+            ? {
+                goals: value["goals"]
+                    .filter((item): item is string => typeof item === "string")
+                    .map((goal) => redactKnownValues(redactFreeText(goal), protectedValues))
+                    .slice(-5),
+            }
+            : {}),
         ...(safeSelectedEntities ? { selectedEntities: safeSelectedEntities } : {}),
     };
 }
@@ -132,7 +139,7 @@ export function assembleConversationContext(input: ConversationContextInput): Co
         && activeTask.choiceSets.some((set) => set.choiceSetRef === hint.choiceSetRef)
         ? hint
         : undefined;
-    const summary = safeSummary(input.summary);
+    const summary = safeSummary(input.summary, input.protectedValues);
     // The bounded digest is useful continuity, but current task state always
     // comes from the live inventory above. No protected task values enter this
     // context object.

@@ -136,6 +136,89 @@ describe("ConversationTaskOrchestratorService", () => {
         );
     });
 
+    it("creates a new client task from an unbound client form when no task is active", async () => {
+        const created = task();
+        const createFromConversation = jest.fn().mockResolvedValue({ snapshot: created, receipt: receipt(created.taskId) });
+        const listForConversation = jest.fn().mockResolvedValue([]);
+        const { orchestrator } = build({ createFromConversation, listForConversation });
+
+        const result = await orchestrator.handleUserTurn({
+            principal,
+            sessionId,
+            capabilityId: "clients.create",
+            formSubmission: {
+                formId: `clients.create-${sessionId}`,
+                values: { name: "신규 고객", phone: "01012345678" },
+            },
+            message: { id: randomUUID(), role: "user", parts: [{ type: "text", text: "" }] },
+        });
+
+        expect(result.mutated).toBe(true);
+        expect(result.task?.taskId).toBe(created.taskId);
+        expect(createFromConversation).toHaveBeenCalledWith(
+            principal,
+            expect.objectContaining({
+                capabilityId: "clients.create",
+                operations: [
+                    { op: "set", field: "name", value: "신규 고객" },
+                    { op: "set", field: "phone", value: "01012345678" },
+                ],
+            }),
+            "user",
+            result.requestHash,
+        );
+    });
+
+    it("refuses every new unbound client form while an active task exists", async () => {
+        const current = task();
+        const patchFromConversation = jest.fn();
+        const listForConversation = jest.fn().mockResolvedValue([current]);
+        const { orchestrator } = build({ listForConversation, patchFromConversation });
+
+        for (const capabilityId of ["clients.create", "clients.update"] as const) {
+            const result = await orchestrator.handleUserTurn({
+                principal,
+                sessionId,
+                capabilityId,
+                formSubmission: {
+                    formId: `${capabilityId}-${sessionId}`,
+                    values: { name: "덮어쓸 수 없는 값", phone: "01099998888" },
+                },
+                message: { id: randomUUID(), role: "user", parts: [{ type: "text", text: "" }] },
+            });
+            expect(result.refusal).toBe("unsupported-input");
+            expect(result.mutated).toBe(false);
+            expect(result.task?.taskId).toBe(current.taskId);
+            expect(result.operations).toEqual([]);
+        }
+        expect(patchFromConversation).not.toHaveBeenCalled();
+    });
+
+    it("replays an exact client form receipt before active-task refusal", async () => {
+        const created = task();
+        const laterTask = task();
+        const createFromConversation = jest.fn().mockResolvedValue({ snapshot: created, receipt: receipt(created.taskId) });
+        const replayConversationIntake = jest.fn()
+            .mockResolvedValueOnce(null)
+            .mockResolvedValueOnce({ snapshot: created, receipt: receipt(created.taskId) });
+        const listForConversation = jest.fn().mockResolvedValueOnce([]).mockResolvedValueOnce([laterTask]);
+        const { orchestrator } = build({ createFromConversation, replayConversationIntake, listForConversation });
+        const message = { id: randomUUID(), role: "user" as const, parts: [{ type: "text", text: "" }] };
+        const formSubmission = {
+            formId: `clients.create-${sessionId}`,
+            values: { name: "정확한 재시도", phone: "01011112222" },
+        };
+
+        const first = await orchestrator.handleUserTurn({ principal, sessionId, capabilityId: "clients.create", message, formSubmission });
+        const replay = await orchestrator.handleUserTurn({ principal, sessionId, capabilityId: "clients.create", message, formSubmission });
+
+        expect(first.mutated).toBe(true);
+        expect(replay.replayed).toBe(true);
+        expect(replay.task?.taskId).toBe(created.taskId);
+        expect(createFromConversation).toHaveBeenCalledTimes(1);
+        expect(listForConversation).toHaveBeenCalledTimes(1);
+    });
+
     it("does not create a task from labelled facts without a selected client write capability", async () => {
         const createFromConversation = jest.fn();
         const { orchestrator, policy } = build({ createFromConversation });
