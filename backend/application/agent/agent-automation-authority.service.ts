@@ -63,16 +63,28 @@ export class AgentAutomationAuthorityService {
             const taskHead = effectiveHead?.origin.kind === "task";
             if (taskHead && !input.taskReference) return refuse();
             if (input.taskReference) {
-                const scopeDigest = agentBindingHash(scope);
-                const scopeIsBound = [...input.taskReference.authorities, ...input.taskReference.coverages]
-                    .some((reference) => reference.scopeDigest === scopeDigest);
+                // Authority references bind the exact operation scope, while a
+                // coverage reference deliberately omits ruleId. A coverage
+                // carrier is therefore matched against the canonical coverage
+                // scope here; the exact rule is checked below by the
+                // grandfathered scope and fingerprint resolver.
+                const exactScopeDigest = agentBindingHash(scope);
+                const coverageScopeDigest = agentBindingHash(agentAutomationCoverageScope(scope));
+                const authorityReferenceBound = input.taskReference.authorities
+                    .some((reference) => reference.scopeDigest === exactScopeDigest);
+                const coverageReferenceBound = input.taskReference.coverages
+                    .some((reference) => reference.scopeDigest === coverageScopeDigest);
+                const expectedReferenceBound = batch.authorities.length > 0
+                    ? authorityReferenceBound
+                    : coverageReferenceBound;
                 // A valid ordinary successor owns the current scope. Its job
                 // may still carry a preserved task carrier from an earlier
                 // materialization, but that transient pointer must not keep a
                 // superseded task record alive or block the ordinary head after
                 // task retention/purge. Scope binding is still checked so a
                 // copied carrier cannot cross into another operation.
-                if (!scopeIsBound || (taskHead && !await this.records.verifyTaskCommitReference(transaction, input.taskReference, scope.branchId))) return refuse();
+                if (!expectedReferenceBound
+                    || (taskHead && !await this.records.verifyTaskCommitReference(transaction, input.taskReference, scope.branchId))) return refuse();
             }
             const coverage = resolveAgentAutomationCoverageHead({ records: batch.coverages, scope: agentAutomationCoverageScope(scope), knownProvenance: batch.coverages.length > 0 });
             if (coverage.status === "refused") return refuse();
