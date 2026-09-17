@@ -1,5 +1,5 @@
 import { act, renderHook, waitFor } from "@testing-library/react";
-import { Children, isValidElement, type ReactElement, type ReactNode } from "react";
+import { Children, isValidElement, useLayoutEffect, type ReactElement, type ReactNode } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 import type { Client } from "@/lib/client/types";
@@ -269,6 +269,49 @@ describe("useClientDetailController", () => {
 
     expect(onClientDeleted).not.toHaveBeenCalled();
     expect(result.current.detailClient?.id).toBe(client.id);
+  });
+
+  it("invalidates an open delete confirmation before identity-reset effects run", async () => {
+    mockedFetchClient.mockImplementation(() => new Promise<Client>(() => {}));
+    const mutateAsync = jest.fn().mockResolvedValue(undefined);
+    mockedUseDeleteClient.mockReturnValue({
+      isPending: false,
+      mutateAsync,
+    } as unknown as ReturnType<typeof useDeleteClient>);
+    type ModalProps = { open: boolean; onConfirm: () => Promise<void> };
+    const transitionModals: ModalProps[] = [];
+    const client = makeClient(1);
+    const { result, rerender } = renderHook(
+      ({ clientId }: { clientId: number }) => {
+        const controller = useClientDetailController({
+          client,
+          clientId,
+          dataComponent: "mobile_clients_detail-sheet_detail",
+        });
+        // Observe the committed modal before passive effects clear the old target.
+        useLayoutEffect(() => {
+          if (clientId === 2 && controller.deleteTargetClientId === 1) {
+            transitionModals.push((controller.deleteModal as ReactElement<ModalProps>).props);
+          }
+        }, [clientId, controller]);
+        return controller;
+      },
+      { initialProps: { clientId: 1 }, wrapper: createWrapper() },
+    );
+
+    act(() => getClientDetailProps(result.current.detail)?.onDelete(1));
+    const oldModal = result.current.deleteModal as ReactElement<ModalProps>;
+    expect(oldModal.props.open).toBe(true);
+    rerender({ clientId: 2 });
+    expect(transitionModals).toHaveLength(1);
+
+    await act(async () => {
+      await transitionModals[0].onConfirm();
+      await oldModal.props.onConfirm();
+    });
+
+    expect(transitionModals[0].open).toBe(false);
+    expect(mutateAsync).not.toHaveBeenCalled();
   });
 
   it("does not close a newer URL detail when an earlier delete completes", async () => {

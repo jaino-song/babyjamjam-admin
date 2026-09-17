@@ -276,7 +276,11 @@ export function useClientDetailController({
   }, [employees, prefillContractCreation, router]);
 
   const handleDeleteConfirm = async () => {
-    if (deleteTargetClientId == null) return;
+    if (
+      deleteTargetClientId == null ||
+      deleteTargetClientId !== resolvedClientId ||
+      deleteTargetClientId !== resolvedClientIdRef.current
+    ) return;
     const targetClientId = deleteTargetClientId;
 
     try {
@@ -364,7 +368,7 @@ export function useClientDetailController({
   const deleteModal = (
     <MobileTwoButtonModal
       data-component={`${dataComponent}_delete-confirm-modal`}
-      open={deleteTargetClientId != null}
+      open={deleteTargetClientId != null && deleteTargetClientId === resolvedClientId}
       title={t(locale, "common.delete")}
       description={t(locale, "clients.delete-confirm")}
       cancelLabel={t(locale, "common.cancel")}
