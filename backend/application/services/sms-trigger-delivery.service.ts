@@ -22,6 +22,7 @@ import {
     SERVICE_END_NOTICE_SMS_TRIGGER_TYPE,
 } from "domain/constants/service-end-notice-message";
 import { MessageTriggerJobEntity } from "domain/entities/message-trigger-job.entity";
+import { isReservedAutomationJob } from "domain/constants/agent-automation-storage";
 import { TriggerJobDeferredError } from "domain/errors/trigger-job-deferred.error";
 import {
     MessageLogEntity,
@@ -206,6 +207,7 @@ export class SmsTriggerDeliveryService {
      * this resolver so they share one immutable snapshot contract.
      */
     async resolveDeliverySnapshot(job: MessageTriggerJobEntity): Promise<Readonly<SmsTriggerDeliverySnapshot>> {
+        this.assertDeliveryJob(job);
         if (!job.branchId) {
             throw new Error(`SMS trigger job ${job.id} is missing branchId`);
         }
@@ -229,6 +231,7 @@ export class SmsTriggerDeliveryService {
 
     /** Resolve the current provider-bound target without trusting staged data. */
     async resolveCanonicalDeliverySnapshot(job: MessageTriggerJobEntity): Promise<Readonly<SmsTriggerDeliverySnapshot>> {
+        this.assertDeliveryJob(job);
         if (!job.branchId) {
             throw new Error(`SMS trigger job ${job.id} is missing branchId`);
         }
@@ -330,6 +333,7 @@ export class SmsTriggerDeliveryService {
     }
 
     async sendJob(job: MessageTriggerJobEntity): Promise<boolean> {
+        this.assertDeliveryJob(job);
         if (!job.branchId) {
             throw new Error(`SMS trigger job ${job.id} is missing branchId`);
         }
@@ -389,6 +393,7 @@ export class SmsTriggerDeliveryService {
      * failed preparation can never leave a job in `dispatching`.
      */
     async prepareJob(job: MessageTriggerJobEntity): Promise<SmsTriggerDeliveryPreparation | null> {
+        this.assertDeliveryJob(job);
         if (!job.branchId) {
             throw new Error(`SMS trigger job ${job.id} is missing branchId`);
         }
@@ -465,6 +470,7 @@ export class SmsTriggerDeliveryService {
         job: MessageTriggerJobEntity,
         preparation: SmsTriggerDeliveryPreparation,
     ): Promise<boolean> {
+        this.assertDeliveryJob(job);
         if (!job.branchId) {
             throw new Error(`SMS trigger job ${job.id} is missing branchId`);
         }
@@ -476,6 +482,10 @@ export class SmsTriggerDeliveryService {
             throw new Error("SMS prepared delivery snapshot changed before provider dispatch");
         }
         return this.sendSmsJob(job, config, preparation.snapshot);
+    }
+
+    private assertDeliveryJob(job: MessageTriggerJobEntity): void {
+        if (isReservedAutomationJob(job)) throw new SmsTriggerDeliverySkipError("Internal automation records cannot be delivered");
     }
 
     /**

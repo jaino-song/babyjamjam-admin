@@ -20,6 +20,8 @@ import { BranchSystemTemplateSnapshotError } from "domain/entities/branch-system
 import { TriggerJobDeferredError } from "domain/errors/trigger-job-deferred.error";
 import { MessageLogEntity } from "domain/entities/message-log.entity";
 import { IMessageLogRepository } from "domain/repositories/message-log.repository.interface";
+import { MESSAGE_AUTOMATION_INTENT_RULE_ID } from "domain/constants/message-automation-intent";
+import { AGENT_AUTOMATION_RECORD_DEDUPE_PREFIX, AGENT_AUTOMATION_RECORD_PAYLOAD_KEY } from "domain/constants/agent-automation-storage";
 
 describe("SmsTriggerDeliveryService", () => {
     // F7: adding a new template key to the catalog cannot change an existing key's configHash —
@@ -76,6 +78,26 @@ describe("SmsTriggerDeliveryService", () => {
             code: "P1001",
             clientVersion: "test",
         });
+
+    it.each(["rule", "dedupe", "payload"])("refuses internal %s carriers before templates, enrichment, logs or provider calls", async (carrier) => {
+        const job = createServiceInfoJob();
+        if (carrier === "rule") Object.assign(job, { ruleId: MESSAGE_AUTOMATION_INTENT_RULE_ID });
+        if (carrier === "dedupe") Object.assign(job, { dedupeKey: `${AGENT_AUTOMATION_RECORD_DEDUPE_PREFIX}synthetic` });
+        if (carrier === "payload") Object.assign(job.payload, { [AGENT_AUTOMATION_RECORD_PAYLOAD_KEY]: null });
+        const aligo = { sendSms: jest.fn() };
+        const templates = { getTemplate: jest.fn() };
+        const logs = { create: jest.fn() };
+        const enrichers = { enrich: jest.fn() };
+        const service = new SmsTriggerDeliveryService(aligo as never, templates as never, logs as never, undefined, enrichers as never);
+        for (const operation of [() => service.resolveDeliverySnapshot(job), () => service.resolveCanonicalDeliverySnapshot(job), () => service.prepareJob(job),
+            () => service.sendJob(job), () => service.sendPreparedJob(job, {} as never)]) {
+            await expect(operation()).rejects.toThrow("Internal automation records cannot be delivered");
+        }
+        expect(aligo.sendSms).not.toHaveBeenCalled();
+        expect(templates.getTemplate).not.toHaveBeenCalled();
+        expect(logs.create).not.toHaveBeenCalled();
+        expect(enrichers.enrich).not.toHaveBeenCalled();
+    });
 
     it("sends the service information trigger through SMS instead of alimtalk", async () => {
         const aligoService = {
