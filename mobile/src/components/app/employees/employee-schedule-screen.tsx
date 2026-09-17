@@ -288,9 +288,13 @@ export function EmployeeScheduleScreen({
   const [detailClientOverride, setDetailClientOverride] = useState<Client | null>(null);
   const { allClients, isLoading, isError, refetch } = useInfiniteClients();
   const entries = useMemo(() => buildScheduleEntries(allClients, today), [allClients, today]);
+  const searchFilteredEntries = useMemo(
+    () => filterScheduleEntries(entries, "all", searchQuery),
+    [entries, searchQuery],
+  );
   const filteredEntries = useMemo(
-    () => filterScheduleEntries(entries, kindFilter, searchQuery),
-    [entries, kindFilter, searchQuery],
+    () => filterScheduleEntries(searchFilteredEntries, kindFilter, ""),
+    [kindFilter, searchFilteredEntries],
   );
   const entriesByDate = useMemo(() => {
     const grouped = new Map<string, ScheduleEntry[]>();
@@ -352,7 +356,7 @@ export function EmployeeScheduleScreen({
 
   const kindFilterItems = SCHEDULE_KIND_FILTERS.map((filter) => ({
     label: filter.label,
-    count: filteredEntries.filter((entry) => filter.key === "all" || entry.kind === filter.key).length,
+    count: searchFilteredEntries.filter((entry) => filter.key === "all" || entry.kind === filter.key).length,
   }));
   const activeKindLabel = SCHEDULE_KIND_FILTERS.find((filter) => filter.key === kindFilter)?.label ?? "전체";
 
