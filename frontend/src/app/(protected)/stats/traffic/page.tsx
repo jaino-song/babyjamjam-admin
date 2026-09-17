@@ -1,5 +1,12 @@
 import { redirect } from "next/navigation";
 import { Block } from "@/components/app/v3/Block";
+import {
+  StatsPeriodNotice,
+  StatsPeriodProvider,
+  StatsPeriodSelector,
+  StatsSourceEmpty,
+  StatsSourceNotice,
+} from "@/components/app/stats/StatsPeriodSelector";
 import { getCurrentUser } from "@/lib/auth/cookies";
 import { ROLES } from "@/lib/constants/roles";
 import { formatDateForDisplay } from "@/lib/date/format-date-for-display";
@@ -11,7 +18,12 @@ import {
   getBrowserBreakdown,
   getSourceBreakdown,
   getRegionBreakdown,
+  isPostHogConfigured,
 } from "@/lib/observability/posthog";
+import {
+  parseStatsPeriodParam,
+  statsPeriodLabel,
+} from "@/lib/observability/stats-period";
 import { StatsHero } from "../_components/StatsHero";
 import { KpiCard } from "../_components/KpiCard";
 
@@ -29,49 +41,60 @@ function formatDelta(today: number, yesterday: number) {
   };
 }
 
-export default async function TrafficDetailPage() {
+interface TrafficDetailPageProps {
+  searchParams?: Promise<Record<string, string | string[] | undefined>>;
+}
+
+export default async function TrafficDetailPage({ searchParams }: TrafficDetailPageProps) {
   const user = await getCurrentUser();
   if (user?.role !== ROLES.owner) {
     redirect("/stats/inquiries");
   }
 
+  const params = searchParams ? await searchParams : {};
+  const period = parseStatsPeriodParam(params.period);
+  if (period === null) {
+    return <StatsPeriodNotice title="사이트 트래픽 통계 기간을 확인해 주세요" dataComponent="desktop_stats-traffic_page_period-error" />;
+  }
+  const posthogConfigured = isPostHogConfigured();
+
   const [summary, trend, topPages, devices, browsers, sources, regions] =
     await Promise.all([
-      getTrafficSummary(),
-      getTrafficTrend(7),
-      getTopPages(7, 10),
-      getDeviceBreakdown(7),
-      getBrowserBreakdown(7),
-      getSourceBreakdown(7),
-      getRegionBreakdown(7),
+      getTrafficSummary(period),
+      getTrafficTrend(period),
+      getTopPages(period, 10),
+      getDeviceBreakdown(period),
+      getBrowserBreakdown(period),
+      getSourceBreakdown(period),
+      getRegionBreakdown(period),
     ]);
 
   const pvDelta = formatDelta(summary.today.pv, summary.yesterday.pv);
   const uniqueDelta = formatDelta(summary.today.unique, summary.yesterday.unique);
 
-  // Build 7-day chart
+  // Build selected-range chart
   const todayDate = new Date();
   const trendMap = new Map(trend.map((p) => [p.day, p]));
-  const last7 = Array.from({ length: 7 }, (_, i) => {
+  const selectedRange = Array.from({ length: period }, (_, i) => {
     const d = new Date(todayDate);
-    d.setDate(d.getDate() - (6 - i));
+    d.setDate(d.getDate() - (period - 1 - i));
     const key = d.toISOString().slice(0, 10);
     const found = trendMap.get(key);
     return { date: d, pv: found?.pv ?? 0, unique: found?.unique ?? 0 };
   });
-  const maxValue = Math.max(1, ...last7.map((p) => p.pv));
+  const maxValue = Math.max(1, ...selectedRange.map((p) => p.pv));
   const chartW = 1100;
   const chartH = 200;
   const padL = 40;
   const padR = 20;
   const usableW = chartW - padL - padR;
   const yFor = (v: number) => chartH - 36 - (v / maxValue) * (chartH - 56);
-  const pvPoints = last7.map((p, i) => {
-    const x = padL + (i / 6) * usableW;
+  const pvPoints = selectedRange.map((p, i) => {
+    const x = padL + (selectedRange.length > 1 ? i / (selectedRange.length - 1) : 0) * usableW;
     return `${x.toFixed(1)},${yFor(p.pv).toFixed(1)}`;
   });
-  const uniquePoints = last7.map((p, i) => {
-    const x = padL + (i / 6) * usableW;
+  const uniquePoints = selectedRange.map((p, i) => {
+    const x = padL + (selectedRange.length > 1 ? i / (selectedRange.length - 1) : 0) * usableW;
     return `${x.toFixed(1)},${yFor(p.unique).toFixed(1)}`;
   });
   const pvLine = pvPoints.length ? `M${pvPoints.join(" L")}` : "";
@@ -82,22 +105,44 @@ export default async function TrafficDetailPage() {
           padL + usableW
         },${chartH - 36} Z`
       : "";
+  const chartLabelCount = period > 7 ? 6 : period;
+  const chartLabelIndexes = new Set(
+    Array.from({ length: chartLabelCount }, (_, index) =>
+      chartLabelCount <= 1
+        ? 0
+        : Math.round((index * (selectedRange.length - 1)) / (chartLabelCount - 1)),
+    ),
+  );
 
   const mobile = devices.find((d) => /mobile/i.test(d.deviceType)) ?? { pct: 0, count: 0 };
   const desktop = devices.find((d) => /desktop/i.test(d.deviceType)) ?? { pct: 0, count: 0 };
 
   return (
+    <StatsPeriodProvider key={period} initialPeriod={period}>
     <section data-component="desktop_stats-traffic_page" className="flex flex-col gap-6 pb-10">
       <Block name="desktop_stats-traffic_page_hero" className="shrink-0">
         <StatsHero
           title="사이트 트래픽"
           subtitle="PostHog · 페이지뷰/방문자/소스/디바이스/지역 상세 분석"
           rightValue={formatDateForDisplay(todayDate)}
-          backHref="/stats"
+          backHref={`/stats?period=${period}`}
           backLabel="통계 overview로"
           dataComponent="desktop_stats-traffic_page_hero_content"
         />
       </Block>
+
+      <StatsPeriodSelector
+        basePath="/stats/traffic"
+        period={period}
+        dataComponent="desktop_stats-traffic_page_period-selector"
+      />
+
+      {!posthogConfigured && (
+        <StatsSourceNotice
+          sources={["PostHog"]}
+          dataComponent="desktop_stats-traffic_page_source-unavailable"
+        />
+      )}
 
       <Block name="desktop_stats-traffic_page_kpi" className="shrink-0">
         <div
@@ -107,42 +152,42 @@ export default async function TrafficDetailPage() {
           <KpiCard
             iconEmoji="🌐"
             label="조회수 (오늘)"
-            value={summary.today.pv.toLocaleString("ko-KR")}
-            delta={pvDelta}
+            value={posthogConfigured ? summary.today.pv.toLocaleString("ko-KR") : "—"}
+            delta={posthogConfigured ? pvDelta : undefined}
             dataComponent="desktop_stats-traffic_page_kpi_grid_card-pv"
           />
           <KpiCard
             iconEmoji="👥"
             label="방문자"
-            value={summary.today.unique.toLocaleString("ko-KR")}
-            delta={uniqueDelta}
+            value={posthogConfigured ? summary.today.unique.toLocaleString("ko-KR") : "—"}
+            delta={posthogConfigured ? uniqueDelta : undefined}
             dataComponent="desktop_stats-traffic_page_kpi_grid_card-unique"
           />
           <KpiCard
             iconEmoji="⏱"
             label="평균 방문 시간"
             value={
-              summary.sevenDayTotal.pv === 0
-                ? "-"
-                : `${Math.floor(summary.avgSessionSeconds / 60)}:${String(Math.round(summary.avgSessionSeconds % 60)).padStart(2, "0")}`
+              !posthogConfigured || summary.selectedRange.total.pv === 0
+                ? "—"
+                : `${Math.floor(summary.selectedRange.avgSessionSeconds / 60)}:${String(Math.round(summary.selectedRange.avgSessionSeconds % 60)).padStart(2, "0")}`
             }
             dataComponent="desktop_stats-traffic_page_kpi_grid_card-session"
             valueSize="sm"
           />
           <KpiCard
             iconEmoji="↩"
-            label="이탈률"
-            value={summary.bounceRate.toFixed(1)}
-            unit="%"
-            tone={summary.bounceRate > 60 ? "warn" : "default"}
+            label={`이탈률 (${statsPeriodLabel(period)})`}
+            value={posthogConfigured ? summary.selectedRange.bounceRate.toFixed(1) : "—"}
+            unit={posthogConfigured ? "%" : undefined}
+            tone={posthogConfigured && summary.selectedRange.bounceRate > 60 ? "warn" : "default"}
             dataComponent="desktop_stats-traffic_page_kpi_grid_card-bounce"
           />
           <KpiCard
             iconEmoji="✨"
-            label="7일 합계"
-            value={summary.sevenDayTotal.pv.toLocaleString("ko-KR")}
-            unit="조회"
-            meta={`방문자 ${summary.sevenDayTotal.unique}명`}
+            label={`${statsPeriodLabel(period)} 합계`}
+            value={posthogConfigured ? summary.selectedRange.total.pv.toLocaleString("ko-KR") : "—"}
+            unit={posthogConfigured ? "조회" : undefined}
+            meta={posthogConfigured ? `방문자 ${summary.selectedRange.total.unique}명` : undefined}
             dataComponent="desktop_stats-traffic_page_kpi_grid_card-week"
             valueSize="sm"
           />
@@ -155,7 +200,7 @@ export default async function TrafficDetailPage() {
           className="animate-v3-slide-up bg-white rounded-[28px] shadow-v3 p-6"
         >
           <header className="flex items-center gap-2.5 pb-3.5 border-b border-v3-border mb-4">
-            <h3 className="text-[0.95rem] font-bold text-v3-text">조회수 · 방문자 추이 (7일)</h3>
+            <h3 className="text-[0.95rem] font-bold text-v3-text">조회수 · 방문자 추이 ({statsPeriodLabel(period)})</h3>
             <span className="text-[0.6rem] font-bold uppercase tracking-wider rounded px-1.5 py-0.5 bg-purple-100 text-purple-700">
               PostHog
             </span>
@@ -170,9 +215,11 @@ export default async function TrafficDetailPage() {
               </span>
             </div>
           </header>
-          {summary.sevenDayTotal.pv === 0 ? (
+          {!posthogConfigured ? (
+            <StatsSourceEmpty source="PostHog" dataComponent="desktop_stats-traffic_page_trend-unavailable" />
+          ) : summary.selectedRange.total.pv === 0 ? (
             <p className="text-center py-10 text-[0.85rem] text-v3-text-muted">
-              지난 7일간 트래픽 데이터가 없어요.
+              {statsPeriodLabel(period)} 트래픽 데이터가 없어요.
             </p>
           ) : (
             <svg
@@ -206,28 +253,30 @@ export default async function TrafficDetailPage() {
                   strokeDasharray="4,3"
                 />
               )}
-              {last7.map((p, i) => {
-                const x = padL + (i / 6) * usableW;
+              {selectedRange.map((p, i) => {
+                const x = padL + (selectedRange.length > 1 ? i / (selectedRange.length - 1) : 0) * usableW;
                 return (
                   <g key={i}>
                     <circle cx={x} cy={yFor(p.pv)} r={3} fill="hsl(214 100% 34%)" />
-                    {i === last7.length - 1 && (
+                    {i === selectedRange.length - 1 && (
                       <text x={x} y={yFor(p.pv) - 8} fontSize={11} fontWeight={600} fill="hsl(214 100% 34%)" textAnchor="middle">
                         {p.pv}
                       </text>
                     )}
-                    <text
-                      x={x}
-                      y={chartH - 12}
-                      fontSize={10}
-                      fill={i === last7.length - 1 ? "hsl(214 100% 34%)" : "hsl(215 16% 47%)"}
-                      fontWeight={i === last7.length - 1 ? 600 : 400}
-                      textAnchor="middle"
-                    >
-                      {i === last7.length - 1
-                        ? "오늘"
-                        : `${p.date.getMonth() + 1}/${p.date.getDate()}`}
-                    </text>
+                    {chartLabelIndexes.has(i) && (
+                      <text
+                        x={x}
+                        y={chartH - 12}
+                        fontSize={10}
+                        fill={i === selectedRange.length - 1 ? "hsl(214 100% 34%)" : "hsl(215 16% 47%)"}
+                        fontWeight={i === selectedRange.length - 1 ? 600 : 400}
+                        textAnchor="middle"
+                      >
+                        {i === selectedRange.length - 1
+                          ? "오늘"
+                          : `${String(p.date.getMonth() + 1).padStart(2, "0")}.${String(p.date.getDate()).padStart(2, "0")}`}
+                      </text>
+                    )}
                   </g>
                 );
               })}
@@ -250,7 +299,9 @@ export default async function TrafficDetailPage() {
               PostHog
             </span>
           </header>
-          {topPages.length === 0 ? (
+          {!posthogConfigured ? (
+            <StatsSourceEmpty source="PostHog" dataComponent="desktop_stats-traffic_page_top-pages-unavailable" />
+          ) : topPages.length === 0 ? (
             <p className="text-center py-6 text-[0.85rem] text-v3-text-muted">데이터 없음</p>
           ) : (
             <table className="w-full text-[0.82rem]">
@@ -265,8 +316,8 @@ export default async function TrafficDetailPage() {
               <tbody>
                 {topPages.map((p, i) => {
                   const share =
-                    summary.sevenDayTotal.pv > 0
-                      ? (p.pv / summary.sevenDayTotal.pv) * 100
+                    summary.selectedRange.total.pv > 0
+                      ? (p.pv / summary.selectedRange.total.pv) * 100
                       : 0;
                   return (
                     <tr
@@ -298,7 +349,9 @@ export default async function TrafficDetailPage() {
               PostHog
             </span>
           </header>
-          {sources.length === 0 ? (
+          {!posthogConfigured ? (
+            <StatsSourceEmpty source="PostHog" dataComponent="desktop_stats-traffic_page_sources-unavailable" />
+          ) : sources.length === 0 ? (
             <p className="text-center py-6 text-[0.85rem] text-v3-text-muted">데이터 없음</p>
           ) : (
             <div className="space-y-2.5">
@@ -336,7 +389,9 @@ export default async function TrafficDetailPage() {
               PostHog
             </span>
           </header>
-          <div className="space-y-5">
+          {!posthogConfigured ? (
+            <StatsSourceEmpty source="PostHog" dataComponent="desktop_stats-traffic_page_device-unavailable" />
+          ) : <div className="space-y-5">
             <div>
               <div className="text-[0.62rem] font-bold uppercase tracking-wider text-v3-text-muted mb-2">
                 디바이스
@@ -376,7 +431,7 @@ export default async function TrafficDetailPage() {
                 </div>
               )}
             </div>
-          </div>
+          </div>}
         </div>
 
         <div
@@ -389,7 +444,9 @@ export default async function TrafficDetailPage() {
               PostHog
             </span>
           </header>
-          {regions.length === 0 ? (
+          {!posthogConfigured ? (
+            <StatsSourceEmpty source="PostHog" dataComponent="desktop_stats-traffic_page_region-unavailable" />
+          ) : regions.length === 0 ? (
             <p className="text-center py-6 text-[0.85rem] text-v3-text-muted">
               지역 데이터가 없어요.
             </p>
@@ -415,5 +472,6 @@ export default async function TrafficDetailPage() {
         </div>
       </Block>
     </section>
+    </StatsPeriodProvider>
   );
 }

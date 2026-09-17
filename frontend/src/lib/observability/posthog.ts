@@ -21,12 +21,17 @@ import type {
   TrafficSummary,
   TrafficTrendPoint,
 } from "./types";
+import type { StatsPeriod } from "./stats-period";
 
 const POSTHOG_HOST = process.env.POSTHOG_HOST ?? "https://us.posthog.com";
 const POSTHOG_API_KEY = process.env.POSTHOG_API_KEY ?? "";
 const POSTHOG_PROJECT_ID = process.env.POSTHOG_PROJECT_ID ?? "";
 
 const REVALIDATE_SECONDS = 60;
+
+export function isPostHogConfigured(): boolean {
+  return Boolean(POSTHOG_API_KEY && POSTHOG_PROJECT_ID);
+}
 
 const FUNNEL_STEPS: Array<{ event: string; label: string }> = [
   { event: "pricing_viewed", label: "가격 페이지 진입" },
@@ -47,7 +52,7 @@ async function hogQL<Row extends unknown[]>(
   query: string,
   revalidate = REVALIDATE_SECONDS
 ): Promise<Row[]> {
-  if (!POSTHOG_API_KEY || !POSTHOG_PROJECT_ID) {
+  if (!isPostHogConfigured()) {
     console.warn("[posthog] missing POSTHOG_API_KEY or POSTHOG_PROJECT_ID");
     return [];
   }
@@ -108,7 +113,8 @@ function branchFilter(slug: string | null | undefined): string {
 // ============================================================
 
 export async function getInquiriesSummary(
-  branchSlug?: string | null
+  branchSlug?: string | null,
+  days: StatsPeriod = 7,
 ): Promise<InquiriesSummary> {
   const bf = branchFilter(branchSlug);
   const rows = await hogQL<[number, number, number, number, string | null]>(`
@@ -124,22 +130,38 @@ export async function getInquiriesSummary(
       ${bf}
   `);
 
-  const submittedSeven = await hogQL<[number]>(`
+  const [submittedSeven, submittedSelected, viewedSeven, viewedSelected] = await Promise.all([
+    hogQL<[number]>(`
     SELECT count() FROM events
     WHERE event = 'consultation_submitted'
       AND timestamp >= now() - INTERVAL 7 DAY
       ${bf}
-  `);
-  // pricing_viewed events don't carry branch_slug — the conversion rate is
-  // site-wide regardless of the user's branch filter.
-  const viewedSeven = await hogQL<[number]>(`
+    `),
+    hogQL<[number]>(`
+    SELECT count() FROM events
+    WHERE event = 'consultation_submitted'
+      AND timestamp >= now() - INTERVAL ${days} DAY
+      ${bf}
+    `),
+    // pricing_viewed events don't carry branch_slug — the conversion rate is
+    // site-wide regardless of the user's branch filter.
+    hogQL<[number]>(`
     SELECT count() FROM events
     WHERE event = 'pricing_viewed'
       AND timestamp >= now() - INTERVAL 7 DAY
-  `);
+    `),
+    hogQL<[number]>(`
+    SELECT count() FROM events
+    WHERE event = 'pricing_viewed'
+      AND timestamp >= now() - INTERVAL ${days} DAY
+    `),
+  ]);
   const subs = safeNumber(submittedSeven[0]?.[0]);
   const views = safeNumber(viewedSeven[0]?.[0]);
+  const selectedSubs = safeNumber(submittedSelected[0]?.[0]);
+  const selectedViews = safeNumber(viewedSelected[0]?.[0]);
   const conv = views > 0 ? (subs / views) * 100 : 0;
+  const selectedConversionRate = selectedViews > 0 ? (selectedSubs / selectedViews) * 100 : 0;
 
   const r = rows[0];
   return {
@@ -150,6 +172,12 @@ export async function getInquiriesSummary(
     thirtyDayTotal: safeNumber(r?.[3]),
     lastSubmissionAt: safeString(r?.[4]),
     conversionRate: conv,
+    selectedRange: {
+      days,
+      total: days === 30 ? safeNumber(r?.[3]) : safeNumber(r?.[2]),
+      average: (days === 30 ? safeNumber(r?.[3]) : safeNumber(r?.[2])) / days,
+      conversionRate: selectedConversionRate,
+    },
   };
 }
 
@@ -201,7 +229,8 @@ export async function getInquiriesByBranch(days = 1): Promise<InquiryByBranchRow
 
 export async function getRecentInquiries(
   limit = 10,
-  branchSlug?: string | null
+  branchSlug?: string | null,
+  days: StatsPeriod = 7,
 ): Promise<RecentInquiry[]> {
   const rows = await hogQL<[string, string | null, string | null, string | null, string | null, string]>(`
     SELECT
@@ -213,7 +242,7 @@ export async function getRecentInquiries(
       timestamp
     FROM events
     WHERE event = 'consultation_submitted'
-      AND timestamp >= now() - INTERVAL 7 DAY
+      AND timestamp >= now() - INTERVAL ${days} DAY
       ${branchFilter(branchSlug)}
     ORDER BY timestamp DESC
     LIMIT ${limit}
@@ -358,23 +387,26 @@ export async function getFunnelBySource(days = 7): Promise<FunnelBySource[]> {
 // TRAFFIC
 // ============================================================
 
-export async function getTrafficSummary(): Promise<TrafficSummary> {
-  const rows = await hogQL<[number, number, number, number, number, number]>(`
+export async function getTrafficSummary(days: StatsPeriod = 7): Promise<TrafficSummary> {
+  const maxDays = Math.max(7, days);
+  const rows = await hogQL<[number, number, number, number, number, number, number, number]>(`
     SELECT
       countIf(toDate(timestamp) = today()) AS pv_today,
       uniqIf(distinct_id, toDate(timestamp) = today()) AS u_today,
       countIf(toDate(timestamp) = today() - 1) AS pv_yest,
       uniqIf(distinct_id, toDate(timestamp) = today() - 1) AS u_yest,
       countIf(timestamp >= now() - INTERVAL 7 DAY) AS pv_7d,
-      uniqIf(distinct_id, timestamp >= now() - INTERVAL 7 DAY) AS u_7d
+      uniqIf(distinct_id, timestamp >= now() - INTERVAL 7 DAY) AS u_7d,
+      countIf(timestamp >= now() - INTERVAL ${days} DAY) AS pv_selected,
+      uniqIf(distinct_id, timestamp >= now() - INTERVAL ${days} DAY) AS u_selected
     FROM events
     WHERE event = '$pageview'
-      AND timestamp >= now() - INTERVAL 7 DAY
+      AND timestamp >= now() - INTERVAL ${maxDays} DAY
   `);
   const r = rows[0];
 
-  // Bounce rate: sessions with only 1 pageview
-  const bounceRows = await hogQL<[number, number]>(`
+  const [bounceRows, selectedBounceRows] = await Promise.all([
+    hogQL<[number, number]>(`
     SELECT
       countIf(pv_count = 1) AS bounces,
       count() AS total
@@ -386,13 +418,30 @@ export async function getTrafficSummary(): Promise<TrafficSummary> {
         AND properties.$session_id IS NOT NULL
       GROUP BY sid
     )
-  `);
+    `),
+    hogQL<[number, number]>(`
+    SELECT
+      countIf(pv_count = 1) AS bounces,
+      count() AS total
+    FROM (
+      SELECT properties.$session_id AS sid, count() AS pv_count
+      FROM events
+      WHERE event = '$pageview'
+        AND timestamp >= now() - INTERVAL ${days} DAY
+        AND properties.$session_id IS NOT NULL
+      GROUP BY sid
+    )
+    `),
+  ]);
   const bounces = safeNumber(bounceRows[0]?.[0]);
   const totalSessions = safeNumber(bounceRows[0]?.[1]);
   const bounceRate = totalSessions > 0 ? (bounces / totalSessions) * 100 : 0;
+  const selectedBounces = safeNumber(selectedBounceRows[0]?.[0]);
+  const selectedSessions = safeNumber(selectedBounceRows[0]?.[1]);
+  const selectedBounceRate = selectedSessions > 0 ? (selectedBounces / selectedSessions) * 100 : 0;
 
-  // Avg session: rough estimate via session duration
-  const sessionRows = await hogQL<[number]>(`
+  const [sessionRows, selectedSessionRows] = await Promise.all([
+    hogQL<[number]>(`
     SELECT avg(duration_s) FROM (
       SELECT properties.$session_id AS sid,
         dateDiff('second', min(timestamp), max(timestamp)) AS duration_s
@@ -402,8 +451,21 @@ export async function getTrafficSummary(): Promise<TrafficSummary> {
       GROUP BY sid
       HAVING count() >= 2
     )
-  `);
+    `),
+    hogQL<[number]>(`
+    SELECT avg(duration_s) FROM (
+      SELECT properties.$session_id AS sid,
+        dateDiff('second', min(timestamp), max(timestamp)) AS duration_s
+      FROM events
+      WHERE timestamp >= now() - INTERVAL ${days} DAY
+        AND properties.$session_id IS NOT NULL
+      GROUP BY sid
+      HAVING count() >= 2
+    )
+    `),
+  ]);
   const avgSession = safeNumber(sessionRows[0]?.[0]);
+  const selectedAvgSession = safeNumber(selectedSessionRows[0]?.[0]);
 
   return {
     today: { pv: safeNumber(r?.[0]), unique: safeNumber(r?.[1]) },
@@ -411,6 +473,12 @@ export async function getTrafficSummary(): Promise<TrafficSummary> {
     sevenDayTotal: { pv: safeNumber(r?.[4]), unique: safeNumber(r?.[5]) },
     avgSessionSeconds: avgSession,
     bounceRate,
+    selectedRange: {
+      days,
+      total: { pv: safeNumber(r?.[6]), unique: safeNumber(r?.[7]) },
+      avgSessionSeconds: selectedAvgSession,
+      bounceRate: selectedBounceRate,
+    },
   };
 }
 
