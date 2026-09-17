@@ -149,9 +149,14 @@ export class SmsRetryService {
                         return { kind: "terminal", log: sourceLog };
                     }
 
+                    const retryAuthority = await this.verifyAutomaticRetryAuthority(transaction, sourceLog);
+                    const retryDraft = this.createRetryAttempt(sourceLog);
+                    if (retryAuthority.kind === "valid") {
+                        this.applyAuthorizedSnapshot(retryDraft, retryAuthority.snapshot);
+                    }
                     const retryStart = await this.logRepository.startRetryAttempt(
                         sourceLog,
-                        this.createRetryAttempt(sourceLog),
+                        retryDraft,
                         invocation,
                         transaction,
                     );
@@ -159,14 +164,10 @@ export class SmsRetryService {
                     if (retryStart.kind === "suppressed") return { kind: "terminal", log: retryStart.log };
                     const retryLog = retryStart.log;
 
-                    const retryAuthority = await this.verifyAutomaticRetryAuthority(transaction, sourceLog);
                     if (retryAuthority.kind === "invalid") {
                         retryLog.markRetrySuperseded(AUTOMATION_RETRY_SEAL_INVALID_REASON);
                         await this.logRepository.update(retryLog, transaction);
                         return { kind: "terminal", log: retryLog };
-                    }
-                    if (retryAuthority.kind === "valid") {
-                        this.applyAuthorizedSnapshot(retryLog, retryAuthority.snapshot);
                     }
 
                     try {

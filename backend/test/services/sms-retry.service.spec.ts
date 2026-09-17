@@ -748,6 +748,21 @@ describe("SmsRetryService", () => {
         expect(authorityService.checkAutomaticJob).toHaveBeenCalledTimes(1);
         expect(deliveryService.resolveCanonicalDeliverySnapshot).toHaveBeenCalledTimes(1);
         expect(aligoService.sendSms).toHaveBeenCalledTimes(1);
+        expect(logRepository.startRetryAttempt).toHaveBeenCalledWith(
+            sourceLog,
+            expect.objectContaining({
+                receiver: canonicalSnapshot.receiver,
+                messageBody: canonicalSnapshot.message,
+                recipientName: canonicalSnapshot.recipientName,
+                variables: expect.objectContaining({
+                    title: canonicalSnapshot.title,
+                    msgType: canonicalSnapshot.requestedDeliveryType,
+                }),
+                providerAcceptanceFingerprint: expect.any(String),
+            }),
+            "automatic",
+            transaction,
+        );
         expect(aligoService.sendSms).toHaveBeenCalledWith(expect.objectContaining({
             receiver: canonicalSnapshot.receiver,
             message: canonicalSnapshot.message,
