@@ -32,9 +32,10 @@ export const messageTriggersApi = {
         api.get<UpcomingMessageTriggerJob[]>("/message-trigger-jobs/upcoming", {
             params: { limit },
         }),
-    listHistory: (limit = 200) =>
+    listHistory: (limit = 200, skip = 0, signal?: AbortSignal) =>
         api.get<MessageLogRecord[]>("/message-logs", {
-            params: { limit },
+            params: { limit, skip },
+            signal,
         }),
     retryHistory: (id: number) =>
         api.post<MessageLogRecord>(`/message-logs/${id}/retry`),
