@@ -14,6 +14,7 @@ import { describeClientMessageEffect } from "./client-message-effect-recipe";
 import { buildEmployeeAssignmentMessageEffect } from "./employee-assignment-message-effect-recipe";
 import {
     describeServiceRecordLinkEffect,
+    DEFAULT_MOBILE_SERVICE_RECORD_BASE_URL,
     type ServiceRecordLinkCaseSource,
     type ServiceRecordLinkScheduleSource,
     type ServiceRecordLinkTokenSource,
@@ -386,10 +387,25 @@ export class AgentAutomationJobAuthorityService {
     }
 
     private matchesConfiguredServiceRecordBase(value: string, token: string): boolean {
-        const configured = this.configService?.get<string>("MOBILE_SERVICE_RECORD_BASE_URL");
-        if (!configured) return true;
+        const configured = this.configService?.get<string>(
+            "MOBILE_SERVICE_RECORD_BASE_URL",
+            DEFAULT_MOBILE_SERVICE_RECORD_BASE_URL,
+        ) ?? DEFAULT_MOBILE_SERVICE_RECORD_BASE_URL;
         const base = configured.trim().replace(/\/+$/, "");
-        return base.length > 0 && value === `${base}/service-record/${token}`;
+        if (!base) return false;
+        try {
+            const expected = new URL(`${base}/service-record/${token}`);
+            const candidate = new URL(value);
+            return expected.protocol === "https:" && candidate.protocol === expected.protocol
+                && expected.username === "" && expected.password === ""
+                && candidate.username === "" && candidate.password === ""
+                && expected.search === "" && expected.hash === ""
+                && candidate.search === "" && candidate.hash === ""
+                && candidate.origin === expected.origin
+                && candidate.pathname === expected.pathname;
+        } catch {
+            return false;
+        }
     }
 
     private async hasCanonicalCatchUpPredecessorChain(

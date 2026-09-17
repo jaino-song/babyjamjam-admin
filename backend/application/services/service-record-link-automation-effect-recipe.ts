@@ -18,6 +18,8 @@ import type { MessageTriggerRuleEntity } from "domain/entities/message-trigger-r
 import type { SmsTriggerDeliverySnapshot } from "./sms-trigger-delivery.service";
 
 const RECIPE_VERSION = "service-record-link-automation-recipe-v1";
+/** Keep this default aligned with ServiceRecordLinkService.buildServiceRecordUrl. */
+export const DEFAULT_MOBILE_SERVICE_RECORD_BASE_URL = "https://m.admin.babyjamjam.com";
 const DIGEST = /^[a-f0-9]{64}$/;
 const UUID = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i;
 const LINK_TOKEN = /^[A-Za-z0-9_-]+$/;

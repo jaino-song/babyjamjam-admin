@@ -44,7 +44,10 @@ import { ServiceRecordLifecycleService } from "./service-record-lifecycle.servic
 import { MessageTemplateAutomationLockService } from "./message-template-automation-lock.service";
 import { MessageAutomationBranchLockService } from "./message-automation-branch-lock.service";
 import { MessageAutomationActivationService } from "./message-automation-activation.service";
-import { buildServiceRecordLinkMessage } from "./service-record-link-automation-effect-recipe";
+import {
+    buildServiceRecordLinkMessage,
+    DEFAULT_MOBILE_SERVICE_RECORD_BASE_URL,
+} from "./service-record-link-automation-effect-recipe";
 import { captureServiceRecordError } from "infrastructure/observability/service-record-sentry";
 
 const AUTOMATIC_SCHEDULING_LEASE_MINUTES = 10;
@@ -791,7 +794,7 @@ export class ServiceRecordLinkService {
 
     private buildServiceRecordUrl(linkToken: string): string {
         const base = this.configService
-            .get<string>("MOBILE_SERVICE_RECORD_BASE_URL", "https://m.admin.babyjamjam.com")
+            .get<string>("MOBILE_SERVICE_RECORD_BASE_URL", DEFAULT_MOBILE_SERVICE_RECORD_BASE_URL)
             .replace(/\/+$/, "");
         return `${base}/service-record/${linkToken}`;
     }

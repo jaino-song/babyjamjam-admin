@@ -22,7 +22,8 @@ const endDate = new Date("2026-10-15T00:00:00.000Z");
 const employeePhone = "010-0000-0021";
 const serviceRecordUrl = "https://m.admin.babyjamjam.com/service-record/efl_synthetic_token";
 
-function fixture() {
+function fixture(options: { serviceRecordUrl?: string; configBase?: string } = {}) {
+    const recordUrl = options.serviceRecordUrl ?? serviceRecordUrl;
     const rule = MessageTriggerRuleEntity.reconstitute(
         SERVICE_RECORD_LINK_RULE_ID,
         null,
@@ -86,8 +87,8 @@ function fixture() {
         employeeId,
         employeeName: schedule.primaryEmployee.name,
         recipientPhone: employeePhone,
-        buttonUrl: serviceRecordUrl,
-        serviceRecordUrl,
+        buttonUrl: recordUrl,
+        serviceRecordUrl: recordUrl,
         serviceStartDate: "2026-10-01",
         serviceEndDate: "2026-10-15",
     });
@@ -168,13 +169,21 @@ function fixture() {
             return effect ? { status: "allowed", seal: {} } : { status: "refused", reason: "automation-authority-unavailable" };
         }),
     };
-    const service = new AgentAutomationJobAuthorityService(authority as never, sources as never, sender as never);
+    const configService = options.configBase === undefined
+        ? undefined
+        : { get: jest.fn().mockReturnValue(options.configBase) };
+    const service = new AgentAutomationJobAuthorityService(
+        authority as never,
+        sources as never,
+        sender as never,
+        configService as never,
+    );
     const render = jest.fn().mockResolvedValue(snapshot);
     return { service, transaction, job, token, render, snapshot };
 }
 
 describe("AgentAutomationJobAuthorityService service-record-link adapter", () => {
-    it("resolves current rows under the transaction and does not mint, mutate or send", async () => {
+    it("uses the issuer default when ConfigService is absent", async () => {
         const f = fixture();
         const result = await f.service.checkAutomaticJob(f.transaction as never, f.job, "materialize", f.render);
         expect(result).toMatchObject({ status: "allowed" });
@@ -183,6 +192,23 @@ describe("AgentAutomationJobAuthorityService service-record-link adapter", () =>
         expect(f.transaction.message_trigger_job.findFirst).toHaveBeenCalledTimes(1);
         expect(f.transaction.service_record_token).not.toHaveProperty("create");
         expect(f.transaction.service_record_token).not.toHaveProperty("update");
+    });
+
+    it("refuses a foreign HTTPS origin even when ConfigService is absent", async () => {
+        const f = fixture({ serviceRecordUrl: "https://evil.example/service-record/efl_synthetic_token" });
+        const result = await f.service.checkAutomaticJob(f.transaction as never, f.job, "materialize", f.render);
+        expect(result).toMatchObject({ status: "refused", reason: "automation-authority-unavailable" });
+        expect(f.render).not.toHaveBeenCalled();
+    });
+
+    it("accepts the configured canonical origin", async () => {
+        const f = fixture({
+            serviceRecordUrl: "https://links.example/service-record/efl_synthetic_token",
+            configBase: "https://links.example",
+        });
+        const result = await f.service.checkAutomaticJob(f.transaction as never, f.job, "materialize", f.render);
+        expect(result).toMatchObject({ status: "allowed" });
+        expect(f.render).toHaveBeenCalledTimes(1);
     });
 
     it.each([
