@@ -61,7 +61,9 @@ export function safeSummary(summary: unknown, protectedValues: readonly unknown[
             // supplied by the live safe snapshot instead.
             return [domain, {
                 present: true,
-                ...(typeof item["status"] === "string" ? { status: item["status"] } : {}),
+                ...(typeof item["status"] === "string"
+                    ? { status: redactKnownValues(redactFreeText(item["status"]), protectedValues) }
+                    : {}),
             }];
         }))
         : undefined;

@@ -64,7 +64,7 @@ describe("conversation context assembler", () => {
             summary: {
                 version: "stale-summary",
                 sourceMessageCount: 0,
-                selectedEntities: { clients: { id: 7, name: "요약 고객" } },
+                selectedEntities: { clients: { id: 7, name: "요약 고객", status: "비정규이름 / 비정규주소" } },
                 goals: ["비정규이름 확인: 비정규주소"],
             },
             tasks: [live],
@@ -88,6 +88,9 @@ describe("conversation context assembler", () => {
         expect(serialized).not.toContain("01012345678");
         expect(serialized).not.toContain("비정규이름");
         expect(serialized).not.toContain("비정규주소");
+        expect(context.summary).toEqual(expect.objectContaining({
+            selectedEntities: { clients: { present: true, status: "[protected] / [protected]" } },
+        }));
         expect(serialized).not.toContain("보호된 선택 라벨");
         expect(serialized).not.toContain("요약 고객");
         expect(context.actionOutcomes).toEqual(expect.arrayContaining([

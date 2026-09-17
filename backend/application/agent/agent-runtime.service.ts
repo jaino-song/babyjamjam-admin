@@ -266,6 +266,7 @@ export class AgentRuntimeService {
         let taskCapabilityIds: ("clients.create" | "clients.update")[] = [...new Set(routedTaskCapabilities)];
         let conversationTask: ConversationTaskTurnResult | undefined;
         let conversationContext: ConversationContext | undefined;
+        let unboundClientFormRefusal = false;
         if (this.taskOrchestrator) {
             const requestedCapability = selectedWriteCapability;
             const isClientConversationForm = submittedClientWriteCapability !== undefined;
@@ -289,7 +290,7 @@ export class AgentRuntimeService {
             const filtered = await this.taskOrchestrator.filterWriteCapabilities(input.principal, offered);
             offered = filtered.capabilities;
             taskMode = filtered.taskMode;
-            const unboundClientFormRefusal = Boolean(
+            unboundClientFormRefusal = Boolean(
                 formSubmission
                 && isClientConversationForm
                 && conversationTask?.refusal === "unsupported-input"
@@ -329,7 +330,7 @@ export class AgentRuntimeService {
                 // mutation tools below.
                 offered = offered.filter((capability) => capability.meta.risk === "read" && capability.meta.sideEffect === false);
             }
-            if (conversationTask?.task && !taskMode && !conversationTask.replayed) {
+            if (conversationTask?.task && !taskMode && !conversationTask.replayed && !unboundClientFormRefusal) {
                 // Keep the feature-off runtime on its legacy path. The
                 // orchestrator may return a read-only continuation for a
                 // question, but task snapshots/context are unavailable until
@@ -337,8 +338,8 @@ export class AgentRuntimeService {
                 conversationTask = { ...conversationTask, task: null };
             }
         }
-        const protectTaskEntityData = taskMode || Boolean(conversationTask?.replayed);
-        if (this.contextAssembler && (!this.taskOrchestrator || taskMode || conversationTask?.replayed)) {
+        const protectTaskEntityData = taskMode || Boolean(conversationTask?.replayed) || unboundClientFormRefusal;
+        if (this.contextAssembler && (!this.taskOrchestrator || taskMode || conversationTask?.replayed || unboundClientFormRefusal)) {
             conversationContext = await this.contextAssembler.assemble(
                 input.principal,
                 session,
