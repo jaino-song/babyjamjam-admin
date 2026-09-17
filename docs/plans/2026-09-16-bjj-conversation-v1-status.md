@@ -313,3 +313,19 @@ Verification on the integration worktree:
 - Security review: `.env*`/`*.pem` ignore rules present, production dependency audit reported no known vulnerabilities, no new secret match in the correction diff, and no dangerous pattern in changed files.
 
 Independent SOL FINAL for this correction: **SHIP / HIGH confidence**, no blocking or nonblocking findings. The review covers the two correction commits only and explicitly does not close the broader Phase7 implementation. Phase7 remains **OPEN**: ordinary successor/catch-up provenance, schedule/link adapters, durable log/retry seals, cumulative real task-provider scenarios, Phase8/9, paid model evaluation, real SMS, production data, merge, deployment and operational activation are still out of scope. The three completion flags remain **not complete**.
+
+### Phase7 catch-up predecessor canonicality (2026-09-18)
+
+The automatic authority adapter now validates the persisted predecessor chain for catch-up jobs with `sequence > 1`. Every predecessor is resolved through the caller's transaction and checked for branch/client/schedule lineage, automatic-job ownership, supported lifecycle status and terminal timestamps, batch/sequence/interval/timing, its own branch-scoped rule, its own `originalScheduledFor`, canonical recipient/template/phone/payload and per-rule dedupe key. The traversal remains bounded at 500 links and refuses missing, forked, retimed, cross-scope or malformed chains. Existing scheduler terminal semantics are preserved, including canceled predecessors as terminal links. No schema, dependency, environment, auth-core or provider behavior changed.
+
+The first candidate `9934ed5b55a507bb60068a5c3d02ab56e4e7175b` received scoped SOL `FIX_REQUIRED/HIGH`: the producer orders due jobs from different rules in one batch, while that candidate assumed a same-rule predecessor and the fixture masked the mismatch. The correction resolves each predecessor using its own rule and original recipe time and changes the fixture to a heterogeneous due service-start predecessor followed by a client-greeting successor. Final code commit: `b586eb540c5a93a08e76b7190357c948a45ce1ed` (`fix(ai): validate heterogeneous catch-up predecessors`).
+
+Verification on the integration worktree:
+
+- Backend TypeScript, changed-file ESLint, backend build and `git diff --check`: passed.
+- Guarded real-AppModule agent E2E with `E2E_VENDOR_STUBS=1`: **14/14 tests passed**.
+- Existing retroactive-order producer regression: **1 passed, 222 skipped**; mixed rule IDs, original schedules, interval and predecessor dedupe linkage remain covered.
+- Security review: production dependency audit reported no known vulnerabilities; changed diff had no secret or dangerous-code pattern; only the authority service and its E2E changed.
+- Independent scoped SOL FINAL for `9934ed5b55a507bb60068a5c3d02ab56e4e7175b..b586eb540c5a93a08e76b7190357c948a45ce1ed`: **SHIP / HIGH**, no findings.
+
+This closes only the bounded catch-up predecessor canonicality slice. The two-row E2E does not independently exercise every status or the 500-link limit; those remain residual coverage. Ordinary successor provenance, schedule/link adapters, durable log/retry seals, cumulative task-provider scenarios, Phase8/9, paid model evaluation, real SMS, production data, merge, deployment and operational activation remain open. The three completion flags remain **not complete**.
