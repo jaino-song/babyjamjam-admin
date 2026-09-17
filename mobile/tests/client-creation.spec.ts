@@ -337,7 +337,7 @@ test.describe("clients/new wizard", () => {
     expect(createdPayload).toEqual(
       expect.objectContaining({
         name: "홍테스트 고객",
-        birthday: "950101",
+        birthday: "1995-01-01",
         dueDate: "2026-06-15",
         address: "인천광역시 연수구 테스트로 10",
         phone: "010-1111-2222",
