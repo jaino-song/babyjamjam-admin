@@ -732,3 +732,6 @@ TL;DR: 배정(4b-1 백엔드: 역할·자격·동시 변경 코드 전환 / 4b-2
 - 웨이브1은 이미 병합됨(`582e806a1`): BE 5153+1flaky(고립 52/52), FE 1679, MO 1696 — **보정 후 재감사 필요**(감사 3건 FIX_REQUIRED).
 
 **pdfjs 환경 플레이크 (2026-09-17):** `receipt-pdf-verifier.service.spec.ts` 1테스트가 통합·고립·base `582e806a1` 프로브 워크트리에서 모두 실패(`capability_unverified`) — 환경성 기존 이슈 확정(웨이브1·보정 무관). Phase 9 증거 실행에서 재확인 필요.
+
+**웨이브1 확정 (2026-09-17):** 6d1+6g1+6h1 → 초안 3건 FIX_REQUIRED(B1: 백엔드 충돌 extras 유실·FE 5xx-mutation outcome 위반·MO login 누락) → 보정 `b099ecb2e`/`cf6929a72`/`fdd2dad1a` → 재감사 **3건 SHIP**. 통합 `5f205c805`(병합+보정): BE 362/5159(+pdfjs 환성), FE 267/1685, MO 252/1701. 기록: 126행 migrated, findings wave1-{backend-services,fe-bff,mo-bff}. 유닛 워크트리 정리 예정. 6.1 잔여 130행.
+- carried: 6d1 gated e2e 2건(live DB), 6g1 N2~N6(json 10파일·check-phone·area-templates read·stream boundary), 6h1 N4(agent passthrough)·AUTH_REFRESH_REPLAY_CONCURRENT 카탈로그 등록, pdfjs 환경 플레이크.
