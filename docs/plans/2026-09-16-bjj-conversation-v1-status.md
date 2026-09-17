@@ -11,7 +11,7 @@ Integration: `codex/bjj-conversation-v1`. Local implementation, deterministic ve
 | 3 — owned draft APIs | Closed | Authenticated HTTP/DB replay, conflicts and scope tests; SOL SHIP |
 | 4 — lifecycle and retention | Closed | Source `3b094cdfa13b20f1c08762b916c2f2f20ffcef9c`; shared23/backend436/DB73; SOL SHIP/HIGH |
 | 5 — conversation intake and context | Closed | Source `2d114d147b88fc208c86ed12679cf6f9101aca56`; shared25/backend498/DB93; cumulative SOL SHIP/HIGH |
-| 6 — atomic task/action approval | Blocked before implementation | Fresh direct DeepSeek scout failed402/insufficient balance at09:51KST; no source findings or fallback |
+| 6 — atomic task/action approval | Source reconciliation complete; PLAN review next | User-authorized Luna/medium/fast read-only scouts verified action/task, recovery and projection owners |
 | 7 — client writes and automation consent | Not implemented | Consent must survive intent materialization and temporary-task purge through actual dispatch/retry |
 | 8 — desktop and mobile | Not implemented | Both renderers, protected forms and authenticated browser QA pending |
 | 9 — cumulative QA and release preparation | Not implemented | Full acceptance evidence and independent cumulative review pending |
@@ -40,7 +40,7 @@ Four stock registration fixtures use unlabelled synthetic-token input unsupporte
 
 ## Next step and completion boundaries
 
-At2026-09-17 09:51KST, a fresh approved direct-DeepSeek read-only scout at the Phase5 close commit `a5409c55a9c596df9d3cd84a209432bd44934846` again failed with `402 Payment Required: Insufficient Balance` after its built-in retries. The scout returned no source findings and reported inner explorer exit1. An ancillary Context7 authentication warning also appeared; the model request itself failed for insufficient balance. No fallback role/model or main-agent source exploration was used. The supplied Explorer Model Policy requires fail-closed handling. Resume Phase6 discovery after this provider is restored; then reconcile the prepared action/task transaction contract and obtain its independent plan review before implementation.
+At2026-09-17 09:51KST, a fresh approved direct-DeepSeek read-only scout at the Phase5 close commit `a5409c55a9c596df9d3cd84a209432bd44934846` again failed with `402 Payment Required: Insufficient Balance` after its built-in retries. The scout returned no source findings and reported inner explorer exit1. An ancillary Context7 authentication warning also appeared; the model request itself failed for insufficient balance. No fallback role/model or main-agent source exploration was used. The supplied Explorer Model Policy requires fail-closed handling. This was the prior blocking condition. The user subsequently authorized replacing exploration with Luna/medium/fast. Three native read-only Codex scouts at source `b79cea5faa8324a0ec78fe1d18834a4945316eb2` completed successfully, verifying action/task transaction seams, recovery/retention and protected action presentation. The task-local invocations explicitly selected gpt-5.6-luna, medium effort and fast service; provider-tier metadata was not separately exposed. Global agent configuration remains unchanged. Phase6 now proceeds to independent PLAN review and direct implementation after that gate.
 
 - Full implementation and deterministic acceptance: **not complete**; Phases6–9 remain.
 - Actual Google/OpenAI conversation quality evaluation: **deferred**; no paid product-model evaluation performed.
