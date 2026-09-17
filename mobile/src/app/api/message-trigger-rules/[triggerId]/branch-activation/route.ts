@@ -4,9 +4,9 @@ import { z } from "zod";
 import { serverAPIClient } from "@/lib/api/server";
 import {
   backendJsonResponse,
+  errorResponse,
   getAuthHeaders,
   getAuthToken,
-  messageTriggerUpstreamErrorResponse,
   parseBody,
 } from "@/lib/api/route-utils";
 import {
@@ -52,6 +52,6 @@ export async function PUT(request: NextRequest, context: RouteContext) {
     );
     return backendJsonResponse(response);
   } catch (error) {
-    return messageTriggerUpstreamErrorResponse(error, "update message trigger branch activation");
+    return errorResponse(error, "update message trigger branch activation", "mutation");
   }
 }
