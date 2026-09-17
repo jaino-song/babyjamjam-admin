@@ -242,6 +242,24 @@ describe("ContractCreationForm — contract date ordering", () => {
     expect(mockDispatchHeadless).not.toHaveBeenCalled();
   });
 
+  it("associates a malformed payment date with the inline error", async () => {
+    seedContractDates();
+
+    renderForm();
+    fireEvent.change(screen.getByLabelText("본인부담금 결제일"), { target: { value: "2026-02-31" } });
+
+    const paymentDateInput = screen.getByLabelText("본인부담금 결제일");
+    expect(screen.getByTestId("contract-creation-date-range-error")).toHaveTextContent(PAYMENT_DATE_INVALID_ERROR);
+    expect(paymentDateInput).toHaveAttribute("aria-invalid", "true");
+    expect(paymentDateInput).toHaveAttribute(
+      "aria-describedby",
+      "contract-creation-date-range-error",
+    );
+    expect(screen.getByTestId("contract-creation-submit")).toBeDisabled();
+    expect(mockUpdateClientMutateAsync).not.toHaveBeenCalled();
+    expect(mockDispatchHeadless).not.toHaveBeenCalled();
+  });
+
   it("rejects an invalid start date even when the optional end date is empty", async () => {
     seedContractDates({ startDate: "2026-02-31", endDate: "" });
 

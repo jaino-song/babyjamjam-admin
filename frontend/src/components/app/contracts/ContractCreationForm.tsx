@@ -1215,6 +1215,7 @@ export const ContractCreationForm = ({
     startDateInput,
     paymentDateInput,
   );
+  const isPaymentDateInvalid = contractDateValidationMessage === CONTRACT_PAYMENT_DATE_INVALID_MESSAGE;
   // endDate는 이용자 서명 후 직원이 Step 3에서 사후 입력하므로 발급 시점에는 옵셔널.
   const isStep4Valid = !contractDateValidationMessage && !contractDateRequiredValidationMessage;
   const isCurrentStepValid = [isStep1Valid && isBirthdayValid, isStep2Valid, isStep3Valid, isStep4Valid][activeStep] ?? true;
@@ -1727,6 +1728,9 @@ export const ContractCreationForm = ({
                   if (formatted.length === 10) setPaymentDate(formatted);
                   else if (formatted.length === 0) setPaymentDate("");
                 }}
+                error={isPaymentDateInvalid}
+                aria-invalid={isPaymentDateInvalid ? "true" : undefined}
+                aria-describedby={isPaymentDateInvalid ? CONTRACT_DATE_RANGE_ERROR_ID : undefined}
                 data-component="desktop_contracts_creation_form_payment-date-input"
                 className={INPUT_CLS}
               />
