@@ -4,7 +4,9 @@ import userEvent from "@testing-library/user-event";
 import { AgentMobileShell } from "./AgentMobileShell";
 
 const mockSendMessage = jest.fn();
+const mockRefreshTask = jest.fn();
 const mockMessages: unknown[] = [];
+let mockTaskNeedsReconciliation = false;
 
 jest.mock("@/hooks/useAgentChat", () => ({
     useAgentChat: () => ({
@@ -21,6 +23,10 @@ jest.mock("@/hooks/useAgentChat", () => ({
         rejectAction: jest.fn(),
         submitStructuredForm: jest.fn(),
         submitFeedback: jest.fn(),
+        task: null,
+        taskNeedsReconciliation: mockTaskNeedsReconciliation,
+        refreshTask: mockRefreshTask,
+        commandTask: jest.fn(),
     }),
 }));
 
@@ -28,6 +34,8 @@ describe("AgentMobileShell drawer accessibility", () => {
     beforeEach(() => {
         mockMessages.length = 0;
         mockSendMessage.mockClear();
+        mockRefreshTask.mockClear();
+        mockTaskNeedsReconciliation = false;
     });
 
     it("moves focus into the modal drawer, inerts the app, and restores focus on Escape", async () => {
@@ -84,5 +92,15 @@ describe("AgentMobileShell drawer accessibility", () => {
             "data-component",
             "mobile_chat_agent-shell_thread_message-assistant_part-0_action-approval",
         );
+    });
+
+    it("offers a refresh action when another screen changed the task draft", () => {
+        mockTaskNeedsReconciliation = true;
+
+        render(<AgentMobileShell />);
+
+        expect(screen.getByRole("alert")).toHaveTextContent("최신 초안을 확인한 뒤 다시 수정해 주세요.");
+        fireEvent.click(screen.getByRole("button", { name: "최신 초안 불러오기" }));
+        expect(mockRefreshTask).toHaveBeenCalledTimes(1);
     });
 });

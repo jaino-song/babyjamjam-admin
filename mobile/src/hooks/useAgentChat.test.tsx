@@ -1,7 +1,52 @@
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { TextDecoder as NodeTextDecoder } from "node:util";
+import { AgentTaskSchema, type AgentTask } from "@babyjamjam/shared/agent";
 
 import { useAgentChat, useAgentShellEnabled } from "./useAgentChat";
+
+const TASK_IDS = {
+    task: "11111111-1111-4111-8111-111111111111",
+    session: "22222222-2222-4222-8222-222222222222",
+    event: "33333333-3333-4333-8333-333333333333",
+    snapshot2: "55555555-5555-4555-8555-555555555555",
+    snapshot3: "66666666-6666-4666-8666-666666666666",
+};
+
+function makeTask(overrides: Partial<AgentTask> = {}): AgentTask {
+    return AgentTaskSchema.parse({
+        schemaVersion: 1,
+        taskId: TASK_IDS.task,
+        sessionId: TASK_IDS.session,
+        kind: "clients.create",
+        capabilityId: "clients.create",
+        revision: 2,
+        state: "collecting",
+        confirmed: { name: "홍길동", phone: "01012345678" },
+        tentative: {},
+        provenance: {
+            confirmed: { name: { source: "user" }, phone: { source: "user" } },
+            tentative: {},
+        },
+        issues: [],
+        constraints: { noSend: false },
+        choiceSets: [],
+        orderedChoiceRefs: [],
+        target: null,
+        consent: { choice: "unanswered", binding: null },
+        action: null,
+        times: { createdAt: "2026-09-16T00:00:00.000Z", updatedAt: "2026-09-16T00:00:01.000Z" },
+        currentSnapshotRef: TASK_IDS.snapshot2,
+        ...overrides,
+    });
+}
+
+function jsonResponse(payload: unknown, options: { ok?: boolean; status?: number } = {}): Response {
+    return {
+        ok: options.ok ?? true,
+        status: options.status ?? (options.ok === false ? 500 : 200),
+        json: async () => payload,
+    } as Response;
+}
 
 describe("mobile useAgentChat", () => {
     beforeAll(() => {
@@ -615,6 +660,101 @@ describe("mobile useAgentChat", () => {
         await act(async () => { await result.current.approveAction("action-outcome", "revision-a"); });
 
         expect(result.current.errorState).toEqual({ code: errorCode, message, effectState });
+    });
+
+    it("keeps a newer task snapshot when a stream and refresh return an older revision", async () => {
+        let taskReadCount = 0;
+        global.fetch = jest.fn().mockImplementation(async (input: string | URL | Request) => {
+            const url = String(input);
+            if (url.endsWith(`/tasks/${TASK_IDS.task}`)) {
+                taskReadCount += 1;
+                return jsonResponse(taskReadCount === 1
+                    ? makeTask({ revision: 3, currentSnapshotRef: TASK_IDS.snapshot3 })
+                    : makeTask({ revision: 2, currentSnapshotRef: TASK_IDS.snapshot2 }));
+            }
+            if (url.endsWith("/chat")) {
+                let consumed = false;
+                return {
+                    ok: true,
+                    headers: { get: () => TASK_IDS.session },
+                    body: {
+                        getReader: () => ({
+                            read: async () => {
+                                if (consumed) return { done: true, value: new Uint8Array() };
+                                consumed = true;
+                                return {
+                                    done: false,
+                                    value: new Uint8Array(Buffer.from([
+                                        `data: {"type":"data-task-snapshot","data":{"taskId":"${TASK_IDS.task}","snapshotRef":"${TASK_IDS.snapshot2}","kind":"clients.create","capabilityId":"clients.create","revision":2,"state":"collecting","fieldStatus":[]}}`,
+                                        "data: [DONE]",
+                                        "",
+                                    ].join("\n"))),
+                                };
+                            },
+                        }),
+                    },
+                } as unknown as Response;
+            }
+            return jsonResponse([]);
+        });
+
+        const { result } = renderHook(() => useAgentChat());
+        await act(async () => { await result.current.refreshTask(TASK_IDS.task); });
+        expect(result.current.taskSnapshot?.revision).toBe(3);
+
+        await act(async () => { await result.current.sendMessage("이전 초안 스트림"); });
+
+        expect(result.current.taskSnapshot?.revision).toBe(3);
+        expect(result.current.task?.revision).toBe(3);
+    });
+
+    it("sends the expected revision and event id, then exposes the latest task after a 409", async () => {
+        const eventId = TASK_IDS.event;
+        const latestTask = makeTask({ revision: 3, currentSnapshotRef: TASK_IDS.snapshot3 });
+        const fetchMock = jest.fn().mockImplementation(async (input: string | URL | Request, init?: RequestInit) => {
+            const url = String(input);
+            if (url.endsWith(`/tasks/${TASK_IDS.task}`) && !init?.method) return jsonResponse(makeTask());
+            if (url.endsWith(`/tasks/${TASK_IDS.task}`) && init?.method === "PATCH") {
+                return jsonResponse({
+                    code: "AGENT_TASK_CONFLICT",
+                    message: "Task input conflict",
+                    reason: "revision-mismatch",
+                    snapshot: latestTask,
+                }, { ok: false, status: 409 });
+            }
+            return jsonResponse([]);
+        });
+        global.fetch = fetchMock;
+
+        const { result } = renderHook(() => useAgentChat());
+        await act(async () => { await result.current.refreshTask(TASK_IDS.task); });
+        let mutation;
+        await act(async () => {
+            mutation = await result.current.patchTask(
+                TASK_IDS.task,
+                [{ op: "set", field: "name", value: "새 이름" }],
+                { clientEventId: eventId },
+            );
+        });
+
+        expect(mutation).toEqual({ status: "conflict" });
+        expect(result.current.taskSnapshot?.revision).toBe(3);
+        expect(result.current.task?.revision).toBe(3);
+        expect(result.current.taskNeedsReconciliation).toBe(true);
+        expect(result.current.errorState).toEqual({
+            code: "task_conflict",
+            message: "초안이 다른 화면에서 변경되었습니다. 최신 내용을 확인해 주세요.",
+            effectState: "nothing-happened",
+        });
+
+        const patchCall = fetchMock.mock.calls.find(([input, request]) => String(input).endsWith(`/tasks/${TASK_IDS.task}`) && request?.method === "PATCH");
+        expect(patchCall).toBeDefined();
+        const patchBody = JSON.parse(String(patchCall?.[1]?.body));
+        expect(patchBody).toEqual({
+            clientEventId: eventId,
+            expectedRevision: 2,
+            operations: [{ op: "set", field: "name", value: "새 이름" }],
+        });
     });
 });
 

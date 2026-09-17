@@ -7,11 +7,15 @@ import {
     AgentActivityPartSchema,
     AgentAttachmentPartSchema,
     AgentEntityChoicePartSchema,
+    AgentEntitySelectPartSchema,
     AgentErrorPartSchema,
     AgentFeedbackPartSchema,
     AgentFormPartSchema,
     AgentFormSubmitPartSchema,
     AgentNavigationPartSchema,
+    AgentTaskPatchPartSchema,
+    AgentTaskSnapshotPartSchema,
+    type AgentTask,
     type AgentFormField,
 } from "@babyjamjam/shared";
 
@@ -56,10 +60,12 @@ type Props = {
     onApproveAction: (actionId: string, expectedRevision: string, acknowledgementToken?: string) => void;
     onRejectAction: (actionId: string) => void;
     onSubmitForm: (formId: string, values: Record<string, unknown>) => void;
+    onTaskEntitySelect?: (taskId: string, choiceSetRef: string, optionId: string) => void;
+    task?: AgentTask | null;
     terminalActionIds?: ReadonlySet<string>;
 };
 
-export function MobileAgentPartRegistry({ "data-component": dataComponent, part, onEntitySelect, onApproveAction, onRejectAction, onSubmitForm, terminalActionIds }: Props) {
+export function MobileAgentPartRegistry({ "data-component": dataComponent, part, onEntitySelect, onApproveAction, onRejectAction, onSubmitForm, onTaskEntitySelect, task, terminalActionIds }: Props) {
     if (part.type === "text") return <p data-slot="text" className="whitespace-pre-wrap break-words">{part.text ?? ""}</p>;
     if (part.type === "dynamic-tool" || part.type.startsWith("tool-")) {
         if (part.state === "output-error") return <p data-slot="tool-error" className="text-sm text-muted-foreground">{part.errorText ?? "도구 결과를 표시할 수 없어요."}</p>;
@@ -69,6 +75,36 @@ export function MobileAgentPartRegistry({ "data-component": dataComponent, part,
     if (part.type === "data-activity") {
         const parsed = AgentActivityPartSchema.safeParse(part.data);
         return parsed.success ? <p data-slot="activity" className="text-sm text-muted-foreground">{parsed.data.label}</p> : <Fallback />;
+    }
+    if (part.type === "data-task-snapshot") {
+        const parsed = AgentTaskSnapshotPartSchema.safeParse(part.data);
+        if (!parsed.success) return <Fallback />;
+        const stateLabel: Record<string, string> = {
+            collecting: "정보 수집",
+            confirming_target: "대상 확인",
+            review_ready: "검토 준비",
+            awaiting_approval: "승인 대기",
+            paused: "보류",
+            executing: "실행 중",
+            reconciling: "결과 확인",
+            completed: "완료",
+            failed: "실패",
+            cancelled: "취소됨",
+        };
+        const filledFields = parsed.data.fieldStatus.filter(({ status }) => status !== "missing");
+        return <section data-component={dataComponent} data-slot="task-snapshot" aria-label="현재 업무 초안" className="rounded-xl border p-3"><p className="font-semibold">현재 업무 초안 · {stateLabel[parsed.data.state] ?? parsed.data.state}</p><p className="mt-1 text-xs text-muted-foreground">버전 {parsed.data.revision}</p>{filledFields.length > 0 && <ul className="mt-2 flex flex-wrap gap-1 text-xs text-muted-foreground">{filledFields.map(({ field, status }) => <li key={field}>{field} · {status}</li>)}</ul>}</section>;
+    }
+    if (part.type === "data-entity-select") {
+        const parsed = AgentEntitySelectPartSchema.safeParse(part.data);
+        if (!parsed.success) return <Fallback />;
+        const choiceSet = task?.taskId === parsed.data.taskId
+            ? task.choiceSets.find((candidate) => candidate.choiceSetRef === parsed.data.choiceSetRef)
+            : undefined;
+        return <div data-component={dataComponent} data-slot="entity-select" className="flex flex-col gap-2" role="group" aria-label="대상 선택"><p className="text-sm font-medium">대상을 선택해 주세요.</p>{parsed.data.optionIds.map((optionId, index) => { const option = choiceSet?.options.find((candidate) => candidate.optionId === optionId); return <Button key={optionId} type="button" variant="outline" className="h-auto min-h-11 justify-start whitespace-normal py-2" disabled={!onTaskEntitySelect} onClick={() => onTaskEntitySelect?.(parsed.data.taskId, parsed.data.choiceSetRef, optionId)}>{option?.label ?? `선택 ${index + 1}`}{option?.description ? ` · ${option.description}` : ""}</Button>; })}</div>;
+    }
+    if (part.type === "data-task-patch") {
+        const parsed = AgentTaskPatchPartSchema.safeParse(part.data);
+        return parsed.success ? <p data-component={dataComponent} data-slot="task-patch" className="text-sm text-muted-foreground">초안이 버전 {parsed.data.acceptedRevision}으로 업데이트되었습니다.</p> : <Fallback />;
     }
     if (part.type === "data-entity-choice") {
         const parsed = AgentEntityChoicePartSchema.safeParse(part.data);

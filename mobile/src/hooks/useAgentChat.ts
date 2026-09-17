@@ -2,13 +2,45 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { BjjUIMessage } from "@babyjamjam/shared";
-import { AgentCapabilityMetaSchema } from "@babyjamjam/shared/agent";
+import {
+    acceptAgentTaskSnapshot,
+    AgentCapabilityMetaSchema,
+    AgentTaskCommandRequestSchema,
+    AgentTaskMutationResponseSchema,
+    AgentTaskPatchPartSchema,
+    AgentTaskPatchRequestSchema,
+    AgentTaskSchema,
+    AgentTaskSnapshotEnvelopeSchema,
+    AgentTaskSnapshotPartSchema,
+    AgentEntitySelectPartSchema,
+    captureAgentTaskSnapshotRequest,
+    createAgentTaskSnapshotState,
+    projectTaskForSafeChat,
+    resetAgentTaskSnapshotState,
+    type AgentTask,
+    type AgentTaskClientSnapshotState,
+    type ClientInputOperation,
+} from "@babyjamjam/shared/agent";
+import { z } from "zod";
 import { authenticatedFetch } from "@/lib/api/authenticated-fetch";
 
 export type MobileAgentMessage = Pick<BjjUIMessage, "id" | "role" | "parts">;
 type MobileAgentPart = { type: string; text?: string; data?: unknown };
 export type MobileAgentSessionSummary = { id: string; title: string | null; updatedAt: string; messages?: MobileAgentMessage[] };
 export type MobileAgentError = { code: string; message: string; effectState: "nothing-happened" | "succeeded-unconfirmed" | "partial" };
+export type MobileAgentTaskSnapshot = z.infer<typeof AgentTaskSnapshotPartSchema>;
+export type MobileAgentTaskCommand =
+    | { command: "pause" }
+    | { command: "resume" }
+    | { command: "prepare-review" }
+    | { command: "cancel" }
+    | { command: "select-target"; choiceSetRef?: string; choiceSetId?: string; optionId: string }
+    | { command: "start-update"; targetRef: string; expectedTargetVersion: string };
+export type MobileAgentTaskMutationResult = {
+    status: "applied" | "conflict" | "failed";
+    task?: AgentTask;
+    snapshot?: MobileAgentTaskSnapshot;
+};
 const AGENT_SESSION_KEY = "agent_session_id";
 
 function readActionErrorCode(error: unknown): string | undefined {
@@ -31,6 +63,31 @@ function actionErrorFromStatus(status: unknown, serverErrorCode: string | undefi
 }
 
 function makeId(): string { return `mobile-agent-${Date.now()}-${Math.random().toString(36).slice(2)}`; }
+
+function makeTaskEventId(): string {
+    if (typeof globalThis.crypto?.randomUUID === "function") return globalThis.crypto.randomUUID();
+    const random = `${Date.now().toString(16)}${Math.random().toString(16).slice(2)}`.padEnd(12, "0").slice(-12);
+    return `00000000-0000-4000-8000-${random}`;
+}
+
+function taskSnapshotPartFromTask(task: AgentTask): MobileAgentTaskSnapshot {
+    const safe = projectTaskForSafeChat(task);
+    return AgentTaskSnapshotPartSchema.parse({
+        taskId: safe.taskId,
+        snapshotRef: safe.currentSnapshotRef,
+        kind: safe.kind,
+        capabilityId: safe.capabilityId,
+        revision: safe.revision,
+        state: safe.state,
+        fieldStatus: safe.fieldStatus.map(({ field, status }) => ({ field, status })),
+    });
+}
+
+function taskRevisionFor(taskId: string, state: AgentTaskClientSnapshotState, snapshot: MobileAgentTaskSnapshot | null): number | undefined {
+    if (snapshot?.taskId === taskId) return snapshot.revision;
+    if (state.task?.taskId === taskId) return state.task.revision;
+    return undefined;
+}
 
 function isTruthy(value: string | undefined): boolean {
     return value === "1" || value?.toLowerCase() === "true";
@@ -73,10 +130,248 @@ export function useAgentChat() {
     const [status, setStatus] = useState<"ready" | "streaming" | "error">("ready");
     const [sessions, setSessions] = useState<MobileAgentSessionSummary[]>([]);
     const [errorState, setErrorState] = useState<MobileAgentError | null>(null);
+    const [taskClientState, setTaskClientState] = useState<AgentTaskClientSnapshotState>(() => createAgentTaskSnapshotState());
+    const [taskSnapshot, setTaskSnapshot] = useState<MobileAgentTaskSnapshot | null>(null);
+    const [taskNeedsReconciliation, setTaskNeedsReconciliation] = useState(false);
     const sessionId = useRef<string | undefined>(undefined);
     const pendingSessionId = useRef<string | undefined>(undefined);
     const abortRef = useRef<AbortController | null>(null);
     const operationEpochRef = useRef(0);
+    const taskClientStateRef = useRef(taskClientState);
+    const taskSnapshotRef = useRef<MobileAgentTaskSnapshot | null>(null);
+
+    const commitTaskClientState = useCallback((next: AgentTaskClientSnapshotState) => {
+        taskClientStateRef.current = next;
+        setTaskClientState(next);
+    }, []);
+
+    const acceptTaskSnapshotPart = useCallback((incoming: MobileAgentTaskSnapshot): boolean => {
+        const current = taskSnapshotRef.current;
+        const currentTaskId = current?.taskId ?? taskClientStateRef.current.task?.taskId;
+        if (currentTaskId && currentTaskId !== incoming.taskId) return false;
+        if (current && incoming.revision < current.revision) return false;
+        if (current
+            && incoming.revision === current.revision
+            && incoming.snapshotRef === current.snapshotRef
+            && incoming.state === current.state) return false;
+        taskSnapshotRef.current = incoming;
+        setTaskSnapshot(incoming);
+        return true;
+    }, []);
+
+    const resetTaskSnapshot = useCallback((nextIdentityEpoch?: number) => {
+        const current = taskClientStateRef.current;
+        const next = resetAgentTaskSnapshotState(current, nextIdentityEpoch ?? current.identityEpoch + 1);
+        commitTaskClientState(next);
+        taskSnapshotRef.current = null;
+        setTaskSnapshot(null);
+        setTaskNeedsReconciliation(false);
+    }, [commitTaskClientState]);
+
+    const beginTaskSnapshotRequest = useCallback(() => {
+        const current = taskClientStateRef.current;
+        if (current.requestGeneration === Number.MAX_SAFE_INTEGER) throw new Error("Task request generation exhausted");
+        const next = { ...current, requestGeneration: current.requestGeneration + 1 };
+        commitTaskClientState(next);
+        return captureAgentTaskSnapshotRequest(next);
+    }, [commitTaskClientState]);
+
+    const markTaskEventPending = useCallback((eventId: string) => {
+        const current = taskClientStateRef.current;
+        if (current.pendingEventIds.includes(eventId)) return;
+        commitTaskClientState({ ...current, pendingEventIds: [...current.pendingEventIds, eventId] });
+    }, [commitTaskClientState]);
+
+    const removeTaskEventPending = useCallback((eventId: string) => {
+        const current = taskClientStateRef.current;
+        const pendingEventIds = current.pendingEventIds.filter((candidate) => candidate !== eventId);
+        if (pendingEventIds.length === current.pendingEventIds.length) return;
+        commitTaskClientState({ ...current, pendingEventIds });
+    }, [commitTaskClientState]);
+
+    const acceptAuthorizedTask = useCallback((
+        task: unknown,
+        request: ReturnType<typeof captureAgentTaskSnapshotRequest>,
+        acknowledgedEventId?: string,
+        conflict = false,
+    ) => {
+        const parsedTask = AgentTaskSchema.safeParse(task);
+        if (!parsedTask.success) return null;
+        const current = taskClientStateRef.current;
+        const currentTaskId = taskSnapshotRef.current?.taskId ?? current.task?.taskId;
+        if (currentTaskId && currentTaskId !== parsedTask.data.taskId) return null;
+        if (taskSnapshotRef.current && parsedTask.data.revision < taskSnapshotRef.current.revision) return null;
+        const envelope = AgentTaskSnapshotEnvelopeSchema.safeParse({
+            identityEpoch: request.identityEpoch,
+            task: parsedTask.data,
+            ...(acknowledgedEventId ? { acknowledgedEventId } : {}),
+            ...(conflict ? { conflict: { status: 409, latestRevision: parsedTask.data.revision, latestSnapshotRef: parsedTask.data.currentSnapshotRef } } : {}),
+        });
+        if (!envelope.success) return null;
+        const acceptance = acceptAgentTaskSnapshot(current, envelope.data, request);
+        if (acceptance.accepted) {
+            commitTaskClientState(acceptance.state);
+            acceptTaskSnapshotPart(taskSnapshotPartFromTask(parsedTask.data));
+            setTaskNeedsReconciliation(acceptance.needsReconciliation || conflict);
+        }
+        return acceptance;
+    }, [acceptTaskSnapshotPart, commitTaskClientState]);
+
+    const refreshTask = useCallback(async (taskId?: string): Promise<boolean> => {
+        const current = taskClientStateRef.current;
+        const id = taskId ?? taskSnapshotRef.current?.taskId ?? current.task?.taskId;
+        if (!id) return false;
+        let request: ReturnType<typeof captureAgentTaskSnapshotRequest>;
+        try {
+            request = beginTaskSnapshotRequest();
+        } catch {
+            return false;
+        }
+        try {
+            const response = await authenticatedFetch(`/api/ai/agent/tasks/${encodeURIComponent(id)}`, { credentials: "same-origin" });
+            const body = await response.json().catch(() => undefined) as unknown;
+            if (response.status === 409) {
+                const snapshot = body && typeof body === "object" ? (body as Record<string, unknown>).snapshot : undefined;
+                const accepted = snapshot ? acceptAuthorizedTask(snapshot, request, undefined, true) : null;
+                setTaskNeedsReconciliation(true);
+                setErrorState({ code: "task_conflict", message: "초안이 다른 화면에서 변경되었습니다. 최신 내용을 확인해 주세요.", effectState: "nothing-happened" });
+                return Boolean(accepted?.accepted);
+            }
+            if (!response.ok) {
+                if (response.status === 410) {
+                    setErrorState({ code: "task_expired", message: "초안이 만료되었습니다. 새 업무를 시작해 주세요.", effectState: "nothing-happened" });
+                }
+                return false;
+            }
+            const accepted = acceptAuthorizedTask(body, request);
+            return Boolean(accepted?.accepted || accepted?.reason === "same-revision" || accepted?.reason === "acknowledged-event");
+        } catch {
+            return false;
+        }
+    }, [acceptAuthorizedTask, beginTaskSnapshotRequest]);
+
+    const handleTaskConflict = useCallback((body: unknown, request: ReturnType<typeof captureAgentTaskSnapshotRequest>) => {
+        const snapshot = body && typeof body === "object" ? (body as Record<string, unknown>).snapshot : undefined;
+        const accepted = snapshot ? acceptAuthorizedTask(snapshot, request, undefined, true) : null;
+        setTaskNeedsReconciliation(true);
+        setErrorState({ code: "task_conflict", message: "초안이 다른 화면에서 변경되었습니다. 최신 내용을 확인해 주세요.", effectState: "nothing-happened" });
+        return accepted;
+    }, [acceptAuthorizedTask]);
+
+    const executeTaskMutation = useCallback(async (
+        taskId: string,
+        method: "PATCH" | "POST",
+        path: string,
+        body: unknown,
+        clientEventId: string,
+    ): Promise<MobileAgentTaskMutationResult> => {
+        let request: ReturnType<typeof captureAgentTaskSnapshotRequest>;
+        try {
+            request = beginTaskSnapshotRequest();
+        } catch {
+            return { status: "failed" };
+        }
+        markTaskEventPending(clientEventId);
+        try {
+            const response = await authenticatedFetch(path, {
+                method,
+                credentials: "same-origin",
+                headers: { "content-type": "application/json" },
+                body: JSON.stringify(body),
+            });
+            const payload = await response.json().catch(() => undefined) as unknown;
+            if (response.ok) {
+                const parsed = AgentTaskMutationResponseSchema.safeParse(payload);
+                if (!parsed.success) {
+                    removeTaskEventPending(clientEventId);
+                    setErrorState({ code: "task_response_invalid", message: "초안 변경 결과를 확인하지 못했습니다.", effectState: "nothing-happened" });
+                    return { status: "failed" };
+                }
+                const accepted = acceptAuthorizedTask(parsed.data.snapshot, request, parsed.data.receipt.eventId);
+                if (!accepted?.accepted && accepted?.reason === "stale-generation") {
+                    setTaskNeedsReconciliation(true);
+                }
+                return { status: "applied", task: parsed.data.snapshot, snapshot: taskSnapshotPartFromTask(parsed.data.snapshot) };
+            }
+            if (response.status === 409) {
+                handleTaskConflict(payload, request);
+                // A conflict leaves this event pending so the caller can decide
+                // whether to retry after reviewing the latest server snapshot.
+                return { status: "conflict" };
+            }
+            removeTaskEventPending(clientEventId);
+            if (response.status === 410) {
+                setErrorState({ code: "task_expired", message: "초안이 만료되었습니다. 새 업무를 시작해 주세요.", effectState: "nothing-happened" });
+            } else {
+                setErrorState({ code: "task_mutation_failed", message: "초안 변경을 완료하지 못했습니다.", effectState: "nothing-happened" });
+            }
+            return { status: "failed" };
+        } catch {
+            removeTaskEventPending(clientEventId);
+            setErrorState({ code: "task_mutation_unconfirmed", message: "초안 변경 결과를 확인하지 못했습니다. 최신 초안을 확인해 주세요.", effectState: "succeeded-unconfirmed" });
+            return { status: "failed" };
+        }
+    }, [acceptAuthorizedTask, beginTaskSnapshotRequest, handleTaskConflict, markTaskEventPending, removeTaskEventPending]);
+
+    const patchTask = useCallback(async (
+        taskId: string,
+        operations: readonly ClientInputOperation[],
+        options: { expectedRevision?: number; clientEventId?: string } = {},
+    ): Promise<MobileAgentTaskMutationResult> => {
+        const expectedRevision = options.expectedRevision ?? taskRevisionFor(taskId, taskClientStateRef.current, taskSnapshotRef.current);
+        const clientEventId = options.clientEventId ?? makeTaskEventId();
+        const parsed = AgentTaskPatchRequestSchema.safeParse({ clientEventId, expectedRevision, operations });
+        if (!parsed.success) {
+            setErrorState({ code: "task_input_invalid", message: "초안 변경 입력을 확인해 주세요.", effectState: "nothing-happened" });
+            return { status: "failed" };
+        }
+        setErrorState(null);
+        return executeTaskMutation(taskId, "PATCH", `/api/ai/agent/tasks/${encodeURIComponent(taskId)}`, parsed.data, clientEventId);
+    }, [executeTaskMutation]);
+
+    const commandTask = useCallback(async (
+        taskId: string,
+        command: MobileAgentTaskCommand,
+        options: { expectedRevision?: number; clientEventId?: string } = {},
+    ): Promise<MobileAgentTaskMutationResult> => {
+        const expectedRevision = options.expectedRevision ?? taskRevisionFor(taskId, taskClientStateRef.current, taskSnapshotRef.current);
+        const clientEventId = options.clientEventId ?? makeTaskEventId();
+        const parsed = AgentTaskCommandRequestSchema.safeParse({ ...command, clientEventId, expectedRevision });
+        if (!parsed.success) {
+            setErrorState({ code: "task_command_invalid", message: "초안 명령을 확인해 주세요.", effectState: "nothing-happened" });
+            return { status: "failed" };
+        }
+        setErrorState(null);
+        return executeTaskMutation(taskId, "POST", `/api/ai/agent/tasks/${encodeURIComponent(taskId)}/commands`, parsed.data, clientEventId);
+    }, [executeTaskMutation]);
+
+    const ingestTaskParts = useCallback((nextMessages: readonly MobileAgentMessage[]) => {
+        const snapshots: MobileAgentTaskSnapshot[] = [];
+        const taskIds = new Set<string>();
+        for (const message of nextMessages) {
+            for (const part of message.parts) {
+                const candidate = part as unknown as { type?: string; data?: unknown };
+                if (candidate.type === "data-task-snapshot") {
+                    const parsed = AgentTaskSnapshotPartSchema.safeParse(candidate.data);
+                    if (parsed.success) {
+                        snapshots.push(parsed.data);
+                        taskIds.add(parsed.data.taskId);
+                    }
+                } else if (candidate.type === "data-task-patch") {
+                    const parsed = AgentTaskPatchPartSchema.safeParse(candidate.data);
+                    if (parsed.success) taskIds.add(parsed.data.taskId);
+                } else if (candidate.type === "data-entity-select") {
+                    const parsed = AgentEntitySelectPartSchema.safeParse(candidate.data);
+                    if (parsed.success) taskIds.add(parsed.data.taskId);
+                }
+            }
+        }
+        const latest = snapshots
+            .sort((left, right) => right.revision - left.revision)
+            .at(0);
+        if (latest) acceptTaskSnapshotPart(latest);
+        for (const taskId of taskIds) void refreshTask(taskId);
+    }, [acceptTaskSnapshotPart, refreshTask]);
 
     const refreshSessions = useCallback(async () => {
         const response = await authenticatedFetch("/api/ai/agent/sessions", { credentials: "same-origin" });
@@ -110,6 +405,7 @@ export function useAgentChat() {
             let buffer = "";
             let assistantMessageId: string | undefined;
             const parts: MobileAgentPart[] = [];
+            const streamedTaskIds = new Set<string>();
             const streamIsCurrent = () => !controller.signal.aborted && operationEpoch === operationEpochRef.current;
             const publishAssistantSnapshot = () => {
                 if (!streamIsCurrent()) return;
@@ -142,6 +438,28 @@ export function useAgentChat() {
                         if (previous) previous.text = `${previous.text ?? ""}${chunk.delta}`;
                         else parts.push({ type: "text", text: chunk.delta });
                         changed = true;
+                    } else if (chunk.type === "data-task-snapshot") {
+                        const parsed = AgentTaskSnapshotPartSchema.safeParse(chunk.data);
+                        if (parsed.success) {
+                            streamedTaskIds.add(parsed.data.taskId);
+                            acceptTaskSnapshotPart(parsed.data);
+                            parts.push({ type: chunk.type, data: parsed.data });
+                            changed = true;
+                        }
+                    } else if (chunk.type === "data-entity-select") {
+                        const parsed = AgentEntitySelectPartSchema.safeParse(chunk.data);
+                        if (parsed.success) {
+                            streamedTaskIds.add(parsed.data.taskId);
+                            parts.push({ type: chunk.type, data: parsed.data });
+                            changed = true;
+                        }
+                    } else if (chunk.type === "data-task-patch") {
+                        const parsed = AgentTaskPatchPartSchema.safeParse(chunk.data);
+                        if (parsed.success) {
+                            streamedTaskIds.add(parsed.data.taskId);
+                            parts.push({ type: chunk.type, data: parsed.data });
+                            changed = true;
+                        }
                     } else if (chunk.type?.startsWith("data-")) {
                         parts.push({ type: chunk.type, data: chunk.data });
                         changed = true;
@@ -167,6 +485,10 @@ export function useAgentChat() {
             if (controller.signal.aborted || operationEpoch !== operationEpochRef.current) return;
             if (parts.length === 0) parts.push({ type: "text", text: "응답을 받지 못했습니다." });
             publishAssistantSnapshot();
+            for (const taskId of streamedTaskIds) {
+                if (!streamIsCurrent()) return;
+                await refreshTask(taskId);
+            }
             setStatus("ready");
             await refreshSessions();
         } catch (error) {
@@ -179,7 +501,7 @@ export function useAgentChat() {
         } finally {
             if (abortRef.current === controller) abortRef.current = null;
         }
-    }, [messages, refreshSessions, status]);
+    }, [acceptTaskSnapshotPart, messages, refreshSessions, refreshTask, status]);
 
     const stop = useCallback(() => {
         operationEpochRef.current += 1;
@@ -189,6 +511,8 @@ export function useAgentChat() {
     }, []);
     const selectSession = useCallback(async (id: string) => {
         const operationEpoch = ++operationEpochRef.current;
+        const isDifferentSession = sessionId.current !== id;
+        if (isDifferentSession) resetTaskSnapshot();
         pendingSessionId.current = id;
         abortRef.current?.abort();
         abortRef.current = null;
@@ -208,20 +532,21 @@ export function useAgentChat() {
             if (operationEpoch !== operationEpochRef.current) return;
             sessionId.current = session.id;
             if (typeof window !== "undefined") window.sessionStorage.setItem(AGENT_SESSION_KEY, session.id);
-            setMessages(session.messages ?? []);
+            const restoredMessages = session.messages ?? [];
+            setMessages(restoredMessages);
+            ingestTaskParts(restoredMessages);
             setStatus("ready");
         } finally {
             if (pendingSessionId.current === id && operationEpoch === operationEpochRef.current) {
                 pendingSessionId.current = undefined;
             }
         }
-    }, []);
+    }, [ingestTaskParts, resetTaskSnapshot]);
 
     useEffect(() => {
         if (typeof window === "undefined") return;
         const storedSessionId = window.sessionStorage.getItem(AGENT_SESSION_KEY);
         if (!storedSessionId) return;
-        sessionId.current = storedSessionId;
         void selectSession(storedSessionId).catch(() => {
             sessionId.current = undefined;
             window.sessionStorage.removeItem(AGENT_SESSION_KEY);
@@ -318,6 +643,7 @@ export function useAgentChat() {
                 sessionId.current = undefined;
                 if (typeof window !== "undefined") window.sessionStorage.removeItem(AGENT_SESSION_KEY);
                 setMessages([]);
+                resetTaskSnapshot();
             }
             await refreshSessions();
         } finally {
@@ -325,7 +651,7 @@ export function useAgentChat() {
                 pendingSessionId.current = undefined;
             }
         }
-    }, [refreshSessions]);
+    }, [refreshSessions, resetTaskSnapshot]);
 
     const submitFeedback = useCallback(async (messageId: string, type: "positive" | "negative", comment?: string) => {
         if (!sessionId.current) return;
@@ -344,7 +670,29 @@ export function useAgentChat() {
         setMessages([]);
         setStatus("ready");
         setErrorState(null);
+        resetTaskSnapshot();
         void refreshSessions();
-    }, [refreshSessions, stop]);
-    return { messages, status, errorState, sendMessage, stop, resetBranch, sessions, refreshSessions, selectSession, deleteSession, approveAction, rejectAction, submitStructuredForm, submitFeedback };
+    }, [refreshSessions, resetTaskSnapshot, stop]);
+    return {
+        messages,
+        status,
+        errorState,
+        sendMessage,
+        stop,
+        resetBranch,
+        sessions,
+        refreshSessions,
+        selectSession,
+        deleteSession,
+        approveAction,
+        rejectAction,
+        submitStructuredForm,
+        submitFeedback,
+        taskSnapshot,
+        task: taskClientState.task,
+        taskNeedsReconciliation,
+        refreshTask,
+        patchTask,
+        commandTask,
+    };
 }
