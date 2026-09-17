@@ -22,7 +22,8 @@ function setup(rules: MessageTriggerRuleEntity[], parentEnabled = true, schemaPr
         message_trigger_rule: { create: forbiddenWrite, upsert: forbiddenWrite },
         message_log: { create: forbiddenWrite } };
     const jobRepository = { save: forbiddenWrite, upsertPending: forbiddenWrite };
-    const senderApproval = { isApproved: jest.fn().mockResolvedValue(true) };
+    const senderApproval = { isApproved: jest.fn().mockResolvedValue(true),
+        getApprovedBranches: jest.fn().mockResolvedValue(new Map([[branchId, new Date("2026-09-01T00:00:00Z")]])) };
     const overrides = { findAllByBranch: jest.fn().mockResolvedValue([{ ruleId: "global-disabled-in-branch", isActive: false }]) };
     const trigger = new MessageTriggerService(prisma as never, {} as never, senderApproval as never,
         ruleRepository as never, jobRepository as never, {} as never, {} as never, {} as never,
@@ -31,7 +32,7 @@ function setup(rules: MessageTriggerRuleEntity[], parentEnabled = true, schemaPr
     const provider = new MessageExternalAgentCapabilitiesProvider(prisma as never, trigger,
         jobRepository as never, {} as never, senderApproval as never);
     const capability = provider.getCapabilities().find(({ meta }) => meta.name === "automation.list")!;
-    return { capability, ruleRepository, forbiddenWrite, senderApproval, overrides };
+    return { capability, trigger, ruleRepository, forbiddenWrite, senderApproval, overrides };
 }
 
 describe("automation.list side-effect-free rule resolution", () => {
@@ -69,6 +70,33 @@ describe("automation.list side-effect-free rule resolution", () => {
         const { capability, forbiddenWrite } = setup([rule("branch-active", branchId), rule("global-active", null)], false);
         const result = await capability.execute(context, {}) as { rules: Array<{ isActive: boolean }> };
         expect(result.rules.map(({ isActive }) => isActive)).toEqual([false, false]);
+        expect(forbiddenWrite).not.toHaveBeenCalled();
+    });
+
+    it("reports missing branch defaults without mistaking global bookkeeping for a provisioned rule", async () => {
+        const global = rule("system:message_automation_intent", null);
+        global.templateKey = MessageTriggerTemplateKey.CLIENT_GREETING;
+        const { trigger, forbiddenWrite } = setup([rule("local-info", branchId), global]);
+        expect(await trigger.readClientAutomationSettings(branchId)).toMatchObject({ status: "available",
+            defaultsPresent: false, dispatchEnabled: true, senderApproved: true, senderApprovedAt: new Date("2026-09-01T00:00:00Z") });
+        expect(forbiddenWrite).not.toHaveBeenCalled();
+    });
+
+    it("uses the same template-only default matching as ordinary provisioning, respecting inactive edited defaults", async () => {
+        const greeting = rule("local-greeting", branchId, false);
+        greeting.templateKey = MessageTriggerTemplateKey.CLIENT_GREETING;
+        const { trigger, forbiddenWrite, senderApproval } = setup([rule("local-info", branchId), greeting], false);
+        senderApproval.getApprovedBranches.mockResolvedValue(new Map());
+        expect(await trigger.readClientAutomationSettings(branchId)).toMatchObject({ status: "available",
+            defaultsPresent: true, dispatchEnabled: false, senderApproved: false, senderApprovedAt: null });
+        expect(forbiddenWrite).not.toHaveBeenCalled();
+    });
+
+    it("distinguishes unavailable storage from an intentionally inactive empty ruleset", async () => {
+        const { trigger, forbiddenWrite, ruleRepository, senderApproval } = setup([], true, false);
+        expect(await trigger.readClientAutomationSettings(branchId)).toEqual({ status: "unavailable" });
+        expect(ruleRepository.findAll).not.toHaveBeenCalled();
+        expect(senderApproval.getApprovedBranches).not.toHaveBeenCalled();
         expect(forbiddenWrite).not.toHaveBeenCalled();
     });
 });

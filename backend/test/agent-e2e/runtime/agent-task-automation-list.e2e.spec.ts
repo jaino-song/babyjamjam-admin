@@ -6,6 +6,10 @@ import { AgentModelFactory } from "../../../infrastructure/agent/agent-model.fac
 import { tenantContextStore } from "../../../infrastructure/tenant/tenant-context.store";
 import { MessageExternalAgentCapabilitiesProvider } from "../../../application/usecases/message/message-external-agent-capabilities.provider";
 import { MessageTriggerService } from "../../../application/services/message-trigger.service";
+import { SmsTriggerDeliveryService } from "../../../application/services/sms-trigger-delivery.service";
+import { AligoService } from "../../../application/services/aligo.service";
+import { describeClientMessageEffect } from "../../../application/services/client-message-effect-recipe";
+import { agentBindingHash } from "../../../domain/repositories/agent-linked-action.types";
 import { createApprovedAgentTaskPersistenceClient, assertApprovedAgentTaskPersistenceDatabaseTarget } from "./agent-task-persistence.helper";
 
 const describeAgentE2E = process.env["AGENT_E2E"] === "1" ? describe : describe.skip;
@@ -79,6 +83,9 @@ describeAgentE2E("real automation.list with two eligible clients and missing def
         const result = await tenantContextStore.run({ origin: "http", branchId },
             () => capability.execute(context, {})) as { rules: Array<{ id: string }> };
         expect(result.rules.every(({ id }) => before.rules.some((rule) => rule.id === id))).toBe(true);
+        const settings = await tenantContextStore.run({ origin: "http", branchId },
+            () => app.get(MessageTriggerService).readClientAutomationSettings(branchId));
+        expect(settings).toMatchObject({ status: "available", defaultsPresent: false, dispatchEnabled: true, senderApproved: true });
         expect(await storedAutomation()).toEqual(before);
         expect(createModel).not.toHaveBeenCalled();
     });
@@ -95,5 +102,41 @@ describeAgentE2E("real automation.list with two eligible clients and missing def
         expect(jobs.every((job) => job.status === "pending")).toBe(true);
         expect(await prisma.message_log.count({ where: { branchId } })).toBe(0);
         expect(createModel).not.toHaveBeenCalled();
+    });
+
+    it("reads settings and the exact materialization source without changing settings, customers or automation", async () => {
+        const trigger = app.get(MessageTriggerService);
+        const before = await storedAutomation();
+        const settingsBefore = await prisma.system_setting.findMany({ where: { key: { startsWith: `branch:${branchId}:` } }, orderBy: { key: "asc" } });
+        const clientsBefore = await prisma.client.findMany({ where: { branchId }, orderBy: { id: "asc" } });
+        const send = jest.spyOn(app.get(AligoService), "sendSms");
+        await tenantContextStore.run({ origin: "http", branchId }, async () => {
+            const settings = await trigger.readClientAutomationSettings(branchId);
+            expect(settings).toMatchObject({ status: "available", defaultsPresent: true, senderApproved: true, dispatchEnabled: true });
+            const source = await trigger.readClientAutomationSource(branchId, clientIds[0]!);
+            expect(source).toMatchObject({ id: clientIds[0], name: clientsBefore[0]!.name, phone: clientsBefore[0]!.phone,
+                createdAt: clientsBefore[0]!.createdAt, startDate: clientsBefore[0]!.startDate });
+            if (settings.status !== "available" || !source) throw new Error("Missing positive planning fixture");
+            const rule = settings.rules.find((entry) => entry.branchId === branchId && entry.templateKey === "CLIENT_GREETING");
+            if (!rule) throw new Error("Missing provisioned greeting rule");
+            const described = await describeClientMessageEffect({ branchId,
+                subject: { kind: "client", clientId: source.id, clientIdentity: agentBindingHash({ id: source.id, createdAt: source.createdAt }) },
+                rule, client: source, change: "refresh", now: new Date(), delivery: app.get(SmsTriggerDeliveryService),
+                policy: { dispatchEnabled: settings.dispatchEnabled, senderApproved: settings.senderApproved,
+                    // A synthetic provider identity for the read-only recipe test; no execution grant.
+                    senderIdentityDigest: "a".repeat(64), senderApprovedAt: settings.senderApprovedAt?.toISOString() ?? null,
+                    pastTriggerEnabled: settings.pastTriggerEnabled, pastTriggerConfig: settings.pastTriggerConfig },
+            });
+            expect(described.status).toBe("effect");
+            expect(JSON.stringify(described)).not.toContain(source.phone);
+            expect(JSON.stringify(described)).not.toContain(source.name);
+            expect(await trigger.readClientAutomationSource(branchId, 971000099)).toBeNull();
+        });
+        expect(await storedAutomation()).toEqual(before);
+        expect(await prisma.system_setting.findMany({ where: { key: { startsWith: `branch:${branchId}:` } }, orderBy: { key: "asc" } })).toEqual(settingsBefore);
+        expect(await prisma.client.findMany({ where: { branchId }, orderBy: { id: "asc" } })).toEqual(clientsBefore);
+        expect(createModel).not.toHaveBeenCalled();
+        expect(send).not.toHaveBeenCalled();
+        send.mockRestore();
     });
 });

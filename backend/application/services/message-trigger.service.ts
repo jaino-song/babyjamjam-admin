@@ -132,6 +132,24 @@ const DEFAULT_CLIENT_GREETING_TRIGGER: UpsertRuleParams = {
     templateKey: MessageTriggerTemplateKey.CLIENT_GREETING,
 };
 
+function matchesTriggerDefaults(rule: MessageTriggerRuleEntity, defaults: UpsertRuleParams, templateOnly: boolean): boolean {
+    if (templateOnly) return rule.templateKey === defaults.templateKey;
+    return rule.eventType === defaults.eventType && rule.offsetType === defaults.offsetType
+        && rule.offsetDays === (defaults.offsetDays ?? 0) && rule.recipientType === defaults.recipientType
+        && rule.templateKey === defaults.templateKey;
+}
+
+export type ClientAutomationSettingsSnapshot = {
+    status: "available";
+    rules: MessageTriggerRuleEntity[];
+    defaultsPresent: boolean;
+    dispatchEnabled: boolean;
+    senderApproved: boolean;
+    senderApprovedAt: Date | null;
+    pastTriggerEnabled: boolean;
+    pastTriggerConfig: MessageAutomationPastTriggerConfig;
+} | { status: "unavailable" };
+
 const ORPHANED_TRIGGER_JOB_CANCEL_REASON = "Related client or schedule deleted";
 const EXPIRED_PENDING_JOB_CANCEL_REASON = "기존 발송 예정 24시간 경과";
 const MISSING_CATCH_UP_PREDECESSOR_CANCEL_REASON = "보충 발송 이전 순위 job 없음";
@@ -393,12 +411,29 @@ export class MessageTriggerService {
         return (await this.resolvePersistedRules(branchId)).rules;
     }
 
+    /** Server-only preview input. Reads neither provision defaults nor materialize delivery jobs. */
+    async readClientAutomationSettings(branchId: string): Promise<ClientAutomationSettingsSnapshot> {
+        const { rules, parentEnabled, schemaReady } = await this.resolvePersistedRules(branchId);
+        if (!schemaReady) return { status: "unavailable" };
+        const [approvedBranches, pastTriggerEnabled, pastTriggerConfig] = await Promise.all([
+            this.messageSenderApprovalService.getApprovedBranches([branchId]),
+            this.getMessagePolicyEnabled(branchId, "past-trigger"),
+            this.getRetroactiveSendConfig(branchId),
+        ]);
+        const defaultsPresent = [DEFAULT_SERVICE_INFO_TRIGGER, DEFAULT_CLIENT_GREETING_TRIGGER]
+            .every((defaults) => rules.some((rule) => rule.branchId === branchId && matchesTriggerDefaults(rule, defaults, true)));
+        return { status: "available", rules, defaultsPresent, dispatchEnabled: parentEnabled,
+            senderApproved: approvedBranches.has(branchId), senderApprovedAt: approvedBranches.get(branchId) ?? null,
+            pastTriggerEnabled, pastTriggerConfig };
+    }
+
     private async resolvePersistedRules(branchId: string): Promise<{
         rules: MessageTriggerRuleEntity[];
         parentEnabled: boolean;
+        schemaReady: boolean;
     }> {
         if (!(await this.hasTriggerSchema())) {
-            return { rules: [], parentEnabled: false };
+            return { rules: [], parentEnabled: false, schemaReady: false };
         }
         const parentEnabled = await this.isMessageAutomationParentEnabled(branchId);
         const rules = await this.ruleRepository.findAll(branchId);
@@ -413,7 +448,7 @@ export class MessageTriggerService {
         if (!parentEnabled) {
             for (const rule of rules) rule.isActive = false;
         }
-        return { rules, parentEnabled };
+        return { rules, parentEnabled, schemaReady: true };
     }
 
     async ensureDefaultRulesForBranch(branchId: string): Promise<void> {
@@ -1078,26 +1113,13 @@ export class MessageTriggerService {
         return { id, status: "canceled" };
     }
 
-    async syncClientRulesForClient(
-        branchId: string,
-        clientId: number,
-        includePast: boolean,
-        suppressGreeting = false,
-        intentOptions?: MessageTriggerIntentSyncOptions,
-    ): Promise<void> {
-        if (!(await this.hasTriggerSchema())) {
-            return;
-        }
-
-        if (!(await this.messageSenderApprovalService.isApproved(branchId))) {
-            return;
-        }
-
+    /** The same branch-scoped source is used by preview and by job materialization. */
+    async readClientAutomationSource(branchId: string, clientId: number): Promise<ClientTriggerSource | null> {
         const supportsCreatedAt = await hasColumn(this.prisma, "client", "created_at");
         const supportsAreaId = await hasColumn(this.prisma, "client", "area_id");
         // Prisma's type inference does not correctly narrow the `area` relation type when
         // the select key is inside a conditional spread; cast to ClientTriggerSource explicitly.
-        const client = await this.prisma.client.findFirst({
+        return await this.prisma.client.findFirst({
             where: { id: clientId, branchId },
             select: {
                 id: true,
@@ -1115,6 +1137,24 @@ export class MessageTriggerService {
                 ...(supportsCreatedAt ? { createdAt: true } : {}),
             },
         }) as ClientTriggerSource | null;
+    }
+
+    async syncClientRulesForClient(
+        branchId: string,
+        clientId: number,
+        includePast: boolean,
+        suppressGreeting = false,
+        intentOptions?: MessageTriggerIntentSyncOptions,
+    ): Promise<void> {
+        if (!(await this.hasTriggerSchema())) {
+            return;
+        }
+
+        if (!(await this.messageSenderApprovalService.isApproved(branchId))) {
+            return;
+        }
+
+        const client = await this.readClientAutomationSource(branchId, clientId);
         if (!client) return;
 
         const rules = await this.ruleRepository.findActiveByEventTypes(branchId, [
@@ -1154,7 +1194,7 @@ export class MessageTriggerService {
 
         const candidateJobs: ClientRuleJobCandidate[] = [];
         for (const rule of rules) {
-            if (rule.eventType === MessageTriggerEventType.CLIENT_CREATED && !supportsCreatedAt) {
+            if (rule.eventType === MessageTriggerEventType.CLIENT_CREATED && !client.createdAt) {
                 continue;
             }
             if (rule.templateKey === MessageTriggerTemplateKey.CLIENT_GREETING && suppressGreeting) {
@@ -1412,19 +1452,7 @@ export class MessageTriggerService {
         defaults: UpsertRuleParams,
         matchTemplateKeyOnly = false,
     ): Promise<{ rules: MessageTriggerRuleEntity[]; created: MessageTriggerRuleEntity | null }> {
-        const matchesDefault = (rule: MessageTriggerRuleEntity): boolean => {
-            if (matchTemplateKeyOnly) {
-                return rule.templateKey === defaults.templateKey;
-            }
-
-            return (
-                rule.eventType === defaults.eventType &&
-                rule.offsetType === defaults.offsetType &&
-                rule.offsetDays === (defaults.offsetDays ?? 0) &&
-                rule.recipientType === defaults.recipientType &&
-                rule.templateKey === defaults.templateKey
-            );
-        };
+        const matchesDefault = (rule: MessageTriggerRuleEntity): boolean => matchesTriggerDefaults(rule, defaults, matchTemplateKeyOnly);
 
         // Provisioning asks whether THIS branch already has its default, so it
         // may only consider rules the branch owns. findAll also returns the
