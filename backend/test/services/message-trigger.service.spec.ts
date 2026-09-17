@@ -5030,6 +5030,7 @@ describe("MessageTriggerService", () => {
                     branchId?: string;
                     status?: { in?: string[] };
                     createdAt?: { lte?: Date };
+                    updatedAt?: { gte?: Date; lte?: Date };
                     AND?: Array<{ id?: { lt?: string } }>;
                 };
                 take?: number;
@@ -5045,8 +5046,10 @@ describe("MessageTriggerService", () => {
                 const cutoff = query.where.createdAt?.lte;
                 return jobRows
                     .filter((row) => row.branchId === query.where.branchId)
-                    .filter((row) => query.where.status?.in?.includes(row.status) ?? false)
+                    .filter((row) => query.where.status?.in === undefined || query.where.status.in.includes(row.status))
                     .filter((row) => cutoff === undefined || row.createdAt <= cutoff)
+                    .filter((row) => query.where.updatedAt?.gte === undefined || row.updatedAt >= query.where.updatedAt.gte)
+                    .filter((row) => query.where.updatedAt?.lte === undefined || row.updatedAt <= query.where.updatedAt.lte)
                     .filter((row) => afterId === undefined || row.id < afterId)
                     .sort((left, right) => right.id.localeCompare(left.id))
                     .slice(0, query.take ?? terminalRows.length);
@@ -5061,13 +5064,23 @@ describe("MessageTriggerService", () => {
 
             const ids: Array<number | string> = [];
             let cursor: string | undefined;
+            let firstSnapshotAt: Date | undefined;
+            type HistoryPageResult = Awaited<ReturnType<MessageTriggerService["listHistoryPage"]>>;
+            let finalPage: HistoryPageResult | undefined;
             for (let pageIndex = 0; pageIndex < 10; pageIndex += 1) {
                 ordinaryJob.status = pageIndex === 0
                     ? "pending"
                     : pageIndex === 1
                         ? "processing"
                         : "sent";
+                if (pageIndex > 0 && firstSnapshotAt) {
+                    ordinaryJob.updatedAt = new Date(firstSnapshotAt.getTime() + pageIndex * 1_000);
+                }
                 const result = await service.listHistoryPage(branchId, 50, cursor);
+                if (pageIndex === 0) {
+                    firstSnapshotAt = new Date(result.page.snapshotAt);
+                }
+                finalPage = result;
                 ids.push(...result.items.map((item) => item.id));
                 if (!result.page.hasMore) break;
                 cursor = result.page.nextCursor ?? undefined;
@@ -5083,6 +5096,7 @@ describe("MessageTriggerService", () => {
             ]);
             expect(ids).not.toContain("job:00000000-0000-4000-8000-0000000000b0");
             expect(ordinaryJob.status).toBe("sent");
+            expect(finalPage?.page.hasMore).toBe(false);
             expect(prisma.message_log.findMany).toHaveBeenCalledTimes(5);
         });
 
