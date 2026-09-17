@@ -1,6 +1,6 @@
 # BabyJamJam conversational AI implementation status
 
-Updated: 2026-09-17. Baseline: `4198fb991a59d63f14f529f54b1d66c1587ca76b`.
+Updated: 2026-09-18. Baseline: `4198fb991a59d63f14f529f54b1d66c1587ca76b`.
 Integration: `codex/bjj-conversation-v1`. Local implementation, deterministic verification, model quality and operational activation are separate results.
 
 | Phase | Status | Evidence / remaining gate |
@@ -12,9 +12,23 @@ Integration: `codex/bjj-conversation-v1`. Local implementation, deterministic ve
 | 4 — lifecycle and retention | Closed | Source `3b094cdfa13b20f1c08762b916c2f2f20ffcef9c`; shared23/backend436/DB73; SOL SHIP/HIGH |
 | 5 — conversation intake and context | Closed | Source `2d114d147b88fc208c86ed12679cf6f9101aca56`; shared25/backend498/DB93; cumulative SOL SHIP/HIGH |
 | 6 — atomic task/action approval | Closed | Source `4dd69251ebde09ed1a2eaf8228c2a08080a73bef`; shared25/backend535/DB114; cumulative SOL SHIP/HIGH |
-| 7 — client writes and automation consent | Implementation in progress; PLAN APPROVE/HIGH | Shared consent contracts, pure recipes, read-only rule listing and private receipt foundation added; complete transaction/delivery integration and FINAL pending |
+| 7 — client writes and automation consent | Paused by user; runtime gate scoped FINAL SHIP/HIGH | Runtime source `b02ceaa2`; real customer/intent, ordinary successors, schedule/link and log/retry integration plus cumulative FINAL remain |
 | 8 — desktop and mobile | Not implemented | Both renderers, protected forms and authenticated browser QA pending |
 | 9 — cumulative QA and release preparation | Not implemented | Full acceptance evidence and independent cumulative review pending |
+
+## User-requested pause — runtime delivery gate verified
+
+The user requested finishing only the in-flight increment, stopping, and updating Linear. The runtime delivery gate increment is now closed at source `b02ceaa2bb375ee43da3ade45afa88fcda948b1c`, reviewed against `8603f08ba19a79f5f01f149048273a492135b146`. Fresh independent SOL FINAL **SHIP/HIGH**, no remaining findings. This is not Phase7 close. No later implementation starts without a resume request.
+
+[Linear BJJ-328 — implementation progress and resume record](https://linear.app/jaino-studio/issue/17988d2f-59ba-41e9-a7c5-84dc2712f7f4). The Linear connector required reauthentication; publication was completed through the authenticated UI. The unrelated archived AI contract-chat issue was not modified.
+
+Frozen final verification: shared28/3, backend606/40, messaging561/20, guarded PostgreSQL/AppModule180/13, all four type checks, actual Nest build, capability manifest47, generated/installed vendor31 and declared-range diff pass. Lint0errors93existingwarnings; the changed SMS test's `_receiptUrl` warning exists in the base. Evidence: `/tmp/bjj-runtime-terminal-green-*.log`, `/tmp/bjj-runtime-terminal-green-db.log`. The reviewer inspected code and logs; independent broad-suite re-execution is not claimed.
+
+Review correction: a typed post-CAS admission refusal formerly fell through to a generic stale-entity status write. Same-claim terminal `failed`/`sent` rows could be overwritten as `dispatching`. Actual DB regressions reproduced both at `cf7a64c4b` (`/tmp/bjj-runtime-terminal-red2.log`). Both prepared and compatibility callers now skip that write on the explicit preserve-stored result. Final DB180 verifies terminal preservation with zero provider/log effects. The initial isolated regression attempt lacked branch-local provisioning and failed with NotFound; that fixture was corrected before the genuine RED reproduction. The earlier runtime suite's synthetic dispatcher/rule race was likewise given a valid customer source, retaining its original conflict assertions.
+
+Resume in Phase7: connect the actual client-write provider and transaction-aware intent/authority/receipt commit; implement bounded ordinary mutation successors, schedule/link adapters and catch-up predecessor canonicality, and durable SMS log/retry provenance. Then run real task yes/no/noSend integration, recovery/race/purge checks and cumulative Phase7 FINAL. Phase8 desktop/mobile and Phase9 complete acceptance remain unstarted. The earlier product evaluation gaps below remain unresolved. Actual model quality, operational activation, deployment and environment merges remain separate and unperformed.
+
+No schema, dependency, environment or auth-core change in this increment. Security review confirms fail-closed ownership/claim/seal/snapshot checks and one-use admission; missing process capabilities retain uncertainty rather than granting retries. Rollback must retain provenance readers and delivery fences after authority/coverage records exist, or keep affected automatic delivery disabled until forward correction. Do not remove those guards while retaining task-origin evidence.
 
 ## Phase5 final verification
 
