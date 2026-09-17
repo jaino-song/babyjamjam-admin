@@ -156,7 +156,10 @@ export function DetailPanel({
       : tabs;
 
   const renderedHeader = hasStructuredHeader ? (
-    <div className="flex items-center justify-between gap-[calc(16px*var(--glint-ui-scale,1))]">
+    <div className={cn(
+      "flex justify-between gap-[calc(16px*var(--glint-ui-scale,1))]",
+      stepper ? "flex-col items-stretch md:flex-row md:items-center" : "items-center",
+    )}>
       <div className="flex min-w-0 items-center gap-[calc(12px*var(--glint-ui-scale,1))]">
         {avatar}
         <PanelTitleGroup
@@ -184,6 +187,7 @@ export function DetailPanel({
     <div
       data-component={dataComponent}
       data-slot="detail-panel"
+      data-has-stepper={stepper ? "true" : undefined}
       data-source-component={sourceComponent}
       className="relative flex h-full min-h-0 flex-col overflow-hidden rounded-[28px] bg-white shadow-v3"
     >

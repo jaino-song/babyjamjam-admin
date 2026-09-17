@@ -654,10 +654,24 @@
 }
 
 /* Glint UI Scale: responsive sizing tokens for dense application surfaces. */
+:root {
+  --glint-ui-viewport-scale: 1;
+}
+
+/* Match the shell's md breakpoint and useGlintUiScale's desktop lower bound. */
+@media (min-width: 768px) {
+  :root {
+    --glint-ui-viewport-scale: max(
+      0.67,
+      calc(min(calc(100vw / 1920px), calc(100vh / 1080px)) * 1.1)
+    );
+  }
+}
+
 .glint-ui-scale-scope {
   --glint-ui-scope-scale: var(
     --glint-ui-scale,
-    calc(min(calc(100vw / 1920px), calc(100vh / 1080px)) * 1.1)
+    var(--glint-ui-viewport-scale, 1)
   );
   --spacing: calc(4px * var(--glint-ui-scope-scale));
   --text-xs: calc(12px * var(--glint-ui-scope-scale));
@@ -811,7 +825,21 @@
 
 [data-slot="main-content"][data-mode="compact"] {
   flex-direction: row;
-  padding-top: 16px;
+}
+
+/* Keep wizard controls reachable when a phone viewport loses vertical space. */
+@media (max-width: 767px) {
+  [data-slot="main-content-body"]:has(
+    :is([data-slot="clients-sections"], [data-slot="contracts-sections"])
+      [data-slot="detail-panel"][data-has-stepper="true"]
+  ) {
+    overflow-y: auto;
+  }
+
+  :is([data-slot="clients-sections"], [data-slot="contracts-sections"])
+    [data-slot="split-layout"]:has([data-slot="detail-panel"][data-has-stepper="true"]) {
+    min-height: 28rem;
+  }
 }
 
 [data-slot="main-content"][data-mode="compact"] [data-slot="page-sections"],
@@ -834,6 +862,10 @@
     [data-slot="page-sections"]
   )) {
     padding-top: 16px;
+
+    @media (max-width: 767px) {
+      padding-top: 80px;
+    }
   }
 
   :is(

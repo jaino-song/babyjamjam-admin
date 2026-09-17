@@ -709,7 +709,7 @@ export default function ContractsPage() {
     <PageSection name="contracts">
       {/* TODO: 통계 카운트는 아직 제공기록지 문서를 포함한다. 후속 작업에서 통계 엔드포인트를 분리한다. */}
       <ContractStatsBar
-        name="contracts"
+        name="contracts" density="responsive-square"
         showDocumentJobs={documentJobsEnabled}
         isLoading={isStatsLoading}
         items={[
