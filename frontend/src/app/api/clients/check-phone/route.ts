@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { serverAPIClient } from "@/lib/api/server";
-import { getAuthHeaders, getAuthToken } from "@/lib/api/route-utils";
+import { errorResponse, getAuthHeaders, getAuthToken } from "@/lib/api/route-utils";
 
 interface CheckPhoneResponse {
   exists?: boolean;
@@ -31,7 +31,6 @@ export async function GET(request: NextRequest) {
 
     return NextResponse.json({ exists: response.data?.exists === true });
   } catch (error) {
-    console.error("[API] Error checking phone:", error);
-    return NextResponse.json({ exists: false });
+    return errorResponse(error, "check client phone");
   }
 }
