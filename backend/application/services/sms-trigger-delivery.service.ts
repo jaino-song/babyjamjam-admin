@@ -58,7 +58,7 @@ export interface SmsTemplateDeliveryConfig {
  * adopt a different title, template key, or provider routing rule.
  */
 export const SMS_DELIVERY_CONFIG_VERSION = "sms-template-delivery-v1";
-export { SMS_DELIVERY_SNAPSHOT_VARIABLE } from "domain/constants/sms-delivery-snapshot";
+export { SMS_DELIVERY_SNAPSHOT_VARIABLE };
 
 export interface SmsTriggerDeliverySnapshot {
     readonly templateKey: MessageTriggerTemplateKey;
