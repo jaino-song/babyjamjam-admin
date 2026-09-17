@@ -1,8 +1,9 @@
 import { z } from "zod";
 import { AgentAutomationEffectSummarySchema } from "@babyjamjam/shared";
-import type { AgentAutomationAuthority, AgentAutomationJobSeal } from "domain/entities/agent-automation-consent";
-import { isAgentAutomationEffectVariantValid, isAgentAutomationOperationValid } from "domain/entities/agent-automation-consent";
+import type { AgentAutomationAuthority, AgentAutomationCoverage, AgentAutomationJobSeal } from "domain/entities/agent-automation-consent";
+import { isAgentAutomationCoverageScopeValid, isAgentAutomationEffectVariantValid, isAgentAutomationOperationValid } from "domain/entities/agent-automation-consent";
 import { agentAutomationEffectDigest, agentAutomationRecordDigest } from "./agent-automation-consent";
+import { agentAutomationCoverageRecordDigest } from "./agent-automation-coverage";
 
 const digest = z.string().regex(/^[a-f0-9]{64}$/);
 const positiveId = z.number().int().positive().max(Number.MAX_SAFE_INTEGER);
@@ -66,14 +67,40 @@ export const AgentAutomationJobSealStorageSchema = z.object({
     scope: AgentAutomationScopeStorageSchema, memberDigest: digest, reviewedEffectDigest: digest,
 }).strict();
 
+export const AgentAutomationCoverageScopeStorageSchema = z.object({
+    branchId: z.uuid(), clientId: positiveId, clientIdentity: digest,
+    kind: AgentAutomationEffectSummarySchema.shape.kind, scheduleId: positiveId.nullable(),
+    recipientType: AgentAutomationEffectSummarySchema.shape.recipientType, scheduleIdentity: digest.nullable(),
+}).strict().refine(isAgentAutomationCoverageScopeValid, "Inconsistent automation coverage scope");
+
+export const AgentAutomationCoverageStorageSchema = z.object({
+    kind: z.literal("coverage"), version: z.literal(1), id: z.uuid(), scope: AgentAutomationCoverageScopeStorageSchema,
+    sequence: positiveId, previousId: z.uuid().nullable(), origin, mutationDigest: digest,
+    grandfatheredScopes: z.array(z.object({ scope: AgentAutomationScopeStorageSchema, fingerprint: digest }).strict()).max(500),
+    recordedAt: z.iso.datetime(), recordDigest: digest,
+}).strict().superRefine((record, context) => {
+    try {
+        if (record.recordDigest !== agentAutomationCoverageRecordDigest(record)
+            || (record.origin.kind === "ordinary" && !["client-write", "schedule-write"].includes(record.origin.operation))) {
+            context.addIssue({ code: "custom", message: "Invalid automation coverage binding" });
+        }
+    } catch {
+        context.addIssue({ code: "custom", message: "Ambiguous automation coverage scopes" });
+    }
+});
+
 /** Private committed association; never included in a capability's public result. */
 export const AgentAutomationReceiptMetadataSchema = z.object({
     version: z.literal(1), taskId: z.uuid(), taskRevision: positiveId, questionRef: z.uuid(),
     reviewedEffectDigest: digest, reviewedPolicyDigest: digest,
-    authorities: z.array(z.object({ id: z.uuid(), recordDigest: digest, scopeDigest: digest }).strict()).min(1).max(500),
+    authorities: z.array(z.object({ id: z.uuid(), recordDigest: digest, scopeDigest: digest }).strict()).max(500),
+    coverages: z.array(z.object({ id: z.uuid(), recordDigest: digest, scopeDigest: digest }).strict()).max(500).optional(),
 }).strict().superRefine((metadata, context) => {
-    if (new Set(metadata.authorities.map(({ id }) => id)).size !== metadata.authorities.length
-        || new Set(metadata.authorities.map(({ scopeDigest }) => scopeDigest)).size !== metadata.authorities.length) {
+    const coverages = metadata.coverages ?? [];
+    const all = [...metadata.authorities, ...coverages];
+    if (!all.length || new Set(all.map(({ id }) => id)).size !== all.length
+        || new Set(metadata.authorities.map(({ scopeDigest }) => scopeDigest)).size !== metadata.authorities.length
+        || new Set(coverages.map(({ scopeDigest }) => scopeDigest)).size !== coverages.length) {
         context.addIssue({ code: "custom", message: "Duplicate committed automation scope" });
     }
 });
@@ -85,5 +112,10 @@ export function parseAgentAutomationAuthority(value: unknown): AgentAutomationAu
 
 export function parseAgentAutomationJobSeal(value: unknown): AgentAutomationJobSeal | null {
     const result = AgentAutomationJobSealStorageSchema.safeParse(value);
+    return result.success ? result.data : null;
+}
+
+export function parseAgentAutomationCoverage(value: unknown): AgentAutomationCoverage | null {
+    const result = AgentAutomationCoverageStorageSchema.safeParse(value);
     return result.success ? result.data : null;
 }

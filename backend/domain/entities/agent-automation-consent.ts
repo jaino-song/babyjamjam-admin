@@ -70,6 +70,35 @@ export interface AgentAutomationJobSeal {
     reviewedEffectDigest: string;
 }
 
+/** A provenance fence for operation families whose concrete rules may not exist yet. */
+export type AgentAutomationCoverageScope = Omit<AgentAutomationScope, "ruleId">;
+export interface AgentAutomationGrandfatheredScope {
+    scope: AgentAutomationScope;
+    /** Current exact rule, recipient, content, source and policy, independent of presentation change labels. */
+    fingerprint: string;
+}
+export interface AgentAutomationCoverage {
+    kind: "coverage";
+    version: 1;
+    id: string;
+    scope: AgentAutomationCoverageScope;
+    sequence: number;
+    previousId: string | null;
+    origin: AgentAutomationOrigin;
+    /** Bound by the terminal storage writer to the same committed source mutation and receipt. */
+    mutationDigest: string;
+    grandfatheredScopes: AgentAutomationGrandfatheredScope[];
+    recordedAt: string;
+    recordDigest: string;
+}
+
+export function isAgentAutomationCoverageScopeValid(scope: AgentAutomationCoverageScope): boolean {
+    if (scope.kind === "client-rule") return scope.scheduleId === null && scope.scheduleIdentity === null && scope.recipientType === "client";
+    if (scope.scheduleId === null || scope.scheduleIdentity === null) return false;
+    if (scope.kind === "service-record-link") return scope.recipientType === "primary-employee";
+    return scope.kind === "employee-assignment" && (scope.recipientType === "primary-employee" || scope.recipientType === "secondary-employee");
+}
+
 /** Dedicated producers own their rule/recipient combination; generic rules cannot impersonate them. */
 export function isAgentAutomationOperationValid(operation: Pick<AgentAutomationScope, "kind" | "ruleId" | "scheduleId" | "recipientType">): boolean {
     if (operation.kind === "service-record-link") {
