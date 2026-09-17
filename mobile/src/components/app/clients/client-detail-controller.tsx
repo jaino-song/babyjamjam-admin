@@ -100,11 +100,17 @@ export function useClientDetailController({
   const { data: employees = [] } = useEmployees();
   const prefillContractCreation = useFormStore((state) => state.prefillFromContract);
   const deleteClient = useDeleteClient();
-  const resolvedClientId = client?.id ?? clientId ?? null;
+  // A URL-selected client is authoritative while the detail request is in
+  // flight. A selected row may seed the controller only when it represents
+  // that same URL identity (or when no URL identity was provided).
+  const resolvedClientId = clientId ?? client?.id ?? null;
+  const resolvedClient = client && (clientId === null || clientId === undefined || client.id === clientId)
+    ? client
+    : null;
   const detailQuery = useClient(resolvedClientId ?? 0);
-  const [detailClient, setDetailClient] = useState<Client | null>(client ?? null);
+  const [detailClient, setDetailClient] = useState<Client | null>(resolvedClient);
   const [detailSheetTab, setDetailSheetTab] = useState<DetailTabId>(
-    client?.pendingScheduleChange ? "scheduleChange" : "basic",
+    resolvedClient?.pendingScheduleChange ? "scheduleChange" : "basic",
   );
   const [isDetailRefreshing, setIsDetailRefreshing] = useState(false);
   const [detailRefreshError, setDetailRefreshError] = useState(false);
@@ -136,25 +142,26 @@ export function useClientDetailController({
     initialDetailIdRef.current = null;
     if (deletedDetailIdRef.current !== resolvedClientId) deletedDetailIdRef.current = null;
     /* eslint-disable-next-line react-hooks/set-state-in-effect -- selected-row or URL identity changes reset controller state. */
-    setDetailClient(client ?? null);
-    setDetailSheetTab(client?.pendingScheduleChange ? "scheduleChange" : "basic");
+    setDetailClient(resolvedClient);
+    setDetailSheetTab(resolvedClient?.pendingScheduleChange ? "scheduleChange" : "basic");
     setIsDetailRefreshing(false);
     setDetailRefreshError(false);
     setDeleteTargetClientId(null);
-  }, [client, resolvedClientId]);
+  }, [resolvedClient, resolvedClientId]);
 
   useEffect(() => {
     if (
-      client ||
+      resolvedClient ||
       resolvedClientId === null ||
       deletedDetailIdRef.current === resolvedClientId ||
       !detailQuery.data ||
+      detailQuery.data.id !== resolvedClientId ||
       detailClient
     ) return;
     /* eslint-disable-next-line react-hooks/set-state-in-effect -- query completion supplies the URL-selected client. */
     setDetailClient(detailQuery.data);
     setDetailSheetTab(detailQuery.data.pendingScheduleChange ? "scheduleChange" : "basic");
-  }, [client, detailClient, detailQuery.data, resolvedClientId]);
+  }, [detailClient, detailQuery.data, resolvedClient, resolvedClientId]);
 
   const retryDetail = useCallback(() => {
     if (resolvedClientId === null || deletedDetailIdRef.current === resolvedClientId) return;
@@ -221,6 +228,7 @@ export function useClientDetailController({
   }, [detailClient, detailContractDocument, resolvedClientId]);
 
   const handleClientUpdated = useCallback((updatedClient: Client) => {
+    if (resolvedClientIdRef.current !== updatedClient.id) return;
     detailRequestRef.current += 1;
     setDetailClient(updatedClient);
     setIsDetailRefreshing(false);
@@ -273,15 +281,18 @@ export function useClientDetailController({
 
     try {
       await deleteClient.mutateAsync(targetClientId);
+      const isCurrentDetail = resolvedClientIdRef.current === targetClientId;
       deletedDetailIdRef.current = targetClientId;
-      detailRequestRef.current += 1;
-      initialDetailIdRef.current = targetClientId;
       queryClient.removeQueries({ queryKey: clientQueryKeys.detail(targetClientId) });
-      if (detailClient?.id === targetClientId) setDetailClient(null);
-      setIsDetailRefreshing(false);
-      setDetailRefreshError(false);
-      setDeleteTargetClientId(null);
-      onClientDeletedRef.current?.(targetClientId);
+      if (isCurrentDetail) {
+        detailRequestRef.current += 1;
+        initialDetailIdRef.current = targetClientId;
+        if (detailClient?.id === targetClientId) setDetailClient(null);
+        setIsDetailRefreshing(false);
+        setDetailRefreshError(false);
+        setDeleteTargetClientId(null);
+        onClientDeletedRef.current?.(targetClientId);
+      }
       toast({
         variant: "success",
         title: t(locale, "clients.delete-success"),

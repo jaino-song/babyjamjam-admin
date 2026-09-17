@@ -104,6 +104,7 @@ describe("EmployeeScheduleScreen", () => {
     render(<EmployeeScheduleScreen />);
 
     fireEvent.click(screen.getByRole("button", { name: /서비스 종료/ }));
+    expect(screen.getByRole("button", { name: "서비스 시작 1" })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "목록" }));
     expect(screen.getByText("고객 2")).toBeInTheDocument();
     expect(screen.queryByText("고객 1")).not.toBeInTheDocument();

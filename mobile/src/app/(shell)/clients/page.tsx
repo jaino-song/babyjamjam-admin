@@ -137,11 +137,16 @@ export default function ClientsPage() {
     }
   };
 
+  const handleClientUpdated = (updatedClient: Client) => {
+    if (selectedClientIdFromParam !== null && updatedClient.id !== selectedClientIdFromParam) return;
+    setSelectedClient(updatedClient);
+  };
+
   const detailController = useClientDetailController({
     client: selectedClient,
     clientId: selectedClientIdFromParam,
     dataComponent: "mobile_clients_detail-sheet_stack_detail-page_content",
-    onClientUpdated: setSelectedClient,
+    onClientUpdated: handleClientUpdated,
     onClientDeleted: handleCloseDetailSheet,
   });
   const detailClient = detailController.detailClient;

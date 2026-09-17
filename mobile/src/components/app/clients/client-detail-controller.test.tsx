@@ -271,6 +271,45 @@ describe("useClientDetailController", () => {
     expect(result.current.detailClient?.id).toBe(client.id);
   });
 
+  it("does not close a newer URL detail when an earlier delete completes", async () => {
+    mockedFetchClient.mockImplementation(async (id) => makeClient(id));
+    let resolveDelete!: () => void;
+    const mutateAsync = jest.fn(() => new Promise<void>((resolve) => {
+      resolveDelete = resolve;
+    }));
+    const onClientDeleted = jest.fn();
+    mockedUseDeleteClient.mockReturnValue({
+      isPending: false,
+      mutateAsync,
+    } as unknown as ReturnType<typeof useDeleteClient>);
+    const client = makeClient(1);
+    const { result, rerender } = renderHook(
+      ({ clientId }: { clientId: number }) => useClientDetailController({
+        client: clientId === 1 ? client : null,
+        clientId,
+        dataComponent: "mobile_clients_detail-sheet_detail",
+        onClientDeleted,
+      }),
+      { initialProps: { clientId: 1 }, wrapper: createWrapper() },
+    );
+
+    const clientDetailProps = getClientDetailProps(result.current.detail);
+    act(() => clientDetailProps?.onDelete(client.id));
+    const deleteModal = result.current.deleteModal as ReactElement<{ onConfirm: () => Promise<void> }>;
+    const completion = deleteModal.props.onConfirm();
+    await waitFor(() => expect(mutateAsync).toHaveBeenCalledWith(client.id));
+
+    rerender({ clientId: 2 });
+    await waitFor(() => expect(result.current.detailClient?.id).toBe(2));
+    await act(async () => {
+      resolveDelete();
+      await completion;
+    });
+
+    expect(onClientDeleted).not.toHaveBeenCalled();
+    expect(result.current.detailClient?.id).toBe(2);
+  });
+
   it("clears an old URL-selected client and exposes a retryable error for the new identity", async () => {
     const requests = new Map<number, {
       resolve: (client: Client) => void;
@@ -311,6 +350,36 @@ describe("useClientDetailController", () => {
     expect(result.current.detailClient).toBeNull();
   });
 
+  it("does not seed the new URL identity from a mismatched cached query result", async () => {
+    const staleClient = makeClient(1);
+    let resolveFresh!: (client: Client) => void;
+    mockedUseClient.mockImplementation(() => ({ data: staleClient }) as ReturnType<typeof useClient>);
+    mockedFetchClient.mockImplementation((id) => id === 2
+      ? new Promise<Client>((resolve) => {
+        resolveFresh = resolve;
+      })
+      : new Promise<Client>(() => {}));
+    const { result, rerender } = renderHook(
+      ({ clientId }: { clientId: number }) => useClientDetailController({
+        client: null,
+        clientId,
+        dataComponent: "mobile_clients_detail-sheet_detail",
+      }),
+      { initialProps: { clientId: 1 }, wrapper: createWrapper() },
+    );
+
+    await waitFor(() => expect(result.current.detailClient?.id).toBe(1));
+    rerender({ clientId: 2 });
+    await waitFor(() => expect(result.current.detailClient).toBeNull());
+    expect(result.current.isDetailRefreshing).toBe(true);
+
+    await act(async () => {
+      resolveFresh(makeClient(2));
+      await Promise.resolve();
+    });
+    await waitFor(() => expect(result.current.detailClient?.id).toBe(2));
+  });
+
   it("does not let a pending fresh response overwrite an edited client", async () => {
     let resolveFresh!: (client: Client) => void;
     mockedFetchClient.mockImplementation(() => new Promise<Client>((resolve) => {
@@ -334,5 +403,27 @@ describe("useClientDetailController", () => {
       await Promise.resolve();
     });
     expect(result.current.detailClient?.name).toBe("편집된 고객");
+  });
+
+  it("ignores a late edit callback from the previous URL identity", () => {
+    const clientA = makeClient(1);
+    mockedFetchClient.mockImplementation(() => new Promise<Client>(() => {}));
+    const onClientUpdated = jest.fn();
+    const { result, rerender } = renderHook(
+      ({ clientId }: { clientId: number }) => useClientDetailController({
+        client: clientId === clientA.id ? clientA : null,
+        clientId,
+        dataComponent: "mobile_clients_detail-sheet_detail",
+        onClientUpdated,
+      }),
+      { initialProps: { clientId: clientA.id }, wrapper: createWrapper() },
+    );
+    const staleDetailProps = getClientDetailProps(result.current.detail);
+
+    rerender({ clientId: 2 });
+    act(() => staleDetailProps?.onClientUpdated({ ...clientA, name: "오래된 수정" }));
+
+    expect(onClientUpdated).not.toHaveBeenCalled();
+    expect(result.current.detailClient).toBeNull();
   });
 });
