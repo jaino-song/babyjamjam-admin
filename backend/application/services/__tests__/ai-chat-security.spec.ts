@@ -51,7 +51,15 @@ describe("AIChatService legacy session and confirmation boundary", () => {
             for await (const _event of stream) {
                 // The lookup must fail before any stream event is yielded.
             }
-        })()).rejects.toThrow("Session not found");
+        })()).rejects.toMatchObject({
+            status: 404,
+            response: expect.objectContaining({
+                code: "RESOURCE_NOT_FOUND",
+                params: {},
+                outcome: "NOT_APPLIED",
+                recovery: { action: "NONE", retry: { mode: "NEVER" } },
+            }),
+        });
         expect(repository.findById).toHaveBeenCalledWith("foreign-session", context.userId, context.branchId);
         expect(repository.create).not.toHaveBeenCalled();
     });

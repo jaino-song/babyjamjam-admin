@@ -17,6 +17,7 @@ import { UserEntity } from "domain/entities/user.entity";
 import { PrismaService } from "infrastructure/database/prisma.service";
 import { AdminAuditActor, AdminAuditEventWriter } from "application/services/admin-audit-event.service";
 import { UserMapper } from "infrastructure/database/mapper/user.mapper";
+import { codeOnlyProblemBody, problemBody } from "application/utils/problem-bodies";
 import { currentAdminAuditActor } from "application/services/admin-audit-context";
 
 const MAX_ACCOUNT_ASSIGNMENT_TRANSACTION_ATTEMPTS = 3;
@@ -149,12 +150,20 @@ export class UserService {
             // branchId without branchRole is not a recognized branch-scoped update; the
             // global-user path below does not accept (or apply) branchId, so refuse rather
             // than silently discarding it and letting the caller believe it scoped anything.
-            throw new BadRequestException("branchId를 지정하려면 branchRole도 함께 지정해야 합니다.");
+            throw new BadRequestException(problemBody("VALIDATION_FAILED", {
+                pointer: "/branchRole",
+                code: "REQUIRED",
+                detail: "지점을 지정하려면 지점 역할도 함께 지정해 주세요.",
+            }));
         }
         if (params.role !== undefined && !actor) {
             // A role change with no audit actor would fall through to updateUserUsecase,
             // which applies the role change without writing an audit event.
-            throw new BadRequestException("역할 변경에는 감사 주체(actor) 정보가 필요합니다.");
+            throw new BadRequestException(problemBody("VALIDATION_FAILED", {
+                pointer: "/actor",
+                code: "REQUIRED",
+                detail: "역할 변경에는 감사 주체 정보가 필요해요.",
+            }));
         }
         if (actor) {
             return this.updateGlobalUser(id, params, actor);
@@ -174,20 +183,20 @@ export class UserService {
         },
     ): Promise<UserApprovalSummary> {
         if (params.callerRole !== "owner") {
-            throw new ForbiddenException("계정 수정은 소유자만 가능합니다.");
+            throw new ForbiddenException(codeOnlyProblemBody("ACCESS_DENIED"));
         }
         if (
             !Array.isArray(params.branchIds)
             || params.branchIds.length === 0
             || new Set(params.branchIds).size !== params.branchIds.length
         ) {
-            throw new BadRequestException("하나 이상의 유효한 지점을 선택해야 합니다.");
+            throw new BadRequestException(this.branchSelectionProblem("지점을 한 개 이상 선택해 주세요."));
         }
         if (
             !Array.isArray(params.expectedBranchIds)
             || new Set(params.expectedBranchIds).size !== params.expectedBranchIds.length
         ) {
-            throw new BadRequestException("예상 지점 정보가 유효하지 않습니다.");
+            throw new BadRequestException(this.branchSelectionProblem("예상 지점 정보가 올바르지 않아요.", "/expectedBranchIds"));
         }
 
         const runTransaction = () => this.prismaService.$transaction(async (tx) => {
@@ -221,20 +230,24 @@ export class UserService {
                 },
             });
             if (!target) {
-                throw new NotFoundException("User not found");
+                throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
             }
             for (const ownedBranch of target.ownedBranches) {
                 await this.lockRow(tx, "branch", ownedBranch.id);
             }
             if (target.role === "owner") {
-                throw new ForbiddenException("오너 계정의 역할은 변경할 수 없습니다.");
+                throw new ForbiddenException(this.ownerRoleChangeProblem());
             }
             if (target.approvalStatus !== "approved") {
-                throw new BadRequestException("승인된 계정만 수정할 수 있습니다.");
+                throw new BadRequestException(problemBody("VALIDATION_FAILED", {
+                    pointer: "/id",
+                    code: "INVALID_VALUE",
+                    detail: "승인된 계정만 수정할 수 있어요.",
+                }));
             }
             if (getAccountAssignmentRoleRank(target.role) === undefined) {
                 throw new ConflictException(
-                    "계정 정보가 변경되었습니다. 새로고침 후 다시 시도해 주세요.",
+                    this.staleAccountProblem(),
                 );
             }
 
@@ -254,13 +267,17 @@ export class UserService {
                 );
             if (!expectedSnapshotMatches) {
                 throw new ConflictException(
-                    "계정 정보가 변경되었습니다. 새로고침 후 다시 시도해 주세요.",
+                    this.staleAccountProblem(),
                 );
             }
 
             if (params.role === "admin" && target.role !== "admin") {
                 throw new ForbiddenException(
-                    "지점장 역할은 기존 지점장 계정에서만 유지할 수 있습니다.",
+                    problemBody("ACCESS_DENIED", {
+                        pointer: "/role",
+                        code: "INVALID_VALUE",
+                        detail: "지점장 역할은 기존 지점장 계정에서만 유지할 수 있어요.",
+                    }),
                 );
             }
 
@@ -284,7 +301,7 @@ export class UserService {
                 )
             ) {
                 throw new BadRequestException(
-                    "지점장 역할을 유지하려면 담당 지점을 모두 포함해야 합니다.",
+                    this.branchSelectionProblem("지점장 역할을 유지하려면 담당 지점을 모두 포함해 주세요."),
                 );
             }
 
@@ -301,7 +318,7 @@ export class UserService {
             );
             if (branchIdsRequiringActiveValidation.length === 0) {
                 throw new BadRequestException(
-                    "하나 이상의 활성 지점을 선택해야 합니다.",
+                    this.branchSelectionProblem("활성 지점을 한 개 이상 선택해 주세요."),
                 );
             }
             const activeBranches = await tx.branch.findMany({
@@ -312,7 +329,7 @@ export class UserService {
                 select: { id: true },
             });
             if (activeBranches.length !== branchIdsRequiringActiveValidation.length) {
-                throw new BadRequestException("유효하지 않은 지점입니다.");
+                throw new BadRequestException(this.branchSelectionProblem());
             }
 
             const effectiveBranchIdSet = new Set(effectiveBranchIds);
@@ -440,14 +457,14 @@ export class UserService {
                 }
                 if (attempt === MAX_ACCOUNT_ASSIGNMENT_TRANSACTION_ATTEMPTS) {
                     throw new ConflictException(
-                        "계정 정보가 동시에 변경되었습니다. 최신 정보를 확인한 뒤 다시 시도해 주세요.",
+                        this.concurrentChangeProblem(),
                     );
                 }
             }
         }
 
         throw new ConflictException(
-            "계정 정보가 동시에 변경되었습니다. 최신 정보를 확인한 뒤 다시 시도해 주세요.",
+            this.concurrentChangeProblem(),
         );
     }
 
@@ -552,12 +569,16 @@ export class UserService {
         return runSerializableTransaction(this.prismaService, async (tx) => {
             await this.lockRow(tx, "user", id);
             const current = await tx.user.findUnique({ where: { id } });
-            if (!current) throw new NotFoundException("User not found");
+            if (!current) throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
             if (params.role !== undefined && params.callerRole !== "owner") {
-                throw new ForbiddenException("역할 변경은 소유자만 가능합니다.");
+                throw new ForbiddenException(problemBody("ACCESS_DENIED", {
+                    pointer: "/role",
+                    code: "INVALID_VALUE",
+                    detail: "역할 변경은 소유자만 할 수 있어요.",
+                }));
             }
             if (params.role !== undefined && current.role === "owner") {
-                throw new ForbiddenException("오너 계정의 역할은 변경할 수 없습니다.");
+                throw new ForbiddenException(this.ownerRoleChangeProblem());
             }
             if (
                 params.role !== undefined
@@ -568,7 +589,11 @@ export class UserService {
                 // attempt outside this transaction so the record survives the rollback that
                 // throwing here triggers.
                 await this.appendRejectedRoleGrantAudit(actor, id, current.role, params.role);
-                throw new ForbiddenException("owner 역할은 이 경로로 부여할 수 없습니다.");
+                throw new ForbiddenException(problemBody("ACCESS_DENIED", {
+                    pointer: "/role",
+                    code: "INVALID_VALUE",
+                    detail: "오너 역할은 이 경로로 부여할 수 없어요.",
+                }));
             }
 
             const roleChanged = params.role !== undefined && params.role !== current.role;
@@ -634,24 +659,25 @@ export class UserService {
         return runSerializableTransaction(this.prismaService, async (tx) => {
             await this.lockRow(tx, "branch", branchId);
             const branch = await tx.branch.findUnique({ where: { id: branchId }, select: { ownerId: true } });
-            if (!branch) throw new NotFoundException("User not found");
+            if (!branch) throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
             const current = await tx.user.findUnique({ where: { id } });
-            if (!current) throw new NotFoundException("User not found");
+            if (!current) throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
             if (current.role === "owner" && callerRole !== "owner") {
-                throw new NotFoundException("User not found");
+                // Owner targets stay hidden behind a 404 for non-owner callers.
+                throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
             }
             if (current.role === "owner" && branchRole !== "admin") {
-                throw new ConflictException("오너 계정의 역할은 변경할 수 없습니다.");
+                throw new ConflictException(this.ownerRoleChangeProblem());
             }
             if (branch.ownerId === id && branchRole !== "admin") {
-                throw new ConflictException("지점 소유권을 먼저 다른 승인된 계정으로 이전해야 합니다.");
+                throw new ConflictException(this.branchOwnershipProblem());
             }
 
             const membership = await tx.user_branch.findUnique({
                 where: { userId_branchId: { userId: id, branchId } },
             });
             if (!membership && branch.ownerId !== id) {
-                throw new NotFoundException("User not found");
+                throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
             }
             const beforeRole = membership?.role ?? null;
             if (membership || branch.ownerId !== id) {
@@ -659,7 +685,7 @@ export class UserService {
                     where: { userId: id, branchId },
                     data: { role: branchRole },
                 });
-                if (updatedMembership.count !== 1) throw new NotFoundException("User not found");
+                if (updatedMembership.count !== 1) throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
             } else {
                 await tx.user_branch.upsert({
                     where: { userId_branchId: { userId: id, branchId } },
@@ -668,7 +694,7 @@ export class UserService {
                 });
             }
             const persisted = await tx.user.findUnique({ where: { id } });
-            if (!persisted) throw new NotFoundException("User not found");
+            if (!persisted) throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
             await this.appendAudit(tx, actor ?? currentAdminAuditActor(), {
                 action: "user.membership_role.updated",
                 branchId,
@@ -687,12 +713,16 @@ export class UserService {
                 where: { id },
                 select: { id: true, role: true, approvalStatus: true, ownedBranches: { select: { id: true } } },
             });
-            if (!target) throw new NotFoundException("User not found");
+            if (!target) throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
             if (target.role === "owner") {
                 const effectiveActor = actor ?? currentAdminAuditActor();
                 if (!effectiveActor?.userId || effectiveActor.userId === id) {
                     throw new ConflictException(
-                        "글로벌 소유자 계정은 독립적으로 인증된 successor를 통해서만 삭제할 수 있습니다.",
+                        problemBody("REQUEST_CONFLICT", {
+                            pointer: "/id",
+                            code: "INVALID_VALUE",
+                            detail: "글로벌 소유자 계정은 독립적으로 인증된 successor를 통해서만 삭제할 수 있어요.",
+                        }),
                     );
                 }
                 const owners = await tx.user.findMany({
@@ -708,16 +738,22 @@ export class UserService {
                     where: { id },
                     select: { id: true, role: true, approvalStatus: true, ownedBranches: { select: { id: true } } },
                 });
-                if (!target) throw new NotFoundException("User not found");
+                if (!target) throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
                 const lockedOwners = await tx.user.findMany({
                     where: { role: "owner" },
                     select: { id: true },
                 });
                 if (lockedOwners.length <= 1) {
-                    throw new ConflictException("마지막 글로벌 소유자는 삭제할 수 없습니다. 먼저 승인된 successor를 지정하세요.");
+                    throw new ConflictException(
+                        problemBody("REQUEST_CONFLICT", {
+                            pointer: "/id",
+                            code: "INVALID_VALUE",
+                            detail: "마지막 글로벌 소유자는 삭제할 수 없어요. 먼저 승인된 successor를 지정해 주세요.",
+                        }),
+                    );
                 }
                 if (target.ownedBranches.length > 0) {
-                    throw new ConflictException("지점 소유권을 먼저 다른 승인된 계정으로 이전해야 합니다.");
+                    throw new ConflictException(this.branchOwnershipProblem());
                 }
             } else {
                 await this.lockRow(tx, "user", id);
@@ -741,12 +777,12 @@ export class UserService {
         await runSerializableTransaction(this.prismaService, async (tx) => {
             await this.lockRow(tx, "branch", branchId);
             const branch = await tx.branch.findUnique({ where: { id: branchId }, select: { ownerId: true } });
-            if (!branch) throw new NotFoundException("User not found");
+            if (!branch) throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
             if (branch.ownerId === id) {
-                throw new ConflictException("지점 소유권을 먼저 다른 승인된 계정으로 이전해야 합니다.");
+                throw new ConflictException(this.branchOwnershipProblem());
             }
             const deleted = await tx.user_branch.deleteMany({ where: { userId: id, branchId } });
-            if (deleted.count !== 1) throw new NotFoundException("User not found");
+            if (deleted.count !== 1) throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
             await this.appendAudit(tx, actor ?? currentAdminAuditActor(), {
                 action: "user.membership.deleted",
                 branchId,
@@ -770,12 +806,58 @@ export class UserService {
         await tx.$queryRaw(query);
     }
 
+    /** 400 body for a rejected branch selection, pointed at the offending list. */
+    private branchSelectionProblem(
+        detail = "선택한 지점을 찾을 수 없어요. 지점 목록을 다시 확인해 주세요.",
+        pointer = "/branchIds",
+    ) {
+        return problemBody("VALIDATION_FAILED", {
+            pointer,
+            code: "INVALID_VALUE",
+            detail,
+        });
+    }
+
+    private ownerRoleChangeProblem() {
+        return problemBody("ACCESS_DENIED", {
+            pointer: "/role",
+            code: "INVALID_VALUE",
+            detail: "오너 계정의 역할은 변경할 수 없어요.",
+        });
+    }
+
+    private branchOwnershipProblem() {
+        return problemBody("REQUEST_CONFLICT", {
+            pointer: "/branchIds",
+            code: "INVALID_VALUE",
+            detail: "지점 소유권을 먼저 다른 승인된 계정으로 이전해 주세요.",
+        });
+    }
+
+    private staleAccountProblem() {
+        return problemBody("REQUEST_CONFLICT", {
+            pointer: "/expectedBranchIds",
+            code: "INVALID_VALUE",
+            detail: "계정 정보가 변경되었어요. 새로고침 후 다시 시도해 주세요.",
+        });
+    }
+
+    private concurrentChangeProblem() {
+        return problemBody("REQUEST_CONFLICT", {
+            pointer: "/id",
+            code: "INVALID_VALUE",
+            detail: "계정 정보가 동시에 변경되었어요. 최신 정보를 확인한 뒤 다시 시도해 주세요.",
+        });
+    }
+
     private async appendAudit(
         tx: Prisma.TransactionClient,
         actor: AdminAuditActor | undefined,
         event: Omit<Parameters<AdminAuditEventWriter["append"]>[1], "actor" | "outcome" | "source">,
     ): Promise<void> {
         if (!this.auditWriter) {
+            // Internal audit-wiring invariant, not a client-facing failure: it
+            // stays a plain Error so the boundary remaps it to INTERNAL_ERROR.
             if (actor) throw new Error("Admin audit writer is required for audited user mutations");
             return;
         }
@@ -833,12 +915,16 @@ export class UserService {
                 select: { id: true },
             });
             if (!branch) {
-                throw new BadRequestException("유효하지 않은 지점입니다.");
+                throw new BadRequestException(this.branchSelectionProblem("유효하지 않은 지점이에요.", "/branchId"));
             }
 
             if (params.role === "admin") {
                 if (!params.ownerBranchId) {
-                    throw new BadRequestException("지점장 승인은 임명할 지점이 필요합니다.");
+                    throw new BadRequestException(problemBody("VALIDATION_FAILED", {
+                        pointer: "/ownerBranchId",
+                        code: "REQUIRED",
+                        detail: "지점장 승인에는 임명할 지점이 필요해요.",
+                    }));
                 }
 
                 await this.lockRow(tx, "branch", params.ownerBranchId);
@@ -848,10 +934,14 @@ export class UserService {
                     select: { id: true, ownerId: true },
                 });
                 if (!ownerBranch) {
-                    throw new BadRequestException("유효하지 않은 지점입니다.");
+                    throw new BadRequestException(this.branchSelectionProblem("유효하지 않은 지점이에요.", "/ownerBranchId"));
                 }
                 if (ownerBranch.ownerId) {
-                    throw new ConflictException("이미 지점장이 있는 지점입니다.");
+                    throw new ConflictException(problemBody("REQUEST_CONFLICT", {
+                        pointer: "/ownerBranchId",
+                        code: "INVALID_VALUE",
+                        detail: "이미 지점장이 있는 지점이에요.",
+                    }));
                 }
             }
 
@@ -1002,5 +1092,9 @@ async function runSerializableTransaction<T>(
             }
         }
     }
-    throw new ConflictException("동시 변경이 감지되었습니다. 최신 정보를 확인한 뒤 다시 시도해 주세요.");
+    throw new ConflictException(problemBody("REQUEST_CONFLICT", {
+        pointer: "/id",
+        code: "INVALID_VALUE",
+        detail: "계정 정보가 동시에 변경되었어요. 최신 정보를 확인한 뒤 다시 시도해 주세요.",
+    }));
 }

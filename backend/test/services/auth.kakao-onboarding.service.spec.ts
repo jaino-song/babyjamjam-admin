@@ -211,7 +211,15 @@ describe("AuthService Kakao onboarding", () => {
         });
         prisma.auth_flow_state.updateMany.mockResolvedValue({ count: 0 });
 
-        await expect(service.exchangeCodeForTokens("exchange-code")).rejects.toThrow("Authorization code already used");
+        await expect(service.exchangeCodeForTokens("exchange-code")).rejects.toMatchObject({
+            status: 401,
+            response: expect.objectContaining({
+                code: "AUTH_REQUIRED",
+                params: {},
+                outcome: "NOT_APPLIED",
+                recovery: { action: "NONE", retry: { mode: "NEVER" } },
+            }),
+        });
 
         expect(prisma.auth_flow_state.create).not.toHaveBeenCalled();
     });
@@ -255,7 +263,7 @@ describe("AuthService Kakao onboarding", () => {
         )).resolves.toEqual({
             success: true,
             userId: "user-1",
-            message: "관리자 승인 대기 중입니다.",
+            message: "관리자 승인 대기 중입니다. 승인된 후에 로그인할 수 있어요.",
         });
 
         expect(prisma.$transaction).toHaveBeenCalled();

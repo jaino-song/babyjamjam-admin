@@ -257,6 +257,14 @@ describe("catalog coverage", () => {
         "EFORMSIGN_TERMINAL_FAILURE",
         "DOCUMENT_FINALIZE_UNCONFIRMED",
         "DOCUMENT_FINALIZE_FAILED",
+        // Registered account-state and reset-link codes (EM-CAT-03; shipped auth identifiers). BJJ-319 phase 6d2.
+        "PENDING_APPROVAL",
+        "ACCOUNT_REJECTED",
+        "ACCOUNT_PROFILE_INCOMPLETE",
+        "NO_ACCESSIBLE_BRANCH",
+        "AUTH_RESET_TOKEN_INVALID",
+        "AUTH_RESET_TOKEN_EXPIRED",
+        "AUTH_RESET_TOKEN_USED",
     ];
 
     it.each(codes)("contains a complete bilingual entry for %s", (code) => {
@@ -317,6 +325,33 @@ describe("catalog coverage", () => {
         const entry = PROBLEM_CATALOG[code];
         expect(entry.status).toBe(status);
         expect(entry.statuses).toEqual([status]);
+        expect(entry.type).toBe(`https://github.com/jaino-song/babyjamjam-admin/blob/main/docs/error-management.md#${anchor}`);
+    });
+
+    const AUTH_STATUS_403_CODES: Array<[ProblemCode, string]> = [
+        ["PENDING_APPROVAL", "pending-approval"],
+        ["ACCOUNT_REJECTED", "account-rejected"],
+        ["ACCOUNT_PROFILE_INCOMPLETE", "account-profile-incomplete"],
+        ["NO_ACCESSIBLE_BRANCH", "no-accessible-branch"],
+    ];
+
+    it.each(AUTH_STATUS_403_CODES)("registers %s as status 403 with kebab-case type anchor", (code, anchor) => {
+        const entry = PROBLEM_CATALOG[code];
+        expect(entry.status).toBe(403);
+        expect(entry.statuses).toEqual([403]);
+        expect(entry.type).toBe(`https://github.com/jaino-song/babyjamjam-admin/blob/main/docs/error-management.md#${anchor}`);
+    });
+
+    const AUTH_STATUS_400_CODES: Array<[ProblemCode, string]> = [
+        ["AUTH_RESET_TOKEN_INVALID", "auth-reset-token-invalid"],
+        ["AUTH_RESET_TOKEN_EXPIRED", "auth-reset-token-expired"],
+        ["AUTH_RESET_TOKEN_USED", "auth-reset-token-used"],
+    ];
+
+    it.each(AUTH_STATUS_400_CODES)("registers %s as status 400 with kebab-case type anchor", (code, anchor) => {
+        const entry = PROBLEM_CATALOG[code];
+        expect(entry.status).toBe(400);
+        expect(entry.statuses).toEqual([400]);
         expect(entry.type).toBe(`https://github.com/jaino-song/babyjamjam-admin/blob/main/docs/error-management.md#${anchor}`);
     });
 

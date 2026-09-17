@@ -8,17 +8,10 @@ import * as bcrypt from "bcrypt";
 import { EMAIL_PORT, EmailPort } from "../../domain/ports/email.port";
 import { AUTH_TOKEN_REPOSITORY, IAuthTokenRepository } from "../../domain/repositories/auth-token.repository.interface";
 import { maskEmail } from "application/utils/mask";
+import { codeOnlyProblemBody, problemBody } from "application/utils/problem-bodies";
 import { isVisibleStaffBranchSlug } from "domain/constants/branch-routing.constants";
 import { AuthSessionService } from "./auth-session.service";
 import { AuthEmailTokenService } from "./auth-email-token.service";
-import {
-    AUTH_ERROR_CODES,
-    AUTH_ERROR_MESSAGES,
-} from "../constants/auth-error.constants";
-
-export const NO_ACCESSIBLE_BRANCH_MESSAGE = AUTH_ERROR_MESSAGES.NO_ACCESSIBLE_BRANCH;
-export const PENDING_APPROVAL_CODE = AUTH_ERROR_CODES.PENDING_APPROVAL;
-export const PENDING_APPROVAL_MESSAGE = AUTH_ERROR_MESSAGES.PENDING_APPROVAL;
 
 export interface KakaoData {
     kakaoId: string;
@@ -271,24 +264,15 @@ export class AuthService {
         }
 
         if (userOrgs.length === 0) {
-            throw new ForbiddenException({
-                code: AUTH_ERROR_CODES.NO_ACCESSIBLE_BRANCH,
-                message: NO_ACCESSIBLE_BRANCH_MESSAGE,
-            });
+            throw new ForbiddenException(codeOnlyProblemBody("NO_ACCESSIBLE_BRANCH"));
         }
 
         if (!user.phone || !user.birthDate) {
-            throw new ForbiddenException({
-                code: AUTH_ERROR_CODES.ACCOUNT_PROFILE_INCOMPLETE,
-                message: AUTH_ERROR_MESSAGES.ACCOUNT_PROFILE_INCOMPLETE,
-            });
+            throw new ForbiddenException(codeOnlyProblemBody("ACCOUNT_PROFILE_INCOMPLETE"));
         }
 
         if (!user.role || userOrgs.some((userOrg) => !userOrg.role)) {
-            throw new ForbiddenException({
-                code: AUTH_ERROR_CODES.NO_ACCESSIBLE_BRANCH,
-                message: NO_ACCESSIBLE_BRANCH_MESSAGE,
-            });
+            throw new ForbiddenException(codeOnlyProblemBody("NO_ACCESSIBLE_BRANCH"));
         }
 
         let branchId: string | undefined;
@@ -323,15 +307,9 @@ export class AuthService {
     private assertUserApproved(user: { role: string | null; approvalStatus: string }): void {
         if (user.role === 'owner' || user.approvalStatus === 'approved') return;
         if (user.approvalStatus === 'rejected') {
-            throw new ForbiddenException({
-                code: AUTH_ERROR_CODES.ACCOUNT_REJECTED,
-                message: AUTH_ERROR_MESSAGES.ACCOUNT_REJECTED,
-            });
+            throw new ForbiddenException(codeOnlyProblemBody("ACCOUNT_REJECTED"));
         }
-        throw new ForbiddenException({
-            code: PENDING_APPROVAL_CODE,
-            message: PENDING_APPROVAL_MESSAGE,
-        });
+        throw new ForbiddenException(codeOnlyProblemBody("PENDING_APPROVAL"));
     }
 
     async validateKakaoUser(kakaoData: KakaoData): Promise<KakaoUserValidationResult> {
@@ -373,6 +351,31 @@ export class AuthService {
         return branch.isActive === true && isVisibleStaffBranchSlug(branch.slug ?? "");
     }
 
+    /**
+     * 403 body for a branch the caller may not select. The existence-vs-membership
+     * distinction stays internal: the public contract carries only the code and the
+     * /branchId pointer, so callers cannot probe which branch ids exist.
+     */
+    private branchAccessProblem() {
+        return problemBody("ACCESS_DENIED", {
+            pointer: "/branchId",
+            code: "INVALID_VALUE",
+            detail: "이 지점을 선택할 수 없어요.",
+        });
+    }
+
+    /**
+     * 401 body for an unusable Kakao-link session. The session identifier and
+     * cause stay in the in-process compatibility message only.
+     */
+    private kakaoLinkSessionProblem(detail = "카카오 연결 세션이 유효하지 않아요. 다시 연결해 주세요.") {
+        return problemBody("AUTH_REQUIRED", {
+            pointer: "/state",
+            code: "INVALID_VALUE",
+            detail,
+        });
+    }
+
     async getPublicActiveBranches(): Promise<Array<{ id: string; name: string }>> {
         if (this.publicBranchCache && this.publicBranchCache.expiresAt > Date.now()) {
             return this.publicBranchCache.value;
@@ -399,7 +402,7 @@ export class AuthService {
     ): Promise<{ accessToken: string; refreshToken: string }> {
         const user = await this.prisma.user.findUnique({ where: { id: userid } });
         if (!user) {
-            throw new UnauthorizedException("User not found");
+            throw new UnauthorizedException(codeOnlyProblemBody("AUTH_REQUIRED"));
         }
 
         // Owners can access any branch
@@ -409,7 +412,7 @@ export class AuthService {
                 select: { id: true, slug: true, isActive: true },
             });
             if (!org || !this.isSelectableBranch(org)) {
-                throw new ForbiddenException("Branch not found");
+                throw new ForbiddenException(this.branchAccessProblem());
             }
             return this.issueBranchTokens(user, branchid, 'owner', sessionId);
         }
@@ -429,7 +432,7 @@ export class AuthService {
             },
         }));
         if (!userOrg || !this.isSelectableBranch(userOrg.branch)) {
-            throw new ForbiddenException("User does not belong to this branch");
+            throw new ForbiddenException(this.branchAccessProblem());
         }
 
         return this.issueBranchTokens(user, branchid, userOrg.role ?? 'member', sessionId);
@@ -443,7 +446,7 @@ export class AuthService {
     ): Promise<{ accessToken: string; refreshToken: string }> {
         const user = await this.prisma.user.findUnique({ where: { id: userid } });
         if (!user) {
-            throw new UnauthorizedException("User not found");
+            throw new UnauthorizedException(codeOnlyProblemBody("AUTH_REQUIRED"));
         }
 
         // Owners can switch to any branch
@@ -453,7 +456,7 @@ export class AuthService {
                 select: { id: true, slug: true, isActive: true },
             });
             if (!org || !this.isSelectableBranch(org)) {
-                throw new ForbiddenException("Branch not found");
+                throw new ForbiddenException(this.branchAccessProblem());
             }
             return this.issueBranchTokens(user, newbranchid, 'owner', sessionId);
         }
@@ -473,7 +476,7 @@ export class AuthService {
             },
         }));
         if (!userOrg || !this.isSelectableBranch(userOrg.branch)) {
-            throw new ForbiddenException("User does not belong to target branch");
+            throw new ForbiddenException(this.branchAccessProblem());
         }
 
         return this.issueBranchTokens(user, newbranchid, userOrg.role ?? 'member', sessionId);
@@ -580,15 +583,15 @@ export class AuthService {
         });
 
         if (!state || !allowedKinds.includes(state.kind)) {
-            throw new UnauthorizedException("Invalid authorization code");
+            throw new UnauthorizedException(codeOnlyProblemBody("AUTH_REQUIRED"));
         }
 
         if (state.consumedAt) {
-            throw new UnauthorizedException("Authorization code already used");
+            throw new UnauthorizedException(codeOnlyProblemBody("AUTH_REQUIRED"));
         }
 
         if (state.expiresAt.getTime() < Date.now()) {
-            throw new UnauthorizedException("Authorization code expired");
+            throw new UnauthorizedException(codeOnlyProblemBody("AUTH_REQUIRED"));
         }
 
         return state;
@@ -603,15 +606,15 @@ export class AuthService {
             });
 
             if (!state || !allowedKinds.includes(state.kind)) {
-                throw new UnauthorizedException("Invalid authorization code");
+                throw new UnauthorizedException(codeOnlyProblemBody("AUTH_REQUIRED"));
             }
 
             if (state.consumedAt) {
-                throw new UnauthorizedException("Authorization code already used");
+                throw new UnauthorizedException(codeOnlyProblemBody("AUTH_REQUIRED"));
             }
 
             if (state.expiresAt.getTime() < Date.now()) {
-                throw new UnauthorizedException("Authorization code expired");
+                throw new UnauthorizedException(codeOnlyProblemBody("AUTH_REQUIRED"));
             }
 
             const consumeResult = await tx.auth_flow_state.updateMany({
@@ -625,7 +628,7 @@ export class AuthService {
             });
 
             if (consumeResult.count !== 1) {
-                throw new UnauthorizedException("Authorization code already used");
+                throw new UnauthorizedException(codeOnlyProblemBody("AUTH_REQUIRED"));
             }
 
             return state;
@@ -671,7 +674,7 @@ export class AuthService {
 
         const decoded = this.jwt.decode<{ sid?: string }>(tokens.accessToken);
         if (!decoded?.sid) {
-            throw new UnauthorizedException("Authorization session is invalid");
+            throw new UnauthorizedException(codeOnlyProblemBody("AUTH_REQUIRED"));
         }
 
         const code = this.generateToken();
@@ -728,7 +731,7 @@ export class AuthService {
 
         if (stored.kind === "auth_code") {
             if (!stored.sessionId) {
-                throw new UnauthorizedException("Authorization code payload is invalid");
+                throw new UnauthorizedException(codeOnlyProblemBody("AUTH_REQUIRED"));
             }
 
             const tokens = await this.authSessionService.issueTokensForAuthorizationCode(
@@ -742,7 +745,7 @@ export class AuthService {
 
         if (stored.kind === "pending_account_onboarding_exchange") {
             if (!stored.userId) {
-                throw new UnauthorizedException("Pending account onboarding payload is invalid");
+                throw new UnauthorizedException(codeOnlyProblemBody("AUTH_REQUIRED"));
             }
 
             const pendingAccountOnboardingToken = await this.createPendingAccountOnboardingState(stored.userId);
@@ -755,7 +758,7 @@ export class AuthService {
         }
 
         if (!stored.kakaoId) {
-            throw new UnauthorizedException("Pending Kakao signup payload is invalid");
+            throw new UnauthorizedException(codeOnlyProblemBody("AUTH_REQUIRED"));
         }
 
         const pendingSignupData: KakaoData = {
@@ -792,7 +795,7 @@ export class AuthService {
         const stored = await this.getPendingAccountOnboardingOrThrow(token);
 
         if (!stored.userId) {
-            throw new UnauthorizedException("Pending account onboarding payload is invalid");
+            throw new UnauthorizedException(codeOnlyProblemBody("AUTH_REQUIRED"));
         }
 
         const user = await this.prisma.user.findUnique({
@@ -809,7 +812,7 @@ export class AuthService {
         });
 
         if (!user) {
-            throw new UnauthorizedException("Pending account onboarding user not found");
+            throw new UnauthorizedException(codeOnlyProblemBody("AUTH_REQUIRED"));
         }
 
         // Cross-branch by design: pending-onboarding users have no selected branch yet.
@@ -852,19 +855,19 @@ export class AuthService {
             });
 
             if (!stored || stored.kind !== 'pending_kakao_signup') {
-                throw new UnauthorizedException('Pending Kakao signup not found');
+                throw new UnauthorizedException(codeOnlyProblemBody("AUTH_REQUIRED"));
             }
 
             if (stored.consumedAt) {
-                throw new UnauthorizedException('Pending Kakao signup already used');
+                throw new UnauthorizedException(codeOnlyProblemBody("AUTH_REQUIRED"));
             }
 
             if (stored.expiresAt.getTime() < Date.now()) {
-                throw new UnauthorizedException('Pending Kakao signup expired');
+                throw new UnauthorizedException(codeOnlyProblemBody("AUTH_REQUIRED"));
             }
 
             if (!stored.kakaoId) {
-                throw new UnauthorizedException('Pending Kakao signup payload is invalid');
+                throw new UnauthorizedException(codeOnlyProblemBody("AUTH_REQUIRED"));
             }
 
             const consumeResult = await tx.auth_flow_state.updateMany({
@@ -878,7 +881,7 @@ export class AuthService {
             });
 
             if (consumeResult.count !== 1) {
-                throw new UnauthorizedException('Pending Kakao signup already used');
+                throw new UnauthorizedException(codeOnlyProblemBody("AUTH_REQUIRED"));
             }
 
             const pendingSignupData: KakaoData = {
@@ -896,7 +899,13 @@ export class AuthService {
                 where: { phone },
             });
             if (phoneOwner && phoneOwner.id !== existingUser?.id) {
-                throw new BadRequestException('이미 존재하는 사용자 입니다.');
+                // 등록 코드로 두 원인(전화번호 중복)을 식별해요. 계정 존재 여부를
+                // 탐색할 수 없도록 존재 계정 ID는 본문에 넣지 않아요.
+                throw new BadRequestException(problemBody("VALIDATION_FAILED", {
+                    pointer: "/phone",
+                    code: "INVALID_VALUE",
+                    detail: "이미 등록된 전화번호예요. 다른 전화번호로 다시 시도해 주세요.",
+                }));
             }
 
             if (!existingUser) {
@@ -937,7 +946,7 @@ export class AuthService {
         return {
             success: true,
             userId: onboardingResult,
-            message: PENDING_APPROVAL_MESSAGE,
+            message: "관리자 승인 대기 중입니다. 승인된 후에 로그인할 수 있어요.",
         };
     }
 
@@ -1068,6 +1077,19 @@ export class AuthService {
     }
 
     /**
+     * 400 body for an unusable email-verification link. Registered codes cannot
+     * separate invalid/expired/used without new catalog entries, so the cause
+     * stays in the in-process compatibility message only.
+     */
+    private emailTokenProblem(detail: string) {
+        return problemBody("VALIDATION_FAILED", {
+            pointer: "/token",
+            code: "INVALID_VALUE",
+            detail,
+        });
+    }
+
+    /**
      * Register a new user with email/password
      * Always returns success to prevent email enumeration
      */
@@ -1081,10 +1103,11 @@ export class AuthService {
         // Validate password strength
         const passwordValidation = this.validatePasswordStrength(password);
         if (!passwordValidation.valid) {
-            throw new BadRequestException({
-                message: '비밀번호가 보안 요구사항을 충족하지 않습니다.',
-                errors: passwordValidation.errors,
-            });
+            throw new BadRequestException(problemBody("VALIDATION_FAILED", {
+                pointer: "/password",
+                code: "OUT_OF_RANGE",
+                detail: "비밀번호가 보안 요구사항을 충족하지 않아요.",
+            }));
         }
 
         // Check if email already exists
@@ -1203,18 +1226,20 @@ export class AuthService {
         const tokenEntity = await this.authTokenRepository.findByToken(hashedToken);
 
         if (!tokenEntity) {
-            throw new BadRequestException('유효하지 않은 인증 토큰입니다.');
+            throw new BadRequestException(this.emailTokenProblem("이 링크는 유효하지 않아요. 새 인증 이메일을 요청해 주세요."));
         }
 
         if (tokenEntity.type !== 'email_verification') {
-            throw new BadRequestException('유효하지 않은 인증 토큰입니다.');
+            throw new BadRequestException(this.emailTokenProblem("이 링크는 유효하지 않아요. 새 인증 이메일을 요청해 주세요."));
         }
 
         if (!tokenEntity.isValid()) {
             throw new BadRequestException(
-                tokenEntity.isExpired()
-                    ? '인증 토큰이 만료되었습니다. 새 인증 이메일을 요청해주세요.'
-                    : '이미 사용된 인증 토큰입니다.'
+                this.emailTokenProblem(
+                    tokenEntity.isExpired()
+                        ? "인증 링크가 만료되었어요. 새 인증 이메일을 요청해 주세요."
+                        : "이미 사용된 인증 링크예요.",
+                ),
             );
         }
 
@@ -1225,7 +1250,9 @@ export class AuthService {
                 "email_verification",
             );
             if (!consumed) {
-                throw new BadRequestException("이미 사용되었거나 만료된 인증 토큰입니다.");
+                throw new BadRequestException(
+                    this.emailTokenProblem("이미 사용되었거나 만료된 인증 링크예요."),
+                );
             }
             await tx.user.update({
                 where: { id: tokenEntity.userId },
@@ -1277,10 +1304,11 @@ export class AuthService {
 
         // Check if email is verified
         if (!user.emailVerified) {
-            throw new ForbiddenException({
-                code: 'EMAIL_NOT_VERIFIED',
-                message: '이메일 인증이 필요합니다. 이메일을 확인해주세요.',
-            });
+            throw new ForbiddenException(problemBody("ACCESS_DENIED", {
+                pointer: "/email",
+                code: "INVALID_VALUE",
+                detail: "이메일 인증이 필요해요. 이메일을 확인해 주세요.",
+            }));
         }
 
         this.assertUserApproved(user);
@@ -1356,38 +1384,30 @@ export class AuthService {
         // Validate password strength
         const passwordValidation = this.validatePasswordStrength(newPassword);
         if (!passwordValidation.valid) {
-            throw new BadRequestException({
-                message: '비밀번호가 보안 요구사항을 충족하지 않습니다.',
-                errors: passwordValidation.errors,
-            });
+            throw new BadRequestException(problemBody("VALIDATION_FAILED", {
+                pointer: "/password",
+                code: "OUT_OF_RANGE",
+                detail: "비밀번호가 보안 요구사항을 충족하지 않아요.",
+            }));
         }
 
         const hashedToken = this.hashToken(token);
         const tokenEntity = await this.authTokenRepository.findByToken(hashedToken);
 
         if (!tokenEntity) {
-            throw new BadRequestException({
-                code: "AUTH_RESET_TOKEN_INVALID",
-                message: "유효하지 않은 재설정 토큰입니다.",
-            });
+            throw new BadRequestException(codeOnlyProblemBody("AUTH_RESET_TOKEN_INVALID"));
         }
 
         if (tokenEntity.type !== 'password_reset') {
-            throw new BadRequestException({
-                code: "AUTH_RESET_TOKEN_INVALID",
-                message: "유효하지 않은 재설정 토큰입니다.",
-            });
+            throw new BadRequestException(codeOnlyProblemBody("AUTH_RESET_TOKEN_INVALID"));
         }
 
         if (!tokenEntity.isValid()) {
-            throw new BadRequestException({
-                code: tokenEntity.isExpired()
-                    ? "AUTH_RESET_TOKEN_EXPIRED"
-                    : "AUTH_RESET_TOKEN_USED",
-                message: tokenEntity.isExpired()
-                    ? "재설정 토큰이 만료되었습니다. 새 재설정 이메일을 요청해주세요."
-                    : "이미 사용된 재설정 토큰입니다.",
-            });
+            throw new BadRequestException(
+                codeOnlyProblemBody(
+                    tokenEntity.isExpired() ? "AUTH_RESET_TOKEN_EXPIRED" : "AUTH_RESET_TOKEN_USED",
+                ),
+            );
         }
 
         // Hash new password
@@ -1400,10 +1420,7 @@ export class AuthService {
                 'password_reset',
             );
             if (!consumed) {
-                throw new BadRequestException({
-                    code: "AUTH_RESET_TOKEN_USED",
-                    message: "이미 사용되었거나 만료된 재설정 토큰입니다.",
-                });
+                throw new BadRequestException(codeOnlyProblemBody("AUTH_RESET_TOKEN_USED"));
             }
 
             const user = await tx.user.findUnique({
@@ -1494,24 +1511,33 @@ export class AuthService {
         });
 
         if (!user) {
-            throw new UnauthorizedException('사용자를 찾을 수 없습니다.');
+            throw new UnauthorizedException(codeOnlyProblemBody("AUTH_REQUIRED"));
         }
 
         if (user.passwordHash) {
-            throw new BadRequestException('이미 비밀번호가 설정되어 있습니다.');
+            throw new BadRequestException(problemBody("VALIDATION_FAILED", {
+                pointer: "/password",
+                code: "INVALID_VALUE",
+                detail: "이미 비밀번호가 설정되어 있어요.",
+            }));
         }
 
         if (!user.email) {
-            throw new BadRequestException('이메일 주소가 설정되어 있지 않습니다. 먼저 이메일을 등록해주세요.');
+            throw new BadRequestException(problemBody("VALIDATION_FAILED", {
+                pointer: "/email",
+                code: "REQUIRED",
+                detail: "이메일 주소가 설정되어 있지 않아요. 먼저 이메일을 등록해 주세요.",
+            }));
         }
 
         // Validate password strength
         const passwordValidation = this.validatePasswordStrength(password);
         if (!passwordValidation.valid) {
-            throw new BadRequestException({
-                message: '비밀번호가 보안 요구사항을 충족하지 않습니다.',
-                errors: passwordValidation.errors,
-            });
+            throw new BadRequestException(problemBody("VALIDATION_FAILED", {
+                pointer: "/password",
+                code: "OUT_OF_RANGE",
+                detail: "비밀번호가 보안 요구사항을 충족하지 않아요.",
+            }));
         }
 
         // Hash password
@@ -1571,14 +1597,14 @@ export class AuthService {
         try {
             decodedState = await this.jwt.verifyAsync(linkingStateToken);
         } catch {
-            throw new UnauthorizedException("카카오 연결 세션이 유효하지 않습니다.");
+            throw new UnauthorizedException(this.kakaoLinkSessionProblem());
         }
         if (
             decodedState.purpose !== "link_kakao"
             || decodedState.userId !== userId
             || decodedState.sessionId !== currentSessionId
         ) {
-            throw new UnauthorizedException("카카오 연결 세션이 유효하지 않습니다.");
+            throw new UnauthorizedException(this.kakaoLinkSessionProblem());
         }
 
         await this.prisma.$transaction(async (tx) => {
@@ -1593,7 +1619,7 @@ export class AuthService {
                 FOR UPDATE
             `);
             if (activeSession.length !== 1) {
-                throw new UnauthorizedException("카카오 연결 세션이 만료되었습니다.");
+                throw new UnauthorizedException(this.kakaoLinkSessionProblem("카카오 연결 세션이 만료되었어요."));
             }
 
             const state = await tx.auth_flow_state.findUnique({
@@ -1607,30 +1633,39 @@ export class AuthService {
                 || state.consumedAt
                 || state.expiresAt.getTime() <= now.getTime()
             ) {
-                throw new UnauthorizedException("카카오 연결 세션이 유효하지 않습니다.");
+                throw new UnauthorizedException(this.kakaoLinkSessionProblem());
             }
 
             const user = await tx.user.findUnique({
                 where: { id: userId },
             });
             if (!user) {
-                throw new UnauthorizedException('사용자를 찾을 수 없습니다.');
+                throw new UnauthorizedException(this.kakaoLinkSessionProblem());
             }
             if (user.kakaoId) {
-                throw new BadRequestException('이미 카카오 계정이 연결되어 있습니다.');
+                throw new BadRequestException(problemBody("VALIDATION_FAILED", {
+                    pointer: "/kakaoId",
+                    code: "INVALID_VALUE",
+                    detail: "이미 카카오 계정이 연결되어 있어요.",
+                }));
             }
             const existingKakaoUser = await tx.user.findFirst({
                 where: { kakaoId: kakaoData.kakaoId },
                 select: { id: true },
             });
             if (existingKakaoUser) {
-                throw new BadRequestException('이 카카오 계정은 이미 다른 계정에 연결되어 있습니다.');
+                throw new BadRequestException(problemBody("VALIDATION_FAILED", {
+                    pointer: "/kakaoId",
+                    code: "INVALID_VALUE",
+                    detail: "이 카카오 계정은 이미 다른 계정에 연결되어 있어요.",
+                }));
             }
             if (!user.email || trustedKakaoEmail !== user.email.toLowerCase()) {
-                throw new BadRequestException({
-                    code: "KAKAO_EMAIL_CONFIRMATION_REQUIRED",
-                    message: "기존 계정과 동일한 인증된 카카오 이메일이 필요합니다.",
-                });
+                throw new BadRequestException(problemBody("VALIDATION_FAILED", {
+                    pointer: "/email",
+                    code: "INVALID_VALUE",
+                    detail: "기존 계정과 동일한 인증된 카카오 이메일이 필요해요.",
+                }));
             }
 
             const consumed = await tx.auth_flow_state.updateMany({
@@ -1638,7 +1673,7 @@ export class AuthService {
                 data: { consumedAt: now },
             });
             if (consumed.count !== 1) {
-                throw new UnauthorizedException("카카오 연결 세션이 이미 사용되었습니다.");
+                throw new UnauthorizedException(this.kakaoLinkSessionProblem("카카오 연결 세션이 이미 사용되었어요."));
             }
 
             const authProvider = user.passwordHash ? 'both' : 'kakao';
