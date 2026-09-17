@@ -84,7 +84,7 @@ const DEFAULT_BRANCH_FORM: SystemAdminBranchInput = {
   isActive: true,
 };
 
-export function normalizeSystemAdminBranchInput(
+function normalizeSystemAdminBranchInput(
   input: SystemAdminBranchInput,
 ): SystemAdminBranchInput {
   const email = input.email?.trim();
