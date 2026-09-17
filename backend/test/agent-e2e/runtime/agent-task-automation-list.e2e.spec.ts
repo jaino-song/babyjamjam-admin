@@ -447,6 +447,59 @@ describeAgentE2E("real automation.list with two eligible clients and missing def
             await persistCandidate();
             expect(await adapter.checkAutomaticJob(tx, job, "dispatch", render)).toMatchObject({ status: "refused" });
             await restore();
+            // Catch-up jobs after the first item must point to a canonical
+            // predecessor chain in the same client/rule lineage. Exercise a
+            // three-item chain so the second predecessor is checked too.
+            const chainIntervalMinutes = settings.pastTriggerConfig.sendIntervalMinutes;
+            expect(chainIntervalMinutes).toBeGreaterThan(0);
+            const chainBatchTime = new Date(originalTime.getTime() - 24 * 60 * 60 * 1000);
+            const chainRows: Array<{ id: string; scheduledFor: Date; dedupeKey: string; payload: unknown }> = [];
+            let previousKey: string | null = null;
+            for (const sequence of [1, 2, 3]) {
+                const scheduledFor = new Date(chainBatchTime.getTime() + (sequence - 1) * chainIntervalMinutes * 60_000);
+                const dedupeKey = buildMessageRecipeDedupeKey(rule.id, `client:${createdId}`, scheduledFor, rule.recipientType);
+                const catchUpMetadata = { batchId: `client:${createdId}:${chainBatchTime.toISOString()}`, sequence,
+                    intervalMinutes: chainIntervalMinutes, originalScheduledFor: originalTime.toISOString(), predecessorDedupeKey: previousKey };
+                const row = await tx.message_trigger_job.create({ data: { ...recipe, scheduledFor, dedupeKey,
+                    payload: { ...recipe.payload, catchUp: catchUpMetadata } as unknown as Prisma.InputJsonValue } });
+                chainRows.push({ id: row.id, scheduledFor, dedupeKey, payload: row.payload });
+                previousKey = dedupeKey;
+            }
+            const chainJob = MessageTriggerJobEntity.reconstitute(chainRows[2]!.id, branchId, rule.id, "pending", chainRows[2]!.scheduledFor,
+                null, null, null, createdId, null, recipe.recipientType, recipe.recipientPhone!, recipe.templateKey,
+                chainRows[2]!.dedupeKey, chainRows[2]!.payload as MessageTriggerJobEntity["payload"], new Date(), new Date());
+            const persistChainJob = () => tx.message_trigger_job.update({ where: { id: chainJob.id }, data: {
+                scheduledFor: chainJob.scheduledFor, dedupeKey: chainJob.dedupeKey, payload: chainJob.payload as unknown as Prisma.InputJsonValue,
+            } });
+            const chainAllowed = await adapter.checkAutomaticJob(tx, chainJob, "materialize", render);
+            expect(chainAllowed.status).toBe("allowed");
+            if (chainAllowed.status !== "allowed") throw new Error("Missing canonical catch-up chain seal");
+            chainJob.payload.agentAutomationSeal = chainAllowed.seal;
+            await persistChainJob();
+            expect(await adapter.checkAutomaticJob(tx, chainJob, "dispatch", render)).toEqual(chainAllowed);
+
+            const predecessorRow = chainRows[1]!;
+            const predecessorPayload = structuredClone(predecessorRow.payload) as { catchUp: { predecessorDedupeKey: string | null } };
+            predecessorPayload.catchUp.predecessorDedupeKey = "missing-catch-up-predecessor";
+            await tx.message_trigger_job.update({ where: { id: predecessorRow.id }, data: { payload: predecessorPayload as unknown as Prisma.InputJsonValue } });
+            expect(await adapter.checkAutomaticJob(tx, chainJob, "dispatch", render)).toMatchObject({ status: "refused" });
+            await tx.message_trigger_job.update({ where: { id: predecessorRow.id }, data: { payload: predecessorRow.payload as Prisma.InputJsonValue } });
+
+            const rootRow = chainRows[0]!;
+            await tx.message_trigger_job.update({ where: { id: rootRow.id }, data: { scheduledFor: new Date(rootRow.scheduledFor.getTime() + 60_000) } });
+            expect(await adapter.checkAutomaticJob(tx, chainJob, "dispatch", render)).toMatchObject({ status: "refused" });
+            await tx.message_trigger_job.update({ where: { id: rootRow.id }, data: { scheduledFor: rootRow.scheduledFor } });
+
+            const chainCatchUp = chainJob.payload.catchUp!;
+            const originalPredecessorKey = chainCatchUp.predecessorDedupeKey;
+            chainCatchUp.predecessorDedupeKey = "missing-catch-up-predecessor";
+            await persistChainJob();
+            expect(await adapter.checkAutomaticJob(tx, chainJob, "dispatch", render)).toMatchObject({ status: "refused" });
+            chainCatchUp.predecessorDedupeKey = originalPredecessorKey;
+            await persistChainJob();
+            expect(await adapter.checkAutomaticJob(tx, chainJob, "dispatch", render)).toEqual(chainAllowed);
+            await tx.message_trigger_job.deleteMany({ where: { id: { in: chainRows.map(({ id }) => id) } } });
+
             job.payload.templateVariables["__smsDeliverySnapshot"] = "private prepared snapshot";
             await persistCandidate();
             expect(await adapter.checkAutomaticJob(tx, job, "dispatch", render, snapshot.snapshotHash)).toEqual(allowed);
