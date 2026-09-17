@@ -573,7 +573,11 @@ export class PrismaAgentSessionRepository implements IAgentSessionRepository {
                 for (const candidate of candidates) {
                     const candidateOwner = { userId: candidate.userId, branchId: candidate.branchId };
                     const blockingTask = await tx.agent_task.findFirst({
-                        where: { sessionId: candidate.id, ...retainedTaskWhere(candidateOwner) },
+                        where: { sessionId: candidate.id, ...ownerScope(candidateOwner), purgedAt: null,
+                            OR: [
+                                { status: { notIn: ["completed", "failed", "cancelled"] } },
+                                { status: { in: ["completed", "failed", "cancelled"] }, expiresAt: { gt: now } },
+                            ] },
                         select: { id: true },
                     });
                     if (blockingTask) continue;

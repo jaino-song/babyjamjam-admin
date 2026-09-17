@@ -27,6 +27,7 @@ import { ConsultationInquiryModule } from "module/consultation-inquiry.module";
 import { DocumentModule } from "module/document.module";
 import { AgentReleaseEvidenceService } from "application/agent/agent-release-evidence.service";
 import { AgentFeedbackService } from "application/agent/agent-feedback.service";
+import { AGENT_TASK_REVIEW } from "application/agent/agent-task-review.port";
 import { AgentTaskService } from "application/agent/agent-task.service";
 import { AgentTaskPolicyService } from "application/agent/agent-task-policy.service";
 import { ConversationContextAssemblerService } from "application/agent/conversation-context-assembler.service";
@@ -44,6 +45,7 @@ import { SbClientRepository } from "infrastructure/database/repositories/sb.clie
     providers: [
         AgentFlagsService,
         ActionCoordinatorService,
+        { provide: AGENT_TASK_REVIEW, useExisting: ActionCoordinatorService },
         AgentActionSweepLockService,
         ExtendedReadAgentCapabilitiesProvider,
         AgentIntelligenceService,

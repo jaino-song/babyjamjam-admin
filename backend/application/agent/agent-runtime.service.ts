@@ -536,7 +536,7 @@ export class AgentRuntimeService {
                             }
                             throw error;
                         }
-                        writeDataChunk({
+                        if (!action.taskId) writeDataChunk({
                             type: "data-action-proposal",
                             data: {
                                 actionId: action.id,

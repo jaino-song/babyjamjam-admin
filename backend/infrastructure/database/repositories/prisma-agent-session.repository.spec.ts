@@ -776,7 +776,10 @@ describe("PrismaAgentSessionRepository", () => {
                 userId: owner.userId,
                 branchId: owner.branchId,
                 purgedAt: null,
-                status: { notIn: ["completed", "failed", "cancelled"] },
+                OR: [
+                    { status: { notIn: ["completed", "failed", "cancelled"] } },
+                    { status: { in: ["completed", "failed", "cancelled"] }, expiresAt: { gt: now } },
+                ],
             },
             select: { id: true },
         });

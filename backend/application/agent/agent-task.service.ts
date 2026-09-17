@@ -6,6 +6,7 @@ import {
     Inject,
     Injectable,
     NotFoundException,
+    Optional,
     ServiceUnavailableException,
 } from "@nestjs/common";
 import { createHash, randomUUID } from "node:crypto";
@@ -35,6 +36,8 @@ import {
     type ConversationMutationOrigin,
 } from "./conversation-task-policy";
 
+import { AGENT_TASK_REVIEW, type AgentTaskReviewPort } from "./agent-task-review.port";
+import { agentTaskSourceHash, type PreparedAgentTaskReview } from "domain/repositories/agent-linked-action.types";
 import { AgentTaskPolicyService } from "application/agent/agent-task-policy.service";
 import { clientAgentTargetVersion } from "application/usecases/client/client-agent-target";
 import { assertPhoneAvailable } from "application/usecases/client/client-write-validation";
@@ -190,6 +193,7 @@ export class AgentTaskService {
         @Inject(AGENT_TASK_REPOSITORY) private readonly repository: IAgentTaskRepository,
         private readonly policy: AgentTaskPolicyService,
         @Inject(CLIENT_REPOSITORY) private readonly clientRepository: IClientRepository,
+        @Optional() @Inject(AGENT_TASK_REVIEW) private readonly reviews?: AgentTaskReviewPort,
     ) {}
 
     async create(
@@ -291,7 +295,19 @@ export class AgentTaskService {
             origin,
         });
 
-        const result = await this.runPatchTransaction(principal, scope, parsedTaskId.data, input, requestHash, origin, operationOrigins);
+        const prior = await this.lookupCreateEvent(scope, input.clientEventId, requestHash);
+        if (prior.status !== "new") return this.mapCreateLookup(prior);
+        if (initial.task.revision !== input.expectedRevision) throw new AgentTaskConflictException("revision", asAuthorizedTask(initial.task));
+        if ((initial.task.status === "awaiting_approval" && !initial.task.activeActionId)
+            || !["collecting", "confirming_target", "review_ready", "awaiting_approval"].includes(initial.task.status)) {
+            throw new AgentTaskConflictException("state", asAuthorizedTask(initial.task));
+        }
+        // Business validation and target reads finish before session/task/action locks.
+        const preparedNext = await this.nextDraft(principal, initial.task, input.operations, input.clientEventId, origin, operationOrigins);
+        const demoted = initial.task.status === "review_ready" || initial.task.status === "awaiting_approval"
+            ? await this.demotedStatus(principal, initial.task) : preparedNext.status;
+        const result = await this.runPatchTransaction(principal, scope, parsedTaskId.data, input, requestHash, origin, operationOrigins,
+            { sourceHash: agentTaskSourceHash(initial.task), next: preparedNext, demoted });
         return this.mapInternalMutation(result);
     }
 
@@ -319,8 +335,30 @@ export class AgentTaskService {
             command: canonicalCommand,
             origin,
         });
+        if (input.command === "prepare-review") return this.prepareReview(principal, scope, parsedTaskId.data, input, requestHash, origin);
         const result = await this.runCommandTransaction(principal, scope, parsedTaskId.data, input, requestHash, origin);
         return this.mapInternalMutation(result);
+    }
+
+    private async prepareReview(
+        principal: VerifiedTenantPrincipal, scope: AgentTaskSessionScope, taskId: string,
+        input: AgentTaskCommandRequest, requestHash: string, origin: AgentTaskMutationOrigin,
+    ): Promise<{ receipt: AgentTaskEventReceipt; snapshot: AgentTask }> {
+        const prior = await this.lookupCreateEvent(scope, input.clientEventId, requestHash);
+        if (prior.status !== "new") return this.mapCreateLookup(prior);
+        const initial = await this.mustReadTask(taskId, scope);
+        const task = initial.task;
+        if (task.revision !== input.expectedRevision) throw new AgentTaskConflictException("revision", asAuthorizedTask(task));
+        await this.policy.assertCanPrepareReview(principal, task.capabilityId);
+        if ((task.status === "awaiting_approval" && !task.activeActionId) || !this.commandStateAllowed(task.status, "prepare-review")) throw new AgentTaskConflictException("state", asAuthorizedTask(task));
+        let prepared: PreparedAgentTaskReview | undefined;
+        if (!task.activeActionId) {
+            const readiness = await this.reviewReadiness(principal, task);
+            if (!readiness.ready) throw new AgentTaskConflictException("state", asAuthorizedTask(task));
+            if (!this.reviews) throw storageUnavailable();
+            prepared = await this.reviews.prepareTaskReview(structuredClone(task), principal);
+        }
+        return this.mapInternalMutation(await this.runCommandTransaction(principal, scope, taskId, input, requestHash, origin, prepared));
     }
 
     async restoreSession(principal: VerifiedTenantPrincipal, sessionId: string): Promise<AgentTaskRestoreMetadata> {
@@ -857,6 +895,7 @@ export class AgentTaskService {
         requestHash: string,
         origin: AgentTaskMutationOrigin = "user",
         operationOrigins?: readonly AgentTaskMutationOrigin[],
+        prepared?: { sourceHash: string; next: { draft: AgentTaskDraft; status: AgentTaskEntity["status"] }; demoted: AgentTaskEntity["status"] },
     ): Promise<InternalMutation> {
         const raw = await this.repository.withTransaction(scope, async (transaction): Promise<InternalMutation> => {
             const session = await transaction.lockSession();
@@ -887,27 +926,22 @@ export class AgentTaskService {
             if (input.expectedRevision !== locked.task.revision) {
                 return { status: "stale_revision", currentTask: locked.task };
             }
-            if (locked.task.activeActionId !== null) {
-                return { status: "state_conflict", reason: "active_task", task: locked.task };
-            }
-            if (!["collecting", "confirming_target", "review_ready"].includes(locked.task.status)) {
+            if (!["collecting", "confirming_target", "review_ready", "awaiting_approval"].includes(locked.task.status)) {
                 return { status: "state_conflict", reason: "state", task: locked.task };
             }
 
-            let next: { draft: AgentTaskDraft; status: AgentTaskEntity["status"] };
-            try {
-                next = await this.nextDraft(principal, locked.task, input.operations, input.clientEventId, origin, operationOrigins);
-            } catch (error) {
-                if (error instanceof AgentTaskConflictException) {
-                    const response = error.getResponse();
-                    const reason = typeof response === "object" && response !== null && "reason" in response
-                        && response.reason === "consent_required"
-                        ? "consent_required"
-                        : "state";
-                    return transaction.abort<InternalMutation>({ status: "state_conflict", reason, task: locked.task });
-                }
-                throw error;
+            if (!prepared || prepared.sourceHash !== agentTaskSourceHash(locked.task)) {
+                return { status: "stale_revision", currentTask: locked.task };
             }
+            if (locked.task.activeActionId) {
+                const action = await transaction.lockCurrentAction();
+                if (!action || action.taskRevision !== locked.task.revision
+                    || action.proposalRevision !== locked.task.draft.server.actionExpectedRevision
+                    || !["proposed", "approved"].includes(action.status)) {
+                    return { status: "state_conflict", reason: "active_task", task: locked.task };
+                }
+            }
+            const next = structuredClone(prepared.next);
             const now = new Date();
             const changedBeforeReviewDemotion = this.hasSemanticDraftChange(locked.task.draft, next.draft);
             const changed = changedBeforeReviewDemotion || next.status !== locked.task.status;
@@ -936,11 +970,20 @@ export class AgentTaskService {
                 actionExpectedRevision: undefined,
                 actionProposalRevision: undefined,
             };
-            if (locked.task.status === "review_ready") {
-                next.status = await this.demotedStatus(principal, locked.task);
+            if (locked.task.status === "review_ready" || locked.task.status === "awaiting_approval") {
+                next.status = prepared.demoted;
             }
 
             next.draft.currentSnapshotRef = randomUUID();
+
+            if (locked.task.activeActionId) {
+                const invalidated = await transaction.applyLinkedAction({ kind: "invalidate-review", sourceHash: agentTaskSourceHash(locked.task),
+                    next: { expectedRevision: input.expectedRevision, draft: next.draft, status: next.status,
+                        acceptedAt: now, expiresAt: new Date(now.getTime() + TASK_RETENTION_MS) },
+                    event: { clientEventId: input.clientEventId, operation: "patch", requestHash, acceptedRevision: locked.task.revision + 1, acceptedAt: now } });
+                if (invalidated.status !== "applied") return transaction.abort<InternalMutation>({ status: "state_conflict", reason: "state", task: locked.task });
+                return { status: "updated", task: invalidated.task, receipt: invalidated.event };
+            }
 
             if (!await this.ensureRetention(transaction, new Date(now.getTime() + TASK_RETENTION_MS))) {
                 return transaction.abort<InternalMutation>({ status: "storage_failure" });
@@ -992,6 +1035,7 @@ export class AgentTaskService {
         input: AgentTaskCommandRequest,
         requestHash: string,
         origin: AgentTaskMutationOrigin = "user",
+        prepared?: PreparedAgentTaskReview,
     ): Promise<InternalMutation> {
         const operation = `command:${input.command}`;
         const raw = await this.repository.withTransaction(scope, async (transaction): Promise<InternalMutation> => {
@@ -1028,7 +1072,7 @@ export class AgentTaskService {
             if (input.expectedRevision !== locked.task.revision) {
                 return { status: "stale_revision", currentTask: locked.task };
             }
-            if (locked.task.activeActionId !== null) {
+            if (locked.task.activeActionId !== null && !["cancel", "prepare-review"].includes(input.command)) {
                 return { status: "state_conflict", reason: "active_task", task: locked.task };
             }
             if (!this.commandStateAllowed(locked.task.status, input.command)) {
@@ -1047,11 +1091,7 @@ export class AgentTaskService {
                         this.policy.assertCanPatch(principal, locked.task.capabilityId);
                     }
                 } else if (input.command === "prepare-review") {
-                    const assertPrepare = (this.policy as AgentTaskPolicyService & {
-                        assertCanPrepareReview?: AgentTaskPolicyService["assertCanPrepareReview"];
-                    }).assertCanPrepareReview;
-                    if (assertPrepare) await assertPrepare.call(this.policy, principal, locked.task.capabilityId);
-                    else this.policy.assertCanPatch(principal, locked.task.capabilityId);
+                    // Preparation policy and business reads ran before opening this transaction.
                 } else {
                     this.policy.assertCanPatch(principal, locked.task.capabilityId);
                 }
@@ -1064,6 +1104,31 @@ export class AgentTaskService {
 
             if (input.command === "start-update") {
                 return this.runStartUpdateTransaction(principal, scope, locked.task, input, requestHash, transaction);
+            }
+
+            if (input.command === "prepare-review") {
+                if (locked.task.activeActionId) {
+                    const action = await transaction.lockCurrentAction();
+                    if (!action || action.taskRevision !== locked.task.revision || action.proposalRevision !== locked.task.draft.server.actionExpectedRevision
+                        || !["proposed", "approved"].includes(action.status) || action.expiresAt <= new Date()) {
+                        return { status: "state_conflict", reason: "active_task", task: locked.task };
+                    }
+                    const inserted = await transaction.insertEvent({ clientEventId: input.clientEventId, operation, requestHash,
+                        acceptedRevision: locked.task.revision, resultActionId: action.id });
+                    if (inserted.status !== "inserted") return transaction.abort<InternalMutation>({ status: "storage_failure" });
+                    return { status: "updated", task: locked.task, receipt: inserted.event };
+                }
+                if (!prepared) return { status: "storage_failure" };
+                const attached = await transaction.applyLinkedAction({ kind: "attach-review", prepared,
+                    event: { clientEventId: input.clientEventId, operation, requestHash, acceptedRevision: locked.task.revision + 1 } });
+                if (attached.status !== "applied") return transaction.abort<InternalMutation>({ status: "state_conflict", reason: "state", task: locked.task });
+                return { status: "updated", task: attached.task, receipt: attached.event };
+            }
+            if (input.command === "cancel" && locked.task.activeActionId) {
+                const cancelled = await transaction.applyLinkedAction({ kind: "cancel-task", sourceHash: agentTaskSourceHash(locked.task),
+                    event: { clientEventId: input.clientEventId, operation, requestHash, acceptedRevision: locked.task.revision + 1 } });
+                if (cancelled.status !== "applied") return transaction.abort<InternalMutation>({ status: "state_conflict", reason: "state", task: locked.task });
+                return { status: "updated", task: cancelled.task, receipt: cancelled.event };
             }
 
             let transition: CommandTransition;
@@ -1365,8 +1430,8 @@ export class AgentTaskService {
     private commandStateAllowed(status: AgentTaskEntity["status"], command: AgentTaskCommandRequest["command"]): boolean {
         if (command === "pause") return ["collecting", "confirming_target", "review_ready", "paused"].includes(status);
         if (command === "resume") return ["collecting", "confirming_target", "review_ready", "paused"].includes(status);
-        if (command === "cancel") return ["collecting", "confirming_target", "review_ready", "paused"].includes(status);
-        if (command === "prepare-review") return ["collecting", "confirming_target", "review_ready"].includes(status);
+        if (command === "cancel") return ["collecting", "confirming_target", "review_ready", "paused", "awaiting_approval"].includes(status);
+        if (command === "prepare-review") return ["collecting", "confirming_target", "review_ready", "awaiting_approval"].includes(status);
         return ["collecting", "confirming_target", "review_ready"].includes(status);
     }
 

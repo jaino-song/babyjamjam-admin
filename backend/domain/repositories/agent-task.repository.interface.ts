@@ -1,4 +1,10 @@
+import type { AgentActionEntity } from "domain/entities/agent-action.entity";
 import type { AgentTask, AgentTaskCapabilityId, AgentTaskState } from "@babyjamjam/shared";
+import type {
+    AgentLinkedActionLiveOperation, AgentLinkedActionLiveResult,
+    AgentLinkedActionRecoveryScope, AgentLinkedActionRecoveryTransaction,
+    AgentLinkedActionRecoveryContext, AgentLinkedActionRecoveryResult,
+} from "./agent-linked-action.types";
 
 import type {
     AgentTaskDraft,
@@ -156,6 +162,9 @@ export type AgentTaskMutationResult =
     | { status: "storage_failure" };
 
 export interface AgentTaskTransaction {
+    lockCurrentAction(): Promise<AgentActionEntity | null>;
+    /** Closed operations only; owns correlated task, action and receipt writes. */
+    applyLinkedAction(operation: AgentLinkedActionLiveOperation): Promise<AgentLinkedActionLiveResult>;
     /** Must be called before any task/event write in this transaction. */
     lockSession(): Promise<AgentTaskSessionLockResult>;
     /** Locks only a task owned by the already locked session. */
@@ -186,6 +195,10 @@ export type AgentTaskTransactionResult<T> =
     | { status: "storage_failure" };
 
 export interface IAgentTaskRepository {
+    withLinkedActionRecoveryTransaction<T>(
+        scope: AgentLinkedActionRecoveryScope,
+        operation: (transaction: AgentLinkedActionRecoveryTransaction, context: AgentLinkedActionRecoveryContext) => Promise<T>,
+    ): Promise<AgentLinkedActionRecoveryResult<T>>;
     findOwned(taskId: string, owner: AgentTaskOwner): Promise<AgentTaskReadResult>;
     findOwnedRecovery(taskId: string, owner: AgentTaskOwner): Promise<AgentTaskRecoveryReadResult>;
     listOwned(session: AgentTaskSessionScope): Promise<AgentTaskListResult>;

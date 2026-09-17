@@ -48,3 +48,11 @@ At2026-09-17 09:51KST, a fresh approved direct-DeepSeek read-only scout at the P
 - No actual SMS or external business effects were performed. Local DB checks use isolated synthetic data and vendor stubs.
 
 Detailed accepted decisions, phase audits and correction history: [implementation record](2026-09-16-bjj-conversation-v1.md).
+
+### Phase6 implementation candidate (2026-09-17)
+
+- SOL PLAN re-review APPROVE/HIGH at phase base `3b8ace335df3788b9a4d1eaf0426590657f4954a`; live-operation amendment accepted. Actual state label is `confirming_target`.
+- DIRECT main candidate: closed task/action live operations; immutable review binding; preparation/revalidation before locks; atomic claim audit and event; separate inactive recovery; scheduled seven-day terminal retention; safe linked result projection.
+- A narrow evaluation adapter compatibility change explicitly refuses unsupported action persistence instead of fabricating evidence. No fixture/oracle/score changes.
+- Local read-only scout E: Luna/medium/configured fast, exit0. No global config edits.
+- Candidate is not Phase6 close: frozen checks, guarded PostgreSQL barriers, cumulative independent SOL FINAL remain pending. Later Phase7–9 and paid quality/activation remain pending.

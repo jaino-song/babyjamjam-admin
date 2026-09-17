@@ -1,5 +1,5 @@
 import { Injectable } from "@nestjs/common";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { Prisma } from "@prisma/client";
 import {
     AgentAutomationConsentSchema,
@@ -48,6 +48,15 @@ import {
     type IAgentTaskRepository,
     type UpdateAgentTaskInput,
 } from "domain/repositories/agent-task.repository.interface";
+import type { AgentActionEntity } from "domain/entities/agent-action.entity";
+import {
+    agentBindingHash, agentTaskSourceHash,
+    type AgentLinkedActionLiveOperation, type AgentLinkedActionLiveResult,
+    type AgentLinkedActionRecoveryScope, type AgentLinkedActionRecoveryTransaction,
+    type AgentLinkedActionRecoveryContext, type AgentLinkedActionRecoveryResult,
+} from "domain/repositories/agent-linked-action.types";
+import { toAgentActionEntity } from "./prisma-agent-action.repository";
+import { withLinkedActionRecovery } from "./prisma-agent-linked-action-recovery";
 import { PrismaService } from "infrastructure/database/prisma.service";
 import {
     lifecycleTaskActionEvidenceBlocks,
@@ -428,6 +437,135 @@ class PrismaAgentTaskTransaction implements AgentTaskTransaction {
         private readonly scope: AgentTaskSessionScope,
     ) {}
 
+    async lockCurrentAction(): Promise<AgentActionEntity | null> {
+        const task = this.lockedTask;
+        if (!task?.activeActionId || this.sessionResult?.status !== "locked") return null;
+        const rows = await this.transaction.$queryRaw<Array<{ id: string }>>(Prisma.sql`
+            SELECT "id" FROM "agent_action" WHERE "id" = ${task.activeActionId}
+              AND "session_id" = ${this.scope.sessionId}
+              AND "user_id" = CAST(${this.scope.userId} AS uuid)
+              AND "branch_id" = CAST(${this.scope.branchId} AS uuid) FOR UPDATE
+        `);
+        if (!rows.length) return null;
+        const action = await this.transaction.agent_action.findUnique({ where: { id: task.activeActionId } });
+        return action?.taskId === task.taskId ? toAgentActionEntity(action) : null;
+    }
+
+    async applyLinkedAction(operation: AgentLinkedActionLiveOperation): Promise<AgentLinkedActionLiveResult> {
+        const task = this.lockedTask;
+        if (!task || this.sessionResult?.status !== "locked") return { status: "state_conflict" };
+        const now = operation.kind === "claim-execution" ? operation.transitionAt : new Date();
+        if (task.purgedAt || task.expiresAt <= now || this.sessionResult.session.expiresAt <= now) {
+            return { status: "state_conflict" };
+        }
+        let action: AgentActionEntity;
+        let update: UpdateAgentTaskInput;
+        let event: AgentTaskEventInput;
+        if (operation.kind === "attach-review") {
+            const { prepared } = operation;
+            const candidate = prepared.action;
+            if (task.activeActionId || !["collecting", "confirming_target", "review_ready"].includes(task.status)
+                || task.activeSlot !== 1 || prepared.taskId !== task.taskId || prepared.sourceRevision !== task.revision
+                || prepared.sourceHash !== agentTaskSourceHash(task) || candidate.capability !== task.capabilityId
+                || candidate.sessionId !== task.sessionId || candidate.userId !== task.userId || candidate.branchId !== task.branchId
+                || candidate.expiresAt <= now || candidate.inputHash !== agentBindingHash(candidate.proposal["input"])) {
+                return { status: "binding_mismatch" };
+            }
+            const record = await this.transaction.agent_action.create({ data: {
+                ...candidate, status: "proposed", taskId: task.taskId, taskRevision: task.revision + 1,
+                proposal: jsonValue(candidate.proposal), authorizationContext: jsonValue(candidate.authorizationContext),
+                targetSnapshot: candidate.targetSnapshot == null ? Prisma.JsonNull : jsonValue(candidate.targetSnapshot),
+            } });
+            action = toAgentActionEntity(record);
+            const draft = structuredClone(task.draft);
+            draft.currentSnapshotRef = randomUUID();
+            draft.server.actionExpectedRevision = action.proposalRevision;
+            delete draft.server.actionProposalRevision;
+            update = { expectedRevision: task.revision, draft, status: "awaiting_approval", activeActionId: action.id,
+                acceptedAt: now, expiresAt: new Date(now.getTime() + 30 * 86400000) };
+            event = operation.event;
+        } else {
+            const actionId = operation.kind === "claim-execution" ? operation.evidence.actionId : task.activeActionId;
+            if (!actionId || task.activeActionId !== actionId) return { status: "binding_mismatch" };
+            const rows = await this.transaction.$queryRaw<Array<{ id: string }>>(Prisma.sql`
+                SELECT "id" FROM "agent_action" WHERE "id" = ${actionId}
+                  AND "session_id" = ${this.scope.sessionId}
+                  AND "user_id" = CAST(${this.scope.userId} AS uuid)
+                  AND "branch_id" = CAST(${this.scope.branchId} AS uuid)
+                FOR UPDATE
+            `);
+            if (!rows.length) return { status: "binding_mismatch" };
+            const record = await this.transaction.agent_action.findUnique({ where: { id: actionId } });
+            if (!record || record.taskId !== task.taskId) return { status: "binding_mismatch" };
+            action = toAgentActionEntity(record);
+            if (operation.kind === "claim-execution" && ["executing", "succeeded", "failed", "cancelled", "rejected", "expired", "uncertain"].includes(action.status)) {
+                return { status: "already_applied", action, task };
+            }
+            if (action.taskRevision !== task.revision || task.status !== "awaiting_approval"
+                || task.draft.server.actionExpectedRevision !== action.proposalRevision
+                || action.inputHash !== agentBindingHash(action.proposal["input"])
+                || !["proposed", "approved"].includes(action.status)) return { status: "binding_mismatch" };
+            const draft = structuredClone(task.draft);
+            draft.currentSnapshotRef = randomUUID();
+            if (operation.kind === "claim-execution") {
+                const proof = operation.evidence;
+                const token = createHash("sha256").update([
+                    action.id, action.proposalRevision, action.userId, action.branchId, action.expiresAt.toISOString(),
+                ].join(":"), "utf8").digest("hex");
+                if (proof.taskId !== task.taskId || proof.taskRevision !== task.revision || proof.actorId !== task.userId
+                    || proof.proposalRevision !== action.proposalRevision || proof.inputHash !== action.inputHash
+                    || proof.capability !== action.capability || proof.capabilityVersion !== action.capabilityVersion
+                    || proof.risk !== action.risk || action.expiresAt <= now
+                    || proof.targetHash !== agentBindingHash({ snapshot: action.targetSnapshot, version: action.targetVersion })
+                    || (action.authorizationContext["approvalPolicy"] === "strong" && proof.acknowledgement === "standard")
+                    || (proof.acknowledgement !== "standard" && proof.acknowledgement.token !== token)
+                    || (action.status === "approved" && (!action.approvedAt || action.approvedBy !== proof.actorId))) {
+                    return { status: "binding_mismatch" };
+                }
+                const claimed = await this.transaction.agent_action.updateMany({
+                    where: { id: action.id, status: action.status, proposalRevision: action.proposalRevision },
+                    data: { status: "executing", approvedBy: action.approvedBy ?? proof.actorId,
+                        approvedAt: action.approvedAt ?? now, executionAttemptCount: { increment: 1 } },
+                });
+                if (claimed.count !== 1) return this.abort({ status: "binding_mismatch" });
+                update = { expectedRevision: task.revision, draft, status: "executing", preserveLastAcceptedAt: true };
+                event = { clientEventId: randomUUID(), operation: "action:claim", requestHash: agentBindingHash(proof),
+                    acceptedRevision: task.revision + 1, acceptedAt: now };
+            } else {
+                if (operation.sourceHash !== agentTaskSourceHash(task)) return { status: "binding_mismatch" };
+                if (operation.kind === "invalidate-review" && (operation.next.expectedRevision !== task.revision
+                    || !operation.next.draft || !["collecting", "confirming_target", "review_ready"].includes(operation.next.status ?? ""))) {
+                    return { status: "binding_mismatch" };
+                }
+                const cancelled = await this.transaction.agent_action.updateMany({
+                    where: { id: action.id, status: action.status, proposalRevision: action.proposalRevision },
+                    data: { status: "cancelled", error: { code: "task_review_invalidated", message: "Task review is no longer current" },
+                        requestDedupeKey: agentBindingHash({ released: action.requestDedupeKey, actionId: action.id }), resultPartPersistedAt: null },
+                });
+                if (cancelled.count !== 1) return this.abort({ status: "binding_mismatch" });
+                const nextDraft = operation.kind === "invalidate-review" ? structuredClone(operation.next.draft!) : draft;
+                delete nextDraft.server.actionExpectedRevision;
+                delete nextDraft.server.actionProposalRevision;
+                nextDraft.currentSnapshotRef = randomUUID();
+                update = operation.kind === "cancel-task"
+                    ? { expectedRevision: task.revision, draft: nextDraft, status: "cancelled", activeActionId: null,
+                        terminalAt: now, acceptedAt: now, expiresAt: new Date(now.getTime() + 7 * 86400000) }
+                    : { ...operation.next, draft: nextDraft, activeActionId: null };
+                event = operation.event;
+            }
+        }
+        if (update.expiresAt && (await this.ensureSessionRetention(update.expiresAt)).status === "storage_failure") {
+            return this.abort({ status: "storage_failure" });
+        }
+        const updated = await this.updateTask(update);
+        if (updated.status !== "updated") return this.abort({ status: "state_conflict" });
+        const inserted = await this.insertEvent({ ...event, acceptedRevision: updated.task.revision, resultActionId: action.id });
+        if (inserted.status !== "inserted") return this.abort({ status: "storage_failure" });
+        const final = await this.transaction.agent_action.findUnique({ where: { id: action.id } });
+        if (!final) return this.abort({ status: "storage_failure" });
+        return { status: "applied", task: updated.task, action: toAgentActionEntity(final), event: inserted.event };
+    }
+
     async lockSession(): Promise<AgentTaskSessionLockResult> {
         if (this.sessionResult) return this.sessionResult;
         try {
@@ -738,6 +876,13 @@ class PrismaAgentTaskTransaction implements AgentTaskTransaction {
 @Injectable()
 export class PrismaAgentTaskRepository implements IAgentTaskRepository {
     constructor(private readonly prisma: PrismaService) {}
+
+    async withLinkedActionRecoveryTransaction<T>(
+        scope: AgentLinkedActionRecoveryScope,
+        operation: (transaction: AgentLinkedActionRecoveryTransaction, context: AgentLinkedActionRecoveryContext) => Promise<T>,
+    ): Promise<AgentLinkedActionRecoveryResult<T>> {
+        return withLinkedActionRecovery(this.prisma, scope, toEntity, operation);
+    }
 
     async findOwned(taskId: string, owner: AgentTaskOwner): Promise<AgentTaskReadResult> {
         try {

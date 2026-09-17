@@ -1334,19 +1334,15 @@ describe("AgentTaskService", () => {
         expect(repository.tasks.get(task.taskId)!.draft.server.references.phoneCandidates).toEqual({});
     });
 
-    it("prepares review only after fresh readiness and makes the second call a no-op", async () => {
+    it("refuses review issuance when the action preparation port is unavailable", async () => {
         const repository = new FakeTaskRepository();
         const { service, policy } = buildService(repository);
         const created = await service.create(owner, createInput());
-        const prepared = await service.command(owner, created.snapshot.taskId, commandInput("prepare-review", created.snapshot.revision));
-        expect(prepared.snapshot.state).toBe("review_ready");
-        const before = repository.tasks.get(created.snapshot.taskId)!;
-        const noOp = await service.command(owner, created.snapshot.taskId, commandInput("prepare-review", prepared.snapshot.revision));
-        const after = repository.tasks.get(created.snapshot.taskId)!;
-        expect(noOp.snapshot.revision).toBe(prepared.snapshot.revision);
-        expect(after.draft.currentSnapshotRef).toBe(before.draft.currentSnapshotRef);
-        expect(after.expiresAt).toEqual(before.expiresAt);
-        expect(policy.assertCanPrepareReview).toHaveBeenCalledTimes(2);
+        const before = structuredClone(repository.tasks.get(created.snapshot.taskId)!);
+        await expect(service.command(owner, created.snapshot.taskId,
+            commandInput("prepare-review", created.snapshot.revision))).rejects.toMatchObject({ status: 503 });
+        expect(repository.tasks.get(created.snapshot.taskId)).toEqual(before);
+        expect(policy.assertCanPrepareReview).toHaveBeenCalledTimes(1);
     });
 
     it("discovers recovery ids independently from ordinary restore selection", async () => {

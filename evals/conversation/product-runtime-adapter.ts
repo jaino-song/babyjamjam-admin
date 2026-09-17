@@ -464,6 +464,10 @@ function productEventReceipt(event: AgentTaskEventEntity, task: AgentTaskEntity)
  * methods instead of being asserted from fixture expectations.
  */
 export class DeterministicProductTaskRepository implements IAgentTaskRepository {
+    // This host supplies no action ledger; do not fabricate recovery evidence.
+    async withLinkedActionRecoveryTransaction<T>(): Promise<import("../../backend/domain/repositories/agent-linked-action.types").AgentLinkedActionRecoveryResult<T>> {
+        return { status: "storage_failure" };
+    }
     readonly tasks = new Map<string, AgentTaskEntity>();
     readonly events = new Map<string, AgentTaskEventEntity>();
     readonly sessions = new Map<string, ProductSessionMetadata>();
@@ -660,6 +664,8 @@ export class DeterministicProductTaskRepository implements IAgentTaskRepository 
         let lockedSession: ProductSessionMetadata | null = null;
         const eventKey = (clientEventId: string) => `${scope.sessionId}:${scope.userId}:${scope.branchId}:${clientEventId}`;
         return {
+            lockCurrentAction: async () => null,
+            applyLinkedAction: async () => ({ status: "storage_failure" }),
             lockSession: async (): Promise<AgentTaskSessionLockResult> => {
                 const session = this.sessionFor(scope);
                 if (!session) return { status: "not_found" };
