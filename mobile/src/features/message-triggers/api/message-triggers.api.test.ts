@@ -28,3 +28,35 @@ describe("messageTriggersApi.listHistory", () => {
     });
   });
 });
+
+describe("messageTriggersApi.listHistoryPage", () => {
+  beforeEach(() => {
+    mockGet.mockReset();
+    mockGet.mockResolvedValue({
+      data: {
+        items: [],
+        page: { snapshotAt: "2026-09-17T00:00:00.000Z", nextCursor: null, hasMore: false },
+      },
+    } as never);
+  });
+
+  it("forwards the bounded page size, cursor, and abort signal", async () => {
+    const controller = new AbortController();
+
+    await messageTriggersApi.listHistoryPage(500, "cursor-v1", controller.signal);
+
+    expect(mockGet).toHaveBeenCalledWith("/message-logs/page", {
+      params: { limit: 500, cursor: "cursor-v1" },
+      signal: controller.signal,
+    });
+  });
+
+  it("omits the continuation cursor on the first page", async () => {
+    await messageTriggersApi.listHistoryPage();
+
+    expect(mockGet).toHaveBeenCalledWith("/message-logs/page", {
+      params: { limit: 500 },
+      signal: undefined,
+    });
+  });
+});
