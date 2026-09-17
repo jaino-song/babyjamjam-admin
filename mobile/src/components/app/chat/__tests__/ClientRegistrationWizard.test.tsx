@@ -51,7 +51,9 @@ describe("ClientRegistrationWizard", () => {
 
         fireEvent.change(screen.getByLabelText("이름"), { target: { value: "홍길동" } });
         fireEvent.change(screen.getByLabelText("연락처"), { target: { value: "01012345678" } });
-        fireEvent.change(screen.getByLabelText("생년월일"), { target: { value: "900101" } });
+        fireEvent.change(screen.getByLabelText("생년월일"), { target: { value: "19580303" } });
+        expect(screen.getByLabelText("생년월일")).toHaveValue("1958-03-03");
+        expect(screen.getByLabelText("생년월일")).toHaveAttribute("maxLength", "10");
         fireEvent.change(screen.getByLabelText("주소"), { target: { value: "인천 연수구" } });
         fireEvent.change(screen.getByLabelText("출산 예정일"), { target: { value: "2026-02-01" } });
         expect(nextButton).not.toBeDisabled();
@@ -74,7 +76,7 @@ describe("ClientRegistrationWizard", () => {
         expect(mockCreateClientMutateAsync).toHaveBeenCalledWith({
             name: "홍길동",
             phone: "010-1234-5678",
-            birthday: "900101",
+            birthday: "1958-03-03",
             address: "인천 연수구",
             dueDate: "2026-02-01",
             careCenter: true,
@@ -93,7 +95,7 @@ describe("ClientRegistrationWizard", () => {
 
         fireEvent.change(screen.getByLabelText("이름"), { target: { value: "홍길동" } });
         fireEvent.change(screen.getByLabelText("연락처"), { target: { value: "01012345678" } });
-        fireEvent.change(screen.getByLabelText("생년월일"), { target: { value: "900101" } });
+        fireEvent.change(screen.getByLabelText("생년월일"), { target: { value: "1990-01-01" } });
         fireEvent.change(screen.getByLabelText("주소"), { target: { value: "인천 연수구" } });
         fireEvent.change(screen.getByLabelText("출산 예정일"), { target: { value: "2026-02-01" } });
         fireEvent.click(screen.getByRole("button", { name: "다음" }));

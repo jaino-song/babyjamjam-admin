@@ -1,8 +1,8 @@
-const COMPACT_DATE_PATTERN = /^\d{6}$/;
+import { isValidBirthdayIsoDate } from "@babyjamjam/shared/utils/birthday";
 const ISO_DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 
 export const CLIENT_REGISTRATION_ERROR_MESSAGES = {
-    birthday: "생년월일은 유효한 YYMMDD 6자리여야 합니다.",
+    birthday: "생년월일을 YYYY-MM-DD 형식의 유효한 날짜로 입력해 주세요.",
     dueDate: "출산 예정일은 유효한 날짜여야 합니다.",
     phone: "연락처는 11자리 휴대폰 번호여야 합니다.",
 } as const;
@@ -20,16 +20,5 @@ export function isStrictIsoDate(value: string): boolean {
 }
 
 export function isValidClientBirthdayInput(value: string): boolean {
-    if (!COMPACT_DATE_PATTERN.test(value)) return false;
-
-    const year = 2000 + Number(value.slice(0, 2));
-    const month = Number(value.slice(2, 4));
-    const day = Number(value.slice(4, 6));
-    const date = new Date(Date.UTC(year, month - 1, day));
-
-    return (
-        date.getUTCFullYear() === year
-        && date.getUTCMonth() + 1 === month
-        && date.getUTCDate() === day
-    );
+    return isValidBirthdayIsoDate(value);
 }

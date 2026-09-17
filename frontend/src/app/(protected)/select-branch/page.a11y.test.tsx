@@ -16,6 +16,7 @@ jest.mock("./actions", () => ({
 
 jest.mock("next/navigation", () => ({
   useRouter: () => ({ push: mockPush, replace: mockReplace }),
+  useSearchParams: () => new URLSearchParams(),
 }));
 
 jest.mock("@tanstack/react-query", () => ({

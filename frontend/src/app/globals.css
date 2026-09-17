@@ -1649,3 +1649,40 @@ body {
     opacity: 0.65;
   }
 }
+
+/* Same navigation motion as mobile SlidingCard. Keep the outgoing list mounted. */
+.sliding-detail-panel { position: relative; display: flex; flex: 1; min-height: 0; overflow: hidden; border-radius: 28px; isolation: isolate; }
+.sliding-detail-list, .sliding-detail-content {
+  position: absolute; inset: 0; display: flex; flex-direction: column; min-height: 0;
+  transition: transform 380ms cubic-bezier(0.32, 0.72, 0, 1); will-change: transform;
+}
+.sliding-detail-list { transform: translateX(0); }
+.sliding-detail-panel[data-open="true"] > .sliding-detail-list { transform: translateX(-30%); }
+.sliding-detail-dim {
+  position: absolute; inset: 0; background: rgba(15,23,42,.08); opacity: 0; pointer-events: none;
+  transition: opacity 380ms cubic-bezier(0.32,0.72,0,1);
+}
+.sliding-detail-panel[data-open="true"] > .sliding-detail-list > .sliding-detail-dim { opacity: 1; }
+.sliding-detail-content { z-index: 2; transform: translateX(100%); background: white; border-radius: 28px; }
+.sliding-detail-panel[data-open="true"] > .sliding-detail-content { transform: translateX(0); }
+.sliding-detail-header { display: flex; flex-shrink: 0; padding: calc(20px*var(--glint-ui-scale,1)) calc(24px*var(--glint-ui-scale,1)) 0; }
+.sliding-detail-body { display: flex; flex: 1; flex-direction: column; min-height: 0; }
+.schedule-content-enter { animation: schedule-content-enter 300ms cubic-bezier(.22,1,.36,1) both; }
+@keyframes schedule-content-enter { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+@media (prefers-reduced-motion: reduce) {
+  .sliding-detail-list, .sliding-detail-content, .sliding-detail-dim { transition-duration: .01ms; }
+  .schedule-content-enter { animation: none; }
+}
+
+/* Embedded client detail follows the mobile card rhythm independent of viewport. */
+[data-slot="client-detail-presentation"][data-layout="mobile"] [data-slot="detail-panel"] { border-radius: 0; box-shadow: none; }
+[data-slot="client-detail-presentation"][data-layout="mobile"] [data-slot="detail-panel-header"] { padding: 16px; }
+[data-slot="client-detail-presentation"][data-layout="mobile"] [data-slot="detail-panel-scroll-content"] { padding: 16px; }
+[data-slot="client-detail-presentation"][data-layout="mobile"] [data-slot="detail-panel-bottom-spacer"] { height: 0; }
+[data-slot="client-detail-presentation"][data-layout="mobile"] :is([data-source-component="InfoCard"], [data-source-component="ServiceRecordHeaderCard"]) { padding: 14px 16px; border-radius: 18px; background: hsl(var(--v3-dim-white)); }
+[data-slot="client-detail-presentation"][data-layout="mobile"] :is([data-source-component="InfoCard"], [data-source-component="ServiceRecordHeaderCard"]) h3 { font-size: .6rem; letter-spacing: .08em; margin-bottom: 8px; }
+[data-slot="client-detail-presentation"][data-layout="mobile"] [data-source-component="InfoRow"] { gap: 12px; padding: 8px 0; }
+[data-slot="client-detail-presentation"][data-layout="mobile"] [data-source-component="InfoRow"] > span { font-size: .78rem; word-break: keep-all; }
+[data-slot="client-detail-presentation"][data-layout="mobile"] [data-source-component="ClientServiceRecordsTab"] .grid { grid-template-columns: minmax(0, 1fr); }
+
+[data-slot="client-detail-presentation"][data-layout="mobile"] [data-source-component="ClientServiceRecordsTab"] :is(button, a) { min-height: 40px; font-size: .78rem; }

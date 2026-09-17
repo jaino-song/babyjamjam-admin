@@ -137,9 +137,9 @@ describe("ClientFormDialog prefill", () => {
         ];
     });
 
-    it("keeps the normalized contract birthday in the new client input", async () => {
-        render(<ClientFormDialog open onClose={jest.fn()} prefill={{ birthday: "860709" }} />);
-        await waitFor(() => expect(screen.getByLabelText("생년월일")).toHaveValue("860709"));
+    it.each([["860709", "1986-07-09"], ["580303", "1958-03-03"], ["1905-01-01", "1905-01-01"]])("keeps normalized birthday %s as %s", async (birthday, expected) => {
+        render(<ClientFormDialog open onClose={jest.fn()} prefill={{ birthday }} />);
+        await waitFor(() => expect(screen.getByLabelText("생년월일")).toHaveValue(expected));
     });
 
     it("applies create-mode prefill and preserves its price when duration unlocks pricing", async () => {

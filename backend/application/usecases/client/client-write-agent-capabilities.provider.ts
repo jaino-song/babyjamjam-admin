@@ -1,3 +1,4 @@
+import { isValidBirthdayIsoDate } from "@babyjamjam/shared/utils/birthday";
 import { BadRequestException, ConflictException, Inject, Injectable, Logger, Optional } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
 import { z } from "zod";
@@ -49,21 +50,9 @@ const KoreanWonInput = z.string().trim().regex(
     "Amount must be a whole Korean-won value with no trailing text or decimals",
 );
 
-function isCalendarValidYymmdd(value: string): boolean {
-    if (!/^\d{6}$/.test(value)) return false;
-
-    const year = Number(value.slice(0, 2));
-    const month = Number(value.slice(2, 4));
-    const day = Number(value.slice(4, 6));
-    if (month < 1 || month > 12 || day < 1) return false;
-
-    const daysInMonth = [31, year % 4 === 0 ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
-    return day <= (daysInMonth[month - 1] ?? 0);
-}
-
 const ClientBirthdaySchema = z.string()
-    .regex(/^\d{6}$/, "Birthday must be six numeric YYMMDD digits")
-    .refine(isCalendarValidYymmdd, "Birthday must be a calendar-valid YYMMDD date")
+    .regex(/^\d{4}-\d{2}-\d{2}$/, "Birthday must use YYYY-MM-DD")
+    .refine(isValidBirthdayIsoDate, "Birthday must be a valid YYYY-MM-DD date")
     .nullable()
     .optional();
 

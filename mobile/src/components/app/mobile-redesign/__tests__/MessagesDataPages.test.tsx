@@ -5,6 +5,7 @@ import { MESSAGE_JOB_CANCEL_COPY } from "@babyjamjam/shared";
 import {
   useCancelMessageTriggerJob,
   useMessageHistory,
+  useRetryMessageHistory,
   useUpcomingMessageTriggerJobs,
 } from "@/features/message-triggers/hooks/use-message-triggers";
 import { toast } from "@/hooks/use-toast";
@@ -12,6 +13,7 @@ import { MessagesHistoryPage } from "../MessagesDataPages";
 
 jest.mock("@/features/message-triggers/hooks/use-message-triggers", () => ({
   useMessageHistory: jest.fn(),
+  useRetryMessageHistory: jest.fn(),
   useUpcomingMessageTriggerJobs: jest.fn(),
   useCancelMessageTriggerJob: jest.fn(),
 }));
@@ -21,6 +23,7 @@ jest.mock("@/hooks/use-toast", () => ({
 }));
 
 const mockUseMessageHistory = useMessageHistory as jest.Mock;
+const mockUseRetryMessageHistory = useRetryMessageHistory as jest.Mock;
 const mockUseUpcomingMessageTriggerJobs = useUpcomingMessageTriggerJobs as jest.Mock;
 const mockUseCancelMessageTriggerJob = useCancelMessageTriggerJob as jest.Mock;
 const mockToast = toast as jest.Mock;
@@ -114,11 +117,16 @@ function mockNoCancelMutation() {
   mockUseCancelMessageTriggerJob.mockReturnValue({ mutateAsync: jest.fn(), isPending: false });
 }
 
+function mockNoRetryMutation() {
+  mockUseRetryMessageHistory.mockReturnValue({ mutateAsync: jest.fn(), isPending: false });
+}
+
 describe("mobile message data pages (merged 발송 기록 screen)", () => {
   beforeEach(() => {
     mockUseMessageHistory.mockReturnValue({ data: [], isLoading: false, isError: false });
     mockUseUpcomingMessageTriggerJobs.mockReturnValue({ data: [], isLoading: false, isError: false });
     mockNoCancelMutation();
+    mockNoRetryMutation();
     mockToast.mockReset();
   });
 
@@ -458,6 +466,96 @@ describe("mobile message data pages (merged 발송 기록 screen)", () => {
     expect(screen.getByText(/김문자/)).toBeInTheDocument();
   });
 
+  it("keeps history search and date controls collapsed until the filter toggle is opened", async () => {
+    const user = userEvent.setup();
+    mockUseMessageHistory.mockReturnValue({
+      isLoading: false,
+      isError: false,
+      data: [sentRecord],
+    });
+
+    const { container } = render(<MessagesHistoryPage />);
+    const filterToggle = screen.getByRole("button", { name: "필터" });
+
+    expect(filterToggle).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByPlaceholderText("고객명, 연락처, 템플릿, 내용 검색…")).not.toBeInTheDocument();
+
+    const headerText = container.querySelector('[data-component$="_content_list-card_header"] .list-title-text');
+    expect(headerText?.textContent?.indexOf("필터")).toBeGreaterThanOrEqual(0);
+    expect(headerText?.textContent?.indexOf("필터")).toBeLessThan(headerText?.textContent?.indexOf("1건") ?? 0);
+
+    await user.click(filterToggle);
+
+    expect(filterToggle).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByPlaceholderText("고객명, 연락처, 템플릿, 내용 검색…")).toBeInTheDocument();
+    const filterPanel = container.querySelector('[data-slot="message-history-filters"]') as HTMLElement;
+    expect(filterPanel.querySelector('[aria-label="발송 기간"]')).toBeInTheDocument();
+    expect(filterPanel.querySelector('[aria-label="발송 연도"]')).toBeInTheDocument();
+    expect(filterPanel.querySelector('[aria-label="발송 월"]')).toBeInTheDocument();
+    expect(within(filterPanel).getByRole("button", { name: "필터 초기화" })).toHaveClass("w-1/2");
+    expect(within(filterPanel).getByRole("button", { name: "필터 닫기" })).toHaveClass("w-1/2");
+  });
+
+  it("filters history by search while preserving the reset and close actions", async () => {
+    const user = userEvent.setup();
+    mockUseMessageHistory.mockReturnValue({
+      isLoading: false,
+      isError: false,
+      data: [sentRecord, canceledRecord],
+    });
+
+    const { container } = render(<MessagesHistoryPage />);
+    await user.click(screen.getByRole("button", { name: "필터" }));
+
+    const search = screen.getByPlaceholderText("고객명, 연락처, 템플릿, 내용 검색…");
+    await user.type(search, "김문자");
+    expect(screen.getByText("김문자")).toBeInTheDocument();
+    expect(screen.queryByText("취소 고객")).not.toBeInTheDocument();
+
+    const filterPanel = container.querySelector('[data-slot="message-history-filters"]') as HTMLElement;
+    const reset = within(filterPanel).getByRole("button", { name: "필터 초기화" });
+    expect(reset).toBeEnabled();
+    await user.click(reset);
+    expect(search).toHaveValue("");
+    expect(screen.getByText("취소 고객")).toBeInTheDocument();
+
+    await user.click(within(filterPanel).getByRole("button", { name: "필터 닫기" }));
+    expect(screen.queryByPlaceholderText("고객명, 연락처, 템플릿, 내용 검색…")).not.toBeInTheDocument();
+  });
+
+  it("confirms a failed history resend through the existing approval modal", async () => {
+    const user = userEvent.setup();
+    const failedRecord = {
+      ...sentRecord,
+      id: 77,
+      status: "failed" as const,
+      errorMessage: "등록되지 않은 발신번호입니다.",
+    };
+    const mutateAsync = jest.fn().mockResolvedValue({ ...failedRecord, status: "pending" });
+    mockUseRetryMessageHistory.mockReturnValue({ mutateAsync, isPending: false });
+    mockUseMessageHistory.mockReturnValue({
+      isLoading: false,
+      isError: false,
+      data: [failedRecord],
+    });
+
+    render(<MessagesHistoryPage />);
+
+    await user.click(screen.getByRole("button", { name: /김문자/ }));
+    await user.click(screen.getByRole("button", { name: "재발송" }));
+    expect(screen.getByRole("dialog", { name: "메시지를 다시 보낼까요?" })).toBeInTheDocument();
+
+    const approveButton = document.querySelector('[data-component$="_retry-modal_approve"]');
+    expect(approveButton).not.toBeNull();
+    await user.click(approveButton as HTMLElement);
+
+    await waitFor(() => expect(mutateAsync).toHaveBeenCalledWith(77));
+    expect(mockToast).toHaveBeenCalledWith(expect.objectContaining({
+      description: "재발송 요청을 접수했어요",
+      variant: "success",
+    }));
+  });
+
   it("opens the desktop-equivalent message detail when a history row is selected", async () => {
     const user = userEvent.setup();
 
@@ -475,7 +573,7 @@ describe("mobile message data pages (merged 발송 기록 screen)", () => {
 
     const { container } = render(<MessagesHistoryPage />);
 
-    const historyItem = container.querySelector('[data-component="mobile_messages_history_detail-sheet_stack_list-page_shell_content_list-card_body_item"]');
+    const historyItem = container.querySelector('[data-component$="_content_list-card_body_item"]');
 
     expect(historyItem).not.toBeNull();
     expect(historyItem?.querySelector("strong")).toHaveTextContent("제공기록지 작성 링크");
@@ -485,14 +583,16 @@ describe("mobile message data pages (merged 발송 기록 screen)", () => {
 
     await user.click(screen.getByRole("button", { name: /제공기록지 작성 링크/ }));
 
-    const detailPage = container.querySelector('[data-slot="mobile-detail-stack-detail-page"]');
-    const stack = container.querySelector('[data-slot="mobile-detail-stack-track"]');
+    const detailPage = container.querySelector('[data-slot="detail-pane"]');
+    const listPane = container.querySelector('[data-slot="list-pane"]');
+    const detailPaneElement = detailPage as HTMLElement;
 
-    expect(stack).toHaveClass("show-detail");
     expect(detailPage).toHaveAttribute("aria-hidden", "false");
-    const closeButton = detailPage?.querySelector<HTMLButtonElement>(".sheet-close");
+    expect(listPane).toHaveAttribute("aria-hidden", "true");
+    const closeButton = within(detailPage as HTMLElement).getByRole("button", {
+      name: "발송 기록 목록으로 돌아가기",
+    });
 
-    expect(closeButton).not.toBeNull();
     expect(screen.getByText("발송 정보")).toBeInTheDocument();
     expect(screen.getAllByText("김문자")).not.toHaveLength(0);
     expect(screen.getByText("01012345678")).toBeInTheDocument();
@@ -500,13 +600,21 @@ describe("mobile message data pages (merged 발송 기록 screen)", () => {
     expect(detailPage).toHaveTextContent("발송 성공");
     expect(screen.getByText("제공기록지 링크")).toBeInTheDocument();
 
-    await user.click(closeButton!);
+    const detailHero = detailPaneElement.querySelector('[data-slot="detail-hero"]');
+    expect(detailHero).toBeInTheDocument();
+    expect(detailPaneElement.querySelector('[data-component$="_content_icon"]')).toHaveClass(
+      "h-[calc(46px*var(--glint-ui-scale,1))]",
+      "w-[calc(46px*var(--glint-ui-scale,1))]",
+    );
+    expect(detailPaneElement.querySelector('[data-component$="_content_status"]')).not.toBeInTheDocument();
+    expect(detailPaneElement.querySelector('[data-slot="detail-pane-header-trailing"]')).toHaveTextContent("발송 성공");
+
+    await user.click(closeButton);
 
     expect(container.querySelector('[data-component$="_content_list-card_header"] .list-title-text'))
       .toHaveTextContent("발송 기록");
-    expect(stack).not.toHaveClass("show-detail");
     expect(detailPage).toHaveAttribute("aria-hidden", "true");
-    expect(screen.queryByText("01012345678")).not.toBeInTheDocument();
+    expect(listPane).toHaveAttribute("aria-hidden", "false");
   });
 
   it("cancels an upcoming trigger job through the confirm modal and shows success feedback", async () => {

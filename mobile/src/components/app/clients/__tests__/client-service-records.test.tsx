@@ -123,9 +123,24 @@ describe("ClientServiceRecords", () => {
         expect(screen.getByText("발송 전")).toBeInTheDocument();
         expect(screen.getByText("발송됨")).toBeInTheDocument();
         expect(screen.getByText("발송 실패")).toBeInTheDocument();
-        expect(screen.getByRole("button", { name: "링크 수동 전송" })).toBeInTheDocument();
-        expect(screen.getAllByRole("button", { name: "메시지 재전송" })).toHaveLength(2);
+        expect(screen.getAllByRole("button", { name: "제공기록지 링크 발송" })).toHaveLength(3);
         expect(screen.queryAllByText(/메시지 재전송 시/)).toHaveLength(0);
+    });
+
+    it("places the authenticated service-record edit link below the send action", () => {
+        renderComponent({ assignments: [createAssignment(1, "none")] });
+
+        const sendButton = screen.getByRole("button", { name: "제공기록지 링크 발송" });
+        const editLink = screen.getByRole("link", { name: "제공기록지 수정" });
+
+        expect(sendButton.compareDocumentPosition(editLink) & Node.DOCUMENT_POSITION_FOLLOWING)
+            .toBeTruthy();
+        expect(editLink).toHaveAttribute(
+            "href",
+            "https://admin.babyjamjam.com/service-record-admin/100",
+        );
+        expect(editLink).toHaveAttribute("target", "_blank");
+        expect(editLink).toHaveAttribute("rel", "noopener noreferrer");
     });
 
     it("adds the 7-day grace period to the fallback link-expiry shown before a link is issued", () => {
@@ -257,7 +272,7 @@ describe("ClientServiceRecords", () => {
             ],
         });
 
-        await user.click(screen.getByRole("button", { name: "메시지 재전송" }));
+        await user.click(screen.getByRole("button", { name: "제공기록지 링크 발송" }));
 
         expect(screen.getByRole("dialog", { name: "제공기록지 메시지를 재전송하시겠습니까?" })).toBeInTheDocument();
         expect(screen.getByText("기존 링크가 그대로 포함된 메시지를 다시 전송합니다.")).toBeInTheDocument();

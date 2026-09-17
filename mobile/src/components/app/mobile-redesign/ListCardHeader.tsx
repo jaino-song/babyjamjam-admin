@@ -9,6 +9,7 @@ export interface ListCardHeaderProps {
   "data-component": string;
   title: string;
   count?: ReactNode;
+  beforeCount?: ReactNode;
   actionLabel?: string;
   actionHref?: string;
   actionIcon?: ReactNode;
@@ -22,6 +23,7 @@ export function ListCardHeader({
   "data-component": dataComponent,
   title,
   count,
+  beforeCount,
   actionLabel,
   actionHref,
   actionIcon,
@@ -74,6 +76,7 @@ export function ListCardHeader({
     >
       <span className="list-title-text">
         {title}
+        {beforeCount}
         {count && <span className="list-count">{count}</span>}
       </span>
       {action}

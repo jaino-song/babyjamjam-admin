@@ -32,12 +32,14 @@ import { getExpectedSessionDateFromRecords } from "@babyjamjam/shared/utils/serv
 
 import { InfoCard, InfoRow } from "@/components/app/mobile-redesign/detail-sheet";
 import { ApprovalTwoButtonModal } from "@/components/app/ui/ApprovalTwoButtonModal";
+import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useSendServiceRecordLink } from "@/hooks/useServiceRecords";
 import { toast } from "@/hooks/use-toast";
 import type { Client } from "@/lib/client/types";
 import { formatKoreanPhoneNumber } from "@/lib/phone";
 import { ServiceRecordErrorBoundary } from "@/lib/observability/service-record-error-boundary";
+import { getServiceRecordAdminHref } from "@/lib/frontend-origin";
 import { cn } from "@/lib/utils";
 
 interface ClientServiceRecordsProps {
@@ -358,7 +360,7 @@ function LinkCard({
                     </span>
                 }
             />
-            <div className="detail-actions card-actions">
+            <div className="detail-actions card-actions flex-col">
                 <button
                     type="button"
                     className={cn("btn", isResend ? "btn-secondary" : "btn-primary")}
@@ -368,8 +370,23 @@ function LinkCard({
                     disabled={isPending}
                     onClick={handleSendClick}
                 >
-                    {isPending ? "발송 중..." : isResend ? "메시지 재전송" : "링크 수동 전송"}
+                    {isPending ? "발송 중..." : "제공기록지 링크 발송"}
                 </button>
+                <Button
+                    asChild
+                    variant="v3-outline"
+                    size="md"
+                    className="w-full"
+                    data-component={`${dataComponent}_actions_edit-service-record`}
+                >
+                    <a
+                        href={getServiceRecordAdminHref(clientId)}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                    >
+                        제공기록지 수정
+                    </a>
+                </Button>
             </div>
             <ApprovalTwoButtonModal
                 open={resendModalOpen}

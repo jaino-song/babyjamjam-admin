@@ -1466,6 +1466,31 @@
         "requiredFor": [
           "service-record admin read-only draft preview"
         ]
+      },
+      {
+        "name": "EmployeeDirectoryManager",
+        "layer": "organism",
+        "import": "@/components/app/employees/EmployeeDirectoryManager",
+        "file": "frontend/src/components/app/employees/EmployeeDirectoryManager.tsx",
+        "exports": [
+          "EmployeeDirectoryManager"
+        ],
+        "replaces": [
+          "employee page-local directory composition"
+        ]
+      },
+      {
+        "name": "SlidingDetailPanel",
+        "layer": "template",
+        "import": "@/components/app/v3",
+        "file": "frontend/src/components/app/v3/SlidingDetailPanel.tsx",
+        "exports": [
+          "SlidingDetailPanel"
+        ],
+        "replaces": [
+          "custom desktop sliding list-to-detail navigation"
+        ],
+        "description": "Mobile SlidingCard parallax motion for desktop drill-down views, with focus restoration and inactive-pane isolation."
       }
     ],
     "mobile": [

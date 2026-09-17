@@ -111,7 +111,7 @@ export const createClientSchema: FunctionDeclaration = {
             },
             birthday: {
                 type: "string",
-                description: "Client's birthday (YYMMDD format)",
+                description: "Client's birthday (YYYY-MM-DD format; include the full four-digit birth year)",
             },
         },
         required: ["name", "primaryEmployeeId", "careCenter", "voucherClient"],
