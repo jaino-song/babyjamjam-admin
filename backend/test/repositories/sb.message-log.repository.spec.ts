@@ -483,6 +483,29 @@ describe("SbMessageLogRepository", () => {
         });
     });
 
+    describe("findHistoryPageByBranch", () => {
+        it("uses native log id ordering and keeps timestamp precision as an eligibility cutoff", async () => {
+            messageLogModel.findMany.mockResolvedValue([]);
+            const snapshotAt = new Date("2026-07-09T00:00:00.123Z");
+
+            await repository.findHistoryPageByBranch("branch-1", {
+                snapshotAt,
+                after: { source: "log", nativeId: "42" },
+                limit: 11,
+            });
+
+            expect(messageLogModel.findMany).toHaveBeenCalledWith({
+                where: {
+                    branchId: "branch-1",
+                    createdAt: { lte: snapshotAt },
+                    AND: [{ id: { lt: 42 } }],
+                },
+                orderBy: { id: "desc" },
+                take: 11,
+            });
+        });
+    });
+
     describe("reconcileProviderAttempt", () => {
         it("does not reconcile an attempt while the provider call is still started", async () => {
             const startedAt = new Date("2026-08-29T00:00:00.000Z");

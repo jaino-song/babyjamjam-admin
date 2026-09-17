@@ -6,6 +6,7 @@ import {
     IMessageTriggerJobRepository,
     MessageTriggerJobCancellationScope,
 } from "domain/repositories/message-trigger-job.repository.interface";
+import type { MessageHistoryPageQuery } from "domain/repositories/message-log.repository.interface";
 import {
     MessageTriggerJobEntity,
     MessageTriggerJobPayload,
@@ -332,6 +333,40 @@ export class SbMessageTriggerJobRepository implements IMessageTriggerJobReposito
             },
             orderBy: { updatedAt: "desc" },
             take: limit,
+        });
+        return rows.map((row) => this.toDomain(row));
+    }
+
+    async findHistoryPageByBranch(
+        branchId: string,
+        query: MessageHistoryPageQuery,
+    ): Promise<MessageTriggerJobEntity[]> {
+        const after = query.after;
+        const afterWhere = after?.source === "job"
+            ? { id: { lt: after.nativeId } }
+            : undefined;
+
+        const rows = await this.prisma.message_trigger_job.findMany({
+            where: {
+                branchId,
+                ruleId: { not: MESSAGE_AUTOMATION_INTENT_RULE_ID },
+                // Canceled and failed rows have different terminal clocks. A
+                // post-cutoff log must not hide a job that was already terminal
+                // in this snapshot; the relation filter suppresses only logs
+                // that were present at the same cutoff.
+                OR: [
+                    { status: "canceled", canceledAt: { not: null, lte: query.snapshotAt } },
+                    { status: "failed", updatedAt: { lte: query.snapshotAt } },
+                ],
+                logs: { none: { branchId, createdAt: { lte: query.snapshotAt } } },
+                // Native UUID ordering is the continuation key. The
+                // timestamptz(6) created-at cutoff is eligibility only; it is
+                // never serialized into or compared as a cursor position.
+                createdAt: { lte: query.snapshotAt },
+                ...(afterWhere ? { AND: [afterWhere] } : {}),
+            },
+            orderBy: { id: "desc" },
+            take: query.limit,
         });
         return rows.map((row) => this.toDomain(row));
     }

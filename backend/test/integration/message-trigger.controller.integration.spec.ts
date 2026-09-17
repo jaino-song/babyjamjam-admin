@@ -45,6 +45,7 @@ describe("MessageTriggerController (Integration)", () => {
         listRules: jest.Mock;
         listUpcomingJobs: jest.Mock;
         listHistory: jest.Mock;
+        listHistoryPage: jest.Mock;
         cancelJobByUser: jest.Mock;
         createRule: jest.Mock;
         getRule: jest.Mock;
@@ -158,6 +159,7 @@ describe("MessageTriggerController (Integration)", () => {
             listRules: jest.fn(),
             listUpcomingJobs: jest.fn(),
             listHistory: jest.fn(),
+            listHistoryPage: jest.fn(),
             cancelJobByUser: jest.fn(),
             createRule: jest.fn(),
             getRule: jest.fn(),
@@ -315,6 +317,36 @@ describe("MessageTriggerController (Integration)", () => {
 
             expect(response.status).toBe(200);
             expect(triggerService.listHistory).toHaveBeenCalledWith(branchId, 25, 50);
+        });
+    });
+
+    describe("GET /message-logs/page", () => {
+        it("uses the bounded default page size and forwards a cursor", async () => {
+            triggerService.listHistoryPage.mockResolvedValue({
+                items: [createMockHistoryRecord()],
+                page: {
+                    snapshotAt: "2026-09-17T00:00:00.000Z",
+                    nextCursor: "cursor-v1",
+                    hasMore: true,
+                },
+            });
+
+            const response = await request(app.getHttpServer())
+                .get("/message-logs/page")
+                .query({ cursor: "cursor-v1" });
+
+            expect(response.status).toBe(200);
+            expect(response.body.page).toEqual(expect.objectContaining({ hasMore: true }));
+            expect(triggerService.listHistoryPage).toHaveBeenCalledWith(branchId, 500, "cursor-v1");
+        });
+
+        it("rejects a page size above the bounded maximum", async () => {
+            const response = await request(app.getHttpServer())
+                .get("/message-logs/page")
+                .query({ limit: 501 });
+
+            expect(response.status).toBe(400);
+            expect(triggerService.listHistoryPage).not.toHaveBeenCalled();
         });
     });
 

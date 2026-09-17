@@ -5,6 +5,7 @@ import { NextRequest } from "next/server";
 
 import { serverAPIClient } from "@/lib/api/server";
 import { GET as listMessageLogs } from "../message-logs/route";
+import { GET as listMessageLogsPage } from "../message-logs/page/route";
 import { GET as listUpcomingJobs } from "../message-trigger-jobs/upcoming/route";
 import { GET as listTriggerTemplates } from "../message-trigger-templates/route";
 
@@ -51,6 +52,12 @@ describe("Message API routes", () => {
       expect(mockGet).not.toHaveBeenCalled();
     });
 
+    it("rejects paginated message logs GET without an auth cookie before proxying", async () => {
+      const response = await listMessageLogsPage(createRequest("/api/message-logs/page", noAuth));
+      expect(response.status).toBe(401);
+      expect(mockGet).not.toHaveBeenCalled();
+    });
+
     it("rejects upcoming jobs GET without an auth cookie before proxying", async () => {
       const response = await listUpcomingJobs(createRequest("/api/message-trigger-jobs/upcoming", noAuth));
       expect(response.status).toBe(401);
@@ -92,6 +99,26 @@ describe("Message API routes", () => {
       params: {
         limit: "500",
         skip: "500",
+      },
+    });
+  });
+
+  it("forwards the paginated message log limit and cursor", async () => {
+    mockGet.mockResolvedValue({
+      status: 200,
+      data: { items: [], page: { snapshotAt: "2026-09-17T00:00:00.000Z", nextCursor: null, hasMore: false } },
+    });
+
+    const response = await listMessageLogsPage(
+      createRequest("/api/message-logs/page?limit=500&cursor=cursor-v1"),
+    );
+
+    expect(response.status).toBe(200);
+    expect(mockGet).toHaveBeenCalledWith("/message-logs/page", {
+      headers: { Authorization: "Bearer auth-token" },
+      params: {
+        limit: "500",
+        cursor: "cursor-v1",
       },
     });
   });

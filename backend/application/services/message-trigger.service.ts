@@ -62,6 +62,8 @@ import {
 import {
     MESSAGE_LOG_REPOSITORY,
     IMessageLogRepository,
+    type MessageHistoryPageCursor,
+    type MessageHistorySource,
 } from "domain/repositories/message-log.repository.interface";
 import { MessageTriggerDeliveryService } from "./message-trigger-delivery.service";
 import {
@@ -262,6 +264,82 @@ export interface MessageLogRecordView {
     recipientName: string | null;
     clientName: string | null;
     employeeName: string | null;
+}
+
+export interface MessageHistoryPageView {
+    items: MessageLogRecordView[];
+    page: {
+        snapshotAt: string;
+        nextCursor: string | null;
+        hasMore: boolean;
+    };
+}
+
+interface MessageHistoryCandidate {
+    record: MessageLogRecordView;
+    source: MessageHistorySource;
+    nativeId: string;
+}
+
+const MESSAGE_HISTORY_CURSOR_VERSION = 1;
+const MESSAGE_HISTORY_MAX_LIMIT = 500;
+
+interface MessageHistoryCursorPayload {
+    v: typeof MESSAGE_HISTORY_CURSOR_VERSION;
+    branchId: string;
+    snapshotAt: string;
+    source: MessageHistorySource;
+    nativeId: string;
+}
+
+function isMessageHistorySource(value: unknown): value is MessageHistorySource {
+    return value === "log" || value === "job";
+}
+
+function parseHistoryCursorDate(value: unknown): Date | null {
+    if (typeof value !== "string" || value.length === 0) return null;
+    const parsed = new Date(value);
+    return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+function encodeMessageHistoryCursor(payload: MessageHistoryCursorPayload): string {
+    return Buffer.from(JSON.stringify(payload), "utf8").toString("base64url");
+}
+
+function decodeMessageHistoryCursor(cursor: string, branchId: string): MessageHistoryPageCursor & {
+    branchId: string;
+    snapshotAt: Date;
+} {
+    try {
+        if (cursor.length > 4096) throw new Error("cursor too long");
+        const decoded = JSON.parse(Buffer.from(cursor, "base64url").toString("utf8")) as Partial<MessageHistoryCursorPayload>;
+        const snapshotAt = parseHistoryCursorDate(decoded.snapshotAt);
+        if (
+            decoded.v !== MESSAGE_HISTORY_CURSOR_VERSION
+            || decoded.branchId !== branchId
+            || !snapshotAt
+            || !isMessageHistorySource(decoded.source)
+            || typeof decoded.nativeId !== "string"
+            || decoded.nativeId.length === 0
+            || snapshotAt.getTime() > Date.now()
+        ) {
+            throw new Error("invalid cursor payload");
+        }
+        if (decoded.source === "log") {
+            const numericId = Number(decoded.nativeId);
+            if (!Number.isSafeInteger(numericId) || numericId <= 0 || String(numericId) !== decoded.nativeId) {
+                throw new Error("invalid log cursor id");
+            }
+        }
+        return {
+            branchId,
+            snapshotAt,
+            source: decoded.source,
+            nativeId: decoded.nativeId,
+        };
+    } catch {
+        throw new BadRequestException("메시지 발송 기록 페이지 커서가 올바르지 않습니다.");
+    }
 }
 
 interface ClientTriggerSource {
@@ -670,6 +748,200 @@ export class MessageTriggerService {
         return [...logRecords, ...terminalJobRecords]
             .sort((left, right) => right.updatedAt.getTime() - left.updatedAt.getTime())
             .slice(skip, skip + limit);
+    }
+
+    /**
+     * Read a complete, immutable history walk one bounded page at a time.
+     * The initial snapshot is an insertion cutoff, not a multi-request
+     * database transaction: rows created after it are deliberately deferred to
+     * the next fresh walk. Each source is ordered by its immutable native id;
+     * mutable retry timestamps remain presentation fields and never move a
+     * cursor, including when database timestamps have microsecond precision.
+     */
+    async listHistoryPage(
+        branchId: string,
+        limit = MESSAGE_HISTORY_MAX_LIMIT,
+        cursor?: string,
+    ): Promise<MessageHistoryPageView> {
+        if (!Number.isSafeInteger(limit) || limit < 1 || limit > MESSAGE_HISTORY_MAX_LIMIT) {
+            throw new BadRequestException("메시지 발송 기록 페이지 크기가 올바르지 않습니다.");
+        }
+
+        const decodedCursor = cursor === undefined
+            ? null
+            : decodeMessageHistoryCursor(cursor, branchId);
+        const snapshotAt = decodedCursor?.snapshotAt ?? new Date();
+        const after: MessageHistoryPageCursor | null = decodedCursor
+            ? {
+                source: decodedCursor.source,
+                nativeId: decodedCursor.nativeId,
+            }
+            : null;
+        const hasMessageLogTable = await hasTable(this.prisma, "message_log");
+        const hasTriggerSchema = await this.hasTriggerSchema();
+        const logs = hasMessageLogTable && (!after || after.source === "log")
+            ? await this.messageLogRepository.findHistoryPageByBranch(branchId, {
+                snapshotAt,
+                after,
+                // Logs are the first source in the public ordering. Read only
+                // enough rows to fill the page, plus one lookahead row.
+                limit: limit + 1,
+            })
+            : [];
+        const visibleLogs = logs.slice(0, limit);
+        const logLookahead = logs.length > limit;
+        const remainingSlots = Math.max(limit - visibleLogs.length, 0);
+        const terminalJobs = hasTriggerSchema && !logLookahead
+            ? await this.jobRepository.findHistoryPageByBranch(branchId, {
+                snapshotAt,
+                after,
+                // One extra row detects a job continuation when logs fill the
+                // page exactly; otherwise read only the remaining slots plus
+                // one lookahead row.
+                limit: remainingSlots + 1,
+            })
+            : [];
+
+        const triggerJobIds = visibleLogs
+            .map((log) => log.triggerJobId)
+            .filter((id): id is string => Boolean(id));
+        const jobs = triggerJobIds.length > 0
+            ? await this.prisma.message_trigger_job.findMany({
+                where: { branchId, id: { in: triggerJobIds } },
+                select: {
+                    id: true,
+                    ruleId: true,
+                    scheduledFor: true,
+                    recipientType: true,
+                    payload: true,
+                },
+            })
+            : [];
+        const jobsById = new Map(jobs.map((job) => [job.id, job]));
+        const rules = visibleLogs.length > 0 || terminalJobs.length > 0
+            ? await this.ruleRepository.findAll(branchId)
+            : [];
+        const rulesById = new Map(rules.map((rule) => [rule.id, rule]));
+
+        const logCandidates: MessageHistoryCandidate[] = visibleLogs.map((log) => {
+            const job = log.triggerJobId ? jobsById.get(log.triggerJobId) : null;
+            const payload = (job?.payload as MessageTriggerJobEntity["payload"] | undefined) ?? null;
+            const rule = job ? rulesById.get(job.ruleId) ?? null : null;
+            const record: MessageLogRecordView = {
+                id: log.id,
+                provider: log.provider,
+                templateKey: log.templateKey,
+                triggerJobId: log.triggerJobId,
+                receiver: log.receiver,
+                clientId: log.clientId,
+                recipientPhone: log.recipientPhone ?? log.receiver,
+                messageBody: log.messageBody,
+                variables: log.variables,
+                status: log.status,
+                aligoMid: log.aligoMid,
+                errorMessage: log.errorMessage,
+                attempts: log.attempts,
+                lastAttemptAt: log.lastAttemptAt,
+                nextRetryAt: log.nextRetryAt,
+                createdAt: log.createdAt,
+                updatedAt: log.updatedAt,
+                ruleId: job?.ruleId ?? null,
+                ruleName: rule?.name ?? null,
+                eventType: rule?.eventType ?? null,
+                offsetType: rule?.offsetType ?? null,
+                offsetDays: rule?.offsetDays ?? 0,
+                scheduledFor: job?.scheduledFor ?? null,
+                recipientType: (job?.recipientType as MessageTriggerRecipientType | undefined) ?? null,
+                recipientName: log.recipientName ?? payload?.recipientName ?? null,
+                clientName: payload?.clientName ?? null,
+                employeeName: payload?.employeeName ?? null,
+            };
+            return {
+                record,
+                source: "log",
+                nativeId: String(log.id),
+            };
+        });
+
+        // The repository suppresses only logs present at this snapshot. Keep a
+        // defensive ID filter here as well so alternate repository adapters do
+        // not expose a terminal job and its materialized log twice.
+        const loggedTriggerJobIds = new Set(
+            visibleLogs
+                .map((log) => log.triggerJobId)
+                .filter((id): id is string => Boolean(id)),
+        );
+        const jobCandidates: MessageHistoryCandidate[] = terminalJobs
+            .filter((job) => !loggedTriggerJobIds.has(job.id))
+            .map((job) => {
+                const rule = rulesById.get(job.ruleId) ?? null;
+                const receiver = job.recipientPhone ?? job.payload.recipientPhone ?? "";
+                const record: MessageLogRecordView = {
+                    id: `job:${job.id}`,
+                    provider: "message_job",
+                    templateKey: job.templateKey,
+                    triggerJobId: job.id,
+                    receiver,
+                    clientId: job.clientId,
+                    recipientPhone: receiver || null,
+                    messageBody: job.payload.messageBody ?? "",
+                    variables: {
+                        ...job.payload.templateVariables,
+                        recipientName: job.payload.recipientName,
+                        historySource: "message_trigger_job",
+                    },
+                    status: job.status === "canceled" ? "canceled" : "failed",
+                    aligoMid: null,
+                    errorMessage: job.cancelReason,
+                    attempts: job.attempts,
+                    lastAttemptAt: job.updatedAt,
+                    nextRetryAt: null,
+                    createdAt: job.createdAt,
+                    updatedAt: job.updatedAt,
+                    ruleId: job.ruleId,
+                    ruleName: rule?.name ?? null,
+                    eventType: rule?.eventType ?? null,
+                    offsetType: rule?.offsetType ?? null,
+                    offsetDays: rule?.offsetDays ?? 0,
+                    scheduledFor: job.scheduledFor,
+                    recipientType: job.recipientType,
+                    recipientName: job.payload.recipientName,
+                    clientName: job.payload.clientName ?? null,
+                    employeeName: job.payload.employeeName ?? null,
+                };
+                return {
+                    record,
+                    source: "job",
+                    nativeId: job.id,
+                };
+            });
+
+        // The two repositories already return native-id DESC order. Logs are
+        // the first source and terminal jobs follow only when log rows leave
+        // room, so no JavaScript timestamp or UUID sort can disturb a page
+        // boundary.
+        const candidates = [...logCandidates, ...jobCandidates];
+        const hasMore = logLookahead || jobCandidates.length > remainingSlots;
+        const items = candidates.slice(0, limit).map((candidate) => candidate.record);
+        const lastCandidate = candidates[limit - 1];
+        const nextCursor = hasMore && lastCandidate
+            ? encodeMessageHistoryCursor({
+                v: MESSAGE_HISTORY_CURSOR_VERSION,
+                branchId,
+                snapshotAt: snapshotAt.toISOString(),
+                source: lastCandidate.source,
+                nativeId: lastCandidate.nativeId,
+            })
+            : null;
+
+        return {
+            items,
+            page: {
+                snapshotAt: snapshotAt.toISOString(),
+                nextCursor,
+                hasMore,
+            },
+        };
     }
 
     async getRule(branchId: string, id: string): Promise<MessageTriggerRuleEntity> {
