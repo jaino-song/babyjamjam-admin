@@ -851,6 +851,93 @@ describe("mobile useAgentChat", () => {
         expect(result.current.task?.revision).toBe(3);
     });
 
+    it("releases a terminal task identity before accepting the next task in the same session", async () => {
+        const terminalTask = makeTask({ taskId: TASK_IDS.oldTask, revision: 9, state: "completed", currentSnapshotRef: TASK_IDS.oldSnapshot });
+        const nextTask = makeTask({ taskId: TASK_IDS.newTask, revision: 1, currentSnapshotRef: TASK_IDS.newSnapshot });
+        const fetchMock = jest.fn().mockImplementation(async (input: string | URL | Request, init?: RequestInit) => {
+            const url = String(input);
+            if (url.endsWith(`/tasks/${TASK_IDS.oldTask}`) && !init?.method) return jsonResponse(terminalTask);
+            if (url.endsWith(`/tasks/${TASK_IDS.newTask}`) && !init?.method) return jsonResponse(nextTask);
+            if (url.endsWith("/chat")) {
+                let consumed = false;
+                return {
+                    ok: true,
+                    headers: { get: () => TASK_IDS.session },
+                    body: {
+                        getReader: () => ({
+                            read: async () => {
+                                if (consumed) return { done: true, value: new Uint8Array() };
+                                consumed = true;
+                                return {
+                                    done: false,
+                                    value: new Uint8Array(Buffer.from([
+                                        `data: ${JSON.stringify(taskSnapshotPart(TASK_IDS.newTask, TASK_IDS.newSnapshot, 1))}`,
+                                        "data: [DONE]",
+                                        "",
+                                    ].join("\n"))),
+                                };
+                            },
+                        }),
+                    },
+                } as unknown as Response;
+            }
+            return jsonResponse([]);
+        });
+        global.fetch = fetchMock;
+
+        const { result } = renderHook(() => useAgentChat());
+        await act(async () => { await result.current.refreshTask(TASK_IDS.oldTask); });
+        expect(result.current.task?.state).toBe("completed");
+
+        await act(async () => { await result.current.sendMessage("새 업무"); });
+
+        expect(result.current.task?.taskId).toBe(TASK_IDS.newTask);
+        expect(result.current.taskSnapshot?.taskId).toBe(TASK_IDS.newTask);
+        expect(result.current.taskSnapshot?.revision).toBe(1);
+        expect(fetchMock.mock.calls.some(([input]) => String(input).endsWith(`/tasks/${TASK_IDS.newTask}`))).toBe(true);
+    });
+
+    it("rejects a different task snapshot while the current task is still live", async () => {
+        const liveTask = makeTask({ taskId: TASK_IDS.oldTask, revision: 8, currentSnapshotRef: TASK_IDS.oldSnapshot });
+        const fetchMock = jest.fn().mockImplementation(async (input: string | URL | Request, init?: RequestInit) => {
+            const url = String(input);
+            if (url.endsWith(`/tasks/${TASK_IDS.oldTask}`) && !init?.method) return jsonResponse(liveTask);
+            if (url.endsWith("/chat")) {
+                let consumed = false;
+                return {
+                    ok: true,
+                    headers: { get: () => TASK_IDS.session },
+                    body: {
+                        getReader: () => ({
+                            read: async () => {
+                                if (consumed) return { done: true, value: new Uint8Array() };
+                                consumed = true;
+                                return {
+                                    done: false,
+                                    value: new Uint8Array(Buffer.from([
+                                        `data: ${JSON.stringify(taskSnapshotPart(TASK_IDS.newTask, TASK_IDS.newSnapshot, 1))}`,
+                                        "data: [DONE]",
+                                        "",
+                                    ].join("\n"))),
+                                };
+                            },
+                        }),
+                    },
+                } as unknown as Response;
+            }
+            return jsonResponse([]);
+        });
+        global.fetch = fetchMock;
+
+        const { result } = renderHook(() => useAgentChat());
+        await act(async () => { await result.current.refreshTask(TASK_IDS.oldTask); });
+        await act(async () => { await result.current.sendMessage("현재 업무 계속"); });
+
+        expect(result.current.task?.taskId).toBe(TASK_IDS.oldTask);
+        expect(result.current.taskSnapshot?.taskId).toBe(TASK_IDS.oldTask);
+        expect(fetchMock.mock.calls.some(([input]) => String(input).endsWith(`/tasks/${TASK_IDS.newTask}`))).toBe(false);
+    });
+
     it("sends the expected revision and event id, then exposes the latest task after a 409", async () => {
         const eventId = TASK_IDS.event;
         const latestTask = makeTask({ revision: 3, currentSnapshotRef: TASK_IDS.snapshot3 });

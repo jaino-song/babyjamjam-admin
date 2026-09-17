@@ -113,6 +113,10 @@ function parseTaskRestoreMetadata(session: MobileAgentSessionSummary): AgentTask
     return parsed.success ? parsed.data : null;
 }
 
+function isTerminalTaskState(state: AgentTask["state"] | undefined): boolean {
+    return state === "completed" || state === "failed" || state === "cancelled";
+}
+
 function isTruthy(value: string | undefined): boolean {
     return value === "1" || value?.toLowerCase() === "true";
 }
@@ -185,6 +189,14 @@ export function useAgentChat() {
         if (nextTaskId === undefined || activeTaskIdRef.current === nextTaskId) return;
         resetTaskSnapshot();
         activeTaskIdRef.current = nextTaskId;
+    }, [resetTaskSnapshot]);
+
+    const prepareForNewTaskStream = useCallback(() => {
+        const currentTask = taskClientStateRef.current.task;
+        const currentSnapshot = taskSnapshotRef.current;
+        if (isTerminalTaskState(currentTask?.state) || isTerminalTaskState(currentSnapshot?.state)) {
+            resetTaskSnapshot();
+        }
     }, [resetTaskSnapshot]);
 
     const acceptTaskSnapshotPart = useCallback((incoming: MobileAgentTaskSnapshot): boolean => {
@@ -446,6 +458,7 @@ export function useAgentChat() {
     const sendMessage = useCallback(async (text: string) => {
         const content = text.trim();
         if (!content || status === "streaming") return;
+        prepareForNewTaskStream();
         const userMessage = { id: makeId(), role: "user" as const, parts: [{ type: "text", text: content }] } as MobileAgentMessage;
         const nextMessages = [...messages, userMessage];
         setMessages(nextMessages);
@@ -566,7 +579,7 @@ export function useAgentChat() {
         } finally {
             if (abortRef.current === controller) abortRef.current = null;
         }
-    }, [acceptTaskSnapshotPart, messages, refreshSessions, refreshTask, status, switchTaskIdentity]);
+    }, [acceptTaskSnapshotPart, messages, prepareForNewTaskStream, refreshSessions, refreshTask, status, switchTaskIdentity]);
 
     const stop = useCallback(() => {
         operationEpochRef.current += 1;
