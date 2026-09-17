@@ -234,7 +234,7 @@ export default async function StatsPage({ searchParams }: StatsPageProps) {
                 <StatsUnavailableValue />
               )}
             </div>
-            {posthogConfigured ? <MiniBars values={selectedRangeValues} labels={selectedRangeLabels} /> : <StatsSourceEmpty source="PostHog" dataComponent="desktop_stats_page_grid_inner_panel-inquiries-unavailable" />}
+            {posthogConfigured ? <MiniBars data-component="desktop_stats_page_grid_inner_panel-inquiries_body_trend" values={selectedRangeValues} labels={selectedRangeLabels} /> : <StatsSourceEmpty source="PostHog" dataComponent="desktop_stats_page_grid_inner_panel-inquiries-unavailable" />}
             <div className="text-[0.78rem] text-v3-text-muted">
               {posthogConfigured ? (
                 <>
