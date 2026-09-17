@@ -2166,7 +2166,7 @@ export class MessageTriggerService {
                 return;
             }
             job.markDispatchAuthorized();
-            await this.deliverClaimedJob(job);
+            if (await this.deliverClaimedJob(job) === "preserve-stored") return;
             await this.persistTriggerJobStatus(job, "persist dispatched trigger job");
             return;
         }
@@ -2224,7 +2224,7 @@ export class MessageTriggerService {
         // Provider delivery and its message_log writes must happen outside the
         // claim transaction so the FK insert cannot wait on a held row lock.
         job.markDispatchAuthorized();
-        await this.deliverClaimedJob(job, preparation);
+        if (await this.deliverClaimedJob(job, preparation) === "preserve-stored") return;
         await this.persistTriggerJobStatus(job, "persist dispatched trigger job");
     }
 
@@ -2673,7 +2673,7 @@ export class MessageTriggerService {
     private async deliverClaimedJob(
         job: MessageTriggerJobEntity,
         preparation?: SmsTriggerDeliveryPreparation,
-    ): Promise<void> {
+    ): Promise<"persist-result" | "preserve-stored"> {
         try {
             const sent = preparation
                 ? await this.deliveryService.sendPreparedJob(job, preparation)
@@ -2684,13 +2684,17 @@ export class MessageTriggerService {
                 job.markFailed("Provider disabled or delivery failed");
             }
         } catch (error) {
-            if (error instanceof AgentAutomationDispatchUncertainError) return;
+            // The final admission read may have observed a newer terminal
+            // result under this same claim. Never rewrite it with this stale
+            // entity; an unchanged dispatching row remains for reconciliation.
+            if (error instanceof AgentAutomationDispatchUncertainError) return "preserve-stored";
             if (error instanceof TriggerJobDeferredError) {
                 job.defer(error.kind, error.message);
             } else {
                 job.markFailed(error instanceof Error ? error.message : String(error));
             }
         }
+        return "persist-result";
     }
 
     /**

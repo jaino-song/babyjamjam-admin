@@ -1986,7 +1986,8 @@ describe("MessageTriggerService", () => {
         expect(job.status).toBe("dispatching");
         expect(job.attempts).toBe(0); expect(job.nextAttemptAt).toBeNull();
         expect(deliveryService.sendJob).not.toHaveBeenCalled();
-        expect(jobRepository.update).toHaveBeenLastCalledWith(job);
+        // Only the pre-CAS prepared snapshot is written, never the stale result.
+        expect(jobRepository.update).toHaveBeenCalledTimes(1);
     });
 
     it("refuses the automatic one-step compatibility path before provider authorization", async () => {
