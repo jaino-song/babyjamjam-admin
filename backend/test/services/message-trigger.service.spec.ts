@@ -4912,6 +4912,67 @@ describe("MessageTriggerService", () => {
             );
         });
 
+        it.each([
+            ["failed", "pending"],
+            ["canceled", "pending"],
+            ["canceled", "processing"],
+        ])("detects a %s to %s transition through the real page/probe repositories", async (initialStatus, currentStatus) => {
+            const { service, prisma, ruleRepository } = createService();
+            ruleRepository.findAll.mockResolvedValue([]);
+            const firstJob = createJob({
+                id: "00000000-0000-4000-8000-0000000000f0",
+                status: initialStatus as MessageTriggerJobStatus,
+            });
+            const lookaheadJob = createJob({
+                id: "00000000-0000-4000-8000-0000000000a0",
+                status: initialStatus as MessageTriggerJobStatus,
+            });
+            const currentJob = createJob({
+                id: firstJob.id,
+                status: currentStatus as MessageTriggerJobStatus,
+            });
+            let pageReads = 0;
+            let probeReads = 0;
+            prisma.message_trigger_job.findMany.mockImplementation(async (query: {
+                where: Record<string, unknown>;
+            }) => {
+                if ("OR" in query.where) {
+                    pageReads += 1;
+                    return pageReads === 1 ? [firstJob, lookaheadJob] : [];
+                }
+                expect(query.where).toEqual(expect.objectContaining({
+                    branchId,
+                    createdAt: { lte: expect.any(Date) },
+                    updatedAt: { gte: expect.any(Date) },
+                    logs: { none: { branchId, createdAt: { lte: expect.any(Date) } } },
+                }));
+                expect(query.where).not.toHaveProperty("status");
+                probeReads += 1;
+                return probeReads === 1 ? [] : [{ id: currentJob.id }];
+            });
+
+            const serviceInternals = service as unknown as {
+                messageLogRepository: unknown;
+                jobRepository: unknown;
+            };
+            serviceInternals.messageLogRepository = new SbMessageLogRepository(prisma as never);
+            serviceInternals.jobRepository = new SbMessageTriggerJobRepository(prisma as never);
+
+            const firstPage = await service.listHistoryPage(branchId, 1);
+            expect(firstPage.page.hasMore).toBe(true);
+            await expect(
+                service.listHistoryPage(branchId, 1, firstPage.page.nextCursor ?? undefined),
+            ).rejects.toMatchObject({
+                status: 503,
+                response: expect.objectContaining({
+                    code: MESSAGE_HISTORY_SNAPSHOT_CHANGED_CODE,
+                    retryable: true,
+                }),
+            });
+            expect(pageReads).toBe(2);
+            expect(probeReads).toBe(2);
+        });
+
         it("walks older-created logs exactly once through the real service and repositories", async () => {
             const { service, prisma, ruleRepository } = createService();
             ruleRepository.findAll.mockResolvedValue([]);

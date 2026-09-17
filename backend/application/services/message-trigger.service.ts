@@ -756,12 +756,13 @@ export class MessageTriggerService {
     }
 
     /**
-     * Read a complete, immutable history walk one bounded page at a time.
-     * The initial snapshot is an insertion cutoff, not a multi-request
-     * database transaction: rows created after it are deliberately deferred to
-     * the next fresh walk. Each source is ordered by its immutable native id;
-     * mutable retry timestamps remain presentation fields and never move a
-     * cursor, including when database timestamps have microsecond precision.
+     * Read history one bounded page at a time. The initial
+     * snapshot is an application-time eligibility cutoff, not a multi-request
+     * database MVCC transaction: rows created after it may be deferred to the
+     * next fresh walk, while state drift is detected and retried fail-closed.
+     * Each source is ordered by its immutable native id; mutable retry
+     * timestamps remain presentation fields and never move a cursor, including
+     * when database timestamps have microsecond precision.
      */
     async listHistoryPage(
         branchId: string,
@@ -798,10 +799,10 @@ export class MessageTriggerService {
         const remainingSlots = Math.max(limit - visibleLogs.length, 0);
         let terminalJobs: MessageTriggerJobEntity[] = [];
         if (hasTriggerSchema && !logLookahead) {
-            // Read the terminal page first, then probe for a failed row whose
-            // mutable updatedAt moved after the snapshot while this page was
-            // being assembled. A positive probe fails closed so the caller
-            // restarts from a fresh cursor/snapshot instead of silently
+            // Read the terminal page first, then probe for any pre-cutoff row
+            // whose mutable updatedAt reached the application cutoff while
+            // this page was assembled. A positive probe fails closed so the
+            // caller restarts from a fresh cursor/snapshot instead of silently
             // publishing a partial history walk.
             const jobPageQuery = {
                 snapshotAt,

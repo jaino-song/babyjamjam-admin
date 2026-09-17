@@ -502,7 +502,7 @@ describe("SbMessageTriggerJobRepository", () => {
         });
     });
 
-    it("probes one branch-scoped failed candidate after the page read", async () => {
+    it("probes any branch-scoped state change after the page read", async () => {
         const snapshotAt = new Date("2026-07-09T00:00:00.123Z");
         const afterId = "00000000-0000-4000-8000-000000000042";
         messageTriggerJobModel.findMany.mockResolvedValueOnce([{ id: "candidate" }]);
@@ -517,9 +517,8 @@ describe("SbMessageTriggerJobRepository", () => {
             where: {
                 branchId: "branch-1",
                 ruleId: { not: MESSAGE_AUTOMATION_INTENT_RULE_ID },
-                status: "failed",
                 createdAt: { lte: snapshotAt },
-                updatedAt: { gt: snapshotAt },
+                updatedAt: { gte: snapshotAt },
                 logs: { none: { branchId: "branch-1", createdAt: { lte: snapshotAt } } },
                 AND: [{ id: { lt: afterId } }],
             },
@@ -542,14 +541,38 @@ describe("SbMessageTriggerJobRepository", () => {
             where: {
                 branchId: "branch-1",
                 ruleId: { not: MESSAGE_AUTOMATION_INTENT_RULE_ID },
-                status: "failed",
                 createdAt: { lte: snapshotAt },
-                updatedAt: { gt: snapshotAt },
+                updatedAt: { gte: snapshotAt },
                 logs: { none: { branchId: "branch-1", createdAt: { lte: snapshotAt } } },
             },
             select: { id: true },
             take: 1,
         });
+    });
+
+    it.each([
+        ["failed", "pending"],
+        ["canceled", "pending"],
+        ["canceled", "processing"],
+    ])("treats %s to %s state changes at the cutoff as drift", async () => {
+        const snapshotAt = new Date("2026-07-09T00:00:00.123Z");
+        messageTriggerJobModel.findMany.mockResolvedValueOnce([{ id: "candidate" }]);
+
+        await expect(repository.findHistoryPageSnapshotDriftByBranch("branch-1", {
+            snapshotAt,
+            after: null,
+            limit: 2,
+        })).resolves.toBe(true);
+
+        expect(messageTriggerJobModel.findMany).toHaveBeenCalledWith(expect.objectContaining({
+            where: expect.objectContaining({
+                branchId: "branch-1",
+                createdAt: { lte: snapshotAt },
+                updatedAt: { gte: snapshotAt },
+            }),
+            select: { id: true },
+            take: 1,
+        }));
     });
 
     it("upsertPending falls back to findUnique when the guarded update matches no row (sent row stays immutable)", async () => {

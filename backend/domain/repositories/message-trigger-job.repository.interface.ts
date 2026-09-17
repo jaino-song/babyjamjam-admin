@@ -51,9 +51,11 @@ export interface IMessageTriggerJobRepository {
         query: MessageHistoryPageQuery,
     ): Promise<MessageTriggerJobEntity[]>;
     /**
-     * Probe for a failed, pre-cutoff row whose mutable terminal timestamp moved
-     * after the page read. The implementation must remain branch-fenced and
-     * bounded to one candidate; a positive result forces a fresh walk.
+     * Probe for any pre-cutoff row whose mutable state timestamp reached the
+     * application cutoff while the page was being read. The implementation
+     * must remain branch-fenced and bounded to one candidate; a positive result
+     * forces a fresh walk. Equality is treated as drift because database and
+     * application clocks can differ in sub-millisecond precision.
      */
     findHistoryPageSnapshotDriftByBranch(
         branchId: string,

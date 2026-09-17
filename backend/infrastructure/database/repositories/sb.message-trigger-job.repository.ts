@@ -380,20 +380,19 @@ export class SbMessageTriggerJobRepository implements IMessageTriggerJobReposito
             ? { id: { lt: after.nativeId } }
             : undefined;
 
-        // Failed jobs have no immutable terminal timestamp. A release claim
-        // can bump updatedAt while leaving status=failed, so a row that was
-        // eligible at the snapshot may disappear from the page predicate
-        // between requests. Probe only one branch-scoped candidate after the
-        // page read and force a fresh walk when one exists. The createdAt and
-        // log cutoff fences deliberately exclude post-snapshot rows and do
-        // not let a post-snapshot log suppress an eligible job.
+        // A release claim or cancellation resurrection can bump updatedAt
+        // while changing a row out of the terminal page predicate. Probe any
+        // current state, not only failed rows, after the page read and force a
+        // fresh walk when one exists. The createdAt and log cutoff fences
+        // deliberately exclude post-cutoff rows and do not let a post-cutoff
+        // log suppress an eligible job. Equality is fail-closed because
+        // timestamp precision may differ between the database and JS Date.
         const candidate = await this.prisma.message_trigger_job.findMany({
             where: {
                 branchId,
                 ruleId: { not: MESSAGE_AUTOMATION_INTENT_RULE_ID },
-                status: "failed",
                 createdAt: { lte: query.snapshotAt },
-                updatedAt: { gt: query.snapshotAt },
+                updatedAt: { gte: query.snapshotAt },
                 logs: { none: { branchId, createdAt: { lte: query.snapshotAt } } },
                 ...(afterWhere ? { AND: [afterWhere] } : {}),
             },

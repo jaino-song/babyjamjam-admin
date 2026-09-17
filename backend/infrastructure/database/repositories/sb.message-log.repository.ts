@@ -392,11 +392,12 @@ export class SbMessageLogRepository implements IMessageLogRepository {
         const rows = await this.prisma.message_log.findMany({
             where: {
                 branchId,
-                // The first page establishes this immutable insertion cutoff;
-                // continuations reuse it so rows inserted during a walk appear
-                // only on the next fresh history request. Native id ordering is
-                // used for the cursor, so timestamptz(6) precision never enters
-                // the continuation tuple.
+                // The first page establishes this application-time insertion
+                // cutoff; continuations reuse it. Rows committed after the
+                // first read, or made visible late, may be deferred until the
+                // next fresh history poll. Native id ordering is used for the
+                // cursor, so timestamptz(6) precision never enters the
+                // continuation tuple.
                 createdAt: { lte: query.snapshotAt },
                 ...(afterWhere ? { AND: [afterWhere] } : {}),
             },
