@@ -268,6 +268,50 @@ describe("ClientServiceRecordsTab", () => {
         expect(screen.getAllByText("제공기록지 작성 링크")).toHaveLength(3);
     });
 
+    it("shows cancellation guidance for a canceled link when the record card hides its status badge", () => {
+        const assignment = createAssignment(1, "canceled");
+        assignment.link.scheduledFor = "2026-07-01T15:00:00+09:00";
+        const overview: ServiceRecordOverview = {
+            record: {
+                id: "case-canceled-link",
+                status: "IN_PROGRESS",
+                startDate: "2026-07-01T00:00:00.000Z",
+                endDate: "2026-07-05T00:00:00.000Z",
+                totalSessions: 1,
+                completedAt: null,
+                finalizationDueAt: "2026-07-05T20:00:00+09:00",
+                finalizedAt: null,
+                documentsCompletedAt: null,
+                lastError: null,
+                header: null,
+                sessions: [],
+                signatureDocs: [],
+            },
+            assignments: [assignment],
+        };
+
+        const { container } = render(
+            <ClientServiceRecordsTab data-component={TEST_COMPONENT}
+                overview={overview}
+                clientId={100}
+                isLoading={false}
+                isError={false}
+            />,
+        );
+
+        const linkCard = container.querySelector<HTMLElement>(
+            `[data-component="${TEST_COMPONENT}_overview-grid_link-card"]`,
+        );
+        expect(linkCard).toHaveTextContent(
+            "자동 발송 예약이 취소되었습니다. 다시 보내려면 수동 전송하세요.",
+        );
+        expect(linkCard).not.toHaveTextContent(
+            "서비스 시작일 15:00에 자동 발송됩니다. 지금 바로 보내려면 수동 전송하세요.",
+        );
+        expect(linkCard).not.toHaveTextContent("발송 취소");
+        expect(screen.getByRole("button", { name: "링크 수동 전송" })).toBeEnabled();
+    });
+
     it("renders server-owned revision statuses and retries the pinned generation", async () => {
         const onRetry = jest.fn().mockResolvedValue(undefined);
         render(
