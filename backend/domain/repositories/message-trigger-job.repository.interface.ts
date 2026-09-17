@@ -9,7 +9,7 @@ export class MessageHistorySnapshotChangedError extends Error {
     readonly retryable = true;
 
     constructor() {
-        super("메시지 발송 기록 스냅샷이 변경되어 다시 불러와야 합니다.");
+        super("발송 기록이 변경되었습니다. 잠시 후 다시 확인해 주세요.");
         this.name = "MessageHistorySnapshotChangedError";
     }
 }
