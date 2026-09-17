@@ -1,0 +1,92 @@
+.listPaneContent {
+  display: flex;
+  min-height: 0;
+  flex: 1;
+  flex-direction: column;
+  gap: calc(8px * var(--glint-ui-scale, 1));
+  overflow: hidden;
+}
+
+.listCard {
+  min-height: 0;
+  flex: 1;
+  margin: 0 !important;
+  padding: 0 !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+  gap: calc(6px * var(--glint-ui-scale, 1)) !important;
+}
+
+.toolbar {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: calc(6px * var(--glint-ui-scale, 1));
+}
+
+.toolbar > [data-slot="search-bar"] {
+  min-width: 0;
+  flex: 1;
+}
+
+.calendar {
+  flex: 0 0 auto;
+}
+
+.calendarDays {
+  gap: calc(3px * var(--glint-ui-scale, 1));
+}
+
+.calendarDay {
+  min-height: calc(38px * var(--glint-ui-scale, 1)) !important;
+  padding: calc(4px * var(--glint-ui-scale, 1)) !important;
+  gap: calc(2px * var(--glint-ui-scale, 1)) !important;
+  border-radius: calc(9px * var(--glint-ui-scale, 1)) !important;
+}
+
+.eventDots {
+  display: flex;
+  min-height: calc(6px * var(--glint-ui-scale, 1));
+  align-items: center;
+  gap: calc(2px * var(--glint-ui-scale, 1));
+  overflow: hidden;
+}
+
+.eventDot {
+  width: calc(5px * var(--glint-ui-scale, 1));
+  height: calc(5px * var(--glint-ui-scale, 1));
+  flex: 0 0 auto;
+  border-radius: 999px;
+  background: hsl(var(--v3-primary));
+}
+
+.eventDotEnd {
+  background: hsl(var(--v3-orange));
+}
+
+.eventDotReplacement {
+  background: hsl(var(--v3-burgundy));
+}
+
+.eventCount {
+  color: hsl(var(--v3-text-muted));
+  font-size: calc(0.56rem * var(--glint-ui-scale, 1));
+  line-height: 1;
+}
+
+.agenda {
+  flex: 0 0 auto;
+}
+
+.range {
+  flex: 0 0 auto;
+  color: hsl(var(--v3-text-muted));
+  font-size: calc(0.58rem * var(--glint-ui-scale, 1));
+  white-space: nowrap;
+}
+
+@media (max-width: 380px) {
+  .range {
+    display: none;
+  }
+}
