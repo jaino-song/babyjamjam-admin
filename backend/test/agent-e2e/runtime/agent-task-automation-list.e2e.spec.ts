@@ -377,7 +377,7 @@ describeAgentE2E("real automation.list with two eligible clients and missing def
                 authorizationContext: {}, expiresAt, idempotencyKey: randomUUID(), requestDedupeKey: randomUUID(), dedupeExpiresAt: expiresAt } });
             await records.runTaskMutation({ ...context, sessionId, actionId }, artifact, async (transaction) => {
                 const client = await transaction.client.create({ data: { id: createdId, branchId, ...values, voucherClient: false, serviceStatus: "pre_booking" } });
-                return { clientId: createdId, result: { id: createdId, status: "created" }, coverages: [{ scope: {
+                return { clientId: createdId, result: { id: createdId, status: "created" }, affectedJobs: [], coverages: [{ scope: {
                     branchId, clientId: createdId, clientIdentity: agentBindingHash({ version: 1, resource: "client", id: createdId, createdAt: client.createdAt!.toISOString() }),
                     kind: "client-rule", scheduleId: null, scheduleIdentity: null, recipientType: "client",
                 }, grandfatheredScopes: [] }] };

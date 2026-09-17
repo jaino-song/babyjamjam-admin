@@ -2,7 +2,7 @@ import { Injectable } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
 import { randomUUID } from "node:crypto";
 import type { AgentAutomationAuthority, AgentAutomationCoverage, AgentAutomationCoverageScope, AgentAutomationGrandfatheredScope, AgentAutomationScope } from "domain/entities/agent-automation-consent";
-import { AGENT_AUTOMATION_RECORD_CANCEL_REASON, AGENT_AUTOMATION_RECORD_PAYLOAD_KEY } from "domain/constants/agent-automation-storage";
+import { AGENT_AUTOMATION_RECORD_CANCEL_REASON, AGENT_AUTOMATION_RECORD_PAYLOAD_KEY, AGENT_AUTOMATION_TASK_SCOPE_CANCEL_REASON } from "domain/constants/agent-automation-storage";
 import { MESSAGE_AUTOMATION_INTENT_RULE_ID } from "domain/constants/message-automation-intent";
 import { MessageTriggerEventType, MessageTriggerOffsetType, MessageTriggerRecipientType, MessageTriggerTemplateKey } from "domain/constants/message-trigger-catalog";
 import { agentBindingHash } from "domain/repositories/agent-linked-action.types";
@@ -17,6 +17,38 @@ import { agentAutomationRecordKey, agentAutomationRecordPrefix, createAgentAutom
     isCoverage, type AgentAutomationStoredRecord, type AgentAutomationTerminalRecord } from "./agent-automation-terminal-record";
 
 const MAX_CHAIN = 4096;
+const MAX_AFFECTED_JOBS = 500;
+
+type AgentAutomationAffectedJobRow = {
+    id: string;
+    branchId: string | null;
+    ruleId: string;
+    status: string;
+    scheduledFor: Date;
+    recipientPhone: string | null;
+    payload: Prisma.JsonValue;
+    updatedAt: Date;
+    claimToken: string | null;
+    dedupeKey: string;
+    canceledByUser: boolean;
+};
+
+function affectedJobVersion(job: AgentAutomationAffectedJobRow): string {
+    return agentBindingHash(JSON.parse(JSON.stringify({
+        id: job.id,
+        branchId: job.branchId,
+        ruleId: job.ruleId,
+        status: job.status,
+        scheduledFor: job.scheduledFor,
+        recipientPhone: job.recipientPhone,
+        payload: job.payload,
+        updatedAt: job.updatedAt,
+        claimToken: job.claimToken,
+        dedupeKey: job.dedupeKey,
+        canceledByUser: job.canceledByUser,
+    })) as unknown);
+}
+
 export class AgentAutomationRecordRefusedError extends Error {
     constructor() {
         super("Automation record transaction refused");
@@ -31,6 +63,8 @@ export interface AgentAutomationTaskMutation {
     result: Record<string, unknown>;
     /** Derived by the trusted source owner under this transaction, never request JSON. */
     coverages: Array<{ scope: AgentAutomationCoverageScope; grandfatheredScopes: AgentAutomationGrandfatheredScope[] }>;
+    /** Mutable source jobs inspected by the planner and fenced by id/version. */
+    affectedJobs: Array<{ id: string; version: string }>;
 }
 export interface AgentAutomationCommittedBatch {
     authorities: AgentAutomationAuthority[];
@@ -79,6 +113,7 @@ export class AgentAutomationRecordStoreService {
             const mutation = await prepare(tx);
             if (!Number.isSafeInteger(mutation.clientId) || mutation.clientId < 1 || mutation.coverages.length > 500
                 || (artifact.targetClientId !== null && mutation.clientId !== artifact.targetClientId)) refuse();
+            await this.cancelAffectedJobs(tx, artifact.branchId, mutation.affectedJobs);
             const client = await tx.client.findFirst({ where: { id: mutation.clientId, branchId: artifact.branchId }, select: { id: true, createdAt: true } });
             if (!client?.createdAt) refuse();
             const clientIdentity = agentBindingHash({ version: 1, resource: "client", id: client.id, createdAt: client.createdAt.toISOString() });
@@ -189,6 +224,57 @@ export class AgentAutomationRecordStoreService {
         if (scope.scheduleId !== null) {
             const schedule = await tx.employee_schedule.findFirst({ where: { id: scope.scheduleId, branchId, clientId }, select: { incarnationId: true } });
             if (!schedule || scope.scheduleIdentity !== agentAutomationScheduleIdentity(schedule.incarnationId)) refuse();
+        }
+    }
+
+    /**
+     * Consume the planner's mutable source-job snapshot inside the same
+     * transaction as the customer write and terminal evidence. A changed,
+     * terminal, user-canceled, cross-branch, or missing row refuses the whole
+     * mutation so a stale task cannot leave an active successor behind.
+     */
+    private async cancelAffectedJobs(
+        tx: Prisma.TransactionClient,
+        branchId: string,
+        affectedJobs: Array<{ id: string; version: string }>,
+    ): Promise<void> {
+        if (!Array.isArray(affectedJobs) || affectedJobs.length > MAX_AFFECTED_JOBS) refuse();
+        const ids = affectedJobs.map(({ id }) => id);
+        if (new Set(ids).size !== ids.length || ids.some((id) => !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id))) refuse();
+        if (affectedJobs.some(({ version }) => !/^[a-f0-9]{64}$/.test(version))) refuse();
+        if (affectedJobs.length === 0) return;
+
+        const rows = await tx.message_trigger_job.findMany({
+            where: { branchId, id: { in: ids } },
+            select: {
+                id: true, branchId: true, ruleId: true, status: true, scheduledFor: true,
+                recipientPhone: true, payload: true, updatedAt: true, claimToken: true,
+                dedupeKey: true, canceledByUser: true,
+            },
+        }) as AgentAutomationAffectedJobRow[];
+        if (rows.length !== affectedJobs.length) refuse();
+        const byId = new Map(rows.map((row) => [row.id, row]));
+        const checked: AgentAutomationAffectedJobRow[] = [];
+        for (const expected of affectedJobs) {
+            const row = byId.get(expected.id);
+            if (!row || row.branchId !== branchId || !["pending", "processing"].includes(row.status)
+                || row.canceledByUser || affectedJobVersion(row) !== expected.version) refuse();
+            checked.push(row);
+        }
+
+        const canceledAt = new Date();
+        for (const row of checked) {
+            const result = await tx.message_trigger_job.updateMany({
+                where: { id: row.id, branchId, status: row.status, updatedAt: row.updatedAt, canceledByUser: false },
+                data: {
+                    status: "canceled",
+                    canceledAt,
+                    cancelReason: AGENT_AUTOMATION_TASK_SCOPE_CANCEL_REASON,
+                    nextAttemptAt: null,
+                    claimToken: null,
+                },
+            });
+            if (result.count !== 1) refuse();
         }
     }
 

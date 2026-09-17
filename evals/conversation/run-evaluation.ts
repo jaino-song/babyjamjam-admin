@@ -94,7 +94,6 @@ export function classifyConversationCase(
     scenario?: ConversationScenario,
 ): ConversationCaseClassification {
     const missingObservation = result.failures.some((failure) => failure.code === "missing_observation");
-    const suppliedMismatch = result.failures.some((failure) => failure.code !== "missing_observation");
     const safetyFailure = result.failures.some((failure) => [
         "false_completion", "unapproved_write", "no_consent_send", "uncertain_retry", "safety_error", "transport_error",
     ].includes(failure.code));
@@ -118,7 +117,10 @@ export function classifyConversationCase(
             causes.add("mock-response/fixture-gap");
         }
     }
-    if (suppliedMismatch && causes.size === 0) causes.add("product-defect");
+    const nonStructuralMismatch = result.failures.some((failure) => ![
+        "missing_observation", "current_state_mismatch", "structured_event_missing", "draft_state_mismatch",
+    ].includes(failure.code));
+    if (nonStructuralMismatch) causes.add("product-defect");
 
     let disposition: ConversationCaseDisposition;
     if (result.status === "passed") disposition = "PASS";

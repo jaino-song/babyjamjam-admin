@@ -586,6 +586,7 @@ export class ClientWriteAgentCapabilitiesProvider implements AgentCapabilityProv
                         clientId: client.id,
                         result,
                         coverages: await this.taskCoverageCandidates(transaction, artifact, committed.id, committed.createdAt),
+                        affectedJobs: impact.affectedJobs,
                     };
                 },
                 async (transaction, batch) => {

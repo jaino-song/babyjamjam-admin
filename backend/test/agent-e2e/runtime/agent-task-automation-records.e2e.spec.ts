@@ -12,7 +12,9 @@ import { decodeAgentAutomationTerminalRow, agentAutomationRecordKey, agentAutoma
 import { agentAutomationCoverageRecordDigest, agentAutomationGrandfatheredFingerprint } from "../../../application/agent/agent-automation-coverage";
 import { agentBindingHash } from "../../../domain/repositories/agent-linked-action.types";
 import type { AgentContext } from "../../../application/agent/agent-context";
-import { AGENT_AUTOMATION_RECORD_DEDUPE_PREFIX, AGENT_AUTOMATION_RECORD_PAYLOAD_KEY } from "../../../domain/constants/agent-automation-storage";
+import { AGENT_AUTOMATION_RECORD_DEDUPE_PREFIX, AGENT_AUTOMATION_RECORD_PAYLOAD_KEY, AGENT_AUTOMATION_TASK_SCOPE_CANCEL_REASON } from "../../../domain/constants/agent-automation-storage";
+import { MESSAGE_AUTOMATION_INTENT_RULE_ID } from "../../../domain/constants/message-automation-intent";
+import { MessageTriggerEventType, MessageTriggerOffsetType, MessageTriggerRecipientType, MessageTriggerTemplateKey } from "../../../domain/constants/message-trigger-catalog";
 import { createApprovedAgentTaskPersistenceClient, assertApprovedAgentTaskPersistenceDatabaseTarget } from "./agent-task-persistence.helper";
 
 const describeDb = process.env["AGENT_E2E"] === "1" ? describe : describe.skip;
@@ -21,6 +23,19 @@ const userId = "b9100000-0000-4000-8000-000000000002";
 const clientId = 979000001;
 const expiresAt = new Date("2099-01-01T00:00:00.000Z");
 const hash = (value: string) => agentBindingHash(value);
+
+function affectedJobVersion(job: {
+    id: string; branchId: string | null; ruleId: string; status: string; scheduledFor: Date;
+    recipientPhone: string | null; payload: Prisma.JsonValue; updatedAt: Date; claimToken: string | null;
+    dedupeKey: string; canceledByUser: boolean;
+}): string {
+    return agentBindingHash(JSON.parse(JSON.stringify({
+        id: job.id, branchId: job.branchId, ruleId: job.ruleId, status: job.status,
+        scheduledFor: job.scheduledFor, recipientPhone: job.recipientPhone, payload: job.payload,
+        updatedAt: job.updatedAt, claimToken: job.claimToken, dedupeKey: job.dedupeKey,
+        canceledByUser: job.canceledByUser,
+    })) as unknown);
+}
 
 /** Inject a crash after the actual target write, retaining PostgreSQL rollback semantics. */
 function failAfterWrite(base: PrismaClient, delegate: string, method: string): PrismaClient {
@@ -63,6 +78,11 @@ describeDb("committed task automation terminal record transactions", () => {
         db = createApprovedAgentTaskPersistenceClient(); await db.$connect(); await cleanup();
         await db.user.upsert({ where: { id: userId }, update: {}, create: { id: userId, email: "terminal-records@example.invalid", role: "admin" } });
         await db.branch.upsert({ where: { id: branchId }, update: {}, create: { id: branchId, name: "합성 기록 검증", slug: "agent-task-records-proof" } });
+        await db.message_trigger_rule.upsert({ where: { id: MESSAGE_AUTOMATION_INTENT_RULE_ID }, update: {}, create: {
+            id: MESSAGE_AUTOMATION_INTENT_RULE_ID, branchId: null, name: "메시지 자동화 생성 복구 표식", isActive: false,
+            eventType: MessageTriggerEventType.CLIENT_CREATED, offsetType: MessageTriggerOffsetType.IMMEDIATE, offsetDays: 0,
+            recipientType: MessageTriggerRecipientType.CLIENT, templateKey: MessageTriggerTemplateKey.CLIENT_GREETING, isDefault: false, jobsStale: false,
+        } });
     });
     beforeEach(async () => {
         await cleanup();
@@ -70,7 +90,7 @@ describeDb("committed task automation terminal record transactions", () => {
         prepare.mockReset().mockImplementation(async (tx) => {
             const client = await tx.client.create({ data: { id: clientId, branchId, name: "SYNTHETIC_PRIVATE_NAME", phone: "01000000001", voucherClient: false, serviceStatus: "pre_booking" } });
             const clientIdentity = agentBindingHash({ version: 1, resource: "client", id: client.id, createdAt: client.createdAt!.toISOString() });
-            return { clientId, result: { id: clientId, name: client.name, status: "saved" }, coverages: [{ scope: {
+            return { clientId, result: { id: clientId, name: client.name, status: "saved" }, affectedJobs: [], coverages: [{ scope: {
                 branchId, clientId, clientIdentity, kind: "client-rule", recipientType: "client", scheduleId: null, scheduleIdentity: null,
             }, grandfatheredScopes: [] }] };
         });
@@ -83,10 +103,11 @@ describeDb("committed task automation terminal record transactions", () => {
 
     async function seed(choice: "yes" | "no" | "noSend" | "none" = "yes", options: {
         effects?: AgentAutomationEffect[]; existingClient?: { id: number; createdAt: Date | null };
+        affectedJobs?: Array<{ id: string; version: string }>;
     } = {}) {
         const impact = { availability: choice === "none" ? "none" as const : "available" as const,
             complete: true, clientIdentity: options.existingClient ? agentBindingHash({ version: 1, resource: "client", id: options.existingClient.id,
-                createdAt: options.existingClient.createdAt!.toISOString() }) : null, sourceGuard: hash("source"), affectedJobs: [],
+                createdAt: options.existingClient.createdAt!.toISOString() }) : null, sourceGuard: hash("source"), affectedJobs: options.affectedJobs ?? [],
             effects: options.effects ?? (choice === "none" ? [] : [{ kind: "client-rule" as const, ruleId: "synthetic-rule", scheduleId: null,
                 recipientType: "client" as const, templateKey: "CLIENT_GREETING" as const, change: "create" as const,
                 recipientDigest: hash("recipient"), sourceDigest: hash("source"), templateDigest: hash("template"), policyDigest: hash("policy"), recipeDigest: hash("recipe") }]) };
@@ -110,6 +131,53 @@ describeDb("committed task automation terminal record transactions", () => {
             authorizationContext: {}, expiresAt, idempotencyKey: randomUUID(), requestDedupeKey: randomUUID(), dedupeExpiresAt: expiresAt } });
     }
     async function terminals() { return db.message_trigger_job.findMany({ where: { branchId, dedupeKey: { startsWith: AGENT_AUTOMATION_RECORD_DEDUPE_PREFIX } }, orderBy: { dedupeKey: "asc" } }); }
+
+    async function createAffectedJob(clientForJob: number) {
+        return db.message_trigger_job.create({ data: {
+            branchId, ruleId: MESSAGE_AUTOMATION_INTENT_RULE_ID, status: "pending", scheduledFor: new Date("2098-01-01T00:00:00.000Z"),
+            clientId: clientForJob, employeeScheduleId: null, recipientType: MessageTriggerRecipientType.CLIENT,
+            recipientPhone: "01000000001", templateKey: MessageTriggerTemplateKey.CLIENT_GREETING,
+            dedupeKey: `synthetic-affected-job:${randomUUID()}`, payload: { memberId: "synthetic-affected" },
+        } });
+    }
+
+    it("cancels the planner's mutable jobs in the same transaction as the customer mutation", async () => {
+        const existing = await db.client.create({ data: { id: clientId, branchId, name: "합성 기존 고객", phone: "01000000001", voucherClient: false } });
+        const job = await createAffectedJob(existing.id);
+        const affectedJobs = [{ id: job.id, version: affectedJobVersion(job) }];
+        await seed("no", { existingClient: existing, affectedJobs });
+        const identity = artifact.impact.clientIdentity!;
+        const scope = { branchId, clientId, clientIdentity: identity, kind: "client-rule" as const, recipientType: "client" as const, scheduleId: null, scheduleIdentity: null };
+        prepare.mockImplementation(async (tx) => {
+            await tx.client.update({ where: { id: clientId }, data: { name: "합성 정정 고객" } });
+            return { clientId, result: { id: clientId, status: "updated" }, affectedJobs, coverages: [{ scope, grandfatheredScopes: [] }] };
+        });
+
+        await store.runTaskMutation(context, artifact, prepare, stage);
+        const canceled = await db.message_trigger_job.findUniqueOrThrow({ where: { id: job.id } });
+        expect(canceled).toMatchObject({ status: "canceled", canceledByUser: false, cancelReason: AGENT_AUTOMATION_TASK_SCOPE_CANCEL_REASON, claimToken: null, nextAttemptAt: null });
+        expect(canceled.canceledAt).toBeTruthy();
+        expect((await db.client.findUniqueOrThrow({ where: { id: clientId } })).name).toBe("합성 정정 고객");
+    });
+
+    it("rolls back the customer write when an affected job version has changed", async () => {
+        const existing = await db.client.create({ data: { id: clientId, branchId, name: "합성 기존 고객", phone: "01000000001", voucherClient: false } });
+        const job = await createAffectedJob(existing.id);
+        const stale = { id: job.id, version: affectedJobVersion(job) };
+        await db.message_trigger_job.update({ where: { id: job.id }, data: { payload: { memberId: "synthetic-changed" } } });
+        await seed("no", { existingClient: existing, affectedJobs: [stale] });
+        const identity = artifact.impact.clientIdentity!;
+        const scope = { branchId, clientId, clientIdentity: identity, kind: "client-rule" as const, recipientType: "client" as const, scheduleId: null, scheduleIdentity: null };
+        prepare.mockImplementation(async (tx) => {
+            await tx.client.update({ where: { id: clientId }, data: { name: "합성 롤백 고객" } });
+            return { clientId, result: { id: clientId, status: "updated" }, affectedJobs: [stale], coverages: [{ scope, grandfatheredScopes: [] }] };
+        });
+
+        await expect(store.runTaskMutation(context, artifact, prepare, stage)).rejects.toThrow("Automation record transaction refused");
+        expect((await db.client.findUniqueOrThrow({ where: { id: clientId } })).name).toBe("합성 기존 고객");
+        expect((await db.message_trigger_job.findUniqueOrThrow({ where: { id: job.id } })).status).toBe("pending");
+        expect(await terminals()).toHaveLength(0);
+    });
 
     it.each(["yes", "no", "noSend", "none"] as const)("commits %s records with the customer, intent and private receipt exactly once", async (choice) => {
         await seed(choice);
@@ -302,7 +370,7 @@ describeDb("committed task automation terminal record transactions", () => {
         const identity = artifact.impact.clientIdentity!;
         prepare.mockImplementation(async (tx) => {
             await tx.client.update({ where: { id: clientId }, data: { name: "합성 정정" } });
-            return { clientId, result: { id: clientId, status: "updated" }, coverages: [
+            return { clientId, result: { id: clientId, status: "updated" }, affectedJobs: [], coverages: [
                 ...(["secondary-employee", "primary-employee"] as const).map((recipientType) => ({ scope: { branchId, clientId, clientIdentity: identity,
                     kind: "employee-assignment" as const, scheduleId: schedule.id, scheduleIdentity: agentAutomationScheduleIdentity(schedule.incarnationId), recipientType }, grandfatheredScopes: [] })),
                 { scope: { branchId, clientId, clientIdentity: identity, kind: "client-rule", scheduleId: null, scheduleIdentity: null, recipientType: "client" }, grandfatheredScopes: [] },
@@ -352,7 +420,7 @@ describeDb("committed task automation terminal record transactions", () => {
         const scope = { branchId, clientId, clientIdentity: identity, kind: "client-rule" as const, recipientType: "client" as const, scheduleId: null, scheduleIdentity: null };
         prepare.mockImplementation(async (tx) => {
             await tx.client.update({ where: { id: clientId }, data: { name: "합성 정정" } });
-            return { clientId, result: { id: clientId, status: "updated" }, coverages: [{ scope, grandfatheredScopes: [{
+            return { clientId, result: { id: clientId, status: "updated" }, affectedJobs: [], coverages: [{ scope, grandfatheredScopes: [{
                 scope: { ...scope, ruleId: prior.ruleId }, fingerprint: agentAutomationGrandfatheredFingerprint(prior),
             }] }] };
         });

@@ -11,6 +11,7 @@ import {
     evaluateConversationCase,
 } from "../../../evals/conversation/evaluation-policy";
 import {
+    classifyConversationCase,
     conversationEvaluationExitCode,
     formatConversationEvaluationReport,
     runConversationEvaluation,
@@ -115,6 +116,23 @@ describe("deterministic multi-turn conversation evaluation foundation", () => {
             expect.objectContaining({ code: "current_state_mismatch" }),
             expect.objectContaining({ code: "missing_observation" }),
         ]));
+    });
+
+    it("keeps a supplied ledger mismatch as a product defect beside missing evidence", async () => {
+        const { scenario, observation } = await harnessObservation(29);
+        const result = evaluateConversationCase(scenario, {
+            ...observation,
+            actionExecutionLedger: [],
+            sends: undefined,
+        });
+        const classification = classifyConversationCase(result, { mode: "product", run: async () => ({}) }, scenario);
+
+        expect(result.status).toBe("failed");
+        expect(result.failures).toEqual(expect.arrayContaining([
+            expect.objectContaining({ code: "ledger_mismatch" }),
+            expect.objectContaining({ code: "missing_observation" }),
+        ]));
+        expect(classification.causes).toContain("product-defect");
     });
 
     it("reports not_evaluated when only future-phase evidence is unavailable", async () => {
