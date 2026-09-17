@@ -571,6 +571,34 @@ describe("per-session administrator editing", () => {
         expect(screen.getByRole("button", { name: "수정 확인" })).toBeDisabled();
     });
 
+    it("validates only changed header fields when legacy values remain untouched", async () => {
+        const legacyOverview = {
+            ...sessionOverview,
+            record: {
+                ...sessionOverview.record,
+                header: { ...header, babyBirth: "2026-09-01", babyWeight: "Infinity" },
+            },
+        } as unknown as AdminServiceRecordEditorOverview;
+        jest.mocked(adminServiceRecordEditApi.updateDraft).mockResolvedValue(makeDraftState({ header: { momName: "새 산모 이름" } }, 2));
+        jest.mocked(adminServiceRecordEditApi.previewDraft).mockResolvedValue({
+            ...confirmPreviewResponse,
+            draftVersion: 2,
+            contentChanges: { headerChanged: true, changedSessionIndexes: [] },
+        } as Awaited<ReturnType<typeof adminServiceRecordEditApi.previewDraft>>);
+
+        render(<ServiceRecordAdminWizard clientId="42" overview={legacyOverview} initialDraftState={{ ...makeDraftState(), draft: null }} />);
+        fireEvent.click(screen.getByRole("button", { name: "기본정보 수정" }));
+        expect(screen.getByLabelText(/^신생아 출생일자/)).toHaveValue("2026-09-01");
+        expect(screen.getByLabelText("신생아 몸무게 (kg)")).toHaveValue("Infinity");
+        fireEvent.change(screen.getByLabelText("산모 성명"), { target: { value: "새 산모 이름" } });
+
+        const confirm = screen.getByRole("button", { name: "수정 확인" });
+        expect(confirm).toBeEnabled();
+        fireEvent.click(confirm);
+        await waitFor(() => expect(adminServiceRecordEditApi.confirmDraft).toHaveBeenCalledTimes(1));
+        expect(adminServiceRecordEditApi.updateDraft).toHaveBeenCalledWith("draft-1", 1, { header: { momName: "새 산모 이름" } }, undefined);
+    });
+
     it.each(["김산모", "900101", "김아기", "260714", "3.2"])("does not save when a required header value (%s) is blank", (value) => {
         render(<ServiceRecordAdminWizard clientId="42" overview={sessionOverview} initialDraftState={{ ...makeDraftState(), draft: null }} />);
         fireEvent.click(screen.getByRole("button", { name: "기본정보 수정" }));

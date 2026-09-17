@@ -407,7 +407,6 @@ describe("AdminServiceRecordEditService", () => {
     it.each([
         ["momBirth", "260230", "SERVICE_RECORD_HEADER_DATE_INVALID"],
         ["babyBirth", "2402290", "SERVICE_RECORD_HEADER_DATE_INVALID"],
-        ["babyBirth", "260919", "SERVICE_RECORD_HEADER_DATE_INVALID"],
         ["babyWeight", "-1", "SERVICE_RECORD_HEADER_WEIGHT_INVALID"],
         ["babyWeight", "0", "SERVICE_RECORD_HEADER_WEIGHT_INVALID"],
         ["babyWeight", "0.0", "SERVICE_RECORD_HEADER_WEIGHT_INVALID"],
@@ -428,11 +427,11 @@ describe("AdminServiceRecordEditService", () => {
         const harness = createHarness();
 
         await harness.service.startDraft(BRANCH_ID, CLIENT_ID, ACTOR_ID, {
-            changes: { header: { momBirth: "240229", babyBirth: "260917", babyWeight: "3.2" } },
+            changes: { header: { momBirth: "240229", babyBirth: "240229", babyWeight: "3.2" } },
         });
 
         expect(harness.repository.createOrResumeDraft).toHaveBeenCalledWith(expect.objectContaining({
-            changes: { header: { momBirth: "240229", babyBirth: "260917", babyWeight: "3.2" } },
+            changes: { header: { momBirth: "240229", babyBirth: "240229", babyWeight: "3.2" } },
         }));
     });
 
@@ -445,7 +444,10 @@ describe("AdminServiceRecordEditService", () => {
             changes: { header: { momBirth: "", babyBirth: "", babyWeight: "" } },
         }));
 
-        const sessionOnlyHarness = createHarness();
+        const legacySource = sourceSnapshot({
+            header: { ...sourceSnapshot().header, babyBirth: "2026-09-01", babyWeight: "Infinity" },
+        });
+        const sessionOnlyHarness = createHarness({ source: legacySource });
         await sessionOnlyHarness.service.startDraft(BRANCH_ID, CLIENT_ID, ACTOR_ID, {
             changes: { sessions: [{ sessionIndex: 1, notes: "회차 메모" }] },
         });

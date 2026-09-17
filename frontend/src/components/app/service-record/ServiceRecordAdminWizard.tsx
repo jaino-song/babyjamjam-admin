@@ -471,7 +471,11 @@ export function ServiceRecordAdminWizard({
         if ((headerDraft[key] ?? "") !== (headerToInput(baseView.context.header)[key] ?? "")) headerPatch[key] = headerDraft[key] ?? "";
     }
     const editingHeader = screen === "service";
-    const headerErrors: ServiceRecordHeaderErrors = getServiceRecordHeaderErrors(headerDraft);
+    const headerErrors: ServiceRecordHeaderErrors = getServiceRecordHeaderErrors({
+        momBirth: headerPatch.momBirth,
+        babyBirth: headerPatch.babyBirth,
+        babyWeight: headerPatch.babyWeight,
+    });
     const hasHeaderErrors = Object.keys(headerErrors).length > 0;
     const changed = !priorChanges && !supplemental && (editingHeader
         ? Object.keys(headerPatch).length > 0 : Object.keys(patch).length > 1 || Boolean(dateMove));
