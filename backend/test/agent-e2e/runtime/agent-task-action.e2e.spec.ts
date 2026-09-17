@@ -617,4 +617,31 @@ describeDb("atomic task review and execution on guarded PostgreSQL", () => {
         expect(execute.mock.calls[0]![0].taskAutomation.consent.choice).toBe("no");
     });
 
+    it("retains read-only result recovery for historical task actions without minting an automation artifact", async () => {
+        const review = await prepared();
+        execute.mockRejectedValueOnce(new AgentActionUncertainError("Synthetic interruption"));
+        const uncertain = await actions.approve(review.snapshot.action!.actionId, principal, review.snapshot.action!.expectedRevision);
+        expect(uncertain.action.status).toBe("uncertain");
+        definition.planAutomationImpact = jest.fn().mockRejectedValue(new Error("Must not replan committed effects"));
+        const recovered = await actions.reconcile(uncertain.action.id, principal);
+        expect(recovered.status).toBe("succeeded");
+        expect(definition.planAutomationImpact).not.toHaveBeenCalled();
+        expect(reconcile.mock.calls[0]![0]).not.toHaveProperty("taskAutomation");
+        expect(execute).toHaveBeenCalledTimes(1);
+    });
+
+    it("recovers a reviewed automation action from its stored artifact without current-impact planning", async () => {
+        automationFixture();
+        const review = await automationPrepared();
+        const action = await actions.get(review.snapshot.action!.actionId, owner);
+        execute.mockRejectedValueOnce(new AgentActionUncertainError("Synthetic interruption"));
+        const uncertain = await actions.approve(action.id, principal, action.proposalRevision, actions.strongAcknowledgementToken(action));
+        expect(uncertain.action.status).toBe("uncertain");
+        definition.planAutomationImpact = jest.fn().mockRejectedValue(new Error("Must not replan committed effects"));
+        expect((await actions.reconcile(action.id, principal)).status).toBe("succeeded");
+        expect(definition.planAutomationImpact).not.toHaveBeenCalled();
+        expect(reconcile.mock.calls[0]![0].taskAutomation).toEqual(action.proposal["_taskAutomation"]);
+        expect(execute).toHaveBeenCalledTimes(1);
+    });
+
 });

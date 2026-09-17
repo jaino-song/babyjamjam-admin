@@ -773,7 +773,11 @@ export class ActionCoordinatorService implements AgentTaskReviewPort {
         const capability = this.registry.get(action.capability);
         if (!capability.reconcile) throw new ConflictException("Provider reconciliation is unavailable");
         const proposal = jsonObject(action.proposal);
-        const taskAutomation = this.automationForAction(action);
+        // Historical linked actions predate automation artifacts. Preserve their
+        // read-only result lookup, but never hand them to a newly added recovery
+        // writer without a stored automation artifact.
+        const legacyTaskRead = !!action.taskId && !(TASK_AUTOMATION_ARTIFACT_KEY in proposal) && !("automation" in proposal);
+        const taskAutomation = legacyTaskRead ? undefined : this.automationForAction(action);
         const actionContext = {
             principal,
             sessionId: action.sessionId,
@@ -785,7 +789,7 @@ export class ActionCoordinatorService implements AgentTaskReviewPort {
             ...(taskAutomation ? { taskAutomation } : {}),
         };
         const uncertainty = action.error ? jsonObject(action.error["details"]) : null;
-        await capability.recover?.(actionContext, proposal["input"], uncertainty);
+        if (!legacyTaskRead) await capability.recover?.(actionContext, proposal["input"], uncertainty);
         const outcome = await capability.reconcile(actionContext, proposal["input"], uncertainty);
         if (outcome.status === "uncertain") return action;
         return this.applyReconciliationOutcome(action, capability, outcome);
