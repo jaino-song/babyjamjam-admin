@@ -67,6 +67,19 @@ function normalizeMessageHistoryPage(payload: unknown): MessageLogRecord[] {
     throw new Error("메시지 발송 기록 응답을 확인할 수 없습니다.");
 }
 
+export const MESSAGE_HISTORY_REFRESH_INTERVAL_MS = 5_000;
+
+export function getMessageHistoryRefetchInterval(
+    recordCount: number | undefined,
+    pageSize: number,
+): number {
+    const safePageSize = Math.max(pageSize, 1);
+    const safeRecordCount = Math.max(recordCount ?? 0, 0);
+    const estimatedPageRequests = Math.floor(safeRecordCount / safePageSize) + 1;
+
+    return MESSAGE_HISTORY_REFRESH_INTERVAL_MS * estimatedPageRequests;
+}
+
 async function fetchCompleteMessageHistory(
     limit: number,
     signal?: AbortSignal,
@@ -160,7 +173,14 @@ export function useMessageHistory(limit = 200) {
         queryFn: ({ signal }) => fetchCompleteMessageHistory(limit, signal),
         staleTime: 0,
         refetchOnMount: "always",
-        refetchInterval: 5_000,
+        // Complete-history refreshes make one sequential request per page.
+        // Space a multi-page refresh across the same number of 5-second slots
+        // as the previous single-page poll: two pages refresh every 10 seconds,
+        // three pages every 15 seconds. Manual and mutation invalidations still
+        // refetch immediately; a row can be stale for up to the scaled interval
+        // (plus request time), so only background freshness of older rows stretches.
+        refetchInterval: (query) =>
+            getMessageHistoryRefetchInterval(query.state.data?.length, limit),
     });
 }
 

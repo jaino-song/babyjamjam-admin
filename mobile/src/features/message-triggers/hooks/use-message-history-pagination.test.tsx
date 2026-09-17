@@ -4,7 +4,11 @@ import type { ReactNode } from "react";
 
 import type { MessageLogRecord } from "../types";
 import { messageTriggersApi } from "../api/message-triggers.api";
-import { useMessageHistory } from "./use-message-triggers";
+import {
+  getMessageHistoryRefetchInterval,
+  MESSAGE_HISTORY_REFRESH_INTERVAL_MS,
+  useMessageHistory,
+} from "./use-message-triggers";
 
 jest.mock("../api/message-triggers.api", () => ({
   messageTriggersApi: {
@@ -72,6 +76,14 @@ describe("useMessageHistory pagination", () => {
     mockListHistory.mockReset();
   });
 
+  it("keeps one-page polling cadence while spacing multi-page refreshes", () => {
+    expect(getMessageHistoryRefetchInterval(undefined, 200)).toBe(MESSAGE_HISTORY_REFRESH_INTERVAL_MS);
+    expect(getMessageHistoryRefetchInterval(1, 200)).toBe(MESSAGE_HISTORY_REFRESH_INTERVAL_MS);
+    expect(getMessageHistoryRefetchInterval(200, 200)).toBe(MESSAGE_HISTORY_REFRESH_INTERVAL_MS * 2);
+    expect(getMessageHistoryRefetchInterval(201, 200)).toBe(MESSAGE_HISTORY_REFRESH_INTERVAL_MS * 2);
+    expect(getMessageHistoryRefetchInterval(400, 200)).toBe(MESSAGE_HISTORY_REFRESH_INTERVAL_MS * 3);
+  });
+
   it("loads an older date or recipient from a later page", async () => {
     const firstPage = Array.from({ length: 200 }, (_, index) => createRecord(index + 1));
     const olderMatchingRecord = createRecord(201, {
@@ -92,6 +104,8 @@ describe("useMessageHistory pagination", () => {
     expect(result.current.data).toContainEqual(olderMatchingRecord);
     expect(mockListHistory).toHaveBeenNthCalledWith(1, 200, 0, expect.anything());
     expect(mockListHistory).toHaveBeenNthCalledWith(2, 200, 200, expect.anything());
+    expect(mockListHistory.mock.calls[0][2]).toBeInstanceOf(AbortSignal);
+    expect(mockListHistory.mock.calls[1][2]).toBe(mockListHistory.mock.calls[0][2]);
     expect(mockListHistory).toHaveBeenCalledTimes(2);
   });
 
