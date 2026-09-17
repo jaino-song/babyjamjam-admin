@@ -430,9 +430,14 @@ export function SystemAdminPage(): ReactElement {
   });
   const createBranchMutation = useMutation({
     mutationFn: createSystemAdminBranch,
-    onSuccess: async () => {
+    onSuccess: async (branch) => {
       await queryClient.invalidateQueries({ queryKey: ["systemAdminBranchRequests"] });
       toast({ variant: "success", description: "지점을 저장했어요" });
+      if (branch?.id) {
+        router.replace(`/system-admin?section=${activeSection}&item=${encodeURIComponent(branch.id)}`, { scroll: false });
+      } else {
+        closeDetail();
+      }
     },
     onError: () => toast({ variant: "destructive", description: "지점 저장에 실패했어요" }),
   });
