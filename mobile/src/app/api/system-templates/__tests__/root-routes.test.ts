@@ -71,7 +71,13 @@ describe("system-template root API routes", () => {
   it("requires auth before listing system templates", async () => {
     const response = await listSystemTemplates(noCookieRequest("/api/system-templates"));
     expect(response.status).toBe(401);
-    await expect(response.json()).resolves.toEqual({ error: "Unauthorized" });
+    expect(response.headers.get("Content-Type")).toBe("application/problem+json");
+    await expect(response.json()).resolves.toEqual(expect.objectContaining({
+      code: "AUTH_REQUIRED",
+      status: 401,
+      outcome: "NOT_APPLIED",
+      error: "Unauthorized",
+    }));
     expect(mockGet).not.toHaveBeenCalled();
   });
 

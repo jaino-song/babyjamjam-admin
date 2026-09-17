@@ -46,7 +46,13 @@ describe("GET /api/eformsign-docs/feedback-template-id", () => {
     const response = await GET(createRequest(false));
 
     expect(response.status).toBe(401);
-    await expect(response.json()).resolves.toEqual({ error: "Unauthorized" });
+    expect(response.headers.get("Content-Type")).toBe("application/problem+json");
+    await expect(response.json()).resolves.toEqual(expect.objectContaining({
+      code: "AUTH_REQUIRED",
+      status: 401,
+      outcome: "NOT_APPLIED",
+      error: "Unauthorized",
+    }));
     expect(mockServerGet).not.toHaveBeenCalled();
   });
 });

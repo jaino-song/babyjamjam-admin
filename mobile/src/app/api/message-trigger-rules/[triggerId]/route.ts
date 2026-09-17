@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest } from "next/server";
 import { serverAPIClient } from "@/lib/api/server";
 import {
   backendJsonResponse,
@@ -6,8 +6,11 @@ import {
   getAuthToken,
   messageTriggerUpstreamErrorResponse,
   parseBody,
-  unauthorizedResponse,
 } from "@/lib/api/route-utils";
+import {
+  unauthorizedProblemResponse,
+  validationProblemResponse,
+} from "@/lib/api/problem-responses";
 import { updateMessageTriggerRuleSchema } from "@babyjamjam/shared/types/message";
 
 type RouteContext = {
@@ -18,8 +21,10 @@ function isValidTriggerId(triggerId: string): boolean {
   return /^[A-Za-z0-9_-]+(?::[A-Za-z0-9_-]+)*$/.test(triggerId);
 }
 
-function invalidTriggerIdResponse(): NextResponse {
-  return NextResponse.json({ error: "Invalid trigger id" }, { status: 400 });
+function invalidTriggerIdResponse() {
+  return validationProblemResponse("Invalid trigger id", [
+    { pointer: "/triggerId", code: "INVALID_FORMAT", detail: "입력 형식이 올바르지 않아요.", location: "path" },
+  ]);
 }
 
 function triggerRulePath(triggerId: string): string {
@@ -30,7 +35,7 @@ export async function GET(request: NextRequest, context: RouteContext) {
   try {
     const token = getAuthToken(request);
     if (!token) {
-      return unauthorizedResponse("Unauthorized");
+      return unauthorizedProblemResponse();
     }
 
     const { triggerId } = await context.params;
@@ -50,7 +55,7 @@ export async function GET(request: NextRequest, context: RouteContext) {
 export async function PATCH(request: NextRequest, context: RouteContext) {
   const token = getAuthToken(request);
   if (!token) {
-    return unauthorizedResponse("Unauthorized");
+    return unauthorizedProblemResponse();
   }
 
   const { triggerId } = await context.params;
@@ -77,7 +82,7 @@ export async function DELETE(request: NextRequest, context: RouteContext) {
   try {
     const token = getAuthToken(request);
     if (!token) {
-      return unauthorizedResponse("Unauthorized");
+      return unauthorizedProblemResponse();
     }
 
     const { triggerId } = await context.params;

@@ -5,8 +5,8 @@ import {
     errorResponse,
     getAuthHeaders,
     getAuthToken,
-    unauthorizedResponse,
 } from "@/lib/api/route-utils";
+import { unauthorizedProblemResponse } from "@/lib/api/problem-responses";
 
 const ALLOWED_QUERY_KEYS = ["page", "limit", "search", "phone", "status", "readState"] as const;
 
@@ -14,7 +14,7 @@ export async function GET(request: NextRequest) {
     try {
         const token = getAuthToken(request);
         if (!token) {
-            return unauthorizedResponse("Unauthorized");
+            return unauthorizedProblemResponse();
         }
 
         const searchParams = request.nextUrl.searchParams;

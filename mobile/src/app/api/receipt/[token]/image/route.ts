@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { serverAPIClient } from "@/lib/api/server";
-import { errorResponse, withNoStore } from "@/lib/api/route-utils";
-import { getReceiptAccessToken, receiptBackendClientErrorResponse } from "@/lib/api/receipt-auth";
+import { errorResponse } from "@/lib/api/route-utils";
+import { getReceiptAccessToken, receiptAccessRequiredResponse, receiptBackendClientErrorResponse } from "@/lib/api/receipt-auth";
 
 interface AxiosLikeResponse {
     status?: number;
@@ -32,7 +32,7 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
     const { token } = await params;
     const accessToken = getReceiptAccessToken(request);
     if (!accessToken) {
-        return withNoStore(NextResponse.json({ reason: "access_required" }, { status: 401 }));
+        return receiptAccessRequiredResponse();
     }
 
     const download = request.nextUrl.searchParams.get("download") === "1" ? "1" : "0";

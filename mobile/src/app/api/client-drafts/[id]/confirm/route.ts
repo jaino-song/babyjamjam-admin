@@ -7,8 +7,8 @@ import {
     getAuthHeaders,
     getAuthToken,
     parseBody,
-    unauthorizedResponse,
 } from "@/lib/api/route-utils";
+import { unauthorizedProblemResponse } from "@/lib/api/problem-responses";
 
 type RouteParams = { params: Promise<{ id: string }> };
 
@@ -38,7 +38,7 @@ const confirmDraftSchema = z.union([newClientShape, clientUpdateShape]);
 // POST /api/client-drafts/[id]/confirm - 초안 확정 (backend 409/501 status preserved)
 export async function POST(request: NextRequest, { params }: RouteParams) {
     const token = getAuthToken(request);
-    if (!token) return unauthorizedResponse("Unauthorized");
+    if (!token) return unauthorizedProblemResponse();
 
     const { id } = await params;
 
