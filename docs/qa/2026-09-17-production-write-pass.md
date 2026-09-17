@@ -219,3 +219,15 @@
 - Updated customer address to `QA 테스트 전용 수정 주소` and enabled breast-pump rental; save, reload and reselection show both changes retained, original requested name/phone unchanged.
 - Created employee133 `테스트 제공인력` through UI with standard grade, Namdong work area and assignment available. Updated grade to best; reload/reselection shows best grade, exact requested name/phone and Namdong area retained.
 - Read-only DB verification confirms both new IDs belong to the QA branch; customer address/birthday and employee grade/workArea/availability match UI. No actual contract or message send invoked in this pass. Remaining broad QA is not complete.
+
+
+## Actual send attempt — 2026-09-18
+
+- User explicitly requested actual contract/SMS QA. Created contract from customer163 detail with QA template, employee133, 2026 A가-1형 5days, start2026-09-21/end2026-09-29/payment2026-09-18. Clicked final generation once.
+- FAIL/UNCONFIRMED: direct dispatch-headless reached top-level provider send then no confirmation popup; terminal SDK callback timed out after30s. UI displays unknown creation status with retry. No repeated send invoked.
+- Provider document management filtered exact QA template with all statuses selected shows total0. Dev DB customer163 document mirrors=[] and create jobs=[]. This does not prove remote non-delivery after an ambiguous send attempt.
+- The direct headless path ran even with SCHEDULERS_ENABLED=false; queued job workers remain disabled. Customer service fields were updated before the provider attempt (visible behind modal).
+- SMS QA branch is unapproved. Settings requires Aligo terms/privacy third-party consent plus sender confirmation before application; action-time confirmation requested and pending. Do not silently override approval status or consent fields.
+- Browser contract error and SMS consent screens preserved for continuation. Actual contract delivery, SMS, recipient receipt and document-open checks are still incomplete.
+
+- Dispatch intent read confirms id `96b12943-acde-489c-b2c1-12eae12a6601`, customer163, exact QA template, status `uncertain`, attempt_count1, provider_document_id null, no reconciliation. This is an explicit ambiguity fence, not missing queue processing. Supported owner/admin reconciliation requires verified delivered/not-delivered outcome before another send.
