@@ -5,16 +5,17 @@ import { agentAutomationEffectDigest, agentAutomationRecordDigest } from "./agen
 
 const digest = z.string().regex(/^[a-f0-9]{64}$/);
 const positiveId = z.number().int().positive().max(Number.MAX_SAFE_INTEGER);
+const ruleId = z.string().min(1).max(200).regex(/^[A-Za-z0-9:_-]+$/);
 
 export const AgentAutomationEffectStorageSchema = AgentAutomationEffectSummarySchema
     .omit({ effectRef: true, recipientRef: true })
     .extend({
-        ruleId: z.string().min(1).max(200).regex(/^[A-Za-z0-9:_-]+$/),
+        ruleId,
         scheduleId: positiveId.nullable(),
         recipientDigest: digest, sourceDigest: digest, templateDigest: digest, policyDigest: digest, recipeDigest: digest,
     }).strict().superRefine((effect, context) => {
         if ((effect.kind === "client-rule") !== (effect.scheduleId === null)
-            || (effect.kind === "client-rule" && effect.recipientType !== "client")) {
+            || ((effect.kind === "client-rule") !== (effect.recipientType === "client"))) {
             context.addIssue({ code: "custom", message: "Inconsistent automation effect target" });
         }
     });
@@ -22,8 +23,11 @@ export const AgentAutomationEffectStorageSchema = AgentAutomationEffectSummarySc
 export const AgentAutomationScopeStorageSchema = z.object({
     branchId: z.uuid(), clientId: positiveId, clientIdentity: digest,
     kind: AgentAutomationEffectSummarySchema.shape.kind, scheduleId: positiveId.nullable(),
+    ruleId, recipientType: AgentAutomationEffectSummarySchema.shape.recipientType, scheduleIdentity: digest.nullable(),
 }).strict().superRefine((scope, context) => {
-    if ((scope.kind === "client-rule") !== (scope.scheduleId === null)) {
+    if ((scope.kind === "client-rule") !== (scope.scheduleId === null)
+        || (scope.scheduleId === null) !== (scope.scheduleIdentity === null)
+        || (scope.kind === "client-rule") !== (scope.recipientType === "client")) {
         context.addIssue({ code: "custom", message: "Inconsistent automation scope" });
     }
 });
@@ -45,7 +49,8 @@ export const AgentAutomationAuthorityStorageSchema = z.object({
     try {
         if (record.recordDigest !== agentAutomationRecordDigest(record)
             || record.scopeEffectDigest !== agentAutomationEffectDigest(record.effects)
-            || record.effects.some((effect) => effect.kind !== record.scope.kind || effect.scheduleId !== record.scope.scheduleId)
+            || record.effects.some((effect) => effect.kind !== record.scope.kind || effect.scheduleId !== record.scope.scheduleId
+                || effect.ruleId !== record.scope.ruleId || effect.recipientType !== record.scope.recipientType)
             || (record.decision === "allow" && (record.noSend || !record.effects.length
                 || (record.origin.kind === "task" && !record.origin.consentEventId)))
             || (record.decision === "none" && record.effects.length !== 0)) {

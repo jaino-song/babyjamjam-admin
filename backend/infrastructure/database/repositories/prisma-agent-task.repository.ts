@@ -58,6 +58,7 @@ import {
 import { toAgentActionEntity } from "./prisma-agent-action.repository";
 import { withLinkedActionRecovery } from "./prisma-agent-linked-action-recovery";
 import { PrismaService } from "infrastructure/database/prisma.service";
+import { parseAgentTaskAutomationState } from "application/agent/agent-automation-question";
 import {
     lifecycleTaskActionEvidenceBlocks,
     type AgentTaskLifecycleActionEvidence,
@@ -282,8 +283,13 @@ function parseDraft(value: unknown): AgentTaskDraft {
     const orderedChoiceRefs = value["orderedChoiceRefs"].map((ref) => requireReference(ref));
     const serverValue = value["server"];
     if (!isRecord(serverValue)) throw new InvalidAgentTaskStorageError();
+    const automation = serverValue["automation"] === undefined ? undefined : parseAgentTaskAutomationState(serverValue["automation"]);
+    if (automation === null || (automation && automation.noSendAtPresentation !== constraints.data.noSend)) {
+        throw new InvalidAgentTaskStorageError();
+    }
     const server: AgentTaskProtectedState = {
         references: parseServerReferences(serverValue["references"]),
+        ...(automation ? { automation } : {}),
         ...(optionalString(serverValue["actionExpectedRevision"]) === undefined
             ? {}
             : { actionExpectedRevision: optionalString(serverValue["actionExpectedRevision"]) }),

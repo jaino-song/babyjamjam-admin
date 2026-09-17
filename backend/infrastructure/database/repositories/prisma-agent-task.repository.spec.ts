@@ -1,5 +1,7 @@
 import { PrismaAgentTaskRepository } from "./prisma-agent-task.repository";
-import { createEmptyAgentTaskDraft, type AgentTaskDraft } from "domain/entities/agent-task.entity";
+import { createEmptyAgentTaskDraft, toAgentTaskContract, type AgentTaskDraft } from "domain/entities/agent-task.entity";
+import { createAgentAutomationQuestion } from "application/agent/agent-automation-question";
+import type { AgentAutomationEffect } from "domain/entities/agent-automation-consent";
 
 const USER_ID = "10000000-0000-4000-8000-000000000001";
 const BRANCH_ID = "20000000-0000-4000-8000-000000000001";
@@ -356,6 +358,40 @@ describe("PrismaAgentTaskRepository", () => {
         const result = await repository.findOwned(TASK_ID, owner);
 
         expect(result).toMatchObject({ status: "found", task: { draft: { clearedFields: [] } } });
+    });
+
+    it("restores the protected question without exposing private recipe descriptors", async () => {
+        const effects: AgentAutomationEffect[] = [{ kind: "client-rule", ruleId: "private-rule", scheduleId: null,
+            recipientType: "client", templateKey: "CLIENT_GREETING", change: "create",
+            recipientDigest: HASH, sourceDigest: HASH, templateDigest: HASH, policyDigest: HASH, recipeDigest: HASH }];
+        const question = createAgentAutomationQuestion({ effects, availability: "available" });
+        const value = draft();
+        value.server.automation = { version: 1, question, effects, noSendAtPresentation: false };
+        const prisma = { agent_task: { findFirst: jest.fn().mockResolvedValue(taskRecord({ draft: value })) },
+            agent_session: { findFirst: jest.fn().mockResolvedValue(sessionLockRow()) } };
+        const result = await new PrismaAgentTaskRepository(prisma as never).findOwned(TASK_ID, owner);
+        if (result.status !== "found") throw new Error("protected question was not restored");
+        expect(result.task.draft.server.automation).toEqual(value.server.automation);
+        const snapshot = toAgentTaskContract(result.task);
+        expect(snapshot.automation).toEqual(question);
+        expect(JSON.stringify(snapshot)).not.toContain("private-rule");
+        expect(JSON.stringify(snapshot)).not.toContain("recipientDigest");
+    });
+
+    it.each([null, { version: 1 }, { version: 2 }])("refuses malformed present automation state instead of treating it as legacy: %p", async (automation) => {
+        const value = { ...draft(), server: { ...draft().server, automation } };
+        const prisma = { agent_task: { findFirst: jest.fn().mockResolvedValue(taskRecord({ draft: value as unknown as AgentTaskDraft })) },
+            agent_session: { findFirst: jest.fn().mockResolvedValue(sessionLockRow()) } };
+        await expect(new PrismaAgentTaskRepository(prisma as never).findOwned(TASK_ID, owner)).resolves.toEqual({ status: "storage_failure" });
+    });
+
+    it("refuses a stored question whose no-send constraint disagrees with its draft", async () => {
+        const question = createAgentAutomationQuestion({ effects: [], availability: "none" });
+        const value = draft();
+        value.server.automation = { version: 1, question, effects: [], noSendAtPresentation: true };
+        const prisma = { agent_task: { findFirst: jest.fn().mockResolvedValue(taskRecord({ draft: value })) },
+            agent_session: { findFirst: jest.fn().mockResolvedValue(sessionLockRow()) } };
+        await expect(new PrismaAgentTaskRepository(prisma as never).findOwned(TASK_ID, owner)).resolves.toEqual({ status: "storage_failure" });
     });
 
     it("round-trips an explicit clear marker through stored draft JSON", async () => {

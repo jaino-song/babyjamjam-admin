@@ -5,6 +5,20 @@ import { agentBindingHash } from "domain/repositories/agent-linked-action.types"
 
 const DIGEST = /^[a-f0-9]{64}$/;
 
+/** Lookup provenance before comparing creation identities, including after numeric ID reuse. */
+export function agentAutomationLineageKey(scope: AgentAutomationScope): string {
+    return agentBindingHash({ branchId: scope.branchId, clientId: scope.clientId, kind: scope.kind,
+        ruleId: scope.ruleId, scheduleId: scope.scheduleId, recipientType: scope.recipientType });
+}
+
+export function agentAutomationScheduleIdentity(incarnationId: string): string {
+    const normalized = incarnationId.toLowerCase();
+    if (!/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(normalized)) {
+        throw new Error("Invalid schedule incarnation identity");
+    }
+    return agentBindingHash({ version: 1, resource: "employee_schedule", incarnationId: normalized });
+}
+
 export function agentAutomationEffectIdentity(effect: AgentAutomationEffect): string {
     return JSON.stringify([effect.kind, effect.ruleId, effect.scheduleId, effect.recipientType]);
 }
@@ -82,7 +96,8 @@ export function resolveAgentAutomationAuthority(input: {
                 || record.recordDigest !== agentAutomationRecordDigest(record)
                 || record.scopeEffectDigest !== agentAutomationEffectDigest(record.effects)
                 || !DIGEST.test(record.reviewedEffectDigest) || !DIGEST.test(record.reviewedPolicyDigest)
-                || record.effects.some((effect) => effect.kind !== record.scope.kind || effect.scheduleId !== record.scope.scheduleId)
+                || record.effects.some((effect) => effect.kind !== record.scope.kind || effect.scheduleId !== record.scope.scheduleId
+                    || effect.ruleId !== record.scope.ruleId || effect.recipientType !== record.scope.recipientType)
                 || (record.decision === "allow" && (record.noSend || !record.effects.length
                     || (record.origin.kind === "task" && !record.origin.consentEventId)))
                 || (record.decision === "none" && record.effects.length !== 0)) {

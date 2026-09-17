@@ -9,7 +9,7 @@ function authority(): AgentAutomationAuthority {
         recipientType: "client", templateKey: "CLIENT_GREETING", change: "create", recipientDigest: hash,
         sourceDigest: hash, templateDigest: hash, policyDigest: hash, recipeDigest: hash }];
     const record: AgentAutomationAuthority = { version: 1, id: id(1), scope: { branchId: id(2), clientId: 1,
-        clientIdentity: hash, kind: "client-rule", scheduleId: null }, sequence: 1, previousId: null,
+        clientIdentity: hash, kind: "client-rule", ruleId: "rule-a", recipientType: "client", scheduleId: null, scheduleIdentity: null }, sequence: 1, previousId: null,
         origin: { kind: "task", userId: id(3), actionId: id(4), taskId: id(5), taskRevision: 4, consentEventId: id(6) },
         decision: "allow", noSend: false, effects, scopeEffectDigest: agentAutomationEffectDigest(effects),
         reviewedEffectDigest: agentAutomationEffectDigest(effects), reviewedPolicyDigest: agentAutomationPolicyDigest(effects),

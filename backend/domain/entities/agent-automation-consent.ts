@@ -1,4 +1,12 @@
-import type { AgentAutomationEffectSummary } from "@babyjamjam/shared";
+import type { AgentAutomationEffectSummary, AgentAutomationQuestion } from "@babyjamjam/shared";
+
+/** Protected question recipe; only its public question may enter an owned REST snapshot. */
+export interface AgentTaskAutomationState {
+    version: 1;
+    question: AgentAutomationQuestion;
+    effects: AgentAutomationEffect[];
+    noSendAtPresentation: boolean;
+}
 
 /** Private, digest-only recipe. This is never model input or a public mutation. */
 export interface AgentAutomationEffect {
@@ -21,7 +29,10 @@ export interface AgentAutomationScope {
     /** Includes the original resource creation identity, not mutable updatedAt. */
     clientIdentity: string;
     kind: AgentAutomationEffect["kind"];
+    ruleId: string;
     scheduleId: number | null;
+    scheduleIdentity: string | null;
+    recipientType: AgentAutomationEffect["recipientType"];
 }
 
 export type AgentAutomationOrigin =

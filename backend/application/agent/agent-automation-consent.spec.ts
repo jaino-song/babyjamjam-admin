@@ -1,11 +1,12 @@
 import type { AgentAutomationAuthority, AgentAutomationEffect, AgentAutomationScope } from "domain/entities/agent-automation-consent";
 import {
     agentAutomationEffectDigest, canonicalAgentAutomationEffects, agentAutomationPolicyDigest,
-    agentAutomationRecordDigest, resolveAgentAutomationAuthority,
+    agentAutomationRecordDigest, resolveAgentAutomationAuthority, agentAutomationLineageKey, agentAutomationScheduleIdentity,
 } from "./agent-automation-consent";
 
 const hash = (s: string) => s.repeat(64);
-const scope: AgentAutomationScope = { branchId: "branch-a", clientId: 51, clientIdentity: hash("c"), kind: "client-rule", scheduleId: null };
+const scope: AgentAutomationScope = { branchId: "branch-a", clientId: 51, clientIdentity: hash("c"), kind: "client-rule",
+    ruleId: "rule-a", scheduleId: null, scheduleIdentity: null, recipientType: "client" };
 function effect(overrides: Partial<AgentAutomationEffect> = {}): AgentAutomationEffect {
     return { kind: "client-rule", ruleId: "rule-a", scheduleId: null, recipientType: "client", templateKey: "CLIENT_GREETING",
         change: "create", recipientDigest: hash("a"), sourceDigest: hash("b"), templateDigest: hash("c"),
@@ -25,6 +26,28 @@ const resolve = (records: AgentAutomationAuthority[], knownTaskOrigin = false) =
 });
 
 describe("canonical automation consent and append-only authority", () => {
+    it("separates independent rule and recipient heads while detecting reused numeric IDs", () => {
+        const otherRuleScope = { ...scope, ruleId: "rule-b" };
+        expect(agentAutomationLineageKey(otherRuleScope)).not.toBe(agentAutomationLineageKey(scope));
+        expect(agentAutomationLineageKey({ ...scope, clientIdentity: hash("9") })).toBe(agentAutomationLineageKey(scope));
+        const scheduleScope: AgentAutomationScope = { ...scope, kind: "employee-assignment", scheduleId: 12,
+            scheduleIdentity: agentAutomationScheduleIdentity("75000000-0000-4000-8000-000000000001"), recipientType: "primary-employee" };
+        const reused = { ...scheduleScope, scheduleIdentity: agentAutomationScheduleIdentity("75000000-0000-4000-8000-000000000002") };
+        expect(agentAutomationLineageKey(reused)).toBe(agentAutomationLineageKey(scheduleScope));
+        expect(agentAutomationLineageKey({ ...scheduleScope, recipientType: "secondary-employee" })).not.toBe(agentAutomationLineageKey(scheduleScope));
+        const scheduleEffect = effect({ kind: "employee-assignment", scheduleId: 12, recipientType: "primary-employee" });
+        const scheduleRecord = record({ scope: scheduleScope, effects: [scheduleEffect], scopeEffectDigest: agentAutomationEffectDigest([scheduleEffect]) });
+        expect(resolveAgentAutomationAuthority({ records: [scheduleRecord], scope: scheduleScope, effect: scheduleEffect,
+            currentScopeEffectDigest: scheduleRecord.scopeEffectDigest, knownTaskOrigin: true }).status).toBe("allowed");
+        expect(resolveAgentAutomationAuthority({ records: [scheduleRecord], scope: reused, effect: scheduleEffect,
+            currentScopeEffectDigest: scheduleRecord.scopeEffectDigest, knownTaskOrigin: true })).toEqual({ status: "refused", reason: "scope-mismatch" });
+        const otherEffect = effect({ ruleId: "rule-b" });
+        const otherRecord = record({ scope: otherRuleScope, effects: [otherEffect], decision: "deny", scopeEffectDigest: agentAutomationEffectDigest([otherEffect]) });
+        expect(resolveAgentAutomationAuthority({ records: [otherRecord], scope: otherRuleScope, effect: otherEffect,
+            currentScopeEffectDigest: otherRecord.scopeEffectDigest, knownTaskOrigin: true }).status).toBe("suppressed");
+        expect(resolve([record()]).status).toBe("allowed");
+    });
+
     it("binds every member while ignoring input ordering", () => {
         const primary = effect({ kind: "employee-assignment", ruleId: "rule-b", scheduleId: 12, recipientType: "primary-employee" });
         const secondary = effect({ ...primary, recipientType: "secondary-employee", recipientDigest: hash("f") });

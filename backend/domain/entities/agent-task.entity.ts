@@ -3,6 +3,7 @@ import type {
     AgentTaskCapabilityId,
     AgentTaskState,
 } from "@babyjamjam/shared";
+import type { AgentTaskAutomationState } from "./agent-automation-consent";
 
 /**
  * The task row owns identity, lifecycle, revision and retention timestamps.
@@ -59,6 +60,7 @@ export interface AgentTaskProtectedState {
     references: AgentTaskServerReferences;
     actionExpectedRevision?: string;
     actionProposalRevision?: number;
+    automation?: AgentTaskAutomationState;
 }
 
 export interface AgentTaskOwner {
@@ -167,6 +169,7 @@ export function toAgentTaskContract(entity: AgentTaskEntity): AgentTask {
         orderedChoiceRefs: entity.draft.orderedChoiceRefs,
         target,
         consent: entity.draft.consent,
+        ...(entity.draft.server.automation ? { automation: entity.draft.server.automation.question } : {}),
         action,
         times: {
             createdAt: entity.createdAt.toISOString(),

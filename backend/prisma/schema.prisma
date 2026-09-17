@@ -526,6 +526,7 @@ model employee {
 
 model employee_schedule {
   id                      Int                        @id @default(autoincrement())
+  incarnationId           String                     @unique @default(dbgenerated("gen_random_uuid()")) @map("incarnation_id") @db.Uuid
   primaryEmployeeId       Int                        @map("primary_employee_id") @db.SmallInt
   workAddress             String                     @map("work_address")
   startDate               DateTime                   @map("start_date") @db.Date

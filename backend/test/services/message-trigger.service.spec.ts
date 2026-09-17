@@ -3404,7 +3404,7 @@ describe("MessageTriggerService", () => {
     it.each(CONFIGURABLE_SMS_TRIGGER_TEMPLATE_KEYS)(
         "builds every required %s variable from a complete client record",
         (templateKey) => {
-                const rule = createRule({
+            const rule = createRule({
                 eventType: MessageTriggerEventType.SERVICE_START,
                 offsetType: MessageTriggerOffsetType.BEFORE_DAYS,
                 offsetDays: 7,
