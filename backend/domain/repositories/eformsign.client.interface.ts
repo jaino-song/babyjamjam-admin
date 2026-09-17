@@ -84,6 +84,31 @@ export interface EformsignReviewerMember {
     phoneNumber?: string;
 }
 
+/** Raw template workflow metadata returned by eformsign's forms endpoint. */
+export interface EformsignTemplateStepOption {
+    use_receipient_specified?: boolean;
+    specified_recipient_type?: string;
+    specified_recipient_seq?: number | string;
+    receipients?: unknown[];
+}
+
+export interface EformsignTemplateStepSetting {
+    seq?: number | string;
+    type?: string;
+    step_group?: number | string;
+    use_receipient_specified?: boolean;
+    specified_recipient_type?: string;
+    specified_recipient_seq?: number | string;
+    option?: EformsignTemplateStepOption;
+}
+
+export interface EformsignTemplateWorkflowConfig {
+    form_id?: string;
+    config?: {
+        step_settings?: EformsignTemplateStepSetting[];
+    };
+}
+
 export interface CreateDocumentPayload {
     templateId: string;
     /** Stable action identity used by the provider to deduplicate a retried dispatch. */
@@ -164,6 +189,11 @@ export interface IEformsignClientRepository {
     ): Promise<EformsignApiDocumentResponse[]>;
     getDocument(accessToken: string, documentId: string): Promise<EformsignApiDocumentResponse>;
     createDocument(accessToken: string, payload: CreateDocumentPayload): Promise<CreateDocumentResponse>;
+    /** Read the raw workflow metadata required before a contract dispatch. */
+    getTemplateWorkflowConfig(
+        accessToken: string,
+        templateId: string,
+    ): Promise<EformsignTemplateWorkflowConfig>;
     /** Pre-specified recipient of the template's reviewer step, or null if the template has none. */
     getTemplateReviewer(accessToken: string, templateId: string): Promise<EformsignReviewerMember | null>;
 }

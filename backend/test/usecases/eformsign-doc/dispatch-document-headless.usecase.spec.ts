@@ -8,6 +8,32 @@ const TEST_PRINCIPAL = {
     branchRole: "owner",
 } as const;
 
+const TEMPLATE_WORKFLOW_CONFIG = {
+    form_id: "template-1",
+    config: {
+        step_settings: [
+            { seq: 1, type: "write", step_group: 1, option: {} },
+            { seq: 2, type: "participant", step_group: 2, option: {} },
+            { seq: 3, type: "participant", step_group: 3, option: {} },
+            { seq: 4, type: "complete", step_group: 4, option: {} },
+        ],
+    },
+};
+
+function createWorkflowClient(workflowConfig: unknown = TEMPLATE_WORKFLOW_CONFIG, workflowError?: unknown) {
+    const getTemplateWorkflowConfig = jest.fn();
+    if (workflowError !== undefined) {
+        getTemplateWorkflowConfig.mockRejectedValue(workflowError);
+    } else {
+        getTemplateWorkflowConfig.mockResolvedValue(workflowConfig);
+    }
+    return { getTemplateWorkflowConfig };
+}
+
+function resolveEffectiveTemplateId(templateId?: string | null): string {
+    return templateId?.trim() || "template-1";
+}
+
 function createCredentialBoundary() {
     return {
         withCredentials: jest.fn(async (
@@ -23,7 +49,7 @@ describe("DispatchDocumentHeadlessUsecase", () => {
         const assignmentGuard = { assertLiveAssignedProvider: jest.fn() };
         const headless = { dispatchCreation: jest.fn() };
         const usecase = new DispatchDocumentHeadlessUsecase(
-            { generateDocumentOptions: jest.fn() } as never,
+            { generateDocumentOptions: jest.fn(), resolveEffectiveTemplateId } as never,
             headless as never,
             { findByArea: jest.fn() } as never,
             createCredentialBoundary() as never,
@@ -34,6 +60,7 @@ describe("DispatchDocumentHeadlessUsecase", () => {
             assignmentGuard as never,
             { findByClientId: jest.fn() } as never,
             { execute: jest.fn() } as never,
+            createWorkflowClient() as never,
         );
 
         await expect(usecase.execute("branch-1", {
@@ -55,7 +82,7 @@ describe("DispatchDocumentHeadlessUsecase", () => {
         const assignmentGuard = { assertLiveAssignedProvider: jest.fn() };
         const headless = { dispatchCreation: jest.fn() };
         const usecase = new DispatchDocumentHeadlessUsecase(
-            { generateDocumentOptions: jest.fn() } as never,
+            { generateDocumentOptions: jest.fn(), resolveEffectiveTemplateId } as never,
             headless as never,
             { findByArea: jest.fn() } as never,
             createCredentialBoundary() as never,
@@ -66,6 +93,7 @@ describe("DispatchDocumentHeadlessUsecase", () => {
             assignmentGuard as never,
             { findByClientId: jest.fn() } as never,
             { execute: jest.fn() } as never,
+            createWorkflowClient() as never,
         );
 
         await expect(usecase.execute("branch-1", {
@@ -86,6 +114,7 @@ describe("DispatchDocumentHeadlessUsecase", () => {
 
     it("persists the current eformsign status after headless creation", async () => {
         const eformsignService = {
+            resolveEffectiveTemplateId,
             generateDocumentOptions: jest.fn().mockReturnValue({
                 mode: { type: "01" },
                 prefill: { document_name: "산모신생아건강관리서비스 계약서" },
@@ -153,6 +182,7 @@ describe("DispatchDocumentHeadlessUsecase", () => {
             assignmentGuard as never,
             { findByClientId: jest.fn().mockResolvedValue([]) } as never,
             { execute: jest.fn().mockResolvedValue([]) } as never,
+            createWorkflowClient() as never,
         );
 
         await expect(usecase.execute("branch-1", {
@@ -187,6 +217,7 @@ describe("DispatchDocumentHeadlessUsecase", () => {
 
     it("falls back to the initial sign-request status when eformsign status fetch fails", async () => {
         const eformsignService = {
+            resolveEffectiveTemplateId,
             generateDocumentOptions: jest.fn().mockReturnValue({ mode: { type: "01" } }),
         };
         const headlessService = {
@@ -235,6 +266,7 @@ describe("DispatchDocumentHeadlessUsecase", () => {
             assignmentGuard as never,
             { findByClientId: jest.fn().mockResolvedValue([]) } as never,
             { execute: jest.fn().mockResolvedValue([]) } as never,
+            createWorkflowClient() as never,
         );
 
         await expect(usecase.execute("branch-1", {
@@ -273,7 +305,7 @@ describe("DispatchDocumentHeadlessUsecase", () => {
             ),
         };
         const usecase = new DispatchDocumentHeadlessUsecase(
-            { generateDocumentOptions: jest.fn() } as never,
+            { generateDocumentOptions: jest.fn(), resolveEffectiveTemplateId } as never,
             headlessService as never,
             { findByArea: jest.fn() } as never,
             createCredentialBoundary() as never,
@@ -284,6 +316,7 @@ describe("DispatchDocumentHeadlessUsecase", () => {
             assignmentGuard as never,
             { findByClientId: jest.fn().mockResolvedValue([]) } as never,
             { execute: jest.fn().mockResolvedValue([]) } as never,
+            createWorkflowClient() as never,
         );
 
         await expect(usecase.execute("branch-1", {
@@ -307,7 +340,7 @@ describe("DispatchDocumentHeadlessUsecase", () => {
 
     it("returns the remote document id when local persistence fails", async () => {
         const usecase = new DispatchDocumentHeadlessUsecase(
-            { generateDocumentOptions: jest.fn().mockReturnValue({}) } as never,
+            { generateDocumentOptions: jest.fn().mockReturnValue({}), resolveEffectiveTemplateId } as never,
             { dispatchCreation: jest.fn().mockResolvedValue({ ok: true, documentId: "remote-1", durationMs: 50 }) } as never,
             { findByArea: jest.fn().mockResolvedValue({ templateId: "template-1" }) } as never,
             createCredentialBoundary() as never,
@@ -318,6 +351,7 @@ describe("DispatchDocumentHeadlessUsecase", () => {
             { assertLiveAssignedProvider: jest.fn() } as never,
             { findByClientId: jest.fn().mockResolvedValue([]) } as never,
             { execute: jest.fn().mockResolvedValue([]) } as never,
+            createWorkflowClient() as never,
         );
 
         await expect(usecase.execute("branch-1", {
@@ -341,10 +375,19 @@ describe("DispatchDocumentHeadlessUsecase", () => {
             fetchAll?: jest.Mock;
             fetchOne?: jest.Mock;
             createDoc?: jest.Mock;
+            workflowConfig?: unknown;
+            workflowError?: unknown;
+            dispatchBoundary?: Record<string, jest.Mock>;
+            eformsignService?: Record<string, jest.Mock>;
+            workflowClient?: Record<string, jest.Mock>;
+            areaTemplate?: unknown;
         }) => new DispatchDocumentHeadlessUsecase(
-            { generateDocumentOptions: jest.fn().mockReturnValue({}) } as never,
+            (overrides.eformsignService ?? {
+                generateDocumentOptions: jest.fn().mockReturnValue({}),
+                resolveEffectiveTemplateId,
+            }) as never,
             { dispatchCreation: overrides.dispatchCreation } as never,
-            { findByArea: jest.fn().mockResolvedValue(null) } as never,
+            { findByArea: jest.fn().mockResolvedValue(overrides.areaTemplate ?? null) } as never,
             createCredentialBoundary() as never,
             { execute: overrides.createDoc ?? jest.fn().mockResolvedValue(undefined) } as never,
             {
@@ -361,12 +404,118 @@ describe("DispatchDocumentHeadlessUsecase", () => {
                         : jest.fn().mockRejectedValue(new Error("remote list unavailable"))
                 ),
             } as never,
+            (overrides.workflowClient ?? createWorkflowClient(overrides.workflowConfig, overrides.workflowError)) as never,
+            undefined,
+            overrides.dispatchBoundary as never,
         );
 
         const params = {
             clientId: 7,
             contractData: { customerName: "김고객", customerContact: "010-0000-0000" } as never,
         };
+
+        it("uses one resolved override for the workflow read and generated mode", async () => {
+            const resolve = jest.fn((templateId?: string | null) => templateId?.trim() || "template-1");
+            const generate = jest.fn().mockReturnValue({ mode: { type: "01" } });
+            const eformsignService = {
+                resolveEffectiveTemplateId: resolve,
+                generateDocumentOptions: generate,
+            };
+            const workflowClient = createWorkflowClient({
+                form_id: "template-override",
+                config: {
+                    step_settings: [
+                        { seq: 1, type: "write", step_group: 1, option: {} },
+                        { seq: 2, type: "participant", step_group: 2, option: {} },
+                        { seq: 3, type: "reviewer", step_group: 3, option: {} },
+                        { seq: 4, type: "complete", step_group: 4, option: {} },
+                    ],
+                },
+            });
+            const usecase = buildUsecase({
+                dispatchCreation: jest.fn().mockResolvedValue({ ok: true, documentId: "doc-override", durationMs: 1 }),
+                eformsignService,
+                workflowClient,
+                areaTemplate: { templateId: "template-override" },
+            });
+
+            await expect(usecase.execute("branch-1", {
+                clientId: 7,
+                contractData: {
+                    customerName: "김고객",
+                    customerContact: "010-0000-0000",
+                    area: "seoul",
+                } as never,
+            }, TEST_PRINCIPAL)).resolves.toEqual(expect.objectContaining({ ok: true, documentId: "doc-override" }));
+
+            expect(resolve).toHaveBeenCalledTimes(1);
+            expect(resolve).toHaveBeenCalledWith("template-override");
+            expect(workflowClient.getTemplateWorkflowConfig).toHaveBeenCalledWith(
+                "access-token",
+                "template-override",
+            );
+            expect(generate).toHaveBeenCalledWith(
+                expect.any(Object),
+                "access-token",
+                "refresh-token",
+                "template-override",
+                expect.objectContaining({ templateId: "template-override" }),
+            );
+        });
+
+        it.each([
+            ["template_workflow_config_invalid", {
+                form_id: "template-1",
+                config: { step_settings: [{ seq: 1, type: "write", step_group: 1, option: {} }] },
+            }],
+            ["template_workflow_unsupported", {
+                form_id: "template-1",
+                config: {
+                    step_settings: [
+                        { seq: 1, type: "write", step_group: 1, option: {} },
+                        { seq: 2, type: "participant", step_group: 2, option: {} },
+                        { seq: 3, type: "participant", step_group: 3, option: {} },
+                        { seq: 4, type: "participant", step_group: 4, option: {} },
+                        { seq: 5, type: "complete", step_group: 5, option: {} },
+                    ],
+                },
+            }],
+        ])("returns %s before claiming or dispatching", async (reason, workflowConfig) => {
+            const dispatchCreation = jest.fn();
+            const claim = jest.fn();
+            const boundary = { claim };
+            const usecase = buildUsecase({ dispatchCreation, workflowConfig, dispatchBoundary: boundary });
+
+            await expect(usecase.execute("branch-1", params, TEST_PRINCIPAL)).resolves.toEqual(
+                expect.objectContaining({
+                    ok: false,
+                    reason,
+                    fallbackHint: "manual_check",
+                }),
+            );
+            expect(claim).not.toHaveBeenCalled();
+            expect(dispatchCreation).not.toHaveBeenCalled();
+        });
+
+        it("returns an unavailable reason without claiming when the workflow read fails", async () => {
+            const dispatchCreation = jest.fn();
+            const claim = jest.fn();
+            const usecase = buildUsecase({
+                dispatchCreation,
+                workflowError: new Error("provider unavailable"),
+                dispatchBoundary: { claim },
+            });
+
+            await expect(usecase.execute("branch-1", params, TEST_PRINCIPAL)).resolves.toEqual(
+                expect.objectContaining({
+                    ok: false,
+                    reason: "template_workflow_config_unavailable",
+                    fallbackHint: "manual_check",
+                }),
+            );
+            expect(claim).not.toHaveBeenCalled();
+            expect(dispatchCreation).not.toHaveBeenCalled();
+        });
 
         it("still offers the iframe when the run failed before reaching 전송", async () => {
             const dispatchCreation = jest.fn().mockImplementation(async ({ onProgress }) => {
@@ -567,7 +716,7 @@ describe("DispatchDocumentHeadlessUsecase", () => {
             createdDate: new Date(),
         }]) };
         const usecase = new DispatchDocumentHeadlessUsecase(
-            { generateDocumentOptions: jest.fn().mockReturnValue({}) } as never,
+            { generateDocumentOptions: jest.fn().mockReturnValue({}), resolveEffectiveTemplateId } as never,
             { dispatchCreation } as never,
             { findByArea: jest.fn().mockResolvedValue({ templateId: "template-1" }) } as never,
             createCredentialBoundary() as never,
@@ -578,6 +727,7 @@ describe("DispatchDocumentHeadlessUsecase", () => {
             { assertLiveAssignedProvider: jest.fn() } as never,
             repository as never,
             { execute: jest.fn() } as never,
+            createWorkflowClient() as never,
         );
         const params = { clientId: 7, contractData: { area: "seoul" } as never };
 
@@ -596,7 +746,7 @@ describe("DispatchDocumentHeadlessUsecase", () => {
             runExclusive: jest.fn().mockRejectedValue(new EformsignOperationAlreadyRunningError()),
         };
         const usecase = new DispatchDocumentHeadlessUsecase(
-            { generateDocumentOptions: jest.fn() } as never,
+            { generateDocumentOptions: jest.fn(), resolveEffectiveTemplateId } as never,
             headlessService as never,
             { findByArea: jest.fn() } as never,
             createCredentialBoundary() as never,
@@ -607,6 +757,7 @@ describe("DispatchDocumentHeadlessUsecase", () => {
             { assertLiveAssignedProvider: jest.fn() } as never,
             { findByClientId: jest.fn() } as never,
             { execute: jest.fn() } as never,
+            createWorkflowClient() as never,
             operationLock as never,
         );
 

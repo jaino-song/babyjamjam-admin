@@ -8,6 +8,7 @@ import {
     EFORMSIGN_MAX_DOWNLOAD_BYTES,
     EformsignService,
 } from "application/services/eformsign.service";
+import type { EformsignTemplateWorkflow } from "application/utils/eformsign-template-workflow";
 
 function generateEformsignPrivateKeyHex(): string {
     const { privateKey } = crypto.generateKeyPairSync("ec", { namedCurve: "prime256v1" });
@@ -395,6 +396,81 @@ describe("EformsignService", () => {
                 }),
             ]),
         );
+    });
+
+    it("maps validated participant and reviewer sequences without changing provider identities", () => {
+        const service = new EformsignService(createConfigService());
+        const workflow: EformsignTemplateWorkflow = {
+            templateId: "template-override",
+            steps: [],
+            recipients: [
+                { seq: "9", type: "participant", identity: "customer" },
+                { seq: "12", type: "participant", identity: "institution" },
+                { seq: "18", type: "reviewer", identity: "institution" },
+            ],
+        };
+
+        const options = service.generateDocumentOptions(
+            {
+                customerName: "김고객",
+                customerContact: "010-1234-5678",
+                customerDOB: "900101",
+                customerAddress: "주소",
+                caretaker1Name: "이담당",
+                caretaker1Contact: "010-9999-8888",
+                type: "A",
+                days: "5",
+                area: "Seoul",
+                contractDuration: "2026-06-03 ~ 2026-06-07",
+                startYear: "26",
+                startMonth: "06",
+                startDay: "03",
+                startDate: "2026-06-03",
+                endYear: "26",
+                endMonth: "06",
+                endDay: "07",
+                endDate: "2026-06-07",
+                paymentYear: "26",
+                paymentMonth: "06",
+                paymentDay: "03",
+                fullPrice: "100000",
+                grant: "50000",
+                actualPrice: "50000",
+            },
+            "access-token",
+            "refresh-token",
+            "template-override",
+            workflow,
+        );
+
+        expect(options.mode.template_id).toBe("template-override");
+        expect(options.prefill.recipients).toEqual([
+            {
+                step_idx: "9",
+                step_type: "05",
+                name: "김고객",
+                id: "",
+                sms: "010-1234-5678",
+                use_sms: true,
+            },
+            {
+                step_idx: "12",
+                step_type: "05",
+                name: "제공기관 확인",
+                id: "staff@example.com",
+                use_mail: false,
+                use_sms: false,
+            },
+            {
+                step_idx: "18",
+                step_type: "06",
+                name: "제공기관 확인",
+                id: "staff@example.com",
+                use_mail: false,
+                use_sms: false,
+            },
+        ]);
+        expect(JSON.stringify(options.prefill.recipients)).not.toContain("이담당");
     });
 
     it("round-trips formatted whole-won prices as canonical provider values", () => {

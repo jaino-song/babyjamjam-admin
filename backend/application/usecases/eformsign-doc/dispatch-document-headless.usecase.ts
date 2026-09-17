@@ -2,10 +2,17 @@ import { Inject, Injectable, Logger, Optional } from "@nestjs/common";
 import { createHash } from "node:crypto";
 import { ContractDataDto } from "application/dto/contract.dto";
 import { EformsignService } from "application/services/eformsign.service";
+import {
+    EformsignTemplateWorkflowError,
+    EformsignTemplateWorkflowUnavailableError,
+    parseEformsignTemplateWorkflow,
+    type EformsignTemplateWorkflow,
+} from "application/utils/eformsign-template-workflow";
 import { EformsignHeadlessService } from "infrastructure/automation/eformsign-headless.service";
 import { AreaTemplateService } from "application/services/area-template.service";
 import { CLIENT_REPOSITORY, IClientRepository } from "domain/repositories/client.repository.interface";
 import { EFORMSIGN_DOC_REPOSITORY, IEformsignDocRepository } from "domain/repositories/eformsign-doc.repository.interface";
+import { EFORMSIGN_CLIENT_REPOSITORY, IEformsignClientRepository } from "domain/repositories/eformsign.client.interface";
 import { EFORMSIGN_DOCUMENT_KIND } from "domain/entities/eformsign-doc.entity";
 import {
     EformsignCredentialBoundary,
@@ -123,6 +130,7 @@ export class DispatchDocumentHeadlessUsecase {
         private readonly assignmentGuard: ContractClientAssignmentGuardService,
         @Inject(EFORMSIGN_DOC_REPOSITORY) private readonly eformsignDocRepository: IEformsignDocRepository,
         private readonly fetchAllEformsignDocsFromApiUsecase: FetchAllEformsignDocsFromApiUsecase,
+        @Inject(EFORMSIGN_CLIENT_REPOSITORY) private readonly eformsignClient: IEformsignClientRepository,
         @Optional() private readonly operationLock?: EformsignOperationLockService,
         @Optional() private readonly dispatchBoundary?: EformsignDispatchBoundaryService,
     ) {}
@@ -223,6 +231,19 @@ export class DispatchDocumentHeadlessUsecase {
                 }
             }
 
+            const effectiveTemplateId = this.eformsignService.resolveEffectiveTemplateId(templateId);
+            let workflow: EformsignTemplateWorkflow;
+            try {
+                const workflowConfig = await this.eformsignClient.getTemplateWorkflowConfig(
+                    accessToken,
+                    effectiveTemplateId,
+                );
+                workflow = parseEformsignTemplateWorkflow(workflowConfig, effectiveTemplateId);
+            } catch (error) {
+                if (error instanceof EformsignTemplateWorkflowError) throw error;
+                throw new EformsignTemplateWorkflowUnavailableError();
+            }
+
             if (this.dispatchBoundary) {
                 const generation = latestLocalDocument?.documentId ?? (params.force ? "force-initial" : "initial");
                 const fingerprint = createHash("sha256")
@@ -265,7 +286,8 @@ export class DispatchDocumentHeadlessUsecase {
                 params.contractData,
                 accessToken,
                 refreshToken,
-                templateId,
+                effectiveTemplateId,
+                workflow,
             ) as Record<string, unknown>;
             const documentName = (
                 documentOption["prefill"] as { document_name?: unknown } | undefined
@@ -444,6 +466,18 @@ export class DispatchDocumentHeadlessUsecase {
                 },
             );
         } catch (error) {
+            if (error instanceof EformsignTemplateWorkflowError || error instanceof EformsignTemplateWorkflowUnavailableError) {
+                const reason = error.reason;
+                this.progressService.emit(params.progressId, "failed", reason, latestProgressStep);
+                return {
+                    ok: false,
+                    reason,
+                    fallbackHint: "manual_check",
+                    dispatchIntentId: dispatchIntent?.id,
+                    durationMs: Date.now() - start,
+                    failedStep: latestProgressStep,
+                };
+            }
             const reason = sanitizeEformsignErrorMessage(error || "unknown headless dispatch error");
             if (dispatchIntent) {
                 if (latestProgressStep === "creating" || latestProgressStep === "sent") {

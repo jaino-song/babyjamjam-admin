@@ -26,6 +26,7 @@ import {
 import { normalizeEformsignStatusCode } from "domain/utils/eformsign-status-code";
 import { normalizeKoreanWon } from "domain/value-objects/money.vo";
 import { assertRequiredPhone, invalidPhoneFieldMessage, InvalidPhoneError } from "domain/utils/normalize-phone";
+import type { EformsignTemplateWorkflow } from "application/utils/eformsign-template-workflow";
 
 export interface EformsignDocumentWorkflowState {
     statusCode?: string;
@@ -166,7 +167,18 @@ export class EformsignService {
         return signature.toString("hex");
     }
 
-    generateDocumentOptions(contractData: ContractDataDto, accessToken: string, refreshToken: string, templateId?: string) {
+    resolveEffectiveTemplateId(templateId?: string | null): string {
+        const override = typeof templateId === "string" ? templateId.trim() : "";
+        return override || this.EFORMSIGN_TEMPLATE_ID;
+    }
+
+    generateDocumentOptions(
+        contractData: ContractDataDto,
+        accessToken: string,
+        refreshToken: string,
+        templateId?: string | null,
+        workflow?: EformsignTemplateWorkflow,
+    ) {
         assertEformPhone(contractData.customerContact, "customerContact");
         assertEformPhone(contractData.caretaker1Contact, "caretaker1Contact");
         if (contractData.issuerPhone?.trim()) {
@@ -176,6 +188,38 @@ export class EformsignService {
         const fullPrice = normalizeEformsignAmount(contractData.fullPrice);
         const grant = normalizeEformsignAmount(contractData.grant);
         const actualPrice = normalizeEformsignAmount(contractData.actualPrice);
+        const requestedTemplateId = typeof templateId === "string" ? templateId.trim() : "";
+        // Dispatch resolves the fallback once before reading the provider
+        // workflow and passes that non-empty id here. Direct callers without
+        // an override still resolve the configured default locally.
+        const effectiveTemplateId = requestedTemplateId || this.resolveEffectiveTemplateId(templateId);
+        if (workflow && workflow.templateId !== effectiveTemplateId) {
+            throw new Error("template workflow does not match the effective template");
+        }
+        const recipientPlan = workflow?.recipients ?? [
+            { seq: "2", type: "participant" as const, identity: "customer" as const },
+            { seq: "3", type: "reviewer" as const, identity: "institution" as const },
+        ];
+        const recipients = recipientPlan.map((recipient) => {
+            if (recipient.identity === "customer") {
+                return {
+                    step_idx: recipient.seq,
+                    step_type: "05",
+                    name: contractData.customerName,
+                    id: "",
+                    sms: contractData.customerContact,
+                    use_sms: true,
+                };
+            }
+            return {
+                step_idx: recipient.seq,
+                step_type: recipient.type === "participant" ? "05" : "06",
+                name: "제공기관 확인",
+                id: this.USER_EMAIL,
+                use_mail: false,
+                use_sms: false,
+            };
+        });
         return {
             company: {
                 id: this.EFORMSIGN_COMPANY_ID,
@@ -198,7 +242,7 @@ export class EformsignService {
             },
             mode: {
                 type: "01",
-                template_id: templateId || this.EFORMSIGN_TEMPLATE_ID,
+                template_id: effectiveTemplateId,
             },
             prefill: {
                 document_name: "산모신생아건강관리서비스 계약서",
@@ -227,24 +271,7 @@ export class EformsignService {
                     { id: "본인부담금 수령 일", value: contractData.paymentDay },
                     { id: "서비스 기간", value: contractData.contractDuration },
                 ],
-                recipients: [
-                    {
-                        step_idx: "2",
-                        step_type: "05",
-                        name: contractData.customerName,
-                        id: "",
-                        sms: contractData.customerContact,
-                        use_sms: true,
-                    },
-                    {
-                        step_idx: "3",
-                        step_type: "06",
-                        name: "제공기관 확인",
-                        id: this.USER_EMAIL,
-                        use_mail: false,
-                        use_sms: false,
-                    },
-                ],
+                recipients,
             },
             return_fields: [contractData.customerName],
         };
