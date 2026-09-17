@@ -55,12 +55,29 @@ async function mockTemplateApi(page: Page): Promise<void> {
   });
 }
 
+async function blockUnmockedApiRequests(page: Page): Promise<void> {
+  await page.route('**/api/**', async (route: Route) => {
+    const pathname = new URL(route.request().url()).pathname;
+    const isTemplateRequest = pathname === '/api/system-templates/THANKS'
+      || pathname === '/api/branch-system-templates/THANKS';
+    const isSenderApprovalRequest = pathname === '/api/settings/message-sender-approval';
+
+    if (isTemplateRequest || isSenderApprovalRequest) {
+      await route.fallback();
+      return;
+    }
+
+    await route.abort('blockedbyclient');
+  });
+}
+
 test.describe('System Template Detail', () => {
   test.use({ viewport: { width: 390, height: 844 } });
 
   test.beforeEach(async ({ page }) => {
     await mockMessagesApproval(page);
     await mockTemplateApi(page);
+    await blockUnmockedApiRequests(page);
     await page.goto('/messages/system-templates/THANKS');
     await expect(page.locator('[data-component="messages-system-template-detail"]')).toBeVisible({
       timeout: 15000,
