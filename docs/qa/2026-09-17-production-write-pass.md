@@ -176,3 +176,28 @@
 - Created dev-only QA area `QA20260917Namdonggu` and one document-template metadata row, linked to existing dev Namdonggu 2-step template. Guarded by verified dev DB fingerprint and QA branch ownership in one transaction. No provider calls or sends. This enables subsequent wizard checks; no contract has been issued yet.
 - Evidence logs: `/tmp/bjj-qa-20260918-{tests,types,lint,ui,build}.log`, `/tmp/bjj-qa-20260918-audit.json`.
 - No dev/main merge or deployment performed. Full QA remains incomplete: configured contract flows, delivery/PDF, populated schedules/records, mobile parity, role boundaries and broader write cases remain.
+
+
+## Configured contract wizard continuation
+
+- PASS: QA-owned template loads after metadata fixture creation; existing QA customer search selects customer162 and fills phone/birthday/address; employee132 search fills its phone. No final generation clicked.
+- PASS: 2026 A가-1형 / 5 days fills 732,000 total / 659,000 subsidy / 73,000 copay, matching displayed price table. Start Sept21 computes end Sept29. This observed date computation is not independent holiday-source verification.
+- PASS: backward navigation preserves voucher prices and employee selection. Enabling second employee blocks Next until selected; searching the primary employee returns no option in secondary selector. Disabling secondary restores progression.
+- FAIL CONTRACT-DATE-ORDER: start Sept21 / end Sept20 leaves final generation enabled and no inline error. Read-only trace confirms updateClient occurs before provider dispatch without date ordering guard. Did not click final; restored end Sept29. Delegated front-end early guard + UI feedback to Luna max; independent review required before concluding. API/backend hardening and mobile equivalent remain separate unchecked scope.
+- ACCESSIBILITY observation: three rendered step4 date text inputs have empty id, no aria-label and no associated labels. Included local accessible-name correction in date worker scope.
+- Contract draft remains unsent; no customer assignment/date/price change from this wizard occurred.
+
+- FAIL CONTRACT-HEADER-1280: at viewport1280x720 in configured wizard step2, title/description shrink to a single Korean character column while stepper consumes remaining header width. Buttons remain visible. Normal1920 view is not proof of responsive correctness. Reproduced via screenshot; viewport reset afterward. Read-only header ownership trace dispatched.
+
+
+## Contract date/header integrated verification — 2026-09-18
+
+- Execution DELEGATE (Luna max fast/priority); Audit SOL for pre-submission validation and shared header integration.
+- Integrated date guard and optional contract-only stacked header at `40dc4e7d2`; independent Sol SHIP for `be033f17d..40dc4e7d2`, with no blocking findings.
+- PASS live dev browser: reversed end date, incomplete end date, and nonexistent payment date each display a Korean reason and disable generation; corrected dates clear the error and restore generation. The three date inputs now expose associated accessible labels.
+- PASS visual: at 1280x720, after reloading the newly compiled page, contract title/description and all five steps are readable without the former one-character column. Viewport override reset afterward.
+- PASS unavailable-employee recovery: clicked generation with QA employee132 unavailable. Actionable activation/other-employee guidance appeared, step4 and all entered dates were preserved. Guarded dev DB read confirmed QA162 start/end/fullPrice/actualPrice remain null. No successful provider issuance or external receipt claimed.
+- QA employee132 was then changed to available through its edit form, in the dev QA branch only. List, detail and availability count immediately agree. This prepares subsequent controlled issuance checks.
+- Integrated verification at40dc: 256 suites /1807 tests PASS, type-check PASS, UI architecture PASS, production build PASS. Evidence `/tmp/bjj-qa-20260918-dates-{tests,types,ui,build}.log`.
+- Sol low accessibility observation (payment error association) corrected by Luna in `c7cf67ec9`; 10 focused tests and typecheck PASS. Correction production build PASS; fresh Sol FINAL SHIP for exact `40dc4e7d2..c7cf67ec9` (correction scope only). Existing broad start/end ARIA error flags and live assistive-technology checks remain outside this correction.
+- Remaining includes successful controlled provider issuance, actual recipient delivery/PDF, populated service-record/schedule flows, mobile parity and non-owner role checks. No dev/main merge or deployment.
