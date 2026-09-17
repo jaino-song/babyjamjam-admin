@@ -6,6 +6,7 @@ import {
     authRequiredResponse,
     logUpstreamError,
     parseBody,
+    parseUpstreamJsonObject,
     upstreamStatusProblemResponse,
 } from "@/lib/api/route-utils";
 
@@ -50,8 +51,17 @@ export async function POST(request: NextRequest) {
                 { response: { status: backendResponse.status } },
                 upstreamBody,
             );
-            // The upstream rejection body is deliberately not propagated here.
-            return upstreamStatusProblemResponse(backendResponse.status, "confirm chat intent");
+            // EM-STATE-01: an upstream 5xx leaves the application result
+            // unconfirmable (UNKNOWN), so the outcome default must not stamp
+            // NOT_APPLIED. A faithful upstream problem body is propagated;
+            // anything else is sanitized to the registered catalog copy.
+            return upstreamStatusProblemResponse(
+                backendResponse.status,
+                "confirm chat intent",
+                undefined,
+                "mutation",
+                parseUpstreamJsonObject(upstreamBody),
+            );
         }
 
         const responseBody = await backendResponse.text();
@@ -62,6 +72,6 @@ export async function POST(request: NextRequest) {
     } catch (error) {
         // Transport failure: the intent may or may not have been applied.
         logUpstreamError("confirm chat intent", error);
-        return upstreamStatusProblemResponse(502, "confirm chat intent", "UNKNOWN");
+        return upstreamStatusProblemResponse(502, "confirm chat intent", undefined, "mutation");
     }
 }

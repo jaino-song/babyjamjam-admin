@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import { serverAPIClient } from "@/lib/api/server";
 import {
     createProblemDetails,
+    parseProblemDetails,
     PROBLEM_CATALOG,
     type ProblemCode,
     type ProblemDetails,
@@ -176,25 +177,13 @@ const UPSTREAM_STATUS_PROBLEM_CODES: Readonly<Record<number, ProblemCode>> = Obj
     504: "UPSTREAM_TIMEOUT",
 });
 
-export function upstreamStatusProblemResponse(
-    status: number,
-    context: string,
-    outcome: ProblemOutcome = "NOT_APPLIED",
-): NextResponse {
-    const code = UPSTREAM_STATUS_PROBLEM_CODES[status];
-    if (!code) {
-        return errorResponse({ response: { status } }, context);
-    }
-
-    const catalogStatus = PROBLEM_CATALOG[code].status;
-    return localProblemResponse(code, {
-        outcome,
-        ...(status === catalogStatus ? {} : { status }),
-    });
-}
-
 async function readUpstreamJsonBody(response: Response): Promise<unknown> {
     const text = await response.text().catch(() => "");
+    return parseUpstreamJsonObject(text);
+}
+
+/** Parse an upstream body string as JSON; anything non-JSON becomes undefined. */
+export function parseUpstreamJsonObject(text: string): unknown {
     if (!text) {
         return undefined;
     }
@@ -204,6 +193,70 @@ async function readUpstreamJsonBody(response: Response): Promise<unknown> {
         // Non-JSON upstream bodies (HTML/text) are never reflected to clients.
         return undefined;
     }
+}
+
+/**
+ * EM-STATE-01: an upstream 5xx cannot prove that a mutation was not applied —
+ * the effect may exist upstream even though the response failed, so the only
+ * honest default is UNKNOWN (which carries CHECK_STATUS recovery in the
+ * problem contract). Reads may keep claiming NOT_APPLIED because they apply
+ * no state, and an explicit upstream 4xx rejection is a known
+ * non-application for both operations.
+ */
+function defaultOutcomeForUpstreamStatus(
+    status: number,
+    operation: "read" | "mutation",
+): ProblemOutcome {
+    if (status >= 500 && operation === "mutation") {
+        return "UNKNOWN";
+    }
+    return "NOT_APPLIED";
+}
+
+/**
+ * Convert a non-ok upstream status into the shared contract:
+ * - a faithful upstream problem+json body (when one is supplied and it
+ *   validates against the catalog) is propagated with its own registered
+ *   code, status, outcome, and requestId;
+ * - otherwise the status maps to a BFF-authored catalog problem whose outcome
+ *   comes from the explicit caller value or, when omitted, from
+ *   {@link defaultOutcomeForUpstreamStatus};
+ * - unmapped statuses fall back to the sanitized legacy-shape response with
+ *   the status preserved.
+ */
+export function upstreamStatusProblemResponse(
+    status: number,
+    context: string,
+    outcome: ProblemOutcome | undefined,
+    operation: "read" | "mutation" = "mutation",
+    upstreamProblem?: unknown,
+): NextResponse {
+    const code = UPSTREAM_STATUS_PROBLEM_CODES[status];
+    if (!code) {
+        return errorResponse(
+            {
+                response: {
+                    status,
+                    ...(upstreamProblem === undefined ? {} : { data: upstreamProblem }),
+                },
+            },
+            context,
+            operation,
+        );
+    }
+
+    const faithfulProblem = upstreamProblem === undefined
+        ? null
+        : parseProblemDetails(upstreamProblem, status);
+    if (faithfulProblem) {
+        return localProblemJsonResponse(faithfulProblem);
+    }
+
+    const catalogStatus = PROBLEM_CATALOG[code].status;
+    return localProblemResponse(code, {
+        outcome: outcome ?? defaultOutcomeForUpstreamStatus(status, operation),
+        ...(status === catalogStatus ? {} : { status }),
+    });
 }
 
 /**
