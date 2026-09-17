@@ -18,11 +18,6 @@ import {
   buildAllClientRowsForList,
   groupForClient,
 } from "@/lib/client/list-helpers";
-import {
-  getStatusCategory,
-  isProviderReviewWorkflowStep,
-  normalizeEformsignStatusCode,
-} from "@/lib/eformsign/status-codes";
 import { useLocale } from "@/providers/LocaleProvider";
 import { eformsignApi } from "@/services/api";
 import { t } from "@/lib/i18n/translations";
@@ -136,19 +131,6 @@ function clientMeta(c: Client) {
   }
 }
 
-function documentStatusFromStatusType(statusType: string | null | undefined): Client["documentStatus"] {
-  const normalized = normalizeEformsignStatusCode(statusType);
-  if (normalized === "000") return null;
-
-  const category = getStatusCategory(normalized);
-  if (category === "completed") return "completed";
-  if (category === "expired") return "rejected";
-  if (normalized === "020") return "opened";
-  if (["001", "002", "010", "043"].includes(normalized)) return "created";
-  if (["030", "060", "070"].includes(normalized)) return "requested";
-  return null;
-}
-
 function hasContractRequiredBadge(c: Client): boolean {
   return getMobileClientBadges(c).some((badge) => badge.key === "contract_required");
 }
@@ -212,26 +194,12 @@ export default function ClientsPage() {
     retry: 1,
   });
 
-  const localDetailClient = useMemo(() => {
-    if (!detailClient) return null;
-
-    if (!detailContractDocument || detailContractDocument.id !== detailClient.eDocId) {
-      return detailClient;
-    }
-
-    const currentStatus = detailContractDocument.current_status;
-    const documentStatus = documentStatusFromStatusType(currentStatus?.status_type);
-    const statusCategory = getStatusCategory(currentStatus?.status_type);
-    const hasCustomerSigned = documentStatus === "completed"
-      || (statusCategory === "in-progress"
-        && isProviderReviewWorkflowStep(currentStatus));
-
-    return {
-      ...detailClient,
-      documentStatus,
-      hasSigned: hasCustomerSigned,
-    };
-  }, [detailClient, detailContractDocument]);
+  // The client detail response carries the latest backend contract projection.
+  // The document endpoint is keyed by the legacy eDocId and can return an older
+  // document after a contract reissue, so its status must never override the
+  // canonical hasSigned/documentStatus values used by the detail UI. The
+  // fetched document remains available below for field-value fallbacks.
+  const localDetailClient = detailClient;
 
   const handleSelectClient = async (client: Client) => {
     const requestId = selectClientRequestRef.current + 1;
