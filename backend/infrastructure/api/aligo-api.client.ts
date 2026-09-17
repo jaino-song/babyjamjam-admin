@@ -1,9 +1,12 @@
 import { Injectable, Logger } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
+import { createHash } from "node:crypto";
 import {
     AligoSendSmsParams,
     AligoSmsResponse,
     IAligoSmsApiPort,
+    ALIGO_DEFAULT_SENDER_POLICY_VERSION,
+    AligoDefaultSenderPolicy,
 } from "domain/ports/aligo-sms-api.port";
 import { maskPhone } from "application/utils/mask";
 
@@ -35,6 +38,15 @@ export class AligoApiClient implements IAligoSmsApiPort {
                 "ALIGO_API_KEY, ALIGO_USER_ID, and ALIGO_SENDER_PHONE are required for SMS delivery.",
             );
         }
+    }
+
+    getDefaultSenderPolicy(): AligoDefaultSenderPolicy {
+        if (!this.isConfigured) return { availability: "unavailable" };
+        return { availability: "available", provider: "aligo", mode: "live", version: ALIGO_DEFAULT_SENDER_POLICY_VERSION,
+            identityDigest: createHash("sha256").update(JSON.stringify({
+                version: ALIGO_DEFAULT_SENDER_POLICY_VERSION, provider: "aligo", mode: "live",
+                sender: this.ALIGO_SENDER_PHONE, endpoint: this.ALIGO_SMS_API_URL,
+            })).digest("hex") };
     }
 
     async sendSms(params: AligoSendSmsParams): Promise<AligoSmsResponse> {

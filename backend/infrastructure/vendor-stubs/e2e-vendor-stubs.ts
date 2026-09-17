@@ -1,4 +1,5 @@
 import { ConfigService } from "@nestjs/config";
+import { createHash } from "node:crypto";
 
 import {
     CallExtractionInput,
@@ -18,6 +19,8 @@ import {
     AligoSendSmsParams,
     AligoSmsResponse,
     IAligoSmsApiPort,
+    ALIGO_DEFAULT_SENDER_POLICY_VERSION,
+    AligoDefaultSenderPolicy,
 } from "domain/ports/aligo-sms-api.port";
 import {
     CreateDocumentPayload,
@@ -658,6 +661,15 @@ export class E2eEformsignClientStub implements IEformsignClientRepository {
 }
 
 export class E2eAligoApiStub implements IAligoSmsApiPort {
+    getDefaultSenderPolicy(): AligoDefaultSenderPolicy {
+        // Synthetic positive controls use a separate namespace. A stored stub
+        // descriptor can never match the live provider's default-sender digest.
+        return { availability: "available", provider: "aligo", mode: "stub", version: ALIGO_DEFAULT_SENDER_POLICY_VERSION,
+            identityDigest: createHash("sha256").update(JSON.stringify({
+                version: ALIGO_DEFAULT_SENDER_POLICY_VERSION, provider: "aligo", mode: "stub", sender: "synthetic-default",
+            })).digest("hex") };
+    }
+
     sendSms(params: AligoSendSmsParams): Promise<AligoSmsResponse> {
         return Promise.resolve({
             result_code: 1,

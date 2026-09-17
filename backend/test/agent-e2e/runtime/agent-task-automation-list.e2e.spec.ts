@@ -8,6 +8,7 @@ import { MessageExternalAgentCapabilitiesProvider } from "../../../application/u
 import { MessageTriggerService } from "../../../application/services/message-trigger.service";
 import { SmsTriggerDeliveryService } from "../../../application/services/sms-trigger-delivery.service";
 import { AligoService } from "../../../application/services/aligo.service";
+import { AligoDefaultSenderPolicyService } from "../../../application/services/aligo-default-sender-policy.service";
 import { describeClientMessageEffect } from "../../../application/services/client-message-effect-recipe";
 import { agentBindingHash } from "../../../domain/repositories/agent-linked-action.types";
 import { createApprovedAgentTaskPersistenceClient, assertApprovedAgentTaskPersistenceDatabaseTarget } from "./agent-task-persistence.helper";
@@ -119,12 +120,14 @@ describeAgentE2E("real automation.list with two eligible clients and missing def
             if (settings.status !== "available" || !source) throw new Error("Missing positive planning fixture");
             const rule = settings.rules.find((entry) => entry.branchId === branchId && entry.templateKey === "CLIENT_GREETING");
             if (!rule) throw new Error("Missing provisioned greeting rule");
+            const senderPolicy = app.get(AligoDefaultSenderPolicyService).read();
+            expect(senderPolicy).toMatchObject({ availability: "available", mode: "stub" });
+            if (senderPolicy.availability !== "available") throw new Error("Missing synthetic provider policy");
             const described = await describeClientMessageEffect({ branchId,
                 subject: { kind: "client", clientId: source.id, clientIdentity: agentBindingHash({ id: source.id, createdAt: source.createdAt }) },
                 rule, client: source, change: "refresh", now: new Date(), delivery: app.get(SmsTriggerDeliveryService),
                 policy: { dispatchEnabled: settings.dispatchEnabled, senderApproved: settings.senderApproved,
-                    // A synthetic provider identity for the read-only recipe test; no execution grant.
-                    senderIdentityDigest: "a".repeat(64), senderApprovedAt: settings.senderApprovedAt?.toISOString() ?? null,
+                    senderIdentityDigest: senderPolicy.identityDigest, senderApprovedAt: settings.senderApprovedAt?.toISOString() ?? null,
                     pastTriggerEnabled: settings.pastTriggerEnabled, pastTriggerConfig: settings.pastTriggerConfig },
             });
             expect(described.status).toBe("effect");

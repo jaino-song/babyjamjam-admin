@@ -21,6 +21,17 @@ export interface AligoSendSmsParams {
 
 export interface IAligoSmsApiPort {
     sendSms(params: AligoSendSmsParams): Promise<AligoSmsResponse>;
+    /** Read-only identity of the default-sender path used by automation, never explicit-sender requests. */
+    getDefaultSenderPolicy?(): AligoDefaultSenderPolicy;
 }
+
+export const ALIGO_DEFAULT_SENDER_POLICY_VERSION = "aligo-default-sender-policy-v1";
+export type AligoDefaultSenderPolicy = {
+    version: typeof ALIGO_DEFAULT_SENDER_POLICY_VERSION;
+    provider: "aligo";
+    availability: "available";
+    mode: "live" | "stub";
+    identityDigest: string;
+} | { availability: "unavailable" };
 
 export const ALIGO_SMS_API_PORT = Symbol("ALIGO_SMS_API_PORT");
