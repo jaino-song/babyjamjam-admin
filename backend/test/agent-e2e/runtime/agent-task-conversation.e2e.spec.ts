@@ -615,6 +615,11 @@ describeAgentE2E("conversation task runtime against the guarded local database",
                 options: expect.arrayContaining([expect.objectContaining({ optionId: selection.optionIds[0] })]),
             }),
         ]));
+        const persistedBeforeSelection = await prisma.agent_task.findUnique({ where: { id: selection.taskId } });
+        const draftBeforeSelection = persistedBeforeSelection?.draft as { server?: { references?: { choiceTargets?: unknown } } } | null | undefined;
+        expect(draftBeforeSelection?.server?.references?.choiceTargets).toEqual([
+            expect.objectContaining({ choiceSetRef: selection.choiceSetRef, optionId: selection.optionIds[0], clientId: target.id }),
+        ]);
         const selected = await taskService.command(principal, selection.taskId, {
             clientEventId: randomUUID(),
             expectedRevision: attached.revision,
@@ -628,10 +633,10 @@ describeAgentE2E("conversation task runtime against the guarded local database",
         });
         const persisted = await prisma.agent_task.findUnique({ where: { id: selection.taskId } });
         expect(persisted?.targetRef).toBe(selection.choiceSetRef);
-        const persistedDraft = persisted?.draft as { server?: { references?: { choiceTargets?: unknown } } } | null | undefined;
-        expect(persistedDraft?.server?.references?.choiceTargets).toEqual([
-            expect.objectContaining({ choiceSetRef: selection.choiceSetRef, optionId: selection.optionIds[0], clientId: target.id }),
-        ]);
+        expect(persisted?.targetVersion).toBe(clientAgentTargetVersion(target));
+        const persistedDraft = persisted?.draft as { server?: { references?: { target?: unknown; choiceTargets?: unknown } } } | null | undefined;
+        expect(persistedDraft?.server?.references?.target).toEqual({ targetRef: selection.choiceSetRef, clientId: target.id });
+        expect(persistedDraft?.server?.references?.choiceTargets).toEqual([]);
     });
 
     it("rejects the same model event when only resolved authority origin changes", async () => {
