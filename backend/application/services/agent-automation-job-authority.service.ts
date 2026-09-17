@@ -99,7 +99,6 @@ export class AgentAutomationJobAuthorityService {
         const concrete = buildClientMessageRecipe(rule, client, recipeTime);
         if (!concrete) return null;
         if (catchUp) {
-            const canonicalSourcePayload = concrete.payload;
             const prefix = `client:${client.id}:`;
             const batchTime = catchUp.batchId.startsWith(prefix) ? new Date(catchUp.batchId.slice(prefix.length)) : new Date(NaN);
             if (!settings.pastTriggerEnabled || Number.isNaN(batchTime.getTime())
@@ -110,7 +109,7 @@ export class AgentAutomationJobAuthorityService {
                 || catchUp.sequence > MAX_CATCH_UP_PREDECESSOR_CHAIN
                 || job.scheduledFor.getTime() !== batchTime.getTime() + (catchUp.sequence - 1) * catchUp.intervalMinutes * 60_000) return null;
             if (catchUp.sequence > 1 && !await this.hasCanonicalCatchUpPredecessorChain(
-                transaction, job, catchUp, rule, client, canonicalSourcePayload, batchTime,
+                transaction, job, catchUp, settings.rules, client, batchTime,
             )) return null;
             concrete.scheduledFor = job.scheduledFor;
             concrete.dedupeKey = buildMessageRecipeDedupeKey(rule.id, `client:${client.id}`, job.scheduledFor, rule.recipientType);
@@ -141,9 +140,8 @@ export class AgentAutomationJobAuthorityService {
         transaction: Prisma.TransactionClient,
         job: MessageTriggerJobEntity,
         catchUp: CatchUpMetadata,
-        rule: Parameters<typeof buildClientMessageRecipe>[0],
+        rules: ReadonlyArray<Parameters<typeof buildClientMessageRecipe>[0]>,
         client: Parameters<typeof buildClientMessageRecipe>[1],
-        canonicalSourcePayload: MessageTriggerJobEntity["payload"],
         batchTime: Date,
     ): Promise<boolean> {
         if (catchUp.sequence <= 1 || !catchUp.predecessorDedupeKey) return false;
@@ -178,12 +176,8 @@ export class AgentAutomationJobAuthorityService {
                 || isManualMessageTriggerJob(predecessor)
                 || !CATCH_UP_PREDECESSOR_STATUSES.has(predecessor.status)
                 || predecessor.branchId !== job.branchId
-                || predecessor.ruleId !== job.ruleId
                 || predecessor.clientId !== job.clientId
                 || predecessor.employeeScheduleId !== job.employeeScheduleId
-                || predecessor.recipientType !== job.recipientType
-                || predecessor.recipientPhone !== job.recipientPhone
-                || predecessor.templateKey !== job.templateKey
                 || (predecessor.status === "sent" && predecessor.sentAt === null)
                 || (predecessor.status === "canceled" && predecessor.canceledAt === null)
                 || (["pending", "processing", "dispatching"].includes(predecessor.status)
@@ -193,14 +187,21 @@ export class AgentAutomationJobAuthorityService {
             const parsed = catchUpSchema.safeParse(predecessorSource["catchUp"]);
             if (!parsed.success) return false;
             const predecessorCatchUp = parsed.data;
+            const predecessorRule = rules.find(({ id, branchId }) => id === predecessor.ruleId && branchId === job.branchId);
+            if (!predecessorRule || predecessor.recipientType !== predecessorRule.recipientType
+                || predecessor.templateKey !== predecessorRule.templateKey) return false;
+            const predecessorRecipeTime = new Date(predecessorCatchUp.originalScheduledFor);
+            const predecessorConcrete = buildClientMessageRecipe(predecessorRule, client, predecessorRecipeTime);
+            if (!predecessorConcrete) return false;
             const expectedScheduledFor = new Date(batchTime.getTime() + (expectedSequence - 1) * intervalMs);
             if (predecessorCatchUp.batchId !== catchUp.batchId
                 || predecessorCatchUp.sequence !== expectedSequence
                 || predecessorCatchUp.intervalMinutes !== catchUp.intervalMinutes
-                || predecessorCatchUp.originalScheduledFor !== catchUp.originalScheduledFor
+                || predecessorCatchUp.originalScheduledFor !== predecessorConcrete.scheduledFor.toISOString()
                 || predecessor.scheduledFor.getTime() !== expectedScheduledFor.getTime()
-                || predecessor.dedupeKey !== buildMessageRecipeDedupeKey(rule.id, clientScope, expectedScheduledFor, rule.recipientType)
-                || agentBindingHash(predecessorSource) !== agentBindingHash({ ...canonicalSourcePayload, catchUp: predecessorCatchUp })) return false;
+                || predecessor.dedupeKey !== buildMessageRecipeDedupeKey(predecessorRule.id, clientScope, expectedScheduledFor, predecessorRule.recipientType)
+                || predecessor.recipientPhone !== predecessorConcrete.recipientPhone
+                || agentBindingHash(predecessorSource) !== agentBindingHash({ ...predecessorConcrete.payload, catchUp: predecessorCatchUp })) return false;
 
             if (expectedSequence === 1) return predecessorCatchUp.predecessorDedupeKey === null;
             if (!predecessorCatchUp.predecessorDedupeKey) return false;

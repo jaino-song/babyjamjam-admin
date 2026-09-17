@@ -447,27 +447,46 @@ describeAgentE2E("real automation.list with two eligible clients and missing def
             await persistCandidate();
             expect(await adapter.checkAutomaticJob(tx, job, "dispatch", render)).toMatchObject({ status: "refused" });
             await restore();
-            // Catch-up jobs after the first item must point to a canonical
-            // predecessor chain in the same client/rule lineage. Exercise a
-            // three-item chain so the second predecessor is checked too.
+            // The production retroactive path orders all due client rules in
+            // one batch, so a predecessor may have a different rule and its
+            // own original recipe time. Mirror that heterogeneous topology.
             const chainIntervalMinutes = settings.pastTriggerConfig.sendIntervalMinutes;
             expect(chainIntervalMinutes).toBeGreaterThan(0);
-            const chainBatchTime = new Date(originalTime.getTime() - 24 * 60 * 60 * 1000);
-            const chainRows: Array<{ id: string; scheduledFor: Date; dedupeKey: string; payload: unknown }> = [];
+            const chainOriginalTime = new Date(originalTime);
+            // Make the service-start rule due, as the real synchronizer does
+            // before applyRetroactiveSendConfig orders the two candidates.
+            await tx.client.update({ where: { id: createdId }, data: {
+                startDate: new Date(chainOriginalTime.getTime() - 20 * 24 * 60 * 60 * 1000),
+            } });
+            const chainClient = await sourceReader.readClientAutomationSource(branchId, createdId, tx);
+            const predecessorRule = settings.rules.find((candidate) => candidate.branchId === branchId
+                && candidate.id !== rule.id && candidate.templateKey !== rule.templateKey);
+            if (!chainClient || !predecessorRule) throw new Error("Missing heterogeneous catch-up fixture");
+            const predecessorRecipe = buildClientMessageRecipe(predecessorRule, chainClient, chainOriginalTime);
+            const successorRecipe = buildClientMessageRecipe(rule, chainClient, chainOriginalTime);
+            if (!predecessorRecipe || !successorRecipe) throw new Error("Missing heterogeneous catch-up recipe");
+            const chainBatchTime = new Date(chainOriginalTime.getTime() - 24 * 60 * 60 * 1000);
+            const chainRows: Array<{ id: string; scheduledFor: Date; dedupeKey: string; payload: unknown;
+                recipientType: typeof successorRecipe.recipientType; recipientPhone: string; templateKey: typeof successorRecipe.templateKey;
+                createdAt: Date; updatedAt: Date }> = [];
             let previousKey: string | null = null;
-            for (const sequence of [1, 2, 3]) {
+            for (const [index, baseRecipe] of [predecessorRecipe, successorRecipe].entries()) {
+                const sequence = index + 1;
                 const scheduledFor = new Date(chainBatchTime.getTime() + (sequence - 1) * chainIntervalMinutes * 60_000);
-                const dedupeKey = buildMessageRecipeDedupeKey(rule.id, `client:${createdId}`, scheduledFor, rule.recipientType);
+                const dedupeKey = buildMessageRecipeDedupeKey(baseRecipe.ruleId, `client:${createdId}`, scheduledFor, baseRecipe.recipientType);
                 const catchUpMetadata = { batchId: `client:${createdId}:${chainBatchTime.toISOString()}`, sequence,
-                    intervalMinutes: chainIntervalMinutes, originalScheduledFor: originalTime.toISOString(), predecessorDedupeKey: previousKey };
-                const row = await tx.message_trigger_job.create({ data: { ...recipe, scheduledFor, dedupeKey,
-                    payload: { ...recipe.payload, catchUp: catchUpMetadata } as unknown as Prisma.InputJsonValue } });
-                chainRows.push({ id: row.id, scheduledFor, dedupeKey, payload: row.payload });
+                    intervalMinutes: chainIntervalMinutes, originalScheduledFor: baseRecipe.scheduledFor.toISOString(), predecessorDedupeKey: previousKey };
+                const row = await tx.message_trigger_job.create({ data: { ...baseRecipe, scheduledFor, dedupeKey,
+                    payload: { ...baseRecipe.payload, catchUp: catchUpMetadata } as unknown as Prisma.InputJsonValue } });
+                chainRows.push({ id: row.id, scheduledFor, dedupeKey, payload: row.payload,
+                    recipientType: baseRecipe.recipientType, recipientPhone: baseRecipe.recipientPhone!, templateKey: baseRecipe.templateKey,
+                    createdAt: row.createdAt, updatedAt: row.updatedAt });
                 previousKey = dedupeKey;
             }
-            const chainJob = MessageTriggerJobEntity.reconstitute(chainRows[2]!.id, branchId, rule.id, "pending", chainRows[2]!.scheduledFor,
-                null, null, null, createdId, null, recipe.recipientType, recipe.recipientPhone!, recipe.templateKey,
-                chainRows[2]!.dedupeKey, chainRows[2]!.payload as MessageTriggerJobEntity["payload"], new Date(), new Date());
+            const chainSuccessor = chainRows[1]!;
+            const chainJob = MessageTriggerJobEntity.reconstitute(chainSuccessor.id, branchId, successorRecipe.ruleId, "pending", chainSuccessor.scheduledFor,
+                null, null, null, createdId, null, chainSuccessor.recipientType, chainSuccessor.recipientPhone, chainSuccessor.templateKey,
+                chainSuccessor.dedupeKey, chainSuccessor.payload as MessageTriggerJobEntity["payload"], chainSuccessor.createdAt, chainSuccessor.updatedAt);
             const persistChainJob = () => tx.message_trigger_job.update({ where: { id: chainJob.id }, data: {
                 scheduledFor: chainJob.scheduledFor, dedupeKey: chainJob.dedupeKey, payload: chainJob.payload as unknown as Prisma.InputJsonValue,
             } });
@@ -478,17 +497,16 @@ describeAgentE2E("real automation.list with two eligible clients and missing def
             await persistChainJob();
             expect(await adapter.checkAutomaticJob(tx, chainJob, "dispatch", render)).toEqual(chainAllowed);
 
-            const predecessorRow = chainRows[1]!;
+            const predecessorRow = chainRows[0]!;
             const predecessorPayload = structuredClone(predecessorRow.payload) as { catchUp: { predecessorDedupeKey: string | null } };
             predecessorPayload.catchUp.predecessorDedupeKey = "missing-catch-up-predecessor";
             await tx.message_trigger_job.update({ where: { id: predecessorRow.id }, data: { payload: predecessorPayload as unknown as Prisma.InputJsonValue } });
             expect(await adapter.checkAutomaticJob(tx, chainJob, "dispatch", render)).toMatchObject({ status: "refused" });
             await tx.message_trigger_job.update({ where: { id: predecessorRow.id }, data: { payload: predecessorRow.payload as Prisma.InputJsonValue } });
 
-            const rootRow = chainRows[0]!;
-            await tx.message_trigger_job.update({ where: { id: rootRow.id }, data: { scheduledFor: new Date(rootRow.scheduledFor.getTime() + 60_000) } });
+            await tx.message_trigger_job.update({ where: { id: predecessorRow.id }, data: { scheduledFor: new Date(predecessorRow.scheduledFor.getTime() + 60_000) } });
             expect(await adapter.checkAutomaticJob(tx, chainJob, "dispatch", render)).toMatchObject({ status: "refused" });
-            await tx.message_trigger_job.update({ where: { id: rootRow.id }, data: { scheduledFor: rootRow.scheduledFor } });
+            await tx.message_trigger_job.update({ where: { id: predecessorRow.id }, data: { scheduledFor: predecessorRow.scheduledFor } });
 
             const chainCatchUp = chainJob.payload.catchUp!;
             const originalPredecessorKey = chainCatchUp.predecessorDedupeKey;
