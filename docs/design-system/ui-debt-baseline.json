@@ -854,8 +854,8 @@
         "1046:13-1052:14|rawUiElement",
         "1058:13-1064:14|rawUiElement",
         "1440:25-1447:26|rawUiElement",
-        "1513:15-1518:16|rawUiElement",
-        "1521:15-1526:16|rawUiElement"
+        "1514:15-1519:16|rawUiElement",
+        "1522:15-1527:16|rawUiElement"
       ]
     },
     "mobile/src/app/(shell)/clients/page.tsx": {
