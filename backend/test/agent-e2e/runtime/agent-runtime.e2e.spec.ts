@@ -409,20 +409,27 @@ describeAgentE2E("Release A runtime with Postgres, Valkey, and the deterministic
                 jobsStale: false,
             },
         });
+        // Automatic admission requires an actual customer source. This case
+        // isolates the dispatcher/rule CAS, rather than malformed job handling.
+        const client = await prisma.client.create({ data: {
+            branchId: BRANCH_ID, name: "E2E 수신자", phone: `010${String(Date.now()).slice(-8)}`,
+            voucherClient: false,
+        } });
         const job = await prisma.message_trigger_job.create({
             data: {
                 branchId: BRANCH_ID,
                 ruleId,
+                clientId: client.id,
                 status: "pending",
                 scheduledFor: new Date(),
                 recipientType: MessageTriggerRecipientType.CLIENT,
-                recipientPhone: "01012345678",
+                recipientPhone: client.phone,
                 templateKey: "INFO",
                 dedupeKey,
                 payload: {
-                    memberId: "agent-e2e-dispatch-wins",
+                    memberId: String(client.id),
                     recipientName: "E2E 수신자",
-                    recipientPhone: "01012345678",
+                    recipientPhone: client.phone,
                     messageBody: "dispatch wins payload",
                     templateVariables: {},
                 },
@@ -495,6 +502,7 @@ describeAgentE2E("Release A runtime with Postgres, Valkey, and the deterministic
             releaseGate();
             sendSpy.mockRestore();
             await prisma.message_trigger_rule.deleteMany({ where: { id: ruleId } });
+            await prisma.client.delete({ where: { id: client.id } });
             await prisma.branch.update({
                 where: { id: BRANCH_ID },
                 data: {
