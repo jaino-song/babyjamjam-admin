@@ -155,13 +155,15 @@ export function StatsPage({ view = "overview" }: { view?: keyof StatsViewData })
   const params = useSearchParams();
   const user = useInitialUser();
   const isOwner = user?.role === "owner";
-  const detailView: DetailView | null = view !== "overview" ? view : (STATS_LIST.some((item) => item.id === params.get("item")) ? params.get("item") as DetailView : null);
+  const visibleStats = isOwner ? STATS_LIST : STATS_LIST.filter((item) => item.id === "inquiries");
+  const requestedDetailView: DetailView | null = view !== "overview" ? view : (STATS_LIST.some((item) => item.id === params.get("item")) ? params.get("item") as DetailView : null);
+  const detailView: DetailView | null = requestedDetailView && visibleStats.some((item) => item.id === requestedDetailView) ? requestedDetailView : null;
   const didPushDetailRef = useRef(false);
-  const overviewQuery = useQuery({ queryKey: ["stats", "overview"], queryFn: () => getStatsView("overview"), enabled: detailView === null || isOwner, staleTime: 60_000 });
+  const overviewQuery = useQuery({ queryKey: ["stats", "overview"], queryFn: () => getStatsView("overview"), enabled: isOwner && detailView === null, staleTime: 60_000 });
   const detailQuery = useQuery({ queryKey: ["stats", detailView], queryFn: () => getStatsView(detailView as DetailView), enabled: detailView !== null, staleTime: 60_000 });
-  const overview = overviewQuery.data?.data;
-  const list = <SettingsListCard data-component={LIST_BASE} title="운영 통계" count={STATS_LIST.length} subtitle="실시간 운영 지표를 한눈에 확인할 수 있어요.">
-    {overviewQuery.isLoading && !overview ? <SettingsListRowsSkeleton data-component={`${LIST_BASE}_loading`} rowCount={4} /> : STATS_LIST.map((definition) => {
+  const overview = isOwner ? overviewQuery.data?.data : undefined;
+  const list = <SettingsListCard data-component={LIST_BASE} title="운영 통계" count={visibleStats.length} subtitle="실시간 운영 지표를 한눈에 확인할 수 있어요.">
+    {overviewQuery.isLoading && !overview ? <SettingsListRowsSkeleton data-component={`${LIST_BASE}_loading`} rowCount={visibleStats.length} /> : visibleStats.map((definition) => {
       const value = definition.id === "errors" ? formatNumber((overview as StatsViewData["overview"] | null)?.errors?.openCount) : definition.id === "inquiries" ? formatNumber((overview as StatsViewData["overview"] | null)?.inquiries?.sevenDayTotal) : definition.id === "funnel" ? formatPercent((overview as StatsViewData["overview"] | null)?.funnel?.conversionRate) : formatNumber((overview as StatsViewData["overview"] | null)?.traffic?.today.pv);
       return <SettingsListItem key={definition.id} data-component={`${LIST_BASE}_item-${definition.id}`} icon={definition.icon} title={definition.title} subtitle={definition.subtitle} ariaLabel={`${definition.title} 통계 보기`} isSelected={detailView === definition.id} onSelect={() => { didPushDetailRef.current = true; router.push(`/stats/${definition.id}`, { scroll: false }); }} control={<StatusPill data-component={`${LIST_BASE}_item-${definition.id}_value`} variant={overviewQuery.data?.state === "ready" ? "primary" : "neutral"} className="!rounded-[calc(999px*var(--glint-ui-scale,1))] !px-[calc(8px*var(--glint-ui-scale,1))] !py-[calc(4px*var(--glint-ui-scale,1))] !text-[calc(0.62rem*var(--glint-ui-scale,1))]">{value}</StatusPill>} />;
     })}
