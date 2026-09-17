@@ -24,7 +24,10 @@ import { MobileTwoButtonModal } from "@/components/app/ui/MobileTwoButtonModal";
 import { ClientDetailContent, type DetailTabId } from "@/components/app/clients/client-detail";
 import { DashboardRedesign } from "@/components/app/mobile-redesign/DashboardRedesign";
 import { ListLoadMoreSentinel } from "@/components/app/mobile-redesign/primitives";
-import { deriveDashboardAnalyticsFromClients } from "@/lib/dashboard/analytics";
+import {
+  deriveDashboardAnalyticsFromClients,
+  isServiceStartingWithinWeek,
+} from "@/lib/dashboard/analytics";
 import type {
   DashboardRedesignFilter,
   DashboardRedesignProps,
@@ -268,7 +271,8 @@ export default function DashboardPage() {
   const dashboardData = useMemo<
     Omit<DashboardRedesignProps, "activeFilter" | "onFilterChange"> & { allRows: ListRow[] }
   >(() => {
-    const derivedAnalytics = deriveDashboardAnalyticsFromClients(clients);
+    const now = new Date();
+    const derivedAnalytics = deriveDashboardAnalyticsFromClients(clients, now);
     const active = analytics?.activeClients ?? derivedAnalytics.activeClients;
     const upcoming = analytics?.upcomingThisMonth ?? derivedAnalytics.upcomingThisMonth;
     const pendingReview =
@@ -305,11 +309,8 @@ export default function DashboardPage() {
       return { analytics: dashboardAnalytics, sections: [], filters, allRows: [], loading: true };
     }
 
-    const today = new Date();
+    const today = new Date(now);
     today.setHours(0, 0, 0, 0);
-    const weekFromNow = new Date(today);
-    weekFromNow.setDate(today.getDate() + 7);
-    weekFromNow.setHours(23, 59, 59, 999);
     const monthFromNow = new Date(today);
     monthFromNow.setDate(today.getDate() + 30);
     monthFromNow.setHours(23, 59, 59, 999);
@@ -320,14 +321,7 @@ export default function DashboardPage() {
       .sort((a, b) => (b.updatedAt ? new Date(b.updatedAt).getTime() : 0) - (a.updatedAt ? new Date(a.updatedAt).getTime() : 0) || b.id - a.id);
 
     const upcomingClients = clients
-      .filter((c) => {
-        if (!c.startDate || c.serviceStatus === "terminated")
-          return false;
-        const d = new Date(c.startDate);
-        if (Number.isNaN(d.getTime())) return false;
-        d.setHours(0, 0, 0, 0);
-        return d >= today && d <= weekFromNow;
-      })
+      .filter((c) => isServiceStartingWithinWeek(c, now))
       .sort((a, b) => new Date(a.startDate!).getTime() - new Date(b.startDate!).getTime());
 
     const endingSoon = clients
