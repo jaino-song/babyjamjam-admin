@@ -118,6 +118,23 @@ describe("POST /api/auth/token", () => {
         }));
     });
 
+    it("logs the network failure data-free (name/code/status only, no bodies)", async () => {
+        mockPost.mockRejectedValue(new AxiosError("network down", "ECONNREFUSED"));
+
+        await POST(createRequest());
+
+        const logCall = consoleErrorSpy.mock.calls.find(
+            (call) => typeof call[0] === "string" && call[0].includes("exchange authorization code"),
+        );
+        expect(logCall).toBeDefined();
+        expect(logCall?.[1]).toEqual({ status: 500, code: "ECONNREFUSED", name: "AxiosError" });
+        const logged = consoleErrorSpy.mock.calls
+            .flat()
+            .map((entry) => (typeof entry === "string" ? entry : JSON.stringify(entry)))
+            .join(" ");
+        expect(logged).not.toContain("network down");
+    });
+
     it("does not log backend URL or upstream response bodies on token exchange failures", async () => {
         mockPost.mockRejectedValue(
             createAxiosError(500, {

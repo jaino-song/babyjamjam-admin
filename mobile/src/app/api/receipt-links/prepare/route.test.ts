@@ -25,8 +25,15 @@ function createRequest(body: unknown = { clientId: 7 }, authenticated = true) {
 }
 
 describe("POST /api/receipt-links/prepare", () => {
+  let consoleErrorSpy: jest.SpyInstance;
+
   beforeEach(() => {
     mockPost.mockReset();
+    consoleErrorSpy = jest.spyOn(console, "error").mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    consoleErrorSpy.mockRestore();
   });
 
   it("forwards the authenticated client selection and returns the prepared payload", async () => {
@@ -83,5 +90,19 @@ describe("POST /api/receipt-links/prepare", () => {
       reason: "not_voucher_client",
       message: "바우처 이용 산모가 아닙니다",
     });
+  });
+
+  it("normalizes an unexpected upstream failure to a fixed 500 response", async () => {
+    mockPost.mockRejectedValue(new Error("connect ECONNREFUSED db-primary.internal:5432"));
+
+    const response = await POST(createRequest());
+
+    expect(response.status).toBe(500);
+    expect(await response.json()).toEqual({ error: "Failed to prepare receipt link" });
+    const logged = consoleErrorSpy.mock.calls
+      .flat()
+      .map((entry) => (typeof entry === "string" ? entry : JSON.stringify(entry)))
+      .join(" ");
+    expect(logged).not.toContain("db-primary.internal");
   });
 });

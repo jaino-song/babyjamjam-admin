@@ -4,6 +4,7 @@ import { jwtDecode } from "jwt-decode";
 import { z } from "zod";
 
 import { errorResponse, parseBody } from "@/lib/api/route-utils";
+import { upstreamBodyErrorResponse } from "@/lib/api/problem-responses";
 import { serverAPIClient } from "@/lib/api/server";
 import { getServerRuntimeConfig } from "@/lib/env";
 import {
@@ -37,9 +38,11 @@ export async function POST(request: NextRequest) {
         const { autoLogin = true, ...loginPayload } = parsed;
         const { data, status } = await serverAPIClient.post("/auth/login", loginPayload);
 
-        // If login failed, return the response
+        // If login failed, propagate the upstream failure through the problem
+        // boundary: verbatim problem bodies keep their status and headers,
+        // other bodies get the sanitized fallback without raw passthrough.
         if (!data.success || !data.accessToken) {
-            return NextResponse.json(data, { status: status || 401 });
+            return upstreamBodyErrorResponse(status || 401, JSON.stringify(data), "login", "mutation");
         }
 
         // Set auth cookies on successful login

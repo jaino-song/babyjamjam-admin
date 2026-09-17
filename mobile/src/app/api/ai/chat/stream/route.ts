@@ -45,7 +45,7 @@ export async function POST(request: NextRequest) {
 
         if (!backendResponse.ok) {
             const upstreamText = await backendResponse.text().catch(() => "");
-            return upstreamSseUpstreamErrorResponse(backendResponse.status, upstreamText || undefined);
+            return upstreamSseUpstreamErrorResponse(backendResponse.status, upstreamText || undefined, "mutation");
         }
 
         return new Response(backendResponse.body, {
