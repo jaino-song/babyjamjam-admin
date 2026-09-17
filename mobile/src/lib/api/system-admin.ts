@@ -22,7 +22,7 @@ export interface SystemAdminBranchInput {
   district?: string;
   address?: string;
   phone?: string;
-  email?: string;
+  email?: string | null;
   isActive: boolean;
 }
 
