@@ -35,7 +35,7 @@ describe("canonical automation consent and append-only authority", () => {
         const reused = { ...scheduleScope, scheduleIdentity: agentAutomationScheduleIdentity("75000000-0000-4000-8000-000000000002") };
         expect(agentAutomationLineageKey(reused)).toBe(agentAutomationLineageKey(scheduleScope));
         expect(agentAutomationLineageKey({ ...scheduleScope, recipientType: "secondary-employee" })).not.toBe(agentAutomationLineageKey(scheduleScope));
-        const scheduleEffect = effect({ kind: "employee-assignment", scheduleId: 12, recipientType: "primary-employee" });
+        const scheduleEffect = effect({ kind: "employee-assignment", scheduleId: 12, recipientType: "primary-employee", templateKey: "EMPLOYEE_ASSIGNED" });
         const scheduleRecord = record({ scope: scheduleScope, effects: [scheduleEffect], scopeEffectDigest: agentAutomationEffectDigest([scheduleEffect]) });
         expect(resolveAgentAutomationAuthority({ records: [scheduleRecord], scope: scheduleScope, effect: scheduleEffect,
             currentScopeEffectDigest: scheduleRecord.scopeEffectDigest, knownTaskOrigin: true }).status).toBe("allowed");
@@ -49,7 +49,7 @@ describe("canonical automation consent and append-only authority", () => {
     });
 
     it("binds every member while ignoring input ordering", () => {
-        const primary = effect({ kind: "employee-assignment", ruleId: "rule-b", scheduleId: 12, recipientType: "primary-employee" });
+        const primary = effect({ kind: "employee-assignment", ruleId: "rule-b", scheduleId: 12, recipientType: "primary-employee", templateKey: "EMPLOYEE_ASSIGNED" });
         const secondary = effect({ ...primary, recipientType: "secondary-employee", recipientDigest: hash("f") });
         const all = [effect(), primary, secondary];
         expect(agentAutomationEffectDigest(all)).toBe(agentAutomationEffectDigest([...all].reverse()));
@@ -90,5 +90,32 @@ describe("canonical automation consent and append-only authority", () => {
             record({ effects: [effect({ recipientDigest: hash("9") })] })]) {
             expect(resolve([bad]).status).toBe("refused");
         }
+    });
+
+    it.each([false, true])("refuses stale denial provenance, including noSend=%s, before suppressing", (noSend) => {
+        const denied = record({ decision: "deny", noSend });
+        expect(resolve([denied]).status).toBe("suppressed");
+        for (const changed of [effect({ sourceDigest: hash("9") }), effect({ recipientDigest: hash("9") }),
+            effect({ templateDigest: hash("9") }), effect({ policyDigest: hash("9") }), effect({ ruleId: "rule-b" })]) {
+            expect(resolveAgentAutomationAuthority({ records: [denied], scope, effect: changed,
+                currentScopeEffectDigest: agentAutomationEffectDigest([changed]), knownTaskOrigin: true }))
+                .toEqual({ status: "refused", reason: "source-mismatch" });
+            // Even a stale advertised set digest cannot substitute a different member.
+            expect(resolveAgentAutomationAuthority({ records: [denied], scope, effect: changed,
+                currentScopeEffectDigest: denied.scopeEffectDigest, knownTaskOrigin: true }))
+                .toEqual({ status: "refused", reason: "effect-mismatch" });
+        }
+    });
+
+    it("cannot make an empty denial or no-effect record suppress a later recipe", () => {
+        for (const noSend of [false, true]) {
+            const empty = record({ decision: "deny", noSend, effects: [], scopeEffectDigest: agentAutomationEffectDigest([]) });
+            expect(resolve([empty])).toEqual({ status: "refused", reason: "invalid-chain" });
+        }
+        const none = record({ decision: "none", effects: [], scopeEffectDigest: agentAutomationEffectDigest([]) });
+        expect(resolve([none])).toEqual({ status: "refused", reason: "source-mismatch" });
+        expect(resolveAgentAutomationAuthority({ records: [none], scope, effect: effect(),
+            currentScopeEffectDigest: none.scopeEffectDigest, knownTaskOrigin: true }))
+            .toEqual({ status: "refused", reason: "effect-mismatch" });
     });
 });

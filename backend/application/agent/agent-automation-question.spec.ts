@@ -22,6 +22,16 @@ describe("server automation questions and aggregate consent", () => {
         expect(parseAgentTaskAutomationState(null)).toBeNull();
     });
 
+    it("cannot present a question for a forged cross-kind template or recipient", () => {
+        const client = effect("rule-a");
+        for (const invalid of [
+            { ...client, templateKey: "SERVICE_RECORD_LINK" as const },
+            { ...client, kind: "service-record-link" as const, ruleId: "system:service_record_link",
+                scheduleId: 12, recipientType: "secondary-employee" as const, templateKey: "SERVICE_RECORD_LINK" as const },
+            { ...client, kind: "employee-assignment" as const, scheduleId: 12, recipientType: "primary-employee" as const },
+        ]) expect(() => createAgentAutomationQuestion({ effects: [invalid], availability: "available" })).toThrow();
+    });
+
     it("preserves refs for an equivalent reordered set and binds yes to the whole set", () => {
         const effects = [effect("rule-b"), effect("rule-a", hash("f"))];
         const first = createAgentAutomationQuestion({ effects, availability: "available" });

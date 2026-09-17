@@ -1,6 +1,7 @@
 import type {
     AgentAutomationAuthority, AgentAutomationEffect, AgentAutomationScope,
 } from "domain/entities/agent-automation-consent";
+import { isAgentAutomationEffectVariantValid, isAgentAutomationOperationValid } from "domain/entities/agent-automation-consent";
 import { agentBindingHash } from "domain/repositories/agent-linked-action.types";
 
 const DIGEST = /^[a-f0-9]{64}$/;
@@ -28,6 +29,7 @@ export function canonicalAgentAutomationEffects(effects: readonly AgentAutomatio
     if (effects.length > 500) throw new Error("Automation effect limit exceeded");
     const identities = new Set<string>();
     const ordered = effects.map((effect) => {
+        if (!isAgentAutomationEffectVariantValid(effect)) throw new Error("Invalid automation effect variant");
         const identity = agentAutomationEffectIdentity(effect);
         if (identities.has(identity)) throw new Error("Duplicate automation effect identity");
         identities.add(identity);
@@ -90,7 +92,9 @@ export function resolveAgentAutomationAuthority(input: {
         for (let index = 0; index < records.length; index += 1) {
             const record = records[index]!;
             if (agentBindingHash(record.scope) !== expectedScope) return { status: "refused", reason: "scope-mismatch" };
-            if (record.version !== 1 || record.sequence !== index + 1 || ids.has(record.id)
+            if (!isAgentAutomationOperationValid(record.scope)
+                || (record.scope.scheduleId === null) !== (record.scope.scheduleIdentity === null)
+                || record.version !== 1 || record.sequence !== index + 1 || ids.has(record.id)
                 || record.previousId !== (index === 0 ? null : records[index - 1]!.id)
                 || (index === 0 && record.origin.kind !== "task")
                 || record.recordDigest !== agentAutomationRecordDigest(record)
@@ -100,18 +104,19 @@ export function resolveAgentAutomationAuthority(input: {
                     || effect.ruleId !== record.scope.ruleId || effect.recipientType !== record.scope.recipientType)
                 || (record.decision === "allow" && (record.noSend || !record.effects.length
                     || (record.origin.kind === "task" && !record.origin.consentEventId)))
+                || (record.decision === "deny" && !record.effects.length)
                 || (record.decision === "none" && record.effects.length !== 0)) {
                 return { status: "refused", reason: "invalid-chain" };
             }
             ids.add(record.id);
         }
         const authority = records[records.length - 1]!;
-        if (authority.decision !== "allow" || authority.noSend) return { status: "suppressed", authority };
         if (input.currentScopeEffectDigest !== authority.scopeEffectDigest) return { status: "refused", reason: "source-mismatch" };
         const memberDigest = agentAutomationEffectDigest([input.effect]);
         if (!authority.effects.some((effect) => agentAutomationEffectDigest([effect]) === memberDigest)) {
             return { status: "refused", reason: "effect-mismatch" };
         }
+        if (authority.decision !== "allow" || authority.noSend) return { status: "suppressed", authority };
         return { status: "allowed", authority };
     } catch {
         return { status: "refused", reason: "invalid-chain" };

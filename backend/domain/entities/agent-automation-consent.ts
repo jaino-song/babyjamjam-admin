@@ -1,4 +1,6 @@
 import type { AgentAutomationEffectSummary, AgentAutomationQuestion } from "@babyjamjam/shared";
+import { AGENT_SMS_RULE_ID_PREFIX, CONFIGURABLE_SMS_TRIGGER_TEMPLATE_KEYS, MessageTriggerTemplateKey } from "domain/constants/message-trigger-catalog";
+import { SERVICE_RECORD_LINK_RULE_ID } from "domain/constants/service-record-link-message";
 
 /** Protected question recipe; only its public question may enter an owned REST snapshot. */
 export interface AgentTaskAutomationState {
@@ -66,4 +68,23 @@ export interface AgentAutomationJobSeal {
     scope: AgentAutomationScope;
     memberDigest: string;
     reviewedEffectDigest: string;
+}
+
+/** Dedicated producers own their rule/recipient combination; generic rules cannot impersonate them. */
+export function isAgentAutomationOperationValid(operation: Pick<AgentAutomationScope, "kind" | "ruleId" | "scheduleId" | "recipientType">): boolean {
+    if (operation.kind === "service-record-link") {
+        return operation.ruleId === SERVICE_RECORD_LINK_RULE_ID && operation.scheduleId !== null
+            && operation.recipientType === "primary-employee";
+    }
+    if (operation.ruleId.startsWith("system:") || operation.ruleId.startsWith(AGENT_SMS_RULE_ID_PREFIX)) return false;
+    if (operation.kind === "client-rule") return operation.scheduleId === null && operation.recipientType === "client";
+    return operation.kind === "employee-assignment" && operation.scheduleId !== null
+        && (operation.recipientType === "primary-employee" || operation.recipientType === "secondary-employee");
+}
+
+export function isAgentAutomationEffectVariantValid(effect: AgentAutomationEffect): boolean {
+    if (!isAgentAutomationOperationValid(effect)) return false;
+    if (effect.kind === "service-record-link") return effect.templateKey === MessageTriggerTemplateKey.SERVICE_RECORD_LINK;
+    if (effect.kind === "employee-assignment") return effect.templateKey === MessageTriggerTemplateKey.EMPLOYEE_ASSIGNED;
+    return CONFIGURABLE_SMS_TRIGGER_TEMPLATE_KEYS.includes(effect.templateKey as MessageTriggerTemplateKey);
 }

@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { AgentAutomationEffectSummarySchema } from "@babyjamjam/shared";
 import type { AgentAutomationAuthority, AgentAutomationJobSeal } from "domain/entities/agent-automation-consent";
+import { isAgentAutomationEffectVariantValid, isAgentAutomationOperationValid } from "domain/entities/agent-automation-consent";
 import { agentAutomationEffectDigest, agentAutomationRecordDigest } from "./agent-automation-consent";
 
 const digest = z.string().regex(/^[a-f0-9]{64}$/);
@@ -14,8 +15,7 @@ export const AgentAutomationEffectStorageSchema = AgentAutomationEffectSummarySc
         scheduleId: positiveId.nullable(),
         recipientDigest: digest, sourceDigest: digest, templateDigest: digest, policyDigest: digest, recipeDigest: digest,
     }).strict().superRefine((effect, context) => {
-        if ((effect.kind === "client-rule") !== (effect.scheduleId === null)
-            || ((effect.kind === "client-rule") !== (effect.recipientType === "client"))) {
+        if (!isAgentAutomationEffectVariantValid(effect)) {
             context.addIssue({ code: "custom", message: "Inconsistent automation effect target" });
         }
     });
@@ -25,9 +25,8 @@ export const AgentAutomationScopeStorageSchema = z.object({
     kind: AgentAutomationEffectSummarySchema.shape.kind, scheduleId: positiveId.nullable(),
     ruleId, recipientType: AgentAutomationEffectSummarySchema.shape.recipientType, scheduleIdentity: digest.nullable(),
 }).strict().superRefine((scope, context) => {
-    if ((scope.kind === "client-rule") !== (scope.scheduleId === null)
-        || (scope.scheduleId === null) !== (scope.scheduleIdentity === null)
-        || (scope.kind === "client-rule") !== (scope.recipientType === "client")) {
+    if (!isAgentAutomationOperationValid(scope)
+        || (scope.scheduleId === null) !== (scope.scheduleIdentity === null)) {
         context.addIssue({ code: "custom", message: "Inconsistent automation scope" });
     }
 });
@@ -53,6 +52,7 @@ export const AgentAutomationAuthorityStorageSchema = z.object({
                 || effect.ruleId !== record.scope.ruleId || effect.recipientType !== record.scope.recipientType)
             || (record.decision === "allow" && (record.noSend || !record.effects.length
                 || (record.origin.kind === "task" && !record.origin.consentEventId)))
+            || (record.decision === "deny" && !record.effects.length)
             || (record.decision === "none" && record.effects.length !== 0)) {
             context.addIssue({ code: "custom", message: "Invalid automation authority binding" });
         }

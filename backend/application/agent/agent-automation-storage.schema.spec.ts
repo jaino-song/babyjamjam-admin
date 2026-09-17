@@ -1,6 +1,6 @@
 import type { AgentAutomationAuthority, AgentAutomationEffect } from "domain/entities/agent-automation-consent";
 import { agentAutomationEffectDigest, agentAutomationPolicyDigest, agentAutomationRecordDigest } from "./agent-automation-consent";
-import { parseAgentAutomationAuthority, parseAgentAutomationJobSeal } from "./agent-automation-storage.schema";
+import { AgentAutomationEffectStorageSchema, AgentAutomationScopeStorageSchema, parseAgentAutomationAuthority, parseAgentAutomationJobSeal } from "./agent-automation-storage.schema";
 
 const id = (n: number) => `70000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
 const hash = "a".repeat(64);
@@ -49,5 +49,39 @@ describe("strict private automation storage", () => {
         expect(parseAgentAutomationJobSeal({ ...seal, approved: true })).toBeNull();
         expect(parseAgentAutomationJobSeal({ authorityId: record.id })).toBeNull();
         expect(parseAgentAutomationJobSeal({ ...seal, scope: { ...seal.scope, recipientPhone: "01012345678" } })).toBeNull();
+    });
+
+    it("requires an exact nonempty affected set for deny and noSend records", () => {
+        for (const noSend of [false, true]) {
+            const denied = { ...authority(), decision: "deny" as const, noSend, effects: [], scopeEffectDigest: agentAutomationEffectDigest([]) };
+            denied.recordDigest = agentAutomationRecordDigest(denied);
+            expect(parseAgentAutomationAuthority(denied)).toBeNull();
+        }
+    });
+
+    it("accepts only the canonical template, recipient and dedicated rule combinations", () => {
+        const client = authority().effects[0]!;
+        const employee = { ...client, kind: "employee-assignment" as const, scheduleId: 12,
+            recipientType: "primary-employee" as const, templateKey: "EMPLOYEE_ASSIGNED" as const };
+        const link = { ...employee, kind: "service-record-link" as const,
+            ruleId: "system:service_record_link", templateKey: "SERVICE_RECORD_LINK" as const };
+        for (const valid of [client, employee, { ...employee, recipientType: "secondary-employee" }, link]) {
+            expect(AgentAutomationEffectStorageSchema.safeParse(valid).success).toBe(true);
+        }
+        for (const invalid of [
+            { ...client, templateKey: "SERVICE_RECORD_LINK" }, { ...client, templateKey: "EMPLOYEE_ASSIGNED" },
+            { ...client, ruleId: "system:service_record_link" }, { ...client, ruleId: "agent-sms:forged" },
+            { ...employee, templateKey: "INFO" }, { ...employee, recipientType: "client" },
+            { ...employee, ruleId: "system:service_record_link" }, { ...link, templateKey: "INFO" },
+            { ...link, recipientType: "secondary-employee" }, { ...link, ruleId: "rule-a" },
+            { ...link, scheduleId: null },
+        ]) expect(AgentAutomationEffectStorageSchema.safeParse(invalid).success).toBe(false);
+        const linkScope = { ...authority().scope, kind: link.kind, ruleId: link.ruleId,
+            scheduleId: 12, scheduleIdentity: hash, recipientType: link.recipientType };
+        expect(AgentAutomationScopeStorageSchema.safeParse(linkScope).success).toBe(true);
+        for (const invalid of [{ ...linkScope, recipientType: "secondary-employee" }, { ...linkScope, ruleId: "rule-a" },
+            { ...linkScope, scheduleIdentity: null }, { ...linkScope, kind: "employee-assignment" }]) {
+            expect(AgentAutomationScopeStorageSchema.safeParse(invalid).success).toBe(false);
+        }
     });
 });

@@ -12,15 +12,12 @@ import { clientAgentTargetSnapshot, clientAgentTargetVersion } from "./client-ag
 import { AgentActionCertainFailureError } from "application/agent/action-coordinator.service";
 import { readAgentActionEffect, recordAgentActionEffect } from "application/agent/agent-action-effect-receipt";
 import { normalizeClientPricing } from "domain/services/client-pricing";
-import { clientDurationOutOfRangeMessage, CLIENT_DURATION_NEEDS_SERVICE_PERIOD_MESSAGE } from "domain/entities/client.entity";
+import { normalizeClientCreateInput, normalizeClientUpdateInput, normalizeMergedClientPricing } from "./client-write-normalization";
 import {
-    assertClientDurationMatchesDates,
     assertAllowedClientArea,
     assertAllowedServiceStatus,
     assertPhoneAvailable,
     assertClientPhoneInput,
-    deriveClientDuration,
-    mergeAndValidateClientServicePeriod,
     parseClientDate,
 } from "./client-write-validation";
 import { CLIENT_REPOSITORY, IClientRepository } from "domain/repositories/client.repository.interface";
@@ -174,43 +171,15 @@ function validationErrorMessage(error: BadRequestException | ConflictException):
     return error.message;
 }
 
-type ClientPricingUpdate = {
-    voucherClient?: boolean;
-    type?: string | null;
-    duration?: number | null;
-    fullPrice?: string | null;
-    grant?: string | null;
-    actualPrice?: string | null;
-};
-
-function hasPricingUpdate(updates: ClientPricingUpdate): boolean {
-    return updates.voucherClient !== undefined
-        || updates.type !== undefined
-        || updates.duration !== undefined
-        || updates.fullPrice !== undefined
-        || updates.grant !== undefined
-        || updates.actualPrice !== undefined;
-}
-
-function normalizeMergedClientPricing(
-    existing: {
-        voucherClient: boolean;
-        type: string | null;
-        fullPrice: string | null;
-        grant: string | null;
-        actualPrice: string | null;
-    },
-    updates: ClientPricingUpdate,
-) {
-    if (!hasPricingUpdate(updates)) return undefined;
-
-    return normalizeClientPricing({
-        voucherClient: updates.voucherClient ?? existing.voucherClient,
-        type: updates.type === undefined ? existing.type : updates.type,
-        fullPrice: updates.fullPrice === undefined ? existing.fullPrice : updates.fullPrice,
-        grant: updates.grant === undefined ? existing.grant : updates.grant,
-        actualPrice: updates.actualPrice === undefined ? existing.actualPrice : updates.actualPrice,
-    });
+function normalizeAgentClientWrite<T>(normalize: () => T): T {
+    try {
+        return normalize();
+    } catch (error) {
+        if (error instanceof BadRequestException || error instanceof ConflictException) {
+            throw new AgentActionCertainFailureError(validationErrorMessage(error));
+        }
+        throw error;
+    }
 }
 
 async function validateClientServicePeriod(
@@ -233,23 +202,6 @@ async function validateClientServicePeriod(
     }
 }
 
-/**
- * Resolve the duration to persist on an update: duration is the contracted
- * session count and authoritative once set, so a supplied value (including
- * an explicit null clear) always wins over the date-derived count. When the
- * caller omits duration, it is left untouched (`undefined`, no field
- * change) unless the existing client has no duration yet and the period is
- * now complete, in which case the derived count fills it.
- */
-function resolveClientDuration(
-    existingDuration: number | null,
-    suppliedDuration: number | null | undefined,
-    derivedDuration: number | null,
-): number | null | undefined {
-    if (suppliedDuration !== undefined) return suppliedDuration;
-    return existingDuration === null && derivedDuration !== null ? derivedDuration : undefined;
-}
-
 async function validateClientWrite(
     prisma: PrismaService,
     repository: Pick<IClientRepository, "findByPhone">,
@@ -263,29 +215,11 @@ async function validateClientWrite(
         endDate?: Date | null;
         duration?: number | null;
     },
-): Promise<number | null> {
+): Promise<void> {
     try {
         assertAllowedServiceStatus(updates.serviceStatus);
         await assertAllowedClientArea(prisma, branchId, updates.areaId);
         await assertPhoneAvailable(repository, branchId, updates.phone, existing?.id);
-        const mergedServicePeriod = mergeAndValidateClientServicePeriod(existing, {
-            startDate: updates.startDate,
-            endDate: updates.endDate,
-        });
-        const derivedDuration = deriveClientDuration(
-            mergedServicePeriod.startDate,
-            mergedServicePeriod.endDate,
-        );
-        assertClientDurationMatchesDates(updates.duration, derivedDuration);
-        const hasDateUpdate = existing !== null
-            && (updates.startDate !== undefined || updates.endDate !== undefined);
-        if (hasDateUpdate && derivedDuration !== null && updates.duration === null) {
-            throw new BadRequestException(clientDurationOutOfRangeMessage(derivedDuration));
-        }
-        if (hasDateUpdate && derivedDuration === null && updates.duration !== undefined && updates.duration !== null) {
-            throw new BadRequestException(CLIENT_DURATION_NEEDS_SERVICE_PERIOD_MESSAGE);
-        }
-        return derivedDuration;
     } catch (error) {
         if (error instanceof BadRequestException || error instanceof ConflictException) {
             throw new AgentActionCertainFailureError(validationErrorMessage(error));
@@ -374,46 +308,11 @@ export class ClientWriteAgentCapabilitiesProvider implements AgentCapabilityProv
                 execute: async (context, rawInput) => {
                     const input = CreateClientSchema.parse(rawInput);
                     assertAgentClientPhone(input.phone);
-                    const dates = {
-                        startDate: parseClientDate(input.startDate, "startDate") ?? null,
-                        endDate: parseClientDate(input.endDate, "endDate") ?? null,
-                    };
-                    const derivedDuration = await validateClientWrite(this.prisma, this.clientRepository, context.principal.branchId, null, {
-                        ...dates,
-                        areaId: input.areaId,
-                        phone: input.phone,
-                        serviceStatus: input.serviceStatus,
-                        duration: input.duration,
-                    });
-                    const normalizedPricing = normalizeClientPricing({
-                        voucherClient: input.voucherClient ?? false,
-                        type: input.type ?? null,
-                        fullPrice: input.fullPrice ?? null,
-                        grant: input.grant ?? null,
-                        actualPrice: input.actualPrice ?? null,
-                    });
+                    const write = normalizeAgentClientWrite(() => normalizeClientCreateInput(input));
+                    await validateClientWrite(this.prisma, this.clientRepository, context.principal.branchId, null, write);
                     try {
                         return await this.prisma.$transaction(async (transaction) => {
-                            const client = await this.createClient.execute(context.principal.branchId, {
-                                name: input.name,
-                                address: input.address ?? null,
-                                phone: input.phone,
-                                type: normalizedPricing.type,
-                                duration: input.duration ?? derivedDuration ?? null,
-                                fullPrice: normalizedPricing.fullPrice,
-                                grant: normalizedPricing.grant,
-                                actualPrice: normalizedPricing.actualPrice,
-                                startDate: dates.startDate,
-                                endDate: dates.endDate,
-                                careCenter: input.careCenter ?? null,
-                                voucherClient: input.voucherClient ?? false,
-                                birthday: input.birthday ?? null,
-                                dueDate: parseClientDate(input.dueDate, "dueDate") ?? null,
-                                birthDate: parseClientDate(input.birthDate, "birthDate") ?? null,
-                                serviceStatus: input.serviceStatus ?? null,
-                                breastPump: input.breastPump ?? false,
-                                areaId: input.areaId ?? null,
-                            }, transaction);
+                            const client = await this.createClient.execute(context.principal.branchId, write, transaction);
                             await this.serviceRecordLifecycleService.ensureForClient(client.id, transaction);
                             const result = { id: client.id, name: client.name, status: "created" };
                             await recordAgentActionEffect(transaction, context, "clients.create", "client", client.id, result);
@@ -455,22 +354,13 @@ export class ClientWriteAgentCapabilitiesProvider implements AgentCapabilityProv
                     assertAgentClientPhone(input.phone);
                     const existing = await this.findClient.execute(context.principal.branchId, input.id);
                     if (!existing) throw new AgentActionCertainFailureError("Client no longer exists");
-                    const updates = input;
-                    const parsedUpdates = {
-                        ...updates,
-                        startDate: parseClientDate(updates.startDate, "startDate"),
-                        endDate: parseClientDate(updates.endDate, "endDate"),
-                    };
-                    const normalizedPricing = normalizeMergedClientPricing(existing, updates);
-                    const derivedDuration = await validateClientWrite(this.prisma, this.clientRepository, context.principal.branchId, existing, {
-                        ...parsedUpdates,
-                        ...normalizedPricing,
-                    });
+                    const parsedUpdates = normalizeAgentClientWrite(() => normalizeClientUpdateInput(existing, input));
+                    await validateClientWrite(this.prisma, this.clientRepository, context.principal.branchId, existing, parsedUpdates);
                     await validateClientServicePeriod(this.serviceRecordLifecycleService, {
                         clientId: existing.id,
                         startDate: parsedUpdates.startDate,
                         endDate: parsedUpdates.endDate,
-                        duration: resolveClientDuration(existing.duration, parsedUpdates.duration, derivedDuration),
+                        duration: parsedUpdates.duration,
                     });
                     return {
                         targetVersion: clientAgentTargetVersion(existing),
@@ -496,27 +386,16 @@ export class ClientWriteAgentCapabilitiesProvider implements AgentCapabilityProv
                     if (!existing) throw new AgentActionCertainFailureError("Client no longer exists");
                     const { id, targetVersion, ...updates } = input;
                     void targetVersion;
-                    const parsedUpdates = {
-                        ...updates,
-                        ...normalizeMergedClientPricing(existing, updates),
-                        startDate: parseClientDate(updates.startDate, "startDate"),
-                        endDate: parseClientDate(updates.endDate, "endDate"),
-                        dueDate: parseClientDate(updates.dueDate, "dueDate"),
-                        birthDate: parseClientDate(updates.birthDate, "birthDate"),
-                    };
-                    const derivedDuration = await validateClientWrite(this.prisma, this.clientRepository, context.principal.branchId, existing, parsedUpdates);
-                    const duration = resolveClientDuration(existing.duration, parsedUpdates.duration, derivedDuration);
+                    const parsedUpdates = normalizeAgentClientWrite(() => normalizeClientUpdateInput(existing, updates));
+                    await validateClientWrite(this.prisma, this.clientRepository, context.principal.branchId, existing, parsedUpdates);
                     await validateClientServicePeriod(this.serviceRecordLifecycleService, {
                         clientId: existing.id,
                         startDate: parsedUpdates.startDate,
                         endDate: parsedUpdates.endDate,
-                        duration,
+                        duration: parsedUpdates.duration,
                     });
                     try {
-                        const client = await this.updateClient.execute(context.principal.branchId, id, {
-                            ...parsedUpdates,
-                            ...(duration === undefined ? {} : { duration }),
-                        });
+                        const client = await this.updateClient.execute(context.principal.branchId, id, parsedUpdates);
                         await this.serviceRecordLifecycleService.ensureForClient(client.id);
                         await this.refreshEmployeeAssignmentJobsAfterProfileChange(
                             context.principal.branchId,
@@ -536,31 +415,20 @@ export class ClientWriteAgentCapabilitiesProvider implements AgentCapabilityProv
                     if (!existing) throw new AgentActionCertainFailureError("Client no longer exists");
                     const { id, targetVersion, ...updates } = input;
                     void targetVersion;
-                    const parsedUpdates = {
-                        ...updates,
-                        ...normalizeMergedClientPricing(existing, updates),
-                        startDate: parseClientDate(updates.startDate, "startDate"),
-                        endDate: parseClientDate(updates.endDate, "endDate"),
-                        dueDate: parseClientDate(updates.dueDate, "dueDate"),
-                        birthDate: parseClientDate(updates.birthDate, "birthDate"),
-                    };
-                    const derivedDuration = await validateClientWrite(this.prisma, this.clientRepository, context.principal.branchId, existing, parsedUpdates);
-                    const duration = resolveClientDuration(existing.duration, parsedUpdates.duration, derivedDuration);
+                    const parsedUpdates = normalizeAgentClientWrite(() => normalizeClientUpdateInput(existing, updates));
+                    await validateClientWrite(this.prisma, this.clientRepository, context.principal.branchId, existing, parsedUpdates);
                     try {
                         const result = await this.prisma.$transaction(async (transaction) => {
                             await validateClientServicePeriod(this.serviceRecordLifecycleService, {
                                 clientId: existing.id,
                                 startDate: parsedUpdates.startDate,
                                 endDate: parsedUpdates.endDate,
-                                duration,
+                                duration: parsedUpdates.duration,
                             }, transaction);
                             const client = await this.updateClient.executeApprovedTarget(
                                 context.principal.branchId,
                                 id,
-                                {
-                                    ...parsedUpdates,
-                                    ...(duration === undefined ? {} : { duration }),
-                                },
+                                parsedUpdates,
                                 expectedTargetVersion,
                                 transaction,
                             );
