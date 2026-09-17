@@ -4,7 +4,7 @@ const MOCK_EMPLOYEES = [
   {
     id: 101,
     name: "김정인",
-    workArea: ["incheon-namdong"],
+    workArea: ["인천 남동구"],
     phone: "010-1111-2222",
     grade: "A",
     openToNextWork: true,
@@ -24,7 +24,7 @@ const MOCK_EMPLOYEES = [
   {
     id: 103,
     name: "오류테스트",
-    workArea: ["incheon-namdong"],
+    workArea: ["인천 남동구"],
     phone: "010-5555-6666",
     grade: "A",
     openToNextWork: false,

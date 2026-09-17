@@ -47,7 +47,6 @@ import {
 import { ClientDetailContent, GROUPS, type ClientGroup, type DetailTabId } from "@/components/app/clients/client-detail";
 import "@/components/app/mobile-redesign/redesign.css";
 
-const CLIENTS_ROUTE_BODY_CLASS = "mobile-clients-route";
 const ALL_FILTER = "전체";
 const CONTRACT_REQUIRED_FILTER = "계약서 필요";
 const CLIENT_SECTIONS = [
@@ -173,13 +172,6 @@ export default function ClientsPage() {
   const [activeSection, setActiveSection] = useState<ClientSectionId>("list");
   const selectClientRequestRef = useRef(0);
   const prefillContractCreation = useFormStore((state) => state.prefillFromContract);
-
-  useEffect(() => {
-    document.body.classList.add(CLIENTS_ROUTE_BODY_CLASS);
-    return () => {
-      document.body.classList.remove(CLIENTS_ROUTE_BODY_CLASS);
-    };
-  }, []);
 
   const { allClients, allFilteredClients, total, isLoading, isFetching } = useInfiniteClients({
     filter: "all",

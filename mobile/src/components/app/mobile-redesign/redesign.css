@@ -2494,7 +2494,7 @@ body.mobile-all-route .menu-row {
   animation: bjj-skeleton-pulse var(--skeleton-pulse-duration) ease-in-out infinite;
 }
 
-body.mobile-clients-route [data-slot="mobile-bottom-nav"],
+body:has([data-slot="clients-content"]) [data-slot="mobile-bottom-nav"],
 body:has([data-slot="calls-content"]) [data-slot="mobile-bottom-nav"],
 body:has([data-slot="consultations-content"]) [data-slot="mobile-bottom-nav"] {
   position: absolute !important;
@@ -2513,13 +2513,13 @@ body:has([data-slot="consultations-content"]) [data-slot="mobile-bottom-nav"] {
   border-radius: 20px;
 }
 
-body.mobile-clients-route [data-slot="mobile-bottom-nav"] > div[aria-hidden="true"],
+body:has([data-slot="clients-content"]) [data-slot="mobile-bottom-nav"] > div[aria-hidden="true"],
 body:has([data-slot="calls-content"]) [data-slot="mobile-bottom-nav"] > div[aria-hidden="true"],
 body:has([data-slot="consultations-content"]) [data-slot="mobile-bottom-nav"] > div[aria-hidden="true"] {
   display: none;
 }
 
-body.mobile-clients-route [data-slot="mobile-bottom-nav"] a,
+body:has([data-slot="clients-content"]) [data-slot="mobile-bottom-nav"] a,
 body:has([data-slot="calls-content"]) [data-slot="mobile-bottom-nav"] a,
 body:has([data-slot="consultations-content"]) [data-slot="mobile-bottom-nav"] a {
   gap: 2px;
@@ -2528,14 +2528,14 @@ body:has([data-slot="consultations-content"]) [data-slot="mobile-bottom-nav"] a 
   font-family: "NanumSquare Neo", "Noto Sans KR", "Apple SD Gothic Neo", "Malgun Gothic", -apple-system, sans-serif;
 }
 
-body.mobile-clients-route [data-slot="mobile-bottom-nav"] svg,
+body:has([data-slot="clients-content"]) [data-slot="mobile-bottom-nav"] svg,
 body:has([data-slot="calls-content"]) [data-slot="mobile-bottom-nav"] svg,
 body:has([data-slot="consultations-content"]) [data-slot="mobile-bottom-nav"] svg {
   width: 18px;
   height: 18px;
 }
 
-body.mobile-clients-route [data-slot="mobile-bottom-nav"] span,
+body:has([data-slot="clients-content"]) [data-slot="mobile-bottom-nav"] span,
 body:has([data-slot="calls-content"]) [data-slot="mobile-bottom-nav"] span,
 body:has([data-slot="consultations-content"]) [data-slot="mobile-bottom-nav"] span {
   font-size: 10px;
@@ -2543,11 +2543,11 @@ body:has([data-slot="consultations-content"]) [data-slot="mobile-bottom-nav"] sp
   line-height: 1;
 }
 
-body.mobile-clients-route [data-slot="mobile-bottom-nav-clients"] {
+body:has([data-slot="clients-content"]) [data-slot="mobile-bottom-nav-clients"] {
   background: transparent;
 }
 
-body.mobile-clients-route:has(.nav-stack.show-detail) [data-slot="mobile-bottom-nav"],
+body:has([data-slot="clients-content"]):has(.nav-stack.show-detail) [data-slot="mobile-bottom-nav"],
 body:has([data-slot="calls-content"]):has(.nav-stack.show-detail) [data-slot="mobile-bottom-nav"],
 body:has([data-slot="consultations-content"]):has(.nav-stack.show-detail) [data-slot="mobile-bottom-nav"] {
   transform: translate(-50%, calc(100% + 32px));
@@ -2555,7 +2555,7 @@ body:has([data-slot="consultations-content"]):has(.nav-stack.show-detail) [data-
   pointer-events: none;
 }
 
-body.mobile-clients-route [data-slot="mobile-header"],
+body:has([data-slot="clients-content"]) [data-slot="mobile-header"],
 body:has([data-slot="calls-content"]) [data-slot="mobile-header"],
 body:has([data-slot="consultations-content"]) [data-slot="mobile-header"] {
   position: absolute !important;
@@ -4320,13 +4320,13 @@ body.mobile-contracts-route [data-slot="mobile-detail-stack-track"].show-detail 
 /* Lock the app shell to the viewport on the clients route (parity with the
    dashboard, redesign.css:155-212) so the page itself never scrolls — only the
    inner [data-slot="clients-content"] list scrolls. */
-body.mobile-clients-route,
+body:has([data-slot="clients-content"]),
 body:has([data-slot="calls-content"]),
 body:has([data-slot="consultations-content"]) {
   overflow: hidden;
 }
 
-body.mobile-clients-route [data-slot="app-root"],
+body:has([data-slot="clients-content"]) [data-slot="app-root"],
 body:has([data-slot="calls-content"]) [data-slot="app-root"],
 body:has([data-slot="consultations-content"]) [data-slot="app-root"] {
   height: 100dvh;
@@ -4335,7 +4335,7 @@ body:has([data-slot="consultations-content"]) [data-slot="app-root"] {
 }
 
 @media (min-width: 768px) {
-  body.mobile-clients-route [data-slot="app-root"],
+  body:has([data-slot="clients-content"]) [data-slot="app-root"],
   body:has([data-slot="calls-content"]) [data-slot="app-root"],
   body:has([data-slot="consultations-content"]) [data-slot="app-root"] {
     height: min(100dvh, 844px);
@@ -4343,7 +4343,7 @@ body:has([data-slot="consultations-content"]) [data-slot="app-root"] {
   }
 }
 
-body.mobile-clients-route [data-slot="app-root"] [data-slot="app-content"],
+body:has([data-slot="clients-content"]) [data-slot="app-root"] [data-slot="app-content"],
 body:has([data-slot="calls-content"]) [data-slot="app-root"] [data-slot="app-content"],
 body:has([data-slot="consultations-content"]) [data-slot="app-root"] [data-slot="app-content"] {
   position: relative;
@@ -4357,7 +4357,7 @@ body:has([data-slot="consultations-content"]) [data-slot="app-root"] [data-slot=
    falls back to V3MainContent's default (pt-20, no clamp), which pushes the
    header spacing 16px out, lets the sheet grow past the viewport, and leaves
    the list with no scroll container. */
-body.mobile-clients-route [data-slot="main-content"],
+body:has([data-slot="clients-content"]) [data-slot="main-content"],
 body:has([data-slot="calls-content"]) [data-slot="main-content"],
 body:has([data-slot="consultations-content"]) [data-slot="main-content"] {
   position: absolute !important;
@@ -4373,7 +4373,7 @@ body:has([data-slot="consultations-content"]) [data-slot="main-content"] {
   color: hsl(var(--v3-text));
 }
 
-body.mobile-clients-route .mobile-detail-sheet,
+body:has([data-slot="clients-content"]) .mobile-detail-sheet,
 body:has([data-slot="calls-content"]) .mobile-detail-sheet,
 body:has([data-slot="consultations-content"]) .mobile-detail-sheet {
   flex: 1;
@@ -4387,12 +4387,12 @@ body:has([data-slot="consultations-content"]) .mobile-detail-sheet {
   padding: 12px 14px 76px;
 }
 
-body.mobile-clients-route [data-slot="clients-content"] {
+body:has([data-slot="clients-content"]) [data-slot="clients-content"] {
   padding: 12px 14px 76px;
   overflow-y: auto;
 }
 
-body.mobile-clients-route [data-slot="mobile-detail-stack-track"],
+body:has([data-slot="clients-content"]) [data-slot="mobile-detail-stack-track"],
 body:has([data-slot="calls-content"]) [data-slot="mobile-detail-stack-track"],
 body:has([data-slot="consultations-content"]) [data-slot="mobile-detail-stack-track"] {
   position: absolute;
@@ -4401,8 +4401,8 @@ body:has([data-slot="consultations-content"]) [data-slot="mobile-detail-stack-tr
   height: 100%;
 }
 
-body.mobile-clients-route [data-slot="mobile-detail-stack-list-page"],
-body.mobile-clients-route [data-slot="mobile-detail-stack-detail-page"],
+body:has([data-slot="clients-content"]) [data-slot="mobile-detail-stack-list-page"],
+body:has([data-slot="clients-content"]) [data-slot="mobile-detail-stack-detail-page"],
 body:has([data-slot="calls-content"]) [data-slot="mobile-detail-stack-list-page"],
 body:has([data-slot="calls-content"]) [data-slot="mobile-detail-stack-detail-page"],
 body:has([data-slot="consultations-content"]) [data-slot="mobile-detail-stack-list-page"],
@@ -4411,13 +4411,13 @@ body:has([data-slot="consultations-content"]) [data-slot="mobile-detail-stack-de
   inset: 0;
 }
 
-body.mobile-clients-route [data-slot="mobile-detail-stack-detail-page"],
+body:has([data-slot="clients-content"]) [data-slot="mobile-detail-stack-detail-page"],
 body:has([data-slot="calls-content"]) [data-slot="mobile-detail-stack-detail-page"],
 body:has([data-slot="consultations-content"]) [data-slot="mobile-detail-stack-detail-page"] {
   top: 50px;
 }
 
-body.mobile-clients-route [data-slot="mobile-detail-stack-track"].show-detail .nav-page.list,
+body:has([data-slot="clients-content"]) [data-slot="mobile-detail-stack-track"].show-detail .nav-page.list,
 body:has([data-slot="calls-content"]) [data-slot="mobile-detail-stack-track"].show-detail .nav-page.list,
 body:has([data-slot="consultations-content"]) [data-slot="mobile-detail-stack-track"].show-detail .nav-page.list {
   transform: translateX(0) !important;
