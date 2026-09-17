@@ -478,7 +478,7 @@ describeDb("atomic task review and execution on guarded PostgreSQL", () => {
         await expect(service.patch(principal, before.id, { ...request, expectedRevision: after.revision }))
             .rejects.toMatchObject({ response: { reason: "event_payload" } });
         await expect(actions.approve(review.snapshot.action!.actionId, principal, review.snapshot.action!.expectedRevision))
-            .rejects.toMatchObject({ status: 409 });
+            .resolves.toMatchObject({ action: { status: "cancelled", executionAttemptCount: 0 } });
         expect(execute).not.toHaveBeenCalled();
         const accepted = await answer(before.id, after.revision);
         expect(accepted.snapshot.consent.choice).toBe("yes");
@@ -550,7 +550,7 @@ describeDb("atomic task review and execution on guarded PostgreSQL", () => {
         const original = await state(created.snapshot.taskId);
         await expect(orchestrator.applyModelMutation({ principal, sessionId, capabilityId: "clients.create", taskId: original.id,
             intakeEventId: randomUUID(), expectedRevision: original.revision, operations: [{ op: "set", field: "automationChoice", value: "yes" }] }))
-            .rejects.toMatchObject({ response: { reason: "consent_required" } });
+            .rejects.toMatchObject({ status: 400, response: { message: "Unsupported task operation" } });
         expect(await state(original.id)).toEqual(original);
         const message = { id: randomUUID(), role: "user" as const, parts: [{ type: "text", text: "자동 문자 적용: 예" }] };
         const answered = await orchestrator.handleUserTurn({ principal, sessionId, message });
