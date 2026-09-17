@@ -64,7 +64,7 @@ export const AgentAutomationAuthorityStorageSchema = z.object({
 
 export const AgentAutomationJobSealStorageSchema = z.object({
     version: z.literal(1), authorityId: z.uuid(), authorityDigest: digest,
-    scope: AgentAutomationScopeStorageSchema, memberDigest: digest, reviewedEffectDigest: digest,
+    scope: AgentAutomationScopeStorageSchema, memberDigest: digest, reviewedEffectDigest: digest, concreteJobDigest: digest,
 }).strict();
 
 export const AgentAutomationCoverageScopeStorageSchema = z.object({

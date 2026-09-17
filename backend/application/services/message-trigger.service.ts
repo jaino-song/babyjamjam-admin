@@ -411,6 +411,8 @@ export class MessageTriggerService {
 
         const triggerJobs = jobs.map((job): UpcomingMessageTriggerJobView => {
             const rule = rulesById.get(job.ruleId);
+            const publicPayload = { ...job.payload };
+            delete publicPayload.agentAutomationSeal;
 
             return {
                 id: job.id,
@@ -429,7 +431,7 @@ export class MessageTriggerService {
                 cancelReason: job.cancelReason,
                 clientId: job.clientId,
                 employeeScheduleId: job.employeeScheduleId,
-                payload: job.payload,
+                payload: publicPayload,
                 createdAt: job.createdAt,
                 updatedAt: job.updatedAt,
             };

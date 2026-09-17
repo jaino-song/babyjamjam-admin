@@ -226,29 +226,29 @@ describeDb("committed task automation terminal record transactions", () => {
         const resolver = new AgentAutomationAuthorityService(store);
         const target = resolverTarget();
         const describe = jest.fn(async () => artifact.impact.effects[0]!);
-        const allowed = await locks().runExclusive(branchId, (tx) => resolver.check(tx, { target, mode: "materialize" }, describe));
+        const allowed = await locks().runExclusive(branchId, (tx) => resolver.check(tx, { concreteJobDigest: hash("synthetic-concrete-job"), target, mode: "materialize" }, describe));
         expect(allowed.status).toBe("allowed"); if (allowed.status !== "allowed") throw new Error("Missing synthetic seal");
         expect(describe).toHaveBeenCalledWith({ scope: captured.authorities[0]!.scope,
             subject: { kind: "task-client", taskId: artifact.taskId }, change: "create" });
-        expect(await locks().runExclusive(branchId, (tx) => resolver.check(tx, { target, mode: "dispatch" }, describe))).toMatchObject({ status: "refused" });
-        expect(await locks().runExclusive(branchId, (tx) => resolver.check(tx, { target, mode: "dispatch", seal: allowed.seal }, describe))).toEqual(allowed);
+        expect(await locks().runExclusive(branchId, (tx) => resolver.check(tx, { concreteJobDigest: hash("synthetic-concrete-job"), target, mode: "dispatch" }, describe))).toMatchObject({ status: "refused" });
+        expect(await locks().runExclusive(branchId, (tx) => resolver.check(tx, { concreteJobDigest: hash("synthetic-concrete-job"), target, mode: "dispatch", seal: allowed.seal }, describe))).toEqual(allowed);
         await db.agent_action.delete({ where: { id: artifact.actionId } });
         await db.agent_task.delete({ where: { id: artifact.taskId } });
         await db.agent_session.delete({ where: { id: artifact.sessionId } });
-        expect(await locks().runExclusive(branchId, (tx) => resolver.check(tx, { target, mode: "dispatch", seal: allowed.seal }, describe))).toEqual(allowed);
+        expect(await locks().runExclusive(branchId, (tx) => resolver.check(tx, { concreteJobDigest: hash("synthetic-concrete-job"), target, mode: "dispatch", seal: allowed.seal }, describe))).toEqual(allowed);
         const sources = ["recipientDigest", "sourceDigest", "templateDigest", "policyDigest", "recipeDigest"] as const;
         for (const field of sources) {
-            expect(await locks().runExclusive(branchId, (tx) => resolver.check(tx, { target, mode: "dispatch", seal: allowed.seal },
+            expect(await locks().runExclusive(branchId, (tx) => resolver.check(tx, { concreteJobDigest: hash("synthetic-concrete-job"), target, mode: "dispatch", seal: allowed.seal },
                 async () => ({ ...artifact.impact.effects[0]!, [field]: hash(`changed-${field}`) })))).toMatchObject({ status: "refused", reason: "automation-consent-changed" });
         }
-        expect(await locks().runExclusive(branchId, (tx) => resolver.check(tx, { target, mode: "dispatch", seal: { ...allowed.seal, authorityId: randomUUID() } }, describe))).toMatchObject({ status: "refused" });
-        expect(await locks().runExclusive(branchId, (tx) => resolver.check(tx, { target, mode: "materialize", seal: null }, describe))).toMatchObject({ status: "refused" });
-        expect(await locks().runExclusive(branchId, (tx) => resolver.check(tx, { target: { ...target, branchId: randomUUID() }, mode: "materialize" }, describe))).toMatchObject({ status: "refused" });
+        expect(await locks().runExclusive(branchId, (tx) => resolver.check(tx, { concreteJobDigest: hash("synthetic-concrete-job"), target, mode: "dispatch", seal: { ...allowed.seal, authorityId: randomUUID() } }, describe))).toMatchObject({ status: "refused" });
+        expect(await locks().runExclusive(branchId, (tx) => resolver.check(tx, { concreteJobDigest: hash("synthetic-concrete-job"), target, mode: "materialize", seal: null }, describe))).toMatchObject({ status: "refused" });
+        expect(await locks().runExclusive(branchId, (tx) => resolver.check(tx, { concreteJobDigest: hash("synthetic-concrete-job"), target: { ...target, branchId: randomUUID() }, mode: "materialize" }, describe))).toMatchObject({ status: "refused" });
         await db.message_trigger_job.deleteMany({ where: { branchId, status: "failed" } });
         await db.client.delete({ where: { id: clientId } });
-        expect(await locks().runExclusive(branchId, (tx) => resolver.check(tx, { target, mode: "dispatch", seal: allowed.seal }, describe))).toMatchObject({ status: "refused" });
+        expect(await locks().runExclusive(branchId, (tx) => resolver.check(tx, { concreteJobDigest: hash("synthetic-concrete-job"), target, mode: "dispatch", seal: allowed.seal }, describe))).toMatchObject({ status: "refused" });
         await db.client.create({ data: { id: clientId, branchId, name: "합성 재생성", voucherClient: false, phone: "01000000001", createdAt: new Date("2090-01-01") } });
-        expect(await locks().runExclusive(branchId, (tx) => resolver.check(tx, { target, mode: "materialize" }, describe))).toMatchObject({ status: "refused" });
+        expect(await locks().runExclusive(branchId, (tx) => resolver.check(tx, { concreteJobDigest: hash("synthetic-concrete-job"), target, mode: "materialize" }, describe))).toMatchObject({ status: "refused" });
     });
 
     it.each(["no", "noSend", "none"] as const)("keeps %s covered scopes closed to new rules and never describes denied exact work", async (choice) => {
@@ -256,36 +256,36 @@ describeDb("committed task automation terminal record transactions", () => {
         const resolver = new AgentAutomationAuthorityService(store);
         const target: AgentAutomationCurrentTarget = { branchId, clientId, kind: "client-rule", ruleId: "synthetic-rule", scheduleId: null, recipientType: "client" };
         const describe = jest.fn(async () => artifact.impact.effects[0] ?? null);
-        expect(await locks().runExclusive(branchId, (tx) => resolver.check(tx, { target, mode: "materialize" }, describe))).toMatchObject({ status: "refused" });
+        expect(await locks().runExclusive(branchId, (tx) => resolver.check(tx, { concreteJobDigest: hash("synthetic-concrete-job"), target, mode: "materialize" }, describe))).toMatchObject({ status: "refused" });
         if (choice !== "none") expect(describe).not.toHaveBeenCalled();
-        expect(await locks().runExclusive(branchId, (tx) => resolver.check(tx, { target: { ...target, ruleId: "new-rule" }, mode: "materialize" }, describe))).toMatchObject({ status: "refused" });
+        expect(await locks().runExclusive(branchId, (tx) => resolver.check(tx, { concreteJobDigest: hash("synthetic-concrete-job"), target: { ...target, ruleId: "new-rule" }, mode: "materialize" }, describe))).toMatchObject({ status: "refused" });
     });
 
     it("refuses missing coverage or exact evidence rather than reopening legacy behavior", async () => {
         await seed(); await store.runTaskMutation(context, artifact, prepare, stage);
         const resolver = new AgentAutomationAuthorityService(store);
         const target = resolverTarget(); const describe = async () => artifact.impact.effects[0]!;
-        const allowed = await locks().runExclusive(branchId, (tx) => resolver.check(tx, { target, mode: "materialize" }, describe));
+        const allowed = await locks().runExclusive(branchId, (tx) => resolver.check(tx, { concreteJobDigest: hash("synthetic-concrete-job"), target, mode: "materialize" }, describe));
         if (allowed.status !== "allowed") throw new Error("Missing synthetic seal");
         await db.message_trigger_job.delete({ where: { id: captured.authorities[0]!.id } });
-        expect(await locks().runExclusive(branchId, (tx) => resolver.check(tx, { target, mode: "dispatch", seal: allowed.seal }, describe))).toMatchObject({ status: "refused" });
-        expect(await locks().runExclusive(branchId, (tx) => resolver.check(tx, { target, mode: "materialize" }, describe))).toMatchObject({ status: "refused" });
+        expect(await locks().runExclusive(branchId, (tx) => resolver.check(tx, { concreteJobDigest: hash("synthetic-concrete-job"), target, mode: "dispatch", seal: allowed.seal }, describe))).toMatchObject({ status: "refused" });
+        expect(await locks().runExclusive(branchId, (tx) => resolver.check(tx, { concreteJobDigest: hash("synthetic-concrete-job"), target, mode: "materialize" }, describe))).toMatchObject({ status: "refused" });
         await cleanup(); await seed(); await store.runTaskMutation(context, artifact, prepare, stage);
         await db.message_trigger_job.delete({ where: { id: captured.coverages[0]!.id } });
-        expect(await locks().runExclusive(branchId, (tx) => resolver.check(tx, { target: resolverTarget(), mode: "materialize" }, async () => artifact.impact.effects[0]!))).toMatchObject({ status: "refused" });
+        expect(await locks().runExclusive(branchId, (tx) => resolver.check(tx, { concreteJobDigest: hash("synthetic-concrete-job"), target: resolverTarget(), mode: "materialize" }, async () => artifact.impact.effects[0]!))).toMatchObject({ status: "refused" });
     });
 
     it("keeps genuinely absent provenance legacy but refuses a copied seal", async () => {
         await seed(); await store.runTaskMutation(context, artifact, prepare, stage);
         const resolver = new AgentAutomationAuthorityService(store);
-        const first = await locks().runExclusive(branchId, (tx) => resolver.check(tx, { target: resolverTarget(), mode: "materialize" }, async () => artifact.impact.effects[0]!));
+        const first = await locks().runExclusive(branchId, (tx) => resolver.check(tx, { concreteJobDigest: hash("synthetic-concrete-job"), target: resolverTarget(), mode: "materialize" }, async () => artifact.impact.effects[0]!));
         if (first.status !== "allowed") throw new Error("Missing synthetic seal");
         const other = await db.client.create({ data: { branchId, name: "합성 독립 고객", voucherClient: false, phone: "01000000002" } });
         const target = { ...resolverTarget(), clientId: other.id };
         const describe = jest.fn(async () => null);
-        expect(await locks().runExclusive(branchId, (tx) => resolver.check(tx, { target, mode: "dispatch" }, describe))).toEqual({ status: "legacy" });
+        expect(await locks().runExclusive(branchId, (tx) => resolver.check(tx, { concreteJobDigest: hash("synthetic-concrete-job"), target, mode: "dispatch" }, describe))).toEqual({ status: "legacy" });
         expect(describe).not.toHaveBeenCalled();
-        expect(await locks().runExclusive(branchId, (tx) => resolver.check(tx, { target, mode: "dispatch", seal: first.seal }, describe))).toMatchObject({ status: "refused" });
+        expect(await locks().runExclusive(branchId, (tx) => resolver.check(tx, { concreteJobDigest: hash("synthetic-concrete-job"), target, mode: "dispatch", seal: first.seal }, describe))).toMatchObject({ status: "refused" });
     });
 
     it("persists multiple schedule/client scopes in deterministic coverage-before-exact order and refuses recreated schedules", async () => {
@@ -333,14 +333,14 @@ describeDb("committed task automation terminal record transactions", () => {
         const authority = captured.authorities.find(({ scope }) => scope.recipientType === "primary-employee")!;
         const target = resolverTarget(authority.scope);
         const describe = jest.fn(async () => authority.effects[0]!);
-        const allowed = await locks().runExclusive(branchId, (tx) => resolver.check(tx, { target, mode: "materialize" }, describe));
+        const allowed = await locks().runExclusive(branchId, (tx) => resolver.check(tx, { concreteJobDigest: hash("synthetic-concrete-job"), target, mode: "materialize" }, describe));
         expect(allowed.status).toBe("allowed");
         expect(describe).toHaveBeenCalledWith({ scope: authority.scope, subject: { kind: "client", clientId, clientIdentity: identity }, change: "refresh" });
         // Terminal storage has no FK that prevents ordinary schedule deletion.
         await db.employee_schedule.delete({ where: { id: schedule.id } });
         const recreated = await db.employee_schedule.create({ data: scheduleInput });
         expect(recreated.incarnationId).not.toBe(schedule.incarnationId);
-        expect(await locks().runExclusive(branchId, (tx) => resolver.check(tx, { target, mode: "materialize" }, describe))).toMatchObject({ status: "refused" });
+        expect(await locks().runExclusive(branchId, (tx) => resolver.check(tx, { concreteJobDigest: hash("synthetic-concrete-job"), target, mode: "materialize" }, describe))).toMatchObject({ status: "refused" });
         expect(prepare).toHaveBeenCalledTimes(1);
     });
 
@@ -359,11 +359,11 @@ describeDb("committed task automation terminal record transactions", () => {
         await store.runTaskMutation(context, artifact, prepare, stage);
         const resolver = new AgentAutomationAuthorityService(store);
         const target = { ...resolverTarget(), ruleId: prior.ruleId };
-        expect(await locks().runExclusive(branchId, (tx) => resolver.check(tx, { target, mode: "materialize" }, async () => prior))).toEqual({ status: "legacy" });
-        expect(await locks().runExclusive(branchId, (tx) => resolver.check(tx, { target, mode: "dispatch" }, async () => ({ ...prior, change: "refresh" })))).toEqual({ status: "legacy" });
-        expect(await locks().runExclusive(branchId, (tx) => resolver.check(tx, { target, mode: "dispatch" }, async () => ({ ...prior, sourceDigest: hash("new-source") })))).toMatchObject({ status: "refused" });
-        expect(await locks().runExclusive(branchId, (tx) => resolver.check(tx, { target: { ...target, ruleId: "new-rule" }, mode: "materialize" }, async () => ({ ...prior, ruleId: "new-rule" })))).toMatchObject({ status: "refused" });
-        expect(await locks().runExclusive(branchId, (tx) => resolver.check(tx, { target, mode: "dispatch" }, async () => { throw new Error("SYNTHETIC_PRIVATE_EXCEPTION"); }))).toEqual({ status: "refused", reason: "automation-authority-unavailable" });
+        expect(await locks().runExclusive(branchId, (tx) => resolver.check(tx, { concreteJobDigest: hash("synthetic-concrete-job"), target, mode: "materialize" }, async () => prior))).toEqual({ status: "legacy" });
+        expect(await locks().runExclusive(branchId, (tx) => resolver.check(tx, { concreteJobDigest: hash("synthetic-concrete-job"), target, mode: "dispatch" }, async () => ({ ...prior, change: "refresh" })))).toEqual({ status: "legacy" });
+        expect(await locks().runExclusive(branchId, (tx) => resolver.check(tx, { concreteJobDigest: hash("synthetic-concrete-job"), target, mode: "dispatch" }, async () => ({ ...prior, sourceDigest: hash("new-source") })))).toMatchObject({ status: "refused" });
+        expect(await locks().runExclusive(branchId, (tx) => resolver.check(tx, { concreteJobDigest: hash("synthetic-concrete-job"), target: { ...target, ruleId: "new-rule" }, mode: "materialize" }, async () => ({ ...prior, ruleId: "new-rule" })))).toMatchObject({ status: "refused" });
+        expect(await locks().runExclusive(branchId, (tx) => resolver.check(tx, { concreteJobDigest: hash("synthetic-concrete-job"), target, mode: "dispatch" }, async () => { throw new Error("SYNTHETIC_PRIVATE_EXCEPTION"); }))).toEqual({ status: "refused", reason: "automation-authority-unavailable" });
     });
 
 });

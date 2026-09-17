@@ -23,6 +23,7 @@ import {
     SERVICE_END_NOTICE_SMS_TRIGGER_TYPE,
 } from "domain/constants/service-end-notice-message";
 import { MessageTriggerJobEntity } from "domain/entities/message-trigger-job.entity";
+import { SMS_DELIVERY_SNAPSHOT_VARIABLE } from "domain/constants/sms-delivery-snapshot";
 import { isReservedAutomationJob } from "domain/constants/agent-automation-storage";
 import { TriggerJobDeferredError } from "domain/errors/trigger-job-deferred.error";
 import {
@@ -57,7 +58,7 @@ export interface SmsTemplateDeliveryConfig {
  * adopt a different title, template key, or provider routing rule.
  */
 export const SMS_DELIVERY_CONFIG_VERSION = "sms-template-delivery-v1";
-export const SMS_DELIVERY_SNAPSHOT_VARIABLE = "__smsDeliverySnapshot";
+export { SMS_DELIVERY_SNAPSHOT_VARIABLE } from "domain/constants/sms-delivery-snapshot";
 
 export interface SmsTriggerDeliverySnapshot {
     readonly templateKey: MessageTriggerTemplateKey;

@@ -33,12 +33,13 @@ export class AgentAutomationAuthorityService {
 
     async check(
         transaction: Prisma.TransactionClient,
-        input: { target: AgentAutomationCurrentTarget; mode: "materialize" | "dispatch"; seal?: unknown },
+        input: { target: AgentAutomationCurrentTarget; mode: "materialize" | "dispatch"; concreteJobDigest: string; seal?: unknown },
         describe: DescribeCurrentAutomationEffect,
     ): Promise<AgentAutomationAuthorityCheck> {
         const refuse = (reason: Extract<AgentAutomationAuthorityCheck, { status: "refused" }>["reason"] = "automation-authority-unavailable"): AgentAutomationAuthorityCheck => ({ status: "refused", reason });
         try {
             if (input.mode !== "materialize" && input.mode !== "dispatch") return refuse();
+            if (!/^[a-f0-9]{64}$/.test(input.concreteJobDigest)) return refuse();
             const suppliedSeal = input.seal === undefined ? undefined : parseAgentAutomationJobSeal(input.seal);
             if (suppliedSeal === null) return refuse();
             const { target } = input;
@@ -83,7 +84,8 @@ export class AgentAutomationAuthorityService {
                 currentScopeEffectDigest: agentAutomationEffectDigest([effect]), knownTaskOrigin: true });
             if (resolution.status !== "allowed") return refuse("automation-consent-changed");
             const seal: AgentAutomationJobSeal = { version: 1, authorityId: head.id, authorityDigest: head.recordDigest, scope,
-                memberDigest: agentAutomationEffectDigest([effect]), reviewedEffectDigest: head.reviewedEffectDigest };
+                memberDigest: agentAutomationEffectDigest([effect]), reviewedEffectDigest: head.reviewedEffectDigest,
+                concreteJobDigest: input.concreteJobDigest };
             if (suppliedSeal && agentBindingHash(suppliedSeal) !== agentBindingHash(seal)) return refuse("automation-consent-changed");
             if (input.mode === "dispatch" && !suppliedSeal) return refuse();
             return { status: "allowed", seal };

@@ -6,10 +6,18 @@ import { MessageTriggerRecipientType } from "domain/constants/message-trigger-ca
 import { isManualMessageTriggerJob } from "domain/constants/message-trigger-job-ownership";
 import { SERVICE_RECORD_LINK_RULE_ID } from "domain/constants/service-record-link-message";
 import type { MessageTriggerJobEntity } from "domain/entities/message-trigger-job.entity";
+import { agentBindingHash } from "domain/repositories/agent-linked-action.types";
 import { AligoDefaultSenderPolicyService } from "./aligo-default-sender-policy.service";
 import { ClientAutomationSourceReader } from "./client-automation-source.reader";
 import { describeClientMessageEffect } from "./client-message-effect-recipe";
 import type { SmsTriggerDeliverySnapshot } from "./sms-trigger-delivery.service";
+import { agentAutomationConcreteJobDigest, agentAutomationSourcePayload } from "./agent-automation-job-binding";
+import { buildClientMessageRecipe, buildMessageRecipeDedupeKey } from "./message-trigger-recipes";
+import { z } from "zod";
+
+const catchUpSchema = z.object({ batchId: z.string(), sequence: z.number().int().positive(),
+    intervalMinutes: z.number().int().nonnegative(), originalScheduledFor: z.iso.datetime(),
+    predecessorDedupeKey: z.string().min(1).nullable() }).strict();
 
 export type CanonicalAutomationRenderer = (job: MessageTriggerJobEntity, transaction: Prisma.TransactionClient) => Promise<Readonly<SmsTriggerDeliverySnapshot>>;
 
@@ -46,9 +54,15 @@ export class AgentAutomationJobAuthorityService {
             const payload = job.payload as unknown as Record<string, unknown>;
             const seal = Object.prototype.hasOwnProperty.call(payload, AGENT_AUTOMATION_JOB_SEAL_PAYLOAD_KEY)
                 ? payload[AGENT_AUTOMATION_JOB_SEAL_PAYLOAD_KEY] : undefined;
+            const concreteJobDigest = agentAutomationConcreteJobDigest(job);
+            // A transient/copied object cannot authorize another row. Materializers
+            // insert/upsert, validate, then stamp within their existing transaction.
+            const stored = await transaction.message_trigger_job.findFirst({ where: { id: job.id, branchId: job.branchId } });
+            if (!stored || isReservedAutomationJob(stored) || agentAutomationConcreteJobDigest(stored) !== concreteJobDigest) return refuse();
+            if (mode === "dispatch" && agentBindingHash((stored.payload as Record<string, unknown>)[AGENT_AUTOMATION_JOB_SEAL_PAYLOAD_KEY]) !== agentBindingHash(seal)) return refuse();
             return this.authority.check(transaction, {
                 target: { branchId: job.branchId, clientId: job.clientId, kind, ruleId: job.ruleId, scheduleId: job.employeeScheduleId, recipientType },
-                mode, seal,
+                mode, seal, concreteJobDigest,
             }, async (input) => this.describeCurrentClientEffect(transaction, job, input, render, preparedSnapshotHash));
         } catch {
             return refuse();
@@ -70,6 +84,29 @@ export class AgentAutomationJobAuthorityService {
         const rule = settings.rules.find(({ id, branchId }) => id === input.scope.ruleId && branchId === input.scope.branchId);
         const client = await this.sources.readClientAutomationSource(input.scope.branchId, input.scope.clientId, transaction);
         if (!rule || !client || rule.templateKey !== job.templateKey || rule.recipientType !== job.recipientType) return null;
+        // Immediate jobs retain their original materialization time at dispatch.
+        // Catch-up jobs retain the raw recipe time plus the final stable batch
+        // schedule. Neither is rebuilt from the dispatch wall clock.
+        const source = agentAutomationSourcePayload(job.payload);
+        const catchUp = source["catchUp"] === undefined ? undefined : catchUpSchema.parse(source["catchUp"]);
+        const recipeTime = new Date(catchUp?.originalScheduledFor ?? job.scheduledFor);
+        const concrete = buildClientMessageRecipe(rule, client, recipeTime);
+        if (!concrete) return null;
+        if (catchUp) {
+            const prefix = `client:${client.id}:`;
+            const batchTime = catchUp.batchId.startsWith(prefix) ? new Date(catchUp.batchId.slice(prefix.length)) : new Date(NaN);
+            if (!settings.pastTriggerEnabled || Number.isNaN(batchTime.getTime())
+                || catchUp.batchId !== `${prefix}${batchTime.toISOString()}`
+                || catchUp.intervalMinutes !== settings.pastTriggerConfig.sendIntervalMinutes
+                || catchUp.originalScheduledFor !== concrete.scheduledFor.toISOString()
+                || (catchUp.sequence === 1) !== (catchUp.predecessorDedupeKey === null)
+                || job.scheduledFor.getTime() !== batchTime.getTime() + (catchUp.sequence - 1) * catchUp.intervalMinutes * 60_000) return null;
+            concrete.scheduledFor = job.scheduledFor;
+            concrete.dedupeKey = buildMessageRecipeDedupeKey(rule.id, `client:${client.id}`, job.scheduledFor, rule.recipientType);
+            concrete.payload = { ...concrete.payload, catchUp };
+        }
+        if (job.scheduledFor.getTime() !== concrete.scheduledFor.getTime() || job.dedupeKey !== concrete.dedupeKey
+            || job.recipientPhone !== concrete.recipientPhone || agentBindingHash(source) !== agentBindingHash(concrete.payload)) return null;
         const sender = this.sender.read();
         const described = await describeClientMessageEffect({ branchId: input.scope.branchId, subject: input.subject,
             rule, client, change: input.change, now: new Date(), policy: {

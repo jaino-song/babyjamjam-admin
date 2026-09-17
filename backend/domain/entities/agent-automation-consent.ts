@@ -68,6 +68,8 @@ export interface AgentAutomationJobSeal {
     scope: AgentAutomationScope;
     memberDigest: string;
     reviewedEffectDigest: string;
+    /** Exact persisted delivery UUID, final timing, dedupe identity and source payload. */
+    concreteJobDigest: string;
 }
 
 /** A provenance fence for operation families whose concrete rules may not exist yet. */

@@ -25,7 +25,7 @@ import { agentBindingHash } from "../../../domain/repositories/agent-linked-acti
 import { CLIENT_AUTOMATION_IMPACT, type ClientAutomationImpactPort } from "../../../domain/ports/client-automation-impact.port";
 import { AgentTaskAutomationService, type AgentTaskAutomationSource } from "../../../application/agent/agent-task-automation.service";
 import { createEmptyAgentTaskDraft } from "../../../domain/entities/agent-task.entity";
-import { buildClientMessageRecipe } from "../../../application/services/message-trigger-recipes";
+import { buildClientMessageRecipe, buildMessageRecipeDedupeKey } from "../../../application/services/message-trigger-recipes";
 import { createApprovedAgentTaskPersistenceClient, assertApprovedAgentTaskPersistenceDatabaseTarget } from "./agent-task-persistence.helper";
 
 const describeAgentE2E = process.env["AGENT_E2E"] === "1" ? describe : describe.skip;
@@ -338,7 +338,7 @@ describeAgentE2E("real automation.list with two eligible clients and missing def
         expect(await prisma.branch.findUniqueOrThrow({ where: { id: branchId } })).toEqual(beforeBranch);
         expect(createModel).not.toHaveBeenCalled();
     });
-    it("checks real source recipes and templates against committed authority without generating or sending jobs", async () => {
+    it("binds committed authority to a persisted concrete recipe, including copied seals and catch-up schedules", async () => {
         const before = await storedAutomation();
         const beforeClients = await prisma.client.findMany({ where: { branchId }, orderBy: { id: "asc" } });
         const sourceReader = app.get(ClientAutomationSourceReader);
@@ -353,6 +353,8 @@ describeAgentE2E("real automation.list with two eligible clients and missing def
             const taskId = randomUUID(); const sessionId = randomUUID(); const actionId = randomUUID();
             const createdId = 971000090; const userId = context.principal.userId;
             const values = { name: "합성 동의 고객", phone: "01000000009" };
+            await tx.system_setting.upsert({ where: { key: `branch:${branchId}:message_policy:past-trigger:enabled` },
+                create: { key: `branch:${branchId}:message_policy:past-trigger:enabled`, value: "true" }, update: { value: "true" } });
             const impact = await planner.planClientWriteInTransaction(tx, branchId, { kind: "create", taskId, values });
             expect(impact).toMatchObject({ complete: true, availability: "available" });
             expect(impact.effects.length).toBeGreaterThan(0);
@@ -384,15 +386,76 @@ describeAgentE2E("real automation.list with two eligible clients and missing def
             if (!client || settings.status !== "available") throw new Error("Missing synthetic source");
             const rule = settings.rules.find(({ templateKey }) => templateKey === "CLIENT_GREETING")!;
             const recipe = buildClientMessageRecipe(rule, client, new Date())!;
-            const job = MessageTriggerJobEntity.create(recipe);
+            const storedJob = await tx.message_trigger_job.create({ data: { ...recipe, payload: recipe.payload as unknown as Prisma.InputJsonValue } });
+            const job = MessageTriggerJobEntity.reconstitute(storedJob.id, branchId, rule.id, "pending", recipe.scheduledFor,
+                null, null, null, createdId, null, recipe.recipientType, recipe.recipientPhone!, recipe.templateKey,
+                recipe.dedupeKey, recipe.payload, storedJob.createdAt, storedJob.updatedAt);
+            const persistCandidate = () => tx.message_trigger_job.update({ where: { id: job.id }, data: {
+                scheduledFor: job.scheduledFor, dedupeKey: job.dedupeKey, payload: job.payload as unknown as Prisma.InputJsonValue,
+            } });
             const render = (candidate: MessageTriggerJobEntity, transaction: Prisma.TransactionClient) => sms.resolveCanonicalDeliverySnapshot(candidate, transaction);
             const allowed = await adapter.checkAutomaticJob(tx, job, "materialize", render);
             expect(allowed.status).toBe("allowed"); if (allowed.status !== "allowed") throw new Error("Missing current source seal");
             job.payload = { ...job.payload, [AGENT_AUTOMATION_JOB_SEAL_PAYLOAD_KEY]: allowed.seal };
+            await persistCandidate();
             const snapshot = await render(job, tx);
             expect(await adapter.checkAutomaticJob(tx, job, "dispatch", render, snapshot.snapshotHash)).toEqual(allowed);
             expect(await adapter.checkAutomaticJob(tx, job, "dispatch", render, agentBindingHash("wrong-frozen-body"))).toMatchObject({ status: "refused" });
             const originalPayload = structuredClone(job.payload);
+            const originalTime = new Date(job.scheduledFor); const originalKey = job.dedupeKey;
+            const restore = async () => {
+                job.payload = structuredClone(originalPayload); job.scheduledFor = new Date(originalTime); job.dedupeKey = originalKey;
+                await persistCandidate();
+            };
+            // Even a persisted same-scope copy must not inherit the first row's grant.
+            const duplicate = await tx.message_trigger_job.create({ data: { ...recipe, dedupeKey: `${recipe.dedupeKey}:copy`,
+                payload: job.payload as unknown as Prisma.InputJsonValue } });
+            const copied = MessageTriggerJobEntity.reconstitute(duplicate.id, branchId, rule.id, "pending", recipe.scheduledFor,
+                null, null, null, createdId, null, recipe.recipientType, recipe.recipientPhone!, recipe.templateKey,
+                duplicate.dedupeKey, structuredClone(job.payload), duplicate.createdAt, duplicate.updatedAt);
+            expect(await adapter.checkAutomaticJob(tx, copied, "dispatch", render)).toMatchObject({ status: "refused" });
+            await tx.message_trigger_job.delete({ where: { id: duplicate.id } });
+            const mutations = [
+                () => { job.dedupeKey += ":copied"; },
+                () => { job.scheduledFor = new Date(originalTime.getTime() + 60_000);
+                    job.dedupeKey = buildMessageRecipeDedupeKey(rule.id, `client:${createdId}`, job.scheduledFor, rule.recipientType); },
+                () => { job.payload.templateVariables["unusedVariable"] = "synthetic"; },
+                () => { job.payload.memberId = "other-member"; },
+            ];
+            for (const mutate of mutations) {
+                mutate(); await persistCandidate();
+                expect((await render(job, tx)).snapshotHash).toBe(snapshot.snapshotHash);
+                expect(await adapter.checkAutomaticJob(tx, job, "dispatch", render)).toMatchObject({ status: "refused" });
+                await restore();
+            }
+            // A stale intent can legitimately keep a stable batch time preceding
+            // its immediate recipe time. Stamp only after that final schedule.
+            const batchTime = new Date(originalTime.getTime() - 120_000);
+            job.scheduledFor = batchTime;
+            job.dedupeKey = buildMessageRecipeDedupeKey(rule.id, `client:${createdId}`, batchTime, rule.recipientType);
+            delete job.payload.agentAutomationSeal;
+            job.payload.catchUp = { batchId: `client:${createdId}:${batchTime.toISOString()}`, sequence: 1,
+                intervalMinutes: settings.pastTriggerConfig.sendIntervalMinutes, originalScheduledFor: originalTime.toISOString(), predecessorDedupeKey: null };
+            await persistCandidate();
+            const catchUpAllowed = await adapter.checkAutomaticJob(tx, job, "materialize", render);
+            expect(catchUpAllowed.status).toBe("allowed");
+            if (catchUpAllowed.status !== "allowed") throw new Error("Missing catch-up seal");
+            job.payload.agentAutomationSeal = catchUpAllowed.seal; await persistCandidate();
+            expect(await adapter.checkAutomaticJob(tx, job, "dispatch", render)).toEqual(catchUpAllowed);
+            job.payload.catchUp.originalScheduledFor = new Date(originalTime.getTime() + 1).toISOString();
+            await persistCandidate();
+            expect(await adapter.checkAutomaticJob(tx, job, "dispatch", render)).toMatchObject({ status: "refused" });
+            await restore();
+            job.payload.templateVariables["__smsDeliverySnapshot"] = "private prepared snapshot";
+            await persistCandidate();
+            expect(await adapter.checkAutomaticJob(tx, job, "dispatch", render, snapshot.snapshotHash)).toEqual(allowed);
+            await restore();
+            // Complete source validation also rejects an unsealed bad materialization,
+            // even when that extra field never appears in the rendered SMS.
+            delete job.payload.agentAutomationSeal; job.payload.templateVariables["unusedVariable"] = "synthetic";
+            await persistCandidate();
+            expect(await adapter.checkAutomaticJob(tx, job, "materialize", render)).toMatchObject({ status: "refused" });
+            await restore();
             job.payload.recipientPhone = "01000000008";
             expect(await adapter.checkAutomaticJob(tx, job, "dispatch", render)).toMatchObject({ status: "refused" });
             job.payload = structuredClone(originalPayload);
@@ -413,7 +476,7 @@ describeAgentE2E("real automation.list with two eligible clients and missing def
             await tx.system_setting.update({ where: { key: `branch:${branchId}:message_policy:trigger-dispatch:enabled` }, data: { value: "false" } });
             expect(await adapter.checkAutomaticJob(tx, job, "dispatch", render)).toMatchObject({ status: "refused" });
             expect(await tx.message_log.count({ where: { branchId } })).toBe(0);
-            expect(await tx.message_trigger_job.count({ where: { branchId, clientId: createdId } })).toBe(0);
+            expect(await tx.message_trigger_job.count({ where: { branchId, clientId: createdId } })).toBe(1);
             throw new Error("SYNTHETIC_ROLLBACK");
         }))).rejects.toThrow("SYNTHETIC_ROLLBACK");
         expect(await storedAutomation()).toEqual(before);

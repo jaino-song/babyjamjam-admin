@@ -494,6 +494,21 @@ describe("MessageTriggerService", () => {
         );
     });
 
+    it("omits private automation authority from upcoming jobs without changing stored payload", async () => {
+        const { service, jobRepository, ruleRepository } = createService();
+        const job = createJob({ id: "job-private-authority", status: "pending" });
+        // Projection must omit malformed carriers too; parsing is a delivery boundary.
+        job.payload.agentAutomationSeal = { private: "synthetic-authority" } as never;
+        const stored = structuredClone(job.payload);
+        jobRepository.findUpcomingPendingByBranch.mockResolvedValue([job]);
+        ruleRepository.findAll.mockResolvedValue([createRule({ id: job.ruleId })]);
+        const result = await service.listUpcomingJobs(branchId);
+        expect(result).toHaveLength(1);
+        expect(result[0]!.payload).not.toHaveProperty("agentAutomationSeal");
+        expect(result[0]!.payload.recipientName).toBe(job.payload.recipientName);
+        expect(job.payload).toEqual(stored);
+    });
+
     it("includes manual scheduled SMS logs in the upcoming list", async () => {
         const { service, prisma } = createService();
         prisma.message_log.findMany.mockResolvedValue([{

@@ -39,4 +39,3 @@ export function matchesTriggerDefaults(rule: MessageTriggerRuleEntity, defaults:
         && rule.offsetDays === (defaults.offsetDays ?? 0) && rule.recipientType === defaults.recipientType
         && rule.templateKey === defaults.templateKey;
 }
-

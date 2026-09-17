@@ -44,10 +44,11 @@ describe("strict private automation storage", () => {
     it("treats a job seal as a finite reference, never as a caller-provided approval", () => {
         const record = authority();
         const seal = { version: 1, authorityId: record.id, authorityDigest: record.recordDigest,
-            scope: record.scope, memberDigest: agentAutomationEffectDigest(record.effects), reviewedEffectDigest: record.reviewedEffectDigest };
+            scope: record.scope, memberDigest: agentAutomationEffectDigest(record.effects), reviewedEffectDigest: record.reviewedEffectDigest, concreteJobDigest: "a".repeat(64) };
         expect(parseAgentAutomationJobSeal(seal)).toEqual(seal);
         expect(parseAgentAutomationJobSeal({ ...seal, approved: true })).toBeNull();
         expect(parseAgentAutomationJobSeal({ authorityId: record.id })).toBeNull();
+        expect(parseAgentAutomationJobSeal({ ...seal, concreteJobDigest: undefined })).toBeNull();
         expect(parseAgentAutomationJobSeal({ ...seal, scope: { ...seal.scope, recipientPhone: "01012345678" } })).toBeNull();
     });
 
