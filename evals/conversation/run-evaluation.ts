@@ -105,18 +105,23 @@ export function classifyConversationCase(
     const lifecycleEvidenceRequired = Boolean(scenario && (
         scenario.oracle.ledger.length > 0 || scenario.oracle.sends.length > 0 || scenario.oracle.authority.length > 0
     ));
+    const structuralMismatch = result.failures.some((failure) => [
+        "current_state_mismatch", "structured_event_missing", "draft_state_mismatch",
+    ].includes(failure.code));
+    const productFixtureGap = adapter.mode === "product" && (
+        (result.observed.structuredEvents === 0 && structuralMismatch)
+        || scenario?.family === "required-minimal-registration"
+    );
     if (adapter.mode === "product") {
         if (lifecycleEvidenceRequired && missingObservation) causes.add("unimplemented-feature/connection");
         // The deterministic product model emits a fixed response and does not
         // synthesize tool/read events. Structural mismatches from that run are
         // a fixture/adapter limitation, not a claim that product logic passed.
-        const structuralMismatch = result.observed.structuredEvents === 0 && result.failures.some((failure) => [
-            "current_state_mismatch", "structured_event_missing", "draft_state_mismatch",
-        ].includes(failure.code));
-        if (structuralMismatch || scenario?.family === "required-minimal-registration") {
+        if (productFixtureGap) {
             causes.add("mock-response/fixture-gap");
         }
     }
+    if (structuralMismatch && !productFixtureGap) causes.add("product-defect");
     const nonStructuralMismatch = result.failures.some((failure) => ![
         "missing_observation", "current_state_mismatch", "structured_event_missing", "draft_state_mismatch",
     ].includes(failure.code));

@@ -135,6 +135,37 @@ describe("deterministic multi-turn conversation evaluation foundation", () => {
         expect(classification.causes).toContain("product-defect");
     });
 
+    it("labels an observed structural mismatch as a product defect in product mode", async () => {
+        const { scenario, observation } = await harnessObservation(0);
+        const result = evaluateConversationCase(scenario, {
+            ...observation,
+            currentState: { ...observation.currentState!, phase: "unexpected-state" },
+        });
+        const classification = classifyConversationCase(result, { mode: "product", run: async () => ({}) }, scenario);
+
+        expect(result.status).toBe("failed");
+        expect(result.observed.structuredEvents).toBeGreaterThan(0);
+        expect(result.failures).toEqual(expect.arrayContaining([
+            expect.objectContaining({ code: "current_state_mismatch" }),
+        ]));
+        expect(classification.causes).toContain("product-defect");
+    });
+
+    it("labels a structural mismatch as a product defect in harness mode", async () => {
+        const { scenario, observation } = await harnessObservation(0);
+        const result = evaluateConversationCase(scenario, {
+            ...observation,
+            currentState: { ...observation.currentState!, phase: "unexpected-state" },
+        });
+        const classification = classifyConversationCase(result, { mode: "harness", run: async () => ({}) }, scenario);
+
+        expect(result.status).toBe("failed");
+        expect(result.failures).toEqual(expect.arrayContaining([
+            expect.objectContaining({ code: "current_state_mismatch" }),
+        ]));
+        expect(classification.causes).toContain("product-defect");
+    });
+
     it("reports not_evaluated when only future-phase evidence is unavailable", async () => {
         const { scenario, observation } = await harnessObservation(8);
         const result = evaluateConversationCase(scenario, {
