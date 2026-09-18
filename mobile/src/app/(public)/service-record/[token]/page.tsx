@@ -1,7 +1,7 @@
 "use client";
 import { getUserErrorMessage } from "@babyjamjam/shared";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useParams } from "next/navigation";
 
 import {
@@ -160,6 +160,7 @@ export default function ServiceRecordPage() {
     const [scheduleChangeBusy, setScheduleChangeBusy] = useState(false);
     const [errorNotificationMessage, setErrorNotificationMessage] = useState<string | null>(null);
     const [pendingServiceDate, setPendingServiceDate] = useState<{ next: string; shift: number } | null>(null);
+    const defaultDateRef = useRef<(day: number) => string>(() => "");
 
     const navigateTo = useCallback((
         nextScreen: Screen,
@@ -305,7 +306,7 @@ export default function ServiceRecordPage() {
                     paymentConfirmed: Boolean(session.paymentConfirmed),
                 });
             } else {
-                setDraft(initializeUnlockedDraft(token, targetDay, ctx.sessions, defaultDate));
+                setDraft(initializeUnlockedDraft(token, targetDay, ctx.sessions, defaultDateRef.current));
             }
             navigateTo("day", {
                 mode: "none",
@@ -367,6 +368,7 @@ export default function ServiceRecordPage() {
         },
         [ctx?.plannedSessionDates, ctx?.sessions, ctx?.startDate, plannedDateVectorValid],
     );
+    defaultDateRef.current = defaultDate;
 
     async function submitPhone() {
         if (phone.replace(/\D/g, "").length < 10) { setPhoneError("휴대폰 번호를 입력해 주세요."); return; }
@@ -442,7 +444,7 @@ export default function ServiceRecordPage() {
             initialPageIdx = canRestoreDraft
                 ? Math.min(Math.max(stored?.pageIdx ?? 0, 0), DAY_PAGES.length - 1)
                 : 0;
-            setDraft(initializeUnlockedDraft(token, d, ctx?.sessions ?? [], defaultDate));
+            setDraft(initializeUnlockedDraft(token, d, ctx?.sessions ?? [], defaultDateRef.current));
         }
         navigateTo("day", { mode: "push", day: d, pageIdx: initialPageIdx });
     }
