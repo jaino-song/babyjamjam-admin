@@ -204,6 +204,7 @@ export function createDispatchIntentInput(input: {
     fingerprint?: string;
 }) {
     const generation = input.generation ?? `fixture:${randomUUID()}`;
+    const randomFingerprint = () => randomUUID().replace(/-/g, "").repeat(2).slice(0, 64);
     return {
         branchId: input.branchId,
         clientId: input.clientId,
@@ -213,7 +214,7 @@ export function createDispatchIntentInput(input: {
         templateId: input.templateId ?? "cancel-reissue-template",
         action: input.action ?? "create",
         generation,
-        businessKey: input.businessKey ?? `fixture-business-${randomUUID()}`.padEnd(64, "0").slice(0, 64),
-        fingerprint: input.fingerprint ?? `fixture-fingerprint-${randomUUID()}`.padEnd(64, "0").slice(0, 64),
+        businessKey: input.businessKey ?? randomFingerprint(),
+        fingerprint: input.fingerprint ?? randomFingerprint(),
     } as const;
 }
