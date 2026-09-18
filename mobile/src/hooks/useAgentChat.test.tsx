@@ -1022,6 +1022,84 @@ describe("mobile useAgentChat", () => {
         expect(result.current.errorState).toBeNull();
         expect(result.current.taskSnapshot?.revision).toBe(3);
     });
+
+    it("exposes mutation busy and pending state while a task request is in flight", async () => {
+        let resolvePatch: ((response: Response) => void) | undefined;
+        const nextTask = makeTask({ revision: 3, currentSnapshotRef: TASK_IDS.snapshot3 });
+        const fetchMock = jest.fn().mockImplementation(async (input: string | URL | Request, init?: RequestInit) => {
+            const url = String(input);
+            if (url.endsWith(`/tasks/${TASK_IDS.task}`) && !init?.method) return jsonResponse(makeTask());
+            if (url.endsWith(`/tasks/${TASK_IDS.task}`) && init?.method === "PATCH") {
+                return new Promise<Response>((resolve) => { resolvePatch = resolve; });
+            }
+            return jsonResponse([]);
+        });
+        global.fetch = fetchMock;
+
+        const { result } = renderHook(() => useAgentChat());
+        await act(async () => { await result.current.refreshTask(TASK_IDS.task); });
+        let mutation: Promise<unknown> | undefined;
+        act(() => {
+            mutation = result.current.patchTask(TASK_IDS.task, [{ op: "set", field: "name", value: "김하나" }], { clientEventId: TASK_IDS.event });
+        });
+        await waitFor(() => expect(result.current.taskMutationInFlight).toBe(true));
+        expect(result.current.taskPendingEventIds).toContain(TASK_IDS.event);
+
+        resolvePatch?.(jsonResponse({
+            receipt: { taskId: TASK_IDS.task, eventId: TASK_IDS.event, eventHash: "a".repeat(64), acceptedRevision: 3, currentSnapshotRef: TASK_IDS.snapshot3 },
+            snapshot: nextTask,
+        }));
+        await act(async () => { await mutation; });
+        expect(result.current.taskMutationInFlight).toBe(false);
+        expect(result.current.taskPendingEventIds).toEqual([]);
+    });
+
+    it("keeps uncertain task events pending until an authoritative refresh", async () => {
+        let readCount = 0;
+        const latestTask = makeTask({ revision: 3, currentSnapshotRef: TASK_IDS.snapshot3 });
+        global.fetch = jest.fn().mockImplementation(async (input: string | URL | Request, init?: RequestInit) => {
+            const url = String(input);
+            if (url.endsWith(`/tasks/${TASK_IDS.task}`) && !init?.method) {
+                readCount += 1;
+                return jsonResponse(readCount === 1 ? makeTask() : latestTask);
+            }
+            if (url.endsWith(`/tasks/${TASK_IDS.task}`) && init?.method === "PATCH") throw new Error("connection lost");
+            return jsonResponse([]);
+        });
+
+        const { result } = renderHook(() => useAgentChat());
+        await act(async () => { await result.current.refreshTask(TASK_IDS.task); });
+        await act(async () => {
+            await result.current.patchTask(TASK_IDS.task, [{ op: "set", field: "name", value: "확인 필요" }], { clientEventId: TASK_IDS.event });
+        });
+
+        expect(result.current.taskNeedsReconciliation).toBe(true);
+        expect(result.current.taskPendingEventIds).toContain(TASK_IDS.event);
+        expect(result.current.errorState?.effectState).toBe("succeeded-unconfirmed");
+
+        await act(async () => { await result.current.refreshTask(); });
+        expect(result.current.taskNeedsReconciliation).toBe(false);
+        expect(result.current.taskPendingEventIds).toEqual([]);
+    });
+
+    it("clears mutation pending state and preserves expiry after a 410 response", async () => {
+        global.fetch = jest.fn().mockImplementation(async (input: string | URL | Request, init?: RequestInit) => {
+            const url = String(input);
+            if (url.endsWith(`/tasks/${TASK_IDS.task}`) && !init?.method) return jsonResponse(makeTask());
+            if (url.endsWith(`/tasks/${TASK_IDS.task}`) && init?.method === "PATCH") return jsonResponse({}, { ok: false, status: 410 });
+            return jsonResponse([]);
+        });
+
+        const { result } = renderHook(() => useAgentChat());
+        await act(async () => { await result.current.refreshTask(TASK_IDS.task); });
+        await act(async () => {
+            await result.current.patchTask(TASK_IDS.task, [{ op: "set", field: "name", value: "만료 확인" }], { clientEventId: TASK_IDS.event });
+        });
+
+        expect(result.current.errorState).toEqual({ code: "task_expired", message: "초안이 만료되었습니다. 새 업무를 시작해 주세요.", effectState: "nothing-happened" });
+        expect(result.current.taskPendingEventIds).toEqual([]);
+        expect(result.current.taskMutationInFlight).toBe(false);
+    });
 });
 
 describe("mobile useAgentShellEnabled capability discovery", () => {

@@ -385,6 +385,33 @@ describe("MobileAgentPartRegistry", () => {
         expect(snapshot).not.toHaveTextContent("홍길동");
     });
 
+    it("hides controls when a snapshot reference is stale even at the same revision", () => {
+        render(<MobileAgentPartRegistry
+            data-component="mobile_chat_tests_agent-part-registry_stale-task-snapshot"
+            part={{
+                type: "data-task-snapshot",
+                data: {
+                    taskId: TASK_IDS.task,
+                    snapshotRef: "66666666-6666-4666-8666-666666666666",
+                    kind: "clients.create",
+                    capabilityId: "clients.create",
+                    revision: 2,
+                    state: "confirming_target",
+                    fieldStatus: [{ field: "name", status: "confirmed" }],
+                },
+            }}
+            task={makeTask()}
+            onTaskPatch={jest.fn()}
+            onTaskCommand={jest.fn()}
+            onEntitySelect={jest.fn()}
+            onApproveAction={jest.fn()}
+            onRejectAction={jest.fn()}
+            onSubmitForm={jest.fn()}
+        />);
+
+        expect(screen.queryByRole("button", { name: "변경 적용" })).not.toBeInTheDocument();
+    });
+
     it("keeps structured entity selections reference-based and usable in a narrow review", () => {
         const onTaskEntitySelect = jest.fn();
         render(<MobileAgentPartRegistry

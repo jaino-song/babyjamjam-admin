@@ -17,6 +17,7 @@ import {
     AgentTaskSnapshotPartSchema,
     type AgentTask,
     type AgentFormField,
+    type ClientInputOperation,
 } from "@babyjamjam/shared";
 
 import { AgentActionApprovalCard } from "@/components/app/ui/AgentActionApprovalCard";
@@ -25,6 +26,8 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { MobileTaskControls } from "./MobileTaskControls";
+import type { MobileAgentTaskCommand, MobileAgentTaskMutationResult } from "@/hooks/useAgentChat";
 
 type MobilePart = { type: string; text?: string; data?: unknown; state?: string; output?: unknown; errorText?: string; toolName?: string };
 
@@ -63,9 +66,13 @@ type Props = {
     onTaskEntitySelect?: (taskId: string, choiceSetRef: string, optionId: string) => void;
     task?: AgentTask | null;
     terminalActionIds?: ReadonlySet<string>;
+    taskBusy?: boolean;
+    taskNeedsReconciliation?: boolean;
+    onTaskPatch?: (taskId: string, operations: readonly ClientInputOperation[]) => Promise<MobileAgentTaskMutationResult | void> | MobileAgentTaskMutationResult | void;
+    onTaskCommand?: (taskId: string, command: MobileAgentTaskCommand) => Promise<MobileAgentTaskMutationResult | void> | MobileAgentTaskMutationResult | void;
 };
 
-export function MobileAgentPartRegistry({ "data-component": dataComponent, part, onEntitySelect, onApproveAction, onRejectAction, onSubmitForm, onTaskEntitySelect, task, terminalActionIds }: Props) {
+export function MobileAgentPartRegistry({ "data-component": dataComponent, part, onEntitySelect, onApproveAction, onRejectAction, onSubmitForm, onTaskEntitySelect, task, terminalActionIds, taskBusy = false, taskNeedsReconciliation = false, onTaskPatch, onTaskCommand }: Props) {
     if (part.type === "text") return <p data-slot="text" className="whitespace-pre-wrap break-words">{part.text ?? ""}</p>;
     if (part.type === "dynamic-tool" || part.type.startsWith("tool-")) {
         if (part.state === "output-error") return <p data-slot="tool-error" className="text-sm text-muted-foreground">{part.errorText ?? "도구 결과를 표시할 수 없어요."}</p>;
@@ -92,7 +99,7 @@ export function MobileAgentPartRegistry({ "data-component": dataComponent, part,
             cancelled: "취소됨",
         };
         const filledFields = parsed.data.fieldStatus.filter(({ status }) => status !== "missing");
-        return <section data-component={dataComponent} data-slot="task-snapshot" aria-label="현재 업무 초안" className="rounded-xl border p-3"><p className="font-semibold">현재 업무 초안 · {stateLabel[parsed.data.state] ?? parsed.data.state}</p><p className="mt-1 text-xs text-muted-foreground">버전 {parsed.data.revision}</p>{filledFields.length > 0 && <ul className="mt-2 flex flex-wrap gap-1 text-xs text-muted-foreground">{filledFields.map(({ field, status }) => <li key={field}>{field} · {status}</li>)}</ul>}</section>;
+        return <section data-component={dataComponent} data-slot="task-snapshot" aria-label="현재 업무 초안" className="min-w-0 rounded-xl border p-3"><p className="font-semibold">현재 업무 초안 · {stateLabel[parsed.data.state] ?? parsed.data.state}</p><p className="mt-1 text-xs text-muted-foreground">버전 {parsed.data.revision}</p>{filledFields.length > 0 && <ul className="mt-2 flex flex-wrap gap-1 text-xs text-muted-foreground">{filledFields.map(({ field, status }) => <li key={field}>{field} · {status}</li>)}</ul>}{task?.taskId === parsed.data.taskId && task.revision === parsed.data.revision && task.currentSnapshotRef === parsed.data.snapshotRef && <MobileTaskControls data-component={`${dataComponent}_controls`} task={task} taskBusy={taskBusy} taskNeedsReconciliation={taskNeedsReconciliation} onPatch={onTaskPatch} onCommand={onTaskCommand} />}</section>;
     }
     if (part.type === "data-entity-select") {
         const parsed = AgentEntitySelectPartSchema.safeParse(part.data);

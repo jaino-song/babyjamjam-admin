@@ -161,12 +161,14 @@ export function useAgentChat() {
     const [taskClientState, setTaskClientState] = useState<AgentTaskClientSnapshotState>(() => createAgentTaskSnapshotState());
     const [taskSnapshot, setTaskSnapshot] = useState<MobileAgentTaskSnapshot | null>(null);
     const [taskNeedsReconciliation, setTaskNeedsReconciliation] = useState(false);
+    const [taskMutationInFlight, setTaskMutationInFlight] = useState(false);
     const sessionId = useRef<string | undefined>(undefined);
     const pendingSessionId = useRef<string | undefined>(undefined);
     const abortRef = useRef<AbortController | null>(null);
     const operationEpochRef = useRef(0);
     const taskClientStateRef = useRef(taskClientState);
     const taskSnapshotRef = useRef<MobileAgentTaskSnapshot | null>(null);
+    const taskMutationCountRef = useRef(0);
     /** undefined means no restore identity has been established yet; null is an authoritative "no active task". */
     const activeTaskIdRef = useRef<string | null | undefined>(undefined);
 
@@ -235,6 +237,22 @@ export function useAgentChat() {
         commitTaskClientState({ ...current, pendingEventIds });
     }, [commitTaskClientState]);
 
+    const clearPendingTaskEvents = useCallback(() => {
+        const current = taskClientStateRef.current;
+        if (current.pendingEventIds.length === 0) return;
+        commitTaskClientState({ ...current, pendingEventIds: [] });
+    }, [commitTaskClientState]);
+
+    const beginTaskMutation = useCallback(() => {
+        taskMutationCountRef.current += 1;
+        setTaskMutationInFlight(true);
+    }, []);
+
+    const endTaskMutation = useCallback(() => {
+        taskMutationCountRef.current = Math.max(0, taskMutationCountRef.current - 1);
+        if (taskMutationCountRef.current === 0) setTaskMutationInFlight(false);
+    }, []);
+
     const acceptAuthorizedTask = useCallback((
         task: unknown,
         request: ReturnType<typeof captureAgentTaskSnapshotRequest>,
@@ -295,6 +313,7 @@ export function useAgentChat() {
             const authoritative = acceptAuthorizedTask(body, request);
             const accepted = Boolean(authoritative?.accepted || authoritative?.reason === "same-revision" || authoritative?.reason === "acknowledged-event");
             if (accepted) {
+                clearPendingTaskEvents();
                 setTaskNeedsReconciliation(false);
                 setErrorState((currentError) => currentError?.code === "task_conflict" ? null : currentError);
             }
@@ -302,7 +321,7 @@ export function useAgentChat() {
         } catch {
             return false;
         }
-    }, [acceptAuthorizedTask, beginTaskSnapshotRequest]);
+    }, [acceptAuthorizedTask, beginTaskSnapshotRequest, clearPendingTaskEvents]);
 
     const handleTaskConflict = useCallback((body: unknown, request: ReturnType<typeof captureAgentTaskSnapshotRequest>) => {
         const snapshot = body && typeof body === "object" ? (body as Record<string, unknown>).snapshot : undefined;
@@ -326,6 +345,7 @@ export function useAgentChat() {
         } catch {
             return { status: "failed" };
         }
+        beginTaskMutation();
         markTaskEventPending(clientEventId);
         try {
             const response = await authenticatedFetch(path, {
@@ -361,9 +381,8 @@ export function useAgentChat() {
                 return { status: "applied", task: parsed.data.snapshot, snapshot: taskSnapshotPartFromTask(parsed.data.snapshot) };
             }
             if (response.status === 409) {
+                removeTaskEventPending(clientEventId);
                 handleTaskConflict(payload, request);
-                // A conflict leaves this event pending so the caller can decide
-                // whether to retry after reviewing the latest server snapshot.
                 return { status: "conflict" };
             }
             removeTaskEventPending(clientEventId);
@@ -374,11 +393,17 @@ export function useAgentChat() {
             }
             return { status: "failed" };
         } catch {
-            removeTaskEventPending(clientEventId);
+            // Keep the event pending until an authoritative refresh confirms the
+            // outcome.  A transport failure is uncertain and must not invite a
+            // second side effect from a quick follow-up tap.
+            setTaskNeedsReconciliation(true);
             setErrorState({ code: "task_mutation_unconfirmed", message: "초안 변경 결과를 확인하지 못했습니다. 최신 초안을 확인해 주세요.", effectState: "succeeded-unconfirmed" });
             return { status: "failed" };
         }
-    }, [acceptAuthorizedTask, beginTaskSnapshotRequest, handleTaskConflict, markTaskEventPending, removeTaskEventPending, switchTaskIdentity]);
+        finally {
+            endTaskMutation();
+        }
+    }, [acceptAuthorizedTask, beginTaskMutation, beginTaskSnapshotRequest, endTaskMutation, handleTaskConflict, markTaskEventPending, removeTaskEventPending, switchTaskIdentity]);
 
     const patchTask = useCallback(async (
         taskId: string,
@@ -772,6 +797,8 @@ export function useAgentChat() {
         taskSnapshot,
         task: taskClientState.task,
         taskNeedsReconciliation,
+        taskMutationInFlight,
+        taskPendingEventIds: taskClientState.pendingEventIds,
         refreshTask,
         patchTask,
         commandTask,
