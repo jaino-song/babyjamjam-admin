@@ -21,7 +21,10 @@
 - 인증 synthetic browser 계약: desktop **3 passed / 1 intentional skip**, mobile **1 passed / 1 intentional skip**;
   mobile unit **9 passed**. 공식 Chrome에서 `/chat`을 375×812와 1280×900으로 확인해 모바일·데스크톱 shell,
   sidebar 표시, `/chat` 공통 chrome 숨김, DOM·computed style·스크린샷을 확인한 뒤 QA 탭을 원상 복구했다.
-- 실제 Google/OpenAI 품질 평가는 유료 키 없이 실행하지 않았고, 실제 SMS·운영 DB 변경·merge·deploy·운영 활성화도 수행하지 않았다.
+- Google/OpenAI staging runner의 양쪽 provider dry-run은 **576개 계획**을 transport 없이 생성했고,
+  holdout live 실행은 두 평가 키가 unset인 상태에서 `MISSING_API_KEY`로 전송 전에 거절됐다.
+- 현재 원격에는 이 task 브랜치에 대한 PR 또는 workflow run이 없으며, push·merge·deploy는 수행하지 않았다.
+  실제 Google/OpenAI 품질 평가, human review, 실제 SMS·운영 DB 변경·운영 활성화도 수행하지 않았다.
 
 현재 판정은 **구현 및 결정적 검증 완료**, **실제 대화 품질 검증 대기**, **운영 적용 대기**다.
 
