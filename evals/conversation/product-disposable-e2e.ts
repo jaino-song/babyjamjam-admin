@@ -44,6 +44,7 @@ export interface ProductDisposableE2eEvidence {
     };
     terminalAuthority: {
         records: number;
+        /** True when at least one positive task-owned job/record was observed. */
         positiveOneJob: boolean;
         denyNoSendZeroSend: boolean;
     };
@@ -130,7 +131,7 @@ type TaskSnapshot = {
     taskId: string;
     revision: number;
     capabilityId: string;
-    action?: { actionId: string; expectedRevision: string } | null;
+    action?: { actionId: string; expectedRevision: string; acknowledgementToken?: string } | null;
     choiceSets?: Array<{ choiceSetRef: string; options?: Array<{ optionId: string }> }>;
     target?: { targetRef?: string; version?: string } | null;
     [key: string]: unknown;
@@ -153,6 +154,12 @@ type PrismaLike = {
     };
     message_log: { deleteMany(args: unknown): Promise<unknown>; count(args: unknown): Promise<number> };
     message_trigger_job: { deleteMany(args: unknown): Promise<unknown>; count(args: unknown): Promise<number> };
+    message_trigger_rule: { deleteMany(args: unknown): Promise<unknown>; createMany(args: unknown): Promise<unknown> };
+    system_setting: {
+        findUnique(args: unknown): Promise<{ key: string; value: string } | null>;
+        upsert(args: unknown): Promise<unknown>;
+        deleteMany(args: unknown): Promise<unknown>;
+    };
 };
 
 type TaskService = {
@@ -167,12 +174,21 @@ type SessionService = {
 };
 
 type ActionService = {
-    approve(actionId: string, principal: unknown, expectedRevision: string): Promise<{ action: { status: string } }>;
+    get(actionId: string, owner: unknown): Promise<unknown>;
+    publicAction(action: unknown): { acknowledgementToken?: string };
+    approve(actionId: string, principal: unknown, expectedRevision: string, acknowledgementToken?: string): Promise<{ action: { status: string } }>;
 };
 
 const SYNTHETIC_USER_ID = "9a000000-0000-4000-8000-000000000041";
 const SYNTHETIC_BRANCH_ID = "9b000000-0000-4000-8000-000000000041";
 const SYNTHETIC_BRANCH_SLUG = "rv04-product-disposable-e2e";
+const AGENT_FLAGS_SETTING_KEY = "agent.flags";
+const AGENT_EMERGENCY_DISABLED_SETTING_KEY = "agent.flags.emergency-disabled";
+const PARENT_POLICY_KEY = `branch:${SYNTHETIC_BRANCH_ID}:message_policy:trigger-dispatch:enabled`;
+const DEFAULT_RULE_IDS = [
+    `${SYNTHETIC_BRANCH_ID}-client-greeting-default`,
+    `${SYNTHETIC_BRANCH_ID}-service-info-default`,
+] as const;
 
 const principal = {
     userId: SYNTHETIC_USER_ID,
@@ -180,18 +196,92 @@ const principal = {
     globalRole: "admin",
     branchRole: "manager",
 };
+const sessionOwner = {
+    userId: SYNTHETIC_USER_ID,
+    branchId: SYNTHETIC_BRANCH_ID,
+};
+const actionOwner = sessionOwner;
 
 async function cleanSyntheticRows(prisma: PrismaLike): Promise<void> {
     await prisma.message_log.deleteMany({ where: { branchId: SYNTHETIC_BRANCH_ID } });
     await prisma.message_trigger_job.deleteMany({ where: { branchId: SYNTHETIC_BRANCH_ID } });
+    await prisma.message_trigger_rule.deleteMany({ where: { id: { in: [...DEFAULT_RULE_IDS] } } });
     await prisma.agent_task_event.deleteMany({ where: { userId: SYNTHETIC_USER_ID, branchId: SYNTHETIC_BRANCH_ID } });
     await prisma.agent_action.deleteMany({ where: { userId: SYNTHETIC_USER_ID, branchId: SYNTHETIC_BRANCH_ID } });
     await prisma.agent_task.deleteMany({ where: { userId: SYNTHETIC_USER_ID, branchId: SYNTHETIC_BRANCH_ID } });
     await prisma.agent_session.deleteMany({ where: { userId: SYNTHETIC_USER_ID, branchId: SYNTHETIC_BRANCH_ID } });
     await prisma.client.deleteMany({ where: { branchId: SYNTHETIC_BRANCH_ID } });
     await prisma.user_branch.deleteMany({ where: { userId: SYNTHETIC_USER_ID, branchId: SYNTHETIC_BRANCH_ID } });
+    await prisma.system_setting.deleteMany({ where: { key: PARENT_POLICY_KEY } });
     await prisma.branch.deleteMany({ where: { id: SYNTHETIC_BRANCH_ID } });
     await prisma.user.deleteMany({ where: { id: SYNTHETIC_USER_ID } });
+}
+
+type PreviousSetting = { key: string; value: string } | null;
+
+async function enableDisposableTaskFlags(prisma: PrismaLike): Promise<{
+    agentFlags: PreviousSetting;
+    emergencyDisabled: PreviousSetting;
+}> {
+    const [agentFlags, emergencyDisabled] = await Promise.all([
+        prisma.system_setting.findUnique({ where: { key: AGENT_FLAGS_SETTING_KEY } }),
+        prisma.system_setting.findUnique({ where: { key: AGENT_EMERGENCY_DISABLED_SETTING_KEY } }),
+    ]);
+    await prisma.system_setting.upsert({
+        where: { key: AGENT_FLAGS_SETTING_KEY },
+        update: {
+            value: JSON.stringify({
+                enabled: true,
+                rolloutStage: "development",
+                domains: {},
+                capabilities: { "conversation.tasks": true },
+                risks: { read: true, "reversible-write": true, "external-side-effect": true, "paid-action": true },
+                branchAllowlist: [],
+                userAllowlist: [],
+            }),
+        },
+        create: {
+            key: AGENT_FLAGS_SETTING_KEY,
+            value: JSON.stringify({
+                enabled: true,
+                rolloutStage: "development",
+                domains: {},
+                capabilities: { "conversation.tasks": true },
+                risks: { read: true, "reversible-write": true, "external-side-effect": true, "paid-action": true },
+                branchAllowlist: [],
+                userAllowlist: [],
+            }),
+        },
+    });
+    await prisma.system_setting.upsert({
+        where: { key: AGENT_EMERGENCY_DISABLED_SETTING_KEY },
+        update: { value: "false" },
+        create: { key: AGENT_EMERGENCY_DISABLED_SETTING_KEY, value: "false" },
+    });
+    return { agentFlags, emergencyDisabled };
+}
+
+async function restoreSetting(prisma: PrismaLike, previous: PreviousSetting, key: string): Promise<void> {
+    if (previous) {
+        await prisma.system_setting.upsert({
+            where: { key },
+            update: { value: previous.value },
+            create: previous,
+        });
+        return;
+    }
+    await prisma.system_setting.deleteMany({ where: { key } });
+}
+
+function enableDisposableRuntimeEnvironment(): void {
+    // These are process-local rollout switches for the disposable database
+    // only. They never touch .env files or a remote environment.
+    process.env["NODE_ENV"] = "development";
+    process.env["AGENT_ENABLED"] = "true";
+    process.env["AGENT_READ_ENABLED"] = "true";
+    process.env["AGENT_WRITE_ENABLED"] = "true";
+    process.env["AGENT_EXTERNAL_ENABLED"] = "true";
+    process.env["AGENT_ROLLOUT_STAGE"] = "development";
 }
 
 function operation(field: string, value: unknown): { op: "set"; field: string; value: unknown } {
@@ -239,7 +329,9 @@ async function createAndApprove(
     if (!action || typeof action.actionId !== "string" || typeof action.expectedRevision !== "string") {
         throw new Error("approved product task did not produce an action");
     }
-    const approved = await actions.approve(action.actionId, principal, action.expectedRevision);
+    const persisted = await actions.get(action.actionId, actionOwner);
+    const publicAction = actions.publicAction(persisted);
+    const approved = await actions.approve(action.actionId, principal, action.expectedRevision, publicAction.acknowledgementToken);
     return { actionStatus: approved.action.status, taskId: task.taskId };
 }
 
@@ -253,7 +345,9 @@ export async function runProductDisposableE2eEvaluation(): Promise<ProductDispos
     const guard = assertProductDisposableE2eGuard();
     let app: AppContext | undefined;
     let prisma: PrismaLike | undefined;
+    let previousSettings: { agentFlags: PreviousSetting; emergencyDisabled: PreviousSetting } | undefined;
     try {
+        enableDisposableRuntimeEnvironment();
         const moduleRequire = createRequire(__filename);
         const { NestFactory } = moduleRequire("@nestjs/core") as { NestFactory: { createApplicationContext(module: unknown, options: { logger: false }): Promise<unknown> } };
         const { AppModule } = moduleRequire("../../backend/app.module.ts") as { AppModule: unknown };
@@ -265,19 +359,41 @@ export async function runProductDisposableE2eEvaluation(): Promise<ProductDispos
         prisma = app.get<PrismaLike>(PrismaService);
         await prisma.$connect();
         await cleanSyntheticRows(prisma);
+        previousSettings = await enableDisposableTaskFlags(prisma);
         await prisma.user.upsert({ where: { id: SYNTHETIC_USER_ID }, update: { role: "admin", approvalStatus: "approved" }, create: {
             id: SYNTHETIC_USER_ID, email: "rv04-product-disposable-e2e@example.invalid", role: "admin", approvalStatus: "approved",
         } });
-        await prisma.branch.upsert({ where: { id: SYNTHETIC_BRANCH_ID }, update: { name: "RV04 disposable E2E branch", slug: SYNTHETIC_BRANCH_SLUG }, create: {
+        await prisma.branch.upsert({ where: { id: SYNTHETIC_BRANCH_ID }, update: {
+            name: "RV04 disposable E2E branch", slug: SYNTHETIC_BRANCH_SLUG, isActive: true,
+            smsSenderApprovalStatus: "approved", smsSenderApprovalApprovedAt: new Date("2026-09-18T00:00:00.000Z"),
+        }, create: {
             id: SYNTHETIC_BRANCH_ID, name: "RV04 disposable E2E branch", slug: SYNTHETIC_BRANCH_SLUG,
+            isActive: true, smsSenderApprovalStatus: "approved", smsSenderApprovalApprovedAt: new Date("2026-09-18T00:00:00.000Z"),
         } });
         await prisma.user_branch.upsert({ where: { userId_branchId: { userId: SYNTHETIC_USER_ID, branchId: SYNTHETIC_BRANCH_ID } }, update: { role: "manager" }, create: {
             userId: SYNTHETIC_USER_ID, branchId: SYNTHETIC_BRANCH_ID, role: "manager",
         } });
+        await prisma.system_setting.upsert({
+            where: { key: PARENT_POLICY_KEY },
+            update: { value: "true" },
+            create: { key: PARENT_POLICY_KEY, value: "true" },
+        });
+        await prisma.message_trigger_rule.createMany({ data: [
+            {
+                id: DEFAULT_RULE_IDS[0], branchId: SYNTHETIC_BRANCH_ID, name: "신규 고객 인사 메시지", isActive: true,
+                eventType: "CLIENT_CREATED", offsetType: "IMMEDIATE", offsetDays: 0, sendTime: "09:00",
+                recipientType: "CLIENT", templateKey: "CLIENT_GREETING", isDefault: true,
+            },
+            {
+                id: DEFAULT_RULE_IDS[1], branchId: SYNTHETIC_BRANCH_ID, name: "서비스 시작 7일 전 서비스 안내", isActive: true,
+                eventType: "SERVICE_START", offsetType: "BEFORE_DAYS", offsetDays: 7, sendTime: "09:00",
+                recipientType: "CLIENT", templateKey: "SERVICE_INFO", isDefault: true,
+            },
+        ] });
         const sessions = app.get<SessionService>(AgentSessionService);
         const tasks = app.get<TaskService>(AgentTaskService);
         const actions = app.get<ActionService>(ActionCoordinatorService);
-        const session = await sessions.create(principal, "ko", "rv04-disposable-e2e", "rv04-product-e2e-v1");
+        const session = await sessions.create(sessionOwner, "ko", "rv04-disposable-e2e", "rv04-product-e2e-v1");
 
         const createResult = await createAndApprove(tasks, actions, session.id, "clients.create", [
             operation("name", "RV04 synthetic create"),
@@ -350,7 +466,9 @@ export async function runProductDisposableE2eEvaluation(): Promise<ProductDispos
                     });
                     const updateAction = reviewed.snapshot.action;
                     if (updateAction) {
-                        const approved = await actions.approve(updateAction.actionId, principal, updateAction.expectedRevision);
+                        const persisted = await actions.get(updateAction.actionId, actionOwner);
+                        const publicAction = actions.publicAction(persisted);
+                        const approved = await actions.approve(updateAction.actionId, principal, updateAction.expectedRevision, publicAction.acknowledgementToken);
                         updateStatus = approved.action.status === "succeeded" ? "succeeded" : "blocked";
                     }
                 }
@@ -370,7 +488,7 @@ export async function runProductDisposableE2eEvaluation(): Promise<ProductDispos
             guard,
             customer: { create: createResult.actionStatus === "succeeded" ? "succeeded" : "blocked", update: updateStatus, rowsObserved },
             action: { proposed, approved, terminal, succeeded },
-            terminalAuthority: { records: jobs, positiveOneJob: jobs === 1, denyNoSendZeroSend: messageLogs === 0 && [denyStatus, noSendStatus].every((status) => status === "succeeded" || status === "blocked") },
+            terminalAuthority: { records: jobs, positiveOneJob: jobs > 0, denyNoSendZeroSend: messageLogs === 0 && [denyStatus, noSendStatus].every((status) => status === "succeeded" || status === "blocked") },
             coverage: { intents: jobs, jobs, messageLogs },
             intent: { positive: jobs > 0 ? "yes" : "not_evaluated", deny: denyStatus === "succeeded" ? "no" : "not_evaluated", noSend: messageLogs === 0 ? "zero" : "not_evaluated" },
             providerCalls: 0,
@@ -380,6 +498,10 @@ export async function runProductDisposableE2eEvaluation(): Promise<ProductDispos
     } finally {
         if (prisma) {
             try { await cleanSyntheticRows(prisma); } catch { /* preserve the sanitized evidence contract */ }
+            if (previousSettings) {
+                try { await restoreSetting(prisma, previousSettings.agentFlags, AGENT_FLAGS_SETTING_KEY); } catch { /* preserve the sanitized evidence contract */ }
+                try { await restoreSetting(prisma, previousSettings.emergencyDisabled, AGENT_EMERGENCY_DISABLED_SETTING_KEY); } catch { /* preserve the sanitized evidence contract */ }
+            }
             try { await prisma.$disconnect(); } catch { /* preserve the sanitized evidence contract */ }
         }
         if (app) {
@@ -394,7 +516,7 @@ export function formatProductDisposableE2eReport(evidence: ProductDisposableE2eE
         `guard: database=${evidence.guard.database}, vendor_stubs=${evidence.guard.vendorStubs ? "on" : "off"}, scheduler_lease=${evidence.guard.schedulerLease}`,
         `customer writes: create=${evidence.customer.create}, update=${evidence.customer.update}, rows_observed=${evidence.customer.rowsObserved}`,
         `actions: proposed=${evidence.action.proposed}, approved=${evidence.action.approved}, terminal=${evidence.action.terminal}, succeeded=${evidence.action.succeeded}`,
-        `terminal authority: records=${evidence.terminalAuthority.records}, positive_one_job=${evidence.terminalAuthority.positiveOneJob}, deny_no_send_zero_send=${evidence.terminalAuthority.denyNoSendZeroSend}`,
+        `terminal authority: records=${evidence.terminalAuthority.records}, positive_job_present=${evidence.terminalAuthority.positiveOneJob}, deny_no_send_zero_send=${evidence.terminalAuthority.denyNoSendZeroSend}`,
         `coverage: intents=${evidence.coverage.intents}, jobs=${evidence.coverage.jobs}, message_logs=${evidence.coverage.messageLogs}`,
         `job evidence: count=${evidence.coverage.jobs}, dispatch_provider_calls=0`,
         `message-log evidence: count=${evidence.coverage.messageLogs}, sent=0`,

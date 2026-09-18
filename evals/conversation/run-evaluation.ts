@@ -259,7 +259,7 @@ function configureBackendModuleAliases(): void {
     // a narrow transpile-only hook for backend classes loaded by this CLI after
     // the alias resolver is installed; the normal harness remains untouched.
     const tsNodeApi = moduleRequire(moduleRequire.resolve("ts-node", { paths: [backendRoot] })) as {
-        register: (options: { transpileOnly: boolean; compilerOptions: Record<string, unknown> }) => void;
+        register: (options: { transpileOnly: boolean; project: string; compilerOptions: Record<string, unknown> }) => void;
     };
     // ts-node's CLI service is type-checking the entrypoint. Replace only its
     // extension hook before loading backend classes so unresolved project
@@ -267,8 +267,10 @@ function configureBackendModuleAliases(): void {
     delete require.extensions[".ts"];
     tsNodeApi.register({
         transpileOnly: true,
+        project: resolve(backendRoot, "tsconfig.json"),
         compilerOptions: {
             module: "CommonJS",
+            moduleResolution: "Node",
             target: "ES2021",
             experimentalDecorators: true,
             emitDecoratorMetadata: true,
@@ -305,8 +307,10 @@ function runProductCliChild(productDisposableE2e: boolean): number {
     const result = spawnSync(process.execPath, [
         tsNodeCli,
         "--transpile-only",
+        "--project",
+        "tsconfig.json",
         "--compiler-options",
-        '{"module":"CommonJS"}',
+        '{"module":"CommonJS","moduleResolution":"Node","target":"ES2021","experimentalDecorators":true,"emitDecoratorMetadata":true,"esModuleInterop":true}',
         __filename,
         "--product",
         ...(productDisposableE2e ? [PRODUCT_DISPOSABLE_E2E_FLAG] : []),
