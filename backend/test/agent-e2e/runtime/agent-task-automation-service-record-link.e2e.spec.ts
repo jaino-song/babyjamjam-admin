@@ -45,8 +45,8 @@ describeAgentE2E("production service-record-link task effect planner", () => {
 
     beforeAll(async () => {
         assertApprovedAgentTaskPersistenceDatabaseTarget();
-        previousBaseUrl = process.env.MOBILE_SERVICE_RECORD_BASE_URL;
-        process.env.MOBILE_SERVICE_RECORD_BASE_URL = "https://m.admin.babyjamjam.com";
+        previousBaseUrl = process.env["MOBILE_SERVICE_RECORD_BASE_URL"];
+        process.env["MOBILE_SERVICE_RECORD_BASE_URL"] = "https://m.admin.babyjamjam.com";
         prisma = createApprovedAgentTaskPersistenceClient();
         await prisma.$connect();
         await cleanup();
@@ -147,8 +147,8 @@ describeAgentE2E("production service-record-link task effect planner", () => {
             await cleanup();
             await prisma.$disconnect();
         }
-        if (previousBaseUrl === undefined) delete process.env.MOBILE_SERVICE_RECORD_BASE_URL;
-        else process.env.MOBILE_SERVICE_RECORD_BASE_URL = previousBaseUrl;
+        if (previousBaseUrl === undefined) delete process.env["MOBILE_SERVICE_RECORD_BASE_URL"];
+        else process.env["MOBILE_SERVICE_RECORD_BASE_URL"] = previousBaseUrl;
     }, 30_000);
 
     it("emits a digest-only service-record-link effect from the real planner", async () => {
