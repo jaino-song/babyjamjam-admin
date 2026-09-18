@@ -6,7 +6,9 @@ import { useEffect, useMemo, useRef, useState } from "react";
 const GLINT_UI_BASE_VIEWPORT_WIDTH = 1920;
 const GLINT_UI_BASE_VIEWPORT_HEIGHT = 1080;
 const GLINT_UI_SCALE_MULTIPLIER = 1.1;
-const GLINT_UI_VIEWPORT_SCALE_CSS_VALUE = `calc(min(calc(100vw / ${GLINT_UI_BASE_VIEWPORT_WIDTH}px), calc(100vh / ${GLINT_UI_BASE_VIEWPORT_HEIGHT}px)) * ${GLINT_UI_SCALE_MULTIPLIER})`;
+const GLINT_UI_MOBILE_BREAKPOINT = 768;
+const GLINT_UI_MIN_DESKTOP_SCALE = 0.67;
+const GLINT_UI_VIEWPORT_SCALE_CSS_VALUE = "var(--glint-ui-viewport-scale, 1)";
 const GLINT_UI_DPR_CHANGE_EPSILON = 0.001;
 
 export type GlintUiScaleStyle = CSSProperties & {
@@ -14,11 +16,18 @@ export type GlintUiScaleStyle = CSSProperties & {
 };
 
 export function getGlintUiScaleForViewport(width: number, height: number): number {
+  if (width < GLINT_UI_MOBILE_BREAKPOINT) {
+    return 1;
+  }
+
   return Number((
-    Math.min(
-      width / GLINT_UI_BASE_VIEWPORT_WIDTH,
-      height / GLINT_UI_BASE_VIEWPORT_HEIGHT,
-    ) * GLINT_UI_SCALE_MULTIPLIER
+    Math.max(
+      GLINT_UI_MIN_DESKTOP_SCALE,
+      Math.min(
+        width / GLINT_UI_BASE_VIEWPORT_WIDTH,
+        height / GLINT_UI_BASE_VIEWPORT_HEIGHT,
+      ) * GLINT_UI_SCALE_MULTIPLIER,
+    )
   ).toFixed(4));
 }
 

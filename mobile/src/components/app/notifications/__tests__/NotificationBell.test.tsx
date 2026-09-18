@@ -22,6 +22,14 @@ let mockUnreadCount: number | undefined = 3;
 let mockUnreadCountIsError = false;
 let mockUnreadCountError: unknown = null;
 const mockUnreadCountRefetch = jest.fn();
+let mockPwaNotificationsEnabled = false;
+let mockIsSubscribed = true;
+
+jest.mock('@/lib/notification-config', () => ({
+  get PWA_NOTIFICATIONS_ENABLED() {
+    return mockPwaNotificationsEnabled;
+  },
+}));
 
 const mockUnreadNotificationWithUrl: Notification = {
   id: 1,
@@ -103,7 +111,7 @@ jest.mock('@/hooks/usePushNotification', () => ({
   }),
   usePushNotification: () => ({
     isSupported: true,
-    isSubscribed: true,
+    isSubscribed: mockIsSubscribed,
     permission: 'granted',
     isLoading: false,
     error: null,
@@ -119,9 +127,28 @@ beforeEach(() => {
   mockUnreadCount = 3;
   mockUnreadCountIsError = false;
   mockUnreadCountError = null;
+  mockPwaNotificationsEnabled = false;
+  mockIsSubscribed = true;
 });
 
 describe('NotificationBell', () => {
+  it('labels the normal notification bell trigger', () => {
+    render(<NotificationBell />);
+
+    expect(screen.getByRole('button', { name: '알림 열기' })).toBeInTheDocument();
+  });
+
+  it('labels the BellOff trigger when PWA notifications are not subscribed', () => {
+    mockPwaNotificationsEnabled = true;
+    mockIsSubscribed = false;
+
+    render(<NotificationBell />);
+
+    const trigger = screen.getByRole('button', { name: '알림 열기' });
+    expect(trigger).toBeInTheDocument();
+    expect(trigger.querySelector('svg')).toHaveClass('text-muted-foreground');
+  });
+
   it('should call markAsRead.mutate when clicking unread notification', async () => {
     render(<NotificationBell />);
 

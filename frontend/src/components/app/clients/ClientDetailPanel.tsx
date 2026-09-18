@@ -145,6 +145,20 @@ const getScheduleChangeErrorCode = (error: unknown): string | null => {
     return typeof data.code === "string" ? data.code : null;
 };
 
+const getErrorResponseStatus = (error: unknown): number | undefined => {
+    if (!error || typeof error !== "object" || !("response" in error)) {
+        return undefined;
+    }
+
+    const response = error.response;
+    if (!response || typeof response !== "object" || !("status" in response)) {
+        return undefined;
+    }
+
+    const status = response.status;
+    return typeof status === "number" ? status : undefined;
+};
+
 const formatPrice = (price: string | null): string => {
     if (!price) return "-";
     const cleaned = price.replace(/,/g, "");
@@ -1044,6 +1058,7 @@ function ClientDetailPanelBody({
                                     revisionHistory={revisionHistoryQuery.data}
                                     isRevisionHistoryLoading={revisionHistoryQuery.isLoading}
                                     isRevisionHistoryError={revisionHistoryQuery.isError}
+                                    revisionHistoryErrorStatus={getErrorResponseStatus(revisionHistoryQuery.error)}
                                     isRevisionHistoryRefreshing={revisionHistoryQuery.isFetching && !revisionHistoryQuery.isLoading}
                                     onRefreshRevisionHistory={() => void revisionHistoryQuery.refetch()}
                                     onRetryRevisionDocument={(revisionId, documentStateId, expectedGeneration) =>

@@ -251,7 +251,7 @@
     "manual-entry-description": "고객 정보를 직접 입력합니다",
     "manual-entry-mode": "수동 입력 모드",
     "switch-to-search": "고객 검색으로 전환",
-    "client-signed": "계약완료",
+    "client-signed": "서명 완료",
     "name-label": "산모님 성함",
     "name-placeholder": "홍길동",
     "phone-label": "산모님 연락처",
@@ -307,7 +307,7 @@
   },
   "login": {
     "title": "로그인 후 시작하기",
-    "subtitle": "아래의 소셜 로그인 방법 중 하나를 선택해서 로그인을 해주세요",
+    "subtitle": "이메일 또는 카카오 계정으로 로그인해 주세요.",
     "kakao-login": "카카오로 로그인하기",
     "google-login": "구글로 로그인하기"
   },

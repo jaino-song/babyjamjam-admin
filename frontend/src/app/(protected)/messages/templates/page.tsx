@@ -23,10 +23,15 @@ import {
   ListPanel,
   SplitLayout,
 } from "@/components/app/v3";
+import {
+  FormField,
+  FormHelperText,
+  FormTextInput,
+} from "@/components/app/ui/form-section";
 import { SECTION_NAV_RAIL_WIDTH_PX } from "@/components/app/v3/SectionNav";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
-import { cn } from "@/lib/utils";
+import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
 import { formatDateForDisplay } from "@/lib/date/format-date-for-display";
 
@@ -40,6 +45,14 @@ interface TemplateListItem {
 const formatDate = (dateString: string): string => {
   return formatDateForDisplay(dateString);
 };
+
+const TEMPLATE_NAME_ERROR = "템플릿 이름은 공백 이외의 문자를 포함해야 합니다.";
+const TEMPLATE_CONTENT_ERROR = "템플릿 내용은 공백 이외의 문자를 포함해야 합니다.";
+
+interface TemplateFieldErrors {
+  name?: string;
+  content?: string;
+}
 
 function TemplateEditorLoadingSkeleton({ name }: { name: string }) {
   return (
@@ -74,6 +87,7 @@ function BranchTemplateDetail({
   const [name, setName] = useState("");
   const [content, setContent] = useState("");
   const [initialized, setInitialized] = useState<string | null>(null);
+  const [fieldErrors, setFieldErrors] = useState<TemplateFieldErrors>({});
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
 
   if (template && initialized !== template.id) {
@@ -95,8 +109,25 @@ function BranchTemplateDetail({
   }
 
   const hasChanges = name !== template.name || content !== template.content;
+  const hasValidFields = name.trim().length > 0 && content.trim().length > 0;
+  const hasValidationErrors = Boolean(fieldErrors.name || fieldErrors.content);
+  const nameFieldId = `message-template-${template.id}-name`;
+  const contentFieldId = `message-template-${template.id}-content`;
+  const nameErrorId = `${nameFieldId}-error`;
+  const contentErrorId = `${contentFieldId}-error`;
+  const validationSummaryId = `message-template-${template.id}-validation-summary`;
 
   const handleSave = () => {
+    const nextFieldErrors: TemplateFieldErrors = {
+      name: name.trim().length > 0 ? undefined : TEMPLATE_NAME_ERROR,
+      content: content.trim().length > 0 ? undefined : TEMPLATE_CONTENT_ERROR,
+    };
+    setFieldErrors(nextFieldErrors);
+
+    if (!hasValidFields || !hasChanges || updateMutation.isPending) {
+      return;
+    }
+
     updateMutation.mutate(
       { id: template.id, request: { name, content, variables: template.variables } },
       {
@@ -122,30 +153,77 @@ function BranchTemplateDetail({
 
   return (
     <div data-component="desktop_messages_sections_templates-user-detail" className="flex flex-col gap-6">
-      <div data-component="desktop_messages_sections_templates-user-detail_templates-user-name-field">
-        <p className="mb-2 text-[0.8rem] font-semibold text-v3-dark">
-          지점 템플릿 이름 <span className="text-red-500">*</span>
-        </p>
-        <input
+      <FormField
+        data-component="desktop_messages_sections_templates-user-detail_templates-user-name-field"
+        label="지점 템플릿 이름"
+        htmlFor={nameFieldId}
+        required
+      >
+        <FormTextInput
+          data-component="desktop_messages_sections_templates-user-detail_templates-user-name-field_input"
+          id={nameFieldId}
           value={name}
-          onChange={(e) => setName(e.target.value)}
+          onChange={(event) => {
+            setName(event.target.value);
+            setFieldErrors((current) => ({ ...current, name: undefined }));
+          }}
           placeholder="지점 템플릿 이름을 입력하세요"
-          className="w-full rounded-[14px] border border-v3-border bg-white px-4 py-3 text-[0.8rem] text-v3-dark placeholder:text-v3-text-muted/60 focus:border-v3-primary focus:outline-none focus:ring-2 focus:ring-v3-primary/30 transition-colors"
+          error={Boolean(fieldErrors.name)}
+          aria-describedby={fieldErrors.name ? nameErrorId : undefined}
         />
-      </div>
+        {fieldErrors.name ? (
+          <FormHelperText
+            id={nameErrorId}
+            role="alert"
+            tone="error"
+            data-component="desktop_messages_sections_templates-user-detail_templates-user-name-field_error"
+          >
+            {fieldErrors.name}
+          </FormHelperText>
+        ) : null}
+      </FormField>
 
-      <div data-component="desktop_messages_sections_templates-user-detail_templates-user-content-field">
-        <p className="mb-2 text-[0.8rem] font-semibold text-v3-dark">
-          템플릿 내용 <span className="text-red-500">*</span>
-        </p>
-        <textarea
+      <FormField
+        data-component="desktop_messages_sections_templates-user-detail_templates-user-content-field"
+        label="템플릿 내용"
+        htmlFor={contentFieldId}
+        required
+      >
+        <Textarea
+          data-component="desktop_messages_sections_templates-user-detail_templates-user-content-field_input"
+          id={contentFieldId}
           rows={10}
           value={content}
-          onChange={(e) => setContent(e.target.value)}
+          onChange={(event) => {
+            setContent(event.target.value);
+            setFieldErrors((current) => ({ ...current, content: undefined }));
+          }}
           placeholder="메시지 내용을 입력하세요. 변수는 {{변수명}} 형식으로 사용합니다."
-          className="w-full resize-y rounded-[14px] border border-v3-border bg-white px-4 py-3 font-mono text-[0.8rem] text-v3-dark placeholder:text-v3-text-muted/60 focus:border-v3-primary focus:outline-none focus:ring-2 focus:ring-v3-primary/30 transition-colors"
+          aria-invalid={Boolean(fieldErrors.content) || undefined}
+          aria-describedby={fieldErrors.content ? contentErrorId : undefined}
         />
-      </div>
+        {fieldErrors.content ? (
+          <FormHelperText
+            id={contentErrorId}
+            role="alert"
+            tone="error"
+            data-component="desktop_messages_sections_templates-user-detail_templates-user-content-field_error"
+          >
+            {fieldErrors.content}
+          </FormHelperText>
+        ) : null}
+      </FormField>
+
+      {hasValidationErrors ? (
+        <FormHelperText
+          id={validationSummaryId}
+          role="alert"
+          aria-live="polite"
+          data-component="desktop_messages_sections_templates-user-detail_validation-summary"
+        >
+          입력한 템플릿 이름과 내용을 확인해 주세요.
+        </FormHelperText>
+      ) : null}
 
       <div data-component="desktop_messages_sections_templates-user-detail_templates-user-actions" className="flex justify-between gap-3">
         <Button
@@ -158,20 +236,17 @@ function BranchTemplateDetail({
           <Trash2 className="h-4 w-4" aria-hidden="true" />
           삭제
         </Button>
-        <button
+        <Button
           type="button"
+          variant="positive"
           onClick={handleSave}
-          disabled={!name || !content || !hasChanges || updateMutation.isPending}
-          className={cn(
-            "flex items-center gap-2 rounded-[12px] px-5 py-2.5 text-[0.8rem] font-semibold transition-colors",
-            hasChanges && name && content && !updateMutation.isPending
-              ? "bg-v3-primary text-white hover:bg-v3-primary/90"
-              : "cursor-not-allowed bg-v3-dim-white text-v3-text-muted",
-          )}
+          disabled={!hasChanges || updateMutation.isPending}
+          aria-describedby={hasValidationErrors ? validationSummaryId : undefined}
+          data-component="desktop_messages_sections_templates-user-detail_templates-user-actions_save"
         >
           {updateMutation.isPending && <Loader2 className="h-4 w-4 animate-spin" />}
           {updateMutation.isPending ? "저장 중..." : "저장"}
-        </button>
+        </Button>
       </div>
 
       <TwoButtonModal

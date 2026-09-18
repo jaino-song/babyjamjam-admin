@@ -18,7 +18,8 @@ import {
 import { useAllClients } from "@/hooks/useClients";
 import { useEmployees } from "@/hooks/useEmployees";
 import { useMessageTemplates } from "@/hooks/use-message-templates";
-import { useUnreadCount, usePushNotification } from "@/hooks/usePushNotification";
+import { usePushNotification } from "@/hooks/usePushNotification";
+import { useConsultationInquiries } from "@/hooks/use-consultation-inquiries";
 import { AllSettingsRedesign } from "@/components/app/mobile-redesign/AllSettingsRedesign";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -46,12 +47,12 @@ export default function AllMenuPage() {
   const employeesQuery = useEmployees();
   const messageTemplatesQuery = useMessageTemplates();
   const pushNotification = usePushNotification();
-  const unreadCountQuery = useUnreadCount(true);
+  const unreadCountQuery = useConsultationInquiries({ page: 1, limit: 1, readState: "unread" });
 
   const clients = safeArrayPayload(clientsQuery.data);
   const employees = safeArrayPayload(employeesQuery.data);
   const messageTemplates = safeArrayPayload(messageTemplatesQuery.data);
-  const unreadNotifCount = typeof unreadCountQuery.data === "number" ? unreadCountQuery.data : undefined;
+  const unreadConsultationCount = unreadCountQuery.data?.total;
   const isClientsInitialLoading = clientsQuery.isLoading && clientsQuery.data === undefined;
   const isEmployeesInitialLoading = employeesQuery.isLoading && employeesQuery.data === undefined;
   const isMessageTemplatesInitialLoading = messageTemplatesQuery.isLoading && messageTemplatesQuery.data === undefined;
@@ -83,7 +84,7 @@ export default function AllMenuPage() {
             tone: "burgundy",
             badgeLoading: isUnreadInitialLoading,
             badgeSkeletonWidth: "18px",
-            ...(unreadNotifCount !== undefined && unreadNotifCount > 0 ? { badge: String(unreadNotifCount) } : {}),
+            ...(unreadConsultationCount !== undefined && unreadConsultationCount > 0 ? { badge: String(unreadConsultationCount) } : {}),
           },
           {
             label: "고객",
@@ -183,7 +184,7 @@ export default function AllMenuPage() {
     clients.length,
     employees.length,
     messageTemplates.length,
-    unreadNotifCount,
+    unreadConsultationCount,
     isEmployeesInitialLoading,
     isClientsValueUnavailable,
     isMessageTemplatesValueUnavailable,
@@ -253,7 +254,7 @@ export default function AllMenuPage() {
             aria-live="polite"
             data-component="mobile_all_page_unread-count-read-error"
           >
-            <AlertTitle>읽지 않은 알림 수를 불러오지 못했어요</AlertTitle>
+            <AlertTitle>읽지 않은 상담 수를 불러오지 못했어요</AlertTitle>
             <AlertDescription>
               <p>{unreadNormalizedError?.message}</p>
               <Button

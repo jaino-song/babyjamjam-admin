@@ -11,6 +11,15 @@ import type {
     UpdateMessageTriggerRuleBranchActivationDto,
 } from "../types";
 
+export interface MessageHistoryPageTransport {
+    items: MessageLogRecord[];
+    page: {
+        snapshotAt: string;
+        nextCursor: string | null;
+        hasMore: boolean;
+    };
+}
+
 export const messageTriggersApi = {
     list: () => api.get<MessageTriggerRule[]>("/message-trigger-rules"),
     getById: (id: string) => api.get<MessageTriggerRule>(`/message-trigger-rules/${id}`),
@@ -32,9 +41,18 @@ export const messageTriggersApi = {
         api.get<UpcomingMessageTriggerJob[]>("/message-trigger-jobs/upcoming", {
             params: { limit },
         }),
-    listHistory: (limit = 200) =>
+    listHistory: (limit = 200, skip = 0, signal?: AbortSignal) =>
         api.get<MessageLogRecord[]>("/message-logs", {
-            params: { limit },
+            params: { limit, skip },
+            signal,
+        }),
+    listHistoryPage: (limit = 500, cursor?: string, signal?: AbortSignal) =>
+        api.get<MessageHistoryPageTransport>("/message-logs/page", {
+            params: {
+                limit,
+                ...(cursor ? { cursor } : {}),
+            },
+            signal,
         }),
     retryHistory: (id: number) =>
         api.post<MessageLogRecord>(`/message-logs/${id}/retry`),

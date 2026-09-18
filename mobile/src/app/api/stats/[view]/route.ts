@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 
 import { getCurrentUser } from "@/lib/auth/cookies";
 import { getStatsView, isValidStatsBranchSlug, type StatsViewData } from "@/lib/observability/stats-server";
+import { parseStatsPeriodParam } from "@/lib/observability/stats-period";
 
 const STAT_VIEWS = new Set<keyof StatsViewData>(["overview", "errors", "inquiries", "funnel", "traffic"]);
 const OWNER_ONLY_VIEWS = new Set<keyof StatsViewData>(["overview", "errors", "funnel", "traffic"]);
@@ -10,7 +11,7 @@ interface RouteContext {
   params: Promise<{ view: string }>;
 }
 
-export async function GET(_request: NextRequest, context: RouteContext) {
+export async function GET(request: NextRequest, context: RouteContext) {
   const user = await getCurrentUser();
   if (!user) return NextResponse.json({ error: "Authentication required" }, { status: 401 });
 
@@ -30,7 +31,11 @@ export async function GET(_request: NextRequest, context: RouteContext) {
     return NextResponse.json({ error: "Branch context required" }, { status: 403 });
   }
 
-  const response = await getStatsView(view, branchSlug);
+  const rawPeriods = request.nextUrl.searchParams.getAll("period");
+  const period = parseStatsPeriodParam(rawPeriods.length === 0 ? undefined : rawPeriods.length === 1 ? rawPeriods[0] : rawPeriods);
+  if (period === null) return NextResponse.json({ error: "Invalid stats period" }, { status: 400 });
+
+  const response = await getStatsView(view, branchSlug, period);
   return NextResponse.json(response, {
     status: response.state === "error" ? 502 : 200,
     headers: { "Cache-Control": "private, no-store" },

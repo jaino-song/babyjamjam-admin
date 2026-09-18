@@ -67,4 +67,23 @@ describe("useInfiniteEmployees shared search", () => {
 
     expect(result.current.employees.map((employee) => employee.id)).toEqual([expectedId]);
   });
+
+  it("exposes every search match for lists that own their pagination", async () => {
+    const matches = Array.from({ length: 12 }, (_, index) => ({
+      ...employees[0],
+      id: index + 10,
+      name: `검색대상 ${index}`,
+    }));
+    mockedApiGet.mockResolvedValue({ data: [...employees, ...matches] });
+    const { result } = renderHook(() => useInfiniteEmployees({ search: "검색대상" }), {
+      wrapper: createWrapper(),
+    });
+
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+
+    expect(result.current.employees).toHaveLength(6);
+    expect(result.current.filteredEmployees).toEqual(matches);
+    expect(result.current.totalCount).toBe(12);
+    expect(result.current.allEmployees).toHaveLength(14);
+  });
 });

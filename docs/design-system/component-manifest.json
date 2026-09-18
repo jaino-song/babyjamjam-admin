@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updated": "2026-08-27",
+  "updated": "2026-09-17",
   "purpose": "Machine-readable inventory of BabyJamJam design-system components. Agents MUST consult this before any UI work and compose ONLY these components in pages. See docs/design-system/AGENT_UI_RULES.md.",
   "docs": {
     "rules": "docs/design-system/AGENT_UI_RULES.md",
@@ -1491,6 +1491,24 @@
           "custom desktop sliding list-to-detail navigation"
         ],
         "description": "Mobile SlidingCard parallax motion for desktop drill-down views, with focus restoration and inactive-pane isolation."
+      },
+      {
+        "name": "StatsPeriodSelector",
+        "layer": "molecule",
+        "import": "@/components/app/stats/StatsPeriodSelector",
+        "file": "frontend/src/components/app/stats/StatsPeriodSelector.tsx",
+        "exports": [
+          "StatsPeriodSelector",
+          "StatsPeriodProvider",
+          "useSelectedStatsPeriod",
+          "StatsPeriodNotice",
+          "StatsSourceNotice",
+          "StatsSourceEmpty",
+          "StatsUnavailableValue"
+        ],
+        "requiredFor": [
+          "Statistics period selection with URL-preserving navigation"
+        ]
       }
     ],
     "mobile": [
@@ -1531,6 +1549,22 @@
         ],
         "requiredFor": [
           "chat route agent flag state"
+        ]
+      },
+      {
+        "name": "MobileTaskControls",
+        "layer": "organism",
+        "import": "@/components/app/chat/MobileTaskControls",
+        "file": "mobile/src/components/app/chat/MobileTaskControls.tsx",
+        "exports": [
+          "MobileTaskControls",
+          "MobileTaskControlsProps"
+        ],
+        "replaces": [
+          "chat-local task draft editor and lifecycle controls"
+        ],
+        "requiredFor": [
+          "mobile agent task editing and lifecycle commands"
         ]
       },
       {
@@ -2296,6 +2330,42 @@
         ],
         "requiredFor": [
           "public service-record route assembly"
+        ]
+      },
+      {
+        "name": "EmployeeScheduleScreen",
+        "layer": "organism",
+        "import": "@/components/app/employees/employee-schedule-screen",
+        "file": "mobile/src/components/app/employees/employee-schedule-screen.tsx",
+        "exports": [
+          "EmployeeScheduleScreen"
+        ],
+        "requiredFor": [
+          "Employee schedule calendar, agenda, and sliding client detail"
+        ]
+      },
+      {
+        "name": "useClientDetailController",
+        "layer": "hook",
+        "import": "@/components/app/clients/client-detail-controller",
+        "file": "mobile/src/components/app/clients/client-detail-controller.tsx",
+        "exports": [
+          "useClientDetailController"
+        ],
+        "requiredFor": [
+          "Shared client-detail queries and actions in clients and schedules"
+        ]
+      },
+      {
+        "name": "StatsPeriodSelector",
+        "layer": "molecule",
+        "import": "@/components/app/mobile-redesign/StatsPeriodSelector",
+        "file": "mobile/src/components/app/mobile-redesign/StatsPeriodSelector.tsx",
+        "exports": [
+          "StatsPeriodSelector"
+        ],
+        "requiredFor": [
+          "Shared statistics period control for list and sliding detail"
         ]
       }
     ]

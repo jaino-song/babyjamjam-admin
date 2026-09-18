@@ -27,14 +27,26 @@ import { ConsultationInquiryModule } from "module/consultation-inquiry.module";
 import { DocumentModule } from "module/document.module";
 import { AgentReleaseEvidenceService } from "application/agent/agent-release-evidence.service";
 import { AgentFeedbackService } from "application/agent/agent-feedback.service";
+import { AGENT_TASK_REVIEW } from "application/agent/agent-task-review.port";
+import { AgentTaskService } from "application/agent/agent-task.service";
+import { AGENT_TASK_AUTOMATION, AgentTaskAutomationService } from "application/agent/agent-task-automation.service";
+import { AgentTaskPolicyService } from "application/agent/agent-task-policy.service";
+import { ConversationContextAssemblerService } from "application/agent/conversation-context-assembler.service";
+import { ConversationTaskOrchestratorService } from "application/agent/conversation-task-orchestrator.service";
 import { SystemAdminModule } from "module/system-admin.module";
+import { AgentTaskController } from "interface/controllers/agent-task.controller";
+import { AGENT_TASK_REPOSITORY } from "domain/repositories/agent-task.repository.interface";
+import { CLIENT_REPOSITORY } from "domain/repositories/client.repository.interface";
+import { PrismaAgentTaskRepository } from "infrastructure/database/repositories/prisma-agent-task.repository";
+import { SbClientRepository } from "infrastructure/database/repositories/sb.client.repository";
 
 @Module({
     imports: [DiscoveryModule, SystemSettingModule, SystemAdminModule, DatabaseModule, CallInboxModule, ConsultationInquiryModule, DocumentModule],
-    controllers: [AgentController, AgentActionController],
+    controllers: [AgentController, AgentActionController, AgentTaskController],
     providers: [
         AgentFlagsService,
         ActionCoordinatorService,
+        { provide: AGENT_TASK_REVIEW, useExisting: ActionCoordinatorService },
         AgentActionSweepLockService,
         ExtendedReadAgentCapabilitiesProvider,
         AgentIntelligenceService,
@@ -46,10 +58,18 @@ import { SystemAdminModule } from "module/system-admin.module";
         AgentTraceService,
         AgentReleaseEvidenceService,
         AgentFeedbackService,
+        AgentTaskService,
+        AgentTaskAutomationService,
+        { provide: AGENT_TASK_AUTOMATION, useExisting: AgentTaskAutomationService },
+        AgentTaskPolicyService,
+        ConversationContextAssemblerService,
+        ConversationTaskOrchestratorService,
         AgentModelFactory,
         OwnerGuard,
         { provide: AGENT_ACTION_REPOSITORY, useClass: PrismaAgentActionRepository },
         { provide: AGENT_SESSION_REPOSITORY, useClass: PrismaAgentSessionRepository },
+        { provide: AGENT_TASK_REPOSITORY, useClass: PrismaAgentTaskRepository },
+        { provide: CLIENT_REPOSITORY, useClass: SbClientRepository },
     ],
     exports: [CapabilityRegistryService],
 })

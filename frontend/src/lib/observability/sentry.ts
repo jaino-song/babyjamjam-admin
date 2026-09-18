@@ -1,4 +1,5 @@
 import type { SentryIssue, SentryLevel, SentrySummary } from "./types";
+import type { StatsPeriod } from "./stats-period";
 
 const SENTRY_BASE = "https://sentry.io/api/0";
 const SENTRY_ORG = process.env.SENTRY_ORG ?? "";
@@ -6,6 +7,10 @@ const SENTRY_PROJECT_ID = process.env.SENTRY_PROJECT_ID ?? "4511387543011328";
 const SENTRY_TOKEN = process.env.SENTRY_AUTH_TOKEN ?? "";
 
 const REVALIDATE_SECONDS = 60;
+
+export function isSentryConfigured(): boolean {
+  return Boolean(SENTRY_TOKEN && SENTRY_ORG);
+}
 
 interface RawIssue {
   id: string;
@@ -18,13 +23,12 @@ interface RawIssue {
   permalink: string;
   culprit?: string | null;
   metadata?: { filename?: string; function?: string };
-  stats?: { "24h"?: Array<[number, number]>; "30d"?: Array<[number, number]> };
+  stats?: { "24h"?: Array<[number, number]>; "7d"?: Array<[number, number]>; "30d"?: Array<[number, number]> };
 }
 
-async function sentryGet<T>(path: string, revalidate = REVALIDATE_SECONDS): Promise<T | null> {
-  if (!SENTRY_TOKEN || !SENTRY_ORG) {
-    console.warn("[sentry] missing SENTRY_AUTH_TOKEN or SENTRY_ORG");
-    return null;
+async function sentryGet<T>(path: string, revalidate = REVALIDATE_SECONDS): Promise<T> {
+  if (!isSentryConfigured()) {
+    throw new Error("Sentry statistics are not configured");
   }
   const url = path.startsWith("http") ? path : `${SENTRY_BASE}${path}`;
   try {
@@ -33,14 +37,56 @@ async function sentryGet<T>(path: string, revalidate = REVALIDATE_SECONDS): Prom
       next: { revalidate },
     });
     if (!res.ok) {
-      console.warn(`[sentry] ${res.status} ${path}`);
-      return null;
+      throw new Error("Sentry query failed");
     }
     return (await res.json()) as T;
-  } catch (err) {
-    console.warn("[sentry] fetch failed", path, err);
-    return null;
+  } catch {
+    throw new Error("Sentry statistics are unavailable");
   }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function validCount(value: unknown): boolean {
+  return (typeof value === "number" || (typeof value === "string" && value.trim() !== "")) &&
+    Number.isSafeInteger(Number(value)) && Number(value) >= 0;
+}
+
+function validSeries(value: unknown): boolean {
+  return Array.isArray(value) && value.every((point) =>
+    Array.isArray(point) && point.length === 2 &&
+    typeof point[0] === "number" && Number.isFinite(new Date(point[0] * 1000).getTime()) &&
+    typeof point[1] === "number" && validCount(point[1])
+  );
+}
+
+function validIssue(value: unknown): value is RawIssue {
+  if (!isRecord(value)) return false;
+  if (!["id", "title", "level", "permalink"].every((key) =>
+    typeof value[key] === "string" && value[key].trim() !== ""
+  )) return false;
+  if (!validCount(value.count) || typeof value.userCount !== "number" || !validCount(value.userCount)) return false;
+  if (!["firstSeen", "lastSeen"].every((key) =>
+    typeof value[key] === "string" && Number.isFinite(Date.parse(value[key]))
+  )) return false;
+  if (value.culprit != null && typeof value.culprit !== "string") return false;
+  if (value.metadata != null && (!isRecord(value.metadata) ||
+    ![value.metadata.filename, value.metadata.function].every((item) => item == null || typeof item === "string")
+  )) return false;
+  const stats = value.stats;
+  if (stats != null && (!isRecord(stats) ||
+    !["24h", "7d", "30d"].every((key) => !(key in stats) || validSeries(stats[key]))
+  )) return false;
+  return true;
+}
+
+function parseIssues(value: unknown): RawIssue[] {
+  if (!Array.isArray(value) || !value.every(validIssue)) {
+    throw new Error("Invalid Sentry statistics response");
+  }
+  return value;
 }
 
 function normalizeIssue(raw: RawIssue): SentryIssue {
@@ -71,27 +117,59 @@ export async function getOpenIssues(
     statsPeriod,
   });
   const path = `/organizations/${SENTRY_ORG}/issues/?${params.toString()}`;
-  const data = await sentryGet<RawIssue[]>(path);
-  if (!Array.isArray(data)) return [];
+  const data = parseIssues(await sentryGet<unknown>(path));
   return data.map(normalizeIssue);
 }
 
-export async function getIssuesWithStats(): Promise<{ issues: SentryIssue[]; raw: RawIssue[] }> {
+export async function getIssuesWithStats(
+  statsPeriod: "7d" | "30d" = "7d",
+): Promise<{ issues: SentryIssue[]; raw: RawIssue[] }> {
   const params = new URLSearchParams({
     project: SENTRY_PROJECT_ID,
     query: "is:unresolved",
     limit: "100",
     sort: "freq",
-    statsPeriod: "7d",
+    statsPeriod,
   });
   const path = `/organizations/${SENTRY_ORG}/issues/?${params.toString()}`;
-  const data = await sentryGet<RawIssue[]>(path);
-  if (!Array.isArray(data)) return { issues: [], raw: [] };
+  const data = parseIssues(await sentryGet<unknown>(path));
   return { issues: data.map(normalizeIssue), raw: data };
 }
 
-export async function getSummary(): Promise<SentrySummary> {
-  const { issues, raw } = await getIssuesWithStats();
+function seriesForPeriod(raw: RawIssue, statsPeriod: "7d" | "30d"): Array<[number, number]> {
+  return raw.stats?.[statsPeriod] ?? raw.stats?.["30d"] ?? raw.stats?.["24h"] ?? [];
+}
+
+function buildSparkline(raw: RawIssue[], statsPeriod: "7d" | "30d"): number[] {
+  const dailyMap = new Map<string, number>();
+  for (const issue of raw) {
+    for (const [timestamp, count] of seriesForPeriod(issue, statsPeriod)) {
+      const dayKey = new Date(timestamp * 1000).toISOString().slice(0, 10);
+      dailyMap.set(dayKey, (dailyMap.get(dayKey) ?? 0) + count);
+    }
+  }
+  const values = Array.from(dailyMap.keys()).sort().map((day) => dailyMap.get(day) ?? 0);
+  const length = statsPeriod === "30d" ? 30 : 7;
+  const sparkline = values.slice(-length);
+  while (sparkline.length < length) sparkline.unshift(0);
+  return sparkline;
+}
+
+function totalFromSeries(raw: RawIssue[], statsPeriod: "7d" | "30d"): number {
+  return raw.reduce(
+    (total, issue) => total + seriesForPeriod(issue, statsPeriod).reduce((sum, [, count]) => sum + count, 0),
+    0,
+  );
+}
+
+export async function getSummary(
+  options: { statsPeriod?: "7d" | "30d" } = {},
+): Promise<SentrySummary> {
+  const selectedPeriod = options.statsPeriod ?? "7d";
+  const selected = await getIssuesWithStats(selectedPeriod);
+  const legacy = selectedPeriod === "7d" ? selected : await getIssuesWithStats("7d");
+  const { issues, raw } = selected;
+  const legacyIssues = legacy.issues;
 
   const oneDay = 24 * 60 * 60 * 1000;
   const now = Date.now();
@@ -108,26 +186,15 @@ export async function getSummary(): Promise<SentrySummary> {
   };
 
   const topIssue = issues[0] ?? null;
-  const totalEvents7d = issues.reduce((sum, i) => sum + i.count, 0);
-  const affectedUsers = issues.reduce((sum, i) => sum + i.userCount, 0);
+  const totalEvents7d = legacyIssues.reduce((sum, i) => sum + i.count, 0);
+  const affectedUsers = legacyIssues.reduce((sum, i) => sum + i.userCount, 0);
   const lastErrorAt = issues.reduce<string | null>((latest, i) => {
     if (!latest) return i.lastSeen;
     return new Date(i.lastSeen).getTime() > new Date(latest).getTime() ? i.lastSeen : latest;
   }, null);
 
-  // Daily event counts from 30d stats (aggregate across issues)
-  const dailyMap = new Map<string, number>();
-  for (const r of raw) {
-    const series = r.stats?.["30d"] ?? r.stats?.["24h"] ?? [];
-    for (const [ts, count] of series) {
-      const dayKey = new Date(ts * 1000).toISOString().slice(0, 10);
-      dailyMap.set(dayKey, (dailyMap.get(dayKey) ?? 0) + count);
-    }
-  }
-  const sortedDays = Array.from(dailyMap.keys()).sort();
-  const last7Days = sortedDays.slice(-7);
-  const sparkline7d = last7Days.map((d) => dailyMap.get(d) ?? 0);
-  while (sparkline7d.length < 7) sparkline7d.unshift(0);
+  const sparkline7d = buildSparkline(legacy.raw, "7d");
+  const selectedSparkline = buildSparkline(raw, selectedPeriod);
 
   return {
     openCount: issues.length,
@@ -138,7 +205,32 @@ export async function getSummary(): Promise<SentrySummary> {
     affectedUsers,
     lastErrorAt,
     sparkline7d,
+    selectedRange: {
+      days: selectedPeriod === "30d" ? 30 : 7,
+      totalEvents: totalFromSeries(raw, selectedPeriod),
+      affectedUsers: issues.reduce((sum, i) => sum + i.userCount, 0),
+      sparkline: selectedSparkline,
+    },
   };
+}
+
+export async function getEventTrend(
+  period: StatsPeriod = 7,
+): Promise<Array<{ timestamp: string; count: number }>> {
+  const statsPeriod = period === 30 ? "30d" : "7d";
+  const { raw } = await getIssuesWithStats(statsPeriod);
+  const map = new Map<number, number>();
+  for (const issue of raw) {
+    for (const [timestamp, count] of seriesForPeriod(issue, statsPeriod)) {
+      map.set(timestamp, (map.get(timestamp) ?? 0) + count);
+    }
+  }
+  return Array.from(map.entries())
+    .sort(([a], [b]) => a - b)
+    .map(([timestamp, count]) => ({
+      timestamp: new Date(timestamp * 1000).toISOString(),
+      count,
+    }));
 }
 
 export async function get24hEventTrend(): Promise<Array<{ timestamp: string; count: number }>> {

@@ -81,7 +81,7 @@ export default function DashboardAnalyticsPage() {
             role="status"
             data-component="mobile_dashboard_analytics-page_card_feedback"
           >
-            상세 차트는 다음 iteration에서 연결됩니다.
+            상세 차트는 준비 중입니다.
           </div>
         )}
       </div>

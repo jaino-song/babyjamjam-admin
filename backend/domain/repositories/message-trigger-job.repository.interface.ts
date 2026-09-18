@@ -1,11 +1,15 @@
 import { MessageTriggerJobEntity } from "domain/entities/message-trigger-job.entity";
 import type { Prisma } from "@prisma/client";
+import type { MessageHistoryPageQuery } from "domain/repositories/message-log.repository.interface";
 
 export interface MessageTriggerJobCancellationScope {
     clientId?: number;
     employeeScheduleId?: number;
     scheduledBefore?: Date;
 }
+
+/** Internal review read; user cancellation is needed to match the existing upsert fence. */
+export type MessageTriggerJobReviewSnapshot = MessageTriggerJobEntity & { readonly canceledByUser: boolean };
 
 export interface IMessageTriggerJobRepository {
     create(job: MessageTriggerJobEntity): Promise<MessageTriggerJobEntity>;
@@ -27,6 +31,15 @@ export interface IMessageTriggerJobRepository {
     findTerminalByBranch(
         branchId: string,
         limit?: number,
+    ): Promise<MessageTriggerJobEntity[]>;
+    /**
+     * Read current failed/canceled history in the same immutable tuple order
+     * as message logs. The application cutoff fences immutable createdAt only;
+     * current status is intentionally read as of each request.
+     */
+    findHistoryPageByBranch(
+        branchId: string,
+        query: MessageHistoryPageQuery,
     ): Promise<MessageTriggerJobEntity[]>;
     /**
      * Terminal (failed or canceled) jobs for a branch whose terminal
@@ -56,6 +69,8 @@ export interface IMessageTriggerJobRepository {
     /** Whether a rule still has active jobs persisted before its current version fence. */
     hasActiveJobsBefore(branchId: string, ruleId: string, before: Date): Promise<boolean>;
     findPendingByRuleIdsAndClientId(ruleIds: string[], clientId: number): Promise<MessageTriggerJobEntity[]>;
+    /** Bounded, ordered read of actual automation generations, including terminal dedupe rows. */
+    findForClientAutomationReview(branchId: string, clientId: number, ruleIds: string[], transaction?: Prisma.TransactionClient): Promise<MessageTriggerJobReviewSnapshot[]>;
     findPendingByRuleIdsAndEmployeeScheduleId(
         ruleIds: string[],
         employeeScheduleId: number,

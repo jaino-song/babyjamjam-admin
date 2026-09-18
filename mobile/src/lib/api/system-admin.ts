@@ -22,7 +22,7 @@ export interface SystemAdminBranchInput {
   district?: string;
   address?: string;
   phone?: string;
-  email?: string;
+  email?: string | null;
   isActive: boolean;
 }
 
@@ -73,7 +73,7 @@ export async function approveSystemAdminMessageSenderApproval(
 export async function createSystemAdminBranch(
   input: SystemAdminBranchInput,
 ): Promise<SystemAdminBranchRequest> {
-  const { data } = await api.post("/system-admin/branches", input);
+  const { data } = await api.post("/system-admin/branches", normalizeBranchInput(input));
   return data as SystemAdminBranchRequest;
 }
 
@@ -83,9 +83,16 @@ export async function updateSystemAdminBranch(
 ): Promise<SystemAdminBranchRequest> {
   const { data } = await api.patch(
     `/system-admin/branches/${encodeURIComponent(branchId)}`,
-    input,
+    normalizeBranchInput(input),
   );
   return data as SystemAdminBranchRequest;
+}
+
+function normalizeBranchInput(input: SystemAdminBranchInput): SystemAdminBranchInput {
+  return {
+    ...input,
+    ...(input.email !== undefined ? { email: input.email?.trim() || null } : {}),
+  };
 }
 
 export async function getSystemAdminUsers(): Promise<SystemAdminUser[]> {

@@ -250,7 +250,7 @@ describeE2E("BJJ-275 full connected flow", () => {
         });
         if (existing) return { id: existing.id, created: false };
 
-        const id = `e2e:employee-assigned:${label}:${Date.now()}:${Math.floor(Math.random() * 1000)}`;
+        const id = `e2e:employee-assigned:${Date.now()}:${Math.floor(Math.random() * 1000)}`;
         await prisma.message_trigger_rule.create({
             data: {
                 id,

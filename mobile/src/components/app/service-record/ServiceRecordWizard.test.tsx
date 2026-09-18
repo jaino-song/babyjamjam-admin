@@ -1,12 +1,14 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
-import { render } from "@testing-library/react";
+import { render, screen } from "@testing-library/react";
 import type { ServiceRecordWizardProps } from "@babyjamjam/service-record-ui";
 import {
     DAILY_ITEMS,
     DAY_PAGES,
     DEFAULT_DAILY_ANSWERS,
+    getServiceRecordNumericErrors,
+    hasInvalidServiceRecordNumericAnswers,
     ServiceRecordWizard,
 } from "@babyjamjam/service-record-ui";
 
@@ -114,12 +116,12 @@ describe("shared service-record UI contract", () => {
             null,
         ]);
         expect(DAILY_ITEMS.find((item) => item.key === "meals")?.counts).toEqual([
-            { k: "meal", label: "식사", unit: "회" },
-            { k: "snack", label: "간식", unit: "회" },
+            { k: "meal", label: "식사", unit: "회", min: 0, step: 1 },
+            { k: "snack", label: "간식", unit: "회", min: 0, step: 1 },
         ]);
         expect(DAILY_ITEMS.find((item) => item.key === "formulaFeeding")?.counts).toEqual([
-            { k: "count", label: "횟수", unit: "회" },
-            { k: "ml", label: "회당", unit: "ml" },
+            { k: "count", label: "횟수", unit: "회", min: 0, step: 1 },
+            { k: "ml", label: "회당", unit: "ml", min: 0, step: 1 },
         ]);
         expect(DAILY_ITEMS.find((item) => item.key === "etcService")?.maxLength).toBe(40);
         expect(DAILY_ITEMS.find((item) => item.key === "notes")?.maxLength).toBe(80);
@@ -226,6 +228,119 @@ describe("shared service-record UI contract", () => {
 
         expect(container.querySelector('[role="alert"]')).toHaveTextContent("서버 일정 정보를 확인할 수 없습니다");
         expect(container).not.toHaveTextContent("2026.07.18");
+    });
+
+    it.each([
+        ["meals_meal", "-1"],
+        ["breastFeeding_count", "1.5"],
+        ["formulaFeeding_ml", "-10"],
+        ["meals_meal", "9007199254740992"],
+        ["temperature_temp", "NaN"],
+        ["temperature_temp", "Infinity"],
+        ["temperature_temp", "36.75"],
+    ] as const)("reports invalid numeric answer %s=%s without changing its value", (key, value) => {
+        const errors = getServiceRecordNumericErrors({ [key]: value });
+
+        expect(errors[key]).toEqual(expect.any(String));
+        expect(hasInvalidServiceRecordNumericAnswers({ [key]: value })).toBe(true);
+    });
+
+    it.each([
+        ["meals_meal", "0"],
+        ["meals_meal", "9007199254740991"],
+        ["temperature_temp", "36.7"],
+    ] as const)("accepts valid numeric answer %s=%s", (key, value) => {
+        expect(getServiceRecordNumericErrors({ [key]: value })).toEqual({});
+        expect(hasInvalidServiceRecordNumericAnswers({ [key]: value })).toBe(false);
+    });
+
+    it("allows blank numeric answers for administrator drafts while public completion still requires them", () => {
+        const { container } = render(
+            <ServiceRecordWizard
+                {...makeProps({
+                    adminMode: true,
+                    pageIdx: 0,
+                    draft: { ...DEFAULT_DAILY_ANSWERS, meals_meal: "", meals_snack: "" },
+                    slots: {},
+                })}
+            />,
+        );
+
+        expect(container.querySelector('[data-slot="segnum-input"]')).toBeEnabled();
+        expect(container.querySelector('[data-slot="nav"] button')).toBeEnabled();
+
+        const { container: publicContainer } = render(
+            <ServiceRecordWizard
+                {...makeProps({
+                    pageIdx: 0,
+                    draft: { ...DEFAULT_DAILY_ANSWERS, meals_meal: "", meals_snack: "" },
+                })}
+            />,
+        );
+        expect(publicContainer.querySelector('[data-slot="nav"] button')).toBeDisabled();
+    });
+
+    it("blocks the current public page and exposes an accessible Korean numeric error", () => {
+        const { container } = render(
+            <ServiceRecordWizard
+                {...makeProps({
+                    pageIdx: 0,
+                    draft: { ...DEFAULT_DAILY_ANSWERS, meals_meal: "-1", meals_snack: "0" },
+                })}
+            />,
+        );
+
+        const input = container.querySelector('[data-slot="segnum-input"]') as HTMLInputElement;
+        expect(input).toHaveValue(-1);
+        expect(input).toHaveAttribute("aria-invalid", "true");
+        expect(input).toHaveAttribute("aria-describedby");
+        expect(container.querySelector('[role="alert"]')).toHaveTextContent("0 이상");
+        expect(container.querySelector('[data-slot="nav"] button')).toBeDisabled();
+    });
+
+    it("keeps a read-only historic invalid value navigable", () => {
+        const { container } = render(
+            <ServiceRecordWizard
+                {...makeProps({
+                    readOnly: true,
+                    pageIdx: 1,
+                    draft: {
+                        ...DEFAULT_DAILY_ANSWERS,
+                        temperature_temp: "-1",
+                        breastFeeding_count: "0",
+                        formulaFeeding_count: "0",
+                        formulaFeeding_ml: "0",
+                    },
+                })}
+            />,
+        );
+
+        expect(container.querySelector('[data-slot="segnum-input"]')).toBeDisabled();
+        expect(container.querySelector('[data-slot="nav"] button')).toBeEnabled();
+        expect(container.querySelector('[role="alert"]')).toBeInTheDocument();
+    });
+
+    it("blocks the public final confirmation when any numeric answer is invalid", () => {
+        render(
+            <ServiceRecordWizard
+                {...makeProps({
+                    pageIdx: 3,
+                    clientSignature: "data:image/png;base64,test",
+                    draft: {
+                        ...DEFAULT_DAILY_ANSWERS,
+                        meals_meal: "0",
+                        meals_snack: "0",
+                        temperature_temp: "36.75",
+                        breastFeeding_count: "0",
+                        formulaFeeding_count: "0",
+                        formulaFeeding_ml: "0",
+                        paymentConfirmed: true,
+                    },
+                })}
+            />,
+        );
+
+        expect(screen.getByRole("button", { name: "확인" })).toBeDisabled();
     });
 
     it("keeps the shared package free of app, persistence, and network imports", () => {

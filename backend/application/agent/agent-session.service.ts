@@ -1,4 +1,4 @@
-import { ConflictException, Inject, Injectable, NotFoundException } from "@nestjs/common";
+import { ConflictException, Inject, Injectable, NotFoundException, Optional } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { Cron, CronExpression } from "@nestjs/schedule";
 
@@ -10,6 +10,7 @@ import {
     type IAgentSessionRepository,
 } from "domain/repositories/agent-session.repository.interface";
 import { SchedulerLeaseService } from "application/services/scheduler-lease.service";
+import { AGENT_TASK_REPOSITORY, type IAgentTaskRepository } from "domain/repositories/agent-task.repository.interface";
 
 export const DEFAULT_AGENT_RETENTION_DAYS = 30;
 
@@ -19,6 +20,7 @@ export class AgentSessionService {
         @Inject(AGENT_SESSION_REPOSITORY) private readonly repository: IAgentSessionRepository,
         private readonly configService: ConfigService,
         private readonly schedulerLease: SchedulerLeaseService,
+        @Optional() @Inject(AGENT_TASK_REPOSITORY) private readonly taskRepository?: IAgentTaskRepository,
     ) {}
 
     list(owner: AgentSessionOwner) {
@@ -27,6 +29,12 @@ export class AgentSessionService {
 
     async get(id: string, owner: AgentSessionOwner) {
         const session = await this.repository.findOwned(id, owner);
+        if (!session) throw new NotFoundException("Agent session not found");
+        return session;
+    }
+
+    async getForRestore(id: string, owner: AgentSessionOwner) {
+        const session = await this.repository.findOwnedForRestore(id, owner);
         if (!session) throw new NotFoundException("Agent session not found");
         return session;
     }
@@ -103,6 +111,15 @@ export class AgentSessionService {
     @Cron(CronExpression.EVERY_HOUR)
     cleanupExpired(now = new Date()): Promise<number> {
         if (!this.schedulerLease.holdsLease()) return Promise.resolve(0);
+        return this.cleanupTasksThenSessions(now);
+    }
+
+    private async cleanupTasksThenSessions(now: Date): Promise<number> {
+        // Task payload purge and session deletion share the same scheduler
+        // lease.  The task repository performs its own scoped lock/recheck;
+        // deleting sessions afterwards preserves action/event evidence for
+        // any row that was conservatively retained.
+        if (this.taskRepository) await this.taskRepository.purgeExpired(now);
         return this.repository.deleteExpired(now);
     }
 

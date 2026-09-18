@@ -81,6 +81,12 @@ describe("clients analytics route", () => {
               eDocId: "doc-2",
               documentStatus: "completed",
             },
+            {
+              serviceStatus: "pre_booking",
+              startDate: "2026-06-12T00:00:00+09:00",
+              eDocId: null,
+              documentStatus: null,
+            },
           ],
         },
       };
@@ -94,7 +100,7 @@ describe("clients analytics route", () => {
       activeClients: 11,
       contractsNotSent: 2,
       contractsPendingSignature: 3,
-      upcomingThisMonth: 2,
+      upcomingThisMonth: 3,
       upcomingNextMonth: 5,
     });
   });

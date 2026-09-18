@@ -709,7 +709,7 @@ export default function ContractsPage() {
     <PageSection name="contracts">
       {/* TODO: 통계 카운트는 아직 제공기록지 문서를 포함한다. 후속 작업에서 통계 엔드포인트를 분리한다. */}
       <ContractStatsBar
-        name="contracts"
+        name="contracts" density="responsive-square"
         showDocumentJobs={documentJobsEnabled}
         isLoading={isStatsLoading}
         items={[
@@ -842,7 +842,7 @@ export default function ContractsPage() {
                   renderLayout={({ content, footer, footerClassName }) => (
                     <DetailPanel data-component="desktop_contracts_sections_section-content_maternity-section_split-layout_creation-session_detail-panel"
                       title="전자계약서 작성"
-                      subtitle="고객에게 전자계약서를 발송합니다"
+                      subtitle="고객에게 전자계약서를 발송합니다" stepperPlacement="below-title"
                       avatar={
                         <div
                           data-component="desktop_contracts_sections_section-content_maternity-section_split-layout_creation-session_detail-panel_avatar"

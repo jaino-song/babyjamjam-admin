@@ -7,6 +7,7 @@ import {
     Optional,
 } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
+import { randomUUID } from "node:crypto";
 import {
     assertNoActiveEmployeeScheduleOverlap,
 } from "application/policies/employee-schedule-invariants.policy";
@@ -28,6 +29,7 @@ import {
     ServiceRecordTokenContext,
 } from "./service-record-token.service";
 import { ServiceRecordLifecycleService } from "./service-record-lifecycle.service";
+import { AgentAutomationRecordStoreService } from "../agent/agent-automation-record-store.service";
 
 function toIso(d: Date): string {
     return d.toISOString().slice(0, 10);
@@ -178,6 +180,7 @@ export class ScheduleChangeService {
         private readonly tokenService: ServiceRecordTokenService,
         @Optional() private readonly triggerService?: MessageTriggerService,
         @Optional() private readonly lifecycleService?: ServiceRecordLifecycleService,
+        @Optional() private readonly agentAutomationRecordStore?: AgentAutomationRecordStoreService,
     ) {}
 
     private computeTarget(
@@ -539,6 +542,12 @@ export class ScheduleChangeService {
                         excludeScheduleId: schedule.id,
                     });
                 }
+                await this.agentAutomationRecordStore?.appendScheduleWriteFence(tx, {
+                    branchId,
+                    clientId: schedule.clientId,
+                    mutationId: randomUUID(),
+                    scheduleIds: [schedule.id],
+                });
                 await tx.employee_schedule.update({
                     where: { id: scheduleId },
                     data: { endDate: newEndDate },
@@ -781,6 +790,12 @@ export class ScheduleChangeService {
                         excludeScheduleId: schedule.id,
                     });
                 }
+                await this.agentAutomationRecordStore?.appendScheduleWriteFence(tx, {
+                    branchId: request.branchId,
+                    clientId: request.clientId,
+                    mutationId: randomUUID(),
+                    scheduleIds: [request.scheduleId],
+                });
                 await tx.employee_schedule.update({
                     where: { id: request.scheduleId },
                     data: { endDate: newEndDate },

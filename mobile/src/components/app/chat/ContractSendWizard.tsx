@@ -94,7 +94,7 @@ export default function ContractSendWizard({ onComplete }: ContractSendWizardPro
                                             className="text-success border-success h-5 text-[0.7rem]"
                                         >
                                             <FileCheck className="w-3.5 h-3.5 mr-1" />
-                                            계약 완료
+                                            {selectedClient.documentStatus === "completed" ? "계약 완료" : "서명 완료"}
                                         </Badge>
                                     )}
                                 </>

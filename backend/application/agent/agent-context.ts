@@ -1,4 +1,5 @@
 import type { VerifiedTenantPrincipal } from "infrastructure/tenant/tenant.context";
+import type { AgentTaskAutomationArtifact } from "./agent-task-automation-artifact";
 
 export interface AgentContext {
     principal: VerifiedTenantPrincipal;
@@ -11,4 +12,6 @@ export interface AgentContext {
     approvedTargetVersion?: string;
     /** Immutable provider-bound target snapshot captured at proposal time. */
     approvedTargetSnapshot?: Record<string, unknown>;
+    /** Parsed from the owned immutable action by the coordinator, never model input. */
+    taskAutomation?: AgentTaskAutomationArtifact;
 }

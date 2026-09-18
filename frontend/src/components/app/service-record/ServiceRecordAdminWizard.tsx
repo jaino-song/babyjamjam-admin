@@ -7,10 +7,13 @@ import {
     DAY_PAGES,
     ServiceRecordWizard,
     formatShortDate,
+    getServiceRecordHeaderErrors,
+    hasInvalidServiceRecordNumericAnswers,
     isServiceRecordHeaderComplete,
 } from "@babyjamjam/service-record-ui";
 import type {
     ServiceRecordContext,
+    ServiceRecordHeaderErrors,
     SignatureSlotProps,
 } from "@babyjamjam/service-record-ui";
 
@@ -469,6 +472,13 @@ export function ServiceRecordAdminWizard({
         if ((headerDraft[key] ?? "") !== (headerToInput(baseView.context.header)[key] ?? "")) headerPatch[key] = headerDraft[key] ?? "";
     }
     const editingHeader = screen === "service";
+    const headerErrors: ServiceRecordHeaderErrors = getServiceRecordHeaderErrors({
+        momBirth: headerPatch.momBirth,
+        babyBirth: headerPatch.babyBirth,
+        babyWeight: headerPatch.babyWeight,
+    });
+    const hasHeaderErrors = Object.keys(headerErrors).length > 0;
+    const hasInvalidNumericAnswers = hasInvalidServiceRecordNumericAnswers(draft);
     const changed = !priorChanges && !supplemental && (editingHeader
         ? Object.keys(headerPatch).length > 0 : Object.keys(patch).length > 1 || Boolean(dateMove));
     const locked = busy || saveStarted || needsReload || priorChanges || Boolean(supplemental);
@@ -555,9 +565,19 @@ export function ServiceRecordAdminWizard({
         if (priorChanges && !recover) { resetLocal(); return; }
         if (!recover && !changed && !saveStarted) { resetLocal(); return; }
         if (needsReload) return;
-        if (!recover && editingHeader && !isServiceRecordHeaderComplete(headerDraft)) {
-            setError("필수 기본정보를 모두 입력해 주세요.");
+        if (!recover && !editingHeader && hasInvalidNumericAnswers) {
+            setError("숫자 입력값을 확인해 주세요.");
             return;
+        }
+        if (!recover && editingHeader) {
+            if (!isServiceRecordHeaderComplete(headerDraft)) {
+                setError("필수 기본정보를 모두 입력해 주세요.");
+                return;
+            }
+            if (hasHeaderErrors) {
+                setError("기본정보 입력값을 확인해 주세요.");
+                return;
+            }
         }
         saving.current = true;
         setBusy(true);
@@ -716,6 +736,7 @@ export function ServiceRecordAdminWizard({
                 screen={screen} phone="" phoneError={null}
                 context={supplemental ? { ...baseView.context, sessions: [...baseView.context.sessions.filter((item) => item.sessionIndex !== day), supplemental.session] } : displayContext}
                 header={screen === "service" ? headerDraft : headerToInput(displayContext.header)}
+                headerErrors={screen === "service" && !locked ? headerErrors : undefined}
                 day={day} pageIdx={pageIdx} draft={draft}
                 editing={Boolean(currentSession) || Boolean(sourceDate)}
                 readOnly={locked} adminMode clientSignature={currentSession?.clientSignature ?? null}
@@ -751,9 +772,9 @@ export function ServiceRecordAdminWizard({
                             {priorChanges ? "기본정보 확인" : "기본정보 수정"}
                         </Button>
                     ),
-                    adminHeaderAction: ({ isHeaderComplete }) => (
+                    adminHeaderAction: ({ isHeaderComplete, headerErrors: slotHeaderErrors }) => (
                         <Button data-component={`${ADMIN_WIZARD_COMPONENT}_body_header-confirm`} type="button" className="btn submit"
-                            disabled={busy || (changed && (needsReload || !isHeaderComplete))} onClick={() => priorChanges || !changed && !saveStarted ? resetLocal() : void confirm()}>
+                            disabled={busy || (changed && (needsReload || !isHeaderComplete || Object.keys(slotHeaderErrors).length > 0))} onClick={() => priorChanges || !changed && !saveStarted ? resetLocal() : void confirm()}>
                             {busy ? "저장 중…" : changed || saveStarted ? "수정 확인" : "확인"}
                         </Button>
                     ),
@@ -767,9 +788,9 @@ export function ServiceRecordAdminWizard({
                     serviceDateEditor: ({ "data-component": component, disabled, onOpen }) => (
                         <button data-component={component} data-slot="sec-edit" type="button" className="sec-edit" disabled={disabled || Boolean(baseView.scheduleProjectionBlockingReasons.length)} onClick={onOpen}>수정</button>
                     ),
-                    adminSessionAction: (
+                    adminSessionAction: ({ hasInvalidNumericAnswers: slotHasInvalidNumericAnswers }) => (
                         <Button data-component={`${ADMIN_WIZARD_COMPONENT}_body_confirmation-action_confirm`} type="button" className="btn submit"
-                            disabled={busy || (priorChanges && saveStarted) || (needsReload && (changed || saveStarted))}
+                            disabled={busy || slotHasInvalidNumericAnswers || (priorChanges && saveStarted) || (needsReload && (changed || saveStarted))}
                             onClick={() => supplemental ? resetLocal() : void confirm()}>
                             {busy ? "저장 중…" : changed || saveStarted ? "수정 확인" : "확인"}
                         </Button>

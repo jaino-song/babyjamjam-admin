@@ -29,6 +29,9 @@ export interface TemplateContentEditorProps {
     onVariableChange?: (variable: TemplateVariable) => void;
     placeholder?: string;
     hint?: ReactNode;
+    ariaDescribedBy?: string;
+    ariaInvalid?: boolean;
+    error?: boolean;
     disabled?: boolean;
 }
 
@@ -46,6 +49,9 @@ export const TemplateContentEditor = forwardRef<TemplateContentEditorHandle, Tem
             onVariableChange,
             placeholder,
             hint,
+            ariaDescribedBy,
+            ariaInvalid,
+            error,
             disabled = false,
         },
         ref
@@ -116,6 +122,9 @@ export const TemplateContentEditor = forwardRef<TemplateContentEditorHandle, Tem
                                     onVariableClick={handleVariableClick}
                                     placeholder={placeholder}
                                     dataComponent={`${dataComponent}_content-input`}
+                                    ariaDescribedBy={ariaDescribedBy}
+                                    ariaInvalid={ariaInvalid}
+                                    error={error}
                                 />
                             </div>
                         </PopoverAnchor>

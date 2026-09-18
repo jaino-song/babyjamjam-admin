@@ -1,3 +1,4 @@
+import type { Prisma } from "@prisma/client";
 import {
     BadRequestException,
     ForbiddenException,
@@ -209,13 +210,13 @@ export class MessageSenderApprovalService {
         return new Set(branches.map((branch) => branch.id));
     }
 
-    async getApprovedBranches(branchIds: string[]): Promise<Map<string, Date | null>> {
+    async getApprovedBranches(branchIds: string[], transaction?: Prisma.TransactionClient): Promise<Map<string, Date | null>> {
         const uniqueBranchIds = [...new Set(branchIds)];
         if (uniqueBranchIds.length === 0) {
             return new Map();
         }
 
-        const branches = await this.prisma.branch.findMany({
+        const branches = await (transaction ?? this.prisma).branch.findMany({
             where: {
                 id: { in: uniqueBranchIds },
                 smsSenderApprovalStatus: "approved",

@@ -44,6 +44,10 @@ import { ServiceRecordLifecycleService } from "./service-record-lifecycle.servic
 import { MessageTemplateAutomationLockService } from "./message-template-automation-lock.service";
 import { MessageAutomationBranchLockService } from "./message-automation-branch-lock.service";
 import { MessageAutomationActivationService } from "./message-automation-activation.service";
+import {
+    buildServiceRecordLinkMessage,
+    DEFAULT_MOBILE_SERVICE_RECORD_BASE_URL,
+} from "./service-record-link-automation-effect-recipe";
 import { captureServiceRecordError } from "infrastructure/observability/service-record-sentry";
 
 const AUTOMATIC_SCHEDULING_LEASE_MINUTES = 10;
@@ -420,18 +424,11 @@ export class ServiceRecordLinkService {
 
             const url = this.buildServiceRecordUrl(linkToken);
             const clientName = schedule.client?.name ?? "고객";
-            const message = `[사회서비스 제공자 품질평가 A등급]
-안녕하세요, 인천 아이미래로 입니다 :)
-
-${employee.name} 관리사님, ${clientName} 산모님의 서비스 제공기록지 작성 링크입니다.
-매일 서비스 제공 완료 직전에 서비스 세부사항 기록 후에, 산모님께 승인을 받으시면 됩니다.
-
-최초 접속 시에 관리사님의 전화번호 인증이 필요합니다. 링크 접속 후 휴대폰 번호로 본인확인하고, 방문일마다 기록을 남겨주세요.
-
-감사합니다.
-
-제공기록지 링크
-${url}`;
+            const message = buildServiceRecordLinkMessage({
+                clientName,
+                employeeName: employee.name,
+                serviceRecordUrl: url,
+            });
 
             const pendingJob = MessageTriggerJobEntity.create({
                 branchId: schedule.branchId,
@@ -797,7 +794,7 @@ ${url}`;
 
     private buildServiceRecordUrl(linkToken: string): string {
         const base = this.configService
-            .get<string>("MOBILE_SERVICE_RECORD_BASE_URL", "https://m.admin.babyjamjam.com")
+            .get<string>("MOBILE_SERVICE_RECORD_BASE_URL", DEFAULT_MOBILE_SERVICE_RECORD_BASE_URL)
             .replace(/\/+$/, "");
         return `${base}/service-record/${linkToken}`;
     }

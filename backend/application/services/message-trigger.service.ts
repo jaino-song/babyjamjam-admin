@@ -1,3 +1,7 @@
+import { ClientAutomationSourceReader, type ClientAutomationSettingsSnapshot } from "./client-automation-source.reader";
+import { AgentAutomationDeliveryGateService } from "./agent-automation-delivery-gate.service";
+import { AgentAutomationDispatchUncertainError } from "domain/errors/agent-automation-dispatch-uncertain.error";
+import { DEFAULT_SERVICE_INFO_TRIGGER, DEFAULT_CLIENT_GREETING_TRIGGER, matchesTriggerDefaults, type MessageTriggerRuleDefaults as UpsertRuleParams } from "./message-trigger-defaults";
 import {
     BadRequestException,
     ConflictException,
@@ -52,7 +56,6 @@ import {
     MESSAGE_TRIGGER_RULE_BRANCH_OVERRIDE_REPOSITORY,
     IMessageTriggerRuleBranchOverrideRepository,
 } from "domain/repositories/message-trigger-rule-branch-override.repository.interface";
-import { isRuleActiveForBranch } from "domain/utils/message-trigger-rule-activation";
 import { isManualMessageTriggerJob, isManualMessageTriggerRule } from "domain/constants/message-trigger-job-ownership";
 import { SERVICE_END_NOTICE_ALREADY_SENT_CANCEL_REASON } from "domain/constants/service-end-notice-message";
 import {
@@ -62,6 +65,8 @@ import {
 import {
     MESSAGE_LOG_REPOSITORY,
     IMessageLogRepository,
+    type MessageHistoryPageCursor,
+    type MessageHistorySource,
 } from "domain/repositories/message-log.repository.interface";
 import { MessageTriggerDeliveryService } from "./message-trigger-delivery.service";
 import {
@@ -70,7 +75,13 @@ import {
 } from "./sms-trigger-delivery.service";
 import { hasColumn, hasTable } from "infrastructure/database/schema-capabilities";
 import { MessageSenderApprovalService } from "./message-sender-approval.service";
-import { buildSmsClientVariables } from "./sms-client-variables";
+import {
+    buildClientMessageRecipe, buildEmployeeAssignmentMessageRecipe,
+    isMessageRecipeWithinMaterializationWindow,
+    shouldSkipClientPreStartCatchUp,
+    buildMessageRecipeDedupeKey, employeeAssignmentScheduleFingerprint, formatMessageRecipeDate,
+    type ClientTriggerSource, type EmployeeAssignmentScheduleSource,
+} from "./message-trigger-recipes";
 import { normalizePhone } from "application/utils/normalize-phone";
 import { SystemSettingService } from "./system-setting.service";
 import { SystemTemplateService } from "./system-template.service";
@@ -83,24 +94,17 @@ import {
 import { AdminAuditActor } from "./admin-audit-event.service";
 import { MANUAL_DEDUPE_MARKER } from "domain/constants/service-end-notice-message";
 import {
-    DEFAULT_MESSAGE_AUTOMATION_PAST_TRIGGER_CONFIG,
     MessageAutomationPastTriggerConfig,
 } from "domain/entities/system-setting.entity";
-
-interface UpsertRuleParams {
-    name: string;
-    isActive?: boolean;
-    eventType: MessageTriggerEventType;
-    offsetType: MessageTriggerOffsetType;
-    offsetDays?: number;
-    sendTime?: string;
-    recipientType: MessageTriggerRecipientType;
-    templateKey: MessageTriggerTemplateKey;
-}
+import type { AgentAutomationTaskCommitReference } from "domain/entities/agent-automation-consent";
 
 export interface MessageTriggerIntentSyncOptions {
     stableBatchAt: Date;
     preserveExisting: boolean;
+    /** Internal provenance marker; a reference without this marker is ignored. */
+    taskOrigin?: boolean;
+    /** Digest-only reference to the task records reviewed for this materialization. */
+    taskAutomationReference?: AgentAutomationTaskCommitReference;
 }
 
 type MessageTriggerRuleValidationParams = Pick<
@@ -108,25 +112,7 @@ type MessageTriggerRuleValidationParams = Pick<
     "eventType" | "offsetType" | "offsetDays" | "sendTime" | "recipientType" | "templateKey"
 >;
 
-const DEFAULT_SERVICE_INFO_TRIGGER: UpsertRuleParams = {
-    name: "서비스 시작 7일 전 서비스 안내",
-    isActive: true,
-    eventType: MessageTriggerEventType.SERVICE_START,
-    offsetType: MessageTriggerOffsetType.BEFORE_DAYS,
-    offsetDays: 7,
-    recipientType: MessageTriggerRecipientType.CLIENT,
-    templateKey: MessageTriggerTemplateKey.SERVICE_INFO,
-};
-
-const DEFAULT_CLIENT_GREETING_TRIGGER: UpsertRuleParams = {
-    name: "신규 고객 인사 메시지",
-    isActive: true,
-    eventType: MessageTriggerEventType.CLIENT_CREATED,
-    offsetType: MessageTriggerOffsetType.IMMEDIATE,
-    offsetDays: 0,
-    recipientType: MessageTriggerRecipientType.CLIENT,
-    templateKey: MessageTriggerTemplateKey.CLIENT_GREETING,
-};
+export type { ClientAutomationSettingsSnapshot } from "./client-automation-source.reader";
 
 const ORPHANED_TRIGGER_JOB_CANCEL_REASON = "Related client or schedule deleted";
 const EXPIRED_PENDING_JOB_CANCEL_REASON = "기존 발송 예정 24시간 경과";
@@ -264,92 +250,83 @@ export interface MessageLogRecordView {
     employeeName: string | null;
 }
 
-interface ClientTriggerSource {
-    id: number;
-    name: string;
-    phone: string | null;
-    type: string | null;
-    startDate: Date | null;
-    endDate: Date | null;
-    serviceEndNoticeSentAt: Date | null;
-    createdAt?: Date | null;
-    duration?: number | null;
-    fullPrice?: string | null;
-    grant?: string | null;
-    actualPrice?: string | null;
-    area?: { bankAccountInfo: { bankName: string | null; accNum: string | null } | null } | null;
+export interface MessageHistoryPageView {
+    items: MessageLogRecordView[];
+    page: {
+        snapshotAt: string;
+        nextCursor: string | null;
+        hasMore: boolean;
+    };
 }
 
-interface EmployeeAssignmentScheduleSource {
-    id: number;
-    branchId: string | null;
-    clientId: number;
-    workAddress: string;
-    startDate: Date;
-    endDate: Date;
-    replaced: boolean;
-    /**
-     * Deliberately absent from the fingerprint Pick below. Termination is checked
-     * explicitly in the pre-send fence instead, because widening the fingerprint
-     * would change every schedule's hash at once and cancel every already-pending
-     * assignment job on its next dispatch.
-     */
-    terminatedAt: Date | null;
-    primaryEmployeeId: number;
-    secondaryEmployeeId: number | null;
-    client: { id: number; name: string };
-    primaryEmployee: { id: number; name: string; phone: string } | null;
-    secondaryEmployee: { id: number; name: string; phone: string } | null;
+interface MessageHistoryCandidate {
+    record: MessageLogRecordView;
+    source: MessageHistorySource;
+    nativeId: string;
 }
 
-type EmployeeAssignmentScheduleFingerprintSource = Pick<
-    EmployeeAssignmentScheduleSource,
-    | "id"
-    | "branchId"
-    | "clientId"
-    | "workAddress"
-    | "startDate"
-    | "endDate"
-    | "replaced"
-    | "primaryEmployeeId"
-    | "secondaryEmployeeId"
-> & Partial<Pick<EmployeeAssignmentScheduleSource, "client" | "primaryEmployee" | "secondaryEmployee">>;
+const MESSAGE_HISTORY_CURSOR_VERSION = 1;
+const MESSAGE_HISTORY_MAX_LIMIT = 500;
+const MESSAGE_HISTORY_JOB_UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
-function employeeAssignmentEmployeeFingerprint(
-    employee: EmployeeAssignmentScheduleSource["primaryEmployee"] | undefined,
-): { id: number; name: string; phone: string } | null {
-    if (!employee) return null;
-    return { id: employee.id, name: employee.name, phone: employee.phone };
+interface MessageHistoryCursorPayload {
+    v: typeof MESSAGE_HISTORY_CURSOR_VERSION;
+    branchId: string;
+    snapshotAt: string;
+    source: MessageHistorySource;
+    nativeId: string;
 }
 
-/**
- * A schedule has no version column. Persisting this opaque source fingerprint
- * in the assignment job lets the dispatcher reject a claimed job built from
- * any older schedule/assignment generation without copying address data into
- * the provider payload.
- */
-function employeeAssignmentScheduleFingerprint(
-    schedule: EmployeeAssignmentScheduleFingerprintSource,
-    recipientType: MessageTriggerRecipientType,
-): string {
-    return createHash("sha256").update(JSON.stringify({
-        version: "employee-assignment-source-v1",
-        recipientType,
-        id: schedule.id,
-        branchId: schedule.branchId,
-        clientId: schedule.clientId,
-        client: schedule.client
-            ? { id: schedule.client.id, name: schedule.client.name }
-            : null,
-        workAddress: schedule.workAddress,
-        startDate: schedule.startDate.toISOString(),
-        endDate: schedule.endDate.toISOString(),
-        replaced: schedule.replaced,
-        primaryEmployeeId: schedule.primaryEmployeeId,
-        secondaryEmployeeId: schedule.secondaryEmployeeId,
-        primaryEmployee: employeeAssignmentEmployeeFingerprint(schedule.primaryEmployee),
-        secondaryEmployee: employeeAssignmentEmployeeFingerprint(schedule.secondaryEmployee),
-    })).digest("hex");
+function isMessageHistorySource(value: unknown): value is MessageHistorySource {
+    return value === "log" || value === "job";
+}
+
+function parseHistoryCursorDate(value: unknown): Date | null {
+    if (typeof value !== "string" || value.length === 0) return null;
+    const parsed = new Date(value);
+    return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+function encodeMessageHistoryCursor(payload: MessageHistoryCursorPayload): string {
+    return Buffer.from(JSON.stringify(payload), "utf8").toString("base64url");
+}
+
+function decodeMessageHistoryCursor(cursor: string, branchId: string): MessageHistoryPageCursor & {
+    branchId: string;
+    snapshotAt: Date;
+} {
+    try {
+        if (cursor.length > 4096) throw new Error("cursor too long");
+        const decoded = JSON.parse(Buffer.from(cursor, "base64url").toString("utf8")) as Partial<MessageHistoryCursorPayload>;
+        const snapshotAt = parseHistoryCursorDate(decoded.snapshotAt);
+        if (
+            decoded.v !== MESSAGE_HISTORY_CURSOR_VERSION
+            || decoded.branchId !== branchId
+            || !snapshotAt
+            || !isMessageHistorySource(decoded.source)
+            || typeof decoded.nativeId !== "string"
+            || decoded.nativeId.length === 0
+            || snapshotAt.getTime() > Date.now()
+        ) {
+            throw new Error("invalid cursor payload");
+        }
+        if (decoded.source === "log") {
+            const numericId = Number(decoded.nativeId);
+            if (!Number.isSafeInteger(numericId) || numericId <= 0 || String(numericId) !== decoded.nativeId) {
+                throw new Error("invalid log cursor id");
+            }
+        } else if (!MESSAGE_HISTORY_JOB_UUID_PATTERN.test(decoded.nativeId)) {
+            throw new Error("invalid job cursor id");
+        }
+        return {
+            branchId,
+            snapshotAt,
+            source: decoded.source,
+            nativeId: decoded.nativeId,
+        };
+    } catch {
+        throw new BadRequestException("메시지 발송 기록 페이지 커서가 올바르지 않습니다.");
+    }
 }
 
 type ClientRuleJobCandidate = {
@@ -440,6 +417,7 @@ function revisionDocumentJobFacts(
 @Injectable()
 export class MessageTriggerService {
     private readonly logger = new Logger(MessageTriggerService.name);
+    private readonly automationSources: ClientAutomationSourceReader;
 
     constructor(
         private readonly prisma: PrismaService,
@@ -462,30 +440,35 @@ export class MessageTriggerService {
         private readonly messageAutomationActivationService?: MessageAutomationActivationService,
         @Optional()
         private readonly messageAutomationBranchLockService?: MessageAutomationBranchLockService,
-    ) {}
+        @Optional() automationSources?: ClientAutomationSourceReader,
+        @Optional() private readonly automationDeliveryGate?: AgentAutomationDeliveryGateService,
+    ) {
+        // Preserve constructor-based callers while sharing exactly the same read
+        // implementation; the production module injects its registered reader.
+        this.automationSources = automationSources ?? new ClientAutomationSourceReader(prisma, ruleRepository,
+            overrideRepository, messageSenderApprovalService, systemSettingService, messageAutomationActivationService);
+    }
 
     async listRules(branchId: string): Promise<MessageTriggerRuleEntity[]> {
-        if (!(await this.hasTriggerSchema())) {
-            return [];
-        }
-        const parentEnabled = await this.isMessageAutomationParentEnabled(branchId);
-        const rules = await this.ruleRepository.findAll(branchId);
-        const overrides = await this.overrideRepository.findAllByBranch(branchId);
-        const overrideMap = new Map(overrides.map((override) => [override.ruleId, override]));
-        for (const rule of rules) {
-            if (rule.branchId === null) {
-                rule.isLockedByGlobal = !rule.isActive;
-                rule.isActive = isRuleActiveForBranch(rule.isActive, overrideMap.get(rule.id)?.isActive);
-            }
-        }
-        if (!parentEnabled) {
-            for (const rule of rules) rule.isActive = false;
-            return rules;
-        }
-        if (!(await this.messageSenderApprovalService.isApproved(branchId))) {
+        const { rules, parentEnabled } = await this.resolvePersistedRules(branchId);
+        if (!parentEnabled || !(await this.messageSenderApprovalService.isApproved(branchId))) {
             return rules;
         }
         return this.ensureDefaultServiceInfoTrigger(branchId, rules);
+    }
+
+    /** Resolve persisted rules for read capabilities without provisioning defaults or jobs. */
+    async listRulesReadOnly(branchId: string): Promise<MessageTriggerRuleEntity[]> {
+        return (await this.resolvePersistedRules(branchId)).rules;
+    }
+
+    /** Read-only compatibility entrypoints; all consumers share the source owner. */
+    async readClientAutomationSettings(branchId: string, transaction?: Prisma.TransactionClient): Promise<ClientAutomationSettingsSnapshot> {
+        return this.automationSources.readClientAutomationSettings(branchId, transaction);
+    }
+
+    private async resolvePersistedRules(branchId: string, transaction?: Prisma.TransactionClient) {
+        return this.automationSources.resolvePersistedRules(branchId, transaction);
     }
 
     async ensureDefaultRulesForBranch(branchId: string): Promise<void> {
@@ -517,6 +500,8 @@ export class MessageTriggerService {
 
         const triggerJobs = jobs.map((job): UpcomingMessageTriggerJobView => {
             const rule = rulesById.get(job.ruleId);
+            const publicPayload = { ...job.payload };
+            delete publicPayload.agentAutomationSeal;
 
             return {
                 id: job.id,
@@ -535,7 +520,7 @@ export class MessageTriggerService {
                 cancelReason: job.cancelReason,
                 clientId: job.clientId,
                 employeeScheduleId: job.employeeScheduleId,
-                payload: job.payload,
+                payload: publicPayload,
                 createdAt: job.createdAt,
                 updatedAt: job.updatedAt,
             };
@@ -670,6 +655,202 @@ export class MessageTriggerService {
         return [...logRecords, ...terminalJobRecords]
             .sort((left, right) => right.updatedAt.getTime() - left.updatedAt.getTime())
             .slice(skip, skip + limit);
+    }
+
+    /**
+     * Read history one bounded page at a time. The initial snapshot is an
+     * application-time createdAt eligibility cutoff, not a multi-request
+     * database MVCC transaction: rows created after it may be deferred to the
+     * next fresh walk, while current status changes may appear or disappear
+     * as the view is read.
+     * Each source is ordered by its immutable native id; mutable retry
+     * timestamps remain presentation fields and never move a cursor, including
+     * when database timestamps have microsecond precision.
+     */
+    async listHistoryPage(
+        branchId: string,
+        limit = MESSAGE_HISTORY_MAX_LIMIT,
+        cursor?: string,
+    ): Promise<MessageHistoryPageView> {
+        if (!Number.isSafeInteger(limit) || limit < 1 || limit > MESSAGE_HISTORY_MAX_LIMIT) {
+            throw new BadRequestException("메시지 발송 기록 페이지 크기가 올바르지 않습니다.");
+        }
+
+        const decodedCursor = cursor === undefined
+            ? null
+            : decodeMessageHistoryCursor(cursor, branchId);
+        const snapshotAt = decodedCursor?.snapshotAt ?? new Date();
+        const after: MessageHistoryPageCursor | null = decodedCursor
+            ? {
+                source: decodedCursor.source,
+                nativeId: decodedCursor.nativeId,
+            }
+            : null;
+        const hasMessageLogTable = await hasTable(this.prisma, "message_log");
+        const hasTriggerSchema = await this.hasTriggerSchema();
+        const logs = hasMessageLogTable && (!after || after.source === "log")
+            ? await this.messageLogRepository.findHistoryPageByBranch(branchId, {
+                snapshotAt,
+                after,
+                // Logs are the first source in the public ordering. Read only
+                // enough rows to fill the page, plus one lookahead row.
+                limit: limit + 1,
+            })
+            : [];
+        const visibleLogs = logs.slice(0, limit);
+        const logLookahead = logs.length > limit;
+        const remainingSlots = Math.max(limit - visibleLogs.length, 0);
+        const terminalJobs = hasTriggerSchema && !logLookahead
+            ? await this.jobRepository.findHistoryPageByBranch(branchId, {
+                snapshotAt,
+                after,
+                // One extra row detects a job continuation when logs fill the
+                // page exactly; otherwise read only the remaining slots plus
+                // one lookahead row.
+                limit: remainingSlots + 1,
+            })
+            : [];
+
+        const triggerJobIds = visibleLogs
+            .map((log) => log.triggerJobId)
+            .filter((id): id is string => Boolean(id));
+        const jobs = triggerJobIds.length > 0
+            ? await this.prisma.message_trigger_job.findMany({
+                where: { branchId, id: { in: triggerJobIds } },
+                select: {
+                    id: true,
+                    ruleId: true,
+                    scheduledFor: true,
+                    recipientType: true,
+                    payload: true,
+                },
+            })
+            : [];
+        const jobsById = new Map(jobs.map((job) => [job.id, job]));
+        const rules = visibleLogs.length > 0 || terminalJobs.length > 0
+            ? await this.ruleRepository.findAll(branchId)
+            : [];
+        const rulesById = new Map(rules.map((rule) => [rule.id, rule]));
+
+        const logCandidates: MessageHistoryCandidate[] = visibleLogs.map((log) => {
+            const job = log.triggerJobId ? jobsById.get(log.triggerJobId) : null;
+            const payload = (job?.payload as MessageTriggerJobEntity["payload"] | undefined) ?? null;
+            const rule = job ? rulesById.get(job.ruleId) ?? null : null;
+            const record: MessageLogRecordView = {
+                id: log.id,
+                provider: log.provider,
+                templateKey: log.templateKey,
+                triggerJobId: log.triggerJobId,
+                receiver: log.receiver,
+                clientId: log.clientId,
+                recipientPhone: log.recipientPhone ?? log.receiver,
+                messageBody: log.messageBody,
+                variables: log.variables,
+                status: log.status,
+                aligoMid: log.aligoMid,
+                errorMessage: log.errorMessage,
+                attempts: log.attempts,
+                lastAttemptAt: log.lastAttemptAt,
+                nextRetryAt: log.nextRetryAt,
+                createdAt: log.createdAt,
+                updatedAt: log.updatedAt,
+                ruleId: job?.ruleId ?? null,
+                ruleName: rule?.name ?? null,
+                eventType: rule?.eventType ?? null,
+                offsetType: rule?.offsetType ?? null,
+                offsetDays: rule?.offsetDays ?? 0,
+                scheduledFor: job?.scheduledFor ?? null,
+                recipientType: (job?.recipientType as MessageTriggerRecipientType | undefined) ?? null,
+                recipientName: log.recipientName ?? payload?.recipientName ?? null,
+                clientName: payload?.clientName ?? null,
+                employeeName: payload?.employeeName ?? null,
+            };
+            return {
+                record,
+                source: "log",
+                nativeId: String(log.id),
+            };
+        });
+
+        // The repository suppresses only logs present at this snapshot. Keep a
+        // defensive ID filter here as well so alternate repository adapters do
+        // not expose a terminal job and its materialized log twice.
+        const loggedTriggerJobIds = new Set(
+            visibleLogs
+                .map((log) => log.triggerJobId)
+                .filter((id): id is string => Boolean(id)),
+        );
+        const jobCandidates: MessageHistoryCandidate[] = terminalJobs
+            .filter((job) => !loggedTriggerJobIds.has(job.id))
+            .map((job) => {
+                const rule = rulesById.get(job.ruleId) ?? null;
+                const receiver = job.recipientPhone ?? job.payload.recipientPhone ?? "";
+                const record: MessageLogRecordView = {
+                    id: `job:${job.id}`,
+                    provider: "message_job",
+                    templateKey: job.templateKey,
+                    triggerJobId: job.id,
+                    receiver,
+                    clientId: job.clientId,
+                    recipientPhone: receiver || null,
+                    messageBody: job.payload.messageBody ?? "",
+                    variables: {
+                        ...job.payload.templateVariables,
+                        recipientName: job.payload.recipientName,
+                        historySource: "message_trigger_job",
+                    },
+                    status: job.status === "canceled" ? "canceled" : "failed",
+                    aligoMid: null,
+                    errorMessage: job.cancelReason,
+                    attempts: job.attempts,
+                    lastAttemptAt: job.updatedAt,
+                    nextRetryAt: null,
+                    createdAt: job.createdAt,
+                    updatedAt: job.updatedAt,
+                    ruleId: job.ruleId,
+                    ruleName: rule?.name ?? null,
+                    eventType: rule?.eventType ?? null,
+                    offsetType: rule?.offsetType ?? null,
+                    offsetDays: rule?.offsetDays ?? 0,
+                    scheduledFor: job.scheduledFor,
+                    recipientType: job.recipientType,
+                    recipientName: job.payload.recipientName,
+                    clientName: job.payload.clientName ?? null,
+                    employeeName: job.payload.employeeName ?? null,
+                };
+                return {
+                    record,
+                    source: "job",
+                    nativeId: job.id,
+                };
+            });
+
+        // The two repositories already return native-id DESC order. Logs are
+        // the first source and terminal jobs follow only when log rows leave
+        // room, so no JavaScript timestamp or UUID sort can disturb a page
+        // boundary.
+        const candidates = [...logCandidates, ...jobCandidates];
+        const hasMore = logLookahead || jobCandidates.length > remainingSlots;
+        const items = candidates.slice(0, limit).map((candidate) => candidate.record);
+        const lastCandidate = candidates[limit - 1];
+        const nextCursor = hasMore && lastCandidate
+            ? encodeMessageHistoryCursor({
+                v: MESSAGE_HISTORY_CURSOR_VERSION,
+                branchId,
+                snapshotAt: snapshotAt.toISOString(),
+                source: lastCandidate.source,
+                nativeId: lastCandidate.nativeId,
+            })
+            : null;
+
+        return {
+            items,
+            page: {
+                snapshotAt: snapshotAt.toISOString(),
+                nextCursor,
+                hasMore,
+            },
+        };
     }
 
     async getRule(branchId: string, id: string): Promise<MessageTriggerRuleEntity> {
@@ -1150,6 +1331,18 @@ export class MessageTriggerService {
         return { id, status: "canceled" };
     }
 
+    async readClientAutomationSource(branchId: string, clientId: number, transaction?: Prisma.TransactionClient) {
+        return this.automationSources.readClientAutomationSource(branchId, clientId, transaction);
+    }
+
+    async readClientAutomationArea(branchId: string, areaId: string, transaction?: Prisma.TransactionClient) {
+        return this.automationSources.readClientAutomationArea(branchId, areaId, transaction);
+    }
+
+    async readClientAutomationSchedules(branchId: string, clientId: number, transaction?: Prisma.TransactionClient) {
+        return this.automationSources.readClientAutomationSchedules(branchId, clientId, transaction);
+    }
+
     async syncClientRulesForClient(
         branchId: string,
         clientId: number,
@@ -1165,28 +1358,7 @@ export class MessageTriggerService {
             return;
         }
 
-        const supportsCreatedAt = await hasColumn(this.prisma, "client", "created_at");
-        const supportsAreaId = await hasColumn(this.prisma, "client", "area_id");
-        // Prisma's type inference does not correctly narrow the `area` relation type when
-        // the select key is inside a conditional spread; cast to ClientTriggerSource explicitly.
-        const client = await this.prisma.client.findFirst({
-            where: { id: clientId, branchId },
-            select: {
-                id: true,
-                name: true,
-                phone: true,
-                type: true,
-                startDate: true,
-                endDate: true,
-                serviceEndNoticeSentAt: true,
-                duration: true,
-                fullPrice: true,
-                grant: true,
-                actualPrice: true,
-                ...(supportsAreaId ? { area: { select: { bankAccountInfo: { select: { bankName: true, accNum: true } } } } } : {}),
-                ...(supportsCreatedAt ? { createdAt: true } : {}),
-            },
-        }) as ClientTriggerSource | null;
+        const client = await this.readClientAutomationSource(branchId, clientId);
         if (!client) return;
 
         const rules = await this.ruleRepository.findActiveByEventTypes(branchId, [
@@ -1226,7 +1398,7 @@ export class MessageTriggerService {
 
         const candidateJobs: ClientRuleJobCandidate[] = [];
         for (const rule of rules) {
-            if (rule.eventType === MessageTriggerEventType.CLIENT_CREATED && !supportsCreatedAt) {
+            if (rule.eventType === MessageTriggerEventType.CLIENT_CREATED && !client.createdAt) {
                 continue;
             }
             if (rule.templateKey === MessageTriggerTemplateKey.CLIENT_GREETING && suppressGreeting) {
@@ -1255,6 +1427,8 @@ export class MessageTriggerService {
                 includePast,
                 false,
                 intentOptions?.preserveExisting === true,
+                undefined,
+                intentOptions?.taskOrigin ? intentOptions.taskAutomationReference : undefined,
             );
         }
     }
@@ -1327,7 +1501,7 @@ export class MessageTriggerService {
         branchId: string,
         employeeScheduleId: number,
         includePast: boolean,
-        intentOptions?: Pick<MessageTriggerIntentSyncOptions, "preserveExisting">,
+        intentOptions?: Pick<MessageTriggerIntentSyncOptions, "preserveExisting" | "taskOrigin" | "taskAutomationReference">,
     ): Promise<boolean> {
         if (!(await this.hasTriggerSchema())) {
             return false;
@@ -1379,6 +1553,8 @@ export class MessageTriggerService {
                 includePast,
                 false,
                 intentOptions?.preserveExisting === true,
+                undefined,
+                intentOptions?.taskOrigin ? intentOptions.taskAutomationReference : undefined,
             );
             if (!persisted) retryable = true;
         }
@@ -1484,19 +1660,7 @@ export class MessageTriggerService {
         defaults: UpsertRuleParams,
         matchTemplateKeyOnly = false,
     ): Promise<{ rules: MessageTriggerRuleEntity[]; created: MessageTriggerRuleEntity | null }> {
-        const matchesDefault = (rule: MessageTriggerRuleEntity): boolean => {
-            if (matchTemplateKeyOnly) {
-                return rule.templateKey === defaults.templateKey;
-            }
-
-            return (
-                rule.eventType === defaults.eventType &&
-                rule.offsetType === defaults.offsetType &&
-                rule.offsetDays === (defaults.offsetDays ?? 0) &&
-                rule.recipientType === defaults.recipientType &&
-                rule.templateKey === defaults.templateKey
-            );
-        };
+        const matchesDefault = (rule: MessageTriggerRuleEntity): boolean => matchesTriggerDefaults(rule, defaults, matchTemplateKeyOnly);
 
         // Provisioning asks whether THIS branch already has its default, so it
         // may only consider rules the branch owns. findAll also returns the
@@ -1624,38 +1788,37 @@ export class MessageTriggerService {
         expectedJobsStale: boolean,
         preserveExisting = false,
         transaction?: Prisma.TransactionClient,
+        taskAutomationReference?: AgentAutomationTaskCommitReference,
     ): Promise<boolean> {
         if (!job) return true;
-        const automaticJob = this.isAutomaticMessageJob(job);
+        // The reference is carried only in the materialized job payload. It is
+        // digest-only and does not alter the source recipe, so callers without
+        // a task-origin intent retain the exact legacy object and expectations.
+        const materializedJob = taskAutomationReference
+            ? {
+                ...job,
+                payload: {
+                    ...job.payload,
+                    taskAutomationReference,
+                },
+            } as MessageTriggerJobEntity
+            : job;
+        const automaticJob = this.isAutomaticMessageJob(materializedJob);
         if (
             automaticJob
-            && (!this.messageAutomationActivationService || !this.messageAutomationBranchLockService || !job.branchId)
+            && (!this.messageAutomationActivationService || !this.messageAutomationBranchLockService || !this.automationDeliveryGate || !materializedJob.branchId)
         ) {
             throw new ServiceUnavailableException("Message automation activation is not configured");
         }
-        if (!includePast) {
-            const now = Date.now();
-            const scheduledForTime = job.scheduledFor.getTime();
-            if (scheduledForTime < now - PAST_OCCURRENCE_GRACE_MS) {
-                return true;
-            }
-
-            // IMMEDIATE jobs must fire only on the live create/assign path (includePast=true).
-            if (
-                rule.offsetType === MessageTriggerOffsetType.IMMEDIATE &&
-                scheduledForTime <= now
-            ) {
-                return true;
-            }
-        }
+        if (!isMessageRecipeWithinMaterializationWindow(materializedJob, rule, includePast, new Date())) return true;
         const persist = async (transaction?: Prisma.TransactionClient): Promise<MessageTriggerJobEntity | null> => {
-            if (automaticJob && job.branchId) {
-                const enabled = await this.messageAutomationActivationService!.getTriggerDispatchEnabled(job.branchId, transaction);
+            if (automaticJob && materializedJob.branchId) {
+                const enabled = await this.messageAutomationActivationService!.getTriggerDispatchEnabled(materializedJob.branchId, transaction);
                 if (!enabled) return null;
             }
-            return transaction
+            const persisted = await (transaction
                 ? this.jobRepository.upsertPendingForRuleGeneration(
-                    job,
+                    materializedJob,
                     rule.updatedAt,
                     expectedJobsStale,
                     preserveExisting,
@@ -1663,20 +1826,26 @@ export class MessageTriggerService {
                 )
                 : preserveExisting
                     ? this.jobRepository.upsertPendingForRuleGeneration(
-                        job,
+                        materializedJob,
                         rule.updatedAt,
                         expectedJobsStale,
                         true,
                     )
                     : this.jobRepository.upsertPendingForRuleGeneration(
-                        job,
+                        materializedJob,
                         rule.updatedAt,
                         expectedJobsStale,
-                    );
+                    ));
+            if (automaticJob && persisted?.status === "pending") {
+                if (!transaction || !this.automationDeliveryGate) throw new ServiceUnavailableException("Message automation authority is not configured");
+                await this.automationDeliveryGate.bindMaterialization(transaction, persisted,
+                    (candidate, tx) => this.deliveryService.resolveCanonicalDeliverySnapshot(candidate, tx));
+            }
+            return persisted;
         };
         const persisted = automaticJob
             ? await this.messageAutomationBranchLockService!.runExclusive(
-                job.branchId!,
+                materializedJob.branchId!,
                 (lockTransaction) => persist(lockTransaction),
                 transaction,
             )
@@ -1718,7 +1887,7 @@ export class MessageTriggerService {
             );
             job.scheduledFor = scheduledFor;
             if (job.clientId !== null) {
-                job.dedupeKey = this.buildDedupeKey(
+                job.dedupeKey = buildMessageRecipeDedupeKey(
                     rule.id,
                     `client:${job.clientId}`,
                     scheduledFor,
@@ -1739,33 +1908,16 @@ export class MessageTriggerService {
         return [...orderedDueCandidates, ...futureCandidates];
     }
 
-    private async getRetroactiveSendConfig(
-        branchId: string,
-    ): Promise<MessageAutomationPastTriggerConfig> {
-        if (!this.systemSettingService) {
-            return DEFAULT_MESSAGE_AUTOMATION_PAST_TRIGGER_CONFIG;
-        }
-        return this.systemSettingService.getMessageAutomationPastTriggerConfig(branchId);
+    private async getRetroactiveSendConfig(branchId: string, transaction?: Prisma.TransactionClient): Promise<MessageAutomationPastTriggerConfig> {
+        return this.automationSources.getRetroactiveSendConfig(branchId, transaction);
     }
 
-    private async getMessagePolicyEnabled(
-        branchId: string,
-        policyId: "trigger-dispatch" | "trigger-job-retry" | "past-trigger",
-    ): Promise<boolean> {
-        if (policyId === "trigger-dispatch") {
-            if (!this.messageAutomationActivationService) return false;
-            return this.messageAutomationActivationService.getTriggerDispatchEnabled(branchId);
-        }
-        if (
-            !this.systemSettingService
-            || typeof this.systemSettingService.getMessageSettingsPolicyEnabled !== "function"
-        ) return true;
-        return this.systemSettingService.getMessageSettingsPolicyEnabled(branchId, policyId);
+    private async getMessagePolicyEnabled(branchId: string, policyId: "trigger-dispatch" | "trigger-job-retry" | "past-trigger", transaction?: Prisma.TransactionClient): Promise<boolean> {
+        return this.automationSources.getMessagePolicyEnabled(branchId, policyId, transaction);
     }
 
-    private async isMessageAutomationParentEnabled(branchId: string): Promise<boolean> {
-        if (!this.messageAutomationActivationService) return false;
-        return this.messageAutomationActivationService.getTriggerDispatchEnabled(branchId);
+    private async isMessageAutomationParentEnabled(branchId: string, transaction?: Prisma.TransactionClient): Promise<boolean> {
+        return this.automationSources.isMessageAutomationParentEnabled(branchId, transaction);
     }
 
     private isAutomaticMessageJob(job: Pick<MessageTriggerJobEntity, "templateKey" | "ruleId" | "dedupeKey">): boolean {
@@ -1838,78 +1990,16 @@ export class MessageTriggerService {
         rule: MessageTriggerRuleEntity,
         client: ClientTriggerSource,
     ): MessageTriggerJobEntity | null {
-        if (!client.phone) return null;
-        if (
-            rule.templateKey === MessageTriggerTemplateKey.SERVICE_END_NOTICE
-            && client.serviceEndNoticeSentAt !== null
-        ) {
-            return null;
-        }
-
-        const anchorDate = this.getClientAnchorDate(rule.eventType, client);
-        if (!anchorDate) return null;
-
-        const scheduledFor = this.computeScheduledFor(anchorDate, rule);
-        const payload = {
-            clientId: client.id,
-            clientName: client.name,
-            memberId: client.id.toString(),
-            recipientName: client.name,
-            recipientPhone: client.phone,
-            templateVariables: this.buildClientTemplateVariables(rule, client),
-        };
-
-        return MessageTriggerJobEntity.create({
-            branchId: rule.branchId ?? undefined,
-            ruleId: rule.id,
-            scheduledFor,
-            clientId: client.id,
-            recipientType: rule.recipientType,
-            recipientPhone: client.phone,
-            templateKey: rule.templateKey,
-            dedupeKey: this.buildDedupeKey(rule.id, `client:${client.id}`, scheduledFor, rule.recipientType),
-            payload,
-        });
+        const recipe = buildClientMessageRecipe(rule, client, new Date());
+        return recipe ? MessageTriggerJobEntity.create(recipe) : null;
     }
 
     private buildEmployeeAssignmentJob(
         rule: MessageTriggerRuleEntity,
         schedule: EmployeeAssignmentScheduleSource,
     ): MessageTriggerJobEntity | null {
-        const employee =
-            rule.recipientType === MessageTriggerRecipientType.PRIMARY_EMPLOYEE
-                ? schedule.primaryEmployee
-                : schedule.secondaryEmployee;
-        if (!employee?.phone) return null;
-
-        const scheduledFor = new Date();
-        const memberId = `employee:${employee.id}`;
-        return MessageTriggerJobEntity.create({
-            branchId: rule.branchId ?? undefined,
-            ruleId: rule.id,
-            scheduledFor,
-            clientId: schedule.clientId,
-            employeeScheduleId: schedule.id,
-            recipientType: rule.recipientType,
-            recipientPhone: employee.phone,
-            templateKey: rule.templateKey,
-            dedupeKey: `${rule.id}:schedule:${schedule.id}:employee:${employee.id}:${rule.recipientType}`,
-            payload: {
-                clientId: schedule.clientId,
-                clientName: schedule.client.name,
-                employeeId: employee.id,
-                employeeName: employee.name,
-                employeeScheduleFingerprint: employeeAssignmentScheduleFingerprint(schedule, rule.recipientType),
-                memberId,
-                recipientName: employee.name,
-                recipientPhone: employee.phone,
-                templateVariables: {
-                    employeeName: employee.name,
-                    clientName: schedule.client.name,
-                    serviceStartDate: this.formatDate(schedule.startDate),
-                },
-            },
-        });
+        const recipe = buildEmployeeAssignmentMessageRecipe(rule, schedule, new Date());
+        return recipe ? MessageTriggerJobEntity.create(recipe) : null;
     }
 
     private async hasSentEmployeeAssignmentJobForSameEmployee(
@@ -1943,91 +2033,6 @@ export class MessageTriggerService {
         );
     }
 
-    private buildClientTemplateVariables(
-        rule: MessageTriggerRuleEntity,
-        client: ClientTriggerSource,
-    ): Record<string, string> {
-        switch (rule.templateKey) {
-            case MessageTriggerTemplateKey.PRICE_INFO:
-                // PRICE_INFO is the only SMS template that renders price/bank fields,
-                // so it is the only one that carries them into the job payload (data minimization).
-                return buildSmsClientVariables(client);
-            case MessageTriggerTemplateKey.SERVICE_INFO:
-            case MessageTriggerTemplateKey.CLIENT_GREETING:
-            case MessageTriggerTemplateKey.REMINDER:
-            case MessageTriggerTemplateKey.THANKS:
-            case MessageTriggerTemplateKey.SURVEY:
-            case MessageTriggerTemplateKey.INFO:
-            case MessageTriggerTemplateKey.SERVICE_END_NOTICE:
-                return { name: client.name, clientName: client.name, phone: client.phone ?? "" };
-            default:
-                return {};
-        }
-    }
-
-    private getClientAnchorDate(
-        eventType: MessageTriggerEventType,
-        client: Pick<ClientTriggerSource, "createdAt" | "startDate" | "endDate">,
-    ): Date | null {
-        switch (eventType) {
-            case MessageTriggerEventType.CLIENT_CREATED:
-                return client.createdAt ?? null;
-            case MessageTriggerEventType.SERVICE_START:
-                return client.startDate;
-            case MessageTriggerEventType.SERVICE_END:
-                return client.endDate;
-            default:
-                return null;
-        }
-    }
-
-    private computeScheduledFor(anchorDate: Date, rule: MessageTriggerRuleEntity): Date {
-        if (rule.offsetType === MessageTriggerOffsetType.IMMEDIATE) {
-            return new Date();
-        }
-
-        let offsetDays = 0;
-        if (rule.offsetType === MessageTriggerOffsetType.BEFORE_DAYS) {
-            offsetDays = -rule.offsetDays;
-        } else if (rule.offsetType === MessageTriggerOffsetType.AFTER_DAYS) {
-            offsetDays = rule.offsetDays;
-        }
-
-        const targetDate = this.getKstCalendarDate(anchorDate, offsetDays);
-        return new Date(`${targetDate}T${rule.sendTime}:00+09:00`);
-    }
-
-    private getKstCalendarDate(referenceDate: Date, offsetDays: number): string {
-        const formatter = new Intl.DateTimeFormat("en-CA", {
-            timeZone: "Asia/Seoul",
-            year: "numeric",
-            month: "2-digit",
-            day: "2-digit",
-        });
-        const parts = new Map(
-            formatter.formatToParts(referenceDate).map((part) => [part.type, part.value]),
-        );
-        const year = Number(parts.get("year"));
-        const month = Number(parts.get("month"));
-        const day = Number(parts.get("day"));
-        const date = new Date(Date.UTC(year, month - 1, day));
-        date.setUTCDate(date.getUTCDate() + offsetDays);
-        return [
-            date.getUTCFullYear(),
-            String(date.getUTCMonth() + 1).padStart(2, "0"),
-            String(date.getUTCDate()).padStart(2, "0"),
-        ].join("-");
-    }
-
-    private buildDedupeKey(
-        ruleId: string,
-        sourceKey: string,
-        scheduledFor: Date,
-        recipientType: MessageTriggerRecipientType,
-    ): string {
-        return `${ruleId}:${sourceKey}:${recipientType}:${scheduledFor.toISOString()}`;
-    }
-
     private describeTiming(rule: MessageTriggerRuleEntity, anchorLabel: string): string {
         switch (rule.offsetType) {
             case MessageTriggerOffsetType.SAME_DAY:
@@ -2041,14 +2046,6 @@ export class MessageTriggerService {
             default:
                 return "알림 안내";
         }
-    }
-
-    private formatDate(date: Date | null): string {
-        if (!date) return "";
-        const year = date.getFullYear();
-        const month = String(date.getMonth() + 1).padStart(2, "0");
-        const day = String(date.getDate()).padStart(2, "0");
-        return `${year}-${month}-${day}`;
     }
 
     private normalizeOffsetDays(
@@ -2468,7 +2465,7 @@ export class MessageTriggerService {
                 return;
             }
             job.markDispatchAuthorized();
-            await this.deliverClaimedJob(job);
+            if (await this.deliverClaimedJob(job) === "preserve-stored") return;
             await this.persistTriggerJobStatus(job, "persist dispatched trigger job");
             return;
         }
@@ -2526,7 +2523,7 @@ export class MessageTriggerService {
         // Provider delivery and its message_log writes must happen outside the
         // claim transaction so the FK insert cannot wait on a held row lock.
         job.markDispatchAuthorized();
-        await this.deliverClaimedJob(job, preparation);
+        if (await this.deliverClaimedJob(job, preparation) === "preserve-stored") return;
         await this.persistTriggerJobStatus(job, "persist dispatched trigger job");
     }
 
@@ -2578,7 +2575,9 @@ export class MessageTriggerService {
             return this.fenceClaimTokenBeforeProviderSend(job, transaction);
         };
         if (automaticJob) {
-            return this.messageAutomationBranchLockService!.runExclusive(job.branchId!, authorize);
+            if (!this.automationDeliveryGate) throw new ServiceUnavailableException("Message automation authority is not configured");
+            return this.automationDeliveryGate.authorizePreparation(job,
+                (candidate, tx) => this.deliveryService.resolveCanonicalDeliverySnapshot(candidate, tx), authorize);
         }
         return this.prisma.$transaction(authorize, {
             maxWait: CLAIM_DISPATCH_AUTHORIZATION_TIMEOUT_MS,
@@ -2718,7 +2717,11 @@ export class MessageTriggerService {
             return authorized.length === 1 ? { kind: "allow" as const } : { kind: "lost" as const };
         };
         if (this.isAutomaticMessageJob(job)) {
-            return this.messageAutomationBranchLockService!.runExclusive(job.branchId!, authorize);
+            // Automatic delivery has no one-step compatibility bypass.
+            if (!preparation) return { kind: "stale", reason: "문자 발송 준비를 다시 확인해야 합니다" };
+            if (!this.automationDeliveryGate) throw new ServiceUnavailableException("Message automation authority is not configured");
+            return this.automationDeliveryGate.authorizeDispatch(job, preparation,
+                (candidate, tx) => this.deliveryService.resolveCanonicalDeliverySnapshot(candidate, tx), authorize);
         }
         return this.prisma.$transaction(authorize, {
             maxWait: CLAIM_DISPATCH_AUTHORIZATION_TIMEOUT_MS,
@@ -2969,7 +2972,7 @@ export class MessageTriggerService {
     private async deliverClaimedJob(
         job: MessageTriggerJobEntity,
         preparation?: SmsTriggerDeliveryPreparation,
-    ): Promise<void> {
+    ): Promise<"persist-result" | "preserve-stored"> {
         try {
             const sent = preparation
                 ? await this.deliveryService.sendPreparedJob(job, preparation)
@@ -2980,12 +2983,17 @@ export class MessageTriggerService {
                 job.markFailed("Provider disabled or delivery failed");
             }
         } catch (error) {
+            // The final admission read may have observed a newer terminal
+            // result under this same claim. Never rewrite it with this stale
+            // entity; an unchanged dispatching row remains for reconciliation.
+            if (error instanceof AgentAutomationDispatchUncertainError) return "preserve-stored";
             if (error instanceof TriggerJobDeferredError) {
                 job.defer(error.kind, error.message);
             } else {
                 job.markFailed(error instanceof Error ? error.message : String(error));
             }
         }
+        return "persist-result";
     }
 
     /**
@@ -3160,7 +3168,7 @@ export class MessageTriggerService {
         }
 
         const expectedStartDate = job.payload.templateVariables["serviceStartDate"];
-        if (expectedStartDate && this.formatDate(schedule.startDate) !== expectedStartDate) {
+        if (expectedStartDate && formatMessageRecipeDate(schedule.startDate) !== expectedStartDate) {
             return {
                 kind: "stale",
                 reason: EMPLOYEE_ASSIGNMENT_AUTOMATION_CHANGED_CANCEL_REASON,
@@ -3171,7 +3179,7 @@ export class MessageTriggerService {
         // snapshots. Compare them when present; old payloads without these
         // keys remain compatible but are protected by the checks above.
         const expectedEndDate = job.payload.templateVariables["serviceEndDate"];
-        if (expectedEndDate && this.formatDate(schedule.endDate) !== expectedEndDate) {
+        if (expectedEndDate && formatMessageRecipeDate(schedule.endDate) !== expectedEndDate) {
             return {
                 kind: "stale",
                 reason: EMPLOYEE_ASSIGNMENT_AUTOMATION_CHANGED_CANCEL_REASON,
@@ -3268,16 +3276,7 @@ export class MessageTriggerService {
         rule: MessageTriggerRuleEntity,
         client: ClientTriggerSource,
     ): boolean {
-        if (
-            rule.eventType !== MessageTriggerEventType.SERVICE_START ||
-            rule.offsetType !== MessageTriggerOffsetType.BEFORE_DAYS ||
-            !client.startDate
-        ) {
-            return false;
-        }
-
-        return this.getKstCalendarDate(new Date(), 0) >=
-            this.getKstCalendarDate(client.startDate, 0);
+        return shouldSkipClientPreStartCatchUp(rule, client, new Date());
     }
 
     private async postponeCatchUpJobUntilPredecessorCompletes(
@@ -3506,13 +3505,8 @@ export class MessageTriggerService {
         }
     }
 
-    private async hasTriggerSchema(): Promise<boolean> {
-        const [hasRuleTable, hasJobTable, hasSendTime] = await Promise.all([
-            hasTable(this.prisma, "message_trigger_rule"),
-            hasTable(this.prisma, "message_trigger_job"),
-            hasColumn(this.prisma, "message_trigger_rule", "send_time"),
-        ]);
-        return hasRuleTable && hasJobTable && hasSendTime;
+    private async hasTriggerSchema(transaction?: Prisma.TransactionClient): Promise<boolean> {
+        return this.automationSources.hasTriggerSchema(transaction);
     }
 
     private async ensureTriggerSchemaReady(): Promise<void> {

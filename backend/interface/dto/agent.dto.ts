@@ -2,7 +2,7 @@ import { Type } from "class-transformer";
 import { IsArray, IsBoolean, IsIn, IsObject, IsOptional, IsString, MaxLength, ValidateNested, ArrayMaxSize, ArrayMinSize } from "class-validator";
 import { z } from "zod";
 
-import { AgentFormSubmitPartSchema } from "@babyjamjam/shared";
+import { AgentFormSubmitPartSchema, AgentTaskDisplayedChoiceHintSchema } from "@babyjamjam/shared";
 
 const AgentUserTextPartSchema = z.object({
     type: z.literal("text"),
@@ -13,18 +13,21 @@ const AgentUserFormSubmitPartSchema = z.object({
     data: AgentFormSubmitPartSchema,
 }).strict();
 
-/**
- * The client supplies one current user turn only. Conversation history is
- * reconstructed from the user-and-branch-owned session on the server.
- */
-export const AgentChatMessagesSchema = z.array(z.object({
+export const AgentChatMessageSchema = z.object({
     id: z.string().min(1).max(200),
     role: z.literal("user"),
     parts: z.union([
         z.tuple([AgentUserTextPartSchema]),
         z.tuple([AgentUserFormSubmitPartSchema]),
     ]),
-}).strict()).length(1);
+    displayedChoice: AgentTaskDisplayedChoiceHintSchema.optional(),
+}).strict();
+
+/**
+ * The client supplies one current user turn only. Conversation history is
+ * reconstructed from the user-and-branch-owned session on the server.
+ */
+export const AgentChatMessagesSchema = z.array(AgentChatMessageSchema).length(1);
 
 class AgentMessageDto {
     @IsString()
@@ -39,6 +42,10 @@ class AgentMessageDto {
     @ArrayMaxSize(1)
     @IsObject({ each: true })
     parts!: unknown[];
+
+    @IsOptional()
+    @IsObject()
+    displayedChoice?: Record<string, unknown>;
 }
 
 export class AgentChatDto {

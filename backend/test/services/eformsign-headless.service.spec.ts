@@ -88,8 +88,8 @@ describe("EformsignHeadlessService", () => {
      * bound to a stand-in `window`, so the assertions below exercise the source
      * that actually ships to the browser rather than a restatement of it.
      */
-    function extractSuccessCallback(html: string) {
-        const start = html.indexOf("function (resp) {");
+    function extractFunctionSource(html: string, name: string): string {
+        const start = html.indexOf(`function ${name}(`);
         expect(start).toBeGreaterThan(-1);
         let depth = 0;
         let end = start;
@@ -103,10 +103,24 @@ describe("EformsignHeadlessService", () => {
                 }
             }
         }
-        const source = html.slice(start, end);
-        return new Function("window", `return (${source});`) as (
-            win: Record<string, unknown>,
-        ) => (resp: unknown) => void;
+        return html.slice(start, end);
+    }
+
+    function extractNamedFunction<T extends (...args: never[]) => unknown>(
+        html: string,
+        name: string,
+        win: Record<string, unknown>,
+        dependencies: string[] = [],
+    ) {
+        const source = [...dependencies, name].map((dependency) => extractFunctionSource(html, dependency)).join("\n");
+        return new Function(
+            "window",
+            `var diagnostics = window.__eformsignDiagnostics; ${source}; return ${name};`,
+        )(win) as T;
+    }
+
+    function extractSuccessCallback(html: string, win: Record<string, unknown>) {
+        return extractNamedFunction<(resp: unknown) => void>(html, "recordSuccess", win);
     }
 
     it("latches the SDK success callback only for the completion code", () => {
@@ -116,24 +130,149 @@ describe("EformsignHeadlessService", () => {
             }
         ).buildEmbeddedSdkHtml({ mode: { type: "02" } }, "eformsign_finalize_iframe");
 
-        const win: Record<string, unknown> = {};
-        const onSuccess = extractSuccessCallback(html)(win);
+        const win: Record<string, unknown> = {
+            __eformsignDiagnostics: {
+                actionPresent: false,
+                actionType: "unknown",
+                actionCode: "unknown",
+                successCountBucket: "0",
+                successCode: "unknown",
+                errorPresent: false,
+                bootErrorPresent: false,
+            },
+        };
+        const onSuccess = extractSuccessCallback(html, win);
 
         // eformsign fires this callback for non-terminal events too — the
         // top-level 전송 that only opens the confirm popup is one. Latching on
         // it reported a finalize as complete that eformsign never performed.
-        onSuccess({ code: "200", type: "document" });
+        onSuccess({ code: "200", type: "document", message: "success-sensitive-sentinel" });
         expect(win["__eformsignSuccess"]).toBeUndefined();
 
-        onSuccess({ code: "-1", document_id: "doc-1" });
-        expect(win["__eformsignSuccess"]).toEqual({ code: "-1", document_id: "doc-1" });
+        onSuccess({ code: "-1", document_id: "doc-1", token: "token-sensitive-sentinel" });
+        expect(win["__eformsignSuccess"]).toEqual({
+            code: "-1",
+            document_id: "doc-1",
+            token: "token-sensitive-sentinel",
+        });
 
-        // Both payloads stay on the diagnostic log so a run that never reaches a
-        // terminal callback can still say what the SDK did report.
-        expect(win["__eformsignSuccessLog"]).toEqual([
-            { code: "200", type: "document" },
-            { code: "-1", document_id: "doc-1" },
-        ]);
+        expect(win["__eformsignSuccessLog"]).toBeUndefined();
+        expect(JSON.stringify(win["__eformsignDiagnostics"])).not.toContain("sensitive-sentinel");
+        expect(win["__eformsignDiagnostics"]).toEqual(expect.objectContaining({
+            successCountBucket: "2+",
+            successCode: "terminal_success",
+        }));
+    });
+
+    it("projects action callback enums without copying callback names or payloads", () => {
+        const html = (
+            service as unknown as {
+                buildEmbeddedSdkHtml: (option: Record<string, unknown>, iframeId: string) => string;
+            }
+        ).buildEmbeddedSdkHtml({ mode: { type: "02" } }, "eformsign_finalize_iframe");
+        const win: Record<string, unknown> = {
+            __eformsignDiagnostics: {
+                actionPresent: false,
+                actionType: "unknown",
+                actionCode: "unknown",
+                successCountBucket: "0",
+                successCode: "unknown",
+                errorPresent: false,
+                bootErrorPresent: false,
+            },
+        };
+        const classifyAction = extractNamedFunction<(response: unknown) => void>(
+            html,
+            "classifyAction",
+            win,
+            ["classifyActionType", "classifyActionCode"],
+        );
+
+        classifyAction({
+            type: "document",
+            fn: "actionCallback",
+            data: [
+                { name: "전송", code: "21" },
+                { name: "func_get_return_fields", code: "99" },
+            ],
+            document_id: "document-sensitive-sentinel",
+        });
+
+        expect(win["__eformsignDiagnostics"]).toEqual(expect.objectContaining({
+            actionPresent: true,
+            actionType: "document",
+            actionCode: "21",
+        }));
+        expect(JSON.stringify(win["__eformsignDiagnostics"])).not.toContain("전송");
+        expect(JSON.stringify(win["__eformsignDiagnostics"])).not.toContain("document-sensitive-sentinel");
+
+        classifyAction({
+            type: "document",
+            fn: "actionCallback",
+            data: [
+                { name: "func_get_return_fields", code: "99" },
+                { name: "process", code: "22" },
+            ],
+        });
+        expect(win["__eformsignDiagnostics"]).toEqual(expect.objectContaining({
+            actionType: "document",
+            actionCode: "22",
+        }));
+
+        classifyAction({ type: "future", fn: "actionCallback", data: [{ name: "unknown", code: "999" }] });
+        expect(win["__eformsignDiagnostics"]).toEqual(expect.objectContaining({
+            actionType: "other",
+            actionCode: "other",
+        }));
+    });
+
+    it("does not latch an undefined SDK error callback payload", () => {
+        const html = (
+            service as unknown as {
+                buildEmbeddedSdkHtml: (option: Record<string, unknown>, iframeId: string) => string;
+            }
+        ).buildEmbeddedSdkHtml({ mode: { type: "02" } }, "eformsign_finalize_iframe");
+        const win: Record<string, unknown> = {
+            __eformsignDiagnostics: {
+                actionPresent: false,
+                actionType: "unknown",
+                actionCode: "unknown",
+                successCountBucket: "0",
+                successCode: "unknown",
+                errorPresent: false,
+                bootErrorPresent: false,
+            },
+        };
+        const start = html.indexOf("function (resp) {\n                // Preserve the SDK bridge's current latch semantics:");
+        expect(start).toBeGreaterThan(-1);
+        let depth = 0;
+        let end = start;
+        for (let index = html.indexOf("{", start); index < html.length; index += 1) {
+            if (html[index] === "{") depth += 1;
+            if (html[index] === "}") {
+                depth -= 1;
+                if (depth === 0) {
+                    end = index + 1;
+                    break;
+                }
+            }
+        }
+        const onError = new Function(
+            "window",
+            `var diagnostics = window.__eformsignDiagnostics; return (${html.slice(start, end)});`,
+        )(win) as (response?: unknown) => void;
+
+        onError(undefined);
+        expect(win["__eformsignError"]).toBeUndefined();
+        expect(win["__eformsignDiagnostics"]).toEqual(expect.objectContaining({ errorPresent: false }));
+
+        onError({ message: "error-sensitive-sentinel" });
+        expect(win["__eformsignError"]).toBe(true);
+        expect(JSON.stringify(win["__eformsignDiagnostics"])).not.toContain("error-sensitive-sentinel");
+
+        onError(undefined);
+        expect(win["__eformsignError"]).toBeUndefined();
+        expect(win["__eformsignDiagnostics"]).toEqual(expect.objectContaining({ errorPresent: true }));
     });
 
     it("dispatchCreation short-circuits vendor stubs without launching Chromium", async () => {
@@ -192,16 +331,29 @@ describe("EformsignHeadlessService", () => {
         (pageMock.waitForFunction as jest.Mock)
             .mockResolvedValueOnce(undefined)
             .mockRejectedValueOnce(new Error("Timeout 30000ms exceeded"));
+        pageMock.evaluate = jest.fn().mockImplementation((fn: unknown) => {
+            const source = String(fn);
+            if (source.includes("__eformsignDiagnostics")) {
+                return Promise.resolve({
+                    actionPresent: true,
+                    actionType: "document",
+                    actionCode: "21",
+                    successCountBucket: "1",
+                    successCode: "other",
+                    errorPresent: false,
+                    bootErrorPresent: false,
+                });
+            }
+            return Promise.resolve(undefined);
+        });
 
         const result = await service.dispatchCreation({ documentOption: { mode: { type: "01" } } });
 
         expect(result.ok).toBe(false);
         if (!result.ok) {
-            // The bare Playwright timeout used to surface here and said nothing
-            // about what the SDK had reported, which is what made the finalize
-            // false-success incident unexplainable from logs alone.
-            expect(result.reason).toContain("no terminal callback");
-            expect(result.reason).toContain("Observed success callbacks");
+            expect(result.reason).toContain("headless creation dispatch failed (sdk_error)");
+            expect(result.reason).toContain('"actionCode":"21"');
+            expect(result.reason).not.toContain("Timeout 30000ms exceeded");
         }
     });
 
@@ -218,6 +370,17 @@ describe("EformsignHeadlessService", () => {
             if (source.includes("__eformsignSuccess")) {
                 return Promise.resolve(false);
             }
+            if (source.includes("__eformsignDiagnostics")) {
+                return Promise.resolve({
+                    actionPresent: true,
+                    actionType: "template",
+                    actionCode: "22",
+                    successCountBucket: "0",
+                    successCode: "unknown",
+                    errorPresent: true,
+                    bootErrorPresent: false,
+                });
+            }
             return Promise.resolve(undefined);
         });
 
@@ -225,8 +388,9 @@ describe("EformsignHeadlessService", () => {
 
         expect(result.ok).toBe(false);
         if (!result.ok) {
-            expect(result.reason).toContain("eformsign SDK error");
-            expect(result.reason).toContain("request rejected");
+            expect(result.reason).toContain("headless creation dispatch failed (sdk_error)");
+            expect(result.reason).toContain('"errorPresent":true');
+            expect(result.reason).not.toContain("request rejected");
         }
     });
 
@@ -245,7 +409,8 @@ describe("EformsignHeadlessService", () => {
 
         expect(result.ok).toBe(false);
         if (!result.ok) {
-            expect(result.reason).toContain("selector miss");
+            expect(result.reason).toBe("headless creation dispatch failed (error)");
+            expect(result.reason).not.toContain("selector miss");
         }
     });
 
