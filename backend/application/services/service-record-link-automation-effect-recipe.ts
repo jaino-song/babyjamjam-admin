@@ -302,9 +302,12 @@ export function describeServiceRecordLinkEffect(input: {
                     endDate: serviceRecordCase.endDate?.toISOString() ?? null,
                     requiredSessionCount: serviceRecordCase.requiredSessionCount,
                     formVersion: serviceRecordCase.formVersion,
-                    version: serviceRecordCase.version,
                     finalizedAt: serviceRecordCase.finalizedAt?.toISOString() ?? null,
-                    updatedAt: serviceRecordCase.updatedAt.toISOString(),
+                    // Lifecycle repair increments the case bookkeeping
+                    // version/timestamp while re-projecting the same
+                    // assignment. Those fields are not part of the link
+                    // payload or recipient policy, so they must not turn a
+                    // committed task effect into a false consent change.
                 }
                 : null,
             token: {

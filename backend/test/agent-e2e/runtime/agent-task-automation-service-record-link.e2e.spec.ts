@@ -14,7 +14,6 @@ import { SmsTriggerDeliveryService } from "../../../application/services/sms-tri
 import { AgentAutomationJobAuthorityService } from "../../../application/services/agent-automation-job-authority.service";
 import { MessageAutomationIntentService } from "../../../application/services/message-automation-intent.service";
 import { MessageTriggerJobEntity, type MessageTriggerJobPayload, type MessageTriggerJobStatus } from "../../../domain/entities/message-trigger-job.entity";
-import { decodeAgentAutomationTerminalRow, isCoverage } from "../../../application/agent/agent-automation-terminal-record";
 import { ClientAutomationImpactService } from "../../../application/services/client-automation-impact.service";
 import { CLIENT_AUTOMATION_IMPACT } from "../../../domain/ports/client-automation-impact.port";
 import { SERVICE_RECORD_LINK_RULE_ID } from "../../../domain/constants/service-record-link-message";
@@ -356,21 +355,6 @@ describeAgentE2E("production service-record-link task effect planner", () => {
         });
         expect((row.payload as Record<string, unknown>)["taskAutomationReference"]).toEqual(taskReference);
 
-        const terminalRows = await prisma.message_trigger_job.findMany({ where: { branchId } });
-        const storedServiceEffect = terminalRows
-            .map((candidate) => decodeAgentAutomationTerminalRow(candidate))
-            .find((candidate) => candidate && !isCoverage(candidate.record)
-                && candidate.record.scope.kind === "service-record-link")?.record;
-        await prisma.client.update({ where: { id: clientId }, data: { name: existing.name } });
-        const recomputed = await tenantContextStore.run({ origin: "http", branchId }, () => app.get<ClientAutomationImpactService>(CLIENT_AUTOMATION_IMPACT).planClientWrite(branchId, {
-            kind: "update", clientId, values: { name: nextName },
-        }));
-        await prisma.client.update({ where: { id: clientId }, data: { name: nextName } });
-        console.log("service-record effect digests", {
-            stored: storedServiceEffect && !isCoverage(storedServiceEffect) ? storedServiceEffect.effects[0] : undefined,
-            recomputed: recomputed.effects.find((effect) => effect.kind === "service-record-link"),
-        });
-
         const delivery = app.get(SmsTriggerDeliveryService);
         const authority = app.get(AgentAutomationJobAuthorityService);
         const job = MessageTriggerJobEntity.reconstitute(
@@ -387,10 +371,6 @@ describeAgentE2E("production service-record-link task effect planner", () => {
             "materialize",
             (candidate, transaction) => delivery.resolveCanonicalDeliverySnapshot(candidate, transaction),
         )));
-        console.log("service-record authority result", allowed);
-        console.log("service-record authority rows", await prisma.message_trigger_job.findMany({
-            where: { branchId }, select: { id: true, ruleId: true, employeeScheduleId: true, status: true, dedupeKey: true },
-        }));
         expect(allowed.status).toBe("allowed");
         expect(await prisma.message_log.count({ where: { branchId } })).toBe(0);
     });
