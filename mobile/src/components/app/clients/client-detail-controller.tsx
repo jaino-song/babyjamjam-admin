@@ -48,6 +48,43 @@ function contractPrefillDate(value: string | null | undefined): string | undefin
   return undefined;
 }
 
+function positiveTimestamp(value: unknown): number | null {
+  const normalizeTimestamp = (timestamp: number): number | null => {
+    if (!Number.isFinite(timestamp) || timestamp <= 0) return null;
+    return Number.isNaN(new Date(timestamp).getTime()) ? null : timestamp;
+  };
+
+  if (value instanceof Date) {
+    return normalizeTimestamp(value.getTime());
+  }
+
+  if (typeof value === "number") {
+    const timestamp = value < 10_000_000_000 ? value * 1000 : value;
+    return normalizeTimestamp(timestamp);
+  }
+
+  if (typeof value !== "string") return null;
+  const normalized = value.trim();
+  if (!normalized) return null;
+
+  const numericValue = Number(normalized);
+  if (Number.isFinite(numericValue)) {
+    if (numericValue <= 0) return null;
+    const timestamp = numericValue < 10_000_000_000 ? numericValue * 1000 : numericValue;
+    return normalizeTimestamp(timestamp);
+  }
+
+  const parsed = Date.parse(normalized);
+  return normalizeTimestamp(parsed);
+}
+
+function isCurrentProviderDocument(
+  document: EformsignDocument | null | undefined,
+  documentId: string | null,
+): document is EformsignDocument {
+  return Boolean(documentId && document?.id === documentId);
+}
+
 export interface UseClientDetailControllerOptions {
   client?: Client | null;
   clientId?: number | null;
@@ -181,31 +218,100 @@ export function useClientDetailController({
     retryDetail();
   }, [resolvedClientId, retryDetail]);
 
+  const localDetailClient = useMemo(() => (
+    detailClient && detailClient.id === resolvedClientId ? detailClient : null
+  ), [detailClient, resolvedClientId]);
+  const currentDocumentId = localDetailClient?.eDocId ?? null;
+  const documentQueryEnabled = Boolean(
+    currentDocumentId &&
+    currentDocumentId.trim() &&
+    (detailSheetTab === "basic" || detailSheetTab === "contracts"),
+  );
+
   const {
     notificationLogs: detailNotificationLogs,
     isLoading: isNotificationLogsLoading,
     isError: isNotificationLogsError,
     refetch: refetchNotificationLogs,
   } = useClientMessageHistory(detailClient);
-  const { data: detailContractDocument } = useQuery<EformsignDocument>({
-    queryKey: ["eformsign-docs", "document", detailClient?.eDocId],
+  const providerDocumentQuery = useQuery<EformsignDocument | null>({
+    queryKey: ["eformsign-docs", "document", currentDocumentId],
     queryFn: async () => {
-      if (!detailClient?.eDocId) throw new Error("documentId is required");
-      return eformsignApi.getDocument(detailClient.eDocId);
+      if (!currentDocumentId) throw new Error("documentId is required");
+      return eformsignApi.getDocument(currentDocumentId);
     },
-    enabled: Boolean(detailClient?.eDocId && (detailSheetTab === "basic" || detailSheetTab === "contracts")),
+    enabled: documentQueryEnabled,
     staleTime: 1000 * 60,
     retry: 1,
   });
+
+  const providerDocument = providerDocumentQuery.data;
+  const providerDocumentMatches = isCurrentProviderDocument(providerDocument, currentDocumentId);
+  const providerCreatedTimestamp = providerDocumentMatches
+    ? positiveTimestamp(providerDocument.created_date)
+    : null;
+  const providerSettled = providerDocumentQuery.isError
+    || (providerDocumentQuery.isSuccess && !providerDocumentQuery.isFetching);
+  const shouldFetchLocalDocument = documentQueryEnabled
+    && providerSettled
+    && providerCreatedTimestamp === null;
+  const localDocumentQuery = useQuery({
+    queryKey: ["eformsign-docs", "document-mirror", currentDocumentId],
+    queryFn: async () => {
+      if (!currentDocumentId) throw new Error("documentId is required");
+      return eformsignApi.getLocalDocumentRecord(currentDocumentId);
+    },
+    enabled: shouldFetchLocalDocument,
+    staleTime: 1000 * 60,
+    retry: false,
+  });
+
+  const localDocument = localDocumentQuery.data;
+  const localDocumentMatches = Boolean(
+    currentDocumentId &&
+    localDocument?.documentId === currentDocumentId,
+  );
+  const localCreatedTimestamp = localDocumentMatches
+    ? positiveTimestamp(localDocument?.createdDate)
+    : null;
+  const detailContractDocument = useMemo(() => {
+    if (!currentDocumentId) return null;
+
+    if (providerDocumentMatches && providerDocument) {
+      if (providerCreatedTimestamp !== null) {
+        return providerDocument;
+      }
+
+      if (localCreatedTimestamp !== null) {
+        return {
+          ...providerDocument,
+          created_date: localCreatedTimestamp,
+        };
+      }
+
+      return providerDocument;
+    }
+
+    if (localCreatedTimestamp !== null) {
+      return {
+        id: currentDocumentId,
+        created_date: localCreatedTimestamp,
+      } as EformsignDocument;
+    }
+
+    return null;
+  }, [
+    currentDocumentId,
+    localCreatedTimestamp,
+    providerCreatedTimestamp,
+    providerDocument,
+    providerDocumentMatches,
+  ]);
 
   // The client detail response is the canonical contract projection. The
   // legacy eFormSign document is still passed through for field fallbacks,
   // but its status may lag after a reissue and must never override the
   // backend's hasSigned/documentStatus values.
-  const localDetailClient = useMemo(() => (
-    detailClient && detailClient.id === resolvedClientId ? detailClient : null
-  ), [detailClient, resolvedClientId]);
-
   const handleClientUpdated = useCallback((updatedClient: Client) => {
     if (resolvedClientIdRef.current !== updatedClient.id) return;
     detailRequestRef.current += 1;

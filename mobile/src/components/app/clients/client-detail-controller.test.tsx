@@ -3,7 +3,9 @@ import { Children, isValidElement, useLayoutEffect, type ReactElement, type Reac
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 import type { Client } from "@/lib/client/types";
+import type { EformsignDocument } from "@/lib/eformsign/types";
 import { fetchClient, useClient, useDeleteClient } from "@/hooks/useClients";
+import { eformsignApi } from "@/services/api";
 import { useClientDetailController } from "./client-detail-controller";
 
 jest.mock("next/navigation", () => ({
@@ -72,12 +74,14 @@ jest.mock("@/components/app/clients/client-detail", () => ({
 }));
 
 jest.mock("@/services/api", () => ({
-  eformsignApi: { getDocument: jest.fn() },
+  eformsignApi: { getDocument: jest.fn(), getLocalDocumentRecord: jest.fn() },
 }));
 
 const mockedFetchClient = jest.mocked(fetchClient);
 const mockedUseClient = jest.mocked(useClient);
 const mockedUseDeleteClient = jest.mocked(useDeleteClient);
+const mockedGetDocument = jest.mocked(eformsignApi.getDocument);
+const mockedGetLocalDocumentRecord = jest.mocked(eformsignApi.getLocalDocumentRecord);
 
 function makeClient(id: number): Client {
   return {
@@ -107,6 +111,10 @@ function makeClient(id: number): Client {
   };
 }
 
+function makeProviderDocument(id: string, createdDate: unknown): EformsignDocument {
+  return { id, created_date: createdDate } as EformsignDocument;
+}
+
 function createWrapper() {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return function Wrapper({ children }: { children: ReactNode }) {
@@ -125,18 +133,21 @@ function hasDataComponent(node: ReactNode, expected: string): boolean {
 function getClientDetailProps(node: ReactNode): {
   onDelete: (id: number) => void;
   onClientUpdated: (client: Client) => void;
+  contractDocument?: EformsignDocument | null;
 } | null {
   for (const child of Children.toArray(node)) {
     if (!isValidElement(child)) continue;
     const props = child.props as {
       onDelete?: (id: number) => void;
       onClientUpdated?: (client: Client) => void;
+      contractDocument?: EformsignDocument | null;
       children?: ReactNode;
     };
     if (props.onDelete && props.onClientUpdated) {
       return {
         onDelete: props.onDelete,
         onClientUpdated: props.onClientUpdated,
+        contractDocument: props.contractDocument,
       };
     }
     const nested = getClientDetailProps(props.children);
@@ -154,6 +165,8 @@ describe("useClientDetailController", () => {
       isPending: false,
       mutateAsync: jest.fn(),
     } as unknown as ReturnType<typeof useDeleteClient>);
+    mockedGetDocument.mockReset();
+    mockedGetLocalDocumentRecord.mockReset();
   });
 
   it("does not let a stale fresh response for a previous selection replace the current client", async () => {
@@ -468,5 +481,127 @@ describe("useClientDetailController", () => {
 
     expect(onClientUpdated).not.toHaveBeenCalled();
     expect(result.current.detailClient).toBeNull();
+  });
+
+  it("uses the matching mirror date when the provider detail ends in a 503", async () => {
+    const client = { ...makeClient(1), eDocId: "doc-1" };
+    mockedFetchClient.mockResolvedValue(client);
+    mockedGetDocument.mockRejectedValue(new Error("provider 503"));
+    mockedGetLocalDocumentRecord.mockResolvedValue({
+      documentId: "doc-1",
+      createdDate: "2026-09-18T12:00:00.000Z",
+    });
+
+    const { result } = renderHook(
+      () => useClientDetailController({ client, dataComponent: "mobile_clients_detail-sheet_detail" }),
+      { wrapper: createWrapper() },
+    );
+
+    await waitFor(() => expect(mockedGetLocalDocumentRecord).toHaveBeenCalledWith("doc-1"), { timeout: 4_000 });
+    await waitFor(() => expect(
+      getClientDetailProps(result.current.detail)?.contractDocument?.created_date,
+    ).toBe(Date.parse("2026-09-18T12:00:00.000Z")));
+  });
+
+  it("keeps a valid provider date and does not request the mirror", async () => {
+    const client = { ...makeClient(1), eDocId: "doc-1" };
+    mockedFetchClient.mockResolvedValue(client);
+    const providerDocument = makeProviderDocument("doc-1", Date.parse("2026-09-17T12:00:00.000Z"));
+    mockedGetDocument.mockResolvedValue(providerDocument);
+
+    const { result } = renderHook(
+      () => useClientDetailController({ client, dataComponent: "mobile_clients_detail-sheet_detail" }),
+      { wrapper: createWrapper() },
+    );
+
+    await waitFor(() => expect(
+      getClientDetailProps(result.current.detail)?.contractDocument,
+    ).toBe(providerDocument));
+    expect(mockedGetLocalDocumentRecord).not.toHaveBeenCalled();
+  });
+
+  it("falls back to a matching mirror date after a successful provider response with an invalid date", async () => {
+    const client = { ...makeClient(1), eDocId: "doc-1" };
+    mockedFetchClient.mockResolvedValue(client);
+    const providerDocument = makeProviderDocument("doc-1", 0);
+    mockedGetDocument.mockResolvedValue(providerDocument);
+    mockedGetLocalDocumentRecord.mockResolvedValue({
+      documentId: "doc-1",
+      createdDate: "2026-09-18T12:00:00.000Z",
+    });
+
+    const { result } = renderHook(
+      () => useClientDetailController({ client, dataComponent: "mobile_clients_detail-sheet_detail" }),
+      { wrapper: createWrapper() },
+    );
+
+    await waitFor(() => expect(mockedGetLocalDocumentRecord).toHaveBeenCalledWith("doc-1"), { timeout: 4_000 });
+    await waitFor(() => expect(
+      getClientDetailProps(result.current.detail)?.contractDocument?.created_date,
+    ).toBe(Date.parse("2026-09-18T12:00:00.000Z")));
+  });
+
+  it.each([
+    ["missing", {}],
+    ["malformed", { documentId: "doc-1", createdDate: "not-a-date" }],
+    ["nonpositive", { documentId: "doc-1", createdDate: 0 }],
+    ["negative", { documentId: "doc-1", createdDate: -1 }],
+    ["numeric string zero", { documentId: "doc-1", createdDate: "0" }],
+    ["numeric string negative", { documentId: "doc-1", createdDate: "-1" }],
+    ["mismatched", { documentId: "doc-other", createdDate: "2026-09-18T12:00:00.000Z" }],
+  ])("keeps the sent date empty for a %s mirror record", async (_label, record) => {
+    const client = { ...makeClient(1), eDocId: "doc-1" };
+    mockedFetchClient.mockResolvedValue(client);
+    mockedGetDocument.mockRejectedValue(new Error("provider 503"));
+    mockedGetLocalDocumentRecord.mockResolvedValue(record);
+
+    const { result } = renderHook(
+      () => useClientDetailController({ client, dataComponent: "mobile_clients_detail-sheet_detail" }),
+      { wrapper: createWrapper() },
+    );
+
+    await waitFor(() => expect(mockedGetLocalDocumentRecord).toHaveBeenCalledWith("doc-1"), { timeout: 4_000 });
+    await waitFor(() => expect(getClientDetailProps(result.current.detail)?.contractDocument ?? null).toBeNull());
+  });
+
+  it("does not let deferred provider or mirror data from client A appear after switching to client B", async () => {
+    const providerRequests = new Map<string, { resolve: (document: EformsignDocument) => void; reject: (error: Error) => void }>();
+    const localRequests = new Map<string, { resolve: (record: { documentId: string; createdDate: string }) => void }>();
+    mockedGetDocument.mockImplementation((documentId) => {
+      if (documentId === "doc-a") return Promise.reject(new Error("provider 503"));
+      return new Promise<EformsignDocument>((resolve, reject) => {
+        providerRequests.set(documentId, { resolve, reject });
+      });
+    });
+    mockedGetLocalDocumentRecord.mockImplementation((documentId) => new Promise((resolve) => {
+      localRequests.set(documentId, { resolve: resolve as (record: { documentId: string; createdDate: string }) => void });
+    }));
+
+    const clientA = { ...makeClient(1), eDocId: "doc-a" };
+    const clientB = { ...makeClient(2), eDocId: "doc-b" };
+    mockedFetchClient.mockImplementation(async (id) => id === 1 ? clientA : clientB);
+    const { result, rerender } = renderHook(
+      ({ client }: { client: Client }) => useClientDetailController({
+        client,
+        dataComponent: "mobile_clients_detail-sheet_detail",
+      }),
+      { initialProps: { client: clientA }, wrapper: createWrapper() },
+    );
+
+    await waitFor(() => expect(mockedGetDocument).toHaveBeenCalledWith("doc-a"));
+    await waitFor(() => expect(localRequests.has("doc-a")).toBe(true), { timeout: 4_000 });
+
+    rerender({ client: clientB });
+    await waitFor(() => expect(result.current.detailClient?.id).toBe(2));
+
+    await act(async () => {
+      localRequests.get("doc-a")?.resolve({
+        documentId: "doc-a",
+        createdDate: "2026-09-18T12:00:00.000Z",
+      });
+      await Promise.resolve();
+    });
+
+    expect(getClientDetailProps(result.current.detail)?.contractDocument ?? null).toBeNull();
   });
 });
