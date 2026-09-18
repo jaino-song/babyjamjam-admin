@@ -1,13 +1,14 @@
 "use client";
 
 import React, { useRef, useEffect } from "react";
+import Link from "next/link";
 import { cn } from "@/lib/utils";
 import { Loader2 } from "lucide-react";
 import { TeaserOverlay } from "./TeaserOverlay";
 
 type SlotClassNameArgs<T> = { index: number; item: T | null; isLoading: boolean };
 
-export interface AnimatedSlotListProps<T> {
+interface AnimatedSlotListBaseProps<T> {
   /** Caller-context canonical base for the list root. */
   "data-component"?: string;
   /** Number of slots to render. If not provided, shows all items (unlimited). */
@@ -22,7 +23,6 @@ export interface AnimatedSlotListProps<T> {
   delayStepSeconds?: number;
   hideEmptySlots?: boolean;
   slotClassName?: string | ((args: SlotClassNameArgs<T>) => string);
-  onSlotClick?: (item: T, index: number) => void;
   render: (args: { index: number; item: T | null; isLoading: boolean }) => React.ReactNode;
 
   // Load more functionality
@@ -38,6 +38,21 @@ export interface AnimatedSlotListProps<T> {
   animate?: boolean;
 }
 
+type AnimatedSlotListInteractionProps<T> =
+  | {
+      /** Render loaded items as native links. Cannot be combined with onSlotClick. */
+      getSlotHref: (item: T, index: number) => string;
+      onSlotClick?: never;
+    }
+  | {
+      /** Preserve the legacy loaded-item click wrapper. Cannot be combined with getSlotHref. */
+      getSlotHref?: never;
+      onSlotClick?: (item: T, index: number) => void;
+    };
+
+export type AnimatedSlotListProps<T> =
+  AnimatedSlotListBaseProps<T> & AnimatedSlotListInteractionProps<T>;
+
 export function AnimatedSlotList<T>({
   "data-component": dataComponent,
   count,
@@ -50,6 +65,7 @@ export function AnimatedSlotList<T>({
   hideEmptySlots = true,
   slotClassName,
   onSlotClick,
+  getSlotHref,
   render,
   // Load more props
   hasMore = false,
@@ -154,25 +170,42 @@ export function AnimatedSlotList<T>({
 
         const shouldHide = hideEmptySlots && !isLoading && !item;
         const itemOpacity = getItemOpacity(index);
+        const slotClassNameValue = cn(
+          animate && "animate-v3-pop-up",
+          computedSlotClassName,
+          shouldHide && "hidden"
+        );
+        const slotStyle = {
+          animationDelay: animate ? `${Math.min(index, 4) * delayStepSeconds}s` : undefined,
+          opacity: isLoading ? 1 : itemOpacity,
+        };
+        const slotContent = render({ index, item, isLoading });
+
+        if (!isLoading && item && getSlotHref) {
+          return (
+            <Link
+              key={`slot-${index}`}
+              href={getSlotHref(item, index)}
+              data-component={resolvedItemDataComponent}
+              className={slotClassNameValue}
+              style={slotStyle}
+            >
+              {slotContent}
+            </Link>
+          );
+        }
 
         return (
           <div
             key={`slot-${index}`}
             data-component={resolvedItemDataComponent}
-            className={cn(
-              animate && "animate-v3-pop-up",
-              computedSlotClassName,
-              shouldHide && "hidden"
-            )}
-            style={{
-              animationDelay: animate ? `${Math.min(index, 4) * delayStepSeconds}s` : undefined,
-              opacity: isLoading ? 1 : itemOpacity,
-            }}
+            className={slotClassNameValue}
+            style={slotStyle}
             onClick={
               !isLoading && item && onSlotClick ? () => onSlotClick(item, index) : undefined
             }
           >
-            {render({ index, item, isLoading })}
+            {slotContent}
           </div>
         );
       })}
