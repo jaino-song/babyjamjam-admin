@@ -13,6 +13,14 @@ PR [#731](https://github.com/jaino-song/babyjamjam-admin/pull/731) promoted `dev
 
 This records preview promotion and deterministic pre-deploy evidence only. Preview runtime/browser proof, paid Google/OpenAI quality evaluation, human review and operational activation remain open.
 
+## Scope update — 2026-09-19
+
+Per user direction, AWS OIDC/IAM repair, preview deployment/runtime/browser proof, production database changes and
+operational activation are skipped for this continuation and remain unverified. The OpenAI staging runner passed its
+dry-run configuration check, but the local evaluation key is absent; a bounded live smoke refused with
+`MISSING_API_KEY` before network transport. No provider request or secret value was recorded. Paid model-quality
+evaluation and human review remain pending a configured evaluation key.
+
 ## RV-04 real product AppModule path — 2026-09-19
 
 The guarded product evaluator is committed at `afca342d2` (`test(agent): harden guarded product evaluator`). This is the current-branch run that boots the real Nest `AppModule` against the disposable PostgreSQL database and exercises the task/action path instead of only the mocked evaluation harness.

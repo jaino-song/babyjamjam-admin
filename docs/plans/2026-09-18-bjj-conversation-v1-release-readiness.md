@@ -22,6 +22,16 @@ PR [#731](https://github.com/jaino-song/babyjamjam-admin/pull/731)이 `dev`를 `
 이 섹션은 preview 승격과 배포 전 결정적 검증만 기록한다. Preview runtime/browser proof, 유료
 Google/OpenAI 품질 평가, human review 및 운영 활성화는 여전히 별도 게이트다.
 
+## Scope update — 2026-09-19
+
+사용자 지시에 따라 AWS OIDC/IAM 수리, preview 배포·런타임·브라우저 검증, 운영 DB 변경 및 운영 활성화는
+이번 진행에서 건너뛴다. 해당 항목은 미검증으로 유지한다.
+
+OpenAI 평가 경로는 문서의 `gpt-4.1-mini` current/improved 프로필로 dry-run과 단일 케이스 live smoke를
+재확인했다. dry-run 설정은 유효했지만 로컬 환경에 비어 있지 않은 OpenAI 평가 키가 없어
+`MISSING_API_KEY`로 transport 생성 전에 fail-closed 되었다. provider 요청이나 키 값은 기록하지 않았다.
+유료 모델 품질 평가와 human review는 평가 키가 구성된 뒤 진행한다.
+
 ## Current task-branch attestation — 2026-09-18
 
 현재 누적 검증은 `/Users/jaino/Development/babyjamjam-admin/bjj-conversation-complete`의
