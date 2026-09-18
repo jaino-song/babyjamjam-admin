@@ -117,6 +117,7 @@ describeE2E("eformsign durable cancellation and reissue (disposable PostgreSQL)"
         await Promise.all([cancellationClient.$connect(), dispatchClient.$connect()]);
         const cancellationAcquired = barrier();
         const cancellationRelease = barrier();
+        const dispatchAttempted = barrier();
         const lockedCancellationClient = instrumentMirrorLock(cancellationClient, {
             acquired: cancellationAcquired.release,
             holdAfterAcquire: cancellationRelease.entered,
@@ -124,7 +125,9 @@ describeE2E("eformsign durable cancellation and reissue (disposable PostgreSQL)"
         const cancellationRepository = new SbEformsignCancellationRepository(
             lockedCancellationClient as never,
         );
-        const dispatchRepository = new SbEformsignDispatchIntentRepository(dispatchClient as never);
+        const dispatchRepository = new SbEformsignDispatchIntentRepository(
+            instrumentMirrorLock(dispatchClient, { attempted: dispatchAttempted.release }) as never,
+        );
         const cancellation = cancellationRepository.begin({
             branchId: created.branch.id,
             documentIds: [created.document.documentId],
@@ -139,7 +142,7 @@ describeE2E("eformsign durable cancellation and reissue (disposable PostgreSQL)"
             localDocumentId: created.document.id,
         }));
         const dispatch = dispatchRepository.claim(prepared.id, created.branch.id);
-        await new Promise<void>((resolve) => setImmediate(resolve));
+        await dispatchAttempted.entered;
         cancellationRelease.release();
 
         await expect(cancellation).resolves.toHaveProperty("targets");
@@ -157,6 +160,7 @@ describeE2E("eformsign durable cancellation and reissue (disposable PostgreSQL)"
         await Promise.all([dispatchClient.$connect(), cancellationClient.$connect()]);
         const dispatchAcquired = barrier();
         const dispatchRelease = barrier();
+        const cancellationAttempted = barrier();
         const lockedDispatchClient = instrumentMirrorLock(dispatchClient, {
             acquired: dispatchAcquired.release,
             holdAfterAcquire: dispatchRelease.entered,
@@ -164,7 +168,9 @@ describeE2E("eformsign durable cancellation and reissue (disposable PostgreSQL)"
         const dispatchRepository = new SbEformsignDispatchIntentRepository(
             lockedDispatchClient as never,
         );
-        const cancellationRepository = new SbEformsignCancellationRepository(cancellationClient as never);
+        const cancellationRepository = new SbEformsignCancellationRepository(
+            instrumentMirrorLock(cancellationClient, { attempted: cancellationAttempted.release }) as never,
+        );
         const prepared = await dispatchRepository.prepare(createDispatchIntentInput({
             branchId: created.branch.id,
             clientId: created.client.id,
@@ -178,7 +184,7 @@ describeE2E("eformsign durable cancellation and reissue (disposable PostgreSQL)"
             actorUserId: randomUUID(),
             reason: "dispatch owns mirror first",
         });
-        await new Promise<void>((resolve) => setImmediate(resolve));
+        await cancellationAttempted.entered;
         dispatchRelease.release();
 
         await expect(dispatch).resolves.toMatchObject({ claimed: true });
