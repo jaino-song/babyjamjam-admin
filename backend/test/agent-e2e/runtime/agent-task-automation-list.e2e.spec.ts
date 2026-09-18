@@ -388,7 +388,7 @@ describeAgentE2E("real automation.list with two eligible clients and missing def
             const client = await sourceReader.readClientAutomationSource(branchId, createdId, tx);
             const settings = await sourceReader.readClientAutomationSettings(branchId, tx);
             if (!client || settings.status !== "available") throw new Error("Missing synthetic source");
-            const rule = settings.rules.find(({ templateKey }) => templateKey === "CLIENT_GREETING")!;
+            const rule = settings.rules.find(({ branchId: ownerBranchId, templateKey }) => ownerBranchId === branchId && templateKey === "CLIENT_GREETING")!;
             const recipe = buildClientMessageRecipe(rule, client, new Date())!;
             const storedJob = await tx.message_trigger_job.create({ data: {
                 ...recipe,

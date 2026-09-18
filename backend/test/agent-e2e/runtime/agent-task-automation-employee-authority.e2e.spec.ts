@@ -72,6 +72,7 @@ describeAgentE2E("employee-assignment automation authority adapter", () => {
         await prisma.client.deleteMany({ where: { id: clientId, branchId } });
         await prisma.employee.deleteMany({ where: { branchId, id: { in: [primaryEmployeeId, secondaryEmployeeId, replacementEmployeeId] } } });
         await prisma.system_setting.deleteMany({ where: { key: parentPolicyKey } });
+        await prisma.message_trigger_rule.deleteMany({ where: { id: MESSAGE_AUTOMATION_INTENT_RULE_ID } });
         await prisma.branch.deleteMany({ where: { id: branchId } });
     }
 
@@ -303,6 +304,23 @@ describeAgentE2E("employee-assignment automation authority adapter", () => {
             templateKey: MessageTriggerTemplateKey.EMPLOYEE_ASSIGNED,
             isDefault: false,
         } });
+        await prisma.message_trigger_rule.upsert({
+            where: { id: MESSAGE_AUTOMATION_INTENT_RULE_ID },
+            update: {},
+            create: {
+                id: MESSAGE_AUTOMATION_INTENT_RULE_ID,
+                branchId: null,
+                name: "메시지 자동화 생성 복구 표식",
+                isActive: false,
+                eventType: MessageTriggerEventType.CLIENT_CREATED,
+                offsetType: MessageTriggerOffsetType.IMMEDIATE,
+                offsetDays: 0,
+                recipientType: MessageTriggerRecipientType.CLIENT,
+                templateKey: MessageTriggerTemplateKey.CLIENT_GREETING,
+                isDefault: false,
+                jobsStale: false,
+            },
+        });
         await prisma.employee_schedule.create({ data: {
             id: scheduleId,
             branchId,
