@@ -250,8 +250,9 @@ export class SbSystemTemplateRepository implements ISystemTemplateRepository {
   async findByBranchKey(
     branchId: string,
     key: SystemTemplateKey,
+    transaction?: Prisma.TransactionClient,
   ): Promise<SystemTemplateEntity | null> {
-    return this.prisma.$transaction(async (transaction) => {
+    const read = async (transaction: Prisma.TransactionClient) => {
       const branch = await transaction.branch.findUnique({
         where: { id: branchId },
         select: { id: true, systemTemplateSnapshot: true },
@@ -275,7 +276,8 @@ export class SbSystemTemplateRepository implements ISystemTemplateRepository {
 
       const row = await transaction.system_template.findUnique({ where: { templateKey: key } });
       return row ? SystemTemplateMapper.toDomain(row) : null;
-    }, {
+    };
+    return transaction ? read(transaction) : this.prisma.$transaction(read, {
       isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead,
       maxWait: 5_000,
       timeout: 15_000,

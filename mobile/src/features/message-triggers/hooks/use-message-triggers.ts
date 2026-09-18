@@ -52,6 +52,196 @@ function normalizeSinglePayload<T>(payload: unknown): T | null {
     return null;
 }
 
+class MessageHistoryContractError extends Error {
+    readonly retryable = false;
+
+    constructor(message: string) {
+        super(message);
+        this.name = "MessageHistoryContractError";
+    }
+}
+
+class MessageHistoryTransientError extends Error {
+    readonly retryable = true;
+    readonly attemptedPages: number;
+
+    constructor(attemptedPages: number) {
+        super("메시지 발송 기록을 불러오는 중 일시적인 오류가 발생했습니다. 잠시 후 자동으로 다시 시도합니다.");
+        this.name = "MessageHistoryTransientError";
+        this.attemptedPages = attemptedPages;
+    }
+}
+
+function createAbortError(reason: unknown): Error {
+    if (
+        reason !== null
+        && typeof reason === "object"
+        && "name" in reason
+        && (reason as { name?: unknown }).name === "AbortError"
+    ) {
+        return reason as Error;
+    }
+
+    const abortError = new Error(
+        reason instanceof Error ? reason.message : "메시지 발송 기록 요청이 취소되었습니다.",
+    );
+    abortError.name = "AbortError";
+    return abortError;
+}
+
+interface NormalizedMessageHistoryPage {
+    items: MessageLogRecord[];
+    snapshotAt: string;
+    nextCursor: string | null;
+    hasMore: boolean;
+}
+
+function normalizeMessageHistoryPage(payload: unknown): NormalizedMessageHistoryPage {
+    if (payload === null || typeof payload !== "object") {
+        throw new MessageHistoryContractError("메시지 발송 기록 서버 응답 형식이 올바르지 않습니다.");
+    }
+
+    const envelope = payload as Record<string, unknown>;
+    const page = envelope.page;
+    if (!Array.isArray(envelope.items) || page === null || typeof page !== "object") {
+        throw new MessageHistoryContractError("메시지 발송 기록 서버 응답 형식이 올바르지 않습니다.");
+    }
+
+    const pageRecord = page as Record<string, unknown>;
+    if (
+        typeof pageRecord.snapshotAt !== "string"
+        || Number.isNaN(new Date(pageRecord.snapshotAt).getTime())
+        || typeof pageRecord.hasMore !== "boolean"
+        || (pageRecord.nextCursor !== null && typeof pageRecord.nextCursor !== "string")
+        || (typeof pageRecord.nextCursor === "string" && pageRecord.nextCursor.length === 0)
+        || (!pageRecord.hasMore && pageRecord.nextCursor !== null)
+    ) {
+        throw new MessageHistoryContractError("메시지 발송 기록 서버 응답 형식이 올바르지 않습니다.");
+    }
+
+    for (const item of envelope.items) {
+        if (
+            item === null
+            || typeof item !== "object"
+            || !("id" in item)
+            || (typeof (item as { id?: unknown }).id !== "string"
+                && typeof (item as { id?: unknown }).id !== "number")
+        ) {
+            throw new MessageHistoryContractError("메시지 발송 기록 항목 형식이 올바르지 않습니다.");
+        }
+    }
+
+    return {
+        items: envelope.items as MessageLogRecord[],
+        snapshotAt: pageRecord.snapshotAt,
+        nextCursor: pageRecord.nextCursor as string | null,
+        hasMore: pageRecord.hasMore,
+    };
+}
+
+export const MESSAGE_HISTORY_REFRESH_INTERVAL_MS = 5_000;
+
+export function getMessageHistoryRefetchInterval(
+    recordCount: number | undefined,
+    pageSize: number,
+    attemptedPageCount = 0,
+): number {
+    const safePageSize = Math.max(pageSize, 1);
+    const safeRecordCount = Math.max(recordCount ?? 0, 0);
+    const estimatedPageRequests = Math.floor(safeRecordCount / safePageSize) + 1;
+    const safeAttemptedPageCount = Math.max(attemptedPageCount, 1);
+
+    return MESSAGE_HISTORY_REFRESH_INTERVAL_MS * Math.max(estimatedPageRequests, safeAttemptedPageCount);
+}
+
+async function fetchCompleteMessageHistory(
+    limit: number,
+    signal?: AbortSignal,
+): Promise<MessageLogRecord[]> {
+    const records: MessageLogRecord[] = [];
+    const seenIds = new Set<string>();
+    const seenCursors = new Set<string>();
+    let cursor: string | undefined;
+    let snapshotAt: string | undefined;
+
+    for (let pageIndex = 0; pageIndex < 100; pageIndex += 1) {
+        if (signal?.aborted) {
+            throw createAbortError(signal.reason);
+        }
+        if (cursor !== undefined) {
+            if (seenCursors.has(cursor)) {
+                throw new MessageHistoryContractError(
+                    "메시지 발송 기록 페이지 커서가 반복되어 전체 기록을 확인할 수 없습니다.",
+                );
+            }
+            seenCursors.add(cursor);
+        }
+
+        let response;
+        try {
+            response = await messageTriggersApi.listHistoryPage(limit, cursor, signal);
+        } catch (error) {
+            if (signal?.aborted || (error instanceof Error && error.name === "AbortError")) {
+                throw createAbortError(signal?.aborted ? signal.reason : error);
+            }
+            throw new MessageHistoryTransientError(pageIndex + 1);
+        }
+        const page = normalizeMessageHistoryPage(response.data);
+        if (snapshotAt === undefined) {
+            snapshotAt = page.snapshotAt;
+        } else if (snapshotAt !== page.snapshotAt) {
+            throw new MessageHistoryContractError(
+                "메시지 발송 기록 스냅샷이 변경되어 전체 기록을 확인할 수 없습니다.",
+            );
+        }
+        if (page.hasMore && page.items.length === 0) {
+            throw new MessageHistoryContractError(
+                "메시지 발송 기록 페이지가 비어 있어 전체 기록을 확인할 수 없습니다.",
+            );
+        }
+
+        for (const record of page.items) {
+            const recordId = String(record.id);
+            if (seenIds.has(recordId)) {
+                throw new MessageHistoryContractError(
+                    "메시지 발송 기록에 중복된 항목이 있어 전체 기록을 확인할 수 없습니다.",
+                );
+            }
+
+            seenIds.add(recordId);
+            records.push(record);
+        }
+
+        if (records.length > 50_000) {
+            throw new MessageHistoryContractError(
+                "메시지 발송 기록이 100페이지(최대 50,000건)를 초과하여 전체 기록을 확인할 수 없습니다.",
+            );
+        }
+
+        if (!page.hasMore) return records;
+        if (page.nextCursor === null) {
+            throw new MessageHistoryContractError(
+                "메시지 발송 기록 페이지 커서가 누락되어 전체 기록을 확인할 수 없습니다.",
+            );
+        }
+        if (cursor !== undefined && page.nextCursor === cursor) {
+            throw new MessageHistoryContractError(
+                "메시지 발송 기록 페이지 커서가 진행되지 않아 전체 기록을 확인할 수 없습니다.",
+            );
+        }
+        if (pageIndex === 99) {
+            throw new MessageHistoryContractError(
+                "메시지 발송 기록이 100페이지(최대 50,000건)를 초과하여 전체 기록을 확인할 수 없습니다.",
+            );
+        }
+        cursor = page.nextCursor;
+    }
+
+    throw new MessageHistoryContractError(
+        "메시지 발송 기록이 100페이지(최대 50,000건)를 초과하여 전체 기록을 확인할 수 없습니다.",
+    );
+}
+
 export function useMessageTriggerRules() {
     return useQuery<MessageTriggerRule[]>({
         queryKey: messageTriggerKeys.list(),
@@ -98,16 +288,45 @@ export function useUpcomingMessageTriggerJobs(limit = 200) {
     });
 }
 
-export function useMessageHistory(limit = 200) {
+export function useMessageHistory(limit = 500) {
     return useQuery<MessageLogRecord[]>({
         queryKey: messageTriggerKeys.history(limit),
-        queryFn: () =>
-            messageTriggersApi
-                .listHistory(limit)
-                .then((response) => normalizeArrayPayload<MessageLogRecord>(response.data)),
+        queryFn: ({ signal }) => fetchCompleteMessageHistory(limit, signal),
         staleTime: 0,
         refetchOnMount: "always",
-        refetchInterval: 5_000,
+        // Complete-history refreshes make one sequential request per page.
+        // Space a multi-page refresh across the same number of 5-second slots
+        // as the previous single-page poll: two pages refresh every 10 seconds,
+        // three pages every 15 seconds. Manual and mutation invalidations still
+        // refetch immediately; a row can be stale for up to the scaled interval
+        // (plus request time); transient failures retain the attempted-page
+        // count so a late failure cannot restart a full walk every five seconds.
+        retry: false,
+        refetchInterval: (query) => {
+            const error = query.state.error as {
+                retryable?: boolean;
+                name?: string;
+                attemptedPages?: number;
+            } | null;
+            if (error?.retryable === false || error?.name === "AbortError") return false;
+            return getMessageHistoryRefetchInterval(
+                query.state.data?.length,
+                limit,
+                error?.attemptedPages,
+            );
+        },
+    });
+}
+
+export function useRetryMessageHistory() {
+    const queryClient = useQueryClient();
+
+    return useMutation({
+        mutationFn: (id: number) =>
+            messageTriggersApi.retryHistory(id).then((response) => response.data),
+        onSuccess: async () => {
+            await queryClient.invalidateQueries({ queryKey: messageTriggerKeys.history() });
+        },
     });
 }
 

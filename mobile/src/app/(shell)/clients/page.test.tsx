@@ -79,15 +79,20 @@ jest.mock("@/components/app/mobile-redesign/primitives", () => ({
   ListCard: ({
     beforeFilters,
     children,
+    count,
     filters,
     onFilterChange,
+    title,
   }: {
     beforeFilters?: ReactNode;
     children: ReactNode;
+    count?: ReactNode;
     filters: Array<{ label: string; count: ReactNode }>;
     onFilterChange?: (label: string) => void;
+    title?: string;
   }) => (
     <div>
+      {title ? <div data-testid="list-card-header-count">{title} {count}</div> : null}
       {beforeFilters}
       <div>
         {filters.map((filter) => (
@@ -117,7 +122,19 @@ jest.mock("@/components/app/mobile-redesign/detail-sheet", () => ({
     detail: ReactNode;
     list: ReactNode;
   }) => <div>{list}{detail}</div>,
-  MobileSearchBar: () => null,
+  MobileSearchBar: ({
+    value,
+    onChange,
+  }: {
+    value: string;
+    onChange: (value: string) => void;
+  }) => (
+    <input
+      aria-label="고객 검색"
+      value={value}
+      onChange={(event) => onChange(event.target.value)}
+    />
+  ),
 }));
 
 jest.mock("@/components/app/mobile-redesign/ClientRegistrationPolicySettings", () => ({
@@ -301,5 +318,31 @@ describe("ClientsPage URL-selected detail identity", () => {
       await Promise.resolve();
     });
     await waitFor(() => expect(screen.getByTestId("client-detail-2")).toBeInTheDocument());
+  });
+
+  it("uses the filtered count for the header and 전체 chip while searching", async () => {
+    mockClientId = null;
+    const clients = [makeClient(1), makeClient(2), makeClient(3)];
+    mockedUseInfiniteClients.mockImplementation(({ search } = {}) => ({
+      allClients: clients,
+      allFilteredClients: search?.trim() ? clients.slice(0, 1) : clients,
+      total: clients.length,
+      isLoading: false,
+      isFetching: false,
+    } as unknown as ReturnType<typeof useInfiniteClients>));
+
+    renderPage(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
+
+    expect(screen.getByTestId("list-card-header-count")).toHaveTextContent("고객 3명");
+    expect(screen.getByRole("button", { name: "전체 3" })).toBeInTheDocument();
+
+    fireEvent.change(screen.getByRole("textbox", { name: "고객 검색" }), {
+      target: { value: "고객 1" },
+    });
+
+    await waitFor(() => {
+      expect(screen.getByTestId("list-card-header-count")).toHaveTextContent("고객 1명");
+      expect(screen.getByRole("button", { name: "전체 1" })).toBeInTheDocument();
+    });
   });
 });

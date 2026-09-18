@@ -17,6 +17,69 @@ export interface VariableValidationResult {
     errors: string[];
 }
 
+export const MESSAGE_TEMPLATE_REQUIRED_FIELD_MESSAGES = {
+    name: "템플릿 이름은 공백 이외의 문자를 포함해야 합니다.",
+    content: "템플릿 내용은 공백 이외의 문자를 포함해야 합니다.",
+} as const;
+
+export const MESSAGE_TEMPLATE_REQUIRED_FIELD_MISSING_MESSAGES = {
+    name: "템플릿 이름을 입력해주세요.",
+    content: "템플릿 내용을 입력해주세요.",
+} as const;
+
+export interface MessageTemplateRequiredFieldInput {
+    name?: unknown;
+    content?: unknown;
+}
+
+export interface MessageTemplateRequiredFieldOptions {
+    requireName?: boolean;
+    requireContent?: boolean;
+}
+
+/**
+ * Validate only fields present in an incoming write. Legacy rows may contain
+ * blank values, so partial updates must not reject fields that were omitted.
+ */
+export function validateMessageTemplateRequiredFields(
+    fields: MessageTemplateRequiredFieldInput,
+    options: MessageTemplateRequiredFieldOptions = {},
+): VariableValidationResult {
+    const errors: string[] = [];
+    const fieldRules = [
+        {
+            key: "name" as const,
+            value: fields.name,
+            required: options.requireName === true,
+            missingMessage: MESSAGE_TEMPLATE_REQUIRED_FIELD_MISSING_MESSAGES.name,
+            invalidMessage: MESSAGE_TEMPLATE_REQUIRED_FIELD_MESSAGES.name,
+        },
+        {
+            key: "content" as const,
+            value: fields.content,
+            required: options.requireContent === true,
+            missingMessage: MESSAGE_TEMPLATE_REQUIRED_FIELD_MISSING_MESSAGES.content,
+            invalidMessage: MESSAGE_TEMPLATE_REQUIRED_FIELD_MESSAGES.content,
+        },
+    ];
+
+    for (const rule of fieldRules) {
+        if (rule.value === undefined) {
+            if (rule.required) errors.push(rule.missingMessage);
+            continue;
+        }
+
+        if (typeof rule.value !== "string" || !/\S/.test(rule.value)) {
+            errors.push(rule.invalidMessage);
+        }
+    }
+
+    return {
+        valid: errors.length === 0,
+        errors,
+    };
+}
+
 interface CreateMessageTemplateProps {
     name: string;
     content: string;

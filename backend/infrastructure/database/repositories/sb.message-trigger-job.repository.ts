@@ -5,7 +5,9 @@ import { PrismaService } from "infrastructure/database/prisma.service";
 import {
     IMessageTriggerJobRepository,
     MessageTriggerJobCancellationScope,
+    MessageTriggerJobReviewSnapshot,
 } from "domain/repositories/message-trigger-job.repository.interface";
+import type { MessageHistoryPageQuery } from "domain/repositories/message-log.repository.interface";
 import {
     MessageTriggerJobEntity,
     MessageTriggerJobPayload,
@@ -22,6 +24,8 @@ import {
     SERVICE_RECORD_LINK_SCHEDULING_RETRY_REASON,
 } from "domain/constants/service-record-link-message";
 import { manualMessageTriggerJobPredicate } from "application/utils/message-trigger-job-ownership-sql";
+import { isReservedAutomationJob } from "domain/constants/agent-automation-storage";
+import { ordinaryAutomationJobSql, ordinaryAutomationJobWhere } from "application/utils/message-automation-record-sql";
 
 type MessageTriggerJobPrismaRow = {
     id: string;
@@ -147,6 +151,7 @@ export class SbMessageTriggerJobRepository implements IMessageTriggerJobReposito
     }
 
     async create(job: MessageTriggerJobEntity): Promise<MessageTriggerJobEntity> {
+        this.assertOrdinaryJob(job);
         const row = await this.prisma.message_trigger_job.create({
             data: this.toCreate(job),
         });
@@ -154,15 +159,16 @@ export class SbMessageTriggerJobRepository implements IMessageTriggerJobReposito
     }
 
     async update(job: MessageTriggerJobEntity): Promise<MessageTriggerJobEntity> {
+        this.assertOrdinaryJob(job);
         const branchWhere = this.branchWhereFragment(job);
         if (job.claimToken) {
             const result = await this.prisma.message_trigger_job.updateMany({
-                where: { id: job.id, claimToken: job.claimToken, ...branchWhere },
+                where: { id: job.id, claimToken: job.claimToken, ...branchWhere, ...ordinaryAutomationJobWhere() },
                 data: this.toUpdate(job),
             });
             if (result.count !== 1) {
                 const current = await this.prisma.message_trigger_job.findUnique({
-                    where: { id: job.id, ...branchWhere },
+                    where: { id: job.id, ...branchWhere, ...ordinaryAutomationJobWhere() },
                 });
                 if (!current) {
                     throw new Error(`Message trigger job not found: ${job.id}`);
@@ -170,7 +176,7 @@ export class SbMessageTriggerJobRepository implements IMessageTriggerJobReposito
                 return this.toDomain(current);
             }
             const current = await this.prisma.message_trigger_job.findUnique({
-                where: { id: job.id, ...branchWhere },
+                where: { id: job.id, ...branchWhere, ...ordinaryAutomationJobWhere() },
             });
             if (!current) {
                 throw new Error(`Message trigger job not found: ${job.id}`);
@@ -178,15 +184,15 @@ export class SbMessageTriggerJobRepository implements IMessageTriggerJobReposito
             return this.toDomain(current);
         }
         const row = await this.prisma.message_trigger_job.update({
-            where: { id: job.id, ...branchWhere },
+            where: { id: job.id, ...branchWhere, ...ordinaryAutomationJobWhere() },
             data: this.toUpdate(job),
         });
         return this.toDomain(row);
     }
 
     async findByIdInBranch(branchId: string, id: string): Promise<MessageTriggerJobEntity | null> {
-        const row = await this.prisma.message_trigger_job.findFirst({ where: { id, branchId } });
-        return row ? this.toDomain(row) : null;
+        const row = await this.prisma.message_trigger_job.findFirst({ where: { id, branchId, ...ordinaryAutomationJobWhere() } });
+        return row && !isReservedAutomationJob(row) ? this.toDomain(row) : null;
     }
 
     async claimPendingWithRuleFence(
@@ -249,6 +255,7 @@ export class SbMessageTriggerJobRepository implements IMessageTriggerJobReposito
                 WHERE job.id = ${id}
                   AND ${jobBranchPredicate}
                   AND job.status = 'pending'
+                  AND ${ordinaryAutomationJobSql({ ruleId: Prisma.sql`job.rule_id`, dedupeKey: Prisma.sql`job.dedupe_key`, payload: Prisma.sql`job.payload` })}
             ),
             locked_rule AS MATERIALIZED (
                 SELECT rule.id
@@ -267,6 +274,7 @@ export class SbMessageTriggerJobRepository implements IMessageTriggerJobReposito
               AND job.rule_id = rule.id
               AND ${jobBranchPredicate}
               AND job.status = 'pending'
+              AND ${ordinaryAutomationJobSql({ ruleId: Prisma.sql`job.rule_id`, dedupeKey: Prisma.sql`job.dedupe_key`, payload: Prisma.sql`job.payload` })}
             RETURNING job.id, job.claim_token
         `);
         return claimed[0]?.claim_token ?? null;
@@ -275,7 +283,7 @@ export class SbMessageTriggerJobRepository implements IMessageTriggerJobReposito
     async findDuePendingSystemScope(limit = 100): Promise<MessageTriggerJobEntity[]> {
         const now = new Date();
         const rows = await this.prisma.message_trigger_job.findMany({
-            where: {
+            where: { ...ordinaryAutomationJobWhere(),
                 status: "pending",
                 scheduledFor: { lte: now },
                 OR: [{ nextAttemptAt: null }, { nextAttemptAt: { lte: now } }],
@@ -291,7 +299,7 @@ export class SbMessageTriggerJobRepository implements IMessageTriggerJobReposito
 
     async findStaleProcessingSystemScope(cutoff: Date, limit = 50): Promise<MessageTriggerJobEntity[]> {
         const rows = await this.prisma.message_trigger_job.findMany({
-            where: {
+            where: { ...ordinaryAutomationJobWhere(),
                 // `dispatching` is an irreversible provider authorization
                 // state. It is reclaimed for reconciliation, never for a
                 // fresh provider attempt, so a crash after authorization
@@ -310,7 +318,7 @@ export class SbMessageTriggerJobRepository implements IMessageTriggerJobReposito
         limit = 200,
     ): Promise<MessageTriggerJobEntity[]> {
         const rows = await this.prisma.message_trigger_job.findMany({
-            where: {
+            where: { ...ordinaryAutomationJobWhere(),
                 branchId,
                 status: { in: ["pending", "processing", "dispatching"] },
             },
@@ -325,13 +333,46 @@ export class SbMessageTriggerJobRepository implements IMessageTriggerJobReposito
         limit = 200,
     ): Promise<MessageTriggerJobEntity[]> {
         const rows = await this.prisma.message_trigger_job.findMany({
-            where: {
+            where: { ...ordinaryAutomationJobWhere(),
                 branchId,
                 ruleId: { not: MESSAGE_AUTOMATION_INTENT_RULE_ID },
                 status: { in: ["failed", "canceled"] },
             },
             orderBy: { updatedAt: "desc" },
             take: limit,
+        });
+        return rows.map((row) => this.toDomain(row));
+    }
+
+    async findHistoryPageByBranch(
+        branchId: string,
+        query: MessageHistoryPageQuery,
+    ): Promise<MessageTriggerJobEntity[]> {
+        const after = query.after;
+        const afterWhere = after?.source === "job"
+            ? { id: { lt: after.nativeId } }
+            : undefined;
+
+        const rows = await this.prisma.message_trigger_job.findMany({
+            where: {
+                branchId,
+                ruleId: { not: MESSAGE_AUTOMATION_INTENT_RULE_ID },
+                // History is a current-state view. The application cutoff
+                // fences immutable creation only; current status changes may
+                // appear or disappear between page requests and are allowed
+                // to settle on the next poll.
+                status: { in: ["failed", "canceled"] },
+                // A post-cutoff log must not hide a job that is currently
+                // terminal; suppress only logs present at this cutoff.
+                logs: { none: { branchId, createdAt: { lte: query.snapshotAt } } },
+                // Native UUID ordering is the continuation key. The createdAt
+                // cutoff is eligibility only; it is never serialized into or
+                // compared as a cursor position.
+                createdAt: { lte: query.snapshotAt },
+                ...(afterWhere ? { AND: [afterWhere] } : {}),
+            },
+            orderBy: { id: "desc" },
+            take: query.limit,
         });
         return rows.map((row) => this.toDomain(row));
     }
@@ -351,7 +392,7 @@ export class SbMessageTriggerJobRepository implements IMessageTriggerJobReposito
         limit: number,
     ): Promise<MessageTriggerJobEntity[]> {
         const rows = await this.prisma.message_trigger_job.findMany({
-            where: {
+            where: { ...ordinaryAutomationJobWhere(),
                 branchId,
                 ruleId: { not: MESSAGE_AUTOMATION_INTENT_RULE_ID },
                 canceledByUser: false,
@@ -372,7 +413,7 @@ export class SbMessageTriggerJobRepository implements IMessageTriggerJobReposito
         until: Date,
     ): Promise<number> {
         return this.prisma.message_trigger_job.count({
-            where: {
+            where: { ...ordinaryAutomationJobWhere(),
                 branchId,
                 ruleId: { not: MESSAGE_AUTOMATION_INTENT_RULE_ID },
                 canceledByUser: false,
@@ -390,7 +431,7 @@ export class SbMessageTriggerJobRepository implements IMessageTriggerJobReposito
         beforeId?: string,
     ): Promise<MessageTriggerJobEntity[]> {
         const rows = await this.prisma.message_trigger_job.findMany({
-            where: {
+            where: { ...ordinaryAutomationJobWhere(),
                 branchId,
                 ruleId: { not: MESSAGE_AUTOMATION_INTENT_RULE_ID },
             },
@@ -403,7 +444,7 @@ export class SbMessageTriggerJobRepository implements IMessageTriggerJobReposito
 
     async hasActiveJobsBefore(branchId: string, ruleId: string, before: Date): Promise<boolean> {
         const row = await this.prisma.message_trigger_job.findFirst({
-            where: {
+            where: { ...ordinaryAutomationJobWhere(),
                 branchId,
                 ruleId,
                 status: { in: ["pending", "processing", "dispatching"] },
@@ -423,7 +464,7 @@ export class SbMessageTriggerJobRepository implements IMessageTriggerJobReposito
     ): Promise<MessageTriggerJobEntity[]> {
         if (ruleIds.length === 0) return [];
         const rows = await this.prisma.message_trigger_job.findMany({
-            where: {
+            where: { ...ordinaryAutomationJobWhere(),
                 ruleId: { in: ruleIds },
                 clientId,
                 status: { in: ["pending", "processing"] },
@@ -432,13 +473,22 @@ export class SbMessageTriggerJobRepository implements IMessageTriggerJobReposito
         return rows.map((row) => this.toDomain(row));
     }
 
+    async findForClientAutomationReview(branchId: string, clientId: number, ruleIds: string[], transaction?: Prisma.TransactionClient): Promise<MessageTriggerJobReviewSnapshot[]> {
+        if (ruleIds.length === 0) return [];
+        const rows = await (transaction ?? this.prisma).message_trigger_job.findMany({
+            where: { ...ordinaryAutomationJobWhere(), branchId, clientId, ruleId: { in: ruleIds } },
+            orderBy: { id: "asc" }, take: 501,
+        });
+        return rows.map((row) => Object.assign(this.toDomain(row), { canceledByUser: row.canceledByUser }));
+    }
+
     async findPendingByRuleIdsAndEmployeeScheduleId(
         ruleIds: string[],
         employeeScheduleId: number,
     ): Promise<MessageTriggerJobEntity[]> {
         if (ruleIds.length === 0) return [];
         const rows = await this.prisma.message_trigger_job.findMany({
-            where: {
+            where: { ...ordinaryAutomationJobWhere(),
                 ruleId: { in: ruleIds },
                 employeeScheduleId,
                 status: { in: ["pending", "processing"] },
@@ -452,7 +502,7 @@ export class SbMessageTriggerJobRepository implements IMessageTriggerJobReposito
         employeeScheduleId: number,
     ): Promise<MessageTriggerJobEntity[]> {
         const rows = await this.prisma.message_trigger_job.findMany({
-            where: {
+            where: { ...ordinaryAutomationJobWhere(),
                 ruleId,
                 employeeScheduleId,
                 status: "sent",
@@ -467,7 +517,7 @@ export class SbMessageTriggerJobRepository implements IMessageTriggerJobReposito
         reason: string,
     ): Promise<number> {
         const result = await this.prisma.message_trigger_job.updateMany({
-            where: {
+            where: { ...ordinaryAutomationJobWhere(),
                 branchId,
                 status: { in: ["pending", "processing"] },
                 OR: [
@@ -487,7 +537,7 @@ export class SbMessageTriggerJobRepository implements IMessageTriggerJobReposito
 
     async cancelOrphanedPending(reason: string, branchId?: string): Promise<number> {
         const result = await this.prisma.message_trigger_job.updateMany({
-            where: {
+            where: { ...ordinaryAutomationJobWhere(),
                 ...(branchId ? { branchId } : {}),
                 status: { in: ["pending", "processing"] },
                 clientId: null,
@@ -509,7 +559,7 @@ export class SbMessageTriggerJobRepository implements IMessageTriggerJobReposito
         limit = 200,
     ): Promise<MessageTriggerJobEntity[]> {
         const rows = await this.prisma.message_trigger_job.findMany({
-            where: {
+            where: { ...ordinaryAutomationJobWhere(),
                 branchId,
                 clientId: null,
                 employeeScheduleId: null,
@@ -538,7 +588,7 @@ export class SbMessageTriggerJobRepository implements IMessageTriggerJobReposito
         if (jobIds.length === 0) return 0;
 
         const result = await this.prisma.message_trigger_job.updateMany({
-            where: {
+            where: { ...ordinaryAutomationJobWhere(),
                 id: { in: jobIds },
                 status: "canceled",
                 clientId: null,
@@ -553,7 +603,7 @@ export class SbMessageTriggerJobRepository implements IMessageTriggerJobReposito
 
     async cancelPendingByRuleId(ruleId: string, reason: string): Promise<number> {
         const result = await this.prisma.message_trigger_job.updateMany({
-            where: { ruleId, status: { in: ["pending", "processing"] } },
+            where: { ...ordinaryAutomationJobWhere(), ruleId, status: { in: ["pending", "processing"] } },
             data: {
                 status: "canceled",
                 canceledAt: new Date(),
@@ -566,7 +616,7 @@ export class SbMessageTriggerJobRepository implements IMessageTriggerJobReposito
 
     async cancelPendingOlderThan(ruleId: string, cutoff: Date, reason: string): Promise<number> {
         const result = await this.prisma.message_trigger_job.updateMany({
-            where: {
+            where: { ...ordinaryAutomationJobWhere(),
                 ruleId,
                 status: { in: ["pending", "processing"] },
                 scheduledFor: { lt: cutoff },
@@ -583,7 +633,7 @@ export class SbMessageTriggerJobRepository implements IMessageTriggerJobReposito
 
     async cancelPendingByUser(id: string, branchId: string, reason: string): Promise<boolean> {
         const result = await this.prisma.message_trigger_job.updateMany({
-            where: { id, branchId, status: { in: ["pending", "processing"] } },
+            where: { ...ordinaryAutomationJobWhere(), id, branchId, status: { in: ["pending", "processing"] } },
             data: {
                 status: "canceled",
                 canceledAt: new Date(),
@@ -605,6 +655,7 @@ export class SbMessageTriggerJobRepository implements IMessageTriggerJobReposito
         scope: MessageTriggerJobCancellationScope = {},
         transaction?: Prisma.TransactionClient,
     ): Promise<number | null> {
+        if (ruleId === MESSAGE_AUTOMATION_INTENT_RULE_ID) return null;
         const cancel = async (writeTransaction: Prisma.TransactionClient) => {
             // Generation-aware cancellation uses the same rule-then-job lock
             // order as the producer and dispatcher fences.
@@ -633,6 +684,7 @@ export class SbMessageTriggerJobRepository implements IMessageTriggerJobReposito
             }
 
             const predicates = [
+                ordinaryAutomationJobSql({ ruleId: Prisma.sql`rule_id`, dedupeKey: Prisma.sql`dedupe_key`, payload: Prisma.sql`payload` }),
                 Prisma.sql`branch_id = ${branchId}::uuid`,
                 Prisma.sql`rule_id = ${ruleId}`,
                 Prisma.sql`status IN ('pending', 'processing')`,
@@ -675,6 +727,7 @@ export class SbMessageTriggerJobRepository implements IMessageTriggerJobReposito
         job: MessageTriggerJobEntity,
         transaction?: Prisma.TransactionClient,
     ): Promise<MessageTriggerJobEntity | null> {
+        if (isReservedAutomationJob(job)) return null;
         // Automatic service-record scheduling uses a failed row as a durable
         // lease. It must not go through upsertPending: ordinary failed rows
         // belong to provider-delivery retry and are intentionally immutable.
@@ -702,6 +755,7 @@ export class SbMessageTriggerJobRepository implements IMessageTriggerJobReposito
                 claim_token = NULL,
                 updated_at = clock_timestamp()
             WHERE id = ${markerId}
+              AND ${ordinaryAutomationJobSql({ ruleId: Prisma.sql`rule_id`, dedupeKey: Prisma.sql`dedupe_key`, payload: Prisma.sql`payload` })}
               AND branch_id = ${job.branchId}::uuid
               AND rule_id = ${job.ruleId}
               AND client_id = ${job.clientId}
@@ -725,6 +779,7 @@ export class SbMessageTriggerJobRepository implements IMessageTriggerJobReposito
         preserveExisting = false,
         transaction?: Prisma.TransactionClient,
     ): Promise<MessageTriggerJobEntity | null> {
+        if (isReservedAutomationJob(job)) return null;
         const branchPredicate = job.branchId === null
             ? Prisma.sql`branch_id IS NULL`
             : Prisma.sql`branch_id = ${job.branchId}::uuid`;
@@ -766,6 +821,9 @@ export class SbMessageTriggerJobRepository implements IMessageTriggerJobReposito
         job: MessageTriggerJobEntity,
         preserveExisting = false,
     ): Promise<MessageTriggerJobEntity> {
+        this.assertOrdinaryJob(job);
+        const ordinaryConflict = ordinaryAutomationJobSql({ ruleId: Prisma.sql`"message_trigger_job"."rule_id"`,
+            dedupeKey: Prisma.sql`"message_trigger_job"."dedupe_key"`, payload: Prisma.sql`"message_trigger_job"."payload"` });
         const conflictAction = preserveExisting
             ? Prisma.sql`DO UPDATE SET
                 status = 'pending',
@@ -776,12 +834,22 @@ export class SbMessageTriggerJobRepository implements IMessageTriggerJobReposito
                 recipient_type = EXCLUDED.recipient_type,
                 recipient_phone = EXCLUDED.recipient_phone,
                 template_key = EXCLUDED.template_key,
-                payload = EXCLUDED.payload,
+                payload = CASE
+                    WHEN "message_trigger_job"."payload" ? 'taskAutomationReference'
+                      AND NOT (EXCLUDED.payload ? 'taskAutomationReference')
+                    THEN jsonb_set(
+                        EXCLUDED.payload,
+                        '{taskAutomationReference}',
+                        "message_trigger_job"."payload"->'taskAutomationReference',
+                        true
+                    )
+                    ELSE EXCLUDED.payload
+                END,
                 attempts = 0,
                 next_attempt_at = NULL,
                 claim_token = NULL,
                 updated_at = date_trunc('milliseconds', clock_timestamp())
-            WHERE "message_trigger_job"."status" = 'canceled'
+            WHERE ${ordinaryConflict} AND "message_trigger_job"."status" = 'canceled'
               AND "message_trigger_job"."canceled_by_user" = false
               AND "message_trigger_job"."cancel_reason" = ${MESSAGE_SENDER_APPROVAL_REQUIRED_CANCEL_REASON}`
             : Prisma.sql`DO UPDATE SET
@@ -793,12 +861,22 @@ export class SbMessageTriggerJobRepository implements IMessageTriggerJobReposito
                 recipient_type = EXCLUDED.recipient_type,
                 recipient_phone = EXCLUDED.recipient_phone,
                 template_key = EXCLUDED.template_key,
-                payload = EXCLUDED.payload,
+                payload = CASE
+                    WHEN "message_trigger_job"."payload" ? 'taskAutomationReference'
+                      AND NOT (EXCLUDED.payload ? 'taskAutomationReference')
+                    THEN jsonb_set(
+                        EXCLUDED.payload,
+                        '{taskAutomationReference}',
+                        "message_trigger_job"."payload"->'taskAutomationReference',
+                        true
+                    )
+                    ELSE EXCLUDED.payload
+                END,
                 attempts = 0,
                 next_attempt_at = NULL,
                 claim_token = NULL,
                 updated_at = date_trunc('milliseconds', clock_timestamp())
-            WHERE "message_trigger_job"."status" IN ('pending', 'canceled')
+            WHERE ${ordinaryConflict} AND "message_trigger_job"."status" IN ('pending', 'canceled')
               AND NOT ("message_trigger_job"."status" = 'canceled' AND "message_trigger_job"."canceled_by_user" = true)`;
         const rows = await client.$queryRaw<MessageTriggerJobRawRow[]>(Prisma.sql`
             INSERT INTO "message_trigger_job" (
@@ -851,7 +929,7 @@ export class SbMessageTriggerJobRepository implements IMessageTriggerJobReposito
         }
 
         const existing = await client.message_trigger_job.findUnique({
-            where: { dedupeKey: job.dedupeKey },
+            where: { dedupeKey: job.dedupeKey, ...ordinaryAutomationJobWhere() },
         });
         if (!existing) {
             throw new Error(`Message trigger job upsert returned no row: ${job.dedupeKey}`);
@@ -868,6 +946,7 @@ export class SbMessageTriggerJobRepository implements IMessageTriggerJobReposito
         expectedSource: MessageTriggerJobEntity,
         retryJob: MessageTriggerJobEntity,
     ): Promise<MessageTriggerJobEntity | null> {
+        if (isReservedAutomationJob(expectedSource) || isReservedAutomationJob(retryJob)) return null;
         // The target version is computed by the capability from the canonical
         // provider snapshot. The row lock below is the linearization point at
         // which that approved source is compared and the retry is claimed.
@@ -878,6 +957,7 @@ export class SbMessageTriggerJobRepository implements IMessageTriggerJobReposito
                 FROM "message_trigger_job"
                 WHERE "id" = ${sourceJobId}
                   AND "branch_id" = ${branchId}::uuid
+                  AND ${ordinaryAutomationJobSql({ ruleId: Prisma.sql`rule_id`, dedupeKey: Prisma.sql`dedupe_key`, payload: Prisma.sql`payload` })}
                 FOR UPDATE
             `);
             const row = rows[0];
@@ -895,7 +975,7 @@ export class SbMessageTriggerJobRepository implements IMessageTriggerJobReposito
             }
 
             const existing = await transaction.message_trigger_job.findUnique({
-                where: { dedupeKey: retryJob.dedupeKey },
+                where: { dedupeKey: retryJob.dedupeKey, ...ordinaryAutomationJobWhere() },
             });
             if (existing) return this.toDomain(existing);
 
@@ -946,6 +1026,7 @@ export class SbMessageTriggerJobRepository implements IMessageTriggerJobReposito
     }
 
     private toDomain(row: MessageTriggerJobPrismaRow): MessageTriggerJobEntity {
+        this.assertOrdinaryJob(row);
         return MessageTriggerJobEntity.reconstitute(
             row.id,
             row.branchId,
@@ -976,6 +1057,7 @@ export class SbMessageTriggerJobRepository implements IMessageTriggerJobReposito
     }
 
     private rawRowToDomain(row: MessageTriggerJobRawRow): MessageTriggerJobEntity {
+        this.assertOrdinaryJob({ ruleId: row.rule_id, dedupeKey: row.dedupe_key, payload: this.toPayload(row.payload) });
         return MessageTriggerJobEntity.reconstitute(
             row.id,
             row.branch_id,
@@ -1002,6 +1084,10 @@ export class SbMessageTriggerJobRepository implements IMessageTriggerJobReposito
 
     private toDate(value: Date | string): Date {
         return value instanceof Date ? value : new Date(value);
+    }
+
+    private assertOrdinaryJob(job: { ruleId?: string; dedupeKey?: string; payload?: unknown }): void {
+        if (isReservedAutomationJob(job)) throw new Error("Internal automation records are not delivery jobs");
     }
 
     private toNullableDate(value: Date | string | null): Date | null {

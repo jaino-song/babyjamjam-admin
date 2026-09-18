@@ -1,4 +1,5 @@
 import { fireEvent, render, screen } from "@testing-library/react";
+import { AgentTaskSchema, type AgentTask } from "@babyjamjam/shared/agent";
 
 import { MobileAgentPartRegistry } from "./MobileAgentPartRegistry";
 
@@ -10,6 +11,42 @@ if (typeof globalThis.ResizeObserver === "undefined") {
             unobserve() {}
             disconnect() {}
         },
+    });
+}
+
+const TASK_IDS = {
+    task: "11111111-1111-4111-8111-111111111111",
+    session: "22222222-2222-4222-8222-222222222222",
+    snapshot: "55555555-5555-4555-8555-555555555555",
+    choiceSet: "77777777-7777-4777-8777-777777777777",
+    option: "88888888-8888-4888-8888-888888888888",
+};
+
+function makeTask(overrides: Partial<AgentTask> = {}): AgentTask {
+    return AgentTaskSchema.parse({
+        schemaVersion: 1,
+        taskId: TASK_IDS.task,
+        sessionId: TASK_IDS.session,
+        kind: "clients.create",
+        capabilityId: "clients.create",
+        revision: 2,
+        state: "confirming_target",
+        confirmed: { name: "홍길동", phone: "01012345678" },
+        tentative: {},
+        provenance: {
+            confirmed: { name: { source: "user" }, phone: { source: "user" } },
+            tentative: {},
+        },
+        issues: [],
+        constraints: { noSend: false },
+        choiceSets: [],
+        orderedChoiceRefs: [],
+        target: null,
+        consent: { choice: "unanswered", binding: null },
+        action: null,
+        times: { createdAt: "2026-09-16T00:00:00.000Z", updatedAt: "2026-09-16T00:00:01.000Z" },
+        currentSnapshotRef: TASK_IDS.snapshot,
+        ...overrides,
     });
 }
 
@@ -317,5 +354,145 @@ describe("MobileAgentPartRegistry", () => {
             expect(form?.querySelector(`[data-component="${base}_form_submit"]`)).toBeInTheDocument();
             expect(form?.querySelector('[data-component="mobile_chat_agent-form"]')).not.toBeInTheDocument();
         }
+    });
+
+    it("renders a safe task snapshot without exposing field values", () => {
+        render(<MobileAgentPartRegistry
+            data-component="mobile_chat_tests_agent-part-registry_task-snapshot"
+            part={{
+                type: "data-task-snapshot",
+                data: {
+                    taskId: "11111111-1111-4111-8111-111111111111",
+                    snapshotRef: "55555555-5555-4555-8555-555555555555",
+                    kind: "clients.create",
+                    capabilityId: "clients.create",
+                    revision: 4,
+                    state: "review_ready",
+                    fieldStatus: [{ field: "name", status: "confirmed" }, { field: "phone", status: "missing" }],
+                },
+            }}
+            onEntitySelect={jest.fn()}
+            onApproveAction={jest.fn()}
+            onRejectAction={jest.fn()}
+            onSubmitForm={jest.fn()}
+        />);
+
+        const snapshot = screen.getByRole("region", { name: "현재 업무 초안" });
+        expect(snapshot).toHaveAttribute("data-slot", "task-snapshot");
+        expect(snapshot).toHaveTextContent("검토 준비");
+        expect(snapshot).toHaveTextContent("버전 4");
+        expect(snapshot).toHaveTextContent("name · confirmed");
+        expect(snapshot).not.toHaveTextContent("홍길동");
+    });
+
+    it("hides controls when a snapshot reference is stale even at the same revision", () => {
+        render(<MobileAgentPartRegistry
+            data-component="mobile_chat_tests_agent-part-registry_stale-task-snapshot"
+            part={{
+                type: "data-task-snapshot",
+                data: {
+                    taskId: TASK_IDS.task,
+                    snapshotRef: "66666666-6666-4666-8666-666666666666",
+                    kind: "clients.create",
+                    capabilityId: "clients.create",
+                    revision: 2,
+                    state: "confirming_target",
+                    fieldStatus: [{ field: "name", status: "confirmed" }],
+                },
+            }}
+            task={makeTask()}
+            onTaskPatch={jest.fn()}
+            onTaskCommand={jest.fn()}
+            onEntitySelect={jest.fn()}
+            onApproveAction={jest.fn()}
+            onRejectAction={jest.fn()}
+            onSubmitForm={jest.fn()}
+        />);
+
+        expect(screen.queryByRole("button", { name: "변경 적용" })).not.toBeInTheDocument();
+    });
+
+    it("keeps structured entity selections reference-based and usable in a narrow review", () => {
+        const onTaskEntitySelect = jest.fn();
+        render(<MobileAgentPartRegistry
+            data-component="mobile_chat_tests_agent-part-registry_task-entity-select"
+            part={{
+                type: "data-entity-select",
+                data: {
+                    taskId: "11111111-1111-4111-8111-111111111111",
+                    choiceSetRef: "77777777-7777-4777-8777-777777777777",
+                    optionIds: ["88888888-8888-4888-8888-888888888888"],
+                },
+            }}
+            onEntitySelect={jest.fn()}
+            onTaskEntitySelect={onTaskEntitySelect}
+            task={makeTask({
+                choiceSets: [{ choiceSetRef: TASK_IDS.choiceSet, options: [{ optionId: TASK_IDS.option, label: "서울 보호자" }] }],
+                orderedChoiceRefs: [TASK_IDS.choiceSet],
+            })}
+            onApproveAction={jest.fn()}
+            onRejectAction={jest.fn()}
+            onSubmitForm={jest.fn()}
+        />);
+
+        const option = screen.getByRole("button", { name: "서울 보호자" });
+        expect(option).toHaveClass("min-h-11", "whitespace-normal");
+        fireEvent.click(option);
+        expect(onTaskEntitySelect).toHaveBeenCalledWith(
+            "11111111-1111-4111-8111-111111111111",
+            "77777777-7777-4777-8777-777777777777",
+            "88888888-8888-4888-8888-888888888888",
+        );
+    });
+
+    it.each([
+        ["mismatched task", makeTask({ taskId: "99999999-9999-4999-8999-999999999999" }), "선택 1"],
+        ["missing choice set", makeTask(), "선택 1"],
+        ["stale option", makeTask({ choiceSets: [{ choiceSetRef: TASK_IDS.choiceSet, options: [{ optionId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", label: "다른 대상" }] }] }), "선택 1"],
+    ] as const)("disables structured selection for %s", (_reason, task, label) => {
+        const onTaskEntitySelect = jest.fn();
+        render(<MobileAgentPartRegistry
+            data-component="mobile_chat_tests_agent-part-registry_task-entity-select-invalid"
+            part={{
+                type: "data-entity-select",
+                data: {
+                    taskId: TASK_IDS.task,
+                    choiceSetRef: TASK_IDS.choiceSet,
+                    optionIds: [TASK_IDS.option],
+                },
+            }}
+            onEntitySelect={jest.fn()}
+            onTaskEntitySelect={onTaskEntitySelect}
+            task={task}
+            onApproveAction={jest.fn()}
+            onRejectAction={jest.fn()}
+            onSubmitForm={jest.fn()}
+        />);
+
+        const option = screen.getByRole("button", { name: label });
+        expect(option).toBeDisabled();
+        fireEvent.click(option);
+        expect(onTaskEntitySelect).not.toHaveBeenCalled();
+    });
+
+    it("renders the server receipt for a task patch", () => {
+        render(<MobileAgentPartRegistry
+            data-component="mobile_chat_tests_agent-part-registry_task-patch"
+            part={{
+                type: "data-task-patch",
+                data: {
+                    taskId: "11111111-1111-4111-8111-111111111111",
+                    eventId: "33333333-3333-4333-8333-333333333333",
+                    acceptedRevision: 5,
+                    currentSnapshotRef: "66666666-6666-4666-8666-666666666666",
+                },
+            }}
+            onEntitySelect={jest.fn()}
+            onApproveAction={jest.fn()}
+            onRejectAction={jest.fn()}
+            onSubmitForm={jest.fn()}
+        />);
+
+        expect(screen.getByText("초안이 버전 5으로 업데이트되었습니다.")).toHaveAttribute("data-slot", "task-patch");
     });
 });

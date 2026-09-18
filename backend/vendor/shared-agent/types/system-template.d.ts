@@ -3,15 +3,15 @@ export declare const SYSTEM_TEMPLATE_KEYS: readonly ["PRICE_INFO", "GREETING", "
 export type SystemTemplateKey = (typeof SYSTEM_TEMPLATE_KEYS)[number];
 /** Runtime key validation for system-template BFF route parameters. */
 export declare const systemTemplateKeySchema: z.ZodEnum<{
+    SERVICE_INFO: "SERVICE_INFO";
     PRICE_INFO: "PRICE_INFO";
-    GREETING: "GREETING";
+    REMINDER: "REMINDER";
     THANKS: "THANKS";
     SURVEY: "SURVEY";
-    SERVICE_INFO: "SERVICE_INFO";
-    SERVICE_RECORD_LINK: "SERVICE_RECORD_LINK";
-    SERVICE_END_NOTICE: "SERVICE_END_NOTICE";
-    REMINDER: "REMINDER";
     INFO: "INFO";
+    SERVICE_END_NOTICE: "SERVICE_END_NOTICE";
+    SERVICE_RECORD_LINK: "SERVICE_RECORD_LINK";
+    GREETING: "GREETING";
 }>;
 export declare const SYSTEM_TEMPLATE_DELIVERY_MODES: readonly ["sms", "service-feedback-link", "receipt-link"];
 export type SystemTemplateDeliveryMode = (typeof SYSTEM_TEMPLATE_DELIVERY_MODES)[number];

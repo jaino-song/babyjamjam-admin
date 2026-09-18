@@ -24,6 +24,7 @@ export interface ClientMessageHistoryDetailView {
   recipientPhone: string;
   messageBody: string;
   failureReason: string | null;
+  cancelReason?: string | null;
 }
 
 const HERO_ICON_TONE_CLASS: Record<MessageHistoryDetailTone, string> = {
@@ -134,6 +135,9 @@ export function ClientMessageHistoryDetail({
         <InfoRow label="채널" value={view.channelLabel} />
         {view.failureReason ? (
           <InfoRow label="실패 사유" value={view.failureReason} tone="burgundy" />
+        ) : null}
+        {view.cancelReason ? (
+          <InfoRow label="취소 사유" value={view.cancelReason} tone="muted" />
         ) : null}
       </InfoCard>
 

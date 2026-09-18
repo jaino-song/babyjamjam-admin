@@ -25,7 +25,7 @@ export interface ISystemTemplateRepository {
   findByKey(key: SystemTemplateKey, transaction?: Prisma.TransactionClient): Promise<SystemTemplateEntity | null>;
   findAll(): Promise<SystemTemplateEntity[]>;
   findBranchSnapshot(branchId: string): Promise<BranchSystemTemplateSnapshot | null>;
-  findByBranchKey(branchId: string, key: SystemTemplateKey): Promise<SystemTemplateEntity | null>;
+  findByBranchKey(branchId: string, key: SystemTemplateKey, transaction?: Prisma.TransactionClient): Promise<SystemTemplateEntity | null>;
   findAllByBranch(branchId: string): Promise<SystemTemplateEntity[]>;
   updateBranchTemplate(
     branchId: string,

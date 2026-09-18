@@ -68,13 +68,18 @@ test.describe("Mobile nav: center chat + /all menu", () => {
         body: JSON.stringify([{ id: 1 }]),
       });
     });
-    await page.route("**/api/notifications/unread/count**", async (route) => {
+    await page.route("**/api/consultation-inquiries?**", async (route) => {
+      expect(new URL(route.request().url()).searchParams.get("readState")).toBe("unread");
       await unreadCountReady;
       await route.fulfill({
         status: 200,
         contentType: "application/json",
-        body: JSON.stringify({ count: 3 }),
+        body: JSON.stringify({ data: [], total: 3, page: 1, limit: 1, totalPages: 3 }),
       });
+    });
+    // Bell notifications are deliberately different from unread consultations.
+    await page.route("**/api/notifications/unread/count**", async (route) => {
+      await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ count: 141 }) });
     });
     await page.route("**/api/message-templates**", async (route) => {
       await messageTemplatesReady;

@@ -4,6 +4,7 @@ import {
     MESSAGE_AUTOMATION_INTENT_RETRY_REASON,
     MESSAGE_AUTOMATION_INTENT_RULE_ID,
 } from "domain/constants/message-automation-intent";
+import type { AgentAutomationTaskCommitReference } from "domain/entities/agent-automation-consent";
 import { PrismaService } from "infrastructure/database/prisma.service";
 import { MessageTriggerService } from "./message-trigger.service";
 
@@ -17,6 +18,8 @@ export async function fulfillClientMessageAutomationIntent(params: {
     clientId: number;
     includePast: boolean;
     suppressGreeting: boolean;
+    taskOrigin?: boolean;
+    taskAutomationReference?: AgentAutomationTaskCommitReference;
 }): Promise<boolean> {
     const dedupeKey = getClientAutomationIntentDedupeKey(params.branchId, params.clientId);
     // Internal intent rows start at attempts=0. The first approved claim promotes the row to 1
@@ -80,18 +83,28 @@ export async function fulfillClientMessageAutomationIntent(params: {
             await releaseClientIntent(params.prisma, claim.id, true);
             return false;
         }
-        await params.triggerService.ensureDefaultRulesForBranch(params.branchId);
+        // Task-origin intents may only consume rules that were present in the
+        // reviewed question. Provisioning branch defaults here would turn a
+        // later scheduler retry into an unreviewed expansion of scope.
+        if (!params.taskOrigin) {
+            await params.triggerService.ensureDefaultRulesForBranch(params.branchId);
+        }
+        const intentOptions = {
+            stableBatchAt: claim.scheduled_for instanceof Date
+                ? claim.scheduled_for
+                : new Date(claim.scheduled_for),
+            preserveExisting: true,
+            ...(params.taskOrigin ? { taskOrigin: true } : {}),
+            ...(params.taskAutomationReference
+                ? { taskAutomationReference: params.taskAutomationReference }
+                : {}),
+        };
         await params.triggerService.syncClientRulesForClient(
             params.branchId,
             params.clientId,
             params.includePast,
             params.suppressGreeting,
-            {
-                stableBatchAt: claim.scheduled_for instanceof Date
-                    ? claim.scheduled_for
-                    : new Date(claim.scheduled_for),
-                preserveExisting: true,
-            },
+            intentOptions,
         );
         if (!(await isBranchApproved(params.prisma, params.branchId))) {
             await releaseClientIntent(params.prisma, claim.id, true);

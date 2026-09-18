@@ -10,7 +10,7 @@ import { createSchedulerLeaseMock } from "../../utils/mocks/scheduler-lease.mock
 
 describe("Release A agent security boundaries", () => {
     const repository = {
-        create: jest.fn(), list: jest.fn(), findOwned: jest.fn(), updateOwned: jest.fn(), archiveOwned: jest.fn(), unarchiveOwned: jest.fn(), deleteOwned: jest.fn(), appendMessages: jest.fn(), upsertActionResultMessage: jest.fn(), deleteExpired: jest.fn(),
+        create: jest.fn(), list: jest.fn(), findOwned: jest.fn(), findOwnedForRestore: jest.fn(), updateOwned: jest.fn(), archiveOwned: jest.fn(), unarchiveOwned: jest.fn(), deleteOwned: jest.fn(), appendMessages: jest.fn(), upsertActionResultMessage: jest.fn(), deleteExpired: jest.fn(),
     } as jest.Mocked<IAgentSessionRepository>;
 
     beforeEach(() => jest.resetAllMocks());
@@ -20,6 +20,15 @@ describe("Release A agent security boundaries", () => {
         const service = new AgentSessionService(repository, new ConfigService(), createSchedulerLeaseMock());
         await expect(service.get("session", { userId: "other", branchId: "other-branch" })).rejects.toThrow("Agent session not found");
         expect(repository.findOwned).toHaveBeenCalledWith("session", { userId: "other", branchId: "other-branch" });
+    });
+
+    it("keeps restore reads owner-scoped and refuses a foreign session", async () => {
+        repository.findOwnedForRestore.mockResolvedValue(null);
+        const service = new AgentSessionService(repository, new ConfigService(), createSchedulerLeaseMock());
+        const owner = { userId: "other", branchId: "other-branch" };
+
+        await expect(service.getForRestore("session", owner)).rejects.toThrow("Agent session not found");
+        expect(repository.findOwnedForRestore).toHaveBeenCalledWith("session", owner);
     });
 
     it("enforces a per-user and branch rate limit", async () => {

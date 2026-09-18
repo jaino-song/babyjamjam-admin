@@ -1,4 +1,5 @@
 import { ConfigService } from "@nestjs/config";
+import { createHash } from "node:crypto";
 
 import {
     CallExtractionInput,
@@ -18,6 +19,8 @@ import {
     AligoSendSmsParams,
     AligoSmsResponse,
     IAligoSmsApiPort,
+    ALIGO_DEFAULT_SENDER_POLICY_VERSION,
+    AligoDefaultSenderPolicy,
 } from "domain/ports/aligo-sms-api.port";
 import {
     CreateDocumentPayload,
@@ -25,6 +28,7 @@ import {
     EformsignApiDocumentResponse,
     EformsignApiListResponse,
     EformsignReviewerMember,
+    EformsignTemplateWorkflowConfig,
     EformsignTokenResponse,
     IEformsignClientRepository,
 } from "domain/repositories/eformsign.client.interface";
@@ -443,6 +447,22 @@ export function buildEformsignStubTokenResponse(): EformsignTokenResponse {
     };
 }
 
+export function buildEformsignStubTemplateWorkflowConfig(
+    templateId = EFORMSIGN_STUB_TEMPLATE_ID,
+): EformsignTemplateWorkflowConfig {
+    return {
+        form_id: templateId,
+        config: {
+            step_settings: [
+                { seq: 1, type: "write", step_group: 1, option: { receipients: [] } },
+                { seq: 2, type: "participant", step_group: 2, option: { receipients: [] } },
+                { seq: 3, type: "participant", step_group: 3, option: { receipients: [] } },
+                { seq: 4, type: "complete", step_group: 4, option: { receipients: [] } },
+            ],
+        },
+    };
+}
+
 function buildEformsignStubWireDocuments(): EformsignStubWireDocument[] {
     return STUB_EFORMSIGN_DOCUMENTS
         .map((document) => cloneStubDocument(document))
@@ -650,6 +670,14 @@ export class E2eEformsignClientStub implements IEformsignClientRepository {
         return Promise.resolve(buildEformsignStubCreateDocumentResponse(payload));
     }
 
+    getTemplateWorkflowConfig(
+        accessToken: string,
+        templateId: string,
+    ): Promise<EformsignTemplateWorkflowConfig> {
+        void accessToken;
+        return Promise.resolve(buildEformsignStubTemplateWorkflowConfig(templateId));
+    }
+
     getTemplateReviewer(accessToken: string, templateId: string): Promise<EformsignReviewerMember | null> {
         void accessToken;
         void templateId;
@@ -658,6 +686,15 @@ export class E2eEformsignClientStub implements IEformsignClientRepository {
 }
 
 export class E2eAligoApiStub implements IAligoSmsApiPort {
+    getDefaultSenderPolicy(): AligoDefaultSenderPolicy {
+        // Synthetic positive controls use a separate namespace. A stored stub
+        // descriptor can never match the live provider's default-sender digest.
+        return { availability: "available", provider: "aligo", mode: "stub", version: ALIGO_DEFAULT_SENDER_POLICY_VERSION,
+            identityDigest: createHash("sha256").update(JSON.stringify({
+                version: ALIGO_DEFAULT_SENDER_POLICY_VERSION, provider: "aligo", mode: "stub", sender: "synthetic-default",
+            })).digest("hex") };
+    }
+
     sendSms(params: AligoSendSmsParams): Promise<AligoSmsResponse> {
         return Promise.resolve({
             result_code: 1,

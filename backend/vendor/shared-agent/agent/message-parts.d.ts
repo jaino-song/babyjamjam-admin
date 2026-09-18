@@ -1,5 +1,6 @@
 import type { UIMessage } from "ai";
 import { z } from "zod";
+import { AgentTaskDisplayedChoiceHintSchema } from "./task-types";
 export declare const AgentRendererNameSchema: z.ZodEnum<{
     error: "error";
     text: "text";
@@ -11,6 +12,9 @@ export declare const AgentRendererNameSchema: z.ZodEnum<{
     attachment: "attachment";
     form: "form";
     feedback: "feedback";
+    "task-snapshot": "task-snapshot";
+    "entity-select": "entity-select";
+    "task-patch": "task-patch";
 }>;
 export type AgentRendererName = z.infer<typeof AgentRendererNameSchema>;
 export declare const AgentMessageMetadataSchema: z.ZodObject<{
@@ -80,13 +84,13 @@ export declare const AgentErrorPartSchema: z.ZodObject<{
     code: z.ZodString;
     category: z.ZodEnum<{
         model: "model";
+        client: "client";
         capability: "capability";
         provider: "provider";
         routing: "routing";
         validation: "validation";
         authorization: "authorization";
         persistence: "persistence";
-        client: "client";
     }>;
     message: z.ZodString;
     retryable: z.ZodBoolean;
@@ -108,20 +112,20 @@ export declare const AgentFormFieldSchema: z.ZodObject<{
     type: z.ZodEnum<{
         number: "number";
         boolean: "boolean";
-        text: "text";
         date: "date";
+        text: "text";
         textarea: "textarea";
     }>;
     required: z.ZodOptional<z.ZodBoolean>;
     inputMode: z.ZodOptional<z.ZodEnum<{
-        text: "text";
+        search: "search";
         none: "none";
-        tel: "tel";
-        url: "url";
         email: "email";
+        url: "url";
+        text: "text";
+        tel: "tel";
         numeric: "numeric";
         decimal: "decimal";
-        search: "search";
     }>>;
     placeholder: z.ZodOptional<z.ZodString>;
     maxLength: z.ZodOptional<z.ZodNumber>;
@@ -137,20 +141,20 @@ export declare const AgentFormPartSchema: z.ZodObject<{
         type: z.ZodEnum<{
             number: "number";
             boolean: "boolean";
-            text: "text";
             date: "date";
+            text: "text";
             textarea: "textarea";
         }>;
         required: z.ZodOptional<z.ZodBoolean>;
         inputMode: z.ZodOptional<z.ZodEnum<{
-            text: "text";
+            search: "search";
             none: "none";
-            tel: "tel";
-            url: "url";
             email: "email";
+            url: "url";
+            text: "text";
+            tel: "tel";
             numeric: "numeric";
             decimal: "decimal";
-            search: "search";
         }>>;
         placeholder: z.ZodOptional<z.ZodString>;
         maxLength: z.ZodOptional<z.ZodNumber>;
@@ -165,6 +169,76 @@ export declare const AgentFeedbackPartSchema: z.ZodObject<{
     traceId: z.ZodOptional<z.ZodString>;
     prompt: z.ZodDefault<z.ZodString>;
 }, z.core.$strip>;
+/** Safe reference/status payload for `data-task-snapshot`. */
+export declare const AgentTaskSnapshotPartSchema: z.ZodObject<{
+    taskId: z.ZodUUID;
+    snapshotRef: z.ZodUUID;
+    kind: z.ZodEnum<{
+        "clients.create": "clients.create";
+        "clients.update": "clients.update";
+    }>;
+    capabilityId: z.ZodEnum<{
+        "clients.create": "clients.create";
+        "clients.update": "clients.update";
+    }>;
+    revision: z.ZodNumber;
+    state: z.ZodEnum<{
+        executing: "executing";
+        failed: "failed";
+        cancelled: "cancelled";
+        completed: "completed";
+        collecting: "collecting";
+        confirming_target: "confirming_target";
+        review_ready: "review_ready";
+        awaiting_approval: "awaiting_approval";
+        paused: "paused";
+        reconciling: "reconciling";
+    }>;
+    fieldStatus: z.ZodArray<z.ZodObject<{
+        field: z.ZodEnum<{
+            type: "type";
+            name: "name";
+            address: "address";
+            phone: "phone";
+            duration: "duration";
+            fullPrice: "fullPrice";
+            grant: "grant";
+            actualPrice: "actualPrice";
+            startDate: "startDate";
+            endDate: "endDate";
+            careCenter: "careCenter";
+            voucherClient: "voucherClient";
+            birthday: "birthday";
+            dueDate: "dueDate";
+            birthDate: "birthDate";
+            serviceStatus: "serviceStatus";
+            breastPump: "breastPump";
+            areaId: "areaId";
+        }>;
+        status: z.ZodEnum<{
+            confirmed: "confirmed";
+            tentative: "tentative";
+            missing: "missing";
+            "confirmed-and-tentative": "confirmed-and-tentative";
+        }>;
+    }, z.core.$strict>>;
+}, z.core.$strict>;
+/** Structured, server-issued reference payload for `data-entity-select`. */
+export declare const AgentEntitySelectPartSchema: z.ZodObject<{
+    taskId: z.ZodUUID;
+    choiceSetRef: z.ZodUUID;
+    optionIds: z.ZodArray<z.ZodUUID>;
+}, z.core.$strict>;
+/**
+ * Persisted chat parts carry only the server acceptance receipt reference.
+ * Actual validated operations remain in the REST request contract.
+ */
+export declare const AgentTaskPatchPartSchema: z.ZodObject<{
+    taskId: z.ZodUUID;
+    eventId: z.ZodUUID;
+    acceptedRevision: z.ZodNumber;
+    currentSnapshotRef: z.ZodUUID;
+}, z.core.$strict>;
 export type AgentDataParts = {
     activity: z.infer<typeof AgentActivityPartSchema>;
     "entity-choice": z.infer<typeof AgentEntityChoicePartSchema>;
@@ -176,9 +250,16 @@ export type AgentDataParts = {
     form: z.infer<typeof AgentFormPartSchema>;
     "form-submit": z.infer<typeof AgentFormSubmitPartSchema>;
     feedback: z.infer<typeof AgentFeedbackPartSchema>;
+    "task-snapshot": z.infer<typeof AgentTaskSnapshotPartSchema>;
+    "entity-select": z.infer<typeof AgentEntitySelectPartSchema>;
+    "task-patch": z.infer<typeof AgentTaskPatchPartSchema>;
 };
 export type BjjUITools = Record<string, {
     input: unknown;
     output: unknown | undefined;
 }>;
 export type BjjUIMessage = UIMessage<AgentMessageMetadata, AgentDataParts, BjjUITools>;
+export type AgentConversationMessage = BjjUIMessage & {
+    /** Optional server-issued hint retained for byte-for-byte retries. */
+    displayedChoice?: z.infer<typeof AgentTaskDisplayedChoiceHintSchema>;
+};

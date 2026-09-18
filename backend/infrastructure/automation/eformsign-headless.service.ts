@@ -12,11 +12,15 @@ import { runEformsignFinalizeGates } from "./eformsign-finalize-gates";
 import type { EformsignHeadlessProgressStep } from "application/services/eformsign-headless-progress.service";
 import {
     EFORMSIGN_SDK_COMPLETION_CODE,
-    formatEformsignCallbackPayload,
-    formatObservedSuccessCallbacks,
+    EFORMSIGN_SDK_ACTION_CALLBACK_CREATE_CODE,
+    EFORMSIGN_SDK_ACTION_CALLBACK_DOCUMENT_TYPE,
+    EFORMSIGN_SDK_ACTION_CALLBACK_PROCESS_CODE,
+    EFORMSIGN_SDK_ACTION_CALLBACK_RETURN_FIELDS_CODE,
+    EFORMSIGN_SDK_ACTION_CALLBACK_TEMPLATE_TYPE,
     readEformsignCallbackState,
-    readObservedSuccessCallbacks,
+    readEformsignSdkDiagnosticSummary,
 } from "./eformsign-gate-utils";
+import type { EformsignSdkDiagnosticSummary } from "./eformsign-gate-utils";
 import { areE2EVendorStubsEnabled } from "infrastructure/vendor-stubs/e2e-vendor-stubs";
 
 /**
@@ -60,6 +64,22 @@ function shouldLaunchHeadless(): boolean {
     return !EFORMSIGN_HEADED_MODE_VALUES.has(value);
 }
 
+class EformsignSdkDiagnosticError extends Error {
+    constructor(readonly diagnostics: EformsignSdkDiagnosticSummary) {
+        super("eformsign SDK diagnostic failure");
+    }
+}
+
+function safeHeadlessFailureReason(error: unknown, operation: string): string {
+    if (error instanceof EformsignSdkDiagnosticError) {
+        return `${operation} failed (sdk_error). Diagnostics: ${JSON.stringify(error.diagnostics)}`;
+    }
+    if (!(error instanceof Error)) return `${operation} failed (unknown)`;
+    if (/(?:timeout|timed out)/i.test(error.message)) return `${operation} failed (timeout)`;
+    if (/sdk/i.test(error.message)) return `${operation} failed (sdk_error)`;
+    return `${operation} failed (error)`;
+}
+
 /**
  * Drives the eformsign embedded SDK off-screen so the iframe gate sequence
  * (입력 시작 → 회사 도장 ×3 → 다음 ×2 → 전송 → popup 전송) runs on the backend
@@ -86,7 +106,8 @@ export class EformsignHeadlessService implements OnModuleDestroy {
             try {
                 await this.browser.close();
             } catch (error) {
-                this.logger.warn(`Browser close failed during shutdown: ${error}`);
+                void error;
+                this.logger.warn("Browser close failed during shutdown.");
             }
             this.browser = null;
         }
@@ -122,7 +143,7 @@ export class EformsignHeadlessService implements OnModuleDestroy {
                     await context.close().catch(() => undefined);
                 }
             } catch (error) {
-                const reason = error instanceof Error ? error.message : "unknown headless dispatch error";
+                const reason = safeHeadlessFailureReason(error, "headless creation dispatch");
                 this.logger.error(`dispatchCreation failed: ${reason}`);
                 return {
                     ok: false,
@@ -163,7 +184,7 @@ export class EformsignHeadlessService implements OnModuleDestroy {
                     await context.close().catch(() => undefined);
                 }
             } catch (error) {
-                const reason = error instanceof Error ? error.message : "unknown headless finalize error";
+                const reason = safeHeadlessFailureReason(error, "headless finalize dispatch");
                 this.logger.error(`dispatchFinalize failed: ${reason}`);
                 return {
                     ok: false,
@@ -206,10 +227,8 @@ export class EformsignHeadlessService implements OnModuleDestroy {
                 ? this.readDocumentIdFromCallback(callbackState.success)
                 : undefined;
             if (!callbackState.hasError && callbackDocumentId) {
-                const reason = gateError instanceof Error ? gateError.message : String(gateError);
-                this.logger.warn(
-                    `[creation] gate ended with "${reason}" after eformsign returned document ${callbackDocumentId}; treating the vendor-confirmed creation as success.`,
-                );
+                void gateError;
+                this.logger.warn("[creation] gate ended after terminal vendor success; treating creation as success.");
                 await params.onProgress?.("sent");
                 return {
                     ok: true,
@@ -277,30 +296,18 @@ export class EformsignHeadlessService implements OnModuleDestroy {
                 { timeout: timeoutMs },
             );
         } catch {
-            // Non-terminal success callbacks are the expected shape of this
-            // timeout, and they are the only record of how far the SDK got —
-            // a bare Playwright timeout here left past incidents unexplainable.
-            throw new Error(
-                `eformsign SDK reported no terminal callback within ${timeoutMs}ms. ` +
-                    `Observed success callbacks: ${await this.describeObservedCallbacks(page)}`,
-            );
+            const diagnostics = await readEformsignSdkDiagnosticSummary(page);
+            throw new EformsignSdkDiagnosticError(diagnostics);
         }
 
         const state = await readEformsignCallbackState(page);
         if (state.hasError) {
-            throw new Error(`eformsign SDK error: ${formatEformsignCallbackPayload(state.error)}`);
+            throw new EformsignSdkDiagnosticError(await readEformsignSdkDiagnosticSummary(page));
         }
         if (!state.hasSuccess) {
-            throw new Error(
-                "eformsign SDK completed without a success callback. " +
-                    `Observed success callbacks: ${await this.describeObservedCallbacks(page)}`,
-            );
+            throw new EformsignSdkDiagnosticError(await readEformsignSdkDiagnosticSummary(page));
         }
         return this.readDocumentIdFromCallback(state.success);
-    }
-
-    private async describeObservedCallbacks(page: Page): Promise<string> {
-        return formatObservedSuccessCallbacks(await readObservedSuccessCallbacks(page));
     }
 
     private readDocumentIdFromCallback(payload: unknown): string | undefined {
@@ -333,7 +340,7 @@ export class EformsignHeadlessService implements OnModuleDestroy {
     private async waitForEformsignIframe(page: Page, iframeId: string): Promise<void> {
         await page.waitForFunction(
             (targetIframeId) => {
-                const w = window as unknown as { __eformsignBootError?: string };
+                const w = window as unknown as { __eformsignBootError?: unknown };
                 if (w.__eformsignBootError) {
                     return true;
                 }
@@ -348,11 +355,11 @@ export class EformsignHeadlessService implements OnModuleDestroy {
         );
 
         const bootError = await page.evaluate(() => {
-            const w = window as unknown as { __eformsignBootError?: string };
+            const w = window as unknown as { __eformsignBootError?: unknown };
             return w.__eformsignBootError;
         });
         if (bootError) {
-            throw new Error(bootError);
+            throw new Error("eformsign SDK failed to load");
         }
     }
 
@@ -370,34 +377,151 @@ export class EformsignHeadlessService implements OnModuleDestroy {
 <script>
 (function () {
     var option = ${optionJson};
-    function fail(message) {
-        window.__eformsignBootError = message;
-        console.error(message);
+    var diagnostics = {
+        actionPresent: false,
+        actionType: "unknown",
+        actionCode: "unknown",
+        successCountBucket: "0",
+        successCode: "unknown",
+        errorPresent: false,
+        bootErrorPresent: false
+    };
+    window.__eformsignDiagnostics = diagnostics;
+    function fail() {
+        diagnostics.bootErrorPresent = true;
+        window.__eformsignBootError = true;
     }
     function loadScript(src, done) {
         var script = document.createElement("script");
         script.src = src;
         script.async = false;
         script.onload = function () { done(); };
-        script.onerror = function () { fail("Failed to load script: " + src); };
+        script.onerror = function () { fail(); };
         document.head.appendChild(script);
+    }
+    function classifyActionType(value) {
+        if (value === "${EFORMSIGN_SDK_ACTION_CALLBACK_DOCUMENT_TYPE}") {
+            return "${EFORMSIGN_SDK_ACTION_CALLBACK_DOCUMENT_TYPE}";
+        }
+        if (value === "${EFORMSIGN_SDK_ACTION_CALLBACK_TEMPLATE_TYPE}") {
+            return "${EFORMSIGN_SDK_ACTION_CALLBACK_TEMPLATE_TYPE}";
+        }
+        if (typeof value === "string" || typeof value === "number") return "other";
+        return "unknown";
+    }
+    function classifyActionCode(value) {
+        var normalized = typeof value === "string" || typeof value === "number"
+            ? String(value)
+            : null;
+        if (normalized === "${EFORMSIGN_SDK_ACTION_CALLBACK_CREATE_CODE}") {
+            return "${EFORMSIGN_SDK_ACTION_CALLBACK_CREATE_CODE}";
+        }
+        if (normalized === "${EFORMSIGN_SDK_ACTION_CALLBACK_PROCESS_CODE}") {
+            return "${EFORMSIGN_SDK_ACTION_CALLBACK_PROCESS_CODE}";
+        }
+        if (normalized === "${EFORMSIGN_SDK_ACTION_CALLBACK_RETURN_FIELDS_CODE}") {
+            return "${EFORMSIGN_SDK_ACTION_CALLBACK_RETURN_FIELDS_CODE}";
+        }
+        if (typeof value === "string" || typeof value === "number") return "other";
+        return "unknown";
+    }
+    function classifyAction(response) {
+        diagnostics.actionPresent = true;
+        try {
+            if (!response || typeof response !== "object") {
+                diagnostics.actionType = "unknown";
+                diagnostics.actionCode = "unknown";
+                return;
+            }
+            diagnostics.actionType = classifyActionType(response.type);
+            var data = Array.isArray(response.data) ? response.data : [];
+            var dataLimit = data.length > 20 ? 20 : data.length;
+            var sawScalarCode = false;
+            var preferredCode = null;
+            var returnFieldsCodeSeen = false;
+            for (var i = 0; i < dataLimit; i += 1) {
+                var item = data[i];
+                if (!item || typeof item !== "object") {
+                    continue;
+                }
+                var code = classifyActionCode(item.code);
+                if (code === "${EFORMSIGN_SDK_ACTION_CALLBACK_CREATE_CODE}"
+                    || code === "${EFORMSIGN_SDK_ACTION_CALLBACK_PROCESS_CODE}") {
+                    if (preferredCode === null) preferredCode = code;
+                    continue;
+                }
+                if (code === "${EFORMSIGN_SDK_ACTION_CALLBACK_RETURN_FIELDS_CODE}") {
+                    returnFieldsCodeSeen = true;
+                    continue;
+                }
+                if (code === "other") sawScalarCode = true;
+            }
+            if (data.length > dataLimit && preferredCode === null && !returnFieldsCodeSeen) sawScalarCode = true;
+            if (preferredCode !== null) {
+                diagnostics.actionCode = preferredCode;
+            } else if (returnFieldsCodeSeen) {
+                diagnostics.actionCode = "${EFORMSIGN_SDK_ACTION_CALLBACK_RETURN_FIELDS_CODE}";
+            } else if (sawScalarCode) {
+                diagnostics.actionCode = "other";
+            } else {
+                diagnostics.actionCode = "unknown";
+            }
+        } catch {
+            diagnostics.actionType = "unknown";
+            diagnostics.actionCode = "unknown";
+        }
+    }
+    function recordSuccess(response) {
+        diagnostics.successCountBucket = diagnostics.successCountBucket === "0"
+            ? "1"
+            : "2+";
+        try {
+            if (response && (typeof response === "object" || typeof response === "function")) {
+                var responseCode = response.code;
+                var responseCodeString = typeof responseCode === "string" || typeof responseCode === "number"
+                    ? String(responseCode)
+                    : null;
+                diagnostics.successCode = responseCodeString === "${EFORMSIGN_SDK_COMPLETION_CODE}"
+                    ? "terminal_success"
+                    : responseCodeString !== null
+                        ? "other"
+                        : "unknown";
+                if (diagnostics.successCode === "terminal_success") {
+                    // The terminal payload is intentionally retained only for the
+                    // internal document_id return path; it is never logged/projected.
+                    window.__eformsignSuccess = response;
+                }
+            } else {
+                diagnostics.successCode = "unknown";
+            }
+        } catch {
+            diagnostics.successCode = "unknown";
+        }
     }
     function open() {
         if (typeof window.EformSignDocument !== "function") {
-            return fail("EformSignDocument SDK did not initialize");
+            return fail();
         }
         var sdk = new window.EformSignDocument();
         sdk.document(
             option,
             "${iframeId}",
             function (resp) {
-                (window.__eformsignSuccessLog = window.__eformsignSuccessLog || []).push(resp);
-                if (resp && String(resp.code) === "${EFORMSIGN_SDK_COMPLETION_CODE}") {
-                    window.__eformsignSuccess = resp;
-                }
+                recordSuccess(resp);
             },
-            function (resp) { window.__eformsignError = resp; },
-            function (resp) { window.__eformsignAction = resp; }
+            function (resp) {
+                // Preserve the SDK bridge's current latch semantics: an
+                // undefined callback clears the current error latch, while a
+                // concrete callback latches a fixed boolean. The diagnostic
+                // flag records that a concrete error was observed separately.
+                if (resp === undefined) {
+                    window.__eformsignError = undefined;
+                    return;
+                }
+                diagnostics.errorPresent = true;
+                window.__eformsignError = true;
+            },
+            function (resp) { classifyAction(resp); }
         );
         sdk.open();
     }

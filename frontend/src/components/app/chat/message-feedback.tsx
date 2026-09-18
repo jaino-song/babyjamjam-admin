@@ -68,6 +68,7 @@ export function MessageFeedback({
                                 data-testid="thumbs-up"
                                 variant="ghost"
                                 size="icon"
+                                aria-label="도움이 됐어요"
                                 onClick={handleThumbsUp}
                                 disabled={feedbackGiven !== null || isSubmitting}
                                 className={cn(
@@ -93,6 +94,7 @@ export function MessageFeedback({
                                 data-testid="thumbs-down"
                                 variant="ghost"
                                 size="icon"
+                                aria-label="개선이 필요해요"
                                 onClick={handleThumbsDown}
                                 disabled={feedbackGiven !== null || isSubmitting}
                                 className={cn(

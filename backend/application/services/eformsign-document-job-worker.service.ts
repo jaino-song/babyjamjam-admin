@@ -53,6 +53,15 @@ const MAX_CONSECUTIVE_FINALIZE_STEPS = 3;
 const WORKER_ENABLED_ENV = "EFORMSIGN_DOCUMENT_JOBS_WORKER_ENABLED";
 const TERMINAL_RETENTION_MS = 7 * 24 * 60 * 60_000;
 const RETENTION_SWEEP_INTERVAL_MS = 60 * 60_000;
+const TEMPLATE_WORKFLOW_FAILURE_REASONS = new Set([
+    "template_workflow_config_invalid",
+    "template_workflow_unsupported",
+    "template_workflow_config_unavailable",
+]);
+
+function isTemplateWorkflowFailure(reason: unknown): reason is string {
+    return typeof reason === "string" && TEMPLATE_WORKFLOW_FAILURE_REASONS.has(reason);
+}
 
 interface CreateDocumentJobPayload {
     clientId: number;
@@ -654,6 +663,15 @@ export class EformsignDocumentJobWorkerService {
 
         if (result.ok) {
             await this.repository.markCompleted(job.id, leaseToken, result.documentId);
+            return;
+        }
+        if (isTemplateWorkflowFailure(result.reason)) {
+            // Workflow validation/read failures happen before the provider send
+            // boundary. Keep them on the deterministic pre-send path even when
+            // a queued job carries a stale `creating` marker from authorization;
+            // reconciling such a run would imply a provider submission that was
+            // never attempted.
+            await this.handlePreSendFailure(job, result.reason);
             return;
         }
         if (this.isAmbiguous(result, latestProgressStep)) {

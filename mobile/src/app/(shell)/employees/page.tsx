@@ -233,7 +233,7 @@ function EmployeeDetailContent({
                 key={`${client.clientId}:${client.role}`}
                 initial={employeeInitial(client.clientName)}
                 title={client.clientName}
-                meta={`${client.startDate} ~ ${client.endDate}`}
+                meta={`${formatDateForDisplay(client.startDate)} ~ ${formatDateForDisplay(client.endDate)}`}
                 badge={client.role === "primary" ? "주담당" : "부담당"}
                 tone={client.role === "primary" ? "green" : "primary"}
               />
@@ -344,11 +344,14 @@ export default function EmployeesPage() {
   const [formOpen, setFormOpen] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<number | null>(null);
 
-  const { allEmployees, isLoading } = useInfiniteEmployees({
+  const { allEmployees, filteredEmployees, isLoading } = useInfiniteEmployees({
     filter: "all",
     search: searchQuery,
   });
-  const isEmployeesFetching = isLoading && allEmployees.length === 0;
+  const isEmployeesFetching = isLoading && filteredEmployees.length === 0;
+  const selectedEmployee = selected
+    ? allEmployees.find((employee) => employee.id === selected.id) ?? selected
+    : null;
 
   const deleteEmployee = useDeleteEmployee();
 
@@ -404,7 +407,7 @@ export default function EmployeesPage() {
       unavailable: 0,
     };
     const map: Partial<Record<EmployeeStatus, Employee[]>> = {};
-    for (const employee of allEmployees) {
+    for (const employee of filteredEmployees) {
       const group = GROUPS.find((g) => g.key === employee.status);
       if (!group) continue;
       counts[group.key] = (counts[group.key] ?? 0) + 1;
@@ -412,7 +415,7 @@ export default function EmployeesPage() {
       map[group.key]!.push(employee);
     }
     return { counts, map };
-  }, [allEmployees]);
+  }, [filteredEmployees]);
 
   const filterItems = useMemo(() => {
     if (isEmployeesFetching) {
@@ -423,13 +426,13 @@ export default function EmployeesPage() {
     }
 
     const items: Array<{ label: string; count: string }> = [
-      { label: ALL_FILTER, count: String(allEmployees.length) },
+      { label: ALL_FILTER, count: String(filteredEmployees.length) },
     ];
     for (const g of GROUPS) {
       items.push({ label: g.title, count: String(grouped.counts[g.key]) });
     }
     return items;
-  }, [allEmployees.length, grouped.counts, isEmployeesFetching]);
+  }, [filteredEmployees.length, grouped.counts, isEmployeesFetching]);
 
   const sectionsFull = useMemo(() => {
     type Section = {
@@ -442,7 +445,7 @@ export default function EmployeesPage() {
 
     // 전체: 상태 grouping 없이 최근 활동순 단일 리스트 (총 8개부터 teaser → 무한 스크롤).
     if (activeFilter === ALL_FILTER) {
-      const flat = buildAllEmployeeRowsForList(allEmployees);
+      const flat = buildAllEmployeeRowsForList(filteredEmployees);
       return flat.length > 0
         ? [{ key: "all", title: "", group: GROUPS[0], fullRows: flat, fullCount: flat.length }]
         : [];
@@ -463,7 +466,7 @@ export default function EmployeesPage() {
       });
     }
     return sections;
-  }, [activeFilter, grouped.map, allEmployees]);
+  }, [activeFilter, grouped.map, filteredEmployees]);
 
   const maxFullCount = useMemo(
     () => sectionsFull.reduce((m, s) => Math.max(m, s.fullCount), 0),
@@ -503,7 +506,7 @@ export default function EmployeesPage() {
                   ? <ListCountSkeleton
                       data-component="mobile_employees_detail-sheet_stack_list-page_content_list-card_header_count-skeleton"
                     />
-                  : `${allEmployees.length}명`
+                  : `${filteredEmployees.length}명`
               }
               actionLabel="+ 추가"
               actionHref="/employees/new"
@@ -593,13 +596,13 @@ export default function EmployeesPage() {
           </div>
         }
         detail={
-          selected ? (
+          selectedEmployee ? (
             <EmployeeDetailContent
-              employee={selected}
+              employee={selectedEmployee}
               activeTab={detailSheetTab}
               onTabChange={setDetailSheetTab}
-              onEdit={() => handleEdit(selected)}
-              onDelete={() => handleDeleteRequest(selected.id)}
+              onEdit={() => handleEdit(selectedEmployee)}
+              onDelete={() => handleDeleteRequest(selectedEmployee.id)}
             />
           ) : (
             <div className="detail-body" data-component="mobile_employees_detail-sheet_stack_detail-page_empty" />

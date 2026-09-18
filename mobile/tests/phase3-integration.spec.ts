@@ -47,6 +47,20 @@ const createMessageLog = (name: string) => ({
   employeeName: null,
 });
 
+const HISTORY_SNAPSHOT = "2026-07-16T05:00:00.000Z";
+
+const historyPage = (
+  items: unknown[],
+  options: { nextCursor?: string | null; hasMore?: boolean } = {},
+) => phase3Json({
+  items,
+  page: {
+    snapshotAt: HISTORY_SNAPSHOT,
+    nextCursor: options.nextCursor ?? null,
+    hasMore: options.hasMore ?? false,
+  },
+});
+
 const selector = (component: string) => `[data-component="${component}"]`;
 
 async function expectWizard(page: Page) {
@@ -349,7 +363,7 @@ test.describe("Phase 3.1 functional integration matrix", () => {
     await page.route("**/api/message-trigger-jobs/upcoming**", async (route) => {
       await route.fulfill(phase3Json([]));
     });
-    await page.route("**/api/message-logs**", async (route) => {
+    await page.route("**/api/message-logs/page**", async (route) => {
       historyRequests += 1;
       if (historyMode === "401") {
         await route.fulfill(phase3Json({ message: "unauthorized" }, 401));
@@ -360,7 +374,7 @@ test.describe("Phase 3.1 functional integration matrix", () => {
       } else if (historyRequests === 1) {
         await route.fulfill(phase3Json({ message: "temporary" }, 503));
       } else {
-        await route.fulfill(phase3Json([]));
+        await route.fulfill(historyPage([]));
       }
     });
 
@@ -378,11 +392,11 @@ test.describe("Phase 3.1 functional integration matrix", () => {
       network: await runAndReadCount("network"),
       server: await runAndReadCount("503"),
     };
-    // These are the exact browser request totals observed in this fixture.
-    // The 401 trace includes the existing auth-refresh path; 403 is a single
-    // request. Network and resolved-5xx totals remain explicit evidence rather
-    // than being normalized to a guessed mount model.
-    expect(attempts).toEqual({ unauthorized: 2, forbidden: 1, network: 4, server: 2 });
+    // React Query retry:false keeps page failures from adding query-level
+    // retries. The API client still retries one network transport failure,
+    // while a resolved 503 gets no transport retry; 401 adds one auth-refresh
+    // request and 403 remains a single request.
+    expect(attempts).toEqual({ unauthorized: 2, forbidden: 1, network: 2, server: 1 });
   });
 
   test("6. keeps legacy and unsafe mutation failures safe and prevents replay", async ({ page }) => {
@@ -481,14 +495,14 @@ test.describe("Phase 3.1 functional integration matrix", () => {
         await route.fulfill(phase3Json([]));
       }
     });
-    await page.route("**/api/message-logs**", async (route) => {
+    await page.route("**/api/message-logs/page**", async (route) => {
       if (mode === "loading") {
         await new Promise((resolve) => setTimeout(resolve, 400));
-        await route.fulfill(phase3Json([]));
+        await route.fulfill(historyPage([]));
       } else if (mode === "partial") {
-        await route.fulfill(phase3Json([createMessageLog("부분 실패 고객")]));
+        await route.fulfill(historyPage([createMessageLog("부분 실패 고객")]));
       } else {
-        await route.fulfill(phase3Json([createMessageLog("지난 고객")]));
+        await route.fulfill(historyPage([createMessageLog("지난 고객")]));
       }
     });
 

@@ -155,6 +155,46 @@ describe("DetailPanel", () => {
     expect(screen.getByText("전자계약서 작성")).toBeInTheDocument();
   });
 
+  it("can place the stepper below a full-width title row without changing the inline default", () => {
+    const { container, rerender } = render(
+      <DetailPanel data-component="desktop_v3_tests_split-layout_detail-panel-8-below-title"
+        title="전자계약서 작성"
+        subtitle="고객에게 전자계약서를 발송합니다"
+        stepperPlacement="below-title"
+        stepper={<div data-testid="detail-panel-stepper-below-title">1 / 5</div>}
+      >
+        {null}
+      </DetailPanel>,
+    );
+
+    const header = container.querySelector('header[data-slot="detail-panel-header"]');
+    const titleGroup = container.querySelector('[data-slot="panel-subtitle"]')?.parentElement;
+    const titleRow = titleGroup?.parentElement;
+    const headerLayout = titleRow?.parentElement;
+    const stepper = screen.getByTestId("detail-panel-stepper-below-title");
+    const stepperRow = stepper.parentElement;
+
+    expect(header).toBeInTheDocument();
+    expect(headerLayout).toHaveClass("flex-col", "items-stretch");
+    expect(headerLayout?.firstElementChild).toBe(titleRow);
+    expect(headerLayout?.lastElementChild).toBe(stepperRow);
+    expect(stepperRow).toHaveClass("w-full", "min-w-0", "max-w-full", "overflow-x-auto");
+
+    rerender(
+      <DetailPanel data-component="desktop_v3_tests_split-layout_detail-panel-8-inline"
+        title="전자계약서 작성"
+        subtitle="고객에게 전자계약서를 발송합니다"
+        stepper={<div data-testid="detail-panel-stepper-inline">1 / 5</div>}
+      >
+        {null}
+      </DetailPanel>,
+    );
+
+    const inlineStepper = screen.getByTestId("detail-panel-stepper-inline");
+    expect(inlineStepper.parentElement).not.toHaveClass("w-full", "overflow-x-auto");
+    expect(inlineStepper.parentElement?.parentElement).toHaveClass("md:flex-row", "md:items-center");
+  });
+
   it("keeps the panel mounted while loading and skeletonizes only text chrome", () => {
     const onTabChange = jest.fn();
     const { container } = render(

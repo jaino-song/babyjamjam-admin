@@ -544,16 +544,18 @@ export function TemplateSendForm({
         return [...currentQueue, currentQueueItem];
       }
 
-      // For requiresRecipientName templates, update the queued entry in place so
-      // a name correction always propagates (instead of being silently dropped).
-      // For phone-only templates, the phone is the full identity — skip as before.
-      if (requiresRecipientName) {
-        const updated = [...currentQueue];
-        updated[existingIndex] = currentQueueItem;
-        return updated;
-      }
+      const existingItem = currentQueue[existingIndex];
+      const shouldUpdateIdentity = requiresRecipientName
+        || existingItem.clientId !== currentQueueItem.clientId;
+      const shouldUpdateMessage = existingItem.message !== currentQueueItem.message;
 
-      return currentQueue;
+      if (!shouldUpdateIdentity && !shouldUpdateMessage) return currentQueue;
+
+      const updated = [...currentQueue];
+      updated[existingIndex] = shouldUpdateIdentity
+        ? currentQueueItem
+        : { ...existingItem, message: currentQueueItem.message };
+      return updated;
     });
   }, [currentQueueItem, requiresRecipientName]);
 
@@ -1169,15 +1171,7 @@ export function TemplateSendForm({
               data-component="desktop_messages_sections_template-send-form_phone-field"
               className="min-w-0 w-full"
             >
-              {templateId === "builtin:greeting" ? (
-                <ContactInput
-                  phone={phone}
-                  setPhone={handlePhoneChange}
-                  label="휴대 전화번호"
-                  placeholder="010-0000-0000"
-                  required
-                />
-              ) : phoneAutocompleteField}
+              {phoneAutocompleteField}
             </div>
             {children ? <TemplateFieldGrid layout="stack">{children}</TemplateFieldGrid> : null}
           </>

@@ -8,11 +8,24 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Separator } from "@/components/ui/separator";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import type { AgentTask, AgentTaskPatchRequest } from "@babyjamjam/shared/agent";
 import { AgentPartRegistry } from "./parts/AgentPartRegistry";
 import { ErrorPart } from "./parts/ErrorPart";
-import { useAgentChat } from "@/hooks/useAgentChat";
+import { TaskSnapshotControls } from "./parts/TaskSnapshotPart";
+import { useAgentChat, type AgentTaskCommand } from "@/hooks/useAgentChat";
 
 const MOBILE_MEDIA_QUERY = "(max-width: 767px)";
+const REFRESHABLE_TASK_ERROR_CODES = new Set([
+    "task_conflict",
+    "task_conflict_unresolved",
+    "task_reconciliation_required",
+    "task_mutation_unconfirmed",
+    "task_command_unconfirmed",
+    "task_patch_failed",
+    "task_patch_invalid",
+    "task_command_failed",
+    "task_command_invalid",
+]);
 
 function subscribeMobileViewport(onChange: () => void) {
     const media = window.matchMedia(MOBILE_MEDIA_QUERY);
@@ -40,13 +53,51 @@ export function AgentShell() {
     const sidebarOpen = isMobile ? mobileSidebarOpen : desktopSidebarOpen;
     const menuButtonRef = useRef<HTMLButtonElement>(null);
     const sidebarRef = useRef<HTMLElement>(null);
-    const { messages, sendMessage, status, error, actionError, stop, regenerate, resetBranch, sessions, selectSession, renameSession, deleteSession, approveAction, rejectAction, submitStructuredForm, submitFeedback } = useAgentChat();
+    const { messages, sendMessage, status, error, actionError, taskError, taskSnapshotState, taskAccessState, taskMutationInFlight, taskNeedsReconciliation, createTaskEventId, patchTask, commandTask, loadTaskSnapshot, retryPendingTaskEvent, stop, regenerate, resetBranch, sessions, selectSession, renameSession, deleteSession, approveAction, rejectAction, submitStructuredForm, submitFeedback } = useAgentChat();
     const isStreaming = status === "streaming" || status === "submitted";
+    const taskControlsBusy = isStreaming
+        || taskMutationInFlight === true
+        || taskNeedsReconciliation === true
+        || taskAccessState?.status !== "authorized"
+        || (taskSnapshotState?.pendingEventIds.length ?? 0) > 0;
+    const canRefreshTask = taskAccessState?.status === "unavailable"
+        || REFRESHABLE_TASK_ERROR_CODES.has(taskError?.code ?? "");
+    const retryTaskId = canRefreshTask && typeof taskError?.taskId === "string" ? taskError.taskId : undefined;
+    const retryPendingTask = taskError?.code === "task_pending_event"
+        && typeof taskError.taskId === "string"
+        && typeof taskError.pendingEventId === "string"
+        ? { taskId: taskError.taskId, eventId: taskError.pendingEventId }
+        : undefined;
+    const taskMutationOptions = (task: AgentTask) => ({
+        expectedRevision: task.revision,
+        clientEventId: createTaskEventId?.() ?? "00000000-0000-4000-8000-000000000000",
+    });
+    const runTaskPatch = (taskId: string, operations: AgentTaskPatchRequest["operations"]) => {
+        const task = taskSnapshotState?.task;
+        if (!task || task.taskId !== taskId || taskControlsBusy) return;
+        return patchTask(taskId, operations, taskMutationOptions(task));
+    };
+    const runTaskCommand = (taskId: string, command: AgentTaskCommand) => {
+        const task = taskSnapshotState?.task;
+        if (!task || task.taskId !== taskId || taskControlsBusy) return;
+        return commandTask(taskId, command, taskMutationOptions(task));
+    };
     const terminalActionIds = useMemo(() => new Set(messages.flatMap((message) => message.parts.flatMap((part) => {
         if (part.type !== "data-action-result") return [];
         const data = (part as { data?: { actionId?: unknown } }).data;
         return typeof data?.actionId === "string" ? [data.actionId] : [];
     }))), [messages]);
+    const hasCurrentTaskSnapshot = useMemo(() => {
+        const task = taskSnapshotState?.task;
+        if (!task) return false;
+        return messages.some((message) => message.parts.some((part) => {
+            if (part.type !== "data-task-snapshot") return false;
+            const data = (part as { data?: { taskId?: unknown; revision?: unknown; snapshotRef?: unknown } }).data;
+            return data?.taskId === task.taskId
+                && data.revision === task.revision
+                && data.snapshotRef === task.currentSnapshotRef;
+        }));
+    }, [messages, taskSnapshotState?.task]);
     const filteredSessions = useMemo(() => {
         const query = sessionSearch.trim().toLocaleLowerCase();
         return query ? sessions.filter((session) => (session.title ?? "새 대화").toLocaleLowerCase().includes(query)) : sessions;
@@ -110,9 +161,11 @@ export function AgentShell() {
                 </header>
                 <ScrollArea className="min-h-0 flex-1"><div data-component="desktop_chat_agent-shell_thread_messages" className="mx-auto flex w-full max-w-3xl flex-col gap-6 p-4 sm:p-8">
                     {messages.length === 0 && <div className="py-24 text-center text-muted-foreground"><p className="text-lg font-semibold">무엇을 도와드릴까요?</p><p className="mt-2 text-sm">고객·직원·일정·계약을 확인하고 권한이 있는 작업을 제안합니다.</p></div>}
-                    {messages.map((message) => <article key={message.id} data-component="desktop_chat_agent-shell_thread_messages_message" data-source-component="AgentShell" className={message.role === "user" ? "ml-auto max-w-[85%] rounded-2xl bg-primary px-4 py-3 text-primary-foreground" : "max-w-[90%] rounded-2xl border bg-card px-4 py-3"}><AgentPartRegistry data-component="desktop_chat_agent-shell_thread_messages_message_part-registry" message={message} isBusy={isStreaming} terminalActionIds={terminalActionIds} onEntitySelect={(id, entityType) => void sendMessage({ text: `선택한 엔티티 유형: ${entityType}, 선택한 엔티티 ID: ${id}` })} onFeedback={(value) => void submitFeedback(message.id, value)} onApproveAction={(actionId, expectedRevision, acknowledgementToken) => void approveAction(actionId, expectedRevision, acknowledgementToken)} onRejectAction={(actionId) => void rejectAction(actionId)} onSubmitForm={submitStructuredForm} onRetry={() => void regenerate()} />{message.role === "assistant" && !message.parts.some((part) => part.type === "data-feedback") && <div data-component="desktop_chat_agent-shell_thread_messages_message_feedback" data-slot="feedback" className="mt-3 flex gap-2"><Button data-component="desktop_chat_agent-shell_thread_messages_message_feedback_positive" type="button" size="sm" variant="ghost" onClick={() => void submitFeedback(message.id, "positive")}>좋아요</Button><Button data-component="desktop_chat_agent-shell_thread_messages_message_feedback_negative" type="button" size="sm" variant="ghost" onClick={() => void submitFeedback(message.id, "negative")}>아쉬워요</Button></div>}</article>)}
+                    {messages.map((message) => <article key={message.id} data-component="desktop_chat_agent-shell_thread_messages_message" data-source-component="AgentShell" className={message.role === "user" ? "ml-auto max-w-[85%] rounded-2xl bg-primary px-4 py-3 text-primary-foreground" : "max-w-[90%] rounded-2xl border bg-card px-4 py-3"}><AgentPartRegistry data-component="desktop_chat_agent-shell_thread_messages_message_part-registry" message={message} task={taskSnapshotState?.task} isBusy={isStreaming} taskBusy={taskControlsBusy} terminalActionIds={terminalActionIds} onEntitySelect={(id, entityType) => void sendMessage({ text: `선택한 엔티티 유형: ${entityType}, 선택한 엔티티 ID: ${id}` })} onTaskEntitySelect={(taskId, choiceSetRef, optionId) => { void runTaskCommand(taskId, { command: "select-target", choiceSetRef, optionId }); }} onTaskPatch={runTaskPatch} onTaskCommand={runTaskCommand} onFeedback={(value) => void submitFeedback(message.id, value)} onApproveAction={(actionId, expectedRevision, acknowledgementToken) => void approveAction(actionId, expectedRevision, acknowledgementToken)} onRejectAction={(actionId) => void rejectAction(actionId)} onSubmitForm={submitStructuredForm} onRetry={() => void regenerate()} />{message.role === "assistant" && !message.parts.some((part) => part.type === "data-feedback") && <div data-component="desktop_chat_agent-shell_thread_messages_message_feedback" data-slot="feedback" className="mt-3 flex gap-2"><Button data-component="desktop_chat_agent-shell_thread_messages_message_feedback_positive" type="button" size="sm" variant="ghost" onClick={() => void submitFeedback(message.id, "positive")}>좋아요</Button><Button data-component="desktop_chat_agent-shell_thread_messages_message_feedback_negative" type="button" size="sm" variant="ghost" onClick={() => void submitFeedback(message.id, "negative")}>아쉬워요</Button></div>}</article>)}
+                    {taskSnapshotState?.task && !hasCurrentTaskSnapshot && <TaskSnapshotControls data-component="desktop_chat_agent-shell_thread_task-controls" task={taskSnapshotState.task} disabled={taskControlsBusy} onPatch={runTaskPatch} onCommand={runTaskCommand} />}
                     {error && <ErrorPart data-component="desktop_chat_agent-shell_thread_messages_stream-error" code="stream_failed" category="client" message="응답 스트림이 중단되었습니다." retryable effectState="nothing-happened" onRetry={() => void regenerate()} />}
                     {actionError && <ErrorPart data-component="desktop_chat_agent-shell_thread_messages_action-error" code={actionError.code} category="client" message={actionError.message} retryable={false} effectState={actionError.effectState} />}
+                    {taskError && <ErrorPart data-component="desktop_chat_agent-shell_thread_messages_task-error" code={taskError.code} category="persistence" message={taskError.message} retryable={retryTaskId !== undefined || (retryPendingTask !== undefined && retryPendingTaskEvent !== undefined)} effectState="nothing-happened" onRetry={retryPendingTask ? () => void retryPendingTaskEvent?.(retryPendingTask.taskId, retryPendingTask.eventId) : retryTaskId && loadTaskSnapshot ? () => void loadTaskSnapshot(retryTaskId) : undefined} />}
                 </div></ScrollArea>
                 <div data-component="desktop_chat_agent-shell_thread_composer" className="mx-auto flex w-full max-w-3xl items-end gap-2 p-4 sm:p-6">
                     <Textarea value={input} onChange={(event) => setInput(event.target.value)} onKeyDown={(event) => { if (event.nativeEvent.isComposing) return; if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); submit(); } }} placeholder="질문을 입력하세요" aria-label="질문 입력" rows={2} />

@@ -49,6 +49,19 @@ export class MessageTriggerController {
         return this.triggerService.cancelJobByUser(tenant.branchId ?? "", id);
     }
 
+    @Get("message-logs/page")
+    listHistoryPage(
+        @CurrentTenant() tenant: { branchId?: string },
+        @Query("limit") limit?: string,
+        @Query("cursor") cursor?: string,
+    ) {
+        return this.triggerService.listHistoryPage(
+            tenant.branchId ?? "",
+            parseInteger(limit, "limit", { defaultValue: 500, min: 1, max: 500 }),
+            cursor,
+        );
+    }
+
     @Get("message-logs")
     listHistory(
         @CurrentTenant() tenant: { branchId?: string },

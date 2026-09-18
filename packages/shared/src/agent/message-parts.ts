@@ -1,6 +1,15 @@
 import type { UIMessage } from "ai";
 import { z } from "zod";
 
+import {
+    AgentTaskCapabilityIdSchema,
+    AgentTaskDisplayedChoiceHintSchema,
+    AgentTaskReferenceSchema,
+    AgentTaskRevisionSchema,
+    AgentTaskStateSchema,
+} from "./task-types";
+import { CLIENT_WRITE_FIELD_NAMES } from "./client-input-policy";
+
 export const AgentRendererNameSchema = z.enum([
     "text",
     "activity",
@@ -12,6 +21,9 @@ export const AgentRendererNameSchema = z.enum([
     "attachment",
     "form",
     "feedback",
+    "task-snapshot",
+    "entity-select",
+    "task-patch",
 ]);
 
 export type AgentRendererName = z.infer<typeof AgentRendererNameSchema>;
@@ -127,6 +139,46 @@ export const AgentFeedbackPartSchema = z.object({
     prompt: z.string().min(1).default("도움이 되었나요?"),
 });
 
+/** Safe reference/status payload for `data-task-snapshot`. */
+export const AgentTaskSnapshotPartSchema = z.object({
+    taskId: AgentTaskReferenceSchema,
+    snapshotRef: AgentTaskReferenceSchema,
+    kind: AgentTaskCapabilityIdSchema,
+    capabilityId: AgentTaskCapabilityIdSchema,
+    revision: AgentTaskRevisionSchema,
+    state: AgentTaskStateSchema,
+    fieldStatus: z.array(z.object({
+        field: z.enum(CLIENT_WRITE_FIELD_NAMES),
+        status: z.enum(["missing", "confirmed", "tentative", "confirmed-and-tentative"]),
+    }).strict()),
+}).strict().superRefine((value, context) => {
+    if (value.kind !== value.capabilityId) {
+        context.addIssue({ code: "custom", path: ["kind"], message: "Task kind must match capabilityId" });
+    }
+});
+
+/** Structured, server-issued reference payload for `data-entity-select`. */
+export const AgentEntitySelectPartSchema = z.object({
+    taskId: AgentTaskReferenceSchema,
+    choiceSetRef: AgentTaskReferenceSchema,
+    optionIds: z.array(AgentTaskReferenceSchema).min(1).max(100),
+}).strict();
+
+/**
+ * Persisted chat parts carry only the server acceptance receipt reference.
+ * Actual validated operations remain in the REST request contract.
+ */
+export const AgentTaskPatchPartSchema = z.object({
+    taskId: AgentTaskReferenceSchema,
+    eventId: AgentTaskReferenceSchema,
+    acceptedRevision: AgentTaskRevisionSchema,
+    currentSnapshotRef: AgentTaskReferenceSchema,
+}).strict().superRefine((value, context) => {
+    if (!value.eventId) {
+        context.addIssue({ code: "custom", path: ["eventId"], message: "A task patch part needs a server event reference" });
+    }
+});
+
 export type AgentDataParts = {
     activity: z.infer<typeof AgentActivityPartSchema>;
     "entity-choice": z.infer<typeof AgentEntityChoicePartSchema>;
@@ -138,6 +190,9 @@ export type AgentDataParts = {
     form: z.infer<typeof AgentFormPartSchema>;
     "form-submit": z.infer<typeof AgentFormSubmitPartSchema>;
     feedback: z.infer<typeof AgentFeedbackPartSchema>;
+    "task-snapshot": z.infer<typeof AgentTaskSnapshotPartSchema>;
+    "entity-select": z.infer<typeof AgentEntitySelectPartSchema>;
+    "task-patch": z.infer<typeof AgentTaskPatchPartSchema>;
 };
 
 export type BjjUITools = Record<string, {
@@ -146,3 +201,8 @@ export type BjjUITools = Record<string, {
 }>;
 
 export type BjjUIMessage = UIMessage<AgentMessageMetadata, AgentDataParts, BjjUITools>;
+
+export type AgentConversationMessage = BjjUIMessage & {
+    /** Optional server-issued hint retained for byte-for-byte retries. */
+    displayedChoice?: z.infer<typeof AgentTaskDisplayedChoiceHintSchema>;
+};

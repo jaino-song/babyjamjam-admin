@@ -1,3 +1,4 @@
+import type { Prisma } from "@prisma/client";
 import { Injectable, Inject } from "@nestjs/common";
 import { SYSTEM_TEMPLATE_REPOSITORY, ISystemTemplateRepository } from "domain/repositories/system-template.repository.interface";
 import { SystemTemplateKey, SYSTEM_TEMPLATE_REGISTRY } from "domain/constants/system-template-registry";
@@ -18,8 +19,9 @@ export class GetSystemTemplateUseCase {
     return SystemTemplateEntity.create(key, contract.defaultContent);
   }
 
-  async executeForBranch(branchId: string, key: SystemTemplateKey): Promise<SystemTemplateEntity> {
-    const template = await this.repository.findByBranchKey(branchId, key);
+  async executeForBranch(branchId: string, key: SystemTemplateKey, transaction?: Prisma.TransactionClient): Promise<SystemTemplateEntity> {
+    const template = transaction ? await this.repository.findByBranchKey(branchId, key, transaction)
+      : await this.repository.findByBranchKey(branchId, key);
     if (template) return template;
 
     const contract = SYSTEM_TEMPLATE_REGISTRY[key];

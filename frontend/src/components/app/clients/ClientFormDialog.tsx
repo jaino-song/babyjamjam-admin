@@ -1028,9 +1028,9 @@ function ClientFormContent({
                     type: formData.voucherClient ? formData.type : null,
                     duration: formData.duration || null,
                     ...durationConfirmation,
-                    fullPrice: formData.fullPrice,
-                    grant: formData.voucherClient ? formData.grant : "0",
-                    actualPrice: formData.voucherClient ? formData.actualPrice : formData.fullPrice,
+                    fullPrice: formData.fullPrice || null,
+                    grant: formData.voucherClient ? formData.grant || null : "0",
+                    actualPrice: formData.voucherClient ? formData.actualPrice || null : formData.fullPrice || null,
                     startDate: normalizedStartDate || null,
                     endDate: normalizedEndDate || null,
                     careCenter: formData.careCenter,
@@ -1249,6 +1249,7 @@ function ClientFormContent({
                     data-component={`${base}_basic-grid_field-birthday`}
                     htmlFor="birthday"
                     label={t(locale, "clients.form.birthday")}
+                    required
                 >
                     <FormTextInput
                         id="birthday"
@@ -1299,6 +1300,7 @@ function ClientFormContent({
                     data-component={`${base}_basic-grid_field-phone`}
                     htmlFor="phone"
                     label={t(locale, "clients.form.phone")}
+                    required
                     labelAccessory={phoneInlineMessage ? (
                         <FormHelperText
                             id="clients-form-dialog-phone-helper"
@@ -1356,6 +1358,7 @@ function ClientFormContent({
                     data-component={`${base}_basic-grid_field-address`}
                     htmlFor="address"
                     label={t(locale, "clients.form.address")}
+                    required
                     className="sm:col-span-2"
                 >
                     <FormTextInput
@@ -1687,6 +1690,7 @@ function ClientFormContent({
                 data-component={`${base}_birthday-input`}
                 htmlFor="birthday"
                 label={t(locale, "clients.form.birthday")}
+                required
             >
                 <FormTextInput
                     id="birthday"
@@ -1732,6 +1736,7 @@ function ClientFormContent({
                 data-component={`${base}_phone-input`}
                 htmlFor="phone"
                 label={t(locale, "clients.form.phone")}
+                required
                 labelAccessory={phoneInlineMessage ? (
                     <FormHelperText
                         id="clients-form-panel-phone-helper"
@@ -1789,6 +1794,7 @@ function ClientFormContent({
                 data-component={`${base}_address-input`}
                 htmlFor="address"
                 label={t(locale, "clients.form.address")}
+                required
                 className={PANEL_FULL_FIELD_CLASS_NAME}
             >
                 <FormTextInput

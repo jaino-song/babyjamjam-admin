@@ -5,6 +5,7 @@ import {
   type ProblemError,
   type ProblemOutcome,
 } from "@babyjamjam/shared";
+import { getHeadlessProviderFailureMessage } from "@/lib/eformsign/headless-progress";
 
 type ValidationTarget = {
   selector: string;
@@ -79,6 +80,25 @@ export const CONTRACT_OUTCOME_COPY: Readonly<Record<ProblemOutcome, { title: str
     message: "계약서 생성 결과를 확인할 수 없어 새 계약서를 다시 만들지 말고 계약 목록에서 상태를 확인해 주세요.",
   },
 });
+
+/**
+ * The headless dispatch contract returns these exact reasons as a plain ok:false
+ * response before the provider send boundary. Keep their copy trusted and keep
+ * the resulting alert unlocked so staff can retry with the same client.
+ */
+export function buildHeadlessProviderFailureAlert(
+  reason: unknown,
+): ContractSubmissionAlert | null {
+  const message = getHeadlessProviderFailureMessage(reason);
+  if (!message) return null;
+  return {
+    title: CONTRACT_OUTCOME_COPY.FAILED.title,
+    message,
+    outcome: "FAILED",
+    locked: false,
+    verified: false,
+  };
+}
 
 const HEADLESS_UNSAFE_FALLBACK_REASONS = new Set([
   "remote_unconfirmed",

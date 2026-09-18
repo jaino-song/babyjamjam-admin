@@ -1,0 +1,54 @@
+--- a/packages/shared/tsconfig.backend-runtime.json
++++ b/packages/shared/tsconfig.backend-runtime.json
+@@ -2,24 +2,27 @@
+-    "extends": "./tsconfig.json",
+-    "compilerOptions": {
+-        "target": "ES2021",
+-        "module": "CommonJS",
+-        "moduleResolution": "Node",
+-        "rootDir": "src",
+-        "outDir": "../../backend/vendor/shared-agent",
+-        "noEmit": false,
+-        "declaration": true,
+-        "isolatedModules": false
+-    },
+-    "include": [
+-        "src/agent/index.ts",
+-        "src/agent/action-types.ts",
+-        "src/agent/capability-meta.ts",
+-        "src/agent/message-parts.ts",
+-        "src/constants/service-record-form-layout.ts",
+-        "src/utils/business-days.ts",
+-        "src/utils/birthday.ts",
+-        "src/utils/service-record-schedule.ts",
+-        "src/types/service-record.ts",
+-        "src/errors/problem-details.ts",
+-        "src/types/system-template.ts"
+-    ]
++  "extends": "./tsconfig.json",
++  "compilerOptions": {
++    "target": "ES2021",
++    "module": "CommonJS",
++    "moduleResolution": "Node",
++    "rootDir": "src",
++    "outDir": "../../backend/vendor/shared-agent",
++    "noEmit": false,
++    "declaration": true,
++    "isolatedModules": false
++  },
++  "include": [
++    "src/agent/index.ts",
++    "src/agent/action-types.ts",
++    "src/agent/capability-meta.ts",
++    "src/agent/message-parts.ts",
++    "src/constants/service-record-form-layout.ts",
++    "src/utils/business-days.ts",
++    "src/utils/birthday.ts",
++    "src/utils/service-record-schedule.ts",
++    "src/types/service-record.ts",
++    "src/errors/problem-details.ts",
++    "src/types/system-template.ts",
++    "src/agent/client-input-policy.ts",
++    "src/agent/task-types.ts",
++    "src/agent/task-projection.ts"
++  ]
