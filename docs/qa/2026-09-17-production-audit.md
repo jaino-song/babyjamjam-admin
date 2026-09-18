@@ -208,7 +208,7 @@ CLIENT-001은 확인한 중복 번호 시나리오 하나의 결과이며 모든
 | `/messages/system-templates/[templateKey]` | 미실행 |
 | `/messages/system-templates` | 미실행 |
 | `/messages/templates/[id]/edit` | 미실행 |
-| `/messages/templates/new` | 미실행 |
+| `/messages/templates/new` | 모바일: 데스크톱에서 생성하라는 안내·목록 복귀 확인. PC 별도 생성 폼의 실제 생성 및 공백 검증은 쓰기 검수 기록 참조 |
 | `/messages/templates` | 미실행 |
 | `/prices` | PRICE-001~004 |
 | `/select-branch` | BRANCH-002 |
@@ -247,18 +247,18 @@ CLIENT-001은 확인한 중복 번호 시나리오 하나의 결과이며 모든
 | `/admin/feedback` | 미실행 |
 | `/admin` | 미실행 |
 | `/all` | MOBILE-004 |
-| `/calls` | 미실행 |
-| `/chat` | 미실행 |
-| `/clients/new` | MOBILE-002 실패 |
+| `/calls` | dev QA 합성 통화1건: 대기·기록·유형/이름 검색·상세/전문·390px·폐기 후 대기0/기록유지 확인. 실제 수집·AI 추출·고객 확정은 미검증 |
+| `/chat` | dev QA 데이터 작업 없는 연결 확인 응답·새 대화 초기화 확인; 업무 도구 실행은 미검증 |
+| `/clients/new` | dev QA 재검수: 기존 QA 고객 번호 중복 안내·차단 정상, 고객 미등록 QA 번호는 등록 가능/다음 활성. 초안3단계·자부담5일/815000·9/21→9/29 계산·이전 값 유지·닫기 확인. 최종 신규 저장은 별도 |
 | `/clients` | MOBILE-001 초기 표시 확인 |
-| `/consultations` | dev QA390px 검색·상태 필터·0건 안내 확인; 데이터 있는 상세/처리 미완료 |
+| `/consultations` | dev QA390px 상담1건 생성 후 상세2탭·읽음 처리·필터·이름/연락처/주소 검색·새로고침 유지 확인; PC 동일 기록 대조 |
 | `/contracts/creation` | 미실행 |
 | `/contracts/new` | dev QA 사전 입력 4단계·이전/닫기 및 날짜 오류 검수; 실제 발급 미완료 — 쓰기 검수 기록 참조 |
 | `/contracts` | dev QA 실제 생성 문서 목록·서명 대기 필터·상세 3탭·PDF 표시·복귀 확인; 본문 연락처 오류, 모바일 다운로드 미확인 |
 | `/dashboard/analytics` | dev QA 시작 예정 집계 수정 후 1명 확인; 상세 차트는 준비 중 안내 |
-| `/dashboard` | dev QA 필터·빈 상태·고객 상세·집계 수정 검수; 카드/목록 1명 일치, 첫50명 제한 잔존 |
-| `/employees/new` | 미실행 |
-| `/employees` | 미실행 |
+| `/dashboard` | dev QA 필터·빈 상태·고객 상세·집계 수정 검수; 카드/목록1명 일치. 전체 페이지 조회 수정·리뷰·테스트 통과; 50페이지/2500명 상한과 동시 변경 시 누락 가능성 잔존 |
+| `/employees/new` | dev QA390px 중복 연락처 차단·유효 초안2단계·필수 지역 미선택 등록 차단·복수 지역/등급/배정 상태 유지·닫기 확인. 유효 신규 저장 별도 |
+| `/employees` | dev QA390px 2명 목록·첫/두번째 근무 지역 검색·상세3탭·고객163 배정/기간·빈 이전 근무·닫기 확인 |
 | `/employees/schedule` | dev QA 390px 날짜 배지 수정 후 일자21/전체 날짜 확인; 읽기 전용 목록 |
 | `/files` | dev QA390px 0건 안내·업로드 진입 확인; 실제 파일 작업 미완료 |
 | `/files/upload` | dev QA390px 폼·유형/25MB 제한 안내·빈 제출 비활성·취소 확인; 오너 업로드는 전체 지점 공개로 실제 업로드 미실행 |
@@ -269,12 +269,12 @@ CLIENT-001은 확인한 중복 번호 시나리오 하나의 결과이며 모든
 | `/messages` | 미실행 |
 | `/messages/scheduled` | 미실행 |
 | `/messages/sender-approval` | 미실행 |
-| `/messages/settings` | dev QA390px 7개 설정·중복전송 상세·복귀 확인; 토글 변경 미실행 |
-| `/messages/system-templates/[templateKey]` | dev QA GREETING 본문·데스크톱 편집 안내·상세 닫기 확인; 나머지 템플릿 미검수 |
+| `/messages/settings` | dev QA390px 7개 설정·상세·복귀, 중복전송 확인 끄기/재조회/켜기 원복 확인. 자동 전송 안내 문구 개선 확인; 스케줄러 실행 검수와 별개 |
+| `/messages/system-templates/[templateKey]` | dev QA 기본9개 본문·변수·상세 닫기, INFO390px 전체폭 CTA 수정 확인 |
 | `/messages/system-templates` | 미실행 |
 | `/messages/templates/[id]/edit` | 미실행 |
-| `/messages/templates/new` | 미실행 |
-| `/messages/templates` | dev QA 390px 목록·기본9/지점0·빈 필터·상세/복귀 읽기 검수; 생성/편집 미실행 |
+| `/messages/templates/new` | 모바일: 데스크톱에서 생성하라는 안내·목록 복귀 확인. PC 별도 생성 폼의 실제 생성 및 공백 검증은 쓰기 검수 기록 참조 |
+| `/messages/templates` | dev QA390px 기본9/지점1 목록·지점 필터·상세/복귀, PC 생성·수정 결과 반영 확인. QA 양식 실제 문자1건 공급자 발송완료 대조 |
 | `/notification` | dev QA390px 비활성 채널과 이유 표시 확인; 전체 디바이스 테스트 발송 제외 |
 | `/notifications` | dev QA /notification으로 정상 이동 확인 |
 | `/` | 미실행 |
