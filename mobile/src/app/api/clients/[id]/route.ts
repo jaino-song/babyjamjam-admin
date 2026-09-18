@@ -7,8 +7,8 @@ import {
     getAuthHeaders,
     getAuthToken,
     parseBody,
-    unauthorizedResponse,
 } from "@/lib/api/route-utils";
+import { unauthorizedProblemResponse } from "@/lib/api/problem-responses";
 import { invalidClientIdResponse, isValidClientId } from "../client-route-utils";
 
 type RouteParams = { params: Promise<{ id: string }> };
@@ -47,7 +47,7 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
     try {
         const token = getAuthToken(request);
         if (!token) {
-            return unauthorizedResponse("Unauthorized");
+            return unauthorizedProblemResponse();
         }
 
         const { id } = await params;
@@ -60,7 +60,7 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
         });
         return backendJsonResponse(response);
     } catch (error) {
-        return errorResponse(error, "fetch client");
+        return errorResponse(error, "fetch client", "read");
     }
 }
 
@@ -68,7 +68,7 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
 export async function PATCH(request: NextRequest, { params }: RouteParams) {
     const token = getAuthToken(request);
     if (!token) {
-        return unauthorizedResponse("Unauthorized");
+        return unauthorizedProblemResponse();
     }
 
     const { id } = await params;
@@ -85,7 +85,7 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
         });
         return backendJsonResponse(backendResponse);
     } catch (error) {
-        return errorResponse(error, "update client");
+        return errorResponse(error, "update client", "mutation");
     }
 }
 
@@ -94,7 +94,7 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
     try {
         const token = getAuthToken(request);
         if (!token) {
-            return unauthorizedResponse("Unauthorized");
+            return unauthorizedProblemResponse();
         }
 
         const { id } = await params;
@@ -107,6 +107,6 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
         });
         return backendJsonResponse(response);
     } catch (error) {
-        return errorResponse(error, "delete client");
+        return errorResponse(error, "delete client", "mutation");
     }
 }

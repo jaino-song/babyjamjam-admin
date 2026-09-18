@@ -7,8 +7,11 @@ import {
     getAuthHeaders,
     getAuthToken,
     getUpstreamErrorStatus,
-    unauthorizedResponse,
 } from "@/lib/api/route-utils";
+import {
+    unauthorizedProblemResponse,
+    validationProblemResponse,
+} from "@/lib/api/problem-responses";
 import {
     BinaryDownloadError,
     toBinaryBytes,
@@ -112,7 +115,7 @@ export async function GET(
     const authToken = getAuthToken(request);
 
     if (!authToken) {
-        const response = unauthorizedResponse("Authentication required. Please log in.");
+        const response = unauthorizedProblemResponse();
         response.headers.set("Cache-Control", "private, no-store");
         return response;
     }
@@ -123,8 +126,16 @@ export async function GET(
     const requestedPageParam = searchParams.get("page");
     const isReceiptPng = searchParams.get("format") === "receipt-png";
 
+    let requestedPage: number | null;
     try {
-        const requestedPage = parsePageNumber(requestedPageParam);
+        requestedPage = parsePageNumber(requestedPageParam);
+    } catch {
+        return validationProblemResponse("Invalid page number", [
+            { pointer: "/page", code: "INVALID_FORMAT", detail: "입력 형식이 올바르지 않아요.", location: "query" },
+        ]);
+    }
+
+    try {
         const response = await serverAPIClient.get(
             `/api/documents/${encodeURIComponent(documentId)}/download_files`,
             {
@@ -191,14 +202,16 @@ export async function GET(
         });
     } catch (error) {
         if (error instanceof RangeError) {
-            return safeBinaryErrorResponse(error.message, 400);
+            return validationProblemResponse("Requested page is out of range", [
+                { pointer: "/page", code: "INVALID_VALUE", detail: "허용되지 않는 값이에요.", location: "query" },
+            ]);
         }
 
         if (error instanceof BinaryDownloadError) {
             return safeBinaryErrorResponse("계약서 PDF를 불러오지 못했습니다.");
         }
 
-        const response = errorResponse(error, "fetch eformsign document PDF");
+        const response = errorResponse(error, "fetch eformsign document PDF", "read");
         response.headers.set("Cache-Control", "private, no-store");
         return response;
     }

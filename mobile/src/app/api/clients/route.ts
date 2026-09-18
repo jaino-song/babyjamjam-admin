@@ -12,9 +12,9 @@ import {
     getAuthHeaders,
     getAuthToken,
     parseBody,
-    unauthorizedResponse,
     withNoStore,
 } from "@/lib/api/route-utils";
+import { unauthorizedProblemResponse } from "@/lib/api/problem-responses";
 
 // Mirrors backend CreateClientDto: `name` (@IsString) plus the three booleans
 // `careCenter`, `voucherClient`, `breastPump` (@IsBoolean, no @IsOptional) are
@@ -64,7 +64,7 @@ export async function GET(request: NextRequest) {
     try {
         const token = getAuthToken(request);
         if (!token) {
-            return unauthorizedResponse("Unauthorized");
+            return unauthorizedProblemResponse();
         }
 
         const searchParams = request.nextUrl.searchParams;
@@ -85,7 +85,7 @@ export async function GET(request: NextRequest) {
         });
         return withNoStore(backendJsonResponse(response));
     } catch (error) {
-        return errorResponse(error, "fetch clients");
+        return errorResponse(error, "fetch clients", "read");
     }
 }
 
@@ -93,7 +93,7 @@ export async function GET(request: NextRequest) {
 export async function POST(request: NextRequest) {
     const token = getAuthToken(request);
     if (!token) {
-        return unauthorizedResponse("Unauthorized");
+        return unauthorizedProblemResponse();
     }
 
     const { data, response } = await parseBody(createClientSchema, request);
@@ -122,6 +122,6 @@ export async function POST(request: NextRequest) {
                 }
             }
         }
-        return errorResponse(error, "create client");
+        return errorResponse(error, "create client", "mutation");
     }
 }

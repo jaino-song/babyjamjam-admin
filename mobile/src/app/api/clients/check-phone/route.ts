@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { serverAPIClient } from "@/lib/api/server";
 import { getAuthToken, getAuthHeaders } from "@/lib/api/route-utils";
+import { unauthorizedProblemResponse } from "@/lib/api/problem-responses";
 
 interface ClientPhone {
   phone?: string | null;
@@ -18,7 +19,7 @@ export async function GET(request: NextRequest) {
   try {
     const token = getAuthToken(request);
     if (!token) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+      return unauthorizedProblemResponse();
     }
 
     const phone = request.nextUrl.searchParams.get("phone");
