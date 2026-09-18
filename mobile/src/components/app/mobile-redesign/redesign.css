@@ -5397,7 +5397,7 @@ body.mobile-prices-route [data-slot="mobile-bottom-nav"] span {
   background: white;
   border-radius: 18px;
   padding: 16px 18px;
-  margin: 0 16px;
+  margin: 0;
   box-shadow: 0 4px 24px hsla(214, 50%, 20%, 0.06);
 }
 .price-breakdown-row {
