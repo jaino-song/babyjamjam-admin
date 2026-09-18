@@ -14,6 +14,7 @@ let mockSearchParams = new URLSearchParams();
 let mockEditingClient: Client | undefined;
 let mockEditingContractDocument: object | undefined;
 let mockLatePrefill: Record<string, unknown> = {};
+let mockAllVoucherPrices: Array<Record<string, string | number | null>> = [];
 let mockEmployees: Array<{
   id: number;
   name: string;
@@ -43,7 +44,7 @@ jest.mock("@/hooks/useEmployees", () => ({
 }));
 
 jest.mock("@/hooks/useVoucherData", () => ({
-  useAllVoucherPrices: () => ({ data: mockEmptyPrices, isLoading: false, isFetching: false }),
+  useAllVoucherPrices: () => ({ data: mockAllVoucherPrices, isLoading: false, isFetching: false }),
   useOutOfPocketPriceInfos: () => ({
     data: mockOutOfPocketPrices,
     isLoading: false,
@@ -170,6 +171,7 @@ describe("mobile client service date confirmation", () => {
     mockEditingClient = undefined;
     mockEditingContractDocument = undefined;
     mockLatePrefill = {};
+    mockAllVoucherPrices = [];
     mockEmployees = [];
     act(() => useClientDialogStore.getState().reset());
     useClientWizardStore.getState().reset();
@@ -554,5 +556,41 @@ describe("mobile client service date confirmation", () => {
     });
     expect(useClientWizardStore.getState().primaryEmployeeId).toBe(23);
     expect(useClientWizardStore.getState().secondaryEmployeeId).toBe(23);
+  });
+
+  it("hydrates an ID-free contract price candidate by matching its amounts", async () => {
+    mockSearchParams = new URLSearchParams("clientId=7");
+    mockEditingClient = {
+      ...editingClient(),
+      eDocId: "price-prefill-contract",
+      type: null,
+      duration: null,
+      fullPrice: null,
+      grant: null,
+      actualPrice: null,
+    };
+    mockEditingContractDocument = { id: "price-prefill-contract" };
+    mockLatePrefill = {
+      fullPrice: "300000",
+      grant: "200000",
+      actualPrice: "100000",
+    };
+    mockAllVoucherPrices = [
+      {
+        type: "A통합1형",
+        duration: "30",
+        fullPrice: "300000",
+        grant: "200000",
+        actualPrice: "100000",
+        year: 2026,
+      },
+    ];
+
+    render(<NewClientPage />);
+
+    await waitFor(() => {
+      expect(useClientWizardStore.getState().type).toBe("A통합1형");
+      expect(useClientWizardStore.getState().duration).toBe(30);
+    });
   });
 });

@@ -24,7 +24,7 @@ import {
   useOutOfPocketPriceInfos,
   useVoucherPriceInfos,
   useVoucherYears,
-  type VoucherPriceInfo,
+  type ContractVoucherPriceInfo,
 } from "@/hooks/useVoucherData";
 import type { CreateClientDto, ServiceStatus, UpdateClientDto } from "@/lib/client/types";
 import { SERVICE_STATUS_OPTIONS } from "@/lib/client/types";
@@ -183,22 +183,22 @@ const findEmployeeByContractPrefill = (
 
 const normalizePriceDigits = (value: string | null | undefined): string => (value ?? "").replace(/\D/g, "");
 
-const findVoucherPriceByAmounts = (
-  voucherPrices: readonly VoucherPriceInfo[],
-  amounts: { fullPrice?: string; grant?: string; actualPrice?: string },
-): VoucherPriceInfo | undefined => {
+type VoucherPriceAmountCandidate = Pick<ContractVoucherPriceInfo, "fullPrice" | "grant" | "actualPrice">;
+
+function findVoucherPriceByAmounts<T extends VoucherPriceAmountCandidate>(
+  voucherPrices: readonly T[], amounts: { fullPrice?: string; grant?: string; actualPrice?: string },
+): T | undefined {
   const fullPrice = normalizePriceDigits(amounts.fullPrice);
   const grant = normalizePriceDigits(amounts.grant);
   const actualPrice = normalizePriceDigits(amounts.actualPrice);
   if (!fullPrice && !grant && !actualPrice) return undefined;
-
   return voucherPrices.find((price) => {
     if (fullPrice && normalizePriceDigits(price.fullPrice) !== fullPrice) return false;
     if (grant && normalizePriceDigits(price.grant) !== grant) return false;
     if (actualPrice && normalizePriceDigits(price.actualPrice) !== actualPrice) return false;
     return true;
   });
-};
+}
 
 export default function NewClientPage() {
   const router = useRouter();
