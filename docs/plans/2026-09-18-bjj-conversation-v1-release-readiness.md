@@ -3,7 +3,19 @@
 작성일: 2026-09-18  
 통합 worktree: `/Users/jaino/Development/babyjamjam-admin/bjj-conversation-v1`  
 통합 브랜치: `codex/bjj-conversation-v1`  
-검증 기준 커밋: `9da30d27ab07dff3fd62e50861031e85a6adc1ea`
+검증 기준 커밋: `1d512cd3b1281cc28b42699dc3dd7394f591ee49`
+
+## Phase 7 deterministic close — 2026-09-18
+
+Phase 7 is integrated at `1d512cd3b1281cc28b42699dc3dd7394f591ee49`; the final correction source is `720425b8548599f2f647f58569ba3dc7fba031c4`. Present-but-unusable service-record sources now remain explicit digest-only unavailable scopes with `complete=true`, allowing a reviewed `no`/`noSend` customer transaction to persist terminal coverage while preventing service-record intent, delivery job and SMS creation. Malformed schedule identity/date data remains incomplete and fail-closed.
+
+- Focused planner/recipe: **2 suites / 34 tests passed**.
+- Guarded disposable PostgreSQL/AppModule: **16 suites / 198 tests passed** at the task SHA and again after integration.
+- Full backend: **396 suites passed, 1 skipped; 5,713 tests passed, 44 skipped; 1 snapshot passed**.
+- Type-check, Nest build, capability drift (**47**) and production dependency audit (**0 vulnerabilities**) passed.
+- Independent SOL FINAL: **SHIP / HIGH**, no blocking findings.
+
+The implementation and deterministic validation gates are closed. Paid Google/OpenAI quality evaluation, human review, real SMS, production database changes, deployment and operational activation remain open release gates.
 
 ## 최신 통합 업데이트 — 2026-09-18
 

@@ -3,6 +3,18 @@
 Updated: 2026-09-18. Baseline: `4198fb991a59d63f14f529f54b1d66c1587ca76b`.
 Integration: `codex/bjj-conversation-v1`. Local implementation, deterministic verification, model quality and operational activation are separate results.
 
+## Phase 7 deterministic close — 2026-09-18
+
+The final service-record-link correction is integrated at `1d512cd3b1281cc28b42699dc3dd7394f591ee49` from task source `720425b8548599f2f647f58569ba3dc7fba031c4`. Trustworthy schedule scopes with unusable tokens, delivery snapshots, templates or sender policy now produce digest-only unavailable effects with `complete=true`, so explicit `no`/`noSend` customer writes can commit terminal coverage without acquiring send authority. Malformed schedule incarnation/date data remains incomplete and fails closed.
+
+- Focused planner/recipe regression: **2 suites / 34 tests passed**.
+- Guarded disposable PostgreSQL/AppModule matrix at the task SHA: **16 suites / 198 tests passed**. The no-send task path commits the customer update, persists service-record terminal coverage, and creates no service-record intent/job or message log.
+- Post-merge integration verification: **2 suites / 34 tests passed** and **16 suites / 198 guarded tests passed** at the integration SHA.
+- Full backend Jest at the task SHA: **396 suites passed, 1 skipped; 5,713 tests passed, 44 skipped; 1 snapshot passed**. Backend type-check, Nest build, capability drift (**47 capabilities**) and production dependency audit (**0 vulnerabilities**) passed.
+- Independent cumulative SOL FINAL at `720425b8548599f2f647f58569ba3dc7fba031c4` against `4dd69251ebde09ed1a2eaf8228c2a08080a73bef`: **SHIP / HIGH**, no blocking findings.
+
+This closes Phase 7 implementation and deterministic validation. Paid Google/OpenAI quality evaluation, human review, real SMS, production database changes, deployment, merge to environment branches and operational activation remain separate gates.
+
 ## Phase 7 carrier correction — 2026-09-18
 
 The task-origin automation reference now follows a schedule intent into the dedicated service-record-link job. `ClientWriteAgentCapabilitiesProvider` includes reviewed `service-record-link` effects when staging schedule intents; `MessageAutomationIntentService` passes the digest-only commit reference to `ServiceRecordLinkService`; and the automatic link job persists that reference for the existing authority/recipe check. Legacy callers without a task reference retain the one-argument path and unchanged payload.
@@ -38,7 +50,7 @@ Phase 7/8 implementation evidence is materially expanded, while Phase 9 merge/de
 | 4 — lifecycle and retention | Closed | Source `3b094cdfa13b20f1c08762b916c2f2f20ffcef9c`; shared23/backend436/DB73; SOL SHIP/HIGH |
 | 5 — conversation intake and context | Closed | Source `2d114d147b88fc208c86ed12679cf6f9101aca56`; shared25/backend498/DB93; cumulative SOL SHIP/HIGH |
 | 6 — atomic task/action approval | Closed | Source `4dd69251ebde09ed1a2eaf8228c2a08080a73bef`; shared25/backend535/DB114; cumulative SOL SHIP/HIGH |
-| 7 — client writes and automation consent | Integrated slices verified; plan-level close remains open | Guarded PostgreSQL/AppModule and remote full-flow/auth checks pass; cumulative consent/provider coverage and final cumulative SOL close remain |
+| 7 — client writes and automation consent | Closed for implementation and deterministic validation | Integrated at `1d512cd3b1281cc28b42699dc3dd7394f591ee49`; cumulative consent/provider and no-send coverage verified. Paid model quality, real SMS, production data and activation remain separate |
 | 8 — desktop and mobile | Integrated browser slices verified; final cross-screen acceptance remains open | Authenticated desktop and mobile real-backend paths pass; full keyboard/IME/focus/scroll acceptance remains |
 | 9 — cumulative QA and release preparation | Deterministic release evidence recorded; operational gates remain open | Release/rollback record and remote CI evidence are recorded; GitGuardian blocks merge, and deployment/production activation remain unperformed |
 
