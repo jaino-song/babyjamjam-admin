@@ -305,8 +305,7 @@ export default function ServiceRecordPage() {
                     paymentConfirmed: Boolean(session.paymentConfirmed),
                 });
             } else {
-                const stored = readStoredFormState(token);
-                if (stored?.day === targetDay && stored.draft) setDraft(stored.draft);
+                setDraft(initializeUnlockedDraft(token, targetDay, ctx.sessions, defaultDate));
             }
             navigateTo("day", {
                 mode: "none",
@@ -443,9 +442,7 @@ export default function ServiceRecordPage() {
             initialPageIdx = canRestoreDraft
                 ? Math.min(Math.max(stored?.pageIdx ?? 0, 0), DAY_PAGES.length - 1)
                 : 0;
-            setDraft(canRestoreDraft && stored?.draft
-                ? stored.draft
-                : { _date: defaultDate(d), ...DEFAULT_DAILY_ANSWERS });
+            setDraft(initializeUnlockedDraft(token, d, ctx?.sessions ?? [], defaultDate));
         }
         navigateTo("day", { mode: "push", day: d, pageIdx: initialPageIdx });
     }
@@ -688,4 +685,32 @@ export default function ServiceRecordPage() {
             }}
         />
     );
+}
+
+function initializeUnlockedDraft(
+    token: string,
+    day: number,
+    sessions: ServiceRecordContext["sessions"],
+    defaultDate: (day: number) => string,
+): Record<string, unknown> {
+    const session = sessions.find((row) => row.sessionIndex === day);
+    const serverDraft: Record<string, unknown> = {
+        _date: defaultDate(day),
+        ...DEFAULT_DAILY_ANSWERS,
+        etcService: "",
+        notes: "",
+        paymentConfirmed: false,
+        ...(session
+            ? {
+                _date: session.serviceDate.slice(0, 10),
+                ...(session.answers ?? {}),
+                etcService: session.etcService ?? "",
+                notes: session.notes ?? "",
+                paymentConfirmed: Boolean(session.paymentConfirmed),
+            }
+            : {}),
+    };
+    const stored = readStoredFormState(token);
+    if (stored?.day !== day || !stored.draft) return serverDraft;
+    return { ...serverDraft, ...stored.draft };
 }
