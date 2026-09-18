@@ -12,9 +12,22 @@ Integration: `codex/bjj-conversation-v1`. Local implementation, deterministic ve
 | 4 — lifecycle and retention | Closed | Source `3b094cdfa13b20f1c08762b916c2f2f20ffcef9c`; shared23/backend436/DB73; SOL SHIP/HIGH |
 | 5 — conversation intake and context | Closed | Source `2d114d147b88fc208c86ed12679cf6f9101aca56`; shared25/backend498/DB93; cumulative SOL SHIP/HIGH |
 | 6 — atomic task/action approval | Closed | Source `4dd69251ebde09ed1a2eaf8228c2a08080a73bef`; shared25/backend535/DB114; cumulative SOL SHIP/HIGH |
-| 7 — client writes and automation consent | Paused by user; runtime gate scoped FINAL SHIP/HIGH | Runtime source `b02ceaa2`; real customer/intent, ordinary successors, schedule/link and log/retry integration plus cumulative FINAL remain |
-| 8 — desktop and mobile | Not implemented | Both renderers, protected forms and authenticated browser QA pending |
-| 9 — cumulative QA and release preparation | Not implemented | Full acceptance evidence and independent cumulative review pending |
+| 7 — client writes and automation consent | Integrated slices verified; plan-level close remains open | Guarded PostgreSQL/AppModule and remote full-flow/auth checks pass; cumulative consent/provider coverage and final cumulative SOL close remain |
+| 8 — desktop and mobile | Integrated browser slices verified; final cross-screen acceptance remains open | Authenticated desktop and mobile real-backend paths pass; full keyboard/IME/focus/scroll acceptance remains |
+| 9 — cumulative QA and release preparation | Deterministic release evidence recorded; operational gates remain open | Release/rollback record and remote CI evidence are recorded; GitGuardian blocks merge, and deployment/production activation remain unperformed |
+
+## Latest continuation update — Phase7 through Phase9 evidence
+
+Updated 2026-09-18 at integration head `defc787667df8a5db624fdd5e4a3df4b5ad3b7ef` (PR [#716](https://github.com/jaino-song/babyjamjam-admin/pull/716)). The latest fixture isolation correction makes the automation authority E2E order-independent and prevents a reserved global marker from being selected as a branch-owned rule. It does not change production authority behavior.
+
+- Local full backend Jest: **395 suites passed, 1 skipped; 5,691 tests passed, 44 skipped; 1 snapshot passed; exit 0**.
+- Local guarded task E2E on disposable PostgreSQL/AppModule: **11 suites, 158 tests passed; exit 0**. The cumulative carrier and catch-up run remains **14 suites, 192 tests passed**.
+- Deterministic conversation harness: **48/48 passed** (development 32, holdout 16), with zero network, transport or safety errors.
+- Authenticated browser slices: desktop Release A **1 passed, 1 intentional skip**; mobile real-backend **1 passed**. The mobile run was re-executed against the synthetic backend after the fixture correction.
+- Remote PR checks: backend, full-flow, call-inbox, auth observe/enforce, frontend, mobile, shared contracts, OSV and advisory real-backend browser checks passed. GitGuardian remains failed and is the current required-check blocker; no bypass was used.
+- Release materials are in [`2026-09-18-bjj-conversation-v1-release-readiness.md`](./2026-09-18-bjj-conversation-v1-release-readiness.md). Vercel entries are preview checks only; Lightsail and database deployment jobs were skipped by workflow conditions.
+
+These results close the recorded deterministic implementation and browser evidence for the integrated slices. They do **not** close the full Phase7 plan-level acceptance or the three completion flags: no paid Google/OpenAI quality evaluation, human review, real SMS, production database migration, merge, deployment or operational activation was performed.
 
 ## User-requested pause — runtime delivery gate verified
 
