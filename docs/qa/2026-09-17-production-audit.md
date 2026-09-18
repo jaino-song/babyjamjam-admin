@@ -194,10 +194,10 @@ CLIENT-001은 확인한 중복 번호 시나리오 하나의 결과이며 모든
 | `/admin/agent` | 미실행 |
 | `/admin/feedback/[id]` | 미실행; 모바일 결과와 별도 |
 | `/admin` | dev QA PC 빈 통계·목록·상세 미선택 안내 시각 확인; 유효 피드백 상세 별도 |
-| `/all` | 미실행 |
+| `/all` | dev QA PC 폭에서 /dashboard 리다이렉트 확인 |
 | `/chat` | 미실행 |
-| `/clients/filtered` | 미실행 |
-| `/clients/new` | 독립 경로 미실행 |
+| `/clients/filtered` | dev QA 네 필터 표시·미완료/시작예정 QA163 날짜·두 빈 결과·누락 필터 오류·닫기 복귀 확인 |
+| `/clients/new` | dev QA 독립 폼 중복 연락처 차단·미등록 QA 번호 다음·이전 입력 유지·닫기 확인. 생일/주소 공란 허용 차이는 의도 확인 중; 최종 저장 미실행 |
 | `/clients` | CLIENT-001/002 |
 | `/consultations` | CONSULT-001 |
 | `/contracts` | CONTRACT-001/002, RECORD-001 |
@@ -240,7 +240,7 @@ CLIENT-001은 확인한 중복 번호 시나리오 하나의 결과이며 모든
 | `/kakao/onboarding` | 미실행 |
 | `/login` | 미실행 |
 | `/onboarding` | 미실행 |
-| `/register` | 미실행 |
+| `/register` | dev QA390px 빈 입력·이메일 형식·공백 이름 오류 확인; 비밀번호 입력/최종 계정 생성 미실행 |
 | `/reset-password` | dev QA390px 토큰 없음 안내·재요청 경로 확인; 유효 토큰/비밀번호 변경 미실행 |
 | `/verify-email` | dev QA390px 토큰 없음·빈/잘못된 이메일 차단 확인; 유효 인증/재발송 미실행 |
 | `/admin/feedback/[id]` | dev QA 없는 UUID 오류 안내·목록 복귀 확인; QA 구형 채팅 세션0건으로 유효 상세 미검증 |
