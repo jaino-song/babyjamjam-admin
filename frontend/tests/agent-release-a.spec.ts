@@ -221,7 +221,7 @@ test.describe("Release A flag coexistence", () => {
     });
 
     test("keeps IME Enter local and restores focus when the mobile sidebar closes", async ({ page }) => {
-        test.skip(!runAgentE2E || runAgentRealE2E, "Run with RUN_AGENT_E2E=1 against the authenticated Playwright environment");
+        test.skip(!runAgentE2E || runAgentRealE2E || !shellEnabled, "Run with RUN_AGENT_E2E=1 and NEXT_PUBLIC_AGENT_SHELL_ENABLED=1");
         const routes = await setupRoutes(page);
         await page.goto("/chat");
         await expect(page.getByText("AI 운영 코파일럿")).toBeVisible();
@@ -251,7 +251,7 @@ test.describe("Release A flag coexistence", () => {
     });
 
     test("shows the latest server draft after a task revision conflict", async ({ page }) => {
-        test.skip(!runAgentE2E || runAgentRealE2E, "Run with RUN_AGENT_E2E=1 against the authenticated Playwright environment");
+        test.skip(!runAgentE2E || runAgentRealE2E || !shellEnabled, "Run with RUN_AGENT_E2E=1 and NEXT_PUBLIC_AGENT_SHELL_ENABLED=1");
         const routes = await setupRoutes(page, { task: true });
         await page.goto("/chat");
         await expect(page.getByText("AI 운영 코파일럿")).toBeVisible();
