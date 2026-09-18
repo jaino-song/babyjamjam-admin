@@ -487,6 +487,7 @@ describe("mobile message data pages (merged 발송 기록 screen)", () => {
     await user.click(filterToggle);
 
     expect(filterToggle).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByRole("textbox", { name: "고객명, 연락처, 템플릿, 내용 검색" })).toBeInTheDocument();
     expect(screen.getByPlaceholderText("고객명, 연락처, 템플릿, 내용 검색…")).toBeInTheDocument();
     const filterPanel = container.querySelector('[data-slot="message-history-filters"]') as HTMLElement;
     expect(filterPanel.querySelector('[aria-label="발송 기간"]')).toBeInTheDocument();
