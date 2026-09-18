@@ -632,6 +632,44 @@ describe("MessageAutomationIntentService", () => {
         );
     });
 
+    it("carries a task commit reference into both schedule and service-record link successors", async () => {
+        const { service, triggerService, serviceRecordLinkService } = setup();
+        const taskAutomationReference = createAgentAutomationTaskCommitReference({
+            actionId: "70000000-0000-4000-8000-000000000014",
+            taskId: "70000000-0000-4000-8000-000000000015",
+            taskRevision: 5,
+            authorities: [{
+                id: "70000000-0000-4000-8000-000000000011",
+                recordDigest: "a".repeat(64),
+                scopeDigest: "b".repeat(64),
+            }],
+            coverages: [],
+        });
+
+        await expect(service.fulfillScheduleIntent({
+            branchId: "branch-1",
+            scheduleId: 72,
+            includePast: true,
+            taskOrigin: true,
+            taskAutomationReference,
+        })).resolves.toBe(true);
+
+        expect(triggerService.syncEmployeeAssignmentRulesForSchedule).toHaveBeenCalledWith(
+            "branch-1",
+            72,
+            true,
+            {
+                preserveExisting: true,
+                taskOrigin: true,
+                taskAutomationReference,
+            },
+        );
+        expect(serviceRecordLinkService.scheduleForServiceStart).toHaveBeenCalledWith(
+            72,
+            { taskAutomationReference },
+        );
+    });
+
     it("retains a schedule intent when job generation reports a retryable result", async () => {
         const { service, prisma, triggerService, serviceRecordLinkService } = setup();
         triggerService.syncEmployeeAssignmentRulesForSchedule.mockResolvedValue(false);

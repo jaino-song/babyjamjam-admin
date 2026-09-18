@@ -49,6 +49,7 @@ import {
     DEFAULT_MOBILE_SERVICE_RECORD_BASE_URL,
 } from "./service-record-link-automation-effect-recipe";
 import { captureServiceRecordError } from "infrastructure/observability/service-record-sentry";
+import type { AgentAutomationTaskCommitReference } from "domain/entities/agent-automation-consent";
 
 const AUTOMATIC_SCHEDULING_LEASE_MINUTES = 10;
 const AUTOMATIC_SCHEDULING_RETRY_DELAY_MS = AUTOMATIC_SCHEDULING_LEASE_MINUTES * 60 * 1000;
@@ -104,12 +105,16 @@ export class ServiceRecordLinkService {
     }
 
     /** Ensure the assignment link exists and schedule the SMS for service-start day 15:00 KST. */
-    async scheduleForServiceStart(scheduleId: number): Promise<boolean> {
+    async scheduleForServiceStart(
+        scheduleId: number,
+        options: { taskAutomationReference?: AgentAutomationTaskCommitReference } = {},
+    ): Promise<boolean> {
         try {
             const { scheduledFor, employeeId, jobEnqueued } = await this.issueServiceRecordLinkJob(scheduleId, {
                 scheduledFor: null,
                 recordMissingPhoneFailure: true,
                 isManualSend: false,
+                taskAutomationReference: options.taskAutomationReference,
             });
             if (jobEnqueued) {
                 this.logger.log(
@@ -295,6 +300,7 @@ export class ServiceRecordLinkService {
             preparedLinkToken?: string;
             isManualSend: boolean;
             recipientPhone?: string;
+            taskAutomationReference?: AgentAutomationTaskCommitReference;
         },
     ): Promise<{
         scheduledFor: Date;
@@ -459,6 +465,9 @@ export class ServiceRecordLinkService {
                         serviceStartDate: this.formatDate(schedule.startDate),
                         serviceEndDate: this.formatDate(schedule.endDate),
                     },
+                    ...(options.taskAutomationReference
+                        ? { taskAutomationReference: options.taskAutomationReference }
+                        : {}),
                 },
             });
             const promote = (transaction?: Prisma.TransactionClient) => transaction

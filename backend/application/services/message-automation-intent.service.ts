@@ -162,7 +162,14 @@ export class MessageAutomationIntentService {
                 await this.releaseIntent(claim);
                 return false;
             }
-            await this.serviceRecordLinkService.scheduleForServiceStart(params.scheduleId);
+            if (params.taskAutomationReference) {
+                await this.serviceRecordLinkService.scheduleForServiceStart(
+                    params.scheduleId,
+                    { taskAutomationReference: params.taskAutomationReference },
+                );
+            } else {
+                await this.serviceRecordLinkService.scheduleForServiceStart(params.scheduleId);
+            }
             return this.deleteClaimedIntent(claim);
         } catch (error) {
             await this.releaseAfterFailure(claim, error);
