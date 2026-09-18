@@ -5,6 +5,23 @@
 현재 검증 브랜치: `codex/unit/bjj-conversation-final`
 현재 기준 커밋: `6fe3a27c20f8b5babec14b7374070178e068bc95` (base `origin/dev` `089cb133741f67752d084c1fba0766c5ad6a70f4`)
 
+## Preview promotion attempt — 2026-09-19
+
+PR [#731](https://github.com/jaino-song/babyjamjam-admin/pull/731)이 `dev`를 `preview`로 승격해 merge commit
+`92d5b63eec1cb04e0b7821b5424800751e8a711b1`을 생성했다. Preview push workflow는
+`35364445679`이다.
+
+- Backend type-check/lint/test, auth observe/enforce E2E, conversation task E2E, immutable image build,
+  database-patch wait 및 deployment-target resolution은 모두 통과했다.
+- Lightsail deploy job `105667457833`은 AWS OIDC 인증에서
+  `Could not assume role with OIDC: Not authorized to perform sts:AssumeRoleWithWebIdentity`로 실패했다.
+  따라서 Systems Manager 배포는 실행되지 않았다.
+- Preview backend 배포·런타임 health/browser proof, 운영 DB 변경, 실제 SMS/provider 호출은 수행되지 않았다.
+  외부 AWS IAM trust/configuration 경계이며 IAM이나 workflow 우회는 하지 않았다.
+
+이 섹션은 preview 승격과 배포 전 결정적 검증만 기록한다. Preview runtime/browser proof, 유료
+Google/OpenAI 품질 평가, human review 및 운영 활성화는 여전히 별도 게이트다.
+
 ## Current task-branch attestation — 2026-09-18
 
 현재 누적 검증은 `/Users/jaino/Development/babyjamjam-admin/bjj-conversation-complete`의

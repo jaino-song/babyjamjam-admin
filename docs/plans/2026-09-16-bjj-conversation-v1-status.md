@@ -3,6 +3,16 @@
 Updated: 2026-09-18. Baseline: `origin/dev` at `55777f1facf7aafb3cbe19b322b6205a4c4860df`.
 Current verification: `/Users/jaino/Development/babyjamjam-admin/bjj-conversation-complete` on `feature/bjj-conversation-complete`, HEAD `a6e72806e`. Local implementation, deterministic verification, model quality and operational activation are separate results.
 
+## Preview promotion attempt — 2026-09-19
+
+PR [#731](https://github.com/jaino-song/babyjamjam-admin/pull/731) promoted `dev` to `preview` and merged at `92d5b63eec1cb04e0b7821b5424800751e8a711b1`. The preview push workflow was `35364445679`.
+
+- Backend type-check, lint, unit tests, auth observe/enforce E2E, conversation task E2E, immutable image build, database-patch wait and deployment-target resolution all passed.
+- The Lightsail deploy job stopped at AWS OIDC authentication with `Could not assume role with OIDC: Not authorized to perform sts:AssumeRoleWithWebIdentity` (`105667457833`). Systems Manager deployment did not run.
+- No preview backend deployment, runtime health check, authenticated preview browser QA, production database change or SMS/provider call is claimed. The blocker is the external AWS IAM trust/configuration boundary; no IAM or workflow bypass was made.
+
+This records preview promotion and deterministic pre-deploy evidence only. Preview runtime/browser proof, paid Google/OpenAI quality evaluation, human review and operational activation remain open.
+
 ## RV-04 real product AppModule path — 2026-09-19
 
 The guarded product evaluator is committed at `afca342d2` (`test(agent): harden guarded product evaluator`). This is the current-branch run that boots the real Nest `AppModule` against the disposable PostgreSQL database and exercises the task/action path instead of only the mocked evaluation harness.
