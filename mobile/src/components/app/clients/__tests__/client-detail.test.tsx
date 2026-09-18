@@ -1,6 +1,7 @@
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ReactNode } from "react";
+import { formatMessageDateTimeCompact } from "@babyjamjam/shared";
 
 import {
   ClientDetailContent,
@@ -463,6 +464,54 @@ describe("ClientDetailContent", () => {
     await userEvent.setup().click(messageRows[0]);
 
     expect(screen.getByText(`메시지 · ${rowTime}`)).toBeInTheDocument();
+  });
+
+  it("falls back to updatedAt for a canceled row when lastAttemptAt is absent", async () => {
+    const log: ClientNotificationLogRecord = {
+      id: 54,
+      provider: "aligo_sms",
+      templateKey: "service_record_link_sms",
+      receiver: "01012345678",
+      recipientPhone: "01012345678",
+      recipientName: "관리사",
+      clientId: client.id,
+      status: "canceled",
+      messageBody: "제공기록지 작성 링크",
+      errorMessage: "사용자가 발송을 취소했습니다.",
+      createdAt: "2026-09-18T17:32:00.000Z",
+      lastAttemptAt: null,
+      updatedAt: "2026-09-18T18:34:00.000Z",
+      ruleName: "제공기록지 작성 링크",
+      variables: {},
+    };
+    const expectedUpdatedTime = formatMessageDateTimeCompact(log.updatedAt ?? null);
+    const createdTime = formatMessageDateTimeCompact(log.createdAt);
+
+    render(
+      <ClientDetailContent
+        data-component="mobile_clients_detail-sheet_stack_detail-page_content"
+        client={client}
+        contractDocument={null}
+        activeTab="message"
+        notificationLogs={[log]}
+        onTabChange={jest.fn()}
+        onMessage={jest.fn()}
+        onIssueContract={jest.fn()}
+        onEdit={jest.fn()}
+        onDelete={jest.fn()}
+        onClientUpdated={jest.fn()}
+      />,
+    );
+
+    const row = screen.getByRole("button", { name: /메시지 · 제공기록지 작성 링크/ });
+    expect(expectedUpdatedTime).not.toBe(createdTime);
+    expect(row.querySelector(".doc-meta")).toHaveTextContent(expectedUpdatedTime);
+    expect(row.querySelector(".doc-meta")).not.toHaveTextContent(createdTime);
+
+    await userEvent.setup().click(row);
+
+    expect(screen.getByText(`메시지 · ${expectedUpdatedTime}`)).toBeInTheDocument();
+    expect(screen.queryByText(`메시지 · ${createdTime}`)).not.toBeInTheDocument();
   });
 
   it.each([
