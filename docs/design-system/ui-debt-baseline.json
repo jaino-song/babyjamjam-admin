@@ -1052,8 +1052,7 @@
     "mobile/src/app/(shell)/privacy/page.tsx": {
       "ui-architecture/no-visual-tailwind-in-pages": [
         "18:24-18:106|visualTailwindInPage",
-        "24:24-24:59|visualTailwindInPage",
-        "30:22-30:76|visualTailwindInPage"
+        "24:22-24:76|visualTailwindInPage"
       ]
     },
     "mobile/src/app/(shell)/select-branch/page.tsx": {
@@ -1069,8 +1068,7 @@
     "mobile/src/app/(shell)/terms/page.tsx": {
       "ui-architecture/no-visual-tailwind-in-pages": [
         "18:24-18:106|visualTailwindInPage",
-        "24:24-24:59|visualTailwindInPage",
-        "30:22-30:76|visualTailwindInPage"
+        "24:22-24:76|visualTailwindInPage"
       ]
     }
   },
