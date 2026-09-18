@@ -45,7 +45,18 @@ export class EmployeeScheduleService {
         replaced?: boolean;
     }): Promise<EmployeeScheduleEntity> {
         const intentAt = new Date();
+        const ordinaryMutationId = randomUUID();
         const schedule = await this.prisma.$transaction(async (transaction) => {
+            // Acquire the branch automation lock before the schedule write.
+            // The zero-scope call intentionally performs no append; the second
+            // call below re-reads the new incarnation to reject stale numeric
+            // ID reuse before this transaction can commit.
+            await this.agentAutomationRecordStore?.appendScheduleWriteFence(transaction, {
+                branchId: branchid,
+                clientId: params.clientId,
+                mutationId: ordinaryMutationId,
+                scheduleIds: [],
+            });
             const created = await this.createEmployeeScheduleUsecase.execute(branchid, {
                 clientId: params.clientId,
                 primaryEmployeeId: params.primaryEmployeeId,
@@ -55,6 +66,12 @@ export class EmployeeScheduleService {
                 endDate: new Date(params.endDate),
                 replaced: params.replaced,
             }, transaction);
+            await this.agentAutomationRecordStore?.appendScheduleWriteFence(transaction, {
+                branchId: branchid,
+                clientId: created.clientId,
+                mutationId: ordinaryMutationId,
+                scheduleIds: [created.id],
+            });
             await this.messageAutomationIntentService.persistScheduleIntent(transaction, {
                 branchId: branchid,
                 clientId: created.clientId,
@@ -124,12 +141,33 @@ export class EmployeeScheduleService {
         const intentAt = new Date();
         const ordinaryMutationId = randomUUID();
         const schedule = await this.prisma.$transaction(async (transaction) => {
+            // Keep the same owning transaction and advisory lock for the
+            // source fence and schedule mutation. The fence is intentionally
+            // evaluated before the update so a stale task cannot race it.
+            const scheduleReader = (transaction as unknown as {
+                employee_schedule?: { findFirst?: (args: unknown) => Promise<{ id: number; clientId: number } | null> };
+            }).employee_schedule;
+            const existing = scheduleReader?.findFirst
+                ? await scheduleReader.findFirst({ where: { id, branchId: branchid }, select: { id: true, clientId: true } })
+                : null;
+            if (existing) {
+                await this.agentAutomationRecordStore?.appendScheduleWriteFence(transaction, {
+                    branchId: branchid,
+                    clientId: existing.clientId,
+                    mutationId: ordinaryMutationId,
+                    scheduleIds: [existing.id],
+                });
+            }
             const updated = await this.updateEmployeeScheduleUsecase.execute(branchid, id, {
                 workAddress: params.workAddress,
                 startDate: params.startDate ? new Date(params.startDate) : undefined,
                 endDate: params.endDate ? new Date(params.endDate) : undefined,
                 replaced: params.replaced,
             }, transaction);
+            // The second read is required because the usecase revalidates the
+            // complete write set under its locks. It also keeps create/update
+            // behavior consistent when a test or legacy caller omits the
+            // discovery result above.
             await this.agentAutomationRecordStore?.appendScheduleWriteFence(transaction, {
                 branchId: branchid,
                 clientId: updated.clientId,
