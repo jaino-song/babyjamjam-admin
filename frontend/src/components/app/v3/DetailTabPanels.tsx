@@ -95,11 +95,14 @@ export function DetailTabPanels({
           "flex items-start transition-transform duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] will-change-transform motion-reduce:transition-none",
           trackClassName
         )}
-        style={{ transform: `translateX(-${activeTabIndex * 100}%)` }}
+        style={{
+          transform: durationMs === 0 ? "none" : `translateX(-${activeTabIndex * 100}%)`,
+          transition: durationMs === 0 ? "none" : undefined,
+        }}
       >
         {panels.map((panel) => {
           const isActive = activeTab === panel.key;
-          const isVisible = visiblePanelKeys.includes(panel.key);
+          const isVisible = durationMs === 0 ? isActive : visiblePanelKeys.includes(panel.key);
 
           return (
             <section
@@ -111,6 +114,7 @@ export function DetailTabPanels({
               aria-labelledby={idPrefix ? `${idPrefix}-tab-${panel.key}` : undefined}
               aria-hidden={!isActive}
               inert={isActive ? undefined : true}
+              style={durationMs === 0 && !isActive ? { display: "none" } : undefined}
               className={cn(
                 "w-full min-w-0 shrink-0",
                 !isActive && "pointer-events-none",

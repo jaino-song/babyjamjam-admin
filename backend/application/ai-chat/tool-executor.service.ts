@@ -1,3 +1,4 @@
+import { isValidBirthdayIsoDate } from "@babyjamjam/shared/utils/birthday";
 import { Injectable, Logger } from "@nestjs/common";
 import { ClientService } from "application/services/client.service";
 import { EmployeeService } from "application/services/employee.service";
@@ -73,7 +74,6 @@ const CLIENT_SERVICE_STATUSES = [
 ] as const;
 
 const ISO_DATE_PATTERN = /^(\d{4})-(\d{2})-(\d{2})$/;
-const BIRTHDAY_PATTERN = /^(\d{2})(\d{2})(\d{2})$/;
 
 @Injectable()
 export class ToolExecutorService {
@@ -614,24 +614,9 @@ export class ToolExecutorService {
     }
 
     private parseBirthdayValue(value: string, key: string): string {
-        const match = BIRTHDAY_PATTERN.exec(value);
-        if (!match) {
-            throw new Error(`${key}은(는) YYMMDD 형식이어야 합니다`);
+        if (!isValidBirthdayIsoDate(value)) {
+            throw new Error(`${key}은(는) YYYY-MM-DD 형식의 유효한 생년월일이어야 합니다`);
         }
-
-        const year = 2000 + Number(match[1]);
-        const month = Number(match[2]);
-        const day = Number(match[3]);
-        const date = new Date(Date.UTC(year, month - 1, day));
-        const isValidDate =
-            date.getUTCFullYear() === year
-            && date.getUTCMonth() === month - 1
-            && date.getUTCDate() === day;
-
-        if (!isValidDate) {
-            throw new Error(`${key}은(는) 유효한 생년월일이어야 합니다`);
-        }
-
         return value;
     }
 

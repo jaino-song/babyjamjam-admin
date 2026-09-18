@@ -5,24 +5,24 @@ import { FormRequestPart } from "./FormRequestPart";
 describe("FormRequestPart", () => {
     const dataComponent = "desktop_chat_tests_agent-part-registry_form-request";
 
-    it("passes numeric YYMMDD metadata to desktop inputs without changing ownership", () => {
+    it("passes YYYY-MM-DD metadata to desktop inputs without changing ownership", () => {
         render(
             <FormRequestPart
                 data-component={dataComponent}
                 formId="employee-create"
                 title="직원 등록"
                 fields={[
-                    { name: "birthday", label: "생년월일", type: "text", inputMode: "numeric", placeholder: "YYMMDD", maxLength: 6 },
+                    { name: "birthday", label: "생년월일", type: "date", inputMode: "numeric", placeholder: "YYYY-MM-DD", maxLength: 10 },
                     { name: "notes", label: "메모", type: "textarea", placeholder: "간단한 메모", maxLength: 120 },
                 ]}
             />,
         );
 
-        const birthday = screen.getByRole("textbox", { name: "생년월일" });
-        expect(birthday).toHaveAttribute("type", "text");
+        const birthday = screen.getByLabelText("생년월일");
+        expect(birthday).toHaveAttribute("type", "date");
         expect(birthday).toHaveAttribute("inputmode", "numeric");
-        expect(birthday).toHaveAttribute("placeholder", "YYMMDD");
-        expect(birthday).toHaveAttribute("maxlength", "6");
+        expect(birthday).toHaveAttribute("placeholder", "YYYY-MM-DD");
+        expect(birthday).toHaveAttribute("maxlength", "10");
         expect(birthday).toHaveAttribute("data-component", `${dataComponent}_field_control`);
 
         const notes = screen.getByRole("textbox", { name: "메모" });

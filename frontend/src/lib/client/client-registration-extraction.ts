@@ -1,3 +1,4 @@
+import { normalizeBirthdayIsoDate } from "@babyjamjam/shared/utils/birthday";
 import {
     isValidClientBirthdayInput,
     isValidCompactDateInput,
@@ -239,7 +240,7 @@ function extractLabeledDateValue(
     if (options?.allowBirthdayCalendarQualifier) {
         const calendarQualifier = afterLabel.match(BIRTHDAY_CALENDAR_QUALIFIER_PREFIX);
         if (calendarQualifier?.[1] === "음력") {
-            // The registration API stores Gregorian YYMMDD values and this
+            // The registration API stores Gregorian YYYY-MM-DD values and this
             // extractor has no lunar-calendar conversion. Refuse lunar input
             // rather than silently persisting the same digits as Gregorian.
             return undefined;
@@ -265,6 +266,9 @@ function extractLabeledDateValue(
         return undefined;
     }
 
+    if (options?.allowBirthdayCalendarQualifier) {
+        return normalizeBirthdayIsoDate(candidate.raw) ?? undefined;
+    }
     return normalizeDateCandidate(candidate.raw);
 }
 

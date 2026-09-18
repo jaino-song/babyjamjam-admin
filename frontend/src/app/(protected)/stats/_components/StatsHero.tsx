@@ -1,6 +1,9 @@
+"use client";
+
 import Link from "next/link";
 import { ArrowLeft } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { useSelectedStatsPeriod } from "@/components/app/stats/StatsPeriodSelector";
 
 interface StatsHeroProps {
   title: string;
@@ -25,14 +28,22 @@ export function StatsHero({
   ariaLabel,
   dataComponent,
 }: StatsHeroProps) {
+  const { period } = useSelectedStatsPeriod();
+  const resolvedBackHref = backHref
+    ? (() => {
+        const url = new URL(backHref, "http://stats.local");
+        url.searchParams.set("period", String(period));
+        return `${url.pathname}${url.search}${url.hash}`;
+      })()
+    : undefined;
   return (
     <div
       data-component={dataComponent}
       className="animate-v3-slide-up space-y-3"
     >
-      {backHref && backLabel ? (
+      {resolvedBackHref && backLabel ? (
         <Link
-          href={backHref}
+          href={resolvedBackHref}
           data-component={`${dataComponent}_back-link`}
           className="inline-flex items-center gap-1 text-[0.78rem] font-medium text-v3-text-muted hover:text-v3-primary transition-colors"
         >

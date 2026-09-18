@@ -3,6 +3,7 @@ import { Prisma } from "@prisma/client";
 
 import {
     IMessageLogRepository,
+    MessageHistoryPageQuery,
     MessageRetryInvocation,
     MessageRetryStartResult,
 } from "domain/repositories/message-log.repository.interface";
@@ -375,6 +376,33 @@ export class SbMessageLogRepository implements IMessageLogRepository {
             orderBy: { createdAt: "desc" },
             take: limit,
             skip,
+        });
+        return rows.map(MessageLogMapper.toDomain);
+    }
+
+    async findHistoryPageByBranch(
+        branchId: string,
+        query: MessageHistoryPageQuery,
+    ): Promise<MessageLogEntity[]> {
+        const after = query.after;
+        const afterWhere = after?.source === "log"
+            ? { id: { lt: Number(after.nativeId) } }
+            : undefined;
+
+        const rows = await this.prisma.message_log.findMany({
+            where: {
+                branchId,
+                // The first page establishes this application-time insertion
+                // cutoff; continuations reuse it. Rows committed after the
+                // first read, or made visible late, may be deferred until the
+                // next fresh history poll. Native id ordering is used for the
+                // cursor, so timestamptz(6) precision never enters the
+                // continuation tuple.
+                createdAt: { lte: query.snapshotAt },
+                ...(afterWhere ? { AND: [afterWhere] } : {}),
+            },
+            orderBy: { id: "desc" },
+            take: query.limit,
         });
         return rows.map(MessageLogMapper.toDomain);
     }

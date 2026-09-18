@@ -154,7 +154,7 @@ const CLIENT_REGISTRATION_TRIGGER = /산모\s*등록|고객\s*등록/;
 function clientRegistrationAssistantContent(draft: ReturnType<typeof extractClientRegistrationDraft>): string {
     const labels = {
         phone: "연락처",
-        birthday: "생년월일 (YYMMDD)",
+        birthday: "생년월일 (YYYY-MM-DD)",
         address: "주소",
         dueDate: "출산 예정일 (YYMMDD)",
     } as const;

@@ -81,8 +81,8 @@ export function ContractCreationClientStep({ flow }: ContractCreationClientStepP
               value: form.birthday,
               onChange: (event) => actions.changeBirthday(event.target.value),
               inputMode: "numeric",
-              maxLength: 6,
-              placeholder: "YYMMDD",
+              maxLength: 10,
+              placeholder: "YYYY-MM-DD",
             }}
           />
           <InputField

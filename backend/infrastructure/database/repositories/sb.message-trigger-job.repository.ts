@@ -7,6 +7,7 @@ import {
     MessageTriggerJobCancellationScope,
     MessageTriggerJobReviewSnapshot,
 } from "domain/repositories/message-trigger-job.repository.interface";
+import type { MessageHistoryPageQuery } from "domain/repositories/message-log.repository.interface";
 import {
     MessageTriggerJobEntity,
     MessageTriggerJobPayload,
@@ -339,6 +340,39 @@ export class SbMessageTriggerJobRepository implements IMessageTriggerJobReposito
             },
             orderBy: { updatedAt: "desc" },
             take: limit,
+        });
+        return rows.map((row) => this.toDomain(row));
+    }
+
+    async findHistoryPageByBranch(
+        branchId: string,
+        query: MessageHistoryPageQuery,
+    ): Promise<MessageTriggerJobEntity[]> {
+        const after = query.after;
+        const afterWhere = after?.source === "job"
+            ? { id: { lt: after.nativeId } }
+            : undefined;
+
+        const rows = await this.prisma.message_trigger_job.findMany({
+            where: {
+                branchId,
+                ruleId: { not: MESSAGE_AUTOMATION_INTENT_RULE_ID },
+                // History is a current-state view. The application cutoff
+                // fences immutable creation only; current status changes may
+                // appear or disappear between page requests and are allowed
+                // to settle on the next poll.
+                status: { in: ["failed", "canceled"] },
+                // A post-cutoff log must not hide a job that is currently
+                // terminal; suppress only logs present at this cutoff.
+                logs: { none: { branchId, createdAt: { lte: query.snapshotAt } } },
+                // Native UUID ordering is the continuation key. The createdAt
+                // cutoff is eligibility only; it is never serialized into or
+                // compared as a cursor position.
+                createdAt: { lte: query.snapshotAt },
+                ...(afterWhere ? { AND: [afterWhere] } : {}),
+            },
+            orderBy: { id: "desc" },
+            take: query.limit,
         });
         return rows.map((row) => this.toDomain(row));
     }

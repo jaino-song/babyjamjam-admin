@@ -13,9 +13,9 @@ import {
 } from "./helpers/phase3-fixtures";
 
 const UPCOMING_ZONE_HEADER =
-  "mobile_messages_history_detail-sheet_stack_list-page_shell_content_list-card_body_zone-upcoming_header";
+  "mobile_messages_history_detail-sheet_screen_content_sliding-card_stage_list-pane_history-list_content_list-card_body_zone-upcoming_header";
 const PAST_ZONE_HEADER =
-  "mobile_messages_history_detail-sheet_stack_list-page_shell_content_list-card_body_zone-past_header";
+  "mobile_messages_history_detail-sheet_screen_content_sliding-card_stage_list-pane_history-list_content_list-card_body_zone-past_header";
 
 const createMessageLog = (name: string) => ({
   id: 102,
@@ -45,6 +45,20 @@ const createMessageLog = (name: string) => ({
   recipientName: name,
   clientName: name,
   employeeName: null,
+});
+
+const HISTORY_SNAPSHOT = "2026-07-16T05:00:00.000Z";
+
+const historyPage = (
+  items: unknown[],
+  options: { nextCursor?: string | null; hasMore?: boolean } = {},
+) => phase3Json({
+  items,
+  page: {
+    snapshotAt: HISTORY_SNAPSHOT,
+    nextCursor: options.nextCursor ?? null,
+    hasMore: options.hasMore ?? false,
+  },
 });
 
 const selector = (component: string) => `[data-component="${component}"]`;
@@ -80,14 +94,17 @@ test.describe("Phase 3.1 functional integration matrix", () => {
   test("1. confirms a changed service period once, posts duration 15, and blocks duplicate confirmation", async ({ page }) => {
     let createCalls = 0;
     let createdPayload: Record<string, unknown> | null = null;
+    let releaseCreate!: () => void;
+    const createResponseGate = new Promise<void>((resolve) => {
+      releaseCreate = resolve;
+    });
 
     await installPhase3WizardFixture(page, {
       onCreate: async (route) => {
         createCalls += 1;
         createdPayload = route.request().postDataJSON() as Record<string, unknown>;
-        // Leave the first response open long enough for a second click to race
-        // the request; the page's submission guard must still keep one POST.
-        await new Promise((resolve) => setTimeout(resolve, 100));
+        // Keep submission pending until both click events have been delivered.
+        await createResponseGate;
       },
     });
 
@@ -118,8 +135,16 @@ test.describe("Phase 3.1 functional integration matrix", () => {
     await submit.click();
     await expect(confirmation).toBeVisible();
     const confirmButton = confirmation.locator(selector("mobile_clients-new_screen_root_duration-confirmation_confirm-button"));
-    await Promise.allSettled([confirmButton.click(), confirmButton.click()]);
-    await expect.poll(() => createCalls, { timeout: 10_000 }).toBe(1);
+    try {
+      // One double-click action delivers both clicks without a second locator
+      // waiting for the confirmation button after submission removes it.
+      await confirmButton.dblclick();
+      await expect.poll(() => createCalls, { timeout: 10_000 }).toBe(1);
+    } finally {
+      releaseCreate();
+    }
+    await expect(page).toHaveURL(/\/clients(?:\?.*)?$/);
+    expect(createCalls).toBe(1);
     expect(createdPayload).toEqual(
       expect.objectContaining({
         duration: 15,
@@ -248,7 +273,7 @@ test.describe("Phase 3.1 functional integration matrix", () => {
     // already-populated end date. This handshake makes hydration ordering
     // deterministic and avoids timing-based sleeps.
     await eformDocumentRequest;
-    await expect(page.locator(phase3Selectors.birthday)).toHaveValue("950414");
+    await expect(page.locator(phase3Selectors.birthday)).toHaveValue("1995-04-14");
     await expect(page.locator(phase3Selectors.dueDate)).toHaveValue("2026-09-15");
     await advanceWizardStep(page);
     await advanceWizardStep(page);
@@ -338,7 +363,7 @@ test.describe("Phase 3.1 functional integration matrix", () => {
     await page.route("**/api/message-trigger-jobs/upcoming**", async (route) => {
       await route.fulfill(phase3Json([]));
     });
-    await page.route("**/api/message-logs**", async (route) => {
+    await page.route("**/api/message-logs/page**", async (route) => {
       historyRequests += 1;
       if (historyMode === "401") {
         await route.fulfill(phase3Json({ message: "unauthorized" }, 401));
@@ -349,7 +374,7 @@ test.describe("Phase 3.1 functional integration matrix", () => {
       } else if (historyRequests === 1) {
         await route.fulfill(phase3Json({ message: "temporary" }, 503));
       } else {
-        await route.fulfill(phase3Json([]));
+        await route.fulfill(historyPage([]));
       }
     });
 
@@ -367,11 +392,11 @@ test.describe("Phase 3.1 functional integration matrix", () => {
       network: await runAndReadCount("network"),
       server: await runAndReadCount("503"),
     };
-    // These are the exact browser request totals observed in this fixture.
-    // The 401 trace includes the existing auth-refresh path; 403 is a single
-    // request. Network and resolved-5xx totals remain explicit evidence rather
-    // than being normalized to a guessed mount model.
-    expect(attempts).toEqual({ unauthorized: 2, forbidden: 1, network: 4, server: 2 });
+    // React Query retry:false keeps page failures from adding query-level
+    // retries. The API client still retries one network transport failure,
+    // while a resolved 503 gets no transport retry; 401 adds one auth-refresh
+    // request and 403 remains a single request.
+    expect(attempts).toEqual({ unauthorized: 2, forbidden: 1, network: 2, server: 1 });
   });
 
   test("6. keeps legacy and unsafe mutation failures safe and prevents replay", async ({ page }) => {
@@ -470,14 +495,14 @@ test.describe("Phase 3.1 functional integration matrix", () => {
         await route.fulfill(phase3Json([]));
       }
     });
-    await page.route("**/api/message-logs**", async (route) => {
+    await page.route("**/api/message-logs/page**", async (route) => {
       if (mode === "loading") {
         await new Promise((resolve) => setTimeout(resolve, 400));
-        await route.fulfill(phase3Json([]));
+        await route.fulfill(historyPage([]));
       } else if (mode === "partial") {
-        await route.fulfill(phase3Json([createMessageLog("부분 실패 고객")]));
+        await route.fulfill(historyPage([createMessageLog("부분 실패 고객")]));
       } else {
-        await route.fulfill(phase3Json([createMessageLog("지난 고객")]));
+        await route.fulfill(historyPage([createMessageLog("지난 고객")]));
       }
     });
 

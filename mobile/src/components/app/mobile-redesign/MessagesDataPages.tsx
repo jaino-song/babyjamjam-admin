@@ -10,6 +10,8 @@ import {
   History,
   Loader2,
   MessageSquareText,
+  RotateCcw,
+  X,
   XCircle,
   type LucideIcon,
 } from "lucide-react";
@@ -35,6 +37,7 @@ import {
 import {
   useCancelMessageTriggerJob,
   useMessageHistory,
+  useRetryMessageHistory,
   useUpcomingMessageTriggerJobs,
 } from "@/features/message-triggers/hooks/use-message-triggers";
 import type {
@@ -49,15 +52,24 @@ import {
   type MessageHistoryDetailTone,
 } from "@/components/app/clients/client-message-history-detail";
 import { ApprovalTwoButtonModal } from "@/components/app/ui/ApprovalTwoButtonModal";
-import { StatusBadge } from "@/components/app/ui/status-badge";
+import { StatusBadge, StatusPill } from "@/components/app/ui/status-badge";
 import {
   InfoCard,
   InfoRow,
-  MobileDetailPage,
-  MobileDetailSheet,
 } from "@/components/app/mobile-redesign/detail-sheet";
 import { MessageSectionNav } from "@/components/app/mobile-redesign/MessageSectionNav";
 import { ListCard, ListCountSkeleton } from "@/components/app/mobile-redesign/primitives";
+import { SlidingCard } from "@/components/app/mobile-redesign/sliding-card";
+import { SearchBox } from "@/components/app/v3";
+import { Button } from "@/components/ui/button";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { matchesSearchQuery } from "@/lib/search/korean-search";
 import { Skeleton } from "@/components/ui/skeleton";
 import "@/components/app/mobile-redesign/redesign.css";
 
@@ -102,10 +114,223 @@ const HISTORY_DETAIL_TONE: Record<MessageLogStatus, MessageHistoryDetailTone> = 
  * route that survives it; /messages/scheduled is now a redirect only.
  */
 const HISTORY_SHEET_BASE = "mobile_messages_history_detail-sheet";
-const HISTORY_LIST_BASE = `${HISTORY_SHEET_BASE}_stack_list-page_shell`;
+const HISTORY_SLIDING_CARD_BASE = `${HISTORY_SHEET_BASE}_screen_content_sliding-card`;
+const HISTORY_LIST_BASE = `${HISTORY_SLIDING_CARD_BASE}_stage_list-pane_history-list`;
 const HISTORY_ROW_BASE = `${HISTORY_LIST_BASE}_content_list-card_body_item`;
 const UPCOMING_ROW_BASE = `${HISTORY_LIST_BASE}_content_list-card_body_item-upcoming`;
-const HISTORY_DETAIL_BASE = `${HISTORY_SHEET_BASE}_stack_detail-page_body`;
+const HISTORY_DETAIL_BASE = `${HISTORY_SLIDING_CARD_BASE}_stage_detail-pane_body`;
+
+const HISTORY_STATUS_PILL_VARIANT: Record<MessageLogStatus, "neutral" | "success" | "warning" | "danger"> = {
+  pending: "warning",
+  sent: "success",
+  failed: "danger",
+  canceled: "neutral",
+};
+
+type MessageHistoryRelativeDateFilter = "all" | "1d" | "7d" | "30d";
+
+const MESSAGE_HISTORY_RELATIVE_DATE_OPTIONS: ReadonlyArray<{
+  value: MessageHistoryRelativeDateFilter;
+  label: string;
+}> = [
+  { value: "all", label: "전체" },
+  { value: "1d", label: "1일 전" },
+  { value: "7d", label: "1주일 전" },
+  { value: "30d", label: "한 달 전" },
+];
+
+const MESSAGE_HISTORY_MONTH_OPTIONS = Array.from({ length: 12 }, (_, index) => {
+  const value = String(index + 1).padStart(2, "0");
+  return { value, label: `${index + 1}월` };
+});
+
+function matchesHistoryDateParts(sentAt: string, yearFilter: string, monthFilter: string): boolean {
+  if (!yearFilter && !monthFilter) return true;
+
+  const targetDate = new Date(sentAt);
+  if (Number.isNaN(targetDate.getTime())) return true;
+
+  const matchesYear = !yearFilter || String(targetDate.getFullYear()) === yearFilter;
+  const matchesMonth = !monthFilter || String(targetDate.getMonth() + 1).padStart(2, "0") === monthFilter;
+  return matchesYear && matchesMonth;
+}
+
+function matchesHistoryRelativeDate(
+  sentAt: string,
+  relativeDateFilter: MessageHistoryRelativeDateFilter,
+): boolean {
+  if (relativeDateFilter === "all") return true;
+
+  const targetDate = new Date(sentAt);
+  if (Number.isNaN(targetDate.getTime())) return true;
+
+  const days = relativeDateFilter === "1d" ? 1 : relativeDateFilter === "7d" ? 7 : 30;
+  const threshold = new Date();
+  threshold.setHours(0, 0, 0, 0);
+  threshold.setDate(threshold.getDate() - days);
+  return targetDate >= threshold;
+}
+
+function normalizeDatePart(value: string, emptyValue: string): string {
+  return value === emptyValue ? "" : value;
+}
+
+function matchesHistoryQuery(record: MessageLogRecord, query: string): boolean {
+  const normalized = normalizeMessageHistoryPresentation(record);
+  const recipientBadge = record.recipientType === "CLIENT" ? "고객" : record.recipientType ? "직원" : "";
+
+  return matchesSearchQuery(query, [
+    normalized.title,
+    normalized.recipientName,
+    normalized.recipientPhone,
+    normalized.templateLabel,
+    normalized.channelLabel,
+    normalized.messagePreview,
+    normalized.failureReason ?? "",
+    recipientBadge,
+    HISTORY_STATUS[normalized.status].label,
+  ]);
+}
+
+function matchesUpcomingQuery(job: UpcomingMessageTriggerJob, query: string): boolean {
+  const recipientName = job.payload.recipientName || job.payload.clientName || job.payload.employeeName || "수신자";
+  const recipientPhone = job.payload.recipientPhone || job.recipientPhone || "";
+  const reasonText = getJobReasonText(job);
+
+  return matchesSearchQuery(query, [
+    recipientName,
+    recipientPhone,
+    getMessageTemplateLabel(job.templateKey),
+    reasonText,
+    JOB_STATUS[job.status].label,
+    job.recipientType === "CLIENT" ? "고객" : "직원",
+  ]);
+}
+
+function MessageHistoryFilterPanel({
+  dataComponent,
+  searchValue,
+  onSearchChange,
+  relativeDateFilter,
+  onRelativeDateChange,
+  dateYear,
+  onDateYearChange,
+  dateMonth,
+  onDateMonthChange,
+  historyYearOptions,
+  onReset,
+  onClose,
+}: {
+  dataComponent: string;
+  searchValue: string;
+  onSearchChange: (value: string) => void;
+  relativeDateFilter: MessageHistoryRelativeDateFilter;
+  onRelativeDateChange: (value: MessageHistoryRelativeDateFilter) => void;
+  dateYear: string;
+  onDateYearChange: (value: string) => void;
+  dateMonth: string;
+  onDateMonthChange: (value: string) => void;
+  historyYearOptions: number[];
+  onReset: () => void;
+  onClose: () => void;
+}) {
+  const isDateFilterActive = Boolean(dateYear || dateMonth || relativeDateFilter !== "all");
+
+  return (
+    <div
+      className="message-history-filter-panel"
+      data-component={dataComponent}
+      data-slot="message-history-filters"
+    >
+      <SearchBox
+        data-component={`${dataComponent}_search`}
+        placeholder="고객명, 연락처, 템플릿, 내용 검색…"
+        value={searchValue}
+        onChange={onSearchChange}
+      />
+      <div className="message-history-filter-controls" data-component={`${dataComponent}_controls`}>
+        <Select value={relativeDateFilter} onValueChange={(value) => onRelativeDateChange(value as MessageHistoryRelativeDateFilter)}>
+          <SelectTrigger
+            size="sm"
+            aria-label="발송 기간"
+            className="w-full"
+            data-component={`${dataComponent}_period-trigger`}
+          >
+            <SelectValue placeholder="기간" />
+          </SelectTrigger>
+          <SelectContent data-component={`${dataComponent}_period-content`}>
+            {MESSAGE_HISTORY_RELATIVE_DATE_OPTIONS.map((option) => (
+              <SelectItem key={option.value} value={option.value}>
+                {option.label}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        <Select value={dateYear || "year"} onValueChange={(value) => onDateYearChange(normalizeDatePart(value, "year"))}>
+          <SelectTrigger
+            size="sm"
+            aria-label="발송 연도"
+            className="w-full"
+            data-component={`${dataComponent}_year-trigger`}
+          >
+            <SelectValue placeholder="연도" />
+          </SelectTrigger>
+          <SelectContent data-component={`${dataComponent}_year-content`}>
+            <SelectItem value="year">연</SelectItem>
+            {historyYearOptions.map((year) => (
+              <SelectItem key={year} value={String(year)}>
+                {year}년
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        <Select value={dateMonth || "month"} onValueChange={(value) => onDateMonthChange(normalizeDatePart(value, "month"))}>
+          <SelectTrigger
+            size="sm"
+            aria-label="발송 월"
+            className="w-full"
+            data-component={`${dataComponent}_month-trigger`}
+          >
+            <SelectValue placeholder="월" />
+          </SelectTrigger>
+          <SelectContent data-component={`${dataComponent}_month-content`}>
+            <SelectItem value="month">월</SelectItem>
+            {MESSAGE_HISTORY_MONTH_OPTIONS.map((option) => (
+              <SelectItem key={option.value} value={option.value}>
+                {option.label}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </div>
+      <div className="message-history-filter-actions" data-component={`${dataComponent}_actions`}>
+        <Button
+          type="button"
+          variant="v3-outline"
+          size="sm"
+          className="h-10 w-1/2"
+          disabled={!isDateFilterActive && !searchValue}
+          data-component={`${dataComponent}_reset`}
+          onClick={onReset}
+        >
+          <RotateCcw size={14} aria-hidden="true" />
+          필터 초기화
+        </Button>
+        <Button
+          type="button"
+          variant="v3-soft"
+          size="sm"
+          className="h-10 w-1/2"
+          data-component={`${dataComponent}_close`}
+          onClick={onClose}
+        >
+          <X size={14} aria-hidden="true" />
+          필터 닫기
+        </Button>
+      </div>
+    </div>
+  );
+}
 
 // UpcomingMessageTriggerJob has no separate "failure reason" field — cancelReason
 // is the only reason-shaped field it carries, so it doubles for both statuses.
@@ -145,6 +370,8 @@ function MessagePageShell({
   filters = [],
   activeFilter,
   onFilterChange,
+  beforeCount,
+  beforeFilters,
 }: {
   title: string;
   count: React.ReactNode;
@@ -155,37 +382,31 @@ function MessagePageShell({
   filters?: MessageFilterItem[];
   activeFilter?: string;
   onFilterChange?: (label: string) => void;
+  beforeCount?: React.ReactNode;
+  beforeFilters?: React.ReactNode;
 }) {
   return (
-    <section
+    <div
       data-component={dataComponent}
       data-slot={dataSlot}
-      className="messages-page message-page-shell"
+      data-section={activeSection}
+      className="message-page-shell flex min-h-0 flex-1 flex-col overflow-hidden"
     >
-      <div
-        className="shell-content flex-col gap-[calc(8px*var(--glint-ui-scale,1))]"
-        data-component={`${dataComponent}_content`}
-        data-slot="messages-content"
+      <ListCard
+        data-component={`${dataComponent}_content_list-card`}
+        title={title}
+        count={count}
+        beforeCount={beforeCount}
+        filters={filters}
+        activeFilter={activeFilter}
+        onFilterChange={onFilterChange}
+        beforeFilters={beforeFilters}
+        loadMore={false}
+        className="min-h-0 flex-1 !overflow-hidden !rounded-none !p-0 !shadow-none"
       >
-        <div data-component={`${dataComponent}_content_section-nav-wrapper`} className="shrink-0">
-          <MessageSectionNav
-            data-component={`${dataComponent}_content_section-nav`}
-            activeId={activeSection}
-          />
-        </div>
-        <ListCard
-          data-component={`${dataComponent}_content_list-card`}
-          title={title}
-          count={count}
-          filters={filters}
-          activeFilter={activeFilter}
-          onFilterChange={onFilterChange}
-          loadMore={false}
-        >
-          {children}
-        </ListCard>
-      </div>
-    </section>
+        {children}
+      </ListCard>
+    </div>
   );
 }
 
@@ -196,6 +417,13 @@ function EmptyState({ message }: { message: string }) {
       <p>{message}</p>
     </div>
   );
+}
+
+function getMessageHistoryErrorMessage(error: unknown): string {
+  if (error instanceof Error && /[가-힣]/.test(error.message)) {
+    return error.message;
+  }
+  return "발송 기록을 불러오지 못했습니다. 잠시 후 자동으로 다시 시도합니다.";
 }
 
 function UnavailableCount({ dataComponent }: { dataComponent?: string }) {
@@ -365,6 +593,12 @@ export function MessagesHistoryPage() {
   const [selectedRecord, setSelectedRecord] = useState<MessageLogRecord | null>(null);
   const [statusFilter, setStatusFilter] = useState<MessageRecordStatusFilter>("all");
   const [jobPendingCancel, setJobPendingCancel] = useState<UpcomingMessageTriggerJob | null>(null);
+  const [retryTarget, setRetryTarget] = useState<MessageLogRecord | null>(null);
+  const [isFilterPanelOpen, setIsFilterPanelOpen] = useState(false);
+  const [searchValue, setSearchValue] = useState("");
+  const [relativeDateFilter, setRelativeDateFilter] = useState<MessageHistoryRelativeDateFilter>("all");
+  const [dateYear, setDateYear] = useState("");
+  const [dateMonth, setDateMonth] = useState("");
 
   const {
     data: upcomingData = [],
@@ -375,8 +609,10 @@ export function MessagesHistoryPage() {
     data: historyData = [],
     isLoading: isHistoryLoading,
     isError: isHistoryError,
+    error: historyError,
   } = useMessageHistory();
   const cancelMutation = useCancelMessageTriggerJob();
+  const retryMutation = useRetryMessageHistory();
 
   const upcomingJobs = useMemo(
     () => upcomingData
@@ -398,13 +634,43 @@ export function MessagesHistoryPage() {
     [historyData],
   );
 
+  const historyYearOptions = useMemo(() => {
+    const years = new Set<number>();
+    const currentYear = new Date().getFullYear();
+
+    historyRecords.forEach((record) => {
+      const sentDate = new Date(record.lastAttemptAt || record.createdAt);
+      if (!Number.isNaN(sentDate.getTime())) {
+        years.add(sentDate.getFullYear());
+      }
+    });
+
+    for (let year = currentYear; year >= currentYear - 5; year -= 1) {
+      years.add(year);
+    }
+
+    return Array.from(years).sort((left, right) => right - left);
+  }, [historyRecords]);
+
   // all = both zones; upcoming = zone 1 only; sent/failed/canceled = matching
   // zone 2 rows only. Same semantics as desktop's merged screen.
   const showUpcomingZone = statusFilter === "all" || statusFilter === "upcoming";
   const showHistoryZone = statusFilter !== "upcoming";
-  const visibleUpcomingJobs = showUpcomingZone ? upcomingJobs : [];
+  const visibleUpcomingJobs = showUpcomingZone
+    ? upcomingJobs.filter((job) => matchesUpcomingQuery(job, searchValue))
+    : [];
   const visibleHistoryRecords = showHistoryZone
     ? (statusFilter === "all" ? historyRecords : historyRecords.filter((record) => record.status === statusFilter))
+      .filter((record) => matchesHistoryRelativeDate(
+        record.lastAttemptAt || record.createdAt,
+        relativeDateFilter,
+      ))
+      .filter((record) => matchesHistoryDateParts(
+        record.lastAttemptAt || record.createdAt,
+        dateYear,
+        dateMonth,
+      ))
+      .filter((record) => matchesHistoryQuery(record, searchValue))
     : [];
 
   // Both queries gate the whole list: they settle at different times, so keying
@@ -449,7 +715,51 @@ export function MessagesHistoryPage() {
 
   const handleFilterChange = (label: string) => {
     const nextFilter = STATUS_FILTER_ORDER.find((filter) => MESSAGE_RECORD_STATUS_FILTER_LABELS[filter] === label);
-    if (nextFilter) setStatusFilter(nextFilter);
+    if (nextFilter) {
+      setStatusFilter(nextFilter);
+      setSelectedRecord(null);
+    }
+  };
+
+  const resetHistoryFilters = () => {
+    setSearchValue("");
+    setRelativeDateFilter("all");
+    setDateYear("");
+    setDateMonth("");
+    setSelectedRecord(null);
+  };
+
+  const handleRequestRetry = () => {
+    if (
+      selectedRecord
+      && typeof selectedRecord.id === "number"
+      && selectedRecord.status === "failed"
+    ) {
+      setRetryTarget(selectedRecord);
+    }
+  };
+
+  const handleConfirmRetry = async () => {
+    if (!retryTarget || typeof retryTarget.id !== "number") return;
+
+    try {
+      const retriedRecord = await retryMutation.mutateAsync(retryTarget.id);
+      if (retriedRecord.status === "failed") {
+        throw new Error(retriedRecord.errorMessage || "메시지를 재발송하지 못했어요");
+      }
+
+      toast({ variant: "success", description: "재발송 요청을 접수했어요" });
+    } catch (error) {
+      toast({
+        variant: "destructive",
+        description: getUserErrorMessage(
+          error,
+          error instanceof Error ? error.message : "재발송을 요청하지 못했어요",
+        ),
+      });
+    } finally {
+      setRetryTarget(null);
+    }
   };
 
   const handleConfirmCancel = async () => {
@@ -495,161 +805,241 @@ export function MessagesHistoryPage() {
   const selectedCancelReason = selectedRecord && normalizedSelectedRecord?.status === "canceled"
     ? getRecordReasonText(selectedRecord)
     : "";
+  const canRetrySelectedRecord = Boolean(
+    selectedRecord
+    && typeof selectedRecord.id === "number"
+    && selectedRecord.status === "failed",
+  );
+  const filterPanelDataComponent = `${HISTORY_LIST_BASE}_content_list-card_filters`;
+  const historyErrorMessage = getMessageHistoryErrorMessage(historyError);
 
   return (
     <>
-      <MobileDetailSheet
+      <section
         data-component={HISTORY_SHEET_BASE}
-        name="messages"
-        isOpen={normalizedSelectedRecord !== null}
-        onClose={() => setSelectedRecord(null)}
-        list={
-          <MessagePageShell
-            title="발송 기록"
-            count={isPanelLoading ? (
-              // The status region carries real text, not just a label: an empty
-              // labelled region is never announced, and this replaces the only
-              // loading announcement the screen had. Zone counts and row
-              // placeholders stay silent so it is heard once, not five times.
-              <>
-                <ListCountSkeleton
-                  data-component={`${HISTORY_LIST_BASE}_content_list-card_header_count`}
-                />
-                <span role="status" className="sr-only">발송 기록을 불러오고 있습니다.</span>
-              </>
-            ) : isTotalCountUnavailable ? (
-              <UnavailableCount
-                dataComponent={`${HISTORY_LIST_BASE}_content_list-card_header_count`}
-              />
-            ) : (
-              <span data-component={`${HISTORY_LIST_BASE}_content_list-card_header_count`}>
-                {`${totalVisibleCount}건`}
-              </span>
-            )}
-            activeSection="history"
-            dataComponent={HISTORY_LIST_BASE}
-            filters={filterItems}
-            activeFilter={MESSAGE_RECORD_STATUS_FILTER_LABELS[statusFilter]}
-            onFilterChange={handleFilterChange}
+        data-slot="messages-page"
+        data-page="messages-history"
+        className="messages-page flex min-h-0 w-full flex-1"
+      >
+        <div
+          data-component={`${HISTORY_SHEET_BASE}_screen`}
+          className="relative flex min-h-0 w-full flex-1 overflow-hidden"
+        >
+          <div
+            data-component={`${HISTORY_SHEET_BASE}_screen_content`}
+            data-slot="messages-content"
+            className="shell-content relative min-h-0 flex-1 flex-col gap-[calc(8px*var(--glint-ui-scale,1))] !overflow-hidden"
           >
-            <>
-              {upcomingZoneVisible ? (
-                <div
-                  className="section-block"
-                  data-component={`${HISTORY_LIST_BASE}_content_list-card_body_zone-upcoming`}
-                >
-                  <div
-                    className="section-header"
-                    data-component={`${HISTORY_LIST_BASE}_content_list-card_body_zone-upcoming_header`}
-                  >
-                    {MESSAGE_RECORD_ZONE_LABELS.upcoming}
-                    {isUpcomingError ? null : (
-                      <>
-                        {" "}
-                        <ZoneCount
-                          dataComponent={`${HISTORY_LIST_BASE}_content_list-card_body_zone-upcoming_header_count`}
-                          isLoading={isPanelLoading}
-                          value={visibleUpcomingJobs.length}
-                        />
-                      </>
-                    )}
-                  </div>
-                  {isUpcomingError ? (
-                    <EmptyState message="발송 예정 내역을 불러오지 못했습니다." />
-                  ) : isPanelLoading ? (
-                    Array.from({ length: 3 }, (_, index) => (
-                      <RowSkeleton
-                        key={index}
-                        dataComponent={`${HISTORY_LIST_BASE}_content_list-card_body_zone-upcoming_row-skeleton`}
-                        variant="upcoming"
+            <MessageSectionNav
+              data-component={`${HISTORY_SHEET_BASE}_screen_content_section-nav`}
+              activeId="history"
+            />
+            <SlidingCard
+              data-component={HISTORY_SLIDING_CARD_BASE}
+              open={normalizedSelectedRecord !== null}
+              onBack={() => setSelectedRecord(null)}
+              backLabel="발송 기록"
+              detailKey={selectedRecord ? String(selectedRecord.id) : null}
+              list={
+                <MessagePageShell
+                  title="발송 기록"
+                  count={isPanelLoading ? (
+                    // The status region carries real text, not just a label: an empty
+                    // labelled region is never announced, and this replaces the only
+                    // loading announcement the screen had. Zone counts and row
+                    // placeholders stay silent so it is heard once, not five times.
+                    <>
+                      <ListCountSkeleton
+                        data-component={`${HISTORY_LIST_BASE}_content_list-card_header_count`}
                       />
-                    ))
+                      <span role="status" className="sr-only">발송 기록을 불러오고 있습니다.</span>
+                    </>
+                  ) : isTotalCountUnavailable ? (
+                    <UnavailableCount
+                      dataComponent={`${HISTORY_LIST_BASE}_content_list-card_header_count`}
+                    />
                   ) : (
-                    visibleUpcomingJobs.map((job) => (
-                      <UpcomingRow key={job.id} job={job} onCancel={setJobPendingCancel} />
-                    ))
+                    <span data-component={`${HISTORY_LIST_BASE}_content_list-card_header_count`}>
+                      {`${totalVisibleCount}건`}
+                    </span>
                   )}
-                </div>
-              ) : null}
-              {historyZoneVisible ? (
-                <div
-                  className="section-block"
-                  data-component={`${HISTORY_LIST_BASE}_content_list-card_body_zone-past`}
+                  activeSection="history"
+                  dataComponent={HISTORY_LIST_BASE}
+                  filters={filterItems}
+                  activeFilter={MESSAGE_RECORD_STATUS_FILTER_LABELS[statusFilter]}
+                  onFilterChange={handleFilterChange}
+                  beforeCount={
+                    <button
+                      type="button"
+                      className="list-filter-toggle"
+                      aria-expanded={isFilterPanelOpen}
+                      aria-controls={filterPanelDataComponent}
+                      data-component={`${HISTORY_LIST_BASE}_content_list-card_filter-toggle`}
+                      onClick={() => setIsFilterPanelOpen((open) => !open)}
+                    >
+                      필터
+                    </button>
+                  }
+                  beforeFilters={isFilterPanelOpen ? (
+                    <MessageHistoryFilterPanel
+                      dataComponent={filterPanelDataComponent}
+                      searchValue={searchValue}
+                      onSearchChange={(value) => {
+                        setSearchValue(value);
+                        setSelectedRecord(null);
+                      }}
+                      relativeDateFilter={relativeDateFilter}
+                      onRelativeDateChange={(value) => {
+                        setRelativeDateFilter(value);
+                        setSelectedRecord(null);
+                      }}
+                      dateYear={dateYear}
+                      onDateYearChange={(value) => {
+                        setDateYear(value);
+                        setSelectedRecord(null);
+                      }}
+                      dateMonth={dateMonth}
+                      onDateMonthChange={(value) => {
+                        setDateMonth(value);
+                        setSelectedRecord(null);
+                      }}
+                      historyYearOptions={historyYearOptions}
+                      onReset={resetHistoryFilters}
+                      onClose={() => setIsFilterPanelOpen(false)}
+                    />
+                  ) : null}
                 >
-                  <div
-                    className="section-header"
-                    data-component={`${HISTORY_LIST_BASE}_content_list-card_body_zone-past_header`}
-                  >
-                    {MESSAGE_RECORD_ZONE_LABELS.past}
-                    {isHistoryError ? null : (
-                      <>
-                        {" "}
-                        <ZoneCount
-                          dataComponent={`${HISTORY_LIST_BASE}_content_list-card_body_zone-past_header_count`}
-                          isLoading={isPanelLoading}
-                          value={visibleHistoryRecords.length}
-                        />
-                      </>
-                    )}
-                  </div>
-                  {isHistoryError ? (
-                    <EmptyState message="발송 기록을 불러오지 못했습니다." />
-                  ) : isPanelLoading ? (
-                    Array.from({ length: 4 }, (_, index) => (
-                      <RowSkeleton
-                        key={index}
-                        dataComponent={`${HISTORY_LIST_BASE}_content_list-card_body_zone-past_row-skeleton`}
-                        variant="past"
-                      />
-                    ))
-                  ) : (
-                    visibleHistoryRecords.map((record) => (
-                      <HistoryRow key={record.id} record={record} onSelect={setSelectedRecord} />
-                    ))
-                  )}
-                </div>
-              ) : null}
-              {!upcomingZoneVisible && !historyZoneVisible ? (
-                <EmptyState message="표시할 메시지가 없습니다." />
-              ) : null}
-            </>
-          </MessagePageShell>
-        }
-        detail={
-          normalizedSelectedRecord ? (
-            <MobileDetailPage
-              name="messages"
-              data-component={HISTORY_DETAIL_BASE}
-            >
-              <ClientMessageHistoryDetail
-                data-component={`${HISTORY_DETAIL_BASE}_content`}
-                showBackAction={false}
-                view={{
-                  title: normalizedSelectedRecord.title,
-                  templateLabel: normalizedSelectedRecord.templateLabel,
-                  channelLabel: normalizedSelectedRecord.channelLabel,
-                  statusLabel: HISTORY_STATUS[normalizedSelectedRecord.status].label,
-                  statusTone: HISTORY_DETAIL_TONE[normalizedSelectedRecord.status],
-                  sentAtLabel: formatMessageDateTimeCompact(normalizedSelectedRecord.sentAt),
-                  recipientName: normalizedSelectedRecord.recipientName,
-                  recipientPhone: normalizedSelectedRecord.recipientPhone,
-                  messageBody: normalizedSelectedRecord.messagePreview.trim() || "내용이 없습니다.",
-                  failureReason: normalizedSelectedRecord.failureReason ?? null,
-                }}
-                onBack={() => setSelectedRecord(null)}
-              />
-              {selectedCancelReason ? (
-                <InfoCard
-                  data-component={`${HISTORY_DETAIL_BASE}_content_cancel-reason`}
-                  title="취소 정보"
+                  <>
+                    {upcomingZoneVisible ? (
+                      <div
+                        className="section-block"
+                        data-component={`${HISTORY_LIST_BASE}_content_list-card_body_zone-upcoming`}
+                      >
+                        <div
+                          className="section-header"
+                          data-component={`${HISTORY_LIST_BASE}_content_list-card_body_zone-upcoming_header`}
+                        >
+                          {MESSAGE_RECORD_ZONE_LABELS.upcoming}
+                          {isUpcomingError ? null : (
+                            <>
+                              {" "}
+                              <ZoneCount
+                                dataComponent={`${HISTORY_LIST_BASE}_content_list-card_body_zone-upcoming_header_count`}
+                                isLoading={isPanelLoading}
+                                value={visibleUpcomingJobs.length}
+                              />
+                            </>
+                          )}
+                        </div>
+                        {isUpcomingError ? (
+                          <EmptyState message="발송 예정 내역을 불러오지 못했습니다." />
+                        ) : isPanelLoading ? (
+                          Array.from({ length: 3 }, (_, index) => (
+                            <RowSkeleton
+                              key={index}
+                              dataComponent={`${HISTORY_LIST_BASE}_content_list-card_body_zone-upcoming_row-skeleton`}
+                              variant="upcoming"
+                            />
+                          ))
+                        ) : (
+                          visibleUpcomingJobs.map((job) => (
+                            <UpcomingRow key={job.id} job={job} onCancel={setJobPendingCancel} />
+                          ))
+                        )}
+                      </div>
+                    ) : null}
+                    {historyZoneVisible ? (
+                      <div
+                        className="section-block"
+                        data-component={`${HISTORY_LIST_BASE}_content_list-card_body_zone-past`}
+                      >
+                        <div
+                          className="section-header"
+                          data-component={`${HISTORY_LIST_BASE}_content_list-card_body_zone-past_header`}
+                        >
+                          {MESSAGE_RECORD_ZONE_LABELS.past}
+                          {isHistoryError ? null : (
+                            <>
+                              {" "}
+                              <ZoneCount
+                                dataComponent={`${HISTORY_LIST_BASE}_content_list-card_body_zone-past_header_count`}
+                                isLoading={isPanelLoading}
+                                value={visibleHistoryRecords.length}
+                              />
+                            </>
+                          )}
+                        </div>
+                        {isHistoryError ? (
+                          <EmptyState message={historyErrorMessage} />
+                        ) : isPanelLoading ? (
+                          Array.from({ length: 4 }, (_, index) => (
+                            <RowSkeleton
+                              key={index}
+                              dataComponent={`${HISTORY_LIST_BASE}_content_list-card_body_zone-past_row-skeleton`}
+                              variant="past"
+                            />
+                          ))
+                        ) : (
+                          visibleHistoryRecords.map((record) => (
+                            <HistoryRow key={record.id} record={record} onSelect={setSelectedRecord} />
+                          ))
+                        )}
+                      </div>
+                    ) : null}
+                    {!upcomingZoneVisible && !historyZoneVisible ? (
+                      <EmptyState message="표시할 메시지가 없습니다." />
+                    ) : null}
+                  </>
+                </MessagePageShell>
+              }
+              detail={
+                normalizedSelectedRecord ? (
+                  <>
+                    <ClientMessageHistoryDetail
+                      data-component={`${HISTORY_DETAIL_BASE}_content`}
+                      showBackAction={false}
+                      view={{
+                        title: normalizedSelectedRecord.title,
+                        templateLabel: normalizedSelectedRecord.templateLabel,
+                        channelLabel: normalizedSelectedRecord.channelLabel,
+                        statusLabel: HISTORY_STATUS[normalizedSelectedRecord.status].label,
+                        statusTone: HISTORY_DETAIL_TONE[normalizedSelectedRecord.status],
+                        sentAtLabel: formatMessageDateTimeCompact(normalizedSelectedRecord.sentAt),
+                        recipientName: normalizedSelectedRecord.recipientName,
+                        recipientPhone: normalizedSelectedRecord.recipientPhone,
+                        messageBody: normalizedSelectedRecord.messagePreview.trim() || "내용이 없습니다.",
+                        failureReason: normalizedSelectedRecord.failureReason ?? null,
+                      }}
+                      onBack={() => setSelectedRecord(null)}
+                      showStatusBadge={false}
+                      canRetry={canRetrySelectedRecord}
+                      isRetrying={retryMutation.isPending}
+                      onRetry={handleRequestRetry}
+                    />
+                    {selectedCancelReason ? (
+                      <InfoCard
+                        data-component={`${HISTORY_DETAIL_BASE}_content_cancel-reason`}
+                        title="취소 정보"
+                      >
+                        <InfoRow label={MESSAGE_RECORD_REASON_LABEL} value={selectedCancelReason} tone="muted" />
+                      </InfoCard>
+                    ) : null}
+                  </>
+                ) : null
+              }
+              detailHeaderTrailing={normalizedSelectedRecord ? (
+                <StatusPill
+                  data-component={`${HISTORY_SLIDING_CARD_BASE}_stage_detail-pane_header_status`}
+                  variant={HISTORY_STATUS_PILL_VARIANT[normalizedSelectedRecord.status]}
+                  size="sm"
                 >
-                  <InfoRow label={MESSAGE_RECORD_REASON_LABEL} value={selectedCancelReason} tone="muted" />
-                </InfoCard>
+                  {HISTORY_STATUS[normalizedSelectedRecord.status].label}
+                </StatusPill>
               ) : null}
-            </MobileDetailPage>
-          ) : null
-        }
-      />
+            />
+          </div>
+        </div>
+      </section>
       <ApprovalTwoButtonModal
         data-component={`${HISTORY_LIST_BASE}_cancel-modal`}
         open={jobPendingCancel !== null}
@@ -664,6 +1054,20 @@ export function MessagesHistoryPage() {
         approvalVariant="destructive"
         isPending={cancelMutation.isPending}
         onApprove={handleConfirmCancel}
+      />
+      <ApprovalTwoButtonModal
+        data-component={`${HISTORY_DETAIL_BASE}_retry-modal`}
+        open={retryTarget !== null}
+        onOpenChange={(open) => {
+          if (!open && !retryMutation.isPending) setRetryTarget(null);
+        }}
+        title="메시지를 다시 보낼까요?"
+        description={`${retryTarget?.recipientName?.trim() || "수신자"} 고객에게 같은 메시지로 재발송합니다.`}
+        isDescriptionVisuallyHidden={false}
+        approvalLabel="재발송"
+        pendingLabel="재발송 중..."
+        isPending={retryMutation.isPending}
+        onApprove={handleConfirmRetry}
       />
     </>
   );

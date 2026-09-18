@@ -1,5 +1,6 @@
 "use client";
 import { getUserErrorMessage } from "@babyjamjam/shared";
+import { formatBirthdayInput, isValidBirthdayIsoDate } from "@babyjamjam/shared/utils/birthday";
 
 
 import { useState, useMemo, useEffect } from "react";
@@ -293,6 +294,10 @@ export default function NewClientPage() {
   };
 
   const validateStep = (step: number): boolean => {
+    if (store.birthday && !isValidBirthdayIsoDate(store.birthday)) {
+      setError(t(locale, "clients.form.error-birthday-required"));
+      return false;
+    }
     switch (step) {
       case 0:
         if (!store.name.trim()) {
@@ -401,10 +406,10 @@ export default function NewClientPage() {
               label={t(locale, "clients.form.birthday")}
               type="text"
               value={store.birthday}
-              onChange={(e) => setField("birthday", e.target.value)}
+              onChange={(e) => setField("birthday", formatBirthdayInput(e.target.value))}
               inputMode="numeric"
-              placeholder="YYMMDD"
-              maxLength={6}
+              placeholder="YYYY-MM-DD"
+              maxLength={10}
             />
           </div>
           <div data-component="desktop_clients-new_basic_step_due-date-field">

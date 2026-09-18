@@ -200,7 +200,7 @@
       "approvalPolicy": "structured",
       "idempotencyPolicy": "action-id",
       "sourceFile": "application/usecases/client/client-write-agent-capabilities.provider.ts",
-      "sourceDigest": "e7a04e3674efc3f7b01be2fa41e4cdf0a879bd2b26581dfb71fd5970bf40af55"
+      "sourceDigest": "e4ce100ad5f0a9ae3e3b0a50aede5fe3ee7e6371b1ead828b3693d3a1f339a5b"
     },
     {
       "name": "clients.get",
@@ -255,7 +255,7 @@
       "approvalPolicy": "structured",
       "idempotencyPolicy": "action-id",
       "sourceFile": "application/usecases/client/client-write-agent-capabilities.provider.ts",
-      "sourceDigest": "e7a04e3674efc3f7b01be2fa41e4cdf0a879bd2b26581dfb71fd5970bf40af55"
+      "sourceDigest": "e4ce100ad5f0a9ae3e3b0a50aede5fe3ee7e6371b1ead828b3693d3a1f339a5b"
     },
     {
       "name": "consultations.list",
@@ -457,7 +457,7 @@
       "approvalPolicy": "structured",
       "idempotencyPolicy": "action-id",
       "sourceFile": "application/usecases/employee/employee-write-agent-capabilities.provider.ts",
-      "sourceDigest": "4418aa46b2506e31ff8362ee093f131a99bd7774670e4c8e070732bda7727254"
+      "sourceDigest": "19a6185939f873d2f7a1838d528128e34e503c910b91e76192c9e7693c433066"
     },
     {
       "name": "employees.create",
@@ -475,7 +475,7 @@
       "approvalPolicy": "structured",
       "idempotencyPolicy": "action-id",
       "sourceFile": "application/usecases/employee/employee-write-agent-capabilities.provider.ts",
-      "sourceDigest": "4418aa46b2506e31ff8362ee093f131a99bd7774670e4c8e070732bda7727254"
+      "sourceDigest": "19a6185939f873d2f7a1838d528128e34e503c910b91e76192c9e7693c433066"
     },
     {
       "name": "employees.get",
@@ -529,7 +529,7 @@
       "approvalPolicy": "structured",
       "idempotencyPolicy": "action-id",
       "sourceFile": "application/usecases/employee/employee-write-agent-capabilities.provider.ts",
-      "sourceDigest": "4418aa46b2506e31ff8362ee093f131a99bd7774670e4c8e070732bda7727254"
+      "sourceDigest": "19a6185939f873d2f7a1838d528128e34e503c910b91e76192c9e7693c433066"
     },
     {
       "name": "files.delete",

@@ -1782,7 +1782,7 @@ describe("EformsignDocumentMirrorService", () => {
         expect(repository.findFile).not.toHaveBeenCalled();
     });
 
-    it.each(["062", "070", "071"])("returns current document PDF metadata during review status %s", async (status) => {
+    it.each(["001", "doc_tempsave", "062", "070", "071"])("returns current document PDF metadata during draft or review status %s", async (status) => {
         const sourceUpdatedDate = new Date(UPDATED_AT);
         const detail = richDetail();
         detail.current_status.status_type = status;
@@ -1823,6 +1823,22 @@ describe("EformsignDocumentMirrorService", () => {
                 contentType: "application/pdf",
                 byteSize: PDF.length,
             });
+
+        const state = await repository.findState();
+        repository.findState.mockResolvedValue({ ...state, files: [] });
+        await expect(service.getStoredFileMetadata("doc-1", "document")).resolves.toBeNull();
+        repository.findState.mockResolvedValue({ ...state, permanentPurgeRequestedAt: sourceUpdatedDate });
+        await expect(service.getStoredFileMetadata("doc-1", "document")).resolves.toBeNull();
+        repository.findState.mockResolvedValue({
+            ...state,
+            files: [{ ...state.files[0], sourceUpdatedDate: new Date(0) }],
+        });
+        await expect(service.getStoredFileMetadata("doc-1", "document")).resolves.toBeNull();
+        repository.findState.mockResolvedValue({
+            ...state,
+            files: [{ ...state.files[0], fileType: "audit_trail" }],
+        });
+        await expect(service.getStoredFileMetadata("doc-1", "audit_trail")).resolves.toBeNull();
     });
 
     it("returns a current document PDF while status 060 is still syncing its audit trail", async () => {

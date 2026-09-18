@@ -26,6 +26,7 @@ import {
     MessageTriggerJobEntity,
     MessageTriggerJobStatus,
 } from "domain/entities/message-trigger-job.entity";
+import { MessageLogEntity } from "domain/entities/message-log.entity";
 import { MessageTriggerRuleEntity } from "domain/entities/message-trigger-rule.entity";
 import { TriggerJobDeferredError } from "domain/errors/trigger-job-deferred.error";
 import {
@@ -34,6 +35,8 @@ import {
 } from "domain/constants/service-record-link-message";
 import { SMS_DELIVERY_SNAPSHOT_VARIABLE } from "application/services/sms-trigger-delivery.service";
 import { createAgentAutomationTaskCommitReference } from "application/agent/agent-automation-storage.schema";
+import { SbMessageLogRepository } from "infrastructure/database/repositories/sb.message-log.repository";
+import { SbMessageTriggerJobRepository } from "infrastructure/database/repositories/sb.message-trigger-job.repository";
 
 jest.mock("infrastructure/database/schema-capabilities", () => ({
     hasColumn: jest.fn().mockResolvedValue(true),
@@ -158,11 +161,39 @@ describe("MessageTriggerService", () => {
             overrides.nextAttemptAt ?? null,
         );
 
+    const createLog = (overrides: Partial<{
+        id: number;
+        triggerJobId: string | null;
+        createdAt: Date;
+        updatedAt: Date;
+    }> = {}) => MessageLogEntity.reconstitute(
+        overrides.id ?? 1,
+        branchId,
+        "aligo_sms",
+        "CLIENT_GREETING",
+        overrides.triggerJobId ?? null,
+        "010-1234-5678",
+        1,
+        "안녕하세요",
+        {},
+        "sent",
+        null,
+        null,
+        1,
+        overrides.updatedAt ?? new Date("2026-06-01T00:00:00.000Z"),
+        null,
+        overrides.createdAt ?? new Date("2026-06-01T00:00:00.000Z"),
+        overrides.updatedAt ?? new Date("2026-06-01T00:00:00.000Z"),
+        "고객",
+        "010-1234-5678",
+    );
+
     const createMessageLogRepository = () => ({
         findSentTriggerJobIdsSystemScope: jest.fn<Promise<Set<string>>, [string[]]>().mockResolvedValue(
             new Set<string>(),
         ),
         findRecentByBranch: jest.fn().mockResolvedValue([]),
+        findHistoryPageByBranch: jest.fn().mockResolvedValue([]),
     });
 
     /** Default: no branch override present, matching pre-feature behaviour (global rule always governs). */
@@ -278,6 +309,7 @@ describe("MessageTriggerService", () => {
             }),
             findUpcomingPendingByBranch: jest.fn().mockResolvedValue([]),
             findTerminalByBranch: jest.fn().mockResolvedValue([]),
+            findHistoryPageByBranch: jest.fn().mockResolvedValue([]),
             hasActiveJobsBefore: jest.fn().mockResolvedValue(false),
             upsertPending: jest.fn().mockResolvedValue(undefined),
             cancelPendingByUser: jest.fn().mockResolvedValue(true),
@@ -4835,5 +4867,397 @@ describe("MessageTriggerService", () => {
         expect(ruleRepository.findAll).toHaveBeenCalledWith(branchId);
         expect(ruleRepository.create).toHaveBeenCalledTimes(2);
         expect(internals.rebuildJobsForRule).toHaveBeenCalledTimes(2);
+    });
+
+    describe("listHistoryPage", () => {
+        it("fills a page boundary from terminal jobs after the log source", async () => {
+            const { service, ruleRepository, messageLogRepository, jobRepository } = createService();
+            ruleRepository.findAll.mockResolvedValue([]);
+            messageLogRepository.findHistoryPageByBranch.mockResolvedValue([
+                createLog({ id: 40 }),
+            ]);
+            jobRepository.findHistoryPageByBranch.mockResolvedValue([
+                createJob({ id: "00000000-0000-4000-8000-0000000000f0", status: "failed" }),
+                createJob({ id: "00000000-0000-4000-8000-0000000000a0", status: "canceled" }),
+            ]);
+
+            const result = await service.listHistoryPage(branchId, 2);
+
+            expect(result.items.map((item) => item.id)).toEqual([
+                40,
+                "job:00000000-0000-4000-8000-0000000000f0",
+            ]);
+            expect(result.page.hasMore).toBe(true);
+            expect(messageLogRepository.findHistoryPageByBranch).toHaveBeenCalledWith(
+                branchId,
+                expect.objectContaining({ after: null, limit: 3 }),
+            );
+            expect(jobRepository.findHistoryPageByBranch).toHaveBeenCalledWith(
+                branchId,
+                expect.objectContaining({ after: null, limit: 2 }),
+            );
+        });
+
+        it.each(["pending", "processing", "sent"])(
+            "keeps current-state pagination usable when a terminal row becomes %s midwalk",
+            async (nextStatus) => {
+                const { service, prisma, ruleRepository } = createService();
+                ruleRepository.findAll.mockResolvedValue([]);
+                const firstJob = createJob({
+                    id: "00000000-0000-4000-8000-0000000000f0",
+                    status: "failed",
+                    createdAt: new Date("2024-01-01T00:00:00.000Z"),
+                });
+                const lookaheadJob = createJob({
+                    id: "00000000-0000-4000-8000-0000000000a0",
+                    status: "failed",
+                    createdAt: new Date("2024-01-02T00:00:00.000Z"),
+                });
+                const mutableUpdate = new Date(Date.now() + 60_000);
+                firstJob.updatedAt = mutableUpdate;
+                lookaheadJob.updatedAt = mutableUpdate;
+                const rows = [firstJob, lookaheadJob];
+                type HistoryJobQuery = {
+                    where: {
+                        branchId?: string;
+                        status?: { in?: string[] };
+                        createdAt?: { lte?: Date };
+                        updatedAt?: { lte?: Date };
+                        OR?: unknown[];
+                        AND?: Array<{ id?: { lt?: string } }>;
+                    };
+                    take?: number;
+                };
+                prisma.message_trigger_job.findMany.mockImplementation(async (query: HistoryJobQuery) => {
+                    const cutoff = query.where.createdAt?.lte;
+                    const afterId = query.where.AND?.[0]?.id?.lt;
+                    const candidates = rows.filter((row) => {
+                        if (row.branchId !== query.where.branchId) return false;
+                        if (afterId !== undefined && row.id >= afterId) return false;
+                        if (cutoff !== undefined && row.createdAt > cutoff) return false;
+                        if (query.where.status?.in && !query.where.status.in.includes(row.status)) return false;
+                        if (query.where.OR) {
+                            return row.status === "failed"
+                                ? row.updatedAt <= cutoff!
+                                : row.status === "canceled"
+                                    && row.canceledAt !== null
+                                    && row.canceledAt <= cutoff!;
+                        }
+                        return true;
+                    });
+                    return candidates
+                        .sort((left, right) => right.id.localeCompare(left.id))
+                        .slice(0, query.take ?? candidates.length);
+                });
+
+                const serviceInternals = service as unknown as {
+                    messageLogRepository: unknown;
+                    jobRepository: unknown;
+                };
+                serviceInternals.messageLogRepository = new SbMessageLogRepository(prisma as never);
+                serviceInternals.jobRepository = new SbMessageTriggerJobRepository(prisma as never);
+
+                const firstPage = await service.listHistoryPage(branchId, 1);
+                expect(firstPage.items.map((item) => item.id)).toEqual([
+                    "job:00000000-0000-4000-8000-0000000000f0",
+                ]);
+                expect(firstPage.page.hasMore).toBe(true);
+
+                lookaheadJob.status = nextStatus as MessageTriggerJobStatus;
+                const continuation = await service.listHistoryPage(
+                    branchId,
+                    1,
+                    firstPage.page.nextCursor ?? undefined,
+                );
+                expect(continuation.items).toEqual([]);
+                expect(continuation.page.hasMore).toBe(false);
+            },
+        );
+
+        it("includes a pending row that becomes failed below the cursor and defers one above it to a fresh poll", async () => {
+            const { service, prisma, ruleRepository } = createService();
+            ruleRepository.findAll.mockResolvedValue([]);
+            const rows = [
+                createJob({
+                    id: "00000000-0000-4000-8000-0000000000f0",
+                    status: "failed",
+                    createdAt: new Date("2024-01-01T00:00:00.000Z"),
+                }),
+                createJob({
+                    id: "00000000-0000-4000-8000-0000000000e0",
+                    status: "failed",
+                    createdAt: new Date("2024-01-02T00:00:00.000Z"),
+                }),
+                createJob({
+                    id: "00000000-0000-4000-8000-0000000000a0",
+                    status: "pending",
+                    createdAt: new Date("2024-01-03T00:00:00.000Z"),
+                }),
+                createJob({
+                    id: "ffffffff-ffff-4fff-8fff-ffffffffffff",
+                    status: "pending",
+                    createdAt: new Date("2024-01-04T00:00:00.000Z"),
+                }),
+            ];
+            type HistoryJobQuery = {
+                where: {
+                    branchId?: string;
+                    status?: { in?: string[] };
+                    createdAt?: { lte?: Date };
+                    AND?: Array<{ id?: { lt?: string } }>;
+                };
+                take?: number;
+            };
+            prisma.message_trigger_job.findMany.mockImplementation(async (query: HistoryJobQuery) => {
+                const cutoff = query.where.createdAt?.lte;
+                const afterId = query.where.AND?.[0]?.id?.lt;
+                return rows
+                    .filter((row) => row.branchId === query.where.branchId)
+                    .filter((row) => query.where.status?.in?.includes(row.status) ?? false)
+                    .filter((row) => cutoff === undefined || row.createdAt <= cutoff)
+                    .filter((row) => afterId === undefined || row.id < afterId)
+                    .sort((left, right) => right.id.localeCompare(left.id))
+                    .slice(0, query.take ?? rows.length);
+            });
+
+            const serviceInternals = service as unknown as {
+                messageLogRepository: unknown;
+                jobRepository: unknown;
+            };
+            serviceInternals.messageLogRepository = new SbMessageLogRepository(prisma as never);
+            serviceInternals.jobRepository = new SbMessageTriggerJobRepository(prisma as never);
+
+            const firstPage = await service.listHistoryPage(branchId, 1);
+            expect(firstPage.items.map((item) => item.id)).toEqual([
+                "job:00000000-0000-4000-8000-0000000000f0",
+            ]);
+            expect(firstPage.page.hasMore).toBe(true);
+
+            const snapshotAt = new Date(firstPage.page.snapshotAt);
+            rows[2]!.status = "failed";
+            rows[2]!.updatedAt = new Date(snapshotAt.getTime() + 1_000);
+            rows[3]!.status = "failed";
+            rows[3]!.updatedAt = new Date(snapshotAt.getTime() + 1_000);
+
+            const continuation = await service.listHistoryPage(
+                branchId,
+                2,
+                firstPage.page.nextCursor ?? undefined,
+            );
+            expect(continuation.items.map((item) => item.id)).toEqual([
+                "job:00000000-0000-4000-8000-0000000000e0",
+                "job:00000000-0000-4000-8000-0000000000a0",
+            ]);
+            expect(continuation.items.some((item) => item.id === "job:ffffffff-ffff-4fff-8fff-ffffffffffff")).toBe(false);
+
+            const freshPage = await service.listHistoryPage(branchId, 2);
+            expect(freshPage.items.map((item) => item.id)).toEqual([
+                "job:ffffffff-ffff-4fff-8fff-ffffffffffff",
+                "job:00000000-0000-4000-8000-0000000000f0",
+            ]);
+        });
+
+        it("walks more than 200 static records while an ordinary pending job becomes processing and sent", async () => {
+            const { service, prisma, ruleRepository } = createService();
+            ruleRepository.findAll.mockResolvedValue([]);
+            const logRows = Array.from({ length: 205 }, (_, index) => {
+                const id = 205 - index;
+                return createLog({
+                    id,
+                    createdAt: new Date(1_704_067_200_000 + index * 60_000),
+                    updatedAt: new Date(1_704_067_200_000 + index * 60_000),
+                });
+            });
+            const terminalRows = [
+                createJob({ id: "00000000-0000-4000-8000-0000000000f0", status: "failed" }),
+                createJob({ id: "00000000-0000-4000-8000-0000000000e0", status: "canceled" }),
+                createJob({ id: "00000000-0000-4000-8000-0000000000d0", status: "failed" }),
+            ];
+            const ordinaryJob = createJob({
+                id: "00000000-0000-4000-8000-0000000000b0",
+                status: "pending",
+            });
+            const jobRows = [...terminalRows, ordinaryJob];
+            type LogHistoryQuery = {
+                where?: { AND?: Array<{ id?: { lt?: number } }> };
+                take?: number;
+            };
+            type JobHistoryQuery = {
+                where: {
+                    branchId?: string;
+                    status?: { in?: string[] };
+                    createdAt?: { lte?: Date };
+                    updatedAt?: { gte?: Date; lte?: Date };
+                    AND?: Array<{ id?: { lt?: string } }>;
+                };
+                take?: number;
+            };
+            prisma.message_log.findMany.mockImplementation(async (query: LogHistoryQuery) => {
+                const afterId = query.where?.AND?.[0]?.id?.lt;
+                return logRows
+                    .filter((row) => afterId === undefined || row.id < afterId)
+                    .slice(0, query.take ?? logRows.length);
+            });
+            prisma.message_trigger_job.findMany.mockImplementation(async (query: JobHistoryQuery) => {
+                const afterId = query.where.AND?.[0]?.id?.lt;
+                const cutoff = query.where.createdAt?.lte;
+                return jobRows
+                    .filter((row) => row.branchId === query.where.branchId)
+                    .filter((row) => query.where.status?.in === undefined || query.where.status.in.includes(row.status))
+                    .filter((row) => cutoff === undefined || row.createdAt <= cutoff)
+                    .filter((row) => query.where.updatedAt?.gte === undefined || row.updatedAt >= query.where.updatedAt.gte)
+                    .filter((row) => query.where.updatedAt?.lte === undefined || row.updatedAt <= query.where.updatedAt.lte)
+                    .filter((row) => afterId === undefined || row.id < afterId)
+                    .sort((left, right) => right.id.localeCompare(left.id))
+                    .slice(0, query.take ?? terminalRows.length);
+            });
+
+            const serviceInternals = service as unknown as {
+                messageLogRepository: unknown;
+                jobRepository: unknown;
+            };
+            serviceInternals.messageLogRepository = new SbMessageLogRepository(prisma as never);
+            serviceInternals.jobRepository = new SbMessageTriggerJobRepository(prisma as never);
+
+            const ids: Array<number | string> = [];
+            let cursor: string | undefined;
+            let firstSnapshotAt: Date | undefined;
+            type HistoryPageResult = Awaited<ReturnType<MessageTriggerService["listHistoryPage"]>>;
+            let finalPage: HistoryPageResult | undefined;
+            for (let pageIndex = 0; pageIndex < 10; pageIndex += 1) {
+                ordinaryJob.status = pageIndex === 0
+                    ? "pending"
+                    : pageIndex === 1
+                        ? "processing"
+                        : "sent";
+                if (pageIndex > 0 && firstSnapshotAt) {
+                    ordinaryJob.updatedAt = new Date(firstSnapshotAt.getTime() + pageIndex * 1_000);
+                }
+                const result = await service.listHistoryPage(branchId, 50, cursor);
+                if (pageIndex === 0) {
+                    firstSnapshotAt = new Date(result.page.snapshotAt);
+                }
+                finalPage = result;
+                ids.push(...result.items.map((item) => item.id));
+                if (!result.page.hasMore) break;
+                cursor = result.page.nextCursor ?? undefined;
+            }
+
+            expect(ids).toHaveLength(208);
+            expect(new Set(ids.map(String)).size).toBe(208);
+            expect(ids.slice(0, 3)).toEqual([205, 204, 203]);
+            expect(ids.slice(-3)).toEqual([
+                "job:00000000-0000-4000-8000-0000000000f0",
+                "job:00000000-0000-4000-8000-0000000000e0",
+                "job:00000000-0000-4000-8000-0000000000d0",
+            ]);
+            expect(ids).not.toContain("job:00000000-0000-4000-8000-0000000000b0");
+            expect(ordinaryJob.status).toBe("sent");
+            expect(finalPage?.page.hasMore).toBe(false);
+            expect(prisma.message_log.findMany).toHaveBeenCalledTimes(5);
+        });
+
+        it("walks older-created logs exactly once through the real service and repositories", async () => {
+            const { service, prisma, ruleRepository } = createService();
+            ruleRepository.findAll.mockResolvedValue([]);
+            const logRows = [5, 4, 3, 2, 1].map((id) => createLog({
+                id,
+                createdAt: new Date(`2024-01-0${id}T00:00:00.000Z`),
+                // A retry/update timestamp must not move the immutable id
+                // cursor or cause an older row to disappear.
+                updatedAt: new Date("2026-09-17T00:00:00.000Z"),
+            }));
+            prisma.message_log.findMany.mockImplementation(async (query: { where?: { AND?: Array<{ id?: { lt?: number } }> } }) => {
+                const beforeId = query.where?.AND?.[0]?.id?.lt;
+                return logRows.filter((row) => beforeId === undefined || row.id < beforeId);
+            });
+            prisma.message_trigger_job.findMany.mockResolvedValue([]);
+
+            const serviceInternals = service as unknown as {
+                messageLogRepository: unknown;
+                jobRepository: unknown;
+            };
+            serviceInternals.messageLogRepository = new SbMessageLogRepository(prisma as never);
+            serviceInternals.jobRepository = new SbMessageTriggerJobRepository(prisma as never);
+
+            const ids: Array<number | string> = [];
+            let cursor: string | undefined;
+            for (let pageIndex = 0; pageIndex < 10; pageIndex += 1) {
+                const result = await service.listHistoryPage(branchId, 2, cursor);
+                ids.push(...result.items.map((item) => item.id));
+                if (!result.page.hasMore) break;
+                cursor = result.page.nextCursor ?? undefined;
+            }
+
+            expect(ids).toEqual([5, 4, 3, 2, 1]);
+            expect(new Set(ids.map(String)).size).toBe(5);
+            expect(prisma.message_log.findMany).toHaveBeenCalledTimes(3);
+        });
+
+        it("does not query logs after a terminal-job cursor and preserves repository UUID order", async () => {
+            const { service, ruleRepository, messageLogRepository, jobRepository } = createService();
+            ruleRepository.findAll.mockResolvedValue([]);
+            messageLogRepository.findHistoryPageByBranch.mockResolvedValue([]);
+            jobRepository.findHistoryPageByBranch.mockResolvedValue([
+                createJob({ id: "00000000-0000-4000-8000-0000000000ff", status: "failed" }),
+                createJob({ id: "ffffffff-ffff-4fff-8fff-ffffffffffff", status: "failed" }),
+                createJob({ id: "00000000-0000-4000-8000-000000000001", status: "failed" }),
+            ]);
+
+            const firstPage = await service.listHistoryPage(branchId, 2);
+            expect(firstPage.items.map((item) => item.id)).toEqual([
+                "job:00000000-0000-4000-8000-0000000000ff",
+                "job:ffffffff-ffff-4fff-8fff-ffffffffffff",
+            ]);
+            expect(firstPage.page.nextCursor).toBeTruthy();
+
+            messageLogRepository.findHistoryPageByBranch.mockClear();
+            jobRepository.findHistoryPageByBranch.mockResolvedValue([]);
+            await service.listHistoryPage(branchId, 2, firstPage.page.nextCursor!);
+
+            expect(messageLogRepository.findHistoryPageByBranch).not.toHaveBeenCalled();
+            expect(jobRepository.findHistoryPageByBranch).toHaveBeenLastCalledWith(
+                branchId,
+                expect.objectContaining({
+                    after: {
+                        source: "job",
+                        nativeId: "ffffffff-ffff-4fff-8fff-ffffffffffff",
+                    },
+                    limit: 3,
+                }),
+            );
+        });
+
+        it("rejects a cursor whose snapshot is in the future", async () => {
+            const { service } = createService();
+            const futureCursor = Buffer.from(JSON.stringify({
+                v: 1,
+                branchId,
+                snapshotAt: new Date(Date.now() + 60_000).toISOString(),
+                source: "job",
+                nativeId: "00000000-0000-4000-8000-000000000001",
+            })).toString("base64url");
+
+            await expect(service.listHistoryPage(branchId, 2, futureCursor)).rejects.toThrow(
+                "메시지 발송 기록 페이지 커서가 올바르지 않습니다.",
+            );
+        });
+
+        it("rejects a malformed terminal-job cursor before querying either source", async () => {
+            const { service, messageLogRepository, jobRepository } = createService();
+            const malformedCursor = Buffer.from(JSON.stringify({
+                v: 1,
+                branchId,
+                snapshotAt: new Date(Date.now() - 60_000).toISOString(),
+                source: "job",
+                nativeId: "not-a-uuid",
+            })).toString("base64url");
+
+            await expect(service.listHistoryPage(branchId, 2, malformedCursor)).rejects.toThrow(
+                "메시지 발송 기록 페이지 커서가 올바르지 않습니다.",
+            );
+            expect(messageLogRepository.findHistoryPageByBranch).not.toHaveBeenCalled();
+            expect(jobRepository.findHistoryPageByBranch).not.toHaveBeenCalled();
+        });
     });
 });

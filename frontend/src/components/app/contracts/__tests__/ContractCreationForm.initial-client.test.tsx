@@ -214,7 +214,7 @@ describe("ContractCreationForm — initialClient mode", () => {
     const state = useFormStore.getState();
     expect(state.name).toBe(clientA.name);
     expect(state.phone).toBe(clientA.phone);
-    expect(state.birthday).toBe(clientA.birthday);
+    expect(state.birthday).toBe("1995-01-01");
     expect(state.address).toBe(clientA.address);
     expect(state.dueDate).toBe(clientA.dueDate);
     expect(state.birthDate).toBe(clientA.birthDate);

@@ -517,6 +517,31 @@ describe("SbMessageTriggerJobRepository", () => {
         });
     });
 
+    it("findHistoryPageByBranch uses current terminal status, UUID ordering, and cutoff log suppression", async () => {
+        messageTriggerJobModel.findMany.mockResolvedValue([]);
+        const snapshotAt = new Date("2026-07-09T00:00:00.123Z");
+        const afterId = "00000000-0000-4000-8000-000000000042";
+
+        await repository.findHistoryPageByBranch("branch-1", {
+            snapshotAt,
+            after: { source: "job", nativeId: afterId },
+            limit: 11,
+        });
+
+        expect(messageTriggerJobModel.findMany).toHaveBeenCalledWith({
+            where: {
+                branchId: "branch-1",
+                ruleId: { not: MESSAGE_AUTOMATION_INTENT_RULE_ID },
+                status: { in: ["failed", "canceled"] },
+                logs: { none: { branchId: "branch-1", createdAt: { lte: snapshotAt } } },
+                createdAt: { lte: snapshotAt },
+                AND: [{ id: { lt: afterId } }],
+            },
+            orderBy: { id: "desc" },
+            take: 11,
+        });
+    });
+
     it("upsertPending falls back to findUnique when the guarded update matches no row (sent row stays immutable)", async () => {
         queryRaw.mockResolvedValue([]);
         messageTriggerJobModel.findUnique.mockResolvedValue(createRow({

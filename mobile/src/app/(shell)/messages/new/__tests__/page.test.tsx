@@ -1082,6 +1082,26 @@ describe("NewMessagePage", () => {
     expect(api.post).not.toHaveBeenCalledWith("/message-deliveries/sms", expect.anything());
   });
 
+  it.each([
+    ["contract_not_signed", "고객이 계약서 서명을 완료해야 발송할 수 있습니다."],
+    ["pdf_unavailable", "계약서 PDF를 아직 불러올 수 없어요. 잠시 후 다시 시도해 주세요."],
+  ])("shows the %s preparation reason without submitting", async (reason, message) => {
+    (api.post as jest.Mock).mockRejectedValue({ response: { data: { reason } } });
+    renderPage();
+
+    await openTemplateSelect();
+    fireEvent.click(screen.getByRole("option", { name: "서비스 종료 안내" }));
+    const recipientNameInput = screen.getByLabelText(/산모님 성함/);
+    fireEvent.focus(recipientNameInput);
+    fireEvent.change(recipientNameInput, { target: { value: "박서연" } });
+    fireEvent.click(await screen.findByText("박서연"));
+
+    expect(await screen.findByText(message)).toBeVisible();
+    expect(screen.getByRole("button", { name: "즉시 발송" })).toBeDisabled();
+    expect(api.post).not.toHaveBeenCalledWith("/receipt-links/send", expect.anything());
+    expect(api.post).not.toHaveBeenCalledWith("/message-deliveries/sms", expect.anything());
+  });
+
   it("prepares and sends the service end notice with the selected client identity", async () => {
     (api.post as jest.Mock).mockImplementation((url: string) => {
       if (url === "/receipt-links/prepare") {

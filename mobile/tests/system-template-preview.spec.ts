@@ -137,7 +137,11 @@ test.describe('System Template Send CTA', () => {
 
     await page.getByRole('button', { name: '이 템플릿으로 보내기' }).click();
 
-    await expect(page).toHaveURL(/\/messages\/new\?body=/);
+    await expect(page).toHaveURL((url) =>
+      url.pathname === '/messages/new'
+      && url.searchParams.get('template') === 'THANKS'
+      && url.searchParams.get('body') === templateFixture.content,
+    );
     await expect(page.locator('form[data-form="messages-new-form"]')).toBeVisible({
       timeout: 15000,
     });

@@ -1,9 +1,24 @@
 import { expect, test, type Page, type Route } from "@playwright/test";
 
 const LIST_SHELL =
-  "mobile_messages_history_detail-sheet_stack_list-page_shell_content_list-card_body";
+  "mobile_messages_history_detail-sheet_screen_content_sliding-card_stage_list-pane_history-list_content_list-card_body";
 const UPCOMING_ZONE_HEADER = `${LIST_SHELL}_zone-upcoming_header`;
 const PAST_ZONE_HEADER = `${LIST_SHELL}_zone-past_header`;
+const HISTORY_SNAPSHOT = "2026-07-16T05:00:00.000Z";
+
+function historyPage(
+  items: unknown[],
+  options: { nextCursor?: string | null; hasMore?: boolean } = {},
+) {
+  return JSON.stringify({
+    items,
+    page: {
+      snapshotAt: HISTORY_SNAPSHOT,
+      nextCursor: options.nextCursor ?? null,
+      hasMore: options.hasMore ?? false,
+    },
+  });
+}
 
 async function mockMessagesApproval(page: Page) {
   await page.route("**/api/settings/message-sender-approval*", async (route: Route) => {
@@ -133,38 +148,81 @@ test.describe("mobile messages navigation", () => {
     await page.route("**/api/message-trigger-jobs/upcoming**", async (route: Route) => {
       await route.fulfill({ status: 200, contentType: "application/json", body: "[]" });
     });
-    await page.route("**/api/message-logs**", async (route: Route) => {
+    let historyPageRequests = 0;
+    await page.route("**/api/message-logs/page**", async (route: Route) => {
+      historyPageRequests += 1;
+      const cursor = new URL(route.request().url()).searchParams.get("cursor");
+      if (!cursor) {
+        await route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: historyPage([
+            {
+              id: 101,
+              provider: "aligo_sms",
+              templateKey: "CLIENT_GREETING",
+              triggerJobId: null,
+              receiver: "01012345678",
+              clientId: 1,
+              recipientPhone: "01012345678",
+              messageBody: "안녕하세요",
+              variables: {},
+              status: "sent",
+              aligoMid: null,
+              errorMessage: null,
+              attempts: 1,
+              lastAttemptAt: "2026-07-16T01:00:00.000Z",
+              nextRetryAt: null,
+              createdAt: "2026-07-16T01:00:00.000Z",
+              updatedAt: "2026-07-16T01:00:00.000Z",
+              ruleId: null,
+              ruleName: null,
+              eventType: "CLIENT_CREATED",
+              offsetType: "IMMEDIATE",
+              offsetDays: 0,
+              scheduledFor: null,
+              recipientType: "CLIENT",
+              recipientName: "문자 고객",
+              clientName: "문자 고객",
+              employeeName: null,
+            },
+          ], { nextCursor: "fixture-next", hasMore: true }),
+        });
+        return;
+      }
+
+      expect(cursor).toBe("fixture-next");
       await route.fulfill({
         status: 200,
         contentType: "application/json",
-        body: JSON.stringify([
+        body: historyPage([
           {
-            id: 101,
+            id: 100,
             provider: "aligo_sms",
-            templateKey: "CLIENT_GREETING",
+            templateKey: "SERVICE_INFO",
             triggerJobId: null,
-            receiver: "01012345678",
-            clientId: 1,
-            recipientPhone: "01012345678",
-            messageBody: "안녕하세요",
+            receiver: "01087654321",
+            clientId: 2,
+            recipientPhone: "01087654321",
+            messageBody: "오래된 안내",
             variables: {},
             status: "sent",
             aligoMid: null,
             errorMessage: null,
             attempts: 1,
-            lastAttemptAt: "2026-07-16T01:00:00.000Z",
+            lastAttemptAt: "2026-07-15T01:00:00.000Z",
             nextRetryAt: null,
-            createdAt: "2026-07-16T01:00:00.000Z",
-            updatedAt: "2026-07-16T01:00:00.000Z",
+            createdAt: "2026-07-15T01:00:00.000Z",
+            updatedAt: "2026-07-15T01:00:00.000Z",
             ruleId: null,
             ruleName: null,
-            eventType: "CLIENT_CREATED",
-            offsetType: "IMMEDIATE",
-            offsetDays: 0,
+            eventType: "SERVICE_START",
+            offsetType: "BEFORE_DAYS",
+            offsetDays: 7,
             scheduledFor: null,
             recipientType: "CLIENT",
-            recipientName: "문자 고객",
-            clientName: "문자 고객",
+            recipientName: "후속 고객",
+            clientName: "후속 고객",
             employeeName: null,
           },
         ]),
@@ -175,21 +233,23 @@ test.describe("mobile messages navigation", () => {
 
     await expect(page.locator(".list-card .list-title-text")).toContainText("발송 기록");
     await expect(page.getByText("문자 고객")).toBeVisible();
+    await expect(page.getByText("후속 고객")).toBeVisible();
+    expect(historyPageRequests).toBe(2);
     // The merged screen prints a count in the card title and again in each zone
-    // header, so "1건" is no longer unique — assert the past zone's own header.
-    await expect(page.locator(`[data-component="${PAST_ZONE_HEADER}"]`)).toContainText("1건");
+    // header, so assert the past zone's own header after both cursor pages load.
+    await expect(page.locator(`[data-component="${PAST_ZONE_HEADER}"]`)).toContainText("2건");
 
     await page.getByRole("button", { name: /인사 메시지/ }).click();
 
     await expect(
-      page.locator('[data-component="mobile_messages_history_detail-sheet_stack_detail-page_body"]'),
+      page.locator('[data-component="mobile_messages_history_detail-sheet_screen_content_sliding-card_stage_detail-pane_body"]'),
     ).toBeVisible();
     await expect(page.getByText("발송 정보")).toBeVisible();
     await expect(page.getByText("01012345678")).toBeVisible();
     await expect(page.getByText("안녕하세요")).toBeVisible();
 
     await page
-      .locator('[data-component="mobile_messages_history_detail-sheet_stack_detail-page"] .sheet-close')
+      .getByRole("button", { name: "발송 기록 목록으로 돌아가기" })
       .click();
 
     await expect(page.locator(".list-card .list-title-text")).toContainText("발송 기록");
@@ -198,8 +258,12 @@ test.describe("mobile messages navigation", () => {
 
   test("shows upcoming SMS jobs in the merged record screen's upcoming zone", async ({ page }) => {
     // Same reason as the history test above: the past query gates this zone too.
-    await page.route("**/api/message-logs**", async (route: Route) => {
-      await route.fulfill({ status: 200, contentType: "application/json", body: "[]" });
+    await page.route("**/api/message-logs/page**", async (route: Route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: historyPage([]),
+      });
     });
     await page.route("**/api/message-trigger-jobs/upcoming**", async (route: Route) => {
       await route.fulfill({
@@ -255,12 +319,12 @@ test.describe("mobile messages navigation", () => {
         body: JSON.stringify({ message: "upcoming fixture failure" }),
       });
     });
-    await page.route("**/api/message-logs**", async (route: Route) => {
+    await page.route("**/api/message-logs/page**", async (route: Route) => {
       await new Promise((resolve) => setTimeout(resolve, 100));
       await route.fulfill({
         status: 200,
         contentType: "application/json",
-        body: JSON.stringify([
+        body: historyPage([
           {
             id: 102,
             provider: "aligo_sms",

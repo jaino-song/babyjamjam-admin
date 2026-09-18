@@ -1,6 +1,9 @@
+"use client";
+
 import Link from "next/link";
 import { ArrowRight } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { useSelectedStatsPeriod } from "@/components/app/stats/StatsPeriodSelector";
 
 interface PanelCardProps {
   title: string;
@@ -32,6 +35,12 @@ export function PanelCard({
   className,
   children,
 }: PanelCardProps) {
+  const { period } = useSelectedStatsPeriod();
+  const resolvedDetailHref = (() => {
+    const url = new URL(detailHref, "http://stats.local");
+    url.searchParams.set("period", String(period));
+    return `${url.pathname}${url.search}${url.hash}`;
+  })();
   return (
     <section
       data-component={dataComponent}
@@ -59,7 +68,7 @@ export function PanelCard({
           </span>
         ) : null}
         <Link
-          href={detailHref}
+          href={resolvedDetailHref}
           data-component={`${dataComponent}_head_detail-link`}
           className="ml-auto inline-flex items-center gap-1 rounded-lg bg-v3-primary-light px-3 py-1.5 text-[0.72rem] font-semibold text-v3-primary hover:bg-v3-primary hover:text-white transition-colors"
         >

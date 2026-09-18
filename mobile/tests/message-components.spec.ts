@@ -1,7 +1,7 @@
 import { expect, test, type Page, type Route } from "@playwright/test";
 
 const LIST_SHELL =
-  "mobile_messages_history_detail-sheet_stack_list-page_shell_content_list-card_body";
+  "mobile_messages_history_detail-sheet_screen_content_sliding-card_stage_list-pane_history-list_content_list-card_body";
 const UPCOMING_ROW = `${LIST_SHELL}_item-upcoming`;
 const PAST_ROW = `${LIST_SHELL}_item`;
 
@@ -72,6 +72,50 @@ async function mockReadOnlyMessages(page: Page, options: { isApproved?: boolean 
             updatedAt: "2026-07-16T01:00:00.000Z",
           },
         ]),
+      });
+    }
+    if (pathname === "/api/message-logs/page") {
+      return route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          items: [
+            {
+              id: "job:canceled",
+              provider: "message_job",
+              templateKey: "CLIENT_GREETING",
+              triggerJobId: "canceled",
+              receiver: "01077778888",
+              clientId: 4,
+              recipientPhone: "01077778888",
+              messageBody: "",
+              variables: {},
+              status: "canceled",
+              aligoMid: null,
+              errorMessage: "메시지 발송 승인 필요",
+              attempts: 0,
+              lastAttemptAt: "2026-07-16T04:00:00.000Z",
+              nextRetryAt: null,
+              createdAt: "2026-07-16T04:00:00.000Z",
+              updatedAt: "2026-07-16T04:00:00.000Z",
+              ruleId: "rule-4",
+              ruleName: "취소 메시지",
+              eventType: "CLIENT_CREATED",
+              offsetType: "IMMEDIATE",
+              offsetDays: 0,
+              scheduledFor: "2026-07-16T04:00:00.000Z",
+              recipientType: "CLIENT",
+              recipientName: "취소 고객",
+              clientName: "취소 고객",
+              employeeName: null,
+            },
+          ],
+          page: {
+            snapshotAt: "2026-07-16T05:00:00.000Z",
+            nextCursor: null,
+            hasMore: false,
+          },
+        }),
       });
     }
     if (pathname === "/api/message-logs") {

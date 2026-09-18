@@ -1,4 +1,5 @@
 "use client";
+import { formatBirthdayInput, isValidBirthdayIsoDate, normalizeBirthdayIsoDate } from "@babyjamjam/shared/utils/birthday";
 import {
   getUserErrorMessage,
   normalizeApiError,
@@ -155,17 +156,8 @@ const clientBirthdayValue = (client: ClientWithBirthdayAliases | null | undefine
   client?.customerBirthDate ??
   client?.customerDOB;
 
-const normalizeBirthdayInput = (value: string | null | undefined): string => {
-  if (!value) return "";
-
-  const isoValue = isoToYymmdd(value);
-  if (isoValue) return isoValue;
-
-  const digits = value.replace(/\D/g, "");
-  if (digits.length === 6) return digits;
-  if (digits.length === 8) return digits.slice(2);
-  return digits.slice(0, 6);
-};
+const normalizeBirthdayInput = (value: string | null | undefined): string =>
+  normalizeBirthdayIsoDate(value) ?? value ?? "";
 
 const formatPrice = (price: number | string): string => {
   if (!price && price !== 0) return "";
@@ -634,7 +626,7 @@ export default function ContractCreationPage() {
 
 
   const isStep1Valid = Boolean(
-    !clientsDataUnavailable &&
+    !clientsDataUnavailable && (!birthday || isValidBirthdayIsoDate(birthday)) &&
     (clientId !== null || (isManualEntry && name.trim() && phone.trim())) && area
   );
   const isEmployee1Valid = employeeId !== null;
@@ -766,6 +758,11 @@ export default function ContractCreationPage() {
   };
 
   const handleSubmit = async () => {
+    if (birthday && !isValidBirthdayIsoDate(birthday)) {
+      setActiveStep(0);
+      showErrorToast("생년월일을 YYYY-MM-DD 형식으로 입력해 주세요");
+      return;
+    }
     // React state updates are asynchronous; this ref closes the same-tick
     // double-click window before the first network mutation starts.
     if (submissionLockRef.current || submissionInFlightRef.current || isSubmitting) return;
@@ -1224,10 +1221,10 @@ export default function ContractCreationPage() {
                           data-component="mobile_contracts-new_screen_root_page_root_form-scroll_card_birthday-input"
                           className={styles.formInput}
                           value={birthday}
-                          onChange={(e) => setBirthday(e.target.value.replace(/\D/g, "").slice(0, 6))}
+                          onChange={(e) => setBirthday(formatBirthdayInput(e.target.value))}
                           inputMode="numeric"
-                          maxLength={6}
-                          placeholder="YYMMDD"
+                          maxLength={10}
+                          placeholder="YYYY-MM-DD"
                         />
                       </Field>
                       <Field dataComponent="mobile_contracts-new_client_start-date-field" label="서비스 시작일">

@@ -132,7 +132,7 @@ async function mockClientsWizardRoutes(page: Page, options?: { onCreate?: (paylo
 async function fillStepZero(page: Page) {
   await page.getByPlaceholder("홍길동").fill("홍테스트 고객");
   await page.getByPlaceholder("010-1234-5678").fill("01011112222");
-  await page.locator('[data-component="mobile_clients-new_screen_root_page_wizard_form-scroll_basic-details-card_birthday-field_birthday-input"]').fill("950101");
+  await page.locator('[data-component="mobile_clients-new_screen_root_page_wizard_form-scroll_basic-details-card_birthday-field_birthday-input"]').fill("19950101");
   await page.locator('[data-component="mobile_clients-new_screen_root_page_wizard_form-scroll_basic-details-card_due-date-field_due-date-input"]').fill("2026-06-15");
   await page.getByPlaceholder("서울시 강남구...").fill("인천광역시 연수구 테스트로 10");
 
@@ -258,7 +258,7 @@ test.describe("clients/new wizard", () => {
       .toBe(true);
     await expect(dialog.locator('[data-component="mobile_employees_form-dialog_card_assignment"]')).toContainText("제공인력 1에 배정");
     await expect(dialog.locator('[data-component="mobile_employees_form-dialog_card_section-basic_field-name"] input')).toHaveValue("김정인");
-    await expect(dialog.locator('[data-component="mobile_employees_form-dialog_card_section-basic_field-birthday"] input')).toHaveAttribute("placeholder", "YYMMDD");
+    await expect(dialog.locator('[data-component="mobile_employees_form-dialog_card_section-basic_field-birthday"] input')).toHaveAttribute("placeholder", "YYYY-MM-DD");
     await expect(dialog.locator('[data-component="employees-form-dialog-submit"]')).toHaveText("등록");
     await expect(dialog.locator('[data-component="employees-form-dialog-cancel"]')).toHaveClass(/btn-press/);
     await expect(dialog.locator('[data-component="employees-form-dialog-submit"]')).toHaveClass(/btn-press/);
@@ -337,7 +337,7 @@ test.describe("clients/new wizard", () => {
     expect(createdPayload).toEqual(
       expect.objectContaining({
         name: "홍테스트 고객",
-        birthday: "950101",
+        birthday: "1995-01-01",
         dueDate: "2026-06-15",
         address: "인천광역시 연수구 테스트로 10",
         phone: "010-1111-2222",

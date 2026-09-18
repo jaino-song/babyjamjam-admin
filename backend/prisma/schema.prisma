@@ -257,7 +257,7 @@ model client {
   endDate                DateTime?                 @map("end_date") @db.Date
   careCenter             Boolean?                  @map("care_center")
   voucherClient          Boolean                   @map("voucher_client")
-  birthday               String?                   @db.VarChar(6)
+  birthday               String?                   @db.VarChar(10)
   breastPump             Boolean                   @default(false) @map("breast_pump")
   serviceStatus          String?                   @map("service_status")
   serviceEndNoticeSentAt DateTime?                 @map("service_end_notice_sent_at") @db.Timestamptz(6)
@@ -510,7 +510,7 @@ model employee {
   grade                      String
   openToNextWork             Boolean                     @default(true) @map("open_to_next_work")
   companyRegisteredDate      DateTime?                   @map("company_registered_date") @db.Date
-  birthday                   String?                     @db.VarChar(6)
+  birthday                   String?                     @db.VarChar(10)
   deletedAt                  DateTime?                   @map("deleted_at") @db.Timestamptz(6)
   branchId                   String?                     @map("branch_id") @db.Uuid
   branch                     branch?                     @relation(fields: [branchId], references: [id], onDelete: NoAction, onUpdate: NoAction)

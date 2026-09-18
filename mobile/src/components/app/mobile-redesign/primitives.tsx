@@ -640,6 +640,7 @@ export function ListCard({
   "data-component": dataComponent,
   title,
   count,
+  beforeCount,
   actionLabel,
   actionLoading,
   actionHref,
@@ -662,6 +663,7 @@ export function ListCard({
   "data-component": string;
   title: string;
   count?: ReactNode;
+  beforeCount?: ReactNode;
   actionLabel?: string;
   actionLoading?: boolean;
   actionHref?: string;
@@ -713,6 +715,7 @@ export function ListCard({
         data-component={`${dataComponent}_header`}
         title={title}
         count={count}
+        beforeCount={beforeCount}
         actionLabel={actionLabel}
         actionLoading={actionLoading}
         actionHref={actionHref}
