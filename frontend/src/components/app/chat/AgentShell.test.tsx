@@ -5,6 +5,9 @@ import { AgentShell } from "./AgentShell";
 const mockSendMessage = jest.fn();
 const mockLoadTaskSnapshot = jest.fn();
 const mockRetryPendingTaskEvent = jest.fn();
+const mockPatchTask = jest.fn();
+const mockCommandTask = jest.fn();
+const mockCreateTaskEventId = jest.fn(() => "44444444-4444-4444-8444-444444444444");
 const mockRenameSession = jest.fn().mockResolvedValue(true);
 const mockAgentChatState: {
     status: "ready" | "submitted" | "streaming";
@@ -12,7 +15,21 @@ const mockAgentChatState: {
     error: Error | null;
     actionError: { code: string; message: string; effectState: "nothing-happened" | "succeeded-unconfirmed" | "partial" } | null;
     taskError: { code: string; taskId?: string; latestRevision?: number; pendingEventId?: string; message: string } | null;
-} = { status: "ready", messages: [], error: null, actionError: null, taskError: null };
+    taskSnapshotState: { task: Record<string, unknown> | null; pendingEventIds: string[] };
+    taskAccessState: { status: string };
+    taskMutationInFlight: boolean;
+    taskNeedsReconciliation: boolean;
+} = {
+    status: "ready",
+    messages: [],
+    error: null,
+    actionError: null,
+    taskError: null,
+    taskSnapshotState: { task: null, pendingEventIds: [] },
+    taskAccessState: { status: "idle" },
+    taskMutationInFlight: false,
+    taskNeedsReconciliation: false,
+};
 
 jest.mock("next/navigation", () => ({
     useRouter: () => ({ push: jest.fn() }),
@@ -26,6 +43,13 @@ jest.mock("@/hooks/useAgentChat", () => ({
         error: mockAgentChatState.error,
         actionError: mockAgentChatState.actionError,
         taskError: mockAgentChatState.taskError,
+        taskSnapshotState: mockAgentChatState.taskSnapshotState,
+        taskAccessState: mockAgentChatState.taskAccessState,
+        taskMutationInFlight: mockAgentChatState.taskMutationInFlight,
+        taskNeedsReconciliation: mockAgentChatState.taskNeedsReconciliation,
+        createTaskEventId: mockCreateTaskEventId,
+        patchTask: mockPatchTask,
+        commandTask: mockCommandTask,
         loadTaskSnapshot: mockLoadTaskSnapshot,
         retryPendingTaskEvent: mockRetryPendingTaskEvent,
         stop: jest.fn(),
@@ -47,12 +71,19 @@ describe("AgentShell input composition", () => {
         mockSendMessage.mockClear();
         mockLoadTaskSnapshot.mockReset();
         mockRetryPendingTaskEvent.mockReset();
+        mockPatchTask.mockReset();
+        mockCommandTask.mockReset();
+        mockCreateTaskEventId.mockReset().mockReturnValue("44444444-4444-4444-8444-444444444444");
         mockRenameSession.mockClear();
         mockAgentChatState.status = "ready";
         mockAgentChatState.messages = [];
         mockAgentChatState.error = null;
         mockAgentChatState.actionError = null;
         mockAgentChatState.taskError = null;
+        mockAgentChatState.taskSnapshotState = { task: null, pendingEventIds: [] };
+        mockAgentChatState.taskAccessState = { status: "idle" };
+        mockAgentChatState.taskMutationInFlight = false;
+        mockAgentChatState.taskNeedsReconciliation = false;
         const media = {
             matches: false,
             addEventListener: jest.fn(),
@@ -138,6 +169,65 @@ describe("AgentShell input composition", () => {
 
         expect(screen.getByRole("button", { name: "입력 제출" })).toBeEnabled();
         expect(screen.getByRole("heading", { name: "프로필" }).closest("form")).not.toHaveAttribute("aria-busy", "true");
+    });
+
+    it("attaches the current task revision and event id to desktop patch and lifecycle intents", () => {
+        const taskId = "11111111-1111-4111-8111-111111111111";
+        const snapshotRef = "22222222-2222-4222-8222-222222222222";
+        mockAgentChatState.taskSnapshotState = {
+            pendingEventIds: [],
+            task: {
+                schemaVersion: 1,
+                taskId,
+                sessionId: "33333333-3333-4333-8333-333333333333",
+                kind: "clients.create",
+                capabilityId: "clients.create",
+                revision: 4,
+                state: "collecting",
+                confirmed: { name: "기존 이름" },
+                tentative: {},
+                clearedFields: [],
+                provenance: { confirmed: {}, tentative: {} },
+                issues: [],
+                constraints: { noSend: false },
+                choiceSets: [],
+                orderedChoiceRefs: [],
+                target: null,
+                consent: { choice: "unanswered", binding: null },
+                action: null,
+                times: { createdAt: "2026-08-03T00:00:00.000Z", updatedAt: "2026-08-03T00:00:00.000Z" },
+                currentSnapshotRef: snapshotRef,
+            },
+        };
+        mockAgentChatState.taskAccessState = { status: "authorized" };
+        mockAgentChatState.messages = [{
+            id: "assistant-task",
+            role: "assistant",
+            parts: [{ type: "data-task-snapshot", data: {
+                taskId,
+                snapshotRef,
+                kind: "clients.create",
+                capabilityId: "clients.create",
+                revision: 4,
+                state: "collecting",
+                fieldStatus: [{ field: "name", status: "confirmed" }],
+            } }],
+        }];
+
+        render(<AgentShell />);
+
+        fireEvent.change(screen.getByRole("textbox", { name: "이름 변경값" }), { target: { value: "새 이름" } });
+        fireEvent.click(screen.getByRole("button", { name: "변경 적용" }));
+        fireEvent.click(screen.getByRole("button", { name: "검토 준비" }));
+
+        expect(mockPatchTask).toHaveBeenCalledWith(taskId, [{ op: "set", field: "name", value: "새 이름" }], {
+            expectedRevision: 4,
+            clientEventId: "44444444-4444-4444-8444-444444444444",
+        });
+        expect(mockCommandTask).toHaveBeenCalledWith(taskId, { command: "prepare-review" }, {
+            expectedRevision: 4,
+            clientEventId: "44444444-4444-4444-8444-444444444444",
+        });
     });
 
     it("offers a refresh action after a task conflict", async () => {

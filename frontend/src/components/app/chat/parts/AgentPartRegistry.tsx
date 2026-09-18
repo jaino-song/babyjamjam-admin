@@ -21,8 +21,10 @@ import {
     AgentEntitySelectPartSchema,
     AgentTaskPatchPartSchema,
     AgentTaskSnapshotPartSchema,
+    type AgentTaskPatchRequest,
     type AgentTask,
 } from "@babyjamjam/shared";
+import type { AgentTaskCommand } from "@/hooks/useAgentChat";
 import { TaskEntitySelectPart, TaskPatchPart, TaskSnapshotPart } from "./TaskSnapshotPart";
 
 type AgentPartRegistryProps = {
@@ -31,6 +33,8 @@ type AgentPartRegistryProps = {
     onEntitySelect?: (id: string, entityType: string) => void;
     task?: AgentTask | null;
     onTaskEntitySelect?: (taskId: string, choiceSetRef: string, optionId: string) => void;
+    onTaskPatch?: (taskId: string, operations: AgentTaskPatchRequest["operations"]) => void | Promise<unknown>;
+    onTaskCommand?: (taskId: string, command: AgentTaskCommand) => void | Promise<unknown>;
     onFeedback?: (value: "positive" | "negative") => void;
     onApproveAction?: (actionId: string, expectedRevision: string, acknowledgementToken?: string) => void;
     onRejectAction?: (actionId: string) => void;
@@ -41,7 +45,7 @@ type AgentPartRegistryProps = {
     taskBusy?: boolean;
 };
 
-export function AgentPartRegistry({ "data-component": dataComponent, message, task, onTaskEntitySelect, onEntitySelect, onFeedback, onApproveAction, onRejectAction, onSubmitForm, onRetry, terminalActionIds, isBusy = false, taskBusy = false }: AgentPartRegistryProps) {
+export function AgentPartRegistry({ "data-component": dataComponent, message, task, onTaskEntitySelect, onTaskPatch, onTaskCommand, onEntitySelect, onFeedback, onApproveAction, onRejectAction, onSubmitForm, onRetry, terminalActionIds, isBusy = false, taskBusy = false }: AgentPartRegistryProps) {
     const component = (suffix: string) => `${dataComponent}_${suffix}`;
 
     return (
@@ -99,7 +103,7 @@ export function AgentPartRegistry({ "data-component": dataComponent, message, ta
                 if (part.type === "data-task-snapshot") {
                     const parsed = AgentTaskSnapshotPartSchema.safeParse(data);
                     return parsed.success
-                        ? <TaskSnapshotPart key={index} data-component={component("task-snapshot")} data={parsed.data} />
+                        ? <TaskSnapshotPart key={index} data-component={component("task-snapshot")} data={parsed.data} task={task} taskBusy={taskBusy} onPatch={onTaskPatch} onCommand={onTaskCommand} />
                         : <SafePartFallback key={index} data-component={component("fallback")} />;
                 }
                 if (part.type === "data-entity-select") {
