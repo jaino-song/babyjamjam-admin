@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import type { ReactNode } from "react";
 
 import type { Client } from "@/lib/client/types";
@@ -181,7 +181,7 @@ function clientFixture(overrides: Partial<Client> = {}): Client {
   };
 }
 
-function renderWithLatestProjection(client: Client, pinnedDocumentStatus: string) {
+async function renderWithLatestProjection(client: Client, pinnedDocumentStatus: string) {
   mockCanonicalClient = client;
   mockContractDocument = {
     id: client.eDocId ?? "legacy-document-060",
@@ -191,6 +191,9 @@ function renderWithLatestProjection(client: Client, pinnedDocumentStatus: string
   clientQuery.mockReturnValue({ data: mockCanonicalClient } as ReturnType<typeof useClient> extends infer T ? T : never);
   mockQueryClient.fetchQuery.mockResolvedValue(client);
   render(<ClientsPage />);
+  await waitFor(() => {
+    expect(mockClientDetailContent.mock.calls.length).toBeGreaterThan(1);
+  });
 }
 
 beforeEach(() => {
@@ -208,10 +211,10 @@ beforeEach(() => {
 });
 
 describe("clients page canonical contract projection", () => {
-  it("keeps latest signed state when the pinned document is an older unsigned 060", () => {
+  it("keeps latest signed state when the pinned document is an older unsigned 060", async () => {
     const latestClient = clientFixture({ hasSigned: true, documentStatus: "requested" });
 
-    renderWithLatestProjection(latestClient, "060");
+    await renderWithLatestProjection(latestClient, "060");
 
     const latestProps = mockClientDetailContent.mock.calls.at(-1)?.[0];
     expect(latestProps?.client).toMatchObject({
@@ -225,10 +228,10 @@ describe("clients page canonical contract projection", () => {
     expect(screen.getByTestId("client-detail-state")).toHaveTextContent("signed:requested");
   });
 
-  it("keeps latest unsigned state when the pinned document is an older completed 003", () => {
+  it("keeps latest unsigned state when the pinned document is an older completed 003", async () => {
     const latestClient = clientFixture({ hasSigned: false, documentStatus: "requested" });
 
-    renderWithLatestProjection(latestClient, "003");
+    await renderWithLatestProjection(latestClient, "003");
 
     const latestProps = mockClientDetailContent.mock.calls.at(-1)?.[0];
     expect(latestProps?.client).toMatchObject({
