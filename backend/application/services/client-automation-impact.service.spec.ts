@@ -57,6 +57,68 @@ function setup() {
         template, templates, aligo, logs, enrichers };
 }
 
+function addServiceRecordLinkSource(
+    fixture: ReturnType<typeof setup>,
+    tokenOverrides: Partial<{
+        linkTokenHash: string;
+        expectedPhoneHash: string;
+        expiresAt: Date;
+        active: boolean;
+        revokedAt: Date | null;
+        lockedAt: Date | null;
+        failedAttempts: number;
+    }> = {},
+): void {
+    fixture.settings.rules.push(MessageTriggerRuleEntity.reconstitute(
+        SERVICE_RECORD_LINK_RULE_ID,
+        null,
+        "제공기록지 링크",
+        true,
+        MessageTriggerEventType.SERVICE_START,
+        MessageTriggerOffsetType.SAME_DAY,
+        0,
+        MessageTriggerRecipientType.PRIMARY_EMPLOYEE,
+        MessageTriggerTemplateKey.SERVICE_RECORD_LINK,
+        now,
+        now,
+        true,
+        false,
+        "15:00",
+    ));
+    fixture.sources.readClientAutomationServiceRecordLinks = jest.fn().mockResolvedValue([{
+        schedule: {
+            id: 17,
+            incarnationId: "76000000-0000-4000-8000-000000000003",
+            branchId,
+            clientId: fixture.client.id,
+            startDate: new Date("2026-10-01T00:00:00Z"),
+            endDate: new Date("2026-10-15T00:00:00Z"),
+            replaced: false,
+            terminatedAt: null,
+            primaryEmployeeId: 71,
+            client: { id: fixture.client.id, name: fixture.client.name, branchId, createdAt: now, serviceStatus: "active" },
+            primaryEmployee: { id: 71, name: "합성 관리사", phone: "01000000071", branchId, deletedAt: null },
+        },
+        serviceRecordCase: null,
+        token: {
+            id: "76000000-0000-4000-8000-000000000005",
+            branchId,
+            scheduleId: 17,
+            employeeId: 71,
+            serviceRecordCaseId: null,
+            linkTokenHash: "efl_synthetic_token",
+            expectedPhoneHash: createHash("sha256").update("01000000071").digest("hex"),
+            expiresAt: new Date("2026-10-22T11:00:00Z"),
+            active: true,
+            revokedAt: null,
+            lockedAt: null,
+            failedAttempts: 0,
+            createdAt: now,
+            ...tokenOverrides,
+        },
+    }]);
+}
+
 describe("read-only normalized client automation impact", () => {
     beforeEach(() => { jest.useFakeTimers(); jest.setSystemTime(now); });
     afterEach(() => jest.useRealTimers());
@@ -435,5 +497,40 @@ describe("read-only normalized client automation impact", () => {
         ]));
         expect(JSON.stringify(result)).not.toContain("efl_synthetic_token");
         expect(JSON.stringify(result)).not.toContain("01000000071");
+    });
+
+    it.each([
+        ["inactive", { active: false }],
+        ["revoked", { revokedAt: new Date("2026-09-16T00:00:00Z") }],
+        ["locked", { lockedAt: new Date("2026-09-16T00:00:00Z") }],
+        ["expired", { expiresAt: new Date("2026-09-16T00:00:00Z") }],
+        ["phone-mismatched", { expectedPhoneHash: createHash("sha256").update("01000000072").digest("hex") }],
+    ] as const)("keeps a present but %s service-record source available for no-send coverage", async (_state, tokenOverrides) => {
+        const f = setup();
+        addServiceRecordLinkSource(f, tokenOverrides);
+
+        const result = await f.service.planClientWrite(branchId, {
+            kind: "update", clientId: f.client.id, values: { name: "정정 합성 고객" },
+        });
+        expect(result).toMatchObject({ availability: "unavailable", reason: "unsupported-content", complete: true });
+        expect(result.effects).toEqual(expect.arrayContaining([
+            expect.objectContaining({ kind: "service-record-link", ruleId: SERVICE_RECORD_LINK_RULE_ID, scheduleId: 17, change: "create" }),
+        ]));
+        expect(JSON.stringify(result)).not.toContain("efl_synthetic_token");
+        expect(JSON.stringify(result)).not.toContain("01000000071");
+    });
+
+    it("keeps policy-blocked service-record coverage complete without granting yes", async () => {
+        const f = setup();
+        f.settings.senderApproved = false;
+        addServiceRecordLinkSource(f);
+
+        const result = await f.service.planClientWrite(branchId, {
+            kind: "update", clientId: f.client.id, values: { name: "정정 합성 고객" },
+        });
+        expect(result).toMatchObject({ availability: "unavailable", reason: "sender-unavailable", complete: true });
+        expect(result.effects).toEqual(expect.arrayContaining([
+            expect.objectContaining({ kind: "service-record-link", ruleId: SERVICE_RECORD_LINK_RULE_ID, scheduleId: 17, change: "create" }),
+        ]));
     });
 });

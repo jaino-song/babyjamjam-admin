@@ -18,6 +18,7 @@ import { ClientAutomationImpactService } from "../../../application/services/cli
 import { CLIENT_AUTOMATION_IMPACT } from "../../../domain/ports/client-automation-impact.port";
 import { SERVICE_RECORD_LINK_RULE_ID } from "../../../domain/constants/service-record-link-message";
 import { MESSAGE_AUTOMATION_INTENT_RULE_ID } from "../../../domain/constants/message-automation-intent";
+import { AGENT_AUTOMATION_RECORD_PAYLOAD_KEY } from "../../../domain/constants/agent-automation-storage";
 import { MessageTriggerEventType, MessageTriggerOffsetType, MessageTriggerRecipientType, MessageTriggerTemplateKey } from "../../../domain/constants/message-trigger-catalog";
 import { DEFAULT_CLIENT_GREETING_TRIGGER, DEFAULT_SERVICE_INFO_TRIGGER } from "../../../application/services/message-trigger-defaults";
 import { assertApprovedAgentTaskPersistenceDatabaseTarget, createApprovedAgentTaskPersistenceClient } from "./agent-task-persistence.helper";
@@ -371,6 +372,124 @@ describeAgentE2E("production service-record-link task effect planner", () => {
             (candidate, transaction) => delivery.resolveCanonicalDeliverySnapshot(candidate, transaction),
         )));
         expect(allowed.status).toBe("allowed");
+        expect(await prisma.message_log.count({ where: { branchId } })).toBe(0);
+    });
+
+    it("executes a no-send task through the customer transaction and leaves service-record terminal coverage", async () => {
+        await prisma.message_trigger_job.deleteMany({ where: { branchId } });
+        await prisma.service_record_token.updateMany({ where: { branchId, scheduleId }, data: { active: false } });
+
+        const registry = app.get(CapabilityRegistryService);
+        const capability = registry.get("clients.update");
+        const existing = await prisma.client.findUniqueOrThrow({ where: { id: clientId } });
+        const targetVersion = clientAgentTargetVersion(existing as never);
+        const sessionId = randomUUID();
+        const taskId = randomUUID();
+        const actionId = randomUUID();
+        const nextName = "발송금지 task 정정 고객";
+        const principal = { userId, branchId, globalRole: "admin", branchRole: "admin" } as const;
+        const contextBase = { principal, sessionId, traceId: randomUUID(), locale: "ko" } as const;
+        const input = { id: clientId, name: nextName, targetVersion };
+        const canonicalInput = capability.canonicalizeInput
+            ? await capability.canonicalizeInput(contextBase as never, input)
+            : input;
+        const impact = await capability.planAutomationImpact!(contextBase as never, canonicalInput, taskId);
+        expect(impact).toMatchObject({ availability: "unavailable", complete: true });
+        expect(impact.effects).toEqual(expect.arrayContaining([
+            expect.objectContaining({ kind: "service-record-link", ruleId: SERVICE_RECORD_LINK_RULE_ID, scheduleId, change: "create" }),
+        ]));
+
+        const question = createAgentAutomationQuestion(impact);
+        const answer = answerAgentAutomationQuestion({
+            presented: question,
+            current: question,
+            choice: "no",
+            noSend: true,
+            clientEventId: randomUUID(),
+        });
+        if (answer.status !== "accepted") throw new Error("The synthetic no-send consent was not accepted");
+        const artifact = parseTaskAutomationArtifact({
+            version: 1,
+            actionId,
+            taskId,
+            taskRevision: 1,
+            sessionId,
+            userId,
+            branchId,
+            capability: "clients.update",
+            inputHash: agentBindingHash(canonicalInput),
+            targetClientId: clientId,
+            targetVersion,
+            question,
+            consent: answer.consent,
+            noSend: true,
+            impact: { ...impact, grandfatheredEffects: impact.grandfatheredEffects ?? [] },
+        });
+        if (!artifact) throw new Error("The production no-send planner artifact did not parse");
+        const proposal = {
+            input: canonicalInput,
+            automation: taskAutomationPublicSummary(artifact),
+            [TASK_AUTOMATION_ARTIFACT_KEY]: artifact,
+        };
+        const actionLike = {
+            capability: "clients.update",
+            capabilityVersion: capability.meta.version,
+            risk: "external-side-effect" as const,
+            proposal,
+        };
+        const expiresAt = new Date("2099-01-01T00:00:00.000Z");
+        await prisma.agent_session.create({ data: {
+            id: sessionId, userId, branchId, model: "synthetic", agentVersion: "phase7", expiresAt,
+        } });
+        await prisma.agent_task.create({ data: {
+            id: taskId, sessionId, userId, branchId, capabilityId: "clients.update", revision: 1,
+            status: "executing", draft: {}, targetRef: { clientId }, targetVersion, activeActionId: actionId, expiresAt,
+        } });
+        await prisma.agent_action.create({ data: {
+            id: actionId,
+            sessionId,
+            userId,
+            branchId,
+            taskId,
+            taskRevision: 1,
+            capability: "clients.update",
+            capabilityVersion: capability.meta.version,
+            risk: "external-side-effect",
+            status: "executing",
+            inputHash: artifact.inputHash,
+            proposal: proposal as unknown as Prisma.InputJsonValue,
+            proposalRevision: agentLinkedProposalRevision(taskId, 1, actionLike),
+            targetVersion,
+            targetSnapshot: { id: clientId, name: existing.name } as unknown as Prisma.InputJsonValue,
+            authorizationContext: { approvalPolicy: "strong" } as unknown as Prisma.InputJsonValue,
+            expiresAt,
+            idempotencyKey: randomUUID(),
+            requestDedupeKey: randomUUID(),
+            dedupeExpiresAt: expiresAt,
+        } });
+
+        const result = await capability.executeApprovedTarget!(
+            { ...contextBase, actionId, taskAutomation: artifact } as never,
+            { id: clientId, name: nextName },
+            targetVersion,
+        );
+        expect(result).toEqual({ id: clientId, name: nextName, status: "updated" });
+
+        const receiptAction = await prisma.agent_action.findUniqueOrThrow({ where: { id: actionId }, select: { effectReceipt: true } });
+        const receipt = receiptAction.effectReceipt as { metadata?: { automation?: { authorities: Array<{ id: string }>; coverages?: Array<{ id: string }> } } };
+        const references = [ ...(receipt.metadata?.automation?.coverages ?? []), ...(receipt.metadata?.automation?.authorities ?? []) ];
+        expect(references.length).toBeGreaterThan(0);
+        const terminalRows = await prisma.message_trigger_job.findMany({ where: { id: { in: references.map(({ id }) => id) } } });
+        const serviceRecordTerminalRows = terminalRows.filter((row) => {
+            const payload = row.payload as Record<string, unknown>;
+            const terminal = payload[AGENT_AUTOMATION_RECORD_PAYLOAD_KEY] as Record<string, unknown> | undefined;
+            const record = terminal?.["record"] as Record<string, unknown> | undefined;
+            const scope = record?.["scope"] as Record<string, unknown> | undefined;
+            return scope?.["kind"] === "service-record-link" && row.status === "canceled" && row.employeeScheduleId === null;
+        });
+        expect(serviceRecordTerminalRows.length).toBeGreaterThan(0);
+        expect(await prisma.message_trigger_job.count({ where: { branchId, ruleId: SERVICE_RECORD_LINK_RULE_ID, employeeScheduleId: scheduleId } })).toBe(0);
+        expect(await prisma.message_trigger_job.count({ where: { branchId, ruleId: MESSAGE_AUTOMATION_INTENT_RULE_ID, employeeScheduleId: scheduleId } })).toBe(0);
         expect(await prisma.message_log.count({ where: { branchId } })).toBe(0);
     });
 });

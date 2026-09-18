@@ -359,6 +359,19 @@ export class ClientAutomationImpactService implements ClientAutomationImpactPort
                         if (mutable.length > 0) { noteUnavailable("source-unavailable"); complete = false; }
                         continue;
                     }
+                    let scheduleIdentity: string;
+                    try {
+                        scheduleIdentity = agentAutomationScheduleIdentity(schedule.incarnationId);
+                    } catch {
+                        // An invalid incarnation cannot safely anchor a deny/no-send
+                        // coverage row. Keep this source incomplete.
+                        noteUnavailable("source-unavailable"); complete = false; continue;
+                    }
+                    if (!validDate(schedule.startDate) || !validDate(schedule.endDate)) {
+                        // A malformed date changes the operation identity. Do not
+                        // manufacture an unavailable effect from an untrusted row.
+                        noteUnavailable("source-unavailable"); complete = false; continue;
+                    }
                     const unavailableChange: AgentAutomationEffect["change"] = mutable.length ? "refresh" : "create";
                     if (!serviceRecordRule) {
                         effects.push(unavailableServiceRecordLinkEffect({ branchId, subject, link,
@@ -374,10 +387,12 @@ export class ClientAutomationImpactService implements ClientAutomationImpactPort
                         mutable.forEach((job) => affected.set(job.id, job));
                         continue;
                     }
-                    const scheduleIdentity = agentAutomationScheduleIdentity(schedule.incarnationId);
                     const recipe = this.buildServiceRecordLinkRecipe(branchId, serviceRecordRule, link, after.name, now);
                     if (!recipe) {
-                        if (mutable.length > 0 || link.token) { noteUnavailable("source-unavailable"); complete = false; }
+                        effects.push(unavailableServiceRecordLinkEffect({ branchId, subject, link,
+                            policy, change: unavailableChange, reason: "link-recipe-unavailable" }));
+                        noteUnavailable("source-unavailable");
+                        mutable.forEach((job) => affected.set(job.id, job));
                         continue;
                     }
                     const terminalDedupe = previousJobs.some((job) => job.dedupeKey === recipe.dedupeKey
@@ -386,7 +401,13 @@ export class ClientAutomationImpactService implements ClientAutomationImpactPort
                     if (!eligible && mutable.length === 0) continue;
                     const change: AgentAutomationEffect["change"] = !eligible ? "cancel" : mutable.length ? "refresh" : "create";
                     const previewRecipe = this.buildServiceRecordLinkRecipe(branchId, serviceRecordRule, link, after.name, now);
-                    if (!previewRecipe) { noteUnavailable("source-unavailable"); complete = false; continue; }
+                    if (!previewRecipe) {
+                        effects.push(unavailableServiceRecordLinkEffect({ branchId, subject, link,
+                            policy, change, reason: "link-recipe-unavailable" }));
+                        noteUnavailable("source-unavailable");
+                        mutable.forEach((job) => affected.set(job.id, job));
+                        continue;
+                    }
                     let described: AgentAutomationEffect | null = null;
                     try {
                         const deliveryJob = MessageTriggerJobEntity.create(previewRecipe);
@@ -414,8 +435,13 @@ export class ClientAutomationImpactService implements ClientAutomationImpactPort
                         described = null;
                     }
                     if (!described) {
-                        noteUnavailable(change === "cancel" ? "source-unavailable" : "unsupported-content");
-                        complete = false;
+                        const unavailableReason = change === "cancel"
+                            ? "source-unavailable"
+                            : policy.dispatchEnabled && policy.senderApproved ? "unsupported-content" : "sender-unavailable";
+                        effects.push(unavailableServiceRecordLinkEffect({ branchId, subject, link,
+                            policy, change, reason: unavailableReason }));
+                        noteUnavailable(unavailableReason);
+                        mutable.forEach((job) => affected.set(job.id, job));
                         continue;
                     }
                     effects.push(described);
