@@ -244,6 +244,7 @@ function MessageHistoryFilterPanel({
     >
       <SearchBox
         data-component={`${dataComponent}_search`}
+        inputLabel="고객명, 연락처, 템플릿, 내용 검색"
         placeholder="고객명, 연락처, 템플릿, 내용 검색…"
         value={searchValue}
         onChange={onSearchChange}

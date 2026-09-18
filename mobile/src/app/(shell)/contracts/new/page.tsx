@@ -31,7 +31,11 @@ import { ClientAutocomplete } from "@/components/app/clients/ClientAutocomplete"
 import { EmployeeAutocomplete } from "@/components/app/clients/EmployeeAutocomplete";
 
 import voucherOptions from "@/components/app/messages/templates/json/voucher.json";
-import { isStrictIsoDate, isoToYymmdd, normalizeIsoDate, todayIsoDate, yymmddToIso } from "@/lib/contracts/date-input";
+import { isoToYymmdd, normalizeIsoDate, todayIsoDate, yymmddToIso } from "@/lib/contracts/date-input";
+import {
+  getContractDateValidation,
+  getContractDateValues,
+} from "@/lib/contracts/contract-date-validation";
 import { calcEndDateBusinessDays } from "@/lib/date/business-days";
 import { buildInitialSignRequestDocRecord } from "@/lib/eformsign/document-record";
 import { formatKoreanPhoneNumber, normalizeKoreanPhoneDigits } from "@/lib/phone";
@@ -54,6 +58,7 @@ import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import {
   buildContractSubmissionAlert,
+  buildHeadlessProviderFailureAlert,
   canUseContractIframeFallback,
   CONTRACT_OUTCOME_COPY,
   focusContractValidationErrors,
@@ -91,6 +96,10 @@ const WIZARD_STEPS = [
   { title: "계약 정보", desc: "서비스 기간과 본인부담금 수령 날짜를 입력해주세요." },
 ] as const;
 const SUCCESS_REDIRECT_DELAY_MS = 3_000;
+const CONTRACT_DATE_ERROR_ID = "contracts-new-review-date-error";
+const CONTRACT_START_DATE_INPUT_ID = "contracts-new-review-start-date";
+const CONTRACT_END_DATE_INPUT_ID = "contracts-new-review-end-date";
+const CONTRACT_PAYMENT_DATE_INPUT_ID = "contracts-new-review-payment-date";
 const AREA_TEMPLATE_DISPLAY_LABELS: Record<string, string> = {
   Namdonggu: "남동구",
   Seogu: "서구",
@@ -108,6 +117,7 @@ function getAreaTemplateDisplayLabel(areaId: string, templateName?: string | nul
 function Field({
   dataComponent,
   label,
+  htmlFor,
   required,
   children,
   helper,
@@ -115,6 +125,7 @@ function Field({
 }: {
   dataComponent: string;
   label: ReactNode;
+  htmlFor?: string;
   required?: boolean;
   children: ReactNode;
   helper?: ReactNode;
@@ -122,7 +133,7 @@ function Field({
 }) {
   return (
     <div className={styles.formRow} data-component={dataComponent}>
-      <label className={styles.formLabel} data-component={`${dataComponent}_label`}>
+      <label className={styles.formLabel} htmlFor={htmlFor} data-component={`${dataComponent}_label`}>
         {label}
         {required ? (
           <span className={styles.requiredMark} data-component={`${dataComponent}_required`}>*</span>
@@ -256,6 +267,9 @@ export default function ContractCreationPage() {
   const [progressErrorHint, setProgressErrorHint] = useState<string | null>(null);
   const progressSourceRef = useRef<EventSource | null>(null);
   const selectedClientRef = useRef<Pick<Client, "id" | "name"> | null>(null);
+  const persistedClientIdRef = useRef<number | null>(null);
+  const persistedClientSnapshotRef = useRef<string | null>(null);
+  const retryWithPersistedClientRef = useRef(false);
   const defaultPaymentDate = useMemo(() => todayIsoDate(), []);
   const hasAppliedPaymentStepDefaultRef = useRef(false);
 
@@ -263,12 +277,23 @@ export default function ContractCreationPage() {
   const [startDateInput, setStartDateInput] = useState("");
   const [endDateInput, setEndDateInput] = useState("");
   const [paymentDateInput, setPaymentDateInput] = useState("");
+  const paymentDateInputTouchedRef = useRef(false);
   const isContractInfoStep = activeStep === WIZARD_STEPS.length - 1;
   const normalizedPaymentDate = normalizeIsoDate(paymentDate);
   const fallbackPaymentDate = normalizedPaymentDate || defaultPaymentDate;
-  const shouldUseFallbackPaymentDate = isContractInfoStep && paymentDateInput.length === 0;
-  const effectivePaymentDate = shouldUseFallbackPaymentDate ? fallbackPaymentDate : paymentDate;
+  const shouldUseFallbackPaymentDate =
+    isContractInfoStep && paymentDateInput.length === 0 && !paymentDateInputTouchedRef.current;
   const effectivePaymentDateInput = shouldUseFallbackPaymentDate ? isoToYymmdd(fallbackPaymentDate) : paymentDateInput;
+  const contractDateValues = getContractDateValues({
+    startDateInput,
+    endDateInput,
+    paymentDateInput: effectivePaymentDateInput,
+  });
+  const effectiveStartDate = contractDateValues.startDate || startDate;
+  const effectiveEndDate = contractDateValues.endDate || endDate;
+  const effectivePaymentDate = shouldUseFallbackPaymentDate
+    ? fallbackPaymentDate
+    : contractDateValues.paymentDate || paymentDate;
 
   useEffect(() => {
     if (!isContractInfoStep) {
@@ -282,7 +307,12 @@ export default function ContractCreationPage() {
   }, [defaultPaymentDate, isContractInfoStep, normalizedPaymentDate, setPaymentDate]);
   useEffect(() => { setStartDateInput(isoToYymmdd(startDate)); }, [startDate]);
   useEffect(() => { setEndDateInput(isoToYymmdd(endDate)); }, [endDate]);
-  useEffect(() => { setPaymentDateInput(isoToYymmdd(paymentDate)); }, [paymentDate]);
+  useEffect(() => {
+    // Keep an invalid or partial visible draft intact while the canonical
+    // payment date is updated by the step default or another store change.
+    if (paymentDateInputTouchedRef.current) return;
+    setPaymentDateInput(isoToYymmdd(paymentDate));
+  }, [paymentDate]);
   useEffect(() => {
     setArea("");
   }, [setArea]);
@@ -298,11 +328,17 @@ export default function ContractCreationPage() {
     setLocal: (v: string) => void,
     setStore: (v: string) => void,
     raw: string,
+    isPaymentDate = false,
   ) => {
+    if (isPaymentDate) paymentDateInputTouchedRef.current = true;
     const v = raw.replace(/\D/g, "").slice(0, 6);
     setLocal(v);
-    if (v.length === 6) setStore(yymmddToIso(v));
-    else if (v.length === 0) setStore("");
+    if (v.length === 6) {
+      const isoDate = yymmddToIso(v);
+      if (isoDate) setStore(isoDate);
+    } else if (v.length === 0) {
+      setStore("");
+    }
   };
 
   const availableDurations = useMemo(() => {
@@ -502,6 +538,9 @@ export default function ContractCreationPage() {
   }, []);
 
   const handleClientSelect = (selectedClientId: number | null, client: Client | null) => {
+    persistedClientIdRef.current = null;
+    persistedClientSnapshotRef.current = null;
+    retryWithPersistedClientRef.current = false;
     setClientId(selectedClientId);
     selectedClientRef.current = client;
     setEmployeeSelection(null, "", "");
@@ -556,6 +595,11 @@ export default function ContractCreationPage() {
 
   const handleClientNameInputChange = (nextName: string) => {
     const isNameChanging = nextName !== name;
+    if (isNameChanging) {
+      persistedClientIdRef.current = null;
+      persistedClientSnapshotRef.current = null;
+      retryWithPersistedClientRef.current = false;
+    }
     setName(nextName);
     const matchesSelectedClient = clientId !== null && selectedClientRef.current?.name === nextName;
     const hasSelectedClientSnapshot = clientId !== null && selectedClientRef.current !== null;
@@ -571,6 +615,9 @@ export default function ContractCreationPage() {
   };
 
   const handleClientManualEntry = (query: string) => {
+    persistedClientIdRef.current = null;
+    persistedClientSnapshotRef.current = null;
+    retryWithPersistedClientRef.current = false;
     setClientId(null);
     selectedClientRef.current = null;
     setName(query.trim() || name);
@@ -633,11 +680,12 @@ export default function ContractCreationPage() {
   const isEmployee2Valid = !showEmployee2 || employee2Id !== null;
   const isStep2Valid = isEmployee1Valid && isEmployee2Valid;
   const isStep3Valid = Boolean(voucherType && voucherDuration && fullPrice && grant && actualPrice);
-  const isStep4Valid = Boolean(
-    startDate && isStrictIsoDate(startDate) &&
-    endDate && isStrictIsoDate(endDate) &&
-    effectivePaymentDate && isStrictIsoDate(effectivePaymentDate)
-  );
+  const contractDateValidation = getContractDateValidation({
+    startDateInput,
+    endDateInput,
+    paymentDateInput: effectivePaymentDateInput,
+  });
+  const isStep4Valid = contractDateValidation === null;
   const isCurrentStepValid = [isStep1Valid, isStep2Valid, isStep3Valid, isStep4Valid][activeStep] ?? true;
 
   const getStepValidationMessage = (step: number): string | null => {
@@ -645,6 +693,7 @@ export default function ContractCreationPage() {
     if (step === 0 && !isStep1Valid) return "고객 정보와 계약서를 선택해 주세요";
     if (step === 1 && !isStep2Valid) return "등록된 제공인력을 목록에서 선택해 주세요";
     if (step === 2 && !isStep3Valid) return "바우처 유형/기간과 금액 정보를 입력해 주세요";
+    if (step === 3 && contractDateValidation) return contractDateValidation.message;
     if (step === 3 && !isStep4Valid) return "계약 시작일, 종료일, 본인부담금 수령 날짜를 입력해 주세요";
     return null;
   };
@@ -758,6 +807,11 @@ export default function ContractCreationPage() {
   };
 
   const handleSubmit = async () => {
+    if (contractDateValidation) {
+      setActiveStep(WIZARD_STEPS.length - 1);
+      showErrorToast(contractDateValidation.message);
+      return;
+    }
     if (birthday && !isValidBirthdayIsoDate(birthday)) {
       setActiveStep(0);
       showErrorToast("생년월일을 YYYY-MM-DD 형식으로 입력해 주세요");
@@ -780,7 +834,11 @@ export default function ContractCreationPage() {
     try {
       // 1. Manual-entry client creation. The confirmed id is retained in the
       // form store so an uncertain dispatch never suggests deleting it.
-      let finalClientId = clientId ?? storedClientByIdentity?.id ?? storedClientByPhone?.id ?? null;
+      const reusePersistedClient = retryWithPersistedClientRef.current;
+      retryWithPersistedClientRef.current = false;
+      let finalClientId = reusePersistedClient
+        ? persistedClientIdRef.current ?? clientId ?? storedClientByIdentity?.id ?? storedClientByPhone?.id ?? null
+        : clientId ?? storedClientByIdentity?.id ?? storedClientByPhone?.id ?? null;
       const assignment = {
         primaryEmployeeId: employeeId,
         secondaryEmployeeId: showEmployee2 ? employee2Id : null,
@@ -791,17 +849,18 @@ export default function ContractCreationPage() {
         phone,
         birthday: birthday || undefined,
         address: address || null,
-        dueDate: dueDate || startDate || undefined,
+        dueDate: dueDate || effectiveStartDate || undefined,
         type: voucherType || null,
         duration: Number(voucherDuration) || null,
         fullPrice: fullPrice || null,
         grant: grant || null,
         actualPrice: actualPrice || null,
-        startDate: startDate || null,
-        endDate: endDate || null,
+        startDate: effectiveStartDate || null,
+        endDate: effectiveEndDate || null,
         areaId: area || null,
       };
-      if (!finalClientId && isManualEntry) {
+      const clientPersistenceSnapshot = JSON.stringify(clientData);
+      if (!reusePersistedClient && !finalClientId && isManualEntry) {
         const autoRegistrationPayload = {
           ...clientData,
           careCenter: false,
@@ -845,7 +904,10 @@ export default function ContractCreationPage() {
         showErrorToast("고객 정보를 먼저 선택하거나 등록해 주세요.");
         return;
       }
-      if (clientId !== null || storedClientByIdentity || storedClientByPhone) {
+      const shouldUpdatePersistedClient = reusePersistedClient
+        ? persistedClientSnapshotRef.current !== clientPersistenceSnapshot
+        : clientId !== null || storedClientByIdentity || storedClientByPhone;
+      if (shouldUpdatePersistedClient) {
         try {
           await updateClientMutation.mutateAsync({
             id: finalClientId,
@@ -856,11 +918,15 @@ export default function ContractCreationPage() {
           return;
         }
       }
+      if (!reusePersistedClient || shouldUpdatePersistedClient) {
+        persistedClientIdRef.current = finalClientId;
+        persistedClientSnapshotRef.current = clientPersistenceSnapshot;
+      }
 
       // Provider identity remains server-owned; this page sends only contract data.
       // 2. Build contract data for the server-mediated dispatch operation.
-      const start = dayjs(startDate);
-      const end = dayjs(endDate);
+      const start = dayjs(effectiveStartDate);
+      const end = dayjs(effectiveEndDate);
       const payment = dayjs(effectivePaymentDate);
       const contractData: ContractDataDto = {
         customerName: name,
@@ -873,8 +939,8 @@ export default function ContractCreationPage() {
         days: voucherDuration,
         area,
         contractDuration: `${start.format("YYYY-MM-DD")} ~ ${end.format("YYYY-MM-DD")}`,
-        startYear: start.format("YY"), startMonth: start.format("MM"), startDay: start.format("DD"), startDate,
-        endYear: end.format("YY"), endMonth: end.format("MM"), endDay: end.format("DD"), endDate,
+        startYear: start.format("YY"), startMonth: start.format("MM"), startDay: start.format("DD"), startDate: effectiveStartDate,
+        endYear: end.format("YY"), endMonth: end.format("MM"), endDay: end.format("DD"), endDate: effectiveEndDate,
         paymentYear: payment.format("YY"), paymentMonth: payment.format("MM"), paymentDay: payment.format("DD"),
         fullPrice, grant, actualPrice,
       };
@@ -942,6 +1008,23 @@ export default function ContractCreationPage() {
           operation: "mutation",
           locale: "ko-KR",
         });
+        const knownHeadlessFailure = !normalizedHeadless.verified
+          && isRecord(headless)
+          && headless.ok === false
+          ? buildHeadlessProviderFailureAlert(headless.reason)
+          : null;
+        if (knownHeadlessFailure) {
+          setCreationProgress((current) => resolveFailedHeadlessProgress(
+            current,
+            isRecord(headless) && typeof headless.failedStep === "string" ? headless.failedStep : undefined,
+            CONTRACT_CREATION_PROGRESS_STEPS,
+          ));
+          setProgressErrorHint(knownHeadlessFailure.message);
+          setSubmissionAlert(knownHeadlessFailure);
+          setIsProgressModalOpen(false);
+          retryWithPersistedClientRef.current = true;
+          return;
+        }
         if (normalizedHeadless.verified) {
           setProgressErrorHint(normalizedHeadless.message);
           showSubmissionFailure(headless, normalizedHeadless.problem?.outcome ?? "UNKNOWN");
@@ -1474,8 +1557,14 @@ export default function ContractCreationPage() {
                       서비스 기간
                     </div>
                     <div className={styles.formGrid2}>
-                      <Field dataComponent="mobile_contracts-new_review_start-date-field" label="시작일" required>
+                      <Field
+                        dataComponent="mobile_contracts-new_review_start-date-field"
+                        label="시작일"
+                        htmlFor={CONTRACT_START_DATE_INPUT_ID}
+                        required
+                      >
                         <input
+                          id={CONTRACT_START_DATE_INPUT_ID}
                           data-component="mobile_contracts-new_screen_root_page_root_form-scroll_period-card_start-date-input"
                           className={styles.formInput}
                           value={startDateInput}
@@ -1483,10 +1572,18 @@ export default function ContractCreationPage() {
                           inputMode="numeric"
                           maxLength={6}
                           placeholder="YYMMDD"
+                          aria-invalid={contractDateValidation?.field === "startDate" ? "true" : undefined}
+                          aria-describedby={contractDateValidation?.field === "startDate" ? CONTRACT_DATE_ERROR_ID : undefined}
                         />
                       </Field>
-                      <Field dataComponent="mobile_contracts-new_review_end-date-field" label="종료일" required>
+                      <Field
+                        dataComponent="mobile_contracts-new_review_end-date-field"
+                        label="종료일"
+                        htmlFor={CONTRACT_END_DATE_INPUT_ID}
+                        required
+                      >
                         <input
+                          id={CONTRACT_END_DATE_INPUT_ID}
                           data-component="mobile_contracts-new_screen_root_page_root_form-scroll_period-card_end-date-input"
                           className={styles.formInput}
                           value={endDateInput}
@@ -1494,6 +1591,8 @@ export default function ContractCreationPage() {
                           inputMode="numeric"
                           maxLength={6}
                           placeholder="YYMMDD"
+                          aria-invalid={contractDateValidation?.field === "endDate" ? "true" : undefined}
+                          aria-describedby={contractDateValidation?.field === "endDate" ? CONTRACT_DATE_ERROR_ID : undefined}
                         />
                       </Field>
                     </div>
@@ -1506,18 +1605,39 @@ export default function ContractCreationPage() {
                     <div className={styles.formCardTitle} data-component="mobile_contracts-new_screen_root_page_root_form-scroll_payment-card_payment-card-title">
                       결제 정보
                     </div>
-                    <Field dataComponent="mobile_contracts-new_review_payment-date-field" label="본인부담금 수령 날짜" required>
+                    <Field
+                      dataComponent="mobile_contracts-new_review_payment-date-field"
+                      label="본인부담금 수령 날짜"
+                      htmlFor={CONTRACT_PAYMENT_DATE_INPUT_ID}
+                      required
+                    >
                       <input
+                        id={CONTRACT_PAYMENT_DATE_INPUT_ID}
                         data-component="mobile_contracts-new_screen_root_page_root_form-scroll_payment-card_payment-date-input"
                         className={styles.formInput}
                         value={effectivePaymentDateInput}
-                        onChange={(e) => handleDateInputChange(setPaymentDateInput, setPaymentDate, e.target.value)}
+                        onChange={(e) => handleDateInputChange(setPaymentDateInput, setPaymentDate, e.target.value, true)}
                         inputMode="numeric"
                         maxLength={6}
                         placeholder="YYMMDD"
+                        aria-invalid={contractDateValidation?.field === "paymentDate" ? "true" : undefined}
+                        aria-describedby={contractDateValidation?.field === "paymentDate" ? CONTRACT_DATE_ERROR_ID : undefined}
                       />
                     </Field>
                   </div>
+
+                  {contractDateValidation ? (
+                    <div
+                      id={CONTRACT_DATE_ERROR_ID}
+                      role="alert"
+                      aria-live="polite"
+                      className={cn(styles.formHelper, styles.helper_err)}
+                      data-component="mobile_contracts-new_screen_root_page_root_form-scroll_payment-card_date-error"
+                      data-testid="contract-creation-date-range-error"
+                    >
+                      {contractDateValidation.message}
+                    </div>
+                  ) : null}
 
                   <div className={styles.formCard} data-component="mobile_contracts-new_screen_root_page_root_form-scroll_summary-card">
                     <div className={styles.formCardTitle} data-component="mobile_contracts-new_screen_root_page_root_form-scroll_summary-card_summary-card-title">
@@ -1541,8 +1661,8 @@ export default function ContractCreationPage() {
                       <div className={styles.priceSummaryRow}>
                         <span>기간</span>
                         <span className={styles.amount}>
-                          {startDate && endDate
-                            ? `${dayjs(startDate).format("YYYY.MM.DD")} → ${dayjs(endDate).format("YYYY.MM.DD")}`
+                          {effectiveStartDate && effectiveEndDate
+                            ? `${dayjs(effectiveStartDate).format("YYYY.MM.DD")} → ${dayjs(effectiveEndDate).format("YYYY.MM.DD")}`
                             : "-"}
                         </span>
                       </div>

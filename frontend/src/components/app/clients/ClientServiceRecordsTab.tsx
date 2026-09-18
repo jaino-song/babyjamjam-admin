@@ -60,6 +60,7 @@ interface ClientServiceRecordsTabProps {
     revisionHistory?: ServiceRecordRevisionHistoryResponse;
     isRevisionHistoryLoading?: boolean;
     isRevisionHistoryError?: boolean;
+    revisionHistoryErrorStatus?: number;
     isRevisionHistoryRefreshing?: boolean;
     onRefreshRevisionHistory?: () => void;
     onRetryRevisionDocument?: (
@@ -72,6 +73,7 @@ interface ClientServiceRecordsTabProps {
 
 const ClientServiceRecordsDataComponentContext = createContext<string | null>(null);
 const SEND_LINK_FAILURE_DESCRIPTION = "제공기록지 링크 발송에 실패했어요";
+const CANCELED_LINK_HINT = "자동 발송 예약이 취소되었습니다. 다시 보내려면 수동 전송하세요.";
 const MISSING_RECORD_ALERT_SESSION_COUNT = 2;
 const MISSING_RECORD_ALERT_HOUR_KST = 18;
 const KOREA_UTC_OFFSET = "+09:00";
@@ -128,6 +130,7 @@ function ClientServiceRecordsTabContent({
     revisionHistory,
     isRevisionHistoryLoading = false,
     isRevisionHistoryError = false,
+    revisionHistoryErrorStatus,
     isRevisionHistoryRefreshing = false,
     onRefreshRevisionHistory,
     onRetryRevisionDocument,
@@ -140,6 +143,17 @@ function ClientServiceRecordsTabContent({
     const record = overview?.record ?? null;
     const scheduleProjection = overview?.scheduleProjection;
     const hasAuthoritativeProjection = scheduleProjection !== undefined;
+    const isServiceRecordSourceUnavailable = scheduleProjection?.blockingReasons.some(
+        (reason) => reason.code === "SERVICE_RECORD_SOURCE_UNAVAILABLE",
+    ) ?? false;
+    const isNoServiceRecordCase = !isLoading
+        && !isError
+        && overview?.record === null
+        && assignments.length === 0
+        && isServiceRecordSourceUnavailable;
+    const isRevisionHistoryEmpty = isNoServiceRecordCase
+        && isRevisionHistoryError
+        && revisionHistoryErrorStatus === 404;
     const projectionEntries = scheduleProjection && scheduleProjection.blockingReasons.length === 0
         ? scheduleProjection.entries
         : [];
@@ -366,6 +380,7 @@ function ClientServiceRecordsTabContent({
                     history={revisionHistory}
                     isLoading={isRevisionHistoryLoading}
                     isError={isRevisionHistoryError}
+                    isEmpty={isRevisionHistoryEmpty}
                     isRefreshing={isRevisionHistoryRefreshing}
                     onRefresh={onRefreshRevisionHistory}
                     onRetry={onRetryRevisionDocument}
@@ -659,10 +674,21 @@ const REVISION_DOCUMENT_OPERATION_LABELS: Record<ServiceRecordRevisionDocumentOp
     receipt_refresh: "영수증 연결",
 };
 
+const REVISION_DOCUMENT_REASON_LABELS: Record<string, string> = {
+    SERVICE_RECORD_REVISION_WAITING_FOR_COMPLETION: "모든 회차의 기록이 완료되면 문서를 생성합니다.",
+    PROVIDER_TIMEOUT: "문서 처리 응답을 확인하지 못했습니다.",
+};
+
+function getRevisionDocumentReasonLabel(reasonCode: string | null): string | null {
+    if (!reasonCode) return null;
+    return REVISION_DOCUMENT_REASON_LABELS[reasonCode] ?? null;
+}
+
 function RevisionHistoryCard({
     history,
     isLoading,
     isError,
+    isEmpty,
     isRefreshing,
     onRefresh,
     onRetry,
@@ -671,6 +697,7 @@ function RevisionHistoryCard({
     history?: ServiceRecordRevisionHistoryResponse;
     isLoading: boolean;
     isError: boolean;
+    isEmpty: boolean;
     isRefreshing: boolean;
     onRefresh?: () => void;
     onRetry?: (
@@ -693,6 +720,19 @@ function RevisionHistoryCard({
                 {["현재 확정본", "사용 가능 문서", "문서 작업"].map((label) => (
                     <ServiceRecordInfoRowSkeleton key={label} label={label} />
                 ))}
+            </InfoCard>
+        );
+    }
+
+    if (isEmpty) {
+        return (
+            <InfoCard data-component={dataComponent} title="수정본·문서 이력">
+                <div
+                    data-component={`${dataComponent}_empty`}
+                    className="py-[calc(12px*var(--glint-ui-scale,1))] text-[calc(12px*var(--glint-ui-scale,1))] text-v3-text-muted"
+                >
+                    아직 제공기록지 이력이 없습니다.
+                </div>
             </InfoCard>
         );
     }
@@ -810,6 +850,7 @@ function RevisionDocumentRow({
     onRetryError: () => void;
 }) {
     const statusMeta = REVISION_DOCUMENT_STATUS_META[document.status];
+    const reasonLabel = getRevisionDocumentReasonLabel(document.reasonCode);
     const documentKey = `${revisionId}:${document.id}`;
     const isRetrying = retryingDocumentKey === documentKey;
     const retryable = document.canRetry && document.generation !== "unknown" && Boolean(onRetry);
@@ -829,9 +870,9 @@ function RevisionDocumentRow({
                     {REVISION_DOCUMENT_OPERATION_LABELS[document.operation]}
                     {document.documentVersion ? ` · v${document.documentVersion}` : ""}
                 </div>
-                {document.reasonCode && (
+                {reasonLabel && (
                     <div className="mt-0.5 text-[calc(10.8px*var(--glint-ui-scale,1))] text-v3-text-muted">
-                        {document.reasonCode}
+                        {reasonLabel}
                     </div>
                 )}
             </div>
@@ -925,7 +966,9 @@ function LinkStatusCard({
                     )}
                 >
                     <p className="overflow-hidden pb-[calc(12px*var(--glint-ui-scale,1))] text-[calc(11.5px*var(--glint-ui-scale,1))] leading-6 text-v3-text-muted">
-                        서비스 시작일 15:00에 자동 발송됩니다. 지금 바로 보내려면 수동 전송하세요.
+                        {link.status === "canceled"
+                            ? CANCELED_LINK_HINT
+                            : "서비스 시작일 15:00에 자동 발송됩니다. 지금 바로 보내려면 수동 전송하세요."}
                     </p>
                 </div>
                 <Button

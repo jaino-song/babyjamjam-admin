@@ -1,10 +1,13 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { act, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type { ReactNode } from "react";
 
 import { ClientDetailPanel } from "../ClientDetailPanel";
 import type { Client } from "@/lib/client/types";
 import { eformsignApi } from "@/services/api";
+
+const mockUseClientServiceRecordRevisionHistory = jest.fn();
+const mockClientServiceRecordsTab = jest.fn();
 
 jest.mock("@/providers/LocaleProvider", () => ({
     useLocale: () => "ko",
@@ -21,13 +24,7 @@ jest.mock("@/features/message-triggers/hooks/use-message-triggers", () => ({
 
 jest.mock("@/features/service-records/hooks/use-service-records", () => ({
     useClientServiceRecords: () => ({ data: undefined, isError: false, isLoading: false }),
-    useClientServiceRecordRevisionHistory: () => ({
-        data: undefined,
-        isError: false,
-        isLoading: false,
-        isFetching: false,
-        refetch: jest.fn(),
-    }),
+    useClientServiceRecordRevisionHistory: () => mockUseClientServiceRecordRevisionHistory(),
     useRetryServiceRecordDocument: () => ({
         isPending: false,
         variables: undefined,
@@ -55,14 +52,17 @@ jest.mock("@/components/app/messages/MessageHistoryDetailPanel", () => ({
 }));
 
 jest.mock("../ClientServiceRecordsTab", () => ({
-    ClientServiceRecordsTab: () => null,
+    ClientServiceRecordsTab: (props: unknown) => {
+        mockClientServiceRecordsTab(props);
+        return null;
+    },
 }));
 
 jest.mock("@/components/app/v3", () => ({
     AnimatedSlotList: () => null,
     AnimatedSlotListItemContent: () => null,
     DetailEmptyState: () => null,
-    DetailPanel: ({ children }: { children: ReactNode }) => <main>{children}</main>,
+    DetailPanel: ({ children, tabs }: { children: ReactNode; tabs?: ReactNode }) => <main>{tabs}{children}</main>,
     DetailTabPanels: ({
         activeTab,
         panels,
@@ -70,7 +70,21 @@ jest.mock("@/components/app/v3", () => ({
         activeTab: string;
         panels: Array<{ key: string; children: ReactNode }>;
     }) => <>{panels.find((panel) => panel.key === activeTab)?.children}</>,
-    DetailTabs: () => null,
+    DetailTabs: ({
+        tabs,
+        onTabChange,
+    }: {
+        tabs: Array<{ key: string; label: ReactNode }>;
+        onTabChange: (key: string) => void;
+    }) => (
+        <nav>
+            {tabs.map((tab) => (
+                <button key={tab.key} type="button" onClick={() => onTabChange(tab.key)}>
+                    {tab.label}
+                </button>
+            ))}
+        </nav>
+    ),
     InfoCard: ({ children }: { children: ReactNode }) => <section>{children}</section>,
     InfoRow: ({ label, value }: { label: string; value: ReactNode }) => (
         <div>
@@ -118,6 +132,15 @@ const client: Client = {
 describe("ClientDetailPanel employee phones", () => {
     beforeEach(() => {
         mockGetDocumentsByClientId.mockReset().mockResolvedValue([]);
+        mockUseClientServiceRecordRevisionHistory.mockReset().mockReturnValue({
+            data: undefined,
+            error: undefined,
+            isError: false,
+            isLoading: false,
+            isFetching: false,
+            refetch: jest.fn(),
+        });
+        mockClientServiceRecordsTab.mockReset();
     });
 
     function renderPanel(detailClient: Client = client) {
@@ -161,6 +184,27 @@ describe("ClientDetailPanel employee phones", () => {
         expect(invalidateQueries).toHaveBeenCalledWith({ queryKey: ["clients"] });
         expect(invalidateQueries).toHaveBeenCalledWith({ queryKey: ["clients", "detail", 1] });
         expect(invalidateQueries).toHaveBeenCalledWith({ queryKey: ["dashboard", "overview"] });
+    });
+
+    it("passes the revision history response status through to the service-record tab", async () => {
+        mockUseClientServiceRecordRevisionHistory.mockReturnValue({
+            data: undefined,
+            error: { response: { status: 404 } },
+            isError: true,
+            isLoading: false,
+            isFetching: false,
+            refetch: jest.fn(),
+        });
+
+        renderPanel();
+        fireEvent.click(screen.getByRole("button", { name: "제공기록지" }));
+
+        await waitFor(() => expect(mockClientServiceRecordsTab).toHaveBeenCalledWith(
+            expect.objectContaining({
+                revisionHistoryErrorStatus: 404,
+                isRevisionHistoryError: true,
+            }),
+        ));
     });
 
     it("should show employee phone rows with a dash when phone numbers are missing", () => {

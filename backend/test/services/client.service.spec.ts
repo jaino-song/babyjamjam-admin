@@ -2844,6 +2844,71 @@ describe("ClientService", () => {
             });
         });
 
+        describe("hasSigned contract projection", () => {
+            const clientWithDocument = () => {
+                const client = createClientEntity();
+                client.eDocId = "document-1";
+                return client;
+            };
+
+            it("stays false while the customer signing step is current", async () => {
+                listClientsUsecase.execute.mockResolvedValue([clientWithDocument()]);
+                prismaService.eformsign_doc.findMany.mockResolvedValue([
+                    { clientId: 1, statusType: "060", stepType: "05", stepName: "고객 서명" },
+                ]);
+
+                const [result] = await service.findAll(branchId);
+
+                expect(result?.hasSigned).toBe(false);
+            });
+
+            it("is true when an in-progress document is at the provider review step", async () => {
+                listClientsUsecase.execute.mockResolvedValue([clientWithDocument()]);
+                prismaService.eformsign_doc.findMany.mockResolvedValue([
+                    { clientId: 1, statusType: "070", stepType: "06", stepName: "제공기관 확인" },
+                ]);
+
+                const [result] = await service.findAll(branchId);
+
+                expect(result?.hasSigned).toBe(true);
+            });
+
+            it("is true for a completed document even when step fields are absent", async () => {
+                listClientsUsecase.execute.mockResolvedValue([clientWithDocument()]);
+                prismaService.eformsign_doc.findMany.mockResolvedValue([
+                    { clientId: 1, statusType: "003" },
+                ]);
+
+                const [result] = await service.findAll(branchId);
+
+                expect(result?.hasSigned).toBe(true);
+            });
+
+            it.each(["071", "042", "049", "080", "999"])(
+                "fails closed for dead or unknown status %s",
+                async (statusType) => {
+                    listClientsUsecase.execute.mockResolvedValue([clientWithDocument()]);
+                    prismaService.eformsign_doc.findMany.mockResolvedValue([
+                        { clientId: 1, statusType, stepType: "06", stepName: "제공기관 확인" },
+                    ]);
+
+                    const [result] = await service.findAll(branchId);
+
+                    expect(result?.hasSigned).toBe(false);
+                },
+            );
+
+            it("fails closed when the client has no latest contract document", async () => {
+                const client = clientWithDocument();
+                listClientsUsecase.execute.mockResolvedValue([client]);
+                prismaService.eformsign_doc.findMany.mockResolvedValue([]);
+
+                const [result] = await service.findAll(branchId);
+
+                expect(result?.hasSigned).toBe(false);
+            });
+        });
+
         describe("contract required badge", () => {
             const createWaitingClient = (startDate: string, eDocId: string | null = null) =>
                 new ClientEntity(

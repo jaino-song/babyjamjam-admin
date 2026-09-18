@@ -25,6 +25,7 @@ import {
     EformsignApiDocumentResponse,
     EformsignApiListResponse,
     EformsignReviewerMember,
+    EformsignTemplateWorkflowConfig,
     EformsignTokenResponse,
     IEformsignClientRepository,
 } from "domain/repositories/eformsign.client.interface";
@@ -443,6 +444,22 @@ export function buildEformsignStubTokenResponse(): EformsignTokenResponse {
     };
 }
 
+export function buildEformsignStubTemplateWorkflowConfig(
+    templateId = EFORMSIGN_STUB_TEMPLATE_ID,
+): EformsignTemplateWorkflowConfig {
+    return {
+        form_id: templateId,
+        config: {
+            step_settings: [
+                { seq: 1, type: "write", step_group: 1, option: { receipients: [] } },
+                { seq: 2, type: "participant", step_group: 2, option: { receipients: [] } },
+                { seq: 3, type: "participant", step_group: 3, option: { receipients: [] } },
+                { seq: 4, type: "complete", step_group: 4, option: { receipients: [] } },
+            ],
+        },
+    };
+}
+
 function buildEformsignStubWireDocuments(): EformsignStubWireDocument[] {
     return STUB_EFORMSIGN_DOCUMENTS
         .map((document) => cloneStubDocument(document))
@@ -648,6 +665,14 @@ export class E2eEformsignClientStub implements IEformsignClientRepository {
     createDocument(accessToken: string, payload: CreateDocumentPayload): Promise<CreateDocumentResponse> {
         void accessToken;
         return Promise.resolve(buildEformsignStubCreateDocumentResponse(payload));
+    }
+
+    getTemplateWorkflowConfig(
+        accessToken: string,
+        templateId: string,
+    ): Promise<EformsignTemplateWorkflowConfig> {
+        void accessToken;
+        return Promise.resolve(buildEformsignStubTemplateWorkflowConfig(templateId));
     }
 
     getTemplateReviewer(accessToken: string, templateId: string): Promise<EformsignReviewerMember | null> {

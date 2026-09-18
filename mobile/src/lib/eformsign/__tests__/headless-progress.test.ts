@@ -4,10 +4,29 @@ import {
     SERVICE_RECORD_FINALIZE_PROGRESS_STEPS,
     resolveFailedHeadlessProgress,
     resolveNextHeadlessProgress,
+    getHeadlessProviderFailureMessage,
+    getSafeHeadlessFailureMessage,
     shouldOpenFinalizeIframe,
 } from "../headless-progress";
 
 describe("headless progress transitions", () => {
+    it.each([
+        "template_workflow_config_invalid",
+        "template_workflow_unsupported",
+        "template_workflow_config_unavailable",
+    ] as const)("keeps %s as a safe actionable pre-send message", (reason) => {
+        const message = getHeadlessProviderFailureMessage(reason);
+
+        expect(message).toMatch(/^이번 요청에서 계약서를 발송하지 않았어요\./);
+        expect(message).toContain("입력한 고객 정보와 날짜는 그대로 남아 있어요.");
+        expect(getSafeHeadlessFailureMessage(reason)).toBe(message);
+    });
+
+    it("does not map malformed or unknown reasons", () => {
+        expect(getHeadlessProviderFailureMessage("template_workflow_config_invalid ")).toBeNull();
+        expect(getHeadlessProviderFailureMessage(undefined)).toBeNull();
+    });
+
     it("omits the service end-date step for service-record finalization", () => {
         expect(SERVICE_RECORD_FINALIZE_PROGRESS_STEPS.map((step) => step.key)).toEqual([
             "client-started",

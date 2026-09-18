@@ -172,6 +172,7 @@ describe("vendor stub factory selection", () => {
 
         const page = await client.getInProgressDocumentsPage("ignored-token", 1, 0);
         const document = await client.getDocument("ignored-token", "doc-finalize-test");
+        const workflow = await client.getTemplateWorkflowConfig("ignored-token", "template-override");
 
         expect(page).toEqual(expect.objectContaining({
             total_rows: expect.any(Number),
@@ -194,6 +195,15 @@ describe("vendor stub factory selection", () => {
                 status_type: "060",
                 step_type: "05",
                 step_index: "3",
+            }),
+        }));
+        expect(workflow).toEqual(expect.objectContaining({
+            form_id: "template-override",
+            config: expect.objectContaining({
+                step_settings: expect.arrayContaining([
+                    expect.objectContaining({ seq: 1, type: "write" }),
+                    expect.objectContaining({ seq: 4, type: "complete" }),
+                ]),
             }),
         }));
     });

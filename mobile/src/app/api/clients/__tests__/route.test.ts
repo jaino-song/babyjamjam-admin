@@ -72,6 +72,55 @@ describe("client API routes", () => {
     consoleErrorSpy.mockRestore();
   });
 
+  it.each([true, false])("uses the dedicated phone check and preserves exists=%s", async (exists) => {
+    mockGet.mockResolvedValue({ data: { exists } });
+
+    const response = await checkClientPhone(createRequest("/api/clients/check-phone?phone=010-1234-5678"));
+
+    expect(mockGet).toHaveBeenCalledTimes(1);
+    expect(mockGet).toHaveBeenCalledWith("/clients/check-phone", {
+      params: { phone: "01012345678" },
+      headers: { Authorization: "Bearer auth-token" },
+    });
+    expect(response.status).toBe(200);
+    expect(response.headers.get("Cache-Control")).toBe("no-store, max-age=0");
+    await expect(response.json()).resolves.toEqual({ exists });
+  });
+
+  it.each(["", "?phone=abc", "?phone=010123"])("does not query the backend for incomplete phone input %s", async (query) => {
+    const response = await checkClientPhone(createRequest(`/api/clients/check-phone${query}`));
+
+    expect(mockGet).not.toHaveBeenCalled();
+    await expect(response.json()).resolves.toEqual({ exists: false });
+  });
+
+  it.each([undefined, null, {}, { exists: "false" }])("rejects a malformed phone check response %p", async (data) => {
+    mockGet.mockResolvedValue({ data });
+
+    const response = await checkClientPhone(createRequest("/api/clients/check-phone?phone=01012345678"));
+
+    expect(response.status).toBe(502);
+    expect(response.headers.get("Cache-Control")).toBe("no-store, max-age=0");
+    expect(await response.json()).not.toHaveProperty("exists");
+  });
+
+  it("does not mark a failed phone check as available or log request secrets", async () => {
+    const error = Object.assign(new Error("Request failed with status code 400"), {
+      config: { headers: { Authorization: "Bearer private-test-token" }, params: { phone: "01012345678" } },
+    });
+    mockGet.mockRejectedValue(error);
+
+    const response = await checkClientPhone(createRequest("/api/clients/check-phone?phone=01012345678"));
+
+    expect(response.status).toBe(502);
+    const body = await response.json();
+    expect(body).not.toHaveProperty("exists");
+    expect(body.error).toContain("확인하지 못했습니다");
+    expect(consoleErrorSpy).toHaveBeenCalledWith("[API] Error checking phone");
+    expect(JSON.stringify(consoleErrorSpy.mock.calls)).not.toContain("private-test-token");
+    expect(JSON.stringify(body)).not.toContain("01012345678");
+  });
+
   it("preserves backend status and payload when listing clients", async () => {
     mockGet.mockResolvedValue({
       status: 403,

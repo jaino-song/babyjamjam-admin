@@ -11,7 +11,6 @@ import { useClientMessageHistory } from "@/hooks/useClientMessageHistory";
 import { useLocale } from "@/providers/LocaleProvider";
 import { eformsignApi } from "@/services/api";
 import { todayIsoDate } from "@/lib/contracts/date-input";
-import { getStatusCategory } from "@/lib/eformsign/status-codes";
 import { t } from "@/lib/i18n/translations";
 import { toast } from "@/hooks/use-toast";
 import { useFormStore } from "@/stores/form-store";
@@ -24,19 +23,6 @@ import {
   type ClientNotificationLogRecord,
   type DetailTabId,
 } from "./client-detail";
-
-function documentStatusFromStatusType(statusType: string | null | undefined): Client["documentStatus"] {
-  const normalized = statusType?.trim().padStart(3, "0");
-  if (!normalized) return null;
-
-  const category = getStatusCategory(normalized);
-  if (category === "completed") return "completed";
-  if (category === "expired") return "rejected";
-  if (normalized === "020") return "opened";
-  if (["001", "002", "010", "043"].includes(normalized)) return "created";
-  if (["030", "060", "070"].includes(normalized)) return "requested";
-  return null;
-}
 
 function contractPrefillDate(value: string | null | undefined): string | undefined {
   if (!value) return undefined;
@@ -212,20 +198,13 @@ export function useClientDetailController({
     retry: 1,
   });
 
-  const localDetailClient = useMemo(() => {
-    if (!detailClient || detailClient.id !== resolvedClientId) {
-      return null;
-    }
-
-    const documentStatus = documentStatusFromStatusType(detailContractDocument?.current_status?.status_type);
-    if (!documentStatus || detailContractDocument?.id !== detailClient.eDocId) return detailClient;
-
-    return {
-      ...detailClient,
-      documentStatus,
-      hasSigned: documentStatus === "completed" ? true : detailClient.hasSigned,
-    };
-  }, [detailClient, detailContractDocument, resolvedClientId]);
+  // The client detail response is the canonical contract projection. The
+  // legacy eFormSign document is still passed through for field fallbacks,
+  // but its status may lag after a reissue and must never override the
+  // backend's hasSigned/documentStatus values.
+  const localDetailClient = useMemo(() => (
+    detailClient && detailClient.id === resolvedClientId ? detailClient : null
+  ), [detailClient, resolvedClientId]);
 
   const handleClientUpdated = useCallback((updatedClient: Client) => {
     if (resolvedClientIdRef.current !== updatedClient.id) return;

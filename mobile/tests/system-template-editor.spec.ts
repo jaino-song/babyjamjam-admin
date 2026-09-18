@@ -55,10 +55,29 @@ async function mockTemplateApi(page: Page): Promise<void> {
   });
 }
 
+async function blockUnmockedApiRequests(page: Page): Promise<void> {
+  await page.route('**/api/**', async (route: Route) => {
+    const pathname = new URL(route.request().url()).pathname;
+    const isTemplateRequest = pathname === '/api/system-templates/THANKS'
+      || pathname === '/api/branch-system-templates/THANKS';
+    const isSenderApprovalRequest = pathname === '/api/settings/message-sender-approval';
+
+    if (isTemplateRequest || isSenderApprovalRequest) {
+      await route.fallback();
+      return;
+    }
+
+    await route.abort('blockedbyclient');
+  });
+}
+
 test.describe('System Template Detail', () => {
+  test.use({ viewport: { width: 390, height: 844 } });
+
   test.beforeEach(async ({ page }) => {
     await mockMessagesApproval(page);
     await mockTemplateApi(page);
+    await blockUnmockedApiRequests(page);
     await page.goto('/messages/system-templates/THANKS');
     await expect(page.locator('[data-component="messages-system-template-detail"]')).toBeVisible({
       timeout: 15000,
@@ -86,5 +105,65 @@ test.describe('System Template Detail', () => {
     await expect(
       page.getByText('시스템 템플릿 본문 편집·버전 롤백은 데스크톱에서만 가능합니다.'),
     ).toBeVisible();
+  });
+
+  test('keeps a sole send action within the mobile footer and preserves navigation', async ({ page }) => {
+    const footer = page.locator('[data-component="messages-system-template-detail-actions"]');
+    const sendCta = page.getByRole('button', { name: '이 템플릿으로 보내기' });
+
+    await expect(footer).toBeVisible();
+    await expect(sendCta).toBeVisible();
+    await expect(sendCta).toHaveText('이 템플릿으로 보내기');
+
+    const layout = await footer.evaluate((element) => {
+      const button = element.querySelector('button');
+      if (!button) {
+        throw new Error('Expected the template detail footer to contain a send button');
+      }
+
+      const footerRect = element.getBoundingClientRect();
+      const buttonRect = button.getBoundingClientRect();
+      const footerStyle = getComputedStyle(element);
+      const buttonStyle = getComputedStyle(button);
+      const paddingLeft = Number.parseFloat(footerStyle.paddingLeft);
+      const paddingRight = Number.parseFloat(footerStyle.paddingRight);
+
+      return {
+        documentClientWidth: document.documentElement.clientWidth,
+        documentScrollWidth: document.documentElement.scrollWidth,
+        footerLeft: footerRect.left,
+        footerRight: footerRect.right,
+        buttonLeft: buttonRect.left,
+        buttonRight: buttonRect.right,
+        availableWidth: footerRect.width - paddingLeft - paddingRight,
+        buttonWidth: buttonRect.width,
+        buttonClientWidth: button.clientWidth,
+        buttonScrollWidth: button.scrollWidth,
+        gridColumn: buttonStyle.gridColumn,
+      };
+    });
+
+    expect(layout.documentScrollWidth).toBeLessThanOrEqual(layout.documentClientWidth);
+    expect(layout.buttonScrollWidth).toBeLessThanOrEqual(layout.buttonClientWidth);
+    expect(layout.gridColumn).toBe('1 / -1');
+    expect(layout.buttonWidth).toBeCloseTo(layout.availableWidth, 0);
+    expect(layout.buttonLeft).toBeCloseTo(layout.footerLeft + 16, 0);
+    expect(layout.buttonRight).toBeCloseTo(layout.footerRight - 16, 0);
+
+    await sendCta.click();
+    await expect
+      .poll(() => {
+        const url = new URL(page.url());
+        return {
+          pathname: url.pathname,
+          template: url.searchParams.get('template'),
+          body: url.searchParams.get('body'),
+        };
+      })
+      .toEqual({
+        pathname: '/messages/new',
+        template: templateFixture.templateKey,
+        body: templateFixture.content,
+      });
   });
 });

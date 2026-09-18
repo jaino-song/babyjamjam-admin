@@ -242,14 +242,14 @@ test.describe("mobile messages navigation", () => {
     await page.getByRole("button", { name: /인사 메시지/ }).click();
 
     await expect(
-      page.locator('[data-component="mobile_messages_history_detail-sheet_screen_content_sliding-card_stage_detail-pane_body"]'),
+      page.locator('[data-component="mobile_messages_history_detail-sheet_screen_content_sliding-card_stage_detail-pane_body_content"]'),
     ).toBeVisible();
     await expect(page.getByText("발송 정보")).toBeVisible();
     await expect(page.getByText("01012345678")).toBeVisible();
     await expect(page.getByText("안녕하세요")).toBeVisible();
 
     await page
-      .getByRole("button", { name: "발송 기록 목록으로 돌아가기" })
+      .getByRole("button", { name: "발송 기록 목록으로 돌아가기", exact: true })
       .click();
 
     await expect(page.locator(".list-card .list-title-text")).toContainText("발송 기록");

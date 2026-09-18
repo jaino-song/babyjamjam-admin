@@ -638,7 +638,7 @@ export default function ClientsPage() {
     return (
         <PageSection name="clients">
             <StatsBar
-                name="clients"
+                name="clients" density="responsive-square"
                 isLoading={isLoading}
                 items={[
                     { icon: Calendar, value: stats.thisMonthCount, label: "이번달 고객", counter: "명" },

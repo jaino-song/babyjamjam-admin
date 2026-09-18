@@ -81,7 +81,7 @@ export function SystemAdminBranchForm({
       slug: String(formData.get("slug") ?? ""),
       ownerId: String(formData.get("ownerId") ?? ""),
       region: optionalValue(formData, "region"),
-      district: branch?.district,
+      district: branch?.district ?? undefined,
       address: optionalValue(formData, "address"),
       phone: optionalValue(formData, "phone"),
       email: optionalValue(formData, "email"),

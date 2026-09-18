@@ -603,7 +603,7 @@
       "approvalPolicy": "structured",
       "idempotencyPolicy": "action-id",
       "sourceFile": "application/usecases/message-template/message-template-write-agent-capabilities.provider.ts",
-      "sourceDigest": "ca151a13b474a032e10f41720299d9c953888ef7bc60e4543bb2c3542896da01"
+      "sourceDigest": "e025c0cfbb30a6cc9aa0385364e1be423a68e2d090dc9c6305275cb6b216d78f"
     },
     {
       "name": "messages.deliveryHistory",
@@ -711,7 +711,7 @@
       "approvalPolicy": "structured",
       "idempotencyPolicy": "action-id",
       "sourceFile": "application/usecases/message-template/message-template-write-agent-capabilities.provider.ts",
-      "sourceDigest": "ca151a13b474a032e10f41720299d9c953888ef7bc60e4543bb2c3542896da01"
+      "sourceDigest": "e025c0cfbb30a6cc9aa0385364e1be423a68e2d090dc9c6305275cb6b216d78f"
     },
     {
       "name": "notifications.test",

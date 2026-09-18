@@ -21,6 +21,12 @@ const mockAuthenticate = jest.fn();
 const mockCreateClientMutateAsync = jest.fn().mockResolvedValue({ id: 999 });
 const mockUpdateClientMutateAsync = jest.fn().mockResolvedValue({});
 const mockDeleteClientMutateAsync = jest.fn().mockResolvedValue({});
+const mockAreaTemplates = [{
+  id: "area-template-1",
+  areaId: "인천",
+  templateId: "template-1",
+  templateName: "인천 산모 계약서",
+}];
 
 jest.mock("next/navigation", () => ({
   useRouter: () => ({ push: jest.fn(), replace: jest.fn(), refresh: jest.fn() }),
@@ -67,7 +73,7 @@ jest.mock("@/hooks/useEmployees", () => ({
 jest.mock("@/hooks", () => ({
   useVoucherPriceInfos: () => ({ data: [], isLoading: false }),
   useVoucherYears: () => ({ data: [2026], isLoading: false }),
-  useAreaTemplates: () => ({ data: [], isLoading: false }),
+  useAreaTemplates: () => ({ data: mockAreaTemplates, isLoading: false }),
 }));
 
 jest.mock("@/lib/sse/reconnecting-event-source", () => ({
