@@ -371,6 +371,10 @@ describeAgentE2E("production service-record-link task effect planner", () => {
             "materialize",
             (candidate, transaction) => delivery.resolveCanonicalDeliverySnapshot(candidate, transaction),
         )));
+        console.log("service-record authority result", allowed);
+        console.log("service-record authority rows", await prisma.message_trigger_job.findMany({
+            where: { branchId }, select: { id: true, ruleId: true, employeeScheduleId: true, status: true, dedupeKey: true },
+        }));
         expect(allowed.status).toBe("allowed");
         expect(await prisma.message_log.count({ where: { branchId } })).toBe(0);
     });
