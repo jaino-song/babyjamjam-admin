@@ -3,6 +3,19 @@
 Updated: 2026-09-18. Baseline: `4198fb991a59d63f14f529f54b1d66c1587ca76b`.
 Integration: `codex/bjj-conversation-v1`. Local implementation, deterministic verification, model quality and operational activation are separate results.
 
+## Phase 7 carrier correction — 2026-09-18
+
+The task-origin automation reference now follows a schedule intent into the dedicated service-record-link job. `ClientWriteAgentCapabilitiesProvider` includes reviewed `service-record-link` effects when staging schedule intents; `MessageAutomationIntentService` passes the digest-only commit reference to `ServiceRecordLinkService`; and the automatic link job persists that reference for the existing authority/recipe check. Legacy callers without a task reference retain the one-argument path and unchanged payload.
+
+- Focused regression: **3 suites / 135 tests passed**.
+- Guarded disposable PostgreSQL/AppModule agent E2E: **15 suites / 193 tests passed**, using `AGENT_E2E=1 E2E_VENDOR_STUBS=1 SCHEDULER_LEASE_MODE=off` against the approved loopback database `bjj_conversation_test`; the guard rejects model transport and vendor stubs prevent sender calls.
+- Full backend Jest: **396 suites passed, 1 skipped; 5,703 tests passed, 44 skipped; 1 snapshot passed**.
+- Backend type-check, Nest build, and capability manifest/drift (**47 capabilities**) passed.
+- The checked-in manifest digest was regenerated for the changed capability source.
+- Fresh independent SOL FINAL for this bounded slice: **SHIP / MEDIUM**, reviewed at integration SHA `33b8993e3a3c19b21a66c99479e799322a982ca9` against base `604c47bbc850c55c65a4d50694495d39de91af6d`; no blocking findings.
+
+This closes the carrier-correction slice only. Phase 7 plan-level close still requires the cumulative consent/provider matrix and final cumulative independent review. Real distributed lease ownership, paid provider quality, real SMS, production data, deployment, and operational activation remain separate gates.
+
 ## Latest continuation — integrated Phase 7/8 slices
 
 2026-09-18 현재 integration branch에는 schedule-write successor/fence, durable SMS retry provenance after purge/restart, desktop/mobile task snapshot controls, 그리고 synthetic-only Google/OpenAI staging evaluation runner가 반영돼 있다.
