@@ -32,6 +32,20 @@ OpenAI 평가 경로는 문서의 `gpt-4.1-mini` current/improved 프로필로 d
 `MISSING_API_KEY`로 transport 생성 전에 fail-closed 되었다. provider 요청이나 키 값은 기록하지 않았다.
 유료 모델 품질 평가와 human review는 평가 키가 구성된 뒤 진행한다.
 
+## Google model evaluation refresh — 2026-09-19
+
+기존 로컬 Gemini 평가 키를 프로세스에만 주입해 Google staging 전체 조합을 실행했다. `gemini-2.5-flash`,
+current/improved profile, 합성 48개 사례 × 3회로 **288 runs**를 완료했고, redacted artifact는
+[`2026-09-19-google-all.json`](../ai-conversation-quality/artifacts/2026-09-19-google-all.json)이다.
+
+- **286 responses / 2 errors** (HTTP 503 1건, malformed response 1건); text 118, tool calls 168.
+- Required-token **223/324 (68.8%)**; structured-event **172/576 (29.9%)**.
+- Latency p50 **2,169 ms**, p95 **7,631 ms**, max **22,931 ms**; usage/cost는 provider 응답에서 확인되지 않았다.
+- Fixture digest `24ab8fb9498ba7472972c6d3a66b2d19274bc47787f96e5f34e9d8a1abc97d4a`, assertion digest
+  `8c6070f04f167f22e211d113d0fe6e64b2af8491057f861609f8d5d8c2042af4`가 계약과 일치한다.
+
+결과는 제안한 95% 기준 미달이므로 model-quality pass가 아니다. OpenAI 비교와 human review는 여전히 남아 있다.
+
 ## Current task-branch attestation — 2026-09-18
 
 현재 누적 검증은 `/Users/jaino/Development/babyjamjam-admin/bjj-conversation-complete`의
