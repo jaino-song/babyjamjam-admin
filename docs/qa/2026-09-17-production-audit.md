@@ -670,3 +670,5 @@ Vault 파일을 변경하지 않고 현재 소스와 배포 관찰로 독립 작
 - Same-QA-branch selection and read-only AI count response (2) checked; no matching durable agent trace found in the scoped time query, so tool execution is not certified.
 - Existing mobile contract PDF and receipt PNG download clicks produced no observed download event within 20s/15s. File-save acceptance remains unverified; do not promote button clicks or the absence of an error to PASS.
 - Full QA remains incomplete; auth policy-route approval, dev CHECK exception and contract cancel/reissue acceptance remain pending as previously recorded.
+
+- Download evidence upgraded: actual UI PDF and receipt requests bothHTTP200 with matchingbinarysignatures. Returned receiptPNG visually inspected with fixtureamounts/dates; PDFpreview rendered. Server response/contentPASS; localbrowserfilesave remainsUNVERIFIED. Prior eventtimeouts are observation limits, notconfirmedapplicationbugs.
