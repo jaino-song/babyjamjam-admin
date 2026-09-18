@@ -68,7 +68,9 @@ jest.mock("@/components/app/mobile-redesign/detail-sheet", () => ({
 }));
 
 jest.mock("../client-message-history-detail", () => ({
-  ClientMessageHistoryDetail: () => null,
+  ClientMessageHistoryDetail: ({ view }: { view: { sentAtLabel: string } }) => (
+    <div data-testid="message-history-detail-time">{view.sentAtLabel}</div>
+  ),
 }));
 
 jest.mock("../client-service-records", () => ({
@@ -407,5 +409,65 @@ describe("ClientDetailContent", () => {
     expect(screen.getAllByText("메시지 · 제공기록지 작성 링크")).toHaveLength(2);
     expect(screen.getByText("발송 실패")).toBeInTheDocument();
     expect(screen.getByText("발송 성공")).toBeInTheDocument();
+  });
+
+  it("uses the effective message time for ordering, rows, and opened detail", async () => {
+    const canceledLog: ClientNotificationLogRecord = {
+      id: 51,
+      provider: "aligo_sms",
+      templateKey: "service_record_link_sms",
+      receiver: "01012345678",
+      recipientPhone: "01012345678",
+      recipientName: "관리사",
+      clientId: client.id,
+      status: "canceled",
+      messageBody: "제공기록지 작성 링크",
+      errorMessage: "취소됨",
+      createdAt: "2026-09-18T17:32:00.000Z",
+      lastAttemptAt: "2026-09-18T18:34:00.000Z",
+      updatedAt: "2026-09-18T18:20:00.000Z",
+      ruleName: "제공기록지 작성 링크",
+      variables: {},
+    };
+    const legacyLog: ClientNotificationLogRecord = {
+      id: 52,
+      provider: "aligo_sms",
+      templateKey: "manual_sms",
+      receiver: "01012345678",
+      recipientPhone: "01012345678",
+      recipientName: "관리사",
+      clientId: client.id,
+      status: "sent",
+      messageBody: "수동 메시지",
+      errorMessage: null,
+      createdAt: "2026-09-18T18:10:00.000Z",
+      ruleName: null,
+      variables: {},
+    };
+
+    render(
+      <ClientDetailContent
+        data-component="mobile_clients_detail-sheet_stack_detail-page_content"
+        client={client}
+        contractDocument={null}
+        activeTab="message"
+        notificationLogs={[legacyLog, canceledLog]}
+        onTabChange={jest.fn()}
+        onMessage={jest.fn()}
+        onIssueContract={jest.fn()}
+        onEdit={jest.fn()}
+        onDelete={jest.fn()}
+        onClientUpdated={jest.fn()}
+      />,
+    );
+
+    const messageRows = screen.getAllByRole("button").filter((row) => row.textContent?.includes("메시지 ·"));
+    expect(messageRows[0]).toHaveTextContent("제공기록지 작성 링크");
+    const rowTime = messageRows[0].querySelector(".doc-meta")?.textContent;
+    expect(rowTime).toBeTruthy();
+
+    await userEvent.setup().click(messageRows[0]);
+
+    expect(screen.getByTestId("message-history-detail-time")).toHaveTextContent(rowTime ?? "");
   });
 });

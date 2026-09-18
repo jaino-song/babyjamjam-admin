@@ -29,6 +29,7 @@ import {
   formatMessageFailureReason,
   getMessageChannelLabel,
   getMessageHistoryTitle,
+  getMessageHistoryTimestamp,
 } from "@babyjamjam/shared";
 import {
   DropdownMenu,
@@ -439,6 +440,8 @@ export interface ClientNotificationLogRecord {
   messageBody: string;
   errorMessage: string | null;
   createdAt: string;
+  lastAttemptAt?: string | null;
+  updatedAt?: string | null;
   ruleName: string | null;
   variables?: Record<string, unknown> | null;
 }
@@ -536,8 +539,8 @@ function notificationReceiverKey(receiver: string | null): string {
 
 function visibleNotificationLogs(logs: ClientNotificationLogRecord[]): ClientNotificationLogRecord[] {
   const sortedLogs = [...logs].sort((a, b) => {
-    const bTime = new Date(b.createdAt).getTime();
-    const aTime = new Date(a.createdAt).getTime();
+    const bTime = new Date(getMessageHistoryTimestamp(b)).getTime();
+    const aTime = new Date(getMessageHistoryTimestamp(a)).getTime();
     return (Number.isNaN(bTime) ? 0 : bTime) - (Number.isNaN(aTime) ? 0 : aTime);
   });
   const seenGreetingKeys = new Set<string>();
@@ -580,8 +583,8 @@ function notificationStatusTone(status: string): DetailRowTone {
   }
 }
 
-function formatNotificationTime(createdAt: string): string {
-  return formatMessageDateTimeCompact(createdAt);
+function formatNotificationTime(log: ClientNotificationLogRecord): string {
+  return formatMessageDateTimeCompact(getMessageHistoryTimestamp(log));
 }
 
 export function ClientDetailContent({
@@ -1306,7 +1309,7 @@ export function ClientDetailContent({
               channelLabel: notificationChannelLabel(selectedLog),
               statusLabel: notificationStatusLabel(selectedLog.status),
               statusTone: notificationStatusTone(selectedLog.status),
-              sentAtLabel: formatNotificationTime(selectedLog.createdAt),
+              sentAtLabel: formatNotificationTime(selectedLog),
               recipientName: selectedLog.recipientName?.trim() || client.name,
               recipientPhone: selectedLog.recipientPhone?.trim() || selectedLog.receiver?.trim() || "-",
               messageBody: selectedLog.messageBody?.trim()
@@ -1352,7 +1355,7 @@ export function ClientDetailContent({
                       )
                     }
                     title={`${channel} · ${notificationTitle(log)}`}
-                    meta={formatNotificationTime(log.createdAt)}
+                    meta={formatNotificationTime(log)}
                     badge={notificationStatusLabel(log.status)}
                     tone={tone}
                     onClick={() => setSelectedEntry({ key: detailKey, log })}
