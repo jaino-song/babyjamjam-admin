@@ -19,6 +19,7 @@ import {
 } from "infrastructure/tenant";
 import { UpdateBranchUserDto } from "interface/dto/user.dto";
 import { runWithAdminAuditActor } from "application/services/admin-audit-context";
+import { codeOnlyProblemBody } from "application/utils/problem-bodies";
 
 @Controller("branches/:branchId/users")
 @UseGuards(JwtGuard, TenantGuard, OwnerOrAdminGuard)
@@ -34,7 +35,7 @@ export class BranchUserController {
         this.assertSelectedBranch(branchId, tenant);
         const user = await this.userService.findById(userId, branchId);
         if (!user) {
-            throw new NotFoundException("User not found");
+            throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
         }
         return user;
     }
@@ -67,7 +68,7 @@ export class BranchUserController {
         this.assertSelectedBranch(branchId, tenant);
         const target = await this.userService.findById(userId, branchId);
         if (!target || (target.role === "owner" && tenant.globalRole !== "owner")) {
-            throw new NotFoundException("User not found");
+            throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
         }
         await runWithAdminAuditActor({
             userId: tenant.userId,
@@ -82,7 +83,7 @@ export class BranchUserController {
         tenant: VerifiedTenantPrincipal,
     ): void {
         if (!tenant || branchId !== tenant.branchId) {
-            throw new NotFoundException("User not found");
+            throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
         }
     }
 }

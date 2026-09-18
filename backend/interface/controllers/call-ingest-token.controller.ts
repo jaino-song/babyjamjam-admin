@@ -13,6 +13,7 @@ import { CreateCallIngestTokenDto } from "interface/dto/call-inbox.dto";
 import { JwtGuard } from "infrastructure/auth/jwt.guard";
 import { TenantGuard } from "infrastructure/tenant/tenant.guard";
 import { TenantContext } from "infrastructure/tenant/tenant.context";
+import { codeOnlyProblemBody } from "application/utils/problem-bodies";
 
 /** Phase 1 ops-level provisioning: owner-only (spec §5). */
 @Controller()
@@ -25,7 +26,7 @@ export class CallIngestTokenController {
 
     private assertOwner(): void {
         if (this.tenantContext.role !== "owner") {
-            throw new ForbiddenException("Owner role required");
+            throw new ForbiddenException(codeOnlyProblemBody("ACCESS_DENIED"));
         }
     }
 
@@ -33,7 +34,7 @@ export class CallIngestTokenController {
     async create(@Param("branchId") branchId: string, @Body() dto: CreateCallIngestTokenDto) {
         this.assertOwner();
         if (branchId !== this.tenantContext.branchId) {
-            throw new ForbiddenException("Cannot manage tokens for another branch");
+            throw new ForbiddenException(codeOnlyProblemBody("ACCESS_DENIED"));
         }
         return this.tokenService.createToken(branchId, dto.label);
     }
@@ -42,7 +43,7 @@ export class CallIngestTokenController {
     async list(@Param("branchId") branchId: string) {
         this.assertOwner();
         if (branchId !== this.tenantContext.branchId) {
-            throw new ForbiddenException("Cannot manage tokens for another branch");
+            throw new ForbiddenException(codeOnlyProblemBody("ACCESS_DENIED"));
         }
         return this.tokenService.list(branchId);
     }
