@@ -189,6 +189,7 @@ function renderWithLatestProjection(client: Client, pinnedDocumentStatus: string
   };
   mockSearchParams = new URLSearchParams(`id=${client.id}`);
   clientQuery.mockReturnValue({ data: mockCanonicalClient } as ReturnType<typeof useClient> extends infer T ? T : never);
+  mockQueryClient.fetchQuery.mockResolvedValue(client);
   render(<ClientsPage />);
 }
 
