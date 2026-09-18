@@ -85,3 +85,5 @@
 - 외부 상태 재조회에서 PR708이 2026-09-18 07:17:26 UTC에 코드856f5479 기준으로 dev에 병합됐음을 확인했다(merge436a4760). 이후 원격 작업 브랜치에 추가한 취소·재발급/정책 수정은 해당 병합에 포함되지 않았다. 앞선 PR708 반영·CI 표현은 이 구분을 누락했으므로 정정한다.
 - 후속 변경29파일을 별도 Draft PR718로 열었다. 현재 후속 코드668a49f5, 비교 기준 origin/dev436a4760. 부모가 새 환경 브랜치 병합·운영 배포를 수행하지 않았다.
 - f97f639f7의 실제 SHA 지정 CI는 Backend CI35319119913, Backend Full Flow CI35319119856, Shared Contracts CI35319119819 성공이다. PR708의 과거 check 목록으로 후속 코드의 전체 CI 통과를 주장하지 않는다. 668a49f5의 모바일·공유 CI는 확인 당시 실행 중이었다.
+- 후속 코드668a49f5의 PR용 CI 완료: Backend CI35320482313, Frontend CI35320482220, Frontend Auth Lifecycle35320482346, Backend Full Flow35320482114, Shared35320482229, Mobile Unit35320482181, Security35320482666 모두 성공. Mobile CI35320482088에서281 suites/1940 unit, 화면169 passed/2 skipped, 별도 operational copilot1 passed 확인. 실제 로그인 skip은 여전히 미검증이다.
+- QA 전용 Chrome 확장 연결(browser2)은 재확인 시 unavailable이다. 개인 Chrome native 조작에 대한 사용 여부 질문은 응답 대기 중이다. 남은 계약 취소·재발급·서명 및 화면검수는 아직 실행하지 않았다.
