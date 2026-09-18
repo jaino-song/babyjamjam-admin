@@ -135,7 +135,7 @@ export class AgentAutomationJobAuthorityService {
                 || catchUp.sequence > MAX_CATCH_UP_PREDECESSOR_CHAIN
                 || job.scheduledFor.getTime() !== batchTime.getTime() + (catchUp.sequence - 1) * catchUp.intervalMinutes * 60_000) return null;
             if (catchUp.sequence > 1 && !await this.hasCanonicalCatchUpPredecessorChain(
-                transaction, job, catchUp, settings.rules, client, batchTime,
+                transaction, job, catchUp, settings.rules, client, batchTime, taskReference,
             )) return null;
             concrete.scheduledFor = job.scheduledFor;
             concrete.dedupeKey = buildMessageRecipeDedupeKey(rule.id, `client:${client.id}`, job.scheduledFor, rule.recipientType);
@@ -432,6 +432,7 @@ export class AgentAutomationJobAuthorityService {
         rules: ReadonlyArray<Parameters<typeof buildClientMessageRecipe>[0]>,
         client: Parameters<typeof buildClientMessageRecipe>[1],
         batchTime: Date,
+        taskReference?: AgentAutomationTaskCommitReference,
     ): Promise<boolean> {
         if (catchUp.sequence <= 1 || !catchUp.predecessorDedupeKey) return false;
 
@@ -490,7 +491,8 @@ export class AgentAutomationJobAuthorityService {
                 || predecessor.scheduledFor.getTime() !== expectedScheduledFor.getTime()
                 || predecessor.dedupeKey !== buildMessageRecipeDedupeKey(predecessorRule.id, clientScope, expectedScheduledFor, predecessorRule.recipientType)
                 || predecessor.recipientPhone !== predecessorConcrete.recipientPhone
-                || agentBindingHash(predecessorSource) !== agentBindingHash({ ...predecessorConcrete.payload, catchUp: predecessorCatchUp })) return false;
+                || agentBindingHash(predecessorSource) !== agentBindingHash({ ...predecessorConcrete.payload, catchUp: predecessorCatchUp,
+                    ...(taskReference ? { taskAutomationReference: taskReference } : {}) })) return false;
 
             if (expectedSequence === 1) return predecessorCatchUp.predecessorDedupeKey === null;
             if (!predecessorCatchUp.predecessorDedupeKey) return false;
