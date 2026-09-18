@@ -380,3 +380,13 @@ Open scope and completion boundaries:
 - No real SMS, production data change, merge to `dev`/`main`, deployment or operational activation was performed.
 
 The three completion flags therefore remain separate and **not complete**: (1) implementation/deterministic verification of the full plan, (2) actual conversation quality validation, and (3) operational application. The bullets above record only the integrated bounded slices and their evidence.
+
+### Deterministic evaluator conflict/purge and QA evidence (2026-09-18)
+
+Commit `16c926fba` adds product-runtime coverage for two recovery boundaries: a stale `expectedRevision` is rejected, a reused `clientEventId` with a different payload is rejected, and an expired task is purged from live host evidence. The tests use the no-network deterministic driver and do not change fixtures, schemas, dependencies or provider behavior. Focused product-runtime/evaluation/provider-adapter verification passed **3 suites / 56 tests**, with backend type-check and changed-file lint passing.
+
+The product adapter command was rerun with the unchanged fixture set. It still reports **0/48 passed, 48 failed, 0 not_evaluated** and exits 1 by design. The report contains zero safety/network/transport errors and separates the current causes: four registration fixtures use unlabelled synthetic-token prose that strict intake does not parse, the deterministic model has no read-tool outcomes, and later action/provider/authority outcomes are not instrumented in the product adapter. This is a readiness diagnostic, not a model-quality score. The fixtures were left unchanged because replacing placeholder phone/branch values would make the evaluator appear aligned without a supported parser contract.
+
+Frontend authenticated-browser preparation was not claimed from the safe mocked run: the release spec completed **1 passed / 1 skipped** under synthetic auth, with the live backend stream case skipped. Mobile Playwright could not begin a test because the local backend auto-login endpoint returned `429 AUTH_RATE_LIMITED`; no mobile case, external provider or sender ran. The pre-existing untracked `mobile/AGENTS.md` was preserved.
+
+These results do not close Phase7, Phase8 or Phase9. Approved synthetic PostgreSQL/AppModule execution, a successful authenticated mobile/browser run, cumulative independent review, paid Google/OpenAI comparison, merge/deployment and operational activation remain open.
