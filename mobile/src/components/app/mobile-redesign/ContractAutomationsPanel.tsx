@@ -50,14 +50,25 @@ export function ContractAutomationsPanel({
 
   return (
     <div className="section-block" data-component={dataComponent}>
-      <ListItemRow
-        data-component={`${dataComponent}_row`}
-        left={<div className="list-avatar av-primary" data-component={`${dataComponent}_row_icon`}><CalendarCheck size={18} strokeWidth={2.5} /></div>}
-        name="계약 종료일 자동 완료"
-        meta={summary}
-        right={<Switch aria-label="계약 종료일 자동 완료 활성화" checked={saved.enabled} disabled={mutation.isPending} onClick={(event) => event.stopPropagation()} onCheckedChange={toggle} />}
-        onClick={onEdit}
-      />
+      <div className="relative w-full">
+        <ListItemRow
+          data-component={`${dataComponent}_row`}
+          left={<div className="list-avatar av-primary" data-component={`${dataComponent}_row_icon`}><CalendarCheck size={18} strokeWidth={2.5} /></div>}
+          name="계약 종료일 자동 완료"
+          meta={summary}
+          right={<span aria-hidden="true" className="h-[calc(23.4px*var(--v3-ui-scale,1))] w-[calc(41.4px*var(--v3-ui-scale,1))]" />}
+          onClick={onEdit}
+        />
+        <Switch
+          data-component={`${dataComponent}_row_switch`}
+          thumbDataComponent={`${dataComponent}_row_switch_thumb`}
+          aria-label="계약 종료일 자동 완료 활성화"
+          checked={saved.enabled}
+          disabled={mutation.isPending}
+          className="absolute right-0 top-1/2 -translate-y-1/2 [--v3-ui-scale:var(--glint-ui-scale,1)]"
+          onCheckedChange={toggle}
+        />
+      </div>
     </div>
   );
 }
