@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { createLegacyAutomationDeliveryGate } from "../../test/fixtures/legacy-automation-delivery-gate";
 import { MessageTriggerEventType, MessageTriggerOffsetType, MessageTriggerRecipientType, MessageTriggerTemplateKey } from "domain/constants/message-trigger-catalog";
 import { MessageTriggerRuleEntity } from "domain/entities/message-trigger-rule.entity";
@@ -10,6 +11,7 @@ import { AligoDefaultSenderPolicyService } from "./aligo-default-sender-policy.s
 import { ClientAutomationImpactService } from "./client-automation-impact.service";
 import { SmsTriggerDeliveryService } from "./sms-trigger-delivery.service";
 import { buildClientMessageRecipe, buildEmployeeAssignmentMessageRecipe, type ClientTriggerSource } from "./message-trigger-recipes";
+import { SERVICE_RECORD_LINK_RULE_ID } from "domain/constants/service-record-link-message";
 
 const branchId = "76000000-0000-4000-8000-000000000001";
 const taskId = "76000000-0000-4000-8000-000000000002";
@@ -32,6 +34,7 @@ function setup() {
         readClientAutomationSource: jest.fn().mockImplementation(async () => client),
         readClientAutomationArea: jest.fn().mockResolvedValue({ bankAccountInfo: { bankName: "합성 은행", accNum: "000000041" } }),
         readClientAutomationSchedules: jest.fn().mockResolvedValue([]),
+        readClientAutomationServiceRecordLinks: jest.fn().mockResolvedValue([]),
         ensureDefaultRulesForBranch: jest.fn(), syncClientRulesForClient: jest.fn(),
     };
     const jobs: MessageTriggerJobReviewSnapshot[] = [];
@@ -52,6 +55,68 @@ function setup() {
     }
     return { service, client, create, settings, sources, repository, jobs, rules, greeting, info, pending, sender,
         template, templates, aligo, logs, enrichers };
+}
+
+function addServiceRecordLinkSource(
+    fixture: ReturnType<typeof setup>,
+    tokenOverrides: Partial<{
+        linkTokenHash: string;
+        expectedPhoneHash: string;
+        expiresAt: Date;
+        active: boolean;
+        revokedAt: Date | null;
+        lockedAt: Date | null;
+        failedAttempts: number;
+    }> = {},
+): void {
+    fixture.settings.rules.push(MessageTriggerRuleEntity.reconstitute(
+        SERVICE_RECORD_LINK_RULE_ID,
+        null,
+        "제공기록지 링크",
+        true,
+        MessageTriggerEventType.SERVICE_START,
+        MessageTriggerOffsetType.SAME_DAY,
+        0,
+        MessageTriggerRecipientType.PRIMARY_EMPLOYEE,
+        MessageTriggerTemplateKey.SERVICE_RECORD_LINK,
+        now,
+        now,
+        true,
+        false,
+        "15:00",
+    ));
+    fixture.sources.readClientAutomationServiceRecordLinks = jest.fn().mockResolvedValue([{
+        schedule: {
+            id: 17,
+            incarnationId: "76000000-0000-4000-8000-000000000003",
+            branchId,
+            clientId: fixture.client.id,
+            startDate: new Date("2026-10-01T00:00:00Z"),
+            endDate: new Date("2026-10-15T00:00:00Z"),
+            replaced: false,
+            terminatedAt: null,
+            primaryEmployeeId: 71,
+            client: { id: fixture.client.id, name: fixture.client.name, branchId, createdAt: now, serviceStatus: "active" },
+            primaryEmployee: { id: 71, name: "합성 관리사", phone: "01000000071", branchId, deletedAt: null },
+        },
+        serviceRecordCase: null,
+        token: {
+            id: "76000000-0000-4000-8000-000000000005",
+            branchId,
+            scheduleId: 17,
+            employeeId: 71,
+            serviceRecordCaseId: null,
+            linkTokenHash: "efl_synthetic_token",
+            expectedPhoneHash: createHash("sha256").update("01000000071").digest("hex"),
+            expiresAt: new Date("2026-10-22T11:00:00Z"),
+            active: true,
+            revokedAt: null,
+            lockedAt: null,
+            failedAttempts: 0,
+            createdAt: now,
+            ...tokenOverrides,
+        },
+    }]);
 }
 
 describe("read-only normalized client automation impact", () => {
@@ -125,7 +190,7 @@ describe("read-only normalized client automation impact", () => {
         expect(result.effects).toHaveLength(1);
         expect(result.effects[0]).toMatchObject({ ruleId: "info", change: "refresh" });
         expect(result.affectedJobs).toEqual([{ id: job.id, version: expect.stringMatching(/^[a-f0-9]{64}$/) }]);
-        expect(f.repository.findForClientAutomationReview).toHaveBeenCalledWith(branchId, 41, ["greeting", "info"]);
+        expect(f.repository.findForClientAutomationReview).toHaveBeenCalledWith(branchId, 41, ["greeting", "info", SERVICE_RECORD_LINK_RULE_ID]);
     });
 
     it("includes cancellation when clearing the source date and leaves all stored jobs unchanged", async () => {
@@ -279,5 +344,193 @@ describe("read-only normalized client automation impact", () => {
         expect((await f.service.planClientWrite(branchId, write)).effects.some(({ kind }) => kind === "employee-assignment")).toBe(false);
         schedule.incarnationId = "";
         expect(await f.service.planClientWrite(branchId, write)).toMatchObject({ availability: "unavailable", complete: false });
+    });
+
+    it("describes a production service-record-link effect for a renamed scheduled client", async () => {
+        const f = setup();
+        const serviceRule = MessageTriggerRuleEntity.reconstitute(
+            SERVICE_RECORD_LINK_RULE_ID,
+            null,
+            "제공기록지 링크",
+            true,
+            MessageTriggerEventType.SERVICE_START,
+            MessageTriggerOffsetType.SAME_DAY,
+            0,
+            MessageTriggerRecipientType.PRIMARY_EMPLOYEE,
+            MessageTriggerTemplateKey.SERVICE_RECORD_LINK,
+            now,
+            now,
+            true,
+            false,
+            "15:00",
+        );
+        f.settings.rules.push(serviceRule);
+        f.sources.readClientAutomationServiceRecordLinks = jest.fn().mockResolvedValue([{
+            schedule: {
+                id: 17,
+                incarnationId: "76000000-0000-4000-8000-000000000003",
+                branchId,
+                clientId: f.client.id,
+                startDate: new Date("2026-10-01T00:00:00Z"),
+                endDate: new Date("2026-10-15T00:00:00Z"),
+                replaced: false,
+                terminatedAt: null,
+                primaryEmployeeId: 71,
+                client: { id: f.client.id, name: f.client.name, branchId, createdAt: now, serviceStatus: "active" },
+                primaryEmployee: { id: 71, name: "합성 관리사", phone: "01000000071", branchId, deletedAt: null },
+            },
+            serviceRecordCase: null,
+            token: {
+                id: "76000000-0000-4000-8000-000000000005",
+                branchId,
+                scheduleId: 17,
+                employeeId: 71,
+                serviceRecordCaseId: null,
+                linkTokenHash: "efl_synthetic_token",
+                expectedPhoneHash: createHash("sha256").update("01000000071").digest("hex"),
+                expiresAt: new Date("2026-10-22T11:00:00Z"),
+                active: true,
+                revokedAt: null,
+                lockedAt: null,
+                failedAttempts: 0,
+                createdAt: now,
+            },
+        }]);
+
+        const result = await f.service.planClientWrite(branchId, {
+            kind: "update", clientId: f.client.id, values: { name: "정정 합성 고객" },
+        });
+        expect(result).toMatchObject({ availability: "available", complete: true });
+        expect(result.effects).toEqual(expect.arrayContaining([
+            expect.objectContaining({ kind: "service-record-link", ruleId: SERVICE_RECORD_LINK_RULE_ID, scheduleId: 17, change: "create" }),
+        ]));
+        expect(JSON.stringify(result)).not.toContain("efl_synthetic_token");
+        expect(JSON.stringify(result)).not.toContain("01000000071");
+    });
+
+    it("keeps a missing service-record token as an unavailable schedule scope", async () => {
+        const f = setup();
+        f.settings.rules.push(MessageTriggerRuleEntity.reconstitute(
+            SERVICE_RECORD_LINK_RULE_ID,
+            null,
+            "제공기록지 링크",
+            true,
+            MessageTriggerEventType.SERVICE_START,
+            MessageTriggerOffsetType.SAME_DAY,
+            0,
+            MessageTriggerRecipientType.PRIMARY_EMPLOYEE,
+            MessageTriggerTemplateKey.SERVICE_RECORD_LINK,
+            now,
+            now,
+            true,
+            false,
+            "15:00",
+        ));
+        f.sources.readClientAutomationServiceRecordLinks = jest.fn().mockResolvedValue([{
+            schedule: {
+                id: 17,
+                incarnationId: "76000000-0000-4000-8000-000000000003",
+                branchId,
+                clientId: f.client.id,
+                startDate: new Date("2026-10-01T00:00:00Z"),
+                endDate: new Date("2026-10-15T00:00:00Z"),
+                replaced: false,
+                terminatedAt: null,
+                primaryEmployeeId: 71,
+                client: { id: f.client.id, name: f.client.name, branchId, createdAt: now, serviceStatus: "active" },
+                primaryEmployee: { id: 71, name: "합성 관리사", phone: "01000000071", branchId, deletedAt: null },
+            },
+            serviceRecordCase: null,
+            token: null,
+        }]);
+
+        const result = await f.service.planClientWrite(branchId, {
+            kind: "update", clientId: f.client.id, values: { name: "정정 합성 고객" },
+        });
+        expect(result).toMatchObject({ availability: "unavailable", reason: "source-unavailable", complete: true });
+        expect(result.effects).toEqual(expect.arrayContaining([
+            expect.objectContaining({ kind: "service-record-link", ruleId: SERVICE_RECORD_LINK_RULE_ID, scheduleId: 17, change: "create" }),
+        ]));
+        expect(JSON.stringify(result)).not.toContain("01000000071");
+    });
+
+    it("keeps a missing system rule as an unavailable schedule scope", async () => {
+        const f = setup();
+        f.sources.readClientAutomationServiceRecordLinks = jest.fn().mockResolvedValue([{
+            schedule: {
+                id: 17,
+                incarnationId: "76000000-0000-4000-8000-000000000003",
+                branchId,
+                clientId: f.client.id,
+                startDate: new Date("2026-10-01T00:00:00Z"),
+                endDate: new Date("2026-10-15T00:00:00Z"),
+                replaced: false,
+                terminatedAt: null,
+                primaryEmployeeId: 71,
+                client: { id: f.client.id, name: f.client.name, branchId, createdAt: now, serviceStatus: "active" },
+                primaryEmployee: { id: 71, name: "합성 관리사", phone: "01000000071", branchId, deletedAt: null },
+            },
+            serviceRecordCase: null,
+            token: {
+                id: "76000000-0000-4000-8000-000000000005",
+                branchId,
+                scheduleId: 17,
+                employeeId: 71,
+                serviceRecordCaseId: null,
+                linkTokenHash: "efl_synthetic_token",
+                expectedPhoneHash: createHash("sha256").update("01000000071").digest("hex"),
+                expiresAt: new Date("2026-10-22T11:00:00Z"),
+                active: true,
+                revokedAt: null,
+                lockedAt: null,
+                failedAttempts: 0,
+                createdAt: now,
+            },
+        }]);
+
+        const result = await f.service.planClientWrite(branchId, {
+            kind: "update", clientId: f.client.id, values: { name: "정정 합성 고객" },
+        });
+        expect(result).toMatchObject({ availability: "unavailable", reason: "source-unavailable", complete: true });
+        expect(result.effects).toEqual(expect.arrayContaining([
+            expect.objectContaining({ kind: "service-record-link", ruleId: SERVICE_RECORD_LINK_RULE_ID, scheduleId: 17, change: "create" }),
+        ]));
+        expect(JSON.stringify(result)).not.toContain("efl_synthetic_token");
+        expect(JSON.stringify(result)).not.toContain("01000000071");
+    });
+
+    it.each([
+        ["inactive", { active: false }],
+        ["revoked", { revokedAt: new Date("2026-09-16T00:00:00Z") }],
+        ["locked", { lockedAt: new Date("2026-09-16T00:00:00Z") }],
+        ["expired", { expiresAt: new Date("2026-09-16T00:00:00Z") }],
+        ["phone-mismatched", { expectedPhoneHash: createHash("sha256").update("01000000072").digest("hex") }],
+    ] as const)("keeps a present but %s service-record source available for no-send coverage", async (_state, tokenOverrides) => {
+        const f = setup();
+        addServiceRecordLinkSource(f, tokenOverrides);
+
+        const result = await f.service.planClientWrite(branchId, {
+            kind: "update", clientId: f.client.id, values: { name: "정정 합성 고객" },
+        });
+        expect(result).toMatchObject({ availability: "unavailable", reason: "unsupported-content", complete: true });
+        expect(result.effects).toEqual(expect.arrayContaining([
+            expect.objectContaining({ kind: "service-record-link", ruleId: SERVICE_RECORD_LINK_RULE_ID, scheduleId: 17, change: "create" }),
+        ]));
+        expect(JSON.stringify(result)).not.toContain("efl_synthetic_token");
+        expect(JSON.stringify(result)).not.toContain("01000000071");
+    });
+
+    it("keeps policy-blocked service-record coverage complete without granting yes", async () => {
+        const f = setup();
+        f.settings.senderApproved = false;
+        addServiceRecordLinkSource(f);
+
+        const result = await f.service.planClientWrite(branchId, {
+            kind: "update", clientId: f.client.id, values: { name: "정정 합성 고객" },
+        });
+        expect(result).toMatchObject({ availability: "unavailable", reason: "sender-unavailable", complete: true });
+        expect(result.effects).toEqual(expect.arrayContaining([
+            expect.objectContaining({ kind: "service-record-link", ruleId: SERVICE_RECORD_LINK_RULE_ID, scheduleId: 17, change: "create" }),
+        ]));
     });
 });

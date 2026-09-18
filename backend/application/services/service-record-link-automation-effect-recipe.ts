@@ -297,14 +297,17 @@ export function describeServiceRecordLinkEffect(input: {
             serviceRecordCase: serviceRecordCase
                 ? {
                     id: serviceRecordCase.id,
-                    status: serviceRecordCase.status,
-                    startDate: serviceRecordCase.startDate?.toISOString() ?? null,
-                    endDate: serviceRecordCase.endDate?.toISOString() ?? null,
-                    requiredSessionCount: serviceRecordCase.requiredSessionCount,
-                    formVersion: serviceRecordCase.formVersion,
-                    version: serviceRecordCase.version,
+                    // Case scheduling/session bookkeeping is repaired by
+                    // ensureForClient during the same customer write. The
+                    // link operation only depends on case identity and
+                    // finalization, while schedule dates and the token bind
+                    // the actual message payload.
                     finalizedAt: serviceRecordCase.finalizedAt?.toISOString() ?? null,
-                    updatedAt: serviceRecordCase.updatedAt.toISOString(),
+                    // Lifecycle repair increments the case bookkeeping
+                    // version/timestamp while re-projecting the same
+                    // assignment. Those fields are not part of the link
+                    // payload or recipient policy, so they must not turn a
+                    // committed task effect into a false consent change.
                 }
                 : null,
             token: {

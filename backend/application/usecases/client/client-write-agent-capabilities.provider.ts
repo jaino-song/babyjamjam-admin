@@ -695,7 +695,8 @@ export class ClientWriteAgentCapabilitiesProvider implements AgentCapabilityProv
             });
         }
         const scheduleIds = [...new Set(artifact.impact.effects
-            .filter((effect) => effect.kind === "employee-assignment" && effect.scheduleId !== null && effect.change !== "cancel")
+            .filter((effect) => (effect.kind === "employee-assignment" || effect.kind === "service-record-link")
+                && effect.scheduleId !== null && effect.change !== "cancel")
             .map((effect) => effect.scheduleId!))].sort((left, right) => left - right);
         for (const scheduleId of scheduleIds) {
             await this.messageAutomationIntentService.persistScheduleIntent(transaction, {
