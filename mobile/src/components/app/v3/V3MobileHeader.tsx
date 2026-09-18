@@ -21,7 +21,7 @@ export function V3MobileHeader({
   const pathname = usePathname();
   const user = useInitialUser();
 
-  if (!pathname || isLayoutExcluded(pathname)) return null;
+  if (!pathname || pathname === "/chat" || isLayoutExcluded(pathname)) return null;
 
   const userLabel = user?.name ? `${user.name} 님` : DEFAULT_USER_LABEL;
   const branchLabel = user?.branchName ?? DEFAULT_BRANCH_LABEL;

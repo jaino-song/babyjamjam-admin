@@ -5,6 +5,29 @@
 현재 검증 브랜치: `codex/unit/bjj-conversation-final`
 현재 기준 커밋: `6fe3a27c20f8b5babec14b7374070178e068bc95` (base `origin/dev` `089cb133741f67752d084c1fba0766c5ad6a70f4`)
 
+## Current task-branch attestation — 2026-09-18
+
+현재 누적 검증은 `/Users/jaino/Development/babyjamjam-admin/bjj-conversation-complete`의
+`feature/bjj-conversation-complete` 브랜치, HEAD `b65b950d0ea1cf79a56f6c87f90240f47f1665e3`,
+기준 `origin/dev` `55777f1facf7aafb3cbe19b322b6205a4c4860df`에서 수행했다. 위의 과거 기록은
+이전 통합 worktree의 재현 자료로 보존한다.
+
+- Backend 전체 회귀: **401 suites passed, 1 skipped; 5,786 tests passed, 44 skipped; 1 snapshot passed**.
+  8GB 힙 재실행에서 테스트 assertion 실패 없이 종료됐으며, 초기 4GB 힙 OOM 시도는 성공으로 집계하지 않았다.
+- Phase 7 보강: task-origin service-record-link의 정상·위조 revision 차단을 포함한 집중 회귀와 guarded
+  PostgreSQL/AppModule matrix를 별도 통과했다. 실제 provider, SMS, 운영 DB는 사용하지 않았다.
+- 결정적 대화 harness: **48/48 passed**; capability drift **47 capabilities passed**; frontend/mobile
+  type-check와 production build, UI architecture gate, E2E string gate, `pnpm audit --prod`가 통과했다.
+- 인증 synthetic browser 계약: desktop **3 passed / 1 intentional skip**, mobile **1 passed / 1 intentional skip**;
+  mobile unit **9 passed**. 공식 Chrome에서 `/chat`을 375×812와 1280×900으로 확인해 모바일·데스크톱 shell,
+  sidebar 표시, `/chat` 공통 chrome 숨김, DOM·computed style·스크린샷을 확인한 뒤 QA 탭을 원상 복구했다.
+- Google/OpenAI staging runner의 양쪽 provider dry-run은 **576개 계획**을 transport 없이 생성했고,
+  holdout live 실행은 두 평가 키가 unset인 상태에서 `MISSING_API_KEY`로 전송 전에 거절됐다.
+- 현재 원격에는 이 task 브랜치에 대한 PR 또는 workflow run이 없으며, push·merge·deploy는 수행하지 않았다.
+  실제 Google/OpenAI 품질 평가, human review, 실제 SMS·운영 DB 변경·운영 활성화도 수행하지 않았다.
+
+현재 판정은 **구현 및 결정적 검증 완료**, **실제 대화 품질 검증 대기**, **운영 적용 대기**다.
+
 ## Latest release-readiness attestation — 2026-09-18
 
 The current branch has completed implementation and deterministic validation for the Phase 7 continuation and the verified desktop/mobile browser paths. Historical sections below retain the earlier integration records.
