@@ -18,6 +18,17 @@
 
 The Google staging run is recorded in [`staging-evaluation.md`](../ai-conversation-quality/staging-evaluation.md) and its redacted artifact. It completed 288 runs with 10 errors and scored 213/324 required tokens and 179/576 structured events, below the proposed quality threshold. The OpenAI run was refused before transport creation because no API key is present in the staging environment. No key value, raw prompt/response, production customer data, real SMS, or production database was used.
 
+### Phase 7 task-origin carrier correction — 2026-09-18
+
+The task-origin consent reference now travels from the staged schedule intent into the automatic service-record-link job payload. This closes the bounded carrier slice required for service-record-link provenance; it does not close the full Phase 7 plan.
+
+- Focused regression: **3 suites, 135 tests passed**.
+- Guarded disposable PostgreSQL/AppModule agent E2E: **15 suites, 193 tests passed** with `E2E_VENDOR_STUBS=1` and `SCHEDULER_LEASE_MODE=off`; no paid provider, real SMS, or production database was used.
+- Backend regression: **396 suites passed, 1 skipped; 5,703 tests passed, 44 skipped; 1 snapshot passed**. Type-check, build, and capability drift (**47 capabilities**) passed.
+- Independent SOL final review: **SHIP / MEDIUM**, reviewed commit `33b8993e3a3c19b21a66c99479e799322a982ca9` against base `604c47bbc850c55c65a4d50694495d39de91af6d`.
+
+The remaining Phase 7 work is the cumulative consent/provider matrix and final cumulative review. Distributed lease behavior, paid Google/OpenAI quality evaluation, real SMS, production data changes, deployment, and feature activation remain separate gates.
+
 ## 현재 판정
 
 로컬 합성 데이터와 vendor stub을 사용한 구현·결정적 검증은 통과했다. PR [#716](https://github.com/jaino-song/babyjamjam-admin/pull/716)의 backend, full-flow, call-inbox, auth observe/enforce, frontend, mobile, shared, OSV 및 advisory browser 검사는 통과했다. GitGuardian 이력 remediation 이후 최신 PR 상태를 다시 확인해야 하며, merge·배포·운영 활성화는 별도 게이트다. 이 기록은 실제 모델 품질, 실제 SMS, 운영 데이터 변경, 배포 또는 운영 활성화를 의미하지 않는다.
