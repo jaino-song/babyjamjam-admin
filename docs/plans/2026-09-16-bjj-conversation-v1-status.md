@@ -3,6 +3,20 @@
 Updated: 2026-09-18. Baseline: `origin/dev` at `55777f1facf7aafb3cbe19b322b6205a4c4860df`.
 Current verification: `/Users/jaino/Development/babyjamjam-admin/bjj-conversation-complete` on `feature/bjj-conversation-complete`, HEAD `a6e72806e`. Local implementation, deterministic verification, model quality and operational activation are separate results.
 
+## RV-04 real product AppModule path — 2026-09-19
+
+The guarded product evaluator is committed at `afca342d2` (`test(agent): harden guarded product evaluator`). This is the current-branch run that boots the real Nest `AppModule` against the disposable PostgreSQL database and exercises the task/action path instead of only the mocked evaluation harness.
+
+- The command completed with exit 0 against `127.0.0.1:55433/bjj_conversation_test`, with `AGENT_E2E=1`, `E2E_VENDOR_STUBS=1`, and `SCHEDULER_LEASE_MODE=off`.
+- Customer writes: create and update both **succeeded**; **3** synthetic client rows were observed before cleanup.
+- Action path: **4 proposed / 4 approved / 4 terminal / 4 succeeded**.
+- Terminal authority and coverage: **8** task-owned records/jobs observed; positive job evidence present; deny/no-send kept at **zero message logs and zero sends**; **8 intents / 8 jobs / 0 message logs**.
+- The runner refuses missing `--product`, unsafe database URLs, vendor-stub absence, scheduler lease mode, and mismatched datasource targets. It temporarily seeds only the disposable database's task flags, parent policy and default rules, then restores settings and removes all synthetic rows.
+- The real AppModule run made **0 provider calls** and sent **0 SMS**. The default `--product` path is unchanged.
+- Focused evaluator/application regression: **2 suites / 28 tests passed**. Full backend Jest at this branch: **401 suites passed, 1 skipped; 5,789 tests passed, 44 skipped; 1 snapshot passed**. Type-check, diff check, changed-file secret scan and `pnpm audit --prod` passed.
+
+This closes the local RV-04 product DB/AppModule evidence gap. AWS OIDC/IAM trust, preview runtime/browser proof, environment promotion, paid Google/OpenAI quality evaluation, human review and operational activation remain separate gates.
+
 ## Verification refresh — Phase 8 authenticated browser contract — 2026-09-18
 
 The continuation worktree is `/Users/jaino/Development/babyjamjam-admin/bjj-conversation-complete` on `feature/bjj-conversation-complete`. This refresh uses synthetic authenticated storage and route stubs; it does not claim a live authenticated backend, provider, or SMS result.
