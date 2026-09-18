@@ -3,6 +3,15 @@
 Updated: 2026-09-18. Baseline: `origin/dev` at `089cb133741f67752d084c1fba0766c5ad6a70f4`.
 Current verification: `/Users/jaino/Development/babyjamjam-admin/bjj-conversation-final` on `codex/unit/bjj-conversation-final`, HEAD `6fe3a27c20f8b5babec14b7374070178e068bc95`. Local implementation, deterministic verification, model quality and operational activation are separate results.
 
+## Verification refresh — Phase 7 integration item 1 — 2026-09-18
+
+The dedicated task worktree `/Users/jaino/Development/babyjamjam-admin/bjj-conversation-complete` is based on `origin/dev` at `55777f1facf7aafb3cbe19b322b6205a4c4860df`. The Phase 7 PostgreSQL/AppModule integration check was refreshed at commits `fad87a92b` and `5c423b6d6`.
+
+- The guarded disposable PostgreSQL/AppModule matrix passed **16 suites / 199 tests** with `AGENT_E2E=1`, `E2E_VENDOR_STUBS=1`, `SCHEDULER_LEASE_MODE=off`, and both datasource URLs explicitly bound to the approved loopback database `127.0.0.1:55433/bjj_conversation_test`.
+- The service-record-link scenario passed **6 tests**, including the real planner → client update → intent → service-record job → authority path, materialize-to-dispatch seal reuse, and refusal after a schema-valid forged task reference changes its `taskRevision` while the persisted terminal record remains unchanged.
+- Backend type-check, Nest build, production dependency audit (**0 known vulnerabilities**), diff check, and changed-file secret scan passed. No schema, dependency, environment, provider, or SMS transport change was made.
+- The test run created no provider request, SMS send, or message log. It is deterministic local evidence only; paid model quality, real SMS, deployment, environment-branch merge, production database changes, and operational activation remain separate gates.
+
 ## Latest current-branch verification — 2026-09-18
 
 This section is the current attestation for the continuation branch. Earlier sections preserve historical phase records and must not be read as the latest counts.
