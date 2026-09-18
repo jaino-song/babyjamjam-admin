@@ -368,6 +368,7 @@ describeAgentE2E("production service-record-link task effect planner", () => {
             stored: storedServiceEffect && !isCoverage(storedServiceEffect) ? storedServiceEffect.effects[0] : undefined,
             recomputed: recomputed.effects.find((effect) => effect.kind === "service-record-link"),
         });
+        console.log("service-record case current", await prisma.service_record_case.findUnique({ where: { id: caseId }, select: { status: true, startDate: true, endDate: true, requiredSessionCount: true, formVersion: true, version: true } }));
 
         const delivery = app.get(SmsTriggerDeliveryService);
         const authority = app.get(AgentAutomationJobAuthorityService);
