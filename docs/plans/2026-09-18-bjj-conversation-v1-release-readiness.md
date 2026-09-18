@@ -28,6 +28,20 @@
 
 현재 판정은 **구현 및 결정적 검증 완료**, **실제 대화 품질 검증 대기**, **운영 적용 대기**다.
 
+## RV-04 real product AppModule evidence — 2026-09-19
+
+The guarded disposable product evaluator is committed at `afca342d2`. It boots the real Nest `AppModule` against the approved loopback disposable PostgreSQL database and exercises the persisted customer task/action path with vendor stubs.
+
+- Exit 0 with `AGENT_E2E=1`, `E2E_VENDOR_STUBS=1`, `SCHEDULER_LEASE_MODE=off`, and both datasource URLs bound to `127.0.0.1:55433/bjj_conversation_test`.
+- Create/update customer writes both succeeded; 3 synthetic rows were observed before cleanup.
+- 4 actions were proposed, approved, terminal and succeeded.
+- 8 task-owned authority records/jobs were observed; positive job evidence was present. Deny/no-send produced 0 message logs and 0 sends; coverage was 8 intents, 8 jobs and 0 message logs.
+- The runner fails closed for missing product opt-in, unsafe or mismatched datasource URLs, missing vendor stubs and scheduler leases. Temporary disposable task flags, parent policy and default rules are restored/removed during teardown.
+- Provider calls and SMS sends: **0**. The normal `--product` evaluator path and production defaults are unchanged.
+- Evaluator-focused regression: **2 suites / 28 tests passed**. Current full backend: **401 suites passed, 1 skipped; 5,789 tests passed, 44 skipped; 1 snapshot passed**. Type-check, diff check, changed-file secret scan and production dependency audit passed.
+
+This closes the local RV-04 product DB/AppModule evidence gap. AWS OIDC/IAM trust, preview deployment/runtime/browser proof, environment promotion, paid Google/OpenAI evaluation, human review and operational activation remain open release gates.
+
 ## Latest release-readiness attestation — 2026-09-18
 
 The current branch has completed implementation and deterministic validation for the Phase 7 continuation and the verified desktop/mobile browser paths. Historical sections below retain the earlier integration records.
