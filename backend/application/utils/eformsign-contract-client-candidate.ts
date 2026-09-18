@@ -156,6 +156,24 @@ function valueFromFieldRecord(record: UnknownRecord): string | null {
     return null;
 }
 
+function keyedFieldValue(
+    source: unknown,
+    aliases: readonly string[],
+): string | null {
+    for (const record of collectRecords(source)) {
+        for (const [key, rawValue] of Object.entries(record)) {
+            if (!keyedFieldIdMatches(key, aliases)) continue;
+
+            const directValue = stringFromUnknown(rawValue);
+            if (directValue) return directValue;
+
+            const nestedValue = valueFromFieldRecord({ value: rawValue });
+            if (nestedValue) return nestedValue;
+        }
+    }
+    return null;
+}
+
 function valueFromCustomerNameField(rawValue: unknown): string | null {
     const directValue = stringFromUnknown(rawValue);
     if (directValue) return directValue;
@@ -176,6 +194,20 @@ function fieldIdMatches(token: string, aliases: readonly string[]): boolean {
         if (normalizedAlias.length < 5) return false;
         return normalizedToken.includes(normalizedAlias)
             || normalizedAlias.includes(normalizedToken);
+    });
+}
+
+function keyedFieldIdMatches(key: string, aliases: readonly string[]): boolean {
+    const normalizedKey = normalizeFieldId(key);
+    return aliases.some((alias) => {
+        const normalizedAlias = normalizeFieldId(alias);
+        if (normalizedKey === normalizedAlias) return true;
+        // Short labels such as "생일" must not match a provider's longer field key.
+        if (normalizedAlias.length < 5) return false;
+        return normalizedKey.includes(normalizedAlias)
+            || (/^[a-z0-9]+$/.test(normalizedKey)
+                && normalizedKey.length >= 5
+                && normalizedAlias.includes(normalizedKey));
     });
 }
 
@@ -230,6 +262,9 @@ export function eformsignDocumentFieldValue(
     aliases: readonly string[],
 ): string | null {
     for (const source of [document.fields, document.detail_template_info]) {
+        const keyedValue = keyedFieldValue(source, aliases);
+        if (keyedValue) return keyedValue;
+
         for (const record of collectRecords(source)) {
             const tokens = FIELD_ID_KEYS
                 .map((key) => stringFromUnknown(record[key]))
@@ -505,6 +540,7 @@ export function extractEformsignContractClientPrefillCandidate(
             "고객생년월일",
             "산모 생년월일",
             "산모생년월일",
+            "생년월일",
             "주민번호 앞자리",
             "customerDOB",
             "customerBirthDate",
