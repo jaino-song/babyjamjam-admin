@@ -483,7 +483,7 @@ describeAgentE2E("real automation.list with two eligible clients and missing def
                 const catchUpMetadata = { batchId: `client:${createdId}:${chainBatchTime.toISOString()}`, sequence,
                     intervalMinutes: chainIntervalMinutes, originalScheduledFor: baseRecipe.scheduledFor.toISOString(), predecessorDedupeKey: previousKey };
                 const row = await tx.message_trigger_job.create({ data: { ...baseRecipe, scheduledFor, dedupeKey,
-                    payload: { ...baseRecipe.payload, catchUp: catchUpMetadata } as unknown as Prisma.InputJsonValue } });
+                    payload: { ...baseRecipe.payload, catchUp: catchUpMetadata, taskAutomationReference } as unknown as Prisma.InputJsonValue } });
                 chainRows.push({ id: row.id, scheduledFor, dedupeKey, payload: row.payload,
                     recipientType: baseRecipe.recipientType, recipientPhone: baseRecipe.recipientPhone!, templateKey: baseRecipe.templateKey,
                     createdAt: row.createdAt, updatedAt: row.updatedAt });
