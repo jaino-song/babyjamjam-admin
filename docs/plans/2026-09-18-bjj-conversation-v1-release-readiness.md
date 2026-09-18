@@ -16,7 +16,7 @@
 - Mobile task controls: **3 focused suites, 54 tests passed**; mobile type-check and UI architecture gate passed.
 - Provider evaluation runner: **6 focused tests passed**; both-provider dry-run plan is **576 runs** and keyless live invocation fails closed.
 
-The actual Google staging run is being recorded separately as a redacted artifact. The OpenAI run remains blocked until an explicit API key is available in the staging environment. No key value, raw prompt/response, production customer data, real SMS, or production database was used.
+The Google staging run is recorded in [`staging-evaluation.md`](../ai-conversation-quality/staging-evaluation.md) and its redacted artifact. It completed 288 runs with 10 errors and scored 213/324 required tokens and 179/576 structured events, below the proposed quality threshold. The OpenAI run was refused before transport creation because no API key is present in the staging environment. No key value, raw prompt/response, production customer data, real SMS, or production database was used.
 
 ## 현재 판정
 
