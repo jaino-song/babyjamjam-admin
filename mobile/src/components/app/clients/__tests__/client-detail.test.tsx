@@ -134,6 +134,45 @@ function renderDetail(
   );
 }
 
+function contractDocumentWithDates({
+  createdDate,
+  updatedDate = Date.parse("2026-09-25T12:00:00Z"),
+  fields = [],
+}: {
+  createdDate: unknown;
+  updatedDate?: unknown;
+  fields?: unknown[];
+}): EformsignDocument {
+  return {
+    id: "document-1",
+    document_number: "DOC-1",
+    template: { id: "template-1", name: "Test Template" },
+    document_name: "Test Document",
+    creator: { recipient_type: "01", id: "creator@test.com", name: "Creator" },
+    created_date: createdDate as number,
+    last_editor: { recipient_type: "01", id: "editor@test.com", name: "Editor" },
+    updated_date: updatedDate as number,
+    current_status: {
+      status_type: "060",
+      status_doc_type: "doc",
+      status_doc_detail: "detail",
+      step_type: "05",
+      step_index: "1",
+      step_name: "Step 1",
+      step_recipients: [],
+      step_group: 1,
+      expired_date: 0,
+      _expired: false,
+    },
+    fields,
+    next_status: [],
+    previous_status: [],
+    histories: [],
+    recipients: [],
+    detail_template_info: [],
+  };
+}
+
 describe("ClientDetailContent", () => {
   it.each([
     ["unsigned", false, "고객 (고객)"],
@@ -179,6 +218,80 @@ describe("ClientDetailContent", () => {
 
     expect(screen.getAllByText("계약 완료").length).toBeGreaterThan(0);
     expect(screen.getByText("서명 대기자").closest("div")).toHaveTextContent("-");
+  });
+
+  it("uses the document created date for both non-completed sent-date labels", () => {
+    const detailClient = {
+      ...client,
+      eDocId: "document-1",
+      startDate: "2026-09-21",
+      documentStatus: "requested" as const,
+    };
+    const contractDocument = contractDocumentWithDates({
+      createdDate: Date.parse("2026-09-18T12:00:00Z"),
+    });
+
+    renderDetail(contractDocument, detailClient, "contracts");
+
+    expect(screen.getByText("발송 날짜 2026.09.18")).toBeInTheDocument();
+    expect(screen.getByText("발송일").closest("div")).toHaveTextContent("2026.09.18");
+    expect(screen.queryByText("발송 날짜 2026.09.21")).not.toBeInTheDocument();
+  });
+
+  it.each([
+    ["null created date", null],
+    ["zero created date", 0],
+    ["invalid created date", "not-a-timestamp"],
+    ["non-numeric created date", Number.NaN],
+  ])("shows unknown sent dates when %s despite a valid service start", (_label, createdDate) => {
+    const detailClient = {
+      ...client,
+      eDocId: "document-1",
+      startDate: "2026-09-21",
+      documentStatus: "requested" as const,
+    };
+    const contractDocument = contractDocumentWithDates({ createdDate });
+
+    renderDetail(contractDocument, detailClient, "contracts");
+
+    expect(screen.getByText("발송 날짜 -")).toBeInTheDocument();
+    expect(screen.getByText("발송일").closest("div")).toHaveTextContent("-");
+    expect(screen.queryByText("2026.09.21")).not.toBeInTheDocument();
+  });
+
+  it("shows unknown sent dates when the document and service start dates are missing", () => {
+    const detailClient = {
+      ...client,
+      eDocId: "document-1",
+      startDate: null,
+      documentStatus: "requested" as const,
+    };
+    renderDetail(null, detailClient, "contracts");
+
+    expect(screen.getByText("발송 날짜 -")).toBeInTheDocument();
+    expect(screen.getByText("발송일").closest("div")).toHaveTextContent("-");
+  });
+
+  it("keeps the completed date derivation while using created date for the sent row", () => {
+    const detailClient = {
+      ...client,
+      eDocId: "document-1",
+      startDate: "2026-09-21",
+      hasSigned: true,
+      documentStatus: "completed" as const,
+    };
+    const contractDocument = contractDocumentWithDates({
+      createdDate: Date.parse("2026-09-18T12:00:00Z"),
+      updatedDate: Date.parse("2026-09-25T12:00:00Z"),
+      fields: [{ id: "계약 서명 날짜", value: "20260923" }],
+    });
+
+    renderDetail(contractDocument, detailClient, "contracts");
+
+    expect(screen.getByText("완료 날짜 2026.09.25")).toBeInTheDocument();
+    expect(screen.getByText("발송일").closest("div")).toHaveTextContent("2026.09.18");
+    expect(screen.getByText("완료일").closest("div")).toHaveTextContent("2026.09.25");
+    expect(screen.queryByText("2026.09.21")).not.toBeInTheDocument();
   });
 
   it("should show the currently assigned employee phone when the contract has no phone", () => {

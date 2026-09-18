@@ -992,10 +992,7 @@ export function ClientDetailContent({
     contractSignDate,
     serviceStartDate,
   );
-  const contractDocSentDate = firstValue(
-    isoDateFromTimestamp(contractDocument?.created_date),
-    serviceStartDate,
-  );
+  const contractDocSentDate = isoDateFromTimestamp(contractDocument?.created_date);
   const contractDocMetaDateLabel = isContractCompleted ? "완료 날짜" : "발송 날짜";
   const contractDocMetaDate = isContractCompleted ? contractDocCompletedDate : contractDocSentDate;
   const fullPrice = firstValue(
@@ -1286,7 +1283,7 @@ export function ClientDetailContent({
             <InfoCard data-component={`${dataComponent}_tab-panel_contracts_activity-card`} title="최근 진행 상황" delay={60}>
               <InfoRow label="현재 단계" value={documentStatusLabel(client.documentStatus)} tone={docTone as never} />
               <InfoRow label="서명 대기자" value={client.hasSigned ? "-" : `고객 (${client.name})`} />
-              <InfoRow label="발송일" value={formatDate(serviceStartDate)} />
+              <InfoRow label="발송일" value={formatDate(contractDocSentDate)} />
               {isContractCompleted && <InfoRow label="완료일" value={formatDate(contractDocCompletedDate)} />}
             </InfoCard>
           </>
