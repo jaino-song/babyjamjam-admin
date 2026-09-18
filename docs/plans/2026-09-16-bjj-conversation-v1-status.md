@@ -21,6 +21,18 @@ dry-run configuration check, but the local evaluation key is absent; a bounded l
 `MISSING_API_KEY` before network transport. No provider request or secret value was recorded. Paid model-quality
 evaluation and human review remain pending a configured evaluation key.
 
+## Google model evaluation refresh — 2026-09-19
+
+기존 로컬 Gemini 키로 `gemini-2.5-flash` current/improved profile과 합성 48개 사례 × 3회(**288 runs**)를
+완료했다. Redacted artifact는 [`2026-09-19-google-all.json`](../ai-conversation-quality/artifacts/2026-09-19-google-all.json)이다.
+
+- 286 responses / 2 errors (HTTP 503 1건, malformed response 1건); text 118, tool calls 168.
+- Required-token **223/324 (68.8%)**, structured-event **172/576 (29.9%)**.
+- p50 **2,169 ms**, p95 **7,631 ms**, max **22,931 ms**; usage/cost unavailable.
+- Fixture/assertion digest는 checked-in 평가 계약과 일치하며, 제안한 95% 기준에는 미달한다.
+
+OpenAI 비교는 평가 키가 없어 진행하지 못했고, human review와 품질 sign-off도 미완료다.
+
 ## RV-04 real product AppModule path — 2026-09-19
 
 The guarded product evaluator is committed at `afca342d2` (`test(agent): harden guarded product evaluator`). This is the current-branch run that boots the real Nest `AppModule` against the disposable PostgreSQL database and exercises the task/action path instead of only the mocked evaluation harness.
