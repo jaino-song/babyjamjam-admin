@@ -1,5 +1,6 @@
 import { MessageTriggerJobEntity } from "domain/entities/message-trigger-job.entity";
 import type { Prisma } from "@prisma/client";
+import type { MessageHistoryPageQuery } from "domain/repositories/message-log.repository.interface";
 
 export interface MessageTriggerJobCancellationScope {
     clientId?: number;
@@ -27,6 +28,15 @@ export interface IMessageTriggerJobRepository {
     findTerminalByBranch(
         branchId: string,
         limit?: number,
+    ): Promise<MessageTriggerJobEntity[]>;
+    /**
+     * Read current failed/canceled history in the same immutable tuple order
+     * as message logs. The application cutoff fences immutable createdAt only;
+     * current status is intentionally read as of each request.
+     */
+    findHistoryPageByBranch(
+        branchId: string,
+        query: MessageHistoryPageQuery,
     ): Promise<MessageTriggerJobEntity[]>;
     /**
      * Terminal (failed or canceled) jobs for a branch whose terminal

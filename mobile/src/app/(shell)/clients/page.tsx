@@ -1,34 +1,20 @@
 "use client";
-import { getUserErrorMessage } from "@babyjamjam/shared";
-
-
-import { useEffect, useMemo, useRef, useState } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useEffect, useMemo, useState } from "react";
 import { User, Users, Workflow } from "lucide-react";
 import { useRouter, useSearchParams } from "next/navigation";
 
-import { clientQueryKeys, fetchClient, useClient, useDeleteClient } from "@/hooks/useClients";
-import { useEmployees } from "@/hooks/useEmployees";
+import { useClientDetailController } from "@/components/app/clients/client-detail-controller";
 import { useInfiniteClients } from "@/hooks/useInfiniteClients";
 import { useListInfiniteScroll } from "@/hooks/useListInfiniteScroll";
-import { useClientMessageHistory } from "@/hooks/useClientMessageHistory";
 import { Client } from "@/lib/client/types";
+import { formatDateForDisplay } from "@/lib/date/format-date-for-display";
 import { getMobileClientBadges } from "@/lib/client/badges";
 import {
   buildAllClientRowsForList,
   groupForClient,
 } from "@/lib/client/list-helpers";
-import { useLocale } from "@/providers/LocaleProvider";
-import { eformsignApi } from "@/services/api";
-import { t } from "@/lib/i18n/translations";
-import { todayIsoDate } from "@/lib/contracts/date-input";
-import { formatDateForDisplay } from "@/lib/date/format-date-for-display";
 import { parsePositiveIntQueryParam } from "@/lib/query-params";
-import { toast } from "@/hooks/use-toast";
-import { ClientDetailModal } from "@/components/app/clients/ClientDetailModal";
-import { MobileTwoButtonModal } from "@/components/app/ui/MobileTwoButtonModal";
 import { matchesKoreanSearch } from "@/lib/search/korean-search";
-import { useFormStore } from "@/stores/form-store";
 import {
   ListCard,
   ListCountSkeleton,
@@ -43,7 +29,7 @@ import {
   MobileDetailSheet,
   MobileSearchBar,
 } from "@/components/app/mobile-redesign/detail-sheet";
-import { ClientDetailContent, GROUPS, type ClientGroup, type DetailTabId } from "@/components/app/clients/client-detail";
+import { GROUPS, type ClientGroup } from "@/components/app/clients/client-detail";
 import "@/components/app/mobile-redesign/redesign.css";
 
 const ALL_FILTER = "전체";
@@ -66,31 +52,6 @@ function primaryEmployeeMeta(c: Client) {
   return c.primaryEmployee?.name ?? "제공인력 미배정";
 }
 
-function compactDateToIsoDate(value: string | null | undefined): string | null {
-  const digits = (value ?? "").replace(/\D/g, "");
-  if (digits.length < 8) return null;
-
-  const year = digits.slice(0, 4);
-  const month = digits.slice(4, 6);
-  const day = digits.slice(6, 8);
-  const iso = `${year}-${month}-${day}`;
-  const date = new Date(`${iso}T00:00:00`);
-  return Number.isNaN(date.getTime()) ? null : iso;
-}
-
-function yymmddToIsoDate(value: string | null | undefined): string | null {
-  const digits = (value ?? "").replace(/\D/g, "");
-  if (digits.length !== 6) return null;
-
-  const yy = Number(digits.slice(0, 2));
-  const month = digits.slice(2, 4);
-  const day = digits.slice(4, 6);
-  const year = yy >= 70 ? 1900 + yy : 2000 + yy;
-  const iso = `${year}-${month}-${day}`;
-  const date = new Date(`${iso}T00:00:00`);
-  return Number.isNaN(date.getTime()) ? null : iso;
-}
-
 function formatKoreanDate(dateStr: string | null | undefined): string | null {
   if (!dateStr) return null;
 
@@ -102,7 +63,12 @@ function formatKoreanDate(dateStr: string | null | undefined): string | null {
     return `${year}.${month}.${day}`;
   }
 
-  const normalized = compactDateToIsoDate(dateStr) ?? yymmddToIsoDate(dateStr) ?? dateStr;
+  const digits = dateStr.replace(/\D/g, "");
+  const normalized = digits.length >= 8
+    ? `${digits.slice(0, 4)}-${digits.slice(4, 6)}-${digits.slice(6, 8)}`
+    : digits.length === 6
+      ? `${Number(digits.slice(0, 2)) >= 70 ? 1900 + Number(digits.slice(0, 2)) : 2000 + Number(digits.slice(0, 2))}-${digits.slice(2, 4)}-${digits.slice(4, 6)}`
+      : dateStr;
   const date = new Date(normalized);
   if (Number.isNaN(date.getTime())) return null;
   return formatDateForDisplay(date, "");
@@ -135,29 +101,22 @@ function hasContractRequiredBadge(c: Client): boolean {
   return getMobileClientBadges(c).some((badge) => badge.key === "contract_required");
 }
 
-function contractPrefillDate(value: string | null | undefined): string | undefined {
-  if (!value) return undefined;
-
-  const dateOnlyMatch = value.match(/^(\d{4}-\d{2}-\d{2})/);
-  return dateOnlyMatch?.[1] ?? compactDateToIsoDate(value) ?? yymmddToIsoDate(value) ?? undefined;
-}
-
 export default function ClientsPage() {
-  const locale = useLocale();
   const router = useRouter();
-  const queryClient = useQueryClient();
   const searchParams = useSearchParams();
   const selectedClientIdFromParam = parsePositiveIntQueryParam(searchParams.get("id"));
 
   const [selectedClient, setSelectedClient] = useState<Client | null>(null);
-  const [detailSheetTab, setDetailSheetTab] = useState<DetailTabId>("basic");
-  const [detailModalOpen, setDetailModalOpen] = useState(false);
-  const [deleteTargetClientId, setDeleteTargetClientId] = useState<number | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [activeFilter, setActiveFilter] = useState<string>(ALL_FILTER);
   const [activeSection, setActiveSection] = useState<ClientSectionId>("list");
-  const selectClientRequestRef = useRef(0);
-  const prefillContractCreation = useFormStore((state) => state.prefillFromContract);
+
+  useEffect(() => {
+    document.body.classList.add("mobile-clients-route");
+    return () => {
+      document.body.classList.remove("mobile-clients-route");
+    };
+  }, []);
 
   const { allClients, allFilteredClients, total, isLoading, isFetching } = useInfiniteClients({
     filter: "all",
@@ -171,135 +130,29 @@ export default function ClientsPage() {
   });
   const isClientsFetching = isLoading || (isFetching && allClients.length === 0);
 
-  const deleteClient = useDeleteClient();
-  const { data: employees = [] } = useEmployees();
-  const { data: clientFromParam } = useClient(selectedClientIdFromParam ?? 0);
-  const detailClient = selectedClient ?? (selectedClientIdFromParam !== null ? clientFromParam ?? null : null);
-  const {
-    notificationLogs: detailNotificationLogs,
-    isLoading: isNotificationLogsLoading,
-    isError: isNotificationLogsError,
-    refetch: refetchNotificationLogs,
-  } = useClientMessageHistory(detailClient);
-  const { data: detailContractDocument } = useQuery({
-    queryKey: ["eformsign-docs", "document", detailClient?.eDocId],
-    queryFn: async () => {
-      if (!detailClient?.eDocId) {
-        throw new Error("documentId is required");
-      }
-      return eformsignApi.getDocument(detailClient.eDocId!);
-    },
-    enabled: Boolean(detailClient?.eDocId && (detailSheetTab === "basic" || detailSheetTab === "contracts")),
-    staleTime: 1000 * 60,
-    retry: 1,
-  });
-
-  // The client detail response carries the latest backend contract projection.
-  // The document endpoint is keyed by the legacy eDocId and can return an older
-  // document after a contract reissue, so its status must never override the
-  // canonical hasSigned/documentStatus values used by the detail UI. The
-  // fetched document remains available below for field-value fallbacks.
-  const localDetailClient = detailClient;
-
-  const handleSelectClient = async (client: Client) => {
-    const requestId = selectClientRequestRef.current + 1;
-    selectClientRequestRef.current = requestId;
-    setSelectedClient(client);
-    setDetailSheetTab(client.pendingScheduleChange ? "scheduleChange" : "basic");
-
-    try {
-      const freshClient = await queryClient.fetchQuery({
-        queryKey: clientQueryKeys.detail(client.id),
-        queryFn: () => fetchClient(client.id),
-        staleTime: 0,
-      });
-      if (selectClientRequestRef.current !== requestId) return;
-
-      setSelectedClient(freshClient);
-      setDetailSheetTab(freshClient.pendingScheduleChange ? "scheduleChange" : "basic");
-    } catch {
-      // Keep the already-open list row detail. Row selection should not be blocked by refresh failures.
-    }
-  };
-
-  const handleClientUpdated = (updatedClient: Client) => {
-    setSelectedClient(updatedClient);
-    queryClient.setQueryData(clientQueryKeys.detail(updatedClient.id), updatedClient);
-    void queryClient.invalidateQueries({ queryKey: clientQueryKeys.lists() });
-    void queryClient.invalidateQueries({ queryKey: clientQueryKeys.detail(updatedClient.id) });
-  };
-
   const handleCloseDetailSheet = () => {
-    selectClientRequestRef.current += 1;
     setSelectedClient(null);
     if (selectedClientIdFromParam !== null) {
       router.replace("/clients");
     }
   };
 
-  const handleEdit = (client: Client) => {
-    // 기존 ClientFormDialog(데스크탑 폼) 대신 mockup 디자인의 wizard로 라우팅 — `?clientId`로 편집 모드 진입.
-    setDetailModalOpen(false);
-    router.push(`/clients/new?clientId=${client.id}`);
+  const handleClientUpdated = (updatedClient: Client) => {
+    if (selectedClientIdFromParam !== null && updatedClient.id !== selectedClientIdFromParam) return;
+    setSelectedClient(updatedClient);
   };
 
-  const handleMessage = (client: Client) => {
-    router.push(`/messages/new?clientId=${client.id}`);
-  };
+  const detailController = useClientDetailController({
+    client: selectedClient,
+    clientId: selectedClientIdFromParam,
+    dataComponent: "mobile_clients_detail-sheet_stack_detail-page_content",
+    onClientUpdated: handleClientUpdated,
+    onClientDeleted: handleCloseDetailSheet,
+  });
+  const detailClient = detailController.detailClient;
 
-  const handleIssueContract = (client: Client) => {
-    const primaryEmployee =
-      employees.find((employee) => employee.id === client.primaryEmployee?.id) ??
-      employees.find((employee) => employee.name.trim() === client.primaryEmployee?.name?.trim());
-
-    prefillContractCreation({
-      clientId: client.id,
-      name: client.name,
-      phone: client.phone ?? "",
-      birthday: client.birthday ?? "",
-      dueDate: contractPrefillDate(client.dueDate),
-      address: client.address ?? "",
-      employeeId: primaryEmployee?.id ?? client.primaryEmployee?.id ?? null,
-      employeeName: primaryEmployee?.name ?? client.primaryEmployee?.name ?? "",
-      employeePhone: primaryEmployee?.phone ?? "",
-      startDate: contractPrefillDate(client.startDate),
-      endDate: contractPrefillDate(client.endDate),
-      fullPrice: client.fullPrice ?? "",
-      grant: client.grant ?? "",
-      actualPrice: client.actualPrice ?? "",
-      paymentDate: todayIsoDate(),
-      voucherType: client.type ?? "",
-      voucherDuration: client.duration != null ? String(client.duration) : "",
-      area: "",
-    });
-    router.push("/contracts/new");
-  };
-
-  const handleDeleteRequest = (id: number) => {
-    setDeleteTargetClientId(id);
-  };
-
-  const handleDeleteConfirm = async () => {
-    if (deleteTargetClientId == null) return;
-    try {
-      await deleteClient.mutateAsync(deleteTargetClientId);
-      if (detailClient?.id === deleteTargetClientId) {
-        setSelectedClient(null);
-        setDetailModalOpen(false);
-      }
-      setDeleteTargetClientId(null);
-      toast({
-        variant: "success",
-        title: t(locale, "clients.delete-success"),
-        description: t(locale, "clients.delete-success-description"),
-      });
-    } catch {
-      toast({
-        title: t(locale, "clients.delete-fail"),
-        description: getUserErrorMessage(t(locale, "clients.delete-fail-description")),
-        variant: "destructive",
-      });
-    }
+  const handleSelectClient = (client: Client) => {
+    setSelectedClient(client);
   };
 
   const grouped = useMemo(() => {
@@ -316,9 +169,6 @@ export default function ClientsPage() {
     () => allFilteredClients.filter(hasContractRequiredBadge),
     [allFilteredClients],
   );
-  const displayedClientCount = searchQuery.trim()
-    ? allFilteredClients.length
-    : total ?? allClients.length;
 
   const filterItems = useMemo(() => {
     if (isClientsFetching) {
@@ -332,7 +182,7 @@ export default function ClientsPage() {
     const items = [
       {
         label: ALL_FILTER,
-        count: String(displayedClientCount),
+        count: String(total ?? allClients.length),
       },
       {
         label: CONTRACT_REQUIRED_FILTER,
@@ -346,7 +196,7 @@ export default function ClientsPage() {
       });
     }
     return items;
-  }, [contractRequiredClients.length, displayedClientCount, grouped.counts, isClientsFetching]);
+  }, [allClients.length, contractRequiredClients.length, grouped.counts, isClientsFetching, total]);
 
   const sectionsFull = useMemo(() => {
     type Section = {
@@ -424,8 +274,8 @@ export default function ClientsPage() {
       <MobileDetailSheet
         data-component="mobile_clients_detail-sheet"
         name="clients"
-        sheetTitle={(localDetailClient ?? detailClient)?.name}
-        isOpen={Boolean(detailClient)}
+        sheetTitle={detailClient?.name}
+        isOpen={Boolean(detailClient || selectedClientIdFromParam !== null || detailController.isDetailRefreshing || detailController.detailRefreshError)}
         onClose={handleCloseDetailSheet}
         list={
           <div
@@ -451,7 +301,7 @@ export default function ClientsPage() {
                       data-component="mobile_clients_detail-sheet_stack_list-page_content_list-card_header_count-skeleton"
                     />
                   )
-                  : `${displayedClientCount}명`
+                  : `${total ?? allClients.length}명`
               }
               actionLabel="+ 추가"
               actionHref="/clients/new"
@@ -549,57 +399,13 @@ export default function ClientsPage() {
           </div>
         }
         detail={
-          detailClient ? (
-            <ClientDetailContent
-              data-component="mobile_clients_detail-sheet_stack_detail-page_content"
-              client={localDetailClient ?? detailClient}
-              contractDocument={detailContractDocument ?? null}
-              activeTab={detailSheetTab}
-              notificationLogs={detailNotificationLogs}
-              isNotificationLogsLoading={isNotificationLogsLoading}
-              isNotificationLogsError={isNotificationLogsError}
-              onRetryNotificationLogs={() => {
-                void refetchNotificationLogs();
-              }}
-              isIssuingContract={false}
-              onTabChange={setDetailSheetTab}
-              onMessage={() => handleMessage(localDetailClient ?? detailClient)}
-              onIssueContract={handleIssueContract}
-              onEdit={handleEdit}
-              onDelete={handleDeleteRequest}
-              onClientUpdated={handleClientUpdated}
-            />
-          ) : (
-            <div className="detail-body" data-component="mobile_clients_detail-sheet_stack_detail-page_empty" />
-          )
+          detailClient || selectedClientIdFromParam !== null || detailController.isDetailRefreshing || detailController.detailRefreshError
+            ? detailController.detail
+            : <div className="detail-body" data-component="mobile_clients_detail-sheet_stack_detail-page_empty" />
         }
       />
 
-      <ClientDetailModal
-        data-component="mobile_clients_detail-modal"
-        open={detailModalOpen}
-        onClose={() => setDetailModalOpen(false)}
-        client={detailClient}
-        onEdit={handleEdit}
-        onDelete={handleDeleteRequest}
-      />
-
-      <MobileTwoButtonModal
-        data-component="mobile_clients_delete-confirm-modal"
-        open={deleteTargetClientId != null}
-        title={t(locale, "common.delete")}
-        description={t(locale, "clients.delete-confirm")}
-        cancelLabel={t(locale, "common.cancel")}
-        confirmLabel={t(locale, "common.delete")}
-        loading={deleteClient.isPending}
-        onOpenChange={(open) => {
-          if (!open && !deleteClient.isPending) {
-            setDeleteTargetClientId(null);
-          }
-        }}
-        onCancel={() => setDeleteTargetClientId(null)}
-        onConfirm={handleDeleteConfirm}
-      />
+      {detailController.deleteModal}
 
     </>
   );

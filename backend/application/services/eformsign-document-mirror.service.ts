@@ -250,7 +250,8 @@ export class EformsignDocumentMirrorService {
         );
         const canReadActivePartialDocument = fileType === "document"
             && (
-                normalizedStatus === "060"
+                normalizedStatus === "001"
+                || normalizedStatus === "060"
                 || isReviewStageDocumentPdfReadable(normalizedStatus)
             );
         if (

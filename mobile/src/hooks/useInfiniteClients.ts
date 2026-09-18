@@ -146,6 +146,7 @@ export function useInfiniteClients({
     allFilteredClients,
     total,
     isLoading: query.isLoading,
+    isError: query.isError,
     isFetching: query.isFetching,
     isFetchingNextPage: false,
     hasNextPage,

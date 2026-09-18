@@ -97,6 +97,8 @@ describe("PostHog query scope and successful data", () => {
     fetchMock
       .mockResolvedValueOnce(providerResponse({ results: [[2, 1, "7", 20, "2026-09-17T01:00:00Z"]] }))
       .mockResolvedValueOnce(providerResponse({ results: [[7]] }))
+      .mockResolvedValueOnce(providerResponse({ results: [[7]] }))
+      .mockResolvedValueOnce(providerResponse({ results: [[14]] }))
       .mockResolvedValueOnce(providerResponse({ results: [[14]] }));
     const { getInquiriesSummary } = await import("./posthog");
     await expect(getInquiriesSummary("qa-20260917")).resolves.toMatchObject({
@@ -119,8 +121,10 @@ describe("PostHog query scope and successful data", () => {
 
   it("accepts a null average when no sessions qualify", async () => {
     fetchMock
-      .mockResolvedValueOnce(providerResponse({ results: [[0, 0, 0, 0, 0, 0]] }))
+      .mockResolvedValueOnce(providerResponse({ results: [[0, 0, 0, 0, 0, 0, 0, 0]] }))
       .mockResolvedValueOnce(providerResponse({ results: [[0, 0]] }))
+      .mockResolvedValueOnce(providerResponse({ results: [[0, 0]] }))
+      .mockResolvedValueOnce(providerResponse({ results: [[null]] }))
       .mockResolvedValueOnce(providerResponse({ results: [[null]] }));
     const { getTrafficSummary } = await import("./posthog");
     await expect(getTrafficSummary()).resolves.toMatchObject({ avgSessionSeconds: 0, bounceRate: 0 });

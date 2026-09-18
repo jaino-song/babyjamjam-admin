@@ -86,8 +86,19 @@ const DEFAULT_BRANCH_FORM: SystemAdminBranchInput = {
   isActive: true,
 };
 
-function roleLabel(role: string | null | undefined): string {
-  return ROLE_LABELS[role ?? ""] ?? "미지정";
+type BranchFormMode = "create" | "update";
+
+function normalizeSystemAdminBranchInput(
+  input: SystemAdminBranchInput,
+  mode: BranchFormMode,
+): SystemAdminBranchInput {
+  const email = input.email?.trim();
+  if (email) return { ...input, email };
+  if (mode === "update") return { ...input, email: null };
+
+  const inputWithoutEmail = { ...input };
+  delete inputWithoutEmail.email;
+  return inputWithoutEmail;
 }
 
 function branchSaveErrorMessage(error: unknown): string {
@@ -102,6 +113,10 @@ function branchSaveErrorMessage(error: unknown): string {
     return "이메일 형식을 확인해 주세요. 사용하지 않으면 비워 두어도 됩니다.";
   }
   return getUserErrorMessage(error, "지점 정보를 저장하지 못했어요. 다시 시도해 주세요.");
+}
+
+function roleLabel(role: string | null | undefined): string {
+  return ROLE_LABELS[role ?? ""] ?? "미지정";
 }
 
 function dateLabel(value: string | null | undefined): string {
@@ -282,11 +297,13 @@ function FormField({
 }
 
 function BranchForm({
+  mode,
   initial,
   managers,
   isSaving,
   onSave,
 }: {
+  mode: BranchFormMode;
   initial: SystemAdminBranchInput;
   managers: readonly { id: string; label: string }[];
   isSaving: boolean;
@@ -301,7 +318,7 @@ function BranchForm({
   const save = async () => {
     setSaveError(null);
     try {
-      await onSave({ ...form, name: form.name.trim(), slug: form.slug.trim() });
+      await onSave(normalizeSystemAdminBranchInput({ ...form, name: form.name.trim(), slug: form.slug.trim() }, mode));
     } catch (error) {
       setSaveError(branchSaveErrorMessage(error));
     }
@@ -449,9 +466,14 @@ export function SystemAdminPage(): ReactElement {
   });
   const createBranchMutation = useMutation({
     mutationFn: createSystemAdminBranch,
-    onSuccess: async () => {
+    onSuccess: async (branch) => {
       await queryClient.invalidateQueries({ queryKey: ["systemAdminBranchRequests"] });
       toast({ variant: "success", description: "지점을 저장했어요" });
+      if (branch?.id) {
+        router.replace(`/system-admin?section=${activeSection}&item=${encodeURIComponent(branch.id)}`, { scroll: false });
+      } else {
+        closeDetail();
+      }
     },
     onError: () => toast({ variant: "destructive", description: "지점 저장에 실패했어요" }),
   });
@@ -524,7 +546,7 @@ export function SystemAdminPage(): ReactElement {
     const query = accountSearch.trim().toLowerCase();
     return (accountFilter === "all" || accountFilter === category) && (!query || [user.name, user.email, user.phone, user.role, ...user.branches.map((branch) => branch.name)].some((value) => value?.toLowerCase().includes(query)));
   }), [accountFilter, accountSearch, users]);
-  const isOpen = itemParam !== null && (itemParam === NEW_BRANCH_ID || (activeSection === "branches" ? filteredBranches.some((branch) => branch.id === itemParam) : filteredUsers.some((user) => user.id === itemParam)));
+  const isOpen = itemParam !== null && (itemParam === NEW_BRANCH_ID || (activeSection === "branches" ? branches.some((branch) => branch.id === itemParam) : filteredUsers.some((user) => user.id === itemParam)));
   const selectedBranch = branches.find((branch) => branch.id === itemParam) ?? null;
   const selectedUser = users.find((user) => user.id === itemParam) ?? null;
 
@@ -572,7 +594,7 @@ export function SystemAdminPage(): ReactElement {
     detailStatus = itemParam === NEW_BRANCH_ID ? { label: "새 지점", variant: "info" } : approvalLabel(selectedBranch?.messageSenderApproval.approvalStatus);
     detail = <DetailContent data-component={`${DETAIL_BASE}_branch`} icon={Building2} title={itemParam === NEW_BRANCH_ID ? "지점 추가" : selectedBranch?.name ?? "지점 관리"} description="지점 운영 정보와 메시지 발신번호 상태를 관리합니다.">
       {selectedBranch && selectedBranch.messageSenderApproval.approvalStatus === "pending" ? <section data-component={`${DETAIL_BASE}_branch_sender-approval`} className="flex flex-col gap-3 rounded-[calc(18px*var(--glint-ui-scale,1))] border border-amber-200 bg-amber-50 p-4"><div className="flex items-center gap-2"><MessageCircle className="h-4 w-4 text-amber-700" /><strong className="text-[calc(0.8rem*var(--glint-ui-scale,1))] text-amber-900">메시지 발신번호 승인 신청</strong></div><PolicyInfoRows data-component={`${DETAIL_BASE}_branch_sender-approval_info`} title="신청 정보" rows={[{ id: "requester", label: "신청자", value: selectedBranch.messageSenderApproval.requestedBy?.name ?? "-" }, { id: "requested-at", label: "신청일", value: dateLabel(selectedBranch.messageSenderApproval.requestedAt) }, { id: "purpose", label: "요청 기능", value: "SMS/LMS 발송" }]} /><Button type="button" variant="v3" size="md" width="lg" disabled={approveSenderMutation.isPending} onClick={() => approveSenderMutation.mutate(selectedBranch.id)} data-component={`${DETAIL_BASE}_branch_sender-approval_approve`}>{approveSenderMutation.isPending ? "승인 중…" : "메시지 신청 승인"}</Button></section> : null}
-      <BranchForm key={`branch-form-${itemParam ?? "new"}`} initial={branchInput} managers={managerOptions} isSaving={createBranchMutation.isPending || updateBranchMutation.isPending} onSave={async (input) => itemParam === NEW_BRANCH_ID ? createBranchMutation.mutateAsync(input) : selectedBranch ? updateBranchMutation.mutateAsync({ branchId: selectedBranch.id, input }) : undefined} />
+      <BranchForm key={`branch-form-${itemParam ?? "new"}`} mode={itemParam === NEW_BRANCH_ID ? "create" : "update"} initial={branchInput} managers={managerOptions} isSaving={createBranchMutation.isPending || updateBranchMutation.isPending} onSave={async (input) => itemParam === NEW_BRANCH_ID ? createBranchMutation.mutateAsync(input) : selectedBranch ? updateBranchMutation.mutateAsync({ branchId: selectedBranch.id, input }) : undefined} />
       {selectedBranch ? <PolicyInfoRows data-component={`${DETAIL_BASE}_branch_info`} title="운영 정보" rows={[{ id: "location", label: "지역", value: locationLabel(selectedBranch) }, { id: "owner", label: "지점장", value: selectedBranch.owner?.name ?? selectedBranch.owner?.email ?? "미지정" }, { id: "updated", label: "수정일", value: dateLabel(selectedBranch.updatedAt) }, { id: "sender-status", label: "발신번호", value: approvalLabel(selectedBranch.messageSenderApproval.approvalStatus).label }]} /> : null}
     </DetailContent>;
   } else if (activeSection === "accounts" && selectedUser) {
