@@ -742,4 +742,6 @@ TL;DR: 배정(4b-1 백엔드: 역할·자격·동시 변경 코드 전환 / 4b-2
 **6g4 교정 (2026-09-18 01:0x KST):** FE 타입게이트에서 6g2 유닛의 `upstreamStatusProblemResponse` 2인자 호출 10곳 오류 — 3번째 `outcome` 인자 누락(6g2 워커·감사 모두 미검출, jest는 babel 변환이라 통과). 런타임 동일 수정(`403→NOT_APPLIED` 1곳, 나머지 `UNKNOWN` — 현 default와 동일) `2634f19f4`(6파일 10줄) → SELF 검증(tsc 0 + touched 15/56) → 병합 `eae389265` 승인·완료.
 
 **통합 게이트 (2026-09-18 01:0x KST, HEAD `eae389265`):** BE 362/362·5173 통과(초회 pnpm 스토어 stale로 12 실패 → relink 후 재실행, 잔여 3건은 병렬 플레이크·고립 통과 확인; pdfjs 환경 플레이크 별도), BE tsc 0·lint 0e, 공유 jest 27/423+scripts 86/86(parity 포함), MO 263/1775, FE 287/1743+tsc 0. 웨이브2+교정 close.
+
+**Phase 6.1 배치1 (2026-09-18):** 잔여 legacy 263행을 7개 유닛으로 분할(BE usecase 15+31·컨트롤러 25·FE BFF 40·MO BFF 22·FE 클라이언트 70·MO 클라이언트 57; 공유 3행은 verify-only). 6.1a(BE `247f7a2ad`, 신코드 0) → SHIP 61ab → 병합 `fa5c84b51`. 6.1e(MO `509d27f98`) → SHIP 61eb → 병합 `bce8f329b`. 6.1d(FE `3a37230c4`, 72파일) → SHIP 61db → 병합 `90e716462`. 77행 migrated 확정(본 커밋, migrated 326·legacy 186). 6.1b/6.1c 진행 중.
 - carried: 6d1 gated e2e 2건(live DB), 6g1 N2~N6(json 10파일·check-phone·area-templates read·stream boundary), 6h1 N4(agent passthrough)·AUTH_REFRESH_REPLAY_CONCURRENT 카탈로그 등록, pdfjs 환경 플레이크.
