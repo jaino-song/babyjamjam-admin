@@ -101,12 +101,57 @@ describe("PostHog query scope and successful data", () => {
       .mockResolvedValueOnce(providerResponse({ results: [[14]] }))
       .mockResolvedValueOnce(providerResponse({ results: [[14]] }));
     const { getInquiriesSummary } = await import("./posthog");
-    await expect(getInquiriesSummary("qa-20260917")).resolves.toMatchObject({
+    await expect(getInquiriesSummary("qa-20260917", 30)).resolves.toMatchObject({
       today: 2, yesterday: 1, sevenDayTotal: 7, thirtyDayTotal: 20, conversionRate: 50,
     });
     const queries = fetchMock.mock.calls.map(([, options]) => JSON.parse(options.body).query.query);
     expect(queries[0]).toContain("AND properties.branch_slug = 'qa-20260917'");
     expect(queries[1]).toContain("AND properties.branch_slug = 'qa-20260917'");
+  });
+
+  it("reuses the seven-day conversion queries for the default period", async () => {
+    fetchMock
+      .mockResolvedValueOnce(providerResponse({ results: [[0, 0, 7, 30, null]] }))
+      .mockResolvedValueOnce(providerResponse({ results: [[3]] }))
+      .mockResolvedValueOnce(providerResponse({ results: [[12]] }));
+    const { getInquiriesSummary } = await import("./posthog");
+
+    await expect(getInquiriesSummary()).resolves.toMatchObject({
+      conversionRate: 25,
+      selectedRange: { days: 7, conversionRate: 25 },
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    const queries = fetchMock.mock.calls.map(([, options]) => JSON.parse(options.body).query.query);
+    expect(queries[0]).toContain("countIf(timestamp >= now() - INTERVAL 30 DAY)");
+    expect(queries[1]).toContain("event = 'consultation_submitted'");
+    expect(queries[1]).toContain("INTERVAL 7 DAY");
+    expect(queries[2]).toContain("event = 'pricing_viewed'");
+    expect(queries[2]).toContain("INTERVAL 7 DAY");
+  });
+
+  it("keeps distinct selected-range conversion queries for a 30-day period", async () => {
+    fetchMock
+      .mockResolvedValueOnce(providerResponse({ results: [[1, 0, 7, 30, null]] }))
+      .mockResolvedValueOnce(providerResponse({ results: [[3]] }))
+      .mockResolvedValueOnce(providerResponse({ results: [[30]] }))
+      .mockResolvedValueOnce(providerResponse({ results: [[12]] }))
+      .mockResolvedValueOnce(providerResponse({ results: [[40]] }));
+    const { getInquiriesSummary } = await import("./posthog");
+
+    await expect(getInquiriesSummary(undefined, 30)).resolves.toMatchObject({
+      conversionRate: 25,
+      selectedRange: { days: 30, total: 30, average: 1, conversionRate: 75 },
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(5);
+    const queries = fetchMock.mock.calls.map(([, options]) => JSON.parse(options.body).query.query);
+    expect(queries[1]).toContain("event = 'consultation_submitted'");
+    expect(queries[1]).toContain("INTERVAL 7 DAY");
+    expect(queries[2]).toContain("event = 'consultation_submitted'");
+    expect(queries[2]).toContain("INTERVAL 30 DAY");
+    expect(queries[3]).toContain("event = 'pricing_viewed'");
+    expect(queries[3]).toContain("INTERVAL 7 DAY");
+    expect(queries[4]).toContain("event = 'pricing_viewed'");
+    expect(queries[4]).toContain("INTERVAL 30 DAY");
   });
 
   it("preserves intentional all-branch scope and nullable inquiry dimensions", async () => {
