@@ -85,6 +85,13 @@ describe("eformsign document download_files route", () => {
       { params: Promise.resolve({ documentId: "doc-1" }) },
     );
     expect(response.status).toBe(502);
+    const body = await response.json();
+    expect(body).toMatchObject({
+      code: "UPSTREAM_INVALID_RESPONSE",
+      status: 502,
+      outcome: "NOT_APPLIED",
+    });
+    expect(response.headers.get("Content-Type")).toContain("application/problem+json");
   });
 
   it("rejects page requests beyond the PDF page count", async () => {
@@ -101,8 +108,62 @@ describe("eformsign document download_files route", () => {
     );
 
     expect(response.status).toBe(400);
-    await expect(response.json()).resolves.toEqual({
-      error: "Requested page 7 but PDF only has 2 pages.",
+    const body = await response.json();
+    expect(body).toMatchObject({
+      code: "VALIDATION_FAILED",
+      status: 400,
+      outcome: "NOT_APPLIED",
     });
+    expect(body.errors).toMatchObject([{ pointer: "/page", code: "OUT_OF_RANGE" }]);
+    expect(JSON.stringify(body)).not.toContain("Requested page 7 but PDF only has 2 pages.");
+    expect(response.headers.get("Content-Type")).toContain("application/problem+json");
+    expect(mockServerGet).toHaveBeenCalledTimes(1);
+  });
+
+  it("rejects a non-integer page with a validation problem before touching PDF bytes", async () => {
+    const response = await GET(
+      createRequest("http://localhost/api/eformsign/documents/doc-1/download_files?page=abc"),
+      { params: Promise.resolve({ documentId: "doc-1" }) },
+    );
+
+    expect(response.status).toBe(400);
+    const body = await response.json();
+    expect(body).toMatchObject({ code: "VALIDATION_FAILED", status: 400 });
+    expect(body.errors).toMatchObject([{ pointer: "/page", code: "INVALID_VALUE" }]);
+    expect(mockServerGet).not.toHaveBeenCalled();
+  });
+
+  it("rejects an unauthenticated download with a registered 401 problem body", async () => {
+    const response = await GET(
+      new NextRequest("http://localhost/api/eformsign/documents/doc-1/download_files"),
+      { params: Promise.resolve({ documentId: "doc-1" }) },
+    );
+
+    expect(response.status).toBe(401);
+    await expect(response.json()).resolves.toMatchObject({
+      code: "AUTH_REQUIRED",
+      status: 401,
+    });
+    expect(mockServerGet).not.toHaveBeenCalled();
+  });
+
+  it("sanitizes an upstream download failure instead of reflecting binary details", async () => {
+    mockServerGet.mockRejectedValue({
+      response: { status: 500, data: { message: "pdf store shard-5 exploded" } },
+    });
+    const consoleErrorSpy = jest.spyOn(console, "error").mockImplementation(() => undefined);
+    try {
+      const response = await GET(
+        createRequest("http://localhost/api/eformsign/documents/doc-1/download_files"),
+        { params: Promise.resolve({ documentId: "doc-1" }) },
+      );
+
+      expect(response.status).toBe(500);
+      const body = await response.json();
+      expect(typeof body.error).toBe("string");
+      expect(JSON.stringify(body)).not.toContain("shard-5");
+    } finally {
+      consoleErrorSpy.mockRestore();
+    }
   });
 });

@@ -1,17 +1,14 @@
-import { isAxiosError } from "axios";
 import { NextRequest, NextResponse } from "next/server";
 
 import { serverAPIClient } from "@/lib/api/server";
+import {
+    authRequiredResponse,
+    errorResponse,
+    getAuthHeaders,
+    getAuthToken,
+} from "@/lib/api/route-utils";
 
 type RouteParams = { params: Promise<{ clientId: string }> };
-
-function getAuthToken(request: NextRequest): string | null {
-    return request.cookies.get("auth_token")?.value || null;
-}
-
-function getAuthHeaders(token: string): Record<string, string> {
-    return { Authorization: `Bearer ${token}` };
-}
 
 function jsonResponse(body: unknown, status: number): NextResponse {
     return NextResponse.json(body, {
@@ -23,7 +20,7 @@ function jsonResponse(body: unknown, status: number): NextResponse {
 export async function GET(request: NextRequest, { params }: RouteParams) {
     const token = getAuthToken(request);
     if (!token) {
-        return jsonResponse({ error: "Unauthorized" }, 401);
+        return authRequiredResponse();
     }
 
     const { clientId } = await params;
@@ -35,10 +32,6 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
         );
         return jsonResponse(response.data ?? {}, response.status);
     } catch (error) {
-        if (isAxiosError(error) && error.response) {
-            return jsonResponse(error.response.data ?? { error: "Request failed" }, error.response.status);
-        }
-        console.error("[API] Error fetching service-record editor");
-        return jsonResponse({ error: "Failed to fetch service records" }, 500);
+        return errorResponse(error, "fetch service-record editor", "read");
     }
 }

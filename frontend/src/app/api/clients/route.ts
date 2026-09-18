@@ -1,12 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getClientConflictPayload } from "@babyjamjam/shared";
 import { serverAPIClient } from "@/lib/api/server";
-import { errorResponse } from "@/lib/api/route-utils";
-
-// Helper to get auth token from request
-function getAuthToken(request: NextRequest): string | null {
-    return request.cookies.get("auth_token")?.value || null;
-}
+import {
+    authRequiredResponse,
+    errorResponse,
+    getAuthHeaders,
+    getAuthToken,
+} from "@/lib/api/route-utils";
 
 // A converted problem body must keep its public `code`; the legacy conflict
 // bridge only carries message/clientId, so registered problems fall through
@@ -18,17 +18,12 @@ function hasUpstreamProblemCode(error: unknown): boolean {
     return typeof (payload as { code?: unknown }).code === "string";
 }
 
-// Helper to create authorization headers
-function getAuthHeaders(token: string | null): Record<string, string> {
-    return token ? { Authorization: `Bearer ${token}` } : {};
-}
-
 // GET /api/clients - Get all clients (with optional pagination)
 export async function GET(request: NextRequest) {
     try {
         const token = getAuthToken(request);
         if (!token) {
-            return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+            return authRequiredResponse();
         }
 
         const searchParams = request.nextUrl.searchParams;
@@ -49,11 +44,7 @@ export async function GET(request: NextRequest) {
         });
         return NextResponse.json(response.data);
     } catch (error) {
-        console.error("[API] Error fetching clients:", error);
-        return NextResponse.json(
-            { error: "Failed to fetch clients" },
-            { status: 500 }
-        );
+        return errorResponse(error, "fetch clients", "read");
     }
 }
 
@@ -62,7 +53,7 @@ export async function POST(request: NextRequest) {
     try {
         const token = getAuthToken(request);
         if (!token) {
-            return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+            return authRequiredResponse();
         }
 
         const body = await request.json();
@@ -77,6 +68,6 @@ export async function POST(request: NextRequest) {
                 return NextResponse.json(conflict, { status: 409 });
             }
         }
-        return errorResponse(error, "create client");
+        return errorResponse(error, "create client", "mutation");
     }
 }

@@ -1,10 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { serverAPIClient } from "@/lib/api/server";
 import {
+    authRequiredResponse,
     errorResponse,
+    getAuthHeaders,
+    getAuthToken,
     getUpstreamErrorStatus,
     logUpstreamError,
-    sanitizeUpstreamClientError,
 } from "@/lib/api/route-utils";
 
 type RouteParams = { params: Promise<{ id: string }> };
@@ -27,22 +29,12 @@ function getUpstreamErrorCode(error: unknown): unknown {
     return (data as { code?: unknown }).code;
 }
 
-// Helper to get auth token from request
-function getAuthToken(request: NextRequest): string | null {
-    return request.cookies.get("auth_token")?.value || null;
-}
-
-// Helper to create authorization headers
-function getAuthHeaders(token: string | null): Record<string, string> {
-    return token ? { Authorization: `Bearer ${token}` } : {};
-}
-
 // GET /api/clients/[id] - Get a client by ID
 export async function GET(request: NextRequest, { params }: RouteParams) {
     try {
         const token = getAuthToken(request);
         if (!token) {
-            return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+            return authRequiredResponse();
         }
 
         const { id } = await params;
@@ -51,14 +43,7 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
         });
         return NextResponse.json(response.data);
     } catch (error) {
-        logUpstreamError("fetch client", error);
-        return NextResponse.json(
-            sanitizeUpstreamClientError(
-                getUpstreamErrorData(error),
-                "Failed to fetch client", getUpstreamErrorStatus(error),
-            ),
-            { status: getUpstreamErrorStatus(error) },
-        );
+        return errorResponse(error, "fetch client", "read");
     }
 }
 
@@ -67,7 +52,7 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
     try {
         const token = getAuthToken(request);
         if (!token) {
-            return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+            return authRequiredResponse();
         }
 
         const { id } = await params;
@@ -77,14 +62,7 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
         });
         return NextResponse.json(response.data);
     } catch (error) {
-        logUpstreamError("update client", error);
-        return NextResponse.json(
-            sanitizeUpstreamClientError(
-                getUpstreamErrorData(error),
-                "Failed to update client", getUpstreamErrorStatus(error),
-            ),
-            { status: getUpstreamErrorStatus(error) },
-        );
+        return errorResponse(error, "update client", "mutation");
     }
 }
 
@@ -93,7 +71,7 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
     try {
         const token = getAuthToken(request);
         if (!token) {
-            return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+            return authRequiredResponse();
         }
 
         const { id } = await params;
@@ -115,6 +93,6 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
                 { status: 409 },
             );
         }
-        return errorResponse(error, "delete client");
+        return errorResponse(error, "delete client", "mutation");
     }
 }
