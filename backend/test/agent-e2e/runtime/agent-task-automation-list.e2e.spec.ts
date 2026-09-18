@@ -6,7 +6,7 @@ import { AgentAutomationRecordStoreService, agentAutomationTaskCommitReference, 
 import { createAgentAutomationQuestion, answerAgentAutomationQuestion } from "../../../application/agent/agent-automation-question";
 import { parseTaskAutomationArtifact, TASK_AUTOMATION_ARTIFACT_KEY } from "../../../application/agent/agent-task-automation-artifact";
 import { AGENT_AUTOMATION_JOB_SEAL_PAYLOAD_KEY } from "../../../domain/constants/agent-automation-storage";
-import { MessageTriggerJobEntity } from "../../../domain/entities/message-trigger-job.entity";
+import { MessageTriggerJobEntity, type MessageTriggerJobPayload } from "../../../domain/entities/message-trigger-job.entity";
 import type { INestApplication } from "@nestjs/common";
 import { Prisma, type PrismaClient } from "@prisma/client";
 import { randomUUID } from "node:crypto";
