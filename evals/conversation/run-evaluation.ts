@@ -26,11 +26,30 @@ import { createHarnessValidationAdapter, createNoNetworkMockTransport } from "./
 import { spawnSync } from "node:child_process";
 import { createRequire } from "node:module";
 import { delimiter, resolve } from "node:path";
+import { PRODUCT_DISPOSABLE_E2E_FLAG } from "./product-disposable-e2e";
 
 export interface ConversationEvaluationRunOptions {
     cases?: readonly ConversationScenario[];
     adapter: ConversationRuntimeAdapter;
     transport: ConversationTransport;
+}
+
+export interface ConversationEvaluationCliOptions {
+    product: boolean;
+    productChild: boolean;
+    productDisposableE2e: boolean;
+}
+
+/** Keep the CLI contract explicit so the guarded database lane cannot be
+ * selected accidentally by a bare or malformed product invocation. */
+export function parseConversationEvaluationArgs(args: readonly string[]): ConversationEvaluationCliOptions {
+    const product = args.includes("--product");
+    const productChild = args.includes("--product-child");
+    const productDisposableE2e = args.includes(PRODUCT_DISPOSABLE_E2E_FLAG);
+    if (productDisposableE2e && !product) {
+        throw new Error(`${PRODUCT_DISPOSABLE_E2E_FLAG} requires --product`);
+    }
+    return { product, productChild, productDisposableE2e };
 }
 
 export async function runConversationEvaluation(
@@ -240,7 +259,7 @@ function configureBackendModuleAliases(): void {
     // a narrow transpile-only hook for backend classes loaded by this CLI after
     // the alias resolver is installed; the normal harness remains untouched.
     const tsNodeApi = moduleRequire(moduleRequire.resolve("ts-node", { paths: [backendRoot] })) as {
-        register: (options: { transpileOnly: boolean; compilerOptions: Record<string, unknown> }) => void;
+        register: (options: { transpileOnly: boolean; project: string; compilerOptions: Record<string, unknown> }) => void;
     };
     // ts-node's CLI service is type-checking the entrypoint. Replace only its
     // extension hook before loading backend classes so unresolved project
@@ -248,8 +267,10 @@ function configureBackendModuleAliases(): void {
     delete require.extensions[".ts"];
     tsNodeApi.register({
         transpileOnly: true,
+        project: resolve(backendRoot, "tsconfig.json"),
         compilerOptions: {
             module: "CommonJS",
+            moduleResolution: "Node",
             target: "ES2021",
             experimentalDecorators: true,
             emitDecoratorMetadata: true,
@@ -274,29 +295,43 @@ export async function runDeterministicProduct(): Promise<string> {
     return formatConversationEvaluationReport(input);
 }
 
-function runProductCliChild(): number {
+export async function runDeterministicProductDisposableE2e(): Promise<string> {
+    configureBackendModuleAliases();
+    const { formatProductDisposableE2eReport, runProductDisposableE2eEvaluation } = await import("./product-disposable-e2e");
+    return formatProductDisposableE2eReport(await runProductDisposableE2eEvaluation());
+}
+
+function runProductCliChild(productDisposableE2e: boolean): number {
     const backendRoot = resolve(__dirname, "../../backend");
     const tsNodeCli = require.resolve("ts-node/dist/bin.js", { paths: [backendRoot] });
     const result = spawnSync(process.execPath, [
         tsNodeCli,
         "--transpile-only",
+        "--project",
+        "tsconfig.json",
         "--compiler-options",
-        '{"module":"CommonJS"}',
+        '{"module":"CommonJS","moduleResolution":"Node","target":"ES2021","experimentalDecorators":true,"emitDecoratorMetadata":true,"esModuleInterop":true}',
         __filename,
         "--product",
+        ...(productDisposableE2e ? [PRODUCT_DISPOSABLE_E2E_FLAG] : []),
         "--product-child",
     ], { cwd: backendRoot, env: process.env, stdio: "inherit" });
     return result.status ?? 1;
 }
 
 async function main(): Promise<void> {
-    const args = process.argv.slice(2);
-    const productMode = args.includes("--product");
-    if (productMode && !args.includes("--product-child")) {
-        process.exitCode = runProductCliChild();
+    const options = parseConversationEvaluationArgs(process.argv.slice(2));
+    if (options.product && !options.productChild) {
+        process.exitCode = runProductCliChild(options.productDisposableE2e);
         return;
     }
-    if (productMode) {
+    if (options.product && options.productDisposableE2e) {
+        const report = await runDeterministicProductDisposableE2e();
+        process.stdout.write(`${report}\n`);
+        process.exitCode = report.endsWith("status: passed") ? 0 : 1;
+        return;
+    }
+    if (options.product) {
         const input = await runDeterministicProductEvaluation();
         process.stdout.write(`${formatConversationEvaluationReport(input)}\n`);
         process.exitCode = conversationEvaluationExitCode(input.summary.status);

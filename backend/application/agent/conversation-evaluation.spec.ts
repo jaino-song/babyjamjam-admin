@@ -14,8 +14,13 @@ import {
     classifyConversationCase,
     conversationEvaluationExitCode,
     formatConversationEvaluationReport,
+    parseConversationEvaluationArgs,
     runConversationEvaluation,
 } from "../../../evals/conversation/run-evaluation";
+import {
+    assertProductDisposableE2eGuard,
+    formatProductDisposableE2eReport,
+} from "../../../evals/conversation/product-disposable-e2e";
 import { createHarnessValidationAdapter, createNoNetworkMockTransport } from "../../../evals/conversation/mock-transport";
 
 async function harnessObservation(caseIndex: number) {
@@ -77,6 +82,50 @@ describe("deterministic multi-turn conversation evaluation foundation", () => {
         expect(conversationEvaluationExitCode("passed")).toBe(0);
         expect(conversationEvaluationExitCode("not_evaluated")).toBe(0);
         expect(conversationEvaluationExitCode("failed")).toBe(1);
+    });
+
+    it("keeps the default product CLI separate from the explicit disposable AppModule lane", () => {
+        expect(parseConversationEvaluationArgs([])).toEqual({ product: false, productChild: false, productDisposableE2e: false });
+        expect(parseConversationEvaluationArgs(["--product"])).toEqual({ product: true, productChild: false, productDisposableE2e: false });
+        expect(parseConversationEvaluationArgs(["--product", "--product-child"])).toEqual({ product: true, productChild: true, productDisposableE2e: false });
+        expect(parseConversationEvaluationArgs(["--product", "--product-disposable-e2e", "--product-child"])).toEqual({ product: true, productChild: true, productDisposableE2e: true });
+        expect(() => parseConversationEvaluationArgs(["--product-disposable-e2e"])).toThrow("requires --product");
+    });
+
+    it("fails closed before AppModule import unless all disposable guards match", () => {
+        const approved = {
+            AGENT_E2E: "1",
+            E2E_VENDOR_STUBS: "1",
+            SCHEDULER_LEASE_MODE: "off",
+            DATABASE_URL: "postgresql://bjj_test@127.0.0.1:55433/bjj_conversation_test",
+            DIRECT_URL: "postgresql://bjj_test@127.0.0.1:55433/bjj_conversation_test",
+        };
+        expect(assertProductDisposableE2eGuard(approved)).toEqual({
+            database: "bjj_conversation_test",
+            vendorStubs: true,
+            schedulerLease: "off",
+        });
+        expect(() => assertProductDisposableE2eGuard({ ...approved, E2E_VENDOR_STUBS: "0" })).toThrow("E2E_VENDOR_STUBS=1");
+        expect(() => assertProductDisposableE2eGuard({ ...approved, DATABASE_URL: "postgresql://bjj_test@127.0.0.1:5432/production" })).toThrow("unsafe DATABASE_URL");
+        expect(() => assertProductDisposableE2eGuard({ ...approved, DIRECT_URL: "postgresql://bjj_test@127.0.0.1:55433/other" })).toThrow("unsafe DIRECT_URL");
+    });
+
+    it("reports guarded evidence with aggregate fields only", () => {
+        const report = formatProductDisposableE2eReport({
+            status: "blocked",
+            guard: { database: "bjj_conversation_test", vendorStubs: true, schedulerLease: "off" },
+            customer: { create: "blocked", update: "blocked", rowsObserved: 0 },
+            action: { proposed: 0, approved: 0, terminal: 0, succeeded: 0 },
+            terminalAuthority: { records: 0, positiveOneJob: false, denyNoSendZeroSend: true },
+            coverage: { intents: 0, jobs: 0, messageLogs: 0 },
+            intent: { positive: "not_evaluated", deny: "not_evaluated", noSend: "zero" },
+            providerCalls: 0,
+            failure: "guarded_runtime_unavailable",
+        });
+        expect(report).toContain("Guarded disposable product AppModule evaluation");
+        expect(report).toContain("provider calls: 0");
+        expect(report).not.toContain("01000000041");
+        expect(report).not.toContain("9a000000-0000-4000-8000-000000000041");
     });
 
     it("does not let success prose pass when current state and structured evidence are absent", async () => {
