@@ -390,3 +390,36 @@ The product adapter command was rerun with the unchanged fixture set. It still r
 The safe frontend mocked Playwright run completed **1 passed / 1 skipped** under synthetic auth, with the live backend stream case skipped. This is not authenticated browser proof. Mobile Playwright could not begin a test because the local backend auto-login endpoint returned `429 AUTH_RATE_LIMITED`; no mobile case, external provider or sender ran. The pre-existing untracked `mobile/AGENTS.md` was preserved.
 
 These results do not close Phase7, Phase8 or Phase9. Approved synthetic PostgreSQL/AppModule execution, a successful authenticated mobile/browser run, cumulative independent review, paid Google/OpenAI comparison, merge/deployment and operational activation remain open.
+
+### Phase7, Phase8 and Phase9 cumulative verification (2026-09-18)
+
+The task automation carrier correction is now integrated through the employee, service-record and catch-up authority paths. The final guarded AppModule run used a disposable PostgreSQL instance and vendor stubs only: **14 suites and 192 tests passed, exit 0**. The carrier is preserved when a persisted message-trigger job is reconstituted, and heterogeneous catch-up predecessor chains keep the task reference bound through the authority check. The correction commits are `d717e73ab4f928c7bd14bb1ac2924c77ecfb4a0e`, `4c0c4093fe2b69804e0a4d54bfca81c5390682a2`, `8cd9d98568ef04bb371c76eaad83e1c4fdf7a6ad`, `a76bad1ec2d570c95622f48eb93ed46451fc3112` and `bc82ad06cfb4997674604c149d30816f69f13fd7`.
+
+Integrated deterministic checks at `bc82ad06cfb4997674604c149d30816f69f13fd7`:
+
+- Full backend Jest: **392 suites passed, 1 skipped; 5,552 tests passed, 44 skipped; 1 snapshot passed; exit 0**, run with an 8 GB Node heap. The earlier default 4 GB process was killed by the host at roughly 4 GB; this was an infrastructure limit, not a test assertion failure.
+- Backend type-check and Nest build: passed.
+- Frontend and mobile type-check: passed.
+- Frontend and mobile lint: exited 0 with existing UI-architecture and unused-code warnings only.
+- Frontend production build: passed. The build logs existing cookie-dynamic and unauthenticated test-page warnings but exits successfully.
+- Mobile production build: passed with a one-off loopback `NEXT_PUBLIC_API_BASE_URL` process value; no environment file changed. The build logs the existing middleware deprecation and unauthenticated test-page warnings.
+- Capability manifest/drift check: passed (**47 capabilities**, provider and desktop/mobile renderer digests).
+- Deterministic conversation harness: **48/48 passed** (development 32, holdout 16), network/transport/safety errors 0; fixture digest `d983a554e420507006c4859a45062247a57ac5fe13df7e4d0262c73381b791ba`, assertion digest `e86ecc5a491a2c6a97cf67288be4763208d857553773ce837d9a6bf8eb5b7ea9`.
+- Production dependency audit: no known vulnerabilities. Changed-diff secret and dangerous-pattern scans were clean; `git diff --check` passed.
+
+Authenticated synthetic browser evidence:
+
+- Mobile real-backend Playwright: **1 passed, exit 0**, using the disposable PostgreSQL database on loopback port 55433, the integration backend on loopback port 3013, synthetic auth users and vendor stubs. No sender or paid provider call was made.
+- Frontend Release A Playwright: **1 passed, 1 intentionally skipped**, including the real Release A backend stream case against the same synthetic backend. The skipped case is the existing mocked-only branch disabled by `RUN_AGENT_REAL_E2E=1`.
+- A prior browser attempt against the old `production-qa` backend was rejected because that database did not contain the task storage. It is recorded as an environment mismatch and is not counted as product evidence.
+
+Phase9 release materials are recorded in [`2026-09-18-bjj-conversation-v1-release-readiness.md`](./2026-09-18-bjj-conversation-v1-release-readiness.md). The document lists the reproducible checks, staged rollout order, rollback switch and evidence boundaries.
+
+Remaining completion boundaries after this run:
+
+- Phase7 is **not closed** at plan level. The guarded matrix is green, but cumulative consent/provider coverage and a final cumulative independent SOL review still need to be recorded.
+- Phase8 browser coverage now includes authenticated desktop and mobile stream paths. Full cross-screen keyboard/IME/focus/scroll acceptance and the final cumulative SOL review remain open.
+- Phase9 deterministic integration evidence and release/rollback material are complete for this local branch. Merge, CI, deployment, production database changes and operational activation are not evidenced here.
+- Actual Google/OpenAI conversation-quality evaluation is still **not complete**. No paid provider request, repeated comparison, human review, or cost/latency measurement was performed; the 48-case harness is a deterministic functional guard only.
+
+The three completion flags remain separate: implementation and deterministic verification are substantially evidenced for the integrated slices; actual conversation quality validation is pending; operational application is pending.
