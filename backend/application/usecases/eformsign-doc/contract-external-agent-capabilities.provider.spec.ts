@@ -165,6 +165,18 @@ describe("ContractExternalAgentCapabilitiesProvider approval-bound dispatch", ()
         expect(serializedInspection).not.toContain("900101");
     });
 
+    it("fails inspection as a certain failure when the contract client left the branch", async () => {
+        const { provider, createAndSend } = setup(null as never);
+        const capability = provider.getCapabilities()[0]!;
+
+        await expect(capability.inspect!(context, {
+            clientId: 7,
+            templateId: "template-1",
+        })).rejects.toBeInstanceOf(AgentActionCertainFailureError);
+
+        expect(createAndSend.execute).not.toHaveBeenCalled();
+    });
+
     it("refuses dispatch when the locked target changed after preliminary revalidation", async () => {
         const original = client();
         const changed = client({ name: "다른 고객" });
