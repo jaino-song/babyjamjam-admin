@@ -192,8 +192,8 @@ CLIENT-001은 확인한 중복 번호 시나리오 하나의 결과이며 모든
 | `/reset-password` | 미실행 |
 | `/verify-email` | 미실행 |
 | `/admin/agent` | 미실행 |
-| `/admin/feedback/[id]` | 미실행 |
-| `/admin` | 미실행 |
+| `/admin/feedback/[id]` | 미실행; 모바일 결과와 별도 |
+| `/admin` | dev QA PC 빈 통계·목록·상세 미선택 안내 시각 확인; 유효 피드백 상세 별도 |
 | `/all` | 미실행 |
 | `/chat` | 미실행 |
 | `/clients/filtered` | 미실행 |
@@ -207,9 +207,9 @@ CLIENT-001은 확인한 중복 번호 시나리오 하나의 결과이며 모든
 | `/messages` | MESSAGE-001~004, AUTOMATION-001 |
 | `/messages/system-templates/[templateKey]` | 미실행 |
 | `/messages/system-templates` | 미실행 |
-| `/messages/templates/[id]/edit` | 미실행 |
-| `/messages/templates/new` | 모바일: 데스크톱에서 생성하라는 안내·목록 복귀 확인. PC 별도 생성 폼의 실제 생성 및 공백 검증은 쓰기 검수 기록 참조 |
-| `/messages/templates` | 미실행 |
+| `/messages/templates/[id]/edit` | dev QA 기존 QA 양식 로드·공백 검증·취소·원본 유지 확인 |
+| `/messages/templates/new` | dev QA 지점 양식 실제 생성·본문 미리보기, 공백 이름/본문 오류·독립 복구·취소 확인 |
+| `/messages/templates` | dev QA 양식 생성·수정·재조회·공백 이름/본문 차단 확인; 모바일 목록과 대조 |
 | `/prices` | PRICE-001~004 |
 | `/select-branch` | BRANCH-002 |
 | `/settings/general` | 미실행 |
@@ -236,23 +236,23 @@ CLIENT-001은 확인한 중복 번호 시나리오 하나의 결과이며 모든
 | `/receipt/[token]` | dev QA 고의 invalid token 오류/문의 안내 확인; 유효 토큰 본인확인/다운로드 미완료 |
 | `/service-record/[token]` | dev QA 고의 invalid token 오류/문의 안내 확인; 실제 제출/서명 별도 |
 | `/callback` | 미실행 |
-| `/forgot-password` | 미실행 |
+| `/forgot-password` | dev QA390px 빈/잘못된 이메일 차단 확인; 실제 이메일 발송 미실행 |
 | `/kakao/onboarding` | 미실행 |
 | `/login` | 미실행 |
 | `/onboarding` | 미실행 |
 | `/register` | 미실행 |
-| `/reset-password` | 미실행 |
-| `/verify-email` | 미실행 |
-| `/admin/feedback/[id]` | 미실행 |
-| `/admin/feedback` | 미실행 |
-| `/admin` | 미실행 |
+| `/reset-password` | dev QA390px 토큰 없음 안내·재요청 경로 확인; 유효 토큰/비밀번호 변경 미실행 |
+| `/verify-email` | dev QA390px 토큰 없음·빈/잘못된 이메일 차단 확인; 유효 인증/재발송 미실행 |
+| `/admin/feedback/[id]` | dev QA 없는 UUID 오류 안내·목록 복귀 확인; QA 구형 채팅 세션0건으로 유효 상세 미검증 |
+| `/admin/feedback` | dev QA390px 빈 통계·긍정/부정 필터·검색 빈 결과 확인; 검색 접근성·닫기 실행 오류 수정 후 실제 화면/콘솔 재검증 완료; 유효 상세 별도 |
+| `/admin` | dev QA /admin/feedback 리다이렉트 확인 |
 | `/all` | MOBILE-004 |
 | `/calls` | dev QA 합성 통화1건: 대기·기록·유형/이름 검색·상세/전문·390px·폐기 후 대기0/기록유지 확인. 실제 수집·AI 추출·고객 확정은 미검증 |
 | `/chat` | dev QA 데이터 작업 없는 연결 확인 응답·새 대화 초기화 확인; 업무 도구 실행은 미검증 |
 | `/clients/new` | dev QA 재검수: 기존 QA 고객 번호 중복 안내·차단 정상, 고객 미등록 QA 번호는 등록 가능/다음 활성. 초안3단계·자부담5일/815000·9/21→9/29 계산·이전 값 유지·닫기 확인. 최종 신규 저장은 별도 |
 | `/clients` | MOBILE-001 초기 표시 확인 |
 | `/consultations` | dev QA390px 상담1건 생성 후 상세2탭·읽음 처리·필터·이름/연락처/주소 검색·새로고침 유지 확인; PC 동일 기록 대조 |
-| `/contracts/creation` | 미실행 |
+| `/contracts/creation` | dev QA /contracts/new 리다이렉트·빈 초안 닫기 확인 |
 | `/contracts/new` | dev QA 사전 입력 4단계·이전/닫기 및 날짜 오류 검수; 실제 발급 미완료 — 쓰기 검수 기록 참조 |
 | `/contracts` | dev QA 실제 생성 문서 목록·서명 대기 필터·상세 3탭·PDF 표시·복귀 확인; 본문 연락처 오류, 모바일 다운로드 미확인 |
 | `/dashboard/analytics` | dev QA 시작 예정 집계 수정 후 1명 확인; 상세 차트는 준비 중 안내 |
@@ -267,22 +267,22 @@ CLIENT-001은 확인한 중복 번호 시나리오 하나의 결과이며 모든
 | `/messages/history` | MESSAGE-005 앱 성공 기록·본문·재조회 |
 | `/messages/new` | MOBILE-003, MESSAGE-005 |
 | `/messages` | 미실행 |
-| `/messages/scheduled` | 미실행 |
-| `/messages/sender-approval` | 미실행 |
+| `/messages/scheduled` | dev QA /messages/history 이동·예정0 빈 상태 확인 |
+| `/messages/sender-approval` | dev QA /messages/settings 이동 확인; 신규 발신번호 신청 아님 |
 | `/messages/settings` | dev QA390px 7개 설정·상세·복귀, 중복전송 확인 끄기/재조회/켜기 원복 확인. 자동 전송 안내 문구 개선 확인; 스케줄러 실행 검수와 별개 |
 | `/messages/system-templates/[templateKey]` | dev QA 기본9개 본문·변수·상세 닫기, INFO390px 전체폭 CTA 수정 확인 |
 | `/messages/system-templates` | 미실행 |
-| `/messages/templates/[id]/edit` | 미실행 |
+| `/messages/templates/[id]/edit` | dev QA 보기/발송 전용·PC 편집 안내·정확한 본문·발송 초안 연결·복사 확인; 추가 전송 없음 |
 | `/messages/templates/new` | 모바일: 데스크톱에서 생성하라는 안내·목록 복귀 확인. PC 별도 생성 폼의 실제 생성 및 공백 검증은 쓰기 검수 기록 참조 |
 | `/messages/templates` | dev QA390px 기본9/지점1 목록·지점 필터·상세/복귀, PC 생성·수정 결과 반영 확인. QA 양식 실제 문자1건 공급자 발송완료 대조 |
 | `/notification` | dev QA390px 비활성 채널과 이유 표시 확인; 전체 디바이스 테스트 발송 제외 |
 | `/notifications` | dev QA /notification으로 정상 이동 확인 |
 | `/` | 미실행 |
 | `/prices` | dev QA390px 연도·유형·빈 결과·필터 복원·A가1형 금액 확인; 업데이트/공식 가격 대조 미실행 |
-| `/privacy` | 미실행 |
+| `/privacy` | dev QA390px 정적 안내 표시 확인; 비로그인 접근·전체 문서 연결 결함 검토 중 |
 | `/select-branch` | 미실행 |
-| `/settings` | 미실행 |
-| `/terms` | 미실행 |
+| `/settings` | dev QA /notification 리다이렉트 확인 |
+| `/terms` | dev QA390px 정적 안내 표시 확인; 비로그인 접근·전체 문서 연결 결함 검토 중 |
 | `/test` | 미실행 |
 
 ### MESSAGE-001 실행 및 증거 경계
