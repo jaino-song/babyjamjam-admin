@@ -396,7 +396,7 @@ describeAgentE2E("real automation.list with two eligible clients and missing def
             } });
             const job = MessageTriggerJobEntity.reconstitute(storedJob.id, branchId, rule.id, "pending", recipe.scheduledFor,
                 null, null, null, createdId, null, recipe.recipientType, recipe.recipientPhone!, recipe.templateKey,
-                recipe.dedupeKey, recipe.payload, storedJob.createdAt, storedJob.updatedAt);
+                recipe.dedupeKey, storedJob.payload as unknown as MessageTriggerJobPayload, storedJob.createdAt, storedJob.updatedAt);
             const persistCandidate = () => tx.message_trigger_job.update({ where: { id: job.id }, data: {
                 scheduledFor: job.scheduledFor, dedupeKey: job.dedupeKey, payload: job.payload as unknown as Prisma.InputJsonValue,
             } });
