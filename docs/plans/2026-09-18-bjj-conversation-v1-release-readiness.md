@@ -1,9 +1,24 @@
 # BabyJamJam 대화형 업무 AI v1.0 릴리스 준비 기록
 
 작성일: 2026-09-18  
-통합 worktree: `/Users/jaino/Development/babyjamjam-admin/bjj-conversation-v1`  
-통합 브랜치: `codex/bjj-conversation-v1`  
-검증 기준 커밋: `1d512cd3b1281cc28b42699dc3dd7394f591ee49`
+현재 검증 worktree: `/Users/jaino/Development/babyjamjam-admin/bjj-conversation-final`
+현재 검증 브랜치: `codex/unit/bjj-conversation-final`
+현재 기준 커밋: `6fe3a27c20f8b5babec14b7374070178e068bc95` (base `origin/dev` `089cb133741f67752d084c1fba0766c5ad6a70f4`)
+
+## Latest release-readiness attestation — 2026-09-18
+
+The current branch has completed implementation and deterministic validation for the Phase 7 continuation and the verified desktop/mobile browser paths. Historical sections below retain the earlier integration records.
+
+- Phase 7 focused regression: **3 suites / 66 tests passed**.
+- Guarded disposable PostgreSQL/AppModule: **16 suites / 198 tests passed**; no real provider, SMS or production database was used.
+- Full backend: **401 suites passed, 1 skipped; 5,786 tests passed, 44 skipped; 1 snapshot passed**. Type-check, Nest build, capability manifest (**47**), frontend/mobile/shared type-checks and builds passed.
+- Deterministic conversation harness: **48/48 passed**, zero network/transport/safety errors, with fixture digest `24ab8fb9498ba7472972c6d3a66b2d19274bc47787f96e5f34e9d8a1abc97d4a` and assertion digest `8c6070f04f167f22e211d113d0fe6e64b2af8491057f861609f8d5d8c2042af4`.
+- Authenticated synthetic browser: desktop shell and final-backend stream each **1 passed**; mobile final-backend proxy/drawer/reload/session-restore **1 passed**. Full IME/focus/scroll acceptance is not claimed.
+- Provider evaluation: both-provider dry-run produced no transport; keyless live execution refused before transport with `MISSING_API_KEY`. Paid Google/OpenAI quality evaluation and human review remain open.
+- Current independent SOL FINAL: **SHIP / HIGH** with no blocking findings.
+- No real SMS, production DB change, merge to an environment branch, deployment or operational activation was performed.
+
+The release state is therefore: implementation/deterministic verification **complete**; actual conversation quality **pending**; operational application **pending**.
 
 ## Phase 7 deterministic close — 2026-09-18
 

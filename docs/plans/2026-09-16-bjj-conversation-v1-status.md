@@ -1,7 +1,23 @@
 # BabyJamJam conversational AI implementation status
 
-Updated: 2026-09-18. Baseline: `4198fb991a59d63f14f529f54b1d66c1587ca76b`.
-Integration: `codex/bjj-conversation-v1`. Local implementation, deterministic verification, model quality and operational activation are separate results.
+Updated: 2026-09-18. Baseline: `origin/dev` at `089cb133741f67752d084c1fba0766c5ad6a70f4`.
+Current verification: `/Users/jaino/Development/babyjamjam-admin/bjj-conversation-final` on `codex/unit/bjj-conversation-final`, HEAD `6fe3a27c20f8b5babec14b7374070178e068bc95`. Local implementation, deterministic verification, model quality and operational activation are separate results.
+
+## Latest current-branch verification — 2026-09-18
+
+This section is the current attestation for the continuation branch. Earlier sections preserve historical phase records and must not be read as the latest counts.
+
+- Phase 7 focused regression: **3 suites / 66 tests passed**.
+- Guarded disposable PostgreSQL/AppModule matrix: **16 suites / 198 tests passed**. The run used a loopback disposable database, `AGENT_E2E=1`, `E2E_VENDOR_STUBS=1`, schedulers disabled, and no real provider or SMS transport.
+- Full backend Jest: **401 suites passed, 1 skipped; 5,786 tests passed, 44 skipped; 1 snapshot passed**.
+- Backend type-check, Nest build, capability manifest/drift (**47 capabilities**), frontend/mobile/shared type-checks, frontend/mobile production builds, dependency audit and changed-diff secret scan passed. The current diff adds no schema, dependency or environment changes.
+- Deterministic conversation harness: **48/48 passed** (development 32, holdout 16), with zero network calls, transport calls or safety errors. Fixture digest: `24ab8fb9498ba7472972c6d3a66b2d19274bc47787f96e5f34e9d8a1abc97d4a`; assertion digest: `8c6070f04f167f22e211d113d0fe6e64b2af8491057f861609f8d5d8c2042af4`.
+- Authenticated synthetic browser paths: desktop shell selection/stream/session controls **1 passed**; desktop final-backend stream **1 passed**; mobile final-backend proxy, drawer, reload and server-session restore **1 passed**. The full IME/focus/scroll matrix is not claimed complete.
+- Google/OpenAI staging runner: both-provider dry-run completed without transport; the live run refused before transport with `MISSING_API_KEY`. Paid model quality and human review therefore remain open.
+- No real SMS, production database mutation, environment-branch merge, deployment or operational activation has been performed on this branch.
+- Independent cumulative SOL FINAL at this exact HEAD: **SHIP / HIGH**, with no blocking findings.
+
+Current completion flags: implementation and deterministic verification **complete**; actual conversation quality **pending paid provider keys and human review**; operational application **pending deployment and activation gates**.
 
 ## Phase 7 deterministic close — 2026-09-18
 
