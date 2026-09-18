@@ -1,4 +1,5 @@
 import { Inject, Injectable, BadRequestException } from "@nestjs/common";
+import { problemBody } from "application/utils/problem-bodies";
 import { MessageTemplateEntity, TemplateVariable } from "domain/entities/message-template.entity";
 import { IMessageTemplateRepository, MESSAGE_TEMPLATE_REPOSITORY } from "domain/repositories/message-template.repository.interface";
 import type { Prisma } from "@prisma/client";
@@ -25,7 +26,12 @@ export class CreateMessageTemplateUsecase {
 
         const validation = template.validateVariables();
         if (!validation.valid) {
-            throw new BadRequestException(validation.errors.join(", "));
+            throw new BadRequestException(problemBody("VALIDATION_FAILED", {
+                pointer: "/variables",
+                code: "INVALID_VALUE",
+                detail: validation.errors.join(", "),
+                location: "body",
+            }));
         }
 
         return this.messageTemplateRepository.create(branchid, template, transaction);

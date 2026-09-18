@@ -101,7 +101,7 @@ export class ContractExternalAgentCapabilitiesProvider implements AgentCapabilit
                 inspect: async (context, rawInput) => {
                     const input = ContractInputSchema.parse(rawInput);
                     const client = await this.findClientById.execute(context.principal.branchId, input.clientId);
-                    if (!client) throw new Error("Contract client was not found in the current branch");
+                    if (!client) throw new AgentActionCertainFailureError("Contract client was not found in the current branch");
                     const template = await this.resolveContractTemplate(context.principal.branchId, input.templateId);
                     const effectiveDate = new Date();
                     return {

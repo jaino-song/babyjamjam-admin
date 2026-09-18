@@ -1,4 +1,5 @@
 import { Inject, Injectable, BadRequestException, ConflictException, NotFoundException } from "@nestjs/common";
+import { codeOnlyProblemBody, problemBody } from "application/utils/problem-bodies";
 import { MessageTemplateEntity, TemplateVariable } from "domain/entities/message-template.entity";
 import { IMessageTemplateRepository, MESSAGE_TEMPLATE_REPOSITORY } from "domain/repositories/message-template.repository.interface";
 
@@ -22,14 +23,19 @@ export class UpdateMessageTemplateUsecase {
     ): Promise<MessageTemplateEntity> {
         const existing = await this.messageTemplateRepository.findById(branchid, id);
         if (!existing) {
-            throw new NotFoundException(`Template with id ${id} not found`);
+            throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
         }
 
         existing.update(params);
 
         const validation = existing.validateVariables();
         if (!validation.valid) {
-            throw new BadRequestException(validation.errors.join(", "));
+            throw new BadRequestException(problemBody("VALIDATION_FAILED", {
+                pointer: "/variables",
+                code: "INVALID_VALUE",
+                detail: validation.errors.join(", "),
+                location: "body",
+            }));
         }
 
         return this.messageTemplateRepository.update(branchid, existing);
@@ -64,7 +70,9 @@ export class UpdateMessageTemplateUsecase {
             || Number.isNaN(new Date(updatedAtValue).getTime())
             || new Date(updatedAtValue).getTime() !== expectedUpdatedAt.getTime()
         ) {
-            throw new ConflictException("Message template approval snapshot is missing or stale");
+            // A snapshot that no longer matches the target is an approval
+            // race: the latest state wins, never a blind overwrite.
+            throw new ConflictException(codeOnlyProblemBody("SERVICE_RECORD_WRITE_TARGET_CHANGED"));
         }
 
         const existing = MessageTemplateEntity.reconstitute(
@@ -79,7 +87,12 @@ export class UpdateMessageTemplateUsecase {
 
         const validation = existing.validateVariables();
         if (!validation.valid) {
-            throw new BadRequestException(validation.errors.join(", "));
+            throw new BadRequestException(problemBody("VALIDATION_FAILED", {
+                pointer: "/variables",
+                code: "INVALID_VALUE",
+                detail: validation.errors.join(", "),
+                location: "body",
+            }));
         }
 
         const updated = await this.messageTemplateRepository.updateIfVersionMatches(
@@ -89,7 +102,7 @@ export class UpdateMessageTemplateUsecase {
             existing,
         );
         if (!updated) {
-            throw new ConflictException("Message template changed after approval");
+            throw new ConflictException(codeOnlyProblemBody("SERVICE_RECORD_WRITE_TARGET_CHANGED"));
         }
         return updated;
     }

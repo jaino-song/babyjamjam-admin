@@ -19,6 +19,7 @@ import {
     assertAllowedServiceStatus,
     assertPhoneAvailable,
     assertClientPhoneInput,
+    clientProblemBody,
     deriveClientDuration,
     mergeAndValidateClientServicePeriod,
     parseClientDate,
@@ -280,10 +281,20 @@ async function validateClientWrite(
         const hasDateUpdate = existing !== null
             && (updates.startDate !== undefined || updates.endDate !== undefined);
         if (hasDateUpdate && derivedDuration !== null && updates.duration === null) {
-            throw new BadRequestException(clientDurationOutOfRangeMessage(derivedDuration));
+            throw new BadRequestException(clientProblemBody("CLIENT_DURATION_OUT_OF_RANGE", {
+                pointer: "/duration",
+                code: "OUT_OF_RANGE",
+                detail: clientDurationOutOfRangeMessage(derivedDuration),
+                location: "body",
+            }));
         }
         if (hasDateUpdate && derivedDuration === null && updates.duration !== undefined && updates.duration !== null) {
-            throw new BadRequestException(CLIENT_DURATION_NEEDS_SERVICE_PERIOD_MESSAGE);
+            throw new BadRequestException(clientProblemBody("CLIENT_DURATION_NEEDS_SERVICE_PERIOD", {
+                pointer: "/duration",
+                code: "INVALID_VALUE",
+                detail: CLIENT_DURATION_NEEDS_SERVICE_PERIOD_MESSAGE,
+                location: "body",
+            }));
         }
         return derivedDuration;
     } catch (error) {
