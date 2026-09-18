@@ -3,7 +3,7 @@
 작성일: 2026-09-18  
 통합 worktree: `/Users/jaino/Development/babyjamjam-admin/bjj-conversation-v1`  
 통합 브랜치: `codex/bjj-conversation-v1`  
-검증 기준 커밋: `defc787667df8a5db624fdd5e4a3df4b5ad3b7ef`
+검증 기준 커밋: `9da30d27ab07dff3fd62e50861031e85a6adc1ea`
 
 ## 현재 판정
 
@@ -14,6 +14,7 @@
 - Backend: 395 suites passed, 1 skipped; 5,691 tests passed, 44 skipped; 1 snapshot passed.
 - Guarded PostgreSQL/AppModule agent E2E: latest task-focused run 11 suites, 158 tests passed; cumulative carrier run 14 suites, 192 tests passed.
 - Deterministic conversation harness: 48 of 48 passed, zero network/transport/safety errors.
+- Fixture remediation: flagged target-choice identifiers were replaced with low-entropy synthetic identifiers; focused conversation evaluator/runtime tests passed **2 suites, 25 tests**. Updated harness digests are fixture `d086f8cd41611d2242d84977d13b28788b5791fee980f3c935e563124e935c14` and assertion `832898bdd58a2eae06b826821688f72b15b03f6ecf167e94308d8d5ec59bf91d`.
 - Capability manifest and drift: 47 capabilities passed.
 - Frontend and mobile type-check: passed.
 - Frontend and mobile lint: exit 0, existing warnings only.
@@ -21,7 +22,7 @@
 - Mobile production build: passed with a loopback `NEXT_PUBLIC_API_BASE_URL` process value.
 - Authenticated synthetic browser: desktop Release A 1 passed and 1 intentional skip; mobile real-backend 1 passed.
 - Production dependency audit and changed-diff secret scan: clean.
-- Remote PR checks: substantive CI and advisory browser checks passed; GitGuardian remains the only failing required check. Vercel entries are preview checks, and deployment jobs were skipped by workflow conditions.
+- Remote PR checks: substantive CI and advisory browser checks passed; GitGuardian remains the only failing required check. It reports eight historical generic high-entropy findings from the original synthetic fixture commit `8ddcb4d80a7d93168f18c0346f1a85450d5e79de`; the current fixture values were sanitized, but the historical findings still block the check. Vercel entries are preview checks, and deployment jobs were skipped by workflow conditions.
 
 ## Release gates
 
