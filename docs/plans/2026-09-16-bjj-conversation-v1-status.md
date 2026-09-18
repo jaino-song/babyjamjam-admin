@@ -3,6 +3,17 @@
 Updated: 2026-09-18. Baseline: `origin/dev` at `089cb133741f67752d084c1fba0766c5ad6a70f4`.
 Current verification: `/Users/jaino/Development/babyjamjam-admin/bjj-conversation-final` on `codex/unit/bjj-conversation-final`, HEAD `6fe3a27c20f8b5babec14b7374070178e068bc95`. Local implementation, deterministic verification, model quality and operational activation are separate results.
 
+## Verification refresh — Phase 8 authenticated browser contract — 2026-09-18
+
+The continuation worktree is `/Users/jaino/Development/babyjamjam-admin/bjj-conversation-complete` on `feature/bjj-conversation-complete`. This refresh uses synthetic authenticated storage and route stubs; it does not claim a live authenticated backend, provider, or SMS result.
+
+- Desktop Release A browser contract: **3 passed, 1 intentional skip** (the skipped case is the real-backend path). The passed cases cover shell/session controls, IME Enter isolation with sidebar focus restoration, and a task revision conflict that returns the latest server snapshot.
+- Mobile browser contract: **1 passed, 1 intentional skip**. The passed case covers the mobile shell, IME Enter isolation, drawer `aria-modal`/inert/focus restoration, task revision conflict, latest-draft refresh, and scroll-position retention. The skipped case is the real-backend path because `RUN_AGENT_REAL_E2E` was not enabled.
+- Mobile bottom-navigation regression: **9 tests passed**. The dedicated `/chat` agent shell now owns the full mobile viewport by excluding the shared V3 header and bottom navigation on that route; this prevents overlay controls from intercepting the shell's drawer interaction.
+- Frontend and mobile type-checks passed, and `git diff --check` passed. Browser runs used `RUN_AGENT_E2E=1`, `NEXT_PUBLIC_AGENT_SHELL_ENABLED=1`, loopback ports, synthetic auth, and mocked task/chat routes. The run made no external provider or SMS call.
+- Official Chrome visual acceptance was inspected in the authenticated local QA session on `/chat` without submitting a task or changing business data. At **375×812 CSS px**, the shell filled the viewport and exposed the menu, back, branch, prompt, input, and send controls; the root computed style was `display: grid`, `font-size: 16px`, `line-height: 24px`. At **1280×900 CSS px**, the sidebar rendered as a 256px column and the root grid resolved to `255.998px 1024px`; the screenshot and DOM snapshot matched the expected shell state. The QA tab and viewport were restored afterward.
+- This closes the deterministic Phase 8 browser-contract slice only. Official Chrome QA against a live authenticated backend, Phase 9 cumulative integration/release QA, paid Google/OpenAI quality evaluation, human review, merge, deployment, production database changes, and operational activation remain open.
+
 ## Verification refresh — Phase 7 integration item 1 — 2026-09-18
 
 The dedicated task worktree `/Users/jaino/Development/babyjamjam-admin/bjj-conversation-complete` is based on `origin/dev` at `55777f1facf7aafb3cbe19b322b6205a4c4860df`. The Phase 7 PostgreSQL/AppModule integration check was refreshed at commits `fad87a92b` and `5c423b6d6`.

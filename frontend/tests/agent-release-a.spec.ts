@@ -1,5 +1,5 @@
 import { test, expect, type Page, type Route } from "@playwright/test";
-import type { AgentCapabilityMeta } from "@babyjamjam/shared/agent";
+import { AgentTaskSchema, type AgentCapabilityMeta, type AgentTask } from "@babyjamjam/shared/agent";
 
 const shellEnabled = ["1", "true"].includes((process.env.NEXT_PUBLIC_AGENT_SHELL_ENABLED ?? "").toLowerCase());
 const runAgentE2E = process.env.RUN_AGENT_E2E === "1";
@@ -25,10 +25,48 @@ const releaseACapability = {
     sideEffect: false,
 } satisfies AgentCapabilityMeta;
 
-async function setupRoutes(page: Page) {
+const TASK_IDS = {
+    task: "11111111-1111-4111-8111-111111111111",
+    session: "22222222-2222-4222-8222-222222222222",
+    taskSnapshot: "33333333-3333-4333-8333-333333333333",
+    streamSnapshot: "44444444-4444-4444-8444-444444444444",
+};
+
+function makeTask(revision = 1, name = "홍길동"): AgentTask {
+    return AgentTaskSchema.parse({
+        schemaVersion: 1,
+        taskId: TASK_IDS.task,
+        sessionId: TASK_IDS.session,
+        kind: "clients.create",
+        capabilityId: "clients.create",
+        revision,
+        state: "collecting",
+        confirmed: { name, phone: "01012345678" },
+        tentative: {},
+        clearedFields: [],
+        provenance: {
+            confirmed: { name: { source: "user" }, phone: { source: "user" } },
+            tentative: {},
+        },
+        issues: [],
+        constraints: { noSend: false },
+        choiceSets: [],
+        orderedChoiceRefs: [],
+        target: null,
+        consent: { choice: "unanswered", binding: null },
+        action: null,
+        times: { createdAt: "2026-09-18T00:00:00.000Z", updatedAt: "2026-09-18T00:00:01.000Z" },
+        currentSnapshotRef: TASK_IDS.taskSnapshot,
+    });
+}
+
+async function setupRoutes(page: Page, options: { task?: boolean } = {}) {
     let sessionDeleted = false;
     let entityFollowupSent = false;
     let streamedMessageCount = 0;
+    let taskPatchCount = 0;
+    const initialTask = makeTask();
+    const latestTask = makeTask(2, "김철수");
     await page.route("**/api/auth/me", (route) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(authResponse) }));
     await page.route("**/auth/me", (route) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(authResponse) }));
     await page.route("**/api/ai/chat/history**", (route) => route.fulfill({
@@ -56,6 +94,24 @@ async function setupRoutes(page: Page) {
         sessionDeleted = true;
         await route.fulfill({ status: 204, body: "" });
     });
+    if (options.task) {
+        await page.route(`**/api/ai/agent/tasks/${TASK_IDS.task}`, async (route: Route) => {
+            if (route.request().method() === "GET") {
+                await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(taskPatchCount > 0 ? latestTask : initialTask) });
+                return;
+            }
+            if (route.request().method() === "PATCH") {
+                taskPatchCount += 1;
+                await route.fulfill({
+                    status: 409,
+                    contentType: "application/json",
+                    body: JSON.stringify({ snapshot: latestTask }),
+                });
+                return;
+            }
+            await route.fulfill({ status: 405, contentType: "application/json", body: JSON.stringify({ error: "method_not_allowed" }) });
+        });
+    }
     await page.route("**/api/ai/agent/chat", async (route: Route) => {
         streamedMessageCount += 1;
         const messageId = `assistant-stream-${streamedMessageCount}`;
@@ -74,11 +130,15 @@ async function setupRoutes(page: Page) {
             }
             return;
         }
+        const taskSnapshot = postData.includes("초안 충돌")
+            ? `data: {"type":"data-task-snapshot","data":{"taskId":"${TASK_IDS.task}","snapshotRef":"${TASK_IDS.streamSnapshot}","kind":"clients.create","capabilityId":"clients.create","revision":1,"state":"collecting","fieldStatus":[{"field":"name","status":"confirmed"},{"field":"phone","status":"confirmed"}]}}`
+            : null;
         await route.fulfill({
             status: 200,
             headers: { "content-type": "text/event-stream", "x-agent-session-id": "session-a" },
             body: [
                 `data: {"type":"start","messageId":"${messageId}"}`,
+                ...(taskSnapshot ? [taskSnapshot] : []),
                 'data: {"type":"data-entity-choice","data":{"entityType":"clients","prompt":"어느 산모를 말씀하시는지 선택해 주세요.","choices":[{"id":"10","label":"홍길동 1"},{"id":"11","label":"홍길동 2"}]}}',
                 'data: {"type":"text-start","id":"text-1"}',
                 'data: {"type":"text-delta","id":"text-1","delta":"조회 결과입니다."}',
@@ -91,6 +151,8 @@ async function setupRoutes(page: Page) {
 
     return {
         entityFollowupSent: () => entityFollowupSent,
+        streamedMessageCount: () => streamedMessageCount,
+        taskPatchCount: () => taskPatchCount,
     };
 }
 
@@ -156,5 +218,55 @@ test.describe("Release A flag coexistence", () => {
         await input.press("Enter");
         await expect(page.getByText("[agent-e2e-stub] 조회 결과를 확인했습니다.")).toBeVisible();
         await expect(page.getByRole("button", { name: "중지" })).not.toBeVisible();
+    });
+
+    test("keeps IME Enter local and restores focus when the mobile sidebar closes", async ({ page }) => {
+        test.skip(!runAgentE2E || runAgentRealE2E, "Run with RUN_AGENT_E2E=1 against the authenticated Playwright environment");
+        const routes = await setupRoutes(page);
+        await page.goto("/chat");
+        await expect(page.getByText("AI 운영 코파일럿")).toBeVisible();
+
+        const input = page.getByLabel("질문 입력");
+        await input.fill("조합중 입력");
+        await input.dispatchEvent("keydown", { key: "Enter", code: "Enter", isComposing: true, bubbles: true });
+        await expect.poll(routes.streamedMessageCount).toBe(0);
+        await expect(input).toHaveValue("조합중 입력");
+
+        await input.press("Enter");
+        await expect.poll(routes.streamedMessageCount).toBe(1);
+
+        await page.setViewportSize({ width: 390, height: 844 });
+        const menu = page.getByRole("button", { name: "사이드바 열기" });
+        const sidebar = page.locator('[data-component="desktop_chat_agent-shell_sidebar"]');
+        await menu.focus();
+        await menu.click();
+        await expect(sidebar).toHaveAttribute("aria-hidden", "false");
+        await expect.poll(() => page.evaluate(() => document.activeElement?.getAttribute("data-component"))).toBe("desktop_chat_agent-shell_sidebar");
+        await expect(sidebar).toHaveJSProperty("inert", false);
+
+        await page.getByRole("button", { name: "사이드바 닫기" }).click();
+        await expect(sidebar).toHaveAttribute("aria-hidden", "true");
+        await expect.poll(() => page.evaluate(() => document.activeElement?.getAttribute("aria-label"))).toBe("사이드바 열기");
+        await expect(sidebar).toHaveJSProperty("inert", true);
+    });
+
+    test("shows the latest server draft after a task revision conflict", async ({ page }) => {
+        test.skip(!runAgentE2E || runAgentRealE2E, "Run with RUN_AGENT_E2E=1 against the authenticated Playwright environment");
+        const routes = await setupRoutes(page, { task: true });
+        await page.goto("/chat");
+        await expect(page.getByText("AI 운영 코파일럿")).toBeVisible();
+
+        const input = page.getByLabel("질문 입력");
+        await input.fill("초안 충돌");
+        await input.press("Enter");
+        const controls = page.locator('[data-component="desktop_chat_agent-shell_thread_task-controls"]');
+        await expect(controls).toBeVisible();
+        const draftValue = page.getByLabel("이름 변경값");
+        await draftValue.fill("이순신");
+        await page.getByRole("button", { name: "변경 적용" }).click();
+
+        await expect.poll(routes.taskPatchCount).toBe(1);
+        await expect(page.getByText("작업이 변경되었습니다. 최신 초안을 새로고침한 뒤 새 변경 요청으로 다시 적용해 주세요.")).toBeVisible();
+        await expect(page.getByText("버전 2")).toBeVisible();
     });
 });
