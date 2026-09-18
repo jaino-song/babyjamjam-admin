@@ -1182,12 +1182,36 @@ describe("MessageTriggerService", () => {
                 offsetType: MessageTriggerOffsetType.SAME_DAY,
                 recipientType: MessageTriggerRecipientType.PRIMARY_EMPLOYEE,
                 templateKey,
-            })).rejects.toThrow("Invalid recipient for selected event type");
+            })).rejects.toMatchObject({ response: { code: "VALIDATION_FAILED" } });
 
             expect(ruleRepository.create).not.toHaveBeenCalled();
             expect(ruleRepository.markJobsStale).not.toHaveBeenCalled();
         },
     );
+
+    it("rejects an approved automation update whose snapshot no longer matches as VALIDATION_FAILED", async () => {
+        const { service } = createService();
+        const existingRule = createRule({ id: "rule-approved-stale" });
+        const staleSnapshot = {
+            id: existingRule.id,
+            branchId,
+            name: "바뀐 이름",
+            isActive: existingRule.isActive,
+            eventType: existingRule.eventType,
+            offsetType: existingRule.offsetType,
+            offsetDays: existingRule.offsetDays,
+            recipientType: existingRule.recipientType,
+            templateKey: existingRule.templateKey,
+            isDefault: existingRule.isDefault,
+            jobsStale: existingRule.jobsStale,
+            createdAt: existingRule.createdAt.toISOString(),
+            updatedAt: existingRule.updatedAt.toISOString(),
+        };
+        const targetVersion = (service as unknown as { ruleTargetVersion(rule: MessageTriggerRuleEntity): string }).ruleTargetVersion(existingRule);
+
+        await expect(service.updateRuleApprovedTarget(branchId, existingRule.id, { name: "승인된 변경" }, targetVersion, staleSnapshot))
+            .rejects.toMatchObject({ response: { code: "VALIDATION_FAILED" } });
+    });
 
     it("updateRule cancels the old generation and reconciles the new generation before returning", async () => {
         const { service, internals, ruleRepository, jobRepository } = createService();
@@ -1516,6 +1540,7 @@ describe("MessageTriggerService", () => {
         expect(failure).toBeInstanceOf(ConflictException);
         expect(failure.message).toBe("이미 발송되었거나 취소할 수 없는 상태입니다");
         expect(failure.getStatus()).toBe(409);
+        expect(failure.getResponse()).toMatchObject({ code: "REQUEST_CONFLICT" });
     });
 
     it("cancelJobByUser scopes the cancel to the caller's branch, so a job from another branch is refused", async () => {
@@ -1952,7 +1977,7 @@ describe("MessageTriggerService", () => {
 
         await expect(
             service.dispatchPendingJobNow("manual-job", { expectedBranchId: "some-other-branch" }),
-        ).rejects.toThrow("Message trigger job not found");
+        ).rejects.toMatchObject({ response: { code: "RESOURCE_NOT_FOUND" } });
 
         expect(jobRepository.findByIdInBranch).toHaveBeenCalledWith("some-other-branch", "manual-job");
         expect(deliveryService.sendJob).not.toHaveBeenCalled();

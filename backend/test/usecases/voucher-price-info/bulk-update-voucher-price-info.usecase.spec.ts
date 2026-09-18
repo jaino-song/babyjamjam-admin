@@ -1,4 +1,4 @@
-import { BadRequestException } from "@nestjs/common";
+import { BadRequestException, HttpException } from "@nestjs/common";
 import { BulkUpdateVoucherPriceInfoUsecase } from "application/usecases/voucher-price-info/bulk-update-voucher-price-info.usecase";
 import { PrismaService } from "infrastructure/database/prisma.service";
 
@@ -83,6 +83,17 @@ describe("BulkUpdateVoucherPriceInfoUsecase", () => {
 
   it("rejects invalid years before opening a transaction", async () => {
     await expect(usecase.execute([], 1999)).rejects.toBeInstanceOf(BadRequestException);
+    expect(prismaService.$transaction).not.toHaveBeenCalled();
+  });
+
+  it("invalid year carries VALIDATION_FAILED on /year", async () => {
+    try {
+      await usecase.execute([], 1999);
+      throw new Error("Expected the usecase to reject");
+    } catch (error) {
+      expect(error).toBeInstanceOf(HttpException);
+      expect((error as HttpException).getResponse()).toMatchObject({ code: "VALIDATION_FAILED" });
+    }
     expect(prismaService.$transaction).not.toHaveBeenCalled();
   });
 });

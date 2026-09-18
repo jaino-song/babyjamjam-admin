@@ -8,6 +8,7 @@ import { EFORMSIGN_COMPLETED_STATUS_CODES } from "domain/constants/eformsign-doc
 import { EFORMSIGN_DOCUMENT_KIND } from "domain/entities/eformsign-doc.entity";
 import { countBusinessDaysKr, UnsupportedKoreanHolidayYearError } from "domain/utils/business-days";
 import { serviceRecordSessionCount } from "domain/utils/service-record-session-count";
+import { codeOnlyProblemBody } from "application/utils/problem-bodies";
 import { PrismaService } from "infrastructure/database/prisma.service";
 import {
     lockServiceRecordCaseForWrite,
@@ -204,7 +205,7 @@ export class ServiceRecordLifecycleService {
                     where: { id: scheduleId },
                     select: { clientId: true },
                 });
-                if (!schedule) throw new NotFoundException("Assignment not found");
+                if (!schedule) throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
                 return this.ensureForClient(schedule.clientId, transaction);
             });
         }
@@ -213,7 +214,7 @@ export class ServiceRecordLifecycleService {
             where: { id: scheduleId },
             select: { clientId: true },
         });
-        if (!schedule) throw new NotFoundException("Assignment not found");
+        if (!schedule) throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
         return this.ensureForClient(schedule.clientId, tx);
     }
 
@@ -252,7 +253,7 @@ export class ServiceRecordLifecycleService {
                 },
             },
         });
-        if (!client) throw new NotFoundException("Client not found");
+        if (!client) throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
         const branchId = client.branchId
             ?? client.employeeSchedules.find((schedule) => schedule.branchId)?.branchId
             ?? null;
@@ -295,17 +296,17 @@ export class ServiceRecordLifecycleService {
                     },
                 },
             });
-            if (!rereadClient) throw new NotFoundException("Client not found");
+            if (!rereadClient) throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
             const rereadBranchId = rereadClient.branchId
                 ?? rereadClient.employeeSchedules.find((schedule) => schedule.branchId)?.branchId
                 ?? null;
             if (rereadBranchId !== branchId) {
-                throw new ConflictException("Client branch changed while acquiring service-record locks");
+                throw new ConflictException(codeOnlyProblemBody("SERVICE_RECORD_WRITE_TARGET_CHANGED"));
             }
             client = rereadClient;
             existing = await db.service_record_case.findUnique({ where: { clientId } });
             if (existing && (existing.branchId !== branchId || existing.clientId !== clientId)) {
-                throw new ConflictException("Service-record case branch changed while acquiring write locks");
+                throw new ConflictException(codeOnlyProblemBody("SERVICE_RECORD_WRITE_TARGET_CHANGED"));
             }
         }
         const finalizationDueAt = client.endDate
@@ -479,7 +480,7 @@ export class ServiceRecordLifecycleService {
                 params.duration !== undefined && params.duration !== record.requiredSessionCount
             );
             if (dateChanged) {
-                throw new ConflictException({ code: "SERVICE_RECORD_FINALIZED" });
+                throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
             }
         }
 
@@ -488,11 +489,11 @@ export class ServiceRecordLifecycleService {
             && isoDate(params.startDate) !== isoDate(record.startDate)
             && (record.days.length > 0 || (record.startDate && todayKst(now) >= isoDate(record.startDate)!))
         ) {
-            throw new ConflictException({ code: "SERVICE_RECORD_START_DATE_LOCKED" });
+            throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
         }
 
         if (params.endDate === null && record.days.length > 0) {
-            throw new ConflictException({ code: "SERVICE_RECORD_END_DATE_REQUIRED" });
+            throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
         }
         if (
             params.endDate !== undefined
@@ -500,10 +501,10 @@ export class ServiceRecordLifecycleService {
             && record.days.some((day) =>
                 day.locked && isoDate(day.serviceDate)! > isoDate(params.endDate)!)
         ) {
-            throw new ConflictException({ code: "SERVICE_RECORD_END_DATE_BEFORE_LOCKED_SESSION" });
+            throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
         }
         if (params.duration === null && record.days.length > 0) {
-            throw new ConflictException({ code: "SERVICE_RECORD_DURATION_REQUIRED" });
+            throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
         }
         if (
             params.duration !== undefined
@@ -512,7 +513,7 @@ export class ServiceRecordLifecycleService {
             && params.duration < record.requiredSessionCount
             && record.days.length > 0
         ) {
-            throw new ConflictException({ code: "SERVICE_RECORD_DURATION_CANNOT_DECREASE" });
+            throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
         }
     }
 
@@ -974,7 +975,7 @@ export class ServiceRecordLifecycleService {
                 clientId: params.clientId,
             });
             if (!locked) {
-                throw new ConflictException({ code: "SERVICE_RECORD_WRITE_TARGET_CHANGED" });
+                throw new ConflictException(codeOnlyProblemBody("SERVICE_RECORD_WRITE_TARGET_CHANGED"));
             }
         }
         await this.validatePeriodChange({
@@ -1012,7 +1013,7 @@ export class ServiceRecordLifecycleService {
                         endDate: params.endDate,
                     });
                     if (derived === null) {
-                        throw new ConflictException("서비스 기간을 계산할 수 없습니다.");
+                        throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
                     }
                     duration = derived;
                 }
@@ -1033,7 +1034,7 @@ export class ServiceRecordLifecycleService {
             },
         });
         if (updated.count !== 1) {
-            throw new NotFoundException("Client not found for branch");
+            throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
         }
 
         await this.ensureForClient(params.clientId, tx);
@@ -1131,7 +1132,7 @@ export class ServiceRecordLifecycleService {
                 where: { id: serviceRecordCaseId },
                 select: { id: true, branchId: true, clientId: true, status: true },
             });
-            if (!discovered) throw new NotFoundException("Service record not found");
+            if (!discovered) throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
 
             // Finalization/termination states are terminal for lifecycle
             // recompute and contain no later client/employee write. Returning
@@ -1161,7 +1162,7 @@ export class ServiceRecordLifecycleService {
                             serviceRecordCaseId,
                         );
                         if (typeof transaction.$queryRaw === "function" && !caseLocked) {
-                            throw new ConflictException({ code: "SERVICE_RECORD_WRITE_TARGET_CHANGED" });
+                            throw new ConflictException(codeOnlyProblemBody("SERVICE_RECORD_WRITE_TARGET_CHANGED"));
                         }
                         return this.recomputeInTransaction(serviceRecordCaseId, transaction);
                     });
@@ -1197,7 +1198,7 @@ export class ServiceRecordLifecycleService {
                 },
             },
         });
-        if (!record) throw new NotFoundException("Service record not found");
+        if (!record) throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
         if (
             IMMUTABLE_FINALIZATION_STATUSES.has(record.status)
             || record.status === SERVICE_RECORD_CASE_STATUS.MIGRATION_REVIEW_REQUIRED

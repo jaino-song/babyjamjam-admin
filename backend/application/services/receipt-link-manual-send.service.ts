@@ -16,6 +16,7 @@ import {
 import { MessageTriggerJobEntity } from "domain/entities/message-trigger-job.entity";
 import { IMessageTriggerJobRepository, MESSAGE_TRIGGER_JOB_REPOSITORY } from "domain/repositories/message-trigger-job.repository.interface";
 import { normalizePhone } from "application/utils/normalize-phone";
+import { codeOnlyProblemBody, problemBody } from "application/utils/problem-bodies";
 import { MANUAL_DEDUPE_MARKER } from "./receipt-link-delivery-enricher.service";
 import { MessageSenderApprovalService } from "./message-sender-approval.service";
 import { ReceiptLinkIssueService, ReceiptLinkSkipError } from "./receipt-link-issue.service";
@@ -72,14 +73,14 @@ export class ReceiptLinkManualSendService {
         // Branch-scoped lookup: a document that exists but belongs to another branch is
         // indistinguishable from a nonexistent one to this caller, by design.
         const doc = await this.docRepository.findByDocumentId(params.branchId, params.documentId);
-        if (!doc) throw new NotFoundException({ reason: "document_not_found" });
-        if (!doc.clientId) throw new BadRequestException({ reason: "document_not_linked", message: "계약서에 연결된 산모가 없습니다" });
+        if (!doc) throw new NotFoundException({ ...codeOnlyProblemBody("RESOURCE_NOT_FOUND"), reason: "document_not_found" });
+        if (!doc.clientId) throw new BadRequestException({ ...problemBody("VALIDATION_FAILED", { pointer: "/documentId", code: "INVALID_VALUE", detail: "계약서에 연결된 산모가 없습니다", location: "body" }), reason: "document_not_linked" });
         // M4: an eformsign_doc row with no numeric id can never be pinned via preflight's
         // eformsignDocId param (see ReceiptLinkIssueService.findExplicitContractDocument), so
         // silently falling through to the auto-derivation path would pick a DIFFERENT document
         // than the one the caller is looking at — surface this explicitly instead.
         if (doc.id === undefined) {
-            throw new BadRequestException({ reason: "no_contract_document", message: "선택한 문서를 찾을 수 없습니다" });
+            throw new BadRequestException({ ...problemBody("VALIDATION_FAILED", { pointer: "/documentId", code: "INVALID_VALUE", detail: "선택한 문서를 찾을 수 없습니다", location: "body" }), reason: "no_contract_document" });
         }
 
         let preflight;
@@ -87,26 +88,26 @@ export class ReceiptLinkManualSendService {
             preflight = await this.issueService.preflight({ branchId: params.branchId, clientId: doc.clientId, eformsignDocId: doc.id });
         } catch (error) {
             if (error instanceof ReceiptLinkSkipError) {
-                throw new BadRequestException({ reason: error.skipReason, message: error.message });
+                throw new BadRequestException({ ...problemBody("VALIDATION_FAILED", { pointer: "/documentId", code: "INVALID_VALUE", detail: error.message, location: "body" }), reason: error.skipReason });
             }
             throw error;
         }
 
         const phone = normalizePhone(preflight.client.phone) ?? "";
-        if (!phone) throw new BadRequestException({ reason: "missing_phone", message: "산모 연락처가 없거나 형식이 올바르지 않습니다" });
+        if (!phone) throw new BadRequestException({ ...problemBody("VALIDATION_FAILED", { pointer: "/recipientPhone", code: "INVALID_VALUE", detail: "산모 연락처가 없거나 형식이 올바르지 않습니다", location: "body" }), reason: "missing_phone" });
 
         if (params.expectedClientId !== undefined && params.expectedClientId !== preflight.client.id) {
             throw new BadRequestException({
+                ...problemBody("VALIDATION_FAILED", { pointer: "/expectedClientId", code: "INVALID_VALUE", detail: "산모 정보가 변경되었습니다. 산모를 다시 선택해 주세요", location: "body" }),
                 reason: "recipient_mismatch",
-                message: "산모 정보가 변경되었습니다. 산모를 다시 선택해 주세요",
             });
         }
         if (params.expectedRecipientPhone !== undefined) {
             const expectedPhone = normalizePhone(params.expectedRecipientPhone);
             if (!expectedPhone || expectedPhone !== phone) {
                 throw new BadRequestException({
+                    ...problemBody("VALIDATION_FAILED", { pointer: "/expectedRecipientPhone", code: "INVALID_VALUE", detail: "산모 정보가 변경되었습니다. 산모를 다시 선택해 주세요", location: "body" }),
                     reason: "recipient_mismatch",
-                    message: "산모 정보가 변경되었습니다. 산모를 다시 선택해 주세요",
                 });
             }
         }
@@ -148,7 +149,7 @@ export class ReceiptLinkManualSendService {
     async prepare(params: ManualReceiptLinkPrepareParams): Promise<ManualReceiptLinkPrepareResult> {
         await this.senderApproval.ensureApproved(params.branchId);
         if (!Number.isInteger(params.clientId) || params.clientId <= 0) {
-            throw new BadRequestException({ reason: "invalid_client_id", message: "산모 선택 정보가 올바르지 않습니다" });
+            throw new BadRequestException({ ...problemBody("VALIDATION_FAILED", { pointer: "/clientId", code: "INVALID_VALUE", detail: "산모 선택 정보가 올바르지 않습니다", location: "body" }), reason: "invalid_client_id" });
         }
 
         let preflight;
@@ -159,14 +160,14 @@ export class ReceiptLinkManualSendService {
             });
         } catch (error) {
             if (error instanceof ReceiptLinkSkipError) {
-                throw new BadRequestException({ reason: error.skipReason, message: error.message });
+                throw new BadRequestException({ ...problemBody("VALIDATION_FAILED", { pointer: "/clientId", code: "INVALID_VALUE", detail: error.message, location: "body" }), reason: error.skipReason });
             }
             throw error;
         }
 
         const phone = normalizePhone(preflight.client.phone) ?? "";
         if (!phone) {
-            throw new BadRequestException({ reason: "missing_phone", message: "산모 연락처가 없거나 형식이 올바르지 않습니다" });
+            throw new BadRequestException({ ...problemBody("VALIDATION_FAILED", { pointer: "/recipientPhone", code: "INVALID_VALUE", detail: "산모 연락처가 없거나 형식이 올바르지 않습니다", location: "body" }), reason: "missing_phone" });
         }
 
         let issued;
@@ -180,7 +181,7 @@ export class ReceiptLinkManualSendService {
             });
         } catch (error) {
             if (error instanceof ReceiptLinkSkipError) {
-                throw new BadRequestException({ reason: error.skipReason, message: error.message });
+                throw new BadRequestException({ ...problemBody("VALIDATION_FAILED", { pointer: "/clientId", code: "INVALID_VALUE", detail: error.message, location: "body" }), reason: error.skipReason });
             }
             throw error;
         }

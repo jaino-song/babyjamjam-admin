@@ -1,4 +1,5 @@
 import { ForbiddenException, Inject, Injectable, NotFoundException } from "@nestjs/common";
+import { codeOnlyProblemBody, problemBody } from "application/utils/problem-bodies";
 import { IUserRepository, USER_REPOSITORY } from "domain/repositories/user.repository.interface";
 import { UserEntity } from "domain/entities/user.entity";
 
@@ -27,11 +28,11 @@ export class UpdateUserUsecase {
             ? await this.userRepository.findByIdInBranch(id, updates.branchId)
             : await this.userRepository.findById(id);
         if (!user) {
-            throw new NotFoundException("User not found");
+            throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
         }
 
         if (updates.branchId && user.role === "owner" && updates.callerRole !== "owner") {
-            throw new NotFoundException("User not found");
+            throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
         }
 
         if (updates.name !== undefined) {
@@ -45,13 +46,25 @@ export class UpdateUserUsecase {
         }
         if (updates.role !== undefined) {
             if (updates.callerRole !== "owner") {
-                throw new ForbiddenException("역할 변경은 소유자만 가능합니다.");
+                throw new ForbiddenException(problemBody("ACCESS_DENIED", {
+                    pointer: "/role",
+                    code: "INVALID_VALUE",
+                    detail: "역할 변경은 소유자만 가능합니다.",
+                }));
             }
             if (user.role === "owner") {
-                throw new ForbiddenException("오너 계정의 역할은 변경할 수 없습니다.");
+                throw new ForbiddenException(problemBody("ACCESS_DENIED", {
+                    pointer: "/role",
+                    code: "INVALID_VALUE",
+                    detail: "오너 계정의 역할은 변경할 수 없습니다.",
+                }));
             }
             if (updates.role !== null && !ASSIGNABLE_ROLES.has(updates.role)) {
-                throw new ForbiddenException("owner 역할은 이 경로로 부여할 수 없습니다.");
+                throw new ForbiddenException(problemBody("ACCESS_DENIED", {
+                    pointer: "/role",
+                    code: "INVALID_VALUE",
+                    detail: "owner 역할은 이 경로로 부여할 수 없습니다.",
+                }));
             }
             user.role = updates.role;
             const membershipRole = updates.role === "admin" || updates.role === "manager"
@@ -67,7 +80,7 @@ export class UpdateUserUsecase {
                 updates.branchRole,
             );
             if (!updated) {
-                throw new NotFoundException("User not found");
+                throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
             }
             return updated;
         }

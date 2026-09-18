@@ -317,7 +317,7 @@ async function expectException(
         throw new Error(`Expected ${exceptionType.name}`);
     } catch (error) {
         expect(error).toBeInstanceOf(exceptionType);
-        expect(exceptionCode(error)).toEqual({ code });
+        expect(exceptionCode(error)).toMatchObject({ code });
     }
 }
 
@@ -497,7 +497,7 @@ describe("ServiceRecordEntryService planned-session dates", () => {
             3,
             createDto({ serviceDate: "2026-07-08T00:00:00.000Z" }),
             false,
-        )).rejects.toMatchObject({ response: { code: "SERVICE_RECORD_PLANNED_DATE_STALE" } });
+        )).rejects.toMatchObject({ response: { code: "REQUEST_CONFLICT" } });
 
         expect(upsert).not.toHaveBeenCalled();
         expect(scheduleUpdate).not.toHaveBeenCalled();
@@ -609,7 +609,9 @@ describe("ServiceRecordEntryService.upsertSession", () => {
             requiredSessionCount: 15,
             startDate: new Date("2026-09-03"), endDate: new Date("2026-09-08"),
         }) });
-        await expect(service.upsertSession(context, 5, createDto({ serviceDate: "2026-09-09" }), false)).rejects.toThrow("1..4");
+        await expect(service.upsertSession(context, 5, createDto({ serviceDate: "2026-09-09" }), false)).rejects.toMatchObject({
+            response: { code: "VALIDATION_FAILED" },
+        });
         expect(upsert).not.toHaveBeenCalled();
     });
 
@@ -695,7 +697,7 @@ describe("ServiceRecordEntryService.upsertSession", () => {
         await expectException(
             service.upsertSession(context, 1, createDto({ notes: "변조" }), lock),
             ConflictException,
-            "SERVICE_RECORD_SESSION_LOCKED",
+            "REQUEST_CONFLICT",
         );
         expect(prisma.$transaction).toHaveBeenCalledTimes(1);
         expect(upsert).not.toHaveBeenCalled();
@@ -743,7 +745,7 @@ describe("ServiceRecordEntryService.upsertSession", () => {
         await expectException(
             service.upsertSession(context, 1, createDto(), true),
             ConflictException,
-            "SERVICE_RECORD_FINALIZED",
+            "REQUEST_CONFLICT",
         );
         expect(prisma.$transaction).toHaveBeenCalledTimes(1);
         expect(upsert).not.toHaveBeenCalled();
@@ -757,7 +759,7 @@ describe("ServiceRecordEntryService.upsertSession", () => {
             1,
             createDto({ clientSignature: undefined }),
             true,
-        ), BadRequestException, "CLIENT_SIGNATURE_REQUIRED");
+        ), BadRequestException, "VALIDATION_FAILED");
         expect(upsert).not.toHaveBeenCalled();
     });
 
@@ -828,7 +830,7 @@ describe("ServiceRecordEntryService.upsertSession", () => {
 
         await expect(submit).resolves.toEqual(expect.objectContaining({ locked: true }));
         await expect(draft).rejects.toMatchObject({
-            response: { code: "SERVICE_RECORD_SESSION_LOCKED" },
+            response: { code: "REQUEST_CONFLICT" },
         });
         expect(dayModel.upsert).toHaveBeenCalledTimes(1);
         expect(lockQueries).toHaveLength(2);
@@ -866,7 +868,7 @@ describe("ServiceRecordEntryService.upsertSession", () => {
             1,
             createDto({ serviceDate: "2026-07-02T00:00:00.000Z" }),
             true,
-        ), ConflictException, "SERVICE_RECORD_SESSION_LOCKED");
+        ), ConflictException, "REQUEST_CONFLICT");
         expect(upsert).not.toHaveBeenCalled();
     });
 
@@ -879,7 +881,7 @@ describe("ServiceRecordEntryService.upsertSession", () => {
             1,
             createDto({ clientSignature: undefined }),
             true,
-        ), ConflictException, "SERVICE_RECORD_SESSION_LOCKED");
+        ), ConflictException, "REQUEST_CONFLICT");
         expect(updateMany).not.toHaveBeenCalled();
     });
 
@@ -1139,7 +1141,6 @@ describe("ServiceRecordEntryService.upsertSession", () => {
         )).rejects.toMatchObject({
             response: {
                 code: EMPLOYEE_SCHEDULE_OVERLAP_CODE,
-                message: "다음 배정 일정과 겹쳐 종료일을 연장할 수 없습니다. 관리자에게 문의해 주세요.",
             },
         });
         expect(upsert).not.toHaveBeenCalled();
@@ -1365,7 +1366,7 @@ describe("ServiceRecordEntryService.saveHeader", () => {
             deliveryType: "자연분만",
             babyWeight: "3.2",
         })).rejects.toMatchObject({
-            response: { code: "SERVICE_RECORD_FINALIZED" },
+            response: { code: "REQUEST_CONFLICT" },
         });
 
         expect(transaction.service_record_case.update).not.toHaveBeenCalled();

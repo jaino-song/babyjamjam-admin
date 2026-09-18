@@ -3464,9 +3464,11 @@ describe("ClientService", () => {
                 findClientByIdUsecase.execute.mockResolvedValue(null);
 
                 // Act & Assert
-                await expect(service.terminateService(branchId, 999))
-                    .rejects
-                    .toThrow("고객을 찾을 수 없습니다. (id: 999)");
+                const error = await service.terminateService(branchId, 999).catch((cause: unknown) => cause);
+                expect(error).toBeInstanceOf(NotFoundException);
+                expect((error as NotFoundException).getResponse()).toMatchObject({
+                    code: "RESOURCE_NOT_FOUND",
+                });
             });
         });
     });
@@ -3669,9 +3671,11 @@ describe("ClientService", () => {
                 findClientByIdUsecase.execute.mockResolvedValue(null);
 
                 // Act & Assert
-                await expect(service.requestReplacement(branchId, 999, 7))
-                    .rejects
-                    .toThrow("고객을 찾을 수 없습니다. (id: 999)");
+                const error = await service.requestReplacement(branchId, 999, 7).catch((cause: unknown) => cause);
+                expect(error).toBeInstanceOf(NotFoundException);
+                expect((error as NotFoundException).getResponse()).toMatchObject({
+                    code: "RESOURCE_NOT_FOUND",
+                });
             });
         });
     });
@@ -4051,9 +4055,11 @@ describe("ClientService", () => {
                 findClientByIdUsecase.execute.mockResolvedValue(null);
 
                 // Act & Assert
-                await expect(service.completeReplacement(branchId, 999))
-                    .rejects
-                    .toThrow("고객을 찾을 수 없습니다. (id: 999)");
+                const error = await service.completeReplacement(branchId, 999).catch((cause: unknown) => cause);
+                expect(error).toBeInstanceOf(NotFoundException);
+                expect((error as NotFoundException).getResponse()).toMatchObject({
+                    code: "RESOURCE_NOT_FOUND",
+                });
             });
         });
     });

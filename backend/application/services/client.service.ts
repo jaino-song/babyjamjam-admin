@@ -1041,7 +1041,7 @@ export class ClientService {
             const autoRegistrationEnabled = await this.systemSettingService
                 .getClientAutoRegistrationEnabled(branchid);
             if (!autoRegistrationEnabled) {
-                throw new ConflictException("자동 고객 등록이 꺼져 있습니다. 고객을 먼저 등록한 뒤 계약서를 생성해 주세요.");
+                throw new ConflictException({ ...codeOnlyProblemBody("REQUEST_CONFLICT"), message: "자동 고객 등록이 꺼져 있습니다. 고객을 먼저 등록한 뒤 계약서를 생성해 주세요." });
             }
             const greetingEnabled = await this.systemSettingService
                 .getGreetingOnAutoRegistrationEnabled(branchid);
@@ -1948,10 +1948,10 @@ export class ClientService {
                     data: clientUpdateData,
                 });
                 if (result.count === 0) {
-                    throw new NotFoundException(`고객을 찾을 수 없습니다. (id: ${id})`);
+                    throw new NotFoundException(clientCodeOnlyProblemBody("RESOURCE_NOT_FOUND", "고객을 찾을 수 없습니다."));
                 }
             } else if (!currentClient) {
-                throw new NotFoundException(`고객을 찾을 수 없습니다. (id: ${id})`);
+                throw new NotFoundException(clientCodeOnlyProblemBody("RESOURCE_NOT_FOUND", "고객을 찾을 수 없습니다."));
             }
             await this.serviceRecordLifecycleService?.ensureForClient(id, transaction);
         });
@@ -1961,7 +1961,7 @@ export class ClientService {
         }
         const updatedClient = await this.findClientByIdUsecase.execute(branchid, id);
         if (!updatedClient) {
-            throw new NotFoundException(`고객을 찾을 수 없습니다. (id: ${id})`);
+            throw new NotFoundException(clientCodeOnlyProblemBody("RESOURCE_NOT_FOUND", "고객을 찾을 수 없습니다."));
         }
         const updatedPhone = normalizePhone(updatedClient.phone);
         if (updatedPhone) {
@@ -2013,7 +2013,7 @@ export class ClientService {
     ): Promise<ClientEntity> {
         const client = await this.findClientByIdUsecase.execute(branchid, clientId);
         if (!client) {
-            throw new NotFoundException(`고객을 찾을 수 없습니다. (id: ${clientId})`);
+            throw new NotFoundException(clientCodeOnlyProblemBody("RESOURCE_NOT_FOUND", "고객을 찾을 수 없습니다."));
         }
         this.logger.log(
             `Terminating service for client ${clientId}` +
@@ -2109,7 +2109,7 @@ export class ClientService {
     ): Promise<ClientEntity> {
         const client = await this.findClientByIdUsecase.execute(branchid, clientId);
         if (!client) {
-            throw new NotFoundException(`고객을 찾을 수 없습니다. (id: ${clientId})`);
+            throw new NotFoundException(clientCodeOnlyProblemBody("RESOURCE_NOT_FOUND", "고객을 찾을 수 없습니다."));
         }
         // The replacement DTO spells its request-body fields with the `new`
         // prefix, so the shape problems must carry those pointers for UIs.
@@ -2205,7 +2205,7 @@ export class ClientService {
                 data: { serviceStatus: SERVICE_STATUS.REPLACEMENT_REQUESTED },
             });
             if (updateResult.count === 0) {
-                throw new NotFoundException(`고객을 찾을 수 없습니다. (id: ${clientId})`);
+                throw new NotFoundException(clientCodeOnlyProblemBody("RESOURCE_NOT_FOUND", "고객을 찾을 수 없습니다."));
             }
 
             if (currentSchedule) {
@@ -2250,7 +2250,7 @@ export class ClientService {
 
         const updatedClient = await this.findClientByIdUsecase.execute(branchid, clientId);
         if (!updatedClient) {
-            throw new NotFoundException(`고객을 찾을 수 없습니다. (id: ${clientId})`);
+            throw new NotFoundException(clientCodeOnlyProblemBody("RESOURCE_NOT_FOUND", "고객을 찾을 수 없습니다."));
         }
         return updatedClient;
     }
@@ -2263,7 +2263,7 @@ export class ClientService {
     async completeReplacement(branchid: string, clientId: number): Promise<ClientEntity> {
         const client = await this.findClientByIdUsecase.execute(branchid, clientId);
         if (!client) {
-            throw new NotFoundException(`고객을 찾을 수 없습니다. (id: ${clientId})`);
+            throw new NotFoundException(clientCodeOnlyProblemBody("RESOURCE_NOT_FOUND", "고객을 찾을 수 없습니다."));
         }
 
         if (client.serviceStatus !== SERVICE_STATUS.REPLACEMENT_REQUESTED) {

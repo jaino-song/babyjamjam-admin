@@ -75,6 +75,24 @@ describe("MessageSenderApprovalService", () => {
             expect(prisma.branch.update).not.toHaveBeenCalled();
         });
 
+        it("role and approval denials carry ACCESS_DENIED, missing branches carry RESOURCE_NOT_FOUND", async () => {
+            await expect(
+                service.requestApproval({ branchId: "branch-1", userId: "user-1", branchRole: "staff" }),
+            ).rejects.toMatchObject({ response: { code: "ACCESS_DENIED" } });
+
+            prisma.branch.findUnique.mockResolvedValue({
+                smsSenderApprovalStatus: "pending",
+                smsSenderApprovalRequestedAt: null,
+                smsSenderApprovalApprovedAt: null,
+            });
+            await expect(service.ensureApproved("branch-1"))
+                .rejects.toMatchObject({ response: { code: "ACCESS_DENIED" } });
+
+            prisma.branch.findUnique.mockResolvedValue(null);
+            await expect(service.getState("branch-1"))
+                .rejects.toMatchObject({ response: { code: "RESOURCE_NOT_FOUND" } });
+        });
+
         it("persists the branch approval audit in the same transaction", async () => {
             const requestedAt = new Date("2026-06-05T00:00:00.000Z");
             const auditedPrisma = createAuditedPrisma({

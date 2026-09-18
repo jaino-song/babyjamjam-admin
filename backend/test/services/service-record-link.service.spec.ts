@@ -694,6 +694,7 @@ describe("ServiceRecordLinkService", () => {
         );
         prisma.employee_schedule.findUnique.mockResolvedValue(createSchedule({ primaryEmployee: { id: 30, name: "홍제공", phone: "", birthday: "900101" } }));
         await expect(service.prepareLink(10, "01066211878")).rejects.toBeInstanceOf(BadRequestException);
+        await expect(service.prepareLink(10, "01066211878")).rejects.toMatchObject({ response: { code: "INVALID_PROVIDER_PHONE" } });
         await expect(service.sendNow(10, undefined, "01066211878")).rejects.toBeInstanceOf(BadRequestException);
         expect(tokenService.prepareLink).not.toHaveBeenCalled();
         expect(tokenService.issueLink).not.toHaveBeenCalled();
@@ -735,6 +736,7 @@ describe("ServiceRecordLinkService", () => {
 
         await expect(service.sendNow(10)).rejects.toBeInstanceOf(NotFoundException);
         await expect(service.prepareLink(10)).rejects.toBeInstanceOf(NotFoundException);
+        await expect(service.prepareLink(10)).rejects.toMatchObject({ response: { code: "RESOURCE_NOT_FOUND" } });
         expect(tokenService.reuseActiveLink).not.toHaveBeenCalled();
         expect(tokenService.issueLink).not.toHaveBeenCalled();
         expect(tokenService.prepareLink).not.toHaveBeenCalled();

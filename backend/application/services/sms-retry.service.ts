@@ -1,4 +1,5 @@
 import { ConflictException, Inject, Injectable, Logger, NotFoundException, Optional } from "@nestjs/common";
+import { codeOnlyProblemBody } from "application/utils/problem-bodies";
 import { AligoService } from "application/services/aligo.service";
 import { MessageSenderApprovalService } from "application/services/message-sender-approval.service";
 import { parseKstSchedule } from "application/utils/kst-schedule";
@@ -53,30 +54,26 @@ export class SmsRetryService {
     async retryById(branchId: string, logId: number): Promise<MessageLogEntity> {
         const sourceLog = await this.logRepository.findByIdInBranch(branchId, logId);
         if (!sourceLog || sourceLog.provider !== "aligo_sms") {
-            throw new NotFoundException("재발송할 메시지 기록을 찾을 수 없습니다.");
+            throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
         }
 
         if (sourceLog.status !== "failed") {
-            throw new ConflictException("실패한 메시지만 재발송할 수 있습니다.");
+            throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
         }
 
         if (sourceLog.isPartialProviderOutcome()) {
-            throw new ConflictException(
-                "문자 일부 수신자만 접수되어 전체 수신자 목록 재발송을 진행할 수 없습니다. 실패 수신자를 확인해 수동 발송해 주세요.",
-            );
+            throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
         }
         if (sourceLog.isProviderOutcomeUncertain()) {
-            throw new ConflictException(
-                "문자 발송 결과가 불확실합니다. 제공자 이력을 확인하고 먼저 명시적으로 재조정해 주세요.",
-            );
+            throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
         }
         if (sourceLog.providerAcceptanceState === "reconciled_delivered") {
-            throw new ConflictException("이미 발송 완료로 재조정된 문자는 재발송할 수 없습니다.");
+            throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
         }
 
         const retryLog = await this.retry(sourceLog, "manual");
         if (!retryLog) {
-            throw new ConflictException("이미 재발송이 진행 중입니다.");
+            throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
         }
 
         return retryLog;
@@ -224,7 +221,7 @@ export class SmsRetryService {
         providerMessageId?: string | null,
     ): Promise<MessageLogEntity> {
         if (!this.acceptanceService) {
-            throw new ConflictException("SMS provider reconciliation is not configured");
+            throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
         }
         return this.acceptanceService.reconcile({
             branchId,
@@ -383,7 +380,7 @@ export class SmsRetryService {
 
     private beginProviderCallWithoutBoundary(log: MessageLogEntity): MessageLogEntity {
         if (log.providerAcceptanceState !== "prepared" && log.providerAcceptanceState !== "legacy") {
-            throw new ConflictException(`SMS provider attempt cannot start from ${log.providerAcceptanceState}`);
+            throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
         }
         log.providerAcceptanceState = "started";
         log.providerCallStartedAt = new Date(Date.now());

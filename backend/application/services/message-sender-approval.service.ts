@@ -2,6 +2,7 @@ import {
     BadRequestException,
     ForbiddenException,
     Injectable,
+    InternalServerErrorException,
     NotFoundException,
 } from "@nestjs/common";
 import { PrismaService } from "infrastructure/database/prisma.service";
@@ -10,6 +11,7 @@ import {
 } from "interface/dto/message-sender-approval.dto";
 import { AdminAuditActor, AdminAuditEventWriter } from "application/services/admin-audit-event.service";
 import { currentAdminAuditActor } from "application/services/admin-audit-context";
+import { codeOnlyProblemBody, problemBody } from "application/utils/problem-bodies";
 
 type BranchSenderApprovalRecord = {
     approvalStatus: MessageSenderApprovalStatus;
@@ -47,7 +49,7 @@ export class MessageSenderApprovalService {
         });
 
         if (!branch) {
-            throw new NotFoundException("Branch not found");
+            throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
         }
 
         return {
@@ -66,9 +68,7 @@ export class MessageSenderApprovalService {
         actor?: AdminAuditActor;
     }): Promise<BranchSenderApprovalRecord> {
         if (!this.canRequest(params.branchRole)) {
-            throw new ForbiddenException(
-                "Only branch owners, admins or managers can request sender approval.",
-            );
+            throw new ForbiddenException(codeOnlyProblemBody("ACCESS_DENIED"));
         }
 
         const actor = params.actor ?? currentAdminAuditActor();
@@ -143,13 +143,16 @@ export class MessageSenderApprovalService {
             });
 
             if (!current) {
-                throw new NotFoundException("Branch not found");
+                throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
             }
 
             if (this.normalizeStatus(current.smsSenderApprovalStatus) !== "pending") {
-                throw new BadRequestException(
-                    "승인 대기 중인 메시지 발송 권한 신청이 없습니다.",
-                );
+                throw new BadRequestException(problemBody("VALIDATION_FAILED", {
+                    pointer: "/approvalStatus",
+                    code: "INVALID_VALUE",
+                    detail: "승인 대기 중인 메시지 발송 권한 신청이 없습니다.",
+                    location: "body",
+                }));
             }
 
             const updated = await transaction.branch.update({
@@ -237,9 +240,7 @@ export class MessageSenderApprovalService {
     async ensureApproved(branchId: string): Promise<void> {
         const state = await this.getState(branchId);
         if (state.approvalStatus !== "approved") {
-            throw new ForbiddenException(
-                "메시지 발송 권한 승인이 필요합니다.",
-            );
+            throw new ForbiddenException(codeOnlyProblemBody("ACCESS_DENIED"));
         }
     }
 
@@ -294,7 +295,7 @@ export class MessageSenderApprovalService {
         });
 
         if (!current) {
-            throw new NotFoundException("Branch not found");
+            throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
         }
 
         if (this.normalizeStatus(current.smsSenderApprovalStatus) !== "pending") {
@@ -326,10 +327,10 @@ export class MessageSenderApprovalService {
 
     private requireAuditActor(actor: AdminAuditActor | undefined): asserts actor is AdminAuditActor {
         if (!this.auditWriter) {
-            throw new Error("Admin audit writer is required for sender approval mutations");
+            throw new InternalServerErrorException(codeOnlyProblemBody("INTERNAL_ERROR"));
         }
         if (!actor?.userId) {
-            throw new Error("Authenticated actor is required for sender approval mutations");
+            throw new InternalServerErrorException(codeOnlyProblemBody("INTERNAL_ERROR"));
         }
     }
 
