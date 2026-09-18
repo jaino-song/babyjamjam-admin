@@ -1,7 +1,48 @@
 # BabyJamJam conversational AI implementation status
 
-Updated: 2026-09-18. Baseline: `4198fb991a59d63f14f529f54b1d66c1587ca76b`.
-Integration: `codex/bjj-conversation-v1`. Local implementation, deterministic verification, model quality and operational activation are separate results.
+Updated: 2026-09-18. Baseline: `origin/dev` at `089cb133741f67752d084c1fba0766c5ad6a70f4`.
+Current verification: `/Users/jaino/Development/babyjamjam-admin/bjj-conversation-final` on `codex/unit/bjj-conversation-final`, HEAD `6fe3a27c20f8b5babec14b7374070178e068bc95`. Local implementation, deterministic verification, model quality and operational activation are separate results.
+
+## Latest current-branch verification — 2026-09-18
+
+This section is the current attestation for the continuation branch. Earlier sections preserve historical phase records and must not be read as the latest counts.
+
+- Phase 7 focused regression: **3 suites / 66 tests passed**.
+- Guarded disposable PostgreSQL/AppModule matrix: **16 suites / 198 tests passed**. The run used a loopback disposable database, `AGENT_E2E=1`, `E2E_VENDOR_STUBS=1`, schedulers disabled, and no real provider or SMS transport.
+- Full backend Jest: **401 suites passed, 1 skipped; 5,786 tests passed, 44 skipped; 1 snapshot passed**.
+- Backend type-check, Nest build, capability manifest/drift (**47 capabilities**), frontend/mobile/shared type-checks, frontend/mobile production builds, dependency audit and changed-diff secret scan passed. The current diff adds no schema, dependency or environment changes.
+- Deterministic conversation harness: **48/48 passed** (development 32, holdout 16), with zero network calls, transport calls or safety errors. Fixture digest: `24ab8fb9498ba7472972c6d3a66b2d19274bc47787f96e5f34e9d8a1abc97d4a`; assertion digest: `8c6070f04f167f22e211d113d0fe6e64b2af8491057f861609f8d5d8c2042af4`.
+- Authenticated synthetic browser paths: desktop shell selection/stream/session controls **1 passed**; desktop final-backend stream **1 passed**; mobile final-backend proxy, drawer, reload and server-session restore **1 passed**. The full IME/focus/scroll matrix is not claimed complete.
+- Google/OpenAI staging runner: both-provider dry-run completed without transport; the live run refused before transport with `MISSING_API_KEY`. Paid model quality and human review therefore remain open.
+- No real SMS, production database mutation, environment-branch merge, deployment or operational activation has been performed on this branch.
+- Independent cumulative SOL FINAL at this exact HEAD: **SHIP / HIGH**, with no blocking findings.
+
+Current completion flags: implementation and deterministic verification **complete**; actual conversation quality **pending paid provider keys and human review**; operational application **pending deployment and activation gates**.
+
+## Phase 7 deterministic close — 2026-09-18
+
+The final service-record-link correction is integrated at `1d512cd3b1281cc28b42699dc3dd7394f591ee49` from task source `720425b8548599f2f647f58569ba3dc7fba031c4`. Trustworthy schedule scopes with unusable tokens, delivery snapshots, templates or sender policy now produce digest-only unavailable effects with `complete=true`, so explicit `no`/`noSend` customer writes can commit terminal coverage without acquiring send authority. Malformed schedule incarnation/date data remains incomplete and fails closed.
+
+- Focused planner/recipe regression: **2 suites / 34 tests passed**.
+- Guarded disposable PostgreSQL/AppModule matrix at the task SHA: **16 suites / 198 tests passed**. The no-send task path commits the customer update, persists service-record terminal coverage, and creates no service-record intent/job or message log.
+- Post-merge integration verification: **2 suites / 34 tests passed** and **16 suites / 198 guarded tests passed** at the integration SHA.
+- Full backend Jest at the task SHA: **396 suites passed, 1 skipped; 5,713 tests passed, 44 skipped; 1 snapshot passed**. Backend type-check, Nest build, capability drift (**47 capabilities**) and production dependency audit (**0 vulnerabilities**) passed.
+- Independent cumulative SOL FINAL at `720425b8548599f2f647f58569ba3dc7fba031c4` against `4dd69251ebde09ed1a2eaf8228c2a08080a73bef`: **SHIP / HIGH**, no blocking findings.
+
+This closes Phase 7 implementation and deterministic validation. Paid Google/OpenAI quality evaluation, human review, real SMS, production database changes, deployment, merge to environment branches and operational activation remain separate gates.
+
+## Phase 7 carrier correction — 2026-09-18
+
+The task-origin automation reference now follows a schedule intent into the dedicated service-record-link job. `ClientWriteAgentCapabilitiesProvider` includes reviewed `service-record-link` effects when staging schedule intents; `MessageAutomationIntentService` passes the digest-only commit reference to `ServiceRecordLinkService`; and the automatic link job persists that reference for the existing authority/recipe check. Legacy callers without a task reference retain the one-argument path and unchanged payload.
+
+- Focused regression: **3 suites / 135 tests passed**.
+- Guarded disposable PostgreSQL/AppModule agent E2E: **15 suites / 193 tests passed**, using `AGENT_E2E=1 E2E_VENDOR_STUBS=1 SCHEDULER_LEASE_MODE=off` against the approved loopback database `bjj_conversation_test`; the guard rejects model transport and vendor stubs prevent sender calls.
+- Full backend Jest: **396 suites passed, 1 skipped; 5,703 tests passed, 44 skipped; 1 snapshot passed**.
+- Backend type-check, Nest build, and capability manifest/drift (**47 capabilities**) passed.
+- The checked-in manifest digest was regenerated for the changed capability source.
+- Fresh independent SOL FINAL for this bounded slice: **SHIP / MEDIUM**, reviewed at integration SHA `33b8993e3a3c19b21a66c99479e799322a982ca9` against base `604c47bbc850c55c65a4d50694495d39de91af6d`; no blocking findings.
+
+This closes the carrier-correction slice only. Phase 7 plan-level close still requires the cumulative consent/provider matrix and final cumulative independent review. Real distributed lease ownership, paid provider quality, real SMS, production data, deployment, and operational activation remain separate gates.
 
 ## Latest continuation — integrated Phase 7/8 slices
 
@@ -25,7 +66,7 @@ Phase 7/8 implementation evidence is materially expanded, while Phase 9 merge/de
 | 4 — lifecycle and retention | Closed | Source `3b094cdfa13b20f1c08762b916c2f2f20ffcef9c`; shared23/backend436/DB73; SOL SHIP/HIGH |
 | 5 — conversation intake and context | Closed | Source `2d114d147b88fc208c86ed12679cf6f9101aca56`; shared25/backend498/DB93; cumulative SOL SHIP/HIGH |
 | 6 — atomic task/action approval | Closed | Source `4dd69251ebde09ed1a2eaf8228c2a08080a73bef`; shared25/backend535/DB114; cumulative SOL SHIP/HIGH |
-| 7 — client writes and automation consent | Integrated slices verified; plan-level close remains open | Guarded PostgreSQL/AppModule and remote full-flow/auth checks pass; cumulative consent/provider coverage and final cumulative SOL close remain |
+| 7 — client writes and automation consent | Closed for implementation and deterministic validation | Integrated at `1d512cd3b1281cc28b42699dc3dd7394f591ee49`; cumulative consent/provider and no-send coverage verified. Paid model quality, real SMS, production data and activation remain separate |
 | 8 — desktop and mobile | Integrated browser slices verified; final cross-screen acceptance remains open | Authenticated desktop and mobile real-backend paths pass; full keyboard/IME/focus/scroll acceptance remains |
 | 9 — cumulative QA and release preparation | Deterministic release evidence recorded; operational gates remain open | Release/rollback record and remote CI evidence are recorded; GitGuardian blocks merge, and deployment/production activation remain unperformed |
 

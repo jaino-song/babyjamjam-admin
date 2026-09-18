@@ -351,7 +351,12 @@ export function EmployeeScheduleScreen({
 
   const handleMonthChange = (amount: number) => {
     const nextMonth = moveMonth(visibleMonth, amount);
-    if (canNavigateToMonth(nextMonth, range)) setVisibleMonth(nextMonth);
+    if (canNavigateToMonth(nextMonth, range)) {
+      setVisibleMonth(nextMonth);
+      setSelectedDateKey(dateKey(nextMonth));
+      setSelectedEntry(null);
+      setDetailClientOverride(null);
+    }
   };
 
   const kindFilterItems = SCHEDULE_KIND_FILTERS.map((filter) => ({

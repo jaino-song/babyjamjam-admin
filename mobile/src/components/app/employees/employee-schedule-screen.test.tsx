@@ -150,4 +150,24 @@ describe("EmployeeScheduleScreen", () => {
 
     expect(screen.queryByRole("region", { name: "고객 상세" })).not.toBeInTheDocument();
   });
+
+  it("selects October 1 and clears a September entry when navigating months", () => {
+    const client = makeClient(1, { startDate: "2026-09-18" });
+    mockClients([client]);
+    const { container } = render(<EmployeeScheduleScreen />);
+
+    fireEvent.click(container.querySelector('[data-slot="calendar-day"][data-date="2026-09-18"]')!);
+    fireEvent.click(screen.getByRole("button", { name: /고객 1/ }));
+
+    fireEvent.click(container.querySelector('button[aria-label="다음 달"]')!);
+
+    const octoberFirst = container.querySelector(
+      '[data-slot="calendar-day"][data-date="2026-10-01"]',
+    );
+    expect(octoberFirst).toHaveAttribute("aria-pressed", "true");
+    const agenda = container.querySelector('[data-slot="selected-day-agenda"]');
+    expect(agenda).toBeInTheDocument();
+    expect(agenda).toHaveTextContent("10월 1일");
+    expect(agenda).not.toHaveTextContent("고객 1");
+  });
 });

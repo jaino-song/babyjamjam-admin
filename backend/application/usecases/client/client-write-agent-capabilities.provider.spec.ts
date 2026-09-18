@@ -1095,7 +1095,7 @@ describe("ClientWriteAgentCapabilitiesProvider", () => {
         const clientRepository = { findByPhone: jest.fn().mockResolvedValue(null) };
         const transaction = {
             client: { findFirst: jest.fn().mockResolvedValue({ id: 7, createdAt: new Date("2026-09-18T00:00:00.000Z") }) },
-            employee_schedule: { findFirst: jest.fn() },
+            employee_schedule: { findFirst: jest.fn().mockResolvedValue({ incarnationId: "70000000-0000-4000-8000-000000000031" }) },
             agent_action: { updateMany: jest.fn() },
         };
         const prisma = {
@@ -1120,9 +1120,22 @@ describe("ClientWriteAgentCapabilitiesProvider", () => {
             policyDigest: "d".repeat(64),
             recipeDigest: "e".repeat(64),
         };
+        const serviceRecordLinkEffect = {
+            kind: "service-record-link",
+            ruleId: "system:service_record_link",
+            scheduleId: 18,
+            recipientType: "primary-employee",
+            templateKey: "SERVICE_RECORD_LINK",
+            change: "create",
+            recipientDigest: "1".repeat(64),
+            sourceDigest: "2".repeat(64),
+            templateDigest: "3".repeat(64),
+            policyDigest: "4".repeat(64),
+            recipeDigest: "5".repeat(64),
+        };
         const impact = {
             availability: "available",
-            effects: [effect],
+            effects: [effect, serviceRecordLinkEffect],
             complete: true,
             clientIdentity: null,
             sourceGuard: "f".repeat(64),
@@ -1194,6 +1207,10 @@ describe("ClientWriteAgentCapabilitiesProvider", () => {
         expect(intent.persistClientIntent).toHaveBeenCalledWith(
             transaction,
             expect.objectContaining({ branchId: "branch-a", clientId: 7, taskOrigin: true }),
+        );
+        expect(intent.persistScheduleIntent).toHaveBeenCalledWith(
+            transaction,
+            expect.objectContaining({ branchId: "branch-a", clientId: 7, scheduleId: 18, taskOrigin: true }),
         );
         expect(prisma.$transaction).not.toHaveBeenCalled();
     });

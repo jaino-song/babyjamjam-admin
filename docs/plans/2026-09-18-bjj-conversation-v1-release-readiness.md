@@ -1,9 +1,36 @@
 # BabyJamJam 대화형 업무 AI v1.0 릴리스 준비 기록
 
 작성일: 2026-09-18  
-통합 worktree: `/Users/jaino/Development/babyjamjam-admin/bjj-conversation-v1`  
-통합 브랜치: `codex/bjj-conversation-v1`  
-검증 기준 커밋: `9da30d27ab07dff3fd62e50861031e85a6adc1ea`
+현재 검증 worktree: `/Users/jaino/Development/babyjamjam-admin/bjj-conversation-final`
+현재 검증 브랜치: `codex/unit/bjj-conversation-final`
+현재 기준 커밋: `6fe3a27c20f8b5babec14b7374070178e068bc95` (base `origin/dev` `089cb133741f67752d084c1fba0766c5ad6a70f4`)
+
+## Latest release-readiness attestation — 2026-09-18
+
+The current branch has completed implementation and deterministic validation for the Phase 7 continuation and the verified desktop/mobile browser paths. Historical sections below retain the earlier integration records.
+
+- Phase 7 focused regression: **3 suites / 66 tests passed**.
+- Guarded disposable PostgreSQL/AppModule: **16 suites / 198 tests passed**; no real provider, SMS or production database was used.
+- Full backend: **401 suites passed, 1 skipped; 5,786 tests passed, 44 skipped; 1 snapshot passed**. Type-check, Nest build, capability manifest (**47**), frontend/mobile/shared type-checks and builds passed.
+- Deterministic conversation harness: **48/48 passed**, zero network/transport/safety errors, with fixture digest `24ab8fb9498ba7472972c6d3a66b2d19274bc47787f96e5f34e9d8a1abc97d4a` and assertion digest `8c6070f04f167f22e211d113d0fe6e64b2af8491057f861609f8d5d8c2042af4`.
+- Authenticated synthetic browser: desktop shell and final-backend stream each **1 passed**; mobile final-backend proxy/drawer/reload/session-restore **1 passed**. Full IME/focus/scroll acceptance is not claimed.
+- Provider evaluation: both-provider dry-run produced no transport; keyless live execution refused before transport with `MISSING_API_KEY`. Paid Google/OpenAI quality evaluation and human review remain open.
+- Current independent SOL FINAL: **SHIP / HIGH** with no blocking findings.
+- No real SMS, production DB change, merge to an environment branch, deployment or operational activation was performed.
+
+The release state is therefore: implementation/deterministic verification **complete**; actual conversation quality **pending**; operational application **pending**.
+
+## Phase 7 deterministic close — 2026-09-18
+
+Phase 7 is integrated at `1d512cd3b1281cc28b42699dc3dd7394f591ee49`; the final correction source is `720425b8548599f2f647f58569ba3dc7fba031c4`. Present-but-unusable service-record sources now remain explicit digest-only unavailable scopes with `complete=true`, allowing a reviewed `no`/`noSend` customer transaction to persist terminal coverage while preventing service-record intent, delivery job and SMS creation. Malformed schedule identity/date data remains incomplete and fail-closed.
+
+- Focused planner/recipe: **2 suites / 34 tests passed**.
+- Guarded disposable PostgreSQL/AppModule: **16 suites / 198 tests passed** at the task SHA and again after integration.
+- Full backend: **396 suites passed, 1 skipped; 5,713 tests passed, 44 skipped; 1 snapshot passed**.
+- Type-check, Nest build, capability drift (**47**) and production dependency audit (**0 vulnerabilities**) passed.
+- Independent SOL FINAL: **SHIP / HIGH**, no blocking findings.
+
+The implementation and deterministic validation gates are closed. Paid Google/OpenAI quality evaluation, human review, real SMS, production database changes, deployment and operational activation remain open release gates.
 
 ## 최신 통합 업데이트 — 2026-09-18
 
@@ -17,6 +44,17 @@
 - Provider evaluation runner: **6 focused tests passed**; both-provider dry-run plan is **576 runs** and keyless live invocation fails closed.
 
 The Google staging run is recorded in [`staging-evaluation.md`](../ai-conversation-quality/staging-evaluation.md) and its redacted artifact. It completed 288 runs with 10 errors and scored 213/324 required tokens and 179/576 structured events, below the proposed quality threshold. The OpenAI run was refused before transport creation because no API key is present in the staging environment. No key value, raw prompt/response, production customer data, real SMS, or production database was used.
+
+### Phase 7 task-origin carrier correction — 2026-09-18
+
+The task-origin consent reference now travels from the staged schedule intent into the automatic service-record-link job payload. This closes the bounded carrier slice required for service-record-link provenance; it does not close the full Phase 7 plan.
+
+- Focused regression: **3 suites, 135 tests passed**.
+- Guarded disposable PostgreSQL/AppModule agent E2E: **15 suites, 193 tests passed** with `E2E_VENDOR_STUBS=1` and `SCHEDULER_LEASE_MODE=off`; no paid provider, real SMS, or production database was used.
+- Backend regression: **396 suites passed, 1 skipped; 5,703 tests passed, 44 skipped; 1 snapshot passed**. Type-check, build, and capability drift (**47 capabilities**) passed.
+- Independent SOL final review: **SHIP / MEDIUM**, reviewed commit `33b8993e3a3c19b21a66c99479e799322a982ca9` against base `604c47bbc850c55c65a4d50694495d39de91af6d`.
+
+The remaining Phase 7 work is the cumulative consent/provider matrix and final cumulative review. Distributed lease behavior, paid Google/OpenAI quality evaluation, real SMS, production data changes, deployment, and feature activation remain separate gates.
 
 ## 현재 판정
 

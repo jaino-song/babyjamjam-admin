@@ -145,31 +145,40 @@ export async function getInquiriesSummary(
       ${bf}
   `, ["number", "number", "number", "number", "timestamp?"]);
 
+  const submittedSevenPromise = hogQL<[number]>(`
+    SELECT count() FROM events
+    WHERE event = 'consultation_submitted'
+      AND timestamp >= now() - INTERVAL 7 DAY
+      ${bf}
+    `, ["number"]);
+  const submittedSelectedPromise = days === 7
+    ? submittedSevenPromise
+    : hogQL<[number]>(`
+    SELECT count() FROM events
+    WHERE event = 'consultation_submitted'
+      AND timestamp >= now() - INTERVAL ${days} DAY
+      ${bf}
+    `, ["number"]);
+  // pricing_viewed events don't carry branch_slug — the conversion rate is
+  // site-wide regardless of the user's branch filter.
+  const viewedSevenPromise = hogQL<[number]>(`
+    SELECT count() FROM events
+    WHERE event = 'pricing_viewed'
+      AND timestamp >= now() - INTERVAL 7 DAY
+    `, ["number"]);
+  const viewedSelectedPromise = days === 7
+    ? viewedSevenPromise
+    : hogQL<[number]>(`
+    SELECT count() FROM events
+    WHERE event = 'pricing_viewed'
+      AND timestamp >= now() - INTERVAL ${days} DAY
+    `, ["number"]);
+
   const [submittedSeven, submittedSelected, viewedSeven, viewedSelected] = await Promise.all([
-    hogQL<[number]>(`
-    SELECT count() FROM events
-    WHERE event = 'consultation_submitted'
-      AND timestamp >= now() - INTERVAL 7 DAY
-      ${bf}
-    `, ["number"]),
-    hogQL<[number]>(`
-    SELECT count() FROM events
-    WHERE event = 'consultation_submitted'
-      AND timestamp >= now() - INTERVAL ${days} DAY
-      ${bf}
-    `, ["number"]),
-    // pricing_viewed events don't carry branch_slug — the conversion rate is
-    // site-wide regardless of the user's branch filter.
-    hogQL<[number]>(`
-    SELECT count() FROM events
-    WHERE event = 'pricing_viewed'
-      AND timestamp >= now() - INTERVAL 7 DAY
-    `, ["number"]),
-    hogQL<[number]>(`
-    SELECT count() FROM events
-    WHERE event = 'pricing_viewed'
-      AND timestamp >= now() - INTERVAL ${days} DAY
-    `, ["number"]),
+    submittedSevenPromise,
+    submittedSelectedPromise,
+    viewedSevenPromise,
+    viewedSelectedPromise,
   ]);
   const subs = safeNumber(submittedSeven[0]?.[0]);
   const views = safeNumber(viewedSeven[0]?.[0]);

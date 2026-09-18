@@ -12,6 +12,11 @@ import { SystemSettingService } from "./system-setting.service";
 import { MessageAutomationActivationService } from "./message-automation-activation.service";
 import type { ClientTriggerSource, EmployeeAssignmentScheduleSource } from "./message-trigger-recipes";
 import { DEFAULT_SERVICE_INFO_TRIGGER, DEFAULT_CLIENT_GREETING_TRIGGER, matchesTriggerDefaults } from "./message-trigger-defaults";
+import type {
+    ServiceRecordLinkCaseSource,
+    ServiceRecordLinkScheduleSource,
+    ServiceRecordLinkTokenSource,
+} from "./service-record-link-automation-effect-recipe";
 
 export type ClientAutomationSettingsSnapshot = {
     status: "available";
@@ -23,6 +28,12 @@ export type ClientAutomationSettingsSnapshot = {
     pastTriggerEnabled: boolean;
     pastTriggerConfig: MessageAutomationPastTriggerConfig;
 } | { status: "unavailable" };
+
+export type ClientAutomationServiceRecordLinkSource = {
+    schedule: ServiceRecordLinkScheduleSource;
+    serviceRecordCase: ServiceRecordLinkCaseSource | null;
+    token: ServiceRecordLinkTokenSource | null;
+};
 
 /** Shared read owner. It cannot provision defaults, mutate jobs, enrich content or deliver messages. */
 @Injectable()
@@ -127,6 +138,99 @@ export class ClientAutomationSourceReader {
                 primaryEmployee: { select: { id: true, name: true, phone: true } },
                 secondaryEmployee: { select: { id: true, name: true, phone: true } },
             }, orderBy: { id: "asc" }, take: 501,
+        });
+    }
+
+    /**
+     * Read the complete, branch-owned source for the dedicated service-record
+     * link recipe. This is intentionally read-only: link issuance and job
+     * promotion remain owned by ServiceRecordLinkService after approval.
+     */
+    async readClientAutomationServiceRecordLinks(
+        branchId: string,
+        clientId: number,
+        transaction?: Prisma.TransactionClient,
+    ): Promise<ClientAutomationServiceRecordLinkSource[]> {
+        const rows = await (transaction ?? this.prisma).employee_schedule.findMany({
+            where: { branchId, clientId, replaced: false, terminatedAt: null },
+            select: {
+                id: true,
+                incarnationId: true,
+                branchId: true,
+                clientId: true,
+                startDate: true,
+                endDate: true,
+                replaced: true,
+                terminatedAt: true,
+                primaryEmployeeId: true,
+                client: {
+                    select: {
+                        id: true,
+                        name: true,
+                        branchId: true,
+                        createdAt: true,
+                        serviceStatus: true,
+                    },
+                },
+                primaryEmployee: {
+                    select: {
+                        id: true,
+                        name: true,
+                        phone: true,
+                        branchId: true,
+                        deletedAt: true,
+                    },
+                },
+                serviceRecordTokens: {
+                    orderBy: { createdAt: "desc" },
+                    take: 1,
+                    select: {
+                        id: true,
+                        branchId: true,
+                        scheduleId: true,
+                        employeeId: true,
+                        serviceRecordCaseId: true,
+                        linkTokenHash: true,
+                        expectedPhoneHash: true,
+                        expiresAt: true,
+                        active: true,
+                        revokedAt: true,
+                        lockedAt: true,
+                        failedAttempts: true,
+                        createdAt: true,
+                        serviceRecordCase: {
+                            select: {
+                                id: true,
+                                branchId: true,
+                                clientId: true,
+                                status: true,
+                                startDate: true,
+                                endDate: true,
+                                requiredSessionCount: true,
+                                formVersion: true,
+                                version: true,
+                                finalizedAt: true,
+                                updatedAt: true,
+                            },
+                        },
+                    },
+                },
+            },
+            orderBy: { id: "asc" },
+            take: 501,
+        });
+
+        return rows.map((row) => {
+            const token = row.serviceRecordTokens[0] ?? null;
+            return {
+                schedule: row as unknown as ServiceRecordLinkScheduleSource,
+                serviceRecordCase: token?.serviceRecordCase
+                    ? token.serviceRecordCase as ServiceRecordLinkCaseSource
+                    : null,
+                token: token
+                    ? token as unknown as ServiceRecordLinkTokenSource
+                    : null,
+            };
         });
     }
 
