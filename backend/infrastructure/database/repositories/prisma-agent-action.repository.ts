@@ -16,10 +16,12 @@ function jsonObject(value: unknown): Record<string, unknown> {
     return value as Record<string, unknown>;
 }
 
-function toEntity(record: AgentActionRecord): AgentActionEntity {
+export function toAgentActionEntity(record: AgentActionRecord): AgentActionEntity {
     return {
         id: record.id,
         sessionId: record.sessionId,
+        taskId: record.taskId ?? null,
+        taskRevision: record.taskRevision ?? null,
         userId: record.userId,
         branchId: record.branchId,
         capability: record.capability,
@@ -94,7 +96,7 @@ export class PrismaAgentActionRepository implements IAgentActionRepository {
                     dedupeExpiresAt: input.dedupeExpiresAt,
                 },
             });
-            return { status: "created", action: toEntity(record) };
+            return { status: "created", action: toAgentActionEntity(record) };
         });
     }
 }

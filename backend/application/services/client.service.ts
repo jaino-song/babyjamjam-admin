@@ -1,6 +1,7 @@
 import { BadRequestException, ConflictException, Injectable, Inject, Logger, NotFoundException, Optional } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { Prisma } from "@prisma/client";
+import { randomUUID } from "node:crypto";
 import { eformsignCustomerPhone, extractEformsignContractEndDate } from "application/utils/eformsign-contract-client-candidate";
 import { resolveEformsignDocDisplayStatus } from "application/utils/eformsign-doc-display-status";
 import { EformsignDocumentSnapshotService } from "application/services/eformsign-document-snapshot.service";
@@ -66,6 +67,10 @@ import { MessageAutomationIntentService } from "./message-automation-intent.serv
 import { ServiceRecordLinkService } from "./service-record-link.service";
 import { ServiceRecordLifecycleService } from "./service-record-lifecycle.service";
 import { SystemSettingService } from "./system-setting.service";
+import { MessageAutomationBranchLockService } from "./message-automation-branch-lock.service";
+import { AgentAutomationRecordStoreService } from "../agent/agent-automation-record-store.service";
+import { CLIENT_AUTOMATION_IMPACT, type ClientAutomationImpactPort } from "domain/ports/client-automation-impact.port";
+import type { AgentAutomationEffect } from "domain/entities/agent-automation-consent";
 
 const FILTER_DAYS_THRESHOLD = 7;
 // Contract attention window, in KR business days before service start, within
@@ -256,6 +261,10 @@ export class ClientService {
         @Optional() private readonly serviceRecordLifecycleService?: ServiceRecordLifecycleService,
         @Optional() private readonly configService?: ConfigService,
         @Optional() private readonly linkMirroredDocumentByPhoneUsecase?: LinkMirroredEformsignDocByPhoneUsecase,
+        @Optional() @Inject(CLIENT_AUTOMATION_IMPACT)
+        private readonly clientAutomationImpact?: ClientAutomationImpactPort,
+        @Optional() private readonly agentAutomationRecordStore?: AgentAutomationRecordStoreService,
+        @Optional() private readonly messageAutomationBranchLockService?: MessageAutomationBranchLockService,
     ) {}
 
     private async transactionNow(transaction: Prisma.TransactionClient): Promise<Date> {
@@ -888,6 +897,7 @@ export class ClientService {
         applyMessageAutomation: boolean;
     }): Promise<{ createdScheduleId: number | null; replacedScheduleId: number | null }> {
         const intentAt = new Date();
+        const ordinaryMutationId = randomUUID();
         const newSchedule = await this.prismaService.$transaction(async (transaction) => {
             // The common policy rereads every historical schedule after the
             // client lock and locks the complete employee union (including the
@@ -967,6 +977,12 @@ export class ClientService {
                 excludeScheduleId: currentSchedule?.id,
             });
             if (currentSchedule && handover) {
+                await this.agentAutomationRecordStore?.appendScheduleWriteFence(transaction, {
+                    branchId: branchid,
+                    clientId: params.clientId,
+                    mutationId: ordinaryMutationId,
+                    scheduleIds: [currentSchedule.id],
+                });
                 await transaction.employee_schedule.update({
                     where: { id: currentSchedule.id },
                     data: {
@@ -1792,8 +1808,9 @@ export class ClientService {
 
         let createdScheduleId: number | null = null;
         let replacedScheduleId: number | null = null;
+        const ordinaryMutationId = randomUUID();
 
-        await this.prismaService.$transaction(async (transaction) => {
+        const writeTransaction = async (transaction: Prisma.TransactionClient): Promise<void> => {
             // Always serialize client-owned service-record state before any
             // update write. The policy rereads historical schedules after the
             // client lock and locks their complete employee union, plus any
@@ -1911,6 +1928,30 @@ export class ClientService {
             const endDate = lockedMergedServicePeriod.endDate
                 ?? new Date(startDate.getTime() + DEFAULT_SERVICE_PERIOD_MS);
 
+            // Read the current automation source while the service-record and
+            // branch locks are held. The planner is advisory for ordinary
+            // writes: only a complete, available result can append an
+            // ordinary successor; an unavailable read leaves the existing
+            // task lineage in place and the materializer fails closed.
+            const automationImpact = this.clientAutomationImpact?.planClientWriteInTransaction && this.agentAutomationRecordStore
+                ? await this.clientAutomationImpact.planClientWriteInTransaction(transaction, branchid, {
+                    kind: "update",
+                    clientId: id,
+                    values: {
+                        name: params.name,
+                        phone: params.phone === undefined ? undefined : normalizedPhoneUpdate,
+                        type: lockedPricing?.type,
+                        startDate: startDateUpdate,
+                        endDate: endDateUpdate,
+                        duration,
+                        fullPrice: lockedPricing?.fullPrice,
+                        grant: lockedPricing?.grant,
+                        actualPrice: lockedPricing?.actualPrice,
+                        areaId: params.areaId,
+                    },
+                })
+                : null;
+
             if (employeeChanged) {
                 const currentSchedule = await transaction.employee_schedule.findFirst({
                     where: { clientId: id, branchId: branchid, replaced: false },
@@ -1974,6 +2015,12 @@ export class ClientService {
                         excludeScheduleId: currentSchedule?.id,
                     });
                     if (currentSchedule && handover) {
+                        await this.agentAutomationRecordStore?.appendScheduleWriteFence(transaction, {
+                            branchId: branchid,
+                            clientId: id,
+                            mutationId: ordinaryMutationId,
+                            scheduleIds: [currentSchedule.id],
+                        });
                         await transaction.employee_schedule.update({
                             where: { id: currentSchedule.id },
                             data: {
@@ -2038,7 +2085,32 @@ export class ClientService {
                 throw new NotFoundException(`고객을 찾을 수 없습니다. (id: ${id})`);
             }
             await this.serviceRecordLifecycleService?.ensureForClient(id, transaction);
-        });
+            if (
+                automationImpact
+                && automationImpact.availability === "available"
+                && automationImpact.complete
+                && automationImpact.effects.length > 0
+            ) {
+                const clientEffects = automationImpact.effects.filter(
+                    (effect): effect is AgentAutomationEffect => effect.kind === "client-rule",
+                );
+                if (clientEffects.length > 0) {
+                    await this.agentAutomationRecordStore!.appendOrdinarySuccessors(transaction, {
+                        branchId: branchid,
+                        clientId: id,
+                        mutationId: ordinaryMutationId,
+                        operation: "client-write",
+                        effects: clientEffects,
+                    });
+                }
+            }
+        };
+
+        if (this.messageAutomationBranchLockService) {
+            await this.messageAutomationBranchLockService.runExclusive(branchid, writeTransaction);
+        } else {
+            await this.prismaService.$transaction(writeTransaction);
+        }
 
         if (replacedScheduleId !== null) {
             await this.revokeServiceRecordLinkAfterCommit(id, replacedScheduleId);
@@ -2108,6 +2180,7 @@ export class ClientService {
         // case in one owning transaction. Passing the transaction through the
         // update usecase avoids a nested root transaction while locks are held.
         const terminationAt = new Date();
+        const ordinaryMutationId = randomUUID();
         const updatedClient = await this.prismaService.$transaction(async (transaction) => {
             const existingCase = transaction.service_record_case?.findUnique
                 ? await transaction.service_record_case.findUnique({
@@ -2138,6 +2211,12 @@ export class ClientService {
                     schedule.primaryEmployeeId,
                     schedule.secondaryEmployeeId,
                 ]),
+            });
+            await this.agentAutomationRecordStore?.appendScheduleWriteFence(transaction, {
+                branchId: branchid,
+                clientId,
+                mutationId: ordinaryMutationId,
+                scheduleIds: schedules.map((schedule) => schedule.id),
             });
             // Revalidate after the client and dependent rows are locked. The
             // initial existence lookup is only a fast preflight.
@@ -2207,6 +2286,7 @@ export class ClientService {
         );
 
         let replacedScheduleId: number | null = null;
+        const ordinaryMutationId = randomUUID();
         const replacementSchedule = await this.prismaService.$transaction(async (transaction) => {
             // Lock the full historical schedule/employee union before any
             // case or schedule write. The requested providers are part of the
@@ -2288,6 +2368,12 @@ export class ClientService {
             }
 
             if (currentSchedule) {
+                await this.agentAutomationRecordStore?.appendScheduleWriteFence(transaction, {
+                    branchId: branchid,
+                    clientId,
+                    mutationId: ordinaryMutationId,
+                    scheduleIds: [currentSchedule.id],
+                });
                 await transaction.employee_schedule.update({
                     where: { id: currentSchedule.id },
                     data: {

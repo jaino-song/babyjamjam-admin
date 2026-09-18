@@ -213,6 +213,34 @@ describe("CapabilityRouterService", () => {
         }));
     });
 
+    it("masks labelled and server-known customer values before classifier dispatch", async () => {
+        mockedGenerateText.mockResolvedValueOnce({ text: '{"domains":["clients"]}' } as never);
+        const router = new CapabilityRouterService(
+            { list: () => [
+                { meta: { name: "clients.search", domain: "clients" } },
+                { meta: { name: "employees.search", domain: "employees" } },
+            ] } as never,
+            enabledFlags() as never,
+            { create: jest.fn().mockReturnValue({}) } as never,
+        );
+        const previousClassifierFlag = process.env["AGENT_ROUTER_CLASSIFIER_ENABLED"];
+        process.env["AGENT_ROUTER_CLASSIFIER_ENABLED"] = "true";
+
+        try {
+            await router.route("이름: 홍길동, 주소: 서울시 강남구", principal, 12, ["서울시 강남구"]);
+        } finally {
+            if (previousClassifierFlag === undefined) delete process.env["AGENT_ROUTER_CLASSIFIER_ENABLED"];
+            else process.env["AGENT_ROUTER_CLASSIFIER_ENABLED"] = previousClassifierFlag;
+        }
+
+        expect(mockedGenerateText).toHaveBeenCalledWith(expect.objectContaining({
+            prompt: "이름: [protected], 주소: [protected]",
+        }));
+        const classifierPrompt = mockedGenerateText.mock.calls[0]?.[0]?.prompt;
+        expect(classifierPrompt).not.toContain("홍길동");
+        expect(classifierPrompt).not.toContain("서울시 강남구");
+    });
+
     it("removes labeled credentials while preserving opaque operational identifiers", () => {
         expect(minimizeClassifierText("Bearer abc.def token: secret-value actionId=123e4567-e89b-12d3-a456-426614174000 cursor=cuid_2m4x6z8q0v"))
             .toBe("[redacted] [redacted] actionId=123e4567-e89b-12d3-a456-426614174000 cursor=cuid_2m4x6z8q0v");

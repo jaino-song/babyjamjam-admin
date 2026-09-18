@@ -1,3 +1,4 @@
+import { createLegacyAutomationDeliveryGate } from "../fixtures/legacy-automation-delivery-gate";
 import { randomUUID } from "node:crypto";
 import { ConflictException } from "@nestjs/common";
 import { clientLock, reached } from "./helpers/service-record-confirm-race.helper";
@@ -24,7 +25,7 @@ function edit(prisma: unknown) {
 function authorize(prisma: unknown, job: MessageTriggerJobEntity) {
     const forbidden = new Proxy({}, { get: () => { throw new Error("Unexpected non-DB collaborator"); } });
     const service = new MessageTriggerService(prisma as never, forbidden as never, forbidden as never,
-        forbidden as never, forbidden as never, forbidden as never, forbidden as never, forbidden as never);
+        forbidden as never, forbidden as never, forbidden as never, forbidden as never, forbidden as never, undefined, undefined, undefined, undefined, undefined, createLegacyAutomationDeliveryGate(prisma as never, undefined));
     return (service as unknown as {
         authorizeClaimedJobForDispatch(job: MessageTriggerJobEntity): Promise<{ kind: string }>;
     }).authorizeClaimedJobForDispatch(job);

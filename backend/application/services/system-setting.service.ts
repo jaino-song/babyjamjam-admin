@@ -160,10 +160,10 @@ export class SystemSettingService {
 
     async getMessageAutomationPastTriggerConfig(
         branchId: string,
+        readValue?: (key: string) => Promise<string | null>,
     ): Promise<MessageAutomationPastTriggerConfig> {
-        const value = await this.getSettingUsecase.execute(
-            this.getMessageAutomationPastTriggerConfigKey(branchId)
-        );
+        const key = this.getMessageAutomationPastTriggerConfigKey(branchId);
+        const value = readValue ? await readValue(key) : await this.getSettingUsecase.execute(key);
         return this.parseMessageAutomationPastTriggerConfig(value);
     }
 
@@ -185,8 +185,10 @@ export class SystemSettingService {
     async getMessageSettingsPolicyEnabled(
         branchId: string,
         policyId: StoredMessageSettingsPolicyId,
+        readValue?: (key: string) => Promise<string | null>,
     ): Promise<boolean> {
-        const value = await this.getSettingUsecase.executeWithDefault(
+        const value = readValue ? (await readValue(this.getMessageSettingsPolicyEnabledKey(branchId, policyId)))
+            ?? String(DEFAULT_MESSAGE_SETTINGS_POLICY_ENABLED) : await this.getSettingUsecase.executeWithDefault(
             this.getMessageSettingsPolicyEnabledKey(branchId, policyId),
             String(DEFAULT_MESSAGE_SETTINGS_POLICY_ENABLED),
         );

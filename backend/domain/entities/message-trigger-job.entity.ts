@@ -7,6 +7,7 @@ import {
     TRIGGER_JOB_MAX_ATTEMPTS,
     TRIGGER_JOB_RETRY_DELAY_MS,
 } from "domain/constants/message-automation-policy";
+import type { AgentAutomationJobSeal, AgentAutomationTaskCommitReference } from "./agent-automation-consent";
 import type { ServiceRecordRevisionDispatchContext } from "@babyjamjam/shared/types/service-record";
 
 export type MessageTriggerJobStatus =
@@ -26,6 +27,10 @@ export interface MessageTriggerCatchUpMetadata {
 }
 
 export interface MessageTriggerJobPayload {
+    /** Private server-derived authority. Presence is not proof without terminal-record validation. */
+    agentAutomationSeal?: AgentAutomationJobSeal;
+    /** Digest-only task commit/coverage lookup; never contains customer or message data. */
+    taskAutomationReference?: AgentAutomationTaskCommitReference;
     clientId?: number | null;
     clientName?: string | null;
     employeeId?: number | null;

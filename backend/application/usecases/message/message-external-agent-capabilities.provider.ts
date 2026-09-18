@@ -223,7 +223,7 @@ export class MessageExternalAgentCapabilitiesProvider implements AgentCapability
                 inputSchema: z.object({}).default({}), outputSchema: AutomationRulesOutputSchema,
                 execute: async (context, rawInput) => {
                     z.object({}).parse(rawInput);
-                    const rules = await this.messageTriggerService.listRules(context.principal.branchId);
+                    const rules = await this.messageTriggerService.listRulesReadOnly(context.principal.branchId);
                     return { rules: rules.map((rule) => this.ruleView(rule)) };
                 },
             },

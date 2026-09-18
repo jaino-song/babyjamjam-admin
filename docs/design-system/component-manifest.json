@@ -1552,6 +1552,22 @@
         ]
       },
       {
+        "name": "MobileTaskControls",
+        "layer": "organism",
+        "import": "@/components/app/chat/MobileTaskControls",
+        "file": "mobile/src/components/app/chat/MobileTaskControls.tsx",
+        "exports": [
+          "MobileTaskControls",
+          "MobileTaskControlsProps"
+        ],
+        "replaces": [
+          "chat-local task draft editor and lifecycle controls"
+        ],
+        "requiredFor": [
+          "mobile agent task editing and lifecycle commands"
+        ]
+      },
+      {
         "name": "Autocomplete",
         "layer": "molecule",
         "import": "@/components/app/ui/Autocomplete",
