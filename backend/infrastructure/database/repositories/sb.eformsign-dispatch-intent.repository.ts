@@ -102,7 +102,7 @@ export class SbEformsignDispatchIntentRepository implements IEformsignDispatchIn
                     status_type AS "statusType",
                     permanent_purge_requested_at AS "permanentPurgeRequestedAt"
                 FROM eformsign_doc
-                WHERE branch_id = ${branchId}
+                WHERE branch_id = ${branchId}::uuid
                   AND (
                       ${mirrorId !== null ? Prisma.sql`id = ${mirrorId}` : Prisma.sql`FALSE`}
                       OR ${providerDocumentId !== null
@@ -121,7 +121,7 @@ export class SbEformsignDispatchIntentRepository implements IEformsignDispatchIn
             const terminalCancellation = await client.$queryRaw<Array<{ id: string }>>(Prisma.sql`
                 SELECT id
                 FROM eformsign_dispatch_intent
-                WHERE branch_id = ${branchId}
+                WHERE branch_id = ${branchId}::uuid
                   AND action = 'cancel'
                   AND status IN ('accepted', 'reconciled_delivered')
                   AND (

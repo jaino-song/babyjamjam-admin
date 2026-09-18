@@ -55,7 +55,7 @@ export class SbEformsignCancellationRepository implements IEformsignCancellation
                     template_id AS "templateId",
                     permanent_purge_requested_at AS "permanentPurgeRequestedAt"
                 FROM eformsign_doc
-                WHERE branch_id = ${branchId}
+                WHERE branch_id = ${branchId}::uuid
                   AND document_id IN (${Prisma.join(documentIds)})
                 ORDER BY id
                 FOR UPDATE
@@ -92,7 +92,7 @@ export class SbEformsignCancellationRepository implements IEformsignCancellation
                     created_at AS "createdAt",
                     updated_at AS "updatedAt"
                 FROM eformsign_dispatch_intent
-                WHERE branch_id = ${branchId}
+                WHERE branch_id = ${branchId}::uuid
                   AND (
                       local_document_id IN (${Prisma.join(mirrorIds)})
                       OR provider_document_id IN (${Prisma.join(documentIds)})
@@ -134,7 +134,7 @@ export class SbEformsignCancellationRepository implements IEformsignCancellation
                     const scopeRows = await tx.$queryRaw<Array<{ id: number }>>(Prisma.sql`
                         SELECT id
                         FROM eformsign_doc
-                        WHERE branch_id = ${branchId}
+                        WHERE branch_id = ${branchId}::uuid
                           AND client_id = ${clientId}
                           AND employee_schedule_id IS NOT DISTINCT FROM ${assignmentId}
                           AND template_id IS NOT DISTINCT FROM ${templateId}
@@ -247,7 +247,7 @@ export class SbEformsignCancellationRepository implements IEformsignCancellation
                             created_at AS "createdAt",
                             updated_at AS "updatedAt"
                         FROM eformsign_dispatch_intent
-                        WHERE id = ${cancelIntent.id} AND branch_id = ${branchId}
+                        WHERE id = ${cancelIntent.id}::uuid AND branch_id = ${branchId}::uuid
                         FOR UPDATE
                     `);
                     currentIntent = claimedRows[0] ?? {
@@ -635,7 +635,7 @@ export class SbEformsignCancellationRepository implements IEformsignCancellation
                 created_at AS "createdAt",
                 updated_at AS "updatedAt"
             FROM eformsign_dispatch_intent
-            WHERE id = ${intentId} AND branch_id = ${branchId}
+            WHERE id = ${intentId}::uuid AND branch_id = ${branchId}::uuid
             FOR UPDATE
         `);
         return rows[0] ?? null;
@@ -667,7 +667,7 @@ export class SbEformsignCancellationRepository implements IEformsignCancellation
                 template_id AS "templateId",
                 permanent_purge_requested_at AS "permanentPurgeRequestedAt"
             FROM eformsign_doc
-            WHERE branch_id = ${branchId} AND document_id = ${documentId}
+            WHERE branch_id = ${branchId}::uuid AND document_id = ${documentId}
             FOR UPDATE
         `);
         return rows[0] ?? null;

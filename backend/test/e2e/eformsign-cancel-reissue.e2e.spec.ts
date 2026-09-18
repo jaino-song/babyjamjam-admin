@@ -70,10 +70,16 @@ describeE2E("eformsign durable cancellation and reissue (disposable PostgreSQL)"
         const cancelAAttempted = barrier();
         const cancelBAttempted = barrier();
         const repoA = new SbEformsignCancellationRepository(
-            instrumentMirrorLock(clientA, { attempted: cancelAAttempted.release }) as never,
+            instrumentMirrorLock(clientA, {
+                attempted: cancelAAttempted.release,
+                failed: cancelAAttempted.reject,
+            }) as never,
         );
         const repoB = new SbEformsignCancellationRepository(
-            instrumentMirrorLock(clientB, { attempted: cancelBAttempted.release }) as never,
+            instrumentMirrorLock(clientB, {
+                attempted: cancelBAttempted.release,
+                failed: cancelBAttempted.reject,
+            }) as never,
         );
         const held = barrier();
         const release = barrier();
@@ -83,6 +89,7 @@ describeE2E("eformsign durable cancellation and reissue (disposable PostgreSQL)"
             created.document.documentId,
             held.release,
             release.entered,
+            held.reject,
         );
         await held.entered;
 
@@ -98,8 +105,11 @@ describeE2E("eformsign durable cancellation and reissue (disposable PostgreSQL)"
             actorUserId: randomUUID(),
             reason: "concurrent cancel B",
         });
-        await Promise.all([cancelAAttempted.entered, cancelBAttempted.entered]);
-        release.release();
+        try {
+            await Promise.all([cancelAAttempted.entered, cancelBAttempted.entered]);
+        } finally {
+            release.release();
+        }
         const results = await Promise.allSettled([first, second]);
         await holding;
 
@@ -127,13 +137,17 @@ describeE2E("eformsign durable cancellation and reissue (disposable PostgreSQL)"
         const dispatchAttempted = barrier();
         const lockedCancellationClient = instrumentMirrorLock(cancellationClient, {
             acquired: cancellationAcquired.release,
+            failed: cancellationAcquired.reject,
             holdAfterAcquire: cancellationRelease.entered,
         });
         const cancellationRepository = new SbEformsignCancellationRepository(
             lockedCancellationClient as never,
         );
         const dispatchRepository = new SbEformsignDispatchIntentRepository(
-            instrumentMirrorLock(dispatchClient, { attempted: dispatchAttempted.release }) as never,
+            instrumentMirrorLock(dispatchClient, {
+                attempted: dispatchAttempted.release,
+                failed: dispatchAttempted.reject,
+            }) as never,
         );
         const cancellation = cancellationRepository.begin({
             branchId: created.branch.id,
@@ -149,8 +163,11 @@ describeE2E("eformsign durable cancellation and reissue (disposable PostgreSQL)"
             localDocumentId: created.document.id,
         }));
         const dispatch = dispatchRepository.claim(prepared.id, created.branch.id);
-        await dispatchAttempted.entered;
-        cancellationRelease.release();
+        try {
+            await dispatchAttempted.entered;
+        } finally {
+            cancellationRelease.release();
+        }
 
         await expect(cancellation).resolves.toHaveProperty("targets");
         await expect(dispatch).rejects.toBeInstanceOf(ConflictException);
@@ -170,13 +187,17 @@ describeE2E("eformsign durable cancellation and reissue (disposable PostgreSQL)"
         const cancellationAttempted = barrier();
         const lockedDispatchClient = instrumentMirrorLock(dispatchClient, {
             acquired: dispatchAcquired.release,
+            failed: dispatchAcquired.reject,
             holdAfterAcquire: dispatchRelease.entered,
         });
         const dispatchRepository = new SbEformsignDispatchIntentRepository(
             lockedDispatchClient as never,
         );
         const cancellationRepository = new SbEformsignCancellationRepository(
-            instrumentMirrorLock(cancellationClient, { attempted: cancellationAttempted.release }) as never,
+            instrumentMirrorLock(cancellationClient, {
+                attempted: cancellationAttempted.release,
+                failed: cancellationAttempted.reject,
+            }) as never,
         );
         const prepared = await dispatchRepository.prepare(createDispatchIntentInput({
             branchId: created.branch.id,
@@ -191,8 +212,11 @@ describeE2E("eformsign durable cancellation and reissue (disposable PostgreSQL)"
             actorUserId: randomUUID(),
             reason: "dispatch owns mirror first",
         });
-        await cancellationAttempted.entered;
-        dispatchRelease.release();
+        try {
+            await cancellationAttempted.entered;
+        } finally {
+            dispatchRelease.release();
+        }
 
         await expect(dispatch).resolves.toMatchObject({ claimed: true });
         await expect(cancellation).rejects.toBeInstanceOf(ConflictException);
@@ -366,11 +390,15 @@ describeE2E("eformsign durable cancellation and reissue (disposable PostgreSQL)"
         const repoA = new SbEformsignDispatchIntentRepository(
             instrumentDispatchClaim(clientA, {
                 attempted: repoAAttempted.release,
+                failed: repoAAttempted.reject,
                 holdAfterUpdate: repoARelease.entered,
             }) as never,
         );
         const repoB = new SbEformsignDispatchIntentRepository(
-            instrumentDispatchClaim(clientB, { attempted: repoBAttempted.release }) as never,
+            instrumentDispatchClaim(clientB, {
+                attempted: repoBAttempted.release,
+                failed: repoBAttempted.reject,
+            }) as never,
         );
         const start = barrier();
         const input = createDispatchIntentInput({
@@ -390,8 +418,11 @@ describeE2E("eformsign durable cancellation and reissue (disposable PostgreSQL)"
         const claimA = (async () => { await claimStart.entered; return repoA.claim(preparedA.id, created.branch.id); })();
         const claimB = (async () => { await claimStart.entered; return repoB.claim(preparedB.id, created.branch.id); })();
         claimStart.release();
-        await Promise.all([repoAAttempted.entered, repoBAttempted.entered]);
-        repoARelease.release();
+        try {
+            await Promise.all([repoAAttempted.entered, repoBAttempted.entered]);
+        } finally {
+            repoARelease.release();
+        }
         const [claimedA, claimedB] = await Promise.all([claimA, claimB]);
         expect([claimedA?.claimed, claimedB?.claimed].filter(Boolean)).toHaveLength(1);
         expect(await prisma.eformsign_dispatch_intent.findUniqueOrThrow({

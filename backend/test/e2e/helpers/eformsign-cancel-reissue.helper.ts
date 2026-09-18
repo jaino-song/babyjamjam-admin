@@ -40,8 +40,21 @@ export function createApprovedEformsignCancelReissueClient(
 
 export function barrier() {
     let release!: () => void;
-    const entered = new Promise<void>((resolve) => { release = resolve; });
-    return { entered, release };
+    let reject!: (error: unknown) => void;
+    let settled = false;
+    const entered = new Promise<void>((resolve, rejectPromise) => {
+        release = () => {
+            if (settled) return;
+            settled = true;
+            resolve();
+        };
+        reject = (error: unknown) => {
+            if (settled) return;
+            settled = true;
+            rejectPromise(error);
+        };
+    });
+    return { entered, release, reject };
 }
 
 export async function holdMirrorRow(
@@ -50,22 +63,29 @@ export async function holdMirrorRow(
     documentId: string,
     onAcquired: () => void,
     release: Promise<void>,
+    onError?: (error: unknown) => void,
 ): Promise<void> {
-    await prisma.$transaction(async (tx) => {
-        await tx.$queryRaw(Prisma.sql`
-            SELECT id
-            FROM eformsign_doc
-            WHERE branch_id = ${branchId} AND document_id = ${documentId}
-            FOR UPDATE
-        `);
-        onAcquired();
-        await release;
-    });
+    try {
+        await prisma.$transaction(async (tx) => {
+            await tx.$queryRaw(Prisma.sql`
+                SELECT id
+                FROM eformsign_doc
+                WHERE branch_id = ${branchId}::uuid AND document_id = ${documentId}
+                FOR UPDATE
+            `);
+            onAcquired();
+            await release;
+        });
+    } catch (error) {
+        onError?.(error);
+        throw error;
+    }
 }
 
 export type MirrorLockHooks = {
     attempted?: () => void;
     acquired?: () => void;
+    failed?: (error: unknown) => void;
     holdAfterAcquire?: Promise<void>;
 };
 
@@ -95,7 +115,13 @@ export function instrumentMirrorLock(
                     observed = true;
                     hooks.attempted?.();
                 }
-                const result = await query(args);
+                let result;
+                try {
+                    result = await query(args);
+                } catch (error) {
+                    if (lock) hooks.failed?.(error);
+                    throw error;
+                }
                 if (lock) {
                     hooks.acquired?.();
                     if (hooks.holdAfterAcquire) await hooks.holdAfterAcquire;
@@ -108,6 +134,7 @@ export function instrumentMirrorLock(
 
 export type DispatchClaimHooks = {
     attempted?: () => void;
+    failed?: (error: unknown) => void;
     holdAfterUpdate?: Promise<void>;
 };
 
@@ -128,7 +155,13 @@ export function instrumentDispatchClaim(
                     const status = typeof data.status === "string" ? data.status : undefined;
                     if (status === "started") {
                         hooks.attempted?.();
-                        const result = await query(args);
+                        let result;
+                        try {
+                            result = await query(args);
+                        } catch (error) {
+                            hooks.failed?.(error);
+                            throw error;
+                        }
                         if (hooks.holdAfterUpdate) await hooks.holdAfterUpdate;
                         return result;
                     }
