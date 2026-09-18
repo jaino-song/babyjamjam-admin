@@ -7,6 +7,7 @@ import {
     projectScenarioForProduct,
     structuredObservationsForEvents,
 } from "../../../evals/conversation/product-runtime-adapter";
+import { AgentTaskConflictException } from "./agent-task.service";
 
 describe("deterministic product runtime bridge", () => {
     it("projects turns without carrying fixture oracle expectations", () => {
@@ -209,6 +210,85 @@ describe("deterministic product runtime bridge", () => {
         expect(replay.runtimeRestarts).toBe(1);
         expect(replayObservation?.structuredEvents).toEqual([]);
         expect(replayObservation?.acceptedDraftState).toEqual(firstObservation?.acceptedDraftState);
+        expect(transport.networkCalls).toBe(0);
+    });
+
+    it("reports stale revisions and event payload conflicts from the product task service", async () => {
+        const transport = createNoNetworkMockTransport();
+        const driver = createDeterministicProductRuntimeDriver();
+        const scenario = projectScenarioForProduct(CONVERSATION_EVAL_CASES[0]!);
+        await driver.reset?.({ scenario, clock: createDeterministicClock(), transport });
+
+        const text = "고객 등록해줘. 이름: SYN_PRODUCT, 전화번호: 01012345678";
+        await driver.runTurn({
+            scenario,
+            turn: { id: "conflict-seed-turn", userText: text, inputEvents: [{ type: "user_message", text }] },
+            turnIndex: 0,
+            clock: createDeterministicClock(),
+            transport,
+        });
+        const [task] = driver.taskRepository.snapshotTasks();
+        if (!task) throw new Error("The product host did not create the conflict test task");
+
+        const patchEventId = "f3000000-0000-4000-8000-000000000001";
+        const first = await driver.taskService.patch(driver.principal, task.taskId, {
+            clientEventId: patchEventId,
+            expectedRevision: task.revision,
+            operations: [{ op: "set", field: "name", value: "SYN_PATCHED" }],
+        });
+        const expectConflict = async (run: () => Promise<unknown>, reason: "revision" | "event_payload") => {
+            try {
+                await run();
+                throw new Error(`Expected an ${reason} conflict`);
+            } catch (error) {
+                if (!(error instanceof AgentTaskConflictException)) throw error;
+                expect(error.getResponse()).toEqual(expect.objectContaining({ code: "AGENT_TASK_CONFLICT", reason }));
+            }
+        };
+
+        await expectConflict(() => driver.taskService.patch(driver.principal, task.taskId, {
+            clientEventId: "f3000000-0000-4000-8000-000000000002",
+            expectedRevision: task.revision,
+            operations: [{ op: "set", field: "address", value: "SYN_STALE" }],
+        }), "revision");
+        await expectConflict(() => driver.taskService.patch(driver.principal, task.taskId, {
+            clientEventId: patchEventId,
+            expectedRevision: first.snapshot.revision,
+            operations: [{ op: "set", field: "name", value: "SYN_OTHER" }],
+        }), "event_payload");
+
+        expect(driver.taskRepository.snapshotEvents({ ...driver.principal, sessionId: task.sessionId })).toHaveLength(2);
+        expect(transport.networkCalls).toBe(0);
+    });
+
+    it("purges an expired product task from live host evidence", async () => {
+        const transport = createNoNetworkMockTransport();
+        const driver = createDeterministicProductRuntimeDriver();
+        const scenario = projectScenarioForProduct(CONVERSATION_EVAL_CASES[0]!);
+        await driver.reset?.({ scenario, clock: createDeterministicClock(), transport });
+
+        const text = "고객 등록해줘. 이름: SYN_PRODUCT, 전화번호: 01012345678";
+        await driver.runTurn({
+            scenario,
+            turn: { id: "purge-seed-turn", userText: text, inputEvents: [{ type: "user_message", text }] },
+            turnIndex: 0,
+            clock: createDeterministicClock(),
+            transport,
+        });
+        const [task] = driver.taskRepository.snapshotTasks();
+        if (!task) throw new Error("The product host did not create the purge test task");
+        const stored = driver.taskRepository.tasks.get(task.taskId);
+        if (!stored) throw new Error("The purge test task was not retained by the product repository");
+        stored.expiresAt = new Date(0);
+
+        await expect(driver.taskRepository.purgeExpired(new Date())).resolves.toBe(1);
+        expect(stored.purgedAt).toEqual(expect.any(Date));
+        expect(driver.getEvidence().acceptedTaskIds).toEqual([]);
+        const inspection = await driver.inspect({ scenario, clock: createDeterministicClock(), transport });
+        expect(inspection?.currentState).toEqual(expect.objectContaining({
+            phase: "runtime_observed",
+            facts: { taskCount: "0", stream: "completed" },
+        }));
         expect(transport.networkCalls).toBe(0);
     });
 
