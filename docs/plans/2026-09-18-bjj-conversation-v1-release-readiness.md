@@ -9,6 +9,14 @@
 
 로컬 합성 데이터와 vendor stub을 사용한 구현·결정적 검증은 통과했다. PR [#716](https://github.com/jaino-song/babyjamjam-admin/pull/716)의 backend, full-flow, call-inbox, auth observe/enforce, frontend, mobile, shared, OSV 및 advisory browser 검사는 통과했다. GitGuardian 필수 검사는 계속 실패해 merge가 차단되어 있다. 이 기록은 실제 모델 품질, 실제 SMS, 운영 데이터 변경, 배포 또는 운영 활성화를 의미하지 않는다.
 
+## GitGuardian history remediation — latest
+
+- Rewrote the PR-only history so the target-choice fixture uses low-entropy synthetic identifiers for the Q, S and T variants.
+- Reachable branch history contains zero `SYN_DUP_CLIENT_Q*`, `SYN_DUP_CLIENT_S*` or `SYN_DUP_CLIENT_T*` literals; the source-tree change is limited to `evals/conversation/cases.ts`.
+- Deterministic harness rerun: **48/48 passed**, with zero network, transport or safety errors. Updated digests are fixture `24ab8fb9498ba7472972c6d3a66b2d19274bc47787f96e5f34e9d8a1abc97d4a` and assertion `8c6070f04f167f22e211d113d0fe6e64b2af8491057f861609f8d5d8c2042af4`.
+- History merge `89789eb1e961708f10f68a7a48578d6def7f9f27` restores `dev` as the PR parent. The rewritten branch has not been pushed yet; GitGuardian must be rechecked after the force-with-lease update. No bypass is used.
+
+
 ## 재현한 검증
 
 - Backend: 395 suites passed, 1 skipped; 5,691 tests passed, 44 skipped; 1 snapshot passed.

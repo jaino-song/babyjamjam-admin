@@ -31,6 +31,12 @@ Updated 2026-09-18 at integration head `defc787667df8a5db624fdd5e4a3df4b5ad3b7ef
 
 These results close the recorded deterministic implementation and browser evidence for the integrated slices. They do **not** close the full Phase7 plan-level acceptance or the three completion flags: no paid Google/OpenAI quality evaluation, human review, real SMS, production database migration, merge, deployment or operational activation was performed.
 
+## GitGuardian history remediation continuation
+
+The PR-only history was rewritten to remove the remaining high-entropy target-choice fixture identifiers from reachable commits. The Q, S and T variants now use low-entropy synthetic identifiers, and the reachable branch history contains zero `SYN_DUP_CLIENT_Q*`, `SYN_DUP_CLIENT_S*` or `SYN_DUP_CLIENT_T*` literals. The only source-tree change is `evals/conversation/cases.ts`.
+
+The deterministic harness was rerun with **48/48 passed**, zero network/transport/safety errors, fixture digest `24ab8fb9498ba7472972c6d3a66b2d19274bc47787f96e5f34e9d8a1abc97d4a` and assertion digest `8c6070f04f167f22e211d113d0fe6e64b2af8491057f861609f8d5d8c2042af4`. History merge `89789eb1e961708f10f68a7a48578d6def7f9f27` restores `dev` as the PR parent. GitGuardian must be rechecked after the guarded force-with-lease push; no bypass is used.
+
 ## User-requested pause — runtime delivery gate verified
 
 The user requested finishing only the in-flight increment, stopping, and updating Linear. The runtime delivery gate increment is now closed at source `b02ceaa2bb375ee43da3ade45afa88fcda948b1c`, reviewed against `8603f08ba19a79f5f01f149048273a492135b146`. Fresh independent SOL FINAL **SHIP/HIGH**, no remaining findings. This is not Phase7 close. No later implementation starts without a resume request.
