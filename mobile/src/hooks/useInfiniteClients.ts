@@ -154,7 +154,6 @@ export function useInfiniteClients({
     totalCount: allFilteredClients.length,
     isInitialLoad,
     error: query.error,
-    isError: query.isError,
     refetch: query.refetch,
   };
 }
