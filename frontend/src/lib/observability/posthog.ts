@@ -48,13 +48,27 @@ interface HogQLResponse {
   error?: string;
 }
 
+type HogQLColumn = "number" | "number?" | "string" | "string?" | "timestamp" | "timestamp?";
+
+function validColumn(value: unknown, column: HogQLColumn): boolean {
+  if (value === null) return column.endsWith("?");
+  if (column.startsWith("number")) {
+    return (typeof value === "number" || (typeof value === "string" && value.trim() !== "")) &&
+      Number.isFinite(Number(value)) && Number(value) >= 0;
+  }
+  if (column.startsWith("timestamp")) {
+    return typeof value === "string" && Number.isFinite(Date.parse(value));
+  }
+  return typeof value === "string";
+}
+
 async function hogQL<Row extends unknown[]>(
   query: string,
+  columns: readonly HogQLColumn[],
   revalidate = REVALIDATE_SECONDS
 ): Promise<Row[]> {
   if (!isPostHogConfigured()) {
-    console.warn("[posthog] missing POSTHOG_API_KEY or POSTHOG_PROJECT_ID");
-    return [];
+    throw new Error("PostHog statistics are not configured");
   }
   try {
     const res = await fetch(
@@ -70,18 +84,22 @@ async function hogQL<Row extends unknown[]>(
       }
     );
     if (!res.ok) {
-      console.warn(`[posthog] ${res.status} - ${query.slice(0, 80)}`);
-      return [];
+      throw new Error("PostHog query failed");
     }
     const data = (await res.json()) as HogQLResponse;
-    if (data.error) {
-      console.warn("[posthog] query error", data.error);
-      return [];
+    if (
+      data.error || !Array.isArray(data.results) ||
+      !data.results.every((row) =>
+        Array.isArray(row) && row.length === columns.length &&
+        columns.every((column, index) => validColumn(row[index], column))
+      )
+    ) {
+      throw new Error("Invalid PostHog response");
     }
-    return (data.results ?? []) as Row[];
-  } catch (err) {
-    console.warn("[posthog] fetch failed", err);
-    return [];
+    return data.results as Row[];
+  } catch {
+    // Keep provider payloads, credentials and request details out of error logs.
+    throw new Error("PostHog statistics are unavailable");
   }
 }
 
@@ -95,17 +113,14 @@ function safeString(v: unknown): string | null {
   return s === "null" || s === "" ? null : s;
 }
 
-// HogQL queries are sent as raw text, so any value injected into a WHERE
-// clause has to be allowlisted. Branch slugs are kebab-case ASCII
-// identifiers (e.g. "incheon-junggu"); anything else is dropped.
-function sanitizeBranchSlug(slug: string | null | undefined): string | null {
-  if (!slug) return null;
-  return /^[a-zA-Z0-9_-]+$/.test(slug) ? slug : null;
-}
-
+// Null/undefined is the caller's intentional all-branch scope. An invalid
+// supplied identifier must never erase a tenant filter or reach a raw query.
 function branchFilter(slug: string | null | undefined): string {
-  const s = sanitizeBranchSlug(slug);
-  return s ? `AND properties.branch_slug = '${s}'` : "";
+  if (slug == null) return "";
+  if (!/^[a-zA-Z0-9_-]+$/.test(slug)) {
+    throw new Error("Invalid statistics branch scope");
+  }
+  return `AND properties.branch_slug = '${slug}'`;
 }
 
 // ============================================================
@@ -128,7 +143,7 @@ export async function getInquiriesSummary(
     WHERE event = 'consultation_submitted'
       AND timestamp >= now() - INTERVAL 30 DAY
       ${bf}
-  `);
+  `, ["number", "number", "number", "number", "timestamp?"]);
 
   const [submittedSeven, submittedSelected, viewedSeven, viewedSelected] = await Promise.all([
     hogQL<[number]>(`
@@ -136,25 +151,25 @@ export async function getInquiriesSummary(
     WHERE event = 'consultation_submitted'
       AND timestamp >= now() - INTERVAL 7 DAY
       ${bf}
-    `),
+    `, ["number"]),
     hogQL<[number]>(`
     SELECT count() FROM events
     WHERE event = 'consultation_submitted'
       AND timestamp >= now() - INTERVAL ${days} DAY
       ${bf}
-    `),
+    `, ["number"]),
     // pricing_viewed events don't carry branch_slug — the conversion rate is
     // site-wide regardless of the user's branch filter.
     hogQL<[number]>(`
     SELECT count() FROM events
     WHERE event = 'pricing_viewed'
       AND timestamp >= now() - INTERVAL 7 DAY
-    `),
+    `, ["number"]),
     hogQL<[number]>(`
     SELECT count() FROM events
     WHERE event = 'pricing_viewed'
       AND timestamp >= now() - INTERVAL ${days} DAY
-    `),
+    `, ["number"]),
   ]);
   const subs = safeNumber(submittedSeven[0]?.[0]);
   const views = safeNumber(viewedSeven[0]?.[0]);
@@ -192,7 +207,7 @@ export async function getInquiriesDailyTrend(
       AND timestamp >= now() - INTERVAL ${days} DAY
       ${branchFilter(branchSlug)}
     GROUP BY day ORDER BY day ASC
-  `);
+  `, ["timestamp", "number"]);
   return rows.map(([day, count]) => ({ day: safeString(day) ?? "", count: safeNumber(count) }));
 }
 
@@ -206,7 +221,7 @@ export async function getInquiriesHourlyToday(
       AND toDate(timestamp) = today()
       ${branchFilter(branchSlug)}
     GROUP BY hour ORDER BY hour ASC
-  `);
+  `, ["number", "number"]);
   const map = new Map<number, number>();
   for (const [h, c] of rows) map.set(safeNumber(h), safeNumber(c));
   return Array.from({ length: 24 }, (_, hour) => ({ hour, count: map.get(hour) ?? 0 }));
@@ -220,7 +235,7 @@ export async function getInquiriesByBranch(days = 1): Promise<InquiryByBranchRow
       AND timestamp >= now() - INTERVAL ${days} DAY
       AND properties.branch_slug IS NOT NULL
     GROUP BY branch ORDER BY c DESC
-  `);
+  `, ["string", "number"]);
   return rows.map(([branch, count]) => ({
     branchSlug: safeString(branch) ?? "unknown",
     count: safeNumber(count),
@@ -246,7 +261,7 @@ export async function getRecentInquiries(
       ${branchFilter(branchSlug)}
     ORDER BY timestamp DESC
     LIMIT ${limit}
-  `);
+  `, ["string", "string?", "string?", "string?", "string?", "timestamp"]);
   return rows.map(([distinctId, branch, source, pathname, device, timestamp]) => ({
     distinctId: String(distinctId).slice(-8),
     branchSlug: safeString(branch),
@@ -266,7 +281,7 @@ async function countEventsInRange(event: string, days: number): Promise<number> 
     SELECT count() FROM events
     WHERE event = '${event}'
       AND timestamp >= now() - INTERVAL ${days} DAY
-  `);
+  `, ["number"]);
   return safeNumber(rows[0]?.[0]);
 }
 
@@ -319,7 +334,7 @@ export async function getFunnelTrend(days = 30): Promise<FunnelTrendPoint[]> {
     WHERE event IN ('pricing_viewed', 'consultation_submitted')
       AND timestamp >= now() - INTERVAL ${days} DAY
     GROUP BY day ORDER BY day ASC
-  `);
+  `, ["timestamp", "number", "number"]);
   return rows.map(([day, entries, completions]) => {
     const e = safeNumber(entries);
     const c = safeNumber(completions);
@@ -341,7 +356,7 @@ export async function getFunnelByDevice(days = 7): Promise<FunnelByDevice[]> {
       AND timestamp >= now() - INTERVAL ${days} DAY
       AND properties.$device_type IS NOT NULL
     GROUP BY device ORDER BY entries DESC
-  `);
+  `, ["string", "number", "number"]);
   return rows.map(([device, entries, completions]) => {
     const e = safeNumber(entries);
     const c = safeNumber(completions);
@@ -367,7 +382,7 @@ export async function getFunnelBySource(days = 7): Promise<FunnelBySource[]> {
     WHERE event IN ('pricing_viewed','pricing_quote_loaded','consultation_modal_opened','consultation_form_started','consultation_submitted')
       AND timestamp >= now() - INTERVAL ${days} DAY
     GROUP BY source ORDER BY entries DESC LIMIT 10
-  `);
+  `, ["string", "number", "number", "number", "number", "number"]);
   return rows.map(([source, entries, loaded, modal, started, submitted]) => {
     const e = safeNumber(entries);
     const s = safeNumber(submitted);
@@ -402,7 +417,7 @@ export async function getTrafficSummary(days: StatsPeriod = 7): Promise<TrafficS
     FROM events
     WHERE event = '$pageview'
       AND timestamp >= now() - INTERVAL ${maxDays} DAY
-  `);
+  `, ["number", "number", "number", "number", "number", "number", "number", "number"]);
   const r = rows[0];
 
   const [bounceRows, selectedBounceRows] = await Promise.all([
@@ -418,7 +433,7 @@ export async function getTrafficSummary(days: StatsPeriod = 7): Promise<TrafficS
         AND properties.$session_id IS NOT NULL
       GROUP BY sid
     )
-    `),
+    `, ["number", "number"]),
     hogQL<[number, number]>(`
     SELECT
       countIf(pv_count = 1) AS bounces,
@@ -431,7 +446,7 @@ export async function getTrafficSummary(days: StatsPeriod = 7): Promise<TrafficS
         AND properties.$session_id IS NOT NULL
       GROUP BY sid
     )
-    `),
+    `, ["number", "number"]),
   ]);
   const bounces = safeNumber(bounceRows[0]?.[0]);
   const totalSessions = safeNumber(bounceRows[0]?.[1]);
@@ -451,7 +466,7 @@ export async function getTrafficSummary(days: StatsPeriod = 7): Promise<TrafficS
       GROUP BY sid
       HAVING count() >= 2
     )
-    `),
+    `, ["number?"]),
     hogQL<[number]>(`
     SELECT avg(duration_s) FROM (
       SELECT properties.$session_id AS sid,
@@ -462,7 +477,7 @@ export async function getTrafficSummary(days: StatsPeriod = 7): Promise<TrafficS
       GROUP BY sid
       HAVING count() >= 2
     )
-    `),
+    `, ["number?"]),
   ]);
   const avgSession = safeNumber(sessionRows[0]?.[0]);
   const selectedAvgSession = safeNumber(selectedSessionRows[0]?.[0]);
@@ -488,7 +503,7 @@ export async function getTrafficTrend(days = 7): Promise<TrafficTrendPoint[]> {
     FROM events
     WHERE event = '$pageview' AND timestamp >= now() - INTERVAL ${days} DAY
     GROUP BY day ORDER BY day ASC
-  `);
+  `, ["timestamp", "number", "number"]);
   return rows.map(([day, pv, unique]) => ({
     day: safeString(day) ?? "",
     pv: safeNumber(pv),
@@ -503,7 +518,7 @@ export async function getTopPages(days = 1, limit = 10): Promise<TopPageRow[]> {
     WHERE event = '$pageview' AND timestamp >= now() - INTERVAL ${days} DAY
       AND properties.$pathname IS NOT NULL
     GROUP BY path ORDER BY pv DESC LIMIT ${limit}
-  `);
+  `, ["string", "number", "number"]);
   return rows.map(([path, pv, unique]) => ({
     path: safeString(path) ?? "(unknown)",
     pv: safeNumber(pv),
@@ -519,7 +534,7 @@ export async function getDeviceBreakdown(days = 7): Promise<DeviceShareRow[]> {
     WHERE event = '$pageview' AND timestamp >= now() - INTERVAL ${days} DAY
       AND properties.$device_type IS NOT NULL
     GROUP BY device ORDER BY c DESC
-  `);
+  `, ["string", "number"]);
   const total = rows.reduce((s, [, c]) => s + safeNumber(c), 0);
   return rows.map(([device, count]) => ({
     deviceType: safeString(device) ?? "unknown",
@@ -536,7 +551,7 @@ export async function getBrowserBreakdown(days = 7): Promise<BrowserShareRow[]> 
     FROM events
     WHERE event = '$pageview' AND timestamp >= now() - INTERVAL ${days} DAY
     GROUP BY browser ORDER BY c DESC LIMIT 6
-  `);
+  `, ["string", "number"]);
   const total = rows.reduce((s, [, c]) => s + safeNumber(c), 0);
   return rows.map(([browser, count]) => ({
     browser: safeString(browser) ?? "Other",
@@ -551,7 +566,7 @@ export async function getSourceBreakdown(days = 7): Promise<SourceShareRow[]> {
     FROM events
     WHERE event = '$pageview' AND timestamp >= now() - INTERVAL ${days} DAY
     GROUP BY source ORDER BY c DESC LIMIT 8
-  `);
+  `, ["string", "number"]);
   const total = rows.reduce((s, [, c]) => s + safeNumber(c), 0);
   return rows.map(([source, count]) => ({
     source: safeString(source) ?? "direct",
@@ -688,7 +703,7 @@ export async function getRegionBreakdown(days = 7): Promise<RegionShareRow[]> {
     FROM events
     WHERE event = '$pageview' AND timestamp >= now() - INTERVAL ${days} DAY
     GROUP BY province, city ORDER BY c DESC LIMIT 10
-  `);
+  `, ["string?", "string?", "number"]);
   const total = rows.reduce((s, [, , c]) => s + safeNumber(c), 0);
   return rows.map(([province, city, count]) => ({
     region: translateKorRegion(safeString(province), safeString(city)),
@@ -752,7 +767,7 @@ export async function getPagesDetail(days = 7, limit = 30): Promise<PageDetailRo
       ) GROUP BY first_path) AS bounces ON bounces.path = pages.path
     ORDER BY pages.pv DESC
     LIMIT ${limit}
-  `);
+  `, ["string", "number", "number", "number?", "number?", "number?"]);
   return rows.map(([path, pv, unique, entries, exits, bounces]) => {
     const entryCount = safeNumber(entries);
     return {
@@ -783,7 +798,7 @@ export async function getEntryPages(days = 7, limit = 8): Promise<PageEntryExitR
     GROUP BY path
     ORDER BY c DESC
     LIMIT ${limit}
-  `);
+  `, ["string", "number"]);
   const total = rows.reduce((s, [, c]) => s + safeNumber(c), 0);
   return rows.map(([path, count]) => ({
     path: safeString(path) ?? "(unknown)",
@@ -809,7 +824,7 @@ export async function getExitPages(days = 7, limit = 8): Promise<PageEntryExitRo
     GROUP BY path
     ORDER BY c DESC
     LIMIT ${limit}
-  `);
+  `, ["string", "number"]);
   const total = rows.reduce((s, [, c]) => s + safeNumber(c), 0);
   return rows.map(([path, count]) => ({
     path: safeString(path) ?? "(unknown)",
@@ -842,7 +857,7 @@ export async function getPageTransitions(days = 7, limit = 15): Promise<PageTran
     GROUP BY from_path, to_path
     ORDER BY c DESC
     LIMIT ${limit}
-  `);
+  `, ["string", "string", "number"]);
   const total = rows.reduce((s, [, , c]) => s + safeNumber(c), 0);
   return rows.map(([from, to, count]) => ({
     fromPath: safeString(from) ?? "(unknown)",
@@ -862,7 +877,7 @@ export async function getPageNavSummary(days = 7): Promise<PageNavSummary> {
     WHERE event = '$pageview'
       AND timestamp >= now() - INTERVAL ${days} DAY
       AND properties.$pathname IS NOT NULL
-  `);
+  `, ["number", "number"]);
   const bounceRows = await hogQL<[number, number]>(`
     SELECT
       countIf(pv_count = 1) AS bounces,
@@ -875,7 +890,7 @@ export async function getPageNavSummary(days = 7): Promise<PageNavSummary> {
         AND properties.$session_id IS NOT NULL
       GROUP BY sid
     )
-  `);
+  `, ["number", "number"]);
   const activePages = safeNumber(rows[0]?.[0]);
   const totalPv = safeNumber(rows[0]?.[1]);
   const bounces = safeNumber(bounceRows[0]?.[0]);

@@ -255,14 +255,34 @@ describe("mobile message data pages (merged 발송 기록 screen)", () => {
 
   it("shows the past zone's error message while the upcoming zone still loads", () => {
     mockUseUpcomingMessageTriggerJobs.mockReturnValue({ isLoading: true, isError: false, data: undefined });
-    mockUseMessageHistory.mockReturnValue({ isLoading: false, isError: true, data: undefined });
+    mockUseMessageHistory.mockReturnValue({
+      isLoading: false,
+      isError: true,
+      error: new Error("메시지 발송 기록이 100페이지(최대 50,000건)를 초과하여 전체 기록을 확인할 수 없습니다."),
+      data: undefined,
+    });
 
     const { container } = render(<MessagesHistoryPage />);
 
-    expect(screen.getByText("발송 기록을 불러오지 못했습니다.")).toBeInTheDocument();
+    expect(screen.getByText("메시지 발송 기록이 100페이지(최대 50,000건)를 초과하여 전체 기록을 확인할 수 없습니다.")).toBeInTheDocument();
     expect(container.querySelector('[data-component$="_zone-past_header_count"]')).not.toBeInTheDocument();
     expect(container.querySelectorAll('[data-component$="_zone-past_row-skeleton"]')).toHaveLength(0);
     expect(container.querySelectorAll('[data-component$="_zone-upcoming_row-skeleton"]')).toHaveLength(3);
+  });
+
+  it("uses a safe Korean fallback for transient history diagnostics", () => {
+    mockUseUpcomingMessageTriggerJobs.mockReturnValue({ isLoading: false, isError: false, data: [] });
+    mockUseMessageHistory.mockReturnValue({
+      isLoading: false,
+      isError: true,
+      error: new Error("HTTP 500 provider token=secret"),
+      data: undefined,
+    });
+
+    render(<MessagesHistoryPage />);
+
+    expect(screen.getByText("발송 기록을 불러오지 못했습니다. 잠시 후 자동으로 다시 시도합니다.")).toBeInTheDocument();
+    expect(screen.queryByText(/provider token=secret/)).not.toBeInTheDocument();
   });
 
   it("collapses to the empty state only when both zones are settled and empty", () => {
@@ -487,6 +507,7 @@ describe("mobile message data pages (merged 발송 기록 screen)", () => {
     await user.click(filterToggle);
 
     expect(filterToggle).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByRole("textbox", { name: "고객명, 연락처, 템플릿, 내용 검색" })).toBeInTheDocument();
     expect(screen.getByPlaceholderText("고객명, 연락처, 템플릿, 내용 검색…")).toBeInTheDocument();
     const filterPanel = container.querySelector('[data-slot="message-history-filters"]') as HTMLElement;
     expect(filterPanel.querySelector('[aria-label="발송 기간"]')).toBeInTheDocument();

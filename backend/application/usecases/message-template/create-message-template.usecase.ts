@@ -1,5 +1,9 @@
 import { Inject, Injectable, BadRequestException } from "@nestjs/common";
-import { MessageTemplateEntity, TemplateVariable } from "domain/entities/message-template.entity";
+import {
+    MessageTemplateEntity,
+    TemplateVariable,
+    validateMessageTemplateRequiredFields,
+} from "domain/entities/message-template.entity";
 import { IMessageTemplateRepository, MESSAGE_TEMPLATE_REPOSITORY } from "domain/repositories/message-template.repository.interface";
 import type { Prisma } from "@prisma/client";
 
@@ -21,6 +25,14 @@ export class CreateMessageTemplateUsecase {
         params: CreateMessageTemplateParams,
         transaction?: Prisma.TransactionClient,
     ): Promise<MessageTemplateEntity> {
+        const requiredFieldsValidation = validateMessageTemplateRequiredFields(params, {
+            requireName: true,
+            requireContent: true,
+        });
+        if (!requiredFieldsValidation.valid) {
+            throw new BadRequestException(requiredFieldsValidation.errors.join(", "));
+        }
+
         const template = MessageTemplateEntity.create(params);
 
         const validation = template.validateVariables();

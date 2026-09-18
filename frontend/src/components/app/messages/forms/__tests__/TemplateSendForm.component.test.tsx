@@ -7,13 +7,14 @@
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { createProblemDetails } from "@babyjamjam/shared";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { StrictMode, Suspense, startTransition, useLayoutEffect, useState, type ReactNode } from "react";
+import { StrictMode, Suspense, startTransition, useLayoutEffect, useState, type ComponentProps, type ReactNode } from "react";
 
 import type { MessageLogRecord } from "@/features/message-triggers/types";
 import { messageTriggerKeys } from "@/features/message-triggers/hooks/keys";
 import { useMessageHistory } from "@/features/message-triggers/hooks/use-message-triggers";
 import { serviceRecordsApi } from "@/features/service-records/api/service-records.api";
 import { useToast } from "@/hooks/use-toast";
+import type { Client } from "@/lib/client/types";
 import { eformsignApi, messageDeliveryApi } from "@/services/api";
 import { useFormStore } from "@/stores/form-store";
 
@@ -24,23 +25,32 @@ import { TemplateSendForm } from "../TemplateSendForm";
 // ---------------------------------------------------------------------------
 
 // Mock ClientAutocomplete so we don't need to fight Radix Popover in JSDOM.
-// Renders a plain <input> that calls onManualValueChange on change.
+// Preserve both manual input and existing-customer selection callbacks.
 jest.mock("@/components/app/clients/ClientAutocomplete", () => ({
   ClientAutocomplete: ({
     label,
     manualValue,
     onManualValueChange,
-  }: {
-    label: string;
-    manualValue?: string;
-    onManualValueChange?: (v: string) => void;
-  }) => (
-    <input
-      aria-label={label}
-      value={manualValue ?? ""}
-      onChange={(e) => onManualValueChange?.(e.target.value)}
-      data-testid={`autocomplete-${label}`}
-    />
+    onChange,
+  }: ComponentProps<typeof import("@/components/app/clients/ClientAutocomplete").ClientAutocomplete>) => (
+    <>
+      <input
+        aria-label={label}
+        value={manualValue ?? ""}
+        onChange={(e) => onManualValueChange?.(e.target.value)}
+        data-testid={`autocomplete-${label}`}
+      />
+      <button
+        type="button"
+        onClick={() => onChange(42, {
+          id: 42,
+          name: "검수고객",
+          phone: "010-1111-2222",
+        } as Client)}
+      >
+        기존 고객 선택
+      </button>
+    </>
   ),
 }));
 
@@ -349,11 +359,44 @@ afterEach(() => {
 // Recipient phone input layout
 // ---------------------------------------------------------------------------
 describe("recipient phone input layout", () => {
-  it("uses a plain phone input for the greeting template phone-only form", () => {
+  it.each([
+    ["greeting", renderGreetingPhoneOnlyForm],
+    ["service info", renderInfoForm],
+  ])("pins the selected %s recipient to its customer id after searching by phone", async (_template, renderForm) => {
+    mockedSendSms.mockResolvedValue(buildSendSuccess());
+    renderForm();
+
+    fireEvent.change(screen.getByRole("textbox", { name: "휴대 전화번호" }), {
+      target: { value: "01011112222" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "기존 고객 선택" }));
+    const sendButton = screen.getByRole("button", { name: /즉시 발송/ });
+    await waitFor(() => expect(sendButton).toBeEnabled());
+    fireEvent.click(sendButton);
+
+    await waitFor(() => expect(mockedSendSms).toHaveBeenCalledWith(
+      expect.objectContaining({ receiver: "010-1111-2222", clientId: 42 }),
+      "branch-a",
+    ));
+    expect(mockedSendSms).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not attach the previous customer id to a manually added greeting recipient", async () => {
+    mockedSendSms.mockResolvedValue(buildSendSuccess());
     renderGreetingPhoneOnlyForm();
 
-    expect(screen.getByTestId("contact-input-phone")).toBeInTheDocument();
-    expect(screen.queryByTestId("autocomplete-휴대 전화번호")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "기존 고객 선택" }));
+    fireEvent.change(screen.getByRole("textbox", { name: "휴대 전화번호" }), {
+      target: { value: "01033334444" },
+    });
+    const sendButton = screen.getByRole("button", { name: /즉시 발송/ });
+    await waitFor(() => expect(sendButton).toBeEnabled());
+    fireEvent.click(sendButton);
+
+    await waitFor(() => expect(mockedSendSms).toHaveBeenCalledTimes(2));
+    const manualRecipient = mockedSendSms.mock.calls.find(([payload]) => payload.receiver === "010-3333-4444");
+    expect(manualRecipient).toBeDefined();
+    expect(manualRecipient?.[0]).not.toHaveProperty("clientId");
   });
 
   it("keeps the client autocomplete for the service info template", () => {
@@ -954,6 +997,171 @@ describe("B: editing name for already-queued phone updates the pill in place", (
       expect(pills[0].textContent).toContain("김영희");
       expect(pills[0].textContent).not.toContain("김철수");
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// BUG FIX D — an edited message body must replace only the active recipient's
+// queued snapshot before SMS submission and duplicate confirmation.
+// ---------------------------------------------------------------------------
+describe("D: editing the message body updates the active recipient snapshot", () => {
+  it("submits the newest body for a phone-only recipient", async () => {
+    const latestMessage = "수정한 메시지 본문";
+    const view = render(
+      <TemplateSendForm
+        templateId="builtin:info"
+        templateName="서비스 안내"
+        message="초기 메시지 본문"
+      />,
+    );
+    await queueRecipient("01011111111");
+    view.rerender(
+      <TemplateSendForm
+        templateId="builtin:info"
+        templateName="서비스 안내"
+        message={latestMessage}
+      />,
+    );
+    mockedSendSms.mockResolvedValue(buildSendSuccess());
+
+    fireEvent.click(screen.getByRole("button", { name: /즉시 발송/ }));
+
+    await waitFor(() => expect(mockedSendSms).toHaveBeenCalledTimes(1));
+    expect(mockedSendSms.mock.calls[0]?.[0]).toEqual(
+      expect.objectContaining({ message: latestMessage }),
+    );
+  });
+
+  it("submits the newest body for a recipient-name template", async () => {
+    const latestMessage = "이름 포함 수정 메시지";
+    const view = render(
+      <TemplateSendForm
+        templateId="builtin:greeting"
+        templateName="인사 메시지"
+        message="초기 이름 포함 메시지"
+        requiresRecipientName
+      />,
+    );
+    await queueRecipient("01011111111", "김철수");
+    view.rerender(
+      <TemplateSendForm
+        templateId="builtin:greeting"
+        templateName="인사 메시지"
+        message={latestMessage}
+        requiresRecipientName
+      />,
+    );
+    mockedSendSms.mockResolvedValue(buildSendSuccess());
+
+    fireEvent.click(screen.getByRole("button", { name: /즉시 발송/ }));
+
+    await waitFor(() => expect(mockedSendSms).toHaveBeenCalledTimes(1));
+    expect(mockedSendSms.mock.calls[0]?.[0]).toEqual(
+      expect.objectContaining({ message: latestMessage }),
+    );
+  });
+
+  it("preserves the selected customer identity while updating the body", async () => {
+    const latestMessage = "고객 식별 정보를 유지한 수정 메시지";
+    const view = render(
+      <TemplateSendForm
+        templateId="builtin:info"
+        templateName="서비스 안내"
+        message="고객 식별 정보가 있는 초기 메시지"
+      />,
+    );
+    fireEvent.change(screen.getByRole("textbox", { name: "휴대 전화번호" }), {
+      target: { value: "01011112222" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "기존 고객 선택" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: /즉시 발송/ })).toBeEnabled());
+    view.rerender(
+      <TemplateSendForm
+        templateId="builtin:info"
+        templateName="서비스 안내"
+        message={latestMessage}
+      />,
+    );
+    mockedSendSms.mockResolvedValue(buildSendSuccess());
+
+    fireEvent.click(screen.getByRole("button", { name: /즉시 발송/ }));
+
+    await waitFor(() => expect(mockedSendSms).toHaveBeenCalledTimes(1));
+    expect(mockedSendSms.mock.calls[0]?.[0]).toEqual(
+      expect.objectContaining({ clientId: 42, message: latestMessage }),
+    );
+  });
+
+  it("preserves an unrelated queued recipient's individualized body", async () => {
+    const latestMessage = "두 번째 수신자에게 보낼 메시지";
+    const view = render(
+      <TemplateSendForm
+        templateId="builtin:info"
+        templateName="서비스 안내"
+        message="첫 번째 수신자에게 보낼 메시지"
+      />,
+    );
+    await queueRecipient("01011111111");
+    await queueRecipient("01022222222");
+    view.rerender(
+      <TemplateSendForm
+        templateId="builtin:info"
+        templateName="서비스 안내"
+        message={latestMessage}
+      />,
+    );
+    mockedSendSms.mockResolvedValue(buildSendSuccess());
+
+    fireEvent.click(screen.getByRole("button", { name: /즉시 발송/ }));
+
+    await waitFor(() => expect(mockedSendSms).toHaveBeenCalledTimes(2));
+    const messagesByReceiver = new Map(
+      mockedSendSms.mock.calls.map(([payload]) => [payload.receiver, payload.message]),
+    );
+    expect(messagesByReceiver).toEqual(new Map([
+      ["010-1111-1111", "첫 번째 수신자에게 보낼 메시지"],
+      ["010-2222-2222", latestMessage],
+    ]));
+  });
+
+  it("uses the edited body for duplicate confirmation and the confirmed send", async () => {
+    const latestMessage = "중복 확인에 사용할 최신 메시지";
+    const historyRecord = buildHistoryRecord({
+      messageBody: latestMessage,
+      lastAttemptAt: new Date(Date.now() - 60 * 60 * 1000).toISOString(),
+    });
+    const refetch = jest.fn().mockResolvedValue({ data: [historyRecord] });
+    mockedUseMessageHistory.mockReturnValue({ data: [historyRecord], refetch } as never);
+    const view = render(
+      <TemplateSendForm
+        templateId="builtin:info"
+        templateName="서비스 안내"
+        message="중복 확인의 이전 메시지"
+      />,
+    );
+    await queueRecipient("01011111111");
+    view.rerender(
+      <TemplateSendForm
+        templateId="builtin:info"
+        templateName="서비스 안내"
+        message={latestMessage}
+      />,
+    );
+    mockedSendSms.mockResolvedValue(buildSendSuccess());
+
+    fireEvent.click(screen.getByRole("button", { name: /즉시 발송/ }));
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "전송" })).toBeInTheDocument();
+    });
+    expect(mockedSendSms).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole("button", { name: "전송" }));
+
+    await waitFor(() => expect(mockedSendSms).toHaveBeenCalledTimes(1));
+    expect(mockedSendSms.mock.calls[0]?.[0]).toEqual(
+      expect.objectContaining({ message: latestMessage }),
+    );
   });
 });
 

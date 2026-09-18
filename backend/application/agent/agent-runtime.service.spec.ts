@@ -1,5 +1,6 @@
 import { z } from "zod";
 
+import { AgentEntitySelectPartSchema, type AgentTask } from "@babyjamjam/shared";
 import { DeterministicAgentLanguageModel } from "infrastructure/agent/deterministic-agent-language-model";
 import { AgentRuntimeService, buildAuthoritativeModelMessages, buildWriteToolInputSchema, redactModelValue } from "./agent-runtime.service";
 
@@ -25,6 +26,37 @@ function buildEntityCapability(name: string, domain: string, execute: jest.Mock)
     };
 }
 
+function runtimeTaskSnapshot(overrides: Partial<AgentTask> = {}): AgentTask {
+    return {
+        schemaVersion: 1,
+        taskId: "123e4567-e89b-42d3-a456-426614174001",
+        sessionId: "123e4567-e89b-42d3-a456-426614174002",
+        kind: "clients.create",
+        capabilityId: "clients.create",
+        revision: 1,
+        state: "collecting",
+        confirmed: {},
+        tentative: {},
+        clearedFields: [],
+        provenance: { confirmed: {}, tentative: {} },
+        issues: [],
+        constraints: { noSend: false },
+        choiceSets: [],
+        orderedChoiceRefs: [],
+        target: null,
+        consent: { choice: "unanswered", binding: null },
+        action: null,
+        times: {
+            createdAt: "2026-01-01T00:00:00.000Z",
+            updatedAt: "2026-01-01T00:00:00.000Z",
+            acceptedAt: "2026-01-01T00:00:00.000Z",
+            expiresAt: "2026-02-01T00:00:00.000Z",
+        },
+        currentSnapshotRef: "123e4567-e89b-42d3-a456-426614174003",
+        ...overrides,
+    } as AgentTask;
+}
+
 describe("AgentRuntimeService", () => {
     it("builds model history only from server-persisted text and the current user turn", () => {
         const messages = buildAuthoritativeModelMessages([
@@ -48,6 +80,324 @@ describe("AgentRuntimeService", () => {
         });
 
         expect(messages[0]?.parts).toEqual([{ type: "text", text: "[redacted] [redacted] 고객" }]);
+    });
+
+    it("redacts server-known task values in authoritative model history", () => {
+        const messages = buildAuthoritativeModelMessages([], {
+            id: "known-value",
+            role: "user",
+            parts: [{ type: "text", text: "이전 고객 홍길동의 주소를 확인해줘" }],
+        }, 0, ["홍길동"]);
+
+        expect(messages[0]?.parts).toEqual([{ type: "text", text: "이전 고객 [protected]의 주소를 확인해줘" }]);
+    });
+
+    it("passes only protected current-intake and known-task values to the router boundary", async () => {
+        const capability = buildEntityCapability("clients.search", "clients", jest.fn().mockResolvedValue({ id: 1, name: "결과" }));
+        const route = jest.fn().mockResolvedValue({ domains: ["clients"], capabilities: [capability] });
+        const sessions = {
+            get: jest.fn().mockResolvedValue({ id: "session-known", selectedEntities: {}, messages: [], summary: null }),
+            appendMessages: jest.fn().mockResolvedValue(undefined),
+        };
+        const taskOrchestrator = {
+            protectedValuesForConversation: jest.fn().mockResolvedValue(["기존 홍길동"]),
+            handleUserTurn: jest.fn().mockResolvedValue({ task: null, operations: [], replayed: false }),
+            filterWriteCapabilities: jest.fn().mockResolvedValue({ capabilities: [capability], taskMode: false }),
+        };
+        const runtime = new AgentRuntimeService(
+            { list: () => [capability] } as never,
+            { isCapabilityEnabled: jest.fn().mockResolvedValue(true) } as never,
+            sessions as never,
+            { modelId: "deterministic-agent-v1", create: () => new DeterministicAgentLanguageModel([{ type: "text", text: "확인했습니다." }]) } as never,
+            { route } as never,
+            { start: jest.fn().mockResolvedValue({ id: "trace-known", startedAt: Date.now() }), finish: jest.fn().mockResolvedValue(undefined) } as never,
+            undefined,
+            undefined,
+            undefined,
+            taskOrchestrator as never,
+        );
+        const text = "이름: 홍길동, 기존 홍길동의 주소를 확인해줘";
+        const result = await runtime.stream({
+            principal: { userId: "user-a", branchId: "branch-a", globalRole: "admin", branchRole: "admin" },
+            sessionId: "session-known",
+            locale: "ko",
+            messages: [{ id: "message-known", role: "user", parts: [{ type: "text", text }] }] as never,
+        });
+        const reader = result.stream.getReader();
+        while (!(await reader.read()).done) {
+            // Drain completion so persistence stays on the same runtime path.
+        }
+
+        expect(route).toHaveBeenCalledWith(
+            text,
+            expect.objectContaining({ userId: "user-a", branchId: "branch-a" }),
+            12,
+            expect.arrayContaining(["홍길동", "기존 홍길동"]),
+        );
+    });
+
+    it("passes operation-specific correction evidence to the model task boundary", async () => {
+        const capability = {
+            meta: {
+                name: "clients.create",
+                domain: "clients",
+                version: "1.0.0",
+                description: "Create client",
+                risk: "reversible-write" as const,
+                requiredRoles: ["admin"],
+                renderer: "action-proposal" as const,
+                flagKey: "agent.capability.clients.create",
+                sideEffect: true,
+                approvalPolicy: "structured" as const,
+                idempotencyPolicy: "action-id" as const,
+            },
+            inputSchema: z.object({}),
+            outputSchema: z.object({ status: z.string() }),
+            execute: jest.fn(),
+        };
+        const taskSnapshot = {
+            schemaVersion: 1,
+            taskId: "123e4567-e89b-42d3-a456-426614174001",
+            sessionId: "123e4567-e89b-42d3-a456-426614174002",
+            kind: "clients.create",
+            capabilityId: "clients.create",
+            revision: 1,
+            state: "collecting",
+            confirmed: {},
+            tentative: {},
+            clearedFields: [],
+            provenance: { confirmed: {}, tentative: {} },
+            issues: [],
+            constraints: { noSend: false },
+            choiceSets: [],
+            orderedChoiceRefs: [],
+            target: null,
+            consent: { choice: "unanswered", binding: null },
+            action: null,
+            times: {
+                createdAt: "2026-01-01T00:00:00.000Z",
+                updatedAt: "2026-01-01T00:00:00.000Z",
+                acceptedAt: "2026-01-01T00:00:00.000Z",
+                expiresAt: "2026-02-01T00:00:00.000Z",
+            },
+            currentSnapshotRef: "123e4567-e89b-42d3-a456-426614174003",
+        } as AgentTask;
+        const applyModelMutation = jest.fn().mockResolvedValue({ task: taskSnapshot, mutated: true });
+        const taskOrchestrator = {
+            handleUserTurn: jest.fn().mockResolvedValue({
+                task: taskSnapshot,
+                eventId: "123e4567-e89b-42d3-a456-426614174004",
+                operations: [{ op: "clear", field: "address" }],
+                isQuestion: false,
+                replayed: false,
+            }),
+            filterWriteCapabilities: jest.fn().mockResolvedValue({ capabilities: [], taskMode: true }),
+            applyModelMutation,
+        };
+        const sessions = {
+            create: jest.fn().mockResolvedValue({ id: "session-task-correction", selectedEntities: {}, messages: [] }),
+            appendMessages: jest.fn().mockResolvedValue(undefined),
+        };
+        const runtime = new AgentRuntimeService(
+            { list: () => [capability] } as never,
+            { isCapabilityEnabled: jest.fn().mockResolvedValue(true) } as never,
+            sessions as never,
+            {
+                modelId: "deterministic-agent-v1",
+                create: () => new DeterministicAgentLanguageModel([
+                    { type: "tool-call", toolName: "clients_create", input: { operations: [{ op: "clear", field: "address" }] } },
+                    { type: "text", text: "주소를 비웠습니다." },
+                ]),
+            } as never,
+            { route: jest.fn().mockResolvedValue({ domains: ["clients"], capabilities: [capability] }) } as never,
+            { start: jest.fn().mockResolvedValue({ id: "trace-task-correction", startedAt: Date.now() }), finish: jest.fn().mockResolvedValue(undefined) } as never,
+            undefined,
+            undefined,
+            undefined,
+            taskOrchestrator as never,
+        );
+
+        const result = await runtime.stream({
+            principal: { userId: "user-a", branchId: "branch-a", globalRole: "admin", branchRole: "admin" },
+            locale: "ko",
+            messages: [{ id: "message-task-correction", role: "user", parts: [{ type: "text", text: "고객 등록 주소 삭제" }] }] as never,
+        });
+        const reader = result.stream.getReader();
+        while (!(await reader.read()).done) {
+            // Drain the stream so the task tool executes through the runtime.
+        }
+
+        expect(applyModelMutation).toHaveBeenCalledWith(expect.objectContaining({
+            capabilityId: "clients.create",
+            intakeEventId: "123e4567-e89b-42d3-a456-426614174004",
+            userCorrectionEvidence: [{ operation: "clear", field: "address" }],
+        }));
+    });
+
+    it("attaches a unique client search result as one protected task choice without selecting it", async () => {
+        const task = runtimeTaskSnapshot();
+        const capability = {
+            meta: {
+                name: "clients.search",
+                domain: "clients",
+                version: "1.0.0",
+                description: "Search clients",
+                risk: "read" as const,
+                requiredRoles: ["admin"],
+                renderer: "entity-choice" as const,
+                flagKey: "agent.capability.clients.search",
+                sideEffect: false,
+            },
+            inputSchema: z.object({ query: z.string() }),
+            outputSchema: z.object({
+                kind: z.literal("entity"),
+                entity: z.object({ id: z.number().int().positive(), name: z.string(), serviceStatus: z.string().nullable() }),
+            }),
+            execute: jest.fn().mockResolvedValue({
+                kind: "entity",
+                entity: { id: 17, name: "보호된 단일 고객", serviceStatus: "active" },
+            }),
+        };
+        const choiceSetRef = "123e4567-e89b-42d3-a456-426614174010";
+        const optionId = "123e4567-e89b-42d3-a456-426614174011";
+        const attachedTask = runtimeTaskSnapshot({
+            revision: 2,
+            choiceSets: [{ choiceSetRef, options: [{ optionId, label: "보호된 단일 고객", description: "active" }] }],
+            orderedChoiceRefs: [choiceSetRef],
+        });
+        const attachDerivedChoices = jest.fn().mockResolvedValue({ snapshot: attachedTask });
+        const taskOrchestrator = {
+            handleUserTurn: jest.fn().mockResolvedValue({ task, eventId: "123e4567-e89b-42d3-a456-426614174004", operations: [], replayed: false }),
+            filterWriteCapabilities: jest.fn().mockResolvedValue({ capabilities: [capability], taskMode: true }),
+            attachDerivedChoices,
+            protectedValuesForConversation: jest.fn().mockResolvedValue([]),
+        };
+        const sessions = {
+            create: jest.fn().mockResolvedValue({ id: task.sessionId, selectedEntities: {}, messages: [] }),
+            get: jest.fn().mockResolvedValue({ id: task.sessionId, selectedEntities: {}, messages: [] }),
+            appendMessages: jest.fn().mockResolvedValue(undefined),
+        };
+        const model = new DeterministicAgentLanguageModel([
+            { type: "tool-call", toolName: "clients_search", input: { query: "단일 고객" } },
+            { type: "text", text: "선택지를 표시했습니다." },
+        ]);
+        const modelStream = jest.spyOn(model, "doStream");
+        const runtime = new AgentRuntimeService(
+            { list: () => [capability] } as never,
+            { isCapabilityEnabled: jest.fn().mockResolvedValue(true) } as never,
+            sessions as never,
+            { modelId: "deterministic-agent-v1", create: () => model } as never,
+            { route: jest.fn().mockResolvedValue({ domains: ["clients"], capabilities: [capability] }) } as never,
+            { start: jest.fn().mockResolvedValue({ id: "trace-unique", startedAt: Date.now() }), finish: jest.fn().mockResolvedValue(undefined) } as never,
+            undefined,
+            undefined,
+            undefined,
+            taskOrchestrator as never,
+        );
+
+        const result = await runtime.stream({
+            principal: { userId: "user-a", branchId: "branch-a", globalRole: "admin", branchRole: "admin" },
+            sessionId: task.sessionId,
+            locale: "ko",
+            messages: [{ id: "message-unique", role: "user", parts: [{ type: "text", text: "고객 검색" }] }] as never,
+        });
+        const chunks: unknown[] = [];
+        const reader = result.stream.getReader();
+        while (true) {
+            const next = await reader.read();
+            if (next.done) break;
+            chunks.push(next.value);
+        }
+
+        expect(attachDerivedChoices).toHaveBeenCalledWith(
+            expect.objectContaining({ userId: "user-a", branchId: "branch-a" }),
+            task.taskId,
+            "client-target",
+            [{ label: "보호된 단일 고객", description: "active", clientId: 17 }],
+        );
+        expect(attachedTask.target).toBeNull();
+        const selectionChunk = chunks.find((chunk): chunk is { type: string; data: unknown } => (
+            typeof chunk === "object" && chunk !== null && (chunk as { type?: unknown }).type === "data-entity-select"
+        ));
+        expect(selectionChunk).toBeDefined();
+        expect(AgentEntitySelectPartSchema.parse(selectionChunk?.data)).toEqual({
+            taskId: task.taskId,
+            choiceSetRef,
+            optionIds: [optionId],
+        });
+        const modelCalls = JSON.stringify(modelStream.mock.calls);
+        expect(modelCalls).not.toContain("보호된 단일 고객");
+        expect(modelCalls).not.toContain('"clientId":17');
+        expect(JSON.stringify(sessions.appendMessages.mock.calls)).not.toContain("보호된 단일 고객");
+    });
+
+    it("keeps an empty client search result read-only and preserves the accepted task snapshot", async () => {
+        const task = runtimeTaskSnapshot({ revision: 4 });
+        const capability = {
+            meta: {
+                name: "clients.search",
+                domain: "clients",
+                version: "1.0.0",
+                description: "Search clients",
+                risk: "read" as const,
+                requiredRoles: ["admin"],
+                renderer: "entity-choice" as const,
+                flagKey: "agent.capability.clients.search",
+                sideEffect: false,
+            },
+            inputSchema: z.object({ query: z.string() }),
+            outputSchema: z.object({ kind: z.literal("none"), query: z.string() }),
+            execute: jest.fn().mockResolvedValue({ kind: "none", query: "없는 고객" }),
+        };
+        const attachDerivedChoices = jest.fn();
+        const taskOrchestrator = {
+            handleUserTurn: jest.fn().mockResolvedValue({ task, eventId: "123e4567-e89b-42d3-a456-426614174004", operations: [], replayed: false }),
+            filterWriteCapabilities: jest.fn().mockResolvedValue({ capabilities: [capability], taskMode: true }),
+            attachDerivedChoices,
+            protectedValuesForConversation: jest.fn().mockResolvedValue([]),
+        };
+        const sessions = {
+            create: jest.fn().mockResolvedValue({ id: task.sessionId, selectedEntities: {}, messages: [] }),
+            get: jest.fn().mockResolvedValue({ id: task.sessionId, selectedEntities: {}, messages: [] }),
+            appendMessages: jest.fn().mockResolvedValue(undefined),
+        };
+        const runtime = new AgentRuntimeService(
+            { list: () => [capability] } as never,
+            { isCapabilityEnabled: jest.fn().mockResolvedValue(true) } as never,
+            sessions as never,
+            {
+                modelId: "deterministic-agent-v1",
+                create: () => new DeterministicAgentLanguageModel([
+                    { type: "tool-call", toolName: "clients_search", input: { query: "없는 고객" } },
+                    { type: "text", text: "검색 결과가 없습니다." },
+                ]),
+            } as never,
+            { route: jest.fn().mockResolvedValue({ domains: ["clients"], capabilities: [capability] }) } as never,
+            { start: jest.fn().mockResolvedValue({ id: "trace-empty", startedAt: Date.now() }), finish: jest.fn().mockResolvedValue(undefined) } as never,
+            undefined,
+            undefined,
+            undefined,
+            taskOrchestrator as never,
+        );
+
+        const result = await runtime.stream({
+            principal: { userId: "user-a", branchId: "branch-a", globalRole: "admin", branchRole: "admin" },
+            sessionId: task.sessionId,
+            locale: "ko",
+            messages: [{ id: "message-empty", role: "user", parts: [{ type: "text", text: "없는 고객 검색" }] }] as never,
+        });
+        const chunks: unknown[] = [];
+        const reader = result.stream.getReader();
+        while (true) {
+            const next = await reader.read();
+            if (next.done) break;
+            chunks.push(next.value);
+        }
+
+        expect(attachDerivedChoices).not.toHaveBeenCalled();
+        expect(chunks).not.toEqual(expect.arrayContaining([expect.objectContaining({ type: "data-entity-choice" })]));
+        expect(task.revision).toBe(4);
+        expect(task.currentSnapshotRef).toBe("123e4567-e89b-42d3-a456-426614174003");
     });
 
     it("redacts Korean landlines and hyphenated identifiers in persisted history and the current turn", () => {
@@ -204,7 +554,7 @@ describe("AgentRuntimeService", () => {
             appendMessages: jest.fn().mockResolvedValue(undefined),
         };
         const runtime = new AgentRuntimeService(
-            {} as never,
+            { list: () => [capability] } as never,
             { isCapabilityEnabled: jest.fn().mockResolvedValue(true) } as never,
             sessions as never,
             {
@@ -866,6 +1216,75 @@ describe("AgentRuntimeService", () => {
         expect(JSON.stringify(modelStream.mock.calls)).not.toContain("01012345678");
     });
 
+    it("refreshes accepted form values before masking legacy summary goals", async () => {
+        const capability = {
+            meta: {
+                name: "clients.create", domain: "clients", version: "1.0.0", description: "Create client",
+                risk: "reversible-write" as const, requiredRoles: ["admin"], renderer: "action-proposal" as const,
+                flagKey: "agent.capability.clients.create", sideEffect: true,
+                approvalPolicy: "structured" as const, idempotencyPolicy: "action-id" as const,
+            },
+            inputSchema: z.object({ name: z.string(), address: z.string() }),
+            outputSchema: z.object({ status: z.string() }),
+            execute: jest.fn(),
+        };
+        const task = runtimeTaskSnapshot();
+        const model = new DeterministicAgentLanguageModel([{ type: "text", text: "등록 초안" }]);
+        const modelStream = jest.spyOn(model, "doStream");
+        const sessions = {
+            create: jest.fn().mockResolvedValue({
+                id: "session-form-summary",
+                selectedEntities: { clients: { status: "비정규이름 / 비정규주소" } },
+                messages: [],
+                summary: JSON.stringify({ version: "summary-v2", sourceMessageCount: 0, selectedEntities: {}, goals: ["비정규이름 확인: 비정규주소"] }),
+            }),
+            appendMessages: jest.fn().mockResolvedValue(undefined),
+        };
+        const protectedValuesForConversation = jest.fn()
+            .mockResolvedValueOnce([])
+            .mockResolvedValueOnce(["비정규이름", "비정규주소"]);
+        const taskOrchestrator = {
+            handleUserTurn: jest.fn().mockResolvedValue({ task, operations: [], replayed: false, isQuestion: false, eventId: "form-summary-event" }),
+            filterWriteCapabilities: jest.fn().mockResolvedValue({ capabilities: [capability], taskMode: true }),
+            protectedValuesForConversation,
+        };
+        const runtime = new AgentRuntimeService(
+            { list: () => [capability] } as never,
+            { isCapabilityEnabled: jest.fn().mockResolvedValue(true) } as never,
+            sessions as never,
+            { modelId: "deterministic-agent-v1", create: () => model } as never,
+            { route: jest.fn() } as never,
+            { start: jest.fn().mockResolvedValue({ id: "trace-form-summary", startedAt: Date.now() }), finish: jest.fn().mockResolvedValue(undefined) } as never,
+            undefined,
+            undefined,
+            undefined,
+            taskOrchestrator as never,
+        );
+
+        const result = await runtime.stream({
+            principal: { userId: "user-a", branchId: "branch-a", globalRole: "admin", branchRole: "admin" },
+            locale: "ko",
+            messages: [{
+                id: "message-form-summary", role: "user",
+                parts: [{ type: "data-form-submit", data: {
+                    formId: "clients.create-session-form-summary",
+                    values: { name: "비정규이름", address: "비정규주소" },
+                } }],
+            }] as never,
+        });
+        const reader = result.stream.getReader();
+        while (!(await reader.read()).done) {
+            // Drain the stream so the model prompt and persistence complete.
+        }
+
+        const modelInput = JSON.stringify(modelStream.mock.calls);
+        expect(protectedValuesForConversation).toHaveBeenCalledTimes(2);
+        expect(modelInput).not.toContain("비정규이름");
+        expect(modelInput).not.toContain("비정규주소");
+        expect(JSON.stringify(sessions.appendMessages.mock.calls)).not.toContain("비정규이름");
+        expect(JSON.stringify(sessions.appendMessages.mock.calls)).not.toContain("비정규주소");
+    });
+
     it("rejects a structured form replayed against another session", async () => {
         const capability = {
             meta: {
@@ -1014,6 +1433,657 @@ describe("AgentRuntimeService", () => {
                 ] }),
             }),
         ]));
+    });
+
+    it("keeps task-mode client lookup labels in the UI path while stripping them from model/history/persisted messages", async () => {
+        const capability = {
+            meta: {
+                name: "clients.search",
+                domain: "clients",
+                version: "1.0.0",
+                description: "Search clients",
+                risk: "read" as const,
+                requiredRoles: ["admin"],
+                renderer: "entity-choice" as const,
+                flagKey: "agent.capability.clients.search",
+                sideEffect: false,
+            },
+            inputSchema: z.object({ query: z.string() }),
+            outputSchema: z.object({
+                kind: z.literal("choices"),
+                prompt: z.string(),
+                choices: z.array(z.object({ id: z.number(), name: z.string(), serviceStatus: z.string().nullable() })).min(2),
+            }),
+            execute: jest.fn().mockResolvedValue({
+                kind: "choices",
+                prompt: "어느 산모를 말씀하시는지 선택해 주세요.",
+                choices: [
+                    { id: 1, name: "홍길동", serviceStatus: null },
+                    { id: 2, name: "김철수", serviceStatus: "active" },
+                ],
+            }),
+        };
+        const model = new DeterministicAgentLanguageModel([
+            { type: "tool-call", toolName: "clients_search", input: { query: "고객" } },
+            { type: "text", text: "선택지를 표시했습니다." },
+        ]);
+        const modelStream = jest.spyOn(model, "doStream");
+        const sessions = {
+            create: jest.fn().mockResolvedValue({
+                id: "session-task-privacy",
+                selectedEntities: { clients: { id: 99, name: "기존 보호 고객" } },
+                messages: [{
+                    id: "legacy-choice",
+                    role: "assistant",
+                    parts: [{ type: "data-entity-choice", data: {
+                        entityType: "clients",
+                        prompt: "어느 산모인지 선택",
+                        choices: [{ id: "1", label: "홍길동" }, { id: "2", label: "김철수" }],
+                    } }],
+                }, {
+                    id: "legacy-form",
+                    role: "assistant",
+                    parts: [{ type: "data-form", data: {
+                        formId: "clients.create-session-task-privacy",
+                        title: "고객 등록",
+                        schemaVersion: "1.0.0",
+                        fields: [{ name: "name", label: "홍길동", type: "text" }],
+                    } }],
+                }],
+            }),
+            appendMessages: jest.fn().mockResolvedValue(undefined),
+        };
+        const taskOrchestrator = {
+            handleUserTurn: jest.fn().mockResolvedValue({ task: null, eventId: "event-task-privacy", operations: [] }),
+            filterWriteCapabilities: jest.fn().mockResolvedValue({ capabilities: [capability], taskMode: true }),
+        };
+        const runtime = new AgentRuntimeService(
+            { list: () => [capability] } as never,
+            { isCapabilityEnabled: jest.fn().mockResolvedValue(true) } as never,
+            sessions as never,
+            { modelId: "deterministic-agent-v1", create: () => model } as never,
+            { route: jest.fn().mockResolvedValue({ domains: ["clients"], capabilities: [capability] }) } as never,
+            { start: jest.fn().mockResolvedValue({ id: "trace-task-privacy", startedAt: Date.now() }), finish: jest.fn().mockResolvedValue(undefined) } as never,
+            undefined,
+            undefined,
+            undefined,
+            taskOrchestrator as never,
+        );
+
+        const result = await runtime.stream({
+            principal: { userId: "user-a", branchId: "branch-a", globalRole: "admin", branchRole: "admin" },
+            locale: "ko",
+            messages: [{
+                id: "message-task-privacy",
+                role: "user",
+                parts: [{ type: "data-form-submit", data: {
+                    formId: "clients.create-session-task-privacy",
+                    values: { name: "홍길동", phone: "01012345678" },
+                } }],
+            }] as never,
+        });
+        const chunks: unknown[] = [];
+        const reader = result.stream.getReader();
+        while (true) {
+            const next = await reader.read();
+            if (next.done) break;
+            chunks.push(next.value);
+        }
+
+        const prompt = JSON.stringify(modelStream.mock.calls);
+        const persisted = JSON.stringify(sessions.appendMessages.mock.calls);
+        expect(prompt).not.toContain("홍길동");
+        expect(prompt).not.toContain("01012345678");
+        expect(prompt).not.toContain("기존 보호 고객");
+        expect(persisted).not.toContain("홍길동");
+        expect(persisted).not.toContain("01012345678");
+        expect(chunks).toEqual(expect.arrayContaining([
+            expect.objectContaining({ type: "data-entity-choice", data: expect.objectContaining({ choices: [
+                { id: "1", label: "홍길동" },
+                { id: "2", label: "김철수", description: "active" },
+            ] }) }),
+        ]));
+    });
+
+    it("returns only a structural reference for task-mode clients.get while preserving no lookup label in model output", async () => {
+        const capability = {
+            meta: {
+                name: "clients.get",
+                domain: "clients",
+                version: "1.0.0",
+                description: "Get client",
+                risk: "read" as const,
+                requiredRoles: ["admin"],
+                renderer: "activity" as const,
+                flagKey: "agent.capability.clients.get",
+                sideEffect: false,
+            },
+            inputSchema: z.object({ id: z.number() }),
+            outputSchema: z.object({
+                kind: z.literal("entity"),
+                entity: z.object({ id: z.number(), name: z.string(), address: z.string().nullable() }),
+            }),
+            execute: jest.fn().mockResolvedValue({
+                kind: "entity",
+                entity: { id: 7, name: "조회된 보호 고객", address: "서울시 보호 주소" },
+            }),
+        };
+        const model = new DeterministicAgentLanguageModel([
+            { type: "tool-call", toolName: "clients_get", input: { id: 7 } },
+            { type: "text", text: "고객 정보를 확인했습니다." },
+        ]);
+        const modelStream = jest.spyOn(model, "doStream");
+        const sessions = {
+            create: jest.fn().mockResolvedValue({
+                id: "session-task-get-privacy",
+                selectedEntities: { clients: { id: 7, name: "기존 보호 고객" } },
+                messages: [],
+            }),
+            appendMessages: jest.fn().mockResolvedValue(undefined),
+        };
+        const taskOrchestrator = {
+            handleUserTurn: jest.fn().mockResolvedValue({ task: null, eventId: "event-task-get-privacy", operations: [] }),
+            filterWriteCapabilities: jest.fn().mockResolvedValue({ capabilities: [capability], taskMode: true }),
+        };
+        const runtime = new AgentRuntimeService(
+            { list: () => [capability] } as never,
+            { isCapabilityEnabled: jest.fn().mockResolvedValue(true) } as never,
+            sessions as never,
+            { modelId: "deterministic-agent-v1", create: () => model } as never,
+            { route: jest.fn().mockResolvedValue({ domains: ["clients"], capabilities: [capability] }) } as never,
+            { start: jest.fn().mockResolvedValue({ id: "trace-task-get-privacy", startedAt: Date.now() }), finish: jest.fn().mockResolvedValue(undefined) } as never,
+            undefined,
+            undefined,
+            undefined,
+            taskOrchestrator as never,
+        );
+
+        const result = await runtime.stream({
+            principal: { userId: "user-a", branchId: "branch-a", globalRole: "admin", branchRole: "admin" },
+            locale: "ko",
+            messages: [{ id: "message-task-get-privacy", role: "user", parts: [{ type: "text", text: "고객 7 조회" }] }] as never,
+        });
+        const chunks: unknown[] = [];
+        const reader = result.stream.getReader();
+        while (true) {
+            const next = await reader.read();
+            if (next.done) break;
+            chunks.push(next.value);
+        }
+
+        const prompt = JSON.stringify(modelStream.mock.calls);
+        const output = JSON.stringify(chunks);
+        expect(prompt).not.toContain("기존 보호 고객");
+        expect(prompt).not.toContain("서울시 보호 주소");
+        expect(output).not.toContain("조회된 보호 고객");
+        expect(output).not.toContain("서울시 보호 주소");
+        expect(output).toContain("referenceAvailable");
+        expect(sessions.appendMessages).toHaveBeenCalled();
+        expect(JSON.stringify(sessions.appendMessages.mock.calls)).not.toContain("조회된 보호 고객");
+    });
+
+    it("does not duplicate the caller message when the task intake is replayed", async () => {
+        const capability = {
+            meta: { name: "clients.search", domain: "clients", version: "1.0.0", description: "Search clients", risk: "read" as const, requiredRoles: ["admin"], renderer: "activity" as const, flagKey: "agent.capability.clients.search", sideEffect: false },
+            inputSchema: z.object({ query: z.string().optional() }),
+            outputSchema: z.object({}),
+            execute: jest.fn().mockResolvedValue({}),
+        };
+        const sessions = {
+            create: jest.fn().mockResolvedValue({ id: "session-replay", selectedEntities: {}, messages: [] }),
+            appendMessages: jest.fn().mockResolvedValue(undefined),
+        };
+        const taskOrchestrator = {
+            handleUserTurn: jest.fn().mockResolvedValue({
+                task: null,
+                eventId: "event-replay",
+                operations: [],
+                replayed: true,
+            }),
+            filterWriteCapabilities: jest.fn().mockResolvedValue({ capabilities: [capability], taskMode: false }),
+            taskModeEnabled: jest.fn().mockResolvedValue(false),
+        };
+        const runtime = new AgentRuntimeService(
+            { list: () => [capability] } as never,
+            { isCapabilityEnabled: jest.fn().mockResolvedValue(true) } as never,
+            sessions as never,
+            { modelId: "deterministic-agent-v1", create: () => new DeterministicAgentLanguageModel([{ type: "text", text: "재전송 답변" }]) } as never,
+            { route: jest.fn().mockResolvedValue({ domains: ["clients"], capabilities: [capability] }) } as never,
+            { start: jest.fn().mockResolvedValue({ id: "trace-replay", startedAt: Date.now() }), finish: jest.fn().mockResolvedValue(undefined) } as never,
+            undefined,
+            undefined,
+            undefined,
+            taskOrchestrator as never,
+        );
+
+        const result = await runtime.stream({
+            principal: { userId: "user-a", branchId: "branch-a", globalRole: "admin", branchRole: "admin" },
+            locale: "ko",
+            messages: [{ id: "caller-replay", role: "user", parts: [{ type: "text", text: "기존 요청 재전송" }] }] as never,
+        });
+        const reader = result.stream.getReader();
+        while (!(await reader.read()).done) {
+            // Drain so replay persistence runs.
+        }
+
+        expect(sessions.appendMessages).toHaveBeenCalledTimes(1);
+        expect(sessions.appendMessages.mock.calls[0]?.[2]).toHaveLength(1);
+        expect(sessions.appendMessages.mock.calls[0]?.[2][0]).toMatchObject({ role: "assistant" });
+    });
+
+    it("keeps non-client structured forms on the legacy proposal path with task orchestration installed", async () => {
+        const employeeCreate = {
+            meta: {
+                name: "employees.create",
+                domain: "employees",
+                version: "1.0.0",
+                description: "Create employee",
+                risk: "reversible-write" as const,
+                requiredRoles: ["admin"],
+                renderer: "action-proposal" as const,
+                flagKey: "agent.capability.employees.create",
+                sideEffect: true,
+                approvalPolicy: "structured" as const,
+                idempotencyPolicy: "action-id" as const,
+            },
+            inputSchema: z.object({ name: z.string(), phone: z.string() }),
+            outputSchema: z.object({ ok: z.boolean() }),
+            execute: jest.fn(),
+        };
+        const model = new DeterministicAgentLanguageModel([
+            { type: "tool-call", toolName: "employees_create", input: {} },
+            { type: "text", text: "직원 등록 제안입니다." },
+        ]);
+        const sessions = {
+            create: jest.fn().mockResolvedValue({ id: "session-employee-form", selectedEntities: {}, messages: [] }),
+            appendMessages: jest.fn().mockResolvedValue(undefined),
+        };
+        const action = {
+            id: "employee-action",
+            capability: "employees.create",
+            status: "proposed",
+            expiresAt: new Date("2026-02-01T00:00:00.000Z"),
+            proposalRevision: "1",
+            risk: "reversible-write",
+            branchId: "branch-a",
+            targetSnapshot: null,
+            proposal: { title: "직원 등록", summary: "직원 등록", input: { name: "직원 이름", phone: "01012345678" } },
+        };
+        const propose = jest.fn().mockResolvedValue(action);
+        const handleUserTurn = jest.fn(() => {
+            throw new Error("non-client forms must bypass the conversation parser");
+        });
+        const applyModelMutation = jest.fn();
+        const runtime = new AgentRuntimeService(
+            { list: () => [employeeCreate] } as never,
+            { isCapabilityEnabled: jest.fn().mockResolvedValue(true) } as never,
+            sessions as never,
+            { modelId: "deterministic-agent-v1", create: () => model } as never,
+            { route: jest.fn() } as never,
+            { start: jest.fn().mockResolvedValue({ id: "trace-employee-form", startedAt: Date.now() }), finish: jest.fn().mockResolvedValue(undefined) } as never,
+            { propose, strongAcknowledgementToken: jest.fn() } as never,
+            undefined,
+            undefined,
+            {
+                handleUserTurn,
+                filterWriteCapabilities: jest.fn().mockResolvedValue({ capabilities: [employeeCreate], taskMode: false }),
+                applyModelMutation,
+            } as never,
+        );
+
+        const result = await runtime.stream({
+            principal: { userId: "user-a", branchId: "branch-a", globalRole: "admin", branchRole: "admin" },
+            locale: "ko",
+            messages: [{
+                id: "employee-form-message",
+                role: "user",
+                parts: [{ type: "data-form-submit", data: {
+                    formId: "employees.create-session-employee-form",
+                    values: { name: "직원 이름", phone: "01012345678" },
+                } }],
+            }] as never,
+        });
+        const reader = result.stream.getReader();
+        while (!(await reader.read()).done) {
+            // Drain the real stream so the proposal and transcript finish.
+        }
+
+        expect(handleUserTurn).not.toHaveBeenCalled();
+        expect(propose).toHaveBeenCalledWith(expect.objectContaining({
+            capability: "employees.create",
+            input: { name: "직원 이름", phone: "01012345678" },
+        }));
+        expect(applyModelMutation).not.toHaveBeenCalled();
+    });
+
+    it("returns the live snapshot for an unbound client form without feature-off rejection or writes", async () => {
+        const clientCreate = {
+            meta: {
+                name: "clients.create",
+                domain: "clients",
+                version: "1.0.0",
+                description: "Create client",
+                risk: "reversible-write" as const,
+                requiredRoles: ["admin"],
+                renderer: "action-proposal" as const,
+                flagKey: "agent.capability.clients.create",
+                sideEffect: true,
+                approvalPolicy: "structured" as const,
+                idempotencyPolicy: "action-id" as const,
+            },
+            inputSchema: z.object({ name: z.string(), address: z.string() }),
+            outputSchema: z.object({ ok: z.boolean() }),
+            execute: jest.fn(),
+        };
+        const task = runtimeTaskSnapshot({
+            taskId: "123e4567-e89b-42d3-a456-426614174150",
+            confirmed: { name: "보호된 활성 고객" },
+            tentative: { address: "보호된 서울 주소" },
+        });
+        const model = new DeterministicAgentLanguageModel([{ type: "text", text: "현재 작업을 유지합니다." }]);
+        const modelStream = jest.spyOn(model, "doStream");
+        const sessions = {
+            get: jest.fn().mockResolvedValue({
+                id: "session-live-form",
+                selectedEntities: { clients: { id: 42, name: "보호된 활성 고객" } },
+                messages: [],
+                summary: JSON.stringify({
+                    version: "summary-v2",
+                    sourceMessageCount: 0,
+                    selectedEntities: { clients: { status: "보호된 서울 주소" } },
+                    goals: ["보호된 활성 고객"],
+                }),
+            }),
+            appendMessages: jest.fn().mockResolvedValue(undefined),
+        };
+        const protectedValuesForConversation = jest.fn().mockResolvedValue(["보호된 활성 고객", "보호된 서울 주소"]);
+        const handleUserTurn = jest.fn().mockResolvedValue({
+            task,
+            eventId: "event-live-form-refusal",
+            operations: [],
+            replayed: false,
+            isQuestion: false,
+            refusal: "unsupported-input",
+        });
+        const propose = jest.fn();
+        const runtime = new AgentRuntimeService(
+            { list: () => [clientCreate] } as never,
+            { isCapabilityEnabled: jest.fn().mockResolvedValue(true) } as never,
+            sessions as never,
+            { modelId: "deterministic-agent-v1", create: () => model } as never,
+            { route: jest.fn() } as never,
+            { start: jest.fn().mockResolvedValue({ id: "trace-live-form-refusal", startedAt: Date.now() }), finish: jest.fn().mockResolvedValue(undefined) } as never,
+            { propose, strongAcknowledgementToken: jest.fn() } as never,
+            undefined,
+            undefined,
+            {
+                handleUserTurn,
+                filterWriteCapabilities: jest.fn().mockResolvedValue({ capabilities: [clientCreate], taskMode: false }),
+                protectedValuesForConversation,
+            } as never,
+        );
+
+        const result = await runtime.stream({
+            principal: { userId: "user-a", branchId: "branch-a", globalRole: "admin", branchRole: "admin" },
+            sessionId: "session-live-form",
+            locale: "ko",
+            messages: [{
+                id: "live-form-refusal-message",
+                role: "user",
+                parts: [{ type: "data-form-submit", data: {
+                    formId: "clients.create-session-live-form",
+                    values: { name: "새 대상", address: "새 주소" },
+                } }],
+            }] as never,
+        });
+        const chunks: unknown[] = [];
+        const reader = result.stream.getReader();
+        while (true) {
+            const next = await reader.read();
+            if (next.done) break;
+            chunks.push(next.value);
+        }
+
+        expect(handleUserTurn).toHaveBeenCalledWith(expect.objectContaining({ formSubmission: {
+            formId: "clients.create-session-live-form",
+            values: { name: "새 대상", address: "새 주소" },
+        } }));
+        expect(chunks).toEqual(expect.arrayContaining([
+            expect.objectContaining({ type: "data-task-snapshot", data: expect.objectContaining({ taskId: task.taskId }) }),
+        ]));
+        const modelCalls = JSON.stringify(modelStream.mock.calls);
+        expect(modelCalls).not.toContain("clients_create");
+        expect(modelCalls).not.toContain("보호된 활성 고객");
+        expect(modelCalls).not.toContain("보호된 서울 주소");
+        expect(JSON.stringify(sessions.appendMessages.mock.calls)).not.toContain("새 대상");
+        expect(JSON.stringify(sessions.appendMessages.mock.calls)).not.toContain("새 주소");
+        expect(propose).not.toHaveBeenCalled();
+        expect(protectedValuesForConversation).toHaveBeenCalledTimes(2);
+    });
+
+    it.each([
+        { isQuestion: true },
+        { isQuestion: false, commandAccepted: "prepare-review" },
+        { isQuestion: false, commandAccepted: "cancel" },
+        { isQuestion: false, commandAccepted: "prepare-review", replayed: true },
+        { isQuestion: false, commandAccepted: "cancel", replayed: true },
+        { isQuestion: false, mutationBlocked: true },
+    ])("offers only reads after a question, command or blocked task: %j", async (turn) => {
+        const write = (name: string, domain: string) => ({
+            meta: {
+                name,
+                domain,
+                version: "1.0.0",
+                description: name,
+                risk: "reversible-write" as const,
+                requiredRoles: ["admin"],
+                renderer: "action-proposal" as const,
+                flagKey: `agent.capability.${name}`,
+                sideEffect: true,
+                approvalPolicy: "structured" as const,
+                idempotencyPolicy: "action-id" as const,
+            },
+            inputSchema: z.object({}),
+            outputSchema: z.object({ ok: z.boolean() }),
+            execute: jest.fn(),
+        });
+        const search = buildEntityCapability("clients.search", "clients", jest.fn().mockResolvedValue({ kind: "entity", entity: { id: 1, name: "safe" } }));
+        const clientCreate = write("clients.create", "clients");
+        const employeeCreate = write("employees.create", "employees");
+        const messageSend = write("messages.send", "messages");
+        const sessions = {
+            get: jest.fn().mockResolvedValue({ id: "session-question", selectedEntities: {}, messages: [] }),
+            appendMessages: jest.fn().mockResolvedValue(undefined),
+        };
+        const task = runtimeTaskSnapshot({ taskId: "123e4567-e89b-42d3-a456-426614174101" });
+        const taskOrchestrator = {
+            handleUserTurn: jest.fn().mockResolvedValue({ task, operations: [], replayed: false, eventId: "question-event", ...turn }),
+            filterWriteCapabilities: jest.fn().mockResolvedValue({ capabilities: [search, clientCreate, employeeCreate, messageSend], taskMode: true }),
+            taskModeEnabled: jest.fn().mockResolvedValue(true),
+            protectedValuesForConversation: jest.fn().mockResolvedValue([]),
+        };
+        const model = new DeterministicAgentLanguageModel([
+            { type: "tool-call", toolName: "clients_search", input: { query: "고객" } },
+            { type: "text", text: "기존 결과를 확인했습니다." },
+        ]);
+        const modelStream = jest.spyOn(model, "doStream");
+        const runtime = new AgentRuntimeService(
+            { list: () => [search, clientCreate, employeeCreate, messageSend] } as never,
+            { isCapabilityEnabled: jest.fn().mockResolvedValue(true) } as never,
+            sessions as never,
+            { modelId: "deterministic-agent-v1", create: () => model } as never,
+            { route: jest.fn().mockResolvedValue({ domains: ["clients"], capabilities: [search, clientCreate, employeeCreate, messageSend] }) } as never,
+            { start: jest.fn().mockResolvedValue({ id: "trace-question", startedAt: Date.now() }), finish: jest.fn().mockResolvedValue(undefined) } as never,
+            { propose: jest.fn() } as never,
+            undefined,
+            undefined,
+            taskOrchestrator as never,
+        );
+
+        const result = await runtime.stream({
+            principal: { userId: "user-a", branchId: "branch-a", globalRole: "admin", branchRole: "admin" },
+            sessionId: task.sessionId,
+            locale: "ko",
+            messages: [{ id: "question-message", role: "user", parts: [{ type: "text", text: "이 등록 작업은 어떻게 진행되나요?" }] }] as never,
+        });
+        const reader = result.stream.getReader();
+        while (!(await reader.read()).done) {
+            // Drain completion and persistence.
+        }
+
+        const call = JSON.stringify(modelStream.mock.calls.map(([options]) => (options as { tools?: unknown }).tools));
+        expect(call).toContain("clients_search");
+        expect(call).not.toContain("clients_create");
+        expect(call).not.toContain("employees_create");
+        expect(call).not.toContain("messages_send");
+        expect(sessions.appendMessages).toHaveBeenCalled();
+        const persisted = JSON.stringify(sessions.appendMessages.mock.calls);
+        expect(persisted).not.toContain("data-action-proposal");
+    });
+
+    it("keeps a replayed task lookup read-only without attaching fresh choices", async () => {
+        const replayTask = {
+            schemaVersion: 1,
+            taskId: "123e4567-e89b-42d3-a456-426614174001",
+            sessionId: "123e4567-e89b-42d3-a456-426614174002",
+            kind: "clients.create",
+            capabilityId: "clients.create",
+            revision: 2,
+            state: "collecting",
+            confirmed: {},
+            tentative: {},
+            clearedFields: [],
+            provenance: { confirmed: {}, tentative: {} },
+            issues: [],
+            constraints: { noSend: false },
+            choiceSets: [],
+            orderedChoiceRefs: [],
+            target: null,
+            consent: { choice: "unanswered", binding: null },
+            action: null,
+            times: {
+                createdAt: "2026-01-01T00:00:00.000Z",
+                updatedAt: "2026-01-01T00:00:00.000Z",
+                acceptedAt: "2026-01-01T00:00:00.000Z",
+                expiresAt: "2026-02-01T00:00:00.000Z",
+            },
+            currentSnapshotRef: "123e4567-e89b-42d3-a456-426614174003",
+        };
+        const search = {
+            meta: {
+                name: "clients.search",
+                domain: "clients",
+                version: "1.0.0",
+                description: "Search clients",
+                risk: "read" as const,
+                requiredRoles: ["admin"],
+                renderer: "activity" as const,
+                flagKey: "agent.capability.clients.search",
+                sideEffect: false,
+            },
+            inputSchema: z.object({ query: z.string().optional() }),
+            outputSchema: z.object({
+                kind: z.literal("choices"),
+                prompt: z.string(),
+                choices: z.array(z.object({ id: z.number(), name: z.string(), serviceStatus: z.string().nullable() })),
+            }),
+            execute: jest.fn().mockResolvedValue({
+                kind: "choices",
+                prompt: "선택해 주세요",
+                choices: [
+                    { id: 701, name: "재생 보호 고객", serviceStatus: null },
+                    { id: 702, name: "재생 보호 고객 둘", serviceStatus: "active" },
+                ],
+            }),
+        };
+        const get = {
+            meta: {
+                name: "clients.get",
+                domain: "clients",
+                version: "1.0.0",
+                description: "Get client",
+                risk: "read" as const,
+                requiredRoles: ["admin"],
+                renderer: "activity" as const,
+                flagKey: "agent.capability.clients.get",
+                sideEffect: false,
+            },
+            inputSchema: z.object({ id: z.number() }),
+            outputSchema: z.object({
+                kind: z.literal("entity"),
+                entity: z.object({ id: z.number(), name: z.string(), address: z.string().nullable() }),
+            }),
+            execute: jest.fn().mockResolvedValue({
+                kind: "entity",
+                entity: { id: 703, name: "재생 단일 고객", address: "재생 보호 주소" },
+            }),
+        };
+        const sessions = {
+            get: jest.fn().mockResolvedValue({ id: replayTask.sessionId, selectedEntities: { clients: { id: 700, name: "기존 재생 고객" } }, messages: [] }),
+            appendMessages: jest.fn().mockResolvedValue(undefined),
+        };
+        const model = new DeterministicAgentLanguageModel([
+            { type: "tool-call", toolName: "clients_search", input: { query: "고객" } },
+            { type: "tool-call", toolName: "clients_get", input: { id: 703 } },
+            { type: "text", text: "기존 결과를 확인했습니다." },
+        ]);
+        const modelStream = jest.spyOn(model, "doStream");
+        const attachDerivedChoices = jest.fn();
+        const taskOrchestrator = {
+            handleUserTurn: jest.fn().mockResolvedValue({
+                task: replayTask,
+                eventId: "123e4567-e89b-42d3-a456-426614174004",
+                operations: [],
+                isQuestion: true,
+                replayed: true,
+            }),
+            filterWriteCapabilities: jest.fn().mockResolvedValue({ capabilities: [search, get], taskMode: false }),
+            taskModeEnabled: jest.fn().mockResolvedValue(true),
+            attachDerivedChoices,
+            protectedValuesForConversation: jest.fn().mockResolvedValue([]),
+        };
+        const runtime = new AgentRuntimeService(
+            { list: () => [search, get] } as never,
+            { isCapabilityEnabled: jest.fn().mockResolvedValue(true) } as never,
+            sessions as never,
+            { modelId: "deterministic-agent-v1", create: () => model } as never,
+            { route: jest.fn().mockResolvedValue({ domains: ["clients"], capabilities: [search, get] }) } as never,
+            { start: jest.fn().mockResolvedValue({ id: "trace-replay-choice", startedAt: Date.now() }), finish: jest.fn().mockResolvedValue(undefined) } as never,
+            undefined,
+            undefined,
+            undefined,
+            taskOrchestrator as never,
+        );
+
+        const result = await runtime.stream({
+            principal: { userId: "user-a", branchId: "branch-a", globalRole: "admin", branchRole: "admin" },
+            sessionId: replayTask.sessionId,
+            locale: "ko",
+            messages: [{ id: "message-replay-choice", role: "user", parts: [{ type: "text", text: "기존 고객 조회를 다시 보여줘" }] }] as never,
+        });
+        const chunks: unknown[] = [];
+        const reader = result.stream.getReader();
+        while (true) {
+            const next = await reader.read();
+            if (next.done) break;
+            chunks.push(next.value);
+        }
+
+        expect(attachDerivedChoices).not.toHaveBeenCalled();
+        expect(taskOrchestrator.handleUserTurn).toHaveBeenCalled();
+        expect(sessions.appendMessages).toHaveBeenCalledTimes(1);
+        const prompt = JSON.stringify(modelStream.mock.calls);
+        expect(prompt).not.toContain("기존 재생 고객");
+        expect(prompt).not.toContain("700");
+        expect(prompt).not.toContain("재생 보호 고객");
+        expect(prompt).not.toContain("701");
+        expect(prompt).not.toContain("재생 단일 고객");
+        expect(prompt).not.toContain("재생 보호 주소");
+        expect(JSON.stringify(chunks)).not.toContain("재생 보호 고객");
+        expect(JSON.stringify(chunks)).not.toContain("701");
+        expect(JSON.stringify(chunks)).not.toContain("재생 단일 고객");
+        expect(JSON.stringify(chunks)).not.toContain("재생 보호 주소");
+        expect(JSON.stringify(chunks)).not.toContain("data-entity-choice");
     });
 
     it("contains finish-time persistence failures and records a failed trace", async () => {

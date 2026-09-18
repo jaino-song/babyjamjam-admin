@@ -244,6 +244,7 @@ function MessageHistoryFilterPanel({
     >
       <SearchBox
         data-component={`${dataComponent}_search`}
+        inputLabel="고객명, 연락처, 템플릿, 내용 검색"
         placeholder="고객명, 연락처, 템플릿, 내용 검색…"
         value={searchValue}
         onChange={onSearchChange}
@@ -417,6 +418,13 @@ function EmptyState({ message }: { message: string }) {
       <p>{message}</p>
     </div>
   );
+}
+
+function getMessageHistoryErrorMessage(error: unknown): string {
+  if (error instanceof Error && /[가-힣]/.test(error.message)) {
+    return error.message;
+  }
+  return "발송 기록을 불러오지 못했습니다. 잠시 후 자동으로 다시 시도합니다.";
 }
 
 function UnavailableCount({ dataComponent }: { dataComponent?: string }) {
@@ -602,6 +610,7 @@ export function MessagesHistoryPage() {
     data: historyData = [],
     isLoading: isHistoryLoading,
     isError: isHistoryError,
+    error: historyError,
   } = useMessageHistory();
   const cancelMutation = useCancelMessageTriggerJob();
   const retryMutation = useRetryMessageHistory();
@@ -803,6 +812,7 @@ export function MessagesHistoryPage() {
     && selectedRecord.status === "failed",
   );
   const filterPanelDataComponent = `${HISTORY_LIST_BASE}_content_list-card_filters`;
+  const historyErrorMessage = getMessageHistoryErrorMessage(historyError);
 
   return (
     <>
@@ -961,7 +971,7 @@ export function MessagesHistoryPage() {
                           )}
                         </div>
                         {isHistoryError ? (
-                          <EmptyState message="발송 기록을 불러오지 못했습니다." />
+                          <EmptyState message={historyErrorMessage} />
                         ) : isPanelLoading ? (
                           Array.from({ length: 4 }, (_, index) => (
                             <RowSkeleton

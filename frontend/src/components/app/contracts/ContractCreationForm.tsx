@@ -120,11 +120,60 @@ const AREA_TEMPLATE_DISPLAY_LABELS: Record<string, string> = {
   Seogu: "서구",
 };
 
+const AREA_TEMPLATES_LOADING_MESSAGE = "계약서 유형을 불러오는 중입니다...";
+const AREA_TEMPLATES_ERROR_MESSAGE = "계약서 유형을 불러오지 못했습니다. 잠시 후 다시 시도해 주세요.";
+const AREA_TEMPLATES_EMPTY_MESSAGE = "설정된 계약서 유형이 없습니다. 관리자에게 계약서 유형을 설정해 달라고 요청해 주세요.";
+const AREA_TEMPLATE_SELECTION_INVALID_MESSAGE = "계약서 선택을 다시 확인해 주세요.";
+const CONTRACT_START_DATE_REQUIRED_MESSAGE = "계약 시작일을 입력해 주세요.";
+const CONTRACT_START_DATE_INVALID_MESSAGE = "계약 시작일은 YYYY-MM-DD 형식의 유효한 날짜를 입력해 주세요.";
+const CONTRACT_END_DATE_INVALID_MESSAGE = "종료일은 YYYY-MM-DD 형식의 유효한 날짜를 입력해 주세요.";
+const CONTRACT_DATE_RANGE_ERROR_MESSAGE = "종료일은 시작일과 같거나 이후로 입력해 주세요.";
+const CONTRACT_PAYMENT_DATE_REQUIRED_MESSAGE = "결제일을 입력해 주세요.";
+const CONTRACT_PAYMENT_DATE_INVALID_MESSAGE = "결제일은 YYYY-MM-DD 형식의 유효한 날짜를 입력해 주세요.";
+const CONTRACT_DATE_RANGE_ERROR_ID = "contract-creation-date-range-error";
+
 function getAreaTemplateDisplayLabel(areaId: string, templateName?: string | null): string {
   const mappedLabel = AREA_TEMPLATE_DISPLAY_LABELS[areaId];
   if (mappedLabel) return mappedLabel;
 
   return templateName?.replace(/\s*계약서.*$/, "").trim() || areaId;
+}
+
+function isValidIsoDateInput(value: string): boolean {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+
+  const year = Number(value.slice(0, 4));
+  const month = Number(value.slice(5, 7));
+  const day = Number(value.slice(8, 10));
+  if (year < 1 || month < 1 || month > 12 || day < 1 || day > 31) return false;
+
+  const date = new Date(0);
+  date.setUTCFullYear(year, month - 1, day);
+  date.setUTCHours(0, 0, 0, 0);
+
+  return (
+    date.getUTCFullYear() === year &&
+    date.getUTCMonth() === month - 1 &&
+    date.getUTCDate() === day
+  );
+}
+
+function getContractDateValidationMessage(
+  startDate: string,
+  endDate: string,
+  paymentDate: string,
+): string | null {
+  if (startDate && !isValidIsoDateInput(startDate)) return CONTRACT_START_DATE_INVALID_MESSAGE;
+  if (endDate && !isValidIsoDateInput(endDate)) return CONTRACT_END_DATE_INVALID_MESSAGE;
+  if (startDate && endDate && endDate < startDate) return CONTRACT_DATE_RANGE_ERROR_MESSAGE;
+  if (paymentDate && !isValidIsoDateInput(paymentDate)) return CONTRACT_PAYMENT_DATE_INVALID_MESSAGE;
+  return null;
+}
+
+function getContractDateRequiredValidationMessage(startDate: string, paymentDate: string): string | null {
+  if (!startDate) return CONTRACT_START_DATE_REQUIRED_MESSAGE;
+  if (!paymentDate) return CONTRACT_PAYMENT_DATE_REQUIRED_MESSAGE;
+  return null;
 }
 import { eformsignQueryKeys } from "@/hooks/useEformsignDocuments";
 import { useVoucherPriceInfos, useVoucherYears, useAreaTemplates } from "@/hooks";
@@ -269,6 +318,8 @@ function createHeadlessProgressId(): string {
 }
 
 function getSafeHeadlessFailureMessage(reason: string | undefined): string {
+  const knownProviderFailureMessage = getKnownHeadlessProviderFailureMessage(reason);
+  if (knownProviderFailureMessage) return knownProviderFailureMessage;
   if (!reason) {
     return "백엔드 자동 처리에 실패했어요. 재시도하거나 수동 입력을 사용해 주세요.";
   }
@@ -282,6 +333,23 @@ function getSafeHeadlessFailureMessage(reason: string | undefined): string {
     return "전자문서 전송 응답에서 문서 ID를 받지 못했습니다. 재시도하거나 수동 입력을 사용해 주세요.";
   }
   return "백엔드 자동 처리에 실패했어요. 재시도하거나 수동 입력을 사용해 주세요.";
+}
+
+function getKnownHeadlessProviderFailureMessage(reason: string | undefined): string | null {
+  switch (reason) {
+    case "template_workflow_config_invalid":
+      return "이번 요청에서 계약서를 발송하지 않았어요. 계약서 템플릿 설정이 올바르지 않아요. 관리자에게 템플릿 설정을 확인하고 수정해 달라고 요청한 뒤 다시 시도해 주세요. 입력한 고객 정보와 날짜는 그대로 남아 있어요.";
+    case "template_workflow_unsupported":
+      return "이번 요청에서 계약서를 발송하지 않았어요. 현재 계약서 템플릿에서 지원하지 않는 항목이 있어요. 관리자에게 템플릿 설정을 확인하고 항목을 수정해 달라고 요청한 뒤 다시 시도해 주세요. 입력한 고객 정보와 날짜는 그대로 남아 있어요.";
+    case "template_workflow_config_unavailable":
+      return "이번 요청에서 계약서를 발송하지 않았어요. 계약서 템플릿 설정을 잠시 불러오지 못했어요. 잠시 후 다시 시도해 주세요. 입력한 고객 정보와 날짜는 그대로 남아 있어요.";
+    default:
+      return null;
+  }
+}
+
+function serializeClientPersistencePayload(payload: Record<string, unknown>): string {
+  return JSON.stringify(payload);
 }
 
 export const ContractCreationForm = ({
@@ -339,6 +407,9 @@ export const ContractCreationForm = ({
   // contract when the dispatch outcome is unknown.
   const [unverifiedDispatchNotice, setUnverifiedDispatchNotice] = useState<string | null>(null);
   const [creationProgress, setCreationProgress] = useState<HeadlessProgressState>(INITIAL_CREATION_PROGRESS);
+  const persistedClientIdRef = useRef<number | null>(null);
+  const persistedClientSnapshotRef = useRef<string | null>(null);
+  const retryWithPersistedClientRef = useRef(false);
   const [dueDateInput, setDueDateInput] = useState("");
   const [birthDateInput, setBirthDateInput] = useState("");
   const [startDateInput, setStartDateInput] = useState("");
@@ -474,7 +545,19 @@ export const ContractCreationForm = ({
     voucherType,
     voucherYear
   );
-  const { data: areaTemplates = [], isLoading: isAreaTemplatesLoading } = useAreaTemplates();
+  const {
+    data: areaTemplates = [],
+    isError: isAreaTemplatesError,
+    isFetching: isAreaTemplatesFetching,
+    isLoading: isAreaTemplatesLoading,
+    refetch: refetchAreaTemplates,
+  } = useAreaTemplates();
+  const isAreaTemplatesEmpty = !isAreaTemplatesLoading && !isAreaTemplatesError && areaTemplates.length === 0;
+  const isAreaTemplateSelectDisabled = isAreaTemplatesLoading || isAreaTemplatesError || isAreaTemplatesEmpty;
+  const isAreaTemplateSelectionValid =
+    !isAreaTemplatesLoading &&
+    !isAreaTemplatesError &&
+    areaTemplates.some((template) => template.areaId === area);
   const { data: voucherYears = [], isLoading: isVoucherYearsLoading } = useVoucherYears();
   const { data: employees } = useEmployees();
   const createClientMutation = useCreateClient();
@@ -527,6 +610,9 @@ export const ContractCreationForm = ({
     setAllowIframeFallback(false);
     setUnverifiedDispatchNotice(null);
     setCreationProgress(INITIAL_CREATION_PROGRESS);
+    persistedClientIdRef.current = null;
+    persistedClientSnapshotRef.current = null;
+    retryWithPersistedClientRef.current = false;
   };
 
   const handleCancel = () => {
@@ -548,6 +634,9 @@ export const ContractCreationForm = ({
   };
 
   const handleClientSelect = (selectedClientId: number | null, client: Client | null) => {
+    persistedClientIdRef.current = null;
+    persistedClientSnapshotRef.current = null;
+    retryWithPersistedClientRef.current = false;
     setClientId(selectedClientId);
     resetEmployeeFields();
     resetEmployee2Fields();
@@ -715,6 +804,26 @@ export const ContractCreationForm = ({
 
   const handleContractCreation = async ({ mode = "auto" }: ContractCreationRunOptions = {}) => {
     if (isSubmittingRef.current) return;
+    const dateValidationMessage =
+      getContractDateValidationMessage(startDateInput, endDateInput, paymentDateInput)
+      ?? getContractDateRequiredValidationMessage(startDateInput, paymentDateInput);
+    if (dateValidationMessage) {
+      setSubmitError(getUserErrorMessage(dateValidationMessage));
+      setActiveStep(CONTRACT_INFO_STEP_INDEX);
+      return;
+    }
+    if (!isAreaTemplateSelectionValid) {
+      const areaTemplateMessage = isAreaTemplatesLoading
+        ? AREA_TEMPLATES_LOADING_MESSAGE
+        : isAreaTemplatesError
+          ? AREA_TEMPLATES_ERROR_MESSAGE
+          : areaTemplates.length === 0
+            ? AREA_TEMPLATES_EMPTY_MESSAGE
+            : AREA_TEMPLATE_SELECTION_INVALID_MESSAGE;
+      setSubmitError(getUserErrorMessage(areaTemplateMessage));
+      setActiveStep(0);
+      return;
+    }
     isSubmittingRef.current = true;
     onSubmissionStateChange?.(true);
     try {
@@ -747,15 +856,37 @@ export const ContractCreationForm = ({
       let autoRegisteredClientId: number | null = null;
       let keepSubmittingUntilDialogCloses = false;
       try {
-        let finalClientId = clientId;
+        const reusePersistedClient = retryWithPersistedClientRef.current;
+        retryWithPersistedClientRef.current = false;
+        let finalClientId = reusePersistedClient
+          ? persistedClientIdRef.current ?? clientId
+          : clientId;
         const normalizedDueDate = parseYymmddInputToIso(dueDateInput) ?? "";
         const normalizedBirthDate = parseYymmddInputToIso(birthDateInput) ?? "";
         const assignment = {
           primaryEmployeeId: employeeId,
           secondaryEmployeeId: showEmployee2 ? employee2Id : null,
         };
+        const clientPersistenceSnapshot = serializeClientPersistencePayload({
+          ...assignment,
+          name,
+          phone,
+          birthday: birthday || null,
+          address: address || null,
+          dueDate: normalizedDueDate || null,
+          birthDate: normalizedBirthDate || null,
+          type: voucherType || null,
+          duration: parseOptionalInteger(voucherDuration),
+          fullPrice: fullPrice || null,
+          grant: grant || null,
+          actualPrice: actualPrice || null,
+          startDate: startDate || null,
+          endDate: endDate || null,
+          voucherClient: hasPositivePrice(grant),
+          areaId: area || null,
+        });
 
-        if (!clientId) {
+        if (!reusePersistedClient && !clientId) {
           const autoRegistrationPayload = {
             name,
             phone,
@@ -797,9 +928,16 @@ export const ContractCreationForm = ({
           finalClientId = newClient.id;
           if (!reusedExistingClient) autoRegisteredClientId = newClient.id;
           setClientId(newClient.id);
-        } else {
+        }
+        const shouldUpdatePersistedClient = reusePersistedClient
+          ? persistedClientSnapshotRef.current !== clientPersistenceSnapshot
+          : clientId !== null;
+        if (shouldUpdatePersistedClient) {
+          if (finalClientId === null) {
+            throw new Error("고객 정보를 먼저 선택하거나 등록해 주세요.");
+          }
           await updateClientMutation.mutateAsync({
-            id: clientId,
+            id: finalClientId,
             dto: {
               ...assignment,
               name,
@@ -823,6 +961,10 @@ export const ContractCreationForm = ({
         if (finalClientId === null) {
           throw new Error("고객 정보를 먼저 선택하거나 등록해 주세요.");
         }
+        if (!reusePersistedClient || shouldUpdatePersistedClient) {
+          persistedClientIdRef.current = finalClientId;
+          persistedClientSnapshotRef.current = clientPersistenceSnapshot;
+        }
 
         const start = dayjs(startDate);
         const end = endDate ? dayjs(endDate) : null;
@@ -834,7 +976,7 @@ export const ContractCreationForm = ({
           customerContact: phone,
           customerDOB: birthday,
           customerAddress: address,
-          // inputOutsiderNumber (이용자 연락처) prefill 용 — 현재 로그인 계정의 phone 사용
+          // 발급자 연락처 메타데이터는 유지하며, 계약서 이용자 연락처는 customerContact를 사용합니다.
           issuerPhone: authUser?.phone ?? undefined,
           caretaker1Name: employeeName,
           caretaker1Contact: employeePhone,
@@ -938,6 +1080,24 @@ export const ContractCreationForm = ({
               setCreationProgress({ step: "sent", completed: true, failed: false });
               queryClient.invalidateQueries({ queryKey: eformsignQueryKeys.documents() });
               setIsCreationSuccessOpen(true);
+              return;
+            }
+
+            const knownHeadlessFailureMessage = getKnownHeadlessProviderFailureMessage(headless.reason);
+            if (knownHeadlessFailureMessage) {
+              // These exact backend reasons are guaranteed before the provider
+              // send boundary. Keep the existing client and allow a safe retry;
+              // the iframe fallback is not a valid recovery for this failure.
+              setAllowIframeFallback(false);
+              setSubmitError(getUserErrorMessage(knownHeadlessFailureMessage));
+              retryWithPersistedClientRef.current = true;
+              setCreationProgress((current) => ({
+                step: headless.failedStep && isHeadlessProgressStepKey(headless.failedStep)
+                  ? headless.failedStep
+                  : current.step ?? "client-started",
+                completed: false,
+                failed: true,
+              }));
               return;
             }
 
@@ -1119,14 +1279,24 @@ export const ContractCreationForm = ({
     }
   };
 
-  const isStep1Valid = Boolean(name.trim() && phone.trim() && area);
+  const isStep1Valid = Boolean(name.trim() && phone.trim() && isAreaTemplateSelectionValid);
   const isBirthdayValid = !birthday || isValidClientBirthdayInput(birthday);
   const isEmployee1Valid = employeeId !== null;
   const isEmployee2Valid = !showEmployee2 || employee2Id !== null;
   const isStep2Valid = isEmployee1Valid && isEmployee2Valid;
   const isStep3Valid = Boolean(voucherType && voucherDuration && fullPrice && grant && actualPrice);
+  const contractDateValidationMessage = getContractDateValidationMessage(
+    startDateInput,
+    endDateInput,
+    paymentDateInput,
+  );
+  const contractDateRequiredValidationMessage = getContractDateRequiredValidationMessage(
+    startDateInput,
+    paymentDateInput,
+  );
+  const isPaymentDateInvalid = contractDateValidationMessage === CONTRACT_PAYMENT_DATE_INVALID_MESSAGE;
   // endDate는 이용자 서명 후 직원이 Step 3에서 사후 입력하므로 발급 시점에는 옵셔널.
-  const isStep4Valid = Boolean(startDate && paymentDate);
+  const isStep4Valid = !contractDateValidationMessage && !contractDateRequiredValidationMessage;
   const isCurrentStepValid = [isStep1Valid && isBirthdayValid, isStep2Valid, isStep3Valid, isStep4Valid][activeStep] ?? true;
   const requiredFieldProgressText = `필수 항목 11개 중 ${
     [
@@ -1171,8 +1341,9 @@ export const ContractCreationForm = ({
     if (step === 2 && !isStep3Valid) {
       return "바우처 유형/기간과 금액 정보를 입력해 주세요.";
     }
-    if (step === 3 && !isStep4Valid) {
-      return "계약 시작일, 결제일을 입력해 주세요.";
+    if (step === 3 && contractDateValidationMessage) return contractDateValidationMessage;
+    if (step === 3 && contractDateRequiredValidationMessage) {
+      return contractDateRequiredValidationMessage;
     }
     return null;
   };
@@ -1265,7 +1436,7 @@ export const ContractCreationForm = ({
             <Select
               value={area}
               onValueChange={setArea}
-              disabled={isAreaTemplatesLoading}
+              disabled={isAreaTemplateSelectDisabled}
               data-component="desktop_contracts_creation_doc-type-field_select"
             >
               <SelectTrigger
@@ -1287,6 +1458,45 @@ export const ContractCreationForm = ({
                 ))}
               </SelectContent>
             </Select>
+            {isAreaTemplatesLoading && (
+              <Alert
+                data-component="desktop_contracts_creation_doc-type-field_status_loading"
+                variant="info"
+              >
+                <AlertDescription>{AREA_TEMPLATES_LOADING_MESSAGE}</AlertDescription>
+              </Alert>
+            )}
+            {isAreaTemplatesError && (
+              <Alert
+                data-component="desktop_contracts_creation_doc-type-field_status_error"
+                variant="destructive"
+              >
+                <AlertDescription>
+                  {AREA_TEMPLATES_ERROR_MESSAGE}
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    data-component="desktop_contracts_creation_doc-type-field_status_error_retry"
+                    className="mt-3"
+                    onClick={() => void refetchAreaTemplates()}
+                    disabled={isAreaTemplatesFetching}
+                  >
+                    {isAreaTemplatesFetching ? "재시도 중..." : "다시 시도"}
+                  </Button>
+                </AlertDescription>
+              </Alert>
+            )}
+            {isAreaTemplatesEmpty && (
+              <Alert
+                data-component="desktop_contracts_creation_doc-type-field_status_empty"
+                variant="warning"
+              >
+                <AlertDescription>
+                  {AREA_TEMPLATES_EMPTY_MESSAGE}
+                </AlertDescription>
+              </Alert>
+            )}
           </div>
         </div>
       ),
@@ -1513,64 +1723,108 @@ export const ContractCreationForm = ({
     {
       label: stepLabels[3] ?? "계약 정보",
       content: (
-        <div className={PANEL_THREE_COLUMN_GRID_CLASS_NAME}>
-          <div className="space-y-2 flex-1 min-w-0">
-            <Label className={LABEL_CLS}>{t(locale, "contract-msg.start-date-label")}</Label>
-            <Input
-              variant="v3"
-              type="text"
-              inputMode="numeric"
-              pattern="\d{4}-\d{2}-\d{2}"
-              maxLength={10}
-              placeholder="예: YYYY-MM-DD"
-              value={startDateInput}
-              onChange={(e) => {
-                const formatted = formatIsoDateInput(e.target.value);
-                setStartDateInput(formatted);
-                if (formatted.length === 10) setStartDate(formatted);
-                else if (formatted.length === 0) setStartDate("");
-              }}
-              className={INPUT_CLS}
-            />
+        <div className="grid gap-[calc(16px*var(--glint-ui-scale,1))]">
+          <div className={PANEL_THREE_COLUMN_GRID_CLASS_NAME}>
+            <div className="space-y-2 flex-1 min-w-0">
+              <Label
+                htmlFor="contract-creation-start-date"
+                className={LABEL_CLS}
+              >
+                {t(locale, "contract-msg.start-date-label")}
+              </Label>
+              <Input
+                id="contract-creation-start-date"
+                variant="v3"
+                type="text"
+                inputMode="numeric"
+                pattern="\d{4}-\d{2}-\d{2}"
+                maxLength={10}
+                placeholder="예: YYYY-MM-DD"
+                value={startDateInput}
+                required
+                onChange={(e) => {
+                  const formatted = formatIsoDateInput(e.target.value);
+                  setStartDateInput(formatted);
+                  if (formatted.length === 10) setStartDate(formatted);
+                  else if (formatted.length === 0) setStartDate("");
+                }}
+                error={Boolean(contractDateValidationMessage)}
+                aria-invalid={contractDateValidationMessage ? "true" : undefined}
+                aria-describedby={contractDateValidationMessage ? CONTRACT_DATE_RANGE_ERROR_ID : undefined}
+                data-component="desktop_contracts_creation_form_start-date-input"
+                className={INPUT_CLS}
+              />
+            </div>
+            <div className="space-y-2 flex-1 min-w-0">
+              <Label
+                htmlFor="contract-creation-end-date"
+                className={LABEL_CLS}
+              >
+                {t(locale, "contract-msg.end-date-label")}
+              </Label>
+              <Input
+                id="contract-creation-end-date"
+                variant="v3"
+                type="text"
+                inputMode="numeric"
+                pattern="\d{4}-\d{2}-\d{2}"
+                maxLength={10}
+                placeholder="예: YYYY-MM-DD"
+                value={endDateInput}
+                onChange={(e) => {
+                  const formatted = formatIsoDateInput(e.target.value);
+                  setEndDateInput(formatted);
+                  if (formatted.length === 10) setEndDate(formatted);
+                  else if (formatted.length === 0) setEndDate("");
+                }}
+                error={Boolean(contractDateValidationMessage)}
+                aria-invalid={contractDateValidationMessage ? "true" : undefined}
+                aria-describedby={contractDateValidationMessage ? CONTRACT_DATE_RANGE_ERROR_ID : undefined}
+                data-component="desktop_contracts_creation_form_end-date-input"
+                className={INPUT_CLS}
+              />
+            </div>
+            <div className="space-y-2 flex-1 min-w-0">
+              <Label
+                htmlFor="contract-creation-payment-date"
+                className={LABEL_CLS}
+              >
+                {t(locale, "contract-msg.payment-date-label")}
+              </Label>
+              <Input
+                id="contract-creation-payment-date"
+                variant="v3"
+                type="text"
+                inputMode="numeric"
+                pattern="\d{4}-\d{2}-\d{2}"
+                maxLength={10}
+                placeholder="예: YYYY-MM-DD"
+                value={paymentDateInput}
+                required
+                onChange={(e) => {
+                  const formatted = formatIsoDateInput(e.target.value);
+                  setPaymentDateInput(formatted);
+                  if (formatted.length === 10) setPaymentDate(formatted);
+                  else if (formatted.length === 0) setPaymentDate("");
+                }}
+                error={isPaymentDateInvalid}
+                aria-invalid={isPaymentDateInvalid ? "true" : undefined}
+                aria-describedby={isPaymentDateInvalid ? CONTRACT_DATE_RANGE_ERROR_ID : undefined}
+                data-component="desktop_contracts_creation_form_payment-date-input"
+                className={INPUT_CLS}
+              />
+            </div>
           </div>
-          <div className="space-y-2 flex-1 min-w-0">
-            <Label className={LABEL_CLS}>{t(locale, "contract-msg.end-date-label")}</Label>
-            <Input
-              variant="v3"
-              type="text"
-              inputMode="numeric"
-              pattern="\d{4}-\d{2}-\d{2}"
-              maxLength={10}
-              placeholder="예: YYYY-MM-DD"
-              value={endDateInput}
-              onChange={(e) => {
-                const formatted = formatIsoDateInput(e.target.value);
-                setEndDateInput(formatted);
-                if (formatted.length === 10) setEndDate(formatted);
-                else if (formatted.length === 0) setEndDate("");
-              }}
-              className={INPUT_CLS}
-            />
-          </div>
-          <div className="space-y-2 flex-1 min-w-0">
-            <Label className={LABEL_CLS}>{t(locale, "contract-msg.payment-date-label")}</Label>
-            <Input
-              variant="v3"
-              type="text"
-              inputMode="numeric"
-              pattern="\d{4}-\d{2}-\d{2}"
-              maxLength={10}
-              placeholder="예: YYYY-MM-DD"
-              value={paymentDateInput}
-              onChange={(e) => {
-                const formatted = formatIsoDateInput(e.target.value);
-                setPaymentDateInput(formatted);
-                if (formatted.length === 10) setPaymentDate(formatted);
-                else if (formatted.length === 0) setPaymentDate("");
-              }}
-              className={INPUT_CLS}
-            />
-          </div>
+          {contractDateValidationMessage && (
+            <Alert
+              id={CONTRACT_DATE_RANGE_ERROR_ID}
+              variant="destructive"
+              data-component="desktop_contracts_creation_form_date-range-error"
+              data-testid="contract-creation-date-range-error"
+            >
+              <AlertDescription>{contractDateValidationMessage}</AlertDescription>
+            </Alert>
+          )}
         </div>
       ),
       summary: (

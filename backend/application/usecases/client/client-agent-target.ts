@@ -2,7 +2,11 @@ import { createHash } from "node:crypto";
 
 import type { ClientEntity } from "domain/entities/client.entity";
 
-export function clientAgentTargetVersion(client: ClientEntity | null): string {
+type ClientAgentVersionFields = Pick<ClientEntity, "id" | "name" | "address" | "phone" | "type" | "duration"
+    | "fullPrice" | "grant" | "actualPrice" | "startDate" | "endDate" | "dueDate" | "birthDate" | "careCenter"
+    | "voucherClient" | "birthday" | "serviceStatus" | "breastPump" | "areaId">;
+
+export function clientAgentTargetVersion(client: ClientAgentVersionFields | null): string {
     if (!client) return "missing";
     const value = {
         id: client.id, name: client.name, address: client.address, phone: client.phone, type: client.type,

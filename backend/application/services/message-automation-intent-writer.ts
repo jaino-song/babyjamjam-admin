@@ -14,6 +14,7 @@ import {
     MessageTriggerRecipientType,
     MessageTriggerTemplateKey,
 } from "domain/constants/message-trigger-catalog";
+import type { AgentAutomationTaskCommitReference } from "domain/entities/agent-automation-consent";
 
 interface PersistIntentParams {
     branchId: string;
@@ -28,6 +29,8 @@ interface PersistIntentParams {
     suppressGreeting: boolean;
     intentAt: Date;
     replaceExisting: boolean;
+    taskOrigin?: boolean;
+    taskAutomationReference?: AgentAutomationTaskCommitReference;
 }
 
 export async function persistClientMessageAutomationIntent(
@@ -38,6 +41,8 @@ export async function persistClientMessageAutomationIntent(
         includePast: boolean;
         suppressGreeting: boolean;
         intentAt: Date;
+        taskOrigin?: boolean;
+        taskAutomationReference?: AgentAutomationTaskCommitReference;
     },
 ): Promise<void> {
     await persistMessageAutomationIntent(transaction, {
@@ -48,6 +53,8 @@ export async function persistClientMessageAutomationIntent(
         dedupeKey: getClientAutomationIntentDedupeKey(params.branchId, params.clientId),
         kind: "client",
         replaceExisting: false,
+        taskOrigin: params.taskOrigin,
+        taskAutomationReference: params.taskAutomationReference,
     });
 }
 
@@ -60,6 +67,8 @@ export async function persistScheduleMessageAutomationIntent(
         includePast: boolean;
         intentAt: Date;
         replaceExisting?: boolean;
+        taskOrigin?: boolean;
+        taskAutomationReference?: AgentAutomationTaskCommitReference;
     },
 ): Promise<void> {
     await persistMessageAutomationIntent(transaction, {
@@ -74,6 +83,8 @@ export async function persistScheduleMessageAutomationIntent(
         suppressGreeting: false,
         intentAt: params.intentAt,
         replaceExisting: params.replaceExisting ?? false,
+        taskOrigin: params.taskOrigin,
+        taskAutomationReference: params.taskAutomationReference,
     });
 }
 
@@ -140,6 +151,9 @@ async function persistMessageAutomationIntent(
         },
         update: {},
     });
+    const taskAutomationReference = params.taskAutomationReference
+        ? JSON.parse(JSON.stringify(params.taskAutomationReference)) as Prisma.InputJsonObject
+        : undefined;
     const payload = {
         ...(params.clientId === null ? {} : { clientId: params.clientId }),
         ...(params.employeeId === undefined ? {} : { employeeId: params.employeeId }),
@@ -151,7 +165,9 @@ async function persistMessageAutomationIntent(
             includePast: String(params.includePast),
             suppressGreeting: String(params.suppressGreeting),
             replaceExisting: String(params.replaceExisting),
+            ...(params.taskOrigin ? { taskOrigin: "true" } : {}),
         },
+        ...(taskAutomationReference ? { taskAutomationReference } : {}),
     } satisfies Prisma.InputJsonObject;
     await transaction.message_trigger_job.upsert({
         where: { dedupeKey: params.dedupeKey },

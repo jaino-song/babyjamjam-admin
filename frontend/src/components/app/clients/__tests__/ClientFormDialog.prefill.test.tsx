@@ -27,9 +27,11 @@ jest.mock("next/navigation", () => ({
     useSearchParams: () => new URLSearchParams(),
 }));
 
+const mockUpdateClient = jest.fn();
+
 jest.mock("@/hooks/useClients", () => ({
     useCreateClient: () => ({ isPending: false, mutateAsync: jest.fn() }),
-    useUpdateClient: () => ({ isPending: false, mutateAsync: jest.fn() }),
+    useUpdateClient: () => ({ isPending: false, mutateAsync: mockUpdateClient }),
 }));
 
 jest.mock("@/hooks/useVoucherData", () => ({
@@ -125,6 +127,7 @@ const createClient = (overrides: Partial<Client> = {}): Client => ({
 
 describe("ClientFormDialog prefill", () => {
     beforeEach(() => {
+        mockUpdateClient.mockReset();
         mockVoucherPriceInfos = [
             {
                 id: 1,
@@ -137,9 +140,21 @@ describe("ClientFormDialog prefill", () => {
         ];
     });
 
+    it("can update a consultation customer's profile before service prices are set", async () => {
+        const client = createClient({ duration: null, fullPrice: null, actualPrice: null, startDate: null, endDate: null });
+        render(<ClientFormDialog open client={client} onClose={jest.fn()} />);
+        await waitFor(() => expect(screen.getByLabelText("이름*")).toHaveValue(client.name));
+        fireEvent.change(screen.getByLabelText("이름*"), { target: { value: "수정된 고객" } });
+        fireEvent.click(screen.getByRole("button", { name: "저장" }));
+        await waitFor(() => expect(mockUpdateClient).toHaveBeenCalledWith({
+            id: client.id,
+            dto: expect.objectContaining({ name: "수정된 고객", fullPrice: null, actualPrice: null, grant: "0" }),
+        }));
+    });
+
     it.each([["860709", "1986-07-09"], ["580303", "1958-03-03"], ["1905-01-01", "1905-01-01"]])("keeps normalized birthday %s as %s", async (birthday, expected) => {
         render(<ClientFormDialog open onClose={jest.fn()} prefill={{ birthday }} />);
-        await waitFor(() => expect(screen.getByLabelText("생년월일")).toHaveValue(expected));
+        await waitFor(() => expect(screen.getByLabelText("생년월일*")).toHaveValue(expected));
     });
 
     it("applies create-mode prefill and preserves its price when duration unlocks pricing", async () => {
@@ -211,7 +226,7 @@ describe("ClientFormDialog prefill", () => {
             />,
         );
 
-        await waitFor(() => expect(screen.getByLabelText("연락처")).toHaveValue("010-9876-5432"));
+        await waitFor(() => expect(screen.getByLabelText("연락처*")).toHaveValue("010-9876-5432"));
     });
 
     it("keeps employee and voucher selections supplied as create-mode prefill", async () => {

@@ -74,8 +74,47 @@ async function measureFilterPills(page: Page) {
   }, FILTER_PILL);
 }
 
-test.describe("Mobile client list skeleton geometry", () => {
+test.describe("Mobile client list geometry and counts", () => {
   test.use({ viewport: { width: 390, height: 844 } });
+
+  test("shows search-result counts and restores the server total when search is cleared", async ({ page }) => {
+    await page.route("**/api/auth/me", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ id: "owner-1", name: "관리자", role: "owner" }),
+      });
+    });
+    await page.route("**/api/clients**", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ data: CLIENTS, total: 123, page: 1, limit: 50, totalPages: 1 }),
+      });
+    });
+
+    await page.goto("/clients");
+    const search = page.getByRole("textbox", { name: "고객 이름, 매니저 검색" });
+    await expect(page.getByText("123명", { exact: true })).toBeVisible();
+    await expect(page.getByRole("button", { name: "전체 123", exact: true })).toBeVisible();
+
+    await search.fill("고객1");
+    await expect(page.locator(LOADED_ROW)).toHaveCount(1);
+    await expect(page.getByText("1명", { exact: true })).toBeVisible();
+    await expect(page.getByRole("button", { name: "전체 1", exact: true })).toBeVisible();
+
+    await search.fill("QA_NO_MATCH_20260917");
+    await expect(page.getByText("조건에 맞는 고객이 없습니다.", { exact: true })).toBeVisible();
+    await expect(page.getByText("0명", { exact: true })).toBeVisible();
+    await expect(page.getByRole("button", { name: "전체 0", exact: true })).toBeVisible();
+
+    for (const clearedQuery of ["", "   "]) {
+      await search.fill(clearedQuery);
+      await expect(page.locator(LOADED_ROW)).toHaveCount(CLIENTS.length);
+      await expect(page.getByText("123명", { exact: true })).toBeVisible();
+      await expect(page.getByRole("button", { name: "전체 123", exact: true })).toBeVisible();
+    }
+  });
 
   test("keeps the row grid identical when the client data lands", async ({ page }) => {
     test.setTimeout(180_000);

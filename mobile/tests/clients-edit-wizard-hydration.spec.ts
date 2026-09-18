@@ -154,6 +154,7 @@ test.describe("clients edit wizard hydration", () => {
 
     // ── Step 3 (계약 정보) ──
     await expect(page.locator('[data-component="mobile_clients-new_screen_root_page_wizard_form-scroll_contract-status-card"]')).toBeVisible();
+    await expect(page.getByRole("combobox", { name: "계약 상태", exact: true })).toBeVisible();
     const startDateInput = page.locator('[data-component="mobile_clients-new_screen_root_page_wizard_form-scroll_service-period-card_start-date-field_start-date-input"]');
     await expect(startDateInput).toHaveValue("2026-05-30");
     const endDateInput = page.locator('[data-component="mobile_clients-new_screen_root_page_wizard_form-scroll_service-period-card_end-date-field_end-date-input"]');

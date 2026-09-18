@@ -36,6 +36,9 @@ describe("agent contracts", () => {
             "attachment",
             "form",
             "feedback",
+            "task-snapshot",
+            "entity-select",
+            "task-patch",
         ]);
     });
 

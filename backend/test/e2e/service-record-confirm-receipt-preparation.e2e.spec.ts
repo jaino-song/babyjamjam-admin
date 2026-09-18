@@ -1,3 +1,4 @@
+import { createLegacyAutomationDeliveryGate } from "../fixtures/legacy-automation-delivery-gate";
 import { randomUUID } from "node:crypto";
 import { Prisma } from "@prisma/client";
 import type { ServiceRecordRevisionDispatchContext } from "@babyjamjam/shared/types/service-record";
@@ -60,7 +61,7 @@ describeE2E("receipt preparation before atomic authorization (actual PostgreSQL)
     function dispatcher(jobs: SbMessageTriggerJobRepository, delivery: unknown) {
         const forbidden = new Proxy({}, { get: () => { throw new Error("Unexpected external collaborator"); } });
         const service = new MessageTriggerService(prisma as never, delivery as never,
-            forbidden as never, forbidden as never, jobs, forbidden as never, forbidden as never, forbidden as never);
+            forbidden as never, forbidden as never, jobs, forbidden as never, forbidden as never, forbidden as never, undefined, undefined, undefined, undefined, undefined, createLegacyAutomationDeliveryGate(prisma as never, undefined));
         return (job: MessageTriggerJobEntity, branchId: string) => (service as unknown as {
             dispatchClaimedJob(job: MessageTriggerJobEntity, sent: ReadonlySet<string>, approved: ReadonlySet<string>): Promise<void>;
         }).dispatchClaimedJob(job, new Set(), new Set([branchId]));

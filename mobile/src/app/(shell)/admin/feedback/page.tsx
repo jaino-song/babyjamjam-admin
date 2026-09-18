@@ -1,7 +1,7 @@
 'use client';
 
 import { useMemo, useState } from 'react';
-import { useRouter } from 'next/navigation';
+
 import { useQuery } from '@tanstack/react-query';
 import { getFeedbackList, getFeedbackStats, FeedbackItem } from '@/lib/api/admin';
 import { cn } from '@/lib/utils';
@@ -23,7 +23,7 @@ const filterItems = [
 ];
 
 export default function AdminFeedbackPage() {
-  const router = useRouter();
+
   const [filterType, setFilterType] = useState<FilterType>('all');
   const [searchQuery, setSearchQuery] = useState('');
 
@@ -127,7 +127,7 @@ export default function AdminFeedbackPage() {
                 !slotLoading && 'cursor-pointer hover:bg-v3-primary-light/50 hover:border-v3-primary/30'
               )
             }
-            onSlotClick={(feedback) => router.push(`/admin/feedback/${feedback.id}`)}
+            getSlotHref={(feedback) => `/admin/feedback/${feedback.id}`}
             render={({ item: feedback, isLoading: slotLoading }) => {
               if (slotLoading) {
                 return (

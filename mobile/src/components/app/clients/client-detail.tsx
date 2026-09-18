@@ -29,6 +29,7 @@ import {
   formatMessageFailureReason,
   getMessageChannelLabel,
   getMessageHistoryTitle,
+  getMessageHistoryTimestamp,
 } from "@babyjamjam/shared";
 import {
   DropdownMenu,
@@ -439,6 +440,8 @@ export interface ClientNotificationLogRecord {
   messageBody: string;
   errorMessage: string | null;
   createdAt: string;
+  lastAttemptAt?: string | null;
+  updatedAt?: string | null;
   ruleName: string | null;
   variables?: Record<string, unknown> | null;
 }
@@ -536,8 +539,8 @@ function notificationReceiverKey(receiver: string | null): string {
 
 function visibleNotificationLogs(logs: ClientNotificationLogRecord[]): ClientNotificationLogRecord[] {
   const sortedLogs = [...logs].sort((a, b) => {
-    const bTime = new Date(b.createdAt).getTime();
-    const aTime = new Date(a.createdAt).getTime();
+    const bTime = new Date(getMessageHistoryTimestamp(b)).getTime();
+    const aTime = new Date(getMessageHistoryTimestamp(a)).getTime();
     return (Number.isNaN(bTime) ? 0 : bTime) - (Number.isNaN(aTime) ? 0 : aTime);
   });
   const seenGreetingKeys = new Set<string>();
@@ -580,8 +583,8 @@ function notificationStatusTone(status: string): DetailRowTone {
   }
 }
 
-function formatNotificationTime(createdAt: string): string {
-  return formatMessageDateTimeCompact(createdAt);
+function formatNotificationTime(log: ClientNotificationLogRecord): string {
+  return formatMessageDateTimeCompact(getMessageHistoryTimestamp(log));
 }
 
 export function ClientDetailContent({
@@ -992,10 +995,7 @@ export function ClientDetailContent({
     contractSignDate,
     serviceStartDate,
   );
-  const contractDocSentDate = firstValue(
-    isoDateFromTimestamp(contractDocument?.created_date),
-    serviceStartDate,
-  );
+  const contractDocSentDate = isoDateFromTimestamp(contractDocument?.created_date);
   const contractDocMetaDateLabel = isContractCompleted ? "완료 날짜" : "발송 날짜";
   const contractDocMetaDate = isContractCompleted ? contractDocCompletedDate : contractDocSentDate;
   const fullPrice = firstValue(
@@ -1286,7 +1286,7 @@ export function ClientDetailContent({
             <InfoCard data-component={`${dataComponent}_tab-panel_contracts_activity-card`} title="최근 진행 상황" delay={60}>
               <InfoRow label="현재 단계" value={documentStatusLabel(client.documentStatus)} tone={docTone as never} />
               <InfoRow label="서명 대기자" value={client.hasSigned ? "-" : `고객 (${client.name})`} />
-              <InfoRow label="발송일" value={formatDate(serviceStartDate)} />
+              <InfoRow label="발송일" value={formatDate(contractDocSentDate)} />
               {isContractCompleted && <InfoRow label="완료일" value={formatDate(contractDocCompletedDate)} />}
             </InfoCard>
           </>
@@ -1309,13 +1309,18 @@ export function ClientDetailContent({
               channelLabel: notificationChannelLabel(selectedLog),
               statusLabel: notificationStatusLabel(selectedLog.status),
               statusTone: notificationStatusTone(selectedLog.status),
-              sentAtLabel: formatNotificationTime(selectedLog.createdAt),
+              sentAtLabel: formatNotificationTime(selectedLog),
               recipientName: selectedLog.recipientName?.trim() || client.name,
               recipientPhone: selectedLog.recipientPhone?.trim() || selectedLog.receiver?.trim() || "-",
               messageBody: selectedLog.messageBody?.trim()
                 ? selectedLog.messageBody
                 : "내용이 없습니다.",
-              failureReason: formatMessageFailureReason(selectedLog.errorMessage) || null,
+              failureReason: selectedLog.status === "failed"
+                ? formatMessageFailureReason(selectedLog.errorMessage) || null
+                : null,
+              cancelReason: selectedLog.status === "canceled"
+                ? formatMessageFailureReason(selectedLog.errorMessage) || null
+                : null,
             }}
             onBack={() => setSelectedEntry(null)}
           />
@@ -1355,7 +1360,7 @@ export function ClientDetailContent({
                       )
                     }
                     title={`${channel} · ${notificationTitle(log)}`}
-                    meta={formatNotificationTime(log.createdAt)}
+                    meta={formatNotificationTime(log)}
                     badge={notificationStatusLabel(log.status)}
                     tone={tone}
                     onClick={() => setSelectedEntry({ key: detailKey, log })}

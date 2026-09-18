@@ -9,6 +9,7 @@ import {
     CreateDocumentPayload,
     CreateDocumentResponse,
     EformsignReviewerMember,
+    EformsignTemplateWorkflowConfig,
 } from "domain/repositories/eformsign.client.interface";
 import {
     EformsignApiError,
@@ -476,6 +477,23 @@ export class EformsignApiClient implements IEformsignClientRepository {
             // caller records what eformsign actually named the document.
             documentName: data.document?.document_name ?? undefined,
         };
+    }
+
+    /** Read the raw form workflow before constructing a contract dispatch payload. */
+    async getTemplateWorkflowConfig(
+        accessToken: string,
+        templateId: string,
+    ): Promise<EformsignTemplateWorkflowConfig> {
+        this.assertConfigured();
+        return this.request<EformsignTemplateWorkflowConfig>(
+            "getTemplateWorkflowConfig",
+            `${this.EFORMSIGN_DOC_API_URL}/v2.0/api/forms/${encodeURIComponent(templateId)}?is_include_config=true`,
+            {
+                method: "GET",
+                headers: { "Authorization": `Bearer ${accessToken}` },
+            },
+            "Failed to get template workflow config",
+        );
     }
 
     /**

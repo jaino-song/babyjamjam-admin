@@ -8,6 +8,9 @@ export interface AgentActionOwner {
 export interface AgentActionEntity extends AgentActionOwner {
     id: string;
     sessionId: string;
+    /** Absent on legacy action projections; immutable once attached. */
+    taskId?: string | null;
+    taskRevision?: number | null;
     capability: string;
     capabilityVersion: string;
     risk: AgentActionRisk;

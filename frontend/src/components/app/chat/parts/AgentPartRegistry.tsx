@@ -18,12 +18,23 @@ import {
     AgentFormPartSchema,
     AgentFormSubmitPartSchema,
     AgentNavigationPartSchema,
+    AgentEntitySelectPartSchema,
+    AgentTaskPatchPartSchema,
+    AgentTaskSnapshotPartSchema,
+    type AgentTaskPatchRequest,
+    type AgentTask,
 } from "@babyjamjam/shared";
+import type { AgentTaskCommand } from "@/hooks/useAgentChat";
+import { TaskEntitySelectPart, TaskPatchPart, TaskSnapshotPart } from "./TaskSnapshotPart";
 
 type AgentPartRegistryProps = {
     "data-component": string;
     message: UIMessage;
     onEntitySelect?: (id: string, entityType: string) => void;
+    task?: AgentTask | null;
+    onTaskEntitySelect?: (taskId: string, choiceSetRef: string, optionId: string) => void;
+    onTaskPatch?: (taskId: string, operations: AgentTaskPatchRequest["operations"]) => void | Promise<unknown>;
+    onTaskCommand?: (taskId: string, command: AgentTaskCommand) => void | Promise<unknown>;
     onFeedback?: (value: "positive" | "negative") => void;
     onApproveAction?: (actionId: string, expectedRevision: string, acknowledgementToken?: string) => void;
     onRejectAction?: (actionId: string) => void;
@@ -31,9 +42,10 @@ type AgentPartRegistryProps = {
     onRetry?: () => void;
     terminalActionIds?: ReadonlySet<string>;
     isBusy?: boolean;
+    taskBusy?: boolean;
 };
 
-export function AgentPartRegistry({ "data-component": dataComponent, message, onEntitySelect, onFeedback, onApproveAction, onRejectAction, onSubmitForm, onRetry, terminalActionIds, isBusy = false }: AgentPartRegistryProps) {
+export function AgentPartRegistry({ "data-component": dataComponent, message, task, onTaskEntitySelect, onTaskPatch, onTaskCommand, onEntitySelect, onFeedback, onApproveAction, onRejectAction, onSubmitForm, onRetry, terminalActionIds, isBusy = false, taskBusy = false }: AgentPartRegistryProps) {
     const component = (suffix: string) => `${dataComponent}_${suffix}`;
 
     return (
@@ -87,6 +99,31 @@ export function AgentPartRegistry({ "data-component": dataComponent, message, on
                 if (part.type === "data-entity-choice") {
                     const parsed = AgentEntityChoicePartSchema.safeParse(data);
                     return parsed.success ? <div key={index} data-component={component("entity-choice")} data-slot="entity-choice" className="flex flex-wrap gap-2" role="group" aria-label={parsed.data.prompt}>{parsed.data.choices.map((choice) => <Button key={choice.id} data-component={component("entity-choice_choice")} type="button" variant="outline" size="sm" onClick={() => onEntitySelect?.(choice.id, parsed.data.entityType)}>{choice.label}</Button>)}</div> : <SafePartFallback key={index} data-component={component("fallback")} />;
+                }
+                if (part.type === "data-task-snapshot") {
+                    const parsed = AgentTaskSnapshotPartSchema.safeParse(data);
+                    return parsed.success
+                        ? <TaskSnapshotPart key={index} data-component={component("task-snapshot")} data={parsed.data} task={task} taskBusy={taskBusy} onPatch={onTaskPatch} onCommand={onTaskCommand} />
+                        : <SafePartFallback key={index} data-component={component("fallback")} />;
+                }
+                if (part.type === "data-entity-select") {
+                    const parsed = AgentEntitySelectPartSchema.safeParse(data);
+                    return parsed.success
+                        ? <TaskEntitySelectPart
+                            key={index}
+                            data-component={component("entity-select")}
+                            data={parsed.data}
+                            task={task}
+                            disabled={taskBusy || task?.taskId !== parsed.data.taskId}
+                            onSelect={(optionId) => onTaskEntitySelect?.(parsed.data.taskId, parsed.data.choiceSetRef, optionId)}
+                        />
+                        : <SafePartFallback key={index} data-component={component("fallback")} />;
+                }
+                if (part.type === "data-task-patch") {
+                    const parsed = AgentTaskPatchPartSchema.safeParse(data);
+                    return parsed.success
+                        ? <TaskPatchPart key={index} data-component={component("task-patch")} data={parsed.data} />
+                        : <SafePartFallback key={index} data-component={component("fallback")} />;
                 }
                 if (part.type === "data-feedback") {
                     const parsed = AgentFeedbackPartSchema.safeParse(data);

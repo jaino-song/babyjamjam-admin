@@ -36,7 +36,13 @@ export function ServiceScheduleChangeModal({
             }}
             dataComponent="desktop_clients-detail_service-schedule-change-modal"
             title="서비스 일정 변경"
-            description={`${sessionIndex}회차 서비스 제공 날짜를 조정합니다.`}
+            description={
+                <>
+                    <span>{sessionIndex}회차 서비스 제공 날짜를 조정합니다.</span>
+                    <br />
+                    <span>선택한 회차부터 이후 일정을 뒤로 미룹니다. 현재 날짜보다 이후 날짜를 선택해 주세요.</span>
+                </>
+            }
             isDescriptionVisuallyHidden={false}
             size="detail"
             approvalLabel="일정 변경"

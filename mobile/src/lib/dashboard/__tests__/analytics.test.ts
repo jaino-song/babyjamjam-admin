@@ -52,6 +52,12 @@ describe("isContractIncompleteNearServiceStart", () => {
     ).toBe(false);
     expect(
       isContractIncompleteNearServiceStart(
+        client({ startDate: "2026-06-10T00:00:00+09:00", serviceStatus: "pre_booking" }),
+        NOW,
+      ),
+    ).toBe(false);
+    expect(
+      isContractIncompleteNearServiceStart(
         client({ startDate: "2026-06-18T00:00:00+09:00" }),
         NOW,
       ),
@@ -75,7 +81,19 @@ describe("isServiceStartingWithinWeek", () => {
     ).toBe(true);
   });
 
-  it("excludes past starts, dates outside the window, and ended services", () => {
+  it("includes planned pre-booking starts in the upcoming window", () => {
+    expect(
+      isServiceStartingWithinWeek(
+        client({
+          serviceStatus: "pre_booking",
+          startDate: "2026-06-12T00:00:00+09:00",
+        }),
+        NOW,
+      ),
+    ).toBe(true);
+  });
+
+  it("excludes past starts, dates outside the window, completed services, and ended services", () => {
     expect(
       isServiceStartingWithinWeek(
         client({ startDate: "2026-06-09T23:59:00+09:00" }),
@@ -91,6 +109,12 @@ describe("isServiceStartingWithinWeek", () => {
     expect(
       isServiceStartingWithinWeek(
         client({ startDate: "2026-06-10T00:00:00+09:00", serviceStatus: "terminated" }),
+        NOW,
+      ),
+    ).toBe(false);
+    expect(
+      isServiceStartingWithinWeek(
+        client({ startDate: "2026-06-10T00:00:00+09:00", serviceStatus: "completed" }),
         NOW,
       ),
     ).toBe(false);
@@ -143,12 +167,13 @@ describe("deriveDashboardAnalyticsFromClients", () => {
         client({ startDate: "2026-06-10T00:00:00+09:00" }),
         client({ startDate: "2026-06-17T23:59:00+09:00" }),
         client({ startDate: "2026-06-18T00:00:00+09:00" }),
+        client({ startDate: "2026-06-12T00:00:00+09:00", serviceStatus: "pre_booking" }),
         client({ startDate: "2026-06-12T00:00:00+09:00", serviceStatus: "completed" }),
       ],
       NOW,
     );
 
-    expect(analytics.upcomingThisMonth).toBe(2);
+    expect(analytics.upcomingThisMonth).toBe(3);
   });
 });
 

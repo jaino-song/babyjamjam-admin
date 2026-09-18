@@ -20,8 +20,8 @@ const VariableSchema = z.object({
     options: z.array(z.string().max(100)).max(50).optional(),
 });
 const CreateSchema = z.object({
-    name: z.string().trim().min(1).max(100),
-    content: z.string().min(1).max(10000),
+    name: z.string().min(1).regex(/\S/, "템플릿 이름은 공백 이외의 문자를 포함해야 합니다.").max(100),
+    content: z.string().min(1).regex(/\S/, "템플릿 내용은 공백 이외의 문자를 포함해야 합니다.").max(10000),
     variables: z.preprocess((value) => {
         if (typeof value !== "string") return value;
         try { return JSON.parse(value); } catch { return value; }

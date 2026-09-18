@@ -36,6 +36,7 @@ export interface AvailableClientArea {
 // Query keys - centralized for consistency
 export const voucherQueryKeys = {
   bankAccountInfos: ["bank-account-infos"] as const,
+  voucherPriceInfosRoot: ["voucher-price-infos"] as const,
   voucherPriceInfos: (type: string, year?: number) => ["voucher-price-infos", type, year] as const,
   allVoucherPriceInfos: (year: number) => ["all-voucher-price-infos", year] as const,
   voucherYears: ["voucher-years"] as const,

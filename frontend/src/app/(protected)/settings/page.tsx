@@ -1,6 +1,7 @@
 "use client";
 
 import { forwardRef, useState } from "react";
+import Link from "next/link";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import {
@@ -23,6 +24,7 @@ import { getRoleLabel } from "@/lib/constants/roles";
 import { useInitialUser } from "@/providers/UserProvider";
 import { settingsApi } from "@/services/api";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
@@ -90,7 +92,6 @@ const THEME_OPTIONS = [
 
 export default function SettingsPage() {
   const [activeSection, setActiveSection] = useState<SectionId>("profile");
-  const [selectedTheme, setSelectedTheme] = useState<string>("light");
   const initialUser = useInitialUser();
   const authUserQuery = useGetAuthUser({ initialData: initialUser });
   const { data: user } = authUserQuery;
@@ -328,7 +329,7 @@ export default function SettingsPage() {
                 </div>
                 <div data-component="desktop_settings_sections_theme_theme-header_theme-title-group">
                   <h2 className="text-lg font-bold text-foreground">테마</h2>
-                  <p className="text-sm text-muted-foreground">화면 테마를 선택합니다.</p>
+                  <p className="text-sm text-muted-foreground">현재 라이트 테마를 사용하고 있습니다. 다크 테마와 시스템 설정 연동은 준비 중입니다.</p>
                 </div>
               </div>
               <Separator className="mb-6" />
@@ -336,17 +337,18 @@ export default function SettingsPage() {
               <div data-component="desktop_settings_sections_theme_theme-options" className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                 {THEME_OPTIONS.map((theme) => {
                   const Icon = theme.icon;
-                  const isSelected = selectedTheme === theme.id;
+                  const isSelected = theme.id === "light";
                   return (
                     <button
                       key={theme.id}
-                      onClick={() => setSelectedTheme(theme.id)}
-                      disabled={theme.id === "dark"}
+                      type="button"
+                      aria-pressed={isSelected}
+                      disabled={!isSelected}
                       className={`relative flex flex-col items-center gap-3 p-6 rounded-xl border-2 transition-all duration-200 ${
                         isSelected
                           ? "border-[hsl(var(--v3-primary))] bg-[hsl(var(--v3-primary))]/5"
                           : "border-[hsl(var(--v3-border))] hover:border-[hsl(var(--v3-primary))]/30"
-                      } ${theme.id === "dark" ? "opacity-50 cursor-not-allowed" : "cursor-pointer"}`}
+                      } ${!isSelected ? "opacity-50 cursor-not-allowed" : "cursor-pointer"}`}
                     >
                       <div
                         data-component="desktop_settings_sections_theme_theme-options_theme-option-icon"
@@ -371,7 +373,7 @@ export default function SettingsPage() {
                           {theme.description}
                         </p>
                       </div>
-                      {theme.id === "dark" && (
+                      {!isSelected && (
                         <span className="absolute top-2 right-2 text-[10px] bg-muted px-2 py-0.5 rounded-full text-muted-foreground">
                           준비 중
                         </span>
@@ -399,38 +401,16 @@ export default function SettingsPage() {
               <Separator className="mb-6" />
 
               <div data-component="desktop_settings_sections_security_security-content" className="space-y-4">
-                <div data-component="desktop_settings_sections_security_security-content_security-current-password-field">
-                  <Label htmlFor="current-password" className="text-sm font-medium">
-                    현재 비밀번호
-                  </Label>
-                  <input
-                    id="current-password"
-                    type="password"
-                    placeholder="현재 비밀번호를 입력하세요"
-                    className="mt-1.5 w-full px-4 py-2.5 rounded-xl border border-[hsl(var(--v3-border))] bg-white text-sm focus:outline-none focus:ring-2 focus:ring-[hsl(var(--v3-primary))]/20 focus:border-[hsl(var(--v3-primary))] transition-all"
-                  />
-                </div>
-                <div data-component="desktop_settings_sections_security_security-content_security-new-password-field">
-                  <Label htmlFor="new-password" className="text-sm font-medium">
-                    새 비밀번호
-                  </Label>
-                  <input
-                    id="new-password"
-                    type="password"
-                    placeholder="새 비밀번호를 입력하세요"
-                    className="mt-1.5 w-full px-4 py-2.5 rounded-xl border border-[hsl(var(--v3-border))] bg-white text-sm focus:outline-none focus:ring-2 focus:ring-[hsl(var(--v3-primary))]/20 focus:border-[hsl(var(--v3-primary))] transition-all"
-                  />
-                </div>
-                <div data-component="desktop_settings_sections_security_security-content_security-confirm-password-field">
-                  <Label htmlFor="confirm-password" className="text-sm font-medium">
-                    비밀번호 확인
-                  </Label>
-                  <input
-                    id="confirm-password"
-                    type="password"
-                    placeholder="새 비밀번호를 다시 입력하세요"
-                    className="mt-1.5 w-full px-4 py-2.5 rounded-xl border border-[hsl(var(--v3-border))] bg-white text-sm focus:outline-none focus:ring-2 focus:ring-[hsl(var(--v3-primary))]/20 focus:border-[hsl(var(--v3-primary))] transition-all"
-                  />
+                <div data-component="desktop_settings_sections_security_security-content_password-reset" className="space-y-4">
+                  <Alert data-component="desktop_settings_sections_security_security-content_password-reset_notice">
+                    <AlertDescription>
+                      이메일 로그인 비밀번호는 재설정 링크로 변경할 수 있습니다.
+                      다음 화면에서 가입한 이메일을 입력해 주세요.
+                    </AlertDescription>
+                  </Alert>
+                  <Button asChild data-component="desktop_settings_sections_security_security-content_password-reset_link">
+                    <Link href="/forgot-password">비밀번호 재설정</Link>
+                  </Button>
                 </div>
 
                 <Separator className="my-2" />

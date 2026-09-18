@@ -120,6 +120,8 @@ model agent_session {
   branch           branch           @relation(fields: [branchId], references: [id], onDelete: Cascade)
   messages         agent_message[]
   actions          agent_action[]
+  tasks            agent_task[]
+  taskEvents       agent_task_event[]
   traces           agent_trace[]
   feedback         agent_feedback[]
 
@@ -175,14 +177,18 @@ model agent_action {
   resultPartPersistedAt DateTime?     @map("result_part_persisted_at") @db.Timestamptz(6)
   effectReceipt         Json?         @map("effect_receipt")
   effectRecordedAt      DateTime?     @map("effect_recorded_at") @db.Timestamptz(6)
+  taskId                String?       @map("task_id")
+  taskRevision          Int?          @map("task_revision")
   session               agent_session @relation(fields: [sessionId], references: [id], onDelete: Cascade)
   user                  user          @relation(fields: [userId], references: [id], onDelete: Cascade)
   branch                branch        @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  task                  agent_task?   @relation(fields: [taskId], references: [id], onDelete: NoAction)
 
   @@index([sessionId, createdAt], map: "idx_agent_action_session_created")
   @@index([branchId, userId, status], map: "idx_agent_action_owner_status")
   @@index([status, expiresAt], map: "idx_agent_action_status_expires")
   @@index([dedupeExpiresAt], map: "idx_agent_action_dedupe_expires")
+  @@index([taskId], map: "idx_agent_action_task")
 }
 
 model agent_trace {
@@ -520,6 +526,7 @@ model employee {
 
 model employee_schedule {
   id                      Int                        @id @default(autoincrement())
+  incarnationId           String                     @unique @default(dbgenerated("gen_random_uuid()")) @map("incarnation_id") @db.Uuid
   primaryEmployeeId       Int                        @map("primary_employee_id") @db.SmallInt
   workAddress             String                     @map("work_address")
   startDate               DateTime                   @map("start_date") @db.Date
@@ -644,6 +651,8 @@ model branch {
   scheduleChangeRequests        schedule_change_request[]
   authSessions                  auth_session[]
   agentSessions                 agent_session[]
+  agentTasks                    agent_task[]
+  agentTaskEvents               agent_task_event[]
   legacyChatConfirmationIntents legacy_chat_confirmation_intent[]
   agentActions                  agent_action[]
   agentTraces                   agent_trace[]
@@ -677,6 +686,58 @@ model system_setting {
   key       String   @id
   value     String
   updatedAt DateTime @default(now()) @map("updated_at") @db.Timestamptz(6)
+}
+
+/// Protected task draft; expiry clears draft JSON while ownership tombstones remain.
+model agent_task {
+  id             String @id @default(dbgenerated("(gen_random_uuid())::text"))
+  sessionId      String @map("session_id")
+  userId         String @map("user_id") @db.Uuid
+  branchId       String @map("branch_id") @db.Uuid
+  capabilityId   String @map("capability_id") @db.VarChar(100)
+  schemaVersion  Int @default(1) @map("schema_version")
+  revision       Int @default(1)
+  status         String @default("collecting") @db.VarChar(32)
+  activeSlot     Int? @map("active_slot")
+  draft          Json @default("{}")
+  targetRef      Json? @map("target_ref")
+  targetVersion  String? @map("target_version")
+  activeActionId String? @map("active_action_id")
+  lastAcceptedAt DateTime @default(now()) @map("last_accepted_at") @db.Timestamptz(6)
+  expiresAt      DateTime @map("expires_at") @db.Timestamptz(6)
+  terminalAt     DateTime? @map("terminal_at") @db.Timestamptz(6)
+  purgedAt       DateTime? @map("purged_at") @db.Timestamptz(6)
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+  session        agent_session @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  user           user @relation(fields: [userId], references: [id], onDelete: Cascade)
+  branch         branch @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  actions        agent_action[]
+
+  @@unique([sessionId, activeSlot], map: "uq_agent_task_session_active_slot")
+  @@index([userId, branchId, sessionId], map: "idx_agent_task_owner_session")
+  @@index([expiresAt, purgedAt], map: "idx_agent_task_expiry")
+}
+
+/// Minimal acceptance receipt, with no request body or sensitive value copies.
+model agent_task_event {
+  id               String @id @default(dbgenerated("(gen_random_uuid())::text"))
+  sessionId        String @map("session_id")
+  userId           String @map("user_id") @db.Uuid
+  branchId         String @map("branch_id") @db.Uuid
+  clientEventId    String @map("client_event_id") @db.VarChar(100)
+  taskId           String @map("task_id")
+  operation        String @db.VarChar(40)
+  requestHash      String @map("request_hash") @db.VarChar(64)
+  acceptedRevision Int @map("accepted_revision")
+  resultActionId   String? @map("result_action_id")
+  acceptedAt       DateTime @default(now()) @map("accepted_at") @db.Timestamptz(6)
+  session          agent_session @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  user             user @relation(fields: [userId], references: [id], onDelete: Cascade)
+  branch           branch @relation(fields: [branchId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, branchId, sessionId, clientEventId], map: "uq_agent_task_event_owner_session_event")
+  @@index([taskId, acceptedAt], map: "idx_agent_task_event_task_accepted")
 }
 
 // Single-row host-level lease for background schedulers. Exactly one process
@@ -764,6 +825,8 @@ model user {
   chatSessions                  chat_session[]
   legacyChatConfirmationIntents legacy_chat_confirmation_intent[]
   agentSessions                 agent_session[]
+  agentTasks                    agent_task[]
+  agentTaskEvents               agent_task_event[]
   agentActions                  agent_action[]
   agentTraces                   agent_trace[]
   agentFeedback                 agent_feedback[]

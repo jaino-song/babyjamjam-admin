@@ -26,7 +26,7 @@ export function SteppedWizardStepper({
     <div
       data-component="desktop_v3_stepped-wizard_stepper-desktop"
       className={cn(
-        "shrink-0 flex items-start justify-center gap-0 overflow-visible py-[0.225rem]",
+        "shrink-0 flex w-full items-start justify-center gap-0 overflow-visible py-[0.225rem] md:w-auto",
         showLabels ? "min-h-[2.6rem]" : "min-h-[2.16rem]",
         className,
       )}
@@ -40,8 +40,8 @@ export function SteppedWizardStepper({
             <div
               data-component="desktop_v3_stepped-wizard_stepper-desktop_item"
               className={cn(
-                "flex shrink-0 flex-col items-center overflow-visible text-center",
-                showLabels ? "w-[3.65rem] gap-2" : "w-[1.575rem]",
+                "flex flex-col items-center overflow-visible text-center",
+                showLabels ? "min-w-0 flex-1 gap-2 md:w-[3.65rem] md:flex-none md:shrink-0" : "w-[1.575rem] shrink-0",
               )}
             >
               <div data-component="desktop_v3_stepped-wizard_stepper-desktop_item_step" className="flex h-[1.575rem] items-center justify-center overflow-visible">
@@ -61,7 +61,7 @@ export function SteppedWizardStepper({
                 <span
                   data-component="desktop_v3_stepped-wizard_stepper-desktop_item_label"
                   className={cn(
-                    "block w-full text-center text-[0.535rem] font-semibold leading-none whitespace-nowrap transition-colors",
+                    "block w-full text-center text-[0.535rem] font-semibold leading-none whitespace-normal transition-colors md:whitespace-nowrap",
                     (isCompleted || isCurrent) ? "text-v3-primary" : "text-v3-text-muted",
                   )}
                 >
@@ -73,7 +73,7 @@ export function SteppedWizardStepper({
               <div
                 data-component="desktop_v3_stepped-wizard_stepper-desktop_connector"
                 className={cn(
-                  "mt-[0.73125rem] h-[0.1125rem] w-[1.45rem] shrink-0 rounded-full",
+                  "mt-[0.73125rem] h-[0.1125rem] w-[0.75rem] shrink-0 rounded-full md:w-[1.45rem]",
                   idx < currentStep ? "bg-v3-primary" : "bg-v3-border",
                 )}
               />

@@ -1,7 +1,9 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.AgentFeedbackPartSchema = exports.AgentFormSubmitPartSchema = exports.AgentFormPartSchema = exports.AgentFormFieldSchema = exports.AgentAttachmentPartSchema = exports.AgentErrorPartSchema = exports.AgentNavigationPartSchema = exports.AgentActionResultPartSchema = exports.AgentActionProposalPartSchema = exports.AgentEntityChoicePartSchema = exports.AgentActivityPartSchema = exports.AgentMessageMetadataSchema = exports.AgentRendererNameSchema = void 0;
+exports.AgentTaskPatchPartSchema = exports.AgentEntitySelectPartSchema = exports.AgentTaskSnapshotPartSchema = exports.AgentFeedbackPartSchema = exports.AgentFormSubmitPartSchema = exports.AgentFormPartSchema = exports.AgentFormFieldSchema = exports.AgentAttachmentPartSchema = exports.AgentErrorPartSchema = exports.AgentNavigationPartSchema = exports.AgentActionResultPartSchema = exports.AgentActionProposalPartSchema = exports.AgentEntityChoicePartSchema = exports.AgentActivityPartSchema = exports.AgentMessageMetadataSchema = exports.AgentRendererNameSchema = void 0;
 const zod_1 = require("zod");
+const task_types_1 = require("./task-types");
+const client_input_policy_1 = require("./client-input-policy");
 exports.AgentRendererNameSchema = zod_1.z.enum([
     "text",
     "activity",
@@ -13,6 +15,9 @@ exports.AgentRendererNameSchema = zod_1.z.enum([
     "attachment",
     "form",
     "feedback",
+    "task-snapshot",
+    "entity-select",
+    "task-patch",
 ]);
 exports.AgentMessageMetadataSchema = zod_1.z.object({
     sessionId: zod_1.z.string().min(1),
@@ -108,4 +113,41 @@ exports.AgentFeedbackPartSchema = zod_1.z.object({
     messageId: zod_1.z.string().min(1),
     traceId: zod_1.z.string().min(1).optional(),
     prompt: zod_1.z.string().min(1).default("도움이 되었나요?"),
+});
+/** Safe reference/status payload for `data-task-snapshot`. */
+exports.AgentTaskSnapshotPartSchema = zod_1.z.object({
+    taskId: task_types_1.AgentTaskReferenceSchema,
+    snapshotRef: task_types_1.AgentTaskReferenceSchema,
+    kind: task_types_1.AgentTaskCapabilityIdSchema,
+    capabilityId: task_types_1.AgentTaskCapabilityIdSchema,
+    revision: task_types_1.AgentTaskRevisionSchema,
+    state: task_types_1.AgentTaskStateSchema,
+    fieldStatus: zod_1.z.array(zod_1.z.object({
+        field: zod_1.z.enum(client_input_policy_1.CLIENT_WRITE_FIELD_NAMES),
+        status: zod_1.z.enum(["missing", "confirmed", "tentative", "confirmed-and-tentative"]),
+    }).strict()),
+}).strict().superRefine((value, context) => {
+    if (value.kind !== value.capabilityId) {
+        context.addIssue({ code: "custom", path: ["kind"], message: "Task kind must match capabilityId" });
+    }
+});
+/** Structured, server-issued reference payload for `data-entity-select`. */
+exports.AgentEntitySelectPartSchema = zod_1.z.object({
+    taskId: task_types_1.AgentTaskReferenceSchema,
+    choiceSetRef: task_types_1.AgentTaskReferenceSchema,
+    optionIds: zod_1.z.array(task_types_1.AgentTaskReferenceSchema).min(1).max(100),
+}).strict();
+/**
+ * Persisted chat parts carry only the server acceptance receipt reference.
+ * Actual validated operations remain in the REST request contract.
+ */
+exports.AgentTaskPatchPartSchema = zod_1.z.object({
+    taskId: task_types_1.AgentTaskReferenceSchema,
+    eventId: task_types_1.AgentTaskReferenceSchema,
+    acceptedRevision: task_types_1.AgentTaskRevisionSchema,
+    currentSnapshotRef: task_types_1.AgentTaskReferenceSchema,
+}).strict().superRefine((value, context) => {
+    if (!value.eventId) {
+        context.addIssue({ code: "custom", path: ["eventId"], message: "A task patch part needs a server event reference" });
+    }
 });

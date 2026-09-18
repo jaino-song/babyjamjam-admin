@@ -26,10 +26,9 @@ interface RawIssue {
   stats?: { "24h"?: Array<[number, number]>; "7d"?: Array<[number, number]>; "30d"?: Array<[number, number]> };
 }
 
-async function sentryGet<T>(path: string, revalidate = REVALIDATE_SECONDS): Promise<T | null> {
+async function sentryGet<T>(path: string, revalidate = REVALIDATE_SECONDS): Promise<T> {
   if (!isSentryConfigured()) {
-    console.warn("[sentry] missing SENTRY_AUTH_TOKEN or SENTRY_ORG");
-    return null;
+    throw new Error("Sentry statistics are not configured");
   }
   const url = path.startsWith("http") ? path : `${SENTRY_BASE}${path}`;
   try {
@@ -38,14 +37,56 @@ async function sentryGet<T>(path: string, revalidate = REVALIDATE_SECONDS): Prom
       next: { revalidate },
     });
     if (!res.ok) {
-      console.warn(`[sentry] ${res.status} ${path}`);
-      return null;
+      throw new Error("Sentry query failed");
     }
     return (await res.json()) as T;
-  } catch (err) {
-    console.warn("[sentry] fetch failed", path, err);
-    return null;
+  } catch {
+    throw new Error("Sentry statistics are unavailable");
   }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function validCount(value: unknown): boolean {
+  return (typeof value === "number" || (typeof value === "string" && value.trim() !== "")) &&
+    Number.isSafeInteger(Number(value)) && Number(value) >= 0;
+}
+
+function validSeries(value: unknown): boolean {
+  return Array.isArray(value) && value.every((point) =>
+    Array.isArray(point) && point.length === 2 &&
+    typeof point[0] === "number" && Number.isFinite(new Date(point[0] * 1000).getTime()) &&
+    typeof point[1] === "number" && validCount(point[1])
+  );
+}
+
+function validIssue(value: unknown): value is RawIssue {
+  if (!isRecord(value)) return false;
+  if (!["id", "title", "level", "permalink"].every((key) =>
+    typeof value[key] === "string" && value[key].trim() !== ""
+  )) return false;
+  if (!validCount(value.count) || typeof value.userCount !== "number" || !validCount(value.userCount)) return false;
+  if (!["firstSeen", "lastSeen"].every((key) =>
+    typeof value[key] === "string" && Number.isFinite(Date.parse(value[key]))
+  )) return false;
+  if (value.culprit != null && typeof value.culprit !== "string") return false;
+  if (value.metadata != null && (!isRecord(value.metadata) ||
+    ![value.metadata.filename, value.metadata.function].every((item) => item == null || typeof item === "string")
+  )) return false;
+  const stats = value.stats;
+  if (stats != null && (!isRecord(stats) ||
+    !["24h", "7d", "30d"].every((key) => !(key in stats) || validSeries(stats[key]))
+  )) return false;
+  return true;
+}
+
+function parseIssues(value: unknown): RawIssue[] {
+  if (!Array.isArray(value) || !value.every(validIssue)) {
+    throw new Error("Invalid Sentry statistics response");
+  }
+  return value;
 }
 
 function normalizeIssue(raw: RawIssue): SentryIssue {
@@ -76,8 +117,7 @@ export async function getOpenIssues(
     statsPeriod,
   });
   const path = `/organizations/${SENTRY_ORG}/issues/?${params.toString()}`;
-  const data = await sentryGet<RawIssue[]>(path);
-  if (!Array.isArray(data)) return [];
+  const data = parseIssues(await sentryGet<unknown>(path));
   return data.map(normalizeIssue);
 }
 
@@ -92,8 +132,7 @@ export async function getIssuesWithStats(
     statsPeriod,
   });
   const path = `/organizations/${SENTRY_ORG}/issues/?${params.toString()}`;
-  const data = await sentryGet<RawIssue[]>(path);
-  if (!Array.isArray(data)) return { issues: [], raw: [] };
+  const data = parseIssues(await sentryGet<unknown>(path));
   return { issues: data.map(normalizeIssue), raw: data };
 }
 

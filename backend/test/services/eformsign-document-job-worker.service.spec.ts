@@ -272,6 +272,37 @@ describe("EformsignDocumentJobWorkerService", () => {
         );
     });
 
+    it.each([
+        "template_workflow_config_invalid",
+        "template_workflow_unsupported",
+        "template_workflow_config_unavailable",
+    ])("keeps %s on the pre-send retry path even with a creating marker", async (reason) => {
+        const claimed = job({ progressStep: "creating" });
+        const { worker, repository, dispatch, reconciliation } = buildWorker({
+            repository: { claimDue: jest.fn().mockResolvedValue([claimed]) },
+            dispatch: {
+                execute: jest.fn().mockResolvedValue({
+                    ok: false,
+                    reason,
+                    fallbackHint: "manual_check",
+                    durationMs: 1,
+                }),
+            },
+        });
+
+        await worker.processDueJobs();
+
+        expect(dispatch.execute).toHaveBeenCalled();
+        expect(repository.scheduleRetry).toHaveBeenCalledWith(
+            claimed.id,
+            claimed.leaseToken,
+            expect.any(Date),
+            reason,
+        );
+        expect(repository.markReconciling).not.toHaveBeenCalled();
+        expect(reconciliation.reconcile).not.toHaveBeenCalled();
+    });
+
     it("does not retry after the provider send becomes ambiguous", async () => {
         const claimed = job();
         const { worker, repository, reconciliation } = buildWorker({
