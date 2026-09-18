@@ -5,6 +5,7 @@ import { ActionCoordinatorService } from "application/agent/action-coordinator.s
 import { AgentActionApproveDto, AgentActionRejectDto } from "interface/dto/agent.dto";
 import { JwtGuard } from "infrastructure/auth/jwt.guard";
 import { TenantGuard } from "infrastructure/tenant";
+import { codeOnlyProblemBody } from "application/utils/problem-bodies";
 import type { VerifiedTenantPrincipal } from "infrastructure/tenant/tenant.context";
 
 type AgentActionRequest = Request & { tenant?: VerifiedTenantPrincipal };
@@ -57,7 +58,7 @@ export class AgentActionController {
 
     private principal(request: AgentActionRequest): VerifiedTenantPrincipal {
         if (!request.tenant?.userId || !request.tenant.branchId) {
-            throw new ForbiddenException("Verified tenant principal missing");
+            throw new ForbiddenException(codeOnlyProblemBody("ACCESS_DENIED"));
         }
         return request.tenant;
     }

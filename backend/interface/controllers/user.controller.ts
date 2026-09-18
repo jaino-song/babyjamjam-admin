@@ -25,6 +25,7 @@ import { JwtGuard } from "infrastructure/auth/jwt.guard";
 import { OwnerOrAdminGuard } from "infrastructure/auth/owner-or-admin.guard";
 import { OwnerOnlyGuard } from "infrastructure/auth/owner-only.guard";
 import { runWithAdminAuditActor } from "application/services/admin-audit-context";
+import { codeOnlyProblemBody } from "application/utils/problem-bodies";
 
 type AuthenticatedRequest = { user: { userId: string; role: string; branchId?: string; branchRole?: string } };
 
@@ -45,7 +46,7 @@ export class UserController {
         @Query("status") status?: string,
     ) {
         if (req.user.role !== "owner" && !req.user.branchId) {
-            throw new ForbiddenException("Branch context is required");
+            throw new ForbiddenException(codeOnlyProblemBody("ACCESS_DENIED"));
         }
 
         // Owners are scoped to their selected branch too, but they must still see

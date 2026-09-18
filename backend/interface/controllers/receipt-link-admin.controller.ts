@@ -3,6 +3,7 @@ import { JwtGuard } from "infrastructure/auth/jwt.guard";
 import { CurrentTenant, TenantGuard } from "infrastructure/tenant";
 import { ReceiptLinkManualSendService } from "application/services/receipt-link-manual-send.service";
 import { PrepareReceiptLinkDto, SendReceiptLinkDto } from "interface/dto/receipt-link.dto";
+import { codeOnlyProblemBody } from "application/utils/problem-bodies";
 
 @Controller("receipt-links")
 @UseGuards(JwtGuard, TenantGuard)
@@ -18,7 +19,7 @@ export class ReceiptLinkAdminController {
         @Req() request: { user?: { userId?: string } },
     ) {
         if (!tenant.branchId) {
-            throw new ForbiddenException({ reason: "branch_required" });
+            throw new ForbiddenException({ ...codeOnlyProblemBody("ACCESS_DENIED"), reason: "branch_required" });
         }
         return this.manualSendService.send({
             branchId: tenant.branchId,
@@ -38,7 +39,7 @@ export class ReceiptLinkAdminController {
         @Req() request: { user?: { userId?: string } },
     ) {
         if (!tenant.branchId) {
-            throw new ForbiddenException({ reason: "branch_required" });
+            throw new ForbiddenException({ ...codeOnlyProblemBody("ACCESS_DENIED"), reason: "branch_required" });
         }
         return this.manualSendService.prepare({
             branchId: tenant.branchId,
