@@ -195,4 +195,29 @@ describe("extractEformsignContractClientCandidate", () => {
             }),
         );
     });
+
+    it.each([
+        ["이용자 생년월일", "1986. 7. 9."],
+        ["생년월일", "1986-07-09"],
+    ])(
+        "extracts birthday from keyed detail field maps returned by document APIs (%s)",
+        (fieldId, rawBirthday) => {
+            const detail = documentDetail({
+                fields: [],
+                detail_template_info: [{
+                    field_values: {
+                        "이용자 성명": "김고객",
+                        [fieldId]: rawBirthday,
+                    },
+                }],
+            });
+
+            expect(extractEformsignContractClientPrefillCandidate(detail)).toEqual(
+                expect.objectContaining({
+                    name: "김고객",
+                    birthday: "1986-07-09",
+                }),
+            );
+        },
+    );
 });
