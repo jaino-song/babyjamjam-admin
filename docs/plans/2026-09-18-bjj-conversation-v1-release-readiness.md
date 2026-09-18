@@ -5,9 +5,22 @@
 통합 브랜치: `codex/bjj-conversation-v1`  
 검증 기준 커밋: `9da30d27ab07dff3fd62e50861031e85a6adc1ea`
 
+## 최신 통합 업데이트 — 2026-09-18
+
+현재 통합 HEAD는 `codex/bjj-conversation-v1`의 후속 통합 커밋까지 반영했다. Phase 7의 schedule-write successor/fence와 purge 후 SMS retry provenance AppModule 검증, desktop/mobile task snapshot·lifecycle controls, staging Google/OpenAI evaluation runner가 통합됐다.
+
+- Guarded disposable PostgreSQL/AppModule agent E2E: **12 suites, 159 tests passed**.
+- Durable retry/purge integration: **1 suite, 1 test passed**.
+- Schedule record-store/service focused tests: **2 suites, 31 tests passed**.
+- Desktop task controls: **15 focused tests passed**; frontend type-check passed.
+- Mobile task controls: **3 focused suites, 54 tests passed**; mobile type-check and UI architecture gate passed.
+- Provider evaluation runner: **6 focused tests passed**; both-provider dry-run plan is **576 runs** and keyless live invocation fails closed.
+
+The actual Google staging run is being recorded separately as a redacted artifact. The OpenAI run remains blocked until an explicit API key is available in the staging environment. No key value, raw prompt/response, production customer data, real SMS, or production database was used.
+
 ## 현재 판정
 
-로컬 합성 데이터와 vendor stub을 사용한 구현·결정적 검증은 통과했다. PR [#716](https://github.com/jaino-song/babyjamjam-admin/pull/716)의 backend, full-flow, call-inbox, auth observe/enforce, frontend, mobile, shared, OSV 및 advisory browser 검사는 통과했다. GitGuardian 필수 검사는 계속 실패해 merge가 차단되어 있다. 이 기록은 실제 모델 품질, 실제 SMS, 운영 데이터 변경, 배포 또는 운영 활성화를 의미하지 않는다.
+로컬 합성 데이터와 vendor stub을 사용한 구현·결정적 검증은 통과했다. PR [#716](https://github.com/jaino-song/babyjamjam-admin/pull/716)의 backend, full-flow, call-inbox, auth observe/enforce, frontend, mobile, shared, OSV 및 advisory browser 검사는 통과했다. GitGuardian 이력 remediation 이후 최신 PR 상태를 다시 확인해야 하며, merge·배포·운영 활성화는 별도 게이트다. 이 기록은 실제 모델 품질, 실제 SMS, 운영 데이터 변경, 배포 또는 운영 활성화를 의미하지 않는다.
 
 ## GitGuardian history remediation — latest
 

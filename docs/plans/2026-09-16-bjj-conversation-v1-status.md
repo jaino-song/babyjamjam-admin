@@ -3,6 +3,19 @@
 Updated: 2026-09-18. Baseline: `4198fb991a59d63f14f529f54b1d66c1587ca76b`.
 Integration: `codex/bjj-conversation-v1`. Local implementation, deterministic verification, model quality and operational activation are separate results.
 
+## Latest continuation — integrated Phase 7/8 slices
+
+2026-09-18 현재 integration branch에는 schedule-write successor/fence, durable SMS retry provenance after purge/restart, desktop/mobile task snapshot controls, 그리고 synthetic-only Google/OpenAI staging evaluation runner가 반영돼 있다.
+
+- Guarded PostgreSQL/AppModule task E2E: **12 suites / 159 tests passed**.
+- Schedule record-store/service focused tests: **31 tests passed**.
+- Desktop controls: **15 focused tests passed**; mobile controls: **54 focused tests passed**.
+- Backend/frontend/mobile type checks and backend build passed; UI architecture gate passed.
+- Provider runner dry-run: **576-run matrix**, no transport calls; missing-key live run refuses before transport creation.
+- Google 실제 staging 결과와 OpenAI key availability는 별도 evidence로 기록한다. 이 변경은 production model/provider default를 바꾸지 않는다.
+
+Phase 7/8 implementation evidence is materially expanded, while Phase 9 merge/deploy/activation gates remain separate until remote checks and target-environment proof are refreshed.
+
 | Phase | Status | Evidence / remaining gate |
 | --- | --- | --- |
 | 0 — baseline and policy | Closed | Isolated worktrees, accepted policy and trace records |
