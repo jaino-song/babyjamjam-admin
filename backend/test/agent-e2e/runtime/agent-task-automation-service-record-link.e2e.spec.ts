@@ -8,6 +8,7 @@ import { tenantContextStore } from "../../../infrastructure/tenant/tenant-contex
 import { CapabilityRegistryService } from "../../../application/agent/capability-registry.service";
 import { agentBindingHash, agentLinkedProposalRevision } from "../../../domain/repositories/agent-linked-action.types";
 import { createAgentAutomationQuestion, answerAgentAutomationQuestion } from "../../../application/agent/agent-automation-question";
+import { createAgentAutomationTaskCommitReference } from "../../../application/agent/agent-automation-storage.schema";
 import { parseTaskAutomationArtifact, TASK_AUTOMATION_ARTIFACT_KEY, taskAutomationPublicSummary } from "../../../application/agent/agent-task-automation-artifact";
 import { clientAgentTargetVersion } from "../../../application/usecases/client/client-agent-target";
 import { SmsTriggerDeliveryService } from "../../../application/services/sms-trigger-delivery.service";
@@ -413,10 +414,17 @@ describeAgentE2E("production service-record-link task effect planner", () => {
         const reference = payload["taskAutomationReference"] as Record<string, unknown> | undefined;
         if (!reference || typeof reference["taskRevision"] !== "number") throw new Error("Missing persisted task reference");
         try {
+            const forgedReference = createAgentAutomationTaskCommitReference({
+                actionId: reference["actionId"] as string,
+                taskId: reference["taskId"] as string,
+                taskRevision: (reference["taskRevision"] as number) + 1,
+                authorities: reference["authorities"] as Array<{ id: string; recordDigest: string; scopeDigest: string }>,
+                coverages: reference["coverages"] as Array<{ id: string; recordDigest: string; scopeDigest: string }>,
+            });
             await prisma.message_trigger_job.update({ where: { id: row.id }, data: {
                 payload: {
                     ...payload,
-                    taskAutomationReference: { ...reference, taskRevision: (reference["taskRevision"] as number) + 1 },
+                    taskAutomationReference: forgedReference,
                 } as unknown as Prisma.InputJsonValue,
             } });
             const changed = await prisma.message_trigger_job.findUniqueOrThrow({ where: { id: row.id } });
