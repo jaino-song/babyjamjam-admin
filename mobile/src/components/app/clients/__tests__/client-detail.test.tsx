@@ -67,12 +67,6 @@ jest.mock("@/components/app/mobile-redesign/detail-sheet", () => ({
   }) => (activeTab === tabId ? <div>{children}</div> : null),
 }));
 
-jest.mock("../client-message-history-detail", () => ({
-  ClientMessageHistoryDetail: ({ view }: { view: { sentAtLabel: string } }) => (
-    <div data-testid="message-history-detail-time">{view.sentAtLabel}</div>
-  ),
-}));
-
 jest.mock("../client-service-records", () => ({
   ClientServiceRecords: () => null,
 }));
@@ -468,6 +462,86 @@ describe("ClientDetailContent", () => {
 
     await userEvent.setup().click(messageRows[0]);
 
-    expect(screen.getByTestId("message-history-detail-time")).toHaveTextContent(rowTime ?? "");
+    expect(screen.getByText(`메시지 · ${rowTime}`)).toBeInTheDocument();
+  });
+
+  it.each([
+    ["canceled", "취소 사유", "사용자가 발송을 취소했습니다."],
+    ["failed", "실패 사유", "발신번호 인증에 실패했습니다."],
+  ] as const)("shows only the %s reason in the real history detail", async (status, reasonLabel, reason) => {
+    const view = render(
+      <ClientDetailContent
+        data-component="mobile_clients_detail-sheet_stack_detail-page_content"
+        client={client}
+        contractDocument={null}
+        activeTab="message"
+        notificationLogs={[{
+          id: status === "canceled" ? 61 : 62,
+          provider: "aligo_sms",
+          templateKey: "service_record_link_sms",
+          receiver: "01012345678",
+          recipientPhone: "01012345678",
+          recipientName: "관리사",
+          clientId: client.id,
+          status,
+          messageBody: "제공기록지 작성 링크",
+          errorMessage: reason,
+          createdAt: "2026-09-18T18:34:00.000Z",
+          ruleName: "제공기록지 작성 링크",
+          variables: {},
+        }]}
+        onTabChange={jest.fn()}
+        onMessage={jest.fn()}
+        onIssueContract={jest.fn()}
+        onEdit={jest.fn()}
+        onDelete={jest.fn()}
+        onClientUpdated={jest.fn()}
+      />,
+    );
+
+    await userEvent.setup().click(screen.getByRole("button", { name: /메시지 · 제공기록지 작성 링크/ }));
+
+    expect(screen.getByText(reasonLabel)).toBeInTheDocument();
+    expect(screen.getByText(reason)).toBeInTheDocument();
+    expect(screen.queryByText(status === "canceled" ? "실패 사유" : "취소 사유")).not.toBeInTheDocument();
+    view.unmount();
+  });
+
+  it("does not show a reason for a sent message in the real history detail", async () => {
+    render(
+      <ClientDetailContent
+        data-component="mobile_clients_detail-sheet_stack_detail-page_content"
+        client={client}
+        contractDocument={null}
+        activeTab="message"
+        notificationLogs={[{
+          id: 63,
+          provider: "aligo_sms",
+          templateKey: "service_record_link_sms",
+          receiver: "01012345678",
+          recipientPhone: "01012345678",
+          recipientName: "관리사",
+          clientId: client.id,
+          status: "sent",
+          messageBody: "제공기록지 작성 링크",
+          errorMessage: "이 값은 표시되면 안 됩니다.",
+          createdAt: "2026-09-18T18:34:00.000Z",
+          ruleName: "제공기록지 작성 링크",
+          variables: {},
+        }]}
+        onTabChange={jest.fn()}
+        onMessage={jest.fn()}
+        onIssueContract={jest.fn()}
+        onEdit={jest.fn()}
+        onDelete={jest.fn()}
+        onClientUpdated={jest.fn()}
+      />,
+    );
+
+    await userEvent.setup().click(screen.getByRole("button", { name: /메시지 · 제공기록지 작성 링크/ }));
+
+    expect(screen.queryByText("실패 사유")).not.toBeInTheDocument();
+    expect(screen.queryByText("취소 사유")).not.toBeInTheDocument();
+    expect(screen.queryByText("이 값은 표시되면 안 됩니다.")).not.toBeInTheDocument();
   });
 });

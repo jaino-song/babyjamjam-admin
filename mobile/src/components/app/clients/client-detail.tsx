@@ -1315,7 +1315,12 @@ export function ClientDetailContent({
               messageBody: selectedLog.messageBody?.trim()
                 ? selectedLog.messageBody
                 : "내용이 없습니다.",
-              failureReason: formatMessageFailureReason(selectedLog.errorMessage) || null,
+              failureReason: selectedLog.status === "failed"
+                ? formatMessageFailureReason(selectedLog.errorMessage) || null
+                : null,
+              cancelReason: selectedLog.status === "canceled"
+                ? formatMessageFailureReason(selectedLog.errorMessage) || null
+                : null,
             }}
             onBack={() => setSelectedEntry(null)}
           />
