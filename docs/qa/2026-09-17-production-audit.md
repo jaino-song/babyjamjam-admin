@@ -198,7 +198,7 @@ CLIENT-001은 확인한 중복 번호 시나리오 하나의 결과이며 모든
 | `/all` | dev QA PC 폭에서 /dashboard 리다이렉트 확인 |
 | `/chat` | dev QA 기존 읽기 전용 대화 재표시·긍정 피드백 등록·PC/모바일 관리 목록과 상세 재조회 확인 |
 | `/clients/filtered` | dev QA 네 필터 표시·미완료/시작예정 QA163 날짜·두 빈 결과·누락 필터 오류·닫기 복귀 확인 |
-| `/clients/new` | dev QA 독립 폼 중복 연락처 차단·미등록 QA 번호 다음·이전 입력 유지·닫기 확인. 생일/주소 공란 허용 차이는 의도 확인 중; 최종 저장 미실행 |
+| `/clients/new` | dev QA 중복 차단·단계 이동·취소 및 QA164 최종 생성201·새로고침·모바일 재조회 통과. 자동 전송 OFF 요청과 신규 발송/예약0 확인; 생일/주소 필수 여부 차이는 별도 |
 | `/clients` | CLIENT-001/002 |
 | `/consultations` | CONSULT-001 |
 | `/contracts` | CONTRACT-001/002, RECORD-001 |
