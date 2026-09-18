@@ -33,11 +33,12 @@ export function ExpandableSearch({
   const inputRef = useRef<HTMLInputElement>(null);
 
   const handleToggle = () => {
-    setExpanded((prev) => {
-      if (!prev) setTimeout(() => inputRef.current?.focus(), 50);
-      else onChange("");
-      return !prev;
-    });
+    if (!expanded) {
+      setTimeout(() => inputRef.current?.focus(), 50);
+    } else {
+      onChange("");
+    }
+    setExpanded(!expanded);
   };
 
   const handleBlur = () => {

@@ -1,5 +1,5 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import type { ComponentProps } from "react";
+import { StrictMode, useState, type ComponentProps } from "react";
 
 import { ExpandableSearch } from "./ExpandableSearch";
 
@@ -7,6 +7,20 @@ function renderSearch(props: Partial<ComponentProps<typeof ExpandableSearch>> = 
   const onChange = jest.fn();
   render(<ExpandableSearch value="" onChange={onChange} {...props} />);
   return { onChange };
+}
+
+function ControlledSearch({ onClear }: { onClear: () => void }) {
+  const [value, setValue] = useState("");
+
+  return (
+    <ExpandableSearch
+      value={value}
+      onChange={(nextValue) => {
+        setValue(nextValue);
+        if (!nextValue) onClear();
+      }}
+    />
+  );
 }
 
 describe("ExpandableSearch accessibility labels", () => {
@@ -40,5 +54,36 @@ describe("ExpandableSearch accessibility labels", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "고객 검색 열기" }));
     expect(screen.getByRole("button", { name: "고객 검색 닫기" })).toBeInTheDocument();
+  });
+
+  it("clears a controlled value exactly once when closing under StrictMode", async () => {
+    const onClear = jest.fn();
+    const consoleError = jest.spyOn(console, "error");
+
+    try {
+      render(
+        <StrictMode>
+          <ControlledSearch onClear={onClear} />
+        </StrictMode>,
+      );
+
+      const input = screen.getByRole("textbox", { name: "검색어" });
+      fireEvent.click(screen.getByRole("button", { name: "검색 열기" }));
+      fireEvent.change(input, { target: { value: "고객" } });
+      expect(input).toHaveValue("고객");
+
+      fireEvent.click(screen.getByRole("button", { name: "검색 닫기" }));
+
+      expect(input).toHaveValue("");
+      expect(onClear).toHaveBeenCalledTimes(1);
+      expect(
+        consoleError.mock.calls.some(([message]) =>
+          typeof message === "string" && message.includes("Cannot update a component"),
+        ),
+      ).toBe(false);
+      await waitFor(() => expect(input).not.toHaveFocus());
+    } finally {
+      consoleError.mockRestore();
+    }
   });
 });
