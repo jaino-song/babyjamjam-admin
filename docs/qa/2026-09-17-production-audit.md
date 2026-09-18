@@ -191,7 +191,7 @@ CLIENT-001은 확인한 중복 번호 시나리오 하나의 결과이며 모든
 | `/register` | AUTH-003 (계정 생성 미실행) |
 | `/reset-password` | 미실행 |
 | `/verify-email` | 미실행 |
-| `/admin/agent` | 미실행 |
+| `/admin/agent` | dev QA47개 기능 진단·fresh·대기0 조회; 쓰기/발송/권한 작업 비활성, 긴급 비활성화 미실행 |
 | `/admin/feedback/[id]` | 미실행; 모바일 결과와 별도 |
 | `/admin` | dev QA PC 빈 통계·목록·상세 미선택 안내 시각 확인; 유효 피드백 상세 별도 |
 | `/all` | dev QA PC 폭에서 /dashboard 리다이렉트 확인 |
@@ -205,16 +205,16 @@ CLIENT-001은 확인한 중복 번호 시나리오 하나의 결과이며 모든
 | `/employees` | EMPLOYEE-001 |
 | `/files` | FILE-001~003 |
 | `/messages` | MESSAGE-001~004, AUTOMATION-001 |
-| `/messages/system-templates/[templateKey]` | 미실행 |
-| `/messages/system-templates` | 미실행 |
+| `/messages/system-templates/[templateKey]` | dev QA GREETING → 오너 양식 선택·현재/과거 미리보기·버전 이력·닫기 확인; 전역 변경 없음 |
+| `/messages/system-templates` | dev QA /messages/templates 지점 양식 목록 이동 확인 |
 | `/messages/templates/[id]/edit` | dev QA 기존 QA 양식 로드·공백 검증·취소·원본 유지 확인 |
 | `/messages/templates/new` | dev QA 지점 양식 실제 생성·본문 미리보기, 공백 이름/본문 오류·독립 복구·취소 확인 |
 | `/messages/templates` | dev QA 양식 생성·수정·재조회·공백 이름/본문 차단 확인; 모바일 목록과 대조 |
 | `/prices` | PRICE-001~004 |
 | `/select-branch` | BRANCH-002 |
-| `/settings/general` | 미실행 |
+| `/settings/general` | dev QA /settings 계정 탭 이동 확인 |
 | `/settings` | SETTINGS-001 |
-| `/settings/voucher-price` | 미실행 |
+| `/settings/voucher-price` | dev QA /settings 계정 탭 이동 확인 |
 | `/stats/errors` | STATS-001 조회, 원장 일치 미검수 |
 | `/stats/funnel` | STATS-001 조회, 원장 일치 미검수 |
 | `/stats/inquiries` | STATS-001 조회, 원장 일치 미검수 |
@@ -664,3 +664,9 @@ UI 작업 전 확인/완료 기록:
 기존 메모리의 승인·브라우저 증거 경계를 참고했다. Vault 검색은
 `@covenant-labs/vault-contracts` 모듈 누락으로 실패했으며 검색 성공으로 기록하지 않는다.
 Vault 파일을 변경하지 않고 현재 소스와 배포 관찰로 독립 작업을 진행한다.
+
+### Continuation evidence boundary
+
+- Same-QA-branch selection and read-only AI count response (2) checked; no matching durable agent trace found in the scoped time query, so tool execution is not certified.
+- Existing mobile contract PDF and receipt PNG download clicks produced no observed download event within 20s/15s. File-save acceptance remains unverified; do not promote button clicks or the absence of an error to PASS.
+- Full QA remains incomplete; auth policy-route approval, dev CHECK exception and contract cancel/reissue acceptance remain pending as previously recorded.
