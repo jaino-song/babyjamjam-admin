@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { Prisma, PrismaClient } from "@prisma/client";
 
 export const EFORMSIGN_CANCEL_REISSUE_DATABASE =
@@ -106,6 +106,39 @@ export function instrumentMirrorLock(
     }) as unknown as PrismaClient;
 }
 
+export type DispatchClaimHooks = {
+    attempted?: () => void;
+    holdAfterUpdate?: Promise<void>;
+};
+
+/**
+ * Observe the durable claim CAS for reissue races that intentionally have no
+ * live mirror row. The two independent clients reach the same update under
+ * the database's compare-and-set lock instead of relying on a scheduler tick.
+ */
+export function instrumentDispatchClaim(
+    prisma: PrismaClient,
+    hooks: DispatchClaimHooks,
+): PrismaClient {
+    return prisma.$extends({
+        query: {
+            eformsign_dispatch_intent: {
+                updateMany: async ({ args, query }) => {
+                    const data = args.data as { status?: unknown };
+                    const status = typeof data.status === "string" ? data.status : undefined;
+                    if (status === "started") {
+                        hooks.attempted?.();
+                        const result = await query(args);
+                        if (hooks.holdAfterUpdate) await hooks.holdAfterUpdate;
+                        return result;
+                    }
+                    return query(args);
+                },
+            },
+        },
+    }) as unknown as PrismaClient;
+}
+
 /** Fail exactly one mirror update inside a real transaction for rollback tests. */
 export function failFirstMirrorUpdate(prisma: PrismaClient, message: string): PrismaClient {
     let failed = false;
@@ -176,6 +209,23 @@ export async function createCancelReissueFixture(prisma: PrismaClient, suffix = 
             detailSyncedAt: now,
             syncStatus: "ready",
         },
+    });
+    const fileContent = Buffer.from(`cancel-reissue-fixture:${suffix}`);
+    await prisma.eformsign_doc_file.create({
+        data: {
+            eformsignDocId: document.id,
+            fileType: "document",
+            content: fileContent,
+            contentType: "application/pdf",
+            contentDisposition: "inline",
+            byteSize: fileContent.byteLength,
+            sha256: createHash("sha256").update(fileContent).digest("hex"),
+            sourceUpdatedDate: now,
+        },
+    });
+    await prisma.client.update({
+        where: { id: client.id },
+        data: { eDocId: document.documentId },
     });
     return { branch, client, document };
 }

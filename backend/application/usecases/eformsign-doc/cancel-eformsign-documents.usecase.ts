@@ -83,6 +83,11 @@ export class CancelEformsignDocumentsUsecase {
         if (principal.branchId !== branchId) {
             throw new ForbiddenException("전자문서 취소 지점 권한이 없습니다.");
         }
+        // Reject an unauthorized manager before the durable cancellation claim
+        // can write an intent or purge fence.  The credential boundary repeats
+        // this check immediately before custody, but that later guard is too
+        // late to protect the local transaction from a forbidden caller.
+        assertEformsignProviderCapability(principal, "document.cancel");
 
         const { targets } = await this.cancellationRepository.begin({
             branchId,

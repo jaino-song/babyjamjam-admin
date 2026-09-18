@@ -16,6 +16,7 @@ import {
     createDispatchIntentInput,
     failFirstMirrorUpdate,
     holdMirrorRow,
+    instrumentDispatchClaim,
     instrumentMirrorLock,
 } from "./helpers/eformsign-cancel-reissue.helper";
 
@@ -66,8 +67,14 @@ describeE2E("eformsign durable cancellation and reissue (disposable PostgreSQL)"
         const clientA = openClient();
         const clientB = openClient();
         await Promise.all([clientA.$connect(), clientB.$connect()]);
-        const repoA = new SbEformsignCancellationRepository(clientA as never);
-        const repoB = new SbEformsignCancellationRepository(clientB as never);
+        const cancelAAttempted = barrier();
+        const cancelBAttempted = barrier();
+        const repoA = new SbEformsignCancellationRepository(
+            instrumentMirrorLock(clientA, { attempted: cancelAAttempted.release }) as never,
+        );
+        const repoB = new SbEformsignCancellationRepository(
+            instrumentMirrorLock(clientB, { attempted: cancelBAttempted.release }) as never,
+        );
         const held = barrier();
         const release = barrier();
         const holding = holdMirrorRow(
@@ -91,7 +98,7 @@ describeE2E("eformsign durable cancellation and reissue (disposable PostgreSQL)"
             actorUserId: randomUUID(),
             reason: "concurrent cancel B",
         });
-        await new Promise<void>((resolve) => setImmediate(resolve));
+        await Promise.all([cancelAAttempted.entered, cancelBAttempted.entered]);
         release.release();
         const results = await Promise.allSettled([first, second]);
         await holding;
@@ -209,28 +216,95 @@ describeE2E("eformsign durable cancellation and reissue (disposable PostgreSQL)"
         const target = targets[0]!;
         const failingClient = failFirstMirrorUpdate(prisma, "synthetic purge fault");
         const failingRepository = new SbEformsignCancellationRepository(failingClient as never);
+        const originalProviderReceipt = {
+            source: "before-failure",
+            audit: "provider-audit-before-failure",
+        };
+        await prisma.eformsign_dispatch_intent.update({
+            where: { id: target.cancellationIntent.id },
+            data: { providerReceipt: originalProviderReceipt },
+        });
+        const beforeIntent = await prisma.eformsign_dispatch_intent.findUniqueOrThrow({
+            where: { id: target.cancellationIntent.id },
+        });
+        const beforeMirror = await prisma.eformsign_doc.findUniqueOrThrow({
+            where: { documentId: created.document.documentId },
+        });
+        const beforeFile = await prisma.eformsign_doc_file.findUniqueOrThrow({
+            where: {
+                eformsignDocId_fileType: {
+                    eformsignDocId: created.document.id,
+                    fileType: "document",
+                },
+            },
+        });
+        const beforeClient = await prisma.client.findUniqueOrThrow({
+            where: { id: created.client.id },
+            select: { eDocId: true },
+        });
         await expect(failingRepository.completeAccepted({
             target,
             providerReceipt: { source: "e2e", decision: "accepted" },
         })).rejects.toThrow("synthetic purge fault");
         expect(await prisma.eformsign_dispatch_intent.findUniqueOrThrow({
             where: { id: target.cancellationIntent.id },
-        })).toMatchObject({ status: EFORMSIGN_DISPATCH_INTENT_STATUS.STARTED });
+        })).toEqual(beforeIntent);
         expect(await prisma.eformsign_doc.findUniqueOrThrow({
             where: { documentId: created.document.documentId },
-        })).toMatchObject({
-            statusType: "010",
-            permanentPurgeRequestedAt: expect.any(Date),
+        })).toEqual(beforeMirror);
+        const afterFailedFile = await prisma.eformsign_doc_file.findUniqueOrThrow({
+            where: {
+                eformsignDocId_fileType: {
+                    eformsignDocId: created.document.id,
+                    fileType: "document",
+                },
+            },
         });
+        expect(Buffer.compare(afterFailedFile.content, beforeFile.content)).toBe(0);
+        expect(afterFailedFile).toMatchObject({
+            contentType: beforeFile.contentType,
+            contentDisposition: beforeFile.contentDisposition,
+            byteSize: beforeFile.byteSize,
+            sha256: beforeFile.sha256,
+            sourceUpdatedDate: beforeFile.sourceUpdatedDate,
+        });
+        expect(await prisma.client.findUniqueOrThrow({
+            where: { id: created.client.id },
+            select: { eDocId: true },
+        })).toEqual(beforeClient);
 
         const accepted = await repository.completeAccepted({
             target,
             providerReceipt: { source: "e2e", decision: "accepted" },
         });
         expect(accepted.status).toBe(EFORMSIGN_DISPATCH_INTENT_STATUS.ACCEPTED);
+        expect(await prisma.eformsign_dispatch_intent.findUniqueOrThrow({
+            where: { id: target.cancellationIntent.id },
+        })).toMatchObject({
+            status: EFORMSIGN_DISPATCH_INTENT_STATUS.ACCEPTED,
+            providerReceipt: { source: "e2e", decision: "accepted" },
+        });
         expect(await prisma.eformsign_doc.findUniqueOrThrow({
             where: { documentId: created.document.documentId },
-        })).toMatchObject({ statusType: "049", permanentPurgeRequestedAt: null });
+        })).toMatchObject({
+            statusType: "049",
+            customerName: null,
+            customerPhone: null,
+            detailPayload: null,
+            permanentPurgeRequestedAt: null,
+        });
+        expect(await prisma.eformsign_doc_file.findUnique({
+            where: {
+                eformsignDocId_fileType: {
+                    eformsignDocId: created.document.id,
+                    fileType: "document",
+                },
+            },
+        })).toBeNull();
+        expect(await prisma.client.findUniqueOrThrow({
+            where: { id: created.client.id },
+            select: { eDocId: true },
+        })).toEqual({ eDocId: null });
     });
 
     it("rolls back begin insert and fence together when fencing fails", async () => {
@@ -286,15 +360,25 @@ describeE2E("eformsign durable cancellation and reissue (disposable PostgreSQL)"
         const clientA = openClient();
         const clientB = openClient();
         await Promise.all([clientA.$connect(), clientB.$connect()]);
-        const repoA = new SbEformsignDispatchIntentRepository(clientA as never);
-        const repoB = new SbEformsignDispatchIntentRepository(clientB as never);
+        const repoAAttempted = barrier();
+        const repoBAttempted = barrier();
+        const repoARelease = barrier();
+        const repoA = new SbEformsignDispatchIntentRepository(
+            instrumentDispatchClaim(clientA, {
+                attempted: repoAAttempted.release,
+                holdAfterUpdate: repoARelease.entered,
+            }) as never,
+        );
+        const repoB = new SbEformsignDispatchIntentRepository(
+            instrumentDispatchClaim(clientB, { attempted: repoBAttempted.release }) as never,
+        );
         const start = barrier();
         const input = createDispatchIntentInput({
             branchId: created.branch.id,
             clientId: created.client.id,
             generation: `reissue:${accepted.id}`,
-            businessKey: "r".repeat(64),
-            fingerprint: "s".repeat(64),
+            businessKey: "a".repeat(64),
+            fingerprint: "b".repeat(64),
         });
         const prepareA = (async () => { await start.entered; return repoA.prepare(input); })();
         const prepareB = (async () => { await start.entered; return repoB.prepare(input); })();
@@ -306,6 +390,8 @@ describeE2E("eformsign durable cancellation and reissue (disposable PostgreSQL)"
         const claimA = (async () => { await claimStart.entered; return repoA.claim(preparedA.id, created.branch.id); })();
         const claimB = (async () => { await claimStart.entered; return repoB.claim(preparedB.id, created.branch.id); })();
         claimStart.release();
+        await Promise.all([repoAAttempted.entered, repoBAttempted.entered]);
+        repoARelease.release();
         const [claimedA, claimedB] = await Promise.all([claimA, claimB]);
         expect([claimedA?.claimed, claimedB?.claimed].filter(Boolean)).toHaveLength(1);
         expect(await prisma.eformsign_dispatch_intent.findUniqueOrThrow({
@@ -315,6 +401,13 @@ describeE2E("eformsign durable cancellation and reissue (disposable PostgreSQL)"
 
     it("refuses a stale prepared claim after cancellation tombstones the mirror", async () => {
         const created = await fixture();
+        const dispatchRepository = new SbEformsignDispatchIntentRepository(prisma as never);
+        const prepared = await dispatchRepository.prepare(createDispatchIntentInput({
+            branchId: created.branch.id,
+            clientId: created.client.id,
+            localDocumentId: created.document.id,
+            generation: "stale-prepared",
+        }));
         const cancellationRepository = new SbEformsignCancellationRepository(prisma as never);
         const { targets } = await cancellationRepository.begin({
             branchId: created.branch.id,
@@ -326,13 +419,6 @@ describeE2E("eformsign durable cancellation and reissue (disposable PostgreSQL)"
             target: targets[0]!,
             providerReceipt: { source: "e2e", decision: "accepted" },
         });
-        const dispatchRepository = new SbEformsignDispatchIntentRepository(prisma as never);
-        const prepared = await dispatchRepository.prepare(createDispatchIntentInput({
-            branchId: created.branch.id,
-            clientId: created.client.id,
-            localDocumentId: created.document.id,
-            generation: "stale-prepared",
-        }));
         await expect(dispatchRepository.claim(prepared.id, created.branch.id))
             .rejects.toBeInstanceOf(ConflictException);
         expect(await prisma.eformsign_dispatch_intent.findUniqueOrThrow({
@@ -400,8 +486,8 @@ describeE2E("eformsign durable cancellation and reissue (disposable PostgreSQL)"
                 templateId: "cancel-reissue-template",
                 action: "cancel",
                 generation: `foreign-cancel-${randomUUID()}`,
-                businessKey: "f".repeat(64),
-                fingerprint: "g".repeat(64),
+                businessKey: "c".repeat(64),
+                fingerprint: "d".repeat(64),
                 status: EFORMSIGN_DISPATCH_INTENT_STATUS.UNCERTAIN,
                 attemptCount: 1,
             },

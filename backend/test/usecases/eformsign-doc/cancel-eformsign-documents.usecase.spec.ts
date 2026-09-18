@@ -50,6 +50,41 @@ const makeTarget = (documentId: string, intent = makeIntent({ id: `intent-${docu
 });
 
 describe("CancelEformsignDocumentsUsecase", () => {
+    it("rejects a principal without document.cancel before claiming or calling the provider", async () => {
+        const cancellationRepository = {
+            begin: jest.fn(),
+            completeAccepted: jest.fn(),
+            markUncertain: jest.fn(),
+            clearAuthoritativeRefusal: jest.fn(),
+            reconcile: jest.fn(),
+            findByIntentId: jest.fn(),
+        };
+        const eformsignService = { cancelDocuments: jest.fn() };
+        const credentialBoundary = { withCredentials: jest.fn() };
+        const usecase = new CancelEformsignDocumentsUsecase(
+            cancellationRepository as never,
+            eformsignService as never,
+            credentialBoundary as never,
+            { getDocument: jest.fn() } as never,
+        );
+
+        await expect(usecase.execute(
+            {
+                branchId: "branch-1",
+                documentIds: ["doc-1"],
+                actorUserId: "operator-1",
+            },
+            {
+                branchId: "branch-1",
+                userId: "operator-1",
+                branchRole: "manager",
+            },
+        )).rejects.toThrow("Eformsign provider capability required");
+        expect(cancellationRepository.begin).not.toHaveBeenCalled();
+        expect(credentialBoundary.withCredentials).not.toHaveBeenCalled();
+        expect(eformsignService.cancelDocuments).not.toHaveBeenCalled();
+    });
+
     it("persists each provider outcome independently and returns sanitized batch results", async () => {
         const targetOne = makeTarget("doc-1");
         const targetTwo = makeTarget("doc-2", makeIntent({
