@@ -3,6 +3,8 @@ export const SERVICE_RECORD_LINK_SMS_LOG_TEMPLATE_KEY = "service_record_link_sms
 export const SERVICE_RECORD_LINK_SMS_AUTOMATION_KEY = "SERVICE_RECORD_LINK_SMS";
 export const SERVICE_RECORD_LINK_SMS_TITLE = "제공기록지 작성 링크";
 export const SERVICE_RECORD_LINK_SMS_TRIGGER_TYPE = "service_start_at_15";
+export const SERVICE_RECORD_LINK_SCHEDULE_HOUR_KST = 15;
+export const SERVICE_RECORD_LINK_SCHEDULE_TIME_KST = `${String(SERVICE_RECORD_LINK_SCHEDULE_HOUR_KST).padStart(2, "0")}:00`;
 export const SERVICE_RECORD_LINK_SCHEDULING_RETRY_REASON =
     "제공기록지 링크 발송 작업 생성 재시도 대기";
 export const SERVICE_RECORD_LINK_RESCHEDULED_REASON = "Service record link rescheduled";
@@ -25,7 +27,7 @@ export function atKstHour(date: Date, hour: number): Date {
 }
 
 export function getServiceRecordLinkScheduledFor(startDate: Date): Date {
-    return atKstHour(startDate, 15);
+    return atKstHour(startDate, SERVICE_RECORD_LINK_SCHEDULE_HOUR_KST);
 }
 
 /** Calendar days the caregiver's 제공기록지 link stays valid past the service end date. */

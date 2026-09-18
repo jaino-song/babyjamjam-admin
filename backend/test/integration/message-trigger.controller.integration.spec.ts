@@ -22,6 +22,10 @@ import {
     MessageTriggerTemplateKey,
     type MessageTriggerTemplateCatalogItem,
 } from "domain/constants/message-trigger-catalog";
+import {
+    SERVICE_RECORD_LINK_RULE_ID,
+    SERVICE_RECORD_LINK_SCHEDULE_TIME_KST,
+} from "domain/constants/service-record-link-message";
 import { MessageTriggerRuleEntity } from "domain/entities/message-trigger-rule.entity";
 import { SmsRetryService } from "application/services/sms-retry.service";
 
@@ -34,6 +38,7 @@ describe("MessageTriggerController (Integration)", () => {
         eventType: MessageTriggerEventType;
         offsetType: MessageTriggerOffsetType;
         offsetDays: number;
+        sendTime: string;
         recipientType: MessageTriggerRecipientType;
         templateKey: MessageTriggerTemplateKey;
         createdAt: Date;
@@ -65,7 +70,7 @@ describe("MessageTriggerController (Integration)", () => {
     ) =>
         MessageTriggerRuleEntity.reconstitute(
             overrides.id ?? "rule-1",
-            overrides.branchId ?? branchId,
+            overrides.branchId !== undefined ? overrides.branchId : branchId,
             overrides.name ?? "고객 등록 즉시 발송",
             overrides.isActive ?? true,
             overrides.eventType ?? MessageTriggerEventType.CLIENT_CREATED,
@@ -75,6 +80,9 @@ describe("MessageTriggerController (Integration)", () => {
             overrides.templateKey ?? MessageTriggerTemplateKey.CLIENT_WELCOME,
             overrides.createdAt ?? new Date("2025-01-01T00:00:00.000Z"),
             overrides.updatedAt ?? new Date("2025-01-02T00:00:00.000Z"),
+            false,
+            false,
+            overrides.sendTime ?? "09:00",
         );
 
     const createMockUpcomingJob = (
@@ -245,6 +253,34 @@ describe("MessageTriggerController (Integration)", () => {
             expect(response.status).toBe(200);
             expect(response.body).toHaveLength(1);
             expect(triggerService.listRules).toHaveBeenCalledWith(branchId);
+        });
+
+        it("projects only the canonical service-record rule to 15:00 without mutating source entities", async () => {
+            const canonicalRule = createMockRule({
+                id: SERVICE_RECORD_LINK_RULE_ID,
+                branchId: null,
+                eventType: MessageTriggerEventType.SERVICE_START,
+                offsetType: MessageTriggerOffsetType.SAME_DAY,
+                recipientType: MessageTriggerRecipientType.PRIMARY_EMPLOYEE,
+                templateKey: MessageTriggerTemplateKey.SERVICE_RECORD_LINK,
+                sendTime: "09:00",
+            });
+            const templateKeyOnlyRule = createMockRule({
+                id: "branch-service-record-key",
+                templateKey: MessageTriggerTemplateKey.SERVICE_RECORD_LINK,
+                sendTime: "14:37",
+            });
+            triggerService.listRules.mockResolvedValue([canonicalRule, templateKeyOnlyRule]);
+
+            const response = await request(app.getHttpServer()).get("/message-trigger-rules");
+
+            expect(response.status).toBe(200);
+            expect(response.body).toEqual([
+                expect.objectContaining({ id: SERVICE_RECORD_LINK_RULE_ID, sendTime: SERVICE_RECORD_LINK_SCHEDULE_TIME_KST }),
+                expect.objectContaining({ id: "branch-service-record-key", sendTime: "14:37" }),
+            ]);
+            expect(canonicalRule.sendTime).toBe("09:00");
+            expect(templateKeyOnlyRule.sendTime).toBe("14:37");
         });
     });
 
@@ -480,6 +516,29 @@ describe("MessageTriggerController (Integration)", () => {
 
             expect(response.status).toBe(200);
             expect(triggerService.getRule).toHaveBeenCalledWith(branchId, "rule-42");
+        });
+
+        it("projects the canonical service-record detail time while preserving the source entity", async () => {
+            const canonicalRule = createMockRule({
+                id: SERVICE_RECORD_LINK_RULE_ID,
+                branchId: null,
+                eventType: MessageTriggerEventType.SERVICE_START,
+                offsetType: MessageTriggerOffsetType.SAME_DAY,
+                recipientType: MessageTriggerRecipientType.PRIMARY_EMPLOYEE,
+                templateKey: MessageTriggerTemplateKey.SERVICE_RECORD_LINK,
+                sendTime: "09:00",
+            });
+            triggerService.getRule.mockResolvedValue(canonicalRule);
+
+            const response = await request(app.getHttpServer())
+                .get(`/message-trigger-rules/${SERVICE_RECORD_LINK_RULE_ID}`);
+
+            expect(response.status).toBe(200);
+            expect(response.body).toEqual(expect.objectContaining({
+                id: SERVICE_RECORD_LINK_RULE_ID,
+                sendTime: SERVICE_RECORD_LINK_SCHEDULE_TIME_KST,
+            }));
+            expect(canonicalRule.sendTime).toBe("09:00");
         });
     });
 
