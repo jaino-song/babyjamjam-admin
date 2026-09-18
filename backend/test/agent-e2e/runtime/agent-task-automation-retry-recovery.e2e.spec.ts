@@ -15,6 +15,7 @@ import { AligoDefaultSenderPolicyService } from "../../../application/services/a
 import { AligoService } from "../../../application/services/aligo.service";
 import { ClientAutomationSourceReader } from "../../../application/services/client-automation-source.reader";
 import { MessageRetrySchedulerService } from "../../../application/services/message-retry-scheduler.service";
+import { SchedulerLeaseService } from "../../../application/services/scheduler-lease.service";
 import { buildAutomationRetrySealVariables } from "../../../application/services/automation-retry-seal";
 import { buildClientMessageRecipe } from "../../../application/services/message-trigger-recipes";
 import { describeClientMessageEffect } from "../../../application/services/client-message-effect-recipe";
@@ -489,6 +490,10 @@ describeAgentE2E("task automation durable retry and recovery", () => {
             .compile();
         app = moduleRef.createNestApplication();
         await app.init();
+        // The guarded runner keeps background schedulers in standby so an AppModule
+        // integration test cannot start unrelated cron work. This spec invokes the
+        // retry cycle explicitly, so grant only that in-process call the lease gate.
+        jest.spyOn(app.get(SchedulerLeaseService), "holdsLease").mockReturnValue(true);
         sendSms = jest.spyOn(app.get(AligoService), "sendSms");
     }, 30_000);
 
