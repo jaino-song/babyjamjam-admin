@@ -5,6 +5,7 @@ import { isAgentAutomationOperationValid, type AgentAutomationAuthority, type Ag
 import { AGENT_AUTOMATION_RECORD_CANCEL_REASON, AGENT_AUTOMATION_RECORD_PAYLOAD_KEY, AGENT_AUTOMATION_TASK_SCOPE_CANCEL_REASON } from "domain/constants/agent-automation-storage";
 import { MESSAGE_AUTOMATION_INTENT_RULE_ID } from "domain/constants/message-automation-intent";
 import { MessageTriggerEventType, MessageTriggerOffsetType, MessageTriggerRecipientType, MessageTriggerTemplateKey } from "domain/constants/message-trigger-catalog";
+import { SERVICE_RECORD_LINK_RULE_ID } from "domain/constants/service-record-link-message";
 import { agentBindingHash } from "domain/repositories/agent-linked-action.types";
 import { MessageAutomationBranchLockService } from "application/services/message-automation-branch-lock.service";
 import type { AgentContext } from "./agent-context";
@@ -395,6 +396,114 @@ export class AgentAutomationRecordStoreService {
             }
             for (const entry of pendingAuthorities.sort((left, right) => agentAutomationRecordKey(left.record).localeCompare(agentAutomationRecordKey(right.record)))) {
                 await this.persistTerminalRecord(tx, entry.record, entry.commit);
+            }
+        }, transaction);
+    }
+
+    /**
+     * Fence task-owned schedule automation when an ordinary schedule writer
+     * changes that schedule. The source owner may not have a complete
+     * delivery preview while the schedule row is being replaced (for example
+     * before a new service-record token exists), so the safe same-transaction
+     * result is an explicit cancellation successor. A new schedule incarnation
+     * is never inspected here and therefore cannot inherit the old lineage.
+     */
+    async appendScheduleWriteFence(
+        transaction: Prisma.TransactionClient,
+        params: {
+            branchId: string;
+            clientId: number;
+            mutationId: string;
+            scheduleIds: readonly number[];
+        },
+    ): Promise<void> {
+        if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(params.mutationId)
+            || !Number.isSafeInteger(params.clientId) || params.clientId < 1
+            || !Array.isArray(params.scheduleIds) || params.scheduleIds.length > 500) {
+            throw new AgentAutomationRecordRefusedError();
+        }
+        const scheduleIds = [...new Set(params.scheduleIds)].sort((left, right) => left - right);
+        if (scheduleIds.some((scheduleId) => !Number.isSafeInteger(scheduleId) || scheduleId < 1)) {
+            throw new AgentAutomationRecordRefusedError();
+        }
+        if (scheduleIds.length === 0) return;
+
+        await this.branchLocks.runExclusive(params.branchId, async (tx) => {
+            const client = await tx.client.findFirst({
+                where: { id: params.clientId, branchId: params.branchId },
+                select: { id: true, createdAt: true },
+            });
+            if (!client?.createdAt) throw new AgentAutomationRecordRefusedError();
+
+            const schedules = await tx.employee_schedule.findMany({
+                where: { id: { in: scheduleIds }, branchId: params.branchId, clientId: params.clientId },
+                select: { id: true, incarnationId: true },
+            });
+            if (schedules.length !== scheduleIds.length) throw new AgentAutomationRecordRefusedError();
+
+            const rules = await tx.message_trigger_rule.findMany({
+                where: {
+                    OR: [{ branchId: params.branchId }, { branchId: null }],
+                    eventType: MessageTriggerEventType.EMPLOYEE_ASSIGNED,
+                },
+                select: { id: true, branchId: true },
+            });
+            const clientIdentity = agentBindingHash({
+                version: 1,
+                resource: "client",
+                id: client.id,
+                createdAt: client.createdAt.toISOString(),
+            });
+            const scopes: AgentAutomationScope[] = [];
+            for (const schedule of schedules) {
+                const scheduleIdentity = agentAutomationScheduleIdentity(schedule.incarnationId);
+                for (const rule of rules) {
+                    if (rule.id.startsWith("system:") || rule.id.startsWith("agent-sms:")) continue;
+                    for (const recipientType of [
+                        "primary-employee",
+                        "secondary-employee",
+                    ] as const) {
+                        scopes.push({
+                            branchId: params.branchId,
+                            clientId: params.clientId,
+                            clientIdentity,
+                            kind: "employee-assignment",
+                            ruleId: rule.id,
+                            scheduleId: schedule.id,
+                            scheduleIdentity,
+                            recipientType,
+                        });
+                    }
+                }
+                scopes.push({
+                    branchId: params.branchId,
+                    clientId: params.clientId,
+                    clientIdentity,
+                    kind: "service-record-link",
+                    ruleId: SERVICE_RECORD_LINK_RULE_ID,
+                    scheduleId: schedule.id,
+                    scheduleIdentity,
+                    recipientType: "primary-employee",
+                });
+            }
+
+            for (const scope of scopes) {
+                const evidence = await this.readLineageEvidence(tx, scope);
+                const head = evidence.batch.authorities.at(-1);
+                if (!head || head.origin.kind !== "task") continue;
+                // Explicit task denial/no-send already fences the scope. An
+                // allow record must contain exactly one scope effect; an
+                // ambiguous record is safer to reject than to guess which
+                // source should be carried into an ordinary successor.
+                if (head.decision !== "allow" || head.noSend) continue;
+                if (head.effects.length !== 1) throw new AgentAutomationRecordRefusedError();
+                await this.appendOrdinarySuccessors(tx, {
+                    branchId: params.branchId,
+                    clientId: params.clientId,
+                    mutationId: params.mutationId,
+                    operation: "schedule-write",
+                    effects: [{ ...head.effects[0]!, change: "cancel" }],
+                });
             }
         }, transaction);
     }

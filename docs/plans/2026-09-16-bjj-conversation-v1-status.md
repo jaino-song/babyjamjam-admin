@@ -351,9 +351,17 @@ Integrated slices and independent review decisions:
 - **Desktop task snapshots and mutation recovery:** `b34ad22b9`, `d3d3ab357`, `3e68ff8f5`, `105e94ab5`, `97d4ec88f`. The desktop UI ignores stale snapshots, preserves task identity across refreshes, reconciles 409 conflicts and busy/uncertain mutations, and retires conflicts without overwriting newer server state. Final scoped SOL at `4ad2640baf7ecb1dc52d0763f1c605bd61abc23c` was **SHIP / HIGH**. Pending mutation descriptors remain memory-only across a full page reload; authenticated browser QA was not run.
 - **Mobile task snapshots and lifecycle identity:** `582cef532`, `4ee99053d`, `82349a240`. The mobile hook and shell consume the same task snapshot contract, reconcile active identity, and release terminal tasks. Focused coverage was 3 suites/50 tests. Independent SOL was **SHIP / HIGH**.
 
+### Schedule-write approval fence (2026-09-18)
+
+The schedule mutation owners now fence task-origin automation authority in the same database transaction as the schedule write. `AgentAutomationRecordStoreService.appendScheduleWriteFence` validates the branch, client and existing schedule incarnation, then appends a digest-only `schedule-write` cancellation successor only when the exact task-origin allow head is still current. Explicit denied/noSend heads remain unchanged. No provider or sender call is made by the fence.
+
+The fence is wired into `EmployeeScheduleService.update/delete`, `ClientService` employee handover, termination, replacement and private assignment sync, and both date-update paths in `ScheduleChangeService`. Newly created schedules intentionally do not inherit the predecessor's consent; the immutable schedule incarnation is the identity boundary. The EFormSign new-row path remains unchanged for the same reason.
+
+This slice adds two focused record-store cases (allow successor and denied/noSend no-op) and preserves the existing optional dependency behavior for service test doubles. Focused schedule/agent/client coverage was **4 suites / 267 tests passed**. Backend type-check, Nest build, changed-file lint and capability manifest checks passed. The full backend rerun passed **392 suites with 1 skipped; 5,550 tests passed with 44 skipped; 1 snapshot passed**. The guarded PostgreSQL matrix remains unavailable, so database-level lock/contention proof is still pending.
+
 Integrated verification on 2026-09-18:
 
-- Full backend Jest: **391 passed suites, 1 skipped (392 total); 5,548 passed tests, 44 skipped (5,592 total); 1 snapshot passed; exit 0**. The skipped suite is environment-gated; the run completed successfully.
+- Full backend Jest before the schedule fence: **391 passed suites, 1 skipped (392 total); 5,548 passed tests, 44 skipped (5,592 total); 1 snapshot passed; exit 0**. After the schedule fence, the rerun passed **392 suites with 1 skipped; 5,550 tests passed with 44 skipped; 1 snapshot passed**. The skipped suite is environment-gated; both runs completed successfully.
 - Conversation-related backend focus: **10 suites / 381 tests passed**. Backend type-check, Nest build, shared type-check, backend-runtime vendor build and changed-file lint passed.
 - Deterministic conversation harness: **48/48 passed** (development 32, holdout 16), fixture digest `d983a554e420507006c4859a45062247a57ac5fe13df7e4d0262c73381b791ba`, assertion digest `e86ecc5a491a2c6a97cf67288be4763208d857553773ce837d9a6bf8eb5b7ea9`.
 - Current product adapter diagnostic: **0/48 passed, 48 failed** with no safety/network/transport errors. The failures are classified as unimplemented-feature/connection, mock-response/fixture-gap and observation/evidence-gap; this is a readiness diagnostic and is not an actual model-quality score.
@@ -365,7 +373,7 @@ Integrated verification on 2026-09-18:
 
 Open scope and completion boundaries:
 
-- Phase7 remains **OPEN** at plan level. The schedule-write successor owner, complete cumulative real PostgreSQL/AppModule task-provider matrix, and final consent/provider coverage still require implementation and an approved database environment. The integrated slices do not claim Phase7 close.
+- Phase7 remains **OPEN** at plan level. The schedule-write approval fence is now connected, but complete cumulative real PostgreSQL/AppModule task-provider matrix and final consent/provider coverage still require implementation and an approved database environment. The integrated slices do not claim Phase7 close.
 - Phase8 has bounded desktop/mobile integration, but authenticated browser QA, keyboard/IME/focus/scroll verification and final cross-screen acceptance are still pending.
 - Phase9 integration QA, release/rollback evidence and final independent cumulative review are still pending.
 - Actual Google/OpenAI conversation-quality evaluation remains deferred. The deterministic 48-case harness is a functional guard only; paid evaluation, repeated model comparison, human review and cost/latency thresholds are not complete.

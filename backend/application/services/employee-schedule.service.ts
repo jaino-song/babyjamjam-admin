@@ -1,4 +1,5 @@
 import { Injectable, Logger, Optional } from "@nestjs/common";
+import { randomUUID } from "node:crypto";
 import {
     CreateEmployeeScheduleUsecase,
     DeleteEmployeeScheduleUsecase,
@@ -13,6 +14,7 @@ import { PrismaService } from "infrastructure/database/prisma.service";
 import { MessageAutomationIntentService } from "./message-automation-intent.service";
 import { ServiceRecordLinkService } from "./service-record-link.service";
 import { ServiceRecordLifecycleService } from "./service-record-lifecycle.service";
+import { AgentAutomationRecordStoreService } from "../agent/agent-automation-record-store.service";
 
 @Injectable()
 export class EmployeeScheduleService {
@@ -30,6 +32,7 @@ export class EmployeeScheduleService {
         private readonly messageAutomationIntentService: MessageAutomationIntentService,
         @Optional() private readonly serviceRecordLinkService?: ServiceRecordLinkService,
         @Optional() private readonly serviceRecordLifecycleService?: ServiceRecordLifecycleService,
+        @Optional() private readonly agentAutomationRecordStore?: AgentAutomationRecordStoreService,
     ) {}
 
     async create(branchid: string, params: {
@@ -119,6 +122,7 @@ export class EmployeeScheduleService {
         replaced?: boolean;
     }): Promise<EmployeeScheduleEntity> {
         const intentAt = new Date();
+        const ordinaryMutationId = randomUUID();
         const schedule = await this.prisma.$transaction(async (transaction) => {
             const updated = await this.updateEmployeeScheduleUsecase.execute(branchid, id, {
                 workAddress: params.workAddress,
@@ -126,6 +130,12 @@ export class EmployeeScheduleService {
                 endDate: params.endDate ? new Date(params.endDate) : undefined,
                 replaced: params.replaced,
             }, transaction);
+            await this.agentAutomationRecordStore?.appendScheduleWriteFence(transaction, {
+                branchId: branchid,
+                clientId: updated.clientId,
+                mutationId: ordinaryMutationId,
+                scheduleIds: [updated.id],
+            });
             await this.messageAutomationIntentService.persistScheduleIntent(transaction, {
                 branchId: branchid,
                 clientId: updated.clientId,
@@ -179,7 +189,14 @@ export class EmployeeScheduleService {
             await this.deleteEmployeeScheduleUsecase.execute(branchid, id);
             return;
         }
+        const ordinaryMutationId = randomUUID();
         await this.prisma.$transaction(async (transaction) => {
+            await this.agentAutomationRecordStore?.appendScheduleWriteFence(transaction, {
+                branchId: branchid,
+                clientId: schedule.clientId,
+                mutationId: ordinaryMutationId,
+                scheduleIds: [schedule.id],
+            });
             await this.deleteEmployeeScheduleUsecase.execute(branchid, id, transaction);
             await this.serviceRecordLifecycleService?.ensureForClient(
                 schedule.clientId,

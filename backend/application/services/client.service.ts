@@ -862,6 +862,7 @@ export class ClientService {
         applyMessageAutomation: boolean;
     }): Promise<{ createdScheduleId: number | null; replacedScheduleId: number | null }> {
         const intentAt = new Date();
+        const ordinaryMutationId = randomUUID();
         const newSchedule = await this.prismaService.$transaction(async (transaction) => {
             // The common policy rereads every historical schedule after the
             // client lock and locks the complete employee union (including the
@@ -941,6 +942,12 @@ export class ClientService {
                 excludeScheduleId: currentSchedule?.id,
             });
             if (currentSchedule && handover) {
+                await this.agentAutomationRecordStore?.appendScheduleWriteFence(transaction, {
+                    branchId: branchid,
+                    clientId: params.clientId,
+                    mutationId: ordinaryMutationId,
+                    scheduleIds: [currentSchedule.id],
+                });
                 await transaction.employee_schedule.update({
                     where: { id: currentSchedule.id },
                     data: {
@@ -1973,6 +1980,12 @@ export class ClientService {
                         excludeScheduleId: currentSchedule?.id,
                     });
                     if (currentSchedule && handover) {
+                        await this.agentAutomationRecordStore?.appendScheduleWriteFence(transaction, {
+                            branchId: branchid,
+                            clientId: id,
+                            mutationId: ordinaryMutationId,
+                            scheduleIds: [currentSchedule.id],
+                        });
                         await transaction.employee_schedule.update({
                             where: { id: currentSchedule.id },
                             data: {
@@ -2132,6 +2145,7 @@ export class ClientService {
         // case in one owning transaction. Passing the transaction through the
         // update usecase avoids a nested root transaction while locks are held.
         const terminationAt = new Date();
+        const ordinaryMutationId = randomUUID();
         const updatedClient = await this.prismaService.$transaction(async (transaction) => {
             const existingCase = transaction.service_record_case?.findUnique
                 ? await transaction.service_record_case.findUnique({
@@ -2162,6 +2176,12 @@ export class ClientService {
                     schedule.primaryEmployeeId,
                     schedule.secondaryEmployeeId,
                 ]),
+            });
+            await this.agentAutomationRecordStore?.appendScheduleWriteFence(transaction, {
+                branchId: branchid,
+                clientId,
+                mutationId: ordinaryMutationId,
+                scheduleIds: schedules.map((schedule) => schedule.id),
             });
             // Revalidate after the client and dependent rows are locked. The
             // initial existence lookup is only a fast preflight.
@@ -2231,6 +2251,7 @@ export class ClientService {
         );
 
         let replacedScheduleId: number | null = null;
+        const ordinaryMutationId = randomUUID();
         const replacementSchedule = await this.prismaService.$transaction(async (transaction) => {
             // Lock the full historical schedule/employee union before any
             // case or schedule write. The requested providers are part of the
@@ -2312,6 +2333,12 @@ export class ClientService {
             }
 
             if (currentSchedule) {
+                await this.agentAutomationRecordStore?.appendScheduleWriteFence(transaction, {
+                    branchId: branchid,
+                    clientId,
+                    mutationId: ordinaryMutationId,
+                    scheduleIds: [currentSchedule.id],
+                });
                 await transaction.employee_schedule.update({
                     where: { id: currentSchedule.id },
                     data: {
