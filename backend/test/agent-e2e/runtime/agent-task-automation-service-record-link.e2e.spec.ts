@@ -8,6 +8,7 @@ import { tenantContextStore } from "../../../infrastructure/tenant/tenant-contex
 import { CapabilityRegistryService } from "../../../application/agent/capability-registry.service";
 import { agentBindingHash, agentLinkedProposalRevision } from "../../../domain/repositories/agent-linked-action.types";
 import { createAgentAutomationQuestion, answerAgentAutomationQuestion } from "../../../application/agent/agent-automation-question";
+import { createAgentAutomationTaskCommitReference } from "../../../application/agent/agent-automation-storage.schema";
 import { parseTaskAutomationArtifact, TASK_AUTOMATION_ARTIFACT_KEY, taskAutomationPublicSummary } from "../../../application/agent/agent-task-automation-artifact";
 import { clientAgentTargetVersion } from "../../../application/usecases/client/client-agent-target";
 import { SmsTriggerDeliveryService } from "../../../application/services/sms-trigger-delivery.service";
@@ -373,6 +374,79 @@ describeAgentE2E("production service-record-link task effect planner", () => {
         )));
         expect(allowed.status).toBe("allowed");
         expect(await prisma.message_log.count({ where: { branchId } })).toBe(0);
+
+        if (allowed.status !== "allowed") throw new Error("The task authority did not produce a materialization seal");
+        const sealedPayload = {
+            ...(row.payload as Record<string, unknown>),
+            agentAutomationSeal: allowed.seal,
+        } as unknown as Prisma.InputJsonValue;
+        await prisma.message_trigger_job.update({ where: { id: row.id }, data: { payload: sealedPayload } });
+        const sealedRow = await prisma.message_trigger_job.findUniqueOrThrow({ where: { id: row.id } });
+        const sealedJob = MessageTriggerJobEntity.reconstitute(
+            sealedRow.id, sealedRow.branchId, sealedRow.ruleId, sealedRow.status as MessageTriggerJobStatus, sealedRow.scheduledFor,
+            sealedRow.sentAt, sealedRow.canceledAt, sealedRow.cancelReason, sealedRow.clientId, sealedRow.employeeScheduleId,
+            sealedRow.recipientType as MessageTriggerRecipientType, sealedRow.recipientPhone,
+            sealedRow.templateKey as MessageTriggerTemplateKey, sealedRow.dedupeKey,
+            sealedRow.payload as unknown as MessageTriggerJobPayload, sealedRow.createdAt, sealedRow.updatedAt,
+            sealedRow.attempts, sealedRow.nextAttemptAt, sealedRow.claimToken,
+        );
+        const preparedSnapshot = await tenantContextStore.run({ origin: "http", branchId }, () => prisma.$transaction((tx) =>
+            delivery.resolveCanonicalDeliverySnapshot(sealedJob, tx),
+        ));
+        const dispatch = await tenantContextStore.run({ origin: "http", branchId }, () => prisma.$transaction((tx) => authority.checkAutomaticJob(
+            tx,
+            sealedJob,
+            "dispatch",
+            (candidate, transaction) => delivery.resolveCanonicalDeliverySnapshot(candidate, transaction),
+            preparedSnapshot.snapshotHash,
+        )));
+        expect(dispatch.status).toBe("allowed");
+        expect(await prisma.message_log.count({ where: { branchId } })).toBe(0);
+    });
+
+    it("refuses a copied task reference after its revision is changed", async () => {
+        const delivery = app.get(SmsTriggerDeliveryService);
+        const authority = app.get(AgentAutomationJobAuthorityService);
+        const row = await prisma.message_trigger_job.findFirstOrThrow({
+            where: { branchId, ruleId: SERVICE_RECORD_LINK_RULE_ID, employeeScheduleId: scheduleId },
+        });
+        const payload = row.payload as Record<string, unknown>;
+        const reference = payload["taskAutomationReference"] as Record<string, unknown> | undefined;
+        if (!reference || typeof reference["taskRevision"] !== "number") throw new Error("Missing persisted task reference");
+        try {
+            const forgedReference = createAgentAutomationTaskCommitReference({
+                actionId: reference["actionId"] as string,
+                taskId: reference["taskId"] as string,
+                taskRevision: (reference["taskRevision"] as number) + 1,
+                authorities: reference["authorities"] as Array<{ id: string; recordDigest: string; scopeDigest: string }>,
+                coverages: reference["coverages"] as Array<{ id: string; recordDigest: string; scopeDigest: string }>,
+            });
+            await prisma.message_trigger_job.update({ where: { id: row.id }, data: {
+                payload: {
+                    ...payload,
+                    taskAutomationReference: forgedReference,
+                } as unknown as Prisma.InputJsonValue,
+            } });
+            const changed = await prisma.message_trigger_job.findUniqueOrThrow({ where: { id: row.id } });
+            const changedJob = MessageTriggerJobEntity.reconstitute(
+                changed.id, changed.branchId, changed.ruleId, changed.status as MessageTriggerJobStatus, changed.scheduledFor,
+                changed.sentAt, changed.canceledAt, changed.cancelReason, changed.clientId, changed.employeeScheduleId,
+                changed.recipientType as MessageTriggerRecipientType, changed.recipientPhone,
+                changed.templateKey as MessageTriggerTemplateKey, changed.dedupeKey,
+                changed.payload as unknown as MessageTriggerJobPayload, changed.createdAt, changed.updatedAt,
+                changed.attempts, changed.nextAttemptAt, changed.claimToken,
+            );
+            const refused = await tenantContextStore.run({ origin: "http", branchId }, () => prisma.$transaction((tx) => authority.checkAutomaticJob(
+                tx,
+                changedJob,
+                "materialize",
+                (candidate, transaction) => delivery.resolveCanonicalDeliverySnapshot(candidate, transaction),
+            )));
+            expect(refused.status).toBe("refused");
+            expect(await prisma.message_log.count({ where: { branchId } })).toBe(0);
+        } finally {
+            await prisma.message_trigger_job.update({ where: { id: row.id }, data: { payload: payload as unknown as Prisma.InputJsonValue } });
+        }
     });
 
     it("executes a no-send task through the customer transaction and leaves service-record terminal coverage", async () => {
