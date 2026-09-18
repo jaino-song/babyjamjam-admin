@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest } from "next/server";
 
 import { serverAPIClient } from "@/lib/api/server";
 import {
@@ -6,9 +6,12 @@ import {
     errorResponse,
     getAuthHeaders,
     getAuthToken,
-    unauthorizedResponse,
     withNoStore,
 } from "@/lib/api/route-utils";
+import {
+    unauthorizedProblemResponse,
+    validationProblemResponse,
+} from "@/lib/api/problem-responses";
 
 type RouteParams = { params: Promise<{ clientId: string }> };
 
@@ -16,15 +19,17 @@ function isPositiveIntegerString(value: string): boolean {
     return /^[1-9]\d*$/.test(value);
 }
 
-function invalidClientIdResponse(): NextResponse {
-    return NextResponse.json({ error: "Invalid client id" }, { status: 400 });
+function invalidClientIdResponse() {
+    return validationProblemResponse("Invalid client id", [
+        { pointer: "/clientId", code: "INVALID_FORMAT", detail: "입력 형식이 올바르지 않아요.", location: "path" },
+    ]);
 }
 
 export async function GET(request: NextRequest, { params }: RouteParams) {
     try {
         const token = getAuthToken(request);
         if (!token) {
-            return unauthorizedResponse("Unauthorized");
+            return unauthorizedProblemResponse();
         }
 
         const { clientId } = await params;
@@ -37,6 +42,6 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
         });
         return withNoStore(backendJsonResponse(response));
     } catch (error) {
-        return errorResponse(error, "fetch client service records");
+        return errorResponse(error, "fetch client service records", "read");
     }
 }

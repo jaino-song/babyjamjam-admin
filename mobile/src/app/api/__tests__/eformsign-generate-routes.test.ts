@@ -37,9 +37,12 @@ describe("retired eformsign provider routes", () => {
         const response = await handler(createRequest(path, JSON.stringify({ executionTime: 1 })));
 
         expect(response.status).toBe(410);
-        await expect(response.json()).resolves.toMatchObject({
-            code: "EFORMSIGN_PROVIDER_OPERATION_SERVER_ONLY",
-        });
+        expect(response.headers.get("Content-Type")).toBe("application/problem+json");
+        await expect(response.json()).resolves.toEqual(expect.objectContaining({
+            code: "REQUEST_EXPIRED",
+            status: 410,
+            outcome: "NOT_APPLIED",
+        }));
         expect(response.headers.get("Cache-Control")).toContain("no-store");
         expect(mockPost).not.toHaveBeenCalled();
     });
