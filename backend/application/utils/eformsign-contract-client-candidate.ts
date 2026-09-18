@@ -167,8 +167,10 @@ function keyedFieldValue(
             const directValue = stringFromUnknown(rawValue);
             if (directValue) return directValue;
 
-            const nestedValue = valueFromFieldRecord({ value: rawValue });
-            if (nestedValue) return nestedValue;
+            if (isRecord(rawValue)) {
+                const nestedValue = valueFromFieldRecord(rawValue);
+                if (nestedValue) return nestedValue;
+            }
         }
     }
     return null;
@@ -199,16 +201,7 @@ function fieldIdMatches(token: string, aliases: readonly string[]): boolean {
 
 function keyedFieldIdMatches(key: string, aliases: readonly string[]): boolean {
     const normalizedKey = normalizeFieldId(key);
-    return aliases.some((alias) => {
-        const normalizedAlias = normalizeFieldId(alias);
-        if (normalizedKey === normalizedAlias) return true;
-        // Short labels such as "생일" must not match a provider's longer field key.
-        if (normalizedAlias.length < 5) return false;
-        return normalizedKey.includes(normalizedAlias)
-            || (/^[a-z0-9]+$/.test(normalizedKey)
-                && normalizedKey.length >= 5
-                && normalizedAlias.includes(normalizedKey));
-    });
+    return aliases.some((alias) => normalizedKey === normalizeFieldId(alias));
 }
 
 function hasNonCustomerNameFieldMarker(token: string): boolean {
