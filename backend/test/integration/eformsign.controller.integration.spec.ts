@@ -1,5 +1,5 @@
 import { PdfPageRasterizerService, PdfPageOutOfRangeError } from "infrastructure/pdf/pdf-page-rasterizer.service";
-import { BadRequestException, ExecutionContext, INestApplication, ValidationPipe } from "@nestjs/common";
+import { BadRequestException, ExecutionContext, HttpException, INestApplication, ValidationPipe } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { Test, TestingModule } from "@nestjs/testing";
 import { AreaTemplateService } from "application/services/area-template.service";
@@ -16,6 +16,7 @@ import { EformsignListShadowCompareService } from "application/services/eformsig
 import { EformsignMirrorListService } from "application/services/eformsign-mirror-list.service";
 import { EformsignDocumentMirrorService } from "application/services/eformsign-document-mirror.service";
 import { EformsignCredentialBoundary } from "application/services/eformsign-credential-boundary.service";
+import { CancelEformsignDocumentsUsecase } from "application/usecases/eformsign-doc/cancel-eformsign-documents.usecase";
 import { EformsignTemplateScopeService } from "application/services/eformsign-template-scope.service";
 import { EFORMSIGN_DOC_REPOSITORY } from "domain/repositories/eformsign-doc.repository.interface";
 import { EFORMSIGN_DOCUMENT_MIRROR_REPOSITORY } from "domain/repositories/eformsign-document-mirror.repository.interface";
@@ -25,6 +26,171 @@ import {
     extractEformsignVendorCode,
 } from "infrastructure/api/eformsign-api.error";
 import request from "supertest";
+
+type ExplicitTestCancellationDependencies = {
+    eformsignDocService: { findAll: jest.Mock };
+    eformsignService: { cancelDocuments: jest.Mock };
+    documentMirrorService: {
+        requestPermanentPurge: jest.Mock;
+        clearPermanentPurgeRequest: jest.Mock;
+        purgeDocuments: jest.Mock;
+        findTerminalDocumentIds: jest.Mock;
+    };
+    credentialBoundary: { withCredentials: jest.Mock };
+};
+
+/**
+ * The integration suite uses this explicit adapter to preserve coverage for the
+ * pre-durable response shape. It is injected only by this test module; production
+ * wiring always supplies CancelEformsignDocumentsUsecase itself.
+ */
+function createExplicitTestCancellationAdapter(
+    dependencies: ExplicitTestCancellationDependencies,
+) {
+    const {
+        eformsignDocService,
+        eformsignService,
+        documentMirrorService,
+        credentialBoundary,
+    } = dependencies;
+    return {
+        execute: jest.fn(async (
+            params: { branchId: string; documentIds: string[] },
+            principal: unknown,
+        ) => {
+            const requestedDocumentIds = [...new Set(params.documentIds)];
+            let permanentPurgeRequests: unknown[] = [];
+            try {
+                const documents = await eformsignDocService.findAll(params.branchId) ?? [];
+                const ownedDocumentIds = new Set(
+                    documents
+                        .map((document: { documentId?: string }) => document.documentId)
+                        .filter((documentId: unknown): documentId is string => typeof documentId === "string"),
+                );
+                if (requestedDocumentIds.some((documentId) => !ownedDocumentIds.has(documentId))) {
+                    throw new HttpException(
+                        { error: "Document access forbidden" },
+                        403,
+                    );
+                }
+
+                permanentPurgeRequests = await documentMirrorService.requestPermanentPurge(
+                    requestedDocumentIds,
+                );
+                const result = await credentialBoundary.withCredentials(
+                    principal,
+                    "document.cancel",
+                    ({ accessToken }: { accessToken: string }) => eformsignService.cancelDocuments(
+                        accessToken,
+                        requestedDocumentIds,
+                    ),
+                );
+                const cancelledDocumentIds = explicitSuccessfulDocumentIds(result);
+                const uncancelledDocumentIds = requestedDocumentIds.filter(
+                    (documentId) => !cancelledDocumentIds.includes(documentId),
+                );
+                const terminalDocumentIds = await documentMirrorService.findTerminalDocumentIds(
+                    uncancelledDocumentIds,
+                );
+                const purgeableDocumentIds = [
+                    ...new Set([...cancelledDocumentIds, ...terminalDocumentIds]),
+                ];
+                const unresolvedDocumentIds = uncancelledDocumentIds.filter(
+                    (documentId) => !terminalDocumentIds.includes(documentId),
+                );
+                const definitiveFailureDocumentIds = new Set(
+                    explicitDefinitiveFailureDocumentIds(result, requestedDocumentIds),
+                );
+                const definitiveFailurePurgeRequests = permanentPurgeRequests.filter((candidate) => {
+                    if (typeof candidate !== "object" || candidate === null) return false;
+                    const documentId = (candidate as { documentId?: unknown }).documentId;
+                    return typeof documentId === "string"
+                        && unresolvedDocumentIds.includes(documentId)
+                        && definitiveFailureDocumentIds.has(documentId);
+                });
+                if (definitiveFailurePurgeRequests.length > 0) {
+                    const cleanupErrors: unknown[] = [];
+                    try {
+                        await documentMirrorService.clearPermanentPurgeRequest(
+                            definitiveFailurePurgeRequests,
+                        );
+                    } catch (error) {
+                        cleanupErrors.push(error);
+                    }
+                    try {
+                        await documentMirrorService.purgeDocuments(purgeableDocumentIds);
+                    } catch (error) {
+                        cleanupErrors.push(error);
+                    }
+                    if (cleanupErrors.length > 0) {
+                        throw new HttpException(
+                            { error: "Document cleanup was incomplete" },
+                            500,
+                        );
+                    }
+                } else {
+                    await documentMirrorService.purgeDocuments(purgeableDocumentIds);
+                    await documentMirrorService.clearPermanentPurgeRequest([]);
+                }
+                return { ...result, unresolved_document_ids: unresolvedDocumentIds };
+            } catch (error) {
+                const apiError = error instanceof EformsignApiError ? error : null;
+                const isConfirmedAbsence = error instanceof EformsignApiError
+                    && (error.status === 404
+                        || (error.status === 400 && ["4000004", "4000006"].includes(error.vendorCode ?? "")));
+                if (
+                    apiError !== null
+                    && apiError.status >= 400
+                    && apiError.status < 500
+                    && !isConfirmedAbsence
+                    && ![408, 429].includes(apiError.status)
+                ) {
+                    await documentMirrorService.clearPermanentPurgeRequest(permanentPurgeRequests);
+                }
+                if (error instanceof HttpException) throw error;
+                throw new HttpException(
+                    { error: error instanceof Error ? error.message : "eformsign cancellation failed" },
+                    500,
+                );
+            }
+        }),
+    };
+}
+
+function explicitSuccessfulDocumentIds(result: unknown): string[] {
+    if (typeof result !== "object" || result === null) return [];
+    const resultBody = (result as { result?: unknown }).result;
+    if (typeof resultBody !== "object" || resultBody === null) return [];
+    const successResult = (resultBody as { success_result?: unknown }).success_result;
+    return Array.isArray(successResult)
+        ? successResult.filter(
+            (documentId): documentId is string =>
+                typeof documentId === "string" && documentId.trim().length > 0,
+        )
+        : [];
+}
+
+function explicitDefinitiveFailureDocumentIds(result: unknown, requestedDocumentIds: string[]): string[] {
+    if (typeof result !== "object" || result === null) return [];
+    const resultBody = (result as { result?: unknown }).result;
+    if (typeof resultBody !== "object" || resultBody === null) return [];
+    const failures = (resultBody as { fail_result?: unknown }).fail_result;
+    if (!Array.isArray(failures)) return [];
+    const requested = new Set(requestedDocumentIds);
+    return [...new Set(failures.flatMap((failure) => {
+        if (typeof failure !== "object" || failure === null) return [];
+        const candidate = failure as { document_id?: unknown; code?: unknown };
+        const documentId = typeof candidate.document_id === "string"
+            ? candidate.document_id.trim()
+            : "";
+        const code = typeof candidate.code === "string"
+            ? candidate.code.trim()
+            : typeof candidate.code === "number" && Number.isInteger(candidate.code)
+                ? String(candidate.code)
+                : "";
+        return code === "4000164" && requested.has(documentId) ? [documentId] : [];
+    }))];
+}
 
 // Known transport-level flake (~1/8 full-suite runs under parallel-worker
 // load, observed locally 2026-06-06 and once in CI): a supertest request
@@ -62,6 +228,7 @@ describe("EformsignController (Integration)", () => {
         "execute"
     >>;
     let branchFindUnique: jest.Mock;
+    let cancellationUsecase: { execute: jest.Mock };
 
     const authGuard = {
         canActivate: (context: ExecutionContext) => {
@@ -125,6 +292,7 @@ describe("EformsignController (Integration)", () => {
         permanentPurgeLookup.findUnreadyCompletedDocumentIds.mockResolvedValue([]);
         permanentPurgeLookup.findPermanentPurgeRequestedDocumentIds.mockReset();
         permanentPurgeLookup.findPermanentPurgeRequestedDocumentIds.mockResolvedValue([]);
+        cancellationUsecase = { execute: jest.fn() };
         const moduleFixture: TestingModule = await Test.createTestingModule({
             controllers: [EformsignController],
             providers: [
@@ -208,6 +376,7 @@ describe("EformsignController (Integration)", () => {
                     provide: EformsignTemplateScopeService,
                     useValue: { resolveTemplateFilter: jest.fn().mockResolvedValue(undefined) },
                 },
+                { provide: CancelEformsignDocumentsUsecase, useValue: cancellationUsecase },
             ],
         })
             .overrideGuard(JwtGuard)
@@ -247,6 +416,14 @@ describe("EformsignController (Integration)", () => {
         );
         eformsignDocService.findDisplayFieldsByDocumentIds.mockResolvedValue([]);
         eformsignService.getDocumentById.mockImplementation(async (_accessToken: string, documentId: string) => ({ id: documentId }));
+        cancellationUsecase.execute.mockImplementation(
+            createExplicitTestCancellationAdapter({
+                eformsignDocService: eformsignDocService as unknown as { findAll: jest.Mock },
+                eformsignService: eformsignService as unknown as { cancelDocuments: jest.Mock },
+                documentMirrorService,
+                credentialBoundary,
+            }).execute,
+        );
         documentMirrorService.getStoredDetail.mockImplementation(
             async (documentId: string) => ({ id: documentId }),
         );
@@ -1174,6 +1351,7 @@ describe("EformsignController (Integration)", () => {
                         provide: EformsignCredentialBoundary,
                         useValue: credentialBoundary,
                     },
+                    { provide: CancelEformsignDocumentsUsecase, useValue: cancellationUsecase },
                 ],
             })
                 .overrideGuard(JwtGuard)

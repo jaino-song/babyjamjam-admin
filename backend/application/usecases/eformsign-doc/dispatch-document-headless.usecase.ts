@@ -246,7 +246,16 @@ export class DispatchDocumentHeadlessUsecase {
             }
 
             if (this.dispatchBoundary) {
-                const generation = latestLocalDocument?.documentId ?? (params.force ? "force-initial" : "initial");
+                const generation = typeof this.dispatchBoundary.resolveCreateGeneration === "function"
+                    ? await this.dispatchBoundary.resolveCreateGeneration({
+                        branchId,
+                        clientId: params.clientId,
+                        assignmentId: assignment?.scheduleId ?? null,
+                        templateId: templateId ?? null,
+                        latestLocalDocumentId: latestLocalDocument?.documentId ?? null,
+                        force: params.force,
+                    })
+                    : latestLocalDocument?.documentId ?? (params.force ? "force-initial" : "initial");
                 const fingerprint = createHash("sha256")
                     .update(JSON.stringify({ contractData: params.contractData, templateId, generation }))
                     .digest("hex");

@@ -18,6 +18,7 @@ import {
     SyncClientEndDateUsecase,
     DispatchDocumentHeadlessUsecase,
     FinalizeDocumentHeadlessUsecase,
+    CancelEformsignDocumentsUsecase,
     AdoptEformsignDocUsecase,
     MirrorUnassignedEformsignDocUsecase,
     BackfillEformsignDocsUsecase,
@@ -82,6 +83,10 @@ import { EFORMSIGN_DISPATCH_INTENT_REPOSITORY } from "domain/repositories/eforms
 import { SbEformsignDispatchIntentRepository } from "infrastructure/database/repositories/sb.eformsign-dispatch-intent.repository";
 import { EformsignDispatchBoundaryService } from "application/services/eformsign-dispatch-boundary.service";
 import {
+    EFORMSIGN_CANCELLATION_REPOSITORY,
+} from "domain/repositories/eformsign-cancellation.repository.interface";
+import { SbEformsignCancellationRepository } from "infrastructure/database/repositories/sb.eformsign-cancellation.repository";
+import {
     ServiceRecordContractRevisionService,
     SERVICE_RECORD_CONTRACT_REVISION_PROVIDER,
     SERVICE_RECORD_CONTRACT_REVISION_DISPATCH,
@@ -143,6 +148,7 @@ import { ReceiptPdfVerifierService } from "infrastructure/pdf/receipt-pdf-verifi
         // Use cases - Headless dispatch (BJJ-90)
         DispatchDocumentHeadlessUsecase,
         FinalizeDocumentHeadlessUsecase,
+        CancelEformsignDocumentsUsecase,
         AdoptEformsignDocUsecase,
         MirrorUnassignedEformsignDocUsecase,
         LinkMirroredEformsignDocByPhoneUsecase,
@@ -229,6 +235,10 @@ import { ReceiptPdfVerifierService } from "infrastructure/pdf/receipt-pdf-verifi
             useExisting: CreateAndSendServiceRecordSnapshotUsecase,
         },
         EformsignDispatchBoundaryService,
+        {
+            provide: EFORMSIGN_CANCELLATION_REPOSITORY,
+            useClass: SbEformsignCancellationRepository,
+        },
         // Repository bindings
         {
             provide: EFORMSIGN_DOC_REPOSITORY,
@@ -293,6 +303,7 @@ import { ReceiptPdfVerifierService } from "infrastructure/pdf/receipt-pdf-verifi
         GetContractClientCandidateUsecase,
         EformsignDocumentJobService,
         EformsignDispatchBoundaryService,
+        CancelEformsignDocumentsUsecase,
         ServiceRecordRevisionDocumentCoordinator,
         SERVICE_RECORD_REVISION_OPERATION_COORDINATOR,
         ServiceRecordContractRevisionService,

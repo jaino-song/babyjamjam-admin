@@ -46,8 +46,95 @@ const createRemoteDocument = (
     },
 });
 
+const createDurableRetryDependencies = (documentId = "pending-doc") => {
+    const target = {
+        documentId,
+        branchId: "branch-1",
+        localDocumentId: 11,
+        clientId: 7,
+        assignmentId: 13,
+        templateId: "template-1",
+        providerDocumentId: documentId,
+        sourceIntentId: "source-1",
+        sourceIntentStatus: "accepted",
+        purgeGeneration: new Date("2026-07-30T01:00:00.000Z"),
+        cancellationIntent: {
+            id: "cancel-intent-1",
+            status: "started",
+            attemptCount: 1,
+        },
+    };
+    return {
+        target,
+        cancellationRepository: {
+            begin: jest.fn().mockResolvedValue({ targets: [target] }),
+            completeAccepted: jest.fn().mockResolvedValue({ status: "accepted" }),
+            markUncertain: jest.fn().mockResolvedValue({ status: "uncertain" }),
+            clearAuthoritativeRefusal: jest.fn().mockResolvedValue({ status: "reconciled_not_delivered" }),
+            reconcile: jest.fn().mockResolvedValue({
+                intent: target.cancellationIntent,
+                clearedPurgeFence: true,
+            }),
+            findByIntentId: jest.fn(),
+        },
+        mirrorRepository: {
+            findState: jest.fn().mockResolvedValue({ branchId: "branch-1" }),
+        },
+    };
+};
+
+const createPurgeIdentityFixture = (detail: unknown) => {
+    const listedDocument = createRemoteDocument("pending-doc");
+    const durable = createDurableRetryDependencies("pending-doc");
+    const client = {
+        getAccessToken: jest.fn().mockResolvedValue({ oauth_token: { access_token: "shared-access-token" } }),
+        getInProgressDocumentsPage: jest.fn().mockResolvedValue({
+            documents: [listedDocument],
+            total_rows: 1,
+        }),
+        getCompletedDocumentsPage: jest.fn().mockResolvedValue({ documents: [], total_rows: 0 }),
+        getRejectedDocumentsPage: jest.fn().mockResolvedValue({ documents: [], total_rows: 0 }),
+        getDocument: jest.fn().mockResolvedValue(detail),
+    };
+    const mirrorService = {
+        findActiveDocumentIds: jest.fn().mockResolvedValue(["pending-doc"]),
+        findPermanentPurgeRequestedDocumentIds: jest.fn().mockResolvedValue(["pending-doc"]),
+        syncDocumentWithToken: jest.fn().mockResolvedValue({ status: "synced" }),
+        requestPermanentPurge: jest.fn(),
+        purgeDocuments: jest.fn(),
+        markDocumentsDeleted: jest.fn(),
+        clearPermanentPurgeRequest: jest.fn(),
+        findTerminalDocumentIds: jest.fn().mockResolvedValue([]),
+    };
+    const eformsignService = { cancelDocuments: jest.fn() };
+    const usecase = new BackfillEformsignDocsUsecase(
+        client as never,
+        createBoundary() as never,
+        { findByDocumentIdUnscoped: jest.fn().mockResolvedValue({ id: 1 }) } as never,
+        { mirrorRemoteDocument: jest.fn().mockResolvedValue({ documentId: "pending-doc" }) } as never,
+        mirrorService as never,
+        eformsignService as never,
+        durable.cancellationRepository as never,
+        durable.mirrorRepository as never,
+    );
+    return { client, mirrorService, eformsignService, durable, usecase };
+};
+
 describe("BackfillEformsignDocsUsecase", () => {
     const accessToken = "shared-access-token";
+    // Explicit constructor doubles for backfill tests that do not exercise the
+    // permanent-purge retry. Production wiring always supplies real adapters.
+    const TEST_CANCELLATION_REPOSITORY = {
+        begin: jest.fn(),
+        completeAccepted: jest.fn(),
+        markUncertain: jest.fn(),
+        clearAuthoritativeRefusal: jest.fn(),
+        reconcile: jest.fn(),
+        findByIntentId: jest.fn(),
+    };
+    const TEST_MIRROR_REPOSITORY = {
+        findState: jest.fn(),
+    };
 
     afterEach(() => {
         jest.clearAllMocks();
@@ -71,16 +158,24 @@ describe("BackfillEformsignDocsUsecase", () => {
             clearPermanentPurgeRequest: jest.fn().mockResolvedValue(undefined),
             findTerminalDocumentIds: jest.fn().mockResolvedValue([]),
         };
+        const durable = createDurableRetryDependencies("missing-doc");
         const usecase = new BackfillEformsignDocsUsecase(
             client as never,
             createBoundary() as never,
             { findByDocumentIdUnscoped: jest.fn() } as never,
             { mirrorRemoteDocument: jest.fn() } as never,
             mirrorService as never,
+            undefined as never,
+            durable.cancellationRepository as never,
+            durable.mirrorRepository as never,
         );
 
         await expect(usecase.execute({}, TEST_PRINCIPAL)).resolves.toEqual(expect.objectContaining({ failed: 0 }));
-        expect(mirrorService.purgeDocuments).toHaveBeenCalledWith(["missing-doc"]);
+        expect(durable.cancellationRepository.reconcile).toHaveBeenCalledWith(expect.objectContaining({
+            outcome: "delivered",
+            reason: "backfill provider absence confirmed",
+        }));
+        expect(mirrorService.purgeDocuments).not.toHaveBeenCalled();
         expect(mirrorService.markDocumentsDeleted).not.toHaveBeenCalled();
     });
 
@@ -106,6 +201,9 @@ describe("BackfillEformsignDocsUsecase", () => {
             { findByDocumentIdUnscoped: jest.fn() } as never,
             { mirrorRemoteDocument: jest.fn() } as never,
             mirrorService as never,
+            undefined as never,
+            TEST_CANCELLATION_REPOSITORY as never,
+            TEST_MIRROR_REPOSITORY as never,
         );
 
         await expect(usecase.execute({}, TEST_PRINCIPAL)).resolves.toEqual(expect.objectContaining({ failed: 0 }));
@@ -137,6 +235,9 @@ describe("BackfillEformsignDocsUsecase", () => {
             { findByDocumentIdUnscoped: jest.fn() } as never,
             { mirrorRemoteDocument: jest.fn() } as never,
             mirrorService as never,
+            undefined as never,
+            TEST_CANCELLATION_REPOSITORY as never,
+            TEST_MIRROR_REPOSITORY as never,
         );
 
         await expect(usecase.execute({}, TEST_PRINCIPAL)).resolves.toEqual(expect.objectContaining({ failed: 0 }));
@@ -167,6 +268,9 @@ describe("BackfillEformsignDocsUsecase", () => {
             { findByDocumentIdUnscoped: jest.fn() } as never,
             { mirrorRemoteDocument: jest.fn() } as never,
             mirrorService as never,
+            undefined as never,
+            TEST_CANCELLATION_REPOSITORY as never,
+            TEST_MIRROR_REPOSITORY as never,
         );
 
         await expect(usecase.execute({}, TEST_PRINCIPAL)).rejects.toThrow(
@@ -177,7 +281,7 @@ describe("BackfillEformsignDocsUsecase", () => {
 
     it("retries a confirmed-present purge by cancelling and purges only after vendor success", async () => {
         const document = createRemoteDocument("pending-doc");
-        const retryGeneration = new Date("2026-07-30T01:00:00.000Z");
+        const durable = createDurableRetryDependencies();
         const client = {
             getAccessToken: jest.fn().mockResolvedValue({ oauth_token: { access_token: accessToken } }),
             getInProgressDocumentsPage: jest.fn().mockResolvedValue({
@@ -192,9 +296,7 @@ describe("BackfillEformsignDocsUsecase", () => {
             findActiveDocumentIds: jest.fn().mockResolvedValue(["pending-doc"]),
             findPermanentPurgeRequestedDocumentIds: jest.fn().mockResolvedValue(["pending-doc"]),
             syncDocumentWithToken: jest.fn().mockResolvedValue({ status: "synced" }),
-            requestPermanentPurge: jest.fn().mockResolvedValue([
-                { documentId: "pending-doc", generation: retryGeneration },
-            ]),
+            requestPermanentPurge: jest.fn(),
             purgeDocuments: jest.fn().mockResolvedValue(undefined),
             markDocumentsDeleted: jest.fn(),
             clearPermanentPurgeRequest: jest.fn().mockResolvedValue(undefined),
@@ -212,26 +314,45 @@ describe("BackfillEformsignDocsUsecase", () => {
             { mirrorRemoteDocument: jest.fn().mockResolvedValue({ documentId: "pending-doc" }) } as never,
             mirrorService as never,
             eformsignService as never,
+            durable.cancellationRepository as never,
+            durable.mirrorRepository as never,
         );
 
         await expect(usecase.execute({}, TEST_PRINCIPAL)).resolves.toEqual(expect.objectContaining({ failed: 0 }));
         expect(client.getDocument).toHaveBeenCalledWith(accessToken, "pending-doc");
-        expect(mirrorService.requestPermanentPurge).toHaveBeenCalledWith(["pending-doc"]);
         // The retry cancels rather than deletes: the delete endpoint keeps the vendor's
         // copy, so a sweep must not erase it hours later.
         expect(eformsignService.cancelDocuments).toHaveBeenCalledWith(
             accessToken,
             ["pending-doc"],
         );
-        expect(mirrorService.clearPermanentPurgeRequest).not.toHaveBeenCalled();
-        expect(mirrorService.purgeDocuments).toHaveBeenCalledWith(["pending-doc"]);
+        expect(durable.cancellationRepository.completeAccepted).toHaveBeenCalledWith(expect.objectContaining({
+            target: durable.target,
+            providerReceipt: expect.objectContaining({ decision: "accepted" }),
+        }));
+        expect(mirrorService.requestPermanentPurge).not.toHaveBeenCalled();
+        expect(mirrorService.purgeDocuments).not.toHaveBeenCalled();
     });
 
-    it("finishes the purge when the vendor refuses to cancel an already-finished document", async () => {
-        // 042 = cancelled at the vendor. The mirror still reads 060 here, because a live
-        // purge intent fences every writer of statusType — which is the whole reason this
-        // branch consults the vendor's status instead.
-        const document = createRemoteDocument("pending-doc", "042");
+    it("uses the durable cancellation adapter for backfill completion", async () => {
+        const document = createRemoteDocument("pending-doc");
+        const cancellationTarget = {
+            documentId: "pending-doc",
+            branchId: "branch-1",
+            localDocumentId: 11,
+            clientId: 7,
+            assignmentId: 13,
+            templateId: "template-1",
+            providerDocumentId: "pending-doc",
+            sourceIntentId: "source-1",
+            sourceIntentStatus: "accepted",
+            purgeGeneration: new Date("2026-09-18T01:00:00.000Z"),
+            cancellationIntent: {
+                id: "cancel-intent-1",
+                status: "started",
+                attemptCount: 1,
+            },
+        };
         const client = {
             getAccessToken: jest.fn().mockResolvedValue({ oauth_token: { access_token: accessToken } }),
             getInProgressDocumentsPage: jest.fn().mockResolvedValue({
@@ -246,9 +367,165 @@ describe("BackfillEformsignDocsUsecase", () => {
             findActiveDocumentIds: jest.fn().mockResolvedValue(["pending-doc"]),
             findPermanentPurgeRequestedDocumentIds: jest.fn().mockResolvedValue(["pending-doc"]),
             syncDocumentWithToken: jest.fn().mockResolvedValue({ status: "synced" }),
-            requestPermanentPurge: jest.fn().mockResolvedValue([
-                { documentId: "pending-doc", generation: new Date("2026-07-30T01:00:00.000Z") },
-            ]),
+            requestPermanentPurge: jest.fn(),
+            purgeDocuments: jest.fn(),
+            markDocumentsDeleted: jest.fn(),
+            clearPermanentPurgeRequest: jest.fn(),
+            findTerminalDocumentIds: jest.fn().mockResolvedValue([]),
+        };
+        const eformsignService = {
+            cancelDocuments: jest.fn().mockResolvedValue({
+                result: { success_result: ["pending-doc"] },
+            }),
+        };
+        const cancellationRepository = {
+            begin: jest.fn().mockResolvedValue({ targets: [cancellationTarget] }),
+            completeAccepted: jest.fn().mockResolvedValue({ status: "accepted" }),
+            markUncertain: jest.fn(),
+            clearAuthoritativeRefusal: jest.fn(),
+            reconcile: jest.fn(),
+            findByIntentId: jest.fn(),
+        };
+        const mirrorRepository = {
+            findState: jest.fn().mockResolvedValue({ branchId: "branch-1" }),
+        };
+        const usecase = new BackfillEformsignDocsUsecase(
+            client as never,
+            createBoundary() as never,
+            { findByDocumentIdUnscoped: jest.fn().mockResolvedValue({ id: 1 }) } as never,
+            { mirrorRemoteDocument: jest.fn().mockResolvedValue({ documentId: "pending-doc" }) } as never,
+            mirrorService as never,
+            eformsignService as never,
+            cancellationRepository as never,
+            mirrorRepository as never,
+        );
+
+        await expect(usecase.execute({}, TEST_PRINCIPAL)).resolves.toEqual(expect.objectContaining({ failed: 0 }));
+        expect(cancellationRepository.begin).toHaveBeenCalledWith(expect.objectContaining({
+            branchId: "branch-1",
+            documentIds: ["pending-doc"],
+        }));
+        expect(cancellationRepository.completeAccepted).toHaveBeenCalledWith(expect.objectContaining({
+            target: cancellationTarget,
+            providerReceipt: expect.objectContaining({
+                source: "eformsign_backfill_cancel",
+                decision: "accepted",
+            }),
+        }));
+        expect(mirrorService.requestPermanentPurge).not.toHaveBeenCalled();
+        expect(mirrorService.purgeDocuments).not.toHaveBeenCalled();
+    });
+
+    it("retains the purge fence when post-scan detail belongs to another provider document", async () => {
+        const mismatchedDetail = {
+            ...createRemoteDocument("other-doc", "042"),
+            id: "other-doc",
+        };
+        const fixture = createPurgeIdentityFixture(mismatchedDetail);
+
+        await expect(fixture.usecase.execute({}, TEST_PRINCIPAL)).rejects.toThrow(
+            /failed to verify locally active eformsign document pending-doc/i,
+        );
+        // The list projection may be synced once; the mismatched detail must not
+        // trigger the force sync used by the purge verification path.
+        expect(fixture.mirrorService.syncDocumentWithToken).toHaveBeenCalledTimes(1);
+        expect(fixture.mirrorService.syncDocumentWithToken).not.toHaveBeenCalledWith(
+            expect.anything(),
+            "pending-doc",
+            expect.objectContaining({ force: true }),
+        );
+        expect(fixture.durable.cancellationRepository.begin).not.toHaveBeenCalled();
+        expect(fixture.durable.cancellationRepository.reconcile).not.toHaveBeenCalled();
+        expect(fixture.durable.cancellationRepository.completeAccepted).not.toHaveBeenCalled();
+        expect(fixture.durable.cancellationRepository.markUncertain).not.toHaveBeenCalled();
+        expect(fixture.mirrorService.purgeDocuments).not.toHaveBeenCalled();
+        expect(fixture.eformsignService.cancelDocuments).not.toHaveBeenCalled();
+    });
+
+    it("retains the purge fence when post-scan detail omits its provider document id", async () => {
+        const missingIdentityDetail = { ...createRemoteDocument("pending-doc", "042") } as {
+            id?: string;
+            current_status: { status_type: string };
+        };
+        delete missingIdentityDetail.id;
+        const fixture = createPurgeIdentityFixture(missingIdentityDetail);
+
+        await expect(fixture.usecase.execute({}, TEST_PRINCIPAL)).rejects.toThrow(
+            /failed to verify locally active eformsign document pending-doc/i,
+        );
+        expect(fixture.mirrorService.syncDocumentWithToken).toHaveBeenCalledTimes(1);
+        expect(fixture.mirrorService.syncDocumentWithToken).not.toHaveBeenCalledWith(
+            expect.anything(),
+            "pending-doc",
+            expect.objectContaining({ force: true }),
+        );
+        expect(fixture.durable.cancellationRepository.begin).not.toHaveBeenCalled();
+        expect(fixture.durable.cancellationRepository.reconcile).not.toHaveBeenCalled();
+        expect(fixture.durable.cancellationRepository.completeAccepted).not.toHaveBeenCalled();
+        expect(fixture.durable.cancellationRepository.markUncertain).not.toHaveBeenCalled();
+        expect(fixture.mirrorService.purgeDocuments).not.toHaveBeenCalled();
+        expect(fixture.eformsignService.cancelDocuments).not.toHaveBeenCalled();
+    });
+
+    it("fails closed when durable retry dependencies are missing", async () => {
+        const mirrorService = {
+            requestPermanentPurge: jest.fn(),
+            purgeDocuments: jest.fn(),
+            clearPermanentPurgeRequest: jest.fn(),
+        };
+        const eformsignService = { cancelDocuments: jest.fn() };
+        const usecase = new BackfillEformsignDocsUsecase(
+            {} as never,
+            {} as never,
+            {} as never,
+            {} as never,
+            mirrorService as never,
+            eformsignService as never,
+            undefined as never,
+            undefined as never,
+        );
+        const retry = (usecase as unknown as {
+            retryConfirmedPresentPermanentPurge(
+                documentId: string,
+                vendorStatusType: string | undefined,
+                providerDocumentId: string | undefined,
+                accessToken: () => string,
+                refreshAccessToken: () => Promise<string>,
+            ): Promise<void>;
+        }).retryConfirmedPresentPermanentPurge.bind(usecase);
+        await expect(retry(
+            "pending-doc",
+            undefined,
+            "pending-doc",
+            () => accessToken,
+            async () => accessToken,
+        )).rejects.toThrow("Durable eformsign cancellation dependencies are unavailable");
+        expect(mirrorService.requestPermanentPurge).not.toHaveBeenCalled();
+        expect(mirrorService.purgeDocuments).not.toHaveBeenCalled();
+        expect(eformsignService.cancelDocuments).not.toHaveBeenCalled();
+    });
+
+    it("finishes the purge when the vendor refuses to cancel an already-finished document", async () => {
+        // 042 = cancelled at the vendor. The mirror still reads 060 here, because a live
+        // purge intent fences every writer of statusType — which is the whole reason this
+        // branch consults the vendor's status instead.
+        const document = createRemoteDocument("pending-doc", "042");
+        const durable = createDurableRetryDependencies();
+        const client = {
+            getAccessToken: jest.fn().mockResolvedValue({ oauth_token: { access_token: accessToken } }),
+            getInProgressDocumentsPage: jest.fn().mockResolvedValue({
+                documents: [document],
+                total_rows: 1,
+            }),
+            getCompletedDocumentsPage: jest.fn().mockResolvedValue({ documents: [], total_rows: 0 }),
+            getRejectedDocumentsPage: jest.fn().mockResolvedValue({ documents: [], total_rows: 0 }),
+            getDocument: jest.fn().mockResolvedValue(document),
+        };
+        const mirrorService = {
+            findActiveDocumentIds: jest.fn().mockResolvedValue(["pending-doc"]),
+            findPermanentPurgeRequestedDocumentIds: jest.fn().mockResolvedValue(["pending-doc"]),
+            syncDocumentWithToken: jest.fn().mockResolvedValue({ status: "synced" }),
+            requestPermanentPurge: jest.fn(),
             purgeDocuments: jest.fn().mockResolvedValue(undefined),
             markDocumentsDeleted: jest.fn(),
             clearPermanentPurgeRequest: jest.fn(),
@@ -268,18 +545,24 @@ describe("BackfillEformsignDocsUsecase", () => {
             { mirrorRemoteDocument: jest.fn().mockResolvedValue({ documentId: "pending-doc" }) } as never,
             mirrorService as never,
             eformsignService as never,
+            durable.cancellationRepository as never,
+            durable.mirrorRepository as never,
         );
 
         await expect(usecase.execute({}, TEST_PRINCIPAL)).resolves.toEqual(expect.objectContaining({ failed: 0 }));
         // eformsign never cancels a finished document, so retrying forever would make every
         // sweep from here on reattempt a call that cannot succeed.
-        expect(mirrorService.purgeDocuments).toHaveBeenCalledWith(["pending-doc"]);
+        expect(durable.cancellationRepository.reconcile).toHaveBeenCalledWith(expect.objectContaining({
+            outcome: "delivered",
+            providerDocumentId: "pending-doc",
+        }));
+        expect(mirrorService.purgeDocuments).not.toHaveBeenCalled();
         expect(mirrorService.clearPermanentPurgeRequest).not.toHaveBeenCalled();
     });
 
     it("retains a retried purge intent for an ambiguous vendor cancel outcome", async () => {
         const document = createRemoteDocument("pending-doc");
-        const retryGeneration = new Date("2026-07-30T01:00:00.000Z");
+        const durable = createDurableRetryDependencies();
         const client = {
             getAccessToken: jest.fn().mockResolvedValue({ oauth_token: { access_token: accessToken } }),
             getInProgressDocumentsPage: jest.fn().mockResolvedValue({
@@ -294,9 +577,7 @@ describe("BackfillEformsignDocsUsecase", () => {
             findActiveDocumentIds: jest.fn().mockResolvedValue(["pending-doc"]),
             findPermanentPurgeRequestedDocumentIds: jest.fn().mockResolvedValue(["pending-doc"]),
             syncDocumentWithToken: jest.fn().mockResolvedValue({ status: "synced" }),
-            requestPermanentPurge: jest.fn().mockResolvedValue([
-                { documentId: "pending-doc", generation: retryGeneration },
-            ]),
+            requestPermanentPurge: jest.fn(),
             purgeDocuments: jest.fn(),
             markDocumentsDeleted: jest.fn(),
             clearPermanentPurgeRequest: jest.fn(),
@@ -316,17 +597,22 @@ describe("BackfillEformsignDocsUsecase", () => {
             { mirrorRemoteDocument: jest.fn().mockResolvedValue({ documentId: "pending-doc" }) } as never,
             mirrorService as never,
             eformsignService as never,
+            durable.cancellationRepository as never,
+            durable.mirrorRepository as never,
         );
 
         await expect(usecase.execute({}, TEST_PRINCIPAL)).resolves.toEqual(expect.objectContaining({ failed: 0 }));
-        expect(mirrorService.requestPermanentPurge).toHaveBeenCalledWith(["pending-doc"]);
+        expect(durable.cancellationRepository.markUncertain).toHaveBeenCalledWith(expect.objectContaining({
+            target: durable.target,
+            reason: "provider_cancel_uncertain:4000031",
+        }));
         expect(mirrorService.clearPermanentPurgeRequest).not.toHaveBeenCalled();
         expect(mirrorService.purgeDocuments).not.toHaveBeenCalled();
     });
 
     it("clears only the retry generation for a definitive vendor cancel rejection", async () => {
         const document = createRemoteDocument("pending-doc");
-        const retryGeneration = new Date("2026-07-30T01:00:00.000Z");
+        const durable = createDurableRetryDependencies();
         const client = {
             getAccessToken: jest.fn().mockResolvedValue({ oauth_token: { access_token: accessToken } }),
             getInProgressDocumentsPage: jest.fn().mockResolvedValue({
@@ -341,9 +627,7 @@ describe("BackfillEformsignDocsUsecase", () => {
             findActiveDocumentIds: jest.fn().mockResolvedValue(["pending-doc"]),
             findPermanentPurgeRequestedDocumentIds: jest.fn().mockResolvedValue(["pending-doc"]),
             syncDocumentWithToken: jest.fn().mockResolvedValue({ status: "synced" }),
-            requestPermanentPurge: jest.fn().mockResolvedValue([
-                { documentId: "pending-doc", generation: retryGeneration },
-            ]),
+            requestPermanentPurge: jest.fn(),
             purgeDocuments: jest.fn(),
             markDocumentsDeleted: jest.fn(),
             clearPermanentPurgeRequest: jest.fn().mockResolvedValue(["pending-doc"]),
@@ -363,12 +647,16 @@ describe("BackfillEformsignDocsUsecase", () => {
             { mirrorRemoteDocument: jest.fn().mockResolvedValue({ documentId: "pending-doc" }) } as never,
             mirrorService as never,
             eformsignService as never,
+            durable.cancellationRepository as never,
+            durable.mirrorRepository as never,
         );
 
         await expect(usecase.execute({}, TEST_PRINCIPAL)).resolves.toEqual(expect.objectContaining({ failed: 0 }));
-        expect(mirrorService.clearPermanentPurgeRequest).toHaveBeenCalledWith([
-            { documentId: "pending-doc", generation: retryGeneration },
-        ]);
+        expect(durable.cancellationRepository.clearAuthoritativeRefusal).toHaveBeenCalledWith(expect.objectContaining({
+            target: durable.target,
+            reason: "provider_cancel_authoritative_refusal:4000164",
+        }));
+        expect(mirrorService.clearPermanentPurgeRequest).not.toHaveBeenCalled();
         expect(mirrorService.purgeDocuments).not.toHaveBeenCalled();
     });
 
@@ -394,6 +682,9 @@ describe("BackfillEformsignDocsUsecase", () => {
             { findByDocumentIdUnscoped: jest.fn() } as never,
             { mirrorRemoteDocument: jest.fn() } as never,
             mirrorService as never,
+            undefined as never,
+            TEST_CANCELLATION_REPOSITORY as never,
+            TEST_MIRROR_REPOSITORY as never,
         );
 
         await expect(usecase.execute({}, TEST_PRINCIPAL)).rejects.toThrow(
@@ -420,6 +711,9 @@ describe("BackfillEformsignDocsUsecase", () => {
             { findByDocumentIdUnscoped: jest.fn() } as never,
             { mirrorRemoteDocument: jest.fn() } as never,
             mirrorService as never,
+            undefined as never,
+            TEST_CANCELLATION_REPOSITORY as never,
+            TEST_MIRROR_REPOSITORY as never,
         );
 
         await expect(usecase.execute({}, TEST_PRINCIPAL)).rejects.toThrow(/failed for types=01/i);
@@ -464,6 +758,10 @@ describe("BackfillEformsignDocsUsecase", () => {
             credentialBoundary as never,
             repository as never,
             mirror as never,
+            undefined as never,
+            undefined as never,
+            TEST_CANCELLATION_REPOSITORY as never,
+            TEST_MIRROR_REPOSITORY as never,
         );
 
         const summary = await usecase.execute({}, TEST_PRINCIPAL);
@@ -539,6 +837,10 @@ describe("BackfillEformsignDocsUsecase", () => {
             createBoundary() as never,
             repository as never,
             mirror as never,
+            undefined as never,
+            undefined as never,
+            TEST_CANCELLATION_REPOSITORY as never,
+            TEST_MIRROR_REPOSITORY as never,
         );
 
         const summary = await usecase.execute({}, TEST_PRINCIPAL);
@@ -595,6 +897,10 @@ describe("BackfillEformsignDocsUsecase", () => {
             createBoundary() as never,
             repository as never,
             mirror as never,
+            undefined as never,
+            undefined as never,
+            TEST_CANCELLATION_REPOSITORY as never,
+            TEST_MIRROR_REPOSITORY as never,
         );
 
         const result = usecase.execute({}, TEST_PRINCIPAL);
@@ -664,6 +970,9 @@ describe("BackfillEformsignDocsUsecase", () => {
             repository as never,
             mirror as never,
             documentMirrorService as never,
+            undefined as never,
+            TEST_CANCELLATION_REPOSITORY as never,
+            TEST_MIRROR_REPOSITORY as never,
         );
 
         const summary = await usecase.execute({}, TEST_PRINCIPAL);
@@ -723,6 +1032,10 @@ describe("BackfillEformsignDocsUsecase", () => {
             createBoundary() as never,
             repository as never,
             mirror as never,
+            undefined as never,
+            undefined as never,
+            TEST_CANCELLATION_REPOSITORY as never,
+            TEST_MIRROR_REPOSITORY as never,
         );
 
         // The second document must still be written — one bad row may not abort the
@@ -780,6 +1093,9 @@ describe("BackfillEformsignDocsUsecase", () => {
             { findByDocumentIdUnscoped: jest.fn().mockResolvedValue(null) } as never,
             mirror as never,
             documentMirrorService as never,
+            undefined as never,
+            TEST_CANCELLATION_REPOSITORY as never,
+            TEST_MIRROR_REPOSITORY as never,
         );
 
         await expect(usecase.execute({}, TEST_PRINCIPAL)).rejects.toMatchObject({
@@ -837,6 +1153,10 @@ describe("BackfillEformsignDocsUsecase", () => {
             createBoundary() as never,
             repository as never,
             mirror as never,
+            undefined as never,
+            undefined as never,
+            TEST_CANCELLATION_REPOSITORY as never,
+            TEST_MIRROR_REPOSITORY as never,
         );
 
         await expect(usecase.execute({
@@ -875,6 +1195,10 @@ describe("BackfillEformsignDocsUsecase", () => {
             createBoundary() as never,
             repository as never,
             mirror as never,
+            undefined as never,
+            undefined as never,
+            TEST_CANCELLATION_REPOSITORY as never,
+            TEST_MIRROR_REPOSITORY as never,
         );
 
         await expect(usecase.execute({}, TEST_PRINCIPAL)).rejects.toBeInstanceOf(BackfillEformsignDocsError);
@@ -930,6 +1254,10 @@ describe("BackfillEformsignDocsUsecase", () => {
             createBoundary() as never,
             repository as never,
             mirror as never,
+            undefined as never,
+            undefined as never,
+            TEST_CANCELLATION_REPOSITORY as never,
+            TEST_MIRROR_REPOSITORY as never,
         );
 
         await expect(usecase.execute({}, TEST_PRINCIPAL)).rejects.toMatchObject({
@@ -989,6 +1317,10 @@ describe("BackfillEformsignDocsUsecase", () => {
             createBoundary() as never,
             repository as never,
             mirror as never,
+            undefined as never,
+            undefined as never,
+            TEST_CANCELLATION_REPOSITORY as never,
+            TEST_MIRROR_REPOSITORY as never,
         );
 
         await expect(usecase.execute({}, TEST_PRINCIPAL)).rejects.toMatchObject({
@@ -1052,6 +1384,10 @@ describe("BackfillEformsignDocsUsecase", () => {
             createBoundary() as never,
             repository as never,
             mirror as never,
+            undefined as never,
+            undefined as never,
+            TEST_CANCELLATION_REPOSITORY as never,
+            TEST_MIRROR_REPOSITORY as never,
         );
 
         await expect(usecase.execute({}, TEST_PRINCIPAL)).rejects.toMatchObject({
@@ -1147,6 +1483,10 @@ describe("BackfillEformsignDocsUsecase", () => {
             createBoundary() as never,
             repository as never,
             mirror as never,
+            undefined as never,
+            undefined as never,
+            TEST_CANCELLATION_REPOSITORY as never,
+            TEST_MIRROR_REPOSITORY as never,
         );
 
         await expect(usecase.execute({}, TEST_PRINCIPAL)).rejects.toMatchObject({
@@ -1199,6 +1539,10 @@ describe("BackfillEformsignDocsUsecase", () => {
             createBoundary() as never,
             repository as never,
             mirror as never,
+            undefined as never,
+            undefined as never,
+            TEST_CANCELLATION_REPOSITORY as never,
+            TEST_MIRROR_REPOSITORY as never,
         );
 
         await expect(usecase.execute({}, TEST_PRINCIPAL)).rejects.toMatchObject({
@@ -1269,6 +1613,10 @@ describe("BackfillEformsignDocsUsecase", () => {
             credentialBoundary as never,
             repository as never,
             mirror as never,
+            undefined as never,
+            undefined as never,
+            TEST_CANCELLATION_REPOSITORY as never,
+            TEST_MIRROR_REPOSITORY as never,
         );
 
         await expect(usecase.execute({}, TEST_PRINCIPAL)).resolves.toMatchObject({
@@ -1347,6 +1695,10 @@ describe("BackfillEformsignDocsUsecase", () => {
             credentialBoundary as never,
             repository as never,
             mirror as never,
+            undefined as never,
+            undefined as never,
+            TEST_CANCELLATION_REPOSITORY as never,
+            TEST_MIRROR_REPOSITORY as never,
         );
 
         await expect(usecase.execute({}, TEST_PRINCIPAL)).resolves.toMatchObject({
@@ -1414,6 +1766,9 @@ describe("BackfillEformsignDocsUsecase", () => {
             repository as never,
             mirror as never,
             documentMirrorService as never,
+            undefined as never,
+            TEST_CANCELLATION_REPOSITORY as never,
+            TEST_MIRROR_REPOSITORY as never,
         );
 
         await expect(usecase.execute({
@@ -1478,6 +1833,10 @@ describe("BackfillEformsignDocsUsecase", () => {
             credentialBoundary as never,
             repository as never,
             mirror as never,
+            undefined as never,
+            undefined as never,
+            TEST_CANCELLATION_REPOSITORY as never,
+            TEST_MIRROR_REPOSITORY as never,
         );
 
         await expect(usecase.execute({}, TEST_PRINCIPAL)).rejects.toBeInstanceOf(
@@ -1528,6 +1887,10 @@ describe("BackfillEformsignDocsUsecase", () => {
             createBoundary() as never,
             repository as never,
             mirror,
+            undefined as never,
+            undefined as never,
+            TEST_CANCELLATION_REPOSITORY as never,
+            TEST_MIRROR_REPOSITORY as never,
         );
 
         await usecase.execute({}, TEST_PRINCIPAL);
@@ -1579,6 +1942,10 @@ describe("BackfillEformsignDocsUsecase", () => {
             createBoundary() as never,
             repository as never,
             mirror as never,
+            undefined as never,
+            undefined as never,
+            TEST_CANCELLATION_REPOSITORY as never,
+            TEST_MIRROR_REPOSITORY as never,
         );
 
         const summary = await usecase.execute({}, TEST_PRINCIPAL);
@@ -1633,6 +2000,10 @@ describe("BackfillEformsignDocsUsecase", () => {
             createBoundary() as never,
             repository as never,
             mirror as never,
+            undefined as never,
+            undefined as never,
+            TEST_CANCELLATION_REPOSITORY as never,
+            TEST_MIRROR_REPOSITORY as never,
         );
 
         const summary = await usecase.execute({}, TEST_PRINCIPAL);
@@ -1684,6 +2055,10 @@ describe("BackfillEformsignDocsUsecase", () => {
             createBoundary() as never,
             repository as never,
             mirror,
+            undefined as never,
+            undefined as never,
+            TEST_CANCELLATION_REPOSITORY as never,
+            TEST_MIRROR_REPOSITORY as never,
         );
 
         await usecase.execute({}, TEST_PRINCIPAL);

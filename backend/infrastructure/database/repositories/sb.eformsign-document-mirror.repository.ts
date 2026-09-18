@@ -489,158 +489,9 @@ implements IEformsignDocumentMirrorRepository {
         if (documentIds.length === 0) {
             return;
         }
-        await this.prisma.$transaction(async (tx) => {
-            // Take the same parent-row lock as saveFile before deleting child
-            // rows, so an in-flight download cannot recreate a purged file.
-            const rows = await tx.$queryRaw<{
-                id: number;
-                documentId: string;
-                clientId: number | null;
-                autoRegisteredClient: boolean;
-            }[]>(Prisma.sql`
-                SELECT
-                    id,
-                    document_id AS "documentId",
-                    client_id AS "clientId",
-                    auto_registered_client AS "autoRegisteredClient"
-                FROM eformsign_doc
-                WHERE document_id IN (${Prisma.join(documentIds)})
-                ORDER BY id
-                FOR UPDATE
-            `);
-            if (rows.length === 0) {
-                return;
-            }
-            const rowIds = rows.map((row) => row.id);
-            const purgedDocumentIds = rows.map((row) => row.documentId);
-            const autoRegisteredClients = rows.filter((row) =>
-                row.autoRegisteredClient && row.clientId !== null,
-            );
-            for (const row of autoRegisteredClients) {
-                const clientId = row.clientId;
-                if (clientId === null) continue;
-                const lockedClient = await tx.$queryRaw<Array<{ id: number }>>(Prisma.sql`
-                    SELECT id
-                    FROM client
-                    WHERE id = ${clientId}
-                    FOR UPDATE
-                `);
-                if (lockedClient.length !== 1) continue;
-                const rollbackEligibleClient = await tx.client.findFirst({
-                    where: {
-                        id: clientId,
-                        eDocId: { in: purgedDocumentIds },
-                        eformsignDocs: {
-                            none: { id: { notIn: rowIds } },
-                        },
-                        employeeSchedules: { none: {} },
-                        callRecords: { none: {} },
-                        clientDrafts: { none: {} },
-                        scheduleChangeRequests: { none: {} },
-                        messageLogs: { none: {} },
-                        eformsignDocumentJobs: { none: {} },
-                    },
-                    select: { id: true },
-                });
-                if (!rollbackEligibleClient) continue;
-                // Jobs with no send attempt are rollback-only artifacts of the
-                // automatic registration. Sent/logged work is retained and the
-                // client deletion guard below preserves its audit owner.
-                await tx.message_trigger_job.deleteMany({
-                    where: {
-                        clientId,
-                        sentAt: null,
-                        logs: { none: {} },
-                    },
-                });
-                // Lifecycle initialization may have created an empty case. Only
-                // remove that empty shell; any real service-record work keeps the
-                // client outside the deletion predicate below.
-                await tx.service_record_case.deleteMany({
-                    where: {
-                        clientId,
-                        assignments: { none: {} },
-                        days: { none: {} },
-                        serviceRecordTokens: { none: {} },
-                        legacyHeaders: { none: {} },
-                        snapshotChunks: { none: {} },
-                        editDrafts: { none: {} },
-                        revisions: { none: {} },
-                        eformsignDocs: { none: {} },
-                    },
-                });
-                await tx.client.deleteMany({
-                    where: {
-                        id: clientId,
-                        eDocId: { in: purgedDocumentIds },
-                        eformsignDocs: {
-                            none: { id: { notIn: rowIds } },
-                        },
-                        employeeSchedules: { none: {} },
-                        callRecords: { none: {} },
-                        clientDrafts: { none: {} },
-                        scheduleChangeRequests: { none: {} },
-                        messageLogs: { none: {} },
-                        eformsignDocumentJobs: { none: {} },
-                        messageTriggerJobs: { none: {} },
-                        serviceRecordCase: { is: null },
-                    },
-                });
-            }
-            await tx.client.updateMany({
-                where: { eDocId: { in: purgedDocumentIds } },
-                data: { eDocId: null },
-            });
-            await tx.eformsign_doc_file.deleteMany({
-                where: { eformsignDocId: { in: rowIds } },
-            });
-            await tx.eformsign_doc.updateMany({
-                where: { id: { in: rowIds } },
-                data: {
-                    documentName: "삭제된 전자문서",
-                    documentNumber: null,
-                    customerName: null,
-                    customerPhone: null,
-                    creatorName: null,
-                    lastEditorName: null,
-                    stepRecipientTypes: null,
-                    statusType: "049",
-                    statusDetail: "영구 삭제",
-                    stepType: "-",
-                    stepIndex: "-",
-                    stepName: "삭제됨",
-                    stepRecipientType: "-",
-                    stepRecipientName: "삭제됨",
-                    stepRecipientSms: "-",
-                    updatedDate: deletedAt,
-                    expired: false,
-                    clientId: null,
-                    autoRegisteredClient: false,
-                    // A purge tombstone must retain only its deletion audit trail.
-                    // Keep it out of client/service-record views and lifecycle
-                    // readiness sets.
-                    documentKind: null,
-                    employeeScheduleId: null,
-                    serviceRecordCaseId: null,
-                    snapshotVersion: null,
-                    snapshotChunkIndex: null,
-                    detailPayload: Prisma.DbNull,
-                    detailSourceUpdatedDate: deletedAt,
-                    detailSyncedAt: deletedAt,
-                    syncStatus: "ready",
-                    syncError: null,
-                    syncErrorAt: null,
-                    // Clearing the intent is what ends the purge. It is not what keeps the
-                    // document buried: the 049 status does that on its own, because the
-                    // conditional upsert throws EformsignDocStaleUpdateError when the row
-                    // exists and its staleGuard refuses, and only creates when no row exists
-                    // at all. A retained intent instead means "we still owe the vendor a
-                    // purge", which the reconcile sweep acts on — see the retry it drives in
-                    // backfill-eformsign-docs.usecase.ts.
-                    permanentPurgeRequestedAt: null,
-                },
-            });
-        });
+        await this.prisma.$transaction((tx) =>
+            purgeEformsignDocumentContentInTransaction(tx, documentIds, deletedAt),
+        );
     }
 
     async markSyncFinished(
@@ -689,6 +540,146 @@ implements IEformsignDocumentMirrorRepository {
             },
         });
     }
+}
+
+/**
+ * Applies the existing mirror purge semantics inside a caller-owned Prisma
+ * transaction. Cancellation uses this helper so the durable cancel intent CAS
+ * and the local tombstone commit or roll back together.
+ */
+export async function purgeEformsignDocumentContentInTransaction(
+    tx: Prisma.TransactionClient,
+    documentIds: string[],
+    deletedAt: Date,
+): Promise<void> {
+    const uniqueIds = [...new Set(documentIds)];
+    if (uniqueIds.length === 0) return;
+
+    // Take the same parent-row lock as saveFile before deleting child rows, so
+    // an in-flight download cannot recreate a purged file.
+    const rows = await tx.$queryRaw<{
+        id: number;
+        documentId: string;
+        clientId: number | null;
+        autoRegisteredClient: boolean;
+    }[]>(Prisma.sql`
+        SELECT
+            id,
+            document_id AS "documentId",
+            client_id AS "clientId",
+            auto_registered_client AS "autoRegisteredClient"
+        FROM eformsign_doc
+        WHERE document_id IN (${Prisma.join(uniqueIds)})
+        ORDER BY id
+        FOR UPDATE
+    `);
+    if (rows.length === 0) return;
+
+    const rowIds = rows.map((row) => row.id);
+    const purgedDocumentIds = rows.map((row) => row.documentId);
+    const autoRegisteredClients = rows.filter((row) =>
+        row.autoRegisteredClient && row.clientId !== null,
+    );
+    for (const row of autoRegisteredClients) {
+        const clientId = row.clientId;
+        if (clientId === null) continue;
+        const lockedClient = await tx.$queryRaw<Array<{ id: number }>>(Prisma.sql`
+            SELECT id
+            FROM client
+            WHERE id = ${clientId}
+            FOR UPDATE
+        `);
+        if (lockedClient.length !== 1) continue;
+        const rollbackEligibleClient = await tx.client.findFirst({
+            where: {
+                id: clientId,
+                eDocId: { in: purgedDocumentIds },
+                eformsignDocs: { none: { id: { notIn: rowIds } } },
+                employeeSchedules: { none: {} },
+                callRecords: { none: {} },
+                clientDrafts: { none: {} },
+                scheduleChangeRequests: { none: {} },
+                messageLogs: { none: {} },
+                eformsignDocumentJobs: { none: {} },
+            },
+            select: { id: true },
+        });
+        if (!rollbackEligibleClient) continue;
+        await tx.message_trigger_job.deleteMany({
+            where: { clientId, sentAt: null, logs: { none: {} } },
+        });
+        await tx.service_record_case.deleteMany({
+            where: {
+                clientId,
+                assignments: { none: {} },
+                days: { none: {} },
+                serviceRecordTokens: { none: {} },
+                legacyHeaders: { none: {} },
+                snapshotChunks: { none: {} },
+                editDrafts: { none: {} },
+                revisions: { none: {} },
+                eformsignDocs: { none: {} },
+            },
+        });
+        await tx.client.deleteMany({
+            where: {
+                id: clientId,
+                eDocId: { in: purgedDocumentIds },
+                eformsignDocs: { none: { id: { notIn: rowIds } } },
+                employeeSchedules: { none: {} },
+                callRecords: { none: {} },
+                clientDrafts: { none: {} },
+                scheduleChangeRequests: { none: {} },
+                messageLogs: { none: {} },
+                eformsignDocumentJobs: { none: {} },
+                messageTriggerJobs: { none: {} },
+                serviceRecordCase: { is: null },
+            },
+        });
+    }
+    await tx.client.updateMany({
+        where: { eDocId: { in: purgedDocumentIds } },
+        data: { eDocId: null },
+    });
+    await tx.eformsign_doc_file.deleteMany({
+        where: { eformsignDocId: { in: rowIds } },
+    });
+    await tx.eformsign_doc.updateMany({
+        where: { id: { in: rowIds } },
+        data: {
+            documentName: "삭제된 전자문서",
+            documentNumber: null,
+            customerName: null,
+            customerPhone: null,
+            creatorName: null,
+            lastEditorName: null,
+            stepRecipientTypes: null,
+            statusType: "049",
+            statusDetail: "영구 삭제",
+            stepType: "-",
+            stepIndex: "-",
+            stepName: "삭제됨",
+            stepRecipientType: "-",
+            stepRecipientName: "삭제됨",
+            stepRecipientSms: "-",
+            updatedDate: deletedAt,
+            expired: false,
+            clientId: null,
+            autoRegisteredClient: false,
+            documentKind: null,
+            employeeScheduleId: null,
+            serviceRecordCaseId: null,
+            snapshotVersion: null,
+            snapshotChunkIndex: null,
+            detailPayload: Prisma.DbNull,
+            detailSourceUpdatedDate: deletedAt,
+            detailSyncedAt: deletedAt,
+            syncStatus: "ready",
+            syncError: null,
+            syncErrorAt: null,
+            permanentPurgeRequestedAt: null,
+        },
+    });
 }
 
 function isPrismaUniqueConstraintError(error: unknown): boolean {
