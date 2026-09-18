@@ -105,10 +105,10 @@ export class AgentAutomationJobAuthorityService {
         // Dedicated schedule/link owners require their bounded recipe adapters;
         // a known task scope cannot acquire authority from a generic substitute.
         if (input.scope.kind === "employee-assignment") {
-            return this.describeCurrentEmployeeAssignmentEffect(transaction, job, input, render, preparedSnapshotHash);
+            return this.describeCurrentEmployeeAssignmentEffect(transaction, job, input, render, preparedSnapshotHash, taskReference);
         }
         if (input.scope.kind === "service-record-link") {
-            return this.describeCurrentServiceRecordLinkEffect(transaction, job, input, render, preparedSnapshotHash);
+            return this.describeCurrentServiceRecordLinkEffect(transaction, job, input, render, preparedSnapshotHash, taskReference);
         }
         if (input.scope.kind !== "client-rule") return null;
         const settings = await this.sources.readClientAutomationSettings(input.scope.branchId, transaction);
@@ -177,6 +177,7 @@ export class AgentAutomationJobAuthorityService {
         input: Parameters<DescribeCurrentAutomationEffect>[0],
         render: CanonicalAutomationRenderer,
         preparedSnapshotHash?: string,
+        taskReference?: AgentAutomationTaskCommitReference,
     ) {
         const settings = await this.sources.readClientAutomationSettings(input.scope.branchId, transaction);
         if (settings.status !== "available" || input.scope.scheduleId === null || job.employeeScheduleId !== input.scope.scheduleId) {
@@ -194,6 +195,7 @@ export class AgentAutomationJobAuthorityService {
 
         const source = agentAutomationSourcePayload(job.payload);
         const concrete = buildEmployeeAssignmentMessageRecipe(rule, schedule, job.scheduledFor);
+        if (concrete && taskReference) concrete.payload = { ...concrete.payload, taskAutomationReference: taskReference };
         if (!concrete || job.scheduledFor.getTime() !== concrete.scheduledFor.getTime()
             || job.dedupeKey !== concrete.dedupeKey || job.recipientPhone !== concrete.recipientPhone
             || agentBindingHash(source) !== agentBindingHash(concrete.payload)) return null;
@@ -237,6 +239,7 @@ export class AgentAutomationJobAuthorityService {
         input: Parameters<DescribeCurrentAutomationEffect>[0],
         render: CanonicalAutomationRenderer,
         preparedSnapshotHash?: string,
+        taskReference?: AgentAutomationTaskCommitReference,
     ) {
         if (input.scope.scheduleId === null || job.employeeScheduleId !== input.scope.scheduleId
             || job.ruleId !== SERVICE_RECORD_LINK_RULE_ID
@@ -366,6 +369,8 @@ export class AgentAutomationJobAuthorityService {
             pastTriggerEnabled: settings.pastTriggerEnabled,
             pastTriggerConfig: settings.pastTriggerConfig,
         };
+        const effectSourcePayload = { ...payload };
+        if (taskReference) delete effectSourcePayload["taskAutomationReference"];
         return describeServiceRecordLinkEffect({
             branchId: input.scope.branchId,
             subject: input.subject,
@@ -375,7 +380,7 @@ export class AgentAutomationJobAuthorityService {
             token: token as ServiceRecordLinkTokenSource,
             scheduleIdentity: input.scope.scheduleIdentity ?? "",
             serviceRecordUrl,
-            sourcePayload: payload,
+            sourcePayload: effectSourcePayload,
             scheduledFor: job.scheduledFor,
             dedupeKey: job.dedupeKey,
             snapshot,

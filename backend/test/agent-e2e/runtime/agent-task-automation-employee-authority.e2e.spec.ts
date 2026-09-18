@@ -9,6 +9,7 @@ import { agentAutomationEffectDigest, agentAutomationPolicyDigest, agentAutomati
     agentAutomationScheduleIdentity } from "../../../application/agent/agent-automation-consent";
 import { agentAutomationCoverageRecordDigest, agentAutomationCoverageScope } from "../../../application/agent/agent-automation-coverage";
 import { createAgentAutomationTerminalRecord, agentAutomationRecordKey, type AgentAutomationTaskCommit } from "../../../application/agent/agent-automation-terminal-record";
+import { agentAutomationTaskCommitReference } from "../../../application/agent/agent-automation-record-store.service";
 import { AgentAutomationJobAuthorityService, type CanonicalAutomationRenderer } from "../../../application/services/agent-automation-job-authority.service";
 import { AligoDefaultSenderPolicyService } from "../../../application/services/aligo-default-sender-policy.service";
 import { AligoService } from "../../../application/services/aligo.service";
@@ -210,6 +211,12 @@ describeAgentE2E("employee-assignment automation authority adapter", () => {
             receiptDigest: agentBindingHash({ kind: "synthetic-receipt", clientId }),
             recordedAt,
         };
+        const taskAutomationReference = agentAutomationTaskCommitReference({
+            actionId: origin.actionId,
+            taskId: origin.taskId,
+            taskRevision: origin.taskRevision,
+            batch: { authorities: [authority], coverages: [coverage] },
+        });
 
         deliveryJobId = randomUUID();
         await prisma.$transaction(async (tx) => {
@@ -225,7 +232,7 @@ describeAgentE2E("employee-assignment automation authority adapter", () => {
                 recipientPhone: recipe.recipientPhone,
                 templateKey: recipe.templateKey,
                 dedupeKey: recipe.dedupeKey,
-                payload: recipe.payload as unknown as Prisma.InputJsonValue,
+                payload: { ...recipe.payload, taskAutomationReference } as unknown as Prisma.InputJsonValue,
             } });
             for (const record of [coverage, authority]) {
                 const terminal = createAgentAutomationTerminalRecord(record, commit);

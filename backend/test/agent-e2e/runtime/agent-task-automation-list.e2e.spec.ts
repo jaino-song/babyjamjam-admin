@@ -2,7 +2,7 @@ import { AgentAutomationDeliveryGateService } from "../../../application/service
 import { ClientAutomationSourceReader } from "../../../application/services/client-automation-source.reader";
 import { AgentAutomationJobAuthorityService } from "../../../application/services/agent-automation-job-authority.service";
 import { AgentAutomationAuthorityService } from "../../../application/agent/agent-automation-authority.service";
-import { AgentAutomationRecordStoreService } from "../../../application/agent/agent-automation-record-store.service";
+import { AgentAutomationRecordStoreService, agentAutomationTaskCommitReference, type AgentAutomationCommittedBatch } from "../../../application/agent/agent-automation-record-store.service";
 import { createAgentAutomationQuestion, answerAgentAutomationQuestion } from "../../../application/agent/agent-automation-question";
 import { parseTaskAutomationArtifact, TASK_AUTOMATION_ARTIFACT_KEY } from "../../../application/agent/agent-task-automation-artifact";
 import { AGENT_AUTOMATION_JOB_SEAL_PAYLOAD_KEY } from "../../../domain/constants/agent-automation-storage";
@@ -350,6 +350,7 @@ describeAgentE2E("real automation.list with two eligible clients and missing def
         const adapter = new AgentAutomationJobAuthorityService(new AgentAutomationAuthorityService(records), sourceReader, sender);
         const planner = app.get<ClientAutomationImpactService>(CLIENT_AUTOMATION_IMPACT);
         const send = jest.spyOn(app.get(AligoService), "sendSms");
+        let committedBatch: AgentAutomationCommittedBatch | undefined;
         await expect(tenantContextStore.run({ origin: "http", branchId }, () => lock.runExclusive(branchId, async (tx) => {
             const taskId = randomUUID(); const sessionId = randomUUID(); const actionId = randomUUID();
             const createdId = 971000090; const userId = context.principal.userId;
@@ -381,13 +382,18 @@ describeAgentE2E("real automation.list with two eligible clients and missing def
                     branchId, clientId: createdId, clientIdentity: agentBindingHash({ version: 1, resource: "client", id: createdId, createdAt: client.createdAt!.toISOString() }),
                     kind: "client-rule", scheduleId: null, scheduleIdentity: null, recipientType: "client",
                 }, grandfatheredScopes: [] }] };
-            }, async () => {}, tx);
+            }, async (_transaction, batch) => { committedBatch = batch; }, tx);
+            if (!committedBatch) throw new Error("Missing committed automation batch");
+            const taskAutomationReference = agentAutomationTaskCommitReference({ actionId, taskId, taskRevision: 2, batch: committedBatch });
             const client = await sourceReader.readClientAutomationSource(branchId, createdId, tx);
             const settings = await sourceReader.readClientAutomationSettings(branchId, tx);
             if (!client || settings.status !== "available") throw new Error("Missing synthetic source");
             const rule = settings.rules.find(({ templateKey }) => templateKey === "CLIENT_GREETING")!;
             const recipe = buildClientMessageRecipe(rule, client, new Date())!;
-            const storedJob = await tx.message_trigger_job.create({ data: { ...recipe, payload: recipe.payload as unknown as Prisma.InputJsonValue } });
+            const storedJob = await tx.message_trigger_job.create({ data: {
+                ...recipe,
+                payload: { ...recipe.payload, taskAutomationReference } as unknown as Prisma.InputJsonValue,
+            } });
             const job = MessageTriggerJobEntity.reconstitute(storedJob.id, branchId, rule.id, "pending", recipe.scheduledFor,
                 null, null, null, createdId, null, recipe.recipientType, recipe.recipientPhone!, recipe.templateKey,
                 recipe.dedupeKey, recipe.payload, storedJob.createdAt, storedJob.updatedAt);
