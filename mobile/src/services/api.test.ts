@@ -281,3 +281,26 @@ describe("eformsignApi.getDocumentClientCandidate", () => {
         );
     });
 });
+
+describe("eformsignApi.getLocalDocumentRecord", () => {
+    it("requests the tenant-scoped mirror record through the mobile BFF", async () => {
+        const { apiModule, mockGet } = await loadApiModule();
+        const record = {
+            documentId: "doc/1",
+            createdDate: "2026-09-18T12:00:00.000Z",
+        };
+        mockGet.mockResolvedValue({ data: record });
+
+        await expect(apiModule.eformsignApi.getLocalDocumentRecord("doc/1")).resolves.toEqual(record);
+        expect(mockGet).toHaveBeenCalledWith("/eformsign-docs/document-id", {
+            params: { documentId: "doc/1" },
+        });
+    });
+
+    it("preserves a null mirror response", async () => {
+        const { apiModule, mockGet } = await loadApiModule();
+        mockGet.mockResolvedValue({ data: null });
+
+        await expect(apiModule.eformsignApi.getLocalDocumentRecord("doc-1")).resolves.toBeNull();
+    });
+});

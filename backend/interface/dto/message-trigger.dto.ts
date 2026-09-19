@@ -5,6 +5,25 @@ import {
     MessageTriggerRecipientType,
     MessageTriggerTemplateKey,
 } from "domain/constants/message-trigger-catalog";
+import {
+    SERVICE_RECORD_LINK_RULE_ID,
+    SERVICE_RECORD_LINK_SCHEDULE_TIME_KST,
+} from "domain/constants/service-record-link-message";
+import { MessageTriggerRuleEntity } from "domain/entities/message-trigger-rule.entity";
+
+export type MessageTriggerRuleResponseDto = Omit<MessageTriggerRuleEntity, "sendTime" | "update"> & {
+    sendTime: string;
+};
+
+/** Project read responses without mutating the rule entity owned by the service/repository. */
+export const toMessageTriggerRuleResponse = (
+    rule: MessageTriggerRuleEntity,
+): MessageTriggerRuleResponseDto => ({
+    ...rule,
+    sendTime: rule.id === SERVICE_RECORD_LINK_RULE_ID
+        ? SERVICE_RECORD_LINK_SCHEDULE_TIME_KST
+        : rule.sendTime,
+});
 
 export class CreateMessageTriggerRuleDto {
     @IsString()

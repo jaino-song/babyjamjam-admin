@@ -29,6 +29,7 @@ import { ListClientNamesByBranchUsecase } from "application/usecases/eformsign-d
 import { ListReviewStageContractsUsecase } from "application/usecases/eformsign-doc/list-review-stage-contracts.usecase";
 import { DispatchDocumentHeadlessUsecase } from "application/usecases/eformsign-doc/dispatch-document-headless.usecase";
 import { FinalizeDocumentHeadlessUsecase } from "application/usecases/eformsign-doc/finalize-document-headless.usecase";
+import { CancelEformsignDocumentsUsecase } from "application/usecases/eformsign-doc/cancel-eformsign-documents.usecase";
 import { EformsignDispatchBoundaryService } from "application/services/eformsign-dispatch-boundary.service";
 import { AdoptEformsignDocUsecase } from "application/usecases/eformsign-doc/adopt-eformsign-doc.usecase";
 import type { CreateEformsignDocResult } from "application/usecases/eformsign-doc/create-eformsign-doc.usecase";
@@ -77,6 +78,7 @@ export class EformsignDocController {
         private readonly configService: ConfigService,
         private readonly documentJobService: EformsignDocumentJobService,
         @Optional() private readonly dispatchBoundary?: EformsignDispatchBoundaryService,
+        @Optional() private readonly cancelEformsignDocumentsUsecase?: CancelEformsignDocumentsUsecase,
     ) {}
 
     /**
@@ -463,11 +465,38 @@ export class EformsignDocController {
             throw new ForbiddenException("전자문서 작업을 확인할 권한이 없습니다.");
         }
 
+        const actorUserId = tenant.userId ?? request.user?.userId ?? "";
+        const existing = await this.dispatchBoundary.findById(
+            tenant.branchId ?? "",
+            intentId.trim(),
+        );
+        if (existing?.action === "cancel") {
+            if (!this.cancelEformsignDocumentsUsecase) {
+                throw new ServiceUnavailableException("Durable eformsign cancellation is unavailable");
+            }
+            const reconciled = await this.cancelEformsignDocumentsUsecase.reconcile(
+                {
+                    branchId: tenant.branchId ?? "",
+                    intentId: intentId.trim(),
+                    outcome: dto.outcome,
+                    actorUserId,
+                    reason: dto.reason,
+                    providerDocumentId: dto.providerDocumentId?.trim() || undefined,
+                },
+                { ...tenant, userId: actorUserId },
+            );
+            return {
+                intentId: reconciled.intent.id,
+                status: reconciled.intent.status,
+                outcome: reconciled.intent.reconciledOutcome ?? dto.outcome,
+                providerDocumentId: reconciled.intent.providerDocumentId,
+            };
+        }
         const result = await this.dispatchBoundary.reconcile({
             branchId: tenant.branchId ?? "",
             intentId: intentId.trim(),
             outcome: dto.outcome,
-            actorUserId: tenant.userId ?? request.user?.userId ?? "",
+            actorUserId,
             reason: dto.reason,
             providerDocumentId: dto.providerDocumentId?.trim() || undefined,
         });

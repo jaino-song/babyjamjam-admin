@@ -13,6 +13,7 @@ import {
     UpdateMessageTriggerRuleDto,
     UpdateMessageTriggerRuleBranchActivationDto,
     UpdateMessageTriggerRuleActivationWithParentDto,
+    toMessageTriggerRuleResponse,
 } from "interface/dto/message-trigger.dto";
 import { parseInteger } from "interface/parse-integer";
 import { SmsProviderReconciliationDto } from "interface/dto/sms-provider-reconciliation.dto";
@@ -26,8 +27,9 @@ export class MessageTriggerController {
     ) {}
 
     @Get("message-trigger-rules")
-    listRules(@CurrentTenant() tenant: { branchId?: string }) {
-        return this.triggerService.listRules(tenant.branchId ?? "");
+    async listRules(@CurrentTenant() tenant: { branchId?: string }) {
+        const rules = await this.triggerService.listRules(tenant.branchId ?? "");
+        return rules.map(toMessageTriggerRuleResponse);
     }
 
     @Get("message-trigger-jobs/upcoming")
@@ -112,11 +114,12 @@ export class MessageTriggerController {
     }
 
     @Get("message-trigger-rules/:id")
-    getRule(
+    async getRule(
         @CurrentTenant() tenant: { branchId?: string },
         @Param("id") id: string,
     ) {
-        return this.triggerService.getRule(tenant.branchId ?? "", id);
+        const rule = await this.triggerService.getRule(tenant.branchId ?? "", id);
+        return toMessageTriggerRuleResponse(rule);
     }
 
     @Patch("message-trigger-rules/:id")

@@ -244,6 +244,27 @@ describe("MessageTriggerList", () => {
     expect(serviceInfoItem?.querySelector("svg")).toHaveClass("lucide-message-square-text");
   });
 
+  it("renders the canonical service-record trigger at 15:00 KST", async () => {
+    mockUseMessageTriggerRules.mockReturnValue({
+      data: [createRule({
+        id: "system:service_record_link",
+        branchId: null,
+        name: "제공기록지 작성 링크",
+        offsetType: "SAME_DAY",
+        offsetDays: 0,
+        sendTime: "15:00",
+        recipientType: "PRIMARY_EMPLOYEE",
+        templateKey: "SERVICE_RECORD_LINK",
+      })],
+      isError: false,
+      isLoading: false,
+    });
+
+    renderPage();
+
+    expect(screen.getByText(/서비스 시작 당일 15:00 \(한국 시간\) · 주 담당 직원 · SMS/)).toBeInTheDocument();
+  });
+
   it("shows an empty state when no real trigger rule exists", () => {
     renderPage();
 

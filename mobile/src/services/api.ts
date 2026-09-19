@@ -77,6 +77,11 @@ export interface ContractAutomationPoliciesResponse {
     autoFinalize: ContractAutoFinalizeConfig;
 }
 
+interface EformsignLocalDocumentRecordResponse {
+    documentId?: unknown;
+    createdDate?: unknown;
+}
+
 const HEADLESS_DISPATCH_TIMEOUT_MS = 180_000;
 const HEADLESS_FINALIZE_TIMEOUT_MS = 180_000;
 const MAX_PROVIDER_FINALIZE_STEPS = 3;
@@ -430,6 +435,14 @@ export const eformsignApi = {
     },
     getServiceRecordTemplateId: async (): Promise<ServiceRecordTemplateIdResponse> => {
         const { data } = await api.get('/eformsign-docs/feedback-template-id');
+        return data;
+    },
+    getLocalDocumentRecord: async (
+        documentId: string,
+    ): Promise<EformsignLocalDocumentRecordResponse | null> => {
+        const { data } = await api.get('/eformsign-docs/document-id', {
+            params: { documentId },
+        });
         return data;
     },
     // Documents APIs - token is read from httpOnly cookie on server

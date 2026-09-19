@@ -11,6 +11,7 @@ import {
     type IEformsignDispatchIntentRepository,
     type PrepareEformsignDispatchIntentInput,
     type ReconcileEformsignDispatchIntentInput,
+    type EformsignDispatchIntentIdentityInput,
 } from "domain/repositories/eformsign-dispatch-intent.repository.interface";
 import { PrismaService } from "infrastructure/database/prisma.service";
 
@@ -65,13 +66,107 @@ export class SbEformsignDispatchIntentRepository implements IEformsignDispatchIn
         intentId: string,
         branchId: string,
     ): Promise<{ intent: EformsignDispatchIntentEntity; claimed: boolean } | null> {
-        const current = await this.prisma.eformsign_dispatch_intent.findFirst({
+        // A production Prisma client supplies $transaction. Keep the direct
+        // path for small repository unit doubles that predate the mirror lock;
+        // the real path serializes a branch-owned mirror row before the intent
+        // CAS so purge and dispatch cannot cross each other.
+        if (typeof this.prisma.$transaction !== "function") {
+            return this.claimWithClient(this.prisma, intentId, branchId);
+        }
+        return this.prisma.$transaction((tx) => this.claimWithClient(tx, intentId, branchId));
+    }
+
+    private async claimWithClient(
+        client: Pick<PrismaService, "eformsign_dispatch_intent" | "$queryRaw">,
+        intentId: string,
+        branchId: string,
+    ): Promise<{ intent: EformsignDispatchIntentEntity; claimed: boolean } | null> {
+        const current = await client.eformsign_dispatch_intent.findFirst({
             where: { id: intentId, branchId },
         });
         if (!current) return null;
 
+        const mirrorId = current.localDocumentId;
+        const providerDocumentId = current.providerDocumentId;
+        if (
+            (mirrorId !== null || providerDocumentId !== null)
+            && typeof client.$queryRaw === "function"
+        ) {
+            const mirrors = await client.$queryRaw<Array<{
+                id: number;
+                statusType: string;
+                permanentPurgeRequestedAt: Date | null;
+            }>>(Prisma.sql`
+                SELECT
+                    id,
+                    status_type AS "statusType",
+                    permanent_purge_requested_at AS "permanentPurgeRequestedAt"
+                FROM eformsign_doc
+                WHERE branch_id = ${branchId}::uuid
+                  AND (
+                      ${mirrorId !== null ? Prisma.sql`id = ${mirrorId}` : Prisma.sql`FALSE`}
+                      OR ${providerDocumentId !== null
+                          ? Prisma.sql`document_id = ${providerDocumentId}`
+                          : Prisma.sql`FALSE`}
+                  )
+                FOR UPDATE
+            `);
+            if (mirrors.some((mirror) => mirror.permanentPurgeRequestedAt !== null)) {
+                throw new ConflictException("전자문서 영구 삭제 작업이 완료될 때까지 새 작업을 시작할 수 없습니다.");
+            }
+            if (mirrors.some((mirror) => ["047", "049", "099"].includes(mirror.statusType))) {
+                throw new ConflictException("전자문서가 이미 삭제되어 기존 작업을 재개할 수 없습니다.");
+            }
+
+            const terminalCancellation = await client.$queryRaw<Array<{ id: string }>>(Prisma.sql`
+                SELECT id
+                FROM eformsign_dispatch_intent
+                WHERE branch_id = ${branchId}::uuid
+                  AND action = 'cancel'
+                  AND status IN ('accepted', 'reconciled_delivered')
+                  AND (
+                      ${mirrorId !== null ? Prisma.sql`local_document_id = ${mirrorId}` : Prisma.sql`FALSE`}
+                      OR ${providerDocumentId !== null
+                          ? Prisma.sql`provider_document_id = ${providerDocumentId}`
+                          : Prisma.sql`FALSE`}
+                  )
+                ORDER BY updated_at DESC, created_at DESC
+                LIMIT 1
+                FOR UPDATE
+            `);
+            if (terminalCancellation.length > 0) {
+                throw new ConflictException("전자문서가 취소되어 기존 generation을 재개할 수 없습니다.");
+            }
+        }
+
+        if (current.action !== "cancel" && typeof client.$queryRaw === "function") {
+            const pendingCancellation = await client.eformsign_dispatch_intent.findFirst({
+                where: {
+                    branchId,
+                    clientId: current.clientId,
+                    assignmentId: current.assignmentId,
+                    templateId: current.templateId,
+                    action: "cancel",
+                    status: {
+                        in: [
+                            EFORMSIGN_DISPATCH_INTENT_STATUS.PREPARED,
+                            EFORMSIGN_DISPATCH_INTENT_STATUS.STARTED,
+                            EFORMSIGN_DISPATCH_INTENT_STATUS.UNCERTAIN,
+                        ],
+                    },
+                },
+                orderBy: [
+                    { updatedAt: "desc" },
+                    { createdAt: "desc" },
+                ],
+            });
+            if (pendingCancellation) {
+                throw new ConflictException("전자문서 취소 작업이 완료될 때까지 새 작업을 시작할 수 없습니다.");
+            }
+        }
+
         const nextAttemptCount = current.attemptCount + 1;
-        const claimed = await this.prisma.eformsign_dispatch_intent.updateMany({
+        const claimed = await client.eformsign_dispatch_intent.updateMany({
             where: {
                 id: intentId,
                 branchId,
@@ -95,7 +190,7 @@ export class SbEformsignDispatchIntentRepository implements IEformsignDispatchIn
                 reconciliationReason: null,
             },
         });
-        const row = await this.prisma.eformsign_dispatch_intent.findFirst({
+        const row = await client.eformsign_dispatch_intent.findFirst({
             where: { id: intentId, branchId },
         });
         const claimedByThisAttempt = claimed.count === 1
@@ -376,6 +471,57 @@ export class SbEformsignDispatchIntentRepository implements IEformsignDispatchIn
     async findById(branchId: string, intentId: string): Promise<EformsignDispatchIntentEntity | null> {
         const row = await this.prisma.eformsign_dispatch_intent.findFirst({
             where: { id: intentId, branchId },
+        });
+        return row ? this.toDomain(row) : null;
+    }
+
+    async findLatestSuccessfulCancellation(
+        input: EformsignDispatchIntentIdentityInput,
+    ): Promise<EformsignDispatchIntentEntity | null> {
+        const row = await this.prisma.eformsign_dispatch_intent.findFirst({
+            where: {
+                branchId: input.branchId,
+                clientId: input.clientId,
+                assignmentId: input.assignmentId,
+                templateId: input.templateId,
+                action: "cancel",
+                status: {
+                    in: [
+                        EFORMSIGN_DISPATCH_INTENT_STATUS.ACCEPTED,
+                        EFORMSIGN_DISPATCH_INTENT_STATUS.RECONCILED_DELIVERED,
+                    ],
+                },
+            },
+            orderBy: [
+                { updatedAt: "desc" },
+                { createdAt: "desc" },
+            ],
+        });
+        return row ? this.toDomain(row) : null;
+    }
+
+    async findPendingCancellation(
+        input: EformsignDispatchIntentIdentityInput,
+    ): Promise<EformsignDispatchIntentEntity | null> {
+        const row = await this.prisma.eformsign_dispatch_intent.findFirst({
+            where: {
+                branchId: input.branchId,
+                clientId: input.clientId,
+                assignmentId: input.assignmentId,
+                templateId: input.templateId,
+                action: "cancel",
+                status: {
+                    in: [
+                        EFORMSIGN_DISPATCH_INTENT_STATUS.PREPARED,
+                        EFORMSIGN_DISPATCH_INTENT_STATUS.STARTED,
+                        EFORMSIGN_DISPATCH_INTENT_STATUS.UNCERTAIN,
+                    ],
+                },
+            },
+            orderBy: [
+                { updatedAt: "desc" },
+                { createdAt: "desc" },
+            ],
         });
         return row ? this.toDomain(row) : null;
     }

@@ -29,6 +29,13 @@ export interface ReconcileEformsignDispatchIntentInput {
     providerDocumentId?: string | null;
 }
 
+export interface EformsignDispatchIntentIdentityInput {
+    branchId: string;
+    clientId: number | null;
+    assignmentId: number | null;
+    templateId: string | null;
+}
+
 export interface IEformsignDispatchIntentRepository {
     prepare(input: PrepareEformsignDispatchIntentInput): Promise<EformsignDispatchIntentEntity>;
     claim(
@@ -57,6 +64,18 @@ export interface IEformsignDispatchIntentRepository {
     ): Promise<EformsignDispatchIntentEntity | null>;
     reconcile(input: ReconcileEformsignDispatchIntentInput): Promise<EformsignDispatchIntentEntity | null>;
     findById(branchId: string, intentId: string): Promise<EformsignDispatchIntentEntity | null>;
+    /**
+     * Returns the latest successful cancellation for the exact create scope.
+     * The cancellation row is retained after mirror purge, so this is the
+     * source of the next reissue generation.
+     */
+    findLatestSuccessfulCancellation(
+        input: EformsignDispatchIntentIdentityInput,
+    ): Promise<EformsignDispatchIntentEntity | null>;
+    /** A pending cancellation fences a new create in the same scope. */
+    findPendingCancellation(
+        input: EformsignDispatchIntentIdentityInput,
+    ): Promise<EformsignDispatchIntentEntity | null>;
 }
 
 export const EFORMSIGN_DISPATCH_INTENT_REPOSITORY = "EFORMSIGN_DISPATCH_INTENT_REPOSITORY";

@@ -1,4 +1,4 @@
-import { Inject, Injectable, Logger } from "@nestjs/common";
+import { Inject, Injectable, Logger, Optional } from "@nestjs/common";
 import { extractPhoneCandidates } from "application/utils/normalize-phone";
 import {
     EFORMSIGN_DOCUMENT_KIND,
@@ -8,6 +8,7 @@ import {
 import { ClientEntity } from "domain/entities/client.entity";
 import { EFORMSIGN_DOC_REPOSITORY, IEformsignDocRepository } from "domain/repositories/eformsign-doc.repository.interface";
 import { CLIENT_REPOSITORY, IClientRepository } from "domain/repositories/client.repository.interface";
+import { EformsignDocumentSnapshotService } from "application/services/eformsign-document-snapshot.service";
 
 export interface CreateEformsignDocParams {
     documentId: string;
@@ -52,6 +53,8 @@ export class CreateEformsignDocUsecase {
         private readonly eformsignDocRepository: IEformsignDocRepository,
         @Inject(CLIENT_REPOSITORY)
         private readonly clientRepository: IClientRepository,
+        @Optional()
+        private readonly documentSnapshotService?: EformsignDocumentSnapshotService,
     ) {}
 
     async execute(
@@ -101,6 +104,7 @@ export class CreateEformsignDocUsecase {
                 { preserveExistingMirrorProjection: true },
             )
             : await this.eformsignDocRepository.upsertByDocumentId(branchid, entity);
+        await this.bumpDocumentSnapshotVersion(branchid);
         const warnings: CreateEformsignDocWarning[] = [];
 
         // If linkToClient is true, also update client.e_doc_id to track this document
@@ -133,6 +137,16 @@ export class CreateEformsignDocUsecase {
         }
 
         return Object.assign(createdDoc, warnings.length > 0 ? { warnings } : {});
+    }
+
+    private async bumpDocumentSnapshotVersion(branchId: string): Promise<void> {
+        if (!branchId || !this.documentSnapshotService) return;
+
+        try {
+            await this.documentSnapshotService.bumpVersion(branchId);
+        } catch {
+            this.logger.warn("Document snapshot cache invalidation failed");
+        }
     }
 
     private async resolveLinkedClient(

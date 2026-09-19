@@ -1,4 +1,5 @@
 import { CreateEformsignDocParams, CreateEformsignDocUsecase } from "application/usecases/eformsign-doc/create-eformsign-doc.usecase";
+import { EformsignDocumentSnapshotService } from "application/services/eformsign-document-snapshot.service";
 import { ClientEntity } from "domain/entities/client.entity";
 import { EFORMSIGN_DOCUMENT_KIND, EformsignDocEntity } from "domain/entities/eformsign-doc.entity";
 
@@ -52,6 +53,9 @@ describe("CreateEformsignDocUsecase", () => {
         findByPhone: jest.fn(),
         update: jest.fn(),
     };
+    const documentSnapshotService = {
+        bumpVersion: jest.fn().mockResolvedValue(1),
+    };
 
     let usecase: CreateEformsignDocUsecase;
 
@@ -61,6 +65,7 @@ describe("CreateEformsignDocUsecase", () => {
         usecase = new CreateEformsignDocUsecase(
             eformsignDocRepository as never,
             clientRepository as never,
+            documentSnapshotService as never,
         );
     });
 
@@ -125,6 +130,83 @@ describe("CreateEformsignDocUsecase", () => {
         expect(result.documentId).toBe(documentId);
         expect(result.warnings).toEqual(["client_link_failed"]);
         expect(eformsignDocRepository.upsertByDocumentId).toHaveBeenCalledTimes(1);
+        expect(documentSnapshotService.bumpVersion).toHaveBeenCalledWith(branchId);
+    });
+
+    it("invalidates only after upsert and exposes the new pending mirror to the next branch read", async () => {
+        const snapshotService = new EformsignDocumentSnapshotService();
+        const bumpVersion = jest.spyOn(snapshotService, "bumpVersion");
+        const snapshotParams = {
+            source: "mirror" as const,
+            scope: "all" as const,
+            branchId,
+        };
+        const initialEntries = jest.fn().mockResolvedValue([]);
+        await expect(snapshotService.getOrBuild(snapshotParams, initialEntries))
+            .resolves.toMatchObject({ entries: [], cached: false });
+        const otherBranchParams = { ...snapshotParams, branchId: "branch-2" };
+        const otherBranchEntries = jest.fn().mockResolvedValue([]);
+        await expect(snapshotService.getOrBuild(otherBranchParams, otherBranchEntries))
+            .resolves.toMatchObject({ entries: [], cached: false });
+
+        const pendingDocument = "pending-contract-a";
+        await usecase.execute(branchId, createParams({
+            documentId: pendingDocument,
+            statusType: "060",
+            linkToClient: false,
+        } as Partial<CreateEformsignDocParams>));
+        expect(bumpVersion).not.toHaveBeenCalled();
+
+        // Run the same usecase against the real in-memory snapshot service. The
+        // first invocation above used the default mock; this invocation proves
+        // the cache state transition independently of the facade.
+        const statefulUsecase = new CreateEformsignDocUsecase(
+            eformsignDocRepository as never,
+            clientRepository as never,
+            snapshotService,
+        );
+        await statefulUsecase.execute(branchId, createParams({
+            documentId: pendingDocument,
+            statusType: "060",
+            linkToClient: false,
+        }));
+        expect(bumpVersion).toHaveBeenCalledTimes(1);
+
+        const rebuilt = await snapshotService.getOrBuild(
+            snapshotParams,
+            async () => [{
+                document: { id: pendingDocument },
+                searchIndex: [pendingDocument],
+            }],
+        );
+        expect(rebuilt.cached).toBe(false);
+        expect(rebuilt.entries).toEqual([{
+            document: { id: pendingDocument },
+            searchIndex: [pendingDocument],
+        }]);
+
+        const branchHit = await snapshotService.getOrBuild(
+            otherBranchParams,
+            async () => [{ document: { id: "should-not-build" }, searchIndex: [] }],
+        );
+        expect(branchHit.cached).toBe(true);
+        expect(branchHit.entries).toEqual([]);
+        await snapshotService.onModuleDestroy();
+    });
+
+    it("does not bump after a failed upsert and keeps creation successful when bump fails", async () => {
+        eformsignDocRepository.upsertByDocumentId.mockRejectedValueOnce(new Error("upsert failed"));
+        await expect(usecase.execute(branchId, createParams({ linkToClient: false })))
+            .rejects.toThrow("upsert failed");
+        expect(documentSnapshotService.bumpVersion).not.toHaveBeenCalled();
+
+        documentSnapshotService.bumpVersion.mockRejectedValueOnce(new Error("cache unavailable"));
+        const result = await usecase.execute(branchId, createParams({
+            documentId: "cache-failure-doc",
+            linkToClient: false,
+        }));
+        expect(result.documentId).toBe("cache-failure-doc");
+        expect(documentSnapshotService.bumpVersion).toHaveBeenCalledWith(branchId);
     });
 
     it("keeps an existing ready projection intact while adoption assigns ownership", async () => {

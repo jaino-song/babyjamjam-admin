@@ -4,6 +4,8 @@ import {
     getServiceRecordLinkScheduledFor,
     getServiceRecordTokenExpiresAt,
     SERVICE_RECORD_LINK_GRACE_DAYS,
+    SERVICE_RECORD_LINK_SCHEDULE_HOUR_KST,
+    SERVICE_RECORD_LINK_SCHEDULE_TIME_KST,
 } from "domain/constants/service-record-link-message";
 
 /**
@@ -97,6 +99,8 @@ describe("service-record-link-message date contract (P2-9)", () => {
 
             const result = getServiceRecordLinkScheduledFor(startDate);
 
+            expect(SERVICE_RECORD_LINK_SCHEDULE_HOUR_KST).toBe(15);
+            expect(SERVICE_RECORD_LINK_SCHEDULE_TIME_KST).toBe("15:00");
             expect(result.toISOString()).toBe("2025-06-15T06:00:00.000Z");
         });
     });

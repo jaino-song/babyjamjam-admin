@@ -47,7 +47,6 @@ function subgroupOf(name: string): SubGroup {
 }
 
 interface DurationEntry {
-  id: number;
   durationDays: number;
   totalPrice: number;
   grantAmount: number;
@@ -110,7 +109,6 @@ export default function PricesPage() {
       const durationDays = parseInt(String(raw.duration), 10);
       if (!Number.isFinite(durationDays)) continue;
       const entry: DurationEntry = {
-        id: raw.id,
         durationDays,
         totalPrice: parseWon(raw.fullPrice),
         grantAmount: parseWon(raw.grant),
@@ -232,7 +230,9 @@ export default function PricesPage() {
               }
               filters={typeFilterItems}
               activeFilter={typeFilter}
-              onFilterChange={(label) => setTypeFilter(label as TypeFilter)}
+              onFilterChange={(label) =>
+                setTypeFilter(label as TypeFilter)
+              }
               loadMore={false}
               beforeFilters={
                 <div
@@ -378,7 +378,7 @@ function PriceDetailContent({ row, year }: { row: DisplayRow; year: number }) {
       />
 
       {row.durations.map((d) => (
-        <div key={d.id} className="price-breakdown pop-up" data-component="mobile_prices_page_detail-sheet_stack_detail-page_body_breakdown">
+        <div key={`${year}:${row.name}:${d.durationDays}`} className="price-breakdown pop-up" data-component="mobile_prices_page_detail-sheet_stack_detail-page_body_breakdown">
           <div className="price-breakdown-row" data-component="mobile_prices_page_detail-sheet_stack_detail-page_body_breakdown_duration">
             <span className="label">기간</span>
             <span className="value">{d.durationDays}일</span>

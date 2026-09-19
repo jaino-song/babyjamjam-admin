@@ -11,6 +11,7 @@ import {
     IEformsignDispatchIntentRepository,
     PrepareEformsignDispatchIntentInput,
     ReconcileEformsignDispatchIntentInput,
+    EformsignDispatchIntentIdentityInput,
     isDispatchIntentTerminal,
 } from "domain/repositories/eformsign-dispatch-intent.repository.interface";
 
@@ -42,6 +43,17 @@ export class EformsignDispatchBoundaryService {
     ) {}
 
     async claim(input: DispatchIntentClaimInput): Promise<DispatchIntentClaim> {
+        if (input.action === "cancel") {
+            throw new ConflictException("전자문서 취소는 전용 durable 취소 경계를 사용해야 합니다.");
+        }
+        if (input.action === "create") {
+            await this.assertNoPendingCancellation({
+                branchId: input.branchId,
+                clientId: input.clientId ?? null,
+                assignmentId: input.assignmentId ?? null,
+                templateId: input.templateId ?? null,
+            });
+        }
         const prepared = await this.repository.prepare({
             ...input,
             businessKey: input.businessKey ?? buildEformsignDispatchBusinessKey(input),
@@ -146,6 +158,57 @@ export class EformsignDispatchBoundaryService {
     async findById(branchId: string, intentId: string): Promise<EformsignDispatchIntentEntity | null> {
         return this.repository.findById(branchId, intentId);
     }
+
+    /**
+     * Resolves the generation used by a contract create. A live local document
+     * is the strongest identity; after a successful cancellation the retained
+     * cancel intent is the only durable hand-off to the next document.
+     */
+    async resolveCreateGeneration(input: EformsignCreateGenerationInput): Promise<string> {
+        const identity = toDispatchIntentIdentity(input);
+        await this.assertNoPendingCancellation(identity);
+        if (input.latestLocalDocumentId?.trim()) {
+            return input.latestLocalDocumentId.trim();
+        }
+
+        const findLatest = this.repository.findLatestSuccessfulCancellation;
+        const successfulCancellation = typeof findLatest === "function"
+            ? await findLatest.call(this.repository, identity)
+            : null;
+        if (successfulCancellation) {
+            return `reissue:${successfulCancellation.id}`;
+        }
+        return input.force ? "force-initial" : "initial";
+    }
+
+    private async assertNoPendingCancellation(
+        input: EformsignCreateGenerationInput | EformsignDispatchIntentIdentityInput,
+    ): Promise<void> {
+        const findPending = this.repository.findPendingCancellation;
+        if (typeof findPending !== "function") {
+            return;
+        }
+        const pending = await findPending.call(this.repository, toDispatchIntentIdentity(input));
+        if (pending) {
+            throw new ConflictException("전자문서 취소 작업이 완료될 때까지 새 계약을 만들 수 없습니다.");
+        }
+    }
+}
+
+export interface EformsignCreateGenerationInput extends EformsignDispatchIntentIdentityInput {
+    latestLocalDocumentId?: string | null;
+    force?: boolean;
+}
+
+function toDispatchIntentIdentity(
+    input: EformsignCreateGenerationInput | EformsignDispatchIntentIdentityInput,
+): EformsignDispatchIntentIdentityInput {
+    return {
+        branchId: input.branchId,
+        clientId: input.clientId ?? null,
+        assignmentId: input.assignmentId ?? null,
+        templateId: input.templateId ?? null,
+    };
 }
 
 export function buildEformsignDispatchBusinessKey(
