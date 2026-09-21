@@ -59,6 +59,7 @@ import {
   getChannelTemplates,
   isTriggerRuleInChannel,
   isTriggerTemplateInChannel,
+  SMS_TRIGGER_TEMPLATE_KEYS,
   SMS_TRIGGER_TO_SYSTEM_TEMPLATE,
   type TriggerMessageChannel,
 } from "@/features/message-triggers/channel";
@@ -520,8 +521,64 @@ export function TriggerRulesManager({
     [channel, templateQuery.data],
   );
   const visibleTemplates = useMemo(
-    () => (templateQuery.data ?? []).filter((template) => isTriggerTemplateInChannel(template.key, channel)),
-    [channel, templateQuery.data],
+    () => {
+      const catalogTemplates = (templateQuery.data ?? []).filter((template) =>
+        isTriggerTemplateInChannel(template.key, channel),
+      );
+
+      if (
+        templateQuery.isLoading
+        || templateQuery.isError
+        || catalogTemplates.length === 0
+        || catalogTemplates.some((template) => template.key === "SERVICE_RECORD_LINK")
+      ) {
+        return catalogTemplates;
+      }
+
+      const dedicatedSystemTemplate = selectedSystemTemplateKey === "SERVICE_RECORD_LINK"
+        ? selectedSystemTemplate
+        : undefined;
+      const serviceRecordTemplate: TriggerTemplateCatalogItem = {
+        key: "SERVICE_RECORD_LINK",
+        name: dedicatedSystemTemplate?.name ?? "제공기록지 작성 링크",
+        description: dedicatedSystemTemplate?.description ?? "제공기록지 작성 링크입니다.",
+        allowedEventTypes: ["SERVICE_START"],
+        allowedRecipientTypes: ["PRIMARY_EMPLOYEE"],
+        requiredVariables: (dedicatedSystemTemplate?.requiredVariables ?? []).map(({ key, label }) => ({
+          key,
+          label,
+        })),
+        providers: { sms: { templateKey: "SERVICE_RECORD_LINK" } },
+      };
+      const serviceRecordOrder = SMS_TRIGGER_TEMPLATE_KEYS.indexOf("SERVICE_RECORD_LINK");
+      const canonicalPredecessor = SMS_TRIGGER_TEMPLATE_KEYS[serviceRecordOrder - 1];
+      const predecessorIndex = catalogTemplates.findIndex(
+        (template) => template.key === canonicalPredecessor,
+      );
+      const successorIndex = catalogTemplates.findIndex(
+        (template) => SMS_TRIGGER_TEMPLATE_KEYS.indexOf(template.key) > serviceRecordOrder,
+      );
+      // Keep the backend order intact and place the synthetic item next to its canonical neighbor.
+      const insertAt = predecessorIndex >= 0 ? predecessorIndex + 1 : successorIndex;
+
+      if (insertAt === -1) {
+        return [...catalogTemplates, serviceRecordTemplate];
+      }
+
+      return [
+        ...catalogTemplates.slice(0, insertAt),
+        serviceRecordTemplate,
+        ...catalogTemplates.slice(insertAt),
+      ];
+    },
+    [
+      channel,
+      selectedSystemTemplate,
+      selectedSystemTemplateKey,
+      templateQuery.data,
+      templateQuery.isError,
+      templateQuery.isLoading,
+    ],
   );
 
   const eventOptions = useMemo(() => {
