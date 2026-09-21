@@ -3,6 +3,36 @@
 Updated: 2026-09-18. Baseline: `origin/dev` at `55777f1facf7aafb3cbe19b322b6205a4c4860df`.
 Current verification: `/Users/jaino/Development/babyjamjam-admin/bjj-conversation-complete` on `feature/bjj-conversation-complete`, HEAD `a6e72806e`. Local implementation, deterministic verification, model quality and operational activation are separate results.
 
+## Preview promotion attempt — 2026-09-19
+
+PR [#731](https://github.com/jaino-song/babyjamjam-admin/pull/731) promoted `dev` to `preview` and merged at `92d5b63eec1cb04e0b7821b5424800751e8a711b1`. The preview push workflow was `35364445679`.
+
+- Backend type-check, lint, unit tests, auth observe/enforce E2E, conversation task E2E, immutable image build, database-patch wait and deployment-target resolution all passed.
+- The Lightsail deploy job stopped at AWS OIDC authentication with `Could not assume role with OIDC: Not authorized to perform sts:AssumeRoleWithWebIdentity` (`105667457833`). Systems Manager deployment did not run.
+- No preview backend deployment, runtime health check, authenticated preview browser QA, production database change or SMS/provider call is claimed. The blocker is the external AWS IAM trust/configuration boundary; no IAM or workflow bypass was made.
+
+This records preview promotion and deterministic pre-deploy evidence only. Preview runtime/browser proof, paid Google/OpenAI quality evaluation, human review and operational activation remain open.
+
+## Scope update — 2026-09-19
+
+Per user direction, AWS OIDC/IAM repair, preview deployment/runtime/browser proof, production database changes and
+operational activation are skipped for this continuation and remain unverified. The OpenAI staging runner passed its
+dry-run configuration check, but the local evaluation key is absent; a bounded live smoke refused with
+`MISSING_API_KEY` before network transport. No provider request or secret value was recorded. Paid model-quality
+evaluation and human review remain pending a configured evaluation key.
+
+## Google model evaluation refresh — 2026-09-19
+
+기존 로컬 Gemini 키로 `gemini-2.5-flash` current/improved profile과 합성 48개 사례 × 3회(**288 runs**)를
+완료했다. Redacted artifact는 [`2026-09-19-google-all.json`](../ai-conversation-quality/artifacts/2026-09-19-google-all.json)이다.
+
+- 286 responses / 2 errors (HTTP 503 1건, malformed response 1건); text 118, tool calls 168.
+- Required-token **223/324 (68.8%)**, structured-event **172/576 (29.9%)**.
+- p50 **2,169 ms**, p95 **7,631 ms**, max **22,931 ms**; usage/cost unavailable.
+- Fixture/assertion digest는 checked-in 평가 계약과 일치하며, 제안한 95% 기준에는 미달한다.
+
+OpenAI 비교는 평가 키가 없어 진행하지 못했고, human review와 품질 sign-off도 미완료다.
+
 ## RV-04 real product AppModule path — 2026-09-19
 
 The guarded product evaluator is committed at `afca342d2` (`test(agent): harden guarded product evaluator`). This is the current-branch run that boots the real Nest `AppModule` against the disposable PostgreSQL database and exercises the task/action path instead of only the mocked evaluation harness.

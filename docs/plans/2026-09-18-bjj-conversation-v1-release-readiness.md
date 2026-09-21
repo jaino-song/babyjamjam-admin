@@ -5,6 +5,47 @@
 현재 검증 브랜치: `codex/unit/bjj-conversation-final`
 현재 기준 커밋: `6fe3a27c20f8b5babec14b7374070178e068bc95` (base `origin/dev` `089cb133741f67752d084c1fba0766c5ad6a70f4`)
 
+## Preview promotion attempt — 2026-09-19
+
+PR [#731](https://github.com/jaino-song/babyjamjam-admin/pull/731)이 `dev`를 `preview`로 승격해 merge commit
+`92d5b63eec1cb04e0b7821b5424800751e8a711b1`을 생성했다. Preview push workflow는
+`35364445679`이다.
+
+- Backend type-check/lint/test, auth observe/enforce E2E, conversation task E2E, immutable image build,
+  database-patch wait 및 deployment-target resolution은 모두 통과했다.
+- Lightsail deploy job `105667457833`은 AWS OIDC 인증에서
+  `Could not assume role with OIDC: Not authorized to perform sts:AssumeRoleWithWebIdentity`로 실패했다.
+  따라서 Systems Manager 배포는 실행되지 않았다.
+- Preview backend 배포·런타임 health/browser proof, 운영 DB 변경, 실제 SMS/provider 호출은 수행되지 않았다.
+  외부 AWS IAM trust/configuration 경계이며 IAM이나 workflow 우회는 하지 않았다.
+
+이 섹션은 preview 승격과 배포 전 결정적 검증만 기록한다. Preview runtime/browser proof, 유료
+Google/OpenAI 품질 평가, human review 및 운영 활성화는 여전히 별도 게이트다.
+
+## Scope update — 2026-09-19
+
+사용자 지시에 따라 AWS OIDC/IAM 수리, preview 배포·런타임·브라우저 검증, 운영 DB 변경 및 운영 활성화는
+이번 진행에서 건너뛴다. 해당 항목은 미검증으로 유지한다.
+
+OpenAI 평가 경로는 문서의 `gpt-4.1-mini` current/improved 프로필로 dry-run과 단일 케이스 live smoke를
+재확인했다. dry-run 설정은 유효했지만 로컬 환경에 비어 있지 않은 OpenAI 평가 키가 없어
+`MISSING_API_KEY`로 transport 생성 전에 fail-closed 되었다. provider 요청이나 키 값은 기록하지 않았다.
+유료 모델 품질 평가와 human review는 평가 키가 구성된 뒤 진행한다.
+
+## Google model evaluation refresh — 2026-09-19
+
+기존 로컬 Gemini 평가 키를 프로세스에만 주입해 Google staging 전체 조합을 실행했다. `gemini-2.5-flash`,
+current/improved profile, 합성 48개 사례 × 3회로 **288 runs**를 완료했고, redacted artifact는
+[`2026-09-19-google-all.json`](../ai-conversation-quality/artifacts/2026-09-19-google-all.json)이다.
+
+- **286 responses / 2 errors** (HTTP 503 1건, malformed response 1건); text 118, tool calls 168.
+- Required-token **223/324 (68.8%)**; structured-event **172/576 (29.9%)**.
+- Latency p50 **2,169 ms**, p95 **7,631 ms**, max **22,931 ms**; usage/cost는 provider 응답에서 확인되지 않았다.
+- Fixture digest `24ab8fb9498ba7472972c6d3a66b2d19274bc47787f96e5f34e9d8a1abc97d4a`, assertion digest
+  `8c6070f04f167f22e211d113d0fe6e64b2af8491057f861609f8d5d8c2042af4`가 계약과 일치한다.
+
+결과는 제안한 95% 기준 미달이므로 model-quality pass가 아니다. OpenAI 비교와 human review는 여전히 남아 있다.
+
 ## Current task-branch attestation — 2026-09-18
 
 현재 누적 검증은 `/Users/jaino/Development/babyjamjam-admin/bjj-conversation-complete`의
