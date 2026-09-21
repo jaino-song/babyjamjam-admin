@@ -1154,6 +1154,20 @@
     "migration_sha": "f91fabdba6b38e376460da174aca4c0e697e163a",
     "dispatch_ready": false
   },
+  "live_verification": {
+    "status": "runbook-prepared; execution-not-approved",
+    "plan_task": "10.1",
+    "plan_contract": "docs/plans/bjj-319-remaining-plan.md Phase 10 (Task 10.1)",
+    "runbook": "docs/error-management-live-verification.md",
+    "prepared_at": "2026-09-22",
+    "execution_approval": "pending-explicit-user-approval; main executes only after separate approval",
+    "executed": false,
+    "owner_rows_changed": false,
+    "limitations": [
+      "No live external dispatch, signing, or Sentry ingestion was performed in this unit; this record documents the prepared procedure and evidence forms only.",
+      "Live verification is complete only when the runbook evidence table has recorded evidence (plan Task 10.1: no evidence means no operational-verification completion mark)."
+    ]
+  },
   "shared_source_review": {
     "basis_sha": "091e6a38753e27a54aa5783c06c00263f4395d4a",
     "root": "packages/shared/src/",
