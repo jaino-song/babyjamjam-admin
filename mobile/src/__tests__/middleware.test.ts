@@ -110,21 +110,21 @@ describe("middleware API route protection", () => {
     const response = await middleware(createRequest("/api/receipt-links/send"));
 
     expect(response.status).toBe(401);
-    await expect(response.json()).resolves.toEqual({ error: "Authentication required" });
+    await expect(response.json()).resolves.toEqual({ code: "AUTH_REQUIRED", error: "Authentication required" });
   });
 
   it("does not allow the legacy token callback as a public API route", async () => {
     const response = await middleware(createRequest("/api/auth/callback"));
 
     expect(response.status).toBe(401);
-    await expect(response.json()).resolves.toEqual({ error: "Authentication required" });
+    await expect(response.json()).resolves.toEqual({ code: "AUTH_REQUIRED", error: "Authentication required" });
   });
 
   it("rejects protected API routes without a session", async () => {
     const response = await middleware(createRequest("/api/clients"));
 
     expect(response.status).toBe(401);
-    await expect(response.json()).resolves.toEqual({ error: "Authentication required" });
+    await expect(response.json()).resolves.toEqual({ code: "AUTH_REQUIRED", error: "Authentication required" });
   });
 
   it("rejects protected API routes when the session has no selected branch", async () => {
@@ -139,7 +139,7 @@ describe("middleware API route protection", () => {
     const response = await middleware(createRequest("/api/clients", "auth_token=session-token"));
 
     expect(response.status).toBe(403);
-    await expect(response.json()).resolves.toEqual({ error: "Branch selection required" });
+    await expect(response.json()).resolves.toEqual({ code: "BRANCH_SELECTION_REQUIRED", error: "Branch selection required" });
   });
 
   it("allows protected API routes with auth and selected branch", async () => {
