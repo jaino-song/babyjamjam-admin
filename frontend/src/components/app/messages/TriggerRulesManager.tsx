@@ -53,6 +53,7 @@ import { messageTriggerKeys } from "@/features/message-triggers/hooks/keys";
 import {
   CONFIGURABLE_SMS_TRIGGER_TEMPLATE_KEYS,
   MESSAGE_TRIGGER_AUTOMATIC_VARIABLE_KEYS,
+  deriveAvailableTemplates,
   deriveEventTypesFromTemplates,
   deriveRecipientTypesFromTemplates,
   getChannelTemplates,
@@ -518,7 +519,7 @@ export function TriggerRulesManager({
       .filter((template) => template.key !== MANUAL_ONLY_TRIGGER_TEMPLATE_KEY),
     [channel, templateQuery.data],
   );
-  const smsCatalogTemplates = useMemo(
+  const visibleTemplates = useMemo(
     () => (templateQuery.data ?? []).filter((template) => isTriggerTemplateInChannel(template.key, channel)),
     [channel, templateQuery.data],
   );
@@ -546,14 +547,13 @@ export function TriggerRulesManager({
       }));
   }, [getRecipientTypesForEvent, formState.eventType, isSelectedDedicatedRule, selectedRule]);
 
-  const availableTemplates = useMemo<TriggerTemplateCatalogItem[]>(() => {
-    return smsCatalogTemplates;
-  }, [
-    smsCatalogTemplates,
-  ]);
+  const availableTemplates = useMemo<TriggerTemplateCatalogItem[]>(
+    () => deriveAvailableTemplates(automaticChannelTemplates, formState.eventType, formState.recipientType),
+    [automaticChannelTemplates, formState.eventType, formState.recipientType],
+  );
   const selectedTemplate = useMemo(() => {
-    return availableTemplates.find((template) => template.key === formState.templateKey) ?? null;
-  }, [availableTemplates, formState.templateKey]);
+    return visibleTemplates.find((template) => template.key === formState.templateKey) ?? null;
+  }, [formState.templateKey, visibleTemplates]);
   const isClientGreetingRule = formState.templateKey === "CLIENT_GREETING";
   const requiredTemplateVariables = useMemo(() => {
     const variables = [...(selectedTemplate?.requiredVariables ?? [])];
@@ -1288,7 +1288,7 @@ export function TriggerRulesManager({
                           id="trigger-rule-template"
                           label="발송 템플릿"
                           value={formState.templateKey}
-                          options={availableTemplates.map((template) => ({
+                          options={visibleTemplates.map((template) => ({
                             ...getTemplateOptionPresentation(
                               template,
                               formState.eventType,

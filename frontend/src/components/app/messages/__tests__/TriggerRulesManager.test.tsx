@@ -701,6 +701,28 @@ describe("TriggerRulesManager", () => {
       .toHaveAttribute("aria-disabled", "true");
   });
 
+  it("reconciles an incompatible selected template while keeping the full catalog visible", async () => {
+    mockSettingsQueries({ providerEnabled: true, senderApproved: true });
+    mockedUseMessageTriggerTemplates.mockReturnValue({
+      data: allSmsTriggerTemplates,
+    } as unknown as ReturnType<typeof useMessageTriggerTemplates>);
+
+    render(<TriggerRulesManager dataComponent="desktop_messages_sections_section-content_triggers-section_trigger-rules" />);
+    fireEvent.click(screen.getByRole("button", { name: "새 규칙" }));
+
+    const recipientTrigger = screen.getByLabelText("수신 대상");
+    fireEvent.click(recipientTrigger);
+    fireEvent.click(screen.getByRole("option", { name: "주 담당 직원" }));
+
+    await waitFor(() => {
+      expect(screen.getByLabelText("발송 템플릿")).toHaveTextContent("비용 안내");
+    });
+
+    fireEvent.click(screen.getByLabelText("발송 템플릿"));
+    expect(screen.getAllByRole("option")).toHaveLength(allSmsTriggerTemplates.length);
+    expect(screen.getByRole("option", { name: "비용 안내" })).not.toHaveAttribute("aria-disabled");
+  });
+
   it("keeps a selected dedicated template displayed with its disabled reason while editing", () => {
     mockSettingsQueries({ providerEnabled: true, senderApproved: true });
     mockedUseMessageTriggerRules.mockReturnValue({
