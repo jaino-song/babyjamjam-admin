@@ -2,11 +2,15 @@
  * Repair historical eformsign mirror rows whose branch ownership was never persisted.
  *
  * Dry-run (the default; read-only):
- *   pnpm --filter ./backend repair:eformsign-branch-ownership
+ *   pnpm --filter ./backend repair:eformsign-branch-ownership \
+ *     --target-document-id <32-hex-document-id> \
+ *     --target-customer-query '<customer-query>'
  *
  * Apply (requires an explicit target and branch confirmation):
  *   pnpm --filter ./backend repair:eformsign-branch-ownership \
  *     --apply --backup-path /absolute/path/eformsign-branch-backup.json \
+ *     --target-document-id <32-hex-document-id> \
+ *     --target-customer-query '<customer-query>' \
  *     --confirm-target '<environment>@<sanitized-db-target>' \
  *     --confirm-branch-slug incheon
  *
@@ -29,7 +33,7 @@ import {
     isListOnlyHistoricalMaternityTemplateId,
     LIST_ONLY_HISTORICAL_MATERNITY_TEMPLATE_IDS,
 } from "../application/utils/eformsign-historical-template-policy";
-import { matchesKoreanSearch } from "../application/utils/eformsign-document-list";
+import { getChosung, matchesKoreanSearch } from "../application/utils/eformsign-document-list";
 import {
     assertEformsignBackfillConfirmation,
     resolveEformsignBackfillTarget,
@@ -38,9 +42,6 @@ import {
 import { createPrismaClientConfig } from "../infrastructure/database/prisma-url.utils";
 
 export const TARGET_BRANCH_SLUG = "incheon";
-export const TARGET_DOCUMENT_ID = "a16f415f80bc4dfe834ca2882f103b25";
-export const TARGET_CUSTOMER_NAME_QUERY = "배진경";
-export const TARGET_CUSTOMER_NAME_CHOSUNG_QUERY = "ㅂㅈㄱ";
 
 const BACKUP_VERSION = 1 as const;
 const BACKUP_OPERATION = "eformsign-branch-ownership" as const;
@@ -90,6 +91,14 @@ export interface EformsignBranchRepairOptions {
     backupPath?: string;
     confirmTarget?: string;
     confirmBranchSlug?: string;
+    targetDocumentId?: string;
+    targetCustomerQuery?: string;
+}
+
+export interface EformsignTargetVerificationInput {
+    documentId: string;
+    customerQuery: string;
+    customerChosungQuery: string;
 }
 
 export interface EformsignBranchRepairBackupRow {
@@ -135,6 +144,41 @@ type ParsedFlag = {
     name: string;
     value?: string;
 };
+
+function normalizeTargetDocumentId(value: string | undefined): string {
+    const normalized = value?.trim() ?? "";
+    if (!/^[a-f\d]{32}$/iu.test(normalized)) {
+        throw new Error("--target-document-id requires a nonempty 32-character hexadecimal id");
+    }
+    return normalized;
+}
+
+function normalizeTargetCustomerQuery(value: string | undefined): string {
+    const normalized = value?.trim() ?? "";
+    if (!normalized || normalized.length > 200 || /[\u0000-\u001f\u007f]/u.test(normalized)) {
+        throw new Error("--target-customer-query requires a nonempty safe query");
+    }
+    return normalized;
+}
+
+function deriveTargetCustomerChosungQuery(query: string): string {
+    return query.normalize("NFC").split("").map(getChosung).join("").replace(/\s/gu, "");
+}
+
+export function resolveTargetVerificationInput(
+    options: EformsignBranchRepairOptions,
+): EformsignTargetVerificationInput {
+    if (options.mode === "rollback") {
+        throw new Error("Rollback does not require target customer verification inputs");
+    }
+    const documentId = normalizeTargetDocumentId(options.targetDocumentId);
+    const customerQuery = normalizeTargetCustomerQuery(options.targetCustomerQuery);
+    return {
+        documentId,
+        customerQuery,
+        customerChosungQuery: deriveTargetCustomerChosungQuery(customerQuery),
+    };
+}
 
 const ENV_FILE_PATHS = [
     resolve(process.cwd(), ".env.local"),
@@ -216,6 +260,8 @@ export function parseRepairOptions(argv: string[]): EformsignBranchRepairOptions
     let backupPath: string | undefined;
     let confirmTarget: string | undefined;
     let confirmBranchSlug: string | undefined;
+    let targetDocumentId: string | undefined;
+    let targetCustomerQuery: string | undefined;
 
     const parseValue = (flag: string, index: number, inlineValue: string | undefined): ParsedFlag => {
         const value = inlineValue ?? argv[index + 1];
@@ -259,6 +305,18 @@ export function parseRepairOptions(argv: string[]): EformsignBranchRepairOptions
             if (argument === "--confirm-target") index += 1;
             continue;
         }
+        if (argument === "--target-document-id" || argument.startsWith("--target-document-id=")) {
+            const flag = parseValue("--target-document-id", index, argument.split("=", 2)[1]);
+            targetDocumentId = flag.value;
+            if (argument === "--target-document-id") index += 1;
+            continue;
+        }
+        if (argument === "--target-customer-query" || argument.startsWith("--target-customer-query=")) {
+            const flag = parseValue("--target-customer-query", index, argument.split("=", 2)[1]);
+            targetCustomerQuery = flag.value;
+            if (argument === "--target-customer-query") index += 1;
+            continue;
+        }
         if (argument === "--confirm-branch-slug" || argument.startsWith("--confirm-branch-slug=")) {
             const flag = parseValue("--confirm-branch-slug", index, argument.split("=", 2)[1]);
             confirmBranchSlug = flag.value;
@@ -267,7 +325,8 @@ export function parseRepairOptions(argv: string[]): EformsignBranchRepairOptions
         }
         if (argument === "--help" || argument === "-h") {
             throw new Error(
-                "Usage: [--apply --backup-path PATH --confirm-target TARGET --confirm-branch-slug incheon]"
+                "Usage: [--target-document-id ID --target-customer-query QUERY]"
+                + " [--apply --backup-path PATH --confirm-target TARGET --confirm-branch-slug incheon]"
                 + " | [--rollback PATH --confirm-target TARGET --confirm-branch-slug incheon]",
             );
         }
@@ -287,11 +346,23 @@ export function parseRepairOptions(argv: string[]): EformsignBranchRepairOptions
         throw new Error(`Mutation requires --confirm-branch-slug ${TARGET_BRANCH_SLUG}`);
     }
 
+    if (mode !== "rollback") {
+        const targetVerification = resolveTargetVerificationInput({
+            mode,
+            targetDocumentId,
+            targetCustomerQuery,
+        });
+        targetDocumentId = targetVerification.documentId;
+        targetCustomerQuery = targetVerification.customerQuery;
+    }
+
     return {
         mode,
         ...(backupPath ? { backupPath: resolve(backupPath) } : {}),
         ...(confirmTarget ? { confirmTarget } : {}),
         ...(confirmBranchSlug ? { confirmBranchSlug } : {}),
+        ...(targetDocumentId ? { targetDocumentId } : {}),
+        ...(targetCustomerQuery ? { targetCustomerQuery } : {}),
     };
 }
 
@@ -347,9 +418,10 @@ export async function loadUnassignedRows(
 
 async function loadTargetDocument(
     database: EformsignBranchRepairDatabase,
+    targetDocumentId: string,
 ): Promise<TargetDocumentRow> {
     const rows = await database.eformsign_doc.findMany({
-        where: { documentId: TARGET_DOCUMENT_ID },
+        where: { documentId: targetDocumentId },
         select: {
             id: true,
             documentId: true,
@@ -366,7 +438,10 @@ async function loadTargetDocument(
     return rows[0] as TargetDocumentRow;
 }
 
-function assertApprovedTargetTemplateAndCustomer(row: TargetDocumentRow): void {
+function assertApprovedTargetTemplateAndCustomer(
+    row: TargetDocumentRow,
+    targetCustomerQuery: string,
+): void {
     const approvedTemplate = typeof row.templateId === "string"
         && (LIST_ONLY_HISTORICAL_MATERNITY_TEMPLATE_IDS as readonly string[]).includes(row.templateId);
     if (!approvedTemplate) {
@@ -374,27 +449,36 @@ function assertApprovedTargetTemplateAndCustomer(row: TargetDocumentRow): void {
     }
 
     const customerName = row.customerName?.trim() ?? "";
+    const targetCustomerChosungQuery = deriveTargetCustomerChosungQuery(targetCustomerQuery);
     if (
         customerName.length === 0
-        || !matchesKoreanSearch(customerName, TARGET_CUSTOMER_NAME_QUERY)
-        || !matchesKoreanSearch(customerName, TARGET_CUSTOMER_NAME_CHOSUNG_QUERY)
+        || !matchesKoreanSearch(customerName, targetCustomerQuery)
+        || !matchesKoreanSearch(customerName, targetCustomerChosungQuery)
     ) {
         throw new Error("Apply target document customer name does not satisfy the required search checks");
     }
 }
 
-function assertApplyTargetBeforeUpdate(row: TargetDocumentRow, branch: BranchRow): void {
+function assertApplyTargetBeforeUpdate(
+    row: TargetDocumentRow,
+    branch: BranchRow,
+    targetCustomerQuery: string,
+): void {
     if (row.branchId !== null && row.branchId !== branch.id) {
         throw new Error("Apply target document is already owned by another branch");
     }
-    assertApprovedTargetTemplateAndCustomer(row);
+    assertApprovedTargetTemplateAndCustomer(row, targetCustomerQuery);
 }
 
-function assertApplyTargetAfterUpdate(row: TargetDocumentRow, branch: BranchRow): void {
+function assertApplyTargetAfterUpdate(
+    row: TargetDocumentRow,
+    branch: BranchRow,
+    targetCustomerQuery: string,
+): void {
     if (row.branchId !== branch.id) {
         throw new Error("Apply target document was not assigned to the selected HQ branch");
     }
-    assertApprovedTargetTemplateAndCustomer(row);
+    assertApprovedTargetTemplateAndCustomer(row, targetCustomerQuery);
 }
 
 function sortedRowKeys(rows: RepairRow[]): string[] {
@@ -620,9 +704,11 @@ export async function readBranchCounts(
 export async function verifyTargetDocument(
     database: EformsignBranchRepairDatabase,
     targetBranchId: string,
+    targetDocumentId: string,
+    targetCustomerQuery: string,
 ): Promise<EformsignBranchVerification> {
     const rows = await database.eformsign_doc.findMany({
-        where: { documentId: TARGET_DOCUMENT_ID },
+        where: { documentId: targetDocumentId },
         select: {
             id: true,
             documentId: true,
@@ -633,14 +719,15 @@ export async function verifyTargetDocument(
     });
     const row = rows.length === 1 ? rows[0] as TargetDocumentRow : undefined;
     const customerName = row?.customerName?.trim() ?? "";
+    const targetCustomerChosungQuery = deriveTargetCustomerChosungQuery(targetCustomerQuery);
     return {
         found: row !== undefined,
         currentBranchMatchesTarget: row?.branchId === targetBranchId,
         templateIsListOnlyHistoricalMaternity: isListOnlyHistoricalMaternityTemplateId(row?.templateId),
         customerNameMatchesExactQuery: customerName.length > 0
-            && matchesKoreanSearch(customerName, TARGET_CUSTOMER_NAME_QUERY),
+            && matchesKoreanSearch(customerName, targetCustomerQuery),
         customerNameMatchesChosungQuery: customerName.length > 0
-            && matchesKoreanSearch(customerName, TARGET_CUSTOMER_NAME_CHOSUNG_QUERY),
+            && matchesKoreanSearch(customerName, targetCustomerChosungQuery),
     };
 }
 
@@ -696,6 +783,7 @@ export async function applyRepair(
     target: EformsignBackfillTarget,
     hooks: EformsignBranchRepairApplyHooks = {},
 ): Promise<void> {
+    const targetVerification = resolveTargetVerificationInput(options);
     const beforeRows = await loadUnassignedRows(database);
     const backup = createBackup(beforeRows, branch, target);
     await writeBackup(options.backupPath!, backup);
@@ -704,8 +792,8 @@ export async function applyRepair(
     const updatedCount = await database.$transaction(async (transaction) => {
         const transactionRows = await loadUnassignedRows(transaction);
         assertSameRepairRows(beforeRows, transactionRows, "Apply");
-        const targetBefore = await loadTargetDocument(transaction);
-        assertApplyTargetBeforeUpdate(targetBefore, branch);
+        const targetBefore = await loadTargetDocument(transaction, targetVerification.documentId);
+        assertApplyTargetBeforeUpdate(targetBefore, branch, targetVerification.customerQuery);
         const result = await transaction.eformsign_doc.updateMany({
             where: { branchId: null },
             data: { branchId: branch.id },
@@ -716,8 +804,8 @@ export async function applyRepair(
             );
         }
         await hooks.afterUpdateMany?.(result.count);
-        const targetAfter = await loadTargetDocument(transaction);
-        assertApplyTargetAfterUpdate(targetAfter, branch);
+        const targetAfter = await loadTargetDocument(transaction, targetVerification.documentId);
+        assertApplyTargetAfterUpdate(targetAfter, branch, targetVerification.customerQuery);
         return result.count;
     }, MUTATION_TRANSACTION_OPTIONS);
     console.log(`Applied branch repair to ${updatedCount} row(s).`);
@@ -765,6 +853,9 @@ export async function rollbackRepair(
 async function run(options: EformsignBranchRepairOptions): Promise<void> {
     const target = resolveOperatorDatabaseTarget();
     assertMutationConfirmation(options, target);
+    const targetVerification = options.mode === "rollback"
+        ? undefined
+        : resolveTargetVerificationInput(options);
 
     const config = createPrismaClientConfig(
         process.env["DATABASE_CONNECTION_MODE"] === "direct"
@@ -789,7 +880,12 @@ async function run(options: EformsignBranchRepairOptions): Promise<void> {
                 "Projected post-repair",
                 projectApplyCounts(beforeCounts, branch.slug, rows.length),
             );
-            const verification = await verifyTargetDocument(database, branch.id);
+            const verification = await verifyTargetDocument(
+                database,
+                branch.id,
+                targetVerification!.documentId,
+                targetVerification!.customerQuery,
+            );
             printVerification(verification);
             console.log("No database changes made (dry-run).");
             return;
@@ -810,10 +906,19 @@ async function run(options: EformsignBranchRepairOptions): Promise<void> {
 
         const afterCounts = await readBranchCounts(database);
         printCounts("Post-repair", afterCounts);
-        const verification = await verifyTargetDocument(database, branch.id);
-        printVerification(verification);
-        if (options.mode === "apply") {
-            assertPostApplyTargetVerification(verification);
+        if (targetVerification) {
+            const verification = await verifyTargetDocument(
+                database,
+                branch.id,
+                targetVerification.documentId,
+                targetVerification.customerQuery,
+            );
+            printVerification(verification);
+            if (options.mode === "apply") {
+                assertPostApplyTargetVerification(verification);
+            }
+        } else {
+            console.log("Target verification skipped for rollback; secure backup fences remain enforced.");
         }
         console.log(
             "NOTE: This script does not invalidate shared Valkey document snapshots. Deploy/restart "

@@ -7,9 +7,15 @@ import {
     applyRepair,
     readBackup,
     rollbackRepair,
-    TARGET_DOCUMENT_ID,
     type EformsignBranchRepairDatabase,
 } from "../../scripts/repair-eformsign-branch-ownership";
+
+const syntheticTargetDocumentId = "0123456789abcdef0123456789abcdef";
+const syntheticCustomerName = "홍가람";
+const syntheticTargetOptions = {
+    targetDocumentId: syntheticTargetDocumentId,
+    targetCustomerQuery: syntheticCustomerName,
+};
 
 const databaseUrl = process.env["EFORMSIGN_BRANCH_REPAIR_TEST_DATABASE_URL"];
 const integrationEnabled = process.env["EFORMSIGN_BRANCH_REPAIR_INTEGRATION"] === "1";
@@ -67,10 +73,10 @@ describeDisposable("eformsign branch repair transaction (disposable PostgreSQL)"
         await prisma.eformsign_doc.createMany({
             data: [
                 {
-                    documentId: TARGET_DOCUMENT_ID,
+                    documentId: syntheticTargetDocumentId,
                     documentName: "repair target",
                     templateName: "legacy maternity",
-                    customerName: "배진경",
+                    customerName: syntheticCustomerName,
                     createdDate: now,
                     updatedDate: now,
                     statusType: "060",
@@ -129,7 +135,7 @@ describeDisposable("eformsign branch repair transaction (disposable PostgreSQL)"
         if (!prisma) return;
         if (seeded) {
             await prisma.eformsign_doc.deleteMany({
-                where: { documentId: { in: [TARGET_DOCUMENT_ID, candidateDocumentId, otherOwnedDocumentId] } },
+                where: { documentId: { in: [syntheticTargetDocumentId, candidateDocumentId, otherOwnedDocumentId] } },
             });
             await prisma.branch.deleteMany({ where: { id: { in: [hqBranchId, qaBranchId] } } });
         }
@@ -143,17 +149,17 @@ describeDisposable("eformsign branch repair transaction (disposable PostgreSQL)"
         const backupPath = join(tempDirectory, "apply-backup.json");
         await applyRepair(
             prisma as unknown as EformsignBranchRepairDatabase,
-            { mode: "apply", backupPath },
+            { mode: "apply", backupPath, ...syntheticTargetOptions },
             { id: hqBranchId, slug: "incheon", isActive: true },
             target,
         );
 
         const rows = await prisma.eformsign_doc.findMany({
-            where: { documentId: { in: [TARGET_DOCUMENT_ID, candidateDocumentId, otherOwnedDocumentId] } },
+            where: { documentId: { in: [syntheticTargetDocumentId, candidateDocumentId, otherOwnedDocumentId] } },
             select: { documentId: true, branchId: true },
         });
         expect(rows).toEqual(expect.arrayContaining([
-            { documentId: TARGET_DOCUMENT_ID, branchId: hqBranchId },
+            { documentId: syntheticTargetDocumentId, branchId: hqBranchId },
             { documentId: candidateDocumentId, branchId: hqBranchId },
             { documentId: otherOwnedDocumentId, branchId: qaBranchId },
         ]));
@@ -165,11 +171,11 @@ describeDisposable("eformsign branch repair transaction (disposable PostgreSQL)"
         );
 
         const restoredRows = await prisma.eformsign_doc.findMany({
-            where: { documentId: { in: [TARGET_DOCUMENT_ID, candidateDocumentId, otherOwnedDocumentId] } },
+            where: { documentId: { in: [syntheticTargetDocumentId, candidateDocumentId, otherOwnedDocumentId] } },
             select: { documentId: true, branchId: true },
         });
         expect(restoredRows).toEqual(expect.arrayContaining([
-            { documentId: TARGET_DOCUMENT_ID, branchId: null },
+            { documentId: syntheticTargetDocumentId, branchId: null },
             { documentId: candidateDocumentId, branchId: null },
             { documentId: otherOwnedDocumentId, branchId: qaBranchId },
         ]));
@@ -177,7 +183,7 @@ describeDisposable("eformsign branch repair transaction (disposable PostgreSQL)"
 
     it("rolls back the target-fence failure without changing other unassigned rows", async () => {
         await prisma.eformsign_doc.update({
-            where: { documentId: TARGET_DOCUMENT_ID },
+            where: { documentId: syntheticTargetDocumentId },
             data: { branchId: null, templateId: "not-approved" },
         });
         await prisma.eformsign_doc.update({
@@ -187,17 +193,21 @@ describeDisposable("eformsign branch repair transaction (disposable PostgreSQL)"
 
         await expect(applyRepair(
             prisma as unknown as EformsignBranchRepairDatabase,
-            { mode: "apply", backupPath: join(tempDirectory, "fence-backup.json") },
+            {
+                mode: "apply",
+                backupPath: join(tempDirectory, "fence-backup.json"),
+                ...syntheticTargetOptions,
+            },
             { id: hqBranchId, slug: "incheon", isActive: true },
             target,
         )).rejects.toThrow("approved historical maternity template");
 
         const rows = await prisma.eformsign_doc.findMany({
-            where: { documentId: { in: [TARGET_DOCUMENT_ID, candidateDocumentId, otherOwnedDocumentId] } },
+            where: { documentId: { in: [syntheticTargetDocumentId, candidateDocumentId, otherOwnedDocumentId] } },
             select: { documentId: true, branchId: true, templateId: true },
         });
         expect(rows).toEqual(expect.arrayContaining([
-            { documentId: TARGET_DOCUMENT_ID, branchId: null, templateId: "not-approved" },
+            { documentId: syntheticTargetDocumentId, branchId: null, templateId: "not-approved" },
             { documentId: candidateDocumentId, branchId: null, templateId: "active-template" },
             { documentId: otherOwnedDocumentId, branchId: qaBranchId, templateId: "active-template" },
         ]));
@@ -205,7 +215,7 @@ describeDisposable("eformsign branch repair transaction (disposable PostgreSQL)"
 
     it("rolls back every write when a test-only post-update hook fails", async () => {
         await prisma.eformsign_doc.update({
-            where: { documentId: TARGET_DOCUMENT_ID },
+            where: { documentId: syntheticTargetDocumentId },
             data: { branchId: null, templateId: "d1591da29590495d800f55f1d1fc1378" },
         });
         await prisma.eformsign_doc.update({
@@ -214,7 +224,11 @@ describeDisposable("eformsign branch repair transaction (disposable PostgreSQL)"
         });
         await expect(applyRepair(
             prisma as unknown as EformsignBranchRepairDatabase,
-            { mode: "apply", backupPath: join(tempDirectory, "forced-failure-backup.json") },
+            {
+                mode: "apply",
+                backupPath: join(tempDirectory, "forced-failure-backup.json"),
+                ...syntheticTargetOptions,
+            },
             { id: hqBranchId, slug: "incheon", isActive: true },
             target,
             {
@@ -225,11 +239,11 @@ describeDisposable("eformsign branch repair transaction (disposable PostgreSQL)"
         )).rejects.toThrow("forced post-update failure");
 
         const rows = await prisma.eformsign_doc.findMany({
-            where: { documentId: { in: [TARGET_DOCUMENT_ID, candidateDocumentId, otherOwnedDocumentId] } },
+            where: { documentId: { in: [syntheticTargetDocumentId, candidateDocumentId, otherOwnedDocumentId] } },
             select: { documentId: true, branchId: true },
         });
         expect(rows).toEqual(expect.arrayContaining([
-            { documentId: TARGET_DOCUMENT_ID, branchId: null },
+            { documentId: syntheticTargetDocumentId, branchId: null },
             { documentId: candidateDocumentId, branchId: null },
             { documentId: otherOwnedDocumentId, branchId: qaBranchId },
         ]));

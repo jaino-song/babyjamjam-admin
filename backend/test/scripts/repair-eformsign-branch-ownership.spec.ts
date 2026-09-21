@@ -27,6 +27,12 @@ const target = {
     databaseHost: "db.example.com",
     databaseTarget: "db.example.com:5432/app?schema=public&tenant=project",
 };
+const syntheticTargetDocumentId = "0123456789abcdef0123456789abcdef";
+const syntheticCustomerName = "홍가람";
+const syntheticTargetOptions = {
+    targetDocumentId: syntheticTargetDocumentId,
+    targetCustomerQuery: syntheticCustomerName,
+};
 
 function createDatabase(options: {
     candidateRows?: Array<{ id: number; documentId: string; branchId: string | null }>;
@@ -52,10 +58,10 @@ function createDatabase(options: {
     ];
     const targetRow = options.targetRow ?? {
         id: 99,
-        documentId: "a16f415f80bc4dfe834ca2882f103b25",
+        documentId: syntheticTargetDocumentId,
         branchId: null,
         templateId: "d1591da29590495d800f55f1d1fc1378",
-        customerName: "배진경",
+        customerName: syntheticCustomerName,
     };
     const databaseRef: { current?: {
         branch: { findMany: jest.Mock };
@@ -143,11 +149,24 @@ describe("repair-eformsign-branch-ownership operator", () => {
     });
 
     it("defaults to a read-only dry-run and requires strong mutation flags", () => {
-        expect(parseRepairOptions([])).toEqual({ mode: "dry-run" });
+        expect(parseRepairOptions([
+            "--target-document-id",
+            syntheticTargetDocumentId,
+            "--target-customer-query",
+            syntheticCustomerName,
+        ])).toEqual({
+            mode: "dry-run",
+            ...syntheticTargetOptions,
+        });
+        expect(() => parseRepairOptions([])).toThrow("--target-document-id");
         expect(() => parseRepairOptions([
             "--apply",
             "--backup-path",
             "/tmp/backup.json",
+            "--target-document-id",
+            syntheticTargetDocumentId,
+            "--target-customer-query",
+            syntheticCustomerName,
             "--confirm-target",
             "development@db.example.com:5432/app?schema=public&tenant=project",
             "--confirm-branch-slug",
@@ -163,6 +182,18 @@ describe("repair-eformsign-branch-ownership operator", () => {
             "--confirm-branch-slug",
             "qa",
         ])).toThrow("--confirm-branch-slug incheon");
+        expect(() => parseRepairOptions([
+            "--target-document-id",
+            "not-an-id",
+            "--target-customer-query",
+            syntheticCustomerName,
+        ])).toThrow("32-character hexadecimal id");
+        expect(() => parseRepairOptions([
+            "--target-document-id",
+            syntheticTargetDocumentId,
+            "--target-customer-query",
+            "   ",
+        ])).toThrow("nonempty safe query");
     });
 
     it("writes a minimum-field chmod-600 backup and rejects extra payload fields", async () => {
@@ -179,7 +210,7 @@ describe("repair-eformsign-branch-ownership operator", () => {
             expect(() => validateBackup({ ...parsed, createdAt: "2026-09-21" })).toThrow(
                 "Backup createdAt is invalid",
             );
-            expect(() => validateBackup({ ...parsed, customerName: "배진경" })).toThrow(
+            expect(() => validateBackup({ ...parsed, customerName: syntheticCustomerName })).toThrow(
                 "contains unsupported fields",
             );
         } finally {
@@ -198,7 +229,12 @@ describe("repair-eformsign-branch-ownership operator", () => {
 
     it("verifies the target branch, list-only template, and persisted Korean customer search", async () => {
         const database = createDatabase();
-        await expect(verifyTargetDocument(database, branch.id)).resolves.toEqual({
+        await expect(verifyTargetDocument(
+            database,
+            branch.id,
+            syntheticTargetDocumentId,
+            syntheticCustomerName,
+        )).resolves.toEqual({
             found: true,
             currentBranchMatchesTarget: false,
             templateIsListOnlyHistoricalMaternity: true,
@@ -214,7 +250,7 @@ describe("repair-eformsign-branch-ownership operator", () => {
         try {
             await applyRepair(
                 database,
-                { mode: "apply", backupPath },
+                { mode: "apply", backupPath, ...syntheticTargetOptions },
                 branch,
                 target,
             );
@@ -239,10 +275,10 @@ describe("repair-eformsign-branch-ownership operator", () => {
             name: "other branch ownership",
             targetRow: {
                 id: 99,
-                documentId: "a16f415f80bc4dfe834ca2882f103b25",
+                documentId: syntheticTargetDocumentId,
                 branchId: "branch-qa",
                 templateId: "d1591da29590495d800f55f1d1fc1378",
-                customerName: "배진경",
+                customerName: syntheticCustomerName,
             },
             error: "already owned by another branch",
         },
@@ -250,10 +286,10 @@ describe("repair-eformsign-branch-ownership operator", () => {
             name: "unapproved template",
             targetRow: {
                 id: 99,
-                documentId: "a16f415f80bc4dfe834ca2882f103b25",
+                documentId: syntheticTargetDocumentId,
                 branchId: null,
                 templateId: "active-template",
-                customerName: "배진경",
+                customerName: syntheticCustomerName,
             },
             error: "not an approved historical maternity template",
         },
@@ -261,10 +297,10 @@ describe("repair-eformsign-branch-ownership operator", () => {
             name: "customer search mismatch",
             targetRow: {
                 id: 99,
-                documentId: "a16f415f80bc4dfe834ca2882f103b25",
+                documentId: syntheticTargetDocumentId,
                 branchId: null,
                 templateId: "e63c528b0375478d83e30ff8a9ed1967",
-                customerName: "김고객",
+                customerName: "테스트고객",
             },
             error: "customer name does not satisfy",
         },
@@ -273,7 +309,12 @@ describe("repair-eformsign-branch-ownership operator", () => {
         const directory = await mkdtemp(join(tmpdir(), "eformsign-branch-repair-"));
         const backupPath = join(directory, "backup.json");
         try {
-            await expect(applyRepair(database, { mode: "apply", backupPath }, branch, target))
+            await expect(applyRepair(
+                database,
+                { mode: "apply", backupPath, ...syntheticTargetOptions },
+                branch,
+                target,
+            ))
                 .rejects.toThrow(error);
             expect(database.eformsign_doc.updateMany).not.toHaveBeenCalled();
         } finally {
@@ -288,7 +329,12 @@ describe("repair-eformsign-branch-ownership operator", () => {
         const directory = await mkdtemp(join(tmpdir(), "eformsign-branch-repair-"));
         const backupPath = join(directory, "backup.json");
         try {
-            await expect(applyRepair(database, { mode: "apply", backupPath }, branch, target))
+            await expect(applyRepair(
+                database,
+                { mode: "apply", backupPath, ...syntheticTargetOptions },
+                branch,
+                target,
+            ))
                 .rejects.toThrow("was not assigned to the selected HQ branch");
         } finally {
             await rm(directory, { recursive: true, force: true });

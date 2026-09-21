@@ -185,14 +185,14 @@ describe("EformsignMirrorListService", () => {
         repository.findAllVisibleInMirror.mockResolvedValue([
             createMirrorDocument({
                 documentId: "doc-1",
-                customerName: "배진경",
+                customerName: "홍가람",
                 documentName: "계약",
                 stepRecipientName: "송진호",
             }),
         ]);
 
-        const exact = await service.buildList(createQuery({ search: "배진경" }));
-        const chosung = await service.buildList(createQuery({ search: "ㅂㅈㄱ" }));
+        const exact = await service.buildList(createQuery({ search: "홍가람" }));
+        const chosung = await service.buildList(createQuery({ search: "ㅎㄱㄹ" }));
 
         expect(exact.documents.map((document) => document.id)).toEqual(["doc-1"]);
         expect(chosung.documents.map((document) => document.id)).toEqual(["doc-1"]);
@@ -208,27 +208,27 @@ describe("EformsignMirrorListService", () => {
         const filter = await scopeService.resolveTemplateFilter("maternity", "branch-1");
         repository.findAllVisibleInMirror.mockResolvedValue([
             createMirrorDocument({
-                documentId: "a16f415f80bc4dfe834ca2882f103b25",
+                documentId: "0123456789abcdef0123456789abcdef",
                 templateId: "d1591da29590495d800f55f1d1fc1378",
-                customerName: "배진경",
+                customerName: "홍가람",
             }),
         ]);
 
         const exact = await service.buildList(createQuery({
             templateId: filter?.templateId,
-            search: "배진경",
+            search: "홍가람",
         }));
         const chosung = await service.buildList(createQuery({
             templateId: filter?.templateId,
-            search: "ㅂㅈㄱ",
+            search: "ㅎㄱㄹ",
         }));
 
         expect(filter?.templateId).toContain("d1591da29590495d800f55f1d1fc1378");
         expect(exact.documents.map((document) => document.id)).toEqual([
-            "a16f415f80bc4dfe834ca2882f103b25",
+            "0123456789abcdef0123456789abcdef",
         ]);
         expect(chosung.documents.map((document) => document.id)).toEqual([
-            "a16f415f80bc4dfe834ca2882f103b25",
+            "0123456789abcdef0123456789abcdef",
         ]);
     });
 

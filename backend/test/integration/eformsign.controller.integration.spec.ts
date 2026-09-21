@@ -1238,27 +1238,27 @@ describe("EformsignController (Integration)", () => {
             ]);
             mirrorRepository.findAllVisibleInMirror.mockResolvedValue([
                 createMirrorRow({
-                    documentId: "a16f415f80bc4dfe834ca2882f103b25",
+                    documentId: "0123456789abcdef0123456789abcdef",
                     templateId: "d1591da29590495d800f55f1d1fc1378",
-                    customerName: "배진경",
+                    customerName: "홍가람",
                     clientId: null,
                 }),
             ]);
 
             const exact = await request(mirrorApp.getHttpServer())
                 .get("/api/documents")
-                .query({ section: "maternity", search: "배진경" });
+                .query({ section: "maternity", search: "홍가람" });
             const chosung = await request(mirrorApp.getHttpServer())
                 .get("/api/documents")
-                .query({ section: "maternity", search: "ㅂㅈㄱ" });
+                .query({ section: "maternity", search: "ㅎㄱㄹ" });
 
             expect(exact.status).toBe(200);
             expect(chosung.status).toBe(200);
             expect(exact.body.documents.map((d: { id: string }) => d.id)).toEqual([
-                "a16f415f80bc4dfe834ca2882f103b25",
+                "0123456789abcdef0123456789abcdef",
             ]);
             expect(chosung.body.documents.map((d: { id: string }) => d.id)).toEqual([
-                "a16f415f80bc4dfe834ca2882f103b25",
+                "0123456789abcdef0123456789abcdef",
             ]);
             // Search is applied after the same mirror snapshot; the second query must not
             // rebuild the source generation or drop the repaired historical row.
