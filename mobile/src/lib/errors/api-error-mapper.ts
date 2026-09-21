@@ -1,4 +1,4 @@
-import { getUserErrorMessage } from '@babyjamjam/shared';
+import { getUserErrorMessage, normalizeApiError } from '@babyjamjam/shared';
 
 import { t, Locale } from '@/lib/i18n/translations';
 
@@ -140,13 +140,25 @@ export function getApiDisplayMessage(error: unknown): string | null {
 }
 
 /**
- * Get error message from any error type, with Prisma error handling
- * Falls back to the backend's own message, then to a generic localized message
+ * Get error message from any error type, with Prisma error handling.
+ *
+ * Resolution follows the EM v1.0 client policy: a registered problem body
+ * resolves through the shared contract in the caller's locale (catalog
+ * message only — upstream title/detail strings are never rendered);
+ * unregistered legacy bodies keep the compatibility adapter with a
+ * locale-aware fallback instead of the previous hardcoded ko fallback.
  */
 export function getErrorMessage(
     error: unknown,
     locale: Locale,
     fallbackKey: string = 'errors.generic'
 ): string {
-    return getUserErrorMessage(error, t('ko', fallbackKey));
+    const normalized = normalizeApiError(error, {
+        locale: locale === 'en' ? 'en-US' : 'ko-KR',
+        operation: 'mutation',
+    });
+    if (normalized.verified) {
+        return normalized.message;
+    }
+    return getUserErrorMessage(error, t(locale, fallbackKey));
 }

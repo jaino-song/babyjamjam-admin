@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { normalizeApiError } from "@babyjamjam/shared";
 
 type Status = {
     ok: true;
@@ -30,6 +31,17 @@ const MAX_LOCK_REFRESH_DELAY_MS = 30 * 60 * 1000;
 function formatLockedUntil(iso: string): string {
     const date = new Date(iso);
     return `${date.getHours()}시 ${String(date.getMinutes()).padStart(2, "0")}분`;
+}
+
+// EM v1.0 client policy: a registered problem body resolves through the
+// shared contract; the locally authored public-screen copy stays as the
+// fallback. HTTP status still drives the screen state — never the body text.
+function verifyFailureCopy(status: number, body: unknown, fallback: string): string {
+    const normalized = normalizeApiError(
+        { response: { status, data: body } },
+        { locale: "ko-KR", operation: "mutation" },
+    );
+    return normalized.verified ? normalized.message : fallback;
 }
 
 export interface ReceiptLinkScreenProps {
@@ -219,7 +231,7 @@ export function ReceiptLinkScreen({ token }: ReceiptLinkScreenProps) {
                 setScreen({ ...screen, error: "생년월일 6자리(YYMMDD)를 입력해 주세요." });
                 return;
             }
-            setScreen({ ...screen, error: "확인 중 문제가 생겼습니다. 잠시 후 다시 시도해 주세요." });
+            setScreen({ ...screen, error: verifyFailureCopy(response.status, body, "확인 중 문제가 생겼습니다. 잠시 후 다시 시도해 주세요.") });
         } catch {
             if (!mountedRef.current) return;
             setScreen({ ...screen, error: "네트워크 연결을 확인해 주세요." });

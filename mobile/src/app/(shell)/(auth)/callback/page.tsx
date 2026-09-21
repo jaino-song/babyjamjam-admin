@@ -1,9 +1,9 @@
 "use client"
-import { getUserErrorMessage } from "@babyjamjam/shared";
 
 
 import { useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
+import { normalizeApiError } from "@babyjamjam/shared";
 import { Spinner } from "@/components/ui/spinner";
 import { exchangeToken } from "./actions";
 import { getSafeCallbackError } from "@/lib/auth/auth-errors";
@@ -27,13 +27,14 @@ export default function AuthCallbackPage() {
 
             if (oauthError) {
                 console.error("[Auth Callback] OAuth provider returned an error");
-                setError(getUserErrorMessage(getSafeCallbackError(oauthError)));
+                // getSafeCallbackError returns sanitized, locally authored copy.
+                setError(getSafeCallbackError(oauthError));
                 return;
             }
 
             if (!code) {
                 console.error("[Auth Callback] No code in URL");
-                setError(getUserErrorMessage("Authorization Code Required"));
+                setError("인증 코드가 없어요. 다시 로그인해 주세요.");
                 return;
             }
 
@@ -46,7 +47,9 @@ export default function AuthCallbackPage() {
 
                 if (!result.success) {
                     console.error("[Auth Callback] Token exchange failed:", result.error);
-                    setError(getUserErrorMessage(result.error || "Authentication Failed"));
+                    // The server action already normalizes the failure through
+                    // the problem contract; render its copy verbatim.
+                    setError(result.error || "카카오 로그인에 실패했어요. 다시 로그인해 주세요.");
                     return;
                 }
 
@@ -72,7 +75,9 @@ export default function AuthCallbackPage() {
             catch (err) {
                 console.error("[Auth Callback] Token Exchange Error:", err);
                 console.error("[Auth Callback] Error message:", err instanceof Error ? err.message : String(err));
-                setError(getUserErrorMessage(err, "네트워크 오류가 발생했어요. 다시 시도해 주세요."));
+                // Shared problem contract resolution — upstream internals are
+                // never rendered; the normalized message is already safe copy.
+                setError(normalizeApiError(err, { locale: "ko-KR", operation: "mutation" }).message);
             }
         }
         exchangeCodeForTokens();
@@ -81,7 +86,7 @@ export default function AuthCallbackPage() {
     if (error) {
         return (
             <div data-component={CALLBACK_BASE} data-slot="auth-callback-page" className="flex min-h-[100dvh] flex-col items-center justify-center gap-4 px-6 text-center">
-                <p className="text-destructive">{error && getUserErrorMessage(error)}</p>
+                <p className="text-destructive">{error}</p>
                 <button
                     data-component={`${CALLBACK_BASE}_login-button`}
                     className="text-sm text-muted-foreground cursor-pointer hover:underline"

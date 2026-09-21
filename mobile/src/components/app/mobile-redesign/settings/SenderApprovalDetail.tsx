@@ -1,10 +1,9 @@
 "use client";
-import { getUserErrorMessage } from "@babyjamjam/shared";
+import { normalizeApiError } from "@babyjamjam/shared";
 
 
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { isAxiosError } from "axios";
 import { Building2, Send } from "lucide-react";
 import { useRouter } from "next/navigation";
 
@@ -67,15 +66,12 @@ const AGREEMENT_ITEMS: AgreementItem[] = [
   },
 ];
 
+// Shared problem contract resolution — the upstream `message`/`error`
+// strings and Error.message internals are never rendered; a registered body
+// surfaces its catalog copy, otherwise the locally authored fallback.
 function getApprovalErrorMessage(error: unknown): string {
-  if (isAxiosError<{ error?: string; message?: string | string[] }>(error)) {
-    const data = error.response?.data;
-    const message = Array.isArray(data?.message) ? data.message.join(", ") : data?.message;
-    return message ?? data?.error ?? "승인 신청에 실패했어요.";
-  }
-
-  if (error instanceof Error && error.message) return error.message;
-  return "승인 신청에 실패했어요.";
+  const normalized = normalizeApiError(error, { locale: "ko-KR", operation: "mutation" });
+  return normalized.verified ? normalized.message : "승인 신청에 실패했어요.";
 }
 
 function approvalStatusLabel(approval?: MessageSenderApprovalResponse): string {
@@ -118,7 +114,7 @@ export function SenderApprovalDetail({
       router.replace("/all");
     },
     onError: (error) => {
-      setErrorMessage(getUserErrorMessage(error, getApprovalErrorMessage(error)));
+      setErrorMessage(getApprovalErrorMessage(error));
     },
   });
 
@@ -295,7 +291,7 @@ export function SenderApprovalDetail({
           variant="destructive"
           className={styles.feedbackAlert}
         >
-          <AlertDescription>{errorMessage && getUserErrorMessage(errorMessage)}</AlertDescription>
+          <AlertDescription>{errorMessage}</AlertDescription>
         </Alert>
       ) : null}
 

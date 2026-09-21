@@ -1,6 +1,5 @@
 "use client";
 import {
-  getUserErrorMessage,
   normalizeApiError,
   type ProblemOutcome,
 } from "@babyjamjam/shared";
@@ -489,7 +488,9 @@ export default function ContractCreationPage() {
   }, [startDate, voucherDuration, setEndDate]);
 
   const showErrorToast = (message: string) => {
-    toast({ variant: "destructive", description: getUserErrorMessage(message) });
+    // Locally authored validation copy renders verbatim — the legacy
+    // getUserErrorMessage string adapter is not applied to it.
+    toast({ variant: "destructive", description: message });
   };
 
   const showSubmissionFailure = (
@@ -902,6 +903,8 @@ export default function ContractCreationPage() {
           try { data = JSON.parse((event as MessageEvent).data) as HeadlessProgressEvent; }
           catch { return; }
           if (data.step === "failed") {
+            // getSafeHeadlessFailureMessage is a locally authored allowlist
+            // adapter: the upstream raw reason never reaches the UI verbatim.
             const errorHint = getSafeHeadlessFailureMessage(data.reason);
             setCreationProgress((current) => {
               const next = resolveFailedHeadlessProgress(

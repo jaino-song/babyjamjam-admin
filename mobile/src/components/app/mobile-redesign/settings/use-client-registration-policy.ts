@@ -1,5 +1,5 @@
 "use client";
-import { getUserErrorMessage } from "@babyjamjam/shared";
+import { normalizeApiError } from "@babyjamjam/shared";
 
 
 import {
@@ -17,6 +17,13 @@ import {
 } from "@/services/api";
 
 const QUERY_KEY = ["settings", "client-registration-policy"] as const;
+
+// Shared problem contract resolution — a registered body surfaces its
+// catalog copy; the locally authored fallback covers unverified failures.
+function failureMessage(error: unknown, fallback: string): string {
+  const normalized = normalizeApiError(error, { locale: "ko-KR", operation: "mutation" });
+  return normalized.verified ? normalized.message : fallback;
+}
 
 interface ClientRegistrationPolicyMutationContext {
   previous: ClientRegistrationPolicy | undefined;
@@ -52,7 +59,7 @@ export function useClientRegistrationPolicy(): UseClientRegistrationPolicyResult
     },
     onError: (_error, _patch, context) => {
       if (context?.previous) queryClient.setQueryData(QUERY_KEY, context.previous);
-      toast({ variant: "destructive", description: getUserErrorMessage(_error, "고객 자동 등록 설정을 저장하지 못했어요") });
+      toast({ variant: "destructive", description: failureMessage(_error, "고객 자동 등록 설정을 저장하지 못했어요") });
     },
     onSuccess: (saved) => {
       queryClient.setQueryData(QUERY_KEY, saved);

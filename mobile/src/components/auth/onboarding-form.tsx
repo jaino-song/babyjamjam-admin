@@ -1,6 +1,4 @@
 "use client";
-import { getUserErrorMessage } from "@babyjamjam/shared";
-
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
@@ -70,7 +68,9 @@ export function OnboardingForm(props: OnboardingFormProps) {
     const response = await completeKakaoOnboarding(result.data);
     setIsLoading(false);
     if (!response.success) {
-      setServerError(getUserErrorMessage(response.error || "계정 정보를 저장하지 못했습니다."));
+      // The server action already returns contract-resolved authored copy;
+      // store it verbatim instead of re-adapting the string.
+      setServerError(response.error || "계정 정보를 저장하지 못했습니다.");
       return;
     }
     router.replace("/login?authError=PENDING_APPROVAL");
@@ -86,7 +86,7 @@ export function OnboardingForm(props: OnboardingFormProps) {
         <div className="auth-title">카카오 가입 마무리</div>
         <div className="auth-sub">로그인에 필요한 추가 정보를 입력해 주세요.</div>
       </div>
-      {serverError && <div className="auth-server-error" role="alert">{serverError && getUserErrorMessage(serverError)}</div>}
+      {serverError && <div className="auth-server-error" role="alert">{serverError}</div>}
       <form className="auth-form" onSubmit={submit}>
         <input className="auth-input" value={props.email ?? ""} disabled aria-label="이메일" />
         <input className="auth-input" value={props.name ?? ""} disabled aria-label="이름" />

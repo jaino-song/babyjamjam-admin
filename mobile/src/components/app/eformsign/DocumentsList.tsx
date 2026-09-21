@@ -1,6 +1,6 @@
 "use client";
 
-import { getUserErrorMessage } from "@babyjamjam/shared";
+import { normalizeApiError } from "@babyjamjam/shared";
 
 import { useMemo, useState } from "react";
 import { Plus } from "lucide-react";
@@ -126,7 +126,10 @@ export function DocumentsList() {
 
   // Error state - now after all hooks are called
   if (authError || error) {
-    const errorMessage = getUserErrorMessage(authError ?? error, "문서를 불러오지 못했어요.");
+    // Shared problem contract resolution — a registered body surfaces its
+    // catalog copy; upstream internals are never rendered.
+    const errorMessage = normalizeApiError(error, { locale: "ko-KR", operation: "read" })
+      .message;
     return (
       <div className="p-3">
         <Alert variant="destructive">

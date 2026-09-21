@@ -1,5 +1,4 @@
 "use client";
-import { getUserErrorMessage } from "@babyjamjam/shared";
 
 
 import {
@@ -138,7 +137,8 @@ export function MessageSenderApprovalSettings({
 
             {errorMessage ? (
               <Alert variant="destructive">
-                <AlertDescription>{errorMessage && getUserErrorMessage(errorMessage)}</AlertDescription>
+                {/* Callers pass already-normalized copy; render verbatim. */}
+                <AlertDescription>{errorMessage}</AlertDescription>
               </Alert>
             ) : null}
           </div>

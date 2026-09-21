@@ -1,5 +1,6 @@
 "use client";
-import { getUserErrorMessage } from "@babyjamjam/shared";
+
+import { normalizeApiError, type NormalizedApiError } from "@babyjamjam/shared";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useParams } from "next/navigation";
@@ -39,6 +40,34 @@ const FINALIZED_RECORD_STATUSES = new Set([
 ]);
 
 /* ───────────────────────── helpers ───────────────────────── */
+
+// EM v1.0 client policy: a registered problem body resolves through the
+// shared contract (catalog copy in the caller's locale); the upstream
+// `message`/`error` strings are never rendered. Unverified bodies keep the
+// locally authored fallback.
+function problemMessage(status: number, data: unknown, fallback: string): string;
+function problemMessage(error: unknown, fallback: string): string;
+function problemMessage(statusOrError: number | unknown, dataOrFallback: unknown, maybeFallback?: string): string {
+    if (typeof statusOrError === "number") {
+        const normalized = normalizeApiError(
+            { response: { status: statusOrError, data: dataOrFallback } },
+            { locale: "ko-KR", operation: "mutation" },
+        );
+        return normalized.verified ? normalized.message : (maybeFallback as string);
+    }
+    const normalized = normalizeApiError(statusOrError, { locale: "ko-KR", operation: "mutation" });
+    return normalized.verified ? normalized.message : (dataOrFallback as string);
+}
+
+/** Registered problem code from a parsed response body, if any. */
+function problemCode(normalized: NormalizedApiError, body: unknown): string | undefined {
+    if (normalized.verified && normalized.problem) return normalized.problem.code;
+    if (body && typeof body === "object" && !Array.isArray(body)) {
+        const code = (body as { code?: unknown }).code;
+        if (typeof code === "string" && code.length > 0) return code;
+    }
+    return undefined;
+}
 
 interface StoredFormState {
     header?: Record<string, string>;
@@ -410,8 +439,8 @@ export default function ServiceRecordPage() {
         try {
             const response = await api("/header", { method: "PUT", body: JSON.stringify(header) });
             if (!response.ok) {
-                const error = await response.json().catch(() => ({}));
-                setErrorNotificationMessage(error?.message ?? "기본정보 저장에 실패했어요.");
+                const body: unknown = await response.json().catch(() => ({}));
+                setErrorNotificationMessage(problemMessage(response.status, body, "기본정보 저장에 실패했어요."));
                 return;
             }
             clearStoredFormState(token);
@@ -466,13 +495,17 @@ export default function ServiceRecordPage() {
             };
             const res = await api(`/sessions/${day}/submit`, { method: "POST", body: JSON.stringify(body) });
             if (!res.ok) {
-                const e = await res.json().catch(() => ({}));
-                if (e?.code === "CLIENT_SIGNATURE_REQUIRED") {
+                const e: unknown = await res.json().catch(() => ({}));
+                const normalized = normalizeApiError(
+                    { response: { status: res.status, data: e } },
+                    { locale: "ko-KR", operation: "mutation" },
+                );
+                if (problemCode(normalized, e) === "CLIENT_SIGNATURE_REQUIRED") {
                     setErrorNotificationMessage("산모 서명이 필요합니다.");
-                } else if (e?.code === "SERVICE_DATE_IMMUTABLE") {
-                    setErrorNotificationMessage(e?.message ?? "제공일자는 변경할 수 없어요.");
+                } else if (problemCode(normalized, e) === "SERVICE_DATE_IMMUTABLE") {
+                    setErrorNotificationMessage("제공일자는 변경할 수 없어요.");
                 } else {
-                    setErrorNotificationMessage(e?.message ?? "제출에 실패했어요.");
+                    setErrorNotificationMessage(normalized.verified ? normalized.message : "제출에 실패했어요.");
                 }
                 return;
             }
@@ -493,7 +526,7 @@ export default function ServiceRecordPage() {
             const data = await res.json().catch(() => ({}));
             if (!res.ok) {
                 setScheduleChangeModalOpen(false);
-                setErrorNotificationMessage(data?.error ?? data?.message ?? "일정 변경 정보를 불러오지 못했습니다.");
+                setErrorNotificationMessage(problemMessage(res.status, data, "일정 변경 정보를 불러오지 못했습니다."));
                 return;
             }
             setScheduleChangePreview(data as ScheduleChangePreview);
@@ -516,13 +549,17 @@ export default function ServiceRecordPage() {
         try {
             const res = await api("/schedule-change", { method: "POST" });
             const data = await res.json().catch(() => ({}));
-            if (res.ok || (res.status === 409 && data?.code === "REQUEST_ALREADY_PENDING")) {
+            // Registered-code comparison only — the raw body text is never read.
+            if (res.ok || (res.status === 409 && problemCode(normalizeApiError(
+                { response: { status: res.status, data } },
+                { locale: "ko-KR", operation: "mutation" },
+            ), data) === "REQUEST_ALREADY_PENDING")) {
                 setScheduleChangeModalOpen(false);
                 setScheduleChangePreview(null);
                 await loadContext();
                 return;
             }
-            setErrorNotificationMessage(data?.error ?? data?.message ?? "일정 변경 요청에 실패했어요.");
+            setErrorNotificationMessage(problemMessage(res.status, data, "일정 변경 요청에 실패했어요."));
         } finally {
             setScheduleChangeBusy(false);
         }
@@ -579,7 +616,7 @@ export default function ServiceRecordPage() {
             data-component="mobile_service-record_wizard"
             screen={screen}
             phone={phone}
-            phoneError={phoneError ? getUserErrorMessage(phoneError) : null}
+            phoneError={phoneError}
             context={ctx}
             header={header}
             day={day}

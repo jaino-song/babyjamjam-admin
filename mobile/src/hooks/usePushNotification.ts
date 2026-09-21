@@ -269,7 +269,9 @@ export function usePushNotification() {
                 setState((prev) => ({
                     ...prev,
                     isLoading: false,
-                    error: 'Failed to check subscription status',
+                    // Locally authored outcome copy — upstream internals are never stored
+                    // in user-visible state.
+                    error: '알림 상태를 확인하지 못했어요. 잠시 후 다시 시도해 주세요.',
                 }));
             }
 
@@ -302,7 +304,7 @@ export function usePushNotification() {
         if (!PWA_NOTIFICATIONS_ENABLED) return false;
 
         if (!state.isSupported || !vapidKey) {
-            setState((prev) => ({ ...prev, error: 'Push notifications not supported' }));
+            setState((prev) => ({ ...prev, error: '이 브라우저는 알림을 지원하지 않아요.' }));
             return false;
         }
 
@@ -317,7 +319,7 @@ export function usePushNotification() {
                 setState((prev) => ({
                     ...prev,
                     isLoading: false,
-                    error: 'Notification permission denied',
+                    error: '알림 권한이 거부됐어요. 브라우저 설정에서 알림을 허용해 주세요.',
                 }));
                 return false;
             }
@@ -348,7 +350,9 @@ export function usePushNotification() {
             setState((prev) => ({
                 ...prev,
                 isLoading: false,
-                error: err instanceof Error ? err.message : 'Subscription failed',
+                // Locally authored outcome copy — upstream err.message is never
+                // stored in user-visible state.
+                error: '알림 구독에 실패했어요. 잠시 후 다시 시도해 주세요.',
             }));
             return false;
         }
@@ -386,7 +390,9 @@ export function usePushNotification() {
             setState((prev) => ({
                 ...prev,
                 isLoading: false,
-                error: err instanceof Error ? err.message : 'Unsubscription failed',
+                // Locally authored outcome copy — upstream err.message is never
+                // stored in user-visible state.
+                error: '알림 구독 해제에 실패했어요. 잠시 후 다시 시도해 주세요.',
             }));
             return false;
         }

@@ -1,5 +1,6 @@
 "use client";
-import { getUserErrorMessage } from "@babyjamjam/shared";
+
+import { normalizeApiError } from "@babyjamjam/shared";
 
 
 import { useCallback, useMemo, useRef, useState } from "react";
@@ -206,8 +207,15 @@ export function FileUploadScreen() {
       toast({ description: "문서를 업로드했어요", variant: "success" });
       startNavigation();
       router.push("/files");
-    } catch {
-      toast({ description: getUserErrorMessage("문서를 업로드하지 못했어요"), variant: "destructive" });
+    } catch (error) {
+      // Shared problem contract resolution — a registered body surfaces its
+      // catalog copy; the locally authored fallback covers unverified
+      // failures (upload failures are never silently swallowed).
+      const normalized = normalizeApiError(error, { locale: "ko-KR", operation: "mutation" });
+      toast({
+        description: normalized.verified ? normalized.message : "문서를 업로드하지 못했어요",
+        variant: "destructive",
+      });
     }
   };
 

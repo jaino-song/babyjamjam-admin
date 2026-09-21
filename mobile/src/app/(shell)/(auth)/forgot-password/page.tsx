@@ -1,5 +1,4 @@
 "use client";
-import { getUserErrorMessage } from "@babyjamjam/shared";
 
 
 import { useState } from "react";
@@ -7,6 +6,7 @@ import Image from "next/image";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Check } from "lucide-react";
+import { normalizeApiError } from "@babyjamjam/shared";
 
 import { authApi } from "@/services/api";
 import { forgotPasswordSchema } from "@/lib/validations/auth";
@@ -30,6 +30,7 @@ export default function ForgotPasswordPage() {
 
     const result = forgotPasswordSchema.safeParse({ email });
     if (!result.success) {
+      // Local Zod issue copy is authored by this repo's schema — render as-is.
       setFieldError(result.error.issues[0]?.message || "유효한 이메일을 입력해주세요.");
       return;
     }
@@ -40,11 +41,15 @@ export default function ForgotPasswordPage() {
       if (response.success) {
         setIsSuccess(true);
       } else {
-        setError(getUserErrorMessage(response.message || "요청 처리에 실패했어요. 다시 시도해 주세요."));
+        // The upstream `message` field is never rendered; locally authored
+        // copy covers the unverified outcome.
+        setError("요청 처리에 실패했어요. 다시 시도해 주세요.");
       }
     } catch (err) {
       console.error("Forgot password error:", err);
-      setError(getUserErrorMessage(err, "네트워크 오류가 발생했어요. 다시 시도해 주세요."));
+      // Shared problem contract resolution — upstream internals are never
+      // rendered; the normalized message is already safe copy.
+      setError(normalizeApiError(err, { locale: "ko-KR", operation: "mutation" }).message);
     } finally {
       setIsLoading(false);
     }
@@ -124,7 +129,7 @@ export default function ForgotPasswordPage() {
 
       {error && (
         <div className="auth-server-error" role="alert" data-component={`${FORGOT_PASSWORD_BASE}_server-error`}>
-          {error && getUserErrorMessage(error)}
+          {error}
         </div>
       )}
 

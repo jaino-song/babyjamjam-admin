@@ -9,7 +9,9 @@ describe("mobile logout navigation lifecycle", () => {
 
     expect(resultIndex).toBeGreaterThanOrEqual(0);
     expect(redirectIndex).toBeGreaterThan(resultIndex);
-    expect(source).toContain("setError(getUserErrorMessage(result.error ||");
+    // The server action already normalizes failures through the problem
+    // contract, so the page renders its copy verbatim (no string re-adapter).
+    expect(source).toContain('setError(result.error || "로그아웃 중 오류가 발생했어요.");');
     expect(source).toContain("setTimeout(() => {");
   });
 });

@@ -1,11 +1,11 @@
 "use client";
-import { getUserErrorMessage } from "@babyjamjam/shared";
 
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { User, Users, Workflow } from "lucide-react";
 import { useRouter, useSearchParams } from "next/navigation";
+import { normalizeApiError } from "@babyjamjam/shared";
 
 import { clientQueryKeys, fetchClient, useClient, useDeleteClient } from "@/hooks/useClients";
 import { useEmployees } from "@/hooks/useEmployees";
@@ -325,10 +325,16 @@ export default function ClientsPage() {
         title: t(locale, "clients.delete-success"),
         description: t(locale, "clients.delete-success-description"),
       });
-    } catch {
+    } catch (error) {
+      // Shared problem contract resolution — a registered code drives the
+      // surfaced message; the localized fallback covers unverified failures.
+      const normalized = normalizeApiError(error, {
+        locale: locale === "en" ? "en-US" : "ko-KR",
+        operation: "mutation",
+      });
       toast({
         title: t(locale, "clients.delete-fail"),
-        description: getUserErrorMessage(t(locale, "clients.delete-fail-description")),
+        description: normalized.verified ? normalized.message : t(locale, "clients.delete-fail-description"),
         variant: "destructive",
       });
     }

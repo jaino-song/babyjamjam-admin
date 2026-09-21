@@ -1,5 +1,4 @@
 "use client";
-import { getUserErrorMessage } from "@babyjamjam/shared";
 
 
 import { useEffect, useState } from "react";
@@ -7,7 +6,7 @@ import Image from "next/image";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { CheckCircle, ChevronDown, ChevronLeft, ChevronRight, Link2 } from "lucide-react";
-import { REGISTERABLE_ROLE_OPTIONS } from "@babyjamjam/shared";
+import { normalizeApiError, type NormalizedApiError, REGISTERABLE_ROLE_OPTIONS } from "@babyjamjam/shared";
 
 import { authApi } from "@/services/api";
 import {
@@ -19,6 +18,8 @@ import {
 import "@/components/app/mobile-redesign/redesign.css";
 
 interface RegisterErrorData {
+  code?: unknown;
+  field?: unknown;
   errors?: string[];
   message?: string;
 }
@@ -27,10 +28,29 @@ interface AxiosLikeError {
 }
 
 const EMAIL_DUPLICATE_ERROR = "이미 등록된 이메일입니다.";
+const PHONE_DUPLICATE_ERROR = "이미 등록된 전화번호입니다.";
+const REGISTER_FAILURE_COPY = "회원가입에 실패했어요.";
+const REGISTER_NETWORK_FAILURE_COPY = "네트워크 오류가 발생했어요. 다시 시도해 주세요.";
 const REGISTER_TOTAL_STEPS = 3;
 const ACCOUNT_FIELDS = ["email", "name", "password", "confirmPassword"] as const;
 const PROFILE_FIELDS = ["phone", "birthDate"] as const;
 const APPROVAL_FIELDS = ["role"] as const;
+
+/** Registered-code discriminator for the duplicate-phone failure. */
+function isPhoneDuplicateFailure(errorData: RegisterErrorData | undefined, normalized: NormalizedApiError): boolean {
+  // Legacy Prisma body: { code: "P2002", field: "phone" }.
+  if (
+    errorData
+    && errorData.code === "P2002"
+    && errorData.field === "phone"
+  ) {
+    return true;
+  }
+  // Problem body: registered conflict code with a /phone pointer.
+  return normalized.verified
+    && normalized.problem?.code === "REQUEST_CONFLICT"
+    && (normalized.problem.errors ?? []).some((problemError) => problemError.pointer === "/phone");
+}
 
 /** Canonical data-component base for the /register route. */
 const REGISTER_BASE = "mobile_auth_register";
@@ -293,8 +313,15 @@ export default function RegisterPage() {
       if (response.success) {
         if (response.code === "ACCOUNTS_LINKED") setAccountsLinked(true);
         setIsSuccess(true);
+      } else if (response.code === "P2002") {
+        // Registered-code discrimination only — the register flow cannot
+        // produce another P2002, so no raw-message content check is needed.
+        setErrors((prev) => ({ ...prev, phone: PHONE_DUPLICATE_ERROR }));
+        setCurrentStep(1);
       } else {
-        setServerError(getUserErrorMessage(response.message || "회원가입에 실패했어요."));
+        // The upstream `message` field is never rendered; locally authored
+        // copy covers the unverified outcome.
+        setServerError(REGISTER_FAILURE_COPY);
       }
     } catch (err: unknown) {
       console.error("Registration error:", err);
@@ -302,9 +329,16 @@ export default function RegisterPage() {
         typeof err === "object" && err !== null && "response" in err
           ? (err as AxiosLikeError).response?.data
           : undefined;
-      if (errorData?.errors) setServerError(getUserErrorMessage(err, errorData.errors.join("\n")));
-      else if (errorData?.message) setServerError(getUserErrorMessage(err, errorData.message));
-      else setServerError(getUserErrorMessage(err, "네트워크 오류가 발생했어요. 다시 시도해 주세요."));
+      const normalized = normalizeApiError(err, { locale: "ko-KR", operation: "mutation" });
+
+      if (isPhoneDuplicateFailure(errorData, normalized)) {
+        setErrors((prev) => ({ ...prev, phone: PHONE_DUPLICATE_ERROR }));
+        setCurrentStep(1);
+      } else {
+        // Registered problem message (verified) or locally authored copy —
+        // upstream body messages/arrays are never rendered.
+        setServerError(normalized.verified ? normalized.message : REGISTER_NETWORK_FAILURE_COPY);
+      }
     } finally {
       setIsLoading(false);
     }
@@ -393,7 +427,7 @@ export default function RegisterPage() {
 
       {serverError && (
         <div className="auth-server-error" role="alert" data-component={`${REGISTER_BASE}_server-error`}>
-          {serverError && getUserErrorMessage(serverError)}
+          {serverError}
         </div>
       )}
 

@@ -1,5 +1,5 @@
 "use client";
-import { getUserErrorMessage, resolveProblemPresentation } from "@babyjamjam/shared";
+import { normalizeApiError, resolveProblemPresentation } from "@babyjamjam/shared";
 
 
 import type { ComponentType, ReactNode } from "react";
@@ -26,7 +26,6 @@ import {
   Workflow,
 } from "lucide-react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { isAxiosError } from "axios";
 import dynamic from "next/dynamic";
 import { useRouter } from "next/navigation";
 
@@ -128,7 +127,6 @@ import {
   resolveContractVoucherYear,
 } from "@/lib/contracts/contract-service-info";
 import {
-  RECEIPT_SHARE_ERROR_MESSAGE,
   downloadReceiptPng,
   getReceiptFileName,
   shareReceiptPng,
@@ -617,14 +615,13 @@ function progressLabel(doc: EformsignDocument): string {
   return "3/6 - 이용자 문서 열람 대기";
 }
 
+// Shared problem contract resolution for the re-request mutation — a
+// registered problem body surfaces its catalog copy; anything else (including
+// upstream `message`/`error` strings and Error.message internals) resolves to
+// the locally authored fallback.
 function requestErrorMessage(error: unknown, fallback: string): string {
-  if (isAxiosError<{ error?: string; message?: string | string[] }>(error)) {
-    const data = error.response?.data;
-    const message = Array.isArray(data?.message) ? data.message.join(", ") : data?.message;
-    return message ?? data?.error ?? fallback;
-  }
-
-  return error instanceof Error ? error.message : fallback;
+  const normalized = normalizeApiError(error, { locale: "ko-KR", operation: "mutation" });
+  return normalized.verified ? normalized.message : fallback;
 }
 
 function valueFromFieldRecord(record: UnknownRecord): string | null {
@@ -1355,7 +1352,7 @@ function ContractDetailContent({
     if (!stepSeq || stepType !== "05") {
       toast({
         variant: "destructive",
-        description: getUserErrorMessage("지금 단계에서는 재알림을 보낼 수 없어요"),
+        description: "지금 단계에서는 재알림을 보낼 수 없어요",
       });
       return;
     }
@@ -1381,7 +1378,7 @@ function ContractDetailContent({
     } catch (error) {
       toast({
         variant: "destructive",
-        description: getUserErrorMessage(error, requestErrorMessage(error, "재알림을 보내지 못했어요")),
+        description: requestErrorMessage(error, "재알림을 보내지 못했어요"),
       });
     } finally {
       setIsReRequesting(false);
@@ -1450,7 +1447,8 @@ function ContractDetailContent({
           toast({
             variant: "destructive",
             title: "영수증 공유 실패",
-            description: getUserErrorMessage(message, message || RECEIPT_SHARE_ERROR_MESSAGE),
+            // receipt-share emits locally authored copy only; render verbatim.
+            description: message,
           }),
       });
     } finally {

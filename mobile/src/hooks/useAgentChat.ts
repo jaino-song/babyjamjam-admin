@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { BjjUIMessage } from "@babyjamjam/shared";
+import { normalizeApiError } from "@babyjamjam/shared";
 import { AgentCapabilityMetaSchema } from "@babyjamjam/shared/agent";
 import { authenticatedFetch } from "@/lib/api/authenticated-fetch";
 
@@ -237,7 +238,21 @@ export function useAgentChat() {
         await refreshCurrentSession().catch(() => undefined);
         try {
             const response = await authenticatedFetch(`/api/ai/agent/actions/${encodeURIComponent(actionId)}`, { credentials: "same-origin" });
-            if (!response.ok) return { code: "action_unconfirmed", message: "작업 기록을 확인하지 못했습니다.", effectState: "succeeded-unconfirmed" };
+            if (!response.ok) {
+                // Resolve the failure through the shared problem contract: a
+                // registered code drives the surfaced code/message; an
+                // unverified body keeps the local client copy and tag.
+                const body: unknown = await response.json().catch(() => null);
+                const normalized = normalizeApiError(
+                    { response: { status: response.status, data: body } },
+                    { locale: "ko-KR", operation: "mutation" },
+                );
+                return {
+                    code: normalized.verified && normalized.problem ? normalized.problem.code : "action_unconfirmed",
+                    message: normalized.verified ? normalized.message : "작업 기록을 확인하지 못했습니다.",
+                    effectState: "succeeded-unconfirmed",
+                };
+            }
             const action = await response.json() as { status?: unknown; error?: unknown };
             return actionErrorFromStatus(action.status, readActionErrorCode(action.error), fallbackMessage);
         } catch {

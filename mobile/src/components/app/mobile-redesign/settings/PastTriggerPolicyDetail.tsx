@@ -1,5 +1,5 @@
 "use client";
-import { getUserErrorMessage } from "@babyjamjam/shared";
+import { normalizeApiError } from "@babyjamjam/shared";
 
 
 import {
@@ -46,6 +46,13 @@ const MESSAGE_AUTOMATION_POLICIES_QUERY_KEY = [
 const MIN_SEND_INTERVAL_MINUTES = 1;
 const MAX_SEND_INTERVAL_MINUTES = 1_440;
 const SOURCE_COMPONENT = "PastTriggerPolicyDetail";
+
+// Shared problem contract resolution — a registered body surfaces its
+// catalog copy; the locally authored fallback covers unverified failures.
+function failureMessage(error: unknown, fallback: string): string {
+  const normalized = normalizeApiError(error, { locale: "ko-KR", operation: "mutation" });
+  return normalized.verified ? normalized.message : fallback;
+}
 
 const TRIGGER_OFFSET_LABELS: Record<
   MessageTriggerEventType,
@@ -208,7 +215,7 @@ export function PastTriggerPolicyDetail({
       queuedRef.current = false;
       toast({
         variant: "destructive",
-        description: getUserErrorMessage(_error, "지난 자동 전송 설정을 저장하지 못했어요"),
+        description: failureMessage(_error, "지난 자동 전송 설정을 저장하지 못했어요"),
       });
     },
     onSuccess: (nextConfig) => {

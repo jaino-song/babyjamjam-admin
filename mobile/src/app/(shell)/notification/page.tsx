@@ -1,10 +1,10 @@
 "use client";
-import { getUserErrorMessage } from "@babyjamjam/shared";
 
 
 import { useEffect, useState, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { BellRing, Mail, Send, type LucideIcon } from "lucide-react";
+import { normalizeApiError } from "@babyjamjam/shared";
 
 import { Switch } from "@/components/ui/switch";
 import { useGetAuthUser } from "@/hooks/useGetAuthUser";
@@ -118,9 +118,11 @@ export default function NotificationPage() {
       queryClient.setQueryData(notificationPreferencesQueryKey, data);
     },
     onError: () => {
+      // Locally authored copy — the toast primitive no longer re-runs the
+      // legacy string adapter over it.
       toast({
         title: "이메일 알림 설정을 저장하지 못했어요",
-        description: getUserErrorMessage("이전 설정을 유지해요"),
+        description: "이전 설정을 유지해요",
         variant: "destructive",
       });
     },
@@ -164,10 +166,13 @@ export default function NotificationPage() {
         description: `성공 ${data.sent}건 · 실패 ${data.failed}건`,
       });
     },
-    onError: () => {
+    onError: (error) => {
+      // Shared problem contract resolution — a registered code drives the
+      // surfaced message; the local fallback covers unverified failures.
+      const normalized = normalizeApiError(error, { locale: "ko-KR", operation: "mutation" });
       toast({
         title: "테스트 알림을 보내지 못했어요",
-        description: getUserErrorMessage("잠시 후 다시 시도해 주세요"),
+        description: normalized.verified ? normalized.message : "잠시 후 다시 시도해 주세요",
         variant: "destructive",
       });
     },
@@ -181,11 +186,13 @@ export default function NotificationPage() {
     setIsAppNotificationUpdating(false);
 
     if (!success) {
+      // Locally authored copy from the push-notification hook's own failure
+      // states — no upstream internals.
       toast({
         title: "앱 알림 설정을 바꾸지 못했어요",
-        description: getUserErrorMessage(checked
+        description: checked
           ? "앱 알림을 켜지 못했어요. 브라우저 알림 권한을 확인해 주세요"
-          : "앱 알림을 끄지 못했어요. 잠시 후 다시 시도해 주세요"),
+          : "앱 알림을 끄지 못했어요. 잠시 후 다시 시도해 주세요",
         variant: "destructive",
       });
     }
