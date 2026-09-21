@@ -9,7 +9,7 @@ import {
     formatShortDate,
     getServiceRecordHeaderErrors,
     hasInvalidServiceRecordNumericAnswers,
-    isServiceRecordHeaderComplete,
+    hasServiceRecordHeaderValues,
 } from "@babyjamjam/service-record-ui";
 import type {
     ServiceRecordContext,
@@ -472,11 +472,8 @@ export function ServiceRecordAdminWizard({
         if ((headerDraft[key] ?? "") !== (headerToInput(baseView.context.header)[key] ?? "")) headerPatch[key] = headerDraft[key] ?? "";
     }
     const editingHeader = screen === "service";
-    const headerErrors: ServiceRecordHeaderErrors = getServiceRecordHeaderErrors({
-        momBirth: headerPatch.momBirth,
-        babyBirth: headerPatch.babyBirth,
-        babyWeight: headerPatch.babyWeight,
-    });
+    // Validate every changed field without rewriting or rejecting untouched historic values.
+    const headerErrors: ServiceRecordHeaderErrors = getServiceRecordHeaderErrors(headerPatch);
     const hasHeaderErrors = Object.keys(headerErrors).length > 0;
     const hasInvalidNumericAnswers = hasInvalidServiceRecordNumericAnswers(draft);
     const changed = !priorChanges && !supplemental && (editingHeader
@@ -570,7 +567,7 @@ export function ServiceRecordAdminWizard({
             return;
         }
         if (!recover && editingHeader) {
-            if (!isServiceRecordHeaderComplete(headerDraft)) {
+            if (!hasServiceRecordHeaderValues(headerDraft)) {
                 setError("필수 기본정보를 모두 입력해 주세요.");
                 return;
             }

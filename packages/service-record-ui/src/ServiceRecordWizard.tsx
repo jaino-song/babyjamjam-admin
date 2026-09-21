@@ -17,6 +17,7 @@ import {
     getServiceRecordHeaderErrors,
     type ServiceRecordHeaderValidationKey,
     hasDisplayValue,
+    hasServiceRecordHeaderValues,
     isDailyItemComplete,
     isServiceRecordHeaderComplete,
     type ServiceRecordNumericErrors,
@@ -351,7 +352,7 @@ export function ServiceRecordWizard({
     editing,
     readOnly = false,
     adminMode = false,
-    headerErrors: suppliedHeaderErrors = {},
+    headerErrors: suppliedHeaderErrors,
     changedSessionIndexes,
     clientSignature,
     busy,
@@ -383,12 +384,15 @@ export function ServiceRecordWizard({
     const [touchedHeader, setTouchedHeader] = useState<Partial<Record<ServiceRecordHeaderValidationKey, boolean>>>({});
     const [phoneTouched, setPhoneTouched] = useState(false);
     const touchHeader = (key: ServiceRecordHeaderValidationKey) => setTouchedHeader((current) => ({ ...current, [key]: true }));
-    const headerErrors = {
+    // Only an administrator editor with an explicit patch error map owns validation scope.
+    // Employee forms and callers without that map still validate the complete header.
+    const usesScopedHeaderErrors = adminMode && suppliedHeaderErrors !== undefined;
+    const headerErrors = usesScopedHeaderErrors ? (suppliedHeaderErrors ?? {}) : {
         ...suppliedHeaderErrors,
         ...getServiceRecordHeaderErrors(header, new Date(), { required: !adminMode }),
     };
     const visibleHeaderError = (key: ServiceRecordHeaderValidationKey) => readOnly ? undefined
-        : suppliedHeaderErrors[key] || ((touchedHeader[key] || adminMode) ? headerErrors[key] : undefined);
+        : suppliedHeaderErrors?.[key] || ((touchedHeader[key] || adminMode) ? headerErrors[key] : undefined);
     const phoneFieldError = phoneError || (phoneTouched && phone.replace(/\D/g, "").length < 10 ? "휴대폰 번호를 끝까지 입력해 주세요(예: 01012345678)." : null);
     const currentDayPage = DAY_PAGES[pageIdx] ?? DAY_PAGES[0];
     const adminEditing = adminMode && !readOnly;
@@ -418,7 +422,9 @@ export function ServiceRecordWizard({
     const isMomConfirmationPage = Boolean(currentDayPage.confirmation);
     const signatureValue = currentSession?.clientSignature ?? clientSignature;
     const isSignatureLocked = Boolean(currentSession?.clientSignature);
-    const isHeaderComplete = isServiceRecordHeaderComplete(header) && Object.keys(headerErrors).length === 0;
+    const isHeaderComplete = (usesScopedHeaderErrors
+        ? hasServiceRecordHeaderValues(header)
+        : isServiceRecordHeaderComplete(header)) && Object.keys(headerErrors).length === 0;
     const numericErrors = getServiceRecordNumericErrors(draft);
     const hasInvalidNumericAnswers = Object.keys(numericErrors).length > 0;
     const hasInvalidTextAnswers = DAILY_ITEMS.some((item) => item.type === "textarea"

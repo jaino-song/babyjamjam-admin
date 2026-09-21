@@ -185,9 +185,14 @@ export const hasDisplayValue = (value: unknown): boolean => {
     return true;
 };
 
-export const isServiceRecordHeaderComplete = (header: Record<string, unknown>): boolean => (
+/** Presence check only. Administrator patches validate changed fields separately. */
+export const hasServiceRecordHeaderValues = (header: Record<string, unknown>): boolean => (
     HEADER_FIELDS.every((field) => hasDisplayValue(header[field.k]))
     && hasDisplayValue(header.deliveryType)
+);
+
+export const isServiceRecordHeaderComplete = (header: Record<string, unknown>): boolean => (
+    hasServiceRecordHeaderValues(header)
     && Object.keys(getServiceRecordHeaderErrors(header)).length === 0
 );
 
