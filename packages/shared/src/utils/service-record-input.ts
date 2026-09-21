@@ -1,11 +1,11 @@
-import { normalizeContractBirthday } from "./birthday";
+import { isValidBirthdayIsoDate } from "./birthday";
 
-/** Input values are validated as entered, never trimmed, truncated or guessed. */
+/** Validation does not change values. Birthday input formatting belongs to the UI. */
 export const HEADER_FIELDS = [
     { k: "momName", label: "산모 성명", ph: "예: 이예지", inputMode: "text", helper: "성명은 ‘이예지’처럼 띄어쓰기 없이 붙여 써 주세요." },
-    { k: "momBirth", label: "산모 생년월일 (숫자 6자리)", ph: "예: 900101", inputMode: "numeric", helper: "1990년 1월 1일은 900101이에요. 연도 끝 2자리와 월·일을 붙여 써 주세요." },
+    { k: "momBirth", label: "산모 생년월일 (YYYY-MM-DD)", ph: "1999-01-01", inputMode: "numeric", helper: "연도 4자리와 월·일을 숫자로 입력해 주세요(예: 19990101). 하이픈(-)은 자동으로 붙어요." },
     { k: "babyName", label: "신생아 성명", ph: "예: 이아기", inputMode: "text", helper: "신생아 성명은 ‘이아기’처럼 띄어쓰기 없이 붙여 써 주세요." },
-    { k: "babyBirth", label: "신생아 출생일자 (숫자 6자리)", ph: "예: 260615", inputMode: "numeric", helper: "2026년 6월 15일은 260615예요. 공백이나 기호 없이 숫자 6자리로 써 주세요." },
+    { k: "babyBirth", label: "신생아 출생일자 (YYYY-MM-DD)", ph: "1999-01-01", inputMode: "numeric", helper: "출생 연도 4자리와 월·일을 숫자로 입력해 주세요(예: 20260615). 하이픈(-)은 자동으로 붙어요." },
     { k: "babyWeight", label: "신생아 몸무게 (kg)", ph: "예: 3.2", inputMode: "decimal", helper: "kg는 쓰지 말고 숫자만 입력해 주세요(예: 3.2)." },
 ] as const;
 
@@ -24,7 +24,7 @@ const LABELS: Record<ServiceRecordHeaderValidationKey, string> = {
     babyBirth: "신생아 출생일자", deliveryType: "분만형태", babyWeight: "신생아 몸무게",
 };
 const NAME_SPACING = /[\s\u200B\u2060\uFEFF]/u;
-const BIRTH_PATTERN = /^\d{6}$/;
+const BIRTH_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 const WEIGHT_PATTERN = /^(?:\d+(?:\.\d+)?|\.\d+)$/;
 
 export function getServiceRecordHeaderFieldError(
@@ -57,12 +57,11 @@ export function getServiceRecordHeaderFieldError(
         return !/\s/u.test(rawValue) && WEIGHT_PATTERN.test(rawValue) && Number.isFinite(Number(rawValue)) && Number(rawValue) > 0
             ? null : "몸무게는 kg나 공백 없이 0보다 큰 숫자로 입력해 주세요(예: 3.2).";
     }
-    if (rawValue.length !== 6 || !BIRTH_PATTERN.test(rawValue)) {
-        const example = key === "momBirth" ? "1990년 1월 1일 → 900101" : "2026년 6월 15일 → 260615";
-        return `연도 끝 2자리와 월·일을 붙여 숫자 6자리로 입력해 주세요(예: ${example}).`;
+    if (rawValue.length !== 10 || !BIRTH_PATTERN.test(rawValue)) {
+        return "연도 4자리와 월·일을 YYYY-MM-DD 형식으로 입력해 주세요(예: 1999-01-01).";
     }
-    return normalizeContractBirthday(rawValue, now) !== null
-        ? null : "달력에 없거나 오늘보다 늦은 날짜이니 생년월일을 다시 확인해 주세요.";
+    return isValidBirthdayIsoDate(rawValue, now)
+        ? null : "달력에 있는 날짜 중 1900년 1월 1일부터 오늘까지의 날짜를 입력해 주세요.";
 }
 
 export function getServiceRecordHeaderErrors(
