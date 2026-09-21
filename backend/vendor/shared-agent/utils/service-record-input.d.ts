@@ -1,4 +1,4 @@
-/** Input values are validated as entered, never trimmed, truncated or guessed. */
+/** Validation does not change values. Birthday input formatting belongs to the UI. */
 export declare const HEADER_FIELDS: readonly [{
     readonly k: "momName";
     readonly label: "산모 성명";
@@ -7,10 +7,10 @@ export declare const HEADER_FIELDS: readonly [{
     readonly helper: "성명은 ‘이예지’처럼 띄어쓰기 없이 붙여 써 주세요.";
 }, {
     readonly k: "momBirth";
-    readonly label: "산모 생년월일 (숫자 6자리)";
-    readonly ph: "예: 900101";
+    readonly label: "산모 생년월일 (YYYY-MM-DD)";
+    readonly ph: "1999-01-01";
     readonly inputMode: "numeric";
-    readonly helper: "1990년 1월 1일은 900101이에요. 연도 끝 2자리와 월·일을 붙여 써 주세요.";
+    readonly helper: "연도 4자리와 월·일을 숫자로 입력해 주세요(예: 19990101). 하이픈(-)은 자동으로 붙어요.";
 }, {
     readonly k: "babyName";
     readonly label: "신생아 성명";
@@ -19,10 +19,10 @@ export declare const HEADER_FIELDS: readonly [{
     readonly helper: "신생아 성명은 ‘이아기’처럼 띄어쓰기 없이 붙여 써 주세요.";
 }, {
     readonly k: "babyBirth";
-    readonly label: "신생아 출생일자 (숫자 6자리)";
-    readonly ph: "예: 260615";
+    readonly label: "신생아 출생일자 (YYYY-MM-DD)";
+    readonly ph: "1999-01-01";
     readonly inputMode: "numeric";
-    readonly helper: "2026년 6월 15일은 260615예요. 공백이나 기호 없이 숫자 6자리로 써 주세요.";
+    readonly helper: "출생 연도 4자리와 월·일을 숫자로 입력해 주세요(예: 20260615). 하이픈(-)은 자동으로 붙어요.";
 }, {
     readonly k: "babyWeight";
     readonly label: "신생아 몸무게 (kg)";
