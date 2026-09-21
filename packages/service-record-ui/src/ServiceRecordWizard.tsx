@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, type ChangeEvent, type InputHTMLAttributes, type ReactNode } from "react";
+import { formatBirthdayInput } from "../../shared/src/utils/birthday";
 import "./field-help.css";
 
 import {
@@ -560,7 +561,11 @@ export function ServiceRecordWizard({
                                         disabled={readOnly}
                                         aria-invalid={fieldError ? "true" : undefined}
                                         aria-describedby={errorId}
-                                        onChange={(event) => onHeaderChange(field.k, event.target.value)}
+                                        onChange={(event) => onHeaderChange(field.k,
+                                            field.k === "momBirth" || field.k === "babyBirth"
+                                                ? formatBirthdayInput(event.target.value)
+                                                : event.target.value,
+                                        )}
                                     />
                                     <p id={errorId} data-component={`${inputComponent}_helper`} className={`field-helper${fieldError ? " err" : ""}`} role={fieldError ? "alert" : undefined}>{fieldError ?? field.helper}</p>
                                 </div>
