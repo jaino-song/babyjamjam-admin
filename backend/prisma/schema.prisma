@@ -276,7 +276,7 @@ model client {
   callRecords            call_record[]
   clientDrafts           client_draft[]
   scheduleChangeRequests schedule_change_request[]
-  messageLogs            message_log[]
+  messageLogs                   message_log[]
   messageTriggerJobs     message_trigger_job[]
   serviceRecordCase      service_record_case?
   receiptLinkTokens      receipt_link_token[]
@@ -692,7 +692,7 @@ model system_setting {
 model agent_task {
   id             String @id @default(dbgenerated("(gen_random_uuid())::text"))
   sessionId      String @map("session_id")
-  userId         String @map("user_id") @db.Uuid
+  userId        String @map("user_id") @db.Uuid
   branchId       String @map("branch_id") @db.Uuid
   capabilityId   String @map("capability_id") @db.VarChar(100)
   schemaVersion  Int @default(1) @map("schema_version")
@@ -1196,9 +1196,9 @@ model service_record {
   scheduleId          Int                  @unique @map("schedule_id")
   serviceRecordCaseId String?              @map("service_record_case_id") @db.Uuid
   momName             String?              @map("mom_name")
-  momBirth            String?              @map("mom_birth") @db.VarChar(6)
+  momBirth            String?              @map("mom_birth") @db.VarChar(10)
   babyName            String?              @map("baby_name")
-  babyBirth           String?              @map("baby_birth") @db.VarChar(6)
+  babyBirth           String?              @map("baby_birth") @db.VarChar(10)
   deliveryType        String?              @map("delivery_type")
   babyWeight          String?              @map("baby_weight")
   createdAt           DateTime             @default(now()) @map("created_at") @db.Timestamptz(6)
@@ -1257,9 +1257,9 @@ model service_record_case {
   requiredSessionCount  Int?                            @map("required_session_count") @db.SmallInt
   formVersion           Int                             @default(1) @map("form_version")
   momName               String?                         @map("mom_name")
-  momBirth              String?                         @map("mom_birth") @db.VarChar(6)
+  momBirth              String?                         @map("mom_birth") @db.VarChar(10)
   babyName              String?                         @map("baby_name")
-  babyBirth             String?                         @map("baby_birth") @db.VarChar(6)
+  babyBirth             String?                         @map("baby_birth") @db.VarChar(10)
   deliveryType          String?                         @map("delivery_type")
   babyWeight            String?                         @map("baby_weight")
   completedAt           DateTime?                       @map("completed_at") @db.Timestamptz(6)

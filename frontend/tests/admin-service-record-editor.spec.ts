@@ -564,7 +564,7 @@ test("session review retains all fields and dates and writes only after confirma
     await page.getByLabel("체온").fill("36.7");
     await page.getByRole("button", { name: "다음" }).click();
     await goToServicePage(page);
-    await page.getByPlaceholder("서비스 제공 관련 특이사항 기록 필요 시 기재").fill("회차 수정 테스트 메모");
+    await page.getByRole("textbox", { name: "특이사항 (필요 시 기재)", exact: true }).fill("회차 수정 테스트 메모");
     await page.getByRole("button", { name: "다음" }).click();
     expect(evidence.requests.filter((request) => request.method !== "GET")).toHaveLength(0);
     await page.getByRole("button", { name: "수정 확인", exact: true }).click();
@@ -601,7 +601,7 @@ test("a conflict preserves input and requires reload before reviewing the latest
     await openEditor(page);
     await openDay(page, 1);
     await goToServicePage(page);
-    await page.getByPlaceholder("서비스 제공 관련 특이사항 기록 필요 시 기재").fill("내 입력 보존");
+    await page.getByRole("textbox", { name: "특이사항 (필요 시 기재)", exact: true }).fill("내 입력 보존");
     await page.getByRole("button", { name: "다음" }).click();
     await page.getByRole("button", { name: "수정 확인", exact: true }).click();
     await expect(page.getByText("기록이 변경되었습니다. 입력은 보관되어 있습니다. 최신 기록을 다시 불러와 주세요.")).toBeVisible();
