@@ -181,9 +181,13 @@ function filterBySearch(
 
     return documents.filter((document) => {
         const recipientName = document[MIRROR_RECIPIENT_NAME_KEY];
+        const customerName = stringFromUnknown(document[MIRROR_CUSTOMER_NAME_KEY]);
         const values = documentSearchValues(
             document,
-            typeof recipientName === "string" ? [recipientName] : [],
+            [
+                ...(typeof customerName === "string" ? [customerName] : []),
+                ...(typeof recipientName === "string" ? [recipientName] : []),
+            ],
         );
         return values.some((value) => matchesKoreanSearch(value, query));
     });
@@ -194,8 +198,9 @@ function filterBySearch(
  * except that the mirror already holds the answer, so no document is ever re-fetched.
  *
  * Applied to a page rather than the whole list, and deliberately after filtering: the API
- * path enriches only what it is about to return, so its search never sees these values.
- * Adding them earlier here would quietly make the list searchable by customer name.
+ * path enriches only what it is about to return. The mirror's persisted customer name is
+ * added to the search corpus explicitly in filterBySearch, so display enrichment does not
+ * change the result set or accidentally use a current-step recipient as a customer name.
  */
 export function enrichMirrorPage(documents: EformsignListDoc[]): EformsignListDoc[] {
     return documents.map((document) => {

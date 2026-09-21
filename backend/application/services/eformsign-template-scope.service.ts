@@ -19,12 +19,36 @@ export interface EformsignSectionTemplateFilter {
 }
 
 /**
+ * Templates that are still searchable in historical maternity lists but are no longer
+ * available to create a new document. Keep these IDs out of `doc_template`/AreaTemplateService:
+ * that registry is the creation source of truth, while this tuple is list-only scope.
+ */
+export const LIST_ONLY_HISTORICAL_MATERNITY_TEMPLATE_IDS = [
+    "d1591da29590495d800f55f1d1fc1378",
+    "e63c528b0375478d83e30ff8a9ed1967",
+] as const;
+
+const LIST_ONLY_HISTORICAL_MATERNITY_TEMPLATE_ID_SET = new Set<string>(
+    LIST_ONLY_HISTORICAL_MATERNITY_TEMPLATE_IDS,
+);
+
+export function isListOnlyHistoricalMaternityTemplateId(
+    templateId: string | null | undefined,
+): boolean {
+    return templateId !== null
+        && templateId !== undefined
+        && LIST_ONLY_HISTORICAL_MATERNITY_TEMPLATE_ID_SET.has(templateId);
+}
+
+/**
  * section 쿼리가 붙은 문서 목록 요청의 템플릿 필터를 서버가 정본 데이터로 결정한다.
  *
  * 산모 계약서(maternity): 지점 doc_template(area_template) 레지스트리에 등록된 계약서
- * 템플릿만 include한다. 같은 eformsign 계정의 무관한 템플릿(예: 근로계약서) 문서가
- * 섹션에 섞이는 것을 막는 화이트리스트다. 클라이언트가 계산해 보내던 값을 신뢰하지
- * 않고 서버에서 조회하므로 frontend와 mobile이 같은 목록을 보장받는다.
+ * 템플릿과 list-only 역사 템플릿을 include한다. 같은 eformsign 계정의 무관한 템플릿
+ * (예: 근로계약서) 문서가 섹션에 섞이는 것을 막는 화이트리스트다. list-only ID는
+ * 새 문서 생성용 레지스트리에 넣지 않고 이 목록의 조회 범위에만 추가한다. 클라이언트가
+ * 계산해 보내던 값을 신뢰하지 않고 서버에서 조회하므로 frontend와 mobile이 같은 목록을
+ * 보장받는다.
  *
  * 지점에 등록된 계약서 템플릿이 없거나 레지스트리 조회가 실패하면 레거시 규칙인
  * 제공기록지 템플릿 exclude로 폴백한다 — registry가 비었다는 이유만으로 과거 계약서가
@@ -77,7 +101,19 @@ export class EformsignTemplateScopeService {
             );
             return [];
         }
-        return [...new Set(templates.map((template) => template.templateId).filter(Boolean))];
+        const activeTemplateIds = templates
+            .map((template) => template.templateId)
+            .filter(Boolean);
+        if (activeTemplateIds.length === 0) {
+            return [];
+        }
+
+        return [
+            ...new Set([
+                ...activeTemplateIds,
+                ...LIST_ONLY_HISTORICAL_MATERNITY_TEMPLATE_IDS,
+            ]),
+        ];
     }
 
     private serviceRecordFilter(

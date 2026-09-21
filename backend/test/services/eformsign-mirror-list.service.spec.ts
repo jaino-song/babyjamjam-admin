@@ -174,22 +174,21 @@ describe("EformsignMirrorListService", () => {
         expect(chosung.documents.map((d) => d.id)).toEqual(["doc-song"]);
     });
 
-    it("does not let the stored customerName widen the search", async () => {
-        // The API path's search index is built before enrichment, so a customer name never
-        // reaches it. Matching one here would change what the search finds the moment the
-        // source switches — a feature change smuggled in as a migration.
+    it("searches the persisted customerName, including by Korean 초성", async () => {
         repository.findAllVisibleInMirror.mockResolvedValue([
             createMirrorDocument({
                 documentId: "doc-1",
-                customerName: "최고객",
+                customerName: "배진경",
                 documentName: "계약",
                 stepRecipientName: "송진호",
             }),
         ]);
 
-        const { documents } = await service.buildList(createQuery({ search: "최고객" }));
+        const exact = await service.buildList(createQuery({ search: "배진경" }));
+        const chosung = await service.buildList(createQuery({ search: "ㅂㅈㄱ" }));
 
-        expect(documents).toHaveLength(0);
+        expect(exact.documents.map((document) => document.id)).toEqual(["doc-1"]);
+        expect(chosung.documents.map((document) => document.id)).toEqual(["doc-1"]);
     });
 
     it("only searches recipient names the branch owns", async () => {
@@ -209,6 +208,11 @@ describe("EformsignMirrorListService", () => {
         );
 
         expect(documents).toHaveLength(0);
+
+        const customerSearch = await service.buildList(
+            createQuery({ isHeadquarters: true, search: "김고객" }),
+        );
+        expect(customerSearch.documents.map((document) => document.id)).toEqual(["doc-unassigned"]);
     });
 
     it("attaches the contract end date to in-progress provider-review documents", async () => {
