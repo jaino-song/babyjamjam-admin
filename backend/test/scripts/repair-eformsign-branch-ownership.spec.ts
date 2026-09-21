@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
+import { chmod, mkdtemp, readFile, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { promisify } from "node:util";
@@ -8,8 +8,10 @@ import {
     applyRepair,
     assertPostApplyTargetVerification,
     createBackup,
+    main,
     parseRepairOptions,
     readBranchCounts,
+    readTargetManifest,
     resolveTargetBranch,
     rollbackRepair,
     validateBackup,
@@ -29,10 +31,16 @@ const target = {
 };
 const syntheticTargetDocumentId = "0123456789abcdef0123456789abcdef";
 const syntheticCustomerName = "홍가람";
-const syntheticTargetOptions = {
-    targetDocumentId: syntheticTargetDocumentId,
-    targetCustomerQuery: syntheticCustomerName,
-};
+
+async function writeTargetManifest(directory: string, filename = "target.json"): Promise<string> {
+    const path = join(directory, filename);
+    await writeFile(path, JSON.stringify({
+        documentId: syntheticTargetDocumentId,
+        customerQuery: syntheticCustomerName,
+    }), { encoding: "utf8", mode: 0o600 });
+    await chmod(path, 0o600);
+    return path;
+}
 
 function createDatabase(options: {
     candidateRows?: Array<{ id: number; documentId: string; branchId: string | null }>;
@@ -148,25 +156,64 @@ describe("repair-eformsign-branch-ownership operator", () => {
         expect(combinedOutput).not.toContain("Cannot find module");
     });
 
+    it("rejects a malformed manifest before database client setup without echoing its fields", async () => {
+        const directory = await mkdtemp(join(tmpdir(), "eformsign-target-input-"));
+        const path = join(directory, "target.json");
+        const previousEnvironment = {
+            DATABASE_CONNECTION_MODE: process.env["DATABASE_CONNECTION_MODE"],
+            DATABASE_URL: process.env["DATABASE_URL"],
+            RAILWAY_ENVIRONMENT_NAME: process.env["RAILWAY_ENVIRONMENT_NAME"],
+            NODE_ENV: process.env["NODE_ENV"],
+        };
+        try {
+            await writeFile(path, JSON.stringify({
+                documentId: syntheticTargetDocumentId,
+                customerQuery: syntheticCustomerName,
+                extra: "synthetic-extra-field",
+            }), { encoding: "utf8", mode: 0o600 });
+            await chmod(path, 0o600);
+            process.env["DATABASE_CONNECTION_MODE"] = "shared";
+            process.env["DATABASE_URL"] = "postgresql://synthetic-user@db.example.com:5432/app?schema=public";
+            process.env["RAILWAY_ENVIRONMENT_NAME"] = "synthetic";
+            process.env["NODE_ENV"] = "test";
+
+            let error: unknown;
+            try {
+                await main(["--target-input-file", path]);
+            } catch (caught: unknown) {
+                error = caught;
+            }
+            expect(error).toBeInstanceOf(Error);
+            expect((error as Error).message).toBe("Target input manifest contains unsupported fields");
+            expect((error as Error).message).not.toContain(syntheticTargetDocumentId);
+            expect((error as Error).message).not.toContain(syntheticCustomerName);
+        } finally {
+            for (const [key, value] of Object.entries(previousEnvironment)) {
+                if (value === undefined) {
+                    delete process.env[key];
+                } else {
+                    process.env[key] = value;
+                }
+            }
+            await rm(directory, { recursive: true, force: true });
+        }
+    });
+
     it("defaults to a read-only dry-run and requires strong mutation flags", () => {
         expect(parseRepairOptions([
-            "--target-document-id",
-            syntheticTargetDocumentId,
-            "--target-customer-query",
-            syntheticCustomerName,
+            "--target-input-file",
+            "/tmp/target.json",
         ])).toEqual({
             mode: "dry-run",
-            ...syntheticTargetOptions,
+            targetInputFile: resolve("/tmp/target.json"),
         });
-        expect(() => parseRepairOptions([])).toThrow("--target-document-id");
+        expect(() => parseRepairOptions([])).toThrow("--target-input-file");
         expect(() => parseRepairOptions([
             "--apply",
             "--backup-path",
             "/tmp/backup.json",
-            "--target-document-id",
-            syntheticTargetDocumentId,
-            "--target-customer-query",
-            syntheticCustomerName,
+            "--target-input-file",
+            "/tmp/target.json",
             "--confirm-target",
             "development@db.example.com:5432/app?schema=public&tenant=project",
             "--confirm-branch-slug",
@@ -184,16 +231,85 @@ describe("repair-eformsign-branch-ownership operator", () => {
         ])).toThrow("--confirm-branch-slug incheon");
         expect(() => parseRepairOptions([
             "--target-document-id",
-            "not-an-id",
-            "--target-customer-query",
-            syntheticCustomerName,
-        ])).toThrow("32-character hexadecimal id");
+            "synthetic-value-must-not-be-accepted",
+        ])).toThrow("Direct target values are not accepted");
         expect(() => parseRepairOptions([
-            "--target-document-id",
-            syntheticTargetDocumentId,
             "--target-customer-query",
-            "   ",
-        ])).toThrow("nonempty safe query");
+            "synthetic-value-must-not-be-accepted",
+        ])).toThrow("Direct target values are not accepted");
+        let inlineError: unknown;
+        try {
+            parseRepairOptions(["--target-document-id=synthetic-inline-value"]);
+        } catch (error: unknown) {
+            inlineError = error;
+        }
+        expect(inlineError).toBeInstanceOf(Error);
+        expect((inlineError as Error).message).toBe("Direct target values are not accepted; use --target-input-file PATH");
+        expect((inlineError as Error).message).not.toContain("synthetic-inline-value");
+        let queryInlineError: unknown;
+        try {
+            parseRepairOptions(["--target-customer-query=synthetic-inline-value"]);
+        } catch (error: unknown) {
+            queryInlineError = error;
+        }
+        expect(queryInlineError).toBeInstanceOf(Error);
+        expect((queryInlineError as Error).message).not.toContain("synthetic-inline-value");
+    });
+
+    it("accepts only a strict owner-only target manifest and derives Korean initials", async () => {
+        const directory = await mkdtemp(join(tmpdir(), "eformsign-target-input-"));
+        try {
+            const path = await writeTargetManifest(directory);
+            await expect(readTargetManifest(path)).resolves.toEqual({
+                documentId: syntheticTargetDocumentId,
+                customerQuery: syntheticCustomerName,
+                customerChosungQuery: "ㅎㄱㄹ",
+            });
+
+            await chmod(path, 0o640);
+            await expect(readTargetManifest(path)).rejects.toThrow("owner-only");
+            await chmod(path, 0o600);
+
+            await writeFile(path, JSON.stringify({
+                documentId: syntheticTargetDocumentId,
+                customerQuery: syntheticCustomerName,
+                extra: "not-allowed",
+            }), { encoding: "utf8", mode: 0o600 });
+            await chmod(path, 0o600);
+            await expect(readTargetManifest(path)).rejects.toThrow("unsupported fields");
+
+            await writeFile(path, "not-json", { encoding: "utf8", mode: 0o600 });
+            await chmod(path, 0o600);
+            await expect(readTargetManifest(path)).rejects.toThrow("valid JSON");
+
+            await writeFile(path, JSON.stringify({
+                documentId: "not-a-document-id",
+                customerQuery: syntheticCustomerName,
+            }), { encoding: "utf8", mode: 0o600 });
+            await chmod(path, 0o600);
+            await expect(readTargetManifest(path)).rejects.toThrow("32-character hexadecimal id");
+
+            await writeFile(path, JSON.stringify({
+                documentId: syntheticTargetDocumentId,
+                customerQuery: "\u0000",
+            }), { encoding: "utf8", mode: 0o600 });
+            await chmod(path, 0o600);
+            await expect(readTargetManifest(path)).rejects.toThrow("nonempty safe query");
+        } finally {
+            await rm(directory, { recursive: true, force: true });
+        }
+    });
+
+    it("rejects a target manifest symlink without exposing its contents", async () => {
+        const directory = await mkdtemp(join(tmpdir(), "eformsign-target-input-"));
+        try {
+            const targetPath = await writeTargetManifest(directory, "target-real.json");
+            const symlinkPath = join(directory, "target-link.json");
+            await symlink(targetPath, symlinkPath);
+            await expect(readTargetManifest(symlinkPath)).rejects.toThrow("regular owner-only");
+        } finally {
+            await rm(directory, { recursive: true, force: true });
+        }
     });
 
     it("writes a minimum-field chmod-600 backup and rejects extra payload fields", async () => {
@@ -248,11 +364,13 @@ describe("repair-eformsign-branch-ownership operator", () => {
         const directory = await mkdtemp(join(tmpdir(), "eformsign-branch-repair-"));
         const backupPath = join(directory, "backup.json");
         try {
+            const targetInputFile = await writeTargetManifest(directory);
             await applyRepair(
                 database,
-                { mode: "apply", backupPath, ...syntheticTargetOptions },
+                { mode: "apply", backupPath, targetInputFile },
                 branch,
                 target,
+                await readTargetManifest(targetInputFile),
             );
             expect(database.$transaction).toHaveBeenCalledTimes(1);
             expect(database.$transaction.mock.calls[0]?.[1]).toEqual(expect.objectContaining({
@@ -309,11 +427,13 @@ describe("repair-eformsign-branch-ownership operator", () => {
         const directory = await mkdtemp(join(tmpdir(), "eformsign-branch-repair-"));
         const backupPath = join(directory, "backup.json");
         try {
+            const targetInputFile = await writeTargetManifest(directory);
             await expect(applyRepair(
                 database,
-                { mode: "apply", backupPath, ...syntheticTargetOptions },
+                { mode: "apply", backupPath, targetInputFile },
                 branch,
                 target,
+                await readTargetManifest(targetInputFile),
             ))
                 .rejects.toThrow(error);
             expect(database.eformsign_doc.updateMany).not.toHaveBeenCalled();
@@ -329,11 +449,13 @@ describe("repair-eformsign-branch-ownership operator", () => {
         const directory = await mkdtemp(join(tmpdir(), "eformsign-branch-repair-"));
         const backupPath = join(directory, "backup.json");
         try {
+            const targetInputFile = await writeTargetManifest(directory);
             await expect(applyRepair(
                 database,
-                { mode: "apply", backupPath, ...syntheticTargetOptions },
+                { mode: "apply", backupPath, targetInputFile },
                 branch,
                 target,
+                await readTargetManifest(targetInputFile),
             ))
                 .rejects.toThrow("was not assigned to the selected HQ branch");
         } finally {

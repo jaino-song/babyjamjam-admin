@@ -1,21 +1,28 @@
 import { PrismaClient } from "@prisma/client";
-import { mkdtemp, rm } from "node:fs/promises";
+import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 
 import {
     applyRepair,
     readBackup,
+    readTargetManifest,
     rollbackRepair,
     type EformsignBranchRepairDatabase,
 } from "../../scripts/repair-eformsign-branch-ownership";
 
 const syntheticTargetDocumentId = "0123456789abcdef0123456789abcdef";
 const syntheticCustomerName = "홍가람";
-const syntheticTargetOptions = {
-    targetDocumentId: syntheticTargetDocumentId,
-    targetCustomerQuery: syntheticCustomerName,
-};
+
+async function writeTargetManifest(directory: string): Promise<string> {
+    const path = join(directory, "target.json");
+    await writeFile(path, JSON.stringify({
+        documentId: syntheticTargetDocumentId,
+        customerQuery: syntheticCustomerName,
+    }), { encoding: "utf8", mode: 0o600 });
+    await chmod(path, 0o600);
+    return path;
+}
 
 const databaseUrl = process.env["EFORMSIGN_BRANCH_REPAIR_TEST_DATABASE_URL"];
 const integrationEnabled = process.env["EFORMSIGN_BRANCH_REPAIR_INTEGRATION"] === "1";
@@ -147,11 +154,13 @@ describeDisposable("eformsign branch repair transaction (disposable PostgreSQL)"
 
     it("updates only null ownership and preserves another branch in one real transaction", async () => {
         const backupPath = join(tempDirectory, "apply-backup.json");
+        const targetInputFile = await writeTargetManifest(tempDirectory);
         await applyRepair(
             prisma as unknown as EformsignBranchRepairDatabase,
-            { mode: "apply", backupPath, ...syntheticTargetOptions },
+            { mode: "apply", backupPath, targetInputFile },
             { id: hqBranchId, slug: "incheon", isActive: true },
             target,
+            await readTargetManifest(targetInputFile),
         );
 
         const rows = await prisma.eformsign_doc.findMany({
@@ -191,15 +200,17 @@ describeDisposable("eformsign branch repair transaction (disposable PostgreSQL)"
             data: { branchId: null },
         });
 
+        const targetInputFile = await writeTargetManifest(tempDirectory);
         await expect(applyRepair(
             prisma as unknown as EformsignBranchRepairDatabase,
             {
                 mode: "apply",
                 backupPath: join(tempDirectory, "fence-backup.json"),
-                ...syntheticTargetOptions,
+                targetInputFile,
             },
             { id: hqBranchId, slug: "incheon", isActive: true },
             target,
+            await readTargetManifest(targetInputFile),
         )).rejects.toThrow("approved historical maternity template");
 
         const rows = await prisma.eformsign_doc.findMany({
@@ -222,15 +233,17 @@ describeDisposable("eformsign branch repair transaction (disposable PostgreSQL)"
             where: { documentId: candidateDocumentId },
             data: { branchId: null },
         });
+        const targetInputFile = await writeTargetManifest(tempDirectory);
         await expect(applyRepair(
             prisma as unknown as EformsignBranchRepairDatabase,
             {
                 mode: "apply",
                 backupPath: join(tempDirectory, "forced-failure-backup.json"),
-                ...syntheticTargetOptions,
+                targetInputFile,
             },
             { id: hqBranchId, slug: "incheon", isActive: true },
             target,
+            await readTargetManifest(targetInputFile),
             {
                 afterUpdateMany: () => {
                     throw new Error("forced post-update failure");

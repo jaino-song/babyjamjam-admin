@@ -3,14 +3,12 @@
  *
  * Dry-run (the default; read-only):
  *   pnpm --filter ./backend repair:eformsign-branch-ownership \
- *     --target-document-id <32-hex-document-id> \
- *     --target-customer-query '<customer-query>'
+ *     --target-input-file /absolute/path/target.json
  *
  * Apply (requires an explicit target and branch confirmation):
  *   pnpm --filter ./backend repair:eformsign-branch-ownership \
  *     --apply --backup-path /absolute/path/eformsign-branch-backup.json \
- *     --target-document-id <32-hex-document-id> \
- *     --target-customer-query '<customer-query>' \
+ *     --target-input-file /absolute/path/target.json \
  *     --confirm-target '<environment>@<sanitized-db-target>' \
  *     --confirm-branch-slug incheon
  *
@@ -23,7 +21,7 @@
  * The script never writes doc_template/area_template rows. Historical template IDs are
  * list-only, and the branch repair is fenced to rows whose branch_id is NULL at execution.
  */
-import { chmod, readFile, writeFile } from "node:fs/promises";
+import { chmod, lstat, readFile, writeFile } from "node:fs/promises";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
@@ -91,8 +89,7 @@ export interface EformsignBranchRepairOptions {
     backupPath?: string;
     confirmTarget?: string;
     confirmBranchSlug?: string;
-    targetDocumentId?: string;
-    targetCustomerQuery?: string;
+    targetInputFile?: string;
 }
 
 export interface EformsignTargetVerificationInput {
@@ -145,18 +142,18 @@ type ParsedFlag = {
     value?: string;
 };
 
-function normalizeTargetDocumentId(value: string | undefined): string {
-    const normalized = value?.trim() ?? "";
+function normalizeTargetDocumentId(value: unknown): string {
+    const normalized = typeof value === "string" ? value.trim() : "";
     if (!/^[a-f\d]{32}$/iu.test(normalized)) {
-        throw new Error("--target-document-id requires a nonempty 32-character hexadecimal id");
+        throw new Error("Target input documentId must be a nonempty 32-character hexadecimal id");
     }
     return normalized;
 }
 
-function normalizeTargetCustomerQuery(value: string | undefined): string {
-    const normalized = value?.trim() ?? "";
+function normalizeTargetCustomerQuery(value: unknown): string {
+    const normalized = typeof value === "string" ? value.trim() : "";
     if (!normalized || normalized.length > 200 || /[\u0000-\u001f\u007f]/u.test(normalized)) {
-        throw new Error("--target-customer-query requires a nonempty safe query");
+        throw new Error("Target input customerQuery must be a nonempty safe query");
     }
     return normalized;
 }
@@ -165,19 +162,50 @@ function deriveTargetCustomerChosungQuery(query: string): string {
     return query.normalize("NFC").split("").map(getChosung).join("").replace(/\s/gu, "");
 }
 
-export function resolveTargetVerificationInput(
-    options: EformsignBranchRepairOptions,
-): EformsignTargetVerificationInput {
-    if (options.mode === "rollback") {
-        throw new Error("Rollback does not require target customer verification inputs");
+export async function readTargetManifest(path: string): Promise<EformsignTargetVerificationInput> {
+    let fileStat;
+    try {
+        fileStat = await lstat(path);
+    } catch {
+        throw new Error("Target input file could not be read");
     }
-    const documentId = normalizeTargetDocumentId(options.targetDocumentId);
-    const customerQuery = normalizeTargetCustomerQuery(options.targetCustomerQuery);
+    if (fileStat.isSymbolicLink() || !fileStat.isFile() || (fileStat.mode & 0o077) !== 0) {
+        throw new Error("Target input file must be a regular owner-only file");
+    }
+
+    let contents: string;
+    try {
+        contents = await readFile(path, "utf8");
+    } catch {
+        throw new Error("Target input file could not be read");
+    }
+
+    let value: unknown;
+    try {
+        value = JSON.parse(contents) as unknown;
+    } catch {
+        throw new Error("Target input file must contain valid JSON");
+    }
+    if (!value || typeof value !== "object" || Array.isArray(value)) {
+        throw new Error("Target input manifest must be a JSON object");
+    }
+    const manifest = value as Record<string, unknown>;
+    assertExactKeys(manifest, ["documentId", "customerQuery"], "Target input manifest");
+    const documentId = normalizeTargetDocumentId(manifest["documentId"]);
+    const customerQuery = normalizeTargetCustomerQuery(manifest["customerQuery"]);
     return {
         documentId,
         customerQuery,
         customerChosungQuery: deriveTargetCustomerChosungQuery(customerQuery),
     };
+}
+
+function normalizeTargetInputFile(value: string | undefined): string {
+    const normalized = value?.trim() ?? "";
+    if (!normalized) {
+        throw new Error("--target-input-file requires a nonempty path");
+    }
+    return resolve(normalized);
 }
 
 const ENV_FILE_PATHS = [
@@ -260,8 +288,7 @@ export function parseRepairOptions(argv: string[]): EformsignBranchRepairOptions
     let backupPath: string | undefined;
     let confirmTarget: string | undefined;
     let confirmBranchSlug: string | undefined;
-    let targetDocumentId: string | undefined;
-    let targetCustomerQuery: string | undefined;
+    let targetInputFile: string | undefined;
 
     const parseValue = (flag: string, index: number, inlineValue: string | undefined): ParsedFlag => {
         const value = inlineValue ?? argv[index + 1];
@@ -305,16 +332,10 @@ export function parseRepairOptions(argv: string[]): EformsignBranchRepairOptions
             if (argument === "--confirm-target") index += 1;
             continue;
         }
-        if (argument === "--target-document-id" || argument.startsWith("--target-document-id=")) {
-            const flag = parseValue("--target-document-id", index, argument.split("=", 2)[1]);
-            targetDocumentId = flag.value;
-            if (argument === "--target-document-id") index += 1;
-            continue;
-        }
-        if (argument === "--target-customer-query" || argument.startsWith("--target-customer-query=")) {
-            const flag = parseValue("--target-customer-query", index, argument.split("=", 2)[1]);
-            targetCustomerQuery = flag.value;
-            if (argument === "--target-customer-query") index += 1;
+        if (argument === "--target-input-file" || argument.startsWith("--target-input-file=")) {
+            const flag = parseValue("--target-input-file", index, argument.split("=", 2)[1]);
+            targetInputFile = flag.value;
+            if (argument === "--target-input-file") index += 1;
             continue;
         }
         if (argument === "--confirm-branch-slug" || argument.startsWith("--confirm-branch-slug=")) {
@@ -325,10 +346,18 @@ export function parseRepairOptions(argv: string[]): EformsignBranchRepairOptions
         }
         if (argument === "--help" || argument === "-h") {
             throw new Error(
-                "Usage: [--target-document-id ID --target-customer-query QUERY]"
+                "Usage: [--target-input-file PATH]"
                 + " [--apply --backup-path PATH --confirm-target TARGET --confirm-branch-slug incheon]"
                 + " | [--rollback PATH --confirm-target TARGET --confirm-branch-slug incheon]",
             );
+        }
+        if (
+            argument === "--target-document-id"
+            || argument.startsWith("--target-document-id=")
+            || argument === "--target-customer-query"
+            || argument.startsWith("--target-customer-query=")
+        ) {
+            throw new Error("Direct target values are not accepted; use --target-input-file PATH");
         }
         throw new Error(`Unknown argument: ${argument}`);
     }
@@ -346,14 +375,8 @@ export function parseRepairOptions(argv: string[]): EformsignBranchRepairOptions
         throw new Error(`Mutation requires --confirm-branch-slug ${TARGET_BRANCH_SLUG}`);
     }
 
-    if (mode !== "rollback") {
-        const targetVerification = resolveTargetVerificationInput({
-            mode,
-            targetDocumentId,
-            targetCustomerQuery,
-        });
-        targetDocumentId = targetVerification.documentId;
-        targetCustomerQuery = targetVerification.customerQuery;
+    if (mode !== "rollback" && !targetInputFile) {
+        throw new Error("--target-input-file is required for dry-run and apply");
     }
 
     return {
@@ -361,8 +384,7 @@ export function parseRepairOptions(argv: string[]): EformsignBranchRepairOptions
         ...(backupPath ? { backupPath: resolve(backupPath) } : {}),
         ...(confirmTarget ? { confirmTarget } : {}),
         ...(confirmBranchSlug ? { confirmBranchSlug } : {}),
-        ...(targetDocumentId ? { targetDocumentId } : {}),
-        ...(targetCustomerQuery ? { targetCustomerQuery } : {}),
+        ...(targetInputFile ? { targetInputFile: normalizeTargetInputFile(targetInputFile) } : {}),
     };
 }
 
@@ -781,9 +803,9 @@ export async function applyRepair(
     options: EformsignBranchRepairOptions,
     branch: BranchRow,
     target: EformsignBackfillTarget,
+    targetVerification: EformsignTargetVerificationInput,
     hooks: EformsignBranchRepairApplyHooks = {},
 ): Promise<void> {
-    const targetVerification = resolveTargetVerificationInput(options);
     const beforeRows = await loadUnassignedRows(database);
     const backup = createBackup(beforeRows, branch, target);
     await writeBackup(options.backupPath!, backup);
@@ -855,7 +877,7 @@ async function run(options: EformsignBranchRepairOptions): Promise<void> {
     assertMutationConfirmation(options, target);
     const targetVerification = options.mode === "rollback"
         ? undefined
-        : resolveTargetVerificationInput(options);
+        : await readTargetManifest(options.targetInputFile!);
 
     const config = createPrismaClientConfig(
         process.env["DATABASE_CONNECTION_MODE"] === "direct"
@@ -892,7 +914,7 @@ async function run(options: EformsignBranchRepairOptions): Promise<void> {
         }
 
         if (options.mode === "apply") {
-            await applyRepair(database, options, branch, target);
+            await applyRepair(database, options, branch, target, targetVerification!);
         } else {
             const backup = await readBackup(options.backupPath!);
             if (
