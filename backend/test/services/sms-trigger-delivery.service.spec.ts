@@ -643,6 +643,72 @@ describe("SmsTriggerDeliveryService", () => {
         expect(attempt?.providerAcceptanceState).toBe("uncertain");
         expect(attempt?.variables["retrySafety"]).toBeUndefined();
     });
+
+    it("refuses a re-entry dispatch whose durable attempt row already left prepared without resending", async () => {
+        // Registration created the trigger job once; the first dispatch already
+        // staged its provider attempt (the durable row left `prepared`). Any
+        // re-entry (scheduler tick after a reclaim, dispatchPendingJobNow) must
+        // converge on that one row via the providerAcceptanceKey idempotency key
+        // and never open the provider boundary a second time.
+        const aligoService = { sendSms: jest.fn() };
+        const systemTemplateService = {
+            getByKeyForBranch: jest.fn().mockResolvedValue({
+                content: "{{name}} 산모님 서비스 안내",
+            }),
+        };
+        const inFlightRow = MessageLogEntity.reconstitute(
+            901,
+            branchId,
+            "aligo_sms",
+            "service_info_sms",
+            "job-service-info",
+            "01012345678",
+            7,
+            "김지니 산모님 서비스 안내",
+            { recipientName: "김지니" },
+            "pending",
+            null,
+            null,
+            0,
+            null,
+            null,
+            new Date("2026-06-05T00:00:00.000Z"),
+            new Date("2026-06-05T00:00:00.000Z"),
+            "김지니",
+            "01012345678",
+            "sms:existing-attempt-key",
+            "existing-attempt-fingerprint",
+            "started",
+            new Date("2026-06-05T00:01:00.000Z"),
+        );
+        const createdRows: MessageLogEntity[] = [];
+        const logRepository = {
+            // Mirrors prepareProviderAttempt's unique-key convergence: the same
+            // acceptance key returns the existing durable row, not a new one.
+            save: jest.fn().mockImplementation(async (log: MessageLogEntity) => {
+                createdRows.push(log);
+                return inFlightRow;
+            }),
+            update: jest.fn().mockImplementation(async (log: MessageLogEntity) => log),
+        };
+        const service = new SmsTriggerDeliveryService(
+            aligoService as unknown as AligoService,
+            systemTemplateService as unknown as SystemTemplateService,
+            logRepository as unknown as IMessageLogRepository,
+        );
+
+        const error = await captureError(service.sendJob(createServiceInfoJob()));
+
+        expect(error).toBeInstanceOf(Error);
+        expect((error as Error).message).toBe(
+            "SMS provider attempt is already in progress or requires reconciliation; automatic resend is disabled",
+        );
+        expect(aligoService.sendSms).not.toHaveBeenCalled();
+        // Exactly one attempt row exists: the pre-existing in-flight row. The
+        // re-entry created no duplicate.
+        expect(createdRows).toHaveLength(1);
+        expect(logRepository.update).not.toHaveBeenCalled();
+    });
 });
 
 describe("SMS delivery routing drift guard", () => {

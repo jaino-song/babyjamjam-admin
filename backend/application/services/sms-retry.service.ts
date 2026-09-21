@@ -29,6 +29,8 @@ const INVALID_RETRY_SCHEDULE_REASON =
     "예약 발송 일시 형식이 올바르지 않아 재시도하지 않았습니다. 예약일과 예약시간을 확인해 주세요.";
 const PARTIAL_RETRY_SUPERSEDED_REASON =
     "부분 발송 결과의 실패 수신자를 식별할 수 없어 자동 재전송을 중단했습니다. 수신자별로 확인 후 수동 발송해 주세요.";
+const UNCERTAIN_RETRY_SUPERSEDED_REASON =
+    "문자 발송 결과가 불확실하여 자동 재전송을 중단했습니다. 제공자 이력 확인 후 수동 확인이 필요합니다.";
 
 interface RetrySchedule {
     scheduledDate?: string;
@@ -65,6 +67,14 @@ export class SmsRetryService {
             throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
         }
         if (sourceLog.isProviderOutcomeUncertain()) {
+            throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
+        }
+        // A prior retry attempt of this source ended without an accountable
+        // outcome (partial batch or unclassified provider result). The
+        // attempt row carries the marker, and the source row is fenced with
+        // the same durable retrySafety value; refuse the whole-list resend
+        // either way.
+        if (sourceLog.variables["retrySafety"] === "uncertain") {
             throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
         }
         if (sourceLog.providerAcceptanceState === "reconciled_delivered") {
@@ -164,6 +174,15 @@ export class SmsRetryService {
             if (providerOutcome === "partial") {
                 this.markSmsRetryPartial(providerAttempt, this.providerResponseMessage(result));
                 await this.logRepository.update(providerAttempt);
+                // Aligo's batch response never identifies which recipients
+                // failed. Fence the source row itself: it stays `failed` in
+                // history, and its durable retrySafety marker forbids another
+                // whole-recipient-list resend even after a restart.
+                await this.fenceSourceLogAfterUnidentifiableOutcome(
+                    sourceLog,
+                    SMS_PARTIAL_RETRY_SAFETY,
+                    `${this.providerResponseMessage(result)} ${PARTIAL_RETRY_SUPERSEDED_REASON}`.trim(),
+                );
                 this.logger.warn(
                     `[Retry] SMS retry partially accepted for log ${providerAttempt.id}; automatic retry stopped`,
                 );
@@ -175,6 +194,11 @@ export class SmsRetryService {
                     "문자 발송 결과를 확인할 수 없어 자동 재전송을 중단했습니다.",
                 );
                 await this.logRepository.update(providerAttempt);
+                await this.fenceSourceLogAfterUnidentifiableOutcome(
+                    sourceLog,
+                    "uncertain",
+                    UNCERTAIN_RETRY_SUPERSEDED_REASON,
+                );
                 this.logger.warn(
                     `[Retry] SMS retry result was not classifiable for log ${providerAttempt.id}; automatic retry stopped`,
                 );
@@ -205,10 +229,45 @@ export class SmsRetryService {
                 error instanceof Error ? error.message : String(error),
             );
             await this.logRepository.update(providerAttempt);
+            await this.fenceSourceLogAfterUnidentifiableOutcome(
+                sourceLog,
+                "uncertain",
+                UNCERTAIN_RETRY_SUPERSEDED_REASON,
+            );
             this.logger.warn(
                 `[Retry] SMS result uncertain for log ${providerAttempt.id}; automatic retry stopped: ${error}`,
             );
             return providerAttempt;
+        }
+    }
+
+    /**
+     * Persist the whole-list resend ban on the row the user can still retry.
+     * A retry attempt is a separate history row; without this fence the source
+     * row stays an ordinary retryable failure and a restarted process (or a
+     * second manual request) would replay the full recipient list even though
+     * a prior attempt's per-recipient outcome cannot be accounted for.
+     */
+    private async fenceSourceLogAfterUnidentifiableOutcome(
+        sourceLog: MessageLogEntity,
+        retrySafety: (typeof SMS_PARTIAL_RETRY_SAFETY) | "uncertain",
+        reason: string,
+    ): Promise<void> {
+        try {
+            sourceLog.status = "failed";
+            sourceLog.nextRetryAt = null;
+            sourceLog.errorMessage = reason;
+            sourceLog.variables = {
+                ...sourceLog.variables,
+                retrySafety,
+            };
+            await this.logRepository.update(sourceLog);
+        } catch (fenceError) {
+            // The attempt row is already fenced; never mask its outcome with a
+            // source-fence persistence failure, but keep the gap visible.
+            this.logger.warn(
+                `[Retry] Failed to fence source log ${sourceLog.id} after an unidentifiable outcome: ${fenceError}`,
+            );
         }
     }
 

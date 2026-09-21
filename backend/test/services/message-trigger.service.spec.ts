@@ -169,6 +169,11 @@ describe("MessageTriggerService", () => {
         findSentTriggerJobIdsSystemScope: jest.fn<Promise<Set<string>>, [string[]]>().mockResolvedValue(
             new Set<string>(),
         ),
+        // Present by default so reclaim tests exercise the production branch
+        // that fences jobs whose provider attempt is started/uncertain.
+        findUncertainTriggerJobIdsSystemScope: jest.fn<Promise<Set<string>>, [string[]]>().mockResolvedValue(
+            new Set<string>(),
+        ),
         findRecentByBranch: jest.fn().mockResolvedValue([]),
     });
 
@@ -2522,6 +2527,31 @@ describe("MessageTriggerService", () => {
         expect(dispatchingJob.cancelReason).toContain("불확실");
         expect(dispatchingJob.nextAttemptAt).toBeNull();
         expect(jobRepository.update).toHaveBeenCalledWith(dispatchingJob);
+    });
+
+    it("reclaim terminal-fails a stale job whose provider attempt is uncertain instead of resending it", async () => {
+        // Provider accepted (or the call went ambiguous) but the local result
+        // save failed: the message_log row stays started/uncertain. Reclaiming
+        // that job into pending would cross the provider boundary a second
+        // time for an attempt that may already be accepted.
+        const { service, jobRepository, messageLogRepository } = createDispatchService();
+        const uncertainJob = createJob({ id: "job-uncertain", status: "processing" });
+        const unsentJob = createJob({ id: "job-plain-unsent", status: "processing" });
+        jobRepository.findStaleProcessingSystemScope.mockResolvedValue([uncertainJob, unsentJob]);
+        messageLogRepository.findSentTriggerJobIdsSystemScope.mockResolvedValue(new Set());
+        messageLogRepository.findUncertainTriggerJobIdsSystemScope.mockResolvedValue(
+            new Set([uncertainJob.id]),
+        );
+
+        await service.dispatchDueJobs();
+
+        expect(uncertainJob.status).toBe("failed");
+        expect(uncertainJob.cancelReason).toContain("불확실");
+        expect(uncertainJob.nextAttemptAt).toBeNull();
+        // The job without an uncertain log still follows the bounded requeue path.
+        expect(unsentJob.status).toBe("pending");
+        expect(unsentJob.nextAttemptAt).toBeInstanceOf(Date);
+        expect(jobRepository.update).toHaveBeenCalledTimes(2);
     });
 
     it("an externally approved branch recovers via the scheduler tick without any page load", async () => {
