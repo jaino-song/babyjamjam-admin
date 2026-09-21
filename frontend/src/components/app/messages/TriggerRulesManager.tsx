@@ -173,10 +173,8 @@ const TRIGGER_RULE_DETAIL_TABS = [
 const TRIGGER_RULE_APPROVAL_MESSAGE =
   "메시지 발송 승인 후에 설정 가능합니다. 설정에서 메시지 발송 기능을 신청해 주세요.";
 const CLIENT_REGISTRATION_POLICY_QUERY_KEY = ["settings", "client-registration-policy"] as const;
-const MANUAL_ONLY_TRIGGER_TEMPLATE_KEY = "SERVICE_END_NOTICE";
 const TRIGGER_TEMPLATE_OPTION_SUFFIXES = {
   serviceRecordLink: " · 제공기록지 전용 자동화에서 관리",
-  manualOnly: " · 수동 발송 전용",
   eventAndRecipientMismatch: " · 선택한 이벤트·수신 대상과 맞지 않음",
   eventMismatch: " · 선택한 이벤트와 맞지 않음",
   recipientMismatch: " · 선택한 수신 대상과 맞지 않음",
@@ -351,13 +349,6 @@ function getTemplateOptionPresentation(
     };
   }
 
-  if (template.key === MANUAL_ONLY_TRIGGER_TEMPLATE_KEY) {
-    return {
-      label: `${template.name}${TRIGGER_TEMPLATE_OPTION_SUFFIXES.manualOnly}`,
-      disabled: true,
-    };
-  }
-
   const matchesEvent = template.allowedEventTypes.includes(eventType);
   const matchesRecipient = template.allowedRecipientTypes.includes(recipientType);
 
@@ -516,8 +507,7 @@ export function TriggerRulesManager({
   const { data: selectedSystemTemplate } = useSystemTemplate(selectedSystemTemplateKey);
 
   const automaticChannelTemplates = useMemo(
-    () => getChannelTemplates(templateQuery.data ?? [], channel)
-      .filter((template) => template.key !== MANUAL_ONLY_TRIGGER_TEMPLATE_KEY),
+    () => getChannelTemplates(templateQuery.data ?? [], channel),
     [channel, templateQuery.data],
   );
   const visibleTemplates = useMemo(
@@ -639,7 +629,6 @@ export function TriggerRulesManager({
   const filteredRules = useMemo(() => {
     return rules.filter((rule) =>
       (isTriggerDispatchOff ? false : rule.isActive) === (statusFilter === "active") &&
-      rule.templateKey !== MANUAL_ONLY_TRIGGER_TEMPLATE_KEY &&
       isTriggerRuleInChannel(rule, channel)
     );
   }, [channel, isTriggerDispatchOff, rules, statusFilter]);
