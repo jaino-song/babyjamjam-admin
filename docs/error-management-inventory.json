@@ -1168,6 +1168,25 @@
       "Live verification is complete only when the runbook evidence table has recorded evidence (plan Task 10.1: no evidence means no operational-verification completion mark)."
     ]
   },
+  "deployment_rollout": {
+    "status": "rollout-doc-prepared; deployment-not-approved",
+    "plan_task": "11.1",
+    "plan_contract": "docs/plans/bjj-319-remaining-plan.md Phase 11 (Task 11.1)",
+    "rollout_doc": "docs/error-management-rollout.md",
+    "candidate_sha": "06a8b68afbcea16314ade60bcd20b39f9976e59d",
+    "candidate_content": "integration of 6.1 close + 7.1 + 8.1 + 9.1 + 10.1 doc-prep on korean-error-messages",
+    "prepared_at": "2026-09-22",
+    "dev_merge_approval": "pending-explicit-user-approval; main presents the candidate first",
+    "deployment_approval": "pending-separate-explicit-user-approval; target environment undecided",
+    "db_migration_assumed": false,
+    "deployed": false,
+    "owner_rows_changed": false,
+    "limitations": [
+      "This record documents the prepared rollout/rollback/observation procedure only; writing that document is neither a dev-merge nor a deployment approval.",
+      "GitHub CI for the candidate SHA was not run from this environment and must be confirmed before the dev-merge approval.",
+      "Live verification (Phase 10) remains unapproved and unexecuted; BJJ-319 closure cannot be proposed while that gate is open."
+    ]
+  },
   "shared_source_review": {
     "basis_sha": "091e6a38753e27a54aa5783c06c00263f4395d4a",
     "root": "packages/shared/src/",
