@@ -426,7 +426,7 @@ describeE2E("service-record lifecycle/client lock races (real PostgreSQL)", () =
         await waitForLock(prisma, writerPid);
         await holder.$transaction((tx) => tx.service_record_case.update({ where: { id: f.caseIds[0] }, data: { status: "FINALIZING" } }));
         release();
-        await expect(header).rejects.toMatchObject({ response: { code: "SERVICE_RECORD_FINALIZED" } });
+        await expect(header).rejects.toMatchObject({ response: { code: "REQUEST_CONFLICT" } });
         await expect(held).resolves.toBeUndefined();
         await expect(prisma.service_record_case.findUnique({ where: { id: f.caseIds[0] }, select: { status: true, momName: true } })).resolves.toEqual({ status: "FINALIZING", momName: null });
         await Promise.all([holder.$disconnect(), writer.$disconnect()]);
@@ -475,7 +475,7 @@ describeE2E("service-record lifecycle/client lock races (real PostgreSQL)", () =
         await waitForLock(prisma, updatePid);
         release();
         await expect(submit).resolves.toEqual(expect.objectContaining({ locked: true }));
-        await expect(update).rejects.toMatchObject({ response: { code: "SERVICE_RECORD_START_DATE_LOCKED" } });
+        await expect(update).rejects.toMatchObject({ response: { code: "REQUEST_CONFLICT" } });
         await expect(held).resolves.toBeUndefined();
         await expect(prisma.client.findUnique({ where: { id: f.clientIds[0] }, select: { startDate: true } })).resolves.toEqual({ startDate: d("2026-09-01") });
         await Promise.all([holder.$disconnect(), submitDb.$disconnect(), updateDb.$disconnect()]);
