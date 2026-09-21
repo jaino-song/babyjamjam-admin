@@ -19,6 +19,7 @@
     "sentry:sourcemaps": "release=\"${SENTRY_RELEASE:-${RAILWAY_GIT_COMMIT_SHA:-}}\"; test -n \"$release\" && sentry-cli sourcemaps inject dist && sentry-cli sourcemaps upload --release \"$release\" dist && find dist -type f -name '*.map' -delete",
     "sentry:smoke": "ts-node scripts/sentry-service-record-smoke.ts",
     "backfill:eformsign-docs": "NODE_PATH=. ts-node scripts/backfill-eformsign-docs.ts",
+    "repair:eformsign-branch-ownership": "NODE_PATH=. ts-node scripts/repair-eformsign-branch-ownership.ts",
     "type-check": "prisma generate && tsc --noEmit",
     "agent:manifest": "ts-node scripts/agent/generate-capability-manifest.ts",
     "agent:manifest:check": "ts-node scripts/agent/generate-capability-manifest.ts --check && ts-node scripts/agent/check-capability-drift.ts",

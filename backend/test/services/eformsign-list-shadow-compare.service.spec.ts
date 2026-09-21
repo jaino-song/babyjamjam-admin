@@ -280,10 +280,11 @@ describe("EformsignListShadowCompareService", () => {
         expect(logger.warn).not.toHaveBeenCalled();
     });
 
-    it("does not search the stored customerName, because the served list cannot", async () => {
-        // The vendor list is fetched without include_fields, so the served search never
-        // sees a customer name on the document and matches the recipient name instead.
-        // Searching the mirror's own column would find documents the served path cannot.
+    it("reports the persisted customerName search as an expected mirror-vendor diff", async () => {
+        // The vendor list is fetched without include_fields, so its search does not see a
+        // customer name on the document. The local mirror deliberately searches its
+        // persisted customerName, so shadow mode must report the membership difference until
+        // the mirror-backed path is the served source for this query.
         repository.findAllVisibleInMirror.mockResolvedValue([
             createMirrorDocument({
                 documentId: "doc-hidden",
@@ -298,8 +299,8 @@ describe("EformsignListShadowCompareService", () => {
         service.compareInBackground(createQuery({ search: "최고객" }), servedFrom([]));
         await settle();
 
-        expect(logger.warn).not.toHaveBeenCalled();
-        expect(logger.log.mock.calls[0]?.[0]).toContain("match");
+        expect(logger.warn.mock.calls[0]?.[0]).toContain("extra=doc-hidden");
+        expect(logger.warn.mock.calls[0]?.[0]).toContain("search=present");
     });
 
     it("searches headquarters recipient names from branch-owned rows only", async () => {

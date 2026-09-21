@@ -14,6 +14,10 @@ import {
 import { sanitizeEformsignErrorMessage } from "application/utils/eformsign-error-message";
 import { assertValidPhone, InvalidPhoneError } from "application/utils/normalize-phone";
 import { normalizeKoreanWon } from "domain/value-objects/money.vo";
+import {
+    assertEformsignTemplateCanBeCreated,
+    normalizeEformsignTemplateId,
+} from "application/utils/eformsign-historical-template-policy";
 
 export interface CreateAndSendContractParams {
     clientId: number;
@@ -79,7 +83,11 @@ export class CreateAndSendContractUsecase {
         params: CreateAndSendContractParams,
         principal: EformsignProviderPrincipal,
     ): Promise<CreateAndSendContractResult> {
-        const { clientId, templateId, templateName, idempotencyKey } = params;
+        const { clientId, templateName, idempotencyKey } = params;
+        // Fence the caller-provided template before reading client state, claiming a
+        // dispatch intent, writing a mirror row, or crossing the provider boundary.
+        const templateId = normalizeEformsignTemplateId(params.templateId);
+        assertEformsignTemplateCanBeCreated(templateId);
 
         const client = params.clientSnapshot ?? await this.clientRepository.findById(branchid, clientId);
         if (!client) {
