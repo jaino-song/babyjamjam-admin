@@ -186,7 +186,7 @@ describe("SbEformsignDispatchIntentRepository", () => {
             outcome: "not_delivered",
             actorUserId: "33333333-3333-4333-8333-333333333333",
             reason: "provider request is still in flight",
-        })).rejects.toThrow("진행 중인 전자문서는 미전달로 변경할 수 없습니다.");
+        })).rejects.toMatchObject({ response: { code: "DOCUMENT_DISPATCH_IN_PROGRESS" } });
         expect(updateMany).not.toHaveBeenCalled();
     });
 
@@ -208,7 +208,7 @@ describe("SbEformsignDispatchIntentRepository", () => {
             outcome: "not_delivered",
             actorUserId: "33333333-3333-4333-8333-333333333333",
             reason: "claim won while reconciliation was pending",
-        })).rejects.toThrow("전자문서 작업 시도가 변경되어 확인 결과를 적용할 수 없습니다.");
+        })).rejects.toMatchObject({ response: { code: "SERVICE_RECORD_WRITE_TARGET_CHANGED" } });
         expect(updateMany).toHaveBeenCalledWith(expect.objectContaining({
             where: expect.objectContaining({
                 status: {

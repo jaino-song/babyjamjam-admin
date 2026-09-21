@@ -231,6 +231,8 @@ describe("EformsignDispatchBoundaryService", () => {
 
         await expect(service.claim({ ...claimInput, fingerprint: "different" }))
             .rejects.toBeInstanceOf(ConflictException);
+        await expect(service.claim({ ...claimInput, fingerprint: "different" }))
+            .rejects.toMatchObject({ response: { code: "REQUEST_CONFLICT" } });
     });
 
     it("requires an authenticated actor and audit reason for reconciliation", async () => {

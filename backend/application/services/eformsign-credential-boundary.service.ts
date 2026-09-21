@@ -1,4 +1,5 @@
 import {
+    BadGatewayException,
     ForbiddenException,
     Inject,
     Injectable,
@@ -11,6 +12,7 @@ import {
     IEformsignClientRepository,
 } from "domain/repositories/eformsign.client.interface";
 import { sanitizeEformsignErrorMessage } from "application/utils/eformsign-error-message";
+import { codeOnlyProblemBody } from "application/utils/problem-bodies";
 
 /**
  * The only credential shape that a provider operation may receive.  This type
@@ -84,17 +86,17 @@ export function assertEformsignProviderCapability(
     capability: EformsignProviderCapability,
 ): void {
     if (!principal.branchId) {
-        throw new ForbiddenException("Branch selection required for eformsign operations");
+        throw new ForbiddenException(codeOnlyProblemBody("ACCESS_DENIED"));
     }
 
     if (principal.source === "worker") {
         if (principal.userId || principal.globalRole || principal.branchRole) {
-            throw new ForbiddenException("Worker principal cannot impersonate a user");
+            throw new ForbiddenException(codeOnlyProblemBody("ACCESS_DENIED"));
         }
         if (principal.branchId.startsWith("__system__:")
             && capability !== "document.read"
             && capability !== "document.backfill") {
-            throw new ForbiddenException("Global worker is restricted to read/backfill capabilities");
+            throw new ForbiddenException(codeOnlyProblemBody("ACCESS_DENIED"));
         }
         return;
     }
@@ -103,7 +105,7 @@ export function assertEformsignProviderCapability(
         ? "owner"
         : principal.branchRole;
     if (!role || !CAPABILITY_ROLES[capability].includes(role)) {
-        throw new ForbiddenException("Eformsign provider capability required");
+        throw new ForbiddenException(codeOnlyProblemBody("ACCESS_DENIED"));
     }
 }
 
@@ -111,7 +113,7 @@ function toCredentials(response: EformsignTokenResponse): EformsignProviderCrede
     const accessToken = response.oauth_token?.access_token;
     const refreshToken = response.oauth_token?.refresh_token;
     if (!accessToken || !refreshToken) {
-        throw new Error("Eformsign provider returned an incomplete credential response");
+        throw new BadGatewayException(codeOnlyProblemBody("UPSTREAM_INVALID_RESPONSE"));
     }
 
     return { accessToken, refreshToken };

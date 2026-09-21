@@ -96,7 +96,7 @@ describe("EformsignDocumentJobService", () => {
             documentId: "foreign-document",
             requestKey: "request-1",
             source: "staff",
-        })).rejects.toThrow("EFORMSIGN_DOCUMENT_JOB_DOCUMENT_NOT_FOUND");
+        })).rejects.toMatchObject({ response: { code: "RESOURCE_NOT_FOUND" } });
         expect(documents.findByDocumentId).toHaveBeenCalledWith(branchId, "foreign-document");
         expect(repository.enqueue).not.toHaveBeenCalled();
     });
@@ -129,7 +129,7 @@ describe("EformsignDocumentJobService", () => {
             clientId: 7,
             contractData: {} as never,
             requestKey: "request-1",
-        })).rejects.toThrow("EFORMSIGN_DOCUMENT_JOB_CLIENT_NOT_FOUND");
+        })).rejects.toMatchObject({ response: { code: "RESOURCE_NOT_FOUND" } });
         expect(clients.findById).toHaveBeenCalledWith(branchId, 7);
         expect(repository.enqueue).not.toHaveBeenCalled();
     });

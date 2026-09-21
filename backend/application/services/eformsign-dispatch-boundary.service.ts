@@ -2,6 +2,8 @@ import { createHash } from "node:crypto";
 
 import { ConflictException, ForbiddenException, Inject, Injectable } from "@nestjs/common";
 
+import { codeOnlyProblemBody } from "application/utils/problem-bodies";
+
 import {
     EFORMSIGN_DISPATCH_INTENT_STATUS,
     EformsignDispatchIntentEntity,
@@ -48,7 +50,7 @@ export class EformsignDispatchBoundaryService {
         });
 
         if (prepared.fingerprint !== input.fingerprint) {
-            throw new ConflictException("전자문서 작업 요청이 기존 작업과 충돌합니다.");
+            throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
         }
 
         if (isDispatchIntentTerminal(prepared.status)) {
@@ -63,7 +65,7 @@ export class EformsignDispatchBoundaryService {
 
         const claimedResult = await this.repository.claim(prepared.id, prepared.branchId);
         if (!claimedResult) {
-            throw new ConflictException("전자문서 작업을 시작할 수 없습니다.");
+            throw new ConflictException(codeOnlyProblemBody("SERVICE_RECORD_WRITE_TARGET_CHANGED"));
         }
         const claimed = claimedResult.intent;
         if (isDispatchIntentTerminal(claimed.status)) {
@@ -127,7 +129,7 @@ export class EformsignDispatchBoundaryService {
         const actorUserId = input.actorUserId?.trim();
         const reason = typeof input.reason === "string" ? input.reason.trim() : "";
         if (!branchId || !intentId || !actorUserId || !reason) {
-            throw new ForbiddenException("전자문서 작업을 확인할 권한이 없습니다.");
+            throw new ForbiddenException(codeOnlyProblemBody("ACCESS_DENIED"));
         }
         const result = await this.repository.reconcile({
             ...input,
@@ -138,7 +140,7 @@ export class EformsignDispatchBoundaryService {
             providerDocumentId: input.providerDocumentId?.trim() || undefined,
         });
         if (!result) {
-            throw new ForbiddenException("전자문서 작업을 확인할 권한이 없습니다.");
+            throw new ForbiddenException(codeOnlyProblemBody("ACCESS_DENIED"));
         }
         return result;
     }

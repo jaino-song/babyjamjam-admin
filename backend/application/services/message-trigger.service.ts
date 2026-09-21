@@ -33,6 +33,7 @@ import {
     MessageTriggerTemplateKey,
 } from "domain/constants/message-trigger-catalog";
 import { findUnsupportedRequiredMessageTriggerVariables } from "domain/constants/message-trigger-variable-sources";
+import { codeOnlyProblemBody, problemBody } from "application/utils/problem-bodies";
 import { SystemTemplateKey } from "domain/constants/system-template-registry";
 import { EMPLOYEE_ASSIGNMENT_AUTOMATION_CHANGED_CANCEL_REASON } from "domain/constants/message-automation-intent";
 import {
@@ -155,26 +156,51 @@ export function validateMessageTriggerRule(
 ): void {
     const template = MESSAGE_TRIGGER_TEMPLATE_CATALOG[params.templateKey];
     if (!template) {
-        throw new BadRequestException("Unknown template key");
+        throw new BadRequestException(problemBody("VALIDATION_FAILED", {
+            pointer: "/templateKey",
+            code: "INVALID_VALUE",
+            detail: "Unknown template key",
+            location: "body",
+        }));
     }
 
     if (!template.providers.sms) {
-        throw new BadRequestException("SMS 발송 채널이 없는 템플릿입니다.");
+        throw new BadRequestException(problemBody("VALIDATION_FAILED", {
+            pointer: "/templateKey",
+            code: "INVALID_VALUE",
+            detail: "SMS 발송 채널이 없는 템플릿입니다.",
+            location: "body",
+        }));
     }
 
     if (
         !isConfigurableSmsTriggerTemplate(params.templateKey)
         && params.templateKey !== allowedExistingTemplateKey
     ) {
-        throw new BadRequestException("일반 자동 전송 규칙에서 사용할 수 없는 템플릿입니다.");
+        throw new BadRequestException(problemBody("VALIDATION_FAILED", {
+            pointer: "/templateKey",
+            code: "INVALID_VALUE",
+            detail: "일반 자동 전송 규칙에서 사용할 수 없는 템플릿입니다.",
+            location: "body",
+        }));
     }
 
     if (!EVENT_RECIPIENT_OPTIONS[params.eventType].includes(params.recipientType)) {
-        throw new BadRequestException("Invalid recipient for selected event type");
+        throw new BadRequestException(problemBody("VALIDATION_FAILED", {
+            pointer: "/recipientType",
+            code: "INVALID_VALUE",
+            detail: "Invalid recipient for selected event type",
+            location: "body",
+        }));
     }
 
     if (!EVENT_OFFSET_OPTIONS[params.eventType].includes(params.offsetType)) {
-        throw new BadRequestException("Invalid offset type for selected event type");
+        throw new BadRequestException(problemBody("VALIDATION_FAILED", {
+            pointer: "/offsetType",
+            code: "INVALID_VALUE",
+            detail: "Invalid offset type for selected event type",
+            location: "body",
+        }));
     }
 
     const normalizedOffsetDays = normalizeMessageTriggerOffsetDays(params.offsetType, params.offsetDays);
@@ -183,7 +209,12 @@ export function validateMessageTriggerRule(
             params.offsetType === MessageTriggerOffsetType.AFTER_DAYS) &&
         normalizedOffsetDays <= 0
     ) {
-        throw new BadRequestException("Offset days must be greater than 0");
+        throw new BadRequestException(problemBody("VALIDATION_FAILED", {
+            pointer: "/offsetDays",
+            code: "INVALID_VALUE",
+            detail: "Offset days must be greater than 0",
+            location: "body",
+        }));
     }
 
     if (
@@ -193,7 +224,12 @@ export function validateMessageTriggerRule(
             recipientType: params.recipientType,
         })
     ) {
-        throw new BadRequestException("Template is not compatible with the selected event and recipient");
+        throw new BadRequestException(problemBody("VALIDATION_FAILED", {
+            pointer: "/templateKey",
+            code: "INVALID_VALUE",
+            detail: "Template is not compatible with the selected event and recipient",
+            location: "body",
+        }));
     }
 }
 
@@ -654,7 +690,7 @@ export class MessageTriggerService {
         await this.ensureTriggerSchemaReady();
         const rule = await this.ruleRepository.findById(branchId, id);
         if (!rule) {
-            throw new NotFoundException(`Trigger rule ${id} not found`);
+            throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
         }
         return rule;
     }
@@ -662,8 +698,8 @@ export class MessageTriggerService {
     async updateRuleBranchActivation(branchId: string, id: string, isActive: boolean): Promise<MessageTriggerRuleEntity> {
         await this.ensureTriggerSchemaReady();
         const rule = await this.prisma.message_trigger_rule.findUnique({ where: { id }, select: { id: true, branchId: true, isActive: true } });
-        if (!rule || rule.branchId !== null) throw new NotFoundException(`Trigger rule ${id} not found`);
-        if (isActive && !rule.isActive) throw new ConflictException("Global rule is disabled");
+        if (!rule || rule.branchId !== null) throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
+        if (isActive && !rule.isActive) throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
         await this.overrideRepository.upsert(branchId, id, isActive);
         if (!isActive) await this.overrideRepository.cancelJobsForBranchRule(branchId, id, SERVICE_RECORD_LINK_BRANCH_DISABLED_REASON, SERVICE_RECORD_LINK_SCHEDULING_RETRY_REASON);
         return (await this.listRules(branchId)).find((item) => item.id === id) ?? (await this.getRule(branchId, id));
@@ -770,7 +806,12 @@ export class MessageTriggerService {
             || expected.branchId !== branchId
             || this.ruleTargetVersion(expected) !== expectedTargetVersion
         ) {
-            throw new BadRequestException("Automation rule approval snapshot is missing or stale");
+            throw new BadRequestException(problemBody("VALIDATION_FAILED", {
+                pointer: "/targetVersion",
+                code: "INVALID_VALUE",
+                detail: "Automation rule approval snapshot is missing or stale",
+                location: "body",
+            }));
         }
 
         const nextState: UpsertRuleParams = {
@@ -816,7 +857,12 @@ export class MessageTriggerService {
             ),
         );
         if (!updated) {
-            throw new BadRequestException("Automation rule changed after approval");
+            throw new BadRequestException(problemBody("VALIDATION_FAILED", {
+                pointer: "/targetVersion",
+                code: "INVALID_VALUE",
+                detail: "Automation rule changed after approval",
+                location: "body",
+            }));
         }
         return updated;
     }
@@ -845,7 +891,12 @@ export class MessageTriggerService {
             || expected.branchId !== branchId
             || this.ruleTargetVersion(expected) !== expectedTargetVersion
         ) {
-            throw new BadRequestException("Automation rule approval snapshot is missing or stale");
+            throw new BadRequestException(problemBody("VALIDATION_FAILED", {
+                pointer: "/targetVersion",
+                code: "INVALID_VALUE",
+                detail: "Automation rule approval snapshot is missing or stale",
+                location: "body",
+            }));
         }
         const deleted = await this.ruleRepository.deleteIfTargetMatchesAndFenceJobs(
             branchId,
@@ -854,7 +905,12 @@ export class MessageTriggerService {
             mutationStartedAt,
         );
         if (!deleted) {
-            throw new BadRequestException("Automation rule changed after approval");
+            throw new BadRequestException(problemBody("VALIDATION_FAILED", {
+                pointer: "/targetVersion",
+                code: "INVALID_VALUE",
+                detail: "Automation rule changed after approval",
+                location: "body",
+            }));
         }
     }
 
@@ -919,7 +975,7 @@ export class MessageTriggerService {
 
         const job = await fetchJob();
         if (!job) {
-            throw new NotFoundException("Message trigger job not found");
+            throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
         }
         if (job.status !== "pending") {
             return job;
@@ -951,7 +1007,7 @@ export class MessageTriggerService {
             USER_REQUESTED_CANCEL_REASON,
         );
         if (!canceled) {
-            throw new ConflictException(CANCEL_JOB_CONFLICT_MESSAGE);
+            throw new ConflictException({ ...codeOnlyProblemBody("REQUEST_CONFLICT"), message: CANCEL_JOB_CONFLICT_MESSAGE });
         }
         return { id, status: "canceled" };
     }
@@ -1907,7 +1963,12 @@ export class MessageTriggerService {
         if (unsupportedVariables.length === 0) return;
 
         throw new BadRequestException({
-            message: "자동 발송에서 입력할 수 없는 필수 템플릿 변수가 있습니다.",
+            ...problemBody("VALIDATION_FAILED", {
+                pointer: "/templateKey",
+                code: "INVALID_VALUE",
+                detail: "자동 발송에서 입력할 수 없는 필수 템플릿 변수가 있습니다.",
+                location: "body",
+            }),
             unsupportedVariables,
         });
     }
@@ -1934,7 +1995,12 @@ export class MessageTriggerService {
 
         const systemTemplateKey = this.getRuleSystemTemplateKey(params.templateKey);
         if (!systemTemplateKey) {
-            throw new BadRequestException("SMS 발송 채널이 없는 템플릿입니다.");
+            throw new BadRequestException(problemBody("VALIDATION_FAILED", {
+                pointer: "/templateKey",
+                code: "INVALID_VALUE",
+                detail: "SMS 발송 채널이 없는 템플릿입니다.",
+                location: "body",
+            }));
         }
         return this.templateAutomationLock.runExclusive(
             systemTemplateKey,
@@ -3072,9 +3138,7 @@ export class MessageTriggerService {
 
     private async ensureTriggerSchemaReady(): Promise<void> {
         if (!(await this.hasTriggerSchema())) {
-            throw new ServiceUnavailableException(
-                "Message trigger tables are not available. Apply the database migration first.",
-            );
+            throw new ServiceUnavailableException(codeOnlyProblemBody("DEPENDENCY_UNAVAILABLE"));
         }
     }
 }

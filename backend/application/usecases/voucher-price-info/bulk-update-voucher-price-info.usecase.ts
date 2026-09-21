@@ -1,4 +1,5 @@
 import { Injectable, Logger, BadRequestException } from "@nestjs/common";
+import { problemBody } from "application/utils/problem-bodies";
 import { ParsedVoucherPriceData } from "domain/ports/gemini-api.port";
 import { PrismaService } from "infrastructure/database/prisma.service";
 
@@ -16,7 +17,12 @@ export class BulkUpdateVoucherPriceInfoUsecase {
 
   async execute(items: ParsedVoucherPriceData[], year: number): Promise<BulkUpdateResult> {
     if (!year || year < 2000 || year > 2100) {
-      throw new BadRequestException("유효한 연도를 입력해주세요 (2000-2100)");
+      throw new BadRequestException(problemBody("VALIDATION_FAILED", {
+        pointer: "/year",
+        code: "OUT_OF_RANGE",
+        detail: "유효한 연도를 입력해주세요 (2000-2100)",
+        location: "body",
+      }));
     }
 
     this.logger.log(`Bulk updating ${items.length} voucher price items for year ${year}`);

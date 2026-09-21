@@ -1,6 +1,8 @@
-import { BadRequestException, Inject, Injectable } from "@nestjs/common";
+import { BadRequestException, Inject, Injectable, NotFoundException } from "@nestjs/common";
 import { createHash } from "node:crypto";
 import type { Prisma } from "@prisma/client";
+
+import { codeOnlyProblemBody, problemBody } from "application/utils/problem-bodies";
 
 import { ContractDataDto } from "application/dto/contract.dto";
 import {
@@ -76,7 +78,12 @@ function assertContractDataPhones(contractData: ContractDataDto): void {
             assertRequiredPhone(value as string | null | undefined);
         } catch (error) {
             if (error instanceof InvalidPhoneError) {
-                throw new BadRequestException(invalidPhoneFieldMessage(field));
+                throw new BadRequestException(problemBody("VALIDATION_FAILED", {
+                    pointer: `/contractData/${field}`,
+                    code: "INVALID_VALUE",
+                    detail: invalidPhoneFieldMessage(field),
+                    location: "body",
+                }));
             }
             throw error;
         }
@@ -104,7 +111,7 @@ export class EformsignDocumentJobService {
         params: EnqueueCreateDocumentParams,
     ): Promise<EnqueueDocumentJobResult> {
         const client = await this.clientRepository.findById(params.branchId, params.clientId);
-        if (!client) throw new Error("EFORMSIGN_DOCUMENT_JOB_CLIENT_NOT_FOUND");
+        if (!client) throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
         // Validate the durable payload before inserting a resumable job. The
         // controller DTO normally performs this check, but this service is
         // also called by internal retry/repair paths and must not persist an
@@ -137,7 +144,7 @@ export class EformsignDocumentJobService {
             params.branchId,
             params.documentId,
         );
-        if (!document) throw new Error("EFORMSIGN_DOCUMENT_JOB_DOCUMENT_NOT_FOUND");
+        if (!document) throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
         const payload: EformsignDocumentJobPayload = {
             documentId: params.documentId,
             ...(params.prefillEndDate ? { prefillEndDate: params.prefillEndDate } : {}),

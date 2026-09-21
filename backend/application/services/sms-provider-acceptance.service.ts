@@ -1,5 +1,6 @@
-import { ConflictException, Inject, Injectable, NotFoundException } from "@nestjs/common";
+import { ConflictException, Inject, Injectable, InternalServerErrorException, NotFoundException } from "@nestjs/common";
 import { createHash } from "node:crypto";
+import { codeOnlyProblemBody } from "application/utils/problem-bodies";
 import {
     MessageLogEntity,
     SmsProviderAcceptanceState,
@@ -34,10 +35,10 @@ export function buildSmsProviderAcceptanceKey(scope: string, logicalIdentity: st
     const normalizedScope = scope.trim();
     const normalizedIdentity = logicalIdentity.trim();
     if (!normalizedScope || !normalizedIdentity) {
-        throw new Error("SMS provider acceptance scope and identity are required");
+        throw new InternalServerErrorException(codeOnlyProblemBody("INTERNAL_ERROR"));
     }
     if (normalizedIdentity.length > MAX_IDEMPOTENCY_KEY_LENGTH) {
-        throw new Error("SMS provider acceptance identity is too long");
+        throw new InternalServerErrorException(codeOnlyProblemBody("INTERNAL_ERROR"));
     }
     return `sms:${digest({ scope: normalizedScope, identity: normalizedIdentity })}`;
 }
@@ -73,9 +74,7 @@ export class SmsProviderAcceptanceService {
 
     async prepare(log: MessageLogEntity): Promise<MessageLogEntity> {
         if (log.providerAcceptanceState !== "prepared") {
-            throw new ConflictException(
-                `SMS provider attempt is not prepared (${log.providerAcceptanceState})`,
-            );
+            throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
         }
         const repository = this.logRepository as IMessageLogRepository & {
             prepareProviderAttempt?: (attempt: MessageLogEntity) => Promise<MessageLogEntity>;
@@ -92,9 +91,7 @@ export class SmsProviderAcceptanceService {
 
     async beginProviderCall(log: MessageLogEntity): Promise<MessageLogEntity> {
         if (log.providerAcceptanceState !== "prepared") {
-            throw new ConflictException(
-                `SMS provider attempt cannot start from ${log.providerAcceptanceState}`,
-            );
+            throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
         }
 
         const repository = this.logRepository as IMessageLogRepository & {
@@ -103,7 +100,7 @@ export class SmsProviderAcceptanceService {
         if (typeof repository.claimProviderAttempt === "function") {
             const claimed = await repository.claimProviderAttempt(log);
             if (!claimed) {
-                throw new ConflictException("SMS provider attempt is already claimed or no longer prepared");
+                throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
             }
             return claimed;
         }
@@ -122,29 +119,27 @@ export class SmsProviderAcceptanceService {
         const reason = input.reason.trim();
         const providerMessageId = input.providerMessageId?.trim() || null;
         if (!actor || !reason) {
-            throw new ConflictException("SMS provider reconciliation actor and reason are required");
+            throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
         }
         if (providerMessageId && providerMessageId.length > 200) {
-            throw new ConflictException("SMS provider reconciliation provider message id is too long");
+            throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
         }
         if (input.outcome !== "delivered" && input.outcome !== "not-delivered") {
-            throw new ConflictException("SMS provider reconciliation outcome is invalid");
+            throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
         }
 
         const source = await this.logRepository.findByIdInBranch(input.branchId, input.logId);
         if (!source || source.provider !== "aligo_sms") {
-            throw new NotFoundException("재조정할 문자 발송 기록을 찾을 수 없습니다.");
+            throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
         }
 
         const existingOutcome = this.reconciledOutcome(source.providerAcceptanceState);
         if (existingOutcome) {
             if (existingOutcome === input.outcome) return source;
-            throw new ConflictException("SMS provider reconciliation is immutable");
+            throw new ConflictException(codeOnlyProblemBody("SERVICE_RECORD_WRITE_TARGET_CHANGED"));
         }
         if (!source.canReconcileProviderOutcome()) {
-            throw new ConflictException(
-                `SMS provider reconciliation is not allowed from ${source.providerAcceptanceState}`,
-            );
+            throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
         }
 
         const repository = this.logRepository as IMessageLogRepository & {
@@ -165,7 +160,7 @@ export class SmsProviderAcceptanceService {
                 providerMessageId,
             );
             if (!reconciled) {
-                throw new ConflictException("SMS provider reconciliation raced with another transition");
+                throw new ConflictException(codeOnlyProblemBody("SERVICE_RECORD_WRITE_TARGET_CHANGED"));
             }
             return reconciled;
         }

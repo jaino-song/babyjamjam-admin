@@ -1,4 +1,5 @@
 import { Inject, Injectable, NotFoundException } from "@nestjs/common";
+import { codeOnlyProblemBody } from "application/utils/problem-bodies";
 import { MessageEntity } from "domain/entities/message.entity";
 import { IMessageRepository, MESSAGE_REPOSITORY } from "domain/repositories/message.repository.interface";
 
@@ -17,7 +18,7 @@ export class UpdateMessageUsecase {
     ): Promise<MessageEntity> {
         const message = await this.messageRepository.findById(branchid, id);
         if (!message) {
-            throw new NotFoundException(`Message with id ${id} not found`);
+            throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
         }
 
         message.edit(title, text);
