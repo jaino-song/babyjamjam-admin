@@ -22,9 +22,9 @@ const context = {
     startDate: "2026-07-17",
     header: {
         momName: "김산모",
-        momBirth: "900101",
+        momBirth: "1990-01-01",
         babyName: "김아기",
-        babyBirth: "260714",
+        babyBirth: "2026-07-14",
         babyWeight: "3.2",
         deliveryType: "자연분만",
     },
@@ -135,28 +135,31 @@ describe("shared service-record UI contract", () => {
 
     it("renders each day page with the full caller data-component prefix", () => {
         const { container, rerender } = render(<ServiceRecordWizard {...makeProps({ pageIdx: 0 })} />);
+        const fieldSelector = '[data-slot="fld"][data-component^="mobile_service-record_wizard_body_day-field_"]';
+        const expectedFields = (keys: string[]) => keys.map((key) => `${dataComponent}_body_day-field_${key}`);
+        const renderedFields = () => Array.from(container.querySelectorAll(fieldSelector), (field) => field.getAttribute("data-component"));
 
         expect(container.firstElementChild).toHaveAttribute("data-source-component", "ServiceRecordWizard");
-        expect(container.querySelectorAll('[data-component="mobile_service-record_wizard_body_day-field"]')).toHaveLength(5);
-        expect(container.querySelector('[data-component="mobile_service-record_wizard_body_day-field_options"]')).toHaveAttribute("data-slot", "opts");
-        expect(container.querySelector('[data-component="mobile_service-record_wizard_body_day-field_options"] .opt')).toHaveAttribute("data-slot", "opt");
-        expect(container.querySelector('[data-component="mobile_service-record_wizard_body_day-field_options"] .box')).toHaveAttribute("data-slot", "box");
-        expect(container.querySelector('[data-component="mobile_service-record_wizard_body_day-field_radio-options"]')).toBeInTheDocument();
-        expect(container.querySelector('[data-component="mobile_service-record_wizard_body_day-field_count-options_row"]')).toBeInTheDocument();
+        expect(renderedFields()).toEqual(expectedFields(["perineum", "breast", "excretion", "sitz-bath", "meals"]));
+        expect(container.querySelector('[data-component="mobile_service-record_wizard_body_day-field_perineum_options"]')).toHaveAttribute("data-slot", "opts");
+        expect(container.querySelector('[data-component="mobile_service-record_wizard_body_day-field_perineum_options"] .opt')).toHaveAttribute("data-slot", "opt");
+        expect(container.querySelector('[data-component="mobile_service-record_wizard_body_day-field_perineum_options"] .box')).toHaveAttribute("data-slot", "box");
+        expect(container.querySelector('[data-component="mobile_service-record_wizard_body_day-field_sitz-bath_radio-options"]')).toBeInTheDocument();
+        expect(container.querySelector('[data-component="mobile_service-record_wizard_body_day-field_meals_count-options_meal-input_control-row"]')).toBeInTheDocument();
 
         rerender(<ServiceRecordWizard {...makeProps({ pageIdx: 1 })} />);
-        expect(container.querySelectorAll('[data-component="mobile_service-record_wizard_body_day-field"]')).toHaveLength(6);
-        expect(container.querySelectorAll('[data-component="mobile_service-record_wizard_body_day-field_count-options_row"]')).toHaveLength(4);
-        expect(container.querySelector('[data-component="mobile_service-record_wizard_body_day-field_radio-options"]')).toBeInTheDocument();
+        expect(renderedFields()).toEqual(expectedFields(["temperature", "sleep", "breast-feeding", "formula-feeding", "stool", "bath"]));
+        expect(container.querySelectorAll('[data-slot="segnum"][data-component^="mobile_service-record_wizard_body_day-field_"][data-component$="_control-row"]')).toHaveLength(4);
+        expect(container.querySelector('[data-component="mobile_service-record_wizard_body_day-field_sleep_radio-options"]')).toBeInTheDocument();
 
         rerender(<ServiceRecordWizard {...makeProps({ pageIdx: 1, draft: { ...DEFAULT_DAILY_ANSWERS, stool: "이상변" } })} />);
-        expect(container.querySelector('input[placeholder="색깔 등 (이상변 시)"]')).toBeInTheDocument();
+        expect(screen.getByRole("textbox", { name: "이상변의 색깔과 상태" })).toHaveAttribute("data-component", "mobile_service-record_wizard_body_day-field_stool_stool-color-input");
 
         rerender(<ServiceRecordWizard {...makeProps({ pageIdx: 2 })} />);
-        expect(container.querySelectorAll('[data-component="mobile_service-record_wizard_body_day-field"]')).toHaveLength(3);
-        expect(container.querySelector('[data-component="mobile_service-record_wizard_body_day-field_etc-service"]')).toHaveAttribute("maxlength", "40");
-        expect(container.querySelector('[data-component="mobile_service-record_wizard_body_day-field_notes"]')).toHaveAttribute("maxlength", "80");
-        expect(container.querySelector('[data-component="mobile_service-record_wizard_body_day-field_confirm-options"]')).toBeInTheDocument();
+        expect(renderedFields()).toEqual(expectedFields(["etc-service", "notes", "payment-confirmed"]));
+        expect(screen.getByRole("textbox", { name: "기타 서비스 (필요 시 기재)" })).toHaveAttribute("maxlength", "40");
+        expect(screen.getByRole("textbox", { name: "특이사항 (필요 시 기재)" })).toHaveAttribute("maxlength", "80");
+        expect(container.querySelector('[data-component="mobile_service-record_wizard_body_day-field_payment-confirmed_confirm-options"]')).toBeInTheDocument();
 
         rerender(<ServiceRecordWizard {...makeProps({ pageIdx: 3 })} />);
         expect(container.querySelectorAll('[data-component="mobile_service-record_wizard_body_review_section"]')).toHaveLength(3);
