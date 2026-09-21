@@ -42,6 +42,18 @@ describe("Area template usecases", () => {
                 expect.objectContaining({ templateId: "valid-template" }),
             );
         });
+
+        it.each([
+            "d1591da29590495d800f55f1d1fc1378",
+            "e63c528b0375478d83e30ff8a9ed1967",
+        ])("should reject list-only historical template %s before repository mutation", (templateId) => {
+            const usecase = new CreateAreaTemplateUsecase(repository);
+
+            expect(() => usecase.execute("branch-1", "Seoul", templateId)).toThrow(
+                "historical list-only",
+            );
+            expect(repository.create).not.toHaveBeenCalled();
+        });
     });
 
     describe("UpdateAreaTemplateUsecase", () => {
@@ -78,6 +90,37 @@ describe("Area template usecases", () => {
                     templateName: "Name",
                 }),
             );
+        });
+
+        it.each([
+            "d1591da29590495d800f55f1d1fc1378",
+            "e63c528b0375478d83e30ff8a9ed1967",
+        ])("should reject requested list-only historical template %s before update", async (templateId) => {
+            repository.findByArea.mockResolvedValue(
+                new AreaTemplateEntity("id", "Seoul", "existing-template", "Name"),
+            );
+            const usecase = new UpdateAreaTemplateUsecase(repository);
+
+            await expect(usecase.execute("branch-1", "Seoul", { templateId })).rejects.toThrow(
+                "historical list-only",
+            );
+            expect(repository.update).not.toHaveBeenCalled();
+        });
+
+        it("rejects updating a legacy persisted row even when only its name changes", async () => {
+            repository.findByArea.mockResolvedValue(
+                new AreaTemplateEntity(
+                    "id",
+                    "Seoul",
+                    "d1591da29590495d800f55f1d1fc1378",
+                    "Legacy",
+                ),
+            );
+            const usecase = new UpdateAreaTemplateUsecase(repository);
+
+            await expect(usecase.execute("branch-1", "Seoul", { templateName: "Renamed" }))
+                .rejects.toThrow("historical list-only");
+            expect(repository.update).not.toHaveBeenCalled();
         });
     });
 });

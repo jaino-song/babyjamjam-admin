@@ -6,6 +6,7 @@ import { promisify } from "node:util";
 
 import {
     applyRepair,
+    assertPostApplyTargetVerification,
     createBackup,
     parseRepairOptions,
     readBranchCounts,
@@ -88,7 +89,12 @@ function createDatabase(options: {
                 { branchId: null, _count: { _all: candidateRows.length } },
                 { branchId: branch.id, _count: { _all: 3 } },
             ]),
-            updateMany: jest.fn().mockResolvedValue({ count: candidateRows.length }),
+            updateMany: jest.fn((args: { data?: { branchId?: string | null } }) => {
+                if (args.data?.branchId === branch.id) {
+                    targetRow.branchId = branch.id;
+                }
+                return Promise.resolve({ count: candidateRows.length });
+            }),
         },
         $transaction: jest.fn(async (callback: (transaction: EformsignBranchRepairDatabase) => Promise<unknown>) =>
             callback(databaseRef.current as unknown as EformsignBranchRepairDatabase)),
@@ -170,6 +176,9 @@ describe("repair-eformsign-branch-ownership operator", () => {
             const parsed = JSON.parse(await readFile(backupPath, "utf8")) as Record<string, unknown>;
             expect(JSON.stringify(parsed)).not.toContain("customerName");
             expect(validateBackup(parsed)).toEqual(backup);
+            expect(() => validateBackup({ ...parsed, createdAt: "2026-09-21" })).toThrow(
+                "Backup createdAt is invalid",
+            );
             expect(() => validateBackup({ ...parsed, customerName: "배진경" })).toThrow(
                 "contains unsupported fields",
             );
@@ -220,6 +229,77 @@ describe("repair-eformsign-branch-ownership operator", () => {
         } finally {
             await rm(directory, { recursive: true, force: true });
         }
+    });
+
+    it.each([
+        {
+            name: "other branch ownership",
+            targetRow: {
+                id: 99,
+                documentId: "a16f415f80bc4dfe834ca2882f103b25",
+                branchId: "branch-qa",
+                templateId: "d1591da29590495d800f55f1d1fc1378",
+                customerName: "배진경",
+            },
+            error: "already owned by another branch",
+        },
+        {
+            name: "unapproved template",
+            targetRow: {
+                id: 99,
+                documentId: "a16f415f80bc4dfe834ca2882f103b25",
+                branchId: null,
+                templateId: "active-template",
+                customerName: "배진경",
+            },
+            error: "not an approved historical maternity template",
+        },
+        {
+            name: "customer search mismatch",
+            targetRow: {
+                id: 99,
+                documentId: "a16f415f80bc4dfe834ca2882f103b25",
+                branchId: null,
+                templateId: "e63c528b0375478d83e30ff8a9ed1967",
+                customerName: "김고객",
+            },
+            error: "customer name does not satisfy",
+        },
+    ])("fences apply before bulk update for $name", async ({ targetRow, error }) => {
+        const database = createDatabase({ targetRow });
+        const directory = await mkdtemp(join(tmpdir(), "eformsign-branch-repair-"));
+        const backupPath = join(directory, "backup.json");
+        try {
+            await expect(applyRepair(database, { mode: "apply", backupPath }, branch, target))
+                .rejects.toThrow(error);
+            expect(database.eformsign_doc.updateMany).not.toHaveBeenCalled();
+        } finally {
+            await rm(directory, { recursive: true, force: true });
+        }
+    });
+
+    it("fails when the target is not HQ-owned after the bulk update", async () => {
+        const database = createDatabase();
+        database.eformsign_doc.updateMany.mockImplementationOnce(() =>
+            Promise.resolve({ count: 2 }));
+        const directory = await mkdtemp(join(tmpdir(), "eformsign-branch-repair-"));
+        const backupPath = join(directory, "backup.json");
+        try {
+            await expect(applyRepair(database, { mode: "apply", backupPath }, branch, target))
+                .rejects.toThrow("was not assigned to the selected HQ branch");
+        } finally {
+            await rm(directory, { recursive: true, force: true });
+        }
+    });
+
+    it("treats every false post-apply verification field as a failure", () => {
+        expect(() => assertPostApplyTargetVerification({
+            found: true,
+            currentBranchMatchesTarget: false,
+            templateIsListOnlyHistoricalMaternity: true,
+            customerNameMatchesExactQuery: true,
+            customerNameMatchesChosungQuery: true,
+        })).toThrow("Post-apply target verification failed");
     });
 
     it("rolls back only the exact rows still owned by the applied branch", async () => {

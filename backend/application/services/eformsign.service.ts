@@ -27,6 +27,7 @@ import { normalizeEformsignStatusCode } from "domain/utils/eformsign-status-code
 import { normalizeKoreanWon } from "domain/value-objects/money.vo";
 import { assertRequiredPhone, invalidPhoneFieldMessage, InvalidPhoneError } from "domain/utils/normalize-phone";
 import type { EformsignTemplateWorkflow } from "application/utils/eformsign-template-workflow";
+import { assertEformsignTemplateCanBeCreated } from "application/utils/eformsign-historical-template-policy";
 
 export interface EformsignDocumentWorkflowState {
     statusCode?: string;
@@ -169,7 +170,9 @@ export class EformsignService {
 
     resolveEffectiveTemplateId(templateId?: string | null): string {
         const override = typeof templateId === "string" ? templateId.trim() : "";
-        return override || this.EFORMSIGN_TEMPLATE_ID;
+        const effectiveTemplateId = override || this.EFORMSIGN_TEMPLATE_ID.trim();
+        assertEformsignTemplateCanBeCreated(effectiveTemplateId);
+        return effectiveTemplateId;
     }
 
     generateDocumentOptions(
@@ -184,15 +187,14 @@ export class EformsignService {
         if (contractData.issuerPhone?.trim()) {
             assertEformPhone(contractData.issuerPhone, "issuerPhone");
         }
+        // Resolve and fence the template before the provider-configuration check so a
+        // retired configured fallback fails closed with the concrete policy error even
+        // when the surrounding integration is incomplete.
+        const effectiveTemplateId = this.resolveEffectiveTemplateId(templateId);
         this.assertConfigured();
         const fullPrice = normalizeEformsignAmount(contractData.fullPrice);
         const grant = normalizeEformsignAmount(contractData.grant);
         const actualPrice = normalizeEformsignAmount(contractData.actualPrice);
-        const requestedTemplateId = typeof templateId === "string" ? templateId.trim() : "";
-        // Dispatch resolves the fallback once before reading the provider
-        // workflow and passes that non-empty id here. Direct callers without
-        // an override still resolve the configured default locally.
-        const effectiveTemplateId = requestedTemplateId || this.resolveEffectiveTemplateId(templateId);
         if (workflow && workflow.templateId !== effectiveTemplateId) {
             throw new Error("template workflow does not match the effective template");
         }

@@ -3,8 +3,14 @@ import {
     enrichMirrorPage,
     type MirrorListQuery,
 } from "application/services/eformsign-mirror-list.service";
+import { EformsignTemplateScopeService } from "application/services/eformsign-template-scope.service";
 import { documentCustomerNameValue } from "application/utils/eformsign-document-customer-name";
+import {
+    MIRROR_RECIPIENT_NAME_KEY,
+    MIRROR_UNASSIGNED_KEY,
+} from "application/utils/eformsign-list-doc-from-mirror";
 import { EformsignDocEntity } from "domain/entities/eformsign-doc.entity";
+import { AreaTemplateEntity } from "domain/entities/area-template.entity";
 
 function createMirrorDocument(overrides: {
     documentId: string;
@@ -16,6 +22,7 @@ function createMirrorDocument(overrides: {
     customerName?: string | null;
     documentName?: string | null;
     stepRecipientName?: string;
+    clientId?: number | null;
 }): EformsignDocEntity {
     const createdDate = new Date(overrides.createdDate ?? "2026-07-01T00:00:00.000Z");
     return EformsignDocEntity.reconstitute({
@@ -40,7 +47,7 @@ function createMirrorDocument(overrides: {
         stepRecipientSms: "01012345678",
         expiredDate: new Date("2026-08-01T00:00:00.000Z"),
         expired: false,
-        clientId: null,
+        clientId: overrides.clientId === undefined ? null : overrides.clientId,
         documentKind: null,
         employeeScheduleId: null,
         templateId: overrides.templateId === undefined ? "template-1" : overrides.templateId,
@@ -191,6 +198,40 @@ describe("EformsignMirrorListService", () => {
         expect(chosung.documents.map((document) => document.id)).toEqual(["doc-1"]);
     });
 
+    it("serves a historical maternity target through the resolved template scope and name search", async () => {
+        const scopeService = new EformsignTemplateScopeService(
+            { findAll: jest.fn().mockResolvedValue([
+                new AreaTemplateEntity("area-1", "Seoul", "active-template", "활성 계약서"),
+            ]) } as never,
+            { get: jest.fn().mockReturnValue(undefined) } as never,
+        );
+        const filter = await scopeService.resolveTemplateFilter("maternity", "branch-1");
+        repository.findAllVisibleInMirror.mockResolvedValue([
+            createMirrorDocument({
+                documentId: "a16f415f80bc4dfe834ca2882f103b25",
+                templateId: "d1591da29590495d800f55f1d1fc1378",
+                customerName: "배진경",
+            }),
+        ]);
+
+        const exact = await service.buildList(createQuery({
+            templateId: filter?.templateId,
+            search: "배진경",
+        }));
+        const chosung = await service.buildList(createQuery({
+            templateId: filter?.templateId,
+            search: "ㅂㅈㄱ",
+        }));
+
+        expect(filter?.templateId).toContain("d1591da29590495d800f55f1d1fc1378");
+        expect(exact.documents.map((document) => document.id)).toEqual([
+            "a16f415f80bc4dfe834ca2882f103b25",
+        ]);
+        expect(chosung.documents.map((document) => document.id)).toEqual([
+            "a16f415f80bc4dfe834ca2882f103b25",
+        ]);
+    });
+
     it("only searches recipient names the branch owns", async () => {
         // Headquarters sees unclaimed documents, but the API path builds its recipient-name
         // corpus from findAll(branchId), so their names are not searchable there.
@@ -288,11 +329,13 @@ describe("enrichMirrorPage", () => {
             customerName: null,
             documentName: "산모 계약서",
             stepRecipientName: "산모 계약서",
+            clientId: 42,
         });
         const named = createMirrorDocument({
             documentId: "doc-named",
             customerName: null,
             stepRecipientName: "송진호",
+            clientId: 42,
         });
         const service = new EformsignMirrorListService({
             findAllVisibleInMirror: jest.fn().mockResolvedValue([titled, named]),
@@ -323,6 +366,24 @@ describe("enrichMirrorPage", () => {
         } as never);
         const { documents } = await service.buildList(createQuery());
 
+        expect(documentCustomerNameValue(enrichMirrorPage(documents)[0]!)).toBeNull();
+    });
+
+    it("never uses a current-step recipient for a branch-owned but unassigned row", async () => {
+        const unassigned = createMirrorDocument({
+            documentId: "doc-repaired-branch",
+            customerName: null,
+            stepRecipientName: "제공기관 검토자",
+        });
+        const service = new EformsignMirrorListService({
+            findAllVisibleInMirror: jest.fn().mockResolvedValue([unassigned]),
+            findAllVisibleInMirrorForHeadquarters: jest.fn(),
+        } as never);
+
+        const { documents } = await service.buildList(createQuery());
+
+        expect(documents[0]?.[MIRROR_UNASSIGNED_KEY]).toBe(true);
+        expect(documents[0]?.[MIRROR_RECIPIENT_NAME_KEY]).toBe("제공기관 검토자");
         expect(documentCustomerNameValue(enrichMirrorPage(documents)[0]!)).toBeNull();
     });
 });

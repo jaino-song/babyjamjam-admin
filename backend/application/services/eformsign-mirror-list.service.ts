@@ -22,6 +22,7 @@ import {
     eformsignListDocFromMirror,
     MIRROR_CUSTOMER_NAME_KEY,
     MIRROR_RECIPIENT_NAME_KEY,
+    MIRROR_UNASSIGNED_KEY,
     MIRROR_UNKNOWN_RECIPIENT_NAME,
 } from "application/utils/eformsign-list-doc-from-mirror";
 import { stringFromUnknown } from "application/utils/eformsign-document-customer-name";
@@ -241,6 +242,9 @@ export function enrichMirrorPage(documents: EformsignListDoc[]): EformsignListDo
  * stop doing if we handed it the sentinel as a name.
  */
 function recipientNameAsCustomerName(document: EformsignListDoc): string | null {
+    if (document[MIRROR_UNASSIGNED_KEY] === true) {
+        return null;
+    }
     const recipientName = stringFromUnknown(document[MIRROR_RECIPIENT_NAME_KEY]);
     if (!recipientName || recipientName === MIRROR_UNKNOWN_RECIPIENT_NAME) {
         return null;

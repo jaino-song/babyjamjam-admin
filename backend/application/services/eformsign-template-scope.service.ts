@@ -5,7 +5,15 @@ import { ConfigService } from "@nestjs/config";
 
 import { AreaTemplateService } from "application/services/area-template.service";
 import { configuredServiceRecordTemplateIds } from "application/utils/eformsign-document-kind";
+import {
+    LIST_ONLY_HISTORICAL_MATERNITY_TEMPLATE_IDS,
+} from "application/utils/eformsign-historical-template-policy";
 import type { TemplateMatch } from "application/utils/eformsign-document-list";
+
+export {
+    isListOnlyHistoricalMaternityTemplateId,
+    LIST_ONLY_HISTORICAL_MATERNITY_TEMPLATE_IDS,
+} from "application/utils/eformsign-historical-template-policy";
 
 /**
  * The contracts-page section a document list request can name with `section=`.
@@ -16,28 +24,6 @@ export type EformsignListSection = "maternity" | "service-records";
 export interface EformsignSectionTemplateFilter {
     templateId: string;
     templateMatch: TemplateMatch;
-}
-
-/**
- * Templates that are still searchable in historical maternity lists but are no longer
- * available to create a new document. Keep these IDs out of `doc_template`/AreaTemplateService:
- * that registry is the creation source of truth, while this tuple is list-only scope.
- */
-export const LIST_ONLY_HISTORICAL_MATERNITY_TEMPLATE_IDS = [
-    "d1591da29590495d800f55f1d1fc1378",
-    "e63c528b0375478d83e30ff8a9ed1967",
-] as const;
-
-const LIST_ONLY_HISTORICAL_MATERNITY_TEMPLATE_ID_SET = new Set<string>(
-    LIST_ONLY_HISTORICAL_MATERNITY_TEMPLATE_IDS,
-);
-
-export function isListOnlyHistoricalMaternityTemplateId(
-    templateId: string | null | undefined,
-): boolean {
-    return templateId !== null
-        && templateId !== undefined
-        && LIST_ONLY_HISTORICAL_MATERNITY_TEMPLATE_ID_SET.has(templateId);
 }
 
 /**

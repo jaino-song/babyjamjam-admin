@@ -27,7 +27,8 @@ import { Prisma, PrismaClient } from "@prisma/client";
 
 import {
     isListOnlyHistoricalMaternityTemplateId,
-} from "../application/services/eformsign-template-scope.service";
+    LIST_ONLY_HISTORICAL_MATERNITY_TEMPLATE_IDS,
+} from "../application/utils/eformsign-historical-template-policy";
 import { matchesKoreanSearch } from "../application/utils/eformsign-document-list";
 import {
     assertEformsignBackfillConfirmation,
@@ -339,6 +340,58 @@ export async function loadUnassignedRows(
     }));
 }
 
+async function loadTargetDocument(
+    database: EformsignBranchRepairDatabase,
+): Promise<TargetDocumentRow> {
+    const rows = await database.eformsign_doc.findMany({
+        where: { documentId: TARGET_DOCUMENT_ID },
+        select: {
+            id: true,
+            documentId: true,
+            branchId: true,
+            templateId: true,
+            customerName: true,
+        },
+    });
+    if (rows.length !== 1) {
+        throw new Error(
+            `Apply target document must resolve to exactly one row; found ${rows.length}`,
+        );
+    }
+    return rows[0] as TargetDocumentRow;
+}
+
+function assertApprovedTargetTemplateAndCustomer(row: TargetDocumentRow): void {
+    const approvedTemplate = typeof row.templateId === "string"
+        && (LIST_ONLY_HISTORICAL_MATERNITY_TEMPLATE_IDS as readonly string[]).includes(row.templateId);
+    if (!approvedTemplate) {
+        throw new Error("Apply target document template is not an approved historical maternity template");
+    }
+
+    const customerName = row.customerName?.trim() ?? "";
+    if (
+        customerName.length === 0
+        || !matchesKoreanSearch(customerName, TARGET_CUSTOMER_NAME_QUERY)
+        || !matchesKoreanSearch(customerName, TARGET_CUSTOMER_NAME_CHOSUNG_QUERY)
+    ) {
+        throw new Error("Apply target document customer name does not satisfy the required search checks");
+    }
+}
+
+function assertApplyTargetBeforeUpdate(row: TargetDocumentRow, branch: BranchRow): void {
+    if (row.branchId !== null && row.branchId !== branch.id) {
+        throw new Error("Apply target document is already owned by another branch");
+    }
+    assertApprovedTargetTemplateAndCustomer(row);
+}
+
+function assertApplyTargetAfterUpdate(row: TargetDocumentRow, branch: BranchRow): void {
+    if (row.branchId !== branch.id) {
+        throw new Error("Apply target document was not assigned to the selected HQ branch");
+    }
+    assertApprovedTargetTemplateAndCustomer(row);
+}
+
 function sortedRowKeys(rows: RepairRow[]): string[] {
     return rows
         .map((row) => `${row.id}:${row.documentId}:${row.branchId ?? "null"}`)
@@ -422,7 +475,15 @@ export function validateBackup(value: unknown): EformsignBranchRepairBackup {
     if (backup["version"] !== BACKUP_VERSION || backup["operation"] !== BACKUP_OPERATION) {
         throw new Error("Backup version or operation is unsupported");
     }
-    if (typeof backup["createdAt"] !== "string" || !backup["createdAt"]) {
+    const createdAt = backup["createdAt"];
+    const parsedCreatedAt = typeof createdAt === "string" ? new Date(createdAt) : null;
+    if (
+        typeof createdAt !== "string"
+        || !createdAt
+        || !parsedCreatedAt
+        || !Number.isFinite(parsedCreatedAt.getTime())
+        || parsedCreatedAt.toISOString() !== createdAt
+    ) {
         throw new Error("Backup createdAt is invalid");
     }
 
@@ -500,7 +561,7 @@ export function validateBackup(value: unknown): EformsignBranchRepairBackup {
     return {
         version: BACKUP_VERSION,
         operation: BACKUP_OPERATION,
-        createdAt: backup["createdAt"] as string,
+        createdAt,
         target: {
             environment: targetRecord["environment"] as string,
             databaseTarget: targetRecord["databaseTarget"] as string,
@@ -578,6 +639,20 @@ export async function verifyTargetDocument(
     };
 }
 
+export function assertPostApplyTargetVerification(
+    verification: EformsignBranchVerification,
+): void {
+    if (
+        !verification.found
+        || !verification.currentBranchMatchesTarget
+        || !verification.templateIsListOnlyHistoricalMaternity
+        || !verification.customerNameMatchesExactQuery
+        || !verification.customerNameMatchesChosungQuery
+    ) {
+        throw new Error("Post-apply target verification failed");
+    }
+}
+
 function printCounts(label: string, counts: EformsignBranchCounts): void {
     console.log(`${label} branch counts: ${JSON.stringify(counts)}`);
 }
@@ -623,6 +698,8 @@ export async function applyRepair(
     const updatedCount = await database.$transaction(async (transaction) => {
         const transactionRows = await loadUnassignedRows(transaction);
         assertSameRepairRows(beforeRows, transactionRows, "Apply");
+        const targetBefore = await loadTargetDocument(transaction);
+        assertApplyTargetBeforeUpdate(targetBefore, branch);
         const result = await transaction.eformsign_doc.updateMany({
             where: { branchId: null },
             data: { branchId: branch.id },
@@ -632,6 +709,8 @@ export async function applyRepair(
                 `Apply count fence failed; expected ${beforeRows.length}, updated ${result.count}`,
             );
         }
+        const targetAfter = await loadTargetDocument(transaction);
+        assertApplyTargetAfterUpdate(targetAfter, branch);
         return result.count;
     }, MUTATION_TRANSACTION_OPTIONS);
     console.log(`Applied branch repair to ${updatedCount} row(s).`);
@@ -726,9 +805,13 @@ async function run(options: EformsignBranchRepairOptions): Promise<void> {
         printCounts("Post-repair", afterCounts);
         const verification = await verifyTargetDocument(database, branch.id);
         printVerification(verification);
+        if (options.mode === "apply") {
+            assertPostApplyTargetVerification(verification);
+        }
         console.log(
-            "NOTE: This script does not invalidate application document snapshots; deploy/restart "
-            + "the application or wait for the configured snapshot TTL before expecting cached lists to refresh.",
+            "NOTE: This script does not invalidate shared Valkey document snapshots. Deploy/restart "
+            + "only refreshes process-local state; shared snapshots require explicit version "
+            + "invalidation or the configured snapshot TTL before cached lists refresh.",
         );
     } finally {
         await prisma.$disconnect();

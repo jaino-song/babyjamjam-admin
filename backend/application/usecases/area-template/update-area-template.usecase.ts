@@ -1,6 +1,7 @@
 import { Inject, Injectable } from "@nestjs/common";
 import { AreaTemplateEntity } from "domain/entities/area-template.entity";
 import { AREA_TEMPLATE_REPOSITORY, IAreaTemplateRepository } from "domain/repositories/area-template.repository.interface";
+import { assertEformsignTemplateCanBeCreated } from "application/utils/eformsign-historical-template-policy";
 
 @Injectable()
 export class UpdateAreaTemplateUsecase {
@@ -14,10 +15,15 @@ export class UpdateAreaTemplateUsecase {
         area: string,
         params: { templateId?: string; templateName?: string | null }
     ): Promise<AreaTemplateEntity> {
+        if (params.templateId !== undefined) {
+            assertEformsignTemplateCanBeCreated(params.templateId);
+        }
         const existing = await this.areaTemplateRepository.findByArea(branchid, area);
         if (!existing) {
             throw new Error(`AreaTemplate not found for area: ${area}`);
         }
+
+        assertEformsignTemplateCanBeCreated(existing.templateId);
 
         const updated = new AreaTemplateEntity(
             existing.id,
