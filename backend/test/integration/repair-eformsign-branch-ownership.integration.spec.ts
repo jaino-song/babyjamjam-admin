@@ -5,6 +5,8 @@ import { join } from "node:path";
 
 import {
     applyRepair,
+    readBackup,
+    rollbackRepair,
     TARGET_DOCUMENT_ID,
     type EformsignBranchRepairDatabase,
 } from "../../scripts/repair-eformsign-branch-ownership";
@@ -138,9 +140,10 @@ describeDisposable("eformsign branch repair transaction (disposable PostgreSQL)"
     });
 
     it("updates only null ownership and preserves another branch in one real transaction", async () => {
+        const backupPath = join(tempDirectory, "apply-backup.json");
         await applyRepair(
             prisma as unknown as EformsignBranchRepairDatabase,
-            { mode: "apply", backupPath: join(tempDirectory, "apply-backup.json") },
+            { mode: "apply", backupPath },
             { id: hqBranchId, slug: "incheon", isActive: true },
             target,
         );
@@ -152,6 +155,22 @@ describeDisposable("eformsign branch repair transaction (disposable PostgreSQL)"
         expect(rows).toEqual(expect.arrayContaining([
             { documentId: TARGET_DOCUMENT_ID, branchId: hqBranchId },
             { documentId: candidateDocumentId, branchId: hqBranchId },
+            { documentId: otherOwnedDocumentId, branchId: qaBranchId },
+        ]));
+
+        await rollbackRepair(
+            prisma as unknown as EformsignBranchRepairDatabase,
+            await readBackup(backupPath),
+            { id: hqBranchId, slug: "incheon", isActive: true },
+        );
+
+        const restoredRows = await prisma.eformsign_doc.findMany({
+            where: { documentId: { in: [TARGET_DOCUMENT_ID, candidateDocumentId, otherOwnedDocumentId] } },
+            select: { documentId: true, branchId: true },
+        });
+        expect(restoredRows).toEqual(expect.arrayContaining([
+            { documentId: TARGET_DOCUMENT_ID, branchId: null },
+            { documentId: candidateDocumentId, branchId: null },
             { documentId: otherOwnedDocumentId, branchId: qaBranchId },
         ]));
     });
@@ -181,6 +200,38 @@ describeDisposable("eformsign branch repair transaction (disposable PostgreSQL)"
             { documentId: TARGET_DOCUMENT_ID, branchId: null, templateId: "not-approved" },
             { documentId: candidateDocumentId, branchId: null, templateId: "active-template" },
             { documentId: otherOwnedDocumentId, branchId: qaBranchId, templateId: "active-template" },
+        ]));
+    });
+
+    it("rolls back every write when a test-only post-update hook fails", async () => {
+        await prisma.eformsign_doc.update({
+            where: { documentId: TARGET_DOCUMENT_ID },
+            data: { branchId: null, templateId: "d1591da29590495d800f55f1d1fc1378" },
+        });
+        await prisma.eformsign_doc.update({
+            where: { documentId: candidateDocumentId },
+            data: { branchId: null },
+        });
+        await expect(applyRepair(
+            prisma as unknown as EformsignBranchRepairDatabase,
+            { mode: "apply", backupPath: join(tempDirectory, "forced-failure-backup.json") },
+            { id: hqBranchId, slug: "incheon", isActive: true },
+            target,
+            {
+                afterUpdateMany: () => {
+                    throw new Error("forced post-update failure");
+                },
+            },
+        )).rejects.toThrow("forced post-update failure");
+
+        const rows = await prisma.eformsign_doc.findMany({
+            where: { documentId: { in: [TARGET_DOCUMENT_ID, candidateDocumentId, otherOwnedDocumentId] } },
+            select: { documentId: true, branchId: true },
+        });
+        expect(rows).toEqual(expect.arrayContaining([
+            { documentId: TARGET_DOCUMENT_ID, branchId: null },
+            { documentId: candidateDocumentId, branchId: null },
+            { documentId: otherOwnedDocumentId, branchId: qaBranchId },
         ]));
     });
 });

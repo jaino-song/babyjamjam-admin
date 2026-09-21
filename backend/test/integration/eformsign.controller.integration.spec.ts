@@ -1232,6 +1232,40 @@ describe("EformsignController (Integration)", () => {
             expect(areaTemplateFindAll).toHaveBeenCalledWith("branch-1");
         });
 
+        it("serves the historical maternity target through section scope, shared snapshot, and both Korean searches", async () => {
+            areaTemplateFindAll.mockResolvedValue([
+                { templateId: "registered-contract-template" },
+            ]);
+            mirrorRepository.findAllVisibleInMirror.mockResolvedValue([
+                createMirrorRow({
+                    documentId: "a16f415f80bc4dfe834ca2882f103b25",
+                    templateId: "d1591da29590495d800f55f1d1fc1378",
+                    customerName: "배진경",
+                    clientId: null,
+                }),
+            ]);
+
+            const exact = await request(mirrorApp.getHttpServer())
+                .get("/api/documents")
+                .query({ section: "maternity", search: "배진경" });
+            const chosung = await request(mirrorApp.getHttpServer())
+                .get("/api/documents")
+                .query({ section: "maternity", search: "ㅂㅈㄱ" });
+
+            expect(exact.status).toBe(200);
+            expect(chosung.status).toBe(200);
+            expect(exact.body.documents.map((d: { id: string }) => d.id)).toEqual([
+                "a16f415f80bc4dfe834ca2882f103b25",
+            ]);
+            expect(chosung.body.documents.map((d: { id: string }) => d.id)).toEqual([
+                "a16f415f80bc4dfe834ca2882f103b25",
+            ]);
+            // Search is applied after the same mirror snapshot; the second query must not
+            // rebuild the source generation or drop the repaired historical row.
+            expect(mirrorRepository.findAllVisibleInMirror).toHaveBeenCalledTimes(1);
+            expect(exact.body.snapshot_version).toBe(chosung.body.snapshot_version);
+        });
+
         it("lets the section override client-sent template params", async () => {
             // 클라이언트가 include로 other-template을 강요해도 서버 정본(화이트리스트)이 이긴다.
             areaTemplateFindAll.mockResolvedValue([

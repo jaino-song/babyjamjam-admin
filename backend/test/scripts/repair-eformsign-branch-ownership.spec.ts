@@ -219,6 +219,9 @@ describe("repair-eformsign-branch-ownership operator", () => {
                 target,
             );
             expect(database.$transaction).toHaveBeenCalledTimes(1);
+            expect(database.$transaction.mock.calls[0]?.[1]).toEqual(expect.objectContaining({
+                isolationLevel: "Serializable",
+            }));
             expect(database.eformsign_doc.updateMany).toHaveBeenCalledWith({
                 where: { branchId: null },
                 data: { branchId: branch.id },

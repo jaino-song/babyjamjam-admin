@@ -27,7 +27,10 @@ import { normalizeEformsignStatusCode } from "domain/utils/eformsign-status-code
 import { normalizeKoreanWon } from "domain/value-objects/money.vo";
 import { assertRequiredPhone, invalidPhoneFieldMessage, InvalidPhoneError } from "domain/utils/normalize-phone";
 import type { EformsignTemplateWorkflow } from "application/utils/eformsign-template-workflow";
-import { assertEformsignTemplateCanBeCreated } from "application/utils/eformsign-historical-template-policy";
+import {
+    assertEformsignTemplateCanBeCreated,
+    normalizeEformsignTemplateId,
+} from "application/utils/eformsign-historical-template-policy";
 
 export interface EformsignDocumentWorkflowState {
     statusCode?: string;
@@ -169,8 +172,8 @@ export class EformsignService {
     }
 
     resolveEffectiveTemplateId(templateId?: string | null): string {
-        const override = typeof templateId === "string" ? templateId.trim() : "";
-        const effectiveTemplateId = override || this.EFORMSIGN_TEMPLATE_ID.trim();
+        const override = normalizeEformsignTemplateId(templateId);
+        const effectiveTemplateId = override || normalizeEformsignTemplateId(this.EFORMSIGN_TEMPLATE_ID);
         assertEformsignTemplateCanBeCreated(effectiveTemplateId);
         return effectiveTemplateId;
     }

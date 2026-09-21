@@ -14,9 +14,18 @@ const LIST_ONLY_HISTORICAL_MATERNITY_TEMPLATE_ID_SET = new Set<string>(
     LIST_ONLY_HISTORICAL_MATERNITY_TEMPLATE_IDS,
 );
 
+export function normalizeEformsignTemplateId(
+    templateId: string | null | undefined,
+): string {
+    return typeof templateId === "string" ? templateId.trim() : "";
+}
+
 export function isListOnlyHistoricalMaternityTemplateId(
     templateId: string | null | undefined,
 ): boolean {
+    if (typeof templateId === "string") {
+        templateId = normalizeEformsignTemplateId(templateId);
+    }
     return typeof templateId === "string"
         && LIST_ONLY_HISTORICAL_MATERNITY_TEMPLATE_ID_SET.has(templateId);
 }

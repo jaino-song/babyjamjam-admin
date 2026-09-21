@@ -122,6 +122,11 @@ export interface EformsignBranchVerification {
     customerNameMatchesChosungQuery: boolean;
 }
 
+/** Test-only callback boundary; production invocation leaves it unset. */
+export interface EformsignBranchRepairApplyHooks {
+    afterUpdateMany?: (updatedCount: number) => void | Promise<void>;
+}
+
 export interface EformsignBranchCounts {
     [branchLabel: string]: number;
 }
@@ -689,6 +694,7 @@ export async function applyRepair(
     options: EformsignBranchRepairOptions,
     branch: BranchRow,
     target: EformsignBackfillTarget,
+    hooks: EformsignBranchRepairApplyHooks = {},
 ): Promise<void> {
     const beforeRows = await loadUnassignedRows(database);
     const backup = createBackup(beforeRows, branch, target);
@@ -709,6 +715,7 @@ export async function applyRepair(
                 `Apply count fence failed; expected ${beforeRows.length}, updated ${result.count}`,
             );
         }
+        await hooks.afterUpdateMany?.(result.count);
         const targetAfter = await loadTargetDocument(transaction);
         assertApplyTargetAfterUpdate(targetAfter, branch);
         return result.count;

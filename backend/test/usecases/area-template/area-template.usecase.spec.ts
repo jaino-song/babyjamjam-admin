@@ -54,6 +54,18 @@ describe("Area template usecases", () => {
             );
             expect(repository.create).not.toHaveBeenCalled();
         });
+
+        it.each([
+            "d1591da29590495d800f55f1d1fc1378",
+            "e63c528b0375478d83e30ff8a9ed1967",
+        ])("should normalize before rejecting a spaced list-only template %s", (templateId) => {
+            const usecase = new CreateAreaTemplateUsecase(repository);
+
+            expect(() => usecase.execute("branch-1", "Seoul", `  ${templateId}  `)).toThrow(
+                "historical list-only",
+            );
+            expect(repository.create).not.toHaveBeenCalled();
+        });
     });
 
     describe("UpdateAreaTemplateUsecase", () => {
@@ -107,12 +119,29 @@ describe("Area template usecases", () => {
             expect(repository.update).not.toHaveBeenCalled();
         });
 
-        it("rejects updating a legacy persisted row even when only its name changes", async () => {
+        it.each([
+            "d1591da29590495d800f55f1d1fc1378",
+            "e63c528b0375478d83e30ff8a9ed1967",
+        ])("should normalize before rejecting a spaced requested list-only template %s", async (templateId) => {
+            repository.findByArea.mockResolvedValue(
+                new AreaTemplateEntity("id", "Seoul", "existing-template", "Name"),
+            );
+            const usecase = new UpdateAreaTemplateUsecase(repository);
+
+            await expect(usecase.execute("branch-1", "Seoul", { templateId: `  ${templateId}  ` }))
+                .rejects.toThrow("historical list-only");
+            expect(repository.update).not.toHaveBeenCalled();
+        });
+
+        it.each([
+            "d1591da29590495d800f55f1d1fc1378",
+            "e63c528b0375478d83e30ff8a9ed1967",
+        ])("rejects a persisted normalized legacy row %s when only its name changes", async (templateId) => {
             repository.findByArea.mockResolvedValue(
                 new AreaTemplateEntity(
                     "id",
                     "Seoul",
-                    "d1591da29590495d800f55f1d1fc1378",
+                    templateId,
                     "Legacy",
                 ),
             );
@@ -121,6 +150,26 @@ describe("Area template usecases", () => {
             await expect(usecase.execute("branch-1", "Seoul", { templateName: "Renamed" }))
                 .rejects.toThrow("historical list-only");
             expect(repository.update).not.toHaveBeenCalled();
+        });
+
+        it.each([
+            "d1591da29590495d800f55f1d1fc1378",
+            "e63c528b0375478d83e30ff8a9ed1967",
+        ])("allows remediating persisted legacy row %s to an active template", async (templateId) => {
+            repository.findByArea.mockResolvedValue(
+                new AreaTemplateEntity("id", "Seoul", templateId, "Legacy"),
+            );
+            repository.update.mockResolvedValue(
+                new AreaTemplateEntity("id", "Seoul", "active-template", "Legacy"),
+            );
+            const usecase = new UpdateAreaTemplateUsecase(repository);
+
+            await usecase.execute("branch-1", "Seoul", { templateId: "  active-template  " });
+
+            expect(repository.update).toHaveBeenCalledWith(
+                "branch-1",
+                expect.objectContaining({ templateId: "active-template" }),
+            );
         });
     });
 });
