@@ -1,8 +1,8 @@
+import { EformsignTemplateScopeService } from "application/services/eformsign-template-scope.service";
 import {
-    EformsignTemplateScopeService,
     isListOnlyHistoricalMaternityTemplateId,
     LIST_ONLY_HISTORICAL_MATERNITY_TEMPLATE_IDS,
-} from "application/services/eformsign-template-scope.service";
+} from "application/utils/eformsign-historical-template-policy";
 import { SERVICE_RECORD_TEMPLATE_TIER_ENV_KEYS } from "application/usecases/eformsign-doc/service-record-field-ids";
 import { AreaTemplateEntity } from "domain/entities/area-template.entity";
 

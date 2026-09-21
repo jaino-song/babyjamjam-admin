@@ -10,11 +10,6 @@ import {
 } from "application/utils/eformsign-historical-template-policy";
 import type { TemplateMatch } from "application/utils/eformsign-document-list";
 
-export {
-    isListOnlyHistoricalMaternityTemplateId,
-    LIST_ONLY_HISTORICAL_MATERNITY_TEMPLATE_IDS,
-} from "application/utils/eformsign-historical-template-policy";
-
 /**
  * The contracts-page section a document list request can name with `section=`.
  * Matches the section names the UIs already use for their own tab state.
