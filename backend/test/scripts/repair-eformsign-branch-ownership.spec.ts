@@ -1,6 +1,8 @@
+import { execFile } from "node:child_process";
 import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
+import { promisify } from "node:util";
 
 import {
     applyRepair,
@@ -15,6 +17,8 @@ import {
     type EformsignBranchRepairBackup,
     type EformsignBranchRepairDatabase,
 } from "../../scripts/repair-eformsign-branch-ownership";
+
+const execFileAsync = promisify(execFile);
 
 const branch = { id: "branch-incheon", slug: "incheon", isActive: true } as const;
 const target = {
@@ -102,6 +106,36 @@ function createDatabase(options: {
 }
 
 describe("repair-eformsign-branch-ownership operator", () => {
+    it("runs through the documented package command without a path-alias module failure", async () => {
+        const environment = { ...process.env };
+        delete environment["NODE_PATH"];
+
+        let executionError: unknown;
+        try {
+            await execFileAsync(
+                "pnpm",
+                [
+                    "--filter",
+                    "./backend",
+                    "repair:eformsign-branch-ownership",
+                    "--help",
+                ],
+                {
+                    cwd: resolve(__dirname, "../../.."),
+                    env: environment,
+                },
+            );
+        } catch (error: unknown) {
+            executionError = error;
+        }
+
+        expect(executionError).toBeDefined();
+        const output = executionError as { stdout?: string; stderr?: string };
+        const combinedOutput = `${output.stdout ?? ""}${output.stderr ?? ""}`;
+        expect(combinedOutput).toContain("Usage:");
+        expect(combinedOutput).not.toContain("Cannot find module");
+    });
+
     it("defaults to a read-only dry-run and requires strong mutation flags", () => {
         expect(parseRepairOptions([])).toEqual({ mode: "dry-run" });
         expect(() => parseRepairOptions([

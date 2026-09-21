@@ -2,16 +2,16 @@
  * Repair historical eformsign mirror rows whose branch ownership was never persisted.
  *
  * Dry-run (the default; read-only):
- *   pnpm --filter ./backend exec ts-node scripts/repair-eformsign-branch-ownership.ts
+ *   pnpm --filter ./backend repair:eformsign-branch-ownership
  *
  * Apply (requires an explicit target and branch confirmation):
- *   pnpm --filter ./backend exec ts-node scripts/repair-eformsign-branch-ownership.ts \
+ *   pnpm --filter ./backend repair:eformsign-branch-ownership \
  *     --apply --backup-path /absolute/path/eformsign-branch-backup.json \
  *     --confirm-target '<environment>@<sanitized-db-target>' \
  *     --confirm-branch-slug incheon
  *
  * Rollback uses only the secure backup produced by --apply and the same confirmations:
- *   pnpm --filter ./backend exec ts-node scripts/repair-eformsign-branch-ownership.ts \
+ *   pnpm --filter ./backend repair:eformsign-branch-ownership \
  *     --rollback /absolute/path/eformsign-branch-backup.json \
  *     --confirm-target '<environment>@<sanitized-db-target>' \
  *     --confirm-branch-slug incheon
