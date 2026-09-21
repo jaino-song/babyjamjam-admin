@@ -10,6 +10,7 @@ import {
   decodeAccessRole,
   getRefreshSessionMaxAgeSeconds,
 } from "@/lib/auth/session-policy";
+import { normalizeApiError } from "@babyjamjam/shared";
 
 import { prioritizeRecentBranch } from "./branch-order";
 
@@ -25,6 +26,18 @@ interface APIErrorResponse {
   statusCode: number;
   message: string;
   error: string;
+}
+
+// Locally authored failure copy — upstream body messages are never forwarded.
+const BRANCH_LOAD_FAILURE_COPY = "지점 목록을 불러오는데 실패했어요.";
+const BRANCH_SELECT_FAILURE_COPY = "지점 선택에 실패했어요.";
+
+function apiFailureCopy(status: number, data: unknown, fallback: string): string {
+  const normalized = normalizeApiError(
+    { response: { status, data } },
+    { locale: "ko-KR", operation: "mutation" },
+  );
+  return normalized.verified ? normalized.message : fallback;
 }
 
 function getAuthHeaders(token: string | null): Record<string, string> {
@@ -56,13 +69,17 @@ export async function getUserBranches(): Promise<{
       const axiosError = error as AxiosError<APIErrorResponse>;
       return {
         success: false,
-        error: axiosError.response?.data?.message || "지점 목록을 불러오는데 실패했어요.",
+        error: apiFailureCopy(
+          axiosError.response?.status ?? 500,
+          axiosError.response?.data,
+          BRANCH_LOAD_FAILURE_COPY,
+        ),
       };
     }
 
     return {
       success: false,
-      error: "지점 목록을 불러오는데 실패했어요.",
+      error: BRANCH_LOAD_FAILURE_COPY,
     };
   }
 }
@@ -134,13 +151,17 @@ export async function setCurrentBranch(branchId: string): Promise<{
       const axiosError = error as AxiosError<APIErrorResponse>;
       return {
         success: false,
-        error: axiosError.response?.data?.message || "지점 선택에 실패했어요.",
+        error: apiFailureCopy(
+          axiosError.response?.status ?? 500,
+          axiosError.response?.data,
+          BRANCH_SELECT_FAILURE_COPY,
+        ),
       };
     }
 
     return {
       success: false,
-      error: "지점 선택에 실패했어요.",
+      error: BRANCH_SELECT_FAILURE_COPY,
     };
   }
 }

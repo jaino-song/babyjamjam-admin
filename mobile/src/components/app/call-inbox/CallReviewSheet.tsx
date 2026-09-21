@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { normalizeApiError } from "@babyjamjam/shared";
 
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -28,6 +29,14 @@ import type {
 import { findEvidenceTurnIndex, transcriptTurnId, TranscriptView } from "./TranscriptView";
 
 const REVIEW_BASE = "mobile_call-inbox_detail-sheet_stack_detail-page_review";
+
+// Shared problem contract resolution for mutation failures: a registered code
+// drives the surfaced message; the locally authored fallback covers
+// unverified failures (no silent toast-only swallowing).
+function mutationFailureMessage(error: unknown, fallback: string): string {
+  const normalized = normalizeApiError(error, { locale: "ko-KR", operation: "mutation" });
+  return normalized.verified ? normalized.message : fallback;
+}
 
 /**
  * Matches --duration-emphasis, which `.nav-page.detail` uses to slide out.
@@ -310,8 +319,8 @@ function NewClientReview({
       await discardDraft.mutateAsync({});
       toastAfterSheetClose({ title: "폐기했어요", variant: "success" });
       onClose();
-    } catch {
-      toast({ title: "폐기하지 못했어요", variant: "destructive" });
+    } catch (error) {
+      toast({ title: mutationFailureMessage(error, "폐기하지 못했어요"), variant: "destructive" });
     }
   };
 
@@ -346,8 +355,8 @@ function NewClientReview({
         variant: "success",
       });
       onClose();
-    } catch {
-      toast({ title: "고객을 등록하지 못했어요", variant: "destructive" });
+    } catch (error) {
+      toast({ title: mutationFailureMessage(error, "고객을 등록하지 못했어요"), variant: "destructive" });
     }
   };
 
@@ -484,8 +493,8 @@ function ClientUpdateReview({
       await discardDraft.mutateAsync({});
       toastAfterSheetClose({ title: "폐기했어요", variant: "success" });
       onClose();
-    } catch {
-      toast({ title: "폐기하지 못했어요", variant: "destructive" });
+    } catch (error) {
+      toast({ title: mutationFailureMessage(error, "폐기하지 못했어요"), variant: "destructive" });
     }
   };
 
@@ -515,9 +524,9 @@ function ClientUpdateReview({
         variant: "success",
       });
       onClose();
-    } catch {
+    } catch (error) {
       toast({
-        title: "적용하지 못했어요. 값을 확인해 주세요",
+        title: mutationFailureMessage(error, "적용하지 못했어요. 값을 확인해 주세요"),
         variant: "destructive",
       });
     }

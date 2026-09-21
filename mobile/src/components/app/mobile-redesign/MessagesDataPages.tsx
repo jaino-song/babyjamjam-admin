@@ -1,8 +1,7 @@
 "use client";
-import { getUserErrorMessage } from "@babyjamjam/shared";
-
 
 import { useMemo, useState } from "react";
+import { normalizeApiError } from "@babyjamjam/shared";
 import {
   AlertCircle,
   CheckCircle2,
@@ -463,11 +462,14 @@ export function MessagesHistoryPage() {
         description: MESSAGE_JOB_CANCEL_COPY.success,
         variant: "success",
       });
-    } catch {
+    } catch (cancelError) {
       setJobPendingCancel(null);
+      // Shared problem contract resolution — a registered body surfaces its
+      // catalog copy; the locally authored fallback covers unverified failures.
+      const normalized = normalizeApiError(cancelError, { locale: "ko-KR", operation: "mutation" });
       toast({
         title: MESSAGE_JOB_CANCEL_COPY.action,
-        description: getUserErrorMessage(MESSAGE_JOB_CANCEL_COPY.failure),
+        description: normalized.verified ? normalized.message : MESSAGE_JOB_CANCEL_COPY.failure,
         variant: "destructive",
       });
     }

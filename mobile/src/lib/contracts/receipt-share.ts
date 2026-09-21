@@ -7,6 +7,10 @@ import { authenticatedFetch } from "@/lib/api/authenticated-fetch";
 
 const RECEIPT_PNG_MIME_TYPE = "image/png";
 
+// Locally authored outcome copy for the receipt binary download. Binary
+// fetches carry no problem-contract body, so the EM v1.0 client policy
+// resolves the failure with this message instead of a catalog code; the
+// upstream fetch internals are never rendered.
 export const RECEIPT_SHARE_ERROR_MESSAGE =
   "영수증을 불러오지 못했습니다. 잠시 후 다시 시도해 주세요.";
 
@@ -98,6 +102,7 @@ export async function shareReceiptPng({
       if (signal?.aborted || isAbortError(error)) {
         return "cancelled";
       }
+      // Authored copy only — never the raw fetch error.
       onError(RECEIPT_SHARE_ERROR_MESSAGE);
       return "failed";
     }
@@ -143,6 +148,7 @@ export async function shareReceiptPng({
       return "cancelled";
     }
 
+    // Authored copy only — never the raw share/fetch error.
     onError(RECEIPT_SHARE_ERROR_MESSAGE);
     return "failed";
   }

@@ -272,7 +272,8 @@ export function NotificationBell({
             );
         }
 
-        // Subscription error
+        // Subscription error — usePushNotification stores locally authored
+        // outcome copy only, so rendering it verbatim is contract-safe.
         if (PWA_NOTIFICATIONS_ENABLED && subscriptionError && !isSubscribed) {
             return (
                 <div className="p-4">

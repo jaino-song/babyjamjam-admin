@@ -1,5 +1,4 @@
 "use client";
-import { getUserErrorMessage } from "@babyjamjam/shared";
 
 
 import { useEffect, useState } from "react";
@@ -22,7 +21,9 @@ export default function LogoutPage() {
                 // Router Cache so the next account never sees this one's data.
                 window.location.replace("/login");
             } else {
-                setError(getUserErrorMessage(result.error || "로그아웃 중 오류가 발생했어요."));
+                // Server action already normalizes failures through the
+                // problem contract; render its copy verbatim.
+                setError(result.error || "로그아웃 중 오류가 발생했어요.");
                 // Still redirect to login after a short delay even on error
                 setTimeout(() => {
                     window.location.replace("/login");
@@ -36,7 +37,7 @@ export default function LogoutPage() {
     if (error) {
         return (
             <div data-component="mobile_logout_page" className="flex flex-col items-center justify-center h-screen gap-4">
-                <p className="text-destructive">{error && getUserErrorMessage(error)}</p>
+                <p className="text-destructive">{error}</p>
                 <p className="text-sm text-muted-foreground">
                     잠시 후 로그인 페이지로 이동합니다...
                 </p>

@@ -82,6 +82,8 @@ let automaticEformsignAuthStoppedUntil = 0;
 let nextAutomaticEformsignAuthAttemptAt = 0;
 
 export class EformsignAuthAutoRetryStoppedError extends Error {
+    /** Local-only identity token; downstream compares this, never the text. */
+    readonly code = "EFORMSIGN_AUTH_AUTORETRY_STOPPED";
     constructor(message: string) {
         super(message);
         this.name = "EformsignAuthAutoRetryStoppedError";
@@ -107,13 +109,13 @@ function assertAutomaticEformsignAuthAllowed(force = false): void {
 
     if (now < automaticEformsignAuthStoppedUntil) {
         throw new EformsignAuthAutoRetryStoppedError(
-            "Eformsign authentication auto-retries are paused after repeated server errors.",
+            "전자문서 인증 자동 재시도가 반복된 서버 오류로 일시 중지됐어요. 잠시 후 다시 시도해 주세요.",
         );
     }
 
     if (now < nextAutomaticEformsignAuthAttemptAt) {
         throw new EformsignAuthAutoRetryStoppedError(
-            "Eformsign authentication is backing off after a recent server error.",
+            "이전 서버 오류 뒤 대기 시간이 지나지 않아 전자문서 인증을 잠시 기다리고 있어요.",
         );
     }
 }
@@ -402,9 +404,15 @@ export const eformsignApi = {
         }
         return {
             ok: false,
+            // Legacy alias kept for existing reason-based consumers; the
+            // additive members below carry the registered code and outcome
+            // (BJJ-319 phase 5-4b contract).
             reason: "provider_workflow_incomplete",
             fallbackHint: "manual_check",
             durationMs: totalDurationMs,
+            code: "DOCUMENT_FINALIZE_UNCONFIRMED",
+            outcome: "UNKNOWN",
+            recovery: { action: "CHECK_STATUS", retry: { mode: "NEVER" } },
         };
     },
     // Create eformsign doc record to track document in local DB

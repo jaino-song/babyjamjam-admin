@@ -1,5 +1,5 @@
 "use client";
-import { getUserErrorMessage } from "@babyjamjam/shared";
+import { normalizeApiError } from "@babyjamjam/shared";
 
 
 import { createContext, useContext, useMemo, useState, type KeyboardEvent, type ReactNode } from "react";
@@ -291,7 +291,7 @@ function LinkCard({
             toast({ variant: "success", description: "제공기록지 링크를 보냈어요" });
         } catch (error) {
             toast({
-                description: getUserErrorMessage(getErrorDescription(error)),
+                description: getErrorDescription(error),
                 variant: "destructive",
             });
         } finally {
@@ -814,29 +814,12 @@ function formatUnknownValue(value: unknown): string {
     return String(value);
 }
 
+// Shared problem contract resolution — the raw `data.message`/`data.error`
+// strings and Error.message internals are never rendered; the normalized
+// catalog copy (or the locally authored fallback) is.
 function getErrorDescription(error: unknown): string {
-    if (isRecord(error)) {
-        const response = error.response;
-        if (isRecord(response)) {
-            const data = response.data;
-            if (isRecord(data)) {
-                const message = data.message ?? data.error;
-                if (typeof message === "string" && message.trim()) {
-                    return message;
-                }
-            }
-        }
-
-        if (typeof error.message === "string" && error.message.trim()) {
-            return error.message;
-        }
-    }
-
-    return "제공기록지 링크를 보내지 못했어요";
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-    return typeof value === "object" && value !== null;
+    const normalized = normalizeApiError(error, { locale: "ko-KR", operation: "mutation" });
+    return normalized.verified ? normalized.message : "제공기록지 링크를 보내지 못했어요";
 }
 
 function SkeletonInfoRow({
