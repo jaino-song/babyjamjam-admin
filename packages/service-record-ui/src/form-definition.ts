@@ -1,5 +1,7 @@
 import { SERVICE_RECORD_FORM_LAYOUT } from "../../shared/src/constants/service-record-form-layout";
-import { normalizeContractBirthday } from "../../shared/src/utils/birthday";
+import { HEADER_FIELDS, getServiceRecordHeaderErrors } from "../../shared/src/utils/service-record-input";
+export { HEADER_FIELDS, getServiceRecordHeaderErrors, getServiceRecordHeaderFieldError } from "../../shared/src/utils/service-record-input";
+export type { ServiceRecordHeaderValidationKey, ServiceRecordHeaderErrors } from "../../shared/src/utils/service-record-input";
 
 export type ItemType = "multi" | "radio" | "counts" | "stool" | "textarea" | "confirm";
 
@@ -79,10 +81,6 @@ function isStepAligned(value: number, step: number): boolean {
     return Math.abs(quotient - nearest) <= tolerance;
 }
 
-function formatNumericConstraint(value: number): string {
-    return String(value);
-}
-
 function numericFieldErrorMessage(
     count: DailyItemCount,
     rawValue: unknown,
@@ -92,24 +90,24 @@ function numericFieldErrorMessage(
     const min = count.min ?? 0;
     const step = count.step ?? 1;
     if (typeof rawValue !== "string" && typeof rawValue !== "number") {
-        return `${count.label}: 유효한 숫자를 입력해 주세요.`;
+        return `${count.label}에는 단위나 글자 없이 숫자만 입력해 주세요.`;
     }
     if (typeof rawValue === "string" && !SERVICE_RECORD_NUMERIC_PATTERN.test(rawValue)) {
-        return `${count.label}: 유효한 숫자를 입력해 주세요.`;
+        return `${count.label}에는 단위나 글자 없이 숫자만 입력해 주세요.`;
     }
 
     const parsed = typeof rawValue === "number" ? rawValue : Number(rawValue);
     if (!Number.isFinite(parsed)) {
-        return `${count.label}: 유효한 숫자를 입력해 주세요.`;
+        return `${count.label}에는 단위나 글자 없이 숫자만 입력해 주세요.`;
     }
     if (parsed < min) {
-        return `${count.label}: ${formatNumericConstraint(min)} 이상으로 입력해 주세요.`;
+        return `${count.label}에는 ${min} 이상의 숫자를 입력해 주세요.`;
     }
     if (!isStepAligned(parsed - min, step)) {
-        return `${count.label}: ${formatNumericConstraint(step)} 단위로 입력해 주세요.`;
+        return step === 1 ? `${count.label}에는 소수점 없이 횟수나 양을 입력해 주세요(예: 0, 1, 2).` : `${count.label}은 소수점 첫째 자리까지만 입력해 주세요(예: 36.5).`;
     }
     if (step === 1 && !Number.isSafeInteger(parsed)) {
-        return `${count.label}: 안전한 정수로 입력해 주세요.`;
+        return `${count.label}에 입력한 숫자가 너무 크니 실제 횟수나 양을 확인해 주세요.`;
     }
     return null;
 }
@@ -172,62 +170,6 @@ export const DEFAULT_DAILY_ANSWERS: Record<string, unknown> = {
     bath: "실시",
 };
 
-export const HEADER_FIELDS = [
-    { k: "momName", label: "산모 성명", ph: "예) 홍길동" },
-    { k: "momBirth", label: "산모 생년월일 (YYMMDD)", ph: "예) 900101" },
-    { k: "babyName", label: "신생아 성명", ph: "예) 홍아기" },
-    { k: "babyBirth", label: "신생아 출생일자 (YYMMDD)", ph: "예) 260615" },
-    { k: "babyWeight", label: "신생아 몸무게 (kg)", ph: "예) 3.2" },
-] as const;
-
-export type ServiceRecordHeaderValidationKey = "momBirth" | "babyBirth" | "babyWeight";
-export type ServiceRecordHeaderErrors = Partial<Record<ServiceRecordHeaderValidationKey, string>>;
-
-const SERVICE_RECORD_HEADER_DATE_PATTERN = /^\d{6}$/;
-const SERVICE_RECORD_HEADER_WEIGHT_PATTERN = /^(?:\d+(?:\.\d+)?|\.\d+)$/;
-
-const SERVICE_RECORD_HEADER_ERROR_MESSAGES: Record<ServiceRecordHeaderValidationKey, string> = {
-    momBirth: "산모 생년월일은 YYMMDD 6자리의 유효한 날짜로 입력해 주세요.",
-    babyBirth: "신생아 출생일자는 YYMMDD 6자리의 유효한 날짜로 입력해 주세요.",
-    babyWeight: "신생아 몸무게는 0보다 큰 숫자로 입력해 주세요.",
-};
-
-function isPositiveDecimal(value: string): boolean {
-    if (!SERVICE_RECORD_HEADER_WEIGHT_PATTERN.test(value)) return false;
-    const numeric = Number(value);
-    return Number.isFinite(numeric) && numeric > 0;
-}
-
-export function getServiceRecordHeaderFieldError(
-    key: ServiceRecordHeaderValidationKey,
-    rawValue: unknown,
-    now: Date = new Date(),
-): string | null {
-    const value = typeof rawValue === "string" ? rawValue.trim() : "";
-    if (!value) return null;
-
-    if (key === "babyWeight") {
-        return isPositiveDecimal(value) ? null : SERVICE_RECORD_HEADER_ERROR_MESSAGES[key];
-    }
-
-    return SERVICE_RECORD_HEADER_DATE_PATTERN.test(value)
-        && normalizeContractBirthday(value, now) !== null
-        ? null
-        : SERVICE_RECORD_HEADER_ERROR_MESSAGES[key];
-}
-
-export function getServiceRecordHeaderErrors(
-    header: Record<string, unknown>,
-    now: Date = new Date(),
-): ServiceRecordHeaderErrors {
-    const errors: ServiceRecordHeaderErrors = {};
-    for (const key of ["momBirth", "babyBirth", "babyWeight"] as const) {
-        const error = getServiceRecordHeaderFieldError(key, header[key], now);
-        if (error) errors[key] = error;
-    }
-    return errors;
-}
-
 export const REVIEW_EMPTY_LABEL = "입력 없음";
 
 export const REVIEW_SECTIONS = [
@@ -244,7 +186,9 @@ export const hasDisplayValue = (value: unknown): boolean => {
 };
 
 export const isServiceRecordHeaderComplete = (header: Record<string, unknown>): boolean => (
-    HEADER_FIELDS.every((field) => hasDisplayValue(header[field.k])) && hasDisplayValue(header.deliveryType)
+    HEADER_FIELDS.every((field) => hasDisplayValue(header[field.k]))
+    && hasDisplayValue(header.deliveryType)
+    && Object.keys(getServiceRecordHeaderErrors(header)).length === 0
 );
 
 export function formatReviewFieldValue(
