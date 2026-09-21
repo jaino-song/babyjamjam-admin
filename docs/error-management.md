@@ -431,6 +431,10 @@ headless 문서 발송(`POST /eformsign-docs/dispatch-headless`)의 `ok:false` �
 - `BRANCH_CONTEXT_CHANGED`(로컬 전용 409 코드, message-delivery·branch-system-template 2곳)의 카탈로그 등록 또는 유지 확정 — 신규 카탈로그 코드이므로 gap-report·감사 후 결정. 소비자는 현재 상태 코드 기반 분기라 호환 영향 0.
 - auth-e2e/e2e live-DB 레인(멀티테넌시 실DB, write-lock 시나리오 재실행)과 Phase 10 실환경 Sentry 수신 검증.
 
+## 2026-09-22 배포·복구 절차 준비 (BJJ-319 phase 11.1)
+
+`docs/error-management-rollout.md`를 추가했다: 배포 후보 고정(`06a8b68afbcea16314ade60bcd20b39f9976e59d` — 6.1 close + 7.1 + 8.1 + 9.1 + 10.1 doc-prep 통합), 단계별 감사 판정과 로컬 gate 결과, 「호환성 경계」의 어댑터·별칭 유지 하의 서버→클라이언트 배포 순서와 제거 gate, `retrySafety` durable fence를 해석하지 못하는 버전으로 되돌리지 않는 롤백 제약(위험 job 중단 후 안전 버전 복구), 운영 관측 항목(임계값·담당자 blank), BJJ-319 종료 조건 체크리스트. DB 마이그레이션 가정은 없다. 이 문서 작성은 dev 병합 승인이 아니며 대상 환경 배포 승인도 아니다. 위 호환성 경계의 어댑터 제거 조건은 그대로 유지된다.
+
 ## 2026-09-10 웹 직접 문자 후속 검증
 
 웹 `sendSms`가 원본 오류를 보존하며, TemplateSendForm은 검증된 NOT_APPLIED와 UNKNOWN/PARTIALLY_APPLIED를 구분한다. 불확실한 요청의 동일 화면 재발송 차단, 확정 접수 수신자 제외, 새 입력 보존, 중복 확인/발송 중 방식 전환 격리와 commit 이후 상태 갱신을 적용했다. 제공기록지의 외부 API와 발송 정책은 기존 동작을 유지한다.
