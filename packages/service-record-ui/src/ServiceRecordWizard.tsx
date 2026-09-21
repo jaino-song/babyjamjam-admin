@@ -164,8 +164,8 @@ function DailyField({
             <div data-component={`${dataComponent}_count-options`} data-slot="segrow" className="segrow">
                 {item.counts?.map((count) => {
                     const fieldKey = `${item.key}_${count.k}`;
-                    const error = readOnly ? undefined : numericErrors[fieldKey]
-                        ?? (touched[fieldKey] && !hasDisplayValue(draft[fieldKey]) ? `${count.label} 값을 숫자로 입력해 주세요.` : undefined);
+                    const error = numericErrors[fieldKey]
+                        ?? (!readOnly && touched[fieldKey] && !hasDisplayValue(draft[fieldKey]) ? `${count.label} 값을 숫자로 입력해 주세요.` : undefined);
                     const helperId = `${dataComponent}-${item.key}-${count.k}-helper`;
                     const countComponent = `${dataComponent}_count-options_${count.k}-input`;
                     const helper = count.k === "temp"
