@@ -745,3 +745,5 @@ TL;DR: 배정(4b-1 백엔드: 역할·자격·동시 변경 코드 전환 / 4b-2
 
 **Phase 6.1 배치1 (2026-09-18):** 잔여 legacy 263행을 7개 유닛으로 분할(BE usecase 15+31·컨트롤러 25·FE BFF 40·MO BFF 22·FE 클라이언트 70·MO 클라이언트 57; 공유 3행은 verify-only). 6.1a(BE `247f7a2ad`, 신코드 0) → SHIP 61ab → 병합 `fa5c84b51`. 6.1e(MO `509d27f98`) → SHIP 61eb → 병합 `bce8f329b`. 6.1d(FE `3a37230c4`, 72파일) → SHIP 61db → 병합 `90e716462`. 77행 migrated 확정(본 커밋, migrated 326·legacy 186). 6.1b/6.1c 진행 중.
 - carried: 6d1 gated e2e 2건(live DB), 6g1 N2~N6(json 10파일·check-phone·area-templates read·stream boundary), 6h1 N4(agent passthrough)·AUTH_REFRESH_REPLAY_CONCURRENT 카탈로그 등록, pdfjs 환경 플레이크.
+
+**인시던트 · 6.1c 행 반영 (2026-09-22 03:xx KST):** 9/18 12:51 KST에 em-61f2·em-61g2·em-61bb 감사 세션이 프로바이더 장애(zai) → muse 폴백 → rate limit으로 연쇄 중단. 이후 `/tmp/em-6` 전체가 정리(슬립 중 tmp cleanup)로 소실 — 워커 브리프·리스트·로그 유실(git 작업물 무손실). 복구: 세션 export(`~/.local/state/agents/session-exports/opencode/`)에서 브리프 원문 복원, 리스트는 인벤토리 legacy 행에서 재생성(70 FE·57 MO·31 BE·25 controllers 일치 확인). 산출물을 내구성 경로 `/Users/jaino/Development/babyjamjam-admin/.bjj319-em/`로 이전. 6.1c 행 25건 migrated 반영(본 커밋, migrated 351·legacy 161). 61b 재감사(em-61bb2)·61f/61g 재개(em-61f3/em-61g3, 각 41/51 파일 잔여) 진행 중.
