@@ -200,26 +200,24 @@ export function useMarkAllAsRead() {
  * - Subscription state management
  */
 export function usePushNotification() {
-    const [state, setState] = useState<PushNotificationState>({
+    // Disabled-at-build-time values are settled here (lazy init) instead of a
+    // mount effect: the initializer is deterministic and reads no browser
+    // globals, so SSR and client first render agree.
+    const [state, setState] = useState<PushNotificationState>(() => ({
         isSupported: false,
         isSubscribed: false,
-        permission: 'default',
+        permission: PWA_NOTIFICATIONS_ENABLED ? 'default' : 'denied',
         isLoading: PWA_NOTIFICATIONS_ENABLED,
         error: null,
-    });
+    }));
 
     const { data: vapidKey } = useVapidKey(PWA_NOTIFICATIONS_ENABLED);
 
     // Check if push notifications are supported
     useEffect(() => {
         if (!PWA_NOTIFICATIONS_ENABLED) {
-            setState({
-                isSupported: false,
-                isSubscribed: false,
-                permission: 'denied',
-                isLoading: false,
-                error: null,
-            });
+            // Build-time disabled: the initializer already produced the exact
+            // disabled state this branch used to write, so nothing to sync.
             return;
         }
 
@@ -229,6 +227,9 @@ export function usePushNotification() {
             'PushManager' in window &&
             'Notification' in window;
 
+        // Behavior-preserving residual: hydration-safe client capability probe —
+        // hoisting it into the initializer would read window during SSR.
+        // eslint-disable-next-line react-hooks/set-state-in-effect
         setState((prev) => ({
             ...prev,
             isSupported,
@@ -239,6 +240,10 @@ export function usePushNotification() {
     // Check current subscription status
     useEffect(() => {
         if (!state.isSupported) {
+            // Behavior-preserving residual: this reset intentionally also runs
+            // before the mount probe promotes isSupported (pre-probe cascade);
+            // deriving it at init would need a hydration-unsafe window probe.
+            // eslint-disable-next-line react-hooks/set-state-in-effect
             setState((prev) => ({ ...prev, isLoading: false }));
             return;
         }
