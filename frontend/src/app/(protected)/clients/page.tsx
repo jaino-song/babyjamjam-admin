@@ -1,11 +1,10 @@
 "use client";
-import { getUserErrorMessage } from "@babyjamjam/shared";
 
 
 import { useMemo, useState } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { getApiErrorMessage } from "@babyjamjam/shared";
+import { normalizeApiError } from "@babyjamjam/shared";
 import {
     Workflow,
     Users,
@@ -174,7 +173,10 @@ function ClientAutomationSection() {
         },
         onError: (_error, _variables, context) => {
             if (context?.previous) queryClient.setQueryData(["settings", "client-registration-policy"], context.previous);
-            toast({ variant: "destructive", description: getUserErrorMessage(_error, "고객 자동 등록 설정을 저장하지 못했어요") });
+            // Registered problem message (verified) or locally authored copy — the
+            // mutation outcome is surfaced, never silently swallowed.
+            const normalized = normalizeApiError(_error, { locale: "ko-KR", operation: "mutation" });
+            toast({ variant: "destructive", description: normalized.verified ? normalized.message : "고객 자동 등록 설정을 저장하지 못했어요" });
         },
         onSuccess: (saved) => queryClient.setQueryData(["settings", "client-registration-policy"], saved),
         onSettled: async () => { await queryClient.invalidateQueries({ queryKey: ["settings", "client-registration-policy"] }); },
@@ -446,7 +448,7 @@ export default function ClientsPage() {
                 ?? null;
             if (!activeAssignment) {
                 toast({
-                    description: getUserErrorMessage("관리사 배정이 없어 링크를 재설정할 수 없어요"),
+                    description: "관리사 배정이 없어 링크를 재설정할 수 없어요",
                     variant: "destructive",
                 });
                 return;
@@ -457,7 +459,7 @@ export default function ClientsPage() {
             setResetServiceRecordUrl(reset.data.serviceRecordUrl);
         } catch {
             toast({
-                description: getUserErrorMessage("제공기록지 링크를 재설정하지 못했어요. 잠시 후 다시 시도해 주세요"),
+                description: "제공기록지 링크를 재설정하지 못했어요. 잠시 후 다시 시도해 주세요",
                 variant: "destructive",
             });
         } finally {
@@ -475,7 +477,7 @@ export default function ClientsPage() {
                 ?? null;
             if (!activeAssignment) {
                 toast({
-                    description: getUserErrorMessage("관리사 배정이 없어 서비스 일정을 변경할 수 없어요"),
+                    description: "관리사 배정이 없어 서비스 일정을 변경할 수 없어요",
                     variant: "destructive",
                 });
                 return;
@@ -495,7 +497,7 @@ export default function ClientsPage() {
             });
         } catch {
             toast({
-                description: getUserErrorMessage("변경할 수 있는 다음 서비스 일정을 불러오지 못했어요"),
+                description: "변경할 수 있는 다음 서비스 일정을 불러오지 못했어요",
                 variant: "destructive",
             });
         } finally {
@@ -528,7 +530,8 @@ export default function ClientsPage() {
             });
         } catch (error) {
             toast({
-                description: getUserErrorMessage(getScheduleChangeErrorMessage(error)),
+                // Registered-code mapper output is policy-safe copy.
+                description: getScheduleChangeErrorMessage(error),
                 variant: "destructive",
             });
         } finally {
@@ -542,7 +545,7 @@ export default function ClientsPage() {
             toast({ variant: "success", description: "제공기록지 링크를 복사했어요" });
         } catch {
             toast({
-                description: getUserErrorMessage("링크를 복사하지 못했어요. 링크를 직접 선택해 복사해 주세요"),
+                description: "링크를 복사하지 못했어요. 링크를 직접 선택해 복사해 주세요",
                 variant: "destructive",
             });
         }
@@ -561,11 +564,11 @@ export default function ClientsPage() {
             ));
         } catch (err) {
             console.error("Failed to delete client:", err);
+            // Registered problem message (verified) or locally authored copy —
+            // upstream body messages are never rendered.
+            const normalized = normalizeApiError(err, { locale: "ko-KR", operation: "mutation" });
             setDeleteErrorMessage(
-                getApiErrorMessage(
-                    err,
-                    "고객 삭제에 실패했어요. 다시 시도해 주세요.",
-                ),
+                normalized.verified ? normalized.message : "고객 삭제에 실패했어요. 다시 시도해 주세요.",
             );
         }
     };

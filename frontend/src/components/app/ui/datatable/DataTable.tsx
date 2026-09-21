@@ -1,6 +1,6 @@
 "use client";
 
-import { getUserErrorMessage } from "@babyjamjam/shared";
+import { normalizeApiError } from "@babyjamjam/shared";
 
 import { useMemo, useState } from "react";
 import {
@@ -223,7 +223,13 @@ export function DataTable<T extends Record<string, unknown>>({
       >
         <Alert variant="destructive">
           <AlertDescription>
-            {getUserErrorMessage(error, "데이터를 불러오지 못했어요.")}
+            {/* Registered problem message (verified) or locally authored
+                copy — read failures are surfaced, upstream internals are
+                never rendered. */}
+            {(() => {
+              const normalized = normalizeApiError(error, { locale: "ko-KR", operation: "read" });
+              return normalized.verified ? normalized.message : "데이터를 불러오지 못했어요.";
+            })()}
           </AlertDescription>
         </Alert>
       </div>

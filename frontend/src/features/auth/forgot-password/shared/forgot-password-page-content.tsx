@@ -1,5 +1,4 @@
 "use client";
-import { getUserErrorMessage } from "@babyjamjam/shared";
 
 
 import { CheckCircle } from "lucide-react";
@@ -83,7 +82,7 @@ export function ForgotPasswordPageContent({ variant }: ForgotPasswordPageContent
         <>
           {error ? (
             <Alert variant="destructive" onClose={clearError}>
-              {error && getUserErrorMessage(error)}
+              {error}
             </Alert>
           ) : null}
 

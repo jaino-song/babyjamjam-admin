@@ -1,8 +1,8 @@
 "use client";
-import { getUserErrorMessage } from "@babyjamjam/shared";
 
 
 import { useState, useCallback } from "react";
+import { normalizeApiError } from "@babyjamjam/shared";
 import { Upload, CheckCircle, RotateCcw } from "lucide-react";
 
 import { ContentPaper } from "@/components/app/root/content-paper";
@@ -175,8 +175,12 @@ export function VoucherPriceUploadForm() {
             isLoading={parseImageMutation.isPending}
             error={
               parseImageMutation.isError
-                ? parseImageMutation.error?.message ||
-                "이미지 파싱에 실패했어요"
+                ? (() => {
+                  // Registered problem message (verified) or locally authored
+                  // copy — upstream internals are never rendered.
+                  const normalized = normalizeApiError(parseImageMutation.error, { locale: "ko-KR", operation: "mutation" });
+                  return normalized.verified ? normalized.message : "이미지 파싱에 실패했어요";
+                })()
                 : null
             }
           />
@@ -243,7 +247,12 @@ export function VoucherPriceUploadForm() {
           {bulkUpdateMutation.isError && (
             <Alert variant="destructive" className="mt-4 rounded-xl">
               <AlertDescription>
-                업데이트 실패: {bulkUpdateMutation.error?.message || "알 수 없는 오류"}
+                {(() => {
+                  // Registered problem message (verified) or locally authored
+                  // copy — upstream internals are never rendered.
+                  const normalized = normalizeApiError(bulkUpdateMutation.error, { locale: "ko-KR", operation: "mutation" });
+                  return `업데이트 실패: ${normalized.verified ? normalized.message : "알 수 없는 오류"}`;
+                })()}
               </AlertDescription>
             </Alert>
           )}
@@ -273,7 +282,7 @@ export function VoucherPriceUploadForm() {
                 <p className="font-semibold mb-2">일부 항목 처리 실패:</p>
                 <ul className="list-disc pl-4 space-y-1">
                   {updateResult.errors.map((error, index) => (
-                    <li key={index} className="text-sm">{error && getUserErrorMessage(error)}</li>
+                    <li key={index} className="text-sm">{error}</li>
                   ))}
                 </ul>
               </AlertDescription>

@@ -1,6 +1,5 @@
 "use client";
 import {
-  getUserErrorMessage,
   normalizeApiError,
   resolveProblemPresentation,
   type NormalizedApiError,
@@ -52,12 +51,6 @@ const DUPLICATE_SEND_WINDOW_HOURS = 72;
 const DUPLICATE_SEND_WINDOW_MS = DUPLICATE_SEND_WINDOW_HOURS * 60 * 60 * 1000;
 
 type ServiceRecordLinkFailureStage = "assignment" | "send";
-
-const SERVICE_RECORD_LINK_ERROR_MESSAGES: Record<string, string> = {
-  "Assignment not found": "선택한 관리사님과 산모님의 배정 일정을 찾지 못해 제공기록지 링크를 보내지 못했어요",
-  "제공인력 전화번호가 없습니다": "선택한 관리사님의 전화번호가 없어 제공기록지 링크를 보내지 못했어요",
-  "준비된 제공기록지 링크가 만료되었거나 유효하지 않아요": "제공기록지 링크가 만료됐어요. 입력 정보를 다시 선택해 새 링크를 준비해 주세요",
-};
 
 export interface TemplateSendFormSubmitState {
   formId: string;
@@ -139,19 +132,18 @@ function getServiceRecordLinkErrorMessage(
     ? "산모님의 배정 정보를 불러오지 못해 제공기록지 링크를 보내지 못했어요"
     : "서버가 제공기록지 링크 발송 요청을 처리하지 못했어요. 잠시 후 다시 시도해 주세요";
 
-  if (!isAxiosError<{ message?: unknown; error?: unknown }>(error)) return stageFallback;
+  if (!isAxiosError(error)) {
+    const normalized = normalizeApiError(error, { locale: "ko-KR", operation: "mutation" });
+    return normalized.verified ? normalized.message : stageFallback;
+  }
   if (!error.response) {
     return "서버에 연결하지 못해 제공기록지 링크를 보내지 못했어요";
   }
 
-  const payload = error.response.data;
-  const apiMessage = payload && typeof payload === "object"
-    ? payload.message ?? payload.error
-    : null;
-  if (typeof apiMessage === "string") {
-    const knownMessage = SERVICE_RECORD_LINK_ERROR_MESSAGES[apiMessage.trim()];
-    if (knownMessage) return knownMessage;
-  }
+  // Registered problem message (verified) first — the raw body message is
+  // never matched or rendered.
+  const normalized = normalizeApiError(error, { locale: "ko-KR", operation: "mutation" });
+  if (normalized.verified) return normalized.message;
 
   if (error.response.status === 401) {
     return "로그인이 만료돼서 제공기록지 링크를 보내지 못했어요";
@@ -931,7 +923,7 @@ export function TemplateSendForm({
         serviceRecordValidationMessage ??
         "제공기록지 링크를 준비하고 있어요. 잠시 후 다시 시도해 주세요";
       setFeedback({ tone: "error", message: errorMessage });
-      toast({ variant: "destructive", description: getUserErrorMessage(errorMessage) });
+      toast({ variant: "destructive", description: errorMessage });
       return;
     }
 
@@ -961,12 +953,12 @@ export function TemplateSendForm({
             ? "바로 보내지 못해 재시도 대기열에 넣었어요"
             : "제공기록지 링크를 바로 보내지 못했어요";
         setFeedback({ tone: "error", message: errorMessage });
-        toast({ variant: "destructive", description: getUserErrorMessage(errorMessage) });
+        toast({ variant: "destructive", description: errorMessage });
       }
     } catch (error) {
       const errorMessage = getServiceRecordLinkErrorMessage(error, failureStage);
       setFeedback({ tone: "error", message: errorMessage });
-      toast({ variant: "destructive", description: getUserErrorMessage(errorMessage) });
+      toast({ variant: "destructive", description: errorMessage });
     } finally {
       void queryClient.invalidateQueries({ queryKey: messageTriggerKeys.upcoming() });
       void queryClient.invalidateQueries({ queryKey: messageTriggerKeys.history() });
@@ -1031,7 +1023,7 @@ export function TemplateSendForm({
     if (validationMessage) {
       setFeedback({ tone: "error", message: validationMessage });
       if (isPreparedLinkDelivery) {
-        toast({ variant: "destructive", description: getUserErrorMessage(validationMessage) });
+        toast({ variant: "destructive", description: validationMessage });
       }
       return;
     }

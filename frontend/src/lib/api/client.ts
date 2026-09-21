@@ -61,6 +61,24 @@ const processQueue = (error: unknown = null) => {
     failedQueue = [];
 };
 
+function isTransportFailure(error: AxiosError): boolean {
+    // No response means the request never received a server reply (network
+    // drop, DNS, CORS, timeout). Compare transport state — never the raw
+    // "Network Error" message text — so any axios wording change cannot
+    // silently disable the single safe-method retry.
+    if (!error.response) return true;
+    return typeof error.code === "string" && TRANSPORT_RETRY_CODES.has(error.code);
+}
+
+const TRANSPORT_RETRY_CODES = new Set([
+    "ECONNABORTED",
+    "ECONNREFUSED",
+    "ECONNRESET",
+    "ENOTFOUND",
+    "ETIMEDOUT",
+    "EAI_AGAIN",
+]);
+
 function getRequestPath(config: AxiosRequestConfig | undefined): string {
     const url = config?.url ?? "";
     if (!url) return "";
@@ -96,12 +114,33 @@ export function refreshAppAuthSession(): Promise<void> {
     return appAuthRefreshPromise;
 }
 
+function readProblemCode(data: unknown): string | undefined {
+    if (!data || typeof data !== "object" || Array.isArray(data)) return undefined;
+    const code = (data as { code?: unknown }).code;
+    return typeof code === "string" && code.length > 0 ? code : undefined;
+}
+
+function readErrorText(data: unknown): string | undefined {
+    if (!data || typeof data !== "object" || Array.isArray(data)) return undefined;
+    const record = data as { error?: unknown; message?: unknown };
+    const message = record.error ?? record.message;
+    return typeof message === "string" && message.length > 0 ? message : undefined;
+}
+
 function isAppAuthRequiredError(error: AxiosError): boolean {
     const data = error.response?.data;
-    if (!data || typeof data !== "object") return false;
-    const message = (data as { error?: unknown; message?: unknown }).error
-        ?? (data as { error?: unknown; message?: unknown }).message;
-    return typeof message === "string" && message.startsWith("Authentication required.");
+    const code = readProblemCode(data);
+    if (code !== undefined) {
+        // Problem-contract bodies carry the registered code; compare it
+        // instead of matching the legacy English message text.
+        return code === "AUTH_REQUIRED";
+    }
+    // GAP (BJJ-319 6.1f): legacy BFF 401 bodies (`unauthorizedResponse`) carry
+    // no registered code, so the message prefix remains as a fallback until a
+    // BFF unit authors `{code: "AUTH_REQUIRED"}` into those bodies. BFF routes
+    // and packages/shared are out of scope for this unit.
+    const message = readErrorText(data);
+    return message !== undefined && message.startsWith("Authentication required.");
 }
 
 function shouldAuthenticateEformsignFromCredentials(error: unknown): boolean {
@@ -152,7 +191,7 @@ api.interceptors.response.use(
 
         // Network error - single retry
         if (
-            err.message === "Network Error" &&
+            isTransportFailure(err) &&
             originalRequest &&
             !originalRequest._retry &&
             (originalRequestMethod === "get" || originalRequestMethod === "head")

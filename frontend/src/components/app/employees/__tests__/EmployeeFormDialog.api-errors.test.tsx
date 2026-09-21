@@ -153,7 +153,7 @@ describe("EmployeeFormDialog API errors", () => {
     ).toBeInTheDocument();
   });
 
-  it("keeps the legacy mapper message for an unstructured error", async () => {
+  it("maps an unstructured P2002 error through the registered Prisma catalog copy", async () => {
     mockUpdateEmployeeMutateAsync.mockRejectedValue({
       response: {
         status: 409,
@@ -183,7 +183,7 @@ describe("EmployeeFormDialog API errors", () => {
     fireEvent.click(submitButton!);
 
     expect(
-      await screen.findByText("연락처 정보가 이미 등록돼 있어요."),
+      await screen.findByText("연락처이(가) 이미 존재해요."),
     ).toBeInTheDocument();
   });
 });

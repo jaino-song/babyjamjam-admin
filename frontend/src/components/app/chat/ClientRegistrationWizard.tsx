@@ -1,8 +1,8 @@
 "use client";
-import { getUserErrorMessage } from "@babyjamjam/shared";
 
 
 import { useEffect, useMemo, useState } from "react";
+import { normalizeApiError } from "@babyjamjam/shared";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -230,24 +230,24 @@ export function ClientRegistrationWizard({
 
     const handleSubmit = async () => {
         if (employeeName.trim() && createdEmployeeId === null && (isEmployeesFetching || isEmployeeRetrying)) {
-            setSubmitError(getUserErrorMessage("제공인력 정보를 확인하고 있습니다. 잠시 후 다시 시도해 주세요."));
+            setSubmitError("제공인력 정보를 확인하고 있습니다. 잠시 후 다시 시도해 주세요.");
             setActiveStep(0);
             return;
         }
 
         const basicsError = getCanonicalClientRegistrationError({ name, phone, birthday, address, dueDate });
         if (basicsError) {
-            setSubmitError(getUserErrorMessage(basicsError));
+            setSubmitError(basicsError);
             return;
         }
 
         if (voucherClient && !isVoucherInfoComplete) {
-            setSubmitError(getUserErrorMessage("바우처 정보를 입력해주세요."));
+            setSubmitError("바우처 정보를 입력해주세요.");
             return;
         }
 
         if (employeeName && createdEmployeeId === null && !matchedEmployee) {
-            setSubmitError(getUserErrorMessage("제공인력 정보가 변경되었습니다. 제공인력을 다시 확인해 주세요."));
+            setSubmitError("제공인력 정보가 변경되었습니다. 제공인력을 다시 확인해 주세요.");
             setActiveStep(0);
             return;
         }
@@ -290,8 +290,10 @@ export function ClientRegistrationWizard({
             } as CreateClientDto);
             onCreated?.(created);
         } catch (e) {
-            const msg = e instanceof Error ? e.message : "등록에 실패했어요.";
-            setSubmitError(getUserErrorMessage(e, msg));
+            // Registered problem message (verified) or locally authored copy —
+            // upstream internals are never rendered.
+            const normalized = normalizeApiError(e, { locale: "ko-KR", operation: "mutation" });
+            setSubmitError(normalized.verified ? normalized.message : "등록에 실패했어요.");
         } finally {
             setIsSubmitting(false);
         }
@@ -313,8 +315,10 @@ export function ClientRegistrationWizard({
             setIsRegisteringEmployee(false);
             handleNext();
         } catch (e) {
-            const msg = e instanceof Error ? e.message : "제공인력 등록에 실패했어요.";
-            setSubmitError(getUserErrorMessage(e, msg));
+            // Registered problem message (verified) or locally authored copy —
+            // upstream internals are never rendered.
+            const normalized = normalizeApiError(e, { locale: "ko-KR", operation: "mutation" });
+            setSubmitError(normalized.verified ? normalized.message : "제공인력 등록에 실패했어요.");
         } finally {
             setIsSubmitting(false);
         }
@@ -604,7 +608,7 @@ export function ClientRegistrationWizard({
             {submitError && (
                 <Alert variant="destructive" className="mt-4">
                     <AlertCircle className="h-4 w-4" />
-                    <AlertDescription>{submitError && getUserErrorMessage(submitError)}</AlertDescription>
+                    <AlertDescription>{submitError}</AlertDescription>
                 </Alert>
             )}
 

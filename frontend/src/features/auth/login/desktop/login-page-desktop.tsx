@@ -1,5 +1,4 @@
 "use client";
-import { getUserErrorMessage } from "@babyjamjam/shared";
 
 
 import { AuthInlineLink } from "@/components/auth/auth-inline-link";
@@ -55,7 +54,7 @@ export function LoginPageDesktop() {
           onClose={clearServerError}
         >
           <div data-component="desktop_auth_login_error-message">
-            {serverError && getUserErrorMessage(serverError)}
+            {serverError}
             {emailVerificationRequired ? (
               <div data-component="desktop_auth_login_error-message_verify-email" className="mt-2">
                 {isResendingVerification ? (

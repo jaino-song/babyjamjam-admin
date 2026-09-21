@@ -121,7 +121,9 @@ export function useEformsignAuth(
     } catch (err) {
       console.error("[useEformsignAuth] Authentication failed:", err);
       safeStorageRemoveItem("session", "eformsign_auth_time");
-      setError(err instanceof Error ? err : new Error("Authentication failed"));
+      // Locally authored Error only — the raw upstream error (axios body,
+      // vendor message) is never stored in user-facing state.
+      setError(new Error("전자계약 인증에 실패했어요. 잠시 후 페이지가 새로고침돼요."));
       setIsAuthenticated(false);
 
       schedulePageReload();
@@ -165,7 +167,9 @@ export function useEformsignAuth(
     } catch (err) {
       console.error("[useEformsignAuth] Auth state validation failed:", err);
       safeStorageRemoveItem("session", "eformsign_auth_time");
-      setError(err instanceof Error ? err : new Error("Failed to validate authentication"));
+      // Locally authored Error only — the raw upstream error is never stored
+      // in user-facing state.
+      setError(new Error("전자계약 인증 상태를 확인하지 못했어요."));
       setIsAuthenticated(false);
     } finally {
       setIsLoading(false);

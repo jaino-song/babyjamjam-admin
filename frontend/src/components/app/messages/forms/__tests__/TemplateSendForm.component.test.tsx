@@ -501,11 +501,13 @@ describe("recipient phone input layout", () => {
     await waitFor(() => expect(sendButton).toBeEnabled());
     fireEvent.click(sendButton);
 
+    // EM v1.0: a legacy body message is never matched or rendered — an
+    // unverified 400 falls back to the send-stage copy.
     await waitFor(() => {
       expect(
         document.querySelector('[data-component="desktop_messages_sections_template-send-form_feedback"]'),
       ).toHaveTextContent(
-        "선택한 관리사님의 전화번호가 없어 제공기록지 링크를 보내지 못했어요",
+        "서버가 제공기록지 링크 발송 요청을 처리하지 못했어요. 잠시 후 다시 시도해 주세요",
       );
     });
     const feedback = document.querySelector(
@@ -513,10 +515,11 @@ describe("recipient phone input layout", () => {
     );
     expect(feedback).not.toHaveTextContent("400");
     expect(feedback).not.toHaveTextContent("Bad Request");
+    expect(feedback).not.toHaveTextContent("제공인력 전화번호가 없습니다");
     const toast = mockedUseToast.mock.results[0]?.value.toast;
     expect(toast).toHaveBeenCalledWith({
       variant: "destructive",
-      description: "선택한 관리사님의 전화번호가 없어 제공기록지 링크를 보내지 못했어요",
+      description: "서버가 제공기록지 링크 발송 요청을 처리하지 못했어요. 잠시 후 다시 시도해 주세요",
     });
   });
 });

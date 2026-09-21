@@ -1,5 +1,4 @@
 "use client";
-import { getUserErrorMessage } from "@babyjamjam/shared";
 
 
 import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
@@ -9,6 +8,7 @@ import {
     getSignatureStatusVariant,
 } from "@babyjamjam/shared/constants/service-record-display";
 import { ChevronDown, Loader2, RefreshCw } from "lucide-react";
+import { normalizeApiError } from "@babyjamjam/shared";
 import { formatDateTimeKo } from "@babyjamjam/shared/utils/date";
 import { getExpectedSessionDateFromRecords } from "@babyjamjam/shared/utils/service-record-schedule";
 
@@ -164,7 +164,7 @@ function ClientServiceRecordsTabContent({
             if (!result.ok || result.status !== "sent") {
                 toast({
                     variant: "destructive",
-                    description: getUserErrorMessage(SEND_LINK_FAILURE_DESCRIPTION),
+                    description: SEND_LINK_FAILURE_DESCRIPTION,
                 });
                 return false;
             }
@@ -172,7 +172,7 @@ function ClientServiceRecordsTabContent({
             return true;
         } catch (error) {
             toast({
-                description: getUserErrorMessage(getErrorDescription(error)),
+                description: getErrorDescription(error),
                 variant: "destructive",
             });
             return false;
@@ -1598,17 +1598,8 @@ function formatUnknownValue(value: unknown): string {
 const getSignatureVariant = getSignatureStatusVariant;
 
 function getErrorDescription(error: unknown): string {
-    if (error && typeof error === "object" && "response" in error) {
-        const response = (error as { response?: { data?: unknown } }).response;
-        const data = response?.data;
-        if (data && typeof data === "object") {
-            const message = (data as { message?: unknown; error?: unknown }).message
-                ?? (data as { message?: unknown; error?: unknown }).error;
-            if (typeof message === "string") {
-                return `${SEND_LINK_FAILURE_DESCRIPTION}: ${message}`;
-            }
-        }
-    }
-
-    return SEND_LINK_FAILURE_DESCRIPTION;
+    // Registered problem message (verified) or locally authored copy —
+    // upstream body messages are never rendered.
+    const normalized = normalizeApiError(error, { locale: "ko-KR", operation: "mutation" });
+    return normalized.verified ? normalized.message : SEND_LINK_FAILURE_DESCRIPTION;
 }

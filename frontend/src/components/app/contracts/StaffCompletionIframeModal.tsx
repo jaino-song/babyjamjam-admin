@@ -73,7 +73,11 @@ export function StaffCompletionIframeModal({
           onSuccess,
           onError: (response: EformsignErrorResponse) => {
             hasOpenedRef.current = false;
-            onError(response.message || "최종 확인 중 오류가 발생했어요.");
+            // The vendor message is never forwarded; locally authored copy
+            // covers the iframe completion failure. The vendor code stays a
+            // console-only diagnostic.
+            console.error("[StaffCompletionIframeModal] eformsign error", response.code);
+            onError("최종 확인 중 오류가 발생했어요.");
           },
           onAction: (response: EformsignActionResponse) => {
             const actionType = response.type.toLowerCase();

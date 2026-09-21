@@ -26,6 +26,8 @@ import {
     TableRow,
 } from "@/components/ui/table";
 import { useFilteredClients, useClient, useDeleteClient } from "@/hooks/useClients";
+import { useToast } from "@/hooks/use-toast";
+import { normalizeApiError } from "@babyjamjam/shared";
 import { Client, DocumentStatus } from "@/lib/client/types";
 import { formatDateForDisplay } from "@/lib/date/format-date-for-display";
 import { ClientDetailModal } from "../clients/ClientDetailModal";
@@ -84,6 +86,7 @@ export function FilteredClientsDialog({
         useClient(clientId || 0);
 
     const deleteClient = useDeleteClient();
+    const { toast } = useToast();
 
     const isIndividualClient = !filterType && clientId;
     const clients = isIndividualClient
@@ -123,6 +126,13 @@ export function FilteredClientsDialog({
             }
         } catch (err) {
             console.error("Failed to delete client:", err);
+            // The mutation outcome is surfaced to the user flow — never
+            // silently swallowed. A registered problem body drives the copy.
+            const normalized = normalizeApiError(err, { locale: "ko-KR", operation: "mutation" });
+            toast({
+                variant: "destructive",
+                description: normalized.verified ? normalized.message : "고객 삭제에 실패했어요. 다시 시도해 주세요.",
+            });
         }
     };
 
