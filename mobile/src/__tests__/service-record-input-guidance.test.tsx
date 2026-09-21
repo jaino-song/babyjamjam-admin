@@ -4,7 +4,7 @@ import { ServiceRecordWizard } from "../../../packages/service-record-ui/src/Ser
 import type { ServiceRecordWizardProps } from "../../../packages/service-record-ui/src/types";
 
 const validHeader = {
-    momName: "이예지", momBirth: "900101", babyName: "이아기", babyBirth: "260615",
+    momName: "이예지", momBirth: "1999-01-01", babyName: "이아기", babyBirth: "2026-06-15",
     deliveryType: "자연분만", babyWeight: "3.2",
 };
 const makeProps = (overrides: Partial<ServiceRecordWizardProps> = {}): ServiceRecordWizardProps => ({
@@ -20,9 +20,9 @@ const makeProps = (overrides: Partial<ServiceRecordWizardProps> = {}): ServiceRe
     onOpenSubmitModal: jest.fn(), onEditSection: jest.fn(), ...overrides,
 });
 
-function Harness({ onSave = jest.fn() }: { onSave?: () => void }) {
+function Harness({ onSave = jest.fn() }: { onSave?: (header: Record<string, string>) => void }) {
     const [header, setHeader] = useState<Record<string, string>>(validHeader);
-    return <ServiceRecordWizard {...makeProps({ header, onSaveHeader: onSave,
+    return <ServiceRecordWizard {...makeProps({ header, onSaveHeader: () => onSave({ ...header }),
         onHeaderChange: (key, value) => setHeader((current) => ({ ...current, [key]: value })),
     })} />;
 }
@@ -53,17 +53,67 @@ describe("employee service record inline guidance", () => {
         fireEvent.click(screen.getByRole("button", { name: "다음" }));
         expect(save).toHaveBeenCalledTimes(1);
     });
-    it("does not silently truncate or normalize an eight-digit/spaced birthday", () => {
+    it.each(["산모 생년월일 (YYYY-MM-DD)", "신생아 출생일자 (YYYY-MM-DD)"])("formats incremental digits and supports deletion for %s", (label) => {
         render(<Harness />);
-        const birth = screen.getByLabelText("산모 생년월일 (숫자 6자리)");
+        const birth = screen.getByLabelText(label);
+        expect(birth).toHaveAttribute("placeholder", "1999-01-01");
         expect(birth).toHaveAttribute("inputmode", "numeric");
         expect(birth).not.toHaveAttribute("maxlength", "6");
-        fireEvent.change(birth, { target: { value: "1990 01 01" } });
+        expect(document.getElementById(birth.getAttribute("aria-describedby")!)).toHaveTextContent("하이픈(-)은 자동으로 붙어요");
+        for (const [value, expected] of [
+            ["", ""], ["1", "1"], ["19", "19"], ["199", "199"], ["1999", "1999"],
+            ["19990", "1999-0"], ["199901", "1999-01"], ["1999010", "1999-01-0"],
+            ["19990101", "1999-01-01"],
+        ]) {
+            fireEvent.change(birth, { target: { value } });
+            expect(birth).toHaveValue(expected);
+        }
+        fireEvent.change(birth, { target: { value: "1999-01-0" } });
         fireEvent.blur(birth);
-        expect(birth).toHaveValue("1990 01 01");
+        expect(birth).toHaveValue("1999-01-0");
         expect(birth).toHaveAttribute("aria-invalid", "true");
-        expect(document.getElementById(birth.getAttribute("aria-describedby")!)).toHaveTextContent("900101");
         expect(screen.getByRole("button", { name: "다음" })).toBeDisabled();
+        fireEvent.change(birth, { target: { value: "" } });
+        expect(birth).toHaveValue("");
+        fireEvent.change(birth, { target: { value: "19990101" } });
+        expect(birth).toHaveValue("1999-01-01");
+        expect(birth).not.toHaveAttribute("aria-invalid", "true");
+        expect(screen.getByRole("button", { name: "다음" })).toBeEnabled();
+    });
+    it("formats compact, spaced and hyphenated date input before saving parent state", () => {
+        const save = jest.fn();
+        render(<Harness onSave={save} />);
+        const momBirth = screen.getByLabelText("산모 생년월일 (YYYY-MM-DD)");
+        const babyBirth = screen.getByLabelText("신생아 출생일자 (YYYY-MM-DD)");
+        for (const value of ["19990101", "1999 01 01", "1999-01-01"]) {
+            fireEvent.change(momBirth, { target: { value } });
+            expect(momBirth).toHaveValue("1999-01-01");
+        }
+        fireEvent.change(babyBirth, { target: { value: "20260615" } });
+        fireEvent.blur(momBirth);
+        fireEvent.blur(babyBirth);
+        expect(babyBirth).toHaveValue("2026-06-15");
+        fireEvent.click(screen.getByRole("button", { name: "다음" }));
+        expect(save).toHaveBeenCalledWith(expect.objectContaining({ momBirth: "1999-01-01", babyBirth: "2026-06-15" }));
+    });
+    it.each(["19990229", "20260922", "990101"])("does not accept an invalid or incomplete formatted birthday: %s", (value) => {
+        render(<Harness />);
+        const birth = screen.getByLabelText("산모 생년월일 (YYYY-MM-DD)");
+        fireEvent.change(birth, { target: { value } });
+        fireEvent.blur(birth);
+        expect(birth).toHaveAttribute("aria-invalid", "true");
+        expect(screen.getByRole("button", { name: "다음" })).toBeDisabled();
+        fireEvent.change(birth, { target: { value: "20000229" } });
+        expect(birth).toHaveValue("2000-02-29");
+        expect(birth).not.toHaveAttribute("aria-invalid", "true");
+    });
+    it.each([false, true])("passes formatted birthdays through the shared callback in adminMode=%s", (adminMode) => {
+        const onHeaderChange = jest.fn();
+        render(<ServiceRecordWizard {...makeProps({ adminMode, onHeaderChange })} />);
+        fireEvent.change(screen.getByLabelText("산모 생년월일 (YYYY-MM-DD)"), { target: { value: "19990101" } });
+        fireEvent.change(screen.getByLabelText("신생아 출생일자 (YYYY-MM-DD)"), { target: { value: "20260615" } });
+        expect(onHeaderChange).toHaveBeenCalledWith("momBirth", "1999-01-01");
+        expect(onHeaderChange).toHaveBeenCalledWith("babyBirth", "2026-06-15");
     });
     it("shows a missing-field message after blur and removes it after correction", () => {
         render(<Harness />);
