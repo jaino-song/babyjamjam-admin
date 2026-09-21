@@ -1,5 +1,4 @@
 "use client";
-import { getUserErrorMessage } from "@babyjamjam/shared";
 
 
 import { useState, type FormEvent } from "react";
@@ -255,7 +254,7 @@ export function SystemAdminBranchForm({
           className="rounded-[13px] bg-destructive/10 px-4 py-3 text-sm font-semibold text-destructive"
           role="alert"
         >
-          {submitError && getUserErrorMessage(submitError)}
+          {submitError}
         </p>
       ) : null}
 

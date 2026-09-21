@@ -5,7 +5,11 @@ const source = fs.readFileSync(require.resolve("./ContractCreationForm"), "utf8"
 describe("ContractCreationForm compensation flows", () => {
   it("should show the conflict error and stop before document creation when automatic registration is off", () => {
     expect(source).toContain('error.response?.status !== 409');
-    expect(source).toContain('throw new Error(getApiErrorMessage(error, "고객 자동 등록에 실패했어요."))');
+    // The non-duplicate 409 surfaces the locally authored copy through the
+    // AuthoredSubmissionError catch boundary; the upstream body is never
+    // stringified into the rendered error.
+    expect(source).toContain('throw new AuthoredSubmissionError("고객 자동 등록에 실패했어요.")');
+    expect(source).not.toContain('getApiErrorMessage');
     // Provider authentication now runs exclusively inside the backend credential
     // boundary; the browser must not call the provider directly.
     expect(source).not.toContain("eformsignApi.authenticate");

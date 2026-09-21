@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useSyncExternalStore } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api/client";
 import { PWA_NOTIFICATIONS_ENABLED } from "@/lib/notification-config";
@@ -174,6 +174,45 @@ export function useMarkAllAsRead() {
 }
 
 /**
+ * Browser push capabilities for the current page visit. They are fixed while
+ * the page is alive, so they are exposed through an external-store snapshot
+ * instead of a mount effect: the server snapshot reports "unsupported" so the
+ * hydration output matches SSR, and the client snapshot is read lazily (never
+ * touching `navigator` during SSR).
+ */
+interface PushCapability {
+    isSupported: boolean;
+    permission: NotificationPermission;
+}
+
+const PUSH_CAPABILITY_UNSUPPORTED: PushCapability = { isSupported: false, permission: 'denied' };
+let clientPushCapability: PushCapability | null = null;
+
+function getPushCapability(): PushCapability {
+    if (clientPushCapability === null) {
+        const isSupported =
+            typeof window !== 'undefined' &&
+            'serviceWorker' in navigator &&
+            'PushManager' in window &&
+            'Notification' in window;
+        clientPushCapability = {
+            isSupported,
+            permission: isSupported ? Notification.permission : 'denied',
+        };
+    }
+    return clientPushCapability;
+}
+
+function getServerPushCapability(): PushCapability {
+    return PUSH_CAPABILITY_UNSUPPORTED;
+}
+
+function subscribePushCapability(): () => void {
+    // Capabilities never change while the page is alive — nothing to subscribe to.
+    return () => {};
+}
+
+/**
  * Main hook for PWA Push Notification management
  *
  * Handles:
@@ -183,48 +222,27 @@ export function useMarkAllAsRead() {
  * - Subscription state management
  */
 export function usePushNotification() {
-    const [state, setState] = useState<PushNotificationState>({
-        isSupported: false,
+    const capability = useSyncExternalStore(
+        subscribePushCapability,
+        getPushCapability,
+        getServerPushCapability,
+    );
+    const isSupported = PWA_NOTIFICATIONS_ENABLED && capability.isSupported;
+    const permission = PWA_NOTIFICATIONS_ENABLED ? capability.permission : 'denied' as const;
+
+    const [state, setState] = useState<Pick<PushNotificationState, 'isSubscribed' | 'isLoading' | 'error'>>(() => ({
         isSubscribed: false,
-        permission: 'default',
         isLoading: PWA_NOTIFICATIONS_ENABLED,
         error: null,
-    });
+    }));
 
     const { data: vapidKey } = useVapidKey(PWA_NOTIFICATIONS_ENABLED);
 
-    // Check if push notifications are supported
+    // Reconcile the browser subscription with the backend account binding.
+    // Unsupported browsers never enter this effect; their loading state ends
+    // in the derived `isLoading` below.
     useEffect(() => {
-        if (!PWA_NOTIFICATIONS_ENABLED) {
-            setState({
-                isSupported: false,
-                isSubscribed: false,
-                permission: 'denied',
-                isLoading: false,
-                error: null,
-            });
-            return;
-        }
-
-        const isSupported =
-            typeof window !== 'undefined' &&
-            'serviceWorker' in navigator &&
-            'PushManager' in window &&
-            'Notification' in window;
-
-        setState((prev) => ({
-            ...prev,
-            isSupported,
-            permission: isSupported ? Notification.permission : 'denied',
-        }));
-    }, []);
-
-    // Check current subscription status
-    useEffect(() => {
-        if (!state.isSupported) {
-            setState((prev) => ({ ...prev, isLoading: false }));
-            return;
-        }
+        if (!isSupported) return;
 
         let active = true;
         const checkSubscription = async () => {
@@ -252,7 +270,9 @@ export function usePushNotification() {
                 setState((prev) => ({
                     ...prev,
                     isLoading: false,
-                    error: 'Failed to check subscription status',
+                    // Locally authored outcome copy — upstream internals are
+                    // never stored in user-visible state.
+                    error: '알림 상태를 확인하지 못했어요. 잠시 후 다시 시도해 주세요.',
                 }));
             }
 
@@ -262,11 +282,11 @@ export function usePushNotification() {
         return () => {
             active = false;
         };
-    }, [state.isSupported]);
+    }, [isSupported]);
 
     // Register Service Worker
     const registerServiceWorker = useCallback(async () => {
-        if (!PWA_NOTIFICATIONS_ENABLED || !state.isSupported) return null;
+        if (!PWA_NOTIFICATIONS_ENABLED || !isSupported) return null;
 
         try {
             const registration = await navigator.serviceWorker.register('/sw.js', {
@@ -277,29 +297,30 @@ export function usePushNotification() {
             console.error('[Push] Service Worker registration failed:', err);
             throw err;
         }
-    }, [state.isSupported]);
+    }, [isSupported]);
 
     // Subscribe to push notifications
     const subscribe = useCallback(async () => {
         if (!PWA_NOTIFICATIONS_ENABLED) return false;
 
-        if (!state.isSupported || !vapidKey) {
-            setState((prev) => ({ ...prev, error: 'Push notifications not supported' }));
+        if (!isSupported || !vapidKey) {
+            setState((prev) => ({ ...prev, error: '이 브라우저는 알림을 지원하지 않아요.' }));
             return false;
         }
 
         setState((prev) => ({ ...prev, isLoading: true, error: null }));
 
         try {
-            // Request permission
-            const permission = await Notification.requestPermission();
-            setState((prev) => ({ ...prev, permission }));
+            // Request permission and refresh the capability snapshot so the
+            // UI reflects the new permission on the renders that follow.
+            const grantedPermission = await Notification.requestPermission();
+            clientPushCapability = { ...(clientPushCapability ?? PUSH_CAPABILITY_UNSUPPORTED), permission: grantedPermission };
 
-            if (permission !== 'granted') {
+            if (grantedPermission !== 'granted') {
                 setState((prev) => ({
                     ...prev,
                     isLoading: false,
-                    error: 'Notification permission denied',
+                    error: '알림 권한이 거부됐어요. 브라우저 설정에서 알림을 허용해 주세요.',
                 }));
                 return false;
             }
@@ -328,17 +349,19 @@ export function usePushNotification() {
             setState((prev) => ({
                 ...prev,
                 isLoading: false,
-                error: err instanceof Error ? err.message : 'Subscription failed',
+                // Locally authored outcome copy — upstream err.message is
+                // never stored in user-visible state.
+                error: '알림 구독에 실패했어요. 잠시 후 다시 시도해 주세요.',
             }));
             return false;
         }
-    }, [state.isSupported, vapidKey, registerServiceWorker]);
+    }, [isSupported, vapidKey, registerServiceWorker]);
 
     // Unsubscribe from push notifications
     const unsubscribe = useCallback(async () => {
         if (!PWA_NOTIFICATIONS_ENABLED) return false;
 
-        if (!state.isSupported) return false;
+        if (!isSupported) return false;
 
         setState((prev) => ({ ...prev, isLoading: true, error: null }));
 
@@ -364,14 +387,22 @@ export function usePushNotification() {
             setState((prev) => ({
                 ...prev,
                 isLoading: false,
-                error: err instanceof Error ? err.message : 'Unsubscription failed',
+                // Locally authored outcome copy — upstream err.message is
+                // never stored in user-visible state.
+                error: '알림 구독 해제에 실패했어요. 잠시 후 다시 시도해 주세요.',
             }));
             return false;
         }
-    }, [state.isSupported]);
+    }, [isSupported]);
 
     return {
-        ...state,
+        isSupported,
+        permission,
+        isSubscribed: state.isSubscribed,
+        // Unsupported browsers (and the SSR/hydration paint) never reach the
+        // subscription check, so their loading state is derived, not stored.
+        isLoading: isSupported ? state.isLoading : false,
+        error: state.error,
         subscribe,
         unsubscribe,
     };

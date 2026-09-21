@@ -4,6 +4,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { normalizeApiError } from "@babyjamjam/shared";
 import { CalendarCheck } from "lucide-react";
 import {
   AnimatedSlotList,
@@ -38,9 +39,11 @@ const DETAIL_TABS = [
   { key: "description", label: "동작 설명" },
 ] as const;
 
+// Registered problem message (verified) or locally authored copy — the
+// Error.message internals are never rendered.
 function getErrorMessage(error: unknown): string {
-  if (error instanceof Error) return error.message;
-  return "자동화 설정을 저장하지 못했습니다";
+  const normalized = normalizeApiError(error, { locale: "ko-KR", operation: "mutation" });
+  return normalized.verified ? normalized.message : "자동화 설정을 저장하지 못했습니다";
 }
 
 export interface ContractAutomationsManagerProps {

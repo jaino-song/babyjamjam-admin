@@ -54,10 +54,17 @@ describe("ChatPage composition", () => {
     expect(screen.queryByTestId("legacy-chat-page")).not.toBeInTheDocument();
   });
 
-  it("throws a safe discovery error instead of mounting either chat surface", () => {
+  it("renders the safe discovery-error card instead of mounting either chat surface", () => {
     mockUseAgentShellEnabled.mockReturnValue("discovery-error");
 
-    expect(() => ChatPage()).toThrow("AI 운영 코파일럿을 준비하지 못했습니다.");
+    render(<ChatPage />);
+
+    // The discovery failure renders locally authored safe copy through the
+    // design system; it no longer throws an unregistered Error.
+    expect(screen.getByText("AI 운영 코파일럿을 준비하지 못했습니다.")).toBeInTheDocument();
+    expect(
+      document.querySelector('[data-component="desktop_chat_discovery-error"]'),
+    ).toBeInTheDocument();
     expect(screen.queryByTestId("agent-shell-loading")).not.toBeInTheDocument();
     expect(screen.queryByTestId("legacy-chat-page")).not.toBeInTheDocument();
     expect(screen.queryByTestId("agent-shell")).not.toBeInTheDocument();

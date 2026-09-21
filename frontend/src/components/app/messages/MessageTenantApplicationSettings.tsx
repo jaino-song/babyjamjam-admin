@@ -1,9 +1,9 @@
 "use client";
-import { getUserErrorMessage } from "@babyjamjam/shared";
 
 
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { normalizeApiError } from "@babyjamjam/shared";
 import {
   ArrowDown,
   ArrowUp,
@@ -369,7 +369,7 @@ export function MessageTenantApplicationSettings() {
     onError: () => {
       toast({
         variant: "destructive",
-        description: getUserErrorMessage("메시지 발송을 신청하지 못했어요. 잠시 후 다시 시도해 주세요"),
+        description: "메시지 발송을 신청하지 못했어요. 잠시 후 다시 시도해 주세요",
       });
     },
   });
@@ -388,7 +388,7 @@ export function MessageTenantApplicationSettings() {
     onError: () => {
       toast({
         variant: "destructive",
-        description: getUserErrorMessage("지난 자동 전송 설정을 저장하지 못했어요"),
+        description: "지난 자동 전송 설정을 저장하지 못했어요",
       });
     },
   });
@@ -411,7 +411,10 @@ export function MessageTenantApplicationSettings() {
       if (context?.previous) {
         queryClient.setQueryData(["settings", "client-registration-policy"], context.previous);
       }
-      toast({ variant: "destructive", description: getUserErrorMessage(_error, "고객 자동 등록 설정을 저장하지 못했어요") });
+      // Registered problem message (verified) or locally authored copy — the
+      // mutation outcome is surfaced, never silently swallowed.
+      const normalized = normalizeApiError(_error, { locale: "ko-KR", operation: "mutation" });
+      toast({ variant: "destructive", description: normalized.verified ? normalized.message : "고객 자동 등록 설정을 저장하지 못했어요" });
     },
     onSuccess: (savedPolicy) => {
       queryClient.setQueryData(["settings", "client-registration-policy"], savedPolicy);
@@ -424,7 +427,7 @@ export function MessageTenantApplicationSettings() {
 
   const handleSubmit = () => {
     if (!allAgreed) {
-      toast({ variant: "destructive", description: getUserErrorMessage("알리고 정책 동의 항목을 모두 확인해 주세요") });
+      toast({ variant: "destructive", description: "알리고 정책 동의 항목을 모두 확인해 주세요" });
       return;
     }
 
@@ -433,7 +436,7 @@ export function MessageTenantApplicationSettings() {
   const handleSavePastTriggerConfig = () => {
     const sendIntervalMinutes = Number(retroactiveSendIntervalMinutes);
     if (!Number.isInteger(sendIntervalMinutes) || sendIntervalMinutes < 1) {
-      toast({ variant: "destructive", description: getUserErrorMessage("전송 간격은 1분 이상이어야 해요") });
+      toast({ variant: "destructive", description: "전송 간격은 1분 이상이어야 해요" });
       return;
     }
 

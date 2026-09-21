@@ -581,7 +581,7 @@ export function ServiceRecordAdminWizard({
     const [preview, setPreview] = useState<ServiceRecordEditPreviewResponse | null>(null);
     const [previewError, setPreviewError] = useState<string | null>(null);
     const [confirmBusy, setConfirmBusy] = useState(false);
-    const [confirmError, setConfirmError] = useState<string | null>(null);
+    const [confirmError, setConfirmError] = useState<{ status: number; message: string } | null>(null);
     const [confirmResult, setConfirmResult] = useState<ServiceRecordEditConfirmResponse | null>(null);
     const confirmIdempotencyKey = useRef<string | null>(null);
     const lastSuccessfulPreview = useRef<ServiceRecordEditPreviewResponse | null>(null);
@@ -779,7 +779,9 @@ export function ServiceRecordAdminWizard({
     }, [activeDraft, confirmBusy, confirmResult, dateMoveBusy, draftState, dirty, persistDraft, previewBusy]);
 
     const refreshPreview = useCallback(() => {
-        if (confirmBusy || !confirmError?.includes("오래되어")) return;
+        // A stale preview is identified by its registered status (409), never
+        // by matching message text.
+        if (confirmBusy || confirmError?.status !== 409) return;
         confirmIdempotencyKey.current = null;
         setConfirmResult(null);
         setConfirmError(null);
@@ -789,7 +791,7 @@ export function ServiceRecordAdminWizard({
     const confirmPreview = useCallback(async () => {
         if (!activeDraft || !preview || preview.blockingReasons.length > 0 || confirmBusy) return;
         if (preview.draftId !== activeDraft.id || preview.draftVersion !== activeDraft.draftVersion) {
-            setConfirmError(confirmErrorMessage(409));
+            setConfirmError({ status: 409, message: confirmErrorMessage(409) });
             return;
         }
         let idempotencyKey = confirmIdempotencyKey.current;
@@ -798,7 +800,7 @@ export function ServiceRecordAdminWizard({
                 idempotencyKey = createIdempotencyKey();
                 confirmIdempotencyKey.current = idempotencyKey;
             } catch {
-                setConfirmError(confirmErrorMessage(0));
+                setConfirmError({ status: 0, message: confirmErrorMessage(0) });
                 return;
             }
         }
@@ -828,7 +830,7 @@ export function ServiceRecordAdminWizard({
             }
             // Transport loss, malformed 2xx data, and other unknown errors
             // retain the key so an explicit retry cannot create a duplicate.
-            setConfirmError(confirmErrorMessage(status));
+            setConfirmError({ status, message: confirmErrorMessage(status) });
         } finally {
             setConfirmBusy(false);
         }
@@ -1258,7 +1260,8 @@ export function ServiceRecordAdminWizard({
                 error={previewError}
                 onConfirm={confirmPreview}
                 confirmBusy={confirmBusy}
-                confirmError={confirmError}
+                confirmError={confirmError?.message ?? null}
+                confirmErrorStatus={confirmError?.status ?? null}
                 confirmResult={confirmResult}
                 onRefresh={refreshPreview}
                 data-component={`${ADMIN_WIZARD_COMPONENT}_preview-dialog`}

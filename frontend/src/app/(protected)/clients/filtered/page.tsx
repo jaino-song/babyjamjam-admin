@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import { X } from "lucide-react";
-import { getApiErrorMessage } from "@babyjamjam/shared";
+import { normalizeApiError } from "@babyjamjam/shared";
 import { useFilteredClients, useDeleteClient } from "@/hooks/useClients";
 import { Client, DocumentStatus } from "@/lib/client/types";
 import { ClientDetailModal } from "@/components/app/clients/ClientDetailModal";
@@ -127,11 +127,11 @@ export default function FilteredClientsPage() {
         } catch (err) {
             console.error("Failed to delete client:", err);
             setDeleteTargetClientId(null);
+            // Registered problem message (verified) or locally authored copy —
+            // upstream body messages are never rendered.
+            const normalized = normalizeApiError(err, { locale: "ko-KR", operation: "mutation" });
             setDeleteErrorMessage(
-                getApiErrorMessage(
-                    err,
-                    "고객 삭제에 실패했어요. 다시 시도해 주세요.",
-                ),
+                normalized.verified ? normalized.message : "고객 삭제에 실패했어요. 다시 시도해 주세요.",
             );
         }
     };
