@@ -675,6 +675,52 @@ describe("TriggerRulesManager", () => {
     ]);
   });
 
+  it("adds the dedicated service-record template when the configurable catalog omits it", () => {
+    mockSettingsQueries({
+      providerEnabled: true,
+      senderApproved: true,
+      systemTemplate: {
+        id: "service-info-template",
+        templateKey: "SERVICE_INFO",
+        content: "서비스 안내 본문",
+        customVariables: [],
+        requiredVariables: [],
+        updatedAt: "2026-03-01T00:00:00.000Z",
+        name: "서비스 안내",
+        description: "서비스 시작 전에 안내합니다.",
+      } as SettingsQueryState["systemTemplate"],
+    });
+    mockedUseMessageTriggerTemplates.mockReturnValue({
+      data: allSmsTriggerTemplates.filter((template) => template.key !== "SERVICE_RECORD_LINK"),
+    } as unknown as ReturnType<typeof useMessageTriggerTemplates>);
+
+    render(<TriggerRulesManager dataComponent="desktop_messages_sections_section-content_triggers-section_trigger-rules" />);
+    fireEvent.click(screen.getByRole("button", { name: "새 규칙" }));
+
+    const templateTrigger = screen.getByLabelText("발송 템플릿");
+    fireEvent.click(templateTrigger);
+    const options = screen.getAllByRole("option");
+    expect(options).toHaveLength(9);
+    expect(options.map((option) => option.textContent)).toEqual([
+      "리마인드 · 선택한 이벤트·수신 대상과 맞지 않음",
+      "서비스 안내",
+      "제공기록지 작성 링크 · 제공기록지 전용 자동화에서 관리",
+      "인사 메시지 · 선택한 이벤트와 맞지 않음",
+      "비용 안내 · 선택한 수신 대상과 맞지 않음",
+      "예약 완료(입금 확인)",
+      "모니터링 설문",
+      "정보 요청",
+      "수동 영수증 안내 · 수동 발송 전용",
+    ]);
+
+    const dedicatedOption = screen.getByRole("option", {
+      name: "제공기록지 작성 링크 · 제공기록지 전용 자동화에서 관리",
+    });
+    expect(dedicatedOption).toHaveAttribute("aria-disabled", "true");
+    fireEvent.click(dedicatedOption);
+    expect(templateTrigger).toHaveTextContent("서비스 안내");
+  });
+
   it("recomputes disabled template options when event or recipient changes without removing options", () => {
     mockSettingsQueries({ providerEnabled: true, senderApproved: true });
     mockedUseMessageTriggerTemplates.mockReturnValue({
@@ -1048,18 +1094,6 @@ describe("TriggerRulesManager", () => {
           allowedRecipientTypes: ["CLIENT"],
           requiredVariables: [],
           providers: { sms: { templateKey: "SERVICE_INFO" } },
-        },
-        {
-          key: "SERVICE_RECORD_LINK",
-          name: "제공기록지 작성 링크",
-          description: "서비스 시작일 오후 3시에 제공인력에게 제공기록지 작성 링크를 SMS로 발송합니다.",
-          allowedEventTypes: ["SERVICE_START"],
-          allowedRecipientTypes: ["PRIMARY_EMPLOYEE"],
-          requiredVariables: [
-            { key: "employeeName", label: "제공인력명" },
-            { key: "serviceRecordUrl", label: "제공기록지 링크" },
-          ],
-          providers: { sms: { templateKey: "SERVICE_RECORD_LINK" } },
         },
       ],
     } as unknown as ReturnType<typeof useMessageTriggerTemplates>);
