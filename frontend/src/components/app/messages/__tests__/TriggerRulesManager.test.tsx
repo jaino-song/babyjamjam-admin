@@ -538,12 +538,25 @@ describe("TriggerRulesManager", () => {
     );
   });
 
-  it("shows SERVICE_END_NOTICE rules while retaining the backend service-record rule", () => {
+  it("normalizes the legacy system SERVICE_END_NOTICE name without changing user-authored names", async () => {
     mockSettingsQueries({ providerEnabled: true, senderApproved: true });
     mockedUseMessageTriggerRules.mockReturnValue({
       data: [
         {
-          id: "manual-service-end-notice",
+          id: "system:service-end-notice",
+          branchId: null,
+          name: "서비스 종료 안내 (수동 발송)",
+          isActive: true,
+          eventType: "SERVICE_END",
+          offsetType: "AFTER_DAYS",
+          offsetDays: 1,
+          recipientType: "CLIENT",
+          templateKey: "SERVICE_END_NOTICE",
+          createdAt: "2026-03-01T00:00:00.000Z",
+          updatedAt: "2026-03-01T00:00:00.000Z",
+        },
+        {
+          id: "branch-service-end-notice",
           branchId: "org-1",
           name: "수동 영수증 안내",
           isActive: true,
@@ -572,11 +585,31 @@ describe("TriggerRulesManager", () => {
       isLoading: false,
       refetch: jest.fn(),
     } as unknown as ReturnType<typeof useMessageTriggerRules>);
+    mockedUseMessageTriggerTemplates.mockReturnValue({
+      data: [
+        {
+          key: "SERVICE_END_NOTICE",
+          name: "서비스 종료 안내",
+          description: "서비스 종료 안내입니다.",
+          allowedEventTypes: ["SERVICE_END"],
+          allowedRecipientTypes: ["CLIENT"],
+          requiredVariables: [],
+          providers: { sms: { templateKey: "SERVICE_END_NOTICE" } },
+        },
+      ],
+    } as unknown as ReturnType<typeof useMessageTriggerTemplates>);
 
     render(<TriggerRulesManager dataComponent="desktop_messages_sections_section-content_triggers-section_trigger-rules" />);
 
+    expect(screen.getByText("서비스 종료 안내")).toBeInTheDocument();
     expect(screen.getByText("수동 영수증 안내")).toBeInTheDocument();
-    expect(screen.getByText("제공기록지 작성 링크")).toBeInTheDocument();
+    expect(screen.queryByText("서비스 종료 안내 (수동 발송)")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByText("서비스 종료 안내"));
+    await waitFor(() => expect(screen.getByLabelText("규칙 이름")).toHaveValue("서비스 종료 안내"));
+    expect(screen.getByLabelText("규칙 이름")).toBeDisabled();
+    fireEvent.click(screen.getByText("수동 영수증 안내"));
+    await waitFor(() => expect(screen.getByLabelText("규칙 이름")).toHaveValue("수동 영수증 안내"));
+    expect(screen.getByLabelText("규칙 이름")).toBeEnabled();
     expect(screen.getByRole("switch", { name: "제공기록지 작성 링크 활성화" })).toBeInTheDocument();
   });
 

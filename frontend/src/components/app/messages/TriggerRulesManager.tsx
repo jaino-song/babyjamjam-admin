@@ -253,10 +253,22 @@ const TRIGGER_TEMPLATE_MESSAGE_FALLBACKS: Record<TriggerTemplateKey, string> = {
 감사합니다 :)`,
 };
 
+const LEGACY_SERVICE_END_NOTICE_SYSTEM_SUFFIX = " (수동 발송)";
+
+function getRuleDisplayName(rule: MessageTriggerRule): string {
+  if (rule.branchId !== null || rule.templateKey !== "SERVICE_END_NOTICE") {
+    return rule.name;
+  }
+
+  return rule.name.endsWith(LEGACY_SERVICE_END_NOTICE_SYSTEM_SUFFIX)
+    ? rule.name.slice(0, -LEGACY_SERVICE_END_NOTICE_SYSTEM_SUFFIX.length)
+    : rule.name;
+}
+
 function toFormState(rule: MessageTriggerRule | null, isActiveOverride?: boolean): RuleFormState {
   if (!rule) return getDefaultFormState();
   return {
-    name: rule.name,
+    name: getRuleDisplayName(rule),
     isActive: isActiveOverride ?? rule.isActive,
     eventType: rule.eventType,
     offsetType: rule.offsetType,
@@ -743,7 +755,7 @@ export function TriggerRulesManager({
     return filteredRules.map((rule): TriggerRuleListItem => ({
       kind: "trigger-rule",
       id: rule.id,
-      title: rule.name,
+      title: getRuleDisplayName(rule),
       subtitle: `${rule.branchId === null ? "시스템 자동화 · " : ""}${getRuleSummary(toFormState(rule))}`,
       active: isTriggerDispatchOff ? false : rule.isActive,
       icon: getRuleIcon(rule.eventType),
@@ -1162,7 +1174,11 @@ export function TriggerRulesManager({
           ) : (
             <DetailPanel data-component="desktop_messages_sections_split-layout_detail-panel-3"
               isLoading={isDetailLoading}
-              title={effectiveSelectedRuleId === "new" ? "새 발송 규칙" : selectedRule?.name ?? "발송 규칙"}
+              title={effectiveSelectedRuleId === "new"
+                ? "새 발송 규칙"
+                : selectedRule
+                  ? getRuleDisplayName(selectedRule)
+                  : "발송 규칙"}
               subtitle={isSelectedSystemRule
                 ? "내용은 고정되어 있지만 이 지점에서 발송 여부를 켜고 끌 수 있는 시스템 루틴입니다."
                 : copy.detailSubtitle}
