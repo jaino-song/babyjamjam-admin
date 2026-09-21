@@ -53,11 +53,11 @@ import { messageTriggerKeys } from "@/features/message-triggers/hooks/keys";
 import {
   CONFIGURABLE_SMS_TRIGGER_TEMPLATE_KEYS,
   MESSAGE_TRIGGER_AUTOMATIC_VARIABLE_KEYS,
-  deriveAvailableTemplates,
   deriveEventTypesFromTemplates,
   deriveRecipientTypesFromTemplates,
   getChannelTemplates,
   isTriggerRuleInChannel,
+  isTriggerTemplateInChannel,
   SMS_TRIGGER_TO_SYSTEM_TEMPLATE,
   type TriggerMessageChannel,
 } from "@/features/message-triggers/channel";
@@ -172,10 +172,13 @@ const TRIGGER_RULE_APPROVAL_MESSAGE =
   "메시지 발송 승인 후에 설정 가능합니다. 설정에서 메시지 발송 기능을 신청해 주세요.";
 const CLIENT_REGISTRATION_POLICY_QUERY_KEY = ["settings", "client-registration-policy"] as const;
 const MANUAL_ONLY_TRIGGER_TEMPLATE_KEY = "SERVICE_END_NOTICE";
-
-const DEDICATED_TRIGGER_TEMPLATE_LABELS: Partial<Record<TriggerTemplateKey, string>> = {
-  SERVICE_RECORD_LINK: "제공기록지 작성 링크",
-};
+const TRIGGER_TEMPLATE_OPTION_SUFFIXES = {
+  serviceRecordLink: " · 제공기록지 전용 자동화에서 관리",
+  manualOnly: " · 수동 발송 전용",
+  eventAndRecipientMismatch: " · 선택한 이벤트·수신 대상과 맞지 않음",
+  eventMismatch: " · 선택한 이벤트와 맞지 않음",
+  recipientMismatch: " · 선택한 수신 대상과 맞지 않음",
+} as const;
 
 const TRIGGER_TEMPLATE_MESSAGE_FALLBACKS: Record<TriggerTemplateKey, string> = {
   CLIENT_WELCOME: `[아이미래 인천]
@@ -334,6 +337,55 @@ function isParentDisabledConflict(error: unknown): boolean {
   return getErrorStatus(error) === 409 && getErrorCode(error) === "MESSAGE_AUTOMATION_PARENT_DISABLED";
 }
 
+function getTemplateOptionPresentation(
+  template: TriggerTemplateCatalogItem,
+  eventType: TriggerEventType,
+  recipientType: TriggerRecipientType,
+) {
+  if (template.key === "SERVICE_RECORD_LINK") {
+    return {
+      label: `${template.name}${TRIGGER_TEMPLATE_OPTION_SUFFIXES.serviceRecordLink}`,
+      disabled: true,
+    };
+  }
+
+  if (template.key === MANUAL_ONLY_TRIGGER_TEMPLATE_KEY) {
+    return {
+      label: `${template.name}${TRIGGER_TEMPLATE_OPTION_SUFFIXES.manualOnly}`,
+      disabled: true,
+    };
+  }
+
+  const matchesEvent = template.allowedEventTypes.includes(eventType);
+  const matchesRecipient = template.allowedRecipientTypes.includes(recipientType);
+
+  if (!matchesEvent && !matchesRecipient) {
+    return {
+      label: `${template.name}${TRIGGER_TEMPLATE_OPTION_SUFFIXES.eventAndRecipientMismatch}`,
+      disabled: true,
+    };
+  }
+
+  if (!matchesEvent) {
+    return {
+      label: `${template.name}${TRIGGER_TEMPLATE_OPTION_SUFFIXES.eventMismatch}`,
+      disabled: true,
+    };
+  }
+
+  if (!matchesRecipient) {
+    return {
+      label: `${template.name}${TRIGGER_TEMPLATE_OPTION_SUFFIXES.recipientMismatch}`,
+      disabled: true,
+    };
+  }
+
+  return {
+    label: template.name,
+    disabled: false,
+  };
+}
+
 export function TriggerRulesManager({
   dataComponent,
   channel = "sms",
@@ -466,6 +518,10 @@ export function TriggerRulesManager({
       .filter((template) => template.key !== MANUAL_ONLY_TRIGGER_TEMPLATE_KEY),
     [channel, templateQuery.data],
   );
+  const smsCatalogTemplates = useMemo(
+    () => (templateQuery.data ?? []).filter((template) => isTriggerTemplateInChannel(template.key, channel)),
+    [channel, templateQuery.data],
+  );
 
   const eventOptions = useMemo(() => {
     const allowedEvents = new Set(deriveEventTypesFromTemplates(automaticChannelTemplates));
@@ -491,43 +547,9 @@ export function TriggerRulesManager({
   }, [getRecipientTypesForEvent, formState.eventType, isSelectedDedicatedRule, selectedRule]);
 
   const availableTemplates = useMemo<TriggerTemplateCatalogItem[]>(() => {
-    if (isSelectedDedicatedRule && selectedRule) {
-      const currentTemplate = (templateQuery.data ?? []).find(
-        (template) => template.key === selectedRule.templateKey,
-      );
-      if (currentTemplate) return [currentTemplate];
-
-      return [{
-        key: selectedRule.templateKey,
-        name: selectedSystemTemplate?.name
-          ?? DEDICATED_TRIGGER_TEMPLATE_LABELS[selectedRule.templateKey]
-          ?? selectedRule.templateKey,
-        description: selectedSystemTemplate?.description ?? "전용 자동화에서 관리되는 메시지 템플릿입니다.",
-        allowedEventTypes: [selectedRule.eventType],
-        allowedRecipientTypes: [selectedRule.recipientType],
-        requiredVariables: (selectedSystemTemplate?.requiredVariables ?? []).map((variable) => ({
-          key: variable.key,
-          label: variable.label,
-        })),
-        providers: {
-          sms: {
-            templateKey: selectedSystemTemplateKey || selectedRule.templateKey,
-          },
-        },
-      }];
-    }
-    return deriveAvailableTemplates(automaticChannelTemplates, formState.eventType, formState.recipientType);
+    return smsCatalogTemplates;
   }, [
-    automaticChannelTemplates,
-    formState.eventType,
-    formState.recipientType,
-    isSelectedDedicatedRule,
-    selectedRule,
-    selectedSystemTemplate?.description,
-    selectedSystemTemplate?.name,
-    selectedSystemTemplate?.requiredVariables,
-    selectedSystemTemplateKey,
-    templateQuery.data,
+    smsCatalogTemplates,
   ]);
   const selectedTemplate = useMemo(() => {
     return availableTemplates.find((template) => template.key === formState.templateKey) ?? null;
@@ -1267,7 +1289,11 @@ export function TriggerRulesManager({
                           label="발송 템플릿"
                           value={formState.templateKey}
                           options={availableTemplates.map((template) => ({
-                            label: template.name,
+                            ...getTemplateOptionPresentation(
+                              template,
+                              formState.eventType,
+                              formState.recipientType,
+                            ),
                             value: template.key,
                           }))}
                           disabled={isSelectedDedicatedRule}

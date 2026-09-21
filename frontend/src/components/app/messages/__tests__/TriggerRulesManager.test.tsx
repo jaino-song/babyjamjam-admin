@@ -134,6 +134,90 @@ interface SettingsQueryState {
   };
 }
 
+const allSmsTriggerTemplates = [
+  {
+    key: "REMINDER",
+    name: "리마인드",
+    description: "고객에게 일정 리마인드를 SMS로 발송합니다.",
+    allowedEventTypes: ["CLIENT_CREATED"],
+    allowedRecipientTypes: ["PRIMARY_EMPLOYEE"],
+    requiredVariables: [],
+    providers: { sms: { templateKey: "REMINDER" } },
+  },
+  {
+    key: "SERVICE_INFO",
+    name: "서비스 안내",
+    description: "서비스 시작 전에 안내합니다.",
+    allowedEventTypes: ["SERVICE_START"],
+    allowedRecipientTypes: ["CLIENT"],
+    requiredVariables: [],
+    providers: { sms: { templateKey: "SERVICE_INFO" } },
+  },
+  {
+    key: "CLIENT_GREETING",
+    name: "인사 메시지",
+    description: "고객 등록 인사 메시지입니다.",
+    allowedEventTypes: ["CLIENT_CREATED"],
+    allowedRecipientTypes: ["CLIENT"],
+    requiredVariables: [],
+    providers: { sms: { templateKey: "CLIENT_GREETING" } },
+  },
+  {
+    key: "PRICE_INFO",
+    name: "비용 안내",
+    description: "고객에게 비용과 입금 계좌를 안내합니다.",
+    allowedEventTypes: ["SERVICE_START"],
+    allowedRecipientTypes: ["PRIMARY_EMPLOYEE"],
+    requiredVariables: [],
+    providers: { sms: { templateKey: "PRICE_INFO" } },
+  },
+  {
+    key: "THANKS",
+    name: "예약 완료(입금 확인)",
+    description: "예약 완료 메시지입니다.",
+    allowedEventTypes: ["SERVICE_START"],
+    allowedRecipientTypes: ["CLIENT"],
+    requiredVariables: [],
+    providers: { sms: { templateKey: "THANKS" } },
+  },
+  {
+    key: "SURVEY",
+    name: "모니터링 설문",
+    description: "모니터링 설문 안내입니다.",
+    allowedEventTypes: ["SERVICE_START"],
+    allowedRecipientTypes: ["CLIENT"],
+    requiredVariables: [],
+    providers: { sms: { templateKey: "SURVEY" } },
+  },
+  {
+    key: "INFO",
+    name: "정보 요청",
+    description: "정보 안내 메시지입니다.",
+    allowedEventTypes: ["SERVICE_START"],
+    allowedRecipientTypes: ["CLIENT"],
+    requiredVariables: [],
+    providers: { sms: { templateKey: "INFO" } },
+  },
+  {
+    key: "SERVICE_RECORD_LINK",
+    name: "제공기록지 작성 링크",
+    description: "제공기록지 작성 링크입니다.",
+    allowedEventTypes: ["SERVICE_START"],
+    allowedRecipientTypes: ["PRIMARY_EMPLOYEE"],
+    requiredVariables: [],
+    providers: { sms: { templateKey: "SERVICE_RECORD_LINK" } },
+  },
+  {
+    key: "SERVICE_END_NOTICE",
+    name: "수동 영수증 안내",
+    description: "수동 발송으로만 사용하는 영수증 안내입니다.",
+    allowedEventTypes: ["SERVICE_END"],
+    allowedRecipientTypes: ["CLIENT"],
+    requiredVariables: [],
+    providers: { sms: { templateKey: "SERVICE_END_NOTICE" } },
+  },
+] as const;
+
 function automationPoliciesWithTriggerDispatch(active: boolean): MessageAutomationPoliciesResponse {
   return {
     canManageActivation: true,
@@ -496,7 +580,7 @@ describe("TriggerRulesManager", () => {
     expect(screen.getByRole("switch", { name: "제공기록지 작성 링크 활성화" })).toBeInTheDocument();
   });
 
-  it("excludes manual-only SERVICE_END_NOTICE from create and edit template pickers", () => {
+  it("keeps manual-only SERVICE_END_NOTICE visible but disabled in create and edit template pickers", () => {
     mockSettingsQueries({ providerEnabled: true, senderApproved: true });
     mockedUseMessageTriggerTemplates.mockReturnValue({
       data: [
@@ -526,13 +610,160 @@ describe("TriggerRulesManager", () => {
     fireEvent.click(screen.getByRole("button", { name: "새 규칙" }));
     const createTemplateTrigger = screen.getByLabelText("발송 템플릿");
     fireEvent.click(createTemplateTrigger);
-    expect(screen.queryByRole("option", { name: "수동 영수증 안내" })).not.toBeInTheDocument();
+    const manualOnlyOption = screen.getByRole("option", {
+      name: "수동 영수증 안내 · 수동 발송 전용",
+    });
+    expect(manualOnlyOption).toHaveAttribute("aria-disabled", "true");
     fireEvent.keyDown(createTemplateTrigger, { key: "Escape" });
 
     fireEvent.click(screen.getByText("서비스 시작 안내"));
     const editTemplateTrigger = screen.getByLabelText("발송 템플릿");
     fireEvent.click(editTemplateTrigger);
-    expect(screen.queryByRole("option", { name: "수동 영수증 안내" })).not.toBeInTheDocument();
+    expect(screen.getByRole("option", {
+      name: "수동 영수증 안내 · 수동 발송 전용",
+    })).toHaveAttribute("aria-disabled", "true");
+  });
+
+  it("renders every backend SMS template in order with deterministic compatibility labels", () => {
+    mockSettingsQueries({ providerEnabled: true, senderApproved: true });
+    mockedUseMessageTriggerTemplates.mockReturnValue({
+      data: allSmsTriggerTemplates,
+    } as unknown as ReturnType<typeof useMessageTriggerTemplates>);
+
+    render(<TriggerRulesManager dataComponent="desktop_messages_sections_section-content_triggers-section_trigger-rules" />);
+    fireEvent.click(screen.getByRole("button", { name: "새 규칙" }));
+
+    const templateTrigger = screen.getByLabelText("발송 템플릿");
+    fireEvent.click(templateTrigger);
+    const options = screen.getAllByRole("option");
+    expect(options.map((option) => option.textContent)).toEqual([
+      "리마인드 · 선택한 이벤트·수신 대상과 맞지 않음",
+      "서비스 안내",
+      "인사 메시지 · 선택한 이벤트와 맞지 않음",
+      "비용 안내 · 선택한 수신 대상과 맞지 않음",
+      "예약 완료(입금 확인)",
+      "모니터링 설문",
+      "정보 요청",
+      "제공기록지 작성 링크 · 제공기록지 전용 자동화에서 관리",
+      "수동 영수증 안내 · 수동 발송 전용",
+    ]);
+    expect(screen.getByRole("option", { name: "서비스 안내" })).not.toHaveAttribute("aria-disabled");
+    for (const name of [
+      "리마인드 · 선택한 이벤트·수신 대상과 맞지 않음",
+      "인사 메시지 · 선택한 이벤트와 맞지 않음",
+      "비용 안내 · 선택한 수신 대상과 맞지 않음",
+      "제공기록지 작성 링크 · 제공기록지 전용 자동화에서 관리",
+      "수동 영수증 안내 · 수동 발송 전용",
+    ]) {
+      expect(screen.getByRole("option", { name })).toHaveAttribute("aria-disabled", "true");
+    }
+
+    fireEvent.keyDown(templateTrigger, { key: "Escape" });
+    fireEvent.click(screen.getByText("서비스 시작 안내"));
+    const editTemplateTrigger = screen.getByLabelText("발송 템플릿");
+    fireEvent.click(editTemplateTrigger);
+    expect(screen.getAllByRole("option").map((option) => option.textContent)).toEqual([
+      "리마인드 · 선택한 이벤트·수신 대상과 맞지 않음",
+      "서비스 안내",
+      "인사 메시지 · 선택한 이벤트와 맞지 않음",
+      "비용 안내 · 선택한 수신 대상과 맞지 않음",
+      "예약 완료(입금 확인)",
+      "모니터링 설문",
+      "정보 요청",
+      "제공기록지 작성 링크 · 제공기록지 전용 자동화에서 관리",
+      "수동 영수증 안내 · 수동 발송 전용",
+    ]);
+  });
+
+  it("recomputes disabled template options when event or recipient changes without removing options", () => {
+    mockSettingsQueries({ providerEnabled: true, senderApproved: true });
+    mockedUseMessageTriggerTemplates.mockReturnValue({
+      data: allSmsTriggerTemplates,
+    } as unknown as ReturnType<typeof useMessageTriggerTemplates>);
+
+    render(<TriggerRulesManager dataComponent="desktop_messages_sections_section-content_triggers-section_trigger-rules" />);
+    fireEvent.click(screen.getByRole("button", { name: "새 규칙" }));
+
+    const eventTrigger = screen.getByLabelText("이벤트 기준");
+    fireEvent.click(eventTrigger);
+    fireEvent.click(screen.getByRole("option", { name: "고객 등록" }));
+
+    const recipientTrigger = screen.getByLabelText("수신 대상");
+    fireEvent.click(recipientTrigger);
+    fireEvent.click(screen.getByRole("option", { name: "주 담당 직원" }));
+
+    const templateTrigger = screen.getByLabelText("발송 템플릿");
+    fireEvent.click(templateTrigger);
+    const options = screen.getAllByRole("option");
+    expect(options).toHaveLength(allSmsTriggerTemplates.length);
+    expect(screen.getByRole("option", { name: "리마인드" })).not.toHaveAttribute("aria-disabled");
+    expect(screen.getByRole("option", { name: "서비스 안내 · 선택한 이벤트·수신 대상과 맞지 않음" }))
+      .toHaveAttribute("aria-disabled", "true");
+  });
+
+  it("keeps a selected dedicated template displayed with its disabled reason while editing", () => {
+    mockSettingsQueries({ providerEnabled: true, senderApproved: true });
+    mockedUseMessageTriggerRules.mockReturnValue({
+      data: [{
+        id: "service-record-rule",
+        branchId: "org-1",
+        name: "제공기록지 자동화",
+        isActive: true,
+        eventType: "SERVICE_START",
+        offsetType: "SAME_DAY",
+        offsetDays: 0,
+        recipientType: "PRIMARY_EMPLOYEE",
+        templateKey: "SERVICE_RECORD_LINK",
+        createdAt: "2026-03-01T00:00:00.000Z",
+        updatedAt: "2026-03-01T00:00:00.000Z",
+      }],
+      isLoading: false,
+      refetch: jest.fn(),
+    } as unknown as ReturnType<typeof useMessageTriggerRules>);
+    mockedUseMessageTriggerTemplates.mockReturnValue({
+      data: allSmsTriggerTemplates,
+    } as unknown as ReturnType<typeof useMessageTriggerTemplates>);
+
+    render(<TriggerRulesManager dataComponent="desktop_messages_sections_section-content_triggers-section_trigger-rules" />);
+    fireEvent.click(screen.getByText("제공기록지 자동화"));
+
+    expect(screen.getByLabelText("발송 템플릿")).toBeDisabled();
+    expect(screen.getByLabelText("발송 템플릿")).toHaveTextContent(
+      "제공기록지 작성 링크 · 제공기록지 전용 자동화에서 관리",
+    );
+  });
+
+  it("does not change the selected template when a disabled option is clicked", () => {
+    mockSettingsQueries({ providerEnabled: true, senderApproved: true });
+    mockedUseMessageTriggerTemplates.mockReturnValue({
+      data: allSmsTriggerTemplates,
+    } as unknown as ReturnType<typeof useMessageTriggerTemplates>);
+
+    render(<TriggerRulesManager dataComponent="desktop_messages_sections_section-content_triggers-section_trigger-rules" />);
+    fireEvent.click(screen.getByRole("button", { name: "새 규칙" }));
+    const templateTrigger = screen.getByLabelText("발송 템플릿");
+    fireEvent.click(templateTrigger);
+
+    fireEvent.click(screen.getByRole("option", {
+      name: "제공기록지 작성 링크 · 제공기록지 전용 자동화에서 관리",
+    }));
+
+    expect(templateTrigger).toHaveTextContent("서비스 안내");
+  });
+
+  it("does not invent template options while the backend catalog is loading or empty", () => {
+    mockSettingsQueries({ providerEnabled: true, senderApproved: true });
+    mockedUseMessageTriggerTemplates.mockReturnValue({
+      data: undefined,
+      isLoading: true,
+    } as unknown as ReturnType<typeof useMessageTriggerTemplates>);
+
+    render(<TriggerRulesManager dataComponent="desktop_messages_sections_section-content_triggers-section_trigger-rules" />);
+    fireEvent.click(screen.getByRole("button", { name: "새 규칙" }));
+    fireEvent.click(screen.getByLabelText("발송 템플릿"));
+
+    expect(screen.queryAllByRole("option")).toHaveLength(0);
+    expect(screen.queryByText("제공기록지 작성 링크")).not.toBeInTheDocument();
   });
 
   it("shows the client registration greeting condition on the existing CLIENT_GREETING rule", () => {
@@ -795,6 +1026,18 @@ describe("TriggerRulesManager", () => {
           allowedRecipientTypes: ["CLIENT"],
           requiredVariables: [],
           providers: { sms: { templateKey: "SERVICE_INFO" } },
+        },
+        {
+          key: "SERVICE_RECORD_LINK",
+          name: "제공기록지 작성 링크",
+          description: "서비스 시작일 오후 3시에 제공인력에게 제공기록지 작성 링크를 SMS로 발송합니다.",
+          allowedEventTypes: ["SERVICE_START"],
+          allowedRecipientTypes: ["PRIMARY_EMPLOYEE"],
+          requiredVariables: [
+            { key: "employeeName", label: "제공인력명" },
+            { key: "serviceRecordUrl", label: "제공기록지 링크" },
+          ],
+          providers: { sms: { templateKey: "SERVICE_RECORD_LINK" } },
         },
       ],
     } as unknown as ReturnType<typeof useMessageTriggerTemplates>);
