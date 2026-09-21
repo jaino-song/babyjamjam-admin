@@ -16,8 +16,8 @@
 | --- | --- |
 | 통합 worktree | `/Users/jaino/Development/babyjamjam-admin/korean-error-messages` |
 | 통합 branch | `korean-error-messages` |
-| 후보 SHA | `06a8b68afbcea16314ade60bcd20b39f9976e59d` |
-| 후보 내용 | 6.1 close(61a~61g) + 7.1 + 8.1 + 9.1 + 10.1 doc-prep의 통합 결과와 단계 close 기록 |
+| 후보 SHA | `ae9335d145f438a6c73cee46918225359fd4d844` (문서 전용 tail 포함 최종 통합 HEAD) |
+| 후보 내용 | 6.1 close(61a~61g) + 7.1 + 8.1 + 9.1 + 10.1 + 11.1 doc-prep의 통합 결과와 단계 close 기록. 코드/문서 단위 감사 SHA는 §3 감사 표에 유닛별 고정 |
 | dev 반영 기준 | 2026-09-14 `2d01ecd9d`(PR #657)까지. 후보는 그 이후 Phase 4b~10.1 누적을 포함한다 |
 
 단계별 독립 감사 판정(계획 실행 기록의 최종 판정만 표기):
