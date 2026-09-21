@@ -376,6 +376,61 @@ headless 문서 발송(`POST /eformsign-docs/dispatch-headless`)의 `ok:false` �
 
 두 배포 식별자(`EFORMSIGN_CREDENTIALS_SERVER_ONLY` · `EFORMSIGN_PROVIDER_OPERATION_SERVER_ONLY`)를 공유 카탈로그에 410으로 등록하고(EM-CAT-03: 기존 식별자 의미 유지, ko/en 문구 신규), 양 컨트롤러의 레거시 tombstone 7곳(`eformsign-doc.controller.ts` access-token/refresh-token 2곳, `eformsign.controller.ts` generate-signature/access-token/refresh-token/generate-document/generate-staff-document 5곳)을 `GoneException(codeOnlyProblemBody(...))`로 전환했다. 영문 `error` 필드 원문은 제거됐고, HTTP 상태·경로·메서드 시그니처는 그대로다. 등록된 코드는 `mapHttpProblem`이 catalog 문구의 problem+json으로 변환하며, 구버전 호환 별칭(statusCode/message/error)은 `sendProblemResponse`가 그대로 유지한다. 웹·모바일 BFF tombstone 라우트는 백엔드를 프록시하지 않고 자체 Next측 410 `{code}` 본문을 author하므로 이번 변경 대상이 아니며, 백엔드 `error` 필드를 소비하는 BFF는 없다(프론트 `lib/api/client.ts`의 `error` 읽기는 자체 응답의 "Authentication required." 접두사 확인뿐). envelope(ok/reason) 전환(5-4)과 `eformsign.controller`의 나머지 raw 본문(5-3b)은 여전히 후속이다.
 
+## 2026-09-22 Task 9.1 — 전체 실패 시나리오·누락 방지 검사 (BJJ-319 phase 9.1)
+
+### Inventory 전수 감사 (evidence)
+
+797개 owner 행 전수 대조: `classification`·`reason` 결측 0, `path`/`root` 결측 0. 분류 히스토그램: migrated 509 · no-direct-error-boundary 282 · approved-exception 5 · removed 1 — **legacy 0**. `followup_task`는 28행이 참조(4.1=21, 6.1=5, 5.1=1, 7.1=1)하며 모두 완료 task의 증거 소속 기록이고 미해결 항목 0. spec 매핑: mapped-em-v1 761 / exempt 36, `spec_mapping_status` 결측 0.
+
+**이상 발견(9.1에서 시정):** branch-system-template 기능(컨트롤러 1 + BFF 4, 2026-09-10 `99ab404d0`/`373e7e5e1`/`f6eb86ecc`/`1a8294421`)과 `backend/application/utils/problem-bodies.ts`(4.1 헬퍼)가 1.1 스캔 창구 밖이라 owner 행이 없었다. 9.1에서 6행을 추가해 미분류를 0으로 복원했고(총 803행), 컨트롤러의 레거시 403 문자 본문과 로컬 전용 `BRANCH_CONTEXT_CHANGED` 409는 호환성 경계(L20)에 근거한 approved-exception으로 기록했다. `BRANCH_CONTEXT_CHANGED`의 카탈로그 등록 여부는 별도 gap-report 의사결정으로 carried(아래).
+
+### 이행 어댑터 전수 사용처 (제거 금지 — 완료 판정: 소비자·webhook 호환 검증 후)
+
+| 어댑터 (inventory 행) | 지원 소비자 | 비고 |
+| --- | --- | --- |
+| `packages/shared/src/errors/user-error-message.ts` (approved-exception, verify-only) | 직접 import: shared 내부(`route-utils.ts`, index 재노출) + FE 1 화면(`ClientFormDialog.tsx`) + MO 12 파일(등록 마법사·직원 화면·메시지 작성·`api-error-mapper.ts`·`useEmployees.ts` 등) + 테스트 다수 | problem-contract 우선 검증 후 레거시 입력을 한국어 sanitized 메시지로 번역. 단일 승인 레거시 브리지 |
+| `packages/shared/src/errors/api-error-message.ts` (approved-exception, verify-only) | `getApiErrorMessage`: FE 테스트 3곳이 소비(런타임 직접 소비 0), `getConflictPayload`: FE/MO `app/api/employees/route.ts` 2곳 | user-error-message 위임 래퍼. `KOREAN_ERROR_MESSAGES` 외부 소비자 0(user-error-message 내부 전용) |
+| `packages/shared/src/api/route-utils.ts` (approved-exception) | FE BFF 142 라우트 + MO BFF 124 라우트 (266파일 import) | problem-contract-first 공유 경계 툴킷; legacy 401 기본값과 UPSTREAM_ERROR 헬퍼는 미전환/비직접 라우트 호환용 carried |
+| `backend/application/utils/problem-bodies.ts` (9.1 신규 등록, approved-exception verify-only) | backend usecase/service/controller의 problem throw 전반 | 서버측 유일 sanctioned problem-body 빌더. 9.1 intake gate가 미등록 상태를 발견해 등록 |
+
+### 알려진 원인의 500 / 빈 성공 변환 = 0 검증
+
+`packages/shared/scripts/raw-error-intake-gate.mjs --report`(결정론적 스캔)로 잔여 원시 500 문과 실패→빈 성공 catch를 전수 나열했다.
+
+- 원시 500 후보 3건 모두 승인 상태: `eformsign.controller.ts` L68/L72는 sanitized 공급자/불명 오류 전달로 boundary가 problem+json(INTERNAL_ERROR/UPSTREAM_*)으로 변환하며 본문 원문은 유출되지 않음(문제 경계 스푸핑 테스트로 검증), `receipt-link.controller.ts` L91은 423 잠금의 레거시 `{reason, lockedUntil}` 계약 유지(gap G-01 문서화). 카탈로그 없이 아는 업무 원인이 문자열 500 본문으로 남는 곳은 0.
+- 실패→빈 성공: `frontend/src/hooks/usePushNotification.ts`의 `fetchNotifications`/`fetchUnreadCount`가 조회 실패를 `[]`/`0`으로 삼키던 실제 결함을 발견하고 모바일 행과 동일하게 수정(빨강-먼저 테스트 포함). 나머지 14건은 로컬 능력/베스트에포트 의미론(storage 부재, 미구독, 세션 정책, 관측 텔레메트리 저하, 로컬 계산 null 계약)으로 업무 조회의 빈 성공 변환이 아니어서 유지한다.
+
+### 새 원시 오류 유입 gate
+
+`packages/shared/scripts/raw-error-intake-gate.mjs` + `raw-error-intake-gate.test.mjs`(shared `pnpm test`의 `node --test scripts/*.test.mjs`에 자동 편입). 스캔 루트와 원시 패턴을 inventory 자체(`source_roots`, `method.patterns.raw_http_exception`)에서 파생해 경로 이중 관리를 없앴다. 실패 규칙은 하나: inventory 미등록 런타임 파일에서 원시 예외 패턴 적발 시 실패(신규 원시 오류는 전환 또는 inventory 등록 강제). 원시 500/빈 성공 나열은 판단이 반구조적이므로 report-only로 남긴다. HEAD 기준 2,036파일 스캔, 위반 0.
+
+### 필수 시나리오 증거 대조 (계획 표 L192-202)
+
+| # | 시나리오 | 증가 증거 (suite/spec) | 상태 |
+| --- | --- | --- | --- |
+| 1 | 필수값 2개 이상 누락, enum/literal/union 누락 | `backend/infrastructure/filters/problem-http.integration.spec.ts` "returns both missing fields…", `packages/shared/src/errors/problem-details.test.ts` "rejects mismatched or unknown values"/"malformed pointers, field codes, locations, actions, retry modes", 웹/모바일 고객 폼 필드 연결 테스트(6.x 기록) | PASS |
+| 2 | HTML·빈 본문·잘못된 JSON·미등록 type/code/action | `problem-details.test.ts` "safe read messages for empty, HTML…", MADE_UP code/공격 type 거절 테스트, `problem-proxy.test.ts` "does not route mismatched identifiers…", FE/MO `route-utils.test.ts` invalid-JSON | PASS |
+| 3 | 고객 등록 성공·발송 실패 (7.1) | `backend/test/services/sms-trigger-delivery.service.spec.ts` CLIENT_WELCOME 계약·템플릿 실패 fail-closed·사전-저장 실패 무발송 | PASS |
+| 4 | provider 접수 후 유실·저장 실패 (7.1) | 동 파일 "keeps the started fence when the provider accepts but result persistence fails"/"keeps an uncertain fence…", `sms-provider-acceptance.retry.spec.ts` "never retries the uncertain source" | PASS |
+| 5 | 부분 발송 (7.1) | `sms-provider-acceptance.retry.spec.ts` "blocks partial batches…", "persists the partial fence and a restarted process still forbids every resend path" | PASS |
+| 6 | 동시 수정·동시 claim·같은 멱등성 키 | `service-record-write-lock-races-lifecycle-client.e2e.spec.ts`(9.1에서 pin 갱신), `service-record-confirm-provider-races.e2e.spec.ts`, `message-delivery.controller.spec.ts` "converge duplicate manual requests with one idempotency key", re-entry dispatch 거절 테스트 | PASS |
+| 7 | 서명된 계약 수정·iframe 종료·낡은 callback (5-4) | `contract-operation-guard.test.ts` "blocks an in-flight operation when its iframe closes…"/UNKNOWN·PARTIALLY_APPLIED 잠금, `new/page.behavior.test.tsx` "locks an iframe close without a validated callback", `eformsign-doc-dispatch-headless-envelope.spec.ts` | PASS |
+| 8 | 다른 지점/권한 없는 요청 | `backend/test/e2e/multi-tenancy.spec.ts`, `backend/test/auth-e2e/tenant-isolation.spec.ts`(live-DB lane, carried), 요청 ID만 노출하는 문제 경계 스푸핑 테스트 | PASS (live lane carried) |
+| 9 | 취소·인증 갱신·만료·네트워크 복구 (6d2) | `mobile/src/__tests__/middleware.test.ts` 만료 세션 조율·중첩 refresh 금지, `mobile/src/lib/api/__tests__/authenticated-fetch.test.ts` 1회 refresh 후 1회 재시도·abort 보존, `mobile/tests/phase3-integration.spec.ts` test 5 재시도 계측 | PASS |
+| 10 | 구버전 클라이언트·웹훅·정상 빈 조회 | `problem-response.spec.ts` "keeps unconverted business rejections on their existing compatibility path", `problem-http.integration.spec.ts` statusCode/message/error 별칭 보존, `eformsign-webhook.controller.integration.spec.ts` 전체, `usePushNotification` 빈 결과=성공/실패 구분 테스트(FE 9.1 신규 포함) | PASS |
+| 11 | Sentry 중복 capture 없음·요청 참조·민감정보 비노출 | `backend/infrastructure/observability/service-record-sentry.spec.ts` 15 tests(PII/token 제거, "captures … once", 5xx만 capture, 4xx drop) | PASS (코드·테스트 증거) / 실제 Sentry 수신 검증은 Phase 10 |
+
+필수 시나리오에서 실제 갭은 2건뿐이었고 모두 이번 단위에서 시정했다: (a) FE 알림 조회 빈 성공 변환(위 결함 수정), (b) 퇴역 코드 pin e2e 갱신(아래).
+
+### 6.1b 퇴역 코드 pin 갱신 (carried 해소)
+
+`backend/test/e2e/service-record-write-lock-races-lifecycle-client.e2e.spec.ts` L429/478의 퇴역 코드 pin(`SERVICE_RECORD_FINALIZED`/`SERVICE_RECORD_START_DATE_LOCKED`)을 6.1b 매핑대로 `REQUEST_CONFLICT`로 갱신했다(production: `service-record-entry.service.ts` L270/L278, `service-record-lifecycle.service.ts` L492). 라이브 DB 게이팅 의미론은 변경하지 않았다. live-DB/e2e 레인 실행은 계획대로 carried이며 본 단위에서 실행하지 않았다.
+
+### carried (9.1 이후)
+
+- `BRANCH_CONTEXT_CHANGED`(로컬 전용 409 코드, message-delivery·branch-system-template 2곳)의 카탈로그 등록 또는 유지 확정 — 신규 카탈로그 코드이므로 gap-report·감사 후 결정. 소비자는 현재 상태 코드 기반 분기라 호환 영향 0.
+- auth-e2e/e2e live-DB 레인(멀티테넌시 실DB, write-lock 시나리오 재실행)과 Phase 10 실환경 Sentry 수신 검증.
+
 ## 2026-09-10 웹 직접 문자 후속 검증
 
 웹 `sendSms`가 원본 오류를 보존하며, TemplateSendForm은 검증된 NOT_APPLIED와 UNKNOWN/PARTIALLY_APPLIED를 구분한다. 불확실한 요청의 동일 화면 재발송 차단, 확정 접수 수신자 제외, 새 입력 보존, 중복 확인/발송 중 방식 전환 격리와 commit 이후 상태 갱신을 적용했다. 제공기록지의 외부 API와 발송 정책은 기존 동작을 유지한다.
