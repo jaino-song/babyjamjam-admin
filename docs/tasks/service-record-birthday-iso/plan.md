@@ -17,14 +17,15 @@ Change both service-record birth-date inputs to YYYY-MM-DD, automatically insert
 - Existing stored birth dates are not destructively rewritten or assigned a new century while typing.
 - UI and server validation agree on the YYYY-MM-DD submission contract.
 
-## Execution
-1. Inspect existing shared birthday helpers and customer form input behavior.
-2. Update shared field definitions and strict validation; connect the formatter to the existing wizard inputs.
-3. Update relevant regression tests and compile vendored runtime artifacts from the real shared TypeScript sources.
-4. Run available focused checks; inspect committed file contents and PR state.
+## Execution status
+1. Completed: inspected the shared birthday helper, the customer form import and its matching date-formatting implementation.
+2. Completed: changed shared field definitions and validation; connected formatBirthdayInput to momBirth and babyBirth in the existing wizard.
+3. Completed: updated policy, UI and DTO regression tests; regenerated the vendored JS and declarations from the real shared TypeScript sources.
+4. Completed: strict compilation of the two shared helper modules and 121 dependency-free Node regression cases passed. The wizard-specific commit changes only six added lines and one removed line.
+5. Pending: application Jest suites, full lint/typecheck/build and latest-SHA CI completion; real-browser typing, caret and IME checks; existing saved-record load/edit/save roundtrips.
 
 ## Verification and risks
-Full application dependency installation is currently blocked by DNS failures to npm and GitHub in the execution container. Run strict compilation and dependency-free regression checks where possible. Do not claim Jest, browser, CI, IME or complete build success without observed results. Keep the existing PR in Draft and do not merge or deploy.
+The execution container cannot resolve npm or GitHub hosts and does not contain application dependencies. Standalone helper tests are not React, DTO integration, browser or full-application test results. The existing legacy read normalizer remains unchanged, and no database migration or application-wide stored-data conversion is included. Six-digit values are not accepted by the new strict input validator, so callers that restore legacy values must use their read normalization path before saving, or the user must enter the full year. Verify these existing-record paths before merge.
 
 ## Status
-In progress. The existing shared birthday utility and customer form imports have been inspected.
+Implementation committed to Draft PR #734. Focused helper checks passed; full application and browser verification remains pending. Do not merge or deploy on the basis of the standalone checks alone.
