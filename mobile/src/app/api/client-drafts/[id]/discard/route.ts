@@ -7,8 +7,8 @@ import {
     getAuthHeaders,
     getAuthToken,
     parseBody,
-    unauthorizedResponse,
 } from "@/lib/api/route-utils";
+import { unauthorizedProblemResponse } from "@/lib/api/problem-responses";
 
 type RouteParams = { params: Promise<{ id: string }> };
 
@@ -19,7 +19,7 @@ const discardDraftSchema = z.object({
 // POST /api/client-drafts/[id]/discard - 초안 폐기
 export async function POST(request: NextRequest, { params }: RouteParams) {
     const token = getAuthToken(request);
-    if (!token) return unauthorizedResponse("Unauthorized");
+    if (!token) return unauthorizedProblemResponse();
 
     const { id } = await params;
 

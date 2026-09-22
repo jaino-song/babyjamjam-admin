@@ -15,6 +15,7 @@ import { Request, Response } from "express";
 import Redis from "ioredis";
 
 import { PrismaService } from "../database/prisma.service";
+import { codeOnlyProblemBody } from "application/utils/problem-bodies";
 
 type RateLimitRow = {
     count: number;
@@ -221,20 +222,12 @@ export class RateLimitGuard implements CanActivate, OnModuleDestroy {
             return;
         }
 
-        const remainingSeconds = Math.max(
-            1,
-            Math.ceil((result.resetAt.getTime() - now.getTime()) / 1000),
-        );
-        const remainingMinutes = Math.max(1, Math.ceil(remainingSeconds / 60));
-
+        // Registered REQUEST_RATE_LIMITED problem (429): the HTTP mapper keys
+        // on the body code. The Retry-After signal stays on the response
+        // HEADERS (set by setRateLimitHeaders before this assert), and the
+        // catalog copy replaces the old per-window Korean sentence.
         throw new HttpException(
-            {
-                statusCode: HttpStatus.TOO_MANY_REQUESTS,
-                code: "AUTH_RATE_LIMITED",
-                message: `요청 횟수가 초과되었습니다. ${remainingMinutes}분 후에 다시 시도해주세요.`,
-                error: "Too Many Requests",
-                retryAfter: remainingSeconds,
-            },
+            codeOnlyProblemBody("REQUEST_RATE_LIMITED"),
             HttpStatus.TOO_MANY_REQUESTS,
         );
     }

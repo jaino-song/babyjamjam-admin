@@ -1,4 +1,5 @@
 import { Injectable, Inject, NotFoundException } from "@nestjs/common";
+import { codeOnlyProblemBody } from "application/utils/problem-bodies";
 import {
     INotificationRepository,
     NOTIFICATION_REPOSITORY,
@@ -25,12 +26,13 @@ export class MarkNotificationReadUsecase {
         const notification = await this.notificationRepository.findById(branchid, notificationId);
 
         if (!notification) {
-            throw new NotFoundException(`Notification not found: ${notificationId}`);
+            throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
         }
 
-        // 본인의 알림인지 확인
+        // 본인의 알림인지 확인. 타인의 알림은 존재하지 않는 것과 같이 404로
+        // 응답해 알림 식별자의 존재 여부를 노출하지 않는다.
         if (notification.userId !== userId) {
-            throw new NotFoundException(`Notification not found: ${notificationId}`);
+            throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
         }
 
         if (notification.readAt) return notification;

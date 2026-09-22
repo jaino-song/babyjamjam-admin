@@ -1,4 +1,5 @@
 import { CreateAndSendServiceRecordSnapshotUsecase } from "application/usecases/eformsign-doc/create-and-send-service-record-snapshot.usecase";
+import { LIST_ONLY_HISTORICAL_MATERNITY_TEMPLATE_IDS } from "application/utils/eformsign-historical-template-policy";
 
 const TEST_PRINCIPAL = { branchId: "branch-1", globalRole: "owner" };
 const createBoundary = () => ({
@@ -133,7 +134,7 @@ function makeRecord() {
     };
 }
 
-function setup() {
+function setup(options: { templateId?: string } = {}) {
     const snapshotChunk = {
         findMany: jest.fn().mockResolvedValue([]),
         deleteMany: jest.fn().mockResolvedValue({ count: 0 }),
@@ -144,7 +145,11 @@ function setup() {
     const eformsignDoc = {
         upsert: jest.fn().mockResolvedValue({}),
     };
+    const serviceRecordCase = {
+        findUnique: jest.fn(),
+    };
     const prisma = {
+        service_record_case: serviceRecordCase,
         service_record_snapshot_chunk: snapshotChunk,
         eformsign_doc: eformsignDoc,
     };
@@ -177,13 +182,18 @@ function setup() {
         createDocument: jest.fn().mockRejectedValue(new TypeError("fetch failed")),
         findDocumentsByTitle: jest.fn().mockResolvedValue([remoteDocument]),
     };
+    const credentialBoundary = createBoundary();
     const usecase = new CreateAndSendServiceRecordSnapshotUsecase(
         eformsignClient as never,
         prismaWithTransaction as never,
-        createBoundary() as never,
-        {} as never,
+        credentialBoundary as never,
+        {
+            get: jest.fn((key: string) => (
+                key === "EFORMSIGN_SERVICE_RECORD_TEMPLATE_ID" ? options.templateId : undefined
+            )),
+        } as never,
     );
-    return { usecase, prisma: prismaWithTransaction, eformsignClient, remoteDocument };
+    return { usecase, prisma: prismaWithTransaction, eformsignClient, remoteDocument, credentialBoundary };
 }
 
 describe("client-owned service record snapshot", () => {
@@ -232,6 +242,24 @@ describe("client-owned service record snapshot", () => {
         const reader = usecase as unknown as { getConfiguredTiers(): unknown };
 
         expect(() => reader.getConfiguredTiers()).toThrow(/EFORMSIGN_SERVICE_RECORD_TEMPLATE_ID/);
+    });
+
+    it.each([
+        ...LIST_ONLY_HISTORICAL_MATERNITY_TEMPLATE_IDS,
+        ...LIST_ONLY_HISTORICAL_MATERNITY_TEMPLATE_IDS.map((templateId) => `  ${templateId}  `),
+    ])("rejects retired configured tiers before durable or provider work: %s", async (templateId) => {
+        const { usecase, prisma, eformsignClient, credentialBoundary } = setup({ templateId });
+
+        await expect(usecase.executeCase("branch-1", "case-1", TEST_PRINCIPAL))
+            .rejects.toThrow("historical list-only");
+
+        expect(prisma.service_record_case.findUnique).not.toHaveBeenCalled();
+        expect(prisma.service_record_snapshot_chunk.findMany).not.toHaveBeenCalled();
+        expect(prisma.service_record_snapshot_chunk.create).not.toHaveBeenCalled();
+        expect(prisma.service_record_snapshot_chunk.update).not.toHaveBeenCalled();
+        expect(prisma.eformsign_doc.upsert).not.toHaveBeenCalled();
+        expect(credentialBoundary.withCredentials).not.toHaveBeenCalled();
+        expect(eformsignClient.createDocument).not.toHaveBeenCalled();
     });
 
     it("sizes each provider segment to the smallest fitting tier and carries that tier's templateId", () => {

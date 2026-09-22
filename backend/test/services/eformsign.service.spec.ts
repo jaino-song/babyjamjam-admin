@@ -9,6 +9,7 @@ import {
     EformsignService,
 } from "application/services/eformsign.service";
 import type { EformsignTemplateWorkflow } from "application/utils/eformsign-template-workflow";
+import { LIST_ONLY_HISTORICAL_MATERNITY_TEMPLATE_IDS } from "application/utils/eformsign-historical-template-policy";
 
 function generateEformsignPrivateKeyHex(): string {
     const { privateKey } = crypto.generateKeyPairSync("ec", { namedCurve: "prime256v1" });
@@ -303,7 +304,7 @@ describe("EformsignService", () => {
             "access-token",
             "doc-too-large",
             "document",
-        )).rejects.toThrow("exceeds the local mirror size limit");
+        )).rejects.toMatchObject({ response: { code: "PAYLOAD_TOO_LARGE" } });
         expect(arrayBuffer).not.toHaveBeenCalled();
     });
 
@@ -337,7 +338,7 @@ describe("EformsignService", () => {
             "access-token",
             "doc-chunked-too-large",
             "document",
-        )).rejects.toThrow("exceeds the local mirror size limit");
+        )).rejects.toMatchObject({ response: { code: "PAYLOAD_TOO_LARGE" } });
         expect(cancel).toHaveBeenCalled();
     });
 
@@ -371,6 +372,49 @@ describe("EformsignService", () => {
             "older",
         ]);
         expect(result.total_rows).toBe(4);
+    });
+
+    it.each(LIST_ONLY_HISTORICAL_MATERNITY_TEMPLATE_IDS)(
+        "rejects list-only historical template %s when explicitly requested for creation",
+        (templateId) => {
+            const service = new EformsignService(createConfigService());
+
+            expect(() => service.resolveEffectiveTemplateId(templateId)).toThrow(
+                "historical list-only",
+            );
+            expect(() => service.generateDocumentOptions(
+                createContractData(),
+                "access-token",
+                "refresh-token",
+                templateId,
+            )).toThrow("historical list-only");
+        },
+    );
+
+    it("rejects a configured list-only fallback when the area template is missing", () => {
+        const service = new EformsignService(createConfigService({
+            EFORMSIGN_TEMPLATE_ID: LIST_ONLY_HISTORICAL_MATERNITY_TEMPLATE_IDS[0],
+        }));
+
+        expect(() => service.resolveEffectiveTemplateId()).toThrow("historical list-only");
+        expect(() => service.generateDocumentOptions(
+            createContractData(),
+            "access-token",
+            "refresh-token",
+        )).toThrow("historical list-only");
+    });
+
+    it("rejects a retired fallback before an incomplete provider configuration can mask it", () => {
+        const service = new EformsignService(createConfigService({
+            EFORMSIGN_TEMPLATE_ID: LIST_ONLY_HISTORICAL_MATERNITY_TEMPLATE_IDS[0],
+            EFORMSIGN_API_URL: undefined,
+        }));
+
+        expect(() => service.generateDocumentOptions(
+            createContractData(),
+            "access-token",
+            "refresh-token",
+        )).toThrow("historical list-only");
     });
 
     it("uses payment collection date fields and reviewer step for provider confirmation", () => {

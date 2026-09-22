@@ -1,11 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import { serverAPIClient } from "@/lib/api/server";
 import {
+  errorResponse,
   getAuthHeaders,
   getAuthToken,
   sanitizeUpstreamClientError,
   withNoStore,
 } from "@/lib/api/route-utils";
+import { unauthorizedProblemResponse } from "@/lib/api/problem-responses";
 import {
   deriveDashboardAnalyticsFromClients,
   normalizeDashboardAnalyticsPayload,
@@ -35,7 +37,7 @@ function readNumber(payload: unknown, key: string): number | undefined {
 export async function GET(request: NextRequest) {
   const token = getAuthToken(request);
   if (!token) {
-    return withNoStore(NextResponse.json({ error: "Unauthorized" }, { status: 401 }));
+    return unauthorizedProblemResponse();
   }
 
   const headers = getAuthHeaders(token);
@@ -64,7 +66,7 @@ export async function GET(request: NextRequest) {
         if (backendAnalytics) return withNoStore(NextResponse.json(backendAnalytics));
         return withNoStore(
           NextResponse.json(
-            sanitizeUpstreamClientError(response.data, "Failed to fetch dashboard analytics", response.status),
+            sanitizeUpstreamClientError(response.data, "Failed to fetch dashboard analytics", response.status, "read"),
             { status: response.status },
           ),
         );
@@ -102,12 +104,6 @@ export async function GET(request: NextRequest) {
     );
   } catch (error) {
     if (backendAnalytics) return withNoStore(NextResponse.json(backendAnalytics));
-    console.error("[API] Error fetching dashboard analytics:", error);
-    return withNoStore(
-      NextResponse.json(
-        { error: "Failed to fetch dashboard analytics" },
-        { status: 500 },
-      ),
-    );
+    return errorResponse(error, "fetch dashboard analytics", "read");
   }
 }

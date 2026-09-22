@@ -19,6 +19,21 @@ describe("EformsignCredentialBoundary", () => {
         )).toThrow(ForbiddenException);
     });
 
+    it("capability denials carry ACCESS_DENIED", () => {
+        for (const principal of [
+            { ...owner, branchId: undefined },
+            { ...owner, globalRole: "user", branchRole: "user" },
+        ]) {
+            try {
+                assertEformsignProviderCapability(principal, "document.cancel");
+                throw new Error("Expected capability assertion to reject");
+            } catch (error) {
+                expect(error).toBeInstanceOf(ForbiddenException);
+                expect((error as ForbiddenException).getResponse()).toMatchObject({ code: "ACCESS_DENIED" });
+            }
+        }
+    });
+
     it("requires an operation capability for the principal role", () => {
         expect(() => assertEformsignProviderCapability(
             { ...owner, globalRole: "user", branchRole: "user" },

@@ -29,6 +29,7 @@ import { CurrentTenant, TenantGuard } from "infrastructure/tenant";
 import { redactSensitiveLegacyChatContent } from "application/ai-chat/legacy-chat-confirmation.service";
 import type { VerifiedTenantPrincipal } from "infrastructure/tenant/tenant.context";
 import { sanitizeEformsignErrorMessage } from "application/utils/eformsign-error-message";
+import { codeOnlyProblemBody, problemBody } from "application/utils/problem-bodies";
 
 interface JwtUser {
     userId: string;
@@ -121,7 +122,7 @@ export class AIChatController {
         const session = await this.aiChatService.getSession(params.id, user.userId, tenant.branchId);
 
         if (!session) {
-            throw new NotFoundException("Session not found or expired");
+            throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
         }
 
         return {
@@ -146,10 +147,20 @@ export class AIChatController {
         @CurrentTenant() tenant: ChatTenant,
     ) {
         if (offset < 0) {
-            throw new BadRequestException("offset must be >= 0");
+            throw new BadRequestException(problemBody("VALIDATION_FAILED", {
+                pointer: "/offset",
+                code: "OUT_OF_RANGE",
+                detail: "offset은 0 이상이어야 해요.",
+                location: "query",
+            }));
         }
         if (limit < 1 || limit > 50) {
-            throw new BadRequestException("limit must be between 1 and 50");
+            throw new BadRequestException(problemBody("VALIDATION_FAILED", {
+                pointer: "/limit",
+                code: "OUT_OF_RANGE",
+                detail: "limit은 1 이상 50 이하여야 해요.",
+                location: "query",
+            }));
         }
 
         const user = req.user as JwtUser;
@@ -174,7 +185,7 @@ export class AIChatController {
         const session = await this.aiChatService.getSession(params.id, user.userId, tenant.branchId);
 
         if (!session) {
-            throw new NotFoundException("Session not found");
+            throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
         }
 
         await this.aiChatService.deleteSession(params.id, user.userId, tenant.branchId);
@@ -197,7 +208,7 @@ export class AIChatController {
         });
 
         if (!session) {
-            throw new NotFoundException("Session not found");
+            throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
         }
 
         // Accept both messageId (preferred) and messageIndex (backward compatibility).
@@ -210,7 +221,7 @@ export class AIChatController {
         }
 
         if (!message) {
-            throw new NotFoundException("Message not found");
+            throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
         }
 
         // Save feedback to database

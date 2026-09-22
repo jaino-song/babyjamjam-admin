@@ -1,10 +1,10 @@
 import { cookies } from "next/headers";
 import { NextResponse, NextRequest } from "next/server";
-import { AxiosError } from "axios";
 import { jwtDecode } from "jwt-decode";
 import { z } from "zod";
 
-import { getUpstreamErrorStatus, logUpstreamError, parseBody, sanitizeUpstreamClientError } from "@/lib/api/route-utils";
+import { errorResponse, parseBody } from "@/lib/api/route-utils";
+import { upstreamBodyErrorResponse } from "@/lib/api/problem-responses";
 import { serverAPIClient } from "@/lib/api/server";
 import { getServerRuntimeConfig } from "@/lib/env";
 import {
@@ -30,13 +30,6 @@ interface TokenPayload {
     type: "access" | "refresh";
 }
 
-interface APIErrorResponse {
-    statusCode: number;
-    message: string;
-    error: string;
-    code?: string;
-}
-
 export async function POST(request: NextRequest) {
     const { data: parsed, response: invalid } = await parseBody(loginSchema, request);
     if (invalid) return invalid;
@@ -45,9 +38,11 @@ export async function POST(request: NextRequest) {
         const { autoLogin = true, ...loginPayload } = parsed;
         const { data, status } = await serverAPIClient.post("/auth/login", loginPayload);
 
-        // If login failed, return the response
+        // If login failed, propagate the upstream failure through the problem
+        // boundary: verbatim problem bodies keep their status and headers,
+        // other bodies get the sanitized fallback without raw passthrough.
         if (!data.success || !data.accessToken) {
-            return NextResponse.json(data, { status: status || 401 });
+            return upstreamBodyErrorResponse(status || 401, JSON.stringify(data), "login", "mutation");
         }
 
         // Set auth cookies on successful login
@@ -94,22 +89,6 @@ export async function POST(request: NextRequest) {
             requiresBranchSelection: data.requiresBranchSelection,
         }, { status: 200 });
     } catch (error) {
-        logUpstreamError("Auth Login", error);
-
-        if (error instanceof AxiosError) {
-            const axiosError = error as AxiosError<APIErrorResponse>;
-            const status = getUpstreamErrorStatus(error);
-            const responseData = axiosError.response?.data;
-
-            return NextResponse.json(
-                sanitizeUpstreamClientError(responseData, "Login failed", status),
-                { status }
-            );
-        }
-
-        return NextResponse.json(
-            { error: "Internal Server Error" },
-            { status: 500 }
-        );
+        return errorResponse(error, "login");
     }
 }

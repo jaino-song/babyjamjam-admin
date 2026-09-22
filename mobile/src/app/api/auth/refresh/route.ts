@@ -3,7 +3,8 @@ import { NextResponse } from "next/server";
 import { AxiosError } from "axios";
 import { jwtDecode } from "jwt-decode";
 
-import { logUpstreamError, sanitizeUpstreamClientError } from "@/lib/api/route-utils";
+import { errorResponse, logUpstreamError } from "@/lib/api/route-utils";
+import { unauthorizedProblemResponse } from "@/lib/api/problem-responses";
 import { serverAPIClient } from "@/lib/api/server";
 import { getServerRuntimeConfig } from "@/lib/env";
 import {
@@ -20,11 +21,8 @@ interface RefreshResponse {
     refreshToken?: string;
 }
 
-interface APIErrorResponse {
-    statusCode: number;
+interface ReplayErrorBody {
     code?: string;
-    message: string;
-    error: string;
 }
 
 function isAutoLoginEnabled(value: string | undefined): boolean {
@@ -86,7 +84,7 @@ export async function POST() {
     const refreshToken = cookieStore.get("refresh_token")?.value;
 
     if (!refreshToken) {
-        const response = NextResponse.json({ error: "Refresh token not found" }, { status: 401 });
+        const response = unauthorizedProblemResponse();
         clearAuthCookies(response);
         return response;
     }
@@ -99,7 +97,10 @@ export async function POST() {
         });
 
         if (!data?.accessToken) {
-            const response = NextResponse.json({ error: "Invalid refresh response" }, { status: 401 });
+            // The backend answered but the session cannot be restored; the
+            // registered AUTH_REQUIRED problem (401) matches the client
+            // contract of falling back to a fresh sign-in.
+            const response = unauthorizedProblemResponse();
             clearAuthCookies(response);
             return response;
         }
@@ -116,14 +117,17 @@ export async function POST() {
         });
         return response;
     } catch (error) {
-        if (error instanceof AxiosError) {
-            const axiosError = error as AxiosError<APIErrorResponse>;
-            const status = axiosError.response?.status || 500;
-            logUpstreamError("refresh authentication", error);
+        if (error instanceof AxiosError && error.response) {
+            const status = error.response.status || 500;
+
+            // Concurrent-refresh replay bridge: the public wire code has live
+            // consumers in middleware/session-refresh and is not yet a
+            // catalog code (tracked for a shared-catalog registration).
             if (
                 status === 401
-                && axiosError.response?.data?.code === "AUTH_REFRESH_REPLAY_CONCURRENT"
+                && (error.response.data as ReplayErrorBody | undefined)?.code === "AUTH_REFRESH_REPLAY_CONCURRENT"
             ) {
+                logUpstreamError("refresh authentication", error);
                 const response = NextResponse.json(
                     {
                         code: "AUTH_REFRESH_REPLAY_CONCURRENT",
@@ -135,19 +139,13 @@ export async function POST() {
                 return response;
             }
 
-            const response = NextResponse.json(
-                sanitizeUpstreamClientError(
-                    axiosError.response?.data,
-                    "Failed to refresh authentication", status
-                ),
-                { status }
-            );
+            const response = errorResponse(error, "refresh authentication");
             if (status === 401 || status === 403) {
                 clearAuthCookies(response);
             }
             return response;
         }
 
-        return NextResponse.json({ error: "Failed to refresh authentication" }, { status: 500 });
+        return errorResponse(error, "refresh authentication");
     }
 }

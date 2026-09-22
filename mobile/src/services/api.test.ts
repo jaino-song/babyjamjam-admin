@@ -210,9 +210,14 @@ describe("eformsignApi.finalizeHeadless", () => {
         await expect(apiModule.eformsignApi.finalizeHeadless("doc-1"))
             .resolves.toEqual({
                 ok: false,
+                // Legacy reason alias kept for existing consumers, enriched
+                // with the registered code and outcome (5-4b contract).
                 reason: "provider_workflow_incomplete",
                 fallbackHint: "manual_check",
                 durationMs: 2_100,
+                code: "DOCUMENT_FINALIZE_UNCONFIRMED",
+                outcome: "UNKNOWN",
+                recovery: { action: "CHECK_STATUS", retry: { mode: "NEVER" } },
             });
         expect(mockPost).toHaveBeenCalledTimes(3);
     });

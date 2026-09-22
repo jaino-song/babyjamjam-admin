@@ -9,8 +9,9 @@ import {
 import { plainToInstance } from "class-transformer";
 import { validate as validateDto } from "class-validator";
 import { PrismaService } from "infrastructure/database/prisma.service";
+import { codeOnlyProblemBody, problemBody } from "application/utils/problem-bodies";
 import { ClientService } from "application/services/client.service";
-import { assertValidPhone, INVALID_PHONE_MESSAGE, InvalidPhoneError, normalizePhone } from "application/utils/normalize-phone";
+import { assertValidPhone, InvalidPhoneError, normalizePhone } from "application/utils/normalize-phone";
 import { PROPOSAL_FIELDS } from "application/services/call-extraction.prompt";
 import {
     ConfirmDraftDto,
@@ -23,17 +24,44 @@ import { createHash } from "node:crypto";
 
 const DRAFT_STATUSES = ["PENDING", "CONFIRMED", "DISCARDED"] as const;
 
+function invalidPhoneProposalBody() {
+    return problemBody("VALIDATION_FAILED", {
+        pointer: "/proposals",
+        code: "INVALID_FORMAT",
+        detail: "연락처가 올바른 국내 전화번호 형식이 아니에요.",
+        location: "body",
+    });
+}
+
+function changesRequiredBody() {
+    return problemBody("VALIDATION_FAILED", {
+        pointer: "/changes",
+        code: "REQUIRED",
+        detail: "변경할 고객 정보를 입력해 주세요.",
+        location: "body",
+    });
+}
+
+function unknownDraftTypeBody() {
+    return problemBody("VALIDATION_FAILED", {
+        pointer: "/type",
+        code: "INVALID_VALUE",
+        detail: "지원하지 않는 검토 요청이에요.",
+        location: "body",
+    });
+}
+
 function assertPhoneProposalValues(proposals: ReadonlyArray<{ field: string; value: unknown }>): void {
     for (const proposal of proposals) {
         if (proposal.field !== "phone" || proposal.value === null || proposal.value === undefined) continue;
         if (typeof proposal.value !== "string") {
-            throw new BadRequestException(INVALID_PHONE_MESSAGE);
+            throw new BadRequestException(invalidPhoneProposalBody());
         }
         try {
             assertValidPhone(proposal.value);
         } catch (error) {
             if (error instanceof InvalidPhoneError) {
-                throw new BadRequestException(error.message);
+                throw new BadRequestException(invalidPhoneProposalBody());
             }
             throw error;
         }
@@ -51,7 +79,12 @@ export class CallInboxService {
 
     private async validateNewClientFields(rawFields: unknown): Promise<ConfirmNewClientFieldsDto> {
         if (rawFields === null || typeof rawFields !== "object" || Array.isArray(rawFields)) {
-            throw new BadRequestException("fields is required for NEW_CLIENT");
+            throw new BadRequestException(problemBody("VALIDATION_FAILED", {
+                pointer: "/fields",
+                code: "REQUIRED",
+                detail: "새 고객 정보를 입력해 주세요.",
+                location: "body",
+            }));
         }
 
         const fields = plainToInstance(ConfirmNewClientFieldsDto, rawFields);
@@ -61,10 +94,14 @@ export class CallInboxService {
             forbidUnknownValues: true,
         });
         if (errors.length > 0) {
-            const messages = errors.flatMap((error) => Object.values(error.constraints ?? {}));
-            throw new BadRequestException({
-                message: messages.length > 0 ? messages : ["Invalid NEW_CLIENT fields"],
-            });
+            // 항목별 검증 사유는 공개 계약에서 카탈로그 문구로 대체되므로 본문에는
+            // 등록 코드와 필드 포인터만 실어요.
+            throw new BadRequestException(problemBody("VALIDATION_FAILED", {
+                pointer: "/fields",
+                code: "INVALID_VALUE",
+                detail: "새 고객 정보를 확인해 주세요.",
+                location: "body",
+            }));
         }
         return fields;
     }
@@ -113,7 +150,7 @@ export class CallInboxService {
                 draft: true,
             },
         });
-        if (!record) throw new NotFoundException("Call record not found");
+        if (!record) throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
         return {
             ...this.toCallRecordListItem(record),
             transcript: record.transcript,
@@ -232,7 +269,7 @@ export class CallInboxService {
                 reviewedBy: { select: { id: true, name: true } },
             },
         });
-        if (!draft) throw new NotFoundException("Draft not found");
+        if (!draft) throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
         return draft;
     }
 
@@ -244,7 +281,7 @@ export class CallInboxService {
                 where: { id: dto.clientId, branchId },
                 select: { id: true },
             });
-            if (!client) throw new NotFoundException("Client not found in this branch");
+            if (!client) throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
         }
         await this.prismaService.client_draft.update({
             where: { id },
@@ -268,14 +305,14 @@ export class CallInboxService {
             await this.lockDraftForUpdate(transaction, branchId, id);
             const draft = await transaction.client_draft.findFirst({ where: { id, branchId } });
             if (!draft || draft.status !== "PENDING" || draftTargetVersion(draft) !== expectedTargetVersion) {
-                throw new ConflictException("Draft changed after approval; review a new proposal");
+                throw new ConflictException(codeOnlyProblemBody("SERVICE_RECORD_WRITE_TARGET_CHANGED"));
             }
             if (dto.clientId != null) {
                 const client = await transaction.client.findFirst({
                     where: { id: dto.clientId, branchId },
                     select: { id: true },
                 });
-                if (!client) throw new NotFoundException("Client not found in this branch");
+                if (!client) throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
             }
             await transaction.client_draft.update({
                 where: { id },
@@ -314,7 +351,7 @@ export class CallInboxService {
             // a concurrent draft change between validation and locking.
             const observed = await transaction.client_draft.findFirst({ where: { id, branchId } });
             if (!observed || observed.status !== "PENDING" || draftTargetVersion(observed) !== expectedTargetVersion) {
-                throw new ConflictException("Draft changed after approval; review a new proposal");
+                throw new ConflictException(codeOnlyProblemBody("SERVICE_RECORD_WRITE_TARGET_CHANGED"));
             }
             const newClientFields = observed.type === "NEW_CLIENT"
                 ? await this.validateNewClientFields(dto.fields)
@@ -326,19 +363,19 @@ export class CallInboxService {
             await this.lockDraftForUpdate(transaction, branchId, id);
             const current = await transaction.client_draft.findFirst({ where: { id, branchId } });
             if (!current || current.status !== "PENDING" || draftTargetVersion(current) !== expectedTargetVersion) {
-                throw new ConflictException("Draft changed after approval; review a new proposal");
+                throw new ConflictException(codeOnlyProblemBody("SERVICE_RECORD_WRITE_TARGET_CHANGED"));
             }
             if (current.type === "NEW_CLIENT" && newClientFields === undefined) {
-                throw new ConflictException("Draft changed after approval; review a new proposal");
+                throw new ConflictException(codeOnlyProblemBody("SERVICE_RECORD_WRITE_TARGET_CHANGED"));
             }
             if (current.type !== "NEW_CLIENT" && current.type !== "CLIENT_UPDATE") {
-                throw new BadRequestException(`Unknown draft type: ${current.type}`);
+                throw new BadRequestException(unknownDraftTypeBody());
             }
             const locked = await transaction.client_draft.updateMany({
                 where: { id, branchId, status: "PENDING" },
                 data: { status: "CONFIRMING", confirmingStartedAt: new Date() },
             });
-            if (locked.count !== 1) throw new ConflictException("Draft already reviewed");
+            if (locked.count !== 1) throw new ConflictException(codeOnlyProblemBody("REQUEST_NOT_PENDING"));
             return { draft: current, clientUpdateChanges, newClientFields };
         });
 
@@ -351,7 +388,7 @@ export class CallInboxService {
         if (prepared.draft.type === "CLIENT_UPDATE") {
             return this.confirmClientUpdate(branchId, userId, id, prepared.draft, prepared.clientUpdateChanges!, true);
         }
-        throw new BadRequestException(`Unknown draft type: ${prepared.draft.type}`);
+        throw new BadRequestException(unknownDraftTypeBody());
     }
 
     private async confirmNewClientWithDraft(
@@ -371,7 +408,7 @@ export class CallInboxService {
                 data: { status: "CONFIRMING", confirmingStartedAt: new Date() },
             });
             if (locked.count === 0) {
-                throw new ConflictException("Draft already reviewed");
+                throw new ConflictException(codeOnlyProblemBody("REQUEST_NOT_PENDING"));
             }
         }
 
@@ -450,11 +487,11 @@ export class CallInboxService {
         }
         if (draft.type === "CLIENT_UPDATE") {
             if (!dto.changes || typeof dto.changes !== "object" || Array.isArray(dto.changes)) {
-                throw new BadRequestException("changes is required for CLIENT_UPDATE");
+                throw new BadRequestException(changesRequiredBody());
             }
             return this.confirmClientUpdate(branchId, userId, id, draft, dto.changes);
         }
-        throw new BadRequestException(`Unknown draft type: ${draft.type}`);
+        throw new BadRequestException(unknownDraftTypeBody());
     }
 
     private async confirmClientUpdate(
@@ -486,7 +523,7 @@ export class CallInboxService {
                 data: { status: "CONFIRMING", confirmingStartedAt: new Date() },
             });
             if (locked.count === 0) {
-                throw new ConflictException("Draft already reviewed");
+                throw new ConflictException(codeOnlyProblemBody("REQUEST_NOT_PENDING"));
             }
         }
 
@@ -529,10 +566,10 @@ export class CallInboxService {
         rawChanges: unknown,
     ): Promise<Record<string, unknown>> {
         if (draft.clientId == null) {
-            throw new ConflictException("고객 연결이 필요합니다");
+            throw new ConflictException(codeOnlyProblemBody("CLIENT_ASSIGNMENT_REQUIRED"));
         }
         if (!rawChanges || typeof rawChanges !== "object" || Array.isArray(rawChanges)) {
-            throw new BadRequestException("changes is required for CLIENT_UPDATE");
+            throw new BadRequestException(changesRequiredBody());
         }
         const allowedSet = new Set<string>(PROPOSAL_FIELDS);
         const filteredChanges: Record<string, unknown> = {};
@@ -544,12 +581,22 @@ export class CallInboxService {
             if (allowedSet.has(key) && value !== undefined) filteredChanges[key] = value;
         }
         if (Object.keys(filteredChanges).length === 0) {
-            throw new BadRequestException("No valid fields remain after allowlist filtering");
+            throw new BadRequestException(problemBody("VALIDATION_FAILED", {
+                pointer: "/changes",
+                code: "INVALID_VALUE",
+                detail: "변경할 수 있는 항목이 없어요.",
+                location: "body",
+            }));
         }
 
         for (const field of ["name", "voucherClient", "breastPump"] as const) {
             if (Object.prototype.hasOwnProperty.call(filteredChanges, field) && filteredChanges[field] === null) {
-                throw new BadRequestException(`${field} cannot be null`);
+                throw new BadRequestException(problemBody("VALIDATION_FAILED", {
+                    pointer: `/changes/${field}`,
+                    code: "REQUIRED",
+                    detail: `${field} 값은 비워둘 수 없어요.`,
+                    location: "body",
+                }));
             }
         }
 
@@ -564,10 +611,12 @@ export class CallInboxService {
             forbidUnknownValues: true,
         });
         if (errors.length > 0) {
-            const messages = errors.flatMap((error) => Object.values(error.constraints ?? {}));
-            throw new BadRequestException({
-                message: messages.length > 0 ? messages : ["Invalid CLIENT_UPDATE changes"],
-            });
+            throw new BadRequestException(problemBody("VALIDATION_FAILED", {
+                pointer: "/changes",
+                code: "INVALID_VALUE",
+                detail: "변경할 고객 정보를 확인해 주세요.",
+                location: "body",
+            }));
         }
         return filteredChanges;
     }
@@ -578,7 +627,7 @@ export class CallInboxService {
             where: { id, status: "PENDING" },
             data: { status: "DISCARDED" },
         });
-        if (locked.count === 0) throw new ConflictException("Draft already reviewed");
+        if (locked.count === 0) throw new ConflictException(codeOnlyProblemBody("REQUEST_NOT_PENDING"));
         await this.prismaService.client_draft.update({
             where: { id },
             data: { status: "DISCARDED", discardReason: reason ?? null, reviewedById: userId, reviewedAt: new Date() },
@@ -591,8 +640,8 @@ export class CallInboxService {
             where: { id, branchId },
             include: { callRecord: { select: { id: true, callerPhone: true, callerName: true } } },
         });
-        if (!draft) throw new NotFoundException("Draft not found");
-        if (draft.status !== "PENDING") throw new ConflictException("Draft already reviewed");
+        if (!draft) throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
+        if (draft.status !== "PENDING") throw new ConflictException(codeOnlyProblemBody("REQUEST_NOT_PENDING"));
         return draft;
     }
 

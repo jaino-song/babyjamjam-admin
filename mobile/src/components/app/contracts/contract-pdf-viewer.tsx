@@ -332,6 +332,11 @@ export function ContractPdfViewer({
           return;
         }
 
+        // Binary HEAD/GET failure: no problem body exists to parse. The
+        // user-visible copy stays locally authored (renderPdfError) and the
+        // failure is logged for observability — upstream internals are never
+        // rendered.
+        console.error("[ContractPdfViewer] preview load failed", error);
         setValidatedFileUrl(null);
         setPreviewStatus("error");
       }
@@ -693,6 +698,7 @@ export function ContractPdfViewer({
         ) {
           return;
         }
+        console.error("[ContractPdfViewer] fallback download failed", error);
         setPreviewStatus("error");
       })
       .finally(() => {

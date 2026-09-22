@@ -1,10 +1,10 @@
 "use client";
-import { getUserErrorMessage } from "@babyjamjam/shared";
 
 
 import axios from "axios";
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
+import { normalizeApiError, type NormalizedApiError } from "@babyjamjam/shared";
 
 import { usePhoneDuplicateCheck } from "@/hooks/usePhoneDuplicateCheck";
 import { AUTH_ROUTES } from "@/lib/auth/routes";
@@ -30,6 +30,22 @@ const STEP_FIELDS: Record<RegisterStep, readonly RegisterField[]> = {
 };
 
 export const REGISTER_STEP_TOTAL = 2;
+
+/** Registered-code discriminator for the duplicate-phone failure. */
+function isPhoneDuplicateFailure(errorData: unknown, normalized: NormalizedApiError): boolean {
+  // Legacy Prisma body: { code: "P2002", field: "phone" }.
+  if (
+    errorData && typeof errorData === "object" && !Array.isArray(errorData)
+    && (errorData as { code?: unknown }).code === "P2002"
+    && (errorData as { field?: unknown }).field === "phone"
+  ) {
+    return true;
+  }
+  // Problem body: registered conflict code with a /phone pointer.
+  return normalized.verified
+    && normalized.problem?.code === "REQUEST_CONFLICT"
+    && (normalized.problem.errors ?? []).some((problemError) => problemError.pointer === "/phone");
+}
 
 function formatBirthDateInput(value: string) {
   const digits = value.replace(/\D/g, "").slice(0, 8);
@@ -377,25 +393,26 @@ export function useRegisterPageController() {
           setAccountsLinked(true);
         }
         setIsSuccess(true);
-      } else if (response.code === "P2002" && response.message?.includes("phone")) {
+      } else if (response.code === "P2002") {
+        // Registered-code discrimination only — the register flow cannot
+        // produce another P2002, so no raw-message content check is needed.
         setErrors((prev) => ({ ...prev, phone: PHONE_DUPLICATE_ERROR }));
         setCurrentStep(1);
       } else {
-        setServerError(getUserErrorMessage(response.message || "회원가입에 실패했어요."));
+        setServerError("회원가입에 실패했어요.");
       }
     } catch (requestError: unknown) {
       console.error("Registration error:", requestError);
       const errorData = axios.isAxiosError(requestError) ? requestError.response?.data : undefined;
+      const normalized = normalizeApiError(requestError, { locale: "ko-KR", operation: "mutation" });
 
-      if (errorData?.code === "P2002" && (errorData?.field === "phone" || errorData?.message?.includes("phone"))) {
+      if (isPhoneDuplicateFailure(errorData, normalized)) {
         setErrors((prev) => ({ ...prev, phone: PHONE_DUPLICATE_ERROR }));
         setCurrentStep(1);
-      } else if (errorData?.errors) {
-        setServerError(getUserErrorMessage(requestError, errorData.errors.join("\n")));
-      } else if (errorData?.message) {
-        setServerError(getUserErrorMessage(requestError, errorData.message));
       } else {
-        setServerError(getUserErrorMessage(requestError, "네트워크 오류가 발생했어요. 다시 시도해 주세요."));
+        // Registered problem message (verified) or locally authored copy —
+        // upstream body messages/arrays are never rendered.
+        setServerError(normalized.verified ? normalized.message : "네트워크 오류가 발생했어요. 다시 시도해 주세요.");
       }
     } finally {
       setIsLoading(false);

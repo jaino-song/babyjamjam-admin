@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest } from "next/server";
 
 import { serverAPIClient } from "@/lib/api/server";
 import {
@@ -10,11 +10,12 @@ import {
     withNoStore,
 } from "@/lib/api/route-utils";
 
-type RouteParams = { params: Promise<{ id: string }> };
+import {
+    invalidScheduleChangeRequestIdResponse,
+    isValidScheduleChangeRequestId,
+} from "../../schedule-change-route-utils";
 
-function isValidRequestId(value: string): boolean {
-    return /^[A-Za-z0-9_-]{1,128}$/.test(value);
-}
+type RouteParams = { params: Promise<{ id: string }> };
 
 function getReason(body: unknown): string | undefined {
     if (!body || typeof body !== "object") return undefined;
@@ -28,8 +29,8 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
         if (!token) return unauthorizedResponse("Unauthorized");
 
         const { id } = await params;
-        if (!isValidRequestId(id)) {
-            return NextResponse.json({ error: "Invalid schedule change request id" }, { status: 400 });
+        if (!isValidScheduleChangeRequestId(id)) {
+            return invalidScheduleChangeRequestIdResponse();
         }
 
         const reason = getReason(await request.json().catch(() => null));

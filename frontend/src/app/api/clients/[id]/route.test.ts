@@ -3,6 +3,7 @@
  */
 import { NextRequest } from "next/server";
 
+import { createProblemDetails } from "@babyjamjam/shared";
 import { serverAPIClient } from "@/lib/api/server";
 import { DELETE, GET, PATCH } from "./route";
 
@@ -123,6 +124,73 @@ describe("GET /api/clients/[id]", () => {
         });
         expect(JSON.stringify(consoleError.mock.calls)).not.toContain(privateMessage);
         expect(JSON.stringify(consoleError.mock.calls)).not.toContain("private-token");
+    });
+
+    it("rejects unauthenticated reads, updates, and deletes with a registered 401 problem", async () => {
+        mockGet.mockReset();
+        mockPatch.mockReset();
+        mockDelete.mockReset();
+        const unauthenticated = (method: string, body?: object) => new NextRequest(
+            "http://localhost/api/clients/75",
+            {
+                method,
+                headers: body ? { "content-type": "application/json" } : {},
+                ...(body ? { body: JSON.stringify(body) } : {}),
+            },
+        );
+
+        for (const [handler, method, body] of [
+            [GET, "GET", undefined],
+            [PATCH, "PATCH", {}],
+            [DELETE, "DELETE", undefined],
+        ] as const) {
+            const response = await (handler as typeof DELETE)(
+                unauthenticated(method, body),
+                { params: Promise.resolve({ id: "75" }) },
+            );
+
+            expect(response.status).toBe(401);
+            await expect(response.json()).resolves.toMatchObject({
+                code: "AUTH_REQUIRED",
+                status: 401,
+            });
+        }
+        expect(mockGet).not.toHaveBeenCalled();
+        expect(mockPatch).not.toHaveBeenCalled();
+        expect(mockDelete).not.toHaveBeenCalled();
+    });
+
+    it("propagates a registered upstream problem body with its headers intact", async () => {
+        const problem = createProblemDetails({
+            code: "CLIENT_RETENTION_BLOCKED",
+            requestId: "req-client-update",
+            outcome: "NOT_APPLIED",
+        });
+        mockPatch.mockRejectedValue({
+            response: {
+                status: 409,
+                data: { ...problem, statusCode: problem.status, message: problem.detail, error: problem.detail },
+            },
+        });
+        const consoleErrorSpy = jest.spyOn(console, "error").mockImplementation(() => undefined);
+
+        try {
+            const response = await PATCH(createRequest("PATCH", {}), {
+                params: Promise.resolve({ id: "75" }),
+            });
+
+            expect(response.status).toBe(409);
+            const body = await response.json();
+            expect(body).toMatchObject({
+                code: "CLIENT_RETENTION_BLOCKED",
+                status: 409,
+                requestId: "req-client-update",
+                outcome: "NOT_APPLIED",
+            });
+            expect(response.headers.get("Content-Type")).toContain("application/problem+json");
+        } finally {
+            consoleErrorSpy.mockRestore();
+        }
     });
 });
 

@@ -1,5 +1,4 @@
 "use client";
-import { getUserErrorMessage } from "@babyjamjam/shared";
 
 
 import { Button } from "@/components/ui/button";
@@ -33,7 +32,7 @@ export function CallbackPageContent({ variant }: CallbackPageContentProps) {
     >
       {status === "error" ? (
         <>
-          <p className="text-destructive">{error && getUserErrorMessage(error)}</p>
+          <p className="text-destructive">{error}</p>
           <Button
             data-component="desktop_auth_callback_login-btn"
             variant="link"

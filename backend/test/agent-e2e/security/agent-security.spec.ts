@@ -1,5 +1,5 @@
 import { ConfigService } from "@nestjs/config";
-import { ForbiddenException } from "@nestjs/common";
+import { ForbiddenException, NotFoundException } from "@nestjs/common";
 import { AgentRateLimitService } from "application/agent/agent-rate-limit.service";
 import { AgentSessionService } from "application/agent/agent-session.service";
 import { abortWhenResponseCloses, AgentController } from "interface/controllers/agent.controller";
@@ -18,7 +18,12 @@ describe("Release A agent security boundaries", () => {
     it("denies cross-user and cross-branch session reads through the same owner predicate", async () => {
         repository.findOwned.mockResolvedValue(null);
         const service = new AgentSessionService(repository, new ConfigService(), createSchedulerLeaseMock());
-        await expect(service.get("session", { userId: "other", branchId: "other-branch" })).rejects.toThrow("Agent session not found");
+        const error: unknown = await service.get("session", { userId: "other", branchId: "other-branch" }).then(
+            () => { throw new Error("expected the service to reject"); },
+            (caught: unknown) => caught,
+        );
+        expect(error).toBeInstanceOf(NotFoundException);
+        expect((error as NotFoundException).getResponse()).toMatchObject({ code: "RESOURCE_NOT_FOUND" });
         expect(repository.findOwned).toHaveBeenCalledWith("session", { userId: "other", branchId: "other-branch" });
     });
 
@@ -34,7 +39,13 @@ describe("Release A agent security boundaries", () => {
     it("enforces a per-user and branch rate limit", async () => {
         const service = new AgentRateLimitService(new ConfigService({ AGENT_RATE_LIMIT_PER_MINUTE: "1" }));
         await service.check("user", "branch");
-        await expect(service.check("user", "branch")).rejects.toThrow("Agent rate limit exceeded");
+        const error: unknown = await service.check("user", "branch").then(
+            () => { throw new Error("expected the limiter to reject"); },
+            (caught: unknown) => caught,
+        );
+        expect(error).toBeInstanceOf(Error);
+        expect((error as { getStatus?: () => number }).getStatus?.()).toBe(429);
+        expect((error as { getResponse?: () => unknown }).getResponse?.()).toMatchObject({ code: "REQUEST_RATE_LIMITED" });
         await expect(service.check("user", "other-branch")).resolves.toBeUndefined();
         service.onModuleDestroy();
     });
@@ -42,7 +53,12 @@ describe("Release A agent security boundaries", () => {
     it("treats expired and invalid session ids as unavailable", async () => {
         repository.findOwned.mockResolvedValue(null);
         const service = new AgentSessionService(repository, new ConfigService(), createSchedulerLeaseMock());
-        await expect(service.get("expired-session", { userId: "user", branchId: "branch" })).rejects.toThrow("Agent session not found");
+        const error: unknown = await service.get("expired-session", { userId: "user", branchId: "branch" }).then(
+            () => { throw new Error("expected the service to reject"); },
+            (caught: unknown) => caught,
+        );
+        expect(error).toBeInstanceOf(NotFoundException);
+        expect((error as NotFoundException).getResponse()).toMatchObject({ code: "RESOURCE_NOT_FOUND" });
         expect(repository.findOwned).toHaveBeenCalledWith("expired-session", { userId: "user", branchId: "branch" });
     });
 

@@ -2,7 +2,12 @@ import { cookies } from "next/headers";
 import { NextRequest, NextResponse } from "next/server";
 
 import { serverAPIClient } from "@/lib/api/server";
-import { getUpstreamErrorStatus, logUpstreamError } from "@/lib/api/route-utils";
+import {
+    authRequiredResponse,
+    getUpstreamErrorStatus,
+    logUpstreamError,
+    upstreamStatusProblemResponse,
+} from "@/lib/api/route-utils";
 import { clearAuthSessionCookies, setAuthSessionCookies } from "@/lib/auth/session-cookies";
 import { AUTH_COOKIE_NAMES } from "@/lib/auth/session-policy";
 
@@ -24,10 +29,7 @@ function isAutoLoginEnabled(value: string | undefined): boolean {
 export async function POST(request: NextRequest) {
     const refreshToken = request.cookies.get(AUTH_COOKIE_NAMES.refreshToken)?.value;
     if (!refreshToken) {
-        return NextResponse.json(
-            { error: "Session refresh required", code: "AUTH_REFRESH_REQUIRED" },
-            { status: 401 },
-        );
+        return authRequiredResponse();
     }
 
     try {
@@ -55,7 +57,7 @@ export async function POST(request: NextRequest) {
     } catch (error) {
         const status = error instanceof UnrecoverableRefreshError
             ? 401
-            : getUpstreamErrorStatus(error);
+            : getUpstreamErrorStatus(error, 502);
         logUpstreamError("refresh app session", error);
 
         if (status === 401) {
@@ -63,10 +65,12 @@ export async function POST(request: NextRequest) {
             clearAuthSessionCookies(cookieStore);
         }
 
-        const result = NextResponse.json(
-            { error: "Session refresh failed", code: "AUTH_REFRESH_FAILED" },
-            { status: status === 401 ? 401 : 502 },
-        );
+        // EM-STATE-01: an explicit upstream 4xx rejection is a known
+        // non-application (NOT_APPLIED), but an upstream 5xx or a transport
+        // failure leaves the rotation result unconfirmable (UNKNOWN, which
+        // carries CHECK_STATUS recovery in the problem contract). The helper
+        // derives the outcome from the status; the route must not pre-stamp it.
+        const result = upstreamStatusProblemResponse(status, "refresh app session", undefined, "mutation");
         result.headers.set("Cache-Control", "no-store, max-age=0");
         return result;
     }

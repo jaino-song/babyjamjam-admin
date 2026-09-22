@@ -171,13 +171,43 @@ describe("UpdateClientUsecase", () => {
             ).rejects.toThrow(NotFoundException);
         });
 
-        it("should throw NotFoundException with correct message", async () => {
+        it("should throw the registered RESOURCE_NOT_FOUND body without the client id", async () => {
             // Arrange - empty repository
 
-            // Act & Assert
-            await expect(
-                usecase.execute(branchId, 123, { name: "새 이름" }),
-            ).rejects.toThrow("고객을 찾을 수 없습니다. (id: 123)");
+            // Act
+            const error: unknown = await usecase.execute(branchId, 123, { name: "새 이름" })
+                .catch((caught: unknown) => caught);
+
+            // Assert
+            expect(error).toBeInstanceOf(NotFoundException);
+            expect((error as NotFoundException).getResponse()).toEqual({
+                code: "RESOURCE_NOT_FOUND",
+                params: {},
+                outcome: "NOT_APPLIED",
+                recovery: { action: "NONE", retry: { mode: "NEVER" } },
+                message: expect.not.stringContaining("123"),
+            });
+        });
+
+        it("should reject null for non-nullable fields with a VALIDATION_FAILED pointer body", async () => {
+            const existingClient = ClientFactory.create({ id: 1 });
+            mockRepository.setData([existingClient]);
+
+            const error: unknown = await usecase.execute(branchId, 1, { name: null } as never)
+                .catch((caught: unknown) => caught);
+
+            expect(error).toBeInstanceOf(BadRequestException);
+            expect((error as BadRequestException).getResponse()).toMatchObject({
+                code: "VALIDATION_FAILED",
+                errors: expect.arrayContaining([
+                    expect.objectContaining({
+                        pointer: "/name",
+                        code: "REQUIRED",
+                        location: "body",
+                    }),
+                ]),
+            });
+            expect(mockRepository.getAllData()[0]).toBe(existingClient);
         });
 
         it("should persist changes to repository", async () => {

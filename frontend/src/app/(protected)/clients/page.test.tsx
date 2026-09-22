@@ -14,7 +14,12 @@ describe("ClientsPage deletion conflicts", () => {
     expect(handler.indexOf("setDeleteTargetClientId(null)")).toBeLessThan(
       handler.indexOf("await deleteClient.mutateAsync"),
     );
-    expect(handler).toContain("getApiErrorMessage");
+    // The delete failure resolves through the problem contract — the verified
+    // catalog copy or the locally authored fallback; the legacy message
+    // adapter is gone.
+    expect(handler).toContain("normalizeApiError");
+    expect(handler).toContain('"고객 삭제에 실패했어요. 다시 시도해 주세요."');
+    expect(handler).not.toContain("getApiErrorMessage");
     expect(source).toContain('data-component="desktop_clients_modals_delete-error-notification"');
   });
 });

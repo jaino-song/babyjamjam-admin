@@ -1,4 +1,4 @@
-import { ForbiddenException } from "@nestjs/common";
+import { ForbiddenException, NotFoundException } from "@nestjs/common";
 
 import { DocumentService } from "application/services/document.service";
 import { DocumentEntity } from "domain/entities/document.entity";
@@ -50,7 +50,7 @@ describe("DocumentService", () => {
     it("rejects document creation when any document already claims the storage path", async () => {
         documentRepository.existsByStoragePath.mockResolvedValue(true);
 
-        await expect(service.create("branch-1", {
+        const error: unknown = await service.create("branch-1", {
             name: "Contract",
             description: "Branch contract",
             categoryId: "contract",
@@ -60,7 +60,17 @@ describe("DocumentService", () => {
             storagepath: "documents/shared.pdf",
             branchid: "branch-1",
             uploadedby: "user-1",
-        })).rejects.toThrow(new ForbiddenException("storage path unavailable"));
+        }).then(
+            () => { throw new Error("expected create to reject"); },
+            (caught: unknown) => caught,
+        );
+
+        expect(error).toBeInstanceOf(ForbiddenException);
+        expect((error as ForbiddenException).getStatus()).toBe(403);
+        expect((error as ForbiddenException).getResponse()).toMatchObject({
+            code: "ACCESS_DENIED",
+            outcome: "NOT_APPLIED",
+        });
 
         expect(documentRepository.existsByStoragePath).toHaveBeenCalledWith("documents/shared.pdf");
         expect(documentRepository.create).not.toHaveBeenCalled();
@@ -117,13 +127,38 @@ describe("DocumentService", () => {
         );
     });
 
+    it("rejects a missing document with the registered not-found code and no id text", async () => {
+        documentRepository.findById.mockResolvedValue(null);
+
+        const error: unknown = await service.findById("branch-1", "doc-404").then(
+            () => { throw new Error("expected findById to reject"); },
+            (caught: unknown) => caught,
+        );
+
+        expect(error).toBeInstanceOf(NotFoundException);
+        expect((error as NotFoundException).getStatus()).toBe(404);
+        const response = (error as NotFoundException).getResponse() as Record<string, unknown>;
+        expect(response).toMatchObject({ code: "RESOURCE_NOT_FOUND", outcome: "NOT_APPLIED" });
+        expect(JSON.stringify(response)).not.toContain("doc-404");
+    });
+
     it("does not let a globally readable document become writable from another branch", async () => {
         const globallyReadable = createDocumentEntity("branch-origin");
         documentRepository.findById.mockResolvedValue(globallyReadable);
         documentRepository.findBranchById.mockResolvedValue(null);
 
-        await expect(service.update("branch-reader", globallyReadable.id, { name: "tampered" }))
-            .rejects.toThrow("not found");
+        const error: unknown = await service.update("branch-reader", globallyReadable.id, { name: "tampered" })
+            .then(
+                () => { throw new Error("expected update to reject"); },
+                (caught: unknown) => caught,
+            );
+
+        expect(error).toBeInstanceOf(NotFoundException);
+        expect((error as NotFoundException).getStatus()).toBe(404);
+        const response = (error as NotFoundException).getResponse() as Record<string, unknown>;
+        expect(response).toMatchObject({ code: "RESOURCE_NOT_FOUND", outcome: "NOT_APPLIED" });
+        // The rejection must not echo the document id back to the client.
+        expect(JSON.stringify(response)).not.toContain(globallyReadable.id);
 
         expect(documentRepository.update).not.toHaveBeenCalled();
     });

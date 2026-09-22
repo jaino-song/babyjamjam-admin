@@ -4,6 +4,7 @@ import { AdminAuditActor, AdminAuditEventWriter } from "application/services/adm
 import { currentAdminAuditActor } from "application/services/admin-audit-context";
 import { MessageAutomationActivationService } from "application/services/message-automation-activation.service";
 import { GetSettingUsecase, UpdateSettingUsecase } from "application/usecases/system-setting";
+import { codeOnlyProblemBody } from "application/utils/problem-bodies";
 import {
     SystemSettingEntity,
     RibbonConfig,
@@ -154,7 +155,8 @@ export class SystemSettingService {
                 expectedTargetVersion,
                 (rawValue) => this.ribbonTargetVersion(rawValue),
             );
-        if (!updated) throw new ConflictException("Ribbon configuration changed after approval");
+        // 승인 버전과 현재 버전이 어긋난 낙관 동시성 거절은 공개 충돌 계약으로 변환해요.
+        if (!updated) throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
         return updated;
     }
 
@@ -372,6 +374,8 @@ export class SystemSettingService {
         allowSystemActor = false,
         source = "backend",
     ): SystemSettingAuditContext | undefined {
+        // 내부 조립 불변성(감사 writer 누락·인증 컨텍스트 없는 감사)은 사용자 입력으로
+        // 도달하지 않아요. 공개 문제 계약이 아니라 내부 결함 신호로 남기 위해 Error를 유지해요.
         if (!this.auditWriter && !actor) return undefined;
         if (!this.auditWriter) {
             throw new Error("Admin audit writer is required for audited setting mutations");

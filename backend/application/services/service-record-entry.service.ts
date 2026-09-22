@@ -21,6 +21,7 @@ import { getServiceRecordTokenExpiresAt } from "domain/constants/service-record-
 import { SERVICE_RECORD_TEXT_LIMITS } from "domain/constants/service-record-text-limits";
 import { addBusinessDaysKr, UnsupportedKoreanHolidayYearError } from "domain/utils/business-days";
 import { serviceRecordSessionCount } from "domain/utils/service-record-session-count";
+import { codeOnlyProblemBody, problemBody } from "application/utils/problem-bodies";
 import { PrismaService } from "infrastructure/database/prisma.service";
 import { SaveServiceHeaderDto, UpsertSessionDto } from "interface/dto/service-record-entry.dto";
 import {
@@ -166,7 +167,7 @@ function entrySessionCount(record: {
 }
 
 function plannedSessionDateUnavailable(): ConflictException {
-    return new ConflictException({ code: "SERVICE_RECORD_PLANNED_DATE_UNAVAILABLE" });
+    return new ConflictException(codeOnlyProblemBody("SERVICE_RECORD_PLANNED_DATE_UNAVAILABLE"));
 }
 
 /**
@@ -215,8 +216,8 @@ export class ServiceRecordEntryService {
                 select: { id: true, sessionIndex: true, fromDate: true, toDate: true },
             }),
         ]);
-        if (!schedule) throw new NotFoundException("Assignment not found");
-        if (!record) throw new NotFoundException("Service record not found");
+        if (!schedule) throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
+        if (!record) throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
 
         const persistedDates = persistedPlannedSessionDates(
             record.plannedSessions,
@@ -266,7 +267,7 @@ export class ServiceRecordEntryService {
             where: { serviceRecordCaseId: record.id, branchId: ctx.branchId, locked: true },
         });
         if (lockedCount > 0) {
-            throw new ConflictException({ code: "SERVICE_RECORD_HEADER_LOCKED" });
+            throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
         }
         if ([
             SERVICE_RECORD_CASE_STATUS.FINALIZING,
@@ -274,7 +275,7 @@ export class ServiceRecordEntryService {
             SERVICE_RECORD_CASE_STATUS.DOCUMENTS_CREATED,
             SERVICE_RECORD_CASE_STATUS.COMPLETED,
         ].includes(record.status as never)) {
-            throw new ConflictException({ code: "SERVICE_RECORD_FINALIZED" });
+            throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
         }
 
         const updated = await this.prisma.$transaction(async (tx) => {
@@ -316,14 +317,14 @@ export class ServiceRecordEntryService {
                         && rereadSchedule.branchId !== ctx.branchId
                     )
                 ) {
-                    throw new ConflictException("Assignment changed while acquiring service-record locks");
+                    throw new ConflictException(codeOnlyProblemBody("SERVICE_RECORD_WRITE_TARGET_CHANGED"));
                 }
             } else {
                 // Narrow unit doubles without assignment ownership fields keep
                 // the old case-only lock; production never enters this branch.
                 const caseLocked = await lockServiceRecordCaseForWrite(tx, ctx.branchId, record.id);
                 if (typeof tx.$queryRaw === "function" && !caseLocked) {
-                    throw new NotFoundException("Service record not found");
+                    throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
                 }
             }
             // The pre-transaction checks above are only an early rejection.
@@ -342,7 +343,7 @@ export class ServiceRecordEntryService {
                     && rereadRecord.branchId !== ctx.branchId
                 )
             ) {
-                throw new ConflictException("Service record changed while acquiring write locks");
+                throw new ConflictException(codeOnlyProblemBody("SERVICE_RECORD_WRITE_TARGET_CHANGED"));
             }
             const dayDelegate = tx.service_record_day as unknown as {
                 count?: (args: unknown) => Promise<number>;
@@ -353,7 +354,7 @@ export class ServiceRecordEntryService {
                 })
                 : 0;
             if (rereadLockedCount > 0) {
-                throw new ConflictException({ code: "SERVICE_RECORD_HEADER_LOCKED" });
+                throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
             }
             if ([
                 SERVICE_RECORD_CASE_STATUS.FINALIZING,
@@ -361,7 +362,7 @@ export class ServiceRecordEntryService {
                 SERVICE_RECORD_CASE_STATUS.DOCUMENTS_CREATED,
                 SERVICE_RECORD_CASE_STATUS.COMPLETED,
             ].includes(rereadRecord.status as never)) {
-                throw new ConflictException({ code: "SERVICE_RECORD_FINALIZED" });
+                throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
             }
 
             const aggregate = await tx.service_record_case.update({
@@ -410,7 +411,7 @@ export class ServiceRecordEntryService {
                 where: { id: ctx.scheduleId },
                 include: { primaryEmployee: true },
             });
-            if (!schedule) throw new NotFoundException("Assignment not found");
+            if (!schedule) throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
             let record = await tx.service_record_case.findUnique({ where: { id: aggregate.id } });
             if (typeof schedule.clientId === "number") {
                 await lockServiceRecordWriteSet(tx, {
@@ -433,7 +434,7 @@ export class ServiceRecordEntryService {
                         && rereadSchedule.branchId !== ctx.branchId
                     )
                 ) {
-                    throw new ConflictException("Assignment changed while acquiring service-record locks");
+                    throw new ConflictException(codeOnlyProblemBody("SERVICE_RECORD_WRITE_TARGET_CHANGED"));
                 }
                 schedule = rereadSchedule;
                 record = await tx.service_record_case.findUnique({ where: { id: aggregate.id } });
@@ -443,13 +444,13 @@ export class ServiceRecordEntryService {
                 // fields. Real Prisma transactions never take this branch.
                 const locked = await lockServiceRecordCaseForWrite(tx, ctx.branchId, aggregate.id);
                 if (typeof tx.$queryRaw === "function" && !locked) {
-                    throw new NotFoundException("Service record not found");
+                    throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
                 }
                 record = await tx.service_record_case.findUnique({ where: { id: aggregate.id } });
             }
-            if (!record) throw new NotFoundException("Service record not found");
+            if (!record) throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
             if (record.branchId !== ctx.branchId) {
-                throw new NotFoundException("Service record not found");
+                throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
             }
             if ([
                 SERVICE_RECORD_CASE_STATUS.FINALIZING,
@@ -457,19 +458,34 @@ export class ServiceRecordEntryService {
                 SERVICE_RECORD_CASE_STATUS.DOCUMENTS_CREATED,
                 SERVICE_RECORD_CASE_STATUS.COMPLETED,
             ].includes(record.status as never)) {
-                throw new ConflictException({ code: "SERVICE_RECORD_FINALIZED" });
+                throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
             }
 
             const total = entrySessionCount(record);
             if (sessionIndex < 1 || sessionIndex > total) {
-                throw new BadRequestException(`Session ${sessionIndex} is outside the contracted range 1..${total}`);
+                throw new BadRequestException(problemBody("VALIDATION_FAILED", {
+                    pointer: "/sessionIndex",
+                    code: "INVALID_VALUE",
+                    detail: `Session ${sessionIndex} is outside the contracted range 1..${total}`,
+                    location: "body",
+                }));
             }
             const serviceDate = new Date(dto.serviceDate);
             if (Number.isNaN(serviceDate.getTime())) {
-                throw new BadRequestException("Invalid service date");
+                throw new BadRequestException(problemBody("VALIDATION_FAILED", {
+                    pointer: "/serviceDate",
+                    code: "INVALID_VALUE",
+                    detail: "Invalid service date",
+                    location: "body",
+                }));
             }
             if (record.startDate && serviceDate < record.startDate) {
-                throw new BadRequestException("Service date cannot precede the service start date.");
+                throw new BadRequestException(problemBody("VALIDATION_FAILED", {
+                    pointer: "/serviceDate",
+                    code: "INVALID_VALUE",
+                    detail: "Service date cannot precede the service start date.",
+                    location: "body",
+                }));
             }
 
             // A confirmed administrator revision is authoritative for every
@@ -490,7 +506,7 @@ export class ServiceRecordEntryService {
                     throw plannedSessionDateUnavailable();
                 }
                 if (toIso(serviceDate) !== plannedDate) {
-                    throw new ConflictException({ code: "SERVICE_RECORD_PLANNED_DATE_STALE" });
+                    throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
                 }
             }
 
@@ -505,7 +521,12 @@ export class ServiceRecordEntryService {
             try {
                 requiredEndIso = addBusinessDaysKr(serviceDateIso, total - sessionIndex);
             } catch {
-                throw new BadRequestException("서비스 제공일자를 계산할 수 없습니다. 날짜를 확인해 주세요.");
+                throw new BadRequestException(problemBody("VALIDATION_FAILED", {
+                    pointer: "/serviceDate",
+                    code: "INVALID_VALUE",
+                    detail: "서비스 제공일자를 계산할 수 없습니다. 날짜를 확인해 주세요.",
+                    location: "body",
+                }));
             }
             if (currentEndIso && requiredEndIso > currentEndIso) {
                 const newEndDate = new Date(`${requiredEndIso}T00:00:00.000Z`);
@@ -538,10 +559,7 @@ export class ServiceRecordEntryService {
                                 ? (response as { code?: unknown }).code
                                 : undefined;
                             if (code === EMPLOYEE_SCHEDULE_OVERLAP_CODE) {
-                                throw new ConflictException({
-                                    code: EMPLOYEE_SCHEDULE_OVERLAP_CODE,
-                                    message: "다음 배정 일정과 겹쳐 종료일을 연장할 수 없습니다. 관리자에게 문의해 주세요.",
-                                });
+                                throw new ConflictException(codeOnlyProblemBody(EMPLOYEE_SCHEDULE_OVERLAP_CODE));
                             }
                         }
                         throw error;
@@ -568,7 +586,12 @@ export class ServiceRecordEntryService {
             }
 
             if (record.endDate && serviceDate > record.endDate) {
-                throw new BadRequestException("Service date cannot exceed the service end date.");
+                throw new BadRequestException(problemBody("VALIDATION_FAILED", {
+                    pointer: "/serviceDate",
+                    code: "INVALID_VALUE",
+                    detail: "Service date cannot exceed the service end date.",
+                    location: "body",
+                }));
             }
 
             const existing = await tx.service_record_day.findUnique({
@@ -580,7 +603,7 @@ export class ServiceRecordEntryService {
                 },
             });
             if (existing?.locked) {
-                throw new ConflictException({ code: "SERVICE_RECORD_SESSION_LOCKED" });
+                throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
             }
 
             if (sessionIndex > 1) {
@@ -593,22 +616,42 @@ export class ServiceRecordEntryService {
                     },
                 });
                 if (!prev?.locked) {
-                    throw new ConflictException(`Submit session ${sessionIndex - 1} before session ${sessionIndex}.`);
+                    throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
                 }
                 if (serviceDate < prev.serviceDate) {
-                    throw new BadRequestException("Service date cannot precede the previous session's date.");
+                    throw new BadRequestException(problemBody("VALIDATION_FAILED", {
+                        pointer: "/serviceDate",
+                        code: "INVALID_VALUE",
+                        detail: "Service date cannot precede the previous session's date.",
+                        location: "body",
+                    }));
                 }
             }
 
             if (lock) {
                 if (dto.momApproval !== "approved") {
-                    throw new BadRequestException("산모 확인 승인이 필요합니다.");
+                    throw new BadRequestException(problemBody("VALIDATION_FAILED", {
+                        pointer: "/momApproval",
+                        code: "INVALID_VALUE",
+                        detail: "산모 확인 승인이 필요합니다.",
+                        location: "body",
+                    }));
                 }
                 if (!this.hasCompleteHeader(record)) {
-                    throw new BadRequestException("서비스 기본정보를 모두 입력해 주세요.");
+                    throw new BadRequestException(problemBody("VALIDATION_FAILED", {
+                        pointer: "/header",
+                        code: "INVALID_VALUE",
+                        detail: "서비스 기본정보를 모두 입력해 주세요.",
+                        location: "body",
+                    }));
                 }
                 if (!existing?.locked && !existing?.clientSignature && !dto.clientSignature) {
-                    throw new BadRequestException({ code: "CLIENT_SIGNATURE_REQUIRED" });
+                    throw new BadRequestException(problemBody("VALIDATION_FAILED", {
+                        pointer: "/clientSignature",
+                        code: "INVALID_VALUE",
+                        detail: "산모 서명이 필요합니다.",
+                        location: "body",
+                    }));
                 }
             }
 
@@ -627,10 +670,12 @@ export class ServiceRecordEntryService {
                 etcService: this.trimNullable(
                     dto.etcService,
                     SERVICE_RECORD_TEXT_LIMITS.etcService,
+                    "etcService",
                 ),
                 notes: this.trimNullable(
                     dto.notes,
                     SERVICE_RECORD_TEXT_LIMITS.notes,
+                    "notes",
                 ),
                 paymentConfirmed: dto.paymentConfirmed ?? false,
                 momApproval: dto.momApproval ?? null,
@@ -704,7 +749,7 @@ export class ServiceRecordEntryService {
         }
         const record = await this.lifecycleService.ensureForSchedule(ctx.scheduleId);
         if (!record || record.branchId !== ctx.branchId) {
-            throw new NotFoundException("Service record not found");
+            throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
         }
         return record;
     }
@@ -758,9 +803,14 @@ export class ServiceRecordEntryService {
         ].every((value) => Boolean(value?.trim()));
     }
 
-    private trimNullable(value: string | null | undefined, maxLength: number): string | null {
+    private trimNullable(value: string | null | undefined, maxLength: number, field: string): string | null {
         if (value !== null && value !== undefined && value.length > maxLength) {
-            throw new BadRequestException(`입력값은 ${maxLength}자를 넘을 수 없습니다.`);
+            throw new BadRequestException(problemBody("VALIDATION_FAILED", {
+                pointer: `/${field}`,
+                code: "INVALID_VALUE",
+                detail: `입력값은 ${maxLength}자를 넘을 수 없습니다.`,
+                location: "body",
+            }));
         }
         const normalized = value?.trim();
         if (!normalized) return null;

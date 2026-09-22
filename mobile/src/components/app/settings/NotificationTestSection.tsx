@@ -1,5 +1,5 @@
 "use client";
-import { getUserErrorMessage } from "@babyjamjam/shared";
+import { normalizeApiError } from "@babyjamjam/shared";
 
 
 import { useState } from "react";
@@ -27,8 +27,12 @@ export function NotificationTestSection() {
     try {
       const { data } = await api.post<BroadcastResult>('/notifications/test-broadcast');
       setResult(data);
-    } catch {
-      setError(getUserErrorMessage("알림 전송에 실패했어요."));
+    } catch (err) {
+      // Shared problem contract resolution — a registered body surfaces its
+      // catalog copy; otherwise the locally authored fallback. The stored
+      // string is final presentation copy, never an upstream message.
+      const normalized = normalizeApiError(err, { locale: "ko-KR", operation: "mutation" });
+      setError(normalized.verified ? normalized.message : "알림 전송에 실패했어요.");
     } finally {
       setLoading(false);
     }
@@ -75,7 +79,7 @@ export function NotificationTestSection() {
 
       {error && (
         <Alert variant="destructive" className="mt-4">
-          <AlertDescription>{error && getUserErrorMessage(error)}</AlertDescription>
+          <AlertDescription>{error}</AlertDescription>
         </Alert>
       )}
     </div>

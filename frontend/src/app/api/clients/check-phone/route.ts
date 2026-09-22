@@ -1,6 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { serverAPIClient } from "@/lib/api/server";
-import { errorResponse, getAuthHeaders, getAuthToken } from "@/lib/api/route-utils";
+import {
+  authRequiredResponse,
+  errorResponse,
+  getAuthHeaders,
+  getAuthToken,
+} from "@/lib/api/route-utils";
 
 interface CheckPhoneResponse {
   exists?: boolean;
@@ -11,7 +16,7 @@ export async function GET(request: NextRequest) {
   try {
     const token = getAuthToken(request);
     if (!token) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+      return authRequiredResponse();
     }
 
     const phone = request.nextUrl.searchParams.get("phone");
@@ -31,6 +36,9 @@ export async function GET(request: NextRequest) {
 
     return NextResponse.json({ exists: response.data?.exists === true });
   } catch (error) {
+    // A failed lookup is not a negative answer: the caller retries on a
+    // non-2xx status and surfaces the failure instead of treating the number
+    // as available.
     return errorResponse(error, "check client phone", "read");
   }
 }

@@ -1,5 +1,6 @@
 import { BadRequestException, ConflictException, Inject, Injectable, NotFoundException, Optional } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
+import { codeOnlyProblemBody, problemBody } from "application/utils/problem-bodies";
 import {
     assertEmployeeAssignmentEligibility,
     assertEmployeeAssignmentShape,
@@ -44,7 +45,7 @@ export class UpdateEmployeeScheduleUsecase {
         const persist = async (tx?: Prisma.TransactionClient): Promise<EmployeeScheduleEntity> => {
             const schedule = await this.employeeScheduleRepository.findById(branchid, id, tx);
             if (!schedule) {
-                throw new NotFoundException(`Employee schedule with id ${id} not found`);
+                throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
             }
 
             const primaryEmployeeId = updates.primaryEmployeeId ?? schedule.primaryEmployeeId;
@@ -66,8 +67,21 @@ export class UpdateEmployeeScheduleUsecase {
                     updates.replaced ?? schedule.replaced,
                 );
             } catch (error) {
-                if (error instanceof EmployeeScheduleDateRangeError || error instanceof EmployeeScheduleRoleError) {
-                    throw new BadRequestException(error.message);
+                if (error instanceof EmployeeScheduleDateRangeError) {
+                    throw new BadRequestException(problemBody("VALIDATION_FAILED", {
+                        pointer: "/endDate",
+                        code: "INVALID_VALUE",
+                        detail: "시작일은 종료일보다 늦을 수 없어요.",
+                        location: "body",
+                    }));
+                }
+                if (error instanceof EmployeeScheduleRoleError) {
+                    throw new BadRequestException(problemBody("VALIDATION_FAILED", {
+                        pointer: "/secondaryEmployeeId",
+                        code: "INVALID_FORMAT",
+                        detail: "주담당과 부담당은 같은 직원일 수 없어요.",
+                        location: "body",
+                    }));
                 }
                 throw error;
             }
@@ -101,14 +115,14 @@ export class UpdateEmployeeScheduleUsecase {
                 // applying this stale update to a different target set.
                 const lockedSchedule = await this.employeeScheduleRepository.findById(branchid, id, tx);
                 if (!lockedSchedule) {
-                    throw new NotFoundException(`Employee schedule with id ${id} not found`);
+                    throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
                 }
                 if (
                     lockedSchedule.clientId !== schedule.clientId
                     || lockedSchedule.primaryEmployeeId !== schedule.primaryEmployeeId
                     || lockedSchedule.secondaryEmployeeId !== schedule.secondaryEmployeeId
                 ) {
-                    throw new ConflictException("Employee schedule changed while acquiring write locks");
+                    throw new ConflictException(codeOnlyProblemBody("SERVICE_RECORD_WRITE_TARGET_CHANGED"));
                 }
                 const employeeIds = [...new Set(
                     [updated.primaryEmployeeId, updated.secondaryEmployeeId]

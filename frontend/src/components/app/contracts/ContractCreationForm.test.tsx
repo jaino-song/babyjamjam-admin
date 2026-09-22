@@ -21,7 +21,11 @@ describe("ContractCreationForm compensation flows", () => {
 
   it("should show the conflict error and stop before document creation when automatic registration is off", () => {
     expect(source).toContain('error.response?.status !== 409');
-    expect(source).toContain('throw new Error(getApiErrorMessage(error, "고객 자동 등록에 실패했어요."))');
+    // The non-duplicate 409 surfaces the locally authored copy through the
+    // AuthoredSubmissionError catch boundary; the upstream body is never
+    // stringified into the rendered error.
+    expect(source).toContain('throw new AuthoredSubmissionError("고객 자동 등록에 실패했어요.")');
+    expect(source).not.toContain('getApiErrorMessage');
     // Provider authentication now runs exclusively inside the backend credential
     // boundary; the browser must not call the provider directly.
     expect(source).not.toContain("eformsignApi.authenticate");
@@ -85,5 +89,30 @@ describe("ContractCreationForm compensation flows", () => {
     expect(handler).toContain("if (!keepSubmittingUntilDialogCloses)");
     expect(handler).toContain("handleDialogClose()");
     expect(dialogCloseHandler).toContain("setIsSubmitting(false)");
+  });
+});
+
+describe("ContractCreationForm headless failure copy", () => {
+  const helperSource = source.slice(
+    source.indexOf("function getSafeHeadlessFailureMessage"),
+    source.indexOf("export const ContractCreationForm"),
+  );
+
+  it("should map registered contract-send guard codes before the regex fallbacks", () => {
+    expect(helperSource).toContain('reason === "CLIENT_ASSIGNMENT_REQUIRED"');
+    expect(helperSource).toContain("고객의 제공인력 배정을 먼저 저장한 뒤 다시 시도해 주세요.");
+    expect(helperSource).toContain('reason === "DOCUMENT_PROVIDER_MISMATCH"');
+    expect(helperSource).toContain("전자문서의 제공인력과 고객 배정 정보가 일치하지 않아요. 배정을 확인해 주세요.");
+    expect(helperSource).toContain('reason === "CLIENT_SERVICE_TERMINATED"');
+    expect(helperSource).toContain("해지된 고객에게는 전자문서를 발송할 수 없어요.");
+    expect(helperSource.indexOf('reason === "CLIENT_ASSIGNMENT_REQUIRED"'))
+      .toBeLessThan(helperSource.indexOf("/timed out|timeout/i"));
+  });
+
+  it("should keep the existing fallback copy for unknown reasons", () => {
+    expect(helperSource).toContain("/timed out|timeout/i");
+    expect(helperSource).toContain("/chromium|browser|executable/i");
+    expect(helperSource).toContain("/missing document_id/i");
+    expect(helperSource).toContain("백엔드 자동 처리에 실패했어요. 재시도하거나 수동 입력을 사용해 주세요.");
   });
 });

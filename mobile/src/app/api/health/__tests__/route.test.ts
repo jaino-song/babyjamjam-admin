@@ -3,72 +3,78 @@
  */
 import { serverAPIClient } from "@/lib/api/server";
 
-import { GET } from "../route";
+import { GET as healthCheck } from "../route";
 
 jest.mock("@/lib/api/server", () => ({
-  serverAPIClient: {
-    defaults: {
-      baseURL: "https://backend.internal",
+    serverAPIClient: {
+        defaults: { baseURL: "https://backend.example.test" },
+        get: jest.fn(),
     },
-    get: jest.fn(),
-  },
 }));
 
 const mockGet = serverAPIClient.get as jest.Mock;
+const defaults = serverAPIClient.defaults as { baseURL: string | undefined };
 
-describe("GET /api/health", () => {
-  beforeEach(() => {
-    mockGet.mockReset();
-    serverAPIClient.defaults.baseURL = "https://backend.internal";
-  });
+describe("health BFF problem conversion (BJJ-319 6h2)", () => {
+    let consoleInfoSpy: jest.SpyInstance;
+    let consoleErrorSpy: jest.SpyInstance;
 
-  it("does not expose environment config or backend response bodies", async () => {
-    mockGet.mockResolvedValue({
-      status: 200,
-      statusText: "OK",
-      data: {
-        version: "internal-build",
-      },
+    beforeEach(() => {
+        mockGet.mockReset();
+        defaults.baseURL = "https://backend.example.test";
+        consoleInfoSpy = jest.spyOn(console, "info").mockImplementation(() => {});
+        consoleErrorSpy = jest.spyOn(console, "error").mockImplementation(() => {});
     });
 
-    const response = await GET();
-    const body = await response.json();
-
-    expect(response.status).toBe(200);
-    expect(body).toMatchObject({
-      status: "success",
-      backend: {
-        reachable: true,
-        status: 200,
-      },
+    afterEach(() => {
+        consoleInfoSpy.mockRestore();
+        consoleErrorSpy.mockRestore();
     });
-    expect(body).not.toHaveProperty("environment");
-    expect(body).not.toHaveProperty("backendURL");
-    expect(body).not.toHaveProperty("hasBackendURL");
-    expect(body.backend).not.toHaveProperty("statusText");
-    expect(body.backend).not.toHaveProperty("data");
-  });
 
-  it("does not expose backend error details", async () => {
-    mockGet.mockRejectedValue(Object.assign(new Error("connect ECONNREFUSED 10.0.0.4:3001"), {
-      code: "ECONNREFUSED",
-    }));
+    it("keeps a reachable backend diagnostic success", async () => {
+        mockGet.mockResolvedValue({ status: 200, data: {} });
 
-    const response = await GET();
-    const body = await response.json();
+        const response = await healthCheck();
 
-    expect(response.status).toBe(503);
-    expect(body).toMatchObject({
-      status: "error",
-      message: "Backend unreachable",
-      backend: {
-        reachable: false,
-      },
+        expect(response.status).toBe(200);
+        const body = await response.json();
+        expect(body.status).toBe("success");
+        expect(body.backend).toEqual(expect.objectContaining({ reachable: true }));
     });
-    expect(body).not.toHaveProperty("environment");
-    expect(body).not.toHaveProperty("backendURL");
-    expect(body).not.toHaveProperty("hasBackendURL");
-    expect(body.backend).not.toHaveProperty("error");
-    expect(body.backend).not.toHaveProperty("code");
-  });
+
+    it("answers an unreachable backend with a registered DEPENDENCY_UNAVAILABLE problem that keeps the diagnostics", async () => {
+        mockGet.mockRejectedValue(new Error("connect ECONNREFUSED"));
+
+        const response = await healthCheck();
+
+        expect(response.status).toBe(503);
+        expect(response.headers.get("Content-Type")).toBe("application/problem+json");
+        const requestId = response.headers.get("X-Request-Id");
+        expect(requestId).toBeTruthy();
+        const body = await response.json();
+        expect(body).toMatchObject({
+            code: "DEPENDENCY_UNAVAILABLE",
+            status: 503,
+            requestId,
+        });
+        expect(body.status).toBe(503);
+        expect(body.backend).toEqual({ reachable: false });
+        expect(typeof body.timestamp).toBe("string");
+        expect(JSON.stringify(body)).not.toContain("ECONNREFUSED");
+    });
+
+    it("answers a missing backend URL with a registered INTERNAL_ERROR problem", async () => {
+        defaults.baseURL = undefined;
+
+        const response = await healthCheck();
+
+        expect(response.status).toBe(500);
+        expect(response.headers.get("Content-Type")).toBe("application/problem+json");
+        const body = await response.json();
+        expect(body).toMatchObject({
+            code: "INTERNAL_ERROR",
+            status: 500,
+        });
+        expect(body.status).toBe(500);
+    });
 });

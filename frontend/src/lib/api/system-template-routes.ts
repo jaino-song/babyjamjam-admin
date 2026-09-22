@@ -3,24 +3,42 @@ import type { ZodType } from "zod";
 
 import { serverAPIClient } from "@/lib/api/server";
 import {
+    authRequiredResponse,
+    backendJsonResponse,
     buildSystemTemplatePath,
+    errorResponse,
     getAuthHeaders,
     getAuthToken,
     invalidJsonResponse,
     invalidSystemTemplateKeyResponse,
     parseBody,
     readJsonObjectBody,
-    systemTemplateBackendJsonResponse,
-    systemTemplateUpstreamErrorResponse,
-    unauthorizedResponse,
 } from "@/lib/api/route-utils";
 
 async function requireAuthToken(request: NextRequest): Promise<string | NextResponse> {
     const token = getAuthToken(request);
     if (!token) {
-        return unauthorizedResponse("Authentication required. Please log in.");
+        return authRequiredResponse();
     }
     return token;
+}
+
+/**
+ * The shared systemTemplateBackendJsonResponse authors a raw
+ * `{error, code: "UPSTREAM_ERROR"}` body for every non-2xx; the frontend
+ * system-template proxies answer with the problem contract instead: a
+ * problem+json upstream body is propagated faithfully, anything else is
+ * sanitized to the Korean catalog copy with the status preserved.
+ */
+function systemTemplateProxyBackendJsonResponse(
+    response: { status?: number },
+    context: string,
+    operation: "read" | "mutation",
+): NextResponse {
+    if ((response.status ?? 200) >= 400) {
+        return errorResponse({ response }, context, operation);
+    }
+    return backendJsonResponse(response);
 }
 
 function resolveSystemTemplatePath(key: string, suffix = ""): string | NextResponse {
@@ -49,9 +67,9 @@ export async function proxySystemTemplateGet(
             headers: getAuthHeaders(token),
         });
 
-        return systemTemplateBackendJsonResponse(response, context);
+        return systemTemplateProxyBackendJsonResponse(response, context, "read");
     } catch (error) {
-        return systemTemplateUpstreamErrorResponse(error, context);
+        return errorResponse(error, context, "read");
     }
 }
 
@@ -88,14 +106,14 @@ export async function proxySystemTemplatePost(
             headers: getAuthHeaders(token),
         });
 
-        return systemTemplateBackendJsonResponse(response, context);
+        return systemTemplateProxyBackendJsonResponse(response, context, "mutation");
     } catch (error) {
         const invalidJson = invalidJsonResponse(error);
         if (invalidJson) {
             return invalidJson;
         }
 
-        return systemTemplateUpstreamErrorResponse(error, context);
+        return errorResponse(error, context, "mutation");
     }
 }
 
@@ -125,8 +143,8 @@ export async function proxySystemTemplatePut(
             headers: getAuthHeaders(token),
         });
 
-        return systemTemplateBackendJsonResponse(response, context);
+        return systemTemplateProxyBackendJsonResponse(response, context, "mutation");
     } catch (error) {
-        return systemTemplateUpstreamErrorResponse(error, context);
+        return errorResponse(error, context, "mutation");
     }
 }

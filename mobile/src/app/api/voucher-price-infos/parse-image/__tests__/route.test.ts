@@ -48,7 +48,13 @@ describe("POST /api/voucher-price-infos/parse-image", () => {
         const response = await POST(request);
 
         expect(response.status).toBe(401);
-        await expect(response.json()).resolves.toEqual({ error: "Unauthorized" });
+        expect(response.headers.get("Content-Type")).toBe("application/problem+json");
+        await expect(response.json()).resolves.toEqual(expect.objectContaining({
+            code: "AUTH_REQUIRED",
+            status: 401,
+            outcome: "NOT_APPLIED",
+            error: "Unauthorized",
+        }));
         expect(mockPost).not.toHaveBeenCalled();
     });
 
@@ -100,10 +106,11 @@ describe("POST /api/voucher-price-infos/parse-image", () => {
         const response = await POST(createRequest());
 
         expect(response.status).toBe(422);
-        await expect(response.json()).resolves.toEqual({
-            error: "바우처 이미지 파싱에 실패했어요",
-        });
-
+        const body = await response.json();
+        // The sanitized Korean fallback replaces the raw upstream error copy; the
+        // internal path must never leak into the body or the log.
+        expect(body.error).toEqual(expect.stringMatching(/[가-힣].*요[.!]?$/));
+        expect(JSON.stringify(body)).not.toContain("/tmp/voucher-prices");
         const logged = consoleErrorSpy.mock.calls
             .flat()
             .map((entry) => (typeof entry === "string" ? entry : JSON.stringify(entry)))

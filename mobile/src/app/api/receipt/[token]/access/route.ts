@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 
-import { getReceiptAccessToken, receiptBackendClientErrorResponse } from "@/lib/api/receipt-auth";
+import { getReceiptAccessToken, receiptAccessRequiredResponse, receiptBackendClientErrorResponse } from "@/lib/api/receipt-auth";
 import { serverAPIClient } from "@/lib/api/server";
 import { errorResponse, withNoStore } from "@/lib/api/route-utils";
 
@@ -18,7 +18,7 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
     const { token } = await params;
     const accessToken = getReceiptAccessToken(request);
     if (!accessToken) {
-        return withNoStore(NextResponse.json({ reason: "access_required" }, { status: 401 }));
+        return receiptAccessRequiredResponse();
     }
 
     try {

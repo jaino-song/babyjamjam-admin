@@ -93,10 +93,23 @@ describe("UpdateEmployeeScheduleUsecase", () => {
     it("refuses an inverted date range at the application boundary", async () => {
         const { usecase, transaction, repository } = createInvariantHarness();
 
-        await expect(usecase.execute("branch-1", 72, {
+        const error = await usecase.execute("branch-1", 72, {
             startDate: new Date("2026-09-01T00:00:00.000Z"),
             endDate: new Date("2026-08-31T00:00:00.000Z"),
-        }, transaction as never)).rejects.toBeInstanceOf(BadRequestException);
+        }, transaction as never).catch((caught: unknown) => caught);
+
+        expect(error).toBeInstanceOf(BadRequestException);
+        expect((error as BadRequestException).getStatus()).toBe(400);
+        expect((error as BadRequestException).getResponse()).toMatchObject({
+            code: "VALIDATION_FAILED",
+            params: {},
+            outcome: "NOT_APPLIED",
+            errors: [{
+                pointer: "/endDate",
+                code: "INVALID_VALUE",
+                location: "body",
+            }],
+        });
 
         expect(repository.update).not.toHaveBeenCalled();
     });
@@ -104,8 +117,17 @@ describe("UpdateEmployeeScheduleUsecase", () => {
     it("rejects an overlapping active schedule while excluding itself", async () => {
         const { usecase, transaction, repository } = createInvariantHarness({ id: 99 });
 
-        await expect(usecase.execute("branch-1", 72, {}, transaction as never))
-            .rejects.toBeInstanceOf(ConflictException);
+        const error = await usecase.execute("branch-1", 72, {}, transaction as never)
+            .catch((caught: unknown) => caught);
+
+        expect(error).toBeInstanceOf(ConflictException);
+        expect((error as ConflictException).getStatus()).toBe(409);
+        expect((error as ConflictException).getResponse()).toMatchObject({
+            code: "EMPLOYEE_SCHEDULE_OVERLAP",
+            params: {},
+            outcome: "NOT_APPLIED",
+            recovery: { action: "NONE", retry: { mode: "NEVER" } },
+        });
         expect(repository.update).not.toHaveBeenCalled();
 
         const { usecase: selfUsecase, transaction: selfTransaction, repository: selfRepository } = createInvariantHarness({ id: 72 });
@@ -134,9 +156,14 @@ describe("UpdateEmployeeScheduleUsecase", () => {
             },
         ]);
 
-        await expect(usecase.execute("branch-1", 72, {
+        const error = await usecase.execute("branch-1", 72, {
             primaryEmployeeId: 31,
-        }, transaction as never)).rejects.toBeInstanceOf(BadRequestException);
+        }, transaction as never).catch((caught: unknown) => caught);
+
+        expect(error).toBeInstanceOf(BadRequestException);
+        expect((error as BadRequestException).getResponse()).toMatchObject({
+            code: "EMPLOYEE_ASSIGNMENT_UNAVAILABLE",
+        });
         expect(repository.update).not.toHaveBeenCalled();
     });
 });

@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable, Optional } from "@nestjs/common";
+import { BadRequestException, ConflictException, Injectable, Optional } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
 import { createHash, randomBytes } from "crypto";
 import { PrismaService } from "infrastructure/database/prisma.service";
@@ -6,6 +6,7 @@ import { runSystemScope } from "infrastructure/tenant/run-system-scope";
 import { tenantContextStore } from "infrastructure/tenant/tenant-context.store";
 
 import { ServiceRecordSecurityEventService } from "./service-record-security-event.service";
+import { codeOnlyProblemBody, problemBody } from "application/utils/problem-bodies";
 
 export const SERVICE_RECORD_PHONE_CHALLENGE_MAX_FAILED_ATTEMPTS = 5;
 export const SERVICE_RECORD_PHONE_CHALLENGE_WINDOW_MS = 15 * 60 * 1000;
@@ -84,7 +85,12 @@ export class ServiceRecordTokenService {
             });
             if (serviceCase?.finalizedAt) {
                 if (options.throwOnFinalized) {
-                    throw new BadRequestException("최종 확정된 제공기록지는 링크를 다시 발급할 수 없습니다.");
+                    throw new BadRequestException(problemBody("VALIDATION_FAILED", {
+                        pointer: "/scheduleId",
+                        code: "INVALID_VALUE",
+                        detail: "최종 확정된 제공기록지는 링크를 다시 발급할 수 없습니다.",
+                        location: "body",
+                    }));
                 }
                 return null;
             }
@@ -111,7 +117,7 @@ export class ServiceRecordTokenService {
             const current = await this.currentProvider(params, tx, { lockCase: true, throwOnFinalized: true });
             if (!current || current.id !== params.scheduleId || current.primaryEmployeeId !== params.employeeId
                 || !this.normalizePhone(current.primaryEmployee.phone ?? "")) {
-                throw new Error("Service record assignment is no longer current");
+                throw new ConflictException(codeOnlyProblemBody("SERVICE_RECORD_WRITE_TARGET_CHANGED"));
             }
             const scope = {
                 branchId: params.branchId,

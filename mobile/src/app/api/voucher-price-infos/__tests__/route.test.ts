@@ -71,7 +71,13 @@ describe("voucher price info API routes", () => {
   it("requires auth before fetching voucher price infos by type", async () => {
     const response = await getVoucherPriceInfosByType(noCookieRequest("/api/voucher-price-infos/type"));
     expect(response.status).toBe(401);
-    await expect(response.json()).resolves.toEqual({ error: "Unauthorized" });
+    expect(response.headers.get("Content-Type")).toBe("application/problem+json");
+    await expect(response.json()).resolves.toEqual(expect.objectContaining({
+      code: "AUTH_REQUIRED",
+      status: 401,
+      outcome: "NOT_APPLIED",
+      error: "Unauthorized",
+    }));
     expect(mockGet).not.toHaveBeenCalled();
   });
 
@@ -94,7 +100,13 @@ describe("voucher price info API routes", () => {
   it("requires auth before bulk updating voucher prices", async () => {
     const response = await bulkUpdateVoucherPrices(noCookieRequest("/api/voucher-price-infos/bulk-update", "POST"));
     expect(response.status).toBe(401);
-    await expect(response.json()).resolves.toEqual({ error: "Unauthorized" });
+    expect(response.headers.get("Content-Type")).toBe("application/problem+json");
+    await expect(response.json()).resolves.toEqual(expect.objectContaining({
+      code: "AUTH_REQUIRED",
+      status: 401,
+      outcome: "NOT_APPLIED",
+      error: "Unauthorized",
+    }));
     expect(mockPost).not.toHaveBeenCalled();
   });
 
@@ -170,9 +182,11 @@ describe("voucher price info API routes", () => {
     );
 
     expect(response.status).toBe(400);
-    await expect(response.json()).resolves.toEqual({
+    await expect(response.json()).resolves.toEqual(expect.objectContaining({
+      code: "VALIDATION_FAILED",
+      outcome: "NOT_APPLIED",
       error: "업데이트할 항목이 없습니다",
-    });
+    }));
     expect(mockPost).not.toHaveBeenCalled();
   });
 
@@ -186,9 +200,11 @@ describe("voucher price info API routes", () => {
     );
 
     expect(response.status).toBe(400);
-    await expect(response.json()).resolves.toEqual({
+    await expect(response.json()).resolves.toEqual(expect.objectContaining({
+      code: "VALIDATION_FAILED",
+      outcome: "NOT_APPLIED",
       error: "유효한 연도를 입력해주세요 (2000-2100)",
-    });
+    }));
     expect(mockPost).not.toHaveBeenCalled();
   });
 
@@ -202,9 +218,11 @@ describe("voucher price info API routes", () => {
     );
 
     expect(response.status).toBe(400);
-    await expect(response.json()).resolves.toEqual({
+    await expect(response.json()).resolves.toEqual(expect.objectContaining({
+      code: "VALIDATION_FAILED",
+      outcome: "NOT_APPLIED",
       error: "유효한 연도를 입력해주세요 (2000-2100)",
-    });
+    }));
     expect(mockPost).not.toHaveBeenCalled();
   });
 
@@ -250,9 +268,11 @@ describe("voucher price info API routes", () => {
     );
 
     expect(response.status).toBe(409);
-    await expect(response.json()).resolves.toEqual({
-      error: "바우처 가격 정보 업데이트에 실패했어요",
-    });
+    const body = await response.json();
+    // The sanitized Korean fallback replaces the raw upstream error copy; the
+    // internal path must never leak into the body or the log.
+    expect(body.error).toEqual(expect.stringMatching(/[가-힣].*요[.!]?$/));
+    expect(JSON.stringify(body)).not.toContain("/tmp/voucher-prices");
 
     const logged = consoleErrorSpy.mock.calls
       .flat()

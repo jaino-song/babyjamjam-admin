@@ -1,5 +1,6 @@
 import { BadRequestException, ConflictException } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
+import { codeOnlyProblemBody, problemBody } from "application/utils/problem-bodies";
 import {
     assertEmployeeScheduleDateRange,
     type EmployeeScheduleEntity,
@@ -7,7 +8,7 @@ import {
 
 type EmployeeScheduleWriteTransaction = Prisma.TransactionClient;
 
-export const EMPLOYEE_SCHEDULE_OVERLAP_CODE = "EMPLOYEE_SCHEDULE_OVERLAP";
+export const EMPLOYEE_SCHEDULE_OVERLAP_CODE = "EMPLOYEE_SCHEDULE_OVERLAP" as const;
 
 export function employeeScheduleReplacementEndDate(
     replacementAt: Date,
@@ -117,8 +118,13 @@ export async function assertNoActiveEmployeeScheduleOverlap(
 ): Promise<void> {
     try {
         assertEmployeeScheduleDateRange(params.startDate, params.endDate);
-    } catch (error) {
-        throw new BadRequestException(error instanceof Error ? error.message : "Invalid employee schedule date range");
+    } catch {
+        throw new BadRequestException(problemBody("VALIDATION_FAILED", {
+            pointer: "/endDate",
+            code: "INVALID_VALUE",
+            detail: "시작일은 종료일보다 늦을 수 없어요.",
+            location: "body",
+        }));
     }
     if (params.replaced) return;
     // Some pure unit-test transactions intentionally provide only the tables
@@ -156,11 +162,7 @@ export async function assertNoActiveEmployeeScheduleOverlap(
     // Keep self-update semantics explicit even when an adapter/mock does not
     // honor the `id: { not: ... }` predicate itself.
     if (conflict && conflict.id !== params.excludeScheduleId) {
-        throw new ConflictException({
-            code: EMPLOYEE_SCHEDULE_OVERLAP_CODE,
-            message: "An active schedule for this client overlaps the requested interval",
-            conflictScheduleId: conflict.id,
-        });
+        throw new ConflictException(codeOnlyProblemBody(EMPLOYEE_SCHEDULE_OVERLAP_CODE));
     }
 }
 

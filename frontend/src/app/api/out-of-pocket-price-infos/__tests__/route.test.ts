@@ -20,10 +20,14 @@ describe("out-of-pocket price info API route", () => {
     mockGet.mockReset();
   });
 
-  it("requires authentication", async () => {
+  it("requires authentication with a registered 401 problem body", async () => {
     const response = await GET(new NextRequest("http://localhost/api/out-of-pocket-price-infos"));
 
     expect(response.status).toBe(401);
+    await expect(response.json()).resolves.toMatchObject({
+      code: "AUTH_REQUIRED",
+      status: 401,
+    });
     expect(mockGet).not.toHaveBeenCalled();
   });
 

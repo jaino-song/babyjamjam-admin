@@ -13,6 +13,7 @@ import {
     UpdateSystemTemplateUseCase,
     ValidateTemplateContentUseCase,
 } from "application/usecases/system-template";
+import { codeOnlyProblemBody } from "application/utils/problem-bodies";
 import { SYSTEM_TEMPLATE_REGISTRY, SystemTemplateKey, CustomVariable } from "domain/constants/system-template-registry";
 import { SystemTemplateEntity, VariableValidationResult } from "domain/entities/system-template.entity";
 import { SystemTemplateVersionEntity } from "domain/entities/system-template-version.entity";
@@ -124,7 +125,8 @@ export class SystemTemplateService {
     private toKey(key: string): SystemTemplateKey {
         const allowedKeys = Object.values(SystemTemplateKey) as string[];
         if (!allowedKeys.includes(key)) {
-            throw new BadRequestException(`Invalid template key: ${key}`);
+            // 레지스트리에 없는 키는 요청 자체가 올바르지 않다는 공개 계약으로 변환해요.
+            throw new BadRequestException(codeOnlyProblemBody("REQUEST_INVALID"));
         }
         return key as SystemTemplateKey;
     }

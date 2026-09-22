@@ -3,10 +3,12 @@ import { PDFDocument } from "pdf-lib";
 
 import { serverAPIClient } from "@/lib/api/server";
 import {
+  authRequiredResponse,
   errorResponse,
   getAuthHeaders,
   getAuthToken,
-  unauthorizedResponse,
+  localValidationProblemResponse,
+  upstreamStatusProblemResponse,
 } from "@/lib/api/route-utils";
 
 type EformsignFileType = "document" | "audit_trail";
@@ -24,7 +26,7 @@ function parsePageNumber(value: string | null): number | null {
 
   const pageNumber = Number(value);
   if (!Number.isInteger(pageNumber) || pageNumber < 1) {
-    throw new RangeError("Requested page must be a positive integer.");
+    throw new RangeError("page");
   }
 
   return pageNumber;
@@ -36,7 +38,9 @@ async function extractSinglePdfPage(sourcePdf: Uint8Array, pageNumber: number): 
   const sourcePageIndex = pageNumber - 1;
 
   if (sourcePageIndex >= sourcePageCount) {
-    throw new RangeError(`Requested page ${pageNumber} but PDF only has ${sourcePageCount} pages.`);
+    // Machine-readable signal for the validation-problem mapper below; the
+    // raw message never reaches the client.
+    throw new RangeError(`page-count:${sourcePageCount}`);
   }
 
   const receiptDocument = await PDFDocument.create();
@@ -58,7 +62,7 @@ export async function GET(
   const authToken = getAuthToken(request);
 
   if (!authToken) {
-    return unauthorizedResponse("Authentication required. Please log in.");
+    return authRequiredResponse();
   }
 
   const { documentId } = await params;
@@ -79,10 +83,7 @@ export async function GET(
     );
 
     if (response.status >= 400) {
-      return NextResponse.json(
-        { error: `Failed to fetch eformsign document PDF (${response.status})` },
-        { status: response.status },
-      );
+      return errorResponse({ response }, "fetch eformsign document PDF", "read");
     }
 
     const contentType = String(response.headers["content-type"] || "application/pdf");
@@ -92,7 +93,14 @@ export async function GET(
         : new Uint8Array(response.data as ArrayLike<number>);
     if (isReceiptPng) {
       if (!contentType.startsWith("image/png")) {
-        return NextResponse.json({ error: "영수증 이미지 생성에 실패했습니다." }, { status: 502 });
+        // The upstream did not render a receipt image: answer the registered
+        // 502 problem instead of a raw body.
+        return upstreamStatusProblemResponse(
+          502,
+          "render eformsign receipt image",
+          "NOT_APPLIED",
+          "read",
+        );
       }
       return new NextResponse(responseBody, {
         status: response.status,
@@ -125,9 +133,22 @@ export async function GET(
     });
   } catch (error) {
     if (error instanceof RangeError) {
-      return NextResponse.json({ error: error.message }, { status: 400 });
+      // RangeErrors here are always BFF-authored page validations — the
+      // upstream PDF bytes never surface — so answer the registered
+      // validation problem instead of the raw English message.
+      const outOfRange = /^page-count:(\d+)$/.exec(error.message);
+      return localValidationProblemResponse([
+        {
+          pointer: "/page",
+          code: outOfRange ? "OUT_OF_RANGE" : "INVALID_VALUE",
+          detail: outOfRange
+            ? `요청한 페이지는 문서의 전체 ${outOfRange[1]}페이지를 벗어났어요.`
+            : "요청한 페이지는 1 이상의 정수여야 해요.",
+          location: "query",
+        },
+      ]);
     }
 
-    return errorResponse(error, "fetch eformsign document PDF");
+    return errorResponse(error, "fetch eformsign document PDF", "read");
   }
 }

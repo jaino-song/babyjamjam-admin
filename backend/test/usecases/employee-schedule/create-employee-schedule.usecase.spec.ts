@@ -1,4 +1,4 @@
-import { BadRequestException, ConflictException } from "@nestjs/common";
+import { BadRequestException, ConflictException, NotFoundException } from "@nestjs/common";
 import { CreateEmployeeScheduleUsecase } from "application/usecases/employee-schedule/create-employee-schedule.usecase";
 import { EmployeeScheduleEntity } from "domain/entities/employee-schedule.entity";
 
@@ -70,27 +70,31 @@ describe("CreateEmployeeScheduleUsecase assignment eligibility", () => {
         string,
         EmployeeCandidate[],
         Partial<typeof baseParams>,
+        string,
     ]> = [
-        ["wrong branch", [{ ...eligible(), branchId: "branch-b" }], {}],
-        ["soft deleted", [{ ...eligible(), deletedAt: new Date("2026-01-01T00:00:00.000Z") }], {}],
-        ["unavailable", [{ ...eligible(), openToNextWork: false }], {}],
-        ["missing", [], {}],
-        ["wrong branch secondary", [eligible(), { ...eligible(3), branchId: "branch-b" }], { secondaryEmployeeId: 3 }],
-        ["soft deleted secondary", [eligible(), { ...eligible(3), deletedAt: new Date("2026-01-01T00:00:00.000Z") }], { secondaryEmployeeId: 3 }],
-        ["unavailable secondary", [eligible(), { ...eligible(3), openToNextWork: false }], { secondaryEmployeeId: 3 }],
-        ["missing secondary", [eligible()], { secondaryEmployeeId: 999 }],
-        ["same employee in both roles", [eligible()], { secondaryEmployeeId: 2 }],
+        ["wrong branch", [{ ...eligible(), branchId: "branch-b" }], {}, "EMPLOYEE_ASSIGNMENT_NOT_ELIGIBLE"],
+        ["soft deleted", [{ ...eligible(), deletedAt: new Date("2026-01-01T00:00:00.000Z") }], {}, "EMPLOYEE_ASSIGNMENT_NOT_ELIGIBLE"],
+        ["unavailable", [{ ...eligible(), openToNextWork: false }], {}, "EMPLOYEE_ASSIGNMENT_UNAVAILABLE"],
+        ["missing", [], {}, "EMPLOYEE_ASSIGNMENT_NOT_ELIGIBLE"],
+        ["wrong branch secondary", [eligible(), { ...eligible(3), branchId: "branch-b" }], { secondaryEmployeeId: 3 }, "EMPLOYEE_ASSIGNMENT_NOT_ELIGIBLE"],
+        ["soft deleted secondary", [eligible(), { ...eligible(3), deletedAt: new Date("2026-01-01T00:00:00.000Z") }], { secondaryEmployeeId: 3 }, "EMPLOYEE_ASSIGNMENT_NOT_ELIGIBLE"],
+        ["unavailable secondary", [eligible(), { ...eligible(3), openToNextWork: false }], { secondaryEmployeeId: 3 }, "EMPLOYEE_ASSIGNMENT_UNAVAILABLE"],
+        ["missing secondary", [eligible()], { secondaryEmployeeId: 999 }, "EMPLOYEE_ASSIGNMENT_NOT_ELIGIBLE"],
+        ["same employee in both roles", [eligible()], { secondaryEmployeeId: 2 }, "VALIDATION_FAILED"],
     ];
 
     it.each(invalidCases)(
         "refuses %s before creating a schedule",
-        async (_label, employees, overrides) => {
+        async (_label, employees, overrides, expectedCode) => {
             const { usecase, transaction, employeeScheduleRepository } = createHarness(employees);
 
-            await expect(usecase.execute(branchId, {
+            const error = await usecase.execute(branchId, {
                 ...baseParams,
                 ...overrides,
-            }, transaction as never)).rejects.toBeInstanceOf(BadRequestException);
+            }, transaction as never).catch((caught: unknown) => caught);
+
+            expect(error).toBeInstanceOf(BadRequestException);
+            expect((error as BadRequestException).getResponse()).toMatchObject({ code: expectedCode });
 
             expect(transaction.employee.findMany).toHaveBeenCalled();
             expect(employeeScheduleRepository.create).not.toHaveBeenCalled();
@@ -113,8 +117,18 @@ describe("CreateEmployeeScheduleUsecase assignment eligibility", () => {
         const { usecase, transaction, employeeScheduleRepository } = createHarness([eligible()]);
         transaction.client.findFirst.mockResolvedValue(null);
 
-        await expect(usecase.execute(branchId, baseParams, transaction as never))
-            .rejects.toThrow("Client not found for branch");
+        const error = await usecase.execute(branchId, baseParams, transaction as never)
+            .catch((caught: unknown) => caught);
+
+        expect(error).toBeInstanceOf(NotFoundException);
+        expect((error as NotFoundException).getStatus()).toBe(404);
+        expect((error as NotFoundException).getResponse()).toMatchObject({
+            code: "RESOURCE_NOT_FOUND",
+            params: {},
+            outcome: "NOT_APPLIED",
+            recovery: { action: "NONE", retry: { mode: "NEVER" } },
+        });
+        expect((error as NotFoundException).message).not.toContain(String(baseParams.clientId));
 
         expect(transaction.client.findFirst).toHaveBeenCalledWith({
             where: { id: baseParams.clientId, branchId },
@@ -139,11 +153,24 @@ describe("CreateEmployeeScheduleUsecase assignment eligibility", () => {
     it("refuses an inverted date range before creating a schedule", async () => {
         const { usecase, employeeScheduleRepository } = createHarness([eligible()]);
 
-        await expect(usecase.execute(branchId, {
+        const error = await usecase.execute(branchId, {
             ...baseParams,
             startDate: new Date("2026-09-01T00:00:00.000Z"),
             endDate: new Date("2026-08-31T00:00:00.000Z"),
-        })).rejects.toBeInstanceOf(BadRequestException);
+        }).catch((caught: unknown) => caught);
+
+        expect(error).toBeInstanceOf(BadRequestException);
+        expect((error as BadRequestException).getStatus()).toBe(400);
+        expect((error as BadRequestException).getResponse()).toMatchObject({
+            code: "VALIDATION_FAILED",
+            params: {},
+            outcome: "NOT_APPLIED",
+            errors: [{
+                pointer: "/endDate",
+                code: "INVALID_VALUE",
+                location: "body",
+            }],
+        });
 
         expect(employeeScheduleRepository.create).not.toHaveBeenCalled();
     });
@@ -152,8 +179,17 @@ describe("CreateEmployeeScheduleUsecase assignment eligibility", () => {
         const { usecase, transaction, employeeScheduleRepository } = createHarness([eligible()]);
         transaction.employee_schedule.findFirst.mockResolvedValue({ id: 77 });
 
-        await expect(usecase.execute(branchId, baseParams, transaction as never))
-            .rejects.toBeInstanceOf(ConflictException);
+        const error = await usecase.execute(branchId, baseParams, transaction as never)
+            .catch((caught: unknown) => caught);
+
+        expect(error).toBeInstanceOf(ConflictException);
+        expect((error as ConflictException).getStatus()).toBe(409);
+        expect((error as ConflictException).getResponse()).toMatchObject({
+            code: "EMPLOYEE_SCHEDULE_OVERLAP",
+            params: {},
+            outcome: "NOT_APPLIED",
+            recovery: { action: "NONE", retry: { mode: "NEVER" } },
+        });
 
         expect(transaction.employee_schedule.findFirst).toHaveBeenCalledWith(expect.objectContaining({
             where: expect.objectContaining({

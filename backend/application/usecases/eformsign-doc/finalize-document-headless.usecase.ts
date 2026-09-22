@@ -1,5 +1,6 @@
 import { Inject, Injectable, Logger, Optional } from "@nestjs/common";
 import { createHash } from "node:crypto";
+import type { ProblemCode, ProblemOutcome, ProblemRecovery } from "@babyjamjam/shared/errors/problem-details";
 import {
     EformsignDocumentWorkflowState,
     EformsignService,
@@ -65,12 +66,70 @@ export interface FinalizeHeadlessFailure {
     durationMs: number;
     failedStep?: EformsignHeadlessProgressStep;
     dispatchIntentId?: string;
+    /**
+     * BJJ-319 phase 5-4b additive contract: every field above stays
+     * byte-identical; these classify the same failure with the registered
+     * problem code, the business outcome, and the recovery guidance.
+     */
+    code: ProblemCode;
+    outcome: ProblemOutcome;
+    recovery: ProblemRecovery;
 }
 
 export type FinalizeHeadlessResult =
     | FinalizeHeadlessSuccess
     | FinalizeHeadlessAdvanced
     | FinalizeHeadlessFailure;
+
+/**
+ * BJJ-319 phase 5-4b additive contract. The legacy `reason` token stays the
+ * compatibility alias; these are its registered problem-code counterparts with
+ * the business outcome and recovery guidance. `recovery.retry.mode` is always
+ * "NEVER": the finalize protocol recovers through status checks, the iframe
+ * for a send that never started, and manual verification (EM-RETRY-06), never
+ * through an automatic re-send.
+ */
+const RECOVERY_NONE: ProblemRecovery = Object.freeze({ action: "NONE", retry: { mode: "NEVER" } } as const);
+const RECOVERY_CHECK_STATUS: ProblemRecovery = Object.freeze({ action: "CHECK_STATUS", retry: { mode: "NEVER" } } as const);
+
+const FINALIZE_REASON_PROBLEMS: Readonly<Record<string, {
+    code: ProblemCode;
+    outcome: ProblemOutcome;
+    recovery: ProblemRecovery;
+}>> = Object.freeze({
+    operation_in_progress: { code: "DOCUMENT_FINALIZE_IN_PROGRESS", outcome: "NOT_APPLIED", recovery: RECOVERY_NONE },
+    operation_lock_unavailable: { code: "DOCUMENT_LOCK_UNAVAILABLE", outcome: "NOT_APPLIED", recovery: RECOVERY_NONE },
+    operation_lock_lost: { code: "DOCUMENT_LOCK_LOST", outcome: "NOT_APPLIED", recovery: RECOVERY_NONE },
+    authorization_denied: { code: "ACCESS_DENIED", outcome: "NOT_APPLIED", recovery: RECOVERY_NONE },
+    dispatch_already_accepted: { code: "DISPATCH_ALREADY_ACCEPTED", outcome: "UNKNOWN", recovery: RECOVERY_CHECK_STATUS },
+    dispatch_uncertain_manual_reconciliation_required: { code: "DISPATCH_UNCERTAIN", outcome: "UNKNOWN", recovery: RECOVERY_CHECK_STATUS },
+    eformsign_terminal_failure: { code: "EFORMSIGN_TERMINAL_FAILURE", outcome: "FAILED", recovery: RECOVERY_NONE },
+});
+
+/**
+ * Vendor outcome settled as pending or unknown: the send may or may not have
+ * landed, so only a status check is safe. Distinct from the terminal code,
+ * which states a confirmed rejection.
+ */
+const FINALIZE_UNCONFIRMED_PROBLEM = Object.freeze({
+    code: "DOCUMENT_FINALIZE_UNCONFIRMED",
+    outcome: "UNKNOWN",
+    recovery: RECOVERY_CHECK_STATUS,
+} as const);
+
+/**
+ * The additive failure fields for a finalize `reason`. Known reason tokens map
+ * 1:1 to their registered code; anything else is a sanitized provider/infra
+ * failure covered by the catch-all code.
+ */
+function finalizeProblemFields(reason: string): {
+    code: ProblemCode;
+    outcome: ProblemOutcome;
+    recovery: ProblemRecovery;
+} {
+    return FINALIZE_REASON_PROBLEMS[reason]
+        ?? { code: "DOCUMENT_FINALIZE_FAILED", outcome: "NOT_APPLIED", recovery: RECOVERY_NONE };
+}
 
 // The embedded SDK callback and the document-detail API are not atomic. Keep
 // this bounded below the frontend proxy timeout while giving the vendor enough
@@ -144,6 +203,7 @@ export class FinalizeDocumentHeadlessUsecase {
                     reason: "operation_in_progress",
                     fallbackHint: "manual_check",
                     durationMs: Date.now() - start,
+                    ...finalizeProblemFields("operation_in_progress"),
                 };
             }
             if (error instanceof EformsignOperationLockUnavailableError) {
@@ -153,6 +213,7 @@ export class FinalizeDocumentHeadlessUsecase {
                     reason: "operation_lock_unavailable",
                     fallbackHint: "manual_check",
                     durationMs: Date.now() - start,
+                    ...finalizeProblemFields("operation_lock_unavailable"),
                 };
             }
             throw error;
@@ -176,6 +237,7 @@ export class FinalizeDocumentHeadlessUsecase {
                     reason: "authorization_denied",
                     fallbackHint: "manual_check",
                     durationMs: Date.now() - start,
+                    ...finalizeProblemFields("authorization_denied"),
                 };
             }
 
@@ -207,6 +269,7 @@ export class FinalizeDocumentHeadlessUsecase {
                         fallbackHint: "manual_check",
                         dispatchIntentId: claim.intent.id,
                         durationMs: Date.now() - start,
+                        ...finalizeProblemFields("dispatch_already_accepted"),
                     };
                 }
                 if (claim.disposition === "uncertain") {
@@ -216,6 +279,7 @@ export class FinalizeDocumentHeadlessUsecase {
                         fallbackHint: "manual_check",
                         dispatchIntentId: claim.intent.id,
                         durationMs: Date.now() - start,
+                        ...finalizeProblemFields("dispatch_uncertain_manual_reconciliation_required"),
                     };
                 }
                 dispatchIntent = claim.intent;
@@ -252,6 +316,7 @@ export class FinalizeDocumentHeadlessUsecase {
                     fallbackHint: "manual_check",
                     dispatchIntentId: dispatchIntent?.id,
                     durationMs: Date.now() - start,
+                    ...finalizeProblemFields("operation_lock_lost"),
                 };
             }
 
@@ -288,6 +353,7 @@ export class FinalizeDocumentHeadlessUsecase {
                     dispatchIntentId: dispatchIntent?.id,
                     durationMs: result.durationMs,
                     failedStep: latestProgressStep,
+                    ...finalizeProblemFields(resultReason!),
                 };
             }
 
@@ -384,6 +450,11 @@ export class FinalizeDocumentHeadlessUsecase {
                 dispatchIntentId: dispatchIntent?.id,
                 durationMs: result.durationMs,
                 failedStep: latestProgressStep,
+                // A confirmed vendor terminal state states FAILED; a pending or
+                // unreadable outcome stays UNKNOWN and demands a status check.
+                ...(settled === "failed"
+                    ? finalizeProblemFields(reason)
+                    : FINALIZE_UNCONFIRMED_PROBLEM),
             };
                 },
             );
@@ -407,6 +478,7 @@ export class FinalizeDocumentHeadlessUsecase {
                 dispatchIntentId: dispatchIntent?.id,
                 durationMs: Date.now() - start,
                 failedStep: latestProgressStep,
+                ...finalizeProblemFields(reason),
             };
         }
     }

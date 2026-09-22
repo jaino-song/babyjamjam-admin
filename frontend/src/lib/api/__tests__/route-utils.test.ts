@@ -3,8 +3,15 @@
  */
 import { NextRequest } from "next/server";
 
+import { createProblemDetails } from "@babyjamjam/shared";
+
 import { serverAPIClient } from "@/lib/api/server";
-import { proxyGetRequest, proxyLocalGetRequest, proxyPostRequest } from "../route-utils";
+import {
+    proxyGetRequest,
+    proxyLocalGetRequest,
+    proxyPostRequest,
+    upstreamStatusProblemResponse,
+} from "../route-utils";
 
 jest.mock("@/lib/api/server", () => ({
     serverAPIClient: {
@@ -110,5 +117,71 @@ describe("route-utils proxy body parsing", () => {
             params: { limit: "20" },
             headers: { Authorization: "Bearer token-1" },
         });
+    });
+});
+
+describe("upstreamStatusProblemResponse outcome defaults (EM-STATE-01)", () => {
+    it("defaults an upstream 5xx on a mutation to UNKNOWN with CHECK_STATUS recovery", async () => {
+        const response = upstreamStatusProblemResponse(503, "confirm chat intent", undefined, "mutation");
+
+        expect(response.status).toBe(503);
+        expect(response.headers.get("Content-Type")).toBe("application/problem+json");
+        const body = await response.json();
+        expect(body).toMatchObject({
+            code: "DEPENDENCY_UNAVAILABLE",
+            status: 503,
+            outcome: "UNKNOWN",
+        });
+        expect(body.recovery).toMatchObject({ action: "CHECK_STATUS", retry: { mode: "NEVER" } });
+    });
+
+    it("keeps the NOT_APPLIED default for a read regardless of the upstream status", async () => {
+        const response = upstreamStatusProblemResponse(503, "fetch widget", undefined, "read");
+
+        expect(response.status).toBe(503);
+        const body = await response.json();
+        expect(body).toMatchObject({
+            code: "DEPENDENCY_UNAVAILABLE",
+            status: 503,
+            outcome: "NOT_APPLIED",
+        });
+        expect(body).not.toHaveProperty("recovery");
+    });
+
+    it("keeps NOT_APPLIED for an explicit upstream 4xx rejection on a mutation", async () => {
+        const response = upstreamStatusProblemResponse(409, "confirm chat intent", undefined, "mutation");
+
+        const body = await response.json();
+        expect(body).toMatchObject({
+            code: "REQUEST_CONFLICT",
+            status: 409,
+            outcome: "NOT_APPLIED",
+        });
+        expect(body).not.toHaveProperty("recovery");
+    });
+
+    it("propagates a faithful upstream problem body with its own registered code and outcome", async () => {
+        const upstreamProblem = createProblemDetails({
+            code: "REQUEST_CONFLICT",
+            requestId: "upstream-request-1",
+            outcome: "UNKNOWN",
+        });
+        const response = upstreamStatusProblemResponse(
+            409,
+            "confirm chat intent",
+            undefined,
+            "mutation",
+            upstreamProblem,
+        );
+
+        expect(response.status).toBe(409);
+        const body = await response.json();
+        expect(body).toMatchObject({
+            code: "REQUEST_CONFLICT",
+            status: 409,
+            outcome: "UNKNOWN",
+            requestId: "upstream-request-1",
+        });
+        expect(body.recovery).toMatchObject({ action: "CHECK_STATUS" });
     });
 });

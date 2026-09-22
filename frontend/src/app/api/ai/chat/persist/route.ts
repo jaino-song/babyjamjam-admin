@@ -1,6 +1,15 @@
 import { cookies } from "next/headers";
 import { NextRequest } from "next/server";
 
+import {
+    authRequiredResponse,
+    invalidJsonResponse,
+    logUpstreamError,
+    readJsonObjectBody,
+    upstreamStatusProblemResponse,
+    upstreamFetchErrorResponse,
+} from "@/lib/api/route-utils";
+
 const isProduction = process.env.NODE_ENV === "production" || process.env.VERCEL_ENV === "preview";
 const BACKEND_URL = isProduction
     ? process.env.NEXT_PUBLIC_API_BASE_URL
@@ -11,13 +20,17 @@ export async function POST(request: NextRequest) {
     const authToken = cookieStore.get("auth_token");
 
     if (!authToken) {
-        return new Response(JSON.stringify({ error: "Unauthorized" }), {
-            status: 401,
-            headers: { "Content-Type": "application/json" },
-        });
+        return authRequiredResponse();
     }
 
-    const body = await request.json();
+    let body: unknown;
+    try {
+        body = await readJsonObjectBody(request);
+    } catch (error) {
+        const invalidJson = invalidJsonResponse(error);
+        if (invalidJson) return invalidJson;
+        throw error;
+    }
 
     try {
         const backendResponse = await fetch(`${BACKEND_URL}/ai/chat/persist`, {
@@ -30,11 +43,7 @@ export async function POST(request: NextRequest) {
         });
 
         if (!backendResponse.ok) {
-            const errorText = await backendResponse.text();
-            return new Response(JSON.stringify({ error: errorText }), {
-                status: backendResponse.status,
-                headers: { "Content-Type": "application/json" },
-            });
+            return upstreamFetchErrorResponse(backendResponse, "persist chat message", "mutation");
         }
 
         const result = await backendResponse.json();
@@ -43,10 +52,8 @@ export async function POST(request: NextRequest) {
             headers: { "Content-Type": "application/json" },
         });
     } catch (error) {
-        const errorMessage = error instanceof Error ? error.message : "Unknown error";
-        return new Response(JSON.stringify({ error: errorMessage }), {
-            status: 500,
-            headers: { "Content-Type": "application/json" },
-        });
+        // Transport failure: whether the transcript was stored is unconfirmable.
+        logUpstreamError("persist chat message", error);
+        return upstreamStatusProblemResponse(502, "persist chat message", "UNKNOWN");
     }
 }

@@ -1,5 +1,4 @@
 "use client";
-import { getUserErrorMessage } from "@babyjamjam/shared";
 
 
 import { useState } from "react";
@@ -140,7 +139,7 @@ export function NotificationSettings() {
 
             {error && (
                 <Alert variant="destructive" className="mt-4">
-                    <AlertDescription>{error && getUserErrorMessage(error)}</AlertDescription>
+                    <AlertDescription>{error}</AlertDescription>
                 </Alert>
             )}
         </Card>

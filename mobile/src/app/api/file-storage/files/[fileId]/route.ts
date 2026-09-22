@@ -7,8 +7,8 @@ import {
     getAuthHeaders,
     getAuthToken,
     parseBody,
-    unauthorizedResponse,
 } from "@/lib/api/route-utils";
+import { unauthorizedProblemResponse } from "@/lib/api/problem-responses";
 import {
     documentPath,
     invalidFileIdResponse,
@@ -33,7 +33,7 @@ export async function GET(
 ) {
     const token = getAuthToken(request);
     if (!token) {
-        return unauthorizedResponse("unauthorized");
+        return unauthorizedProblemResponse();
     }
 
     const { fileId } = await params;
@@ -57,7 +57,7 @@ export async function PUT(
 ) {
     const token = getAuthToken(request);
     if (!token) {
-        return unauthorizedResponse("unauthorized");
+        return unauthorizedProblemResponse();
     }
 
     const { fileId } = await params;
@@ -86,7 +86,7 @@ export async function DELETE(
 ) {
     const token = getAuthToken(request);
     if (!token) {
-        return unauthorizedResponse("unauthorized");
+        return unauthorizedProblemResponse();
     }
 
     const { fileId } = await params;

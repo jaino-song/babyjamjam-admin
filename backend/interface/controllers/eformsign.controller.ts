@@ -1,4 +1,4 @@
-import { BadRequestException, Controller, Post, Get, Head, Delete, Body, Query, Param, HttpException, HttpStatus, UseGuards, Res, ServiceUnavailableException, GoneException } from "@nestjs/common";
+import { BadRequestException, Controller, Post, Get, Head, Delete, Body, Query, Param, HttpException, HttpStatus, UseGuards, Res, ServiceUnavailableException, GoneException, ForbiddenException, NotFoundException, InternalServerErrorException } from "@nestjs/common";
 import { EformsignService } from "../../application/services/eformsign.service";
 import { EformsignDocService } from "../../application/services/eformsign-doc.service";
 import { AreaTemplateService } from "../../application/services/area-template.service";
@@ -21,6 +21,7 @@ import {
     type EformsignProviderPrincipal,
 } from "application/services/eformsign-credential-boundary.service";
 import { ContractClientAssignmentGuardService } from "application/services/contract-client-assignment-guard.service";
+import { codeOnlyProblemBody, problemBody, uncertainProblemBody } from "application/utils/problem-bodies";
 import {
     DocumentSnapshotEntry,
     DocumentSnapshotScope,
@@ -84,7 +85,12 @@ function parseDownloadFileType(value: string | undefined): DownloadFileType {
         return value;
     }
 
-    throw new BadRequestException("fileType must be document or audit_trail");
+    throw new BadRequestException(problemBody("VALIDATION_FAILED", {
+        pointer: "/fileType",
+        code: "INVALID_VALUE",
+        detail: "파일 종류는 문서 또는 감사 기록 중에서 선택해 주세요.",
+        location: "query",
+    }));
 }
 
 
@@ -112,7 +118,12 @@ function parseStatusCategory(value: string | undefined): DocumentStatusCategory 
     }
 
     throw new BadRequestException(
-        "statusCategory must be drafting, in-progress, completed, expired, or unknown",
+        problemBody("VALIDATION_FAILED", {
+            pointer: "/statusCategory",
+            code: "INVALID_VALUE",
+            detail: "문서 상태는 작성 중, 진행 중, 완료, 만료, 미확인 중에서 선택해 주세요.",
+            location: "query",
+        }),
     );
 }
 
@@ -124,19 +135,34 @@ function parseTemplateMatch(value: string | undefined): TemplateMatch {
         return "exclude";
     }
 
-    throw new BadRequestException("templateMatch must be include or exclude");
+    throw new BadRequestException(problemBody("VALIDATION_FAILED", {
+        pointer: "/templateMatch",
+        code: "INVALID_VALUE",
+        detail: "양식 검색 조건은 포함 또는 제외로 선택해 주세요.",
+        location: "query",
+    }));
 }
 
 function parseDisplayStatus(value: string | undefined): EformsignDocDisplayStatus | undefined {
     if (value === undefined || value === "") return undefined;
     if (value === "signed" || value === "review") return value;
-    throw new BadRequestException("displayStatus must be signed or review");
+    throw new BadRequestException(problemBody("VALIDATION_FAILED", {
+        pointer: "/displayStatus",
+        code: "INVALID_VALUE",
+        detail: "표시 상태는 서명 완료 또는 검토로 선택해 주세요.",
+        location: "query",
+    }));
 }
 
 function parseSection(value: string | undefined): EformsignListSection | undefined {
     if (value === undefined || value === "") return undefined;
     if (value === "maternity" || value === "service-records") return value;
-    throw new BadRequestException("section must be maternity or service-records");
+    throw new BadRequestException(problemBody("VALIDATION_FAILED", {
+        pointer: "/section",
+        code: "INVALID_VALUE",
+        detail: "문서 구분은 산모 또는 서비스 제공 기록으로 선택해 주세요.",
+        location: "query",
+    }));
 }
 
 function shouldExcludeSnapshotTombstones(
@@ -394,42 +420,27 @@ export class EformsignController {
      */
     @Post("generate-signature")
     generateSignature(): never {
-        throw new GoneException({
-            code: "EFORMSIGN_PROVIDER_OPERATION_SERVER_ONLY",
-            error: "eformsign provider operations are server-only",
-        });
+        throw new GoneException(codeOnlyProblemBody("EFORMSIGN_PROVIDER_OPERATION_SERVER_ONLY"));
     }
 
     @Post("access-token")
     getAccessToken(): never {
-        throw new GoneException({
-            code: "EFORMSIGN_CREDENTIALS_SERVER_ONLY",
-            error: "Raw eformsign credentials are not exposed",
-        });
+        throw new GoneException(codeOnlyProblemBody("EFORMSIGN_CREDENTIALS_SERVER_ONLY"));
     }
 
     @Post("refresh-token")
     refreshAccessToken(): never {
-        throw new GoneException({
-            code: "EFORMSIGN_CREDENTIALS_SERVER_ONLY",
-            error: "Raw eformsign credentials are not exposed",
-        });
+        throw new GoneException(codeOnlyProblemBody("EFORMSIGN_CREDENTIALS_SERVER_ONLY"));
     }
 
     @Post("generate-document")
     generateDocument(): never {
-        throw new GoneException({
-            code: "EFORMSIGN_PROVIDER_OPERATION_SERVER_ONLY",
-            error: "Use the server-mediated eformsign dispatch operation",
-        });
+        throw new GoneException(codeOnlyProblemBody("EFORMSIGN_PROVIDER_OPERATION_SERVER_ONLY"));
     }
 
     @Post("generate-staff-document")
     generateStaffDocument(): never {
-        throw new GoneException({
-            code: "EFORMSIGN_PROVIDER_OPERATION_SERVER_ONLY",
-            error: "Use the server-mediated eformsign finalize operation",
-        });
+        throw new GoneException(codeOnlyProblemBody("EFORMSIGN_PROVIDER_OPERATION_SERVER_ONLY"));
     }
 
     /**
@@ -681,10 +692,12 @@ export class EformsignController {
         let permanentPurgeRequests: EformsignPermanentPurgeRequest[] = [];
         try {
             if (!body.document_ids || !Array.isArray(body.document_ids) || body.document_ids.length === 0) {
-                throw new HttpException(
-                    { error: "document_ids array is required and must not be empty" },
-                    HttpStatus.BAD_REQUEST
-                );
+                throw new BadRequestException(problemBody("VALIDATION_FAILED", {
+                    pointer: "/document_ids",
+                    code: "REQUIRED",
+                    detail: "삭제할 문서 ID 목록을 입력해 주세요.",
+                    location: "body",
+                }));
             }
             // is_permanent no longer selects a behaviour. A delete now always cancels at the
             // vendor and purges locally; the old recoverable variant hid the document from
@@ -698,10 +711,7 @@ export class EformsignController {
                 { includePermanentPurgePending: true },
             );
             if (allowedDocuments.length !== requestedDocumentIds.length) {
-                throw new HttpException(
-                    { error: "Document access forbidden" },
-                    HttpStatus.FORBIDDEN,
-                );
+                throw new ForbiddenException(codeOnlyProblemBody("ACCESS_DENIED"));
             }
             // Persist before the vendor call: a timeout after eformsign accepted the
             // cancellation must not leave local PII without a durable retry record.
@@ -795,11 +805,7 @@ export class EformsignController {
             if (error instanceof HttpException) {
                 throw error;
             }
-            const message = sanitizeEformsignErrorMessage(error);
-            throw new HttpException(
-                { error: message },
-                HttpStatus.INTERNAL_SERVER_ERROR
-            );
+            throw new InternalServerErrorException(uncertainProblemBody("INTERNAL_ERROR"));
         }
     }
 
@@ -817,18 +823,12 @@ export class EformsignController {
                 [{ id: documentId }],
             );
             if (allowedDocuments.length === 0) {
-                throw new HttpException(
-                    { error: "Document access forbidden" },
-                    HttpStatus.FORBIDDEN,
-                );
+                throw new ForbiddenException(codeOnlyProblemBody("ACCESS_DENIED"));
             }
 
             const document = await this.documentMirrorService.getStoredDetail(documentId);
             if (!document) {
-                throw new ServiceUnavailableException({
-                    error: "Document detail is waiting for local synchronization",
-                    documentId,
-                });
+                throw new ServiceUnavailableException(codeOnlyProblemBody("DEPENDENCY_UNAVAILABLE"));
             }
             return document;
         } catch (error) {
@@ -852,10 +852,7 @@ export class EformsignController {
                 [{ id: documentId }],
             );
             if (allowedDocuments.length === 0) {
-                throw new HttpException(
-                    { error: "Document access forbidden" },
-                    HttpStatus.FORBIDDEN,
-                );
+                throw new ForbiddenException(codeOnlyProblemBody("ACCESS_DENIED"));
             }
 
             const candidate =
@@ -864,10 +861,7 @@ export class EformsignController {
                     tenant.branchId ?? "",
                 );
             if (!candidate) {
-                throw new HttpException(
-                    { error: "Document not found" },
-                    HttpStatus.NOT_FOUND,
-                );
+                throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
             }
             return candidate;
         } catch (error) {
@@ -892,10 +886,7 @@ export class EformsignController {
                 [{ id: documentId }],
             );
             if (allowedDocuments.length === 0) {
-                throw new HttpException(
-                    { error: "Document access forbidden" },
-                    HttpStatus.FORBIDDEN,
-                );
+                throw new ForbiddenException(codeOnlyProblemBody("ACCESS_DENIED"));
             }
             let file = await this.documentMirrorService.getStoredFileMetadata(
                 documentId,
@@ -909,11 +900,7 @@ export class EformsignController {
                 );
             }
             if (!file) {
-                throw new ServiceUnavailableException({
-                    error: "Document file is waiting for local synchronization",
-                    documentId,
-                    fileType: parsedFileType,
-                });
+                throw new ServiceUnavailableException(codeOnlyProblemBody("DEPENDENCY_UNAVAILABLE"));
             }
 
             res.status(file.status);
@@ -942,20 +929,27 @@ export class EformsignController {
         try {
             const parsedFileType = parseDownloadFileType(fileType);
             if (format !== undefined && format !== "receipt-png") {
-                throw new BadRequestException("format must be receipt-png");
+                throw new BadRequestException(problemBody("VALIDATION_FAILED", {
+                    pointer: "/format",
+                    code: "INVALID_VALUE",
+                    detail: "영수증은 이미지 형식으로만 받을 수 있어요.",
+                    location: "query",
+                }));
             }
             if (format === "receipt-png" && parsedFileType !== "document") {
-                throw new BadRequestException("Receipt images require fileType=document");
+                throw new BadRequestException(problemBody("VALIDATION_FAILED", {
+                    pointer: "/fileType",
+                    code: "INVALID_VALUE",
+                    detail: "영수증 이미지는 문서 파일 형식으로만 요청할 수 있어요.",
+                    location: "query",
+                }));
             }
             const allowedDocuments = await this.filterDocumentsByBranch(
                 tenant.branchId ?? "",
                 [{ id: documentId }],
             );
             if (allowedDocuments.length === 0) {
-                throw new HttpException(
-                    { error: "Document access forbidden" },
-                    HttpStatus.FORBIDDEN,
-                );
+                throw new ForbiddenException(codeOnlyProblemBody("ACCESS_DENIED"));
             }
             let file = await this.documentMirrorService.getStoredFile(
                 documentId,
@@ -969,11 +963,7 @@ export class EformsignController {
                 );
             }
             if (!file) {
-                throw new ServiceUnavailableException({
-                    error: "Document file is waiting for local synchronization",
-                    documentId,
-                    fileType: parsedFileType,
-                });
+                throw new ServiceUnavailableException(codeOnlyProblemBody("DEPENDENCY_UNAVAILABLE"));
             }
 
             if (format === "receipt-png") {
@@ -1045,20 +1035,24 @@ export class EformsignController {
     ) {
         try {
             if (!body.stepType || !body.stepSeq) {
-                throw new HttpException(
-                    { error: "stepType and stepSeq are required" },
-                    HttpStatus.BAD_REQUEST
-                );
+                throw new BadRequestException(problemBody("VALIDATION_FAILED", {
+                    pointer: "/stepType",
+                    code: "REQUIRED",
+                    detail: "재요청할 단계 정보(stepType, stepSeq)를 입력해 주세요.",
+                    location: "body",
+                }));
             }
 
             if (
                 body.recipientPhone &&
                 (!body.recipientPhone.countryCode || !body.recipientPhone.phoneNumber)
             ) {
-                throw new HttpException(
-                    { error: "recipientPhone countryCode and phoneNumber are required" },
-                    HttpStatus.BAD_REQUEST
-                );
+                throw new BadRequestException(problemBody("VALIDATION_FAILED", {
+                    pointer: "/recipientPhone",
+                    code: "REQUIRED",
+                    detail: "수신자 전화번호의 국가 코드와 번호를 모두 입력해 주세요.",
+                    location: "body",
+                }));
             }
 
             const allowedDocuments = await this.filterDocumentsByBranch(
@@ -1066,10 +1060,7 @@ export class EformsignController {
                 [{ id: documentId }],
             );
             if (allowedDocuments.length === 0) {
-                throw new HttpException(
-                    { error: "Document access forbidden" },
-                    HttpStatus.FORBIDDEN,
-                );
+                throw new ForbiddenException(codeOnlyProblemBody("ACCESS_DENIED"));
             }
 
             return await this.credentialBoundary.withCredentials(
@@ -1089,11 +1080,7 @@ export class EformsignController {
                 throw error;
             }
 
-            const message = sanitizeEformsignErrorMessage(error);
-            throw new HttpException(
-                { error: message },
-                HttpStatus.INTERNAL_SERVER_ERROR
-            );
+            throw new InternalServerErrorException(uncertainProblemBody("INTERNAL_ERROR"));
         }
     }
 }

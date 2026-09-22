@@ -1,4 +1,4 @@
-import { Injectable, Inject, Logger } from "@nestjs/common";
+import { Injectable, Inject, Logger, NotFoundException } from "@nestjs/common";
 import { ChatMessage, GeminiStreamChunk, FunctionDeclaration, FunctionCall } from "infrastructure/api/gemini-chat.gateway";
 import { ToolExecutorService, LegacyChatToolContext, ToolExecutionResult } from "application/ai-chat/tool-executor.service";
 import { CHAT_SESSION_REPOSITORY, IChatSessionRepository } from "domain/repositories/chat-session.repository.interface";
@@ -11,6 +11,7 @@ import {
     redactSensitiveLegacyChatContent,
 } from "application/ai-chat/legacy-chat-confirmation.service";
 import type { EformsignProviderPrincipal } from "application/services/eformsign-credential-boundary.service";
+import { codeOnlyProblemBody } from "application/utils/problem-bodies";
 
 /**
  * Interface for Gemini gateway implementations.
@@ -387,6 +388,13 @@ export interface ChatStreamEvent {
     error?: string;
 }
 
+/**
+ * Public SSE failure sentence. Gateway/upstream error text can carry internal
+ * identifiers, so stream error events carry only this fixed copy while the
+ * redacted raw text stays in server logs.
+ */
+const CHAT_STREAM_FAILURE_MESSAGE = "대화를 처리하는 중 문제가 발생했어요. 잠시 후 다시 시도해 주세요.";
+
 @Injectable()
 export class AIChatService {
     private readonly logger = new Logger(AIChatService.name);
@@ -414,7 +422,7 @@ export class AIChatService {
             : null;
 
         if (sessionId && !session) {
-            throw new Error("Session not found or expired");
+            throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
         }
 
         if (!session) {
@@ -545,9 +553,12 @@ export class AIChatService {
                             }
 
                             if (chunk.type === 'error') {
+                                this.logger.warn(
+                                    `Upstream chat chunk error redacted: ${redactSensitiveLegacyChatContent(chunk.error ?? "unknown")}`
+                                );
                                 yield {
                                     type: 'error',
-                                    error: chunk.error ? redactSensitiveLegacyChatContent(chunk.error) : chunk.error,
+                                    error: CHAT_STREAM_FAILURE_MESSAGE,
                                 };
                                 return;
                             }
@@ -586,7 +597,7 @@ export class AIChatService {
         } catch (error) {
             const errorMessage = error instanceof Error ? error.message : 'Unknown error';
             this.logger.error(`Chat stream error: ${redactSensitiveLegacyChatContent(errorMessage)}`);
-            yield { type: 'error', error: redactSensitiveLegacyChatContent(errorMessage) };
+            yield { type: 'error', error: CHAT_STREAM_FAILURE_MESSAGE };
         }
     }
 
@@ -610,7 +621,7 @@ export class AIChatService {
             : null;
 
         if (sessionId && !session) {
-            throw new Error("Session not found or expired");
+            throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
         }
 
         if (!session) {

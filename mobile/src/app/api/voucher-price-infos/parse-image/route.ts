@@ -1,6 +1,7 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest } from "next/server";
 import { serverAPIClient } from "@/lib/api/server";
-import { backendJsonResponse, getUpstreamErrorStatus } from "@/lib/api/route-utils";
+import { backendJsonResponse, errorResponse } from "@/lib/api/route-utils";
+import { unauthorizedProblemResponse, validationProblemResponse } from "@/lib/api/problem-responses";
 
 function getAuthToken(request: NextRequest): string | null {
   return request.cookies.get("auth_token")?.value || null;
@@ -15,7 +16,7 @@ export async function POST(request: NextRequest) {
   try {
     const token = getAuthToken(request);
     if (!token) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+      return unauthorizedProblemResponse();
     }
 
     // FormData 추출
@@ -23,10 +24,14 @@ export async function POST(request: NextRequest) {
     const file = formData.get("image") as File | null;
 
     if (!file) {
-      return NextResponse.json(
-        { error: "이미지 파일이 필요합니다" },
-        { status: 400 },
-      );
+      return validationProblemResponse("이미지 파일이 필요합니다", [
+        {
+          pointer: "/image",
+          code: "INVALID_FORMAT",
+          detail: "이미지 파일이 필요합니다",
+          location: "body",
+        },
+      ]);
     }
 
     // 파일을 ArrayBuffer로 변환 후 FormData 재구성
@@ -53,12 +58,6 @@ export async function POST(request: NextRequest) {
 
     return backendJsonResponse(response);
   } catch (error) {
-    const status = getUpstreamErrorStatus(error);
-    console.error("[API] Error parsing voucher image:", { status });
-
-    return NextResponse.json(
-      { error: "바우처 이미지 파싱에 실패했어요" },
-      { status },
-    );
+    return errorResponse(error, "parse voucher image");
   }
 }

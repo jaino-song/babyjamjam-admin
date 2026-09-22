@@ -1,5 +1,6 @@
 import { Injectable, Logger, NotFoundException } from "@nestjs/common";
 import { createHash, randomBytes } from "crypto";
+import { codeOnlyProblemBody } from "application/utils/problem-bodies";
 import { PrismaService } from "infrastructure/database/prisma.service";
 
 export interface CreatedIngestToken {
@@ -74,7 +75,8 @@ export class CallIngestTokenService {
             data: { active: false, revokedAt: new Date() },
         });
         if (result.count === 0) {
-            throw new NotFoundException("Token not found");
+            // 토큰은 공개 식별자가 아니므로 사유 텍스트 없이 등록 코드만 응답해요.
+            throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
         }
     }
 }

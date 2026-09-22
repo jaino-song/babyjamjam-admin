@@ -1,11 +1,11 @@
 "use client";
-import { getUserErrorMessage } from "@babyjamjam/shared";
 
 
 import { redirect, useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { Calendar, File, Send, User } from "lucide-react";
+import { normalizeApiError } from "@babyjamjam/shared";
 
 const ALL_FILTER = "전체";
 const DASHBOARD_ROUTE_BODY_CLASS = "mobile-dashboard-route";
@@ -262,10 +262,16 @@ export default function DashboardPage() {
         title: t(locale, "clients.delete-success"),
         description: t(locale, "clients.delete-success-description"),
       });
-    } catch {
+    } catch (error) {
+      // Shared problem contract resolution — a registered code drives the
+      // surfaced message; the localized fallback covers unverified failures.
+      const normalized = normalizeApiError(error, {
+        locale: locale === "en" ? "en-US" : "ko-KR",
+        operation: "mutation",
+      });
       toast({
         title: t(locale, "clients.delete-fail"),
-        description: getUserErrorMessage(t(locale, "clients.delete-fail-description")),
+        description: normalized.verified ? normalized.message : t(locale, "clients.delete-fail-description"),
         variant: "destructive",
       });
     }

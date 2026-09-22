@@ -1,5 +1,5 @@
 import { PdfPageRasterizerService, PdfPageOutOfRangeError } from "infrastructure/pdf/pdf-page-rasterizer.service";
-import { BadRequestException, ExecutionContext, INestApplication, ValidationPipe } from "@nestjs/common";
+import { ConflictException, ExecutionContext, INestApplication, ValidationPipe } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { Test, TestingModule } from "@nestjs/testing";
 import { AreaTemplateService } from "application/services/area-template.service";
@@ -11,6 +11,7 @@ import { JwtGuard } from "infrastructure/auth/jwt.guard";
 import { TenantGuard } from "infrastructure/tenant";
 import { EformsignController } from "interface/controllers/eformsign.controller";
 import { ContractClientAssignmentGuardService } from "application/services/contract-client-assignment-guard.service";
+import { codeOnlyProblemBody } from "application/utils/problem-bodies";
 import { EformsignDocumentSnapshotService } from "application/services/eformsign-document-snapshot.service";
 import { EformsignListShadowCompareService } from "application/services/eformsign-list-shadow-compare.service";
 import { EformsignMirrorListService } from "application/services/eformsign-mirror-list.service";
@@ -48,6 +49,7 @@ describe("EformsignController (Integration)", () => {
         | "getRejectedDocuments"
         | "getCompletedDocuments"
         | "getDocumentById"
+        | "reRequestOutsiderDocument"
     >>;
     let areaTemplateService: jest.Mocked<Pick<AreaTemplateService, "findByArea">>;
     let eformsignDocService: jest.Mocked<Pick<
@@ -142,6 +144,7 @@ describe("EformsignController (Integration)", () => {
                         getRejectedDocuments: jest.fn(),
                         getCompletedDocuments: jest.fn(),
                         getDocumentById: jest.fn(),
+                        reRequestOutsiderDocument: jest.fn(),
                     },
                 },
                 {
@@ -269,12 +272,19 @@ describe("EformsignController (Integration)", () => {
         await app.close();
     });
 
+    // Tombstone rejections are registered problem bodies: the controller
+    // throws GoneException(codeOnlyProblemBody(...)), so the response carries
+    // the public contract members (code/params/outcome/recovery) at 410.
     it("tombstones the legacy signature endpoint without service execution", async () => {
         const response = await request(app.getHttpServer())
             .post("/api/generate-signature")
             .send({ executionTime: "abc" });
 
         expect(response.status).toBe(410);
+        expect(response.body.code).toBe("EFORMSIGN_PROVIDER_OPERATION_SERVER_ONLY");
+        expect(response.body.outcome).toBe("NOT_APPLIED");
+        expect(response.body.params).toEqual({});
+        expect(response.body.recovery).toEqual({ action: "NONE", retry: { mode: "NEVER" } });
         expect(eformsignService.generateSignature).not.toHaveBeenCalled();
     });
 
@@ -284,6 +294,9 @@ describe("EformsignController (Integration)", () => {
             .send({ executionTime: 1780000000000 });
 
         expect(response.status).toBe(410);
+        expect(response.body.code).toBe("EFORMSIGN_CREDENTIALS_SERVER_ONLY");
+        expect(response.body.outcome).toBe("NOT_APPLIED");
+        expect(response.body.params).toEqual({});
     });
 
     it("does not invoke the provider when refresh-token is called", async () => {
@@ -292,6 +305,7 @@ describe("EformsignController (Integration)", () => {
             .send({ executionTime: 1780000000000, refreshToken: "stale-token" });
 
         expect(response.status).toBe(410);
+        expect(response.body.code).toBe("EFORMSIGN_CREDENTIALS_SERVER_ONLY");
     });
 
     it("does not invoke the provider when access-token is called", async () => {
@@ -300,6 +314,7 @@ describe("EformsignController (Integration)", () => {
             .send({ executionTime: 1780000000000 });
 
         expect(response.status).toBe(410);
+        expect(response.body.code).toBe("EFORMSIGN_CREDENTIALS_SERVER_ONLY");
     });
 
     it("tombstones the legacy document generation endpoint", async () => {
@@ -314,13 +329,28 @@ describe("EformsignController (Integration)", () => {
             });
 
         expect(response.status).toBe(410);
+        expect(response.body.code).toBe("EFORMSIGN_PROVIDER_OPERATION_SERVER_ONLY");
+        expect(response.body.outcome).toBe("NOT_APPLIED");
+        expect(response.body.params).toEqual({});
         expect(areaTemplateService.findByArea).not.toHaveBeenCalled();
         expect(eformsignService.generateDocumentOptions).not.toHaveBeenCalled();
     });
 
+    it("tombstones the legacy staff document generation endpoint", async () => {
+        const response = await request(app.getHttpServer())
+            .post("/api/generate-staff-document")
+            .send({ accessToken: "access-token", refreshToken: "refresh-token" });
+
+        expect(response.status).toBe(410);
+        expect(response.body.code).toBe("EFORMSIGN_PROVIDER_OPERATION_SERVER_ONLY");
+        expect(response.body.outcome).toBe("NOT_APPLIED");
+        expect(response.body.params).toEqual({});
+        expect(eformsignService.getDocumentById).not.toHaveBeenCalled();
+    });
+
     it("does not accept caller credentials on the legacy document generation endpoint", async () => {
         assignmentGuard.assertLiveAssignedProvider.mockRejectedValue(
-            new BadRequestException("고객의 제공인력 배정을 먼저 저장해 주세요."),
+            new ConflictException(codeOnlyProblemBody("CLIENT_ASSIGNMENT_REQUIRED")),
         );
 
         const response = await request(app.getHttpServer())
@@ -351,13 +381,14 @@ describe("EformsignController (Integration)", () => {
                     paymentYear: "26",
                     paymentMonth: "07",
                     paymentDay: "01",
-                    fullPrice: "1000000",
-                    grant: "800000",
-                    actualPrice: "200000",
-                },
-            });
+                fullPrice: "1000000",
+                grant: "800000",
+                actualPrice: "200000",
+            },
+        });
 
         expect(response.status).toBe(410);
+        expect(response.body.code).toBe("EFORMSIGN_PROVIDER_OPERATION_SERVER_ONLY");
         expect(assignmentGuard.assertLiveAssignedProvider).not.toHaveBeenCalled();
         expect(eformsignService.generateDocumentOptions).not.toHaveBeenCalled();
     });
@@ -506,7 +537,11 @@ describe("EformsignController (Integration)", () => {
             .send({ document_ids: ["deleted-doc", "rejected-doc"] });
 
         expect(response.status).toBe(500);
-        expect(response.body).toEqual({ error: "Document cleanup was incomplete" });
+        expect(response.body).toEqual(expect.objectContaining({
+            code: "INTERNAL_ERROR",
+            outcome: "UNKNOWN",
+            recovery: expect.objectContaining({ action: "CHECK_STATUS" }),
+        }));
         expect(documentMirrorService.clearPermanentPurgeRequest).toHaveBeenCalledTimes(1);
         expect(documentMirrorService.purgeDocuments).toHaveBeenCalledWith(["deleted-doc"]);
     });
@@ -718,8 +753,103 @@ describe("EformsignController (Integration)", () => {
             .send({ document_ids: ["other-branch-doc"] });
 
         expect(response.status).toBe(403);
+        expect(response.body.code).toBe("ACCESS_DENIED");
         expect(eformsignService.cancelDocuments).not.toHaveBeenCalled();
         expect(documentMirrorService.markDocumentsDeleted).not.toHaveBeenCalled();
+    });
+
+    it("reports an unexpected delete failure as a registered 500 problem", async () => {
+        eformsignDocService.findAll.mockResolvedValue([
+            { documentId: "branch-1-doc" },
+        ] as never);
+        eformsignService.cancelDocuments.mockRejectedValue(new Error("socket exploded"));
+
+        const response = await request(app.getHttpServer())
+            .delete("/api/documents?accessToken=access-token&is_permanent=true")
+            .send({ document_ids: ["branch-1-doc"] });
+
+        expect(response.status).toBe(500);
+        expect(response.body.code).toBe("INTERNAL_ERROR");
+        expect(response.body.outcome).toBe("UNKNOWN");
+        expect(response.body.recovery).toEqual(expect.objectContaining({ action: "CHECK_STATUS" }));
+    });
+
+    it("rejects an empty document_ids payload with a field pointer (defense-in-depth)", async () => {
+        await expect(controller.deleteDocuments(
+            { userId: "user-1", branchId: "branch-1" } as never,
+            "true",
+            { document_ids: [] } as never,
+        )).rejects.toMatchObject({
+            status: 400,
+            response: expect.objectContaining({
+                code: "VALIDATION_FAILED",
+                errors: [expect.objectContaining({ pointer: "/document_ids", location: "body" })],
+            }),
+        });
+    });
+
+    describe("re_request_outsider rejections", () => {
+        const tenant = { userId: "user-1", branchId: "branch-1" } as never;
+
+        it("rejects a foreign-branch document before calling the provider", async () => {
+            eformsignDocService.findAll.mockResolvedValue([
+                { documentId: "branch-1-doc" },
+            ] as never);
+
+            const response = await request(app.getHttpServer())
+                .post("/api/documents/other-branch-doc/re_request_outsider")
+                .send({ stepType: "01", stepSeq: "1" });
+
+            expect(response.status).toBe(403);
+            expect(response.body.code).toBe("ACCESS_DENIED");
+            expect(eformsignService.reRequestOutsiderDocument).not.toHaveBeenCalled();
+        });
+
+        it("rejects missing step fields with a field pointer (defense-in-depth)", async () => {
+            await expect(controller.reRequestOutsiderDocument(
+                tenant,
+                "branch-1-doc",
+                { comment: "다시 요청해 주세요." } as never,
+            )).rejects.toMatchObject({
+                status: 400,
+                response: expect.objectContaining({
+                    code: "VALIDATION_FAILED",
+                    errors: [expect.objectContaining({ pointer: "/stepType", location: "body" })],
+                }),
+            });
+            expect(eformsignService.reRequestOutsiderDocument).not.toHaveBeenCalled();
+        });
+
+        it("rejects an incomplete recipient phone with a field pointer (defense-in-depth)", async () => {
+            await expect(controller.reRequestOutsiderDocument(
+                tenant,
+                "branch-1-doc",
+                { stepType: "01", stepSeq: "1", recipientPhone: { countryCode: "+82" } } as never,
+            )).rejects.toMatchObject({
+                status: 400,
+                response: expect.objectContaining({
+                    code: "VALIDATION_FAILED",
+                    errors: [expect.objectContaining({ pointer: "/recipientPhone", location: "body" })],
+                }),
+            });
+            expect(eformsignService.reRequestOutsiderDocument).not.toHaveBeenCalled();
+        });
+
+        it("reports an unexpected re-request failure as a registered 500 problem", async () => {
+            eformsignDocService.findAll.mockResolvedValue([
+                { documentId: "branch-1-doc" },
+            ] as never);
+            eformsignService.reRequestOutsiderDocument.mockRejectedValue(new Error("socket exploded"));
+
+            const response = await request(app.getHttpServer())
+                .post("/api/documents/branch-1-doc/re_request_outsider")
+                .send({ stepType: "01", stepSeq: "1" });
+
+            expect(response.status).toBe(500);
+            expect(response.body.code).toBe("INTERNAL_ERROR");
+        expect(response.body.outcome).toBe("UNKNOWN");
+        expect(response.body.recovery).toEqual(expect.objectContaining({ action: "CHECK_STATUS" }));
+        });
     });
 
     it("rejects invalid download file type before service execution", async () => {
@@ -727,6 +857,11 @@ describe("EformsignController (Integration)", () => {
             .get("/api/documents/doc-1/download_files?accessToken=access-token&fileType=zip");
 
         expect(response.status).toBe(400);
+        expect(response.body.code).toBe("VALIDATION_FAILED");
+        expect(response.body.errors).toEqual([expect.objectContaining({
+            pointer: "/fileType",
+            location: "query",
+        })]);
         expect(documentMirrorService.getStoredFile).not.toHaveBeenCalled();
     });
 
@@ -781,7 +916,58 @@ describe("EformsignController (Integration)", () => {
         const response = await request(app.getHttpServer())
             .get("/api/documents/other-branch-doc/download_files?format=receipt-png");
         expect(response.status).toBe(403);
+        expect(response.body.code).toBe("ACCESS_DENIED");
         expect(app.get(PdfPageRasterizerService).renderPageToPng).not.toHaveBeenCalled();
+    });
+
+    it("rejects an unknown download format with a field pointer", async () => {
+        eformsignDocService.findAll.mockResolvedValue([{ documentId: "branch-1-doc" }] as never);
+
+        const response = await request(app.getHttpServer())
+            .get("/api/documents/branch-1-doc/download_files?fileType=document&format=webp");
+
+        expect(response.status).toBe(400);
+        expect(response.body.code).toBe("VALIDATION_FAILED");
+        expect(response.body.errors).toEqual([expect.objectContaining({
+            pointer: "/format",
+            location: "query",
+        })]);
+        expect(documentMirrorService.getStoredFile).not.toHaveBeenCalled();
+    });
+
+    it("rejects receipt PNG requests for the audit trail file with a field pointer", async () => {
+        eformsignDocService.findAll.mockResolvedValue([{ documentId: "branch-1-doc" }] as never);
+
+        const response = await request(app.getHttpServer())
+            .get("/api/documents/branch-1-doc/download_files?fileType=audit_trail&format=receipt-png");
+
+        expect(response.status).toBe(400);
+        expect(response.body.code).toBe("VALIDATION_FAILED");
+        expect(response.body.errors).toEqual([expect.objectContaining({
+            pointer: "/fileType",
+            location: "query",
+        })]);
+        expect(documentMirrorService.getStoredFile).not.toHaveBeenCalled();
+    });
+
+    it("keeps the HEAD waiting response when the provider PDF is still unavailable", async () => {
+        eformsignDocService.findAll.mockResolvedValue([
+            { documentId: "branch-1-doc" },
+        ] as never);
+        documentMirrorService.getStoredFileMetadata.mockResolvedValue(null);
+        documentMirrorService.syncDocument.mockResolvedValue({
+            status: "synced",
+            missingFileTypes: ["document"],
+        });
+
+        const response = await request(app.getHttpServer())
+            .head("/api/documents/branch-1-doc/download_files?fileType=document");
+
+        // HEAD responses suppress the body at the HTTP layer, so the registered
+        // problem body itself is asserted by the GET variant of this conversion
+        // ("keeps the waiting response when the provider PDF is still unavailable").
+        expect(response.status).toBe(503);
+        expect(documentMirrorService.getStoredFileMetadata).toHaveBeenCalledTimes(2);
     });
 
     it("returns a readable error when the receipt page is missing", async () => {
@@ -884,6 +1070,7 @@ describe("EformsignController (Integration)", () => {
             .get("/api/documents/branch-1-doc/download_files?fileType=document");
 
         expect(response.status).toBe(503);
+        expect(response.body.code).toBe("DEPENDENCY_UNAVAILABLE");
         expect(documentMirrorService.syncDocument).toHaveBeenCalledTimes(1);
         expect(documentMirrorService.getStoredFile).toHaveBeenCalledTimes(2);
     });
@@ -942,6 +1129,7 @@ describe("EformsignController (Integration)", () => {
             .get("/api/documents/other-branch-doc/download_files?accessToken=access-token");
 
         expect(response.status).toBe(403);
+        expect(response.body.code).toBe("ACCESS_DENIED");
         expect(documentMirrorService.getStoredFile).not.toHaveBeenCalled();
         expect(documentMirrorService.syncDocument).not.toHaveBeenCalled();
     });
@@ -954,6 +1142,7 @@ describe("EformsignController (Integration)", () => {
             .get("/api/documents/other-branch-doc/download_files?accessToken=access-token");
 
         expect(response.status).toBe(403);
+        expect(response.body.code).toBe("ACCESS_DENIED");
         expect(documentMirrorService.getStoredFile).not.toHaveBeenCalled();
         expect(documentMirrorService.syncDocument).not.toHaveBeenCalled();
     });
@@ -1012,6 +1201,7 @@ describe("EformsignController (Integration)", () => {
             .get("/api/documents/branch-1-doc");
 
         expect(response.status).toBe(503);
+        expect(response.body.code).toBe("DEPENDENCY_UNAVAILABLE");
         expect(eformsignService.getDocumentById).not.toHaveBeenCalled();
     });
 
@@ -1024,6 +1214,7 @@ describe("EformsignController (Integration)", () => {
             .get("/api/documents/other-branch-doc/client-candidate");
 
         expect(response.status).toBe(403);
+        expect(response.body.code).toBe("ACCESS_DENIED");
         expect(getContractClientCandidateUsecase.execute).not.toHaveBeenCalled();
     });
 
@@ -1063,6 +1254,20 @@ describe("EformsignController (Integration)", () => {
             "branch-1-doc",
             "branch-1",
         );
+    });
+
+    it("reports a missing client candidate as a registered 404 problem", async () => {
+        eformsignDocService.findAll.mockResolvedValue([
+            { documentId: "branch-1-doc" },
+        ] as any);
+        getContractClientCandidateUsecase.execute.mockResolvedValue(null);
+
+        const response = await request(app.getHttpServer())
+            .get("/api/documents/branch-1-doc/client-candidate");
+
+        expect(response.status).toBe(404);
+        expect(response.body.code).toBe("RESOURCE_NOT_FOUND");
+        expect(response.body.outcome).toBe("NOT_APPLIED");
     });
 
     describe("local source-of-truth document reads", () => {
@@ -1232,6 +1437,40 @@ describe("EformsignController (Integration)", () => {
             expect(areaTemplateFindAll).toHaveBeenCalledWith("branch-1");
         });
 
+        it("serves the historical maternity target through section scope, shared snapshot, and both Korean searches", async () => {
+            areaTemplateFindAll.mockResolvedValue([
+                { templateId: "registered-contract-template" },
+            ]);
+            mirrorRepository.findAllVisibleInMirror.mockResolvedValue([
+                createMirrorRow({
+                    documentId: "0123456789abcdef0123456789abcdef",
+                    templateId: "d1591da29590495d800f55f1d1fc1378",
+                    customerName: "홍가람",
+                    clientId: null,
+                }),
+            ]);
+
+            const exact = await request(mirrorApp.getHttpServer())
+                .get("/api/documents")
+                .query({ section: "maternity", search: "홍가람" });
+            const chosung = await request(mirrorApp.getHttpServer())
+                .get("/api/documents")
+                .query({ section: "maternity", search: "ㅎㄱㄹ" });
+
+            expect(exact.status).toBe(200);
+            expect(chosung.status).toBe(200);
+            expect(exact.body.documents.map((d: { id: string }) => d.id)).toEqual([
+                "0123456789abcdef0123456789abcdef",
+            ]);
+            expect(chosung.body.documents.map((d: { id: string }) => d.id)).toEqual([
+                "0123456789abcdef0123456789abcdef",
+            ]);
+            // Search is applied after the same mirror snapshot; the second query must not
+            // rebuild the source generation or drop the repaired historical row.
+            expect(mirrorRepository.findAllVisibleInMirror).toHaveBeenCalledTimes(1);
+            expect(exact.body.snapshot_version).toBe(chosung.body.snapshot_version);
+        });
+
         it("lets the section override client-sent template params", async () => {
             // 클라이언트가 include로 other-template을 강요해도 서버 정본(화이트리스트)이 이긴다.
             areaTemplateFindAll.mockResolvedValue([
@@ -1286,6 +1525,11 @@ describe("EformsignController (Integration)", () => {
                 .get("/api/documents?section=everything");
 
             expect(response.status).toBe(400);
+            expect(response.body.code).toBe("VALIDATION_FAILED");
+            expect(response.body.errors).toEqual([expect.objectContaining({
+                pointer: "/section",
+                location: "query",
+            })]);
             expect(areaTemplateFindAll).not.toHaveBeenCalled();
         });
 
@@ -1420,7 +1664,11 @@ describe("EformsignController (Integration)", () => {
                 .get("/api/documents?displayStatus=unexpected");
 
             expect(response.status).toBe(400);
-            expect(response.body.message).toBe("displayStatus must be signed or review");
+            expect(response.body.code).toBe("VALIDATION_FAILED");
+            expect(response.body.errors).toEqual([expect.objectContaining({
+                pointer: "/displayStatus",
+                location: "query",
+            })]);
         });
 
         it("keeps a stale tombstone in unfiltered all reads but fences it from deletion-aware filters", async () => {
@@ -1704,6 +1952,24 @@ describe("EformsignController (Integration)", () => {
             .get("/api/documents?accessToken=access-token&templateId=service-record-template&templateMatch=unknown");
 
         expect(response.status).toBe(400);
+        expect(response.body.code).toBe("VALIDATION_FAILED");
+        expect(response.body.errors).toEqual([expect.objectContaining({
+            pointer: "/templateMatch",
+            location: "query",
+        })]);
+        expect(eformsignService.getAllDocuments).not.toHaveBeenCalled();
+    });
+
+    it("rejects an unknown status category with a field pointer", async () => {
+        const response = await request(app.getHttpServer())
+            .get("/api/documents?accessToken=access-token&statusCategory=weird");
+
+        expect(response.status).toBe(400);
+        expect(response.body.code).toBe("VALIDATION_FAILED");
+        expect(response.body.errors).toEqual([expect.objectContaining({
+            pointer: "/statusCategory",
+            location: "query",
+        })]);
         expect(eformsignService.getAllDocuments).not.toHaveBeenCalled();
     });
 

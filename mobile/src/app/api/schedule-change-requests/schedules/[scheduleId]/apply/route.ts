@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest } from "next/server";
 
 import { serverAPIClient } from "@/lib/api/server";
 import {
@@ -10,19 +10,14 @@ import {
     withNoStore,
 } from "@/lib/api/route-utils";
 
+import {
+    invalidScheduleDateResponse,
+    invalidScheduleIdResponse,
+    isPositiveScheduleId,
+    isValidIsoDate,
+} from "../../../schedule-change-route-utils";
+
 type RouteParams = { params: Promise<{ scheduleId: string }> };
-
-const ISO_DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
-
-function isPositiveIntegerString(value: string): boolean {
-    return /^[1-9]\d*$/.test(value);
-}
-
-function isValidIsoDate(value: unknown): value is string {
-    if (typeof value !== "string" || !ISO_DATE_PATTERN.test(value)) return false;
-    const parsed = new Date(`${value}T00:00:00.000Z`);
-    return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value;
-}
 
 export async function POST(request: NextRequest, { params }: RouteParams) {
     try {
@@ -30,8 +25,8 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
         if (!token) return unauthorizedResponse("Unauthorized");
 
         const { scheduleId } = await params;
-        if (!isPositiveIntegerString(scheduleId)) {
-            return NextResponse.json({ error: "Invalid schedule id" }, { status: 400 });
+        if (!isPositiveScheduleId(scheduleId)) {
+            return invalidScheduleIdResponse();
         }
 
         const body = await request.json().catch(() => null);
@@ -39,7 +34,7 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
             ? (body as { toDate?: unknown }).toDate
             : undefined;
         if (!isValidIsoDate(toDate)) {
-            return NextResponse.json({ error: "Invalid schedule date" }, { status: 400 });
+            return invalidScheduleDateResponse();
         }
 
         const response = await serverAPIClient.post(

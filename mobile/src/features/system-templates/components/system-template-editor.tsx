@@ -1,5 +1,5 @@
 'use client';
-import { getUserErrorMessage } from "@babyjamjam/shared";
+import { normalizeApiError } from "@babyjamjam/shared";
 
 
 import { useState } from 'react';
@@ -32,7 +32,8 @@ export function SystemTemplateEditor({ template }: Props) {
     if (!newVariable.key.trim() || !newVariable.label.trim()) {
       toast({
         variant: 'destructive',
-        description: getUserErrorMessage('변수 키와 레이블을 입력해 주세요'),
+        // Locally authored validation copy renders verbatim.
+        description: '변수 키와 레이블을 입력해 주세요',
       });
       return;
     }
@@ -41,7 +42,8 @@ export function SystemTemplateEditor({ template }: Props) {
     if (customVariables.some((v) => v.key === newVariable.key)) {
       toast({
         variant: 'destructive',
-        description: getUserErrorMessage('이미 있는 변수 키예요'),
+        // Locally authored validation copy renders verbatim.
+        description: '이미 있는 변수 키예요',
       });
       return;
     }
@@ -73,11 +75,12 @@ export function SystemTemplateEditor({ template }: Props) {
         description: '템플릿을 저장했어요',
       });
     } catch (error) {
-      const errorMessage =
-        error instanceof Error ? error.message : '템플릿을 저장하지 못했어요';
+      // Shared problem contract resolution — a registered body surfaces its
+      // catalog copy; Error.message internals never reach the toast.
+      const normalized = normalizeApiError(error, { locale: 'ko-KR', operation: 'mutation' });
       toast({
         variant: 'destructive',
-        description: getUserErrorMessage(errorMessage),
+        description: normalized.verified ? normalized.message : '템플릿을 저장하지 못했어요',
       });
     }
   };

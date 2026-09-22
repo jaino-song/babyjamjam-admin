@@ -1,11 +1,8 @@
-import { BadRequestException, Injectable } from "@nestjs/common";
+import { ConflictException, Injectable } from "@nestjs/common";
+import { codeOnlyProblemBody } from "application/utils/problem-bodies";
 import { normalizePhone } from "application/utils/normalize-phone";
 import { SERVICE_STATUS } from "domain/value-objects/service-status.vo";
 import { PrismaService } from "infrastructure/database/prisma.service";
-
-const NO_ASSIGNMENT_MESSAGE = "고객의 제공인력 배정을 먼저 저장해 주세요.";
-const PROVIDER_MISMATCH_MESSAGE = "전자문서의 제공인력과 고객 배정 정보가 일치하지 않습니다.";
-const TERMINATED_SERVICE_MESSAGE = "해지된 고객에게는 전자문서를 발송할 수 없습니다.";
 
 type AssignedSchedule = {
     id: number;
@@ -76,7 +73,7 @@ export class ContractClientAssignmentGuardService {
     private async requireAssignedSchedule(branchId: string, clientId: number): Promise<AssignedSchedule> {
         const schedule = await this.findActiveSchedule(branchId, clientId);
         if (!schedule) {
-            throw new BadRequestException(NO_ASSIGNMENT_MESSAGE);
+            throw new ConflictException(codeOnlyProblemBody("CLIENT_ASSIGNMENT_REQUIRED"));
         }
         return schedule;
     }
@@ -88,7 +85,7 @@ export class ContractClientAssignmentGuardService {
         const expectedPhone = normalizePhone(providerPhone ?? null);
         const assignedPhone = normalizePhone(schedule.primaryEmployee.phone);
         if (!expectedPhone || !assignedPhone || expectedPhone !== assignedPhone) {
-            throw new BadRequestException(PROVIDER_MISMATCH_MESSAGE);
+            throw new ConflictException(codeOnlyProblemBody("DOCUMENT_PROVIDER_MISMATCH"));
         }
     }
 
@@ -104,7 +101,7 @@ export class ContractClientAssignmentGuardService {
         schedule: AssignedSchedule,
     ): Promise<void> {
         if (schedule.terminatedAt) {
-            throw new BadRequestException(TERMINATED_SERVICE_MESSAGE);
+            throw new ConflictException(codeOnlyProblemBody("CLIENT_SERVICE_TERMINATED"));
         }
 
         // Read the client fresh rather than trusting a caller-supplied snapshot: an
@@ -115,7 +112,7 @@ export class ContractClientAssignmentGuardService {
             select: { serviceStatus: true },
         });
         if (client?.serviceStatus === SERVICE_STATUS.TERMINATED) {
-            throw new BadRequestException(TERMINATED_SERVICE_MESSAGE);
+            throw new ConflictException(codeOnlyProblemBody("CLIENT_SERVICE_TERMINATED"));
         }
     }
 

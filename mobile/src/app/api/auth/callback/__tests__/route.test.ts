@@ -25,9 +25,13 @@ describe("GET /api/auth/callback", () => {
     const response = await GET();
 
     expect(response.status).toBe(410);
-    await expect(response.json()).resolves.toEqual({
+    expect(response.headers.get("content-type")).toBe("application/problem+json");
+    await expect(response.json()).resolves.toEqual(expect.objectContaining({
+      code: "REQUEST_EXPIRED",
+      status: 410,
+      outcome: "NOT_APPLIED",
       error: "Legacy token callback is disabled",
-    });
+    }));
     expect(mockCookies).not.toHaveBeenCalled();
     expect(cookieStore.set).not.toHaveBeenCalled();
   });

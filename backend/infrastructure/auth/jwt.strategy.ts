@@ -2,6 +2,7 @@ import { Injectable, UnauthorizedException } from "@nestjs/common";
 import { PassportStrategy } from "@nestjs/passport";
 import { ExtractJwt, Strategy } from "passport-jwt";
 import { getJwtSecret } from "./jwt-secret";
+import { codeOnlyProblemBody } from "application/utils/problem-bodies";
 import { PrismaService } from "../database/prisma.service";
 
 interface JwtPayload {
@@ -43,7 +44,7 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
 
     async validate(payload: JwtPayload) {
         if (payload.type !== 'access' || !payload.sid) {
-            throw new UnauthorizedException('Invalid token type');
+            throw new UnauthorizedException(codeOnlyProblemBody("AUTH_REQUIRED"));
         }
 
         let session: {
@@ -76,7 +77,7 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
             });
         } catch {
             // fail-closed: a store outage must not let an unvalidated token through.
-            throw new UnauthorizedException('Unable to validate token');
+            throw new UnauthorizedException(codeOnlyProblemBody("AUTH_REQUIRED"));
         }
 
         if (
@@ -89,11 +90,11 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
             || payload.tokenVersion === undefined
             || payload.tokenVersion !== session.user.tokenVersion
         ) {
-            throw new UnauthorizedException('Invalid or revoked token');
+            throw new UnauthorizedException(codeOnlyProblemBody("AUTH_REQUIRED"));
         }
         const user = session.user;
         if (user.role !== 'owner' && user.approvalStatus !== 'approved') {
-            throw new UnauthorizedException('Account is not approved');
+            throw new UnauthorizedException(codeOnlyProblemBody("AUTH_REQUIRED"));
         }
 
         return {

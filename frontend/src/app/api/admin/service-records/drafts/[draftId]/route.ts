@@ -1,24 +1,26 @@
 import { NextRequest } from "next/server";
 
+import { serverAPIClient } from "@/lib/api/server";
+
 import {
+    authRequiredResponse,
+    errorResponse,
     getAuthHeaders,
     getAuthToken,
-    jsonResponse,
-    readJsonBody,
-    serverAPIClient,
-    upstreamError,
-} from "@/app/api/admin/service-records/_lib/proxy";
+    invalidJsonResponse,
+    readJsonObjectBody,
+} from "@/lib/api/route-utils";
+import { jsonResponse } from "@/app/api/admin/service-records/_lib/proxy";
 
 type RouteParams = { params: Promise<{ draftId: string }> };
 
 export async function PATCH(request: NextRequest, { params }: RouteParams) {
     const token = getAuthToken(request);
-    if (!token) return jsonResponse({ error: "Unauthorized" }, 401);
+    if (!token) return authRequiredResponse();
     const { draftId } = await params;
-    const body = await readJsonBody(request);
-    if (!body) return jsonResponse({ error: "Invalid JSON body" }, 400);
 
     try {
+        const body = await readJsonObjectBody(request);
         const response = await serverAPIClient.patch(
             `/admin/service-records/drafts/${encodeURIComponent(draftId)}`,
             body,
@@ -26,6 +28,8 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
         );
         return jsonResponse(response.data ?? {}, response.status);
     } catch (error) {
-        return upstreamError(error, "Failed to save service record draft");
+        const invalidJson = invalidJsonResponse(error);
+        if (invalidJson) return invalidJson;
+        return errorResponse(error, "save service record draft");
     }
 }

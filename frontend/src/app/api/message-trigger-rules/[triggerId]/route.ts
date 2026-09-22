@@ -1,13 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import { serverAPIClient } from "@/lib/api/server";
 import {
+  authRequiredResponse,
   backendJsonResponse,
+  errorResponse,
   getAuthHeaders,
   getAuthToken,
-  messageTriggerUpstreamErrorResponse,
   parseBody,
-  unauthorizedResponse,
-} from "@babyjamjam/shared/api";
+} from "@/lib/api/route-utils";
 import { updateMessageTriggerRuleSchema } from "@babyjamjam/shared/types/message";
 
 type RouteContext = {
@@ -30,7 +30,7 @@ export async function GET(request: NextRequest, context: RouteContext) {
   try {
     const token = getAuthToken(request);
     if (!token) {
-      return unauthorizedResponse("Unauthorized");
+      return authRequiredResponse();
     }
 
     const { triggerId } = await context.params;
@@ -43,7 +43,7 @@ export async function GET(request: NextRequest, context: RouteContext) {
     });
     return backendJsonResponse(response);
   } catch (error) {
-    return messageTriggerUpstreamErrorResponse(error, "fetch message trigger rule");
+    return errorResponse(error, "fetch message trigger rule", "read");
   }
 }
 
@@ -51,7 +51,7 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
   try {
     const token = getAuthToken(request);
     if (!token) {
-      return unauthorizedResponse("Unauthorized");
+      return authRequiredResponse();
     }
 
     const { triggerId } = await context.params;
@@ -72,7 +72,7 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
     });
     return backendJsonResponse(response);
   } catch (error) {
-    return messageTriggerUpstreamErrorResponse(error, "update message trigger rule");
+    return errorResponse(error, "update message trigger rule", "mutation");
   }
 }
 
@@ -80,7 +80,7 @@ export async function DELETE(request: NextRequest, context: RouteContext) {
   try {
     const token = getAuthToken(request);
     if (!token) {
-      return unauthorizedResponse("Unauthorized");
+      return authRequiredResponse();
     }
 
     const { triggerId } = await context.params;
@@ -93,6 +93,6 @@ export async function DELETE(request: NextRequest, context: RouteContext) {
     });
     return backendJsonResponse(response);
   } catch (error) {
-    return messageTriggerUpstreamErrorResponse(error, "delete message trigger rule");
+    return errorResponse(error, "delete message trigger rule", "mutation");
   }
 }

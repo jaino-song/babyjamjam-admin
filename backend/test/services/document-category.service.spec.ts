@@ -1,4 +1,4 @@
-import { ConflictException, NotFoundException } from "@nestjs/common";
+import { ConflictException } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
 import { DocumentCategoryService } from "application/services/document-category.service";
 import { PrismaService } from "infrastructure/database/prisma.service";
@@ -82,12 +82,18 @@ describe("DocumentCategoryService", () => {
         expect(result[1]).toMatchObject({ value: "branch-only", isCustom: true });
     });
 
-    it("should reject a category owned by another branch", async () => {
+    it("should reject a category owned by another branch with a RESOURCE_NOT_FOUND problem body", async () => {
         prisma.document_category.findFirst.mockResolvedValue(null);
 
-        await expect(
-            service.assertAvailableToBranch("branch-1", "category-from-branch-2"),
-        ).rejects.toThrow(new NotFoundException("Document category not found"));
+        const promise = service.assertAvailableToBranch("branch-1", "category-from-branch-2");
+        await expect(promise).rejects.toMatchObject({
+            status: 404,
+            response: expect.objectContaining({
+                code: "RESOURCE_NOT_FOUND",
+                outcome: "NOT_APPLIED",
+                recovery: { action: "NONE", retry: { mode: "NEVER" } },
+            }),
+        });
 
         expect(prisma.document_category.findFirst).toHaveBeenCalledWith({
             where: {
@@ -211,10 +217,10 @@ describe("DocumentCategoryService", () => {
         await expect(promise).rejects.toMatchObject({
             status: 409,
             response: expect.objectContaining({
-                statusCode: 409,
-                code: "GLOBAL_CATEGORY_CONFLICT",
-                error: "Conflict",
-                field: "value",
+                code: "REQUEST_CONFLICT",
+                outcome: "NOT_APPLIED",
+                recovery: { action: "NONE", retry: { mode: "NEVER" } },
+                errors: [expect.objectContaining({ pointer: "/value" })],
                 message: expect.stringContaining("'contract'"),
             }),
         });
@@ -240,10 +246,10 @@ describe("DocumentCategoryService", () => {
         await expect(promise).rejects.toMatchObject({
             status: 409,
             response: expect.objectContaining({
-                statusCode: 409,
-                code: "P2002",
-                error: "Conflict",
-                field: "value",
+                code: "REQUEST_CONFLICT",
+                outcome: "NOT_APPLIED",
+                recovery: { action: "NONE", retry: { mode: "NEVER" } },
+                errors: [expect.objectContaining({ pointer: "/value" })],
                 message: expect.stringContaining("'branch-contract'"),
             }),
         });

@@ -1,22 +1,17 @@
 import { NextRequest, NextResponse } from "next/server";
 import { serverAPIClient } from "@/lib/api/server";
+import { authRequiredResponse, errorResponse, getAuthHeaders, getAuthToken } from "@/lib/api/route-utils";
 
-function getAuthToken(request: NextRequest): string | null {
-    return request.cookies.get("auth_token")?.value || null;
-}
-
-function getAuthHeaders(token: string | null): Record<string, string> {
-    return token ? { Authorization: `Bearer ${token}` } : {};
-}
+type RouteParams = { params: Promise<{ id: string }> };
 
 export async function GET(
     request: NextRequest,
-    { params }: { params: Promise<{ id: string }> }
+    { params }: RouteParams
 ) {
     try {
         const token = getAuthToken(request);
         if (!token) {
-            return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+            return authRequiredResponse();
         }
 
         const { id } = await params;
@@ -25,22 +20,18 @@ export async function GET(
         });
         return NextResponse.json(response.data);
     } catch (error) {
-        console.error(`[API] Error fetching message template ${request.url}:`, error);
-        return NextResponse.json(
-            { error: "Failed to fetch message template" },
-            { status: 500 }
-        );
+        return errorResponse(error, "fetch message template", "read");
     }
 }
 
 export async function PATCH(
     request: NextRequest,
-    { params }: { params: Promise<{ id: string }> }
+    { params }: RouteParams
 ) {
     try {
         const token = getAuthToken(request);
         if (!token) {
-            return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+            return authRequiredResponse();
         }
 
         const { id } = await params;
@@ -50,22 +41,18 @@ export async function PATCH(
         });
         return NextResponse.json(response.data);
     } catch (error) {
-        console.error(`[API] Error updating message template ${request.url}:`, error);
-        return NextResponse.json(
-            { error: "Failed to update message template" },
-            { status: 500 }
-        );
+        return errorResponse(error, "update message template", "mutation");
     }
 }
 
 export async function DELETE(
     request: NextRequest,
-    { params }: { params: Promise<{ id: string }> }
+    { params }: RouteParams
 ) {
     try {
         const token = getAuthToken(request);
         if (!token) {
-            return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+            return authRequiredResponse();
         }
 
         const { id } = await params;
@@ -74,10 +61,6 @@ export async function DELETE(
         });
         return new NextResponse(null, { status: 204 });
     } catch (error) {
-        console.error(`[API] Error deleting message template ${request.url}:`, error);
-        return NextResponse.json(
-            { error: "Failed to delete message template" },
-            { status: 500 }
-        );
+        return errorResponse(error, "delete message template", "mutation");
     }
 }

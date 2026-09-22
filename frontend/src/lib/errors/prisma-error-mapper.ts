@@ -1,4 +1,4 @@
-import { getUserErrorMessage, getSafeApiDisplayMessage } from '@babyjamjam/shared';
+import { getSafeApiDisplayMessage, normalizeApiError } from '@babyjamjam/shared';
 
 import { t, Locale } from '@/lib/i18n/translations';
 
@@ -110,13 +110,28 @@ export function getApiDisplayMessage(error: unknown): string | null {
 }
 
 /**
- * Get error message from any error type, with Prisma error handling
- * Falls back to the backend's own message, then to a generic localized message
+ * Get error message from any error type, with Prisma error handling.
+ *
+ * Resolution order follows the EM v1.0 client policy: structured Prisma
+ * codes first, then the shared problem contract (registered code only —
+ * upstream messages are never rendered), then the localized fallback.
  */
 export function getErrorMessage(
     error: unknown,
     locale: Locale,
     fallbackKey: string = 'errors.generic'
 ): string {
-    return getUserErrorMessage(error, t('ko', fallbackKey));
+    const apiError = extractApiError(error);
+    const prismaMessage = mapPrismaError(apiError, locale);
+    if (prismaMessage) {
+        return prismaMessage;
+    }
+    const normalized = normalizeApiError(error, {
+        locale: locale === 'en' ? 'en-US' : 'ko-KR',
+        operation: 'mutation',
+    });
+    if (normalized.verified) {
+        return normalized.message;
+    }
+    return t(locale, fallbackKey);
 }

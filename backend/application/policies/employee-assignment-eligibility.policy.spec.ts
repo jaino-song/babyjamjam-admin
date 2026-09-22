@@ -26,7 +26,11 @@ describe("assignment availability explanation", () => {
         expect(denial(employees)).not.toHaveProperty("code", "EMPLOYEE_ASSIGNMENT_UNAVAILABLE");
     });
     it("checks every employee's branch before disclosing the primary employee's availability", () => {
-        expect(denial([employee(), employee({ id: 2, branchId: "other" })], 2)).not.toHaveProperty("code");
+        const body = denial([employee(), employee({ id: 2, branchId: "other" })], 2);
+        // The branch check fires with the registered branch-ineligibility code;
+        // availability (EMPLOYEE_ASSIGNMENT_UNAVAILABLE) stays undisclosed.
+        expect(body).toMatchObject({ code: "EMPLOYEE_ASSIGNMENT_NOT_ELIGIBLE" });
+        expect(body).not.toHaveProperty("code", "EMPLOYEE_ASSIGNMENT_UNAVAILABLE");
     });
     it("keeps retained disabled employees and available new employees eligible", () => {
         expect(() => assertEmployeeAssignmentEligibility("branch-a", 1, null, [employee()], new Set([1]))).not.toThrow();

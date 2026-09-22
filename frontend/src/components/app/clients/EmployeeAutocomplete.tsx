@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo, useRef } from "react";
+import { useState, useMemo, useRef, type RefObject } from "react";
 import { Check, ChevronsUpDown, UserPlus, X, Loader2, Play } from "lucide-react";
 import { useEmployees, Employee } from "@/hooks/useEmployees";
 import { useLocale } from "@/providers/LocaleProvider";
@@ -39,6 +39,10 @@ interface EmployeeAutocompleteProps {
     label: string;
     required?: boolean;
     error?: boolean;
+    /** Space-separated ids describing the trigger, e.g. linked field error entries. */
+    describedBy?: string;
+    /** Optional parent-owned ref bound to the trigger button so callers can focus it on field errors. */
+    triggerButtonRef?: RefObject<HTMLButtonElement | null>;
     helperText?: string;
     excludeIds?: number[];
     allowManualEntry?: boolean;
@@ -61,6 +65,8 @@ export function EmployeeAutocomplete({
     label,
     required = false,
     error = false,
+    describedBy,
+    triggerButtonRef,
     helperText,
     excludeIds = [],
     allowManualEntry = true,
@@ -84,7 +90,8 @@ export function EmployeeAutocomplete({
     const [isOpen, setIsOpen] = useState(false);
     const [isRegistrationDialogOpen, setIsRegistrationDialogOpen] = useState(false);
     const [inputValue, setInputValue] = useState("");
-    const triggerRef = useRef<HTMLButtonElement>(null);
+    const internalTriggerRef = useRef<HTMLButtonElement>(null);
+    const triggerRef = triggerButtonRef ?? internalTriggerRef;
     const popoverSideOffset = -44 * (
         typeof window === "undefined"
             ? 1
@@ -233,6 +240,8 @@ export function EmployeeAutocomplete({
                             role="combobox"
                             aria-label={label}
                             aria-expanded={isOpen}
+                            aria-invalid={error || undefined}
+                            aria-describedby={describedBy}
                             data-component={`${dataComponent}_input`}
                             className={cn(
                                 V3_INPUT_CONTROL_CLASS_NAME,

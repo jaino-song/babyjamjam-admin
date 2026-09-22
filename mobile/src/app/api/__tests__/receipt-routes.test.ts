@@ -234,7 +234,13 @@ describe("receipt BFF routes", () => {
     it("access probes the HttpOnly cookie without downloading the receipt image", async () => {
         const denied = await access(new NextRequest("http://localhost/api/receipt/efr_t/access"), params);
         expect(denied.status).toBe(401);
-        expect(await denied.json()).toEqual({ reason: "access_required" });
+        expect(denied.headers.get("Content-Type")).toBe("application/problem+json");
+        await expect(denied.json()).resolves.toEqual(expect.objectContaining({
+            code: "AUTH_REQUIRED",
+            status: 401,
+            outcome: "NOT_APPLIED",
+            reason: "access_required",
+        }));
         expect(denied.headers.get("cache-control")).toContain("no-store");
         expect(mockGet).not.toHaveBeenCalled();
 
@@ -273,7 +279,13 @@ describe("receipt BFF routes", () => {
     it("image requires the cookie and streams the png with the backend's headers", async () => {
         const denied = await image(new NextRequest("http://localhost/api/receipt/efr_t/image"), params);
         expect(denied.status).toBe(401);
-        expect(await denied.json()).toEqual({ reason: "access_required" });
+        expect(denied.headers.get("Content-Type")).toBe("application/problem+json");
+        await expect(denied.json()).resolves.toEqual(expect.objectContaining({
+            code: "AUTH_REQUIRED",
+            status: 401,
+            outcome: "NOT_APPLIED",
+            reason: "access_required",
+        }));
         expect(mockGet).not.toHaveBeenCalled();
 
         mockGet.mockResolvedValue({

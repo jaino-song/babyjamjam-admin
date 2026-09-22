@@ -33,7 +33,12 @@ describe("GET /api/admin/service-records/client/[clientId]/editor", () => {
         );
 
         expect(response.status).toBe(401);
-        expect(response.headers.get("cache-control")).toBe("no-store");
+        expect(response.headers.get("cache-control")).toContain("no-store");
+        await expect(response.json()).resolves.toMatchObject({
+            code: "AUTH_REQUIRED",
+            status: 401,
+        });
+        expect(response.headers.get("Content-Type")).toContain("application/problem+json");
         expect(mockGet).not.toHaveBeenCalled();
     });
 
@@ -62,7 +67,7 @@ describe("GET /api/admin/service-records/client/[clientId]/editor", () => {
             isAxiosError: true,
             response: {
                 status,
-                data: { code: `EDITOR_${status}` },
+                data: { code: `EDITOR_${status}`, message: "secret editor internals" },
             },
         });
 
@@ -72,11 +77,14 @@ describe("GET /api/admin/service-records/client/[clientId]/editor", () => {
         );
 
         expect(response.status).toBe(status);
-        expect(response.headers.get("cache-control")).toBe("no-store");
-        await expect(response.json()).resolves.toEqual({ code: `EDITOR_${status}` });
+        expect(response.headers.get("cache-control")).toContain("no-store");
+        const body = await response.json();
+        expect(body).toMatchObject({ code: `EDITOR_${status}` });
+        expect(typeof body.error).toBe("string");
+        expect(JSON.stringify(body)).not.toContain("secret editor internals");
     });
 
-    it("returns a generic 500 and logs only a fixed message for an unavailable upstream", async () => {
+    it("returns a sanitized 500 and logs only sanitized diagnostics for an unavailable upstream", async () => {
         const consoleError = jest.spyOn(console, "error").mockImplementation(() => undefined);
         const upstreamError = Object.assign(new Error("private upstream details"), {
             config: { headers: { Authorization: "Bearer secret-jwt" } },
@@ -89,9 +97,11 @@ describe("GET /api/admin/service-records/client/[clientId]/editor", () => {
         );
 
         expect(response.status).toBe(500);
-        expect(response.headers.get("cache-control")).toBe("no-store");
-        await expect(response.json()).resolves.toEqual({ error: "Failed to fetch service records" });
-        expect(consoleError).toHaveBeenCalledWith("[API] Error fetching service-record editor");
+        expect(response.headers.get("cache-control")).toContain("no-store");
+        const body = await response.json();
+        expect(typeof body.error).toBe("string");
+        expect(JSON.stringify(body)).not.toContain("private upstream details");
+        expect(consoleError).toHaveBeenCalled();
         expect(JSON.stringify(consoleError.mock.calls)).not.toContain("private upstream details");
         expect(JSON.stringify(consoleError.mock.calls)).not.toContain("secret-jwt");
         consoleError.mockRestore();

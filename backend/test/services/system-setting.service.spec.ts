@@ -1,3 +1,4 @@
+import { ConflictException } from "@nestjs/common";
 import { SystemSettingService } from "application/services/system-setting.service";
 import { GetSettingUsecase } from "application/usecases/system-setting/get-setting.usecase";
 import { UpdateSettingUsecase } from "application/usecases/system-setting/update-setting.usecase";
@@ -207,7 +208,7 @@ describe("SystemSettingService", () => {
         it("rejects a stale ribbon version without invoking a second unconditional write", async () => {
             updateSettingUsecase.executeIfVersion.mockResolvedValue(null);
 
-            await expect(service.setRibbonConfigIfVersion("stale-version", {
+            const promise = service.setRibbonConfigIfVersion("stale-version", {
                 enabled: true,
                 message: "점검",
                 backgroundColor: "#004AAD",
@@ -215,7 +216,16 @@ describe("SystemSettingService", () => {
                 linkText: "",
                 linkHref: "",
                 linkColor: "#FFB27B",
-            })).rejects.toThrow("Ribbon configuration changed");
+            });
+            await expect(promise).rejects.toBeInstanceOf(ConflictException);
+            await expect(promise).rejects.toMatchObject({
+                status: 409,
+                response: expect.objectContaining({
+                    code: "REQUEST_CONFLICT",
+                    outcome: "NOT_APPLIED",
+                    recovery: { action: "NONE", retry: { mode: "NEVER" } },
+                }),
+            });
             expect(updateSettingUsecase.execute).not.toHaveBeenCalled();
         });
     });

@@ -2,13 +2,13 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { serverAPIClient } from "@/lib/api/server";
 import {
+  authRequiredResponse,
   backendJsonResponse,
+  errorResponse,
   getAuthHeaders,
   getAuthToken,
-  messageTriggerUpstreamErrorResponse,
   parseBody,
-  unauthorizedResponse,
-} from "@babyjamjam/shared/api";
+} from "@/lib/api/route-utils";
 
 const branchActivationSchema = z.object({
   isActive: z.boolean(),
@@ -26,7 +26,7 @@ export async function PUT(request: NextRequest, context: RouteContext) {
   try {
     const token = getAuthToken(request);
     if (!token) {
-      return unauthorizedResponse("Unauthorized");
+      return authRequiredResponse();
     }
 
     const { triggerId } = await context.params;
@@ -46,6 +46,6 @@ export async function PUT(request: NextRequest, context: RouteContext) {
     );
     return backendJsonResponse(response);
   } catch (error) {
-    return messageTriggerUpstreamErrorResponse(error, "update message trigger branch activation");
+    return errorResponse(error, "update message trigger branch activation", "mutation");
   }
 }

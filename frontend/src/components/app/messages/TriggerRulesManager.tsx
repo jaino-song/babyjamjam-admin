@@ -1,5 +1,4 @@
 "use client";
-import { getUserErrorMessage } from "@babyjamjam/shared";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -76,6 +75,7 @@ import type {
   TriggerTemplateCatalogItem,
   TriggerTemplateKey,
 } from "@/features/message-triggers/types";
+import { getUserErrorMessage } from "@babyjamjam/shared";
 
 type RuleSelection = string | "new" | null;
 type RuleStatusFilter = "active" | "inactive";
@@ -866,7 +866,7 @@ export function TriggerRulesManager({
         await showParentDisabledConflict();
         return;
       }
-      toast({ variant: "destructive", description: getUserErrorMessage("규칙 상태를 바꾸지 못했어요") });
+      toast({ variant: "destructive", description: "규칙 상태를 바꾸지 못했어요" });
     }
   };
 
@@ -950,7 +950,7 @@ export function TriggerRulesManager({
     if (unsupportedRequiredCustomVariables.length > 0) {
       toast({
         variant: "destructive",
-        description: getUserErrorMessage("자동 입력할 수 없는 필수 변수가 있어 규칙을 저장할 수 없어요"),
+        description: "자동 입력할 수 없는 필수 변수가 있어 규칙을 저장할 수 없어요",
       });
       return;
     }
@@ -961,12 +961,12 @@ export function TriggerRulesManager({
     }
 
     if (!dto.name.trim()) {
-      toast({ variant: "destructive", description: getUserErrorMessage("규칙 이름을 입력해 주세요") });
+      toast({ variant: "destructive", description: "규칙 이름을 입력해 주세요" });
       return;
     }
 
     if ((dto.offsetType === "BEFORE_DAYS" || dto.offsetType === "AFTER_DAYS") && (!dto.offsetDays || dto.offsetDays < 1)) {
-      toast({ variant: "destructive", description: getUserErrorMessage("일수는 1 이상이어야 해요") });
+      toast({ variant: "destructive", description: "일수는 1 이상이어야 해요" });
       return;
     }
 
@@ -996,7 +996,7 @@ export function TriggerRulesManager({
         await showParentDisabledConflict();
         return;
       }
-      toast({ variant: "destructive", description: getUserErrorMessage("발송 규칙을 저장하지 못했어요") });
+      toast({ variant: "destructive", description: "발송 규칙을 저장하지 못했어요" });
     }
   };
 
@@ -1008,7 +1008,7 @@ export function TriggerRulesManager({
       setSelectedRuleId(null);
       toast({ variant: "success", description: "발송 규칙을 삭제했어요" });
     } catch {
-      toast({ variant: "destructive", description: getUserErrorMessage("발송 규칙을 삭제하지 못했어요") });
+      toast({ variant: "destructive", description: "발송 규칙을 삭제하지 못했어요" });
     }
   };
   return (

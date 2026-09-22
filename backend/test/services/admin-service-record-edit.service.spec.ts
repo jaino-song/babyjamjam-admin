@@ -476,7 +476,15 @@ describe("AdminServiceRecordEditService", () => {
 
         await expect(harness.service.startDraft(BRANCH_ID, CLIENT_ID, ACTOR_ID, {
             changes: forbidden as never,
-        })).rejects.toThrow(/Unknown service-record draft field/);
+        })).rejects.toMatchObject({
+            response: expect.objectContaining({
+                code: "VALIDATION_FAILED",
+                errors: [expect.objectContaining({
+                    pointer: "/changes/branchId",
+                    code: "UNEXPECTED_FIELD",
+                })],
+            }),
+        });
         expect(harness.repository.createOrResumeDraft).not.toHaveBeenCalled();
 
         await expect(harness.service.startDraft(BRANCH_ID, CLIENT_ID, ACTOR_ID, {
@@ -486,7 +494,15 @@ describe("AdminServiceRecordEditService", () => {
                     { sessionIndex: 1, serviceDate: "2026-09-02" },
                 ],
             },
-        })).rejects.toThrow(/Duplicate service-record session/);
+        })).rejects.toMatchObject({
+            response: expect.objectContaining({
+                code: "VALIDATION_FAILED",
+                errors: [expect.objectContaining({
+                    pointer: "/changes/sessions",
+                    code: "INVALID_VALUE",
+                })],
+            }),
+        });
     });
 
     it("returns the latest safe draft state as a 409 on stale CAS", async () => {
@@ -503,7 +519,9 @@ describe("AdminServiceRecordEditService", () => {
         await expect(operation).rejects.toBeInstanceOf(ConflictException);
         await expect(operation).rejects.toMatchObject({
             response: expect.objectContaining({
-                code: "SERVICE_RECORD_EDIT_CONFLICT",
+                code: "SERVICE_RECORD_WRITE_TARGET_CHANGED",
+                outcome: "NOT_APPLIED",
+                recovery: { action: "NONE", retry: { mode: "NEVER" } },
                 latestDraft: latest,
                 sourceChanged: true,
             }),
@@ -553,7 +571,15 @@ describe("AdminServiceRecordEditService", () => {
 
         await expect(harness.service.startDraft(BRANCH_ID, CLIENT_ID, ACTOR_ID, {
             changes: { sessions: [{ sessionIndex: 1, notes: "수정" }] },
-        })).rejects.toThrow(/ambiguous legacy source rows/);
+        })).rejects.toMatchObject({
+            response: expect.objectContaining({
+                code: "VALIDATION_FAILED",
+                errors: [expect.objectContaining({
+                    pointer: "/changes/sessions",
+                    code: "INVALID_VALUE",
+                })],
+            }),
+        });
         expect(harness.repository.createOrResumeDraft).not.toHaveBeenCalled();
     });
 
@@ -1049,7 +1075,8 @@ describe("AdminServiceRecordEditService", () => {
         expect(() => input.prepare({ draft: activeDraft, source })).toThrow(ConflictException);
         expect(() => input.prepare({ draft: activeDraft, source })).toThrow(
             expect.objectContaining({ response: expect.objectContaining({
-                code: "SERVICE_RECORD_FUTURE_SESSION_PROVENANCE_UNAVAILABLE",
+                code: "REQUEST_CONFLICT",
+                outcome: "NOT_APPLIED",
             }) }),
         );
     });
@@ -1123,7 +1150,10 @@ describe("AdminServiceRecordEditService", () => {
         await expect(harness.service.previewDraft(BRANCH_ID, DRAFT_ID, ACTOR_ID, {
             expectedDraftVersion: 1,
         })).rejects.toMatchObject({
-            response: expect.objectContaining({ code: "SERVICE_RECORD_SOURCE_CHANGED", sourceChanged: true }),
+            response: expect.objectContaining({
+                code: "SERVICE_RECORD_WRITE_TARGET_CHANGED",
+                sourceChanged: true,
+            }),
         });
 
         const stale = createHarness({
@@ -1134,7 +1164,7 @@ describe("AdminServiceRecordEditService", () => {
         await expect(stale.service.previewDraft(BRANCH_ID, DRAFT_ID, ACTOR_ID, {
             expectedDraftVersion: 2,
         })).rejects.toMatchObject({
-            response: expect.objectContaining({ code: "SERVICE_RECORD_EDIT_CONFLICT" }),
+            response: expect.objectContaining({ code: "SERVICE_RECORD_WRITE_TARGET_CHANGED" }),
         });
     });
 
@@ -1329,5 +1359,171 @@ describe("AdminServiceRecordEditService", () => {
             idempotencyKey: "11111111-1111-4111-8111-111111111111",
         })).rejects.toBeInstanceOf(BadRequestException);
         expect(harness.repository.confirmDraft).not.toHaveBeenCalled();
+    });
+
+    describe("registered problem contract bodies", () => {
+        const expectProblemBody = async (
+            rejection: Promise<unknown>,
+            status: number,
+            code: string,
+            extra: Record<string, unknown> = {},
+        ) => {
+            await expect(rejection).rejects.toMatchObject({
+                status,
+                response: expect.objectContaining({
+                    code,
+                    outcome: "NOT_APPLIED",
+                    recovery: { action: "NONE", retry: { mode: "NEVER" } },
+                    ...extra,
+                }),
+            });
+        };
+
+        it("keeps the 404 contract with a registered code for a forged confirm identifier", async () => {
+            const harness = createHarness();
+
+            await expectProblemBody(
+                harness.service.confirmDraft(BRANCH_ID, "not-a-uuid", ACTOR_ID, {
+                    expectedDraftVersion: 1,
+                    previewId: `srp_${"a".repeat(64)}`,
+                    idempotencyKey: "11111111-1111-4111-8111-111111111111",
+                }),
+                404,
+                "RESOURCE_NOT_FOUND",
+            );
+            expect(harness.repository.confirmDraft).not.toHaveBeenCalled();
+        });
+
+        it("binds the confirm version guard to a validation problem body", async () => {
+            const harness = createHarness();
+
+            await expect(harness.service.confirmDraft(BRANCH_ID, DRAFT_ID, ACTOR_ID, {
+                expectedDraftVersion: 0,
+                previewId: `srp_${"a".repeat(64)}`,
+                idempotencyKey: "11111111-1111-4111-8111-111111111111",
+            })).rejects.toMatchObject({
+                response: expect.objectContaining({
+                    code: "VALIDATION_FAILED",
+                    errors: [expect.objectContaining({
+                        pointer: "/expectedDraftVersion",
+                        code: "INVALID_FORMAT",
+                    })],
+                }),
+            });
+        });
+
+        it("binds the preview id guard to a validation problem body", async () => {
+            const harness = createHarness();
+
+            await expect(harness.service.confirmDraft(BRANCH_ID, DRAFT_ID, ACTOR_ID, {
+                expectedDraftVersion: 1,
+                previewId: "srp_forged",
+                idempotencyKey: "11111111-1111-4111-8111-111111111111",
+            })).rejects.toMatchObject({
+                response: expect.objectContaining({
+                    code: "VALIDATION_FAILED",
+                    errors: [expect.objectContaining({
+                        pointer: "/previewId",
+                        code: "INVALID_FORMAT",
+                    })],
+                }),
+            });
+        });
+
+        it("maps a closed draft to the registered request-not-pending code", async () => {
+            const harness = createHarness({
+                targetDraft: draft({ status: "CONFIRMED" }),
+            });
+
+            await expectProblemBody(
+                harness.service.previewDraft(BRANCH_ID, DRAFT_ID, ACTOR_ID, { expectedDraftVersion: 1 }),
+                409,
+                "REQUEST_NOT_PENDING",
+            );
+        });
+
+        it("maps a stale preview confirmation to the registered request-stale code", async () => {
+            const source = previewSourceSnapshot();
+            const harness = createHarness({ source });
+            const started = await harness.service.startDraft(BRANCH_ID, CLIENT_ID, ACTOR_ID, {});
+            if (!started.draft) throw new Error("expected a draft");
+            const activeDraft = { ...started.draft, changes: {} };
+            harness.repository.confirmDraft.mockResolvedValue({ status: "confirmed" });
+
+            await harness.service.confirmDraft(BRANCH_ID, DRAFT_ID, ACTOR_ID, {
+                expectedDraftVersion: activeDraft.draftVersion,
+                previewId: `srp_${"b".repeat(64)}`,
+                idempotencyKey: "11111111-1111-4111-8111-111111111111",
+            });
+            const input = harness.repository.confirmDraft.mock.calls.at(-1)?.[0] as {
+                prepare: (snapshot: { draft: typeof activeDraft; source: ServiceRecordEditSource }) => unknown;
+            };
+
+            await expectProblemBody(
+                Promise.resolve().then(() => input.prepare({ draft: activeDraft, source })),
+                409,
+                "REQUEST_STALE",
+            );
+        });
+
+        it("maps a blocked preview confirmation to a registered conflict body", async () => {
+            const source = previewSourceSnapshot();
+            source.requiredSessionCount = null;
+            const harness = createHarness({ source });
+            const started = await harness.service.startDraft(BRANCH_ID, CLIENT_ID, ACTOR_ID, {});
+            if (!started.draft) throw new Error("expected a draft");
+            const activeDraft = { ...started.draft, changes: {} };
+            harness.repository.findDraftById.mockResolvedValue(activeDraft);
+            harness.repository.confirmDraft.mockResolvedValue({ status: "confirmed" });
+            const stalePreview = await harness.service.previewDraft(BRANCH_ID, DRAFT_ID, ACTOR_ID, {
+                expectedDraftVersion: activeDraft.draftVersion,
+            });
+
+            await harness.service.confirmDraft(BRANCH_ID, DRAFT_ID, ACTOR_ID, {
+                expectedDraftVersion: activeDraft.draftVersion,
+                previewId: stalePreview.previewId,
+                idempotencyKey: "11111111-1111-4111-8111-111111111111",
+            });
+            const input = harness.repository.confirmDraft.mock.calls.at(-1)?.[0] as {
+                prepare: (snapshot: { draft: typeof activeDraft; source: ServiceRecordEditSource }) => unknown;
+            };
+
+            await expectProblemBody(
+                Promise.resolve().then(() => input.prepare({ draft: activeDraft, source })),
+                409,
+                "REQUEST_CONFLICT",
+            );
+        });
+
+        it("binds the draft-changes-required guard to a validation problem body", async () => {
+            const harness = createHarness({ targetDraft: draft() });
+
+            await expect(harness.service.updateDraft(BRANCH_ID, DRAFT_ID, ACTOR_ID, {
+                expectedDraftVersion: 1,
+                changes: undefined,
+            } as unknown as Parameters<typeof harness.service.updateDraft>[3])).rejects.toMatchObject({
+                response: expect.objectContaining({
+                    code: "VALIDATION_FAILED",
+                    errors: [expect.objectContaining({
+                        pointer: "/changes",
+                        code: "REQUIRED",
+                    })],
+                }),
+            });
+        });
+
+        it("returns a registered not-found body when the draft or source is missing", async () => {
+            const harness = createHarness({ targetDraft: null });
+            harness.repository.findDraftById.mockResolvedValue(null);
+
+            await expectProblemBody(
+                harness.service.updateDraft(BRANCH_ID, DRAFT_ID, ACTOR_ID, {
+                    expectedDraftVersion: 1,
+                    changes: { header: { momName: "수정" } },
+                }),
+                404,
+                "RESOURCE_NOT_FOUND",
+            );
+        });
     });
 });

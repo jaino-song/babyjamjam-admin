@@ -1,5 +1,4 @@
 "use client";
-import { getUserErrorMessage } from "@babyjamjam/shared";
 
 
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -413,7 +412,7 @@ export function SystemAdminAccountEditDialog({
               tone="error"
               role="alert"
             >
-              {errorMessage && getUserErrorMessage(errorMessage)}
+              {errorMessage}
             </FormHelperText>
           ) : null}
         </form>

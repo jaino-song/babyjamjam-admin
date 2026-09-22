@@ -139,4 +139,41 @@ describe("eformsign document preview route", () => {
     expect(response.headers.get("Cache-Control")).toBe("no-store");
     expect((await response.arrayBuffer()).byteLength).toBe(0);
   });
+
+  it("rejects an unauthenticated GET with a registered 401 problem body", async () => {
+    const request = new NextRequest(
+      "http://localhost/api/eformsign/documents/doc-1/preview",
+      { method: "GET" },
+    );
+
+    const response = await GET(request, context);
+
+    expect(response.status).toBe(401);
+    await expect(response.json()).resolves.toMatchObject({
+      code: "AUTH_REQUIRED",
+      status: 401,
+    });
+    expect(response.headers.get("Content-Type")).toContain("application/problem+json");
+    expect(mockServerGet).not.toHaveBeenCalled();
+    expect(mockServerHead).not.toHaveBeenCalled();
+  });
+
+  it("sanitizes a GET upstream failure instead of reflecting its message", async () => {
+    mockServerGet.mockRejectedValue({
+      response: { status: 500, data: { message: "preview store shard-6 exploded" } },
+    });
+    const consoleErrorSpy = jest.spyOn(console, "error").mockImplementation(() => undefined);
+
+    try {
+      const response = await GET(createRequest("GET"), context);
+
+      expect(response.status).toBe(500);
+      const body = await response.json();
+      expect(typeof body.error).toBe("string");
+      expect(JSON.stringify(body)).not.toContain("shard-6");
+      expect(JSON.stringify(body)).not.toContain("Failed to preview eformsign document");
+    } finally {
+      consoleErrorSpy.mockRestore();
+    }
+  });
 });

@@ -13,6 +13,7 @@ import {
 import { JwtGuard } from 'infrastructure/auth/jwt.guard';
 import { OwnerOrAdminGuard } from 'infrastructure/auth/owner-or-admin.guard';
 import { ChatFeedbackRepository } from 'infrastructure/database/repositories/chat-feedback.repository';
+import { codeOnlyProblemBody } from 'application/utils/problem-bodies';
 import {
     PaginatedFeedbackDto,
     FeedbackStatsDto,
@@ -83,7 +84,7 @@ export class AdminFeedbackController {
         const feedback = await this.feedbackRepository.findById(id, branchId);
 
         if (!feedback) {
-            throw new NotFoundException('Feedback not found');
+            throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
         }
 
         const f = feedback as any;
@@ -122,7 +123,7 @@ export class AdminFeedbackController {
     private requireBranchId(req: any): string {
         const branchId = req.user?.branchId;
         if (!branchId) {
-            throw new ForbiddenException('Branch selection required');
+            throw new ForbiddenException(codeOnlyProblemBody("ACCESS_DENIED"));
         }
         return branchId;
     }
