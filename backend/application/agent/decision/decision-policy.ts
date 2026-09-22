@@ -78,15 +78,47 @@ export function isProfileCompatible(
 }
 
 /**
- * An evidence record whose own status is `not-evaluated` (the decision never
- * ran, e.g. off mode or unsampled turn) is echoed back as-is instead of being
- * manufactured into an abstain or a selection.
+ * Shared evidence-status gate. Every policy consults the evidence record's
+ * own status before evaluating any payload:
+ *
+ * - `accepted` → the helper returns null and the policy proceeds to its
+ *   threshold/membership evaluation.
+ * - `not-evaluated` (the decision never ran, e.g. off mode or unsampled turn)
+ *   → echoed back as-is instead of being manufactured into an abstain or a
+ *   selection.
+ * - `unavailable` (provider call failed) → `unavailable` with the evidence's
+ *   own failure reason; the payload is never evaluated in this state.
+ * - `abstain` (output could not be trusted) → `abstain` with the evidence's
+ *   own failure reason.
+ *
+ * A self-contradictory record (e.g. `status: "unavailable"` but populated
+ * domains) must surface the status, never an `accepted`/`abstain` verdict
+ * derived from the payload.
  */
-function notEvaluatedResult<TSelection>(
+function evidenceStatusGate<TSelection>(
     evidence: DecisionEvidence,
     baseline: TSelection | null,
     profileVersion: string | null,
-): DecisionPolicyResult<TSelection> {
+): DecisionPolicyResult<TSelection> | null {
+    if (evidence.status === DECISION_STATUSES.accepted) return null;
+    if (evidence.status === DECISION_STATUSES.unavailable) {
+        return {
+            status: DECISION_STATUSES.unavailable,
+            selection: null,
+            baselineSelection: baseline,
+            reason: evidence.failureReason ?? "provider-error",
+            profileVersion,
+        };
+    }
+    if (evidence.status === DECISION_STATUSES.abstain) {
+        return {
+            status: DECISION_STATUSES.abstain,
+            selection: null,
+            baselineSelection: baseline,
+            reason: evidence.failureReason ?? "invalid-output",
+            profileVersion,
+        };
+    }
     return {
         status: DECISION_STATUSES.notEvaluated,
         selection: null,
@@ -96,18 +128,13 @@ function notEvaluatedResult<TSelection>(
     };
 }
 
-function isNotEvaluated(evidence: DecisionEvidence): boolean {
-    return evidence.status === DECISION_STATUSES.notEvaluated;
-}
-
 export function applyDomainRoutingPolicy(
     evidence: DomainRoutingEvidence,
     profile: DecisionAcceptanceProfile,
     options: DomainRoutingPolicyOptions,
 ): DecisionPolicyResult<readonly string[]> {
-    if (isNotEvaluated(evidence)) {
-        return notEvaluatedResult<readonly string[]>(evidence, options.baseline, profile.profileVersion);
-    }
+    const gated = evidenceStatusGate<readonly string[]>(evidence, options.baseline, profile.profileVersion);
+    if (gated !== null) return gated;
     const permitted = new Set(options.permittedDomains);
     const validScores = evidence.domains
         .filter((score) => permitted.has(score.domain) && isFiniteProbability(score.yesProbability))
@@ -158,9 +185,8 @@ export function applyClientIntentPolicy(
         profileVersion: profile.profileVersion,
     });
 
-    if (isNotEvaluated(evidence)) {
-        return notEvaluatedResult<ClientIntent>(evidence, baseline, profile.profileVersion);
-    }
+    const gated = evidenceStatusGate<ClientIntent>(evidence, baseline, profile.profileVersion);
+    if (gated !== null) return gated;
     if (evidence.intent === null) {
         return abstain("missing-answer");
     }
@@ -174,11 +200,17 @@ export function applyClientIntentPolicy(
     if (probability < profile.thresholds.acceptProbability) {
         return abstain("low-confidence");
     }
-    const finiteScores = Object.values(evidence.probabilities).filter(isFiniteProbability);
-    const sorted = finiteScores.slice().sort((left, right) => right - left);
-    const top = sorted[0];
-    const second = sorted[1];
-    const margin = top === undefined ? 0 : second === undefined ? top : top - second;
+    // Margin is selected-label vs the best *other* finite label, never the
+    // gap between the distribution's two largest values: a selected label
+    // that is not the argmax yields a non-positive margin and can never be
+    // accepted.
+    let bestOther = 0;
+    for (const [label, score] of Object.entries(evidence.probabilities)) {
+        if (label !== evidence.intent && isFiniteProbability(score)) {
+            bestOther = Math.max(bestOther, score);
+        }
+    }
+    const margin = probability - bestOther;
     if (margin < profile.thresholds.minMargin) {
         return abstain("narrow-margin");
     }
@@ -200,9 +232,8 @@ export function applyClarificationPolicy(
     evidence: ClarificationEvidence,
     profile: DecisionAcceptanceProfile,
 ): DecisionPolicyResult<ClarificationAdvice> {
-    if (isNotEvaluated(evidence)) {
-        return notEvaluatedResult<ClarificationAdvice>(evidence, null, profile.profileVersion);
-    }
+    const gated = evidenceStatusGate<ClarificationAdvice>(evidence, null, profile.profileVersion);
+    if (gated !== null) return gated;
     if (evidence.judgments === null) {
         return {
             status: DECISION_STATUSES.unavailable,
@@ -246,9 +277,8 @@ export function applyCandidatePolicy(
         profileVersion: profile.profileVersion,
     });
 
-    if (isNotEvaluated(evidence)) {
-        return notEvaluatedResult<string>(evidence, options.baseline, profile.profileVersion);
-    }
+    const gated = evidenceStatusGate<string>(evidence, options.baseline, profile.profileVersion);
+    if (gated !== null) return gated;
     if (evidence.outcome === null) {
         return abstain("missing-answer");
     }
@@ -310,6 +340,12 @@ function evidenceLabelScorePairs(evidence: DecisionEvidence): Array<[string, num
         .filter((entry): entry is [string, number] => isFiniteProbability(entry[1]));
 }
 
+/**
+ * Policy rule: unknown or missing model output means `abstain`/`unavailable`,
+ * never a default write. This conversion only records what the evidence
+ * already carries (status, reason, labels, scores); it never manufactures a
+ * selection or promotes an unavailable/abstain record into a write decision.
+ */
 export function toDecisionTraceEvent(input: DecisionTraceInput): DecisionTraceEventV1 {
     const pairs = evidenceLabelScorePairs(input.evidence)
         .filter(([label, score]) => typeof label === "string" && isFiniteProbability(score));
