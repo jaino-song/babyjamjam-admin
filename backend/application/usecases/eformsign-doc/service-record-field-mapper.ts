@@ -15,9 +15,9 @@ import {
 
 export interface ServiceRecordHeaderInput {
     momName: string | null;
-    momBirth: string | null; // YYMMDD
+    momBirth: string | null; // legacy YYMMDD or ISO YYYY-MM-DD
     babyName: string | null;
-    babyBirth: string | null; // YYMMDD
+    babyBirth: string | null; // legacy YYMMDD or ISO YYYY-MM-DD
     deliveryType: string | null; // "자연분만" | "제왕절개"
     babyWeight: string | null;
 }
@@ -51,6 +51,30 @@ export function yymmddToIso(yymmdd: string | null | undefined): string | null {
     if (mm < 1 || mm > 12 || dd < 1 || dd > 31) return null;
     const century = yy < 30 ? "20" : "19";
     return `${century}${yymmdd.slice(0, 2)}-${yymmdd.slice(2, 4)}-${yymmdd.slice(4, 6)}`;
+}
+
+const ISO_BIRTHDAY_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
+
+/**
+ * Header birthdays arrive as legacy six-digit YYMMDD (historic rows) or ISO
+ * YYYY-MM-DD (new saves). ISO values pass through unchanged only when they
+ * form a real calendar date — verified per part, never via JavaScript date
+ * rollover — and legacy values keep the `yymmddToIso` century-pivot semantics
+ * exactly. Anything missing or malformed maps to null so the required field
+ * is sent explicitly blank, as before.
+ */
+export function headerBirthdayToIso(raw: string | null | undefined): string | null {
+    if (raw !== null && raw !== undefined && ISO_BIRTHDAY_PATTERN.test(raw)) {
+        const year = Number(raw.slice(0, 4));
+        const month = Number(raw.slice(5, 7));
+        const day = Number(raw.slice(8, 10));
+        const date = new Date(Date.UTC(year, month - 1, day));
+        if (date.getUTCFullYear() === year && date.getUTCMonth() === month - 1 && date.getUTCDate() === day) {
+            return raw;
+        }
+        return null;
+    }
+    return yymmddToIso(raw);
 }
 
 /** UTC month as 2-digit "MM" (template field type date_MM). */
@@ -156,9 +180,9 @@ export function buildServiceRecordDocumentFields(input: {
     pushRequired(SERVICE_RECORD_HEADER_FIELD_IDS.providerName, providerName);
     pushRequired(SERVICE_RECORD_HEADER_FIELD_IDS.employeeName, employeeName);
     pushRequired(SERVICE_RECORD_HEADER_FIELD_IDS.momName, header?.momName);
-    pushRequired(SERVICE_RECORD_HEADER_FIELD_IDS.momBirth, yymmddToIso(header?.momBirth));
+    pushRequired(SERVICE_RECORD_HEADER_FIELD_IDS.momBirth, headerBirthdayToIso(header?.momBirth));
     pushRequired(SERVICE_RECORD_HEADER_FIELD_IDS.babyName, header?.babyName);
-    pushRequired(SERVICE_RECORD_HEADER_FIELD_IDS.babyBirth, yymmddToIso(header?.babyBirth));
+    pushRequired(SERVICE_RECORD_HEADER_FIELD_IDS.babyBirth, headerBirthdayToIso(header?.babyBirth));
     pushRequired(SERVICE_RECORD_HEADER_FIELD_IDS.babyWeight, header?.babyWeight);
     // Both delivery-type marks are required — send the pair, checked per deliveryType.
     pushCheck(SERVICE_RECORD_HEADER_FIELD_IDS.deliveryNatural, header?.deliveryType === "자연분만");

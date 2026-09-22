@@ -251,12 +251,13 @@ describe("service-record header validation", () => {
     const now = new Date("2026-09-18T00:00:00.000Z");
 
     it.each([
-        ["momBirth", "240229", false],
-        ["babyBirth", "260917", false],
-        ["momBirth", "260230", true],
-        ["babyBirth", "2402290", true],
-        ["babyBirth", "260919", true],
-    ] as const)("validates %s=%s with the strict six-digit calendar contract", (key, value, invalid) => {
+        ["momBirth", "2024-02-29", false],
+        ["babyBirth", "2026-09-17", false],
+        ["momBirth", "2026-02-30", true],
+        ["babyBirth", "2024-02-290", true],
+        ["babyBirth", "2026-09-19", true],
+        ["momBirth", "240229", true],
+    ] as const)("validates %s=%s with the strict ISO calendar contract", (key, value, invalid) => {
         const error = getServiceRecordHeaderFieldError(key, value, now);
         expect(Boolean(error)).toBe(invalid);
     });
@@ -276,9 +277,9 @@ describe("service-record header validation", () => {
         expect(Boolean(error)).toBe(invalid);
     });
 
-    it("keeps blank values compatible with partial draft edits", () => {
+    it("allows omitted partial values but rejects whitespace as a supplied birthday", () => {
         expect(getServiceRecordHeaderFieldError("momBirth", "", now)).toBeNull();
-        expect(getServiceRecordHeaderFieldError("babyBirth", "   ", now)).toBeNull();
+        expect(getServiceRecordHeaderFieldError("babyBirth", "   ", now)).not.toBeNull();
         expect(getServiceRecordHeaderFieldError("babyWeight", undefined, now)).toBeNull();
     });
 });
@@ -546,32 +547,32 @@ describe("per-session administrator editing", () => {
     });
 
     it("preserves basic-information editing with an explicit confirmation", async () => {
-        jest.mocked(adminServiceRecordEditApi.updateDraft).mockResolvedValue(makeDraftState({ header: { momName: "새 산모 이름" } }, 2));
+        jest.mocked(adminServiceRecordEditApi.updateDraft).mockResolvedValue(makeDraftState({ header: { momName: "이예지" } }, 2));
         jest.mocked(adminServiceRecordEditApi.previewDraft).mockResolvedValue({
             ...confirmPreviewResponse, draftVersion: 2, contentChanges: { headerChanged: true, changedSessionIndexes: [] },
         } as Awaited<ReturnType<typeof adminServiceRecordEditApi.previewDraft>>);
         render(<ServiceRecordAdminWizard clientId="42" overview={sessionOverview} initialDraftState={{ ...makeDraftState(), draft: null }} />);
         fireEvent.click(screen.getByRole("button", { name: "기본정보 수정" }));
-        fireEvent.change(screen.getByDisplayValue("김산모"), { target: { value: "새 산모 이름" } });
+        fireEvent.change(screen.getByDisplayValue("김산모"), { target: { value: "이예지" } });
         expect(adminServiceRecordEditApi.updateDraft).not.toHaveBeenCalled();
         fireEvent.click(screen.getByRole("button", { name: "수정 확인" }));
         await waitFor(() => expect(adminServiceRecordEditApi.confirmDraft).toHaveBeenCalledTimes(1));
-        expect(adminServiceRecordEditApi.updateDraft).toHaveBeenCalledWith("draft-1", 1, { header: { momName: "새 산모 이름" } }, undefined);
+        expect(adminServiceRecordEditApi.updateDraft).toHaveBeenCalledWith("draft-1", 1, { header: { momName: "이예지" } }, undefined);
     });
 
-    it("shows the date reason inline, preserves the typed value, and blocks confirmation", () => {
+    it("shows the date reason inline, preserves the formatted invalid value, and blocks confirmation", () => {
         render(<ServiceRecordAdminWizard clientId="42" overview={sessionOverview} initialDraftState={{ ...makeDraftState(), draft: null }} />);
         fireEvent.click(screen.getByRole("button", { name: "기본정보 수정" }));
 
         const input = screen.getByLabelText(/^신생아 출생일자/);
-        fireEvent.change(input, { target: { value: "260230" } });
+        fireEvent.change(input, { target: { value: "20260230" } });
 
-        expect(input).toHaveValue("260230");
+        expect(input).toHaveValue("2026-02-30");
         expect(input).toHaveAttribute("aria-invalid", "true");
         expect(input).toHaveAttribute("aria-describedby");
         const errorId = input.getAttribute("aria-describedby");
         expect(errorId).toBeTruthy();
-        expect(document.getElementById(errorId!)).toHaveTextContent("유효한 날짜");
+        expect(document.getElementById(errorId!)).toHaveTextContent("달력에 있는 날짜 중 1900년 1월 1일부터 오늘까지의 날짜를 입력해 주세요.");
         expect(document.getElementById(errorId!)).toHaveAttribute("data-component", expect.stringContaining("baby-birth"));
 
         const confirm = screen.getByRole("button", { name: "수정 확인" });
@@ -580,7 +581,7 @@ describe("per-session administrator editing", () => {
         expect(adminServiceRecordEditApi.startDraft).not.toHaveBeenCalled();
         expect(adminServiceRecordEditApi.updateDraft).not.toHaveBeenCalled();
         expect(adminServiceRecordEditApi.confirmDraft).not.toHaveBeenCalled();
-        expect(screen.getByDisplayValue("260230")).toBeInTheDocument();
+        expect(screen.getByDisplayValue("2026-02-30")).toBeInTheDocument();
     });
 
     it("shows the weight reason inline and keeps a nonpositive entry from confirmation", () => {
@@ -594,7 +595,7 @@ describe("per-session administrator editing", () => {
         expect(input).toHaveAttribute("aria-invalid", "true");
         const errorId = input.getAttribute("aria-describedby");
         expect(errorId).toBeTruthy();
-        expect(document.getElementById(errorId!)).toHaveTextContent("몸무게는 0보다 큰 숫자");
+        expect(document.getElementById(errorId!)).toHaveTextContent("0보다 큰 숫자");
         expect(document.getElementById(errorId!)).toHaveAttribute("data-component", expect.stringContaining("baby-weight"));
         expect(screen.getByRole("button", { name: "수정 확인" })).toBeDisabled();
     });
@@ -607,7 +608,7 @@ describe("per-session administrator editing", () => {
                 header: { ...header, babyBirth: "2026-09-01", babyWeight: "Infinity" },
             },
         } as unknown as AdminServiceRecordEditorOverview;
-        jest.mocked(adminServiceRecordEditApi.updateDraft).mockResolvedValue(makeDraftState({ header: { momName: "새 산모 이름" } }, 2));
+        jest.mocked(adminServiceRecordEditApi.updateDraft).mockResolvedValue(makeDraftState({ header: { momName: "이예지" } }, 2));
         jest.mocked(adminServiceRecordEditApi.previewDraft).mockResolvedValue({
             ...confirmPreviewResponse,
             draftVersion: 2,
@@ -618,13 +619,52 @@ describe("per-session administrator editing", () => {
         fireEvent.click(screen.getByRole("button", { name: "기본정보 수정" }));
         expect(screen.getByLabelText(/^신생아 출생일자/)).toHaveValue("2026-09-01");
         expect(screen.getByLabelText("신생아 몸무게 (kg)")).toHaveValue("Infinity");
-        fireEvent.change(screen.getByLabelText("산모 성명"), { target: { value: "새 산모 이름" } });
+        fireEvent.change(screen.getByLabelText("산모 성명"), { target: { value: "이예지" } });
 
         const confirm = screen.getByRole("button", { name: "수정 확인" });
         expect(confirm).toBeEnabled();
         fireEvent.click(confirm);
         await waitFor(() => expect(adminServiceRecordEditApi.confirmDraft).toHaveBeenCalledTimes(1));
-        expect(adminServiceRecordEditApi.updateDraft).toHaveBeenCalledWith("draft-1", 1, { header: { momName: "새 산모 이름" } }, undefined);
+        expect(adminServiceRecordEditApi.updateDraft).toHaveBeenCalledWith("draft-1", 1, { header: { momName: "이예지" } }, undefined);
+    });
+
+    it("rejects newly entered name whitespace even when untouched birthdays are legacy values", () => {
+        render(<ServiceRecordAdminWizard clientId="42" overview={sessionOverview} initialDraftState={{ ...makeDraftState(), draft: null }} />);
+        fireEvent.click(screen.getByRole("button", { name: "기본정보 수정" }));
+        const name = screen.getByLabelText("산모 성명");
+        fireEvent.change(name, { target: { value: "이 예지" } });
+        expect(name).toHaveValue("이 예지");
+        expect(name).toHaveAttribute("aria-invalid", "true");
+        expect(document.getElementById(name.getAttribute("aria-describedby")!)).toHaveTextContent("띄어쓰기");
+        const confirm = screen.getByRole("button", { name: "수정 확인" });
+        expect(confirm).toBeDisabled();
+        fireEvent.click(confirm);
+        expect(adminServiceRecordEditApi.startDraft).not.toHaveBeenCalled();
+        expect(adminServiceRecordEditApi.updateDraft).not.toHaveBeenCalled();
+        expect(adminServiceRecordEditApi.confirmDraft).not.toHaveBeenCalled();
+        fireEvent.change(name, { target: { value: "이예지" } });
+        expect(name).not.toHaveAttribute("aria-invalid", "true");
+        expect(confirm).toBeEnabled();
+    });
+
+    it("formats a changed birthday and saves only that ISO value after explicit confirmation", async () => {
+        jest.mocked(adminServiceRecordEditApi.updateDraft).mockResolvedValue(makeDraftState({ header: { momBirth: "1999-01-01" } }, 2));
+        jest.mocked(adminServiceRecordEditApi.previewDraft).mockResolvedValue({
+            ...confirmPreviewResponse, draftVersion: 2, contentChanges: { headerChanged: true, changedSessionIndexes: [] },
+        } as Awaited<ReturnType<typeof adminServiceRecordEditApi.previewDraft>>);
+        render(<ServiceRecordAdminWizard clientId="42" overview={sessionOverview} initialDraftState={{ ...makeDraftState(), draft: null }} />);
+        fireEvent.click(screen.getByRole("button", { name: "기본정보 수정" }));
+        const birth = screen.getByLabelText(/^산모 생년월일/);
+        expect(birth).toHaveAttribute("placeholder", "1999-01-01");
+        expect(screen.getByLabelText(/^신생아 출생일자/)).toHaveAttribute("placeholder", "1999-01-01");
+        fireEvent.change(birth, { target: { value: "19990101" } });
+        expect(birth).toHaveValue("1999-01-01");
+        expect(birth).not.toHaveAttribute("aria-invalid", "true");
+        expect(screen.getByLabelText(/^신생아 출생일자/)).toHaveValue("260714");
+        expect(adminServiceRecordEditApi.updateDraft).not.toHaveBeenCalled();
+        fireEvent.click(screen.getByRole("button", { name: "수정 확인" }));
+        await waitFor(() => expect(adminServiceRecordEditApi.confirmDraft).toHaveBeenCalledTimes(1));
+        expect(adminServiceRecordEditApi.updateDraft).toHaveBeenCalledWith("draft-1", 1, { header: { momBirth: "1999-01-01" } }, undefined);
     });
 
     it.each(["김산모", "900101", "김아기", "260714", "3.2"])("does not save when a required header value (%s) is blank", (value) => {

@@ -21,6 +21,7 @@
         "src/constants/service-record-form-layout.ts",
         "src/utils/business-days.ts",
         "src/utils/birthday.ts",
+        "src/utils/service-record-input.ts",
         "src/utils/service-record-schedule.ts",
         "src/types/service-record.ts",
         "src/errors/problem-details.ts",
