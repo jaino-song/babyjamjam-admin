@@ -8,7 +8,8 @@ import type {
     RankCandidatesRequest,
     RouteDomainsRequest,
 } from "./agent-decision.port";
-import type { AgentDecisionConfig, AgentDecisionConfigService } from "./agent-decision-config.service";
+import { AgentDecisionConfigService } from "./agent-decision-config.service";
+import type { AgentDecisionConfig } from "./agent-decision-config.service";
 import {
     DECISION_FAILURE_REASONS,
     DECISION_KINDS,

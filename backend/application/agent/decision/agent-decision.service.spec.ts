@@ -13,9 +13,9 @@ import {
 } from "./decision-contracts";
 import { DECISION_QUESTION_VERSION } from "./decision-questions";
 import type { ClarificationAdvice } from "./decision-policy";
-import type { AgentDecisionConfig, AgentDecisionConfigService } from "./agent-decision-config.service";
+import { AgentDecisionConfigService, type AgentDecisionConfig } from "./agent-decision-config.service";
 import type { AgentDecisionPort } from "./agent-decision.port";
-import { AgentDecisionService, type DecisionTurnContext } from "./agent-decision.service";
+import { AGENT_DECISION_PORT, AgentDecisionService, type DecisionTurnContext } from "./agent-decision.service";
 
 const MODEL_ID = "jev-1.13.0";
 
@@ -177,6 +177,19 @@ function profileFor(
 }
 
 describe("AgentDecisionService", () => {
+    it("keeps Nest DI metadata resolvable: config service is a value import, port stays on its symbol token", () => {
+        // Regression guard: reverting AgentDecisionConfigService to a
+        // type-only import erases the design:paramtypes entry and breaks
+        // every AppModule boot, while manual instantiation keeps passing.
+        const paramTypes = Reflect.getMetadata("design:paramtypes", AgentDecisionService) as unknown[] | undefined;
+        expect(paramTypes?.[0]).toBe(AgentDecisionConfigService);
+
+        const selfDeclared = Reflect.getMetadata("self:paramtypes", AgentDecisionService) as
+            | Array<{ index: number; param: unknown }>
+            | undefined;
+        expect(selfDeclared).toContainEqual({ index: 1, param: AGENT_DECISION_PORT });
+    });
+
     it("off mode: zero port calls and a not-evaluated/disabled result", async () => {
         const port = fakePort();
         port.routeDomains.mockResolvedValue(routeEvidence());
