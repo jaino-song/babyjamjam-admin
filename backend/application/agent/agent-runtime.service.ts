@@ -29,8 +29,10 @@ import { ConversationTaskOrchestratorService, type ConversationTaskTurnResult } 
 import { extractExplicitUserOperations, sanitizeConversationMessage } from "./conversation-task-policy";
 import { AgentDecisionConfigService } from "./decision/agent-decision-config.service";
 import { AgentDecisionService, type DecisionTurnContext } from "./decision/agent-decision.service";
+import { decideClarification, type ClarificationFacts } from "./decision/clarification-decision";
 import { decideClientIntent } from "./decision/client-intent-decision";
 import { DECISION_KINDS, DECISION_MODES, type ClientIntent, type DecisionMode, type DecisionPolicyResult } from "./decision/decision-contracts";
+import type { ClarificationAdvice } from "./decision/decision-policy";
 import { createDecisionTraceCollector } from "./decision/decision-trace";
 
 export { redactFreeText, redactModelValue } from "./agent-model-redaction";
@@ -83,6 +85,60 @@ function redactApprovalValue(value: unknown, key = ""): unknown {
 function taskSafeEntityMemory(value: Record<string, unknown>, protectTaskEntityData: boolean): unknown {
     if (!protectTaskEntityData) return redactModelValue(value);
     return Object.fromEntries(Object.keys(value).map((domain) => [domain, { referenceAvailable: true }]));
+}
+
+/**
+ * Bounded in-memory no-loop memory for applied clarification questions
+ * (AC-20). No durable "clarification asked" signal exists in committed
+ * state: task issue codes and chat message parts are closed sets, so the
+ * runtime keeps an advisory-only map keyed by `${sessionId}:${taskId}`,
+ * holding the last revision at which a clarification was actually applied.
+ * It is non-authoritative by contract: lost on restart, never persisted,
+ * never logged or serialized, and consulted for nothing except the
+ * already-asked fact below. The bound evicts the oldest entry first.
+ */
+const CLARIFICATION_MEMORY_LIMIT = 256;
+
+/**
+ * Structural clarification facts, built from existing committed state only
+ * (P1 enforce wiring). Sources, in order:
+ *
+ * - `taskRevision` ← the domain task revision.
+ * - `missingFields` ← the safe snapshot's `fieldStatus` entries with status
+ *   `missing` (preferred source); if that projection is unavailable the
+ *   domain task's `task.required` issues with a field are the fallback.
+ *   Both sources carry field names only — never values.
+ * - `targetConfirmed` ← the task's target presence. Consumed by the façade
+ *   request only; no rule in `decideClarification` reads it.
+ * - `hasAcceptedUserInput` ← explicit server-validated input accepted on
+ *   THIS turn. Accepted input advances the task revision, which keeps this
+ *   fact consistent with the recorded no-loop signal: an ask recorded at
+ *   the current revision can never coexist with accepted-input facts.
+ * - `mutationBlocked` ← the existing per-turn deterministic flag, never a
+ *   new rule.
+ */
+function buildClarificationFacts(turn: ConversationTaskTurnResult, askedAtRevision: number | null): ClarificationFacts {
+    const task = turn.task;
+    if (!task) throw new Error("Clarification facts require a task snapshot");
+    let missingFields: readonly string[];
+    try {
+        const safe = projectTaskForSafeChat(task);
+        missingFields = safe.fieldStatus
+            .filter((entry) => entry.status === "missing")
+            .map((entry) => entry.field);
+    } catch {
+        missingFields = task.issues
+            .filter((issue) => issue.code === "task.required" && issue.field !== undefined)
+            .map((issue) => issue.field as ClientWriteField);
+    }
+    return {
+        taskRevision: task.revision,
+        missingFields,
+        targetConfirmed: task.target !== null,
+        hasAcceptedUserInput: turn.mutated === true && turn.operations.length > 0,
+        mutationBlocked: turn.mutationBlocked === true,
+        clarificationAskedAtRevision: askedAtRevision,
+    };
 }
 
 type FormSubmission = { formId: string; values: Record<string, unknown> };
@@ -183,6 +239,22 @@ export class AgentRuntimeService {
         @Optional() private readonly decisionConfig?: AgentDecisionConfigService,
     ) {}
 
+    /** Advisory-only no-loop memory; see the constant's contract above. */
+    private readonly clarificationAskedRevisions = new Map<string, number>();
+
+    private clarificationAskedRevision(sessionId: string, taskId: string): number | null {
+        return this.clarificationAskedRevisions.get(`${sessionId}:${taskId}`) ?? null;
+    }
+
+    private recordClarificationAsked(sessionId: string, taskId: string, revision: number): void {
+        const key = `${sessionId}:${taskId}`;
+        if (!this.clarificationAskedRevisions.has(key) && this.clarificationAskedRevisions.size >= CLARIFICATION_MEMORY_LIMIT) {
+            const oldest = this.clarificationAskedRevisions.keys().next();
+            if (!oldest.done) this.clarificationAskedRevisions.delete(oldest.value);
+        }
+        this.clarificationAskedRevisions.set(key, revision);
+    }
+
     async stream(input: {
         principal: VerifiedTenantPrincipal;
         sessionId?: string;
@@ -259,11 +331,13 @@ export class AgentRuntimeService {
         const decisionWired = this.decisions !== undefined && this.decisionConfig !== undefined;
         let routeMode: DecisionMode = DECISION_MODES.off;
         let intentMode: DecisionMode = DECISION_MODES.off;
+        let clarificationMode: DecisionMode = DECISION_MODES.off;
         let turn: DecisionTurnContext | undefined;
         if (decisionWired && this.decisions && this.decisionConfig) {
-            [routeMode, intentMode] = await Promise.all([
+            [routeMode, intentMode, clarificationMode] = await Promise.all([
                 this.decisionConfig.getKindMode(DECISION_KINDS.routeDomains),
                 this.decisionConfig.getKindMode(DECISION_KINDS.classifyClientIntent),
+                this.decisionConfig.getKindMode(DECISION_KINDS.evaluateClarification),
             ]);
             turn = await this.decisions.createTurnContext({
                 signal: turnAbort.signal,
@@ -471,6 +545,58 @@ export class AgentRuntimeService {
                 conversationTask = { ...conversationTask, task: null };
             }
         }
+        // --- P1 clarification advice (mode-disciplined, additive) ---
+        // Off → no façade call and no behavior change. Shadow → the façade is
+        // consulted for its observation only; nothing is applied. Enforce →
+        // the decision gates the two mutation seams below. `suppressModelMutation`
+        // can only withhold authority: false means "no additional suppression",
+        // never "mutation authorized", and an applied suppression never clears
+        // an existing deterministic restriction (AC-19) — the existing gates
+        // above keep their precedence.
+        let clarificationSuppressesMutation = false;
+        if (
+            turn && this.decisions && this.decisionConfig && this.taskOrchestrator
+            && clarificationMode !== DECISION_MODES.off
+            && conversationTask?.task
+            // Optional-boundary capability check, same pattern as
+            // protectedValuesForConversation above: an injected double without
+            // the P1 method keeps every P0 path exactly as it is.
+            && typeof this.decisions.evaluateClarification === "function"
+        ) {
+            const clarificationTask = conversationTask.task;
+            const facts = buildClarificationFacts(
+                conversationTask,
+                this.clarificationAskedRevision(session.id, clarificationTask.taskId),
+            );
+            let advice: ClarificationAdvice | null = null;
+            pendingDecisionCalls += 1;
+            try {
+                const result = await this.decisions.evaluateClarification(turn, {
+                    text: conversationTask.text,
+                    knownValues: protectedValues,
+                    missingFields: facts.missingFields,
+                    targetConfirmed: facts.targetConfirmed,
+                    baseline: null,
+                });
+                advice = result.selection ?? null;
+            } finally {
+                pendingDecisionCalls -= 1;
+            }
+            if (clarificationMode === DECISION_MODES.enforce) {
+                const decision = decideClarification({ facts, advice });
+                if (decision.recommendClarification) {
+                    // The clarification is asked on this turn at this revision;
+                    // the no-loop fact suppresses a repeat at the same revision.
+                    this.recordClarificationAsked(session.id, clarificationTask.taskId, clarificationTask.revision);
+                }
+                // Explicit input accepted on this turn is never blocked: a
+                // probabilistic (or even deterministic-recovery) suppression
+                // cannot withdraw authority the turn already used (the write
+                // tool and mutation path stay exactly as they are today).
+                const turnAcceptedExplicitInput = conversationTask.mutated === true && conversationTask.operations.length > 0;
+                clarificationSuppressesMutation = decision.suppressModelMutation && !turnAcceptedExplicitInput;
+            }
+        }
         const protectTaskEntityData = taskMode || Boolean(conversationTask?.replayed) || unboundClientFormRefusal;
         if (this.contextAssembler && (!this.taskOrchestrator || taskMode || conversationTask?.replayed || unboundClientFormRefusal)) {
             conversationContext = await this.contextAssembler.assemble(
@@ -626,7 +752,12 @@ export class AgentRuntimeService {
             && this.taskOrchestrator
             && !conversationTask?.commandAccepted
             && !conversationTask?.mutationBlocked
-            && !(conversationTask?.isQuestion && conversationTask.operations.length === 0);
+            && !(conversationTask?.isQuestion && conversationTask.operations.length === 0)
+            // Seam 1 of the P1 clarification enforce: an applied suppression
+            // hides the conversational task write tools for this turn. Read
+            // capabilities and the existing read path are untouched, and a
+            // false value never authorizes anything.
+            && !clarificationSuppressesMutation;
         if (taskToolsEnabled && this.taskOrchestrator) {
             writeToolNames.add("clients_create");
             writeToolNames.add("clients_update");
@@ -657,6 +788,12 @@ export class AgentRuntimeService {
                             ...(conversationTask?.isQuestion && (conversationTask.operations?.length ?? 0) === 0
                                 ? { allowMutation: false }
                                 : {}),
+                            // Seam 2 of the P1 clarification enforce: even though
+                            // suppression also hides this tool, a model-origin
+                            // mutation is refused defensively through the
+                            // orchestrator's existing allowMutation guard and
+                            // message — no new refusal semantics.
+                            ...(clarificationSuppressesMutation ? { allowMutation: false } : {}),
                         });
                         writeDataChunk({ type: "data-task-snapshot", data: taskSnapshotPart(result.task) });
                         return { kind: "task-update" as const, taskId: result.task.taskId, revision: result.task.revision, state: result.task.state };
