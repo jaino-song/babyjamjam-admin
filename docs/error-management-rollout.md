@@ -19,6 +19,7 @@
 | 후보 SHA | `ae9335d145f438a6c73cee46918225359fd4d844` (문서 전용 tail 포함 최종 통합 HEAD) |
 | 후보 내용 | 6.1 close(61a~61g) + 7.1 + 8.1 + 9.1 + 10.1 + 11.1 doc-prep의 통합 결과와 단계 close 기록. 코드/문서 단위 감사 SHA는 §3 감사 표에 유닛별 고정 |
 | dev 반영 기준 | 2026-09-14 `2d01ecd9d`(PR #657)까지. 후보는 그 이후 Phase 4b~10.1 누적을 포함한다 |
+| main 병합 기록 (2026-09-22) | 사용자 승인으로 PR #734 → main `74594fbce`, PR #735(preview `0322619fb` 승격) → main `b2e525a58`에 merge commit 병합. post-merge CI 전 workflow success(Backend CI `b2e525a58` 전 job success, LightNode fallback deploy 성공). 이 기록은 **대상 환경 배포 승인은 아니다**(§1). OIDC Lightsail deploy 실패는 09-17부터 pre-existing AWS infra. 상세는 [실행 계획](plans/bjj-319-remaining-plan.md) 세션 종합 항목. |
 
 단계별 독립 감사 판정(계획 실행 기록의 최종 판정만 표기):
 
