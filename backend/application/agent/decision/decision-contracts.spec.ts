@@ -794,6 +794,21 @@ describe("decision-input redaction and guard", () => {
             'Forbidden decision field "approve" at value.meta.approve',
         );
     });
+
+    it("should traverse each array at most once and return normally for a clean array-only cycle", () => {
+        const clean: unknown[] = [];
+        clean.push(clean);
+        expect(() => assertNoForbiddenDecisionFields(clean)).not.toThrow();
+    });
+
+    it("should still throw the forbidden-field error when an array-only cycle carries a forbidden key", () => {
+        const hostile: unknown[] = [];
+        hostile.push({ approve: true });
+        hostile.push(hostile);
+        expect(() => assertNoForbiddenDecisionFields(hostile)).toThrow(
+            'Forbidden decision field "approve" at value[0].approve',
+        );
+    });
 });
 
 describe("toDecisionTraceEvent", () => {

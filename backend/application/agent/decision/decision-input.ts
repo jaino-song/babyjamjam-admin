@@ -57,14 +57,18 @@ function assertNoForbiddenDecisionFieldsVisited(
     path: string,
     visited: WeakSet<object>,
 ): void {
+    // Cycle guard sits above the array branch so every visited container —
+    // arrays included — is traversed at most once. Below the array branch an
+    // array-only cycle (`const a = []; a.push(a)`) would overflow the stack.
+    if (!isPlainObjectLike(value) && !Array.isArray(value)) return;
+    if (visited.has(value)) return;
+    visited.add(value);
+
     if (Array.isArray(value)) {
         value.forEach((item, index) =>
             assertNoForbiddenDecisionFieldsVisited(item, `${path}[${index}]`, visited));
         return;
     }
-    if (!isPlainObjectLike(value)) return;
-    if (visited.has(value)) return;
-    visited.add(value);
 
     for (const key of Object.keys(value)) {
         if (FORBIDDEN_FIELD_SET.has(key)) {
