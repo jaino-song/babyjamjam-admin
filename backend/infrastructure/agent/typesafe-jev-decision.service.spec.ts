@@ -275,7 +275,7 @@ describe("TypeSafeJevDecisionService", () => {
     });
 
     describe("classifyClientIntent", () => {
-        it("accepts a consistent choice answer with validated probabilities", async () => {
+        it("accepts a criteria-only consistent choice answer with validated probabilities", async () => {
             const { fetch, calls } = stubFetch(() => jsonResponse(
                 systemOneBody({
                     intent: {
@@ -288,7 +288,6 @@ describe("TypeSafeJevDecisionService", () => {
                             read: 0.05,
                             ambiguous: 0.03,
                             unrelated: 0.02,
-                            mystery_label: 0.9,
                         },
                     },
                 }),
@@ -307,6 +306,13 @@ describe("TypeSafeJevDecisionService", () => {
                 ambiguous: 0.03,
                 unrelated: 0.02,
             });
+            expect(Object.keys(evidence.probabilities).sort()).toEqual([
+                "ambiguous",
+                "create",
+                "read",
+                "unrelated",
+                "update_related",
+            ]);
             expect(evidence.confidence).toBe(0.8);
             expect(evidence.returnedModel).toBe(PINNED_MODEL_ID);
 
@@ -315,6 +321,57 @@ describe("TypeSafeJevDecisionService", () => {
                 questions: Record<string, { type: string }>;
             };
             expect(Object.keys(body.questions)).toEqual(["intent"]);
+        });
+
+        it("returns invalid-output with no selection when any probability label is outside the criteria", async () => {
+            // Exact Phase 2 audit scenario: the off-catalog label wins the
+            // map, so trimming it would flip a rejection into an acceptance
+            // with an inflated margin. The whole answer is rejected instead.
+            const { fetch } = stubFetch(() => jsonResponse(
+                systemOneBody({
+                    intent: {
+                        type: "choice",
+                        choice: "create",
+                        confidence: 0.9,
+                        probabilities: { create: 0.7, mystery_label: 0.9 },
+                    },
+                }),
+            ));
+            const service = serviceWith(fetch);
+
+            const evidence = await service.classifyClientIntent(classifyIntentRequest());
+
+            expect(evidence.status).toBe(DECISION_STATUSES.unavailable);
+            expect(evidence.failureReason).toBe(DECISION_FAILURE_REASONS.invalidOutput);
+            expect(evidence.intent).toBeNull();
+            expect(evidence.probabilities).toEqual({});
+            expect(evidence.confidence).toBeNull();
+        });
+
+        it("returns invalid-output when a criteria label is missing from the intent probabilities", async () => {
+            const { fetch } = stubFetch(() => jsonResponse(
+                systemOneBody({
+                    intent: {
+                        type: "choice",
+                        choice: "create",
+                        confidence: 0.9,
+                        probabilities: {
+                            create: 0.8,
+                            update_related: 0.1,
+                            read: 0.05,
+                            ambiguous: 0.05,
+                        },
+                    },
+                }),
+            ));
+            const service = serviceWith(fetch);
+
+            const evidence = await service.classifyClientIntent(classifyIntentRequest());
+
+            expect(evidence.status).toBe(DECISION_STATUSES.unavailable);
+            expect(evidence.failureReason).toBe(DECISION_FAILURE_REASONS.invalidOutput);
+            expect(evidence.intent).toBeNull();
+            expect(evidence.probabilities).toEqual({});
         });
 
         it("returns invalid-output for an unknown intent label", async () => {
@@ -397,7 +454,13 @@ describe("TypeSafeJevDecisionService", () => {
                         type: "choice",
                         choice: "read",
                         confidence: 5,
-                        probabilities: { read: 0.9, create: 0.1 },
+                        probabilities: {
+                            create: 0.1,
+                            update_related: 0,
+                            read: 0.9,
+                            ambiguous: 0,
+                            unrelated: 0,
+                        },
                     },
                 }),
             ));
@@ -574,6 +637,81 @@ describe("TypeSafeJevDecisionService", () => {
             expect(evidence.outcome).toBeNull();
             expect(evidence.suggestion).toBeNull();
             expect(evidence.choiceSetRevision).toBe("rev-7");
+        });
+
+        it("returns invalid-output when any rank probability label is outside the supplied criteria", async () => {
+            const { fetch } = stubFetch(() => jsonResponse(
+                systemOneBody({
+                    rank: {
+                        type: "choice",
+                        choice: "cand-1",
+                        confidence: 0.9,
+                        probabilities: {
+                            "cand-1": 0.5,
+                            "cand-2": 0.2,
+                            none: 0.2,
+                            insufficient_evidence: 0.1,
+                            extra_label: 0.9,
+                        },
+                    },
+                }),
+            ));
+            const service = serviceWith(fetch);
+
+            const evidence = await service.rankCandidates(rankCandidatesRequest());
+
+            expect(evidence.status).toBe(DECISION_STATUSES.unavailable);
+            expect(evidence.failureReason).toBe(DECISION_FAILURE_REASONS.invalidOutput);
+            expect(evidence.outcome).toBeNull();
+            expect(evidence.suggestion).toBeNull();
+            expect(evidence.probabilities).toEqual({});
+        });
+
+        it("returns invalid-output when a criteria label is missing from the rank probabilities", async () => {
+            const { fetch } = stubFetch(() => jsonResponse(
+                systemOneBody({
+                    rank: {
+                        type: "choice",
+                        choice: "cand-1",
+                        confidence: 0.9,
+                        probabilities: { "cand-1": 0.9 },
+                    },
+                }),
+            ));
+            const service = serviceWith(fetch);
+
+            const evidence = await service.rankCandidates(rankCandidatesRequest());
+
+            expect(evidence.status).toBe(DECISION_STATUSES.unavailable);
+            expect(evidence.failureReason).toBe(DECISION_FAILURE_REASONS.invalidOutput);
+            expect(evidence.outcome).toBeNull();
+            expect(evidence.suggestion).toBeNull();
+        });
+
+        it("returns invalid-output when the chosen rank label is not the argmax", async () => {
+            const { fetch } = stubFetch(() => jsonResponse(
+                systemOneBody({
+                    rank: {
+                        type: "choice",
+                        choice: "cand-1",
+                        confidence: 0.9,
+                        probabilities: {
+                            "cand-1": 0.2,
+                            "cand-2": 0.6,
+                            none: 0.15,
+                            insufficient_evidence: 0.05,
+                        },
+                    },
+                }),
+            ));
+            const service = serviceWith(fetch);
+
+            const evidence = await service.rankCandidates(rankCandidatesRequest());
+
+            expect(evidence.status).toBe(DECISION_STATUSES.unavailable);
+            expect(evidence.failureReason).toBe(DECISION_FAILURE_REASONS.invalidOutput);
+            expect(evidence.outcome).toBeNull();
+            expect(evidence.suggestion).toBeNull();
         });
 
         it("returns invalid-score for a non-finite probability on a known label", async () => {

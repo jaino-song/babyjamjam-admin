@@ -170,8 +170,11 @@ function isChoiceAnswer(
 
 /**
  * Argmax over a probability map; missing or non-finite entries are ignored.
- * Unknown/extra labels are dropped before this runs, so an unknown label can
- * never win the argmax.
+ * Callers must first reject any map that carries a label outside the
+ * question's criteria, so this only ever runs over criteria-clean maps.
+ * Ties keep the first label in iteration order (strict `>` comparison, no
+ * replacement on equal values) — the deterministic tie behavior this
+ * adapter has always had.
  */
 function argmaxLabel(probabilities: Record<string, number | undefined>): string | null {
     let best: string | null = null;
@@ -340,14 +343,29 @@ export class TypeSafeJevDecisionService implements AgentDecisionPort {
             if (!isChoiceAnswer(answer)) {
                 return failure(DECISION_FAILURE_REASONS.invalidOutput, response);
             }
+            // Strict label validation: the provider is given exactly this
+            // question's criteria (the five intent labels), so any returned
+            // label outside them makes the whole answer untrustworthy
+            // (AC-02: unknown labels never become accepted decisions).
+            // Dropping an off-catalog label and continuing could turn a
+            // rejection into an acceptance, so the full answer is rejected.
+            for (const label of Object.keys(answer.probabilities)) {
+                if (!INTENT_LABEL_SET.has(label)) {
+                    return failure(DECISION_FAILURE_REASONS.invalidOutput, response);
+                }
+            }
             if (!isClientIntentLabel(answer.choice)) {
                 return failure(DECISION_FAILURE_REASONS.invalidOutput, response);
             }
 
+            // A choice answer must carry an entry for every criteria label:
+            // the evidence probabilities end up criteria-complete.
             const probabilities: Partial<Record<ClientIntent, number>> = {};
             for (const label of INTENT_LABELS) {
                 const value = answer.probabilities[label];
-                if (value === undefined) continue;
+                if (value === undefined) {
+                    return failure(DECISION_FAILURE_REASONS.invalidOutput, response);
+                }
                 if (!isUnitInterval(value)) {
                     return failure(DECISION_FAILURE_REASONS.invalidScore, response);
                 }
@@ -355,9 +373,10 @@ export class TypeSafeJevDecisionService implements AgentDecisionPort {
             }
 
             // Self-contradictory evidence: the chosen label must also be the
-            // argmax of the returned probabilities map. The check runs over
-            // the validated known-label probabilities only: unknown/extra
-            // labels are dropped, not accepted, so they cannot win argmax.
+            // argmax of the returned probabilities map (criteria-complete by
+            // the validation above). Ties keep the first criteria label in
+            // INTENT_LABELS order via the deterministic `>` comparison in
+            // `argmaxLabel`.
             if (argmaxLabel(probabilities) !== answer.choice) {
                 return failure(DECISION_FAILURE_REASONS.invalidOutput, response);
             }
@@ -536,18 +555,39 @@ export class TypeSafeJevDecisionService implements AgentDecisionPort {
             if (!isChoiceAnswer(answer)) {
                 return failure(DECISION_FAILURE_REASONS.invalidOutput, response);
             }
+            // Strict label validation (same rule as intent classification):
+            // any returned label outside the criteria supplied for this
+            // question (the candidate labels plus `none` and
+            // `insufficient_evidence`) makes the whole answer untrustworthy.
+            // The answer is rejected, never trimmed to the known labels.
+            for (const label of Object.keys(answer.probabilities)) {
+                if (!labelSet.has(label)) {
+                    return failure(DECISION_FAILURE_REASONS.invalidOutput, response);
+                }
+            }
             if (!labelSet.has(answer.choice)) {
                 return failure(DECISION_FAILURE_REASONS.invalidOutput, response);
             }
 
+            // A choice answer must carry an entry for every criteria label:
+            // the evidence probabilities end up criteria-complete.
             const probabilities: Record<string, number> = {};
             for (const label of labelSet) {
                 const value = answer.probabilities[label];
-                if (value === undefined) continue;
+                if (value === undefined) {
+                    return failure(DECISION_FAILURE_REASONS.invalidOutput, response);
+                }
                 if (!isUnitInterval(value)) {
                     return failure(DECISION_FAILURE_REASONS.invalidScore, response);
                 }
                 probabilities[label] = value;
+            }
+
+            // The chosen label must also be the argmax of the returned map
+            // (ties keep the first label in `labelSet` insertion order via
+            // the deterministic `>` comparison in `argmaxLabel`).
+            if (argmaxLabel(probabilities) !== answer.choice) {
+                return failure(DECISION_FAILURE_REASONS.invalidOutput, response);
             }
 
             const isMatch = candidateSet.has(answer.choice);
