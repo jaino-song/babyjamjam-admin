@@ -200,7 +200,7 @@
       "approvalPolicy": "structured",
       "idempotencyPolicy": "action-id",
       "sourceFile": "application/usecases/client/client-write-agent-capabilities.provider.ts",
-      "sourceDigest": "04c5eef0459e84d1ffd80f0184db895182c7e699374ba5e4e015349cfb03b373"
+      "sourceDigest": "33c0a7935d424289b5088af48d9b29dd1ba8d0fcc21b9a664a474d081719d10e"
     },
     {
       "name": "clients.get",
@@ -255,7 +255,7 @@
       "approvalPolicy": "structured",
       "idempotencyPolicy": "action-id",
       "sourceFile": "application/usecases/client/client-write-agent-capabilities.provider.ts",
-      "sourceDigest": "04c5eef0459e84d1ffd80f0184db895182c7e699374ba5e4e015349cfb03b373"
+      "sourceDigest": "33c0a7935d424289b5088af48d9b29dd1ba8d0fcc21b9a664a474d081719d10e"
     },
     {
       "name": "consultations.list",
@@ -347,7 +347,7 @@
       "approvalPolicy": "strong",
       "idempotencyPolicy": "provider-key",
       "sourceFile": "application/usecases/eformsign-doc/contract-external-agent-capabilities.provider.ts",
-      "sourceDigest": "efe25d9a027fccfa7192f03d31e11c3581ef55ed9655b989ecb8e78cfc5cf40f"
+      "sourceDigest": "622841296eb46173f4b5f194185fc1fb7787aca2dca95b94262a4cab42cb12e3"
     },
     {
       "name": "contracts.status",
