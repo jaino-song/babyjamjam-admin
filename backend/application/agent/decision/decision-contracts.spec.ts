@@ -1,6 +1,7 @@
 import {
     CANDIDATE_OUTCOMES,
     CLIENT_INTENTS,
+    DECISION_FAILURE_REASONS,
     DECISION_KINDS,
     DECISION_MODES,
     DECISION_PROFILE_MISMATCH_REASONS,
@@ -214,6 +215,170 @@ describe("decision status reachability", () => {
     });
 });
 
+describe("evidence status propagation", () => {
+    it("should return unavailable with the evidence failure reason when routing evidence failed", () => {
+        const result = applyDomainRoutingPolicy(
+            makeRoutingEvidence([{ domain: "clients", yesProbability: 0.9 }], {
+                status: DECISION_STATUSES.unavailable,
+                failureReason: DECISION_FAILURE_REASONS.timeout,
+            }),
+            makeProfile(DECISION_KINDS.routeDomains),
+            { permittedDomains: ["clients"], maxDomains: 3, baseline: ["files"] },
+        );
+        expect(result.status).toBe(DECISION_STATUSES.unavailable);
+        expect(result.reason).toBe(DECISION_FAILURE_REASONS.timeout);
+        expect(result.selection).toBeNull();
+        expect(result.baselineSelection).toEqual(["files"]);
+    });
+
+    it("should stay unavailable when an unavailable routing record carries domains above threshold", () => {
+        const result = applyDomainRoutingPolicy(
+            makeRoutingEvidence(
+                [
+                    { domain: "clients", yesProbability: 0.95 },
+                    { domain: "schedules", yesProbability: 0.9 },
+                ],
+                {
+                    status: DECISION_STATUSES.unavailable,
+                    failureReason: DECISION_FAILURE_REASONS.providerError,
+                },
+            ),
+            makeProfile(DECISION_KINDS.routeDomains),
+            { permittedDomains: ["clients", "schedules"], maxDomains: 3, baseline: [] },
+        );
+        expect(result.status).toBe(DECISION_STATUSES.unavailable);
+        expect(result.reason).toBe(DECISION_FAILURE_REASONS.providerError);
+        expect(result.selection).toBeNull();
+    });
+
+    it("should default the unavailable reason to provider-error when the evidence carries none", () => {
+        const result = applyDomainRoutingPolicy(
+            makeRoutingEvidence([], {
+                status: DECISION_STATUSES.unavailable,
+                failureReason: null,
+            }),
+            makeProfile(DECISION_KINDS.routeDomains),
+            { permittedDomains: ["clients"], maxDomains: 3, baseline: [] },
+        );
+        expect(result.status).toBe(DECISION_STATUSES.unavailable);
+        expect(result.reason).toBe(DECISION_FAILURE_REASONS.providerError);
+    });
+
+    it("should return abstain with the evidence failure reason when routing evidence abstained", () => {
+        const result = applyDomainRoutingPolicy(
+            makeRoutingEvidence([{ domain: "clients", yesProbability: 0.9 }], {
+                status: DECISION_STATUSES.abstain,
+                failureReason: DECISION_FAILURE_REASONS.invalidOutput,
+            }),
+            makeProfile(DECISION_KINDS.routeDomains),
+            { permittedDomains: ["clients"], maxDomains: 3, baseline: [] },
+        );
+        expect(result.status).toBe(DECISION_STATUSES.abstain);
+        expect(result.reason).toBe(DECISION_FAILURE_REASONS.invalidOutput);
+        expect(result.selection).toBeNull();
+    });
+
+    it("should propagate unavailable and abstain statuses for client intent evidence", () => {
+        const unavailableResult = applyClientIntentPolicy(
+            makeIntentEvidence({
+                intent: CLIENT_INTENTS.create,
+                status: DECISION_STATUSES.unavailable,
+                failureReason: DECISION_FAILURE_REASONS.rateLimited,
+            }),
+            makeProfile(DECISION_KINDS.classifyClientIntent),
+            CLIENT_INTENTS.read,
+        );
+        expect(unavailableResult.status).toBe(DECISION_STATUSES.unavailable);
+        expect(unavailableResult.reason).toBe(DECISION_FAILURE_REASONS.rateLimited);
+        expect(unavailableResult.selection).toBeNull();
+        expect(unavailableResult.baselineSelection).toBe(CLIENT_INTENTS.read);
+
+        const abstainResult = applyClientIntentPolicy(
+            makeIntentEvidence({
+                intent: CLIENT_INTENTS.create,
+                status: DECISION_STATUSES.abstain,
+                failureReason: DECISION_FAILURE_REASONS.invalidScore,
+            }),
+            makeProfile(DECISION_KINDS.classifyClientIntent),
+            null,
+        );
+        expect(abstainResult.status).toBe(DECISION_STATUSES.abstain);
+        expect(abstainResult.reason).toBe(DECISION_FAILURE_REASONS.invalidScore);
+        expect(abstainResult.selection).toBeNull();
+    });
+
+    it("should stay unavailable when unavailable clarification evidence carries populated judgments", () => {
+        const result = applyClarificationPolicy(
+            makeClarificationEvidence({
+                status: DECISION_STATUSES.unavailable,
+                failureReason: DECISION_FAILURE_REASONS.authError,
+            }),
+            makeProfile(DECISION_KINDS.evaluateClarification),
+        );
+        expect(result.status).toBe(DECISION_STATUSES.unavailable);
+        expect(result.reason).toBe(DECISION_FAILURE_REASONS.authError);
+        expect(result.selection).toBeNull();
+    });
+
+    it("should propagate unavailable and abstain statuses for clarification evidence", () => {
+        const unavailableResult = applyClarificationPolicy(
+            makeClarificationEvidence({
+                judgments: null,
+                status: DECISION_STATUSES.unavailable,
+                failureReason: DECISION_FAILURE_REASONS.transportError,
+            }),
+            makeProfile(DECISION_KINDS.evaluateClarification),
+        );
+        expect(unavailableResult.status).toBe(DECISION_STATUSES.unavailable);
+        expect(unavailableResult.reason).toBe(DECISION_FAILURE_REASONS.transportError);
+        expect(unavailableResult.selection).toBeNull();
+
+        const abstainResult = applyClarificationPolicy(
+            makeClarificationEvidence({
+                status: DECISION_STATUSES.abstain,
+                failureReason: DECISION_FAILURE_REASONS.invalidOutput,
+            }),
+            makeProfile(DECISION_KINDS.evaluateClarification),
+        );
+        expect(abstainResult.status).toBe(DECISION_STATUSES.abstain);
+        expect(abstainResult.reason).toBe(DECISION_FAILURE_REASONS.invalidOutput);
+        expect(abstainResult.selection).toBeNull();
+    });
+
+    it("should propagate unavailable and abstain statuses for candidate evidence", () => {
+        const profile = makeProfile(DECISION_KINDS.rankCandidates);
+        const options = {
+            choiceSetRevision: "rev-1",
+            candidateLabels: ["clients", "schedules"],
+            baseline: "schedules",
+        };
+        const unavailableResult = applyCandidatePolicy(
+            makeCandidateEvidence({
+                status: DECISION_STATUSES.unavailable,
+                failureReason: DECISION_FAILURE_REASONS.aborted,
+            }),
+            profile,
+            options,
+        );
+        expect(unavailableResult.status).toBe(DECISION_STATUSES.unavailable);
+        expect(unavailableResult.reason).toBe(DECISION_FAILURE_REASONS.aborted);
+        expect(unavailableResult.selection).toBeNull();
+        expect(unavailableResult.baselineSelection).toBe("schedules");
+
+        const abstainResult = applyCandidatePolicy(
+            makeCandidateEvidence({
+                status: DECISION_STATUSES.abstain,
+                failureReason: DECISION_FAILURE_REASONS.invalidOutput,
+            }),
+            profile,
+            options,
+        );
+        expect(abstainResult.status).toBe(DECISION_STATUSES.abstain);
+        expect(abstainResult.reason).toBe(DECISION_FAILURE_REASONS.invalidOutput);
+        expect(abstainResult.selection).toBeNull();
+    });
+});
+
 describe("applyDomainRoutingPolicy", () => {
     const profile = makeProfile(DECISION_KINDS.routeDomains);
 
@@ -347,6 +512,33 @@ describe("applyClientIntentPolicy", () => {
         );
         expect(result.status).toBe(DECISION_STATUSES.abstain);
         expect(result.reason).toBe("narrow-margin");
+    });
+
+    it("should abstain with narrow-margin when the selected label is not the argmax of the distribution", () => {
+        const result = applyClientIntentPolicy(
+            makeIntentEvidence({
+                intent: CLIENT_INTENTS.read,
+                probabilities: { read: 0.75, create: 0.9 },
+            }),
+            profile,
+            null,
+        );
+        expect(result.status).toBe(DECISION_STATUSES.abstain);
+        expect(result.reason).toBe("narrow-margin");
+        expect(result.selection).toBeNull();
+    });
+
+    it("should accept the selected label when it is the argmax with a margin above minMargin over the best other label", () => {
+        const result = applyClientIntentPolicy(
+            makeIntentEvidence({
+                intent: CLIENT_INTENTS.read,
+                probabilities: { read: 0.9, create: 0.5 },
+            }),
+            profile,
+            null,
+        );
+        expect(result.status).toBe(DECISION_STATUSES.accepted);
+        expect(result.selection).toBe(CLIENT_INTENTS.read);
     });
 
     it("should return read as an intent category only when a read intent is accepted", () => {
@@ -586,6 +778,21 @@ describe("decision-input redaction and guard", () => {
     it("should pass a clean evidence object without throwing", () => {
         expect(() => assertNoForbiddenDecisionFields(makeIntentEvidence())).not.toThrow();
         expect(() => assertNoForbiddenDecisionFields({ redactedText: "텍스트", score: 0.9 })).not.toThrow();
+    });
+
+    it("should traverse each object at most once and return normally for a cyclic clean object", () => {
+        const clean: Record<string, unknown> = { labels: ["clients"], meta: { score: 0.9 } };
+        clean["self"] = clean;
+        expect(() => assertNoForbiddenDecisionFields(clean)).not.toThrow();
+    });
+
+    it("should still throw the forbidden-field error when a cyclic object carries a forbidden key", () => {
+        const hostile: Record<string, unknown> = { meta: {} };
+        hostile["self"] = hostile;
+        hostile["meta"] = { approve: true };
+        expect(() => assertNoForbiddenDecisionFields(hostile)).toThrow(
+            'Forbidden decision field "approve" at value.meta.approve',
+        );
     });
 });
 

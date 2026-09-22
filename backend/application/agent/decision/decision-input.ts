@@ -49,11 +49,22 @@ function isPlainObjectLike(value: unknown): value is Record<string, unknown> {
  * plain objects and arrays are traversed.
  */
 export function assertNoForbiddenDecisionFields(value: unknown, path = "value"): void {
+    assertNoForbiddenDecisionFieldsVisited(value, path, new WeakSet<object>());
+}
+
+function assertNoForbiddenDecisionFieldsVisited(
+    value: unknown,
+    path: string,
+    visited: WeakSet<object>,
+): void {
     if (Array.isArray(value)) {
-        value.forEach((item, index) => assertNoForbiddenDecisionFields(item, `${path}[${index}]`));
+        value.forEach((item, index) =>
+            assertNoForbiddenDecisionFieldsVisited(item, `${path}[${index}]`, visited));
         return;
     }
     if (!isPlainObjectLike(value)) return;
+    if (visited.has(value)) return;
+    visited.add(value);
 
     for (const key of Object.keys(value)) {
         if (FORBIDDEN_FIELD_SET.has(key)) {
@@ -61,6 +72,6 @@ export function assertNoForbiddenDecisionFields(value: unknown, path = "value"):
         }
     }
     for (const key of Object.keys(value)) {
-        assertNoForbiddenDecisionFields(value[key], `${path}.${key}`);
+        assertNoForbiddenDecisionFieldsVisited(value[key], `${path}.${key}`, visited);
     }
 }
