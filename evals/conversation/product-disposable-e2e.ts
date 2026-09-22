@@ -122,6 +122,40 @@ function blockedEvidence(guard: ProductDisposableE2eGuard, failure: ProductDispo
     };
 }
 
+export interface ProductDisposableE2eObservedOutcome {
+    /** Terminal status of the approved positive create action. */
+    createStatus: string;
+    /** Terminal status of the converted update action. */
+    updateStatus: "succeeded" | "blocked";
+    /** Observed message_trigger_job rows for the synthetic branch. */
+    jobs: number;
+    /** Observed message_log rows for the synthetic branch. */
+    messageLogs: number;
+    /** Terminal status of the deny-consent action ("blocked" when unevaluated). */
+    denyStatus: string;
+}
+
+/**
+ * A passed run requires the full authority evidence chain, not just a
+ * successful create: the update conversion must have succeeded, at least one
+ * task-owned automation job must have been observed, the deny path must have
+ * reached a reviewed terminal action, and zero message logs must have been
+ * written. Any missing piece is reported as blocked so the runner exits
+ * non-zero instead of passing on an unevaluated lane.
+ */
+export function resolveProductDisposableE2eStatus(
+    outcome: ProductDisposableE2eObservedOutcome,
+): ProductDisposableE2eEvidence["status"] {
+    const createSucceeded = outcome.createStatus === "succeeded";
+    const updateSucceeded = outcome.updateStatus === "succeeded";
+    const positiveOneJob = outcome.jobs > 0;
+    const denyEvaluated = outcome.denyStatus === "succeeded";
+    const zeroSend = outcome.messageLogs === 0;
+    return createSucceeded && updateSucceeded && positiveOneJob && denyEvaluated && zeroSend
+        ? "passed"
+        : "blocked";
+}
+
 type AppContext = {
     get<T>(token: unknown): T;
     close(): Promise<void>;
@@ -484,7 +518,13 @@ export async function runProductDisposableE2eEvaluation(): Promise<ProductDispos
             prisma.message_log.count({ where: { branchId: SYNTHETIC_BRANCH_ID } }),
         ]);
         return {
-            status: createResult.actionStatus === "succeeded" ? "passed" : "blocked",
+            status: resolveProductDisposableE2eStatus({
+                createStatus: createResult.actionStatus,
+                updateStatus,
+                jobs,
+                messageLogs,
+                denyStatus,
+            }),
             guard,
             customer: { create: createResult.actionStatus === "succeeded" ? "succeeded" : "blocked", update: updateStatus, rowsObserved },
             action: { proposed, approved, terminal, succeeded },

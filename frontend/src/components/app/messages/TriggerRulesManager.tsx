@@ -173,8 +173,15 @@ const TRIGGER_RULE_DETAIL_TABS = [
 const TRIGGER_RULE_APPROVAL_MESSAGE =
   "메시지 발송 승인 후에 설정 가능합니다. 설정에서 메시지 발송 기능을 신청해 주세요.";
 const CLIENT_REGISTRATION_POLICY_QUERY_KEY = ["settings", "client-registration-policy"] as const;
+// Backend ownership classifies every SERVICE_END_NOTICE job as a manual message
+// (`isManualMessageTriggerJob`), so a scheduled rule using this template would
+// never be bound by automation authority and would survive the branch
+// trigger-dispatch fence. Keep the template out of the automatic-routine manager
+// until rule ownership distinguishes automatic receipt rules from the manual rule.
+const MANUAL_ONLY_TRIGGER_TEMPLATE_KEY = "SERVICE_END_NOTICE";
 const TRIGGER_TEMPLATE_OPTION_SUFFIXES = {
   serviceRecordLink: " · 제공기록지 전용 자동화에서 관리",
+  manualOnly: " · 수동 발송 전용",
   eventAndRecipientMismatch: " · 선택한 이벤트·수신 대상과 맞지 않음",
   eventMismatch: " · 선택한 이벤트와 맞지 않음",
   recipientMismatch: " · 선택한 수신 대상과 맞지 않음",
@@ -253,22 +260,10 @@ const TRIGGER_TEMPLATE_MESSAGE_FALLBACKS: Record<TriggerTemplateKey, string> = {
 감사합니다 :)`,
 };
 
-const LEGACY_SERVICE_END_NOTICE_SYSTEM_SUFFIX = " (수동 발송)";
-
-function getRuleDisplayName(rule: MessageTriggerRule): string {
-  if (rule.branchId !== null || rule.templateKey !== "SERVICE_END_NOTICE") {
-    return rule.name;
-  }
-
-  return rule.name.endsWith(LEGACY_SERVICE_END_NOTICE_SYSTEM_SUFFIX)
-    ? rule.name.slice(0, -LEGACY_SERVICE_END_NOTICE_SYSTEM_SUFFIX.length)
-    : rule.name;
-}
-
 function toFormState(rule: MessageTriggerRule | null, isActiveOverride?: boolean): RuleFormState {
   if (!rule) return getDefaultFormState();
   return {
-    name: getRuleDisplayName(rule),
+    name: rule.name,
     isActive: isActiveOverride ?? rule.isActive,
     eventType: rule.eventType,
     offsetType: rule.offsetType,
@@ -357,6 +352,13 @@ function getTemplateOptionPresentation(
   if (template.key === "SERVICE_RECORD_LINK") {
     return {
       label: `${template.name}${TRIGGER_TEMPLATE_OPTION_SUFFIXES.serviceRecordLink}`,
+      disabled: true,
+    };
+  }
+
+  if (template.key === MANUAL_ONLY_TRIGGER_TEMPLATE_KEY) {
+    return {
+      label: `${template.name}${TRIGGER_TEMPLATE_OPTION_SUFFIXES.manualOnly}`,
       disabled: true,
     };
   }
@@ -519,7 +521,8 @@ export function TriggerRulesManager({
   const { data: selectedSystemTemplate } = useSystemTemplate(selectedSystemTemplateKey);
 
   const automaticChannelTemplates = useMemo(
-    () => getChannelTemplates(templateQuery.data ?? [], channel),
+    () => getChannelTemplates(templateQuery.data ?? [], channel)
+      .filter((template) => template.key !== MANUAL_ONLY_TRIGGER_TEMPLATE_KEY),
     [channel, templateQuery.data],
   );
   const visibleTemplates = useMemo(
@@ -641,6 +644,7 @@ export function TriggerRulesManager({
   const filteredRules = useMemo(() => {
     return rules.filter((rule) =>
       (isTriggerDispatchOff ? false : rule.isActive) === (statusFilter === "active") &&
+      rule.templateKey !== MANUAL_ONLY_TRIGGER_TEMPLATE_KEY &&
       isTriggerRuleInChannel(rule, channel)
     );
   }, [channel, isTriggerDispatchOff, rules, statusFilter]);
@@ -755,7 +759,7 @@ export function TriggerRulesManager({
     return filteredRules.map((rule): TriggerRuleListItem => ({
       kind: "trigger-rule",
       id: rule.id,
-      title: getRuleDisplayName(rule),
+      title: rule.name,
       subtitle: `${rule.branchId === null ? "시스템 자동화 · " : ""}${getRuleSummary(toFormState(rule))}`,
       active: isTriggerDispatchOff ? false : rule.isActive,
       icon: getRuleIcon(rule.eventType),
@@ -1177,7 +1181,7 @@ export function TriggerRulesManager({
               title={effectiveSelectedRuleId === "new"
                 ? "새 발송 규칙"
                 : selectedRule
-                  ? getRuleDisplayName(selectedRule)
+                  ? selectedRule.name
                   : "발송 규칙"}
               subtitle={isSelectedSystemRule
                 ? "내용은 고정되어 있지만 이 지점에서 발송 여부를 켜고 끌 수 있는 시스템 루틴입니다."
