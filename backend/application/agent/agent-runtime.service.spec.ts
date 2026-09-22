@@ -2247,4 +2247,48 @@ describe("AgentRuntimeService", () => {
             [{ capability: "clients.search", version: "1.0.0", risk: "read" }],
         );
     });
+
+    it("keeps the incumbent router and trace-finish call signatures when decision dependencies are absent", async () => {
+        const capability = buildEntityCapability("clients.search", "clients", jest.fn().mockResolvedValue({ id: 1, name: "결과" }));
+        const route = jest.fn().mockResolvedValue({ domains: ["clients"], capabilities: [capability] });
+        const finish = jest.fn().mockResolvedValue(undefined);
+        const runtime = new AgentRuntimeService(
+            { list: () => [capability] } as never,
+            { isCapabilityEnabled: jest.fn().mockResolvedValue(true) } as never,
+            { get: jest.fn().mockResolvedValue({ id: "session-legacy-shape", selectedEntities: {}, messages: [], summary: null }), appendMessages: jest.fn().mockResolvedValue(undefined) } as never,
+            { modelId: "deterministic-agent-v1", create: () => new DeterministicAgentLanguageModel([{ type: "text", text: "확인했습니다." }]) } as never,
+            { route } as never,
+            { start: jest.fn().mockResolvedValue({ id: "trace-legacy-shape", startedAt: Date.now() }), finish } as never,
+        );
+        const result = await runtime.stream({
+            principal: { userId: "user-a", branchId: "branch-a", globalRole: "admin", branchRole: "admin" },
+            sessionId: "session-legacy-shape",
+            locale: "ko",
+            messages: [{ id: "message-legacy-shape", role: "user", parts: [{ type: "text", text: "고객 확인" }] }] as never,
+        });
+        const reader = result.stream.getReader();
+        while (!(await reader.read()).done) {
+            // Drain completion so the trace finalization runs.
+        }
+        const resultWithIntake = await runtime.stream({
+            principal: { userId: "user-a", branchId: "branch-a", globalRole: "admin", branchRole: "admin" },
+            sessionId: "session-legacy-shape",
+            locale: "ko",
+            messages: [{ id: "message-legacy-shape-2", role: "user", parts: [{ type: "text", text: "이름: 홍길동 고객 등록" }] }] as never,
+        });
+        const readerWithIntake = resultWithIntake.stream.getReader();
+        while (!(await readerWithIntake.read()).done) {
+            // Drain completion so the trace finalization runs.
+        }
+
+        // No decision context is ever appended to the incumbent router calls:
+        // both legacy arities (with and without protected values) are kept.
+        expect(route).toHaveBeenCalledTimes(2);
+        expect(route.mock.calls[0]).toHaveLength(3);
+        expect(route.mock.calls[1]).toHaveLength(4);
+        // The trace finish keeps the incumbent five-argument signature.
+        expect(finish).toHaveBeenCalledTimes(2);
+        expect(finish.mock.calls[0]).toHaveLength(5);
+        expect(finish.mock.calls[1]).toHaveLength(5);
+    });
 });
