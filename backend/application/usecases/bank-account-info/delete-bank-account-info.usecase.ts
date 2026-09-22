@@ -1,4 +1,5 @@
 import { Inject, Injectable, NotFoundException } from "@nestjs/common";
+import { codeOnlyProblemBody } from "application/utils/problem-bodies";
 import { BANK_ACCOUNT_INFO_REPOSITORY, IBankAccountInfoRepository } from "domain/repositories/bank-account-info.repository.interface";
 
 @Injectable()
@@ -15,7 +16,7 @@ export class DeleteBankAccountInfoUsecase {
         // count 0 means the row does not exist in this branch: 404 either way.
         const deleted = await this.bankAccountInfoRepository.delete(area, branchId);
         if (deleted !== 1) {
-            throw new NotFoundException(`Bank account info with area ${area} not found`);
+            throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
         }
     }
 }

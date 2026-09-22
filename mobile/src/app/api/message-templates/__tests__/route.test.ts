@@ -238,9 +238,13 @@ describe("message-template API routes", () => {
     );
 
     expect(response.status).toBe(400);
-    await expect(response.json()).resolves.toEqual({
+    expect(response.headers.get("Content-Type")).toBe("application/problem+json");
+    await expect(response.json()).resolves.toEqual(expect.objectContaining({
+      code: "VALIDATION_FAILED",
+      status: 400,
+      outcome: "NOT_APPLIED",
       error: "Invalid message template id",
-    });
+    }));
     expect(mockPatch).not.toHaveBeenCalled();
   });
 

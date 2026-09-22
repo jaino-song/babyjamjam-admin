@@ -60,7 +60,15 @@ describe("consultation inquiry API routes", () => {
     );
 
     expect(response.status).toBe(400);
-    await expect(response.json()).resolves.toEqual({ error: "Invalid inquiry id" });
+    expect(response.headers.get("Content-Type")).toBe("application/problem+json");
+    const body = await response.json();
+    expect(body).toEqual(expect.objectContaining({
+      code: "VALIDATION_FAILED",
+      status: 400,
+      outcome: "NOT_APPLIED",
+      error: "Invalid inquiry id",
+    }));
+    expect(body.errors[0].pointer).toBe("/id");
     expect(mockPatch).not.toHaveBeenCalled();
   });
 

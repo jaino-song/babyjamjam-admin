@@ -1,6 +1,6 @@
 import { NextResponse, NextRequest } from "next/server";
 import { serverAPIClient } from "@/lib/api/server";
-import { AxiosError } from "axios";
+import { errorResponse } from "@/lib/api/route-utils";
 
 export async function POST(request: NextRequest) {
     try {
@@ -9,25 +9,6 @@ export async function POST(request: NextRequest) {
 
         return NextResponse.json(data, { status });
     } catch (error) {
-        console.error("[Auth Verify Email] Error:", error);
-
-        if (error instanceof AxiosError) {
-            const status = error.response?.status || 500;
-            const responseData = error.response?.data;
-
-            if (responseData) {
-                return NextResponse.json(responseData, { status });
-            }
-
-            return NextResponse.json(
-                { error: error.message || "Verification failed" },
-                { status }
-            );
-        }
-
-        return NextResponse.json(
-            { error: "Internal Server Error" },
-            { status: 500 }
-        );
+        return errorResponse(error, "verify email");
     }
 }

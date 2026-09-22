@@ -192,6 +192,11 @@ describe("MessageTriggerService", () => {
         findSentTriggerJobIdsSystemScope: jest.fn<Promise<Set<string>>, [string[]]>().mockResolvedValue(
             new Set<string>(),
         ),
+        // Present by default so reclaim tests exercise the production branch
+        // that fences jobs whose provider attempt is started/uncertain.
+        findUncertainTriggerJobIdsSystemScope: jest.fn<Promise<Set<string>>, [string[]]>().mockResolvedValue(
+            new Set<string>(),
+        ),
         findRecentByBranch: jest.fn().mockResolvedValue([]),
         findHistoryPageByBranch: jest.fn().mockResolvedValue([]),
     });
@@ -1453,12 +1458,36 @@ describe("MessageTriggerService", () => {
                 offsetType: MessageTriggerOffsetType.SAME_DAY,
                 recipientType: MessageTriggerRecipientType.PRIMARY_EMPLOYEE,
                 templateKey,
-            })).rejects.toThrow("Invalid recipient for selected event type");
+            })).rejects.toMatchObject({ response: { code: "VALIDATION_FAILED" } });
 
             expect(ruleRepository.create).not.toHaveBeenCalled();
             expect(ruleRepository.markJobsStale).not.toHaveBeenCalled();
         },
     );
+
+    it("rejects an approved automation update whose snapshot no longer matches as VALIDATION_FAILED", async () => {
+        const { service } = createService();
+        const existingRule = createRule({ id: "rule-approved-stale" });
+        const staleSnapshot = {
+            id: existingRule.id,
+            branchId,
+            name: "바뀐 이름",
+            isActive: existingRule.isActive,
+            eventType: existingRule.eventType,
+            offsetType: existingRule.offsetType,
+            offsetDays: existingRule.offsetDays,
+            recipientType: existingRule.recipientType,
+            templateKey: existingRule.templateKey,
+            isDefault: existingRule.isDefault,
+            jobsStale: existingRule.jobsStale,
+            createdAt: existingRule.createdAt.toISOString(),
+            updatedAt: existingRule.updatedAt.toISOString(),
+        };
+        const targetVersion = (service as unknown as { ruleTargetVersion(rule: MessageTriggerRuleEntity): string }).ruleTargetVersion(existingRule);
+
+        await expect(service.updateRuleApprovedTarget(branchId, existingRule.id, { name: "승인된 변경" }, targetVersion, staleSnapshot))
+            .rejects.toMatchObject({ response: { code: "VALIDATION_FAILED" } });
+    });
 
     it.each([undefined, "23:59"])("preserves or updates sendTime without losing the generation fence (%s)", async (sendTime) => {
         const { service, ruleRepository, jobRepository } = createService();
@@ -1817,6 +1846,7 @@ describe("MessageTriggerService", () => {
         expect(failure).toBeInstanceOf(ConflictException);
         expect(failure.message).toBe("이미 발송되었거나 취소할 수 없는 상태입니다");
         expect(failure.getStatus()).toBe(409);
+        expect(failure.getResponse()).toMatchObject({ code: "REQUEST_CONFLICT" });
     });
 
     it("cancelJobByUser scopes the cancel to the caller's branch, so a job from another branch is refused", async () => {
@@ -2401,7 +2431,7 @@ describe("MessageTriggerService", () => {
 
         await expect(
             service.dispatchPendingJobNow("manual-job", { expectedBranchId: "some-other-branch" }),
-        ).rejects.toThrow("Message trigger job not found");
+        ).rejects.toMatchObject({ response: { code: "RESOURCE_NOT_FOUND" } });
 
         expect(jobRepository.findByIdInBranch).toHaveBeenCalledWith("some-other-branch", "manual-job");
         expect(deliveryService.sendJob).not.toHaveBeenCalled();
@@ -2952,6 +2982,31 @@ describe("MessageTriggerService", () => {
         expect(dispatchingJob.cancelReason).toContain("불확실");
         expect(dispatchingJob.nextAttemptAt).toBeNull();
         expect(jobRepository.update).toHaveBeenCalledWith(dispatchingJob);
+    });
+
+    it("reclaim terminal-fails a stale job whose provider attempt is uncertain instead of resending it", async () => {
+        // Provider accepted (or the call went ambiguous) but the local result
+        // save failed: the message_log row stays started/uncertain. Reclaiming
+        // that job into pending would cross the provider boundary a second
+        // time for an attempt that may already be accepted.
+        const { service, jobRepository, messageLogRepository } = createDispatchService();
+        const uncertainJob = createJob({ id: "job-uncertain", status: "processing" });
+        const unsentJob = createJob({ id: "job-plain-unsent", status: "processing" });
+        jobRepository.findStaleProcessingSystemScope.mockResolvedValue([uncertainJob, unsentJob]);
+        messageLogRepository.findSentTriggerJobIdsSystemScope.mockResolvedValue(new Set());
+        messageLogRepository.findUncertainTriggerJobIdsSystemScope.mockResolvedValue(
+            new Set([uncertainJob.id]),
+        );
+
+        await service.dispatchDueJobs();
+
+        expect(uncertainJob.status).toBe("failed");
+        expect(uncertainJob.cancelReason).toContain("불확실");
+        expect(uncertainJob.nextAttemptAt).toBeNull();
+        // The job without an uncertain log still follows the bounded requeue path.
+        expect(unsentJob.status).toBe("pending");
+        expect(unsentJob.nextAttemptAt).toBeInstanceOf(Date);
+        expect(jobRepository.update).toHaveBeenCalledTimes(2);
     });
 
     it("an externally approved branch recovers via the scheduler tick without any page load", async () => {

@@ -1,5 +1,4 @@
 "use client";
-import { getUserErrorMessage } from "@babyjamjam/shared";
 
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -40,6 +39,7 @@ import { useInfiniteContracts, type ContractsSectionParam } from "@/hooks/useInf
 import { ServiceRecordHeaderCard } from "@/features/service-records/components/ServiceRecordHeaderCard";
 import { useClientServiceRecords } from "@/features/service-records/hooks/use-service-records";
 import type { EformsignDocument, EformsignDocumentOption } from "@/lib/eformsign/types";
+import { readHeadlessOutcome } from "@/lib/eformsign/headless-outcome";
 import { useDebounce } from "use-debounce";
 import {
   DocumentFilterType,
@@ -108,6 +108,7 @@ import {
   extractReRequestEvents,
 } from "@/lib/eformsign/document-details";
 import { resolveDocumentCustomerName } from "@/lib/eformsign/display-name";
+import { normalizeApiError } from "@babyjamjam/shared";
 import { describeReceiptLinkError } from "@/lib/receipt-link";
 import { formatIsoDateInput } from "@/lib/date/format-iso-input";
 import { useAllVoucherPriceInfos } from "@/hooks/useVoucherData";
@@ -497,7 +498,7 @@ export default function ContractsPage() {
       toast({
         variant: "destructive",
         title: "계약 정보를 불러오지 못했어요",
-        description: getUserErrorMessage("고객 정보를 직접 입력해 주세요"),
+        description: "고객 정보를 직접 입력해 주세요",
       });
     }
   }, [registerCandidateQuery.isError, registerClientDocumentId, toast]);
@@ -660,10 +661,9 @@ export default function ContractsPage() {
       const deleted = response.result?.success_result?.includes(deleteTargetDocumentId);
 
       if (!deleted) {
-        const failedItem = response.result?.fail_result?.find(
-          (item) => item.document_id === deleteTargetDocumentId
-        );
-        throw new Error(failedItem?.message || "문서 삭제에 실패했어요.");
+        // Upstream per-item failure detail is never forwarded; locally
+        // authored copy covers the vendor-side delete failure.
+        throw new Error("문서 삭제에 실패했어요.");
       }
 
       if (selectedDocId === deleteTargetDocumentId) {
@@ -682,12 +682,12 @@ export default function ContractsPage() {
       });
     } catch (deleteError) {
       console.error("Failed to delete contract document:", deleteError);
+      // Registered problem message (verified) or locally authored copy —
+      // upstream internals are never rendered.
+      const normalized = normalizeApiError(deleteError, { locale: "ko-KR", operation: "mutation" });
       toast({
         title: "문서를 삭제하지 못했어요",
-        description:
-          getUserErrorMessage(deleteError, deleteError instanceof Error
-            ? deleteError.message
-            : "잠시 후 다시 시도해 주세요"),
+        description: normalized.verified ? normalized.message : "문서 삭제에 실패했어요.",
         variant: "destructive",
       });
     }
@@ -1425,9 +1425,12 @@ export function ContractDetail({
       });
     },
     onError: (error) => {
+      // Registered problem message (verified) or locally authored copy —
+      // upstream internals are never rendered.
+      const normalized = normalizeApiError(error, { locale: "ko-KR", operation: "mutation" });
       toast({
         variant: "destructive",
-        description: getUserErrorMessage(error, error instanceof Error ? error.message : "재요청하지 못했어요"),
+        description: normalized.verified ? normalized.message : "재요청하지 못했어요",
       });
     },
   });
@@ -1461,7 +1464,14 @@ export function ContractDetail({
           if (headless.ok) {
             return { kind: "headless" };
           }
-          manualCheckRequired = headless.fallbackHint === "manual_check";
+          // BJJ-319 5-4c: the structured outcome is the primary classification
+          // when the envelope carries it. An UNKNOWN verdict means eformsign may
+          // already have applied the step, so the recovery is the manual status
+          // check — never the reviewer iframe. Envelopes without the field keep
+          // the fallbackHint decision.
+          const structuredOutcome = readHeadlessOutcome(headless.outcome);
+          manualCheckRequired = headless.fallbackHint === "manual_check"
+            || structuredOutcome === "UNKNOWN";
           manualCheckReason = headless.reason;
           console.warn(
             "[finalize] headless finalize ok=false",
@@ -1539,10 +1549,13 @@ export function ContractDetail({
     onError: (error) => {
       closeFinalizeProgressStream();
       setFinalizeProgress(INITIAL_FINALIZE_PROGRESS);
+      // Registered problem message (verified) or locally authored copy —
+      // upstream internals are never rendered.
+      const normalized = normalizeApiError(error, { locale: "ko-KR", operation: "mutation" });
       toast({
         variant: "destructive",
         title: "최종 확인을 마치지 못했어요",
-        description: getUserErrorMessage(error, error instanceof Error ? error.message : "잠시 후 다시 시도해 주세요"),
+        description: normalized.verified ? normalized.message : "잠시 후 다시 시도해 주세요",
       });
     },
   });
@@ -1561,7 +1574,8 @@ export function ContractDetail({
       toast({
         variant: "destructive",
         title: "영수증 문자를 보내지 못했습니다",
-        description: getUserErrorMessage(describeReceiptLinkError(error)),
+        // Reason-code/problem-contract mapper output is policy-safe copy.
+        description: describeReceiptLinkError(error),
       });
     },
   });
@@ -1590,7 +1604,7 @@ export function ContractDetail({
     toast({
       variant: "destructive",
       title: "최종 확인을 마치지 못했어요",
-      description: getUserErrorMessage(message),
+      description: message,
     });
     closeStaffCompletionModal();
   };

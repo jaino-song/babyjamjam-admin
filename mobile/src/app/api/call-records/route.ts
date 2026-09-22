@@ -5,15 +5,15 @@ import {
     errorResponse,
     getAuthHeaders,
     getAuthToken,
-    unauthorizedResponse,
     withNoStore,
 } from "@/lib/api/route-utils";
+import { unauthorizedProblemResponse } from "@/lib/api/problem-responses";
 
 // GET /api/call-records — 통화 기록 list (page/limit/category/search)
 export async function GET(request: NextRequest) {
     try {
         const token = getAuthToken(request);
-        if (!token) return unauthorizedResponse("Unauthorized");
+        if (!token) return unauthorizedProblemResponse();
 
         const searchParams = request.nextUrl.searchParams;
         const params: Record<string, string> = {};

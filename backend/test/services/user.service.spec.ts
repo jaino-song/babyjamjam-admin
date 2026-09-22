@@ -726,6 +726,12 @@ describe("UserService", () => {
 
             expect(error).toBeInstanceOf(ConflictException);
             expect((error as ConflictException).getStatus()).toBe(409);
+            expect((error as ConflictException).getResponse()).toEqual(expect.objectContaining({
+                code: "REQUEST_CONFLICT",
+                params: {},
+                outcome: "NOT_APPLIED",
+                recovery: { action: "NONE", retry: { mode: "NEVER" } },
+            }));
             expect(prismaService.$transaction).toHaveBeenCalledTimes(3);
             expect(prismaService.user.findUnique).not.toHaveBeenCalled();
             expect(prismaService.branch.findMany).not.toHaveBeenCalled();
@@ -760,7 +766,15 @@ describe("UserService", () => {
                     branchIds,
                     expectedBranchIds: [branchIds[0]],
                 }),
-            )).rejects.toThrow("유효하지 않은 지점입니다.");
+            )).rejects.toMatchObject({
+                status: 400,
+                response: expect.objectContaining({
+                    code: "VALIDATION_FAILED",
+                    params: {},
+                    outcome: "NOT_APPLIED",
+                    recovery: { action: "NONE", retry: { mode: "NEVER" } },
+                }),
+            });
 
             expectNoAssignmentWrites();
         });
@@ -893,7 +907,15 @@ describe("UserService", () => {
                     branchIds: [inactiveOwnedBranchId],
                     expectedBranchIds: [inactiveOwnedBranchId],
                 }),
-            )).rejects.toThrow("하나 이상의 활성 지점을 선택해야 합니다.");
+            )).rejects.toMatchObject({
+                status: 400,
+                response: expect.objectContaining({
+                    code: "VALIDATION_FAILED",
+                    params: {},
+                    outcome: "NOT_APPLIED",
+                    recovery: { action: "NONE", retry: { mode: "NEVER" } },
+                }),
+            });
 
             expect(prismaService.branch.findMany).not.toHaveBeenCalled();
             expect(prismaService.branch.updateMany).not.toHaveBeenCalled();
@@ -1002,7 +1024,15 @@ describe("UserService", () => {
                     expectedRole: "manager",
                     expectedBranchIds: [branchIds[0]],
                 }),
-            )).rejects.toThrow("기존 지점장 계정에서만 유지할 수 있습니다.");
+            )).rejects.toMatchObject({
+                status: 403,
+                response: expect.objectContaining({
+                    code: "ACCESS_DENIED",
+                    params: {},
+                    outcome: "NOT_APPLIED",
+                    recovery: { action: "NONE", retry: { mode: "NEVER" } },
+                }),
+            });
 
             expect(prismaService.branch.findMany).not.toHaveBeenCalled();
             expect(prismaService.branch.updateMany).not.toHaveBeenCalled();
@@ -1027,7 +1057,15 @@ describe("UserService", () => {
                     role: "admin",
                     branchIds: [branchIds[0]],
                 }),
-            )).rejects.toThrow("담당 지점을 모두 포함해야 합니다.");
+            )).rejects.toMatchObject({
+                status: 400,
+                response: expect.objectContaining({
+                    code: "VALIDATION_FAILED",
+                    params: {},
+                    outcome: "NOT_APPLIED",
+                    recovery: { action: "NONE", retry: { mode: "NEVER" } },
+                }),
+            });
 
             expect(prismaService.branch.findMany).not.toHaveBeenCalled();
             expect(prismaService.branch.updateMany).not.toHaveBeenCalled();
@@ -1050,7 +1088,15 @@ describe("UserService", () => {
                     role: "user",
                     branchIds: [branchIds[0]],
                 }),
-            )).rejects.toThrow("오너 계정의 역할은 변경할 수 없습니다.");
+            )).rejects.toMatchObject({
+                status: 403,
+                response: expect.objectContaining({
+                    code: "ACCESS_DENIED",
+                    params: {},
+                    outcome: "NOT_APPLIED",
+                    recovery: { action: "NONE", retry: { mode: "NEVER" } },
+                }),
+            });
 
             expect(prismaService.branch.findMany).not.toHaveBeenCalled();
             expect(prismaService.branch.updateMany).not.toHaveBeenCalled();
@@ -1074,7 +1120,15 @@ describe("UserService", () => {
                     role: "user",
                     branchIds: [branchIds[0]],
                 }),
-            )).rejects.toThrow("승인된 계정만 수정할 수 있습니다.");
+            )).rejects.toMatchObject({
+                status: 400,
+                response: expect.objectContaining({
+                    code: "VALIDATION_FAILED",
+                    params: {},
+                    outcome: "NOT_APPLIED",
+                    recovery: { action: "NONE", retry: { mode: "NEVER" } },
+                }),
+            });
 
             expect(prismaService.branch.findMany).not.toHaveBeenCalled();
             expect(prismaService.branch.updateMany).not.toHaveBeenCalled();
@@ -1101,24 +1155,75 @@ describe("UserService", () => {
                     expectedRole: "user",
                     expectedBranchIds: [branchIds[0]],
                 }),
-            )).rejects.toThrow("계정 정보가 변경되었습니다.");
+            )).rejects.toMatchObject({
+                status: 409,
+                response: expect.objectContaining({
+                    code: "REQUEST_CONFLICT",
+                    params: {},
+                    outcome: "NOT_APPLIED",
+                    recovery: { action: "NONE", retry: { mode: "NEVER" } },
+                }),
+            });
 
             expect(prismaService.branch.findMany).not.toHaveBeenCalled();
             expectNoAssignmentWrites();
         });
 
         it("refuses a non-owner caller before opening a transaction", async () => {
-            await expect(service.updateAccountAssignment(
+            const rejection = service.updateAccountAssignment(
                 "u1",
                 assignmentParams({
                     role: "user",
                     branchIds: [branchIds[0]],
                     callerRole: "admin",
                 }),
-            )).rejects.toThrow("계정 수정은 소유자만 가능합니다.");
+            );
+            await expect(rejection).rejects.toBeInstanceOf(ForbiddenException);
+            await expect(rejection).rejects.toMatchObject({
+                status: 403,
+                response: expect.objectContaining({
+                    code: "ACCESS_DENIED",
+                    params: {},
+                    outcome: "NOT_APPLIED",
+                    recovery: { action: "NONE", retry: { mode: "NEVER" } },
+                }),
+            });
 
             expect(prismaService.$transaction).not.toHaveBeenCalled();
             expect(prismaService.user.findUnique).not.toHaveBeenCalled();
+        });
+
+        it("answers a missing assignment target with a registered RESOURCE_NOT_FOUND body", async () => {
+            prismaService.user.findUnique.mockResolvedValue(null);
+
+            await expect(service.updateAccountAssignment(
+                "missing-target",
+                assignmentParams(),
+            )).rejects.toMatchObject({
+                status: 404,
+                response: expect.objectContaining({
+                    code: "RESOURCE_NOT_FOUND",
+                    params: {},
+                    outcome: "NOT_APPLIED",
+                    recovery: { action: "NONE", retry: { mode: "NEVER" } },
+                }),
+            });
+            expectNoAssignmentWrites();
+        });
+
+        it("maps branch-selection guards to VALIDATION_FAILED bodies with /branchIds pointers", async () => {
+            prismaService.branch.findMany.mockResolvedValue([]);
+
+            await expect(service.updateAccountAssignment(
+                "u1",
+                assignmentParams({ role: "user" }),
+            )).rejects.toMatchObject({
+                status: 400,
+                response: expect.objectContaining({
+                    code: "VALIDATION_FAILED",
+                    errors: [expect.objectContaining({ pointer: "/branchIds", code: "INVALID_VALUE" })],
+                }),
+            });
         });
     });
 
@@ -1197,7 +1302,15 @@ describe("UserService", () => {
                 role: "manager",
                 approvedBy: "owner-1",
                 branchId: "missing-branch",
-            })).rejects.toThrow("유효하지 않은 지점입니다.");
+            })).rejects.toMatchObject({
+                status: 400,
+                response: expect.objectContaining({
+                    code: "VALIDATION_FAILED",
+                    params: {},
+                    outcome: "NOT_APPLIED",
+                    recovery: { action: "NONE", retry: { mode: "NEVER" } },
+                }),
+            });
 
             expect(prismaService.user.update).not.toHaveBeenCalled();
             expect(prismaService.user_branch.upsert).not.toHaveBeenCalled();
@@ -1254,7 +1367,15 @@ describe("UserService", () => {
                 approvedBy: "owner-1",
                 branchId: "branch-1",
                 ownerBranchId: "owner-branch-1",
-            })).rejects.toThrow("이미 지점장이 있는 지점입니다.");
+            })).rejects.toMatchObject({
+                status: 409,
+                response: expect.objectContaining({
+                    code: "REQUEST_CONFLICT",
+                    params: {},
+                    outcome: "NOT_APPLIED",
+                    recovery: { action: "NONE", retry: { mode: "NEVER" } },
+                }),
+            });
 
             expect(prismaService.user.update).not.toHaveBeenCalled();
             expect(prismaService.branch.update).not.toHaveBeenCalled();
@@ -1265,7 +1386,15 @@ describe("UserService", () => {
                 role: "admin",
                 approvedBy: "owner-1",
                 branchId: "branch-1",
-            })).rejects.toThrow("지점장 승인은 임명할 지점이 필요합니다.");
+            })).rejects.toMatchObject({
+                status: 400,
+                response: expect.objectContaining({
+                    code: "VALIDATION_FAILED",
+                    params: {},
+                    outcome: "NOT_APPLIED",
+                    recovery: { action: "NONE", retry: { mode: "NEVER" } },
+                }),
+            });
 
             expect(prismaService.user.update).not.toHaveBeenCalled();
             expect(prismaService.branch.update).not.toHaveBeenCalled();

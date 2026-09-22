@@ -1,4 +1,5 @@
 import { Injectable, Inject, NotFoundException, ForbiddenException, Optional } from "@nestjs/common";
+import { codeOnlyProblemBody } from "application/utils/problem-bodies";
 import {
     DocumentEntity,
     DOCUMENT_VISIBILITY_SCOPE,
@@ -31,7 +32,11 @@ export class DocumentService {
     }): Promise<DocumentEntity> {
         const isClaimed = await this.documentRepository.existsByStoragePath(params.storagepath);
         if (isClaimed) {
-            throw new ForbiddenException("storage path unavailable");
+            // The path is branch-scoped (`documents/<branchId>/...`) and the
+            // claim check is the write boundary between this branch's upload
+            // and an already-claimed object, so the registered access-denied
+            // code keeps the public 403 while hiding the storage layout text.
+            throw new ForbiddenException(codeOnlyProblemBody("ACCESS_DENIED"));
         }
 
         const doc = DocumentEntity.create({
@@ -57,7 +62,7 @@ export class DocumentService {
     async findById(branchId: string, id: string): Promise<DocumentEntity> {
         const doc = await this.documentRepository.findById(branchId, id);
         if (!doc) {
-            throw new NotFoundException(`Document with id ${id} not found`);
+            throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
         }
         return doc;
     }
@@ -173,7 +178,7 @@ export class DocumentService {
     private async findBranchDocumentById(branchId: string, id: string): Promise<DocumentEntity> {
         const document = await this.documentRepository.findBranchById(branchId, id);
         if (!document) {
-            throw new NotFoundException(`Document with id ${id} not found`);
+            throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
         }
         return document;
     }

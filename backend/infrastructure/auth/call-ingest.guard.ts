@@ -7,6 +7,7 @@ import {
 } from "@nestjs/common";
 import { Request } from "express";
 import { CallIngestTokenService } from "application/services/call-ingest-token.service";
+import { codeOnlyProblemBody } from "application/utils/problem-bodies";
 import { tenantContextStore } from "infrastructure/tenant/tenant-context.store";
 import { runSystemScope } from "infrastructure/tenant/run-system-scope";
 
@@ -30,14 +31,14 @@ export class CallIngestGuard implements CanActivate {
 
         if (!authHeader) {
             this.logger.warn("Call ingest rejected: Missing Authorization header");
-            throw new UnauthorizedException("Missing Authorization header");
+            throw new UnauthorizedException(codeOnlyProblemBody("AUTH_REQUIRED"));
         }
 
         const authMatch = authHeader.match(/^Bearer\s+(.+)$/);
         const token = authMatch?.[1]?.trim();
         if (!token) {
             this.logger.warn("Call ingest rejected: Invalid Authorization format");
-            throw new UnauthorizedException("Invalid Authorization format");
+            throw new UnauthorizedException(codeOnlyProblemBody("AUTH_REQUIRED"));
         }
 
         // The token lookup itself must run in system scope, for the same
@@ -59,7 +60,7 @@ export class CallIngestGuard implements CanActivate {
         const branchId = await runSystemScope(() => this.tokenService.resolveBranchId(token));
         if (!branchId) {
             this.logger.warn("Call ingest rejected: Unknown or revoked token");
-            throw new UnauthorizedException("Invalid token");
+            throw new UnauthorizedException(codeOnlyProblemBody("AUTH_REQUIRED"));
         }
 
         request.callIngestBranchId = branchId;

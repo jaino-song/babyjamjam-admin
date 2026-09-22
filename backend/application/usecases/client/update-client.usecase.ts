@@ -1,4 +1,5 @@
 import { BadRequestException, Inject, Injectable, NotFoundException } from "@nestjs/common";
+import { clientCodeOnlyProblemBody, clientProblemBody } from "application/usecases/client/client-write-validation";
 import { ClientEntity } from "domain/entities/client.entity";
 import { CLIENT_REPOSITORY, IClientRepository } from "domain/repositories/client.repository.interface";
 import type { Prisma } from "@prisma/client";
@@ -50,7 +51,7 @@ export class UpdateClientUsecase {
             ? await this.clientRepository.findByIdForUpdate(branchid, id, transaction)
             : await this.clientRepository.findById(branchid, id);
         if (!client) {
-            throw new NotFoundException(`고객을 찾을 수 없습니다. (id: ${id})`);
+            throw new NotFoundException(clientCodeOnlyProblemBody("RESOURCE_NOT_FOUND", "고객을 찾을 수 없습니다."));
         }
 
         client.update(updates);
@@ -88,7 +89,12 @@ export class UpdateClientUsecase {
 function assertNonNullableClientPatch(updates: UpdateClientParams): void {
     for (const field of ["name", "voucherClient", "breastPump"] as const) {
         if (Object.prototype.hasOwnProperty.call(updates, field) && updates[field] === null) {
-            throw new BadRequestException(`${field} 항목은 비울 수 없습니다.`);
+            throw new BadRequestException(clientProblemBody("VALIDATION_FAILED", {
+                pointer: `/${field}`,
+                code: "REQUIRED",
+                detail: `${field} 항목은 비울 수 없습니다.`,
+                location: "body",
+            }));
         }
     }
 }

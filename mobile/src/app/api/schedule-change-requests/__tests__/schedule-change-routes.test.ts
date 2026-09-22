@@ -36,6 +36,26 @@ function createRequest(
     });
 }
 
+async function expectProblemValidation(response: Response, pointer: string, legacyError: string): Promise<void> {
+    expect(response.status).toBe(400);
+    expect(response.headers.get("content-type")).toBe("application/problem+json");
+    expect(response.headers.get("content-language")).toBe("ko-KR");
+    expect(response.headers.get("cache-control")).toContain("no-store");
+    expect(response.headers.get("x-request-id")).toBeTruthy();
+    await expect(response.json()).resolves.toEqual(expect.objectContaining({
+        code: "VALIDATION_FAILED",
+        status: 400,
+        outcome: "NOT_APPLIED",
+        error: legacyError,
+        errors: [{
+            pointer,
+            code: "INVALID_FORMAT",
+            detail: "입력 형식이 올바르지 않아요.",
+            location: pointer === "/toDate" ? "body" : "path",
+        }],
+    }));
+}
+
 describe("mobile admin service schedule change proxy routes", () => {
     beforeEach(() => {
         mockGet.mockReset();
@@ -77,7 +97,7 @@ describe("mobile admin service schedule change proxy routes", () => {
         );
     });
 
-    it("rejects invalid dates before they reach the backend", async () => {
+    it("rejects invalid dates with a problem body before they reach the backend", async () => {
         const response = await applyScheduleChange(
             createRequest("/api/schedule-change-requests/schedules/11/apply", "POST", {
                 toDate: "2026-02-30",
@@ -85,7 +105,27 @@ describe("mobile admin service schedule change proxy routes", () => {
             { params: Promise.resolve({ scheduleId: "11" }) },
         );
 
-        expect(response.status).toBe(400);
+        await expectProblemValidation(response, "/toDate", "Invalid schedule date");
+        expect(mockPost).not.toHaveBeenCalled();
+    });
+
+    it("rejects a non-positive schedule id with a problem body", async () => {
+        const response = await previewScheduleChange(
+            createRequest("/api/schedule-change-requests/schedules/abc/preview", "GET"),
+            { params: Promise.resolve({ scheduleId: "abc" }) },
+        );
+
+        await expectProblemValidation(response, "/scheduleId", "Invalid schedule id");
+        expect(mockGet).not.toHaveBeenCalled();
+    });
+
+    it("rejects a malformed schedule change request id with a problem body", async () => {
+        const response = await approveScheduleChange(
+            createRequest("/api/schedule-change-requests/bad id!/approve", "POST"),
+            { params: Promise.resolve({ id: "bad id!" }) },
+        );
+
+        await expectProblemValidation(response, "/id", "Invalid schedule change request id");
         expect(mockPost).not.toHaveBeenCalled();
     });
 
@@ -135,6 +175,7 @@ describe("mobile admin service schedule change proxy routes", () => {
         );
 
         expect(response.status).toBe(401);
+        await expect(response.json()).resolves.toEqual({ error: "Unauthorized" });
         expect(mockGet).not.toHaveBeenCalled();
     });
 });

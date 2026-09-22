@@ -1,6 +1,16 @@
-import { ForbiddenException, NotFoundException } from "@nestjs/common";
+import { ForbiddenException, HttpException, NotFoundException } from "@nestjs/common";
 import { UpdateUserUsecase } from "application/usecases/user/update-user.usecase";
 import { MockUserRepository, UserFactory } from "../../utils";
+
+async function rejectedBody(promise: Promise<unknown>): Promise<unknown> {
+    try {
+        await promise;
+    } catch (error) {
+        expect(error).toBeInstanceOf(HttpException);
+        return (error as HttpException).getResponse();
+    }
+    throw new Error("Expected the usecase to reject");
+}
 
 describe("UpdateUserUsecase", () => {
     let usecase: UpdateUserUsecase;
@@ -20,6 +30,11 @@ describe("UpdateUserUsecase", () => {
             await expect(
                 usecase.execute("missing-user", { name: "New Name" }),
             ).rejects.toThrow(NotFoundException);
+        });
+
+        it("missing user carries the RESOURCE_NOT_FOUND problem code", async () => {
+            const body = await rejectedBody(usecase.execute("missing-user", { name: "New Name" }));
+            expect(body).toMatchObject({ code: "RESOURCE_NOT_FOUND" });
         });
 
         it("should update non-role fields regardless of caller role", async () => {
@@ -59,6 +74,16 @@ describe("UpdateUserUsecase", () => {
 
             const persisted = await mockRepository.findById("user_1");
             expect(persisted?.role).toBe("user");
+        });
+
+        it("role denial carries the ACCESS_DENIED problem code on /role", async () => {
+            const existingUser = UserFactory.create({ id: "user_1", role: "user" });
+            mockRepository.setData([existingUser]);
+
+            const body = await rejectedBody(
+                usecase.execute("user_1", { role: "admin", callerRole: "admin" }),
+            );
+            expect(body).toMatchObject({ code: "ACCESS_DENIED" });
         });
 
         it("should throw ForbiddenException when callerRole is missing and role is being changed", async () => {

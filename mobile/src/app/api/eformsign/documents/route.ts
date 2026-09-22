@@ -1,7 +1,11 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest } from "next/server";
 import { z } from "zod";
 
-import { proxyDeleteRequest, proxyLocalGetRequest } from "@/lib/api/route-utils";
+import { getAuthToken, proxyDeleteRequest, proxyLocalGetRequest } from "@/lib/api/route-utils";
+import {
+    unauthorizedProblemResponse,
+    validationProblemResponse,
+} from "@/lib/api/problem-responses";
 import type { GetAllDocumentsParams } from "@/services/api";
 
 // Mirrors backend DeleteDocumentsRequestDto (eformsign.dto.ts):
@@ -101,6 +105,10 @@ export type _EveryClientFilterIsForwarded = AssertNever<UnforwardedClientParam>;
  * must be forwarded for server-side pagination to return correct pages.
  */
 export async function GET(request: NextRequest) {
+    if (!getAuthToken(request)) {
+        return unauthorizedProblemResponse();
+    }
+
     const { searchParams } = new URL(request.url);
     const limitResult = parseIntegerParam(searchParams, "limit", {
         defaultValue: 100,
@@ -108,7 +116,9 @@ export async function GET(request: NextRequest) {
         max: 100,
     });
     if ("error" in limitResult) {
-        return NextResponse.json({ error: limitResult.error }, { status: 400 });
+        return validationProblemResponse(limitResult.error, [
+            { pointer: "/limit", code: "INVALID_FORMAT", detail: "입력 형식이 올바르지 않아요.", location: "query" },
+        ]);
     }
 
     const skipResult = parseIntegerParam(searchParams, "skip", {
@@ -116,7 +126,9 @@ export async function GET(request: NextRequest) {
         min: 0,
     });
     if ("error" in skipResult) {
-        return NextResponse.json({ error: skipResult.error }, { status: 400 });
+        return validationProblemResponse(skipResult.error, [
+            { pointer: "/skip", code: "INVALID_FORMAT", detail: "입력 형식이 올바르지 않아요.", location: "query" },
+        ]);
     }
 
     const backendParams = new URLSearchParams({
@@ -147,6 +159,10 @@ export async function GET(request: NextRequest) {
  * Delete one or more eformsign documents
  */
 export async function DELETE(request: NextRequest) {
+    if (!getAuthToken(request)) {
+        return unauthorizedProblemResponse();
+    }
+
     return proxyDeleteRequest(request, "/api/documents", "delete eformsign documents", {
         bodySchema: deleteDocumentsSchema,
     });

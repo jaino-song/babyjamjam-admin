@@ -1,6 +1,4 @@
 "use client";
-import { getUserErrorMessage } from "@babyjamjam/shared";
-
 
 import { useState, useCallback, useRef } from "react";
 import { authenticatedFetch } from "@/lib/api/authenticated-fetch";
@@ -66,6 +64,15 @@ interface UseChatStreamReturn {
 
 const SESSION_STORAGE_KEY = "ai_chat_session_id";
 
+// Locally authored failure copy for the chat conversation. Transport and
+// stream failures carry no problem body, so the EM v1.0 client policy
+// resolves them to authored copy; upstream Error.message internals and the
+// legacy English fallbacks never reach the UI. SSE `error` payloads are
+// already sanitized to authored copy by the stream proxy, so they render
+// verbatim with this fallback covering a missing field.
+const CHAT_SEND_FAILURE_COPY = "메시지를 전송하지 못했어요. 잠시 후 다시 시도해 주세요.";
+const CHAT_RETRY_NOTICE_COPY = "일시적인 오류가 발생했어요. 다시 시도합니다…";
+
 // Map persisted wizard markers back to UI metadata
 const WIZARD_MARKERS: Record<string, ChatMessage["ui"]> = {
     "[산모 등록 위자드 표시됨]": { type: "clientRegistrationWizard" },
@@ -90,9 +97,9 @@ function confirmationResultMessage(result: unknown): string {
 
     const typedResult = result as { success?: unknown; data?: unknown; error?: unknown };
     if (typedResult.success === false) {
-        return typeof typedResult.error === "string"
-            ? `작업을 처리하지 못했습니다: ${typedResult.error}`
-            : "작업을 처리하지 못했습니다.";
+        // Authored copy only — the upstream tool error detail is never
+        // interpolated into the conversation.
+        return "작업을 처리하지 못했습니다.";
     }
 
     if (typedResult.data && typeof typedResult.data === "object") {
@@ -279,7 +286,7 @@ export function useChatStream(): UseChatStreamReturn {
 
         // A model-produced preview without a server intent is display-only.
         setPendingConfirmation(null);
-        setError(getUserErrorMessage("확인 요청을 사용할 수 없어요. 새로 요청해 주세요."));
+        setError("확인 요청을 사용할 수 없어요. 새로 요청해 주세요.");
     }, [clearScheduledFlush, flushPendingAssistant]);
 
     const confirmAction = useCallback(async () => {
@@ -296,7 +303,7 @@ export function useChatStream(): UseChatStreamReturn {
         try {
             if (confirmation.expiresAt && Date.parse(confirmation.expiresAt) <= Date.now()) {
                 const safeMessage = confirmationRequestErrorMessage(409);
-                setError(getUserErrorMessage(safeMessage));
+                setError(safeMessage);
                 appendMessage({
                     role: "assistant",
                     content: safeMessage,
@@ -319,7 +326,7 @@ export function useChatStream(): UseChatStreamReturn {
 
             if (!response.ok) {
                 const safeMessage = confirmationRequestErrorMessage(response.status);
-                setError(getUserErrorMessage(safeMessage));
+                setError(safeMessage);
                 appendMessage({
                     role: "assistant",
                     content: safeMessage,
@@ -342,7 +349,7 @@ export function useChatStream(): UseChatStreamReturn {
             setState("complete");
         } catch {
             const safeMessage = confirmationRequestErrorMessage(599);
-            setError(getUserErrorMessage(safeMessage));
+            setError(safeMessage);
             appendMessage({
                 role: "assistant",
                 content: safeMessage,
@@ -589,7 +596,9 @@ export function useChatStream(): UseChatStreamReturn {
                         case "error":
                             setIsToolExecuting(false);
                             setCurrentTool(null);
-                            setError(getUserErrorMessage(event.error || "Unknown error"));
+                            // Stream proxy error payloads are authored copy —
+                            // render verbatim with the authored fallback.
+                            setError(event.error || CHAT_SEND_FAILURE_COPY);
                             setState("error");
                             clearScheduledFlush();
                             flushPendingAssistant();
@@ -599,7 +608,7 @@ export function useChatStream(): UseChatStreamReturn {
                                 if (lastIdx >= 0 && updated[lastIdx].role === "assistant") {
                                     updated[lastIdx] = {
                                         ...updated[lastIdx],
-                                        content: getUserErrorMessage(event.error),
+                                        content: event.error || CHAT_SEND_FAILURE_COPY,
                                         isStreaming: false,
                                     };
                                 }
@@ -653,7 +662,9 @@ export function useChatStream(): UseChatStreamReturn {
                         case "error":
                             setIsToolExecuting(false);
                             setCurrentTool(null);
-                            setError(getUserErrorMessage(event.error || "Unknown error"));
+                            // Stream proxy error payloads are authored copy —
+                            // render verbatim with the authored fallback.
+                            setError(event.error || CHAT_SEND_FAILURE_COPY);
                             setState("error");
                             clearScheduledFlush();
                             flushPendingAssistant();
@@ -663,7 +674,7 @@ export function useChatStream(): UseChatStreamReturn {
                                 if (lastIdx >= 0 && updated[lastIdx].role === "assistant") {
                                     updated[lastIdx] = {
                                         ...updated[lastIdx],
-                                        content: getUserErrorMessage(event.error),
+                                        content: event.error || CHAT_SEND_FAILURE_COPY,
                                         isStreaming: false,
                                     };
                                 }
@@ -687,10 +698,12 @@ export function useChatStream(): UseChatStreamReturn {
                 return;
             }
             
-            const errorMessage = err instanceof Error ? err.message : "Unknown error";
+            // Observability only — the internal Error.message (e.g. thrown
+            // transport identifiers) is never rendered into the conversation.
+            console.error("[chat] stream failed:", err);
             clearScheduledFlush();
             flushPendingAssistant();
-            
+
             // Auto-retry logic: retry once automatically after 1 second
             if (retryCount < 1) {
                 setRetryCount((prev) => prev + 1);
@@ -700,7 +713,7 @@ export function useChatStream(): UseChatStreamReturn {
                     if (lastIdx >= 0 && updated[lastIdx].role === "assistant") {
                         updated[lastIdx] = {
                             ...updated[lastIdx],
-                            content: `Error: ${errorMessage}. Retrying...`,
+                            content: CHAT_RETRY_NOTICE_COPY,
                             isStreaming: false,
                         };
                     }
@@ -817,7 +830,9 @@ export function useChatStream(): UseChatStreamReturn {
 	                                    case "error":
 	                                        setIsToolExecuting(false);
 	                                        setCurrentTool(null);
-	                                        setError(getUserErrorMessage(event.error || "Unknown error"));
+	                                        // Stream proxy error payloads are authored
+	                                        // copy — render verbatim with the fallback.
+	                                        setError(event.error || CHAT_SEND_FAILURE_COPY);
 	                                        setState("error");
 	                                        clearScheduledFlush();
 	                                        flushPendingAssistant();
@@ -827,7 +842,7 @@ export function useChatStream(): UseChatStreamReturn {
 	                                            if (lastIdx >= 0 && updated[lastIdx].role === "assistant") {
                                                 updated[lastIdx] = {
                                                     ...updated[lastIdx],
-                                                    content: getUserErrorMessage(event.error),
+                                                    content: event.error || CHAT_SEND_FAILURE_COPY,
                                                     isStreaming: false,
                                                 };
                                             }
@@ -880,7 +895,9 @@ export function useChatStream(): UseChatStreamReturn {
 	                                    case "error":
 	                                        setIsToolExecuting(false);
 	                                        setCurrentTool(null);
-	                                        setError(getUserErrorMessage(event.error || "Unknown error"));
+	                                        // Stream proxy error payloads are authored
+	                                        // copy — render verbatim with the fallback.
+	                                        setError(event.error || CHAT_SEND_FAILURE_COPY);
 	                                        setState("error");
 	                                        clearScheduledFlush();
 	                                        flushPendingAssistant();
@@ -890,7 +907,7 @@ export function useChatStream(): UseChatStreamReturn {
 	                                            if (lastIdx >= 0 && updated[lastIdx].role === "assistant") {
                                                 updated[lastIdx] = {
                                                     ...updated[lastIdx],
-                                                    content: getUserErrorMessage(event.error),
+                                                    content: event.error || CHAT_SEND_FAILURE_COPY,
                                                     isStreaming: false,
                                                 };
                                             }
@@ -912,18 +929,20 @@ export function useChatStream(): UseChatStreamReturn {
                             setState("idle");
                             return;
                         }
-                        
-                        const retryErrorMessage = retryErr instanceof Error ? retryErr.message : "Unknown error";
-                        setError(getUserErrorMessage(retryErrorMessage));
+
+                        // Observability only — the internal Error.message is
+                        // never rendered into the conversation.
+                        console.error("[chat] retry stream failed:", retryErr);
+                        setError(CHAT_SEND_FAILURE_COPY);
                         setState("error");
-                        
+
                         setMessages((prev) => {
                             const updated = [...prev];
                             const lastIdx = updated.length - 1;
                             if (lastIdx >= 0 && updated[lastIdx].role === "assistant") {
                                 updated[lastIdx] = {
                                     ...updated[lastIdx],
-                                    content: getUserErrorMessage(retryErrorMessage),
+                                    content: CHAT_SEND_FAILURE_COPY,
                                     isStreaming: false,
                                 };
                             }
@@ -935,7 +954,7 @@ export function useChatStream(): UseChatStreamReturn {
             }
             
             // After second failure, show error (manual retry needed)
-            setError(getUserErrorMessage(errorMessage));
+            setError(CHAT_SEND_FAILURE_COPY);
             setState("error");
             
             setMessages((prev) => {
@@ -944,7 +963,7 @@ export function useChatStream(): UseChatStreamReturn {
                 if (lastIdx >= 0 && updated[lastIdx].role === "assistant") {
                     updated[lastIdx] = {
                         ...updated[lastIdx],
-                        content: getUserErrorMessage(errorMessage),
+                        content: CHAT_SEND_FAILURE_COPY,
                         isStreaming: false,
                     };
                 }

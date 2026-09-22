@@ -74,6 +74,15 @@ describe("ContractsPage headless finalization fallback", () => {
     expect(source).toContain("if (manualCheckRequired || transportOutcomeUnknown)");
     expect(source).not.toContain("headless finalize threw, falling back to iframe");
   });
+
+  // BJJ-319 5-4c: the additive envelope `outcome` is the primary
+  // classification — an UNKNOWN verdict must reach the manual-check recovery
+  // (확인 필요 copy, no reviewer iframe) even if fallbackHint would say
+  // otherwise. Envelopes without the field keep the fallbackHint decision.
+  it("treats an UNKNOWN envelope outcome as a manual check, never the reviewer iframe", () => {
+    expect(source).toContain("const structuredOutcome = readHeadlessOutcome(headless.outcome);");
+    expect(source).toContain('manualCheckRequired = headless.fallbackHint === "manual_check"\n            || structuredOutcome === "UNKNOWN";');
+  });
 });
 
 function pendingDetailDocumentFixture(): EformsignDocument {

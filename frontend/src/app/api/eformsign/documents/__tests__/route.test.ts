@@ -106,4 +106,37 @@ describe("eformsign documents API route", () => {
       }),
     );
   });
+
+  it("rejects unauthenticated reads and deletes with a registered 401 problem body", async () => {
+    const unauthenticatedGet = new NextRequest("http://localhost/api/eformsign/documents");
+    const unauthenticatedDelete = new NextRequest("http://localhost/api/eformsign/documents", {
+      method: "DELETE",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ document_ids: ["doc-1"] }),
+    });
+
+    for (const response of [await GET(unauthenticatedGet), await DELETE(unauthenticatedDelete)]) {
+      expect(response.status).toBe(401);
+      await expect(response.json()).resolves.toMatchObject({
+        code: "AUTH_REQUIRED",
+        status: 401,
+      });
+      expect(response.headers.get("Content-Type")).toContain("application/problem+json");
+    }
+    expect(mockGet).not.toHaveBeenCalled();
+    expect(mockDelete).not.toHaveBeenCalled();
+  });
+
+  it("sanitizes an upstream list failure instead of reflecting backend details", async () => {
+    mockGet.mockRejectedValue({
+      response: { status: 502, data: { message: "document provider shard-2 exploded" } },
+    });
+
+    const response = await GET(createRequest("http://localhost/api/eformsign/documents"));
+
+    expect(response.status).toBe(502);
+    const body = await response.json();
+    expect(typeof body.error).toBe("string");
+    expect(JSON.stringify(body)).not.toContain("shard-2");
+  });
 });

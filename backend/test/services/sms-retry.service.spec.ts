@@ -227,13 +227,25 @@ describe("SmsRetryService", () => {
         logRepository.findByIdInBranch.mockResolvedValue(null);
 
         await expect(service.retryById("branch-2", 77)).rejects.toThrow(NotFoundException);
+        await expect(service.retryById("branch-2", 77)).rejects.toMatchObject({ response: { code: "RESOURCE_NOT_FOUND" } });
 
         expect(logRepository.startRetryAttempt).not.toHaveBeenCalled();
         expect(aligoService.sendSms).not.toHaveBeenCalled();
     });
 
-    it("rejects a duplicate manual retry when another request already claimed the log", async () => {
+    it("rejects retry of a non-failed message with REQUEST_CONFLICT", async () => {
         const sourceLog = createSmsRetryLog();
+        sourceLog.status = "sent";
+        logRepository.findByIdInBranch.mockResolvedValue(sourceLog);
+
+        await expect(
+            service.retryById("11111111-1111-1111-1111-111111111111", 77),
+        ).rejects.toMatchObject({ response: { code: "REQUEST_CONFLICT" } });
+
+        expect(logRepository.startRetryAttempt).not.toHaveBeenCalled();
+    });
+
+    it("rejects a duplicate manual retry when another request already claimed the log", async () => {        const sourceLog = createSmsRetryLog();
         logRepository.findByIdInBranch.mockResolvedValue(sourceLog);
         logRepository.startRetryAttempt.mockResolvedValue({ kind: "lost" });
 

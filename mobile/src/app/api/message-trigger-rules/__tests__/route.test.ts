@@ -121,10 +121,9 @@ describe("Message trigger rule API routes", () => {
 
       expect(response.status).toBe(status);
       const body = await response.json();
-      expect(body).toEqual({
-        error: "Failed to fetch message trigger rules",
-        code: "UPSTREAM_ERROR",
-      });
+      expect(typeof body.error).toBe("string");
+      expect(body.error).toMatch(/[가-힣]/);
+      expect(body.code).not.toBe("UPSTREAM_ERROR");
       expect(JSON.stringify(body)).not.toContain("upstream-secret");
       expect(JSON.stringify(body)).not.toContain("member@example.com");
     },
@@ -267,7 +266,13 @@ describe("Message trigger rule API routes", () => {
     );
 
     expect(response.status).toBe(400);
-    await expect(response.json()).resolves.toEqual({ error: "Invalid trigger id" });
+    expect(response.headers.get("Content-Type")).toBe("application/problem+json");
+    await expect(response.json()).resolves.toEqual(expect.objectContaining({
+      code: "VALIDATION_FAILED",
+      status: 400,
+      outcome: "NOT_APPLIED",
+      error: "Invalid trigger id",
+    }));
     expect(mockGet).not.toHaveBeenCalled();
   });
 

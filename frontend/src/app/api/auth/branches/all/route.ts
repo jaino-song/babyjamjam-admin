@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { serverAPIClient } from "@/lib/api/server";
-import { AxiosError } from "axios";
+import { errorResponse } from "@/lib/api/route-utils";
 
 export async function GET() {
     try {
@@ -8,23 +8,6 @@ export async function GET() {
 
         return NextResponse.json(data, { status });
     } catch (error) {
-        if (error instanceof AxiosError) {
-            const status = error.response?.status || 500;
-            const responseData = error.response?.data;
-
-            if (responseData) {
-                return NextResponse.json(responseData, { status });
-            }
-
-            return NextResponse.json(
-                { error: error.message || "Failed to fetch branches" },
-                { status },
-            );
-        }
-
-        return NextResponse.json(
-            { error: "Internal Server Error" },
-            { status: 500 },
-        );
+        return errorResponse(error, "fetch auth branches", "read");
     }
 }

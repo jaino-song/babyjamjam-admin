@@ -1,8 +1,18 @@
-import { ForbiddenException, UnauthorizedException } from "@nestjs/common";
+import { ForbiddenException, HttpException, UnauthorizedException } from "@nestjs/common";
 import { ExecutionContext } from "@nestjs/common/interfaces";
 import { ConfigService } from "@nestjs/config";
 import { Request } from "express";
 import { WebhookGuard } from "infrastructure/auth/webhook.guard";
+
+function rejectedCode(fn: () => unknown): unknown {
+    try {
+        fn();
+    } catch (error) {
+        expect(error).toBeInstanceOf(HttpException);
+        return (error as HttpException).getResponse();
+    }
+    throw new Error("Expected the guard to reject");
+}
 
 type MockRequest = {
     headers: Record<string, string | undefined>;
@@ -74,6 +84,23 @@ describe("WebhookGuard", () => {
                 authorization: "Bearer wrong-secret",
             },
         })))).toThrow(UnauthorizedException);
+    });
+
+    it("auth rejections carry AUTH_REQUIRED and tenant rejections carry ACCESS_DENIED", () => {
+        const guard = new WebhookGuard(createConfigService());
+
+        expect(rejectedCode(() => guard.canActivate(createExecutionContext(createRequest({
+            headers: {},
+        }))))).toMatchObject({ code: "AUTH_REQUIRED" });
+
+        const tenantGuard = new WebhookGuard(createConfigService({
+            EFORMSIGN_WEBHOOK_ALLOWED_COMPANY_IDS: "company-1, company-2",
+        }));
+        expect(rejectedCode(() => tenantGuard.canActivate(createExecutionContext(createRequest({
+            body: {
+                company_id: "unknown-company",
+            },
+        }))))).toMatchObject({ code: "ACCESS_DENIED" });
     });
 
     it("throws 403 when the company id is unknown", () => {

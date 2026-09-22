@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest } from "next/server";
 import { z } from "zod";
 import { serverAPIClient } from "@/lib/api/server";
 import {
@@ -7,15 +7,20 @@ import {
     getAuthHeaders,
     getAuthToken,
     parseBody,
-    unauthorizedResponse,
 } from "@/lib/api/route-utils";
+import {
+    unauthorizedProblemResponse,
+    validationProblemResponse,
+} from "@/lib/api/problem-responses";
 
 function isValidTemplateId(id: string): boolean {
     return /^[A-Za-z0-9_-]+$/.test(id);
 }
 
-function invalidTemplateIdResponse(): NextResponse {
-    return NextResponse.json({ error: "Invalid message template id" }, { status: 400 });
+function invalidTemplateIdResponse() {
+    return validationProblemResponse("Invalid message template id", [
+        { pointer: "/id", code: "INVALID_FORMAT", detail: "입력 형식이 올바르지 않아요.", location: "path" },
+    ]);
 }
 
 // Mirrors backend UpdateMessageTemplateDto: every field is optional, so this is
@@ -35,7 +40,7 @@ export async function GET(
     try {
         const token = getAuthToken(request);
         if (!token) {
-            return unauthorizedResponse("Unauthorized");
+            return unauthorizedProblemResponse();
         }
 
         const { id } = await params;
@@ -55,7 +60,7 @@ export async function PATCH(
     try {
         const token = getAuthToken(request);
         if (!token) {
-            return unauthorizedResponse("Unauthorized");
+            return unauthorizedProblemResponse();
         }
 
         const { id } = await params;
@@ -87,7 +92,7 @@ export async function DELETE(
     try {
         const token = getAuthToken(request);
         if (!token) {
-            return unauthorizedResponse("Unauthorized");
+            return unauthorizedProblemResponse();
         }
 
         const { id } = await params;

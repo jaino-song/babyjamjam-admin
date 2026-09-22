@@ -1,5 +1,4 @@
 "use client";
-import { getUserErrorMessage } from "@babyjamjam/shared";
 
 
 import { useMemo, useState } from "react";
@@ -106,7 +105,7 @@ export function FileStoragePage() {
       setUploadDropzoneState(EMPTY_UPLOAD_STATE);
       toast({ description: "문서를 업로드했어요", variant: "success" });
     } catch {
-      toast({ description: getUserErrorMessage("문서를 업로드하지 못했어요"), variant: "destructive" });
+      toast({ description: "문서를 업로드하지 못했어요", variant: "destructive" });
     }
   };
 
@@ -125,7 +124,7 @@ export function FileStoragePage() {
       setEditDoc(null);
       toast({ description: "문서를 수정했어요", variant: "success" });
     } catch {
-      toast({ description: getUserErrorMessage("문서를 수정하지 못했어요"), variant: "destructive" });
+      toast({ description: "문서를 수정하지 못했어요", variant: "destructive" });
     }
   };
 
@@ -136,7 +135,7 @@ export function FileStoragePage() {
       setDeleteDoc(null);
       toast({ description: "문서를 삭제했어요", variant: "success" });
     } catch {
-      toast({ description: getUserErrorMessage("문서를 삭제하지 못했어요"), variant: "destructive" });
+      toast({ description: "문서를 삭제하지 못했어요", variant: "destructive" });
     }
   };
 
@@ -146,7 +145,7 @@ export function FileStoragePage() {
       setIsAddCategoryOpen(false);
       toast({ description: "카테고리를 추가했어요", variant: "success" });
     } catch {
-      toast({ description: getUserErrorMessage("카테고리를 추가하지 못했어요"), variant: "destructive" });
+      toast({ description: "카테고리를 추가하지 못했어요", variant: "destructive" });
     }
   };
 

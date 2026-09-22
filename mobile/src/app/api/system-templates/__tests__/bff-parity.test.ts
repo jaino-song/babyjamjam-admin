@@ -63,9 +63,13 @@ describe("mobile system-template BFF parity contract", () => {
         );
 
         expect(response.status).toBe(401);
-        await expect(response.json()).resolves.toEqual({
-            error: "Authentication required. Please log in.",
-        });
+        expect(response.headers.get("Content-Type")).toBe("application/problem+json");
+        await expect(response.json()).resolves.toEqual(expect.objectContaining({
+            code: "AUTH_REQUIRED",
+            status: 401,
+            outcome: "NOT_APPLIED",
+            error: "Unauthorized",
+        }));
         expect(mockGet).not.toHaveBeenCalled();
         expect(mockPost).not.toHaveBeenCalled();
         expect(mockPut).not.toHaveBeenCalled();
@@ -159,7 +163,9 @@ describe("mobile system-template BFF parity contract", () => {
 
         expect(response.status).toBe(status);
         const body = await response.json();
-        expect(body).toEqual({ error: "Failed to preview system template", code: "UPSTREAM_ERROR" });
+        expect(typeof body.error).toBe("string");
+        expect(body.error).toMatch(/[가-힣]/);
+        expect(body.code).not.toBe("UPSTREAM_ERROR");
         expect(JSON.stringify(body)).not.toContain("upstream-secret");
         expect(JSON.stringify(body)).not.toContain("SELECT");
     });

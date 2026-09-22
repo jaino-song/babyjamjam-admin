@@ -4,6 +4,7 @@
 import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { CalendarCheck } from "lucide-react";
+import { normalizeApiError } from "@babyjamjam/shared";
 
 import { MobileDetailHeader, MobileDetailPage } from "@/components/app/mobile-redesign/detail-sheet";
 import { FormNativeSelect, FormSection } from "@/components/app/ui/form-section";
@@ -17,8 +18,12 @@ const GRACE_OPTIONS = [0, 1, 3, 7, 14, 30].map((value) => ({ value: String(value
 const ATTEMPT_OPTIONS = [1, 2, 3, 5, 10].map((value) => ({ value: String(value), label: String(value) }));
 const EDITOR_BASE = "mobile_contracts_detail-sheet_stack_detail-page_body_automation-editor";
 
-function errorMessage(error: unknown) {
-  return error instanceof Error ? error.message : "자동화 설정을 저장하지 못했습니다";
+// Shared problem contract resolution — Error.message internals are never
+// rendered; a registered body surfaces its catalog copy, otherwise the
+// locally authored fallback (read vs mutation specific).
+function errorMessage(error: unknown, operation: "read" | "mutation") {
+  const normalized = normalizeApiError(error, { locale: "ko-KR", operation });
+  return normalized.message;
 }
 
 export function ContractAutomationEditor({ onClose }: { onClose: () => void }) {
@@ -70,8 +75,8 @@ export function ContractAutomationEditor({ onClose }: { onClose: () => void }) {
         title="계약 종료일 자동 완료"
       />
       <div className="space-y-4 px-4 pb-8" data-component={`${EDITOR_BASE}_form`}>
-        {query.isError ? <p className="text-sm font-semibold text-v3-burgundy" role="alert">{errorMessage(query.error)}</p> : null}
-        {mutation.isError ? <p className="text-sm font-semibold text-v3-burgundy" role="alert">{errorMessage(mutation.error)}</p> : null}
+        {query.isError ? <p className="text-sm font-semibold text-v3-burgundy" role="alert">{errorMessage(query.error, "read")}</p> : null}
+        {mutation.isError ? <p className="text-sm font-semibold text-v3-burgundy" role="alert">{errorMessage(mutation.error, "mutation")}</p> : null}
         {current ? (
           <>
             <FormSection title="자동화 설정" data-component={`${EDITOR_BASE}_settings`}>

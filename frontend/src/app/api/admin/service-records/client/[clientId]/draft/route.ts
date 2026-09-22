@@ -1,19 +1,22 @@
 import { NextRequest } from "next/server";
 
+import { serverAPIClient } from "@/lib/api/server";
+
 import {
+    authRequiredResponse,
+    errorResponse,
     getAuthHeaders,
     getAuthToken,
-    jsonResponse,
-    readJsonBody,
-    serverAPIClient,
-    upstreamError,
-} from "@/app/api/admin/service-records/_lib/proxy";
+    invalidJsonResponse,
+    readJsonObjectBody,
+} from "@/lib/api/route-utils";
+import { jsonResponse } from "@/app/api/admin/service-records/_lib/proxy";
 
 type RouteParams = { params: Promise<{ clientId: string }> };
 
 export async function GET(request: NextRequest, { params }: RouteParams) {
     const token = getAuthToken(request);
-    if (!token) return jsonResponse({ error: "Unauthorized" }, 401);
+    if (!token) return authRequiredResponse();
     const { clientId } = await params;
 
     try {
@@ -23,18 +26,17 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
         );
         return jsonResponse(response.data ?? {}, response.status);
     } catch (error) {
-        return upstreamError(error, "Failed to fetch service record draft");
+        return errorResponse(error, "fetch service record draft", "read");
     }
 }
 
 export async function POST(request: NextRequest, { params }: RouteParams) {
     const token = getAuthToken(request);
-    if (!token) return jsonResponse({ error: "Unauthorized" }, 401);
+    if (!token) return authRequiredResponse();
     const { clientId } = await params;
-    const body = await readJsonBody(request);
-    if (!body) return jsonResponse({ error: "Invalid JSON body" }, 400);
 
     try {
+        const body = await readJsonObjectBody(request);
         const response = await serverAPIClient.post(
             `/admin/service-records/client/${encodeURIComponent(clientId)}/draft`,
             body,
@@ -42,6 +44,8 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
         );
         return jsonResponse(response.data ?? {}, response.status);
     } catch (error) {
-        return upstreamError(error, "Failed to start service record draft");
+        const invalidJson = invalidJsonResponse(error);
+        if (invalidJson) return invalidJson;
+        return errorResponse(error, "start service record draft", "mutation");
     }
 }

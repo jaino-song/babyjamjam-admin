@@ -63,9 +63,18 @@ describe("CallIngestTokenService", () => {
         });
     });
 
-    it("404s when revoking a token from another branch", async () => {
+    it("404s with a registered problem body when revoking a token from another branch", async () => {
         prisma.call_ingest_token.updateMany = jest.fn().mockResolvedValue({ count: 0 });
-        await expect(service.revoke("tok-1", "branch-2")).rejects.toThrow(NotFoundException);
+        const rejection = service.revoke("tok-1", "branch-2");
+        await expect(rejection).rejects.toBeInstanceOf(NotFoundException);
+        await expect(rejection).rejects.toMatchObject({
+            status: 404,
+            response: expect.objectContaining({
+                code: "RESOURCE_NOT_FOUND",
+                outcome: "NOT_APPLIED",
+                recovery: { action: "NONE", retry: { mode: "NEVER" } },
+            }),
+        });
     });
 
     it("scopes the list query to the given branch, most-recent first", async () => {

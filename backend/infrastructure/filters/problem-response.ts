@@ -18,6 +18,38 @@ export function getProblemRequestId(response: Response): string {
     return requestId;
 }
 
+/**
+ * 경계가 소유한 멤버 목록이에요. 문제 멤버는 항상 카탈로그 문안과 파싱 결과로
+ * 다시 만들고, 레거시 별칭(statusCode·message·error)은 `sendProblemResponse`가
+ * 책임져요. `message`는 problem-bodies.ts의 프로세스 내 호환 별칭으로, 생산자
+ * message 텍스트(진단 유출)가 클라이언트에 닿지 않는 기존 불변식을 유지하기 위해
+ * 의도적으로 제외해요. 그 외의 호환 확장 키만 던진 본문에서 다시 붙여요.
+ */
+const BOUNDARY_OWNED_MEMBERS = new Set([
+    "type", "title", "status", "detail", "code", "requestId", "instance",
+    "params", "errors", "outcome", "operationId", "recovery",
+    "statusCode", "message", "error",
+]);
+
+/** 프로토타입 오염에 쓸 수 있는 위험한 키는 확장 전달에서 제외해요. */
+const UNSAFE_EXTRA_KEYS = new Set(["__proto__", "constructor", "prototype"]);
+
+/**
+ * 등록된 문제 본문 옆의 호환 확장 키(임시 저장 복구 상태, 미리보기 식별자,
+ * 차단 사유, 회차 인덱스 등)를 파싱된 문제 응답에 되살려요(EM-CAT-02: 레거시
+ * 필드 유지 + 문제 멤버 추가). 경계가 소유한 멤버는 절대 던진 본문 값으로
+ * 바꾸지 않으므로 확장 전달이 카탈로그 사본을 덮을 수 없어요.
+ */
+function withCompatExtras(problem: ProblemDetails, record: Record<string, unknown>): ProblemDetails {
+    const extras: Record<string, unknown> = {};
+    for (const key of Object.keys(record)) {
+        if (BOUNDARY_OWNED_MEMBERS.has(key) || UNSAFE_EXTRA_KEYS.has(key)) continue;
+        if (record[key] === undefined) continue;
+        extras[key] = record[key];
+    }
+    return Object.keys(extras).length === 0 ? problem : { ...problem, ...extras };
+}
+
 export function getProblemLocale(request: Request, response: Response): "ko-KR" | "en-US" {
     const language = request.acceptsLanguages?.("ko-KR", "en-US", "ko", "en");
     const locale = language === "en-US" || language === "en" ? "en-US" : "ko-KR";
@@ -54,7 +86,7 @@ export function mapHttpProblem(
             ...(record?.["recovery"] === undefined ? {} : { recovery: record["recovery"] }),
         };
         const parsed = parseProblemDetails(candidate, status, locale);
-        if (parsed) return parsed;
+        if (parsed && record) return withCompatExtras(parsed, record);
         new Logger("ProblemResponse").error({ code: "ERROR_CONTRACT_INVALID", requestId, status });
     }
     return createProblemDetails({

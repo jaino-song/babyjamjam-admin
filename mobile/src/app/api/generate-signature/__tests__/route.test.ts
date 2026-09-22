@@ -21,8 +21,12 @@ describe("POST /api/generate-signature", () => {
         const response = await POST(createRequest(JSON.stringify({ executionTime: 1 })));
 
         expect(response.status).toBe(410);
-        await expect(response.json()).resolves.toMatchObject({
-            code: "EFORMSIGN_PROVIDER_OPERATION_SERVER_ONLY",
-        });
+        expect(response.headers.get("Content-Type")).toBe("application/problem+json");
+        await expect(response.json()).resolves.toEqual(expect.objectContaining({
+            code: "REQUEST_EXPIRED",
+            status: 410,
+            outcome: "NOT_APPLIED",
+            error: "eformsign provider operations are server-only",
+        }));
     });
 });

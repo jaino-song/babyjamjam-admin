@@ -1,17 +1,17 @@
 import { NextRequest, NextResponse } from "next/server";
 import { serverAPIClient } from "@/lib/api/server";
 import {
+  authRequiredResponse,
   errorResponse,
   getAuthHeaders,
   getAuthToken,
-  unauthorizedResponse,
 } from "@/lib/api/route-utils";
 
 export async function POST(request: NextRequest) {
   try {
     const token = getAuthToken(request);
     if (!token) {
-      return unauthorizedResponse("Authentication required. Please log in.");
+      return authRequiredResponse();
     }
 
     const body = await request.json();
@@ -22,11 +22,11 @@ export async function POST(request: NextRequest) {
     });
 
     if (response.status >= 400) {
-      return NextResponse.json(response.data, { status: response.status });
+      return errorResponse({ response }, "send SMS delivery", "mutation");
     }
 
     return NextResponse.json(response.data, { status: response.status });
   } catch (error) {
-    return errorResponse(error, "send SMS delivery");
+    return errorResponse(error, "send SMS delivery", "mutation");
   }
 }

@@ -171,6 +171,26 @@ function hasFiniteDuration(value: unknown): value is number {
   return typeof value === "number" && Number.isFinite(value) && value >= 0;
 }
 
+const KNOWN_PROBLEM_OUTCOMES: readonly string[] = [
+  "NOT_APPLIED",
+  "FAILED",
+  "PARTIALLY_APPLIED",
+  "UNKNOWN",
+];
+
+/**
+ * Read the additive headless envelope `outcome` field (BJJ-319 phases 5-4a
+ * dispatch / 5-4b finalize) defensively. Only a registered outcome value is
+ * trusted; every other shape — absent on a legacy envelope, malformed, a
+ * reason token — reads as `null`, so callers keep classifying through the
+ * legacy reason/fallbackHint branches unchanged.
+ */
+export function readHeadlessOutcome(value: unknown): ProblemOutcome | null {
+  return typeof value === "string" && KNOWN_PROBLEM_OUTCOMES.includes(value)
+    ? (value as ProblemOutcome)
+    : null;
+}
+
 /** A truthy `ok` is not sufficient; finalization needs a typed completion. */
 export function parseFinalizeHeadlessResult(value: unknown): FinalizeHeadlessResult {
   if (!isRecord(value) || typeof value.ok !== "boolean" || !hasFiniteDuration(value.durationMs)) {
@@ -178,6 +198,15 @@ export function parseFinalizeHeadlessResult(value: unknown): FinalizeHeadlessRes
   }
   if (value.ok === true) {
     return value.completed === true ? { kind: "success" } : { kind: "unknown" };
+  }
+  // BJJ-319 5-4c: the structured outcome is the primary classification when
+  // the envelope carries it. An UNKNOWN verdict means the provider step may
+  // already be applied, so the editor must never reopen even if a stale
+  // fallbackHint claims the step is safely unfinished. Every other outcome
+  // (NOT_APPLIED, FAILED, absent, unrecognized) keeps the legacy fallbackHint
+  // decision below.
+  if (readHeadlessOutcome(value.outcome) === "UNKNOWN") {
+    return { kind: "unknown" };
   }
   return value.fallbackHint === "iframe" ? { kind: "iframe" } : { kind: "unknown" };
 }

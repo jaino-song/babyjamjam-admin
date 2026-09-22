@@ -1,4 +1,5 @@
 import { Inject, Injectable, NotFoundException } from "@nestjs/common";
+import { codeOnlyProblemBody } from "application/utils/problem-bodies";
 import { VoucherPriceInfoEntity } from "domain/entities/voucher-price-info.entity";
 import { IVoucherPriceInfoRepository, VOUCHER_PRICE_INFO_REPOSITORY } from "domain/repositories/voucher-price-info.repository.interface";
 
@@ -21,7 +22,7 @@ export class UpdateVoucherPriceInfoUsecase {
     async execute(id: number, updates: UpdateVoucherPriceInfoParams): Promise<VoucherPriceInfoEntity> {
         const voucherPriceInfo = await this.voucherPriceInfoRepository.findById(id);
         if (!voucherPriceInfo) {
-            throw new NotFoundException(`Voucher price info with id ${id} not found`);
+            throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
         }
 
         if (updates.type !== undefined) {

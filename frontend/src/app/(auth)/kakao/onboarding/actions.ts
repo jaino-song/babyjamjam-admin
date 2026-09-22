@@ -3,6 +3,7 @@
 import { cookies } from "next/headers";
 import { serverAPIClient } from "@/lib/api/server";
 import { AxiosError } from "axios";
+import { normalizeApiError } from "@babyjamjam/shared";
 
 interface CompleteKakaoOnboardingInput {
     phone: string;
@@ -17,6 +18,18 @@ interface CompleteKakaoOnboardingSuccessResponse {
 
 const PENDING_KAKAO_SIGNUP_COOKIE = "pending_kakao_signup";
 const PENDING_KAKAO_SIGNUP_TOKEN_HEADER = "x-pending-signup-token";
+
+// Locally authored failure copy — upstream body messages and Error.message
+// internals are never forwarded to the client flow.
+const KAKAO_SIGNUP_FAILURE_COPY = "카카오 가입을 완료하지 못했습니다. 다시 시도해 주세요.";
+
+function kakaoSignupFailure(status: number, data: unknown): string {
+    const normalized = normalizeApiError(
+        { response: { status, data } },
+        { locale: "ko-KR", operation: "mutation" },
+    );
+    return normalized.verified ? normalized.message : KAKAO_SIGNUP_FAILURE_COPY;
+}
 
 export async function completeKakaoOnboarding(
     input: CompleteKakaoOnboardingInput,
@@ -47,13 +60,9 @@ export async function completeKakaoOnboarding(
                 cookieStore.delete(PENDING_KAKAO_SIGNUP_COOKIE);
             }
 
-            const message = typeof response.data === "object" && response.data && "message" in response.data
-                ? String(response.data.message)
-                : "카카오 가입을 완료하지 못했습니다. 다시 시도해 주세요.";
-
             return {
                 success: false,
-                error: message,
+                error: kakaoSignupFailure(response.status, response.data),
             };
         }
 
@@ -64,13 +73,18 @@ export async function completeKakaoOnboarding(
         };
     } catch (error) {
         if (error instanceof AxiosError) {
-            const message = error.response?.data?.message || "카카오 가입을 완료하지 못했습니다. 다시 시도해 주세요.";
-            return { success: false, error: message };
+            return {
+                success: false,
+                error: kakaoSignupFailure(
+                    error.response?.status ?? 500,
+                    error.response?.data,
+                ),
+            };
         }
 
         return {
             success: false,
-            error: error instanceof Error ? error.message : "Unknown error",
+            error: KAKAO_SIGNUP_FAILURE_COPY,
         };
     }
 }

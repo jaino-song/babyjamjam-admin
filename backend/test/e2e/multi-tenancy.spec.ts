@@ -172,7 +172,7 @@ describe('Multi-Tenancy E2E Tests', () => {
         });
 
         describe('given request without branchId in JWT', () => {
-            it('should throw ForbiddenException with "Branch selection required"', async () => {
+            it('should throw a forbidden ACCESS_DENIED problem for a missing branch selection', async () => {
                 // Arrange
                 const mockContext = {
                     switchToHttp: () => ({
@@ -186,9 +186,13 @@ describe('Multi-Tenancy E2E Tests', () => {
                     }),
                 };
 
-                // Act & Assert
+                // Act & Assert: the public body carries only the registered
+                // problem code — the denial reason stays in the guard log.
                 await expect(tenantGuard.canActivate(mockContext as any))
-                    .rejects.toThrow('Branch selection required');
+                    .rejects.toMatchObject({
+                        status: 403,
+                        response: expect.objectContaining({ code: 'ACCESS_DENIED' }),
+                    });
             });
         });
     });
@@ -212,7 +216,7 @@ describe('Multi-Tenancy E2E Tests', () => {
         });
 
         describe('given user tries to access branch they are not member of', () => {
-            it('should throw ForbiddenException with "Access denied to this branch"', async () => {
+            it('should throw a forbidden ACCESS_DENIED problem for a missing membership', async () => {
                 // Arrange - User A is not a member of Org B
                 mockPrismaService.user_branch.findFirst.mockResolvedValue(null);
 
@@ -230,7 +234,10 @@ describe('Multi-Tenancy E2E Tests', () => {
 
                 // Act & Assert
                 await expect(tenantGuard.canActivate(mockContext as any))
-                    .rejects.toThrow('Access denied to this branch');
+                    .rejects.toMatchObject({
+                        status: 403,
+                        response: expect.objectContaining({ code: 'ACCESS_DENIED' }),
+                    });
 
                 expect(mockPrismaService.user_branch.findFirst).toHaveBeenCalledWith({
                     where: {

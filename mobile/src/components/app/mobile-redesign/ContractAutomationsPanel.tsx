@@ -1,5 +1,5 @@
 "use client";
-import { getUserErrorMessage } from "@babyjamjam/shared";
+import { normalizeApiError } from "@babyjamjam/shared";
 
 
 import { useCallback } from "react";
@@ -13,8 +13,12 @@ import { useToast } from "@/hooks/use-toast";
 
 const QUERY_KEY = ["settings", "contract-automation-policies"] as const;
 
-function errorMessage(error: unknown) {
-  return error instanceof Error ? error.message : "자동화 설정을 저장하지 못했습니다";
+// Shared problem contract resolution — Error.message internals are never
+// rendered; a registered body surfaces its catalog copy, otherwise the
+// locally authored fallback.
+function errorMessage(error: unknown): string {
+  const normalized = normalizeApiError(error, { locale: "ko-KR", operation: "mutation" });
+  return normalized.verified ? normalized.message : "자동화 설정을 저장하지 못했습니다";
 }
 
 export function ContractAutomationsPanel({
@@ -33,7 +37,7 @@ export function ContractAutomationsPanel({
       await queryClient.invalidateQueries({ queryKey: QUERY_KEY });
       toast({ variant: "success", description: "자동화 설정을 저장했어요" });
     },
-    onError: (error) => toast({ variant: "destructive", description: getUserErrorMessage(error, errorMessage(error)) }),
+    onError: (error) => toast({ variant: "destructive", description: errorMessage(error) }),
   });
   const saved = query.data?.autoFinalize;
   const summary = saved

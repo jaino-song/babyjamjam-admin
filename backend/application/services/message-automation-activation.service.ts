@@ -25,6 +25,7 @@ import {
 } from "./admin-audit-event.service";
 import { currentAdminAuditActor } from "./admin-audit-context";
 import { MessageAutomationBranchLockService } from "./message-automation-branch-lock.service";
+import { codeOnlyProblemBody } from "application/utils/problem-bodies";
 import { SystemSettingEntity } from "domain/entities/system-setting.entity";
 
 export const MESSAGE_AUTOMATION_TRIGGER_DISPATCH_POLICY_ID = "trigger-dispatch" as const;
@@ -166,11 +167,11 @@ export class MessageAutomationActivationService {
             const lockedRules = await this.lockAutomaticRules(branchId, transactionClient);
             const rule = lockedRules.find((candidate) => candidate.id === ruleId);
             if (!rule || (rule.branchId !== null && rule.branchId !== branchId)) {
-                throw new NotFoundException(`Trigger rule ${ruleId} not found`);
+                throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
             }
             this.assertAutomaticRule(rule.templateKey, ruleId);
             if (!rule.isActive && rule.branchId === null) {
-                throw new ConflictException("Global rule is disabled");
+                throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
             }
 
             const key = this.getParentKey(branchId);
@@ -211,7 +212,7 @@ export class MessageAutomationActivationService {
             }
 
             const afterRule = await transactionClient.message_trigger_rule.findUnique({ where: { id: ruleId } });
-            if (!afterRule) throw new NotFoundException(`Trigger rule ${ruleId} not found`);
+            if (!afterRule) throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
             const after = await this.readEffectiveRule(transactionClient, branchId, afterRule);
             const parentChanged = !parentWasEnabled;
             const childChanged = before.isActive !== after.isActive;
@@ -249,9 +250,9 @@ export class MessageAutomationActivationService {
         return this.branchLock.runExclusive(branchId, async (transaction) => {
             const lockedRules = await this.lockAutomaticRules(branchId, transaction);
             const rule = lockedRules.find((candidate) => candidate.id === ruleId);
-            if (!rule || rule.branchId !== null) throw new NotFoundException(`Trigger rule ${ruleId} not found`);
+            if (!rule || rule.branchId !== null) throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
             this.assertAutomaticRule(rule.templateKey, ruleId);
-            if (isActive && !rule.isActive) throw new ConflictException("Global rule is disabled");
+            if (isActive && !rule.isActive) throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
             const parentEnabled = await this.getTriggerDispatchEnabled(branchId, transaction);
             if (isActive && !parentEnabled) throw this.parentDisabledConflict();
 
@@ -264,7 +265,7 @@ export class MessageAutomationActivationService {
             });
             if (!isActive) await this.cancelRuleJobs(branchId, ruleId, transaction);
             const refreshed = await transaction.message_trigger_rule.findUnique({ where: { id: ruleId } });
-            if (!refreshed) throw new NotFoundException(`Trigger rule ${ruleId} not found`);
+            if (!refreshed) throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
             const after = await this.readEffectiveRule(transaction, branchId, refreshed);
             if (before.isActive !== after.isActive) {
                 await this.appendAudit(transaction, effectiveActor, {

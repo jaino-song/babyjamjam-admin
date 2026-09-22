@@ -1,9 +1,9 @@
 "use client";
-import { getUserErrorMessage } from "@babyjamjam/shared";
 
 
 import { useCallback, useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
+import { normalizeApiError } from "@babyjamjam/shared";
 
 import { AUTH_ROUTES } from "@/lib/auth/routes";
 import { resetAuthorityState } from "@/lib/auth/authority-state";
@@ -57,7 +57,7 @@ export function useCallbackPageController() {
     const exchangeCodeForTokens = async () => {
       const callbackError = searchParams.get("error");
       if (callbackError) {
-        setError(getUserErrorMessage(getSafeCallbackError(callbackError)));
+        setError(getSafeCallbackError(callbackError));
         return;
       }
 
@@ -66,7 +66,7 @@ export function useCallbackPageController() {
       if (!code) {
         console.error("[Auth Callback] No code in URL");
         if (!cancelled) {
-          setError(getUserErrorMessage("Authorization Code Required"));
+          setError("인증 코드가 없어요. 다시 로그인해 주세요.");
         }
         return;
       }
@@ -88,7 +88,9 @@ export function useCallbackPageController() {
 
         if (!result.success) {
             console.error("[Auth Callback] Token exchange failed:", result.error);
-            setError(getUserErrorMessage(result.error || "Authentication Failed"));
+            // The server action already normalizes the failure through the
+            // problem contract; render its copy verbatim.
+            setError(result.error || "카카오 로그인에 실패했어요. 다시 로그인해 주세요.");
             return;
         }
 
@@ -118,7 +120,9 @@ export function useCallbackPageController() {
           "[Auth Callback] Error message:",
           requestError instanceof Error ? requestError.message : String(requestError),
         );
-        setError(getUserErrorMessage(requestError, "네트워크 오류가 발생했어요. 다시 시도해 주세요."));
+        // Shared problem contract resolution — upstream internals are never
+        // rendered; the normalized message is already safe copy.
+        setError(normalizeApiError(requestError, { locale: "ko-KR", operation: "mutation" }).message);
       }
     };
 

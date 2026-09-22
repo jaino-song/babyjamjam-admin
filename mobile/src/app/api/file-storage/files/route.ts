@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest } from "next/server";
 import { z } from "zod";
 
 import { serverAPIClient } from "@/lib/api/server";
@@ -7,8 +7,11 @@ import {
     errorResponse,
     getAuthHeaders,
     getAuthToken,
-    unauthorizedResponse,
 } from "@/lib/api/route-utils";
+import {
+    unauthorizedProblemResponse,
+    validationProblemResponse,
+} from "@/lib/api/problem-responses";
 import { validateDocumentUploadCandidate } from "@babyjamjam/shared/file-storage";
 
 // Identity fields (orgId/uploadedBy) are deliberately NOT part of this
@@ -26,7 +29,7 @@ export async function GET(request: NextRequest) {
     try {
         const token = getAuthToken(request);
         if (!token) {
-            return unauthorizedResponse("Unauthorized");
+            return unauthorizedProblemResponse();
         }
 
         const { searchParams } = new URL(request.url);
@@ -49,22 +52,23 @@ export async function POST(request: NextRequest) {
     try {
         const token = getAuthToken(request);
         if (!token) {
-            return unauthorizedResponse("Unauthorized");
+            return unauthorizedProblemResponse();
         }
 
         const formData = await request.formData();
         const file = formData.get("file");
 
         if (!(file instanceof File)) {
-            return NextResponse.json(
-                { error: "File is required" },
-                { status: 400 }
-            );
+            return validationProblemResponse("File is required", [
+                { pointer: "/file", code: "REQUIRED", detail: "필수 항목이에요.", location: "body" },
+            ]);
         }
 
         const fileValidationError = validateDocumentUploadCandidate(file);
         if (fileValidationError) {
-            return NextResponse.json({ error: fileValidationError }, { status: 400 });
+            return validationProblemResponse(fileValidationError, [
+                { pointer: "/file", code: "INVALID_VALUE", detail: "허용되지 않는 값이에요.", location: "body" },
+            ]);
         }
 
         const arrayBuffer = await file.arrayBuffer();
@@ -80,10 +84,9 @@ export async function POST(request: NextRequest) {
             tags: formData.get("tags") ?? undefined,
         });
         if (!metadataResult.success) {
-            return NextResponse.json(
-                { error: "Invalid upload metadata" },
-                { status: 400 }
-            );
+            return validationProblemResponse("Invalid upload metadata", [
+                { pointer: "/metadata", code: "INVALID_FORMAT", detail: "입력 형식이 올바르지 않아요.", location: "body" },
+            ]);
         }
 
         const { name, description, categoryId, tags } = metadataResult.data;

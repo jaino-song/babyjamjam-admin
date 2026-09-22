@@ -7,9 +7,9 @@ import {
     getAuthHeaders,
     getAuthToken,
     parseBody,
-    unauthorizedResponse,
     withNoStore,
 } from "@/lib/api/route-utils";
+import { unauthorizedProblemResponse } from "@/lib/api/problem-responses";
 
 type RouteParams = { params: Promise<{ id: string }> };
 
@@ -31,7 +31,7 @@ const patchDraftSchema = z.object({
 export async function GET(request: NextRequest, { params }: RouteParams) {
     try {
         const token = getAuthToken(request);
-        if (!token) return unauthorizedResponse("Unauthorized");
+        if (!token) return unauthorizedProblemResponse();
 
         const { id } = await params;
 
@@ -48,7 +48,7 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
 // PATCH /api/client-drafts/[id] - 초안 수정
 export async function PATCH(request: NextRequest, { params }: RouteParams) {
     const token = getAuthToken(request);
-    if (!token) return unauthorizedResponse("Unauthorized");
+    if (!token) return unauthorizedProblemResponse();
 
     const { id } = await params;
 

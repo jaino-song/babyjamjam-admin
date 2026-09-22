@@ -109,7 +109,15 @@ describe("DeleteEmployeeScheduleUsecase", () => {
         const usecase = new DeleteEmployeeScheduleUsecase(repository as never);
 
         await expect(usecase.execute(branchId, schedule.id, transaction as never))
-            .rejects.toBeInstanceOf(ConflictException);
+            .rejects.toMatchObject({
+                status: 409,
+                response: {
+                    code: "SERVICE_RECORD_WRITE_TARGET_CHANGED",
+                    params: {},
+                    outcome: "NOT_APPLIED",
+                    recovery: { action: "NONE", retry: { mode: "NEVER" } },
+                },
+            });
         expect(repository.delete).not.toHaveBeenCalled();
     });
 
@@ -125,10 +133,14 @@ describe("DeleteEmployeeScheduleUsecase", () => {
         const error = await usecase.execute(branchId, schedule.id).catch((caught) => caught);
 
         expect(error).toBeInstanceOf(ConflictException);
-        expect((error as ConflictException).getResponse()).toEqual({
-            code: SCHEDULE_RETENTION_BLOCKED,
-            message: SCHEDULE_RETENTION_BLOCKED_MESSAGE,
+        expect((error as ConflictException).getStatus()).toBe(409);
+        expect((error as ConflictException).getResponse()).toMatchObject({
+            code: "SCHEDULE_RETENTION_BLOCKED",
+            params: {},
+            outcome: "NOT_APPLIED",
+            recovery: { action: "NONE", retry: { mode: "NEVER" } },
         });
+        expect((error as ConflictException).getResponse()).not.toHaveProperty("errors");
     });
 
     it("maps a race where the locked row disappears to 404", async () => {
@@ -142,9 +154,15 @@ describe("DeleteEmployeeScheduleUsecase", () => {
 
         expect(error).toMatchObject({
             status: 404,
-            message: `Employee schedule with id ${schedule.id} not found`,
+            response: {
+                code: "RESOURCE_NOT_FOUND",
+                params: {},
+                outcome: "NOT_APPLIED",
+                recovery: { action: "NONE", retry: { mode: "NEVER" } },
+            },
         });
         expect(error).toBeInstanceOf(NotFoundException);
+        expect((error as NotFoundException).message).not.toContain(String(schedule.id));
     });
 
     it("does not call delete when the schedule is absent in the requested branch", async () => {
@@ -154,7 +172,12 @@ describe("DeleteEmployeeScheduleUsecase", () => {
         };
         const usecase = new DeleteEmployeeScheduleUsecase(repository as never);
 
-        await expect(usecase.execute(branchId, schedule.id)).rejects.toBeInstanceOf(NotFoundException);
+        await expect(usecase.execute(branchId, schedule.id)).rejects.toMatchObject({
+            status: 404,
+            response: {
+                code: "RESOURCE_NOT_FOUND",
+            },
+        });
         expect(repository.delete).not.toHaveBeenCalled();
     });
 });

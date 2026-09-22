@@ -5,15 +5,15 @@ import {
     errorResponse,
     getAuthHeaders,
     getAuthToken,
-    unauthorizedResponse,
     withNoStore,
 } from "@/lib/api/route-utils";
+import { unauthorizedProblemResponse } from "@/lib/api/problem-responses";
 
 // GET /api/client-drafts — 클라이언트 초안 list (status/page/limit)
 export async function GET(request: NextRequest) {
     try {
         const token = getAuthToken(request);
-        if (!token) return unauthorizedResponse("Unauthorized");
+        if (!token) return unauthorizedProblemResponse();
 
         const searchParams = request.nextUrl.searchParams;
         const params: Record<string, string> = {};

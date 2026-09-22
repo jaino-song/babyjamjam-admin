@@ -43,7 +43,12 @@ describe("service-record revision proxy routes", () => {
         );
 
         expect(response.status).toBe(401);
-        expect(response.headers.get("cache-control")).toBe("no-store");
+        expect(response.headers.get("cache-control")).toContain("no-store");
+        await expect(response.json()).resolves.toMatchObject({
+            code: "AUTH_REQUIRED",
+            status: 401,
+        });
+        expect(response.headers.get("Content-Type")).toContain("application/problem+json");
         expect(mockGet).not.toHaveBeenCalled();
     });
 
@@ -96,6 +101,7 @@ describe("service-record revision proxy routes", () => {
     });
 
     it.each([403, 404, 409])("preserves upstream retry status %s", async (status) => {
+
         mockPost.mockRejectedValue({
             isAxiosError: true,
             response: { status, data: { code: `REVISION_${status}` } },
@@ -111,6 +117,29 @@ describe("service-record revision proxy routes", () => {
         );
 
         expect(response.status).toBe(status);
-        await expect(response.json()).resolves.toEqual({ code: `REVISION_${status}` });
+        // errorResponse passes the legacy upstream `code` through and adds the
+        // ko-KR status copy as the compatibility `error` alias.
+        await expect(response.json()).resolves.toMatchObject({ code: `REVISION_${status}` });
+    });
+
+    it("sanitizes an upstream history failure instead of reflecting it", async () => {
+        mockGet.mockRejectedValue({
+            response: { status: 500, data: { message: "revision store shard-3 exploded" } },
+        });
+        const consoleErrorSpy = jest.spyOn(console, "error").mockImplementation(() => undefined);
+
+        try {
+            const response = await getRevisionHistory(
+                request("/api/admin/service-records/clients/42/revisions", "GET"),
+                { params: Promise.resolve({ clientId: "42" }) },
+            );
+
+            expect(response.status).toBe(500);
+            const body = await response.json();
+            expect(typeof body.error).toBe("string");
+            expect(JSON.stringify(body)).not.toContain("shard-3");
+        } finally {
+            consoleErrorSpy.mockRestore();
+        }
     });
 });

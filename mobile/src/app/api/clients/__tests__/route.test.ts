@@ -514,7 +514,13 @@ describe("client API routes", () => {
     );
 
     expect(response.status).toBe(400);
-    await expect(response.json()).resolves.toEqual({ error: "Invalid client id" });
+    await expect(response.json()).resolves.toEqual(expect.objectContaining({
+      code: "VALIDATION_FAILED",
+      status: 400,
+      outcome: "NOT_APPLIED",
+      error: "Invalid client id",
+      errors: [{ pointer: "/id", code: "INVALID_FORMAT", detail: "입력 형식이 올바르지 않아요.", location: "path" }],
+    }));
     expect(mockGet).not.toHaveBeenCalled();
   });
 

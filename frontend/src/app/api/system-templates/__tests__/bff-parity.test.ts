@@ -56,15 +56,16 @@ describe("frontend system-template BFF parity contract", () => {
         [updateTemplate, "PUT"],
         [validateTemplate, "POST"],
         [previewTemplate, "POST"],
-    ])("returns the same 401 before touching upstream for %s", async (handler, method) => {
+    ])("returns the same registered 401 problem body before touching upstream for %s", async (handler, method) => {
         const response = await handler(
             createRequest("/api/system-templates/SERVICE_END_NOTICE", method, undefined, ""),
             keyParams,
         );
 
         expect(response.status).toBe(401);
-        await expect(response.json()).resolves.toEqual({
-            error: "Authentication required. Please log in.",
+        await expect(response.json()).resolves.toMatchObject({
+            code: "AUTH_REQUIRED",
+            status: 401,
         });
         expect(mockGet).not.toHaveBeenCalled();
         expect(mockPost).not.toHaveBeenCalled();
@@ -159,8 +160,34 @@ describe("frontend system-template BFF parity contract", () => {
 
         expect(response.status).toBe(status);
         const body = await response.json();
-        expect(body).toEqual({ error: "Failed to preview system template", code: "UPSTREAM_ERROR" });
+        expect(typeof body.error).toBe("string");
+        expect(body.code).not.toBe("UPSTREAM_ERROR");
         expect(JSON.stringify(body)).not.toContain("upstream-secret");
         expect(JSON.stringify(body)).not.toContain("SELECT");
+    });
+
+    it("propagates a registered upstream problem body through the [key] proxy", async () => {
+        mockGet.mockResolvedValue({
+            status: 422,
+            data: {
+                type: "https://github.com/jaino-song/babyjamjam-admin/blob/main/docs/error-management.md#validation-failed",
+                title: "Validation failed",
+                status: 422,
+                detail: "입력 정보가 처리 조건에 맞지 않아요.",
+                code: "VALIDATION_FAILED",
+                requestId: "req-template-1",
+                params: {},
+            },
+        });
+
+        const response = await getTemplate(
+            createRequest("/api/system-templates/SERVICE_END_NOTICE", "GET"),
+            keyParams,
+        );
+
+        expect(response.status).toBe(422);
+        const body = await response.json();
+        expect(body).toMatchObject({ code: "VALIDATION_FAILED", status: 422, requestId: "req-template-1" });
+        expect(response.headers.get("content-type")).toContain("application/problem+json");
     });
 });

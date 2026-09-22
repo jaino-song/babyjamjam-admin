@@ -157,13 +157,13 @@ test("rejects a system-template route helper that concatenates an unsafe key", (
 test("rejects a system-template route helper that replaces the sanitized error policy", () => {
   const mutatedSources = withSource(
     "mobile/src/lib/api/system-template-routes.ts",
-    (source) => source.replaceAll("systemTemplateUpstreamErrorResponse", "localSystemTemplateErrorResponse"),
+    (source) => source.replaceAll("errorResponse", "localSystemTemplateErrorResponse"),
   );
 
   const errors = validateFrontendMobileParity({ sources: mutatedSources });
   assert.ok(
     errors.some((error) =>
-      error.includes("mobile/src/lib/api/system-template-routes.ts must use shared systemTemplateUpstreamErrorResponse policy"),
+      error.includes("mobile/src/lib/api/system-template-routes.ts must use shared problem-boundary errorResponse policy"),
     ),
   );
 });

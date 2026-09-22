@@ -51,9 +51,9 @@ describe("describeReceiptLinkError", () => {
     expect(describeReceiptLinkError(error)).toBe(RECEIPT_LINK_REASON_MESSAGES.missing_phone);
   });
 
-  it("falls back to the server message for an unmapped reason (the real 403 sender-approval body)", () => {
+  it("uses the locally authored fallback for an unmapped reason — the raw server message is never rendered (the real 403 sender-approval body)", () => {
     const error = errorWithData({ message: "메시지 발송 권한 승인이 필요합니다." });
-    expect(describeReceiptLinkError(error)).toBe("메시지 발송 권한 승인이 필요합니다.");
+    expect(describeReceiptLinkError(error)).toBe(RECEIPT_LINK_SEND_FALLBACK_MESSAGE);
   });
 
   it("falls back to the generic message when neither reason nor message is present", () => {
@@ -74,8 +74,8 @@ describe("describeReceiptLinkError", () => {
     expect(result).toBe(RECEIPT_LINK_SEND_FALLBACK_MESSAGE);
   });
 
-  it("still prefers a server message over the fallback when the prototype-key reason has no server message", () => {
+  it("uses the locally authored fallback when an unmapped prototype-key reason carries only a server message", () => {
     const error = errorWithData({ reason: "constructor", message: "제출 정보가 올바르지 않습니다" });
-    expect(describeReceiptLinkError(error)).toBe("제출 정보가 올바르지 않습니다");
+    expect(describeReceiptLinkError(error)).toBe(RECEIPT_LINK_SEND_FALLBACK_MESSAGE);
   });
 });

@@ -1,54 +1,55 @@
-import { isAxiosError } from "axios";
 import { NextRequest, NextResponse } from "next/server";
 
 import { serverAPIClient } from "@/lib/api/server";
 
+import {
+    authRequiredResponse,
+    errorResponse,
+    invalidJsonResponse,
+    localValidationProblemResponse,
+    readJsonObjectBody,
+} from "@/lib/api/route-utils";
+
 type RouteParams = { params: Promise<{ scheduleId: string }> };
 const RECIPIENT_PHONE_PATTERN = /^01[016789]-?\d{3,4}-?\d{4}$/;
 
-function getAuthToken(request: NextRequest): string | null {
-    return request.cookies.get("auth_token")?.value || null;
-}
-
-function getAuthHeaders(token: string | null): Record<string, string> {
-    return token ? { Authorization: `Bearer ${token}` } : {};
-}
-
 export async function POST(request: NextRequest, { params }: RouteParams) {
-    const token = getAuthToken(request);
+    const token = request.cookies.get("auth_token")?.value || null;
     if (!token) {
-        return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+        return authRequiredResponse();
     }
 
     const { scheduleId } = await params;
-    const requestBody = await request.json().catch(() => ({}));
-    const recipientPhone = requestBody && typeof requestBody === "object"
-        ? (requestBody as { recipientPhone?: unknown }).recipientPhone
-        : undefined;
+
+    let requestBody: Record<string, unknown>;
+    try {
+        requestBody = await readJsonObjectBody(request);
+    } catch (error) {
+        const invalidJson = invalidJsonResponse(error);
+        if (invalidJson) return invalidJson;
+        return errorResponse(error, "prepare service record link");
+    }
+    const recipientPhone = requestBody.recipientPhone;
     if (
         recipientPhone !== undefined
         && (typeof recipientPhone !== "string" || !RECIPIENT_PHONE_PATTERN.test(recipientPhone))
     ) {
-        return NextResponse.json({ error: "Invalid recipient phone" }, { status: 400 });
+        return localValidationProblemResponse([
+            { pointer: "/recipientPhone", code: "INVALID_FORMAT", detail: "Invalid input", location: "body" },
+        ]);
     }
 
     try {
         const response = await serverAPIClient.post(
             `/admin/service-records/schedules/${encodeURIComponent(scheduleId)}/prepare-link`,
             recipientPhone ? { recipientPhone } : {},
-            { headers: getAuthHeaders(token) },
+            { headers: { Authorization: `Bearer ${token}` } },
         );
         return NextResponse.json(response.data ?? {}, {
             status: response.status,
             headers: { "Cache-Control": "no-store" },
         });
     } catch (error) {
-        if (isAxiosError(error) && error.response) {
-            return NextResponse.json(error.response.data ?? { error: "Request failed" }, {
-                status: error.response.status,
-            });
-        }
-        console.error("[API] Error preparing service record link");
-        return NextResponse.json({ error: "Failed to prepare service record link" }, { status: 500 });
+        return errorResponse(error, "prepare service record link");
     }
 }

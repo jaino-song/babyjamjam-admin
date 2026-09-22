@@ -1,5 +1,6 @@
 import { ConflictException, Inject, Injectable, Logger, NotFoundException, Optional, ServiceUnavailableException } from "@nestjs/common";
 import type { Prisma } from "@prisma/client";
+import { codeOnlyProblemBody } from "application/utils/problem-bodies";
 import { AligoService } from "application/services/aligo.service";
 import { MessageSenderApprovalService } from "application/services/message-sender-approval.service";
 import { MessageAutomationActivationService } from "application/services/message-automation-activation.service";
@@ -37,6 +38,8 @@ const INVALID_RETRY_SCHEDULE_REASON =
     "예약 발송 일시 형식이 올바르지 않아 재시도하지 않았습니다. 예약일과 예약시간을 확인해 주세요.";
 const PARTIAL_RETRY_SUPERSEDED_REASON =
     "부분 발송 결과의 실패 수신자를 식별할 수 없어 자동 재전송을 중단했습니다. 수신자별로 확인 후 수동 발송해 주세요.";
+const UNCERTAIN_RETRY_SUPERSEDED_REASON =
+    "문자 발송 결과가 불확실하여 자동 재전송을 중단했습니다. 제공자 이력 확인 후 수동 확인이 필요합니다.";
 const AUTOMATION_RETRY_SEAL_INVALID_REASON =
     "자동 문자 권한 증거가 현재 작업과 일치하지 않아 자동 재전송을 중단했습니다. 작업을 다시 검토해 주세요.";
 
@@ -85,30 +88,34 @@ export class SmsRetryService {
     async retryById(branchId: string, logId: number): Promise<MessageLogEntity> {
         const sourceLog = await this.logRepository.findByIdInBranch(branchId, logId);
         if (!sourceLog || sourceLog.provider !== "aligo_sms") {
-            throw new NotFoundException("재발송할 메시지 기록을 찾을 수 없습니다.");
+            throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
         }
 
         if (sourceLog.status !== "failed") {
-            throw new ConflictException("실패한 메시지만 재발송할 수 있습니다.");
+            throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
         }
 
         if (sourceLog.isPartialProviderOutcome()) {
-            throw new ConflictException(
-                "문자 일부 수신자만 접수되어 전체 수신자 목록 재발송을 진행할 수 없습니다. 실패 수신자를 확인해 수동 발송해 주세요.",
-            );
+            throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
         }
         if (sourceLog.isProviderOutcomeUncertain()) {
-            throw new ConflictException(
-                "문자 발송 결과가 불확실합니다. 제공자 이력을 확인하고 먼저 명시적으로 재조정해 주세요.",
-            );
+            throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
+        }
+        // A prior retry attempt of this source ended without an accountable
+        // outcome (partial batch or unclassified provider result). The
+        // attempt row carries the marker, and the source row is fenced with
+        // the same durable retrySafety value; refuse the whole-list resend
+        // either way.
+        if (sourceLog.variables["retrySafety"] === "uncertain") {
+            throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
         }
         if (sourceLog.providerAcceptanceState === "reconciled_delivered") {
-            throw new ConflictException("이미 발송 완료로 재조정된 문자는 재발송할 수 없습니다.");
+            throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
         }
 
         const retryLog = await this.retry(sourceLog, "manual");
         if (!retryLog) {
-            throw new ConflictException("이미 재발송이 진행 중입니다.");
+            throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
         }
 
         return retryLog;
@@ -206,6 +213,7 @@ export class SmsRetryService {
                 if (boundary.value.kind === "terminal") return boundary.value.log;
                 if (boundary.value.kind === "claimed") return null;
                 return this.sendRetryAttempt(
+                    sourceLog,
                     boundary.value.schedule,
                     boundary.value.retryLog,
                     boundary.value.providerAttempt,
@@ -269,7 +277,7 @@ export class SmsRetryService {
             ? await this.acceptanceService.beginProviderCall(retryLog)
             : this.beginProviderCallWithoutBoundary(retryLog);
 
-        return this.sendRetryAttempt(schedule, retryLog, providerAttempt, invocation);
+        return this.sendRetryAttempt(sourceLog, schedule, retryLog, providerAttempt, invocation);
     }
 
     /**
@@ -366,6 +374,7 @@ export class SmsRetryService {
     }
 
     private async sendRetryAttempt(
+        sourceLog: MessageLogEntity,
         schedule: RetrySchedule,
         retryLog: MessageLogEntity,
         providerAttempt: MessageLogEntity,
@@ -405,13 +414,31 @@ export class SmsRetryService {
             if (providerOutcome === "partial") {
                 this.markSmsRetryPartial(providerAttempt, this.providerResponseMessage(result));
                 await this.logRepository.update(providerAttempt);
-                this.logger.warn(`[Retry] SMS retry partially accepted for log ${providerAttempt.id}; automatic retry stopped`);
+                // Aligo's batch response never identifies which recipients
+                // failed. Fence the source row itself: it stays `failed` in
+                // history, and its durable retrySafety marker forbids another
+                // whole-recipient-list resend even after a restart.
+                await this.fenceSourceLogAfterUnidentifiableOutcome(
+                    sourceLog,
+                    SMS_PARTIAL_RETRY_SAFETY,
+                    `${this.providerResponseMessage(result)} ${PARTIAL_RETRY_SUPERSEDED_REASON}`.trim(),
+                );
+                this.logger.warn(
+                    `[Retry] SMS retry partially accepted for log ${providerAttempt.id}; automatic retry stopped`,
+                );
                 return providerAttempt;
             }
             if (providerOutcome === "unknown") {
                 this.markSmsRetryUncertain(providerAttempt, "문자 발송 결과를 확인할 수 없어 자동 재전송을 중단했습니다.");
                 await this.logRepository.update(providerAttempt);
-                this.logger.warn(`[Retry] SMS retry result was not classifiable for log ${providerAttempt.id}; automatic retry stopped`);
+                await this.fenceSourceLogAfterUnidentifiableOutcome(
+                    sourceLog,
+                    "uncertain",
+                    UNCERTAIN_RETRY_SUPERSEDED_REASON,
+                );
+                this.logger.warn(
+                    `[Retry] SMS retry result was not classifiable for log ${providerAttempt.id}; automatic retry stopped`,
+                );
                 return providerAttempt;
             }
 
@@ -433,8 +460,45 @@ export class SmsRetryService {
         } catch (error) {
             this.markSmsRetryUncertain(providerAttempt, error instanceof Error ? error.message : String(error));
             await this.logRepository.update(providerAttempt);
-            this.logger.warn(`[Retry] SMS result uncertain for log ${providerAttempt.id}; automatic retry stopped: ${error}`);
+            await this.fenceSourceLogAfterUnidentifiableOutcome(
+                sourceLog,
+                "uncertain",
+                UNCERTAIN_RETRY_SUPERSEDED_REASON,
+            );
+            this.logger.warn(
+                `[Retry] SMS result uncertain for log ${providerAttempt.id}; automatic retry stopped: ${error}`,
+            );
             return providerAttempt;
+        }
+    }
+
+    /**
+     * Persist the whole-list resend ban on the row the user can still retry.
+     * A retry attempt is a separate history row; without this fence the source
+     * row stays an ordinary retryable failure and a restarted process (or a
+     * second manual request) would replay the full recipient list even though
+     * a prior attempt's per-recipient outcome cannot be accounted for.
+     */
+    private async fenceSourceLogAfterUnidentifiableOutcome(
+        sourceLog: MessageLogEntity,
+        retrySafety: (typeof SMS_PARTIAL_RETRY_SAFETY) | "uncertain",
+        reason: string,
+    ): Promise<void> {
+        try {
+            sourceLog.status = "failed";
+            sourceLog.nextRetryAt = null;
+            sourceLog.errorMessage = reason;
+            sourceLog.variables = {
+                ...sourceLog.variables,
+                retrySafety,
+            };
+            await this.logRepository.update(sourceLog);
+        } catch (fenceError) {
+            // The attempt row is already fenced; never mask its outcome with a
+            // source-fence persistence failure, but keep the gap visible.
+            this.logger.warn(
+                `[Retry] Failed to fence source log ${sourceLog.id} after an unidentifiable outcome: ${fenceError}`,
+            );
         }
     }
 
@@ -447,7 +511,7 @@ export class SmsRetryService {
         providerMessageId?: string | null,
     ): Promise<MessageLogEntity> {
         if (!this.acceptanceService) {
-            throw new ConflictException("SMS provider reconciliation is not configured");
+            throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
         }
         return this.acceptanceService.reconcile({
             branchId,
@@ -606,7 +670,7 @@ export class SmsRetryService {
 
     private beginProviderCallWithoutBoundary(log: MessageLogEntity): MessageLogEntity {
         if (log.providerAcceptanceState !== "prepared" && log.providerAcceptanceState !== "legacy") {
-            throw new ConflictException(`SMS provider attempt cannot start from ${log.providerAcceptanceState}`);
+            throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
         }
         log.providerAcceptanceState = "started";
         log.providerCallStartedAt = new Date(Date.now());

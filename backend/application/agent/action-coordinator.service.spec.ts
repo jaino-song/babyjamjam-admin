@@ -1529,4 +1529,137 @@ describe("ActionCoordinatorService", () => {
         await expect(service.sweepExpired()).resolves.toBe(0);
         expect(sweepLock.isAvailable).not.toHaveBeenCalled();
     });
+
+    // Coordinator rejections are registered problem bodies: the code is the
+    // stable identifier the HTTP mapper keys on, and the message alias carries
+    // catalog copy so internal identifiers never reach a client.
+    describe("problem-body rejection surfaces", () => {
+        async function caught(promise: Promise<unknown>): Promise<unknown> {
+            return promise.then(
+                () => { throw new Error("expected the coordinator to reject"); },
+                (error: unknown) => error,
+            );
+        }
+
+        function expectProblem(error: unknown, exception: new (body?: unknown) => Error, status: number, code: string, outcome = "NOT_APPLIED"): void {
+            expect(error).toBeInstanceOf(exception);
+            expect((error as { getStatus: () => number }).getStatus()).toBe(status);
+            expect((error as { getResponse: () => unknown }).getResponse()).toMatchObject({ code, outcome });
+        }
+
+        it("rejects a read-capability proposal with a field-level validation problem", async () => {
+            const read = capability("read");
+            const service = new ActionCoordinatorService(
+                {} as never,
+                { get: jest.fn().mockReturnValue(read) } as never,
+                { isCapabilityEnabled: jest.fn().mockResolvedValue(true) } as never,
+                { isAvailable: jest.fn().mockReturnValue(false) } as never,
+                sessionPersistence() as never,
+                actionPersistence() as never,
+                createSchedulerLeaseMock(),
+            );
+
+            const error = await caught(service.propose({ sessionId: "session-a", principal, capability: "clients.get", input: { id: 3 }, locale: "ko" }));
+            expectProblem(error, BadRequestException, 400, "VALIDATION_FAILED");
+            expect((error as { getResponse: () => { errors: Array<{ pointer: string }> } }).getResponse().errors[0]?.pointer).toBe("/capability");
+        });
+
+        it("rejects proposals and approvals of disabled capabilities with access-denied problems", async () => {
+            const definition = capability();
+            const service = new ActionCoordinatorService(
+                { agent_action: { findFirst: jest.fn().mockResolvedValue(actionRecord()) } } as never,
+                { get: jest.fn().mockReturnValue(definition) } as never,
+                { isCapabilityEnabled: jest.fn().mockResolvedValue(false) } as never,
+                { isAvailable: jest.fn().mockReturnValue(false) } as never,
+                sessionPersistence() as never,
+                actionPersistence() as never,
+                createSchedulerLeaseMock(),
+            );
+
+            expectProblem(
+                await caught(service.propose({ sessionId: "session-a", principal, capability: "clients.update", input: { id: 3 }, locale: "ko" })),
+                ForbiddenException, 403, "ACCESS_DENIED",
+            );
+            expectProblem(
+                await caught(service.approve("action-a", principal, "proposal-revision")),
+                ForbiddenException, 403, "ACCESS_DENIED",
+            );
+        });
+
+        it("rejects missing actions with a not-found problem body", async () => {
+            const service = new ActionCoordinatorService(
+                { agent_action: { findFirst: jest.fn().mockResolvedValue(null) } } as never,
+                { get: jest.fn() } as never,
+                { isCapabilityEnabled: jest.fn() } as never,
+                { isAvailable: jest.fn().mockReturnValue(false) } as never,
+                sessionPersistence() as never,
+                actionPersistence() as never,
+                createSchedulerLeaseMock(),
+            );
+
+            expectProblem(await caught(service.get("missing", { userId: principal.userId, branchId: principal.branchId })), NotFoundException, 404, "RESOURCE_NOT_FOUND");
+        });
+
+        it("rejects stale, expired, and superseded approvals with conflict problems", async () => {
+            const service = new ActionCoordinatorService(
+                { agent_action: { findFirst: jest.fn().mockResolvedValue(actionRecord()) } } as never,
+                { get: jest.fn().mockReturnValue(capability()) } as never,
+                { isCapabilityEnabled: jest.fn().mockResolvedValue(true) } as never,
+                { isAvailable: jest.fn().mockReturnValue(false) } as never,
+                sessionPersistence() as never,
+                actionPersistence() as never,
+                createSchedulerLeaseMock(),
+            );
+
+            expectProblem(await caught(service.approve("action-a", principal, "stale-revision")), ConflictException, 409, "REQUEST_CONFLICT");
+
+            const expired = actionRecord({ expiresAt: new Date(Date.now() - 1_000) });
+            const expiredService = new ActionCoordinatorService(
+                { agent_action: { findFirst: jest.fn().mockResolvedValue(expired), updateMany: jest.fn().mockResolvedValue({ count: 1 }) } } as never,
+                { get: jest.fn().mockReturnValue(capability()) } as never,
+                { isCapabilityEnabled: jest.fn().mockResolvedValue(true) } as never,
+                { isAvailable: jest.fn().mockReturnValue(false) } as never,
+                sessionPersistence() as never,
+                actionPersistence() as never,
+                createSchedulerLeaseMock(),
+            );
+            expectProblem(await caught(expiredService.approve("action-a", principal, "proposal-revision")), ConflictException, 409, "REQUEST_CONFLICT");
+        });
+
+        it("replaces a provider revalidation reason with catalog copy in the conflict body", async () => {
+            const definition = {
+                ...capability(),
+                revalidate: jest.fn().mockResolvedValue({ valid: false, currentVersion: "new-version", reason: "internal provider detail 12345" }),
+                executeApprovedTarget: jest.fn(),
+            };
+            const action = actionRecord({ targetVersion: "old-version", targetSnapshot: { id: 3 } });
+            const service = new ActionCoordinatorService(
+                { agent_action: { findFirst: jest.fn().mockResolvedValue(action) } } as never,
+                { get: jest.fn().mockReturnValue(definition) } as never,
+                { isCapabilityEnabled: jest.fn().mockResolvedValue(true) } as never,
+                { isAvailable: jest.fn().mockReturnValue(false) } as never,
+                sessionPersistence() as never,
+                actionPersistence() as never,
+                createSchedulerLeaseMock(),
+            );
+
+            const error = await caught(service.approve(action.id, principal, action.proposalRevision));
+            expectProblem(error, ConflictException, 409, "REQUEST_CONFLICT");
+            expect((error as Error).message).not.toContain("internal provider detail");
+        });
+
+        it("rejects reconciliation of a non-uncertain action with a conflict problem body", async () => {
+            const service = new ActionCoordinatorService(
+                { agent_action: { findFirst: jest.fn().mockResolvedValue(actionRecord({ status: "proposed" })) } } as never,
+                { get: jest.fn() } as never,
+                { isCapabilityEnabled: jest.fn() } as never,
+                { isAvailable: jest.fn().mockReturnValue(false) } as never,
+                sessionPersistence() as never,
+                actionPersistence() as never,
+                createSchedulerLeaseMock(),
+            );
+
+            expectProblem(await caught(service.reconcile("action-a", principal)), ConflictException, 409, "REQUEST_CONFLICT");
+        });
+    });
 });

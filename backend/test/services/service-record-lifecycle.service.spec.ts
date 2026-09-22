@@ -44,7 +44,7 @@ async function expectConflict(promise: Promise<unknown>, code: string): Promise<
         throw new Error("Expected ConflictException");
     } catch (error) {
         expect(error).toBeInstanceOf(ConflictException);
-        expect(conflictCode(error)).toEqual({ code });
+        expect(conflictCode(error)).toMatchObject({ code });
     }
 }
 
@@ -71,7 +71,7 @@ describe("ServiceRecordLifecycleService", () => {
             clientId: 1,
             startDate: date("2026-07-02"),
             now: new Date("2026-07-01T01:00:00.000Z"),
-        }), "SERVICE_RECORD_START_DATE_LOCKED");
+        }), "REQUEST_CONFLICT");
     });
 
     it("allows extending the end date without deleting existing sessions", async () => {
@@ -1403,7 +1403,7 @@ describe("ServiceRecordLifecycleService", () => {
 
         await expectConflict(
             service.validatePeriodChange({ clientId: 1, endDate: date("2026-07-11") }),
-            "SERVICE_RECORD_END_DATE_BEFORE_LOCKED_SESSION",
+            "REQUEST_CONFLICT",
         );
     });
 
@@ -1423,11 +1423,11 @@ describe("ServiceRecordLifecycleService", () => {
 
         await expectConflict(
             service.validatePeriodChange({ clientId: 1, duration: null }),
-            "SERVICE_RECORD_DURATION_REQUIRED",
+            "REQUEST_CONFLICT",
         );
         await expectConflict(
             service.validatePeriodChange({ clientId: 1, duration: 9 }),
-            "SERVICE_RECORD_DURATION_CANNOT_DECREASE",
+            "REQUEST_CONFLICT",
         );
     });
 

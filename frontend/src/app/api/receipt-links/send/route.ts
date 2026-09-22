@@ -2,18 +2,19 @@ import { isAxiosError } from "axios";
 import { NextRequest, NextResponse } from "next/server";
 import { serverAPIClient } from "@/lib/api/server";
 import {
+  authRequiredResponse,
   getAuthHeaders,
   getAuthToken,
   invalidJsonResponse,
   logUpstreamError,
   readJsonObjectBody,
-  unauthorizedResponse,
+  upstreamStatusProblemResponse,
 } from "@/lib/api/route-utils";
 
 export async function POST(request: NextRequest) {
   const token = getAuthToken(request);
   if (!token) {
-    return unauthorizedResponse("Authentication required. Please log in.");
+    return authRequiredResponse();
   }
 
   let body: Record<string, unknown>;
@@ -31,7 +32,7 @@ export async function POST(request: NextRequest) {
       return invalidJson;
     }
     logUpstreamError("send receipt link", error);
-    return NextResponse.json({ error: "서버 내부 오류로 영수증 링크를 보내지 못했어요." }, { status: 500 });
+    return upstreamStatusProblemResponse(500, "send receipt link", "UNKNOWN");
   }
 
   const documentId = body.documentId;
@@ -86,7 +87,8 @@ export async function POST(request: NextRequest) {
     // Never use errorResponse() here: its legacy-message mode surfaces upstreamData.error /
     // upstreamData.message verbatim (minus token/email scrubbing), which can leak file paths,
     // DB hosts, or other internal diagnostics from a 5xx body into the client response.
+    // The 5xx boundary answers with the registered INTERNAL_ERROR problem instead.
     logUpstreamError("send receipt link", error);
-    return NextResponse.json({ error: "서버 내부 오류로 영수증 링크를 보내지 못했어요." }, { status: 500 });
+    return upstreamStatusProblemResponse(500, "send receipt link", "UNKNOWN");
   }
 }

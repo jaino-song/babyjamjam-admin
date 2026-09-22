@@ -125,7 +125,7 @@ describe("PrismaExceptionFilter database failover telemetry", () => {
         expect(mockScope.setTag).toHaveBeenCalledWith("prisma.code", code);
         expect(JSON.stringify(mockScope.setTag.mock.calls)).not.toContain(rawMessage);
         expect(JSON.stringify(response.json.mock.calls)).not.toContain(rawMessage);
-        expect(response.json.mock.calls[0]?.[0].code).toBe(code === "P2024" ? "DEPENDENCY_UNAVAILABLE" : "P2002");
+        expect(response.json.mock.calls[0]?.[0].code).toBe(code === "P2024" ? "DEPENDENCY_UNAVAILABLE" : "REQUEST_CONFLICT");
     });
 
     it("captures Prisma errors without a code as ineligible instead of treating them as failover signals", () => {
@@ -157,13 +157,59 @@ describe("PrismaExceptionFilter database failover telemetry", () => {
         expect(mockScope.setTag).toHaveBeenCalledWith("feature", "database-failover");
         expect(mockScope.setTag).not.toHaveBeenCalledWith("feature", "service-records");
     });
-    it.each([["P2002", 409], ["P2003", 400], ["P2025", 404], ["P2011", 400], ["P2006", 400]])("preserves legacy %s without private metadata", (code, status) => {
+    it.each([
+        ["P2002", 409, "REQUEST_CONFLICT"],
+        ["P2003", 400, "REQUEST_INVALID"],
+        ["P2025", 404, "RESOURCE_NOT_FOUND"],
+        ["P2011", 400, "REQUEST_INVALID"],
+        ["P2006", 400, "REQUEST_INVALID"],
+        ["P2000", 400, "VALIDATION_FAILED"],
+    ])("converts %s into the %s problem contract at status %i without private metadata", (code, status, problemCode) => {
         const { host, response } = createHost();
         const exception = new Prisma.PrismaClientKnownRequestError("private value", { code: String(code), clientVersion: "6.19.1", meta: { target: ["private_constraint"] } });
         new PrismaExceptionFilter().catch(exception, host);
         expect(response.status).toHaveBeenCalledWith(status);
-        expect(response.json).toHaveBeenCalledWith(expect.objectContaining({ code, statusCode: status }));
-        expect(JSON.stringify(response.json.mock.calls)).not.toMatch(/private|field|UNKNOWN/);
+        expect(response.setHeader).toHaveBeenCalledWith("Content-Type", "application/problem+json");
+        expect(response.json).toHaveBeenCalledWith(expect.objectContaining({
+            code: problemCode,
+            statusCode: status,
+            outcome: "NOT_APPLIED",
+            recovery: { action: "NONE", retry: { mode: "NEVER" } },
+            requestId: expect.any(String),
+            type: expect.stringContaining("docs/error-management.md"),
+        }));
+        expect(response.json.mock.calls[0]?.[0].message).toBeDefined();
+        expect(response.json.mock.calls[0]?.[0].error).toBeDefined();
+        expect(JSON.stringify(response.json.mock.calls)).not.toMatch(/private|P2002|P2003|P2025|P2011|P2006|P2000/);
+    });
+
+    it.each(["P1002", "P1008"])("converts init failure %s into DEPENDENCY_UNAVAILABLE", (code) => {
+        const { host, response } = createHost();
+        new PrismaExceptionFilter().catch(knownError(code), host);
+        expect(response.status).toHaveBeenCalledWith(503);
+        expect(response.json).toHaveBeenCalledWith(expect.objectContaining({
+            code: "DEPENDENCY_UNAVAILABLE", statusCode: 503, outcome: "UNKNOWN",
+        }));
+    });
+
+    it("keeps the rejected-mutation outcome on a read rejected by a known 4xx code", () => {
+        const { host, response } = createHost("/clients", "ko-KR");
+        const request = host.switchToHttp().getRequest<{ method: string }>();
+        request.method = "GET";
+        new PrismaExceptionFilter().catch(knownError("P2002"), host);
+        expect(response.json).toHaveBeenCalledWith(expect.objectContaining({
+            code: "REQUEST_CONFLICT", statusCode: 409, outcome: "NOT_APPLIED",
+            recovery: { action: "NONE", retry: { mode: "NEVER" } },
+        }));
+    });
+
+    it("maps an unregistered known code onto the INTERNAL_ERROR contract at 500", () => {
+        const { host, response } = createHost();
+        new PrismaExceptionFilter().catch(knownError("P9999"), host);
+        expect(response.status).toHaveBeenCalledWith(500);
+        expect(response.json).toHaveBeenCalledWith(expect.objectContaining({
+            code: "INTERNAL_ERROR", statusCode: 500, outcome: "UNKNOWN",
+        }));
     });
 
     it("negotiates English for database failures", () => {

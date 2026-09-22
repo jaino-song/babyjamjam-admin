@@ -304,7 +304,7 @@ describe("EformsignService", () => {
             "access-token",
             "doc-too-large",
             "document",
-        )).rejects.toThrow("exceeds the local mirror size limit");
+        )).rejects.toMatchObject({ response: { code: "PAYLOAD_TOO_LARGE" } });
         expect(arrayBuffer).not.toHaveBeenCalled();
     });
 
@@ -338,7 +338,7 @@ describe("EformsignService", () => {
             "access-token",
             "doc-chunked-too-large",
             "document",
-        )).rejects.toThrow("exceeds the local mirror size limit");
+        )).rejects.toMatchObject({ response: { code: "PAYLOAD_TOO_LARGE" } });
         expect(cancel).toHaveBeenCalled();
     });
 

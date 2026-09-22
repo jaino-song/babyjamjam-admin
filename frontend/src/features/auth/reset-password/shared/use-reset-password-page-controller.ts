@@ -1,10 +1,9 @@
 "use client";
-import { getUserErrorMessage } from "@babyjamjam/shared";
 
 
 import { useRouter, useSearchParams } from "next/navigation";
 import { useState } from "react";
-import { getResetPasswordErrorMessage } from "@babyjamjam/shared";
+import { normalizeApiError, getResetPasswordErrorMessage } from "@babyjamjam/shared";
 
 import { AUTH_ROUTES } from "@/lib/auth/routes";
 import { checkPasswordStrength, resetPasswordSchema, type ResetPasswordFormData } from "@/lib/validations/auth";
@@ -44,7 +43,7 @@ export function useResetPasswordPageController() {
     setFieldErrors({});
 
     if (!token) {
-      setError(getUserErrorMessage("유효하지 않은 비밀번호 재설정 링크예요."));
+      setError("유효하지 않은 비밀번호 재설정 링크예요.");
       return;
     }
 
@@ -69,16 +68,22 @@ export function useResetPasswordPageController() {
       if (response.success) {
         setIsSuccess(true);
       } else {
-        setError(getUserErrorMessage(response.message || "비밀번호 재설정에 실패했어요."));
+        // The upstream `message` field is never rendered; locally authored
+        // copy covers the unverified outcome.
+        setError("비밀번호 재설정에 실패했어요.");
       }
     } catch (requestError) {
       console.error("Reset password error:", requestError);
       const errorData = requestError && typeof requestError === "object" && "response" in requestError
         ? (requestError as { response?: { data?: { code?: unknown } } }).response?.data
         : undefined;
+      // Registered-code copy first (shared mapper), then the problem
+      // contract; upstream internals are never rendered.
+      const normalized = normalizeApiError(requestError, { locale: "ko-KR", operation: "mutation" });
       setError(
-        getUserErrorMessage(requestError, getResetPasswordErrorMessage(errorData?.code)
-        ?? "네트워크 오류가 발생했어요. 다시 시도해 주세요."),
+        getResetPasswordErrorMessage(errorData?.code)
+        ?? (normalized.verified ? normalized.message : null)
+        ?? "네트워크 오류가 발생했어요. 다시 시도해 주세요.",
       );
     } finally {
       setIsLoading(false);

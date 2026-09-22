@@ -99,14 +99,24 @@ describe("employee schedule invariants policy", () => {
     it("checks only the same client with inclusive bounds and branch scoping", async () => {
         const transaction = createTransaction({ id: 42 });
 
-        await expect(assertNoActiveEmployeeScheduleOverlap(transaction as never, {
+        const error = await assertNoActiveEmployeeScheduleOverlap(transaction as never, {
             branchId: "branch-a",
             clientId: 1,
             primaryEmployeeId: 7,
             secondaryEmployeeId: null,
             ...range,
             replaced: false,
-        })).rejects.toBeInstanceOf(ConflictException);
+        }).catch((caught: unknown) => caught);
+
+        expect(error).toBeInstanceOf(ConflictException);
+        expect((error as ConflictException).getStatus()).toBe(409);
+        expect((error as ConflictException).getResponse()).toMatchObject({
+            code: "EMPLOYEE_SCHEDULE_OVERLAP",
+            params: {},
+            outcome: "NOT_APPLIED",
+            recovery: { action: "NONE", retry: { mode: "NEVER" } },
+        });
+        expect((error as ConflictException).getResponse()).not.toHaveProperty("conflictScheduleId");
 
         expect(transaction.employee_schedule.findFirst).toHaveBeenCalledWith({
             where: {
@@ -161,7 +171,7 @@ describe("employee schedule invariants policy", () => {
 
     it("refuses an inverted range before querying persistence", async () => {
         const transaction = createTransaction();
-        await expect(assertNoActiveEmployeeScheduleOverlap(transaction as never, {
+        const error = await assertNoActiveEmployeeScheduleOverlap(transaction as never, {
             branchId: "branch-a",
             clientId: 1,
             primaryEmployeeId: 7,
@@ -169,7 +179,20 @@ describe("employee schedule invariants policy", () => {
             startDate: range.endDate,
             endDate: range.startDate,
             replaced: false,
-        })).rejects.toBeInstanceOf(BadRequestException);
+        }).catch((caught: unknown) => caught);
+
+        expect(error).toBeInstanceOf(BadRequestException);
+        expect((error as BadRequestException).getStatus()).toBe(400);
+        expect((error as BadRequestException).getResponse()).toMatchObject({
+            code: "VALIDATION_FAILED",
+            params: {},
+            outcome: "NOT_APPLIED",
+            errors: [{
+                pointer: "/endDate",
+                code: "INVALID_VALUE",
+                location: "body",
+            }],
+        });
         expect(transaction.employee_schedule.findFirst).not.toHaveBeenCalled();
     });
 

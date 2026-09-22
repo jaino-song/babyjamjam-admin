@@ -1,7 +1,12 @@
 import { cookies } from "next/headers";
 import { NextRequest } from "next/server";
 import { BACKEND_BASE_URL } from "@/lib/api/server";
-import { upstreamJsonErrorResponse } from "@/lib/api/route-utils";
+import {
+    unauthorizedProblemResponse,
+    upstreamBodyErrorResponse,
+    upstreamUnavailableProblemResponse,
+    validationProblemResponse,
+} from "@/lib/api/problem-responses";
 
 const BACKEND_URL = BACKEND_BASE_URL;
 const SESSION_ID_PATTERN = /^[A-Za-z0-9_-]+$/;
@@ -14,7 +19,9 @@ function jsonResponse(data: unknown, status: number): Response {
 }
 
 function invalidSessionIdResponse(): Response {
-    return jsonResponse({ error: "Invalid session id" }, 400);
+    return validationProblemResponse("Invalid session id", [
+        { pointer: "/id", code: "INVALID_FORMAT", detail: "세션 ID 형식이 올바르지 않아요.", location: "path" },
+    ]);
 }
 
 function getSessionUrl(id: string): string | null {
@@ -34,7 +41,7 @@ export async function GET(
     const { id } = await params;
 
     if (!authToken) {
-        return jsonResponse({ error: "Unauthorized" }, 401);
+        return unauthorizedProblemResponse();
     }
 
     const sessionUrl = getSessionUrl(id);
@@ -51,12 +58,12 @@ export async function GET(
             },
         });
     } catch {
-        return upstreamJsonErrorResponse(502);
+        return upstreamUnavailableProblemResponse("read");
     }
 
     if (!backendResponse.ok) {
-        await backendResponse.text().catch(() => "");
-        return upstreamJsonErrorResponse(backendResponse.status);
+        const upstreamText = await backendResponse.text().catch(() => "");
+        return upstreamBodyErrorResponse(backendResponse.status, upstreamText, "fetch chat session", "read");
     }
 
     const data = await backendResponse.json();
@@ -73,7 +80,7 @@ export async function DELETE(
     const { id } = await params;
 
     if (!authToken) {
-        return jsonResponse({ error: "Unauthorized" }, 401);
+        return unauthorizedProblemResponse();
     }
 
     const sessionUrl = getSessionUrl(id);
@@ -90,7 +97,7 @@ export async function DELETE(
             },
         });
     } catch {
-        return upstreamJsonErrorResponse(502);
+        return upstreamUnavailableProblemResponse("mutation");
     }
 
     if (backendResponse.status === 204) {
@@ -98,8 +105,8 @@ export async function DELETE(
     }
 
     if (!backendResponse.ok) {
-        await backendResponse.text().catch(() => "");
-        return upstreamJsonErrorResponse(backendResponse.status);
+        const upstreamText = await backendResponse.text().catch(() => "");
+        return upstreamBodyErrorResponse(backendResponse.status, upstreamText, "delete chat session");
     }
 
     const data = await backendResponse.json();

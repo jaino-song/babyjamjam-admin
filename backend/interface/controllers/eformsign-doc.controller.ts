@@ -59,6 +59,7 @@ import {
     type EformsignProviderPrincipal,
 } from "application/services/eformsign-credential-boundary.service";
 import { sanitizeEformsignErrorMessage } from "application/utils/eformsign-error-message";
+import { codeOnlyProblemBody } from "application/utils/problem-bodies";
 
 @Controller("eformsign-docs")
 @UseGuards(JwtGuard, TenantGuard)
@@ -182,18 +183,12 @@ export class EformsignDocController {
      */
     @Post("access-token")
     getAccessToken(): never {
-        throw new GoneException({
-            code: "EFORMSIGN_CREDENTIALS_SERVER_ONLY",
-            error: "Raw eformsign credentials are not exposed",
-        });
+        throw new GoneException(codeOnlyProblemBody("EFORMSIGN_CREDENTIALS_SERVER_ONLY"));
     }
 
     @Post("refresh-token")
     refreshAccessToken(): never {
-        throw new GoneException({
-            code: "EFORMSIGN_CREDENTIALS_SERVER_ONLY",
-            error: "Raw eformsign credentials are not exposed",
-        });
+        throw new GoneException(codeOnlyProblemBody("EFORMSIGN_CREDENTIALS_SERVER_ONLY"));
     }
 
     /**
@@ -340,6 +335,9 @@ export class EformsignDocController {
                 remoteDocumentId: result.remoteDocumentId,
                 existingDocumentId: result.existingDocumentId,
                 dispatchIntentId: result.dispatchIntentId,
+                code: result.code,
+                outcome: result.outcome,
+                recovery: result.recovery,
             };
         }
         return {
@@ -379,6 +377,12 @@ export class EformsignDocController {
                 durationMs: 0,
                 reason: "authorization_denied",
                 fallbackHint: "manual_check",
+                // BJJ-319 phase 5-4b additive fields for the same refusal the
+                // usecase's assertOwnedTarget returns; the reason stays the
+                // compatibility alias.
+                code: "ACCESS_DENIED",
+                outcome: "NOT_APPLIED",
+                recovery: { action: "NONE", retry: { mode: "NEVER" } },
             };
         }
         this.logger.log(`[POST /eformsign-docs/finalize-headless] documentId=${dto.documentId}`);
@@ -401,6 +405,9 @@ export class EformsignDocController {
                 reason: result.reason,
                 fallbackHint: result.fallbackHint,
                 dispatchIntentId: result.dispatchIntentId,
+                code: result.code,
+                outcome: result.outcome,
+                recovery: result.recovery,
             };
         }
         return {

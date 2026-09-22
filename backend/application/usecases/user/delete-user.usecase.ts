@@ -1,4 +1,5 @@
 import { Inject, Injectable, NotFoundException } from "@nestjs/common";
+import { codeOnlyProblemBody } from "application/utils/problem-bodies";
 import { IUserRepository, USER_REPOSITORY } from "domain/repositories/user.repository.interface";
 
 @Injectable()
@@ -12,7 +13,7 @@ export class DeleteUserUsecase {
         if (branchId) {
             const deleted = await this.userRepository.deleteMembership(id, branchId);
             if (!deleted) {
-                throw new NotFoundException("User not found");
+                throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
             }
             return;
         }

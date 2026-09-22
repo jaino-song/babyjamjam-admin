@@ -143,9 +143,14 @@ describe("eformsign document download route", () => {
         );
 
         expect(response.status).toBe(400);
-        await expect(response.json()).resolves.toEqual({
-            error: "Requested page 7 but PDF only has 2 pages.",
-        });
+        expect(response.headers.get("Content-Type")).toBe("application/problem+json");
+        await expect(response.json()).resolves.toEqual(expect.objectContaining({
+            code: "VALIDATION_FAILED",
+            status: 400,
+            outcome: "NOT_APPLIED",
+            error: "Requested page is out of range",
+            errors: [{ pointer: "/page", code: "INVALID_VALUE", detail: "허용되지 않는 값이에요.", location: "query" }],
+        }));
     });
 
     it("returns an authenticated, bodyless PDF availability probe", async () => {

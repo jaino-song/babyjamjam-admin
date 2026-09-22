@@ -66,26 +66,38 @@ describe("LegacyChatConfirmationService", () => {
         prisma.legacy_chat_confirmation_intent.findFirst.mockResolvedValue(null);
         const service = new LegacyChatConfirmationService(prisma as never);
 
-        await expect(service.consumeIntent(
+        const error: unknown = await service.consumeIntent(
             { userId: "other-user", branchId: context.branchId, sessionId: context.sessionId },
             { intentId: "intent-1", nonce: "nonce" },
-        )).rejects.toBeInstanceOf(NotFoundException);
+        ).then(
+            () => { throw new Error("expected the service to reject"); },
+            (caught: unknown) => caught,
+        );
+        expect(error).toBeInstanceOf(NotFoundException);
+        expect((error as NotFoundException).getStatus()).toBe(404);
+        expect((error as NotFoundException).getResponse()).toMatchObject({ code: "RESOURCE_NOT_FOUND", outcome: "NOT_APPLIED" });
         expect(prisma.legacy_chat_confirmation_intent.updateMany).not.toHaveBeenCalled();
     });
 
     it.each([
-        ["replay", { consumedAt: new Date() }, "already been used"],
-        ["expiry", { expiresAt: new Date(Date.now() - 1) }, "expired"],
-    ])("rejects %s intents", async (_label, overrides, message) => {
+        ["replay", { consumedAt: new Date() }],
+        ["expiry", { expiresAt: new Date(Date.now() - 1) }],
+    ])("rejects %s intents with a conflict problem body", async (_label, overrides) => {
         const prisma = createPrisma();
         prisma.legacy_chat_confirmation_intent.findFirst.mockResolvedValue(storedIntent(overrides));
         const service = new LegacyChatConfirmationService(prisma as never);
 
-        await expect(service.consumeIntent(context, { intentId: "intent-1", nonce: "bad" })).rejects.toThrow(message);
+        const error: unknown = await service.consumeIntent(context, { intentId: "intent-1", nonce: "bad" }).then(
+            () => { throw new Error("expected the service to reject"); },
+            (caught: unknown) => caught,
+        );
+        expect(error).toBeInstanceOf(ConflictException);
+        expect((error as ConflictException).getStatus()).toBe(409);
+        expect((error as ConflictException).getResponse()).toMatchObject({ code: "REQUEST_CONFLICT", outcome: "NOT_APPLIED" });
         expect(prisma.legacy_chat_confirmation_intent.updateMany).not.toHaveBeenCalled();
     });
 
-    it("rejects nonce, action, payload and session mismatches", async () => {
+    it("rejects nonce, action, payload and session mismatches with conflict problem bodies", async () => {
         const nonce = "c".repeat(43);
         const nonceHash = createHash("sha256").update(nonce).digest("hex");
         const cases: Array<{ intent: Record<string, unknown>; expectedTool?: string; expectedPayload?: Record<string, unknown>; expectedSessionId?: string }> = [
@@ -100,14 +112,32 @@ describe("LegacyChatConfirmationService", () => {
             const service = new LegacyChatConfirmationService(prisma as never);
             const suppliedContext = { ...context, ...(testCase.expectedSessionId ? { sessionId: testCase.expectedSessionId } : {}) };
 
-            await expect(service.consumeIntent(
+            const error: unknown = await service.consumeIntent(
                 suppliedContext,
                 { intentId: "intent-1", nonce },
                 testCase.expectedTool,
                 testCase.expectedPayload,
-            )).rejects.toBeInstanceOf(ConflictException);
+            ).then(
+                () => { throw new Error("expected the service to reject"); },
+                (caught: unknown) => caught,
+            );
+            expect(error).toBeInstanceOf(ConflictException);
+            expect((error as ConflictException).getResponse()).toMatchObject({ code: "REQUEST_CONFLICT", outcome: "NOT_APPLIED" });
             expect(prisma.legacy_chat_confirmation_intent.updateMany).not.toHaveBeenCalled();
         }
+    });
+
+    it("rejects a missing confirmation token without touching stored intents", async () => {
+        const prisma = createPrisma();
+        const service = new LegacyChatConfirmationService(prisma as never);
+
+        const error: unknown = await service.consumeIntent(context, { intentId: "", nonce: "" }).then(
+            () => { throw new Error("expected the service to reject"); },
+            (caught: unknown) => caught,
+        );
+        expect(error).toBeInstanceOf(ConflictException);
+        expect((error as ConflictException).getResponse()).toMatchObject({ code: "REQUEST_CONFLICT", outcome: "NOT_APPLIED" });
+        expect(prisma.legacy_chat_confirmation_intent.findFirst).not.toHaveBeenCalled();
     });
 
     it("claims a valid intent exactly once under concurrent consumption", async () => {

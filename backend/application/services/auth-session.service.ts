@@ -10,6 +10,7 @@ import { createHash, randomBytes, randomUUID, timingSafeEqual } from "crypto";
 
 import { PrismaService } from "infrastructure/database/prisma.service";
 import { runSystemScope } from "infrastructure/tenant/run-system-scope";
+import { codeOnlyProblemBody } from "application/utils/problem-bodies";
 import { getAuthTokenMaxAgeMs } from "./auth-token-policy";
 
 const ACCESS_TOKEN_EXPIRES_IN = "15m";
@@ -27,6 +28,18 @@ export type IssuedAuthTokens = {
     refreshToken: string;
 };
 
+/**
+ * Local rotation guard codes. They are deliberately not registered in the
+ * shared catalog: the web proxy and mobile middleware consume them by name,
+ * so the identifiers must stay stable while the bodies stay legacy-shaped.
+ */
+type RotationErrorCode =
+    | "AUTH_REFRESH_INVALID"
+    | "AUTH_REFRESH_EXPIRED"
+    | "AUTH_REFRESH_REPLAY_CONCURRENT"
+    | "AUTH_REFRESH_REUSED"
+    | "AUTH_SESSION_REVOKED";
+
 type RotationResult =
     | {
         kind: "success";
@@ -38,12 +51,7 @@ type RotationResult =
     }
     | {
         kind: "error";
-        code:
-            | "AUTH_REFRESH_INVALID"
-            | "AUTH_REFRESH_EXPIRED"
-            | "AUTH_REFRESH_REPLAY_CONCURRENT"
-            | "AUTH_REFRESH_REUSED"
-            | "AUTH_SESSION_REVOKED";
+        code: RotationErrorCode;
     };
 
 @Injectable()
@@ -116,7 +124,9 @@ export class AuthSessionService {
     async rotateRefreshToken(rawToken: string): Promise<IssuedAuthTokens> {
         const parsed = this.parseRefreshToken(rawToken);
         if (!parsed) {
-            throw this.refreshError("AUTH_REFRESH_INVALID", "Invalid refresh token");
+            // Unparseable tokens carry no internal rotation signal, so answer
+            // with the registered code instead of a local AUTH_REFRESH_* one.
+            throw new UnauthorizedException(codeOnlyProblemBody("AUTH_REQUIRED"));
         }
 
         const now = new Date();
@@ -728,17 +738,26 @@ export class AuthSessionService {
         if (user.role === "owner" || user.approvalStatus === "approved") {
             return;
         }
-        throw new ForbiddenException({
-            code: user.approvalStatus === "rejected"
-                ? "ACCOUNT_REJECTED"
-                : "PENDING_APPROVAL",
-            message: user.approvalStatus === "rejected"
-                ? "가입이 거부되었습니다."
-                : "관리자 승인 대기 중입니다.",
-        });
+        throw new ForbiddenException(
+            codeOnlyProblemBody(
+                user.approvalStatus === "rejected" ? "ACCOUNT_REJECTED" : "PENDING_APPROVAL",
+            ),
+        );
     }
 
-    private refreshError(code: string, message: string): UnauthorizedException {
-        return new UnauthorizedException({ code, message });
+    /**
+     * 401 body for the refresh/session rotation guards. These codes are local
+     * to this service (the web proxy and mobile middleware branch on them), so
+     * they stay unregistered; the body members still follow the problem
+     * contract and the `message` remains an in-process compatibility alias.
+     */
+    private refreshError(code: RotationErrorCode, message: string): UnauthorizedException {
+        return new UnauthorizedException({
+            code,
+            params: {},
+            outcome: "NOT_APPLIED",
+            recovery: { action: "NONE", retry: { mode: "NEVER" } },
+            message,
+        });
     }
 }

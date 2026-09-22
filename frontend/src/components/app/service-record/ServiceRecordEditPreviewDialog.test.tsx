@@ -146,4 +146,43 @@ describe("ServiceRecordEditPreviewDialog", () => {
         );
         expect(screen.getByRole("alert")).toHaveTextContent("초안 미리보기를 불러오지 못했습니다.");
     });
+
+    it("offers the stale-preview retry affordance from the registered 409 status, not message text", () => {
+        const onOpenChange = jest.fn();
+        const onRefresh = jest.fn();
+        const staleMessage = "미리보기가 오래되어 수정 확정에 실패했습니다. 최신 미리보기를 다시 확인해 주세요.";
+        const { rerender } = render(
+            <ServiceRecordEditPreviewDialog
+                open
+                onOpenChange={onOpenChange}
+                preview={preview}
+                confirmBusy={false}
+                confirmError={staleMessage}
+                confirmErrorStatus={409}
+                onRefresh={onRefresh}
+                data-component={DATA_COMPONENT}
+            />,
+        );
+
+        expect(screen.getByText(staleMessage)).toBeInTheDocument();
+        fireEvent.click(screen.getByRole("button", { name: "최신 미리보기" }));
+        expect(onRefresh).toHaveBeenCalledTimes(1);
+
+        // A non-stale confirm failure keeps the copy but never the retry affordance —
+        // even if a message accidentally contained the legacy marker text.
+        rerender(
+            <ServiceRecordEditPreviewDialog
+                open
+                onOpenChange={onOpenChange}
+                preview={preview}
+                confirmBusy={false}
+                confirmError="미리보기가 오래되어 표시된 문구와 무관하게 상태 불일치가 해소되지 않았습니다."
+                confirmErrorStatus={500}
+                onRefresh={onRefresh}
+                data-component={DATA_COMPONENT}
+            />,
+        );
+        expect(screen.getByText("미리보기가 오래되어 표시된 문구와 무관하게 상태 불일치가 해소되지 않았습니다.")).toBeInTheDocument();
+        expect(screen.queryByRole("button", { name: "최신 미리보기" })).not.toBeInTheDocument();
+    });
 });

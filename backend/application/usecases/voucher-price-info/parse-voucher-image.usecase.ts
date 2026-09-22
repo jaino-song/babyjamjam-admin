@@ -1,4 +1,5 @@
 import { BadRequestException, Inject, Injectable, Logger } from "@nestjs/common";
+import { problemBody } from "application/utils/problem-bodies";
 import {
   GEMINI_API_CLIENT,
   IGeminiApiClient,
@@ -63,19 +64,30 @@ export class ParseVoucherImageUsecase {
    */
   private validateFile(file: Express.Multer.File): void {
     if (!file) {
-      throw new BadRequestException("파일이 제공되지 않았습니다.");
+      throw new BadRequestException(problemBody("VALIDATION_FAILED", {
+        pointer: "/file",
+        code: "REQUIRED",
+        detail: "파일이 제공되지 않았습니다.",
+        location: "body",
+      }));
     }
 
     if (!this.allowedMimeTypes.includes(file.mimetype)) {
-      throw new BadRequestException(
-        `허용되지 않는 파일 형식입니다. 허용 형식: PNG, JPG, JPEG, PDF`,
-      );
+      throw new BadRequestException(problemBody("VALIDATION_FAILED", {
+        pointer: "/file",
+        code: "INVALID_VALUE",
+        detail: "허용되지 않는 파일 형식입니다. 허용 형식: PNG, JPG, JPEG, PDF",
+        location: "body",
+      }));
     }
 
     if (file.size > this.maxFileSize) {
-      throw new BadRequestException(
-        `파일 크기가 10MB를 초과합니다. 현재 크기: ${(file.size / 1024 / 1024).toFixed(2)}MB`,
-      );
+      throw new BadRequestException(problemBody("VALIDATION_FAILED", {
+        pointer: "/file",
+        code: "INVALID_VALUE",
+        detail: `파일 크기가 10MB를 초과합니다. 현재 크기: ${(file.size / 1024 / 1024).toFixed(2)}MB`,
+        location: "body",
+      }));
     }
   }
 

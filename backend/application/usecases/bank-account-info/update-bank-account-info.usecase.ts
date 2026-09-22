@@ -1,4 +1,5 @@
 import { Inject, Injectable, NotFoundException } from "@nestjs/common";
+import { codeOnlyProblemBody } from "application/utils/problem-bodies";
 import { BankAccountInfoEntity } from "domain/entities/bank-account-info.entity";
 import { BANK_ACCOUNT_INFO_REPOSITORY, IBankAccountInfoRepository } from "domain/repositories/bank-account-info.repository.interface";
 
@@ -17,7 +18,7 @@ export class UpdateBankAccountInfoUsecase {
     async execute(area: string, updates: UpdateBankAccountInfoParams, branchId: string): Promise<BankAccountInfoEntity> {
         const bankAccountInfo = await this.bankAccountInfoRepository.findByArea(area, branchId);
         if (!bankAccountInfo) {
-            throw new NotFoundException(`Bank account info with area ${area} not found`);
+            throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
         }
 
         if (updates.bankName !== undefined) {
@@ -32,7 +33,7 @@ export class UpdateBankAccountInfoUsecase {
             // The branch-pinned write matched nothing even though findByArea just
             // saw the row: it was deleted or re-parented in between. Report the
             // same 404 rather than reporting a success that did not happen.
-            throw new NotFoundException(`Bank account info with area ${area} not found`);
+            throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
         }
         return updated;
     }

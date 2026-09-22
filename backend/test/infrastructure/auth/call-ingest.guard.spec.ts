@@ -56,11 +56,29 @@ describe("CallIngestGuard", () => {
         expect(observedScopes[0]).toMatchObject({ origin: "system", systemScope: true });
     });
 
-    it("rejects missing header, malformed header, and unknown token", async () => {
-        await expect(guard.canActivate(contextWithAuth())).rejects.toThrow(UnauthorizedException);
-        await expect(guard.canActivate(contextWithAuth("Token abc"))).rejects.toThrow(UnauthorizedException);
+    // Every rejection is a registered AUTH_REQUIRED problem (401): the HTTP
+    // mapper keys on the body code, and the public body must not reveal which
+    // auth step failed (missing header, bad format, unknown token).
+    it("rejects missing header, malformed header, and unknown token with an AUTH_REQUIRED problem", async () => {
+        const expectAuthProblem = async (promise: Promise<unknown>): Promise<void> => {
+            const error: unknown = await promise.then(
+                () => { throw new Error("expected the guard to reject"); },
+                (caught: unknown) => caught,
+            );
+            expect(error).toBeInstanceOf(UnauthorizedException);
+            expect((error as UnauthorizedException).getStatus()).toBe(401);
+            expect((error as UnauthorizedException).getResponse()).toMatchObject({
+                code: "AUTH_REQUIRED",
+                outcome: "NOT_APPLIED",
+                recovery: { action: "NONE", retry: { mode: "NEVER" } },
+            });
+            expect((error as UnauthorizedException).getResponse()).not.toHaveProperty("errors");
+        };
+
+        await expectAuthProblem(guard.canActivate(contextWithAuth()));
+        await expectAuthProblem(guard.canActivate(contextWithAuth("Token abc")));
 
         tokenService.resolveBranchId.mockResolvedValue(null);
-        await expect(guard.canActivate(contextWithAuth("Bearer cit_bad"))).rejects.toThrow(UnauthorizedException);
+        await expectAuthProblem(guard.canActivate(contextWithAuth("Bearer cit_bad")));
     });
 });

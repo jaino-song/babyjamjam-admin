@@ -35,6 +35,7 @@ import {
     type KakaoCallbackRequest,
 } from "../../infrastructure/auth/kakao-auth.guard";
 import { normalizePhone } from "application/utils/normalize-phone";
+import { codeOnlyProblemBody, problemBody } from "application/utils/problem-bodies";
 
 @Controller("auth")
 export class AuthController {
@@ -206,7 +207,12 @@ export class AuthController {
     ) {
         const token = headerToken ?? queryToken;
         if (!token) {
-            throw new BadRequestException("Pending signup token is required");
+            throw new BadRequestException(problemBody("VALIDATION_FAILED", {
+                pointer: "/token",
+                code: "REQUIRED",
+                detail: "가입 진행 토큰을 입력해 주세요.",
+                location: "custom",
+            }));
         }
 
         return this.authService.getPendingKakaoSignup(token);
@@ -221,7 +227,12 @@ export class AuthController {
     ) {
         const token = headerToken ?? queryToken;
         if (!token) {
-            throw new BadRequestException("Pending signup token is required");
+            throw new BadRequestException(problemBody("VALIDATION_FAILED", {
+                pointer: "/token",
+                code: "REQUIRED",
+                detail: "가입 진행 토큰을 입력해 주세요.",
+                location: "custom",
+            }));
         }
 
         return this.authService.completeKakaoOnboarding(
@@ -239,7 +250,12 @@ export class AuthController {
     ) {
         const token = headerToken ?? queryToken;
         if (!token) {
-            throw new BadRequestException("Pending onboarding token is required");
+            throw new BadRequestException(problemBody("VALIDATION_FAILED", {
+                pointer: "/token",
+                code: "REQUIRED",
+                detail: "온보딩 진행 토큰을 입력해 주세요.",
+                location: "custom",
+            }));
         }
 
         return this.authService.getPendingAccountOnboarding(token);
@@ -248,10 +264,10 @@ export class AuthController {
     @Post("onboarding/complete")
     @UseGuards(RateLimitGuard)
     completeAccountOnboarding(): never {
-        throw new ForbiddenException({
-            code: AUTH_ERROR_CODES.ACCOUNT_PROFILE_INCOMPLETE,
-            message: "가입 정보와 지점 배정은 오너가 확인해야 합니다.",
-        });
+        // Direct completion is closed: profile + branch assignment require owner
+        // confirmation. Frontend login/onboarding dialogs key on `code`, which the
+        // problem body preserves (403 kept).
+        throw new ForbiddenException(codeOnlyProblemBody("ACCOUNT_PROFILE_INCOMPLETE"));
     }
 
     @Post("refresh-token")

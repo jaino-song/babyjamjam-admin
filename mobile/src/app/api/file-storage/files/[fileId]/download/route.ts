@@ -4,8 +4,8 @@ import {
     errorResponse,
     getAuthHeaders,
     getAuthToken,
-    unauthorizedResponse,
 } from "@/lib/api/route-utils";
+import { unauthorizedProblemResponse } from "@/lib/api/problem-responses";
 import {
     documentPath,
     invalidFileIdResponse,
@@ -20,6 +20,23 @@ function copyNosniffHeader(
     if (nosniff) headers["X-Content-Type-Options"] = String(nosniff);
 }
 
+// The download request buffers the upstream body as an ArrayBuffer, so axios
+// also buffers a rejected 4xx/5xx body instead of parsing it. Decode it before
+// handing the error to errorResponse, which forwards a verbatim upstream
+// problem body (or sanitizes to the Korean fallback) while preserving the
+// upstream status — no locally authored English body anymore.
+function decodeBufferedUpstreamError(error: unknown): unknown {
+    const response = (error as { response?: { status?: number; data?: unknown } } | null | undefined)?.response;
+    if (!response || !Buffer.isBuffer(response.data)) return error;
+    let data: unknown;
+    try {
+        data = JSON.parse(response.data.toString("utf8"));
+    } catch {
+        data = undefined;
+    }
+    return { response: { status: response.status, data } };
+}
+
 export async function GET(
     request: NextRequest,
     { params }: { params: Promise<{ fileId: string }> }
@@ -27,7 +44,7 @@ export async function GET(
     try {
         const token = getAuthToken(request);
         if (!token) {
-            return unauthorizedResponse("Unauthorized");
+            return unauthorizedProblemResponse();
         }
 
         const { fileId } = await params;
@@ -65,13 +82,7 @@ export async function GET(
             headers,
         });
     } catch (error) {
-        if (error && typeof error === "object" && "response" in error) {
-            const axiosError = error as { response?: { status: number } };
-            if (axiosError.response?.status === 404) {
-                return NextResponse.json({ error: "Document not found" }, { status: 404 });
-            }
-        }
-        return errorResponse(error, "download document");
+        return errorResponse(decodeBufferedUpstreamError(error), "download document");
     }
 }
 
@@ -81,6 +92,8 @@ export async function HEAD(
 ) {
     try {
         const token = getAuthToken(request);
+        // HEAD responses carry no body by HTTP contract, so the status is the
+        // whole signal here; the GET sibling carries the problem body.
         if (!token) return new NextResponse(null, { status: 401 });
 
         const { fileId } = await params;
