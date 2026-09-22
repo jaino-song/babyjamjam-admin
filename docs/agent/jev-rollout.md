@@ -20,9 +20,12 @@ step; never skip or reorder:
 1. **Repository readiness** — capability manifest/drift checks and the
    cutover guard pass (`pnpm --filter ./backend agent:manifest:check`,
    `agent:cutover:guard`); CI green on the protected branch.
-2. **Synthetic live evaluation** — the evaluation CLI (Task 9.1) runs the
-   committed synthetic fixture corpus against the pinned model and produces an
-   evidence report (`schemaVersion: "jev-evidence-v1"`).
+2. **Synthetic evaluation + evidence bridge** — the evaluation CLI
+   (`run-jev-evaluation.ts`) runs the committed synthetic fixture corpus and
+   writes a versioned evaluation report; with an operator-authored
+   attestation file it additionally emits the readiness evidence document
+   (`schemaVersion: "jev-evidence-v1"`). See "Producing evidence" below for
+   the exact commands and the attestation the operator must author.
 3. **Approved shadow scope** — per-kind mode `shadow` under the branch/internal
    allowlist; disagreements and abstentions are observed, not applied.
 4. **Calibration/holdout** — evidence must attest a non-empty held-out split
@@ -43,12 +46,90 @@ Run the readiness gate before step 5/6 and record its output:
 ```bash
 pnpm --filter ./backend exec ts-node scripts/agent/check-jev-readiness.ts \
   --profile=../evals/agent/jev/release-profile-v1.json \
-  --evidence=<evaluation-report.json>
+  --evidence=../artifacts/jev-fixture-evidence.json
 ```
 
-Exit code `0` and `ready: true` are required. A non-zero exit on the draft
-profile (`evidence-missing`) is the designed fail-closed state, not a tool
-failure.
+Exit code `0` and `ready: true` are required. A non-zero exit is the designed
+fail-closed outcome, not a tool failure: with no evidence the checker reports
+`evidence-missing`; with fixture-mode evidence it reports
+`metric-denominator-zero` / `coverage-below-floor` (see below).
+
+### Producing evidence (offline bridge)
+
+The evidence document is **not** produced by hand and **not** produced by the
+checker. `run-jev-evaluation.ts` converts its own evaluation report into the
+`jev-evidence-v1` document when given `--evidence-out` together with
+`--attestation`:
+
+```bash
+# Offline, no model call — certifies the corpus, never a model:
+pnpm --filter ./backend exec ts-node scripts/agent/run-jev-evaluation.ts \
+  --mode=fixture \
+  --input=../evals/agent/jev/fixtures-v1.json \
+  --output=../artifacts/jev-fixture-report.json \
+  --evidence-out=../artifacts/jev-fixture-evidence.json \
+  --attestation=../artifacts/jev-attestation.json
+
+# Real model evidence — external calls; every live gate applies
+# (--consent=live-provider-call, TYPESAFE_API_KEY, synthetic-only corpus
+# inside evals/agent/jev/, pinned model id):
+pnpm --filter ./backend exec ts-node scripts/agent/run-jev-evaluation.ts \
+  --mode=live \
+  --input=../evals/agent/jev/fixtures-v1.json \
+  --output=../artifacts/jev-live-report.json \
+  --evidence-out=../artifacts/jev-live-evidence.json \
+  --attestation=../artifacts/jev-attestation.json \
+  --consent=live-provider-call
+```
+
+**The operator authors the attestation.** The conversion is offline and maps
+per-kind raw counts and metric numerator/denominator triples from the report's
+computed metrics only — it never invents a value. The facts a synthetic corpus
+cannot provide come exclusively from an operator-authored JSON file
+(schema `jev-attestation-v1`) at the `--attestation` path:
+
+```json
+{
+  "schemaVersion": "jev-attestation-v1",
+  "attestedBy": "<named operator>",
+  "attestedAt": "YYYY-MM-DD",
+  "modelId": "jev-1.13.0",
+  "holdoutSplit": { "present": true, "caseCount": 12 },
+  "humanReference": { "present": true, "caseCount": 29 },
+  "humanReferenceComparisons": {
+    "route-domains": { "comparableCount": 0, "agreedCount": 0 },
+    "classify-client-intent": { "comparableCount": 0, "agreedCount": 0 },
+    "evaluate-clarification": { "comparableCount": 0, "agreedCount": 0 },
+    "rank-candidates": { "comparableCount": 0, "agreedCount": 0 }
+  },
+  "notes": "What was attested and why the counts are what they are."
+}
+```
+
+- `holdoutSplit` attests that the corpus's `holdout` split was genuinely held
+  out; its `caseCount` must match the report's own holdout count and the run
+  is refused otherwise (a truncated `--max-cases` run counts only its selected
+  cases).
+- `humanReference` attests how many human-reviewed reference cases exist.
+- `humanReferenceComparisons` attests, per decision kind, how many of the
+  model's selections were comparable to the human reference and how many
+  agreed. These counts can never exceed the cases the run actually evaluated.
+- A missing, incomplete, incoherent, or mismatched attestation is a precise
+  non-zero refusal naming the exact gap. The attestation's free-form `notes`
+  are not copied into the evidence document; the evidence carries counts,
+  tokens, and the attestation author/date only — no credentials, no raw text.
+
+**What each kind of evidence can mean:**
+
+- Fixture-mode evidence (`--mode=fixture`) contains no model predictions, so
+  every abstention/precision/agreement denominator is zero and the readiness
+  gate always blocks it. It proves the document **format**, nothing more.
+- A synthetic corpus can satisfy the format, but a **real human reference
+  requires a human-reviewed evaluation set**. Attesting invented comparison
+  counts to pass the gate is evidence fabrication under §5 — every gate that
+  consumed such evidence is treated as failed.
+- Passing the checker is still not enablement: the approval reference in the
+  profile is metadata, not authority (§6), and the human gates of §1 remain.
 
 ## 2. Disable first (recovery order)
 
@@ -95,12 +176,13 @@ gate with current evidence and a fresh operator approval.
 
 ## 5. Evidence retention and incident investigation
 
-- Keep every readiness check output (the versioned JSON result) and its input
-  evidence report with the release record; they are the audit trail for why a
-  profile was considered ready.
-- Evidence reports are immutable artifacts: investigate incidents against the
-  retained report and the decision trace events (`semantic-decision-v1`),
-  never by regenerating numbers after the fact.
+- Keep every readiness check output (the versioned JSON result), its input
+  evidence document, and the operator attestation behind it with the release
+  record; they are the audit trail for why a profile was considered ready —
+  and for who attested the holdout split and the human-reference counts.
+- Evidence documents are immutable artifacts: investigate incidents against
+  the retained report, the attestation, and the decision trace events
+  (`semantic-decision-v1`), never by regenerating numbers after the fact.
 - If evidence is found to be wrong or fabricated, treat every gate that
   consumed it as failed: disable (section 2), roll back (section 4), and
   re-run the full gate order.

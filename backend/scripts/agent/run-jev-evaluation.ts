@@ -5,7 +5,8 @@
  * Usage:
  *   ts-node scripts/agent/run-jev-evaluation.ts --mode=fixture|live \
  *     --input=<corpus.json> --output=<report.json> \
- *     [--model=<pinned-id>] [--max-cases=<n>] [--consent=live-provider-call]
+ *     [--model=<pinned-id>] [--max-cases=<n>] [--consent=live-provider-call] \
+ *     [--evidence-out=<evidence.json> --attestation=<attestation.json>]
  *
  * Modes
  *  - fixture (default): network-free. Parses and validates a corpus, checks
@@ -20,6 +21,22 @@
  *      3. the corpus is synthetic-only (labelProvenance "synthetic-authored"
  *         for every case) and --input resolves inside evals/agent/jev/
  *      4. the model is the pinned id jev-1.13.0; moving aliases are rejected
+ *
+ * Evidence bridge: passing --evidence-out together with --attestation makes
+ * the CLI additionally emit a readiness-evidence document with schema
+ * "jev-evidence-v1" (the contract check-jev-readiness.ts validates). The
+ * conversion is offline — no provider call and no network access — and maps
+ * per-kind raw counts and metric numerator/denominator triples from the
+ * report's computed metrics only; it never invents a value. The facts a
+ * synthetic corpus cannot provide (that the holdout split was genuinely held
+ * out, the human-reviewed reference size, and the per-kind human-reference
+ * comparison counts) come exclusively from the operator-authored attestation
+ * file (schema "jev-attestation-v1", author + date fields included). A
+ * missing, incomplete, or mismatched attestation is a precise non-zero
+ * refusal; the evidence document carries no credentials, no raw text, and no
+ * per-case data, and the evaluation report itself is unchanged. Fixture-mode
+ * evidence contains no evaluated cases, so its zero metric denominators can
+ * never pass the readiness gate — it satisfies the document format only.
  *
  * Consent boundary: --consent=live-provider-call authorizes exactly one
  * external action — TypeSafe system-one calls for this corpus evaluation
@@ -54,6 +71,10 @@ import {
     TypeSafeJevDecisionService,
 } from "../../infrastructure/agent/typesafe-jev-decision.service";
 import {
+    EVIDENCE_REPORT_SCHEMA_VERSION,
+    type RequiredMetric,
+} from "./check-jev-readiness";
+import {
     computeEvaluationReport,
     parseJevCorpus,
     detectScenarioLeakage,
@@ -81,6 +102,8 @@ const EVAL_CHOICE_SET_REVISION = "jev-eval-v1";
 const EVAL_PLACEHOLDER_CANDIDATE = "candidate-1";
 /** Binarization threshold for the clarification outcome (evaluation convention). */
 export const CLARIFICATION_BINARIZATION_THRESHOLD = 0.5;
+/** Schema version of the operator-authored attestation consumed by the evidence bridge. */
+export const ATTESTATION_SCHEMA_VERSION = "jev-attestation-v1";
 
 const REPO_ROOT = resolve(__dirname, "..", "..", "..");
 const EVAL_DIR = join(REPO_ROOT, "evals", "agent", "jev");
@@ -192,6 +215,82 @@ export interface JevRunReport {
 }
 
 // ---------------------------------------------------------------------------
+// Evidence bridge types (report + operator attestation → jev-evidence-v1)
+// ---------------------------------------------------------------------------
+
+/** One holdout/human-reference presence attestation. */
+export interface JevAttestationSplit {
+    readonly present: boolean;
+    readonly caseCount: number;
+}
+
+/** Operator-attested human-reference comparison counts for one decision kind. */
+export interface JevAttestationComparison {
+    readonly comparableCount: number;
+    readonly agreedCount: number;
+}
+
+/**
+ * The operator-authored facts the tooling cannot derive from a synthetic
+ * corpus: that the holdout split was genuinely held out, the size of the
+ * human-reviewed reference set, and the per-kind human-reference comparison
+ * counts — signed by an author and a date. Never produced by the tooling.
+ */
+export interface JevAttestation {
+    readonly schemaVersion: typeof ATTESTATION_SCHEMA_VERSION;
+    readonly attestedBy: string;
+    /** ISO date (YYYY-MM-DD) of the attestation. */
+    readonly attestedAt: string;
+    readonly modelId: string;
+    readonly holdoutSplit: JevAttestationSplit;
+    readonly humanReference: JevAttestationSplit;
+    readonly humanReferenceComparisons: Readonly<Record<DecisionKind, JevAttestationComparison>>;
+    readonly notes: string | null;
+}
+
+/**
+ * Metric triple exactly as the readiness checker validates it: integer
+ * numerator/denominator plus the ratio value. When the denominator is zero
+ * the report computed no value, so `value` is honestly absent — the checker
+ * blocks a zero denominator by design.
+ */
+export interface JevEvidenceMetricTriple {
+    readonly numerator: number;
+    readonly denominator: number;
+    readonly value?: number;
+}
+
+export interface JevEvidenceKindEntry {
+    readonly decisionKind: DecisionKind;
+    readonly rawCounts: {
+        readonly labeledCount: number;
+        readonly evaluatedCount: number;
+        readonly acceptedCount: number;
+        readonly abstainedCount: number;
+        readonly unavailableCount: number;
+        readonly missingPredictionCount: number;
+        readonly correctCount: number;
+        readonly humanReferenceComparisons: {
+            readonly comparableCount: number;
+            readonly agreedCount: number;
+        };
+    };
+    readonly metrics: Readonly<Record<RequiredMetric, JevEvidenceMetricTriple>>;
+    readonly holdoutSplit: JevAttestationSplit;
+    readonly humanReference: JevAttestationSplit;
+}
+
+/** The readiness-evidence document: exactly the contract check-jev-readiness.ts parses. */
+export interface JevEvidenceDocument {
+    readonly schemaVersion: typeof EVIDENCE_REPORT_SCHEMA_VERSION;
+    readonly modelId: string;
+    readonly questionVersion: string;
+    readonly datasetDigest: string;
+    readonly notes: string;
+    readonly kinds: readonly JevEvidenceKindEntry[];
+}
+
+// ---------------------------------------------------------------------------
 // Run options / results
 // ---------------------------------------------------------------------------
 
@@ -202,6 +301,10 @@ export interface JevRunOptions {
     readonly model?: string;
     readonly maxCases?: number;
     readonly consent?: string;
+    /** Write a jev-evidence-v1 readiness-evidence document to this path. Requires attestation. */
+    readonly evidenceOut?: string;
+    /** Operator-authored attestation file consumed only by the evidence bridge. */
+    readonly attestation?: string;
     /** Environment consulted for TYPESAFE_API_KEY / TYPESAFE_BASE_URL. */
     readonly env?: Readonly<Record<string, string | undefined>>;
     /** Test seam: transport override handed to the production adapter. */
@@ -216,6 +319,8 @@ export type JevRunResult =
         readonly exitCode: 0;
         readonly reportPath: string;
         readonly report: JevRunReport;
+        /** Evidence document path when --evidence-out was requested, else null. */
+        readonly evidencePath: string | null;
     }
     | {
         readonly ok: false;
@@ -426,6 +531,315 @@ function countBy<T>(items: readonly T[], key: (item: T) => string): Record<strin
         counts[value] = (counts[value] ?? 0) + 1;
     }
     return counts;
+}
+
+// ---------------------------------------------------------------------------
+// Evidence bridge: attestation loading + report → jev-evidence-v1 conversion
+// ---------------------------------------------------------------------------
+
+function attestationInvalid(message: string): JevRunRefusal {
+    return refusal("attestation-invalid", message);
+}
+
+function requireAttestationNonEmptyString(value: unknown, field: string): string {
+    if (typeof value !== "string" || value.trim().length === 0) {
+        throw attestationInvalid(`Attestation field "${field}" must be a non-empty string`);
+    }
+    return value;
+}
+
+function requireAttestationNonNegativeInt(value: unknown, field: string): number {
+    if (typeof value !== "number" || !Number.isInteger(value) || value < 0) {
+        throw attestationInvalid(`Attestation field "${field}" must be a non-negative integer`);
+    }
+    return value;
+}
+
+/** Rejects unknown keys; missing keys are reported by the caller's checks. */
+function rejectUnknownKeys(value: Record<string, unknown>, allowed: readonly string[], what: string): void {
+    for (const key of Object.keys(value)) {
+        if (!allowed.includes(key)) {
+            throw attestationInvalid(`Unknown ${what} key "${key}"`);
+        }
+    }
+}
+
+function requireAttestationSplit(value: unknown, field: string): JevAttestationSplit {
+    if (!isPlainObject(value)) {
+        throw attestationInvalid(`Attestation field "${field}" must be a JSON object`);
+    }
+    rejectUnknownKeys(value, ["caseCount", "present"], field);
+    if (!("present" in value)) {
+        throw attestationInvalid(`Attestation ${field} is missing required key "present"`);
+    }
+    if (!("caseCount" in value)) {
+        throw attestationInvalid(`Attestation ${field} is missing required key "caseCount"`);
+    }
+    const present = value["present"];
+    if (typeof present !== "boolean") {
+        throw attestationInvalid(`Attestation field "${field}.present" must be a boolean`);
+    }
+    const caseCount = requireAttestationNonNegativeInt(value["caseCount"], `${field}.caseCount`);
+    // A presence claim and its count must agree: "present with zero cases"
+    // and "absent but counted" are both incoherent attestations.
+    if (present && caseCount === 0) {
+        throw attestationInvalid(
+            `Attestation field "${field}" declares present: true but caseCount 0; a present split `
+            + "must carry a positive case count",
+        );
+    }
+    if (!present && caseCount !== 0) {
+        throw attestationInvalid(
+            `Attestation field "${field}" declares present: false but caseCount ${caseCount}; `
+            + "an absent split must carry caseCount 0",
+        );
+    }
+    return { caseCount, present };
+}
+
+function requireAttestationComparisons(
+    value: unknown,
+): Readonly<Record<DecisionKind, JevAttestationComparison>> {
+    if (!isPlainObject(value)) {
+        throw attestationInvalid('Attestation field "humanReferenceComparisons" must be a JSON object');
+    }
+    rejectUnknownKeys(value, KIND_VALUES as readonly string[], "attestation humanReferenceComparisons");
+    const result = {} as Record<DecisionKind, JevAttestationComparison>;
+    for (const kind of KIND_VALUES) {
+        const entry = value[kind];
+        if (!isPlainObject(entry)) {
+            throw attestationInvalid(
+                `Attestation humanReferenceComparisons is missing the entry for decision kind "${kind}"`,
+            );
+        }
+        rejectUnknownKeys(entry, ["agreedCount", "comparableCount"], `humanReferenceComparisons.${kind}`);
+        const comparableCount = requireAttestationNonNegativeInt(
+            entry["comparableCount"],
+            `humanReferenceComparisons.${kind}.comparableCount`,
+        );
+        const agreedCount = requireAttestationNonNegativeInt(
+            entry["agreedCount"],
+            `humanReferenceComparisons.${kind}.agreedCount`,
+        );
+        if (agreedCount > comparableCount) {
+            throw attestationInvalid(
+                `Attestation humanReferenceComparisons.${kind}: agreedCount (${agreedCount}) exceeds `
+                + `comparableCount (${comparableCount})`,
+            );
+        }
+        result[kind] = { comparableCount, agreedCount };
+    }
+    return result;
+}
+
+/**
+ * Parses and validates the operator-authored attestation document. Strictly
+ * fail-closed: unknown keys, missing fields, wrong types, or incoherent
+ * presence/count pairs are precise non-zero refusals. This validation never
+ * consults the report — report-dependent cross-checks run at conversion time.
+ */
+export function parseAttestation(raw: unknown): JevAttestation {
+    if (!isPlainObject(raw)) {
+        throw attestationInvalid("Attestation root must be a JSON object");
+    }
+    const allowedKeys = [
+        "attestedAt",
+        "attestedBy",
+        "holdoutSplit",
+        "humanReference",
+        "humanReferenceComparisons",
+        "modelId",
+        "notes",
+        "schemaVersion",
+    ];
+    rejectUnknownKeys(raw, allowedKeys, "attestation");
+    for (const key of ["schemaVersion", "attestedBy", "attestedAt", "modelId", "holdoutSplit", "humanReference", "humanReferenceComparisons"]) {
+        if (!(key in raw)) {
+            throw attestationInvalid(`Attestation is missing required key "${key}"`);
+        }
+    }
+    const schemaVersion = requireAttestationNonEmptyString(raw["schemaVersion"], "schemaVersion");
+    if (schemaVersion !== ATTESTATION_SCHEMA_VERSION) {
+        throw attestationInvalid(
+            `Attestation field "schemaVersion" must be "${ATTESTATION_SCHEMA_VERSION}", got "${schemaVersion}"`,
+        );
+    }
+    const attestedBy = requireAttestationNonEmptyString(raw["attestedBy"], "attestedBy");
+    const attestedAt = requireAttestationNonEmptyString(raw["attestedAt"], "attestedAt");
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(attestedAt)) {
+        throw attestationInvalid(`Attestation field "attestedAt" must be an ISO date (YYYY-MM-DD), got "${attestedAt}"`);
+    }
+    const modelId = requireAttestationNonEmptyString(raw["modelId"], "modelId");
+    const holdoutSplit = requireAttestationSplit(raw["holdoutSplit"], "holdoutSplit");
+    const humanReference = requireAttestationSplit(raw["humanReference"], "humanReference");
+    const humanReferenceComparisons = requireAttestationComparisons(raw["humanReferenceComparisons"]);
+    const notes = "notes" in raw
+        ? requireAttestationNonEmptyString(raw["notes"], "notes")
+        : null;
+    return {
+        attestedAt,
+        attestedBy,
+        holdoutSplit,
+        humanReference,
+        humanReferenceComparisons,
+        modelId,
+        notes,
+        schemaVersion: ATTESTATION_SCHEMA_VERSION,
+    };
+}
+
+/** Loads and validates the attestation file for the evidence bridge. */
+function loadAttestation(path: string): JevAttestation {
+    let raw: string;
+    try {
+        raw = readFileSync(path, "utf8");
+    } catch (error) {
+        throw refusal(
+            "attestation-unreadable",
+            `Failed to read attestation file at "${path}": ${(error as Error).message}`,
+        );
+    }
+    let parsed: unknown;
+    try {
+        parsed = JSON.parse(raw) as unknown;
+    } catch (error) {
+        throw attestationInvalid(`Attestation file at "${path}" is not valid JSON: ${(error as Error).message}`);
+    }
+    return parseAttestation(parsed);
+}
+
+/**
+ * Converts a metric into the checker's numerator/denominator/value triple.
+ * The counts are the report's real counts; the value is the report's computed
+ * ratio. A zero denominator has no value — the report computed null there and
+ * the readiness checker blocks zero denominators by design, so such a triple
+ * can never enable anything.
+ */
+function evidenceMetricTriple(numerator: number, denominator: number, value: number | null): JevEvidenceMetricTriple {
+    if (denominator === 0) {
+        return { denominator, numerator };
+    }
+    if (value === null) {
+        // Unreachable by the report's own math (a metric is null exactly when
+        // its denominator is zero); guarded so a value is never fabricated.
+        throw refusal(
+            "evidence-internal",
+            `Evaluation report computed no value for a metric with denominator ${denominator}`,
+        );
+    }
+    return { denominator, numerator, value };
+}
+
+/**
+ * Pure offline conversion of an evaluation report plus a validated operator
+ * attestation into the jev-evidence-v1 document check-jev-readiness.ts
+ * validates. Every number is mapped from the report's computed metrics or the
+ * attestation — nothing is invented. Cross-checks refuse (precise, non-zero)
+ * when the attestation does not describe this exact report.
+ */
+export function buildEvidenceDocument(report: JevRunReport, attestation: JevAttestation): JevEvidenceDocument {
+    // The evidence must describe the run it was derived from. Fixture mode
+    // runs no model (report.model is null), so the attestation's model id
+    // stands in — it is the operator's declaration of what the bundle is for.
+    if (report.model !== null && report.model !== attestation.modelId) {
+        throw refusal(
+            "attestation-mismatch",
+            `Attestation modelId "${attestation.modelId}" does not match the evaluated model `
+            + `"${report.model}"; the attestation must describe this exact evaluation run`,
+        );
+    }
+
+    // Holdout attestation must agree with the report's own split counts.
+    const reportHoldoutCount = report.summary.corpus.bySplit["holdout"] ?? 0;
+    if (attestation.holdoutSplit.present && attestation.holdoutSplit.caseCount !== reportHoldoutCount) {
+        throw refusal(
+            "attestation-mismatch",
+            `Attestation declares ${attestation.holdoutSplit.caseCount} holdout case(s) but the evaluation `
+            + `report counted ${reportHoldoutCount} (split "holdout"); re-author the attestation for this `
+            + "report (truncated --max-cases runs count only their selected cases)",
+        );
+    }
+    const evidenceHoldout: JevAttestationSplit = attestation.holdoutSplit.present
+        ? { caseCount: reportHoldoutCount, present: true }
+        : { caseCount: 0, present: false };
+
+    const kinds: JevEvidenceKindEntry[] = Object.values(DECISION_KINDS).map((kind) => {
+        const row: JevMetricsRow = report.summary.byKind[kind];
+        const comparisons: JevAttestationComparison = attestation.humanReferenceComparisons[kind];
+        if (comparisons.comparableCount > row.evaluatedCount) {
+            throw refusal(
+                "attestation-mismatch",
+                `Attestation declares ${comparisons.comparableCount} comparable human-reference `
+                + `comparison(s) for decision kind "${kind}" but the report evaluated only `
+                + `${row.evaluatedCount} case(s) of that kind; a case without a prediction cannot be compared`,
+            );
+        }
+        if (comparisons.comparableCount > attestation.humanReference.caseCount) {
+            throw refusal(
+                "attestation-mismatch",
+                `Attestation declares ${comparisons.comparableCount} comparable human-reference `
+                + `comparison(s) for decision kind "${kind}" but only `
+                + `${attestation.humanReference.caseCount} human-reviewed reference case(s) are attested`,
+            );
+        }
+        const agreementValue = comparisons.comparableCount === 0
+            ? null
+            : comparisons.agreedCount / comparisons.comparableCount;
+        return {
+            decisionKind: kind,
+            holdoutSplit: evidenceHoldout,
+            humanReference: { ...attestation.humanReference },
+            metrics: {
+                abstentionRate: evidenceMetricTriple(
+                    row.abstainedCount,
+                    row.evaluatedCount,
+                    row.abstentionRate,
+                ),
+                agreement: evidenceMetricTriple(
+                    comparisons.agreedCount,
+                    comparisons.comparableCount,
+                    agreementValue,
+                ),
+                coverage: evidenceMetricTriple(row.acceptedCount, row.labeledCount, row.coverage),
+                precision: evidenceMetricTriple(row.correctCount, row.acceptedCount, row.precision),
+            },
+            rawCounts: {
+                acceptedCount: row.acceptedCount,
+                abstainedCount: row.abstainedCount,
+                correctCount: row.correctCount,
+                evaluatedCount: row.evaluatedCount,
+                humanReferenceComparisons: {
+                    agreedCount: comparisons.agreedCount,
+                    comparableCount: comparisons.comparableCount,
+                },
+                labeledCount: row.labeledCount,
+                missingPredictionCount: row.missingPredictionCount,
+                unavailableCount: row.unavailableCount,
+            },
+        };
+    });
+
+    // Tool-composed provenance note only: the attestation's free-form notes are
+    // deliberately not copied, so the evidence document stays free of unvetted
+    // operator text. It contains counts, tokens, and the attestation identity.
+    const predictedCount = Object.values(report.summary.byKind)
+        .reduce((sum, row) => sum + row.evaluatedCount, 0);
+    const notes = `Produced offline by run-jev-evaluation.ts from the ${report.mode} evaluation report `
+        + `(dataset ${report.datasetDigest}; ${report.evaluatedCaseCount} of ${report.datasetCaseCount} `
+        + `corpus cases in the run, ${predictedCount} with model predictions). The holdout-split and `
+        + `human-reference facts are operator attestations by ${attestation.attestedBy} dated `
+        + `${attestation.attestedAt}; the tooling cannot derive them from a synthetic corpus. `
+        + "Synthetic fixtures satisfy the document format only — real human-reference evidence "
+        + "requires a human-reviewed evaluation set.";
+
+    return {
+        datasetDigest: report.datasetDigest,
+        kinds,
+        modelId: report.model ?? attestation.modelId,
+        notes,
+        questionVersion: report.summary.questionVersion,
+        schemaVersion: EVIDENCE_REPORT_SCHEMA_VERSION,
+    };
 }
 
 // ---------------------------------------------------------------------------
@@ -718,6 +1132,24 @@ async function executeRun(options: JevRunOptions): Promise<JevRunResult> {
     if (maxCases !== null && (!Number.isInteger(maxCases) || maxCases <= 0)) {
         throw refusal("invalid-arguments", `--max-cases must be a positive integer, got ${String(options.maxCases)}`);
     }
+    // The evidence bridge is all-or-nothing: an evidence document can only be
+    // derived from an operator-authored attestation, and an attestation without
+    // an evidence destination has nothing to produce.
+    const evidenceOut = options.evidenceOut ?? null;
+    const attestationPath = options.attestation ?? null;
+    if (evidenceOut !== null && attestationPath === null) {
+        throw refusal(
+            "evidence-out-requires-attestation",
+            "--evidence-out requires --attestation=<file>; the evidence document is derived from an "
+            + "operator-authored attestation, never synthesized from the report alone",
+        );
+    }
+    if (attestationPath !== null && evidenceOut === null) {
+        throw refusal(
+            "attestation-requires-evidence-out",
+            "--attestation requires --evidence-out=<path>; pass both flags together",
+        );
+    }
     const env = options.env ?? process.env;
     const now = options.now ?? (() => new Date());
 
@@ -740,6 +1172,21 @@ async function executeRun(options: JevRunOptions): Promise<JevRunResult> {
     }
 
     const rubricVersion = loadRubricVersion();
+
+    // Validate the attestation before any mode executes, so a bad attestation
+    // can never waste a live run (and in fixture mode keeps the whole command
+    // offline-fail-fast). Report-dependent cross-checks run at conversion time.
+    const attestation = attestationPath === null ? null : loadAttestation(attestationPath);
+    // A live run whose attestation names a different model is refused before
+    // any provider call; buildEvidenceDocument re-checks against the report
+    // (fixture reports carry no model, so there the attestation id stands in).
+    if (attestation !== null && mode === "live" && attestation.modelId !== model) {
+        throw refusal(
+            "attestation-mismatch",
+            `Attestation modelId "${attestation.modelId}" does not match the evaluated model `
+            + `"${model}"; the attestation must describe this exact evaluation run`,
+        );
+    }
 
     // Full-corpus validation first; --max-cases then bounds what this run
     // evaluates (corpus file order) without changing the dataset digest.
@@ -813,12 +1260,23 @@ async function executeRun(options: JevRunOptions): Promise<JevRunResult> {
     mkdirSync(dirname(outputPath), { recursive: true });
     writeFileSync(outputPath, serialized, "utf8");
 
+    // Evidence bridge: pure offline conversion from the built report plus the
+    // already-validated attestation. The report above is unchanged; the
+    // evidence document carries counts and tokens only.
+    let evidencePath: string | null = null;
+    if (evidenceOut !== null && attestation !== null) {
+        const evidence = buildEvidenceDocument(report, attestation);
+        evidencePath = resolve(evidenceOut);
+        mkdirSync(dirname(evidencePath), { recursive: true });
+        writeFileSync(evidencePath, `${JSON.stringify(evidence, null, 2)}\n`, "utf8");
+    }
+
     const leakage = report.summary.corpus.scenarioLeakage;
     if (leakage.length > 0) {
         console.error(`Scenario leakage detected across splits: ${leakage.join(", ")}`);
     }
 
-    return { ok: true, exitCode: 0, reportPath: outputPath, report };
+    return { evidencePath, exitCode: 0, ok: true, report, reportPath: outputPath };
 }
 
 function emptyKindCounts(): Record<DecisionKind, number> {
@@ -873,6 +1331,7 @@ export async function runJevEvaluation(options: JevRunOptions): Promise<JevRunRe
 const USAGE = [
     "Usage: ts-node scripts/agent/run-jev-evaluation.ts --mode=fixture|live --input=<corpus.json> --output=<report.json>",
     "       [--model=<pinned-id>] [--max-cases=<n>] [--consent=live-provider-call]",
+    "       [--evidence-out=<evidence.json> --attestation=<attestation.json>]",
     "",
     "Mode fixture (default) is network-free: it validates the corpus and the",
     "judge rubric, computes the reference-label report, and writes the report.",
@@ -885,6 +1344,17 @@ const USAGE = [
     "  3. a synthetic-only corpus (--input inside evals/agent/jev/)",
     "  4. the pinned model id (moving aliases are rejected)",
     "Exits non-zero, naming the missing condition, when a gate fails.",
+    "",
+    "Evidence bridge: pass --evidence-out together with --attestation to also",
+    'emit a readiness-evidence document (schema "jev-evidence-v1") derived',
+    "offline from the report. The attestation is an operator-authored JSON",
+    `file (schema "${ATTESTATION_SCHEMA_VERSION}") carrying the facts a`,
+    "synthetic corpus cannot provide: the holdout split, the human-reviewed",
+    "reference count, the per-kind human-reference comparison counts, and an",
+    "author/date. The conversion never invents values and refuses (non-zero)",
+    "on a missing, incomplete, or mismatched attestation. Fixture-mode",
+    "evidence has no evaluated cases and can never pass the readiness gate;",
+    "it satisfies the document format only.",
 ].join("\n");
 
 interface CliArgs {
@@ -894,6 +1364,8 @@ interface CliArgs {
     readonly model?: string;
     readonly maxCases?: number;
     readonly consent?: string;
+    readonly evidenceOut?: string;
+    readonly attestation?: string;
 }
 
 function parseCliArgs(argv: readonly string[]): CliArgs {
@@ -903,9 +1375,11 @@ function parseCliArgs(argv: readonly string[]): CliArgs {
     let model: string | undefined;
     let maxCases: number | undefined;
     let consent: string | undefined;
+    let evidenceOut: string | undefined;
+    let attestation: string | undefined;
 
     for (const arg of argv) {
-        const match = /^(--mode|--input|--output|--model|--max-cases|--consent)=(.+)$/.exec(arg);
+        const match = /^(--mode|--input|--output|--model|--max-cases|--consent|--evidence-out|--attestation)=(.+)$/.exec(arg);
         if (match === null) {
             throw new Error(`Unrecognized argument "${arg}"\n\n${USAGE}`);
         }
@@ -943,11 +1417,19 @@ function parseCliArgs(argv: readonly string[]): CliArgs {
                 if (consent !== undefined) throw new Error("--consent supplied more than once");
                 consent = value;
                 break;
+            case "--evidence-out":
+                if (evidenceOut !== undefined) throw new Error("--evidence-out supplied more than once");
+                evidenceOut = value;
+                break;
+            case "--attestation":
+                if (attestation !== undefined) throw new Error("--attestation supplied more than once");
+                attestation = value;
+                break;
         }
     }
     if (input === null) throw new Error(`--input is required\n\n${USAGE}`);
     if (output === null) throw new Error(`--output is required\n\n${USAGE}`);
-    return { mode, input, output, model, maxCases, consent };
+    return { mode, input, output, model, maxCases, consent, evidenceOut, attestation };
 }
 
 if (require.main === module) {
@@ -960,6 +1442,11 @@ if (require.main === module) {
                     `Jev ${result.report.mode} evaluation report written to ${result.reportPath} `
                     + `(datasetDigest ${result.report.datasetDigest}, cases ${result.report.evaluatedCaseCount})`,
                 );
+                if (result.evidencePath !== null) {
+                    console.log(
+                        `Jev evidence document (${EVIDENCE_REPORT_SCHEMA_VERSION}) written to ${result.evidencePath}`,
+                    );
+                }
             } else {
                 console.error(`[${result.errorCode}] ${result.message}`);
                 process.exitCode = 1;

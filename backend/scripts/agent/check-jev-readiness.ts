@@ -14,9 +14,13 @@
  *
  * Inputs:
  *   --profile   (required) release profile document, schema "jev-release-profile-v1"
- *   --evidence  (optional) evaluation-evidence report, schema "jev-evidence-v1",
- *               produced by the offline evaluation tooling (jev-evaluation.ts
- *               foundation + the Task 9.1 live-run wrapper)
+ *   --evidence  (optional) evaluation-evidence document, schema "jev-evidence-v1",
+ *               produced by the evaluation CLI run-jev-evaluation.ts
+ *               (--evidence-out) from its evaluation report plus an
+ *               operator-authored attestation (--attestation) supplying the
+ *               holdout-split and human-reference facts that the tooling
+ *               cannot derive from a synthetic corpus. This checker only
+ *               validates the document; it never produces one.
  *
  * Output: one JSON document on stdout:
  *   { schemaVersion, ready, profileVersion, checkedAt, reasons[] }
@@ -28,6 +32,9 @@
  * redundancy is deliberate — a report that claims a bare percentage without
  * its counts is not acceptable release evidence, and every reported ratio is
  * recomputed here from the counts so the two can never quietly disagree.
+ * Provenance: the document comes from the evaluation CLI plus an operator
+ * attestation — metric counts are tool-derived, while the holdout split and
+ * human-reference facts are attested, never measured, by the tooling.
  *
  * The file system is read-only: only readFileSync is imported, results are
  * printed to stdout, and nothing is ever written.
