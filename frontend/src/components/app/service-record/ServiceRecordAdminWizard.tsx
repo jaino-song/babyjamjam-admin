@@ -110,6 +110,24 @@ function headerToInput(header: Record<string, unknown> | null): Record<string, s
     );
 }
 
+/**
+ * The shared validator reads a plain `Record<string, unknown>`; an interface
+ * patch type carries no index signature, so map every editable key explicitly
+ * instead of casting. Changed fields stay validated, omitted fields stay
+ * omitted (absent keys read as `undefined`, which the validator treats as
+ * "not supplied").
+ */
+function headerChangesToValidationRecord(changes: AdminServiceRecordEditHeaderChanges): Record<string, unknown> {
+    return {
+        momName: changes.momName,
+        momBirth: changes.momBirth,
+        babyName: changes.babyName,
+        babyBirth: changes.babyBirth,
+        deliveryType: changes.deliveryType,
+        babyWeight: changes.babyWeight,
+    };
+}
+
 export interface AdminServiceRecordSessionVariant {
     key: string;
     sourceLabel: string;
@@ -473,7 +491,7 @@ export function ServiceRecordAdminWizard({
     }
     const editingHeader = screen === "service";
     // Validate every changed field without rewriting or rejecting untouched historic values.
-    const headerErrors: ServiceRecordHeaderErrors = getServiceRecordHeaderErrors(headerPatch);
+    const headerErrors: ServiceRecordHeaderErrors = getServiceRecordHeaderErrors(headerChangesToValidationRecord(headerPatch));
     const hasHeaderErrors = Object.keys(headerErrors).length > 0;
     const hasInvalidNumericAnswers = hasInvalidServiceRecordNumericAnswers(draft);
     const changed = !priorChanges && !supplemental && (editingHeader

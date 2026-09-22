@@ -572,7 +572,7 @@ describe("per-session administrator editing", () => {
         expect(input).toHaveAttribute("aria-describedby");
         const errorId = input.getAttribute("aria-describedby");
         expect(errorId).toBeTruthy();
-        expect(document.getElementById(errorId!)).toHaveTextContent("달력에 없거나");
+        expect(document.getElementById(errorId!)).toHaveTextContent("달력에 있는 날짜 중 1900년 1월 1일부터 오늘까지의 날짜를 입력해 주세요.");
         expect(document.getElementById(errorId!)).toHaveAttribute("data-component", expect.stringContaining("baby-birth"));
 
         const confirm = screen.getByRole("button", { name: "수정 확인" });
