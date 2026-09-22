@@ -19,6 +19,7 @@ import {
     type AgentTaskMutationResponse,
     type AgentTaskPatchRequest,
 } from "@babyjamjam/shared/agent";
+import { normalizeApiError } from "@babyjamjam/shared";
 
 const AGENT_SESSION_KEY = "agent_session_id";
 
@@ -655,7 +656,21 @@ export function useAgentChat() {
         await refreshCurrentSession().catch(() => undefined);
         try {
             const response = await fetch(`/api/ai/actions/${encodeURIComponent(actionId)}`, { credentials: "same-origin" });
-            if (!response.ok) return { code: "action_unconfirmed", message: "작업 기록을 확인하지 못했습니다. 중복 실행하지 마세요.", effectState: "succeeded-unconfirmed" as const };
+            if (!response.ok) {
+                // Resolve the failure through the shared problem contract: a
+                // registered code drives the surfaced code/message; an
+                // unverified body keeps the local client copy and tag.
+                const body: unknown = await response.json().catch(() => null);
+                const normalized = normalizeApiError(
+                    { response: { status: response.status, data: body } },
+                    { locale: "ko-KR", operation: "mutation" },
+                );
+                return {
+                    code: normalized.verified && normalized.problem ? normalized.problem.code : "action_unconfirmed",
+                    message: normalized.verified ? normalized.message : "작업 기록을 확인하지 못했습니다. 중복 실행하지 마세요.",
+                    effectState: "succeeded-unconfirmed" as const,
+                };
+            }
             const action = await response.json() as { status?: unknown; error?: unknown };
             return actionErrorFromStatus(action.status, readActionErrorCode(action.error), fallbackCode, fallbackMessage);
         } catch {

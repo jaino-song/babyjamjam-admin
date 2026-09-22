@@ -2,10 +2,9 @@ import { ConflictException, Inject, Injectable, NotFoundException } from "@nestj
 import { Prisma } from "@prisma/client";
 import { EMPLOYEE_SCHEDULE_REPOSITORY, IEmployeeScheduleRepository } from "domain/repositories/employee-schedule.repository.interface";
 import { lockServiceRecordWriteSet } from "application/policies/service-record-write-lock.policy";
+import { codeOnlyProblemBody } from "application/utils/problem-bodies";
 import {
     RetentionDeleteBlockedError,
-    SCHEDULE_RETENTION_BLOCKED,
-    SCHEDULE_RETENTION_BLOCKED_MESSAGE,
     ScopedDeleteNotFoundError,
 } from "domain/errors/retention-delete-blocked.error";
 
@@ -26,7 +25,7 @@ export class DeleteEmployeeScheduleUsecase {
                 ? await this.employeeScheduleRepository.findById(branchid, id, tx)
                 : await this.employeeScheduleRepository.findById(branchid, id);
             if (!schedule) {
-                throw new NotFoundException(`Employee schedule with id ${id} not found`);
+                throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
             }
 
             if (tx && tx.employee_schedule?.findMany) {
@@ -70,7 +69,7 @@ export class DeleteEmployeeScheduleUsecase {
                     || lockedSchedule.primaryEmployeeId !== schedule.primaryEmployeeId
                     || lockedSchedule.secondaryEmployeeId !== schedule.secondaryEmployeeId
                 ) {
-                    throw new ConflictException("Employee schedule changed while acquiring write locks");
+                    throw new ConflictException(codeOnlyProblemBody("SERVICE_RECORD_WRITE_TARGET_CHANGED"));
                 }
             }
 
@@ -82,13 +81,10 @@ export class DeleteEmployeeScheduleUsecase {
                 }
             } catch (error) {
                 if (error instanceof ScopedDeleteNotFoundError) {
-                    throw new NotFoundException(`Employee schedule with id ${id} not found`);
+                    throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
                 }
                 if (error instanceof RetentionDeleteBlockedError) {
-                    throw new ConflictException({
-                        code: SCHEDULE_RETENTION_BLOCKED,
-                        message: SCHEDULE_RETENTION_BLOCKED_MESSAGE,
-                    });
+                    throw new ConflictException(codeOnlyProblemBody("SCHEDULE_RETENTION_BLOCKED"));
                 }
                 throw error;
             }

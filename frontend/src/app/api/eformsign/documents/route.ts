@@ -1,10 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import {
+    authRequiredResponse,
     errorResponse,
     getAuthHeaders,
     getAuthToken,
-    sanitizeUpstreamClientError,
-    unauthorizedResponse,
 } from "@/lib/api/route-utils";
 import { serverAPIClient } from "@/lib/api/server";
 
@@ -20,7 +19,7 @@ export async function GET(request: NextRequest) {
     const authToken = getAuthToken(request);
 
     if (!authToken) {
-        return unauthorizedResponse("Authentication required. Please log in.");
+        return authRequiredResponse();
     }
 
     const { searchParams } = new URL(request.url);
@@ -65,15 +64,12 @@ export async function GET(request: NextRequest) {
         });
 
         if (response.status >= 400) {
-            return NextResponse.json(
-                sanitizeUpstreamClientError(response.data, "Failed to fetch all eformsign documents", response.status),
-                { status: response.status },
-            );
+            return errorResponse({ response }, "fetch all eformsign documents", "read");
         }
 
         return NextResponse.json(response.data);
     } catch (error) {
-        return errorResponse(error, "fetch all eformsign documents");
+        return errorResponse(error, "fetch all eformsign documents", "read");
     }
 }
 
@@ -81,7 +77,7 @@ export async function DELETE(request: NextRequest) {
     const authToken = getAuthToken(request);
 
     if (!authToken) {
-        return unauthorizedResponse("Authentication required. Please log in.");
+        return authRequiredResponse();
     }
 
     const { searchParams } = new URL(request.url);
@@ -96,14 +92,11 @@ export async function DELETE(request: NextRequest) {
         });
 
         if (response.status >= 400) {
-            return NextResponse.json(
-                sanitizeUpstreamClientError(response.data, "Failed to delete eformsign documents", response.status),
-                { status: response.status },
-            );
+            return errorResponse({ response }, "delete eformsign documents", "mutation");
         }
 
         return NextResponse.json(response.data);
     } catch (error) {
-        return errorResponse(error, "delete eformsign documents");
+        return errorResponse(error, "delete eformsign documents", "mutation");
     }
 }

@@ -511,3 +511,255 @@ TL;DR: dev가 63커밋 전진(계약·메시지·시스템 템플릿·single-fli
 
 **advisory e2e 2건 기록 (2026-09-14):** Mobile CI의 advisory `playwright e2e`에서 2건이 실패한다: ① `system-template-preview.spec.ts:140` — `buildSystemTemplateSendHref`가 `template=` 파라미터를 추가한 dev 변경으로 실제 URL이 `/messages/new?template=THANKS&body=…`가 되어 `/messages\/new\?body=/` 정규식이 불일치. ② `contracts-mobile-list-row.spec.ts:1068` — dev의 `be3dc1db1`(인증 파일 소비자)로 영수증 다운로드가 `<a href>`에서 `<button aria-label="…다운로드">`(인증 fetch 다운로드)로 바뀌어 href 속성 단언이 불일치. **둘 다 dev 기존 실패다** — dev의 spec 파일 원문이 동일한 stale 기대값을 갖고 있고, dev CI(`Mobile CI`)는 최근 머지 커밋 4건(160983ca9, 9da26712c, 3ea495975, 074586547)에서 이미 failure다(160983ca9의 실패는 UI gate 드리프트 1줄; advisory는 skip). 우리 병합이 만든 회귀가 아니므로 우리 브랜치에서 dev의 stale 스펙을 임의 수정하지 않고 carried로 기록한다. 단, 우리 병합의 ui-debt 재앵커가 dev의 게이트 드리프트도 함께 해소한다. advisory는 non-blocking이며 required checks는 전부 pass다.
 
+## dev 동기화·PR #657 병합 실행 결과 (2026-09-14)
+
+TL;DR: dev가 두 번 더 전진해 sync-2(`ab23fe2af`)·sync-3(`9ec166edc`)로 해소하고, 동결 트리 재감사 **SHIP/HIGH**를 받은 뒤 PR #657을 dev에 병합했다(`2d01ecd9d`). 통합 브랜치는 dev tip으로 fast-forward했다.
+
+- **sync-2 `ab23fe2af`** (`62ef50356` + `895f15169`, dev 30커밋/91파일 — system-template BFF 계약 통일·frontend-mobile parity 게이트·delivery mode 등): 충돌 10파일. shared `package.json`/`tsconfig.backend-runtime.json`/`route-utils`(+) import union, system-template/message-trigger BFF 테스트는 dev parity 계약(`{error:"Failed to <context>", code:"UPSTREAM_ERROR"}`) 채택(구 한글 포워딩 supersede), ClientAutocomplete는 우리 refresh 오류 알림 + dev 공유 검색(`matchesSearchQuery`) 통합, messages/new는 dev의 `selectedTemplateDeliveryMode` 가드 + `service-feedback-link` 차단 + 우리 제출 멱등/잠금/정규화 병합, bff-parity malformed-JSON은 공유 `parseBody`의 EM 문제 본문(VALIDATION_FAILED/NOT_APPLIED)에 맞춰 양 플랫폼 동일하게 갱신. vendor는 병합 소스에서 `build:backend-runtime` 재생성 + `pnpm install`, 재실행 무변경(결정적).
+- **sync-2 감사: FIX_REQUIRED(절차 B1)** — 감사 중 같은 worktree에서 sync-3를 준비해 트리가 감사 도중 변함. 내용 결함은 0(9개 검증 항목 전부 통과: 마커 0·삭제 0·manifest union·BFF 구현-테스트 일치·vendor closure disjoint 등). 교훈: 감사 동안 worktree 동결이 필수.
+- **sync-3 `9ec166edc`** (`ab23fe2af` + `c00b2305b`, dev phone unification 7커밋/14파일): 충돌 3파일 — `ui-debt-baseline` 재앵커(그룹 27/28, kind 수량 dev와 동일, anchors-only 검증), 직원 2파일 import(우리 `normalizeApiError`/`getUserErrorMessage` 유지 + dev `formatKoreanPhoneNumber` 채택, `getApiErrorMessage`는 사용처가 우리 전환으로 대체되어 제거).
+- **재감사(동결 트리) SHIP/HIGH**: `9ec166edc` 14파일 전량 정적 검증 — dev 변경 드랍 0, 양 부모 대비 삭제 0, 마커 0, baseline 정규화 dev 동일성 + 앵커 스팟체크 4건, phone 파일 보존.
+- **검증(tip `9ec166edc`)**: mobile 249/1626, frontend 235/1543, shared 27/345 + 86 node, backend 355/5037(2연속; 1회 비재현 flake 기록), mobile/frontend/shared/backend 타입체크, UI gate fe/mo pass, 해소 파일 eslint 0 errors, `scripts/ci` 31 pass.
+- **PR #657 병합 완료: `2d01ecd9d`** (2026-09-14T14:08Z). merge 시점 dev head `b6fbd28b5`(message-history-badge-alignment, 7파일)와 GitHub이 충돌 없이 자동 병합. 통합 브랜치 `korean-error-messages`는 `2d01ecd9d`로 fast-forward 완료.
+- **carried:** advisory Playwright 2건(dev 기존 stale 스펙 — 우리 회귀 아님, 위 기록), 백엔드 flake 1회(비재현), cosmetic import 여백(직원 3파일 선행), `objectContaining` parity 단언 완화(양 플랫폼 동일).
+- **다음:** 잠정 코드 정렬(EM-CAT-01 예시 대비 개명 vs 유지+문서화) → Phase 4b(배정)·4c(일정). 이후 모든 task는 dev tip `2d01ecd9d`에서 분기한다.
+- **잠정 코드 정렬 검토 완료(2026-09-14):** 현행 `CLIENT_*`/`EMPLOYEE_*` 10개 코드 유지(EM-CAT-01 등록 식별자 충족, 예시는 illustrative; EM-CAT-03 공개 안정성 우선). `problem-details.ts`의 "Provisional" 주석 해제 + em 문서에 근거·예시 매핑 기록. Phase 4b 신규 배정 충돌 코드는 `ASSIGNMENT_OVERLAP` 우선 검토. 공개 식별자 변경이 없으므로 별도 감사 없이(trivial) 마감한다.
+
+
+## Phase 4b — 배정 오류 전환 (바인딩·실행, 2026-09-15)
+
+TL;DR: 배정(4b-1 백엔드: 역할·자격·동시 변경 코드 전환 / 4b-2 UI: 필드 매핑·BFF passthrough)로 분리한다. 4b-1을 dev tip `23f835e61` 기준 유닛으로 dispatch한다.
+
+**조사 결과(정찰 `em-4b-scout`, 2026-09-15):** 배정 소유 오류 경로는 `employee-assignment-eligibility.policy.ts`(역할 2 + 자격 1), `client.service.ts`(missing-primary 2곳 L887/L1835, 동시 변경 2곳 L1753/L2149 `SERVICE_RECORD_WRITE_TARGET_CHANGED`), schedule 유스케이스(같은 policy 재사용, 필드명 동일). `contract-client-assignment-guard`는 계약 도메인(5.1), `EMPLOYEE_SCHEDULE_OVERLAP`은 4c로 분리. `employee-assignment-eligibility.policy.spec.ts`는 현재 없음(inventory test_evidence []).
+
+- **Task 4b-1: 배정 거절·동시 변경 코드 전환** (feature, high)
+  - 카탈로그 추가 2개: `EMPLOYEE_ASSIGNMENT_NOT_ELIGIBLE`(400, 자격 미달 — 지점 불일치/미오픈/삭제) · `SERVICE_RECORD_WRITE_TARGET_CHANGED`(409, 기존 배포 식별자 등록 — EM-CAT-03에 따라 개명 없이 등록만).
+  - 전환: policy 역할 오류 2곳 → `VALIDATION_FAILED` `/secondaryEmployeeId` INVALID_FORMAT(다른 상세 2종), 자격 오류 → 신규 코드(codeOnly), client.service missing-primary 2곳 → `VALIDATION_FAILED` `/primaryEmployeeId` REQUIRED, 동시 변경 2곳 → 신규 등록 코드(codeOnly). 상태 코드는 유지(400/409)하고 문구는 해요체로 정리한다.
+  - 검증: red-first, policy 신규 spec(역할·자격 각 케이스), client.service spec 갱신(L1445/L3518 raw 단언), 전체 backend suite + shared + 양측 typecheck + vendor 재생성 결정성. 등록으로 HTTP shape가 바뀌는 동일 코드의 타 사이트(service-record lock 등)는 전체 suite에서 드러나면 최소 기계적 표준화만 하고 확장 내역을 보고한다.
+  - Dispatch metadata: `Phase: 4b-1` · `Parallel group: none` · `Execution: DELEGATE` · `Audit: SOL` · `Decision reason: 공개 코드 2개 추가·등록 + 다중 사이트 전환, 공유 계약 영향` · `Tier: standard` · `Sandbox: local` · `Agent: worker` · `Model: opencode-go/glm-5.3-flash` · `Effort: default` · `Phase starting integration commit: 23f835e61` · `Integration worktree: /Users/jaino/Development/babyjamjam-admin/korean-error-messages` · `Branch: unit/bjj319-assignment-errors` · `Worktree: /Users/jaino/Development/babyjamjam-admin/unit-bjj319-assignment-errors` · `Paths: packages/shared/src/errors/problem-details.ts(+test), backend/application/policies/employee-assignment-eligibility.policy.ts, backend/application/services/client.service.ts [해당 throw만], backend/test/policies/employee-assignment-eligibility.policy.spec.ts [신규], backend/test/services/client.service.spec.ts [해당 단언만], docs/error-management.md [공개 코드], backend/vendor/shared-agent/** [재생성]` · `Depends: Task 4.1(4a 완료)`
+  - **4b-2(후속):** UI 단위 — `ClientFormDialog` `/primaryEmployeeId`·`/secondaryEmployeeId` 필드 매핑, 웹 request-replacement 프록시 오류 passthrough(현재 500으로 삼킴), 모바일 error-presentation 확인. 4b-1 close 후 바인딩.
+
+**Task 4b-1 실행 결과 (2026-09-15):** worker unit `c6a8eff64`(실제 분기 `204a4ea43`) → 통합 `d56aac196`(9 files, +261/−13). 카탈로그에 `EMPLOYEE_ASSIGNMENT_NOT_ELIGIBLE`(400)·`SERVICE_RECORD_WRITE_TARGET_CHANGED`(409, 기존 식별자 등록) 추가, policy 역할·자격 3곳과 client.service 배정 4곳 전환(상태 유지, 해요체), policy 신규 spec(+147), docs·vendor 재생성. red-first: 신규 spec 4 failed → 12 passed.
+- 검증(통합 `d56aac196`): backend 356 suites/5,049(2연속; 첫 통합 실행에서 비재현 flake 1건), shared 349 jest+86 node, mobile 1,630, frontend 1,543, 4종 타입·UI 게이트·`scripts/ci` 31 통과, vendor 재생성 결정성 확인. 감사 **SHIP/HIGH**(base `204a4ea43`).
+- carried(auditor): ① `request-replacement` 라우트의 pointer는 `/secondaryEmployeeId`(본문 필드는 `newSecondaryEmployeeId`) — 플랜의 명시 선택이며 4b-2가 라우트 인지 pointer/프록시 passthrough를 소유. ② client.service 4개 전환 throw 직접 단언 없음(기존 공백). ③ 등록으로 wire shape가 바뀐 타 emitters는 테스트 미검증(4b-2/5.1). ④ inventory의 non-catalog 라벨 갱신(본 기록에서 처리).
+- 기록: inventory 정책 행 migrated·client.service/write-lock/link-mirrored 행 갱신, `assignment-error-contract` verified finding 추가, `vendor_parity` 갱신. unit worktree/branch 정리. 다음은 **4b-2**(웹 폼 필드 매핑·request-replacement 프록시 오류 passthrough·모바일 확인).
+
+**Task 4b-2: 배정 오류 UI·프록시 정렬** (feature, med) — 바인딩 2026-09-15, base `8de700776`
+- 웹 BFF `frontend/src/app/api/clients/[id]/request-replacement/route.ts`: 예외를 전부 500으로 삼키는 catch를 `frontend/src/app/api/clients/route.ts` POST의 problem-code passthrough 패턴으로 정렬(구형 본문은 기존 sanitize/브리지 유지). 라우트 테스트 추가.
+- 웹 `ClientFormDialog.tsx`: `ClientFormField`에 `primaryEmployeeId`/`secondaryEmployeeId` 추가 + `fieldForProblemError`가 `/primaryEmployeeId`, `/secondaryEmployeeId`(및 대체 플로우의 `/newPrimaryEmployeeId`, `/newSecondaryEmployeeId`)를 매핑하고 name/phone과 동일한 필드 표시·포커스로 연결.
+- 백엔드(소형): `assertEmployeeAssignmentShape`에 pointer 컨텍스트 옵션(기본 `/primaryEmployeeId`·`/secondaryEmployeeId`) 추가, `client.service.ts` requestReplacement 호출만 `/newPrimaryEmployeeId`·`/newSecondaryEmployeeId` 전달 — EM-VAL-03 pointer 정합(4b-1 감사 carried ① 해소). 관련 spec 단언 갱신.
+- 모바일: 변경 없음(확인만) — 프록시 passthrough·`error-presentation` 매핑은 이미 존재. 소비자 없는 `useRequestReplacement` 훅은 이번 범위 밖(후속 UI 슬롯으로 기록).
+- 비목표: 새 replacement UI 구현, 일정(4c) 도메인, 등록 코드 rename, 다른 BFF 라우트 확장.
+- Dispatch metadata: `Phase: 4b-2` · `Execution: DELEGATE` · `Audit: SOL` · `Agent: worker` · `Model: opencode-go/glm-5.3-flash` · `Phase starting integration commit: 8de700776` · `Branch: unit/bjj319-assignment-ui` · `Worktree: unit-bjj319-assignment-ui` · `Paths: frontend/src/app/api/clients/[id]/request-replacement/route.ts(+test), frontend/src/components/app/clients/ClientFormDialog.tsx(+tests), backend/application/policies/employee-assignment-eligibility.policy.ts(+spec), backend/application/services/client.service.ts [requestReplacement throw 1곳], backend/test/services/client.service.spec.ts [pointer 단언만]` · `Depends: Task 4b-1`
+
+**Task 4b-2 실행 결과 (2026-09-15):** worker unit `6393af1b1`(base `f8ef234b1`) → 통합 `94612c8af`(9 files, +385/−30). ① 백엔드 pointer 컨텍스트(기본 `/primaryEmployeeId`·`/secondaryEmployeeId`, requestReplacement만 `/new*`) — 4b-1 carried ① 해소. ② 웹 프록시 problem passthrough(`errorResponse`, 구형은 sanitize 폴백) + route test 4건. ③ ClientFormDialog 직원 필드 매핑(4철자)·필드 인지 스텝/포커스, EmployeeAutocomplete에 aria prop(하위 호환). ④ 모바일 무변경(검증만).
+- 검증(통합 `94612c8af`): backend 356/5,050, frontend 236/1,550, mobile 249/1,630, shared 349+86, 4종 타입·UI 게이트·`scripts/ci` 통과. 감사 **SHIP/HIGH**.
+- carried(auditor): N1 테스트 포맷(cosmetic), N2 `primary` pointer 미사용(무해), N3 inventory 갱신(본 기록), N4 모바일 `/new*` 미매핑(휴면), N5 create/update pointer 서비스 레벨 단언 없음(low). `useRequestReplacement` 소비자 0 — 대체 UI 슬롯은 후속.
+- 기록: inventory request-replacement 행 migrated·ClientFormDialog 행 갱신, `assignment-ui-proxy-alignment` finding 추가. unit worktree/branch 정리. **Phase 4b 완료(4b-1·4b-2)** — 다음은 **4c(일정)**.
+
+**Task 4c-1: 직원 일정 CRUD 오류 전환** (feature, high) — 바인딩 2026-09-15, base `4b5ae77dc`
+- 카탈로그 추가 2개(기존 배포 식별자 등록, EM-CAT-03): `EMPLOYEE_SCHEDULE_OVERLAP`(409, "같은 고객의 활성 일정과 기간이 겹쳐요.") · `SCHEDULE_RETENTION_BLOCKED`(409, 기존 한국어 문구를 카탈로그로 이관).
+- 전환: ① policy 날짜범위 거절 → `VALIDATION_FAILED` `/endDate` INVALID_VALUE("시작일은 종료일보다 늦을 수 없어요."), 중복 → `EMPLOYEE_SCHEDULE_OVERLAP` code-only(409, `conflictScheduleId`는 소비자 0·params 미지원이라 제거 — 기록). ② create/update/delete usecase: raw NotFound ×6 → `RESOURCE_NOT_FOUND`, lock 재읽기 충돌 ×3 → 4b-1에서 등록한 `SERVICE_RECORD_WRITE_TARGET_CHANGED` 재사용(EM-CAT-02 동일 원인), 보관 삭제 제한 → `SCHEDULE_RETENTION_BLOCKED`, 엔티티 date/role 래핑 → 위 VALIDATION_FAILED 매핑(역할은 `/secondaryEmployeeId` INVALID_FORMAT).
+- 범위 밖(기록): `parseInteger` 전역 변환(공유 헬퍼, 컨트롤러 다수) — 별도 단위 후보, `schedule-change.service`는 4c-2, BFF/UI는 4c-3, `service-record-entry`의 overlap 매핑은 제공기록지 슬롯.
+- Dispatch metadata: `Phase: 4c-1` · `Execution: DELEGATE` · `Audit: SOL` · `Agent: worker` · `Model: opencode-go/glm-5.3-flash` · `Paths: packages/shared/src/errors/problem-details.ts(+test), backend/application/policies/employee-schedule-invariants.policy.ts(+spec), backend/application/usecases/employee-schedule/{create,update,delete}-employee-schedule.usecase.ts(+specs), backend/vendor/shared-agent/**, docs/error-management.md` · `Depends: Task 4.2(4b 완료)`
+
+**Task 4c-1 실행 결과 (2026-09-15):** worker unit `0a026d03b`(base `1a1d52d79`) → 통합 `97a752cef`(14 files, +282/−64). 카탈로그 2코드(`EMPLOYEE_SCHEDULE_OVERLAP` 409, `SCHEDULE_RETENTION_BLOCKED` 409) 등록, policy 날짜범위→`VALIDATION_FAILED` `/endDate`·중복→신규 코드(`conflictScheduleId` 제거 — 소비자 0·params 미지원), usecase 3종 NF 6곳→`RESOURCE_NOT_FOUND`·lock 충돌→`SERVICE_RECORD_WRITE_TARGET_CHANGED` 재사용·보관 제한→신규 코드·엔티티 date/role 래핑→필드 문제. red-first 2 failed→pass.
+- 검증(통합 `97a752cef`): backend 356/5,050, shared 353+86, mobile 1,630, frontend 1,550, 4종 타입·게이트·ci 통과, vendor 결정성. 감사 **SHIP/HIGH**.
+- carried: parseInteger 전역 변환(별도 단위), `service-record-entry` 특정 연장 문구가 카탈로그 일반 문구로 대체(제공기록지 슬롯), HTTP 경계 직접 테스트는 기존 패턴 의존.
+- 기록: inventory 4행 migrated·service-record-entry 노트·vendor_parity 갱신, `schedule-crud-contract` finding 추가. unit worktree/branch 정리. 다음은 **4c-2(schedule-change 서비스)**.
+
+**Task 4c-2: schedule-change 서비스 오류 전환** (feature, high) — 바인딩 2026-09-15, base `91cb0f26c`
+- 카탈로그 등록(기존 배포 식별자, EM-CAT-03): `SERVICE_RECORD_PLANNED_DATE_UNAVAILABLE`(409) · `INVALID_SCHEDULE_DATE`(400) · `ALL_SESSIONS_SUBMITTED`(409) · `REQUEST_ALREADY_PENDING`(409) · `REQUEST_NOT_PENDING`(409) · `SCHEDULE_DATE_NOT_POSTPONED`(409) · `REQUEST_STALE`(409). 추가 1개: `SCHEDULE_CHANGE_UNCOMPUTABLE`(409, "고객 회기 정보/배정 기간 부재로 계산 불가" — raw 메시지 3종 대체).
+- 전환: `schedule-change.service.ts`의 코드 throw 전부 `codeOnlyProblemBody`로(원인·상태 보존), raw English 메시지 — NF 3종 → `RESOURCE_NOT_FOUND`, lock("target changed while acquiring write locks") → `SERVICE_RECORD_WRITE_TARGET_CHANGED` 재사용, 계산 불가 3종("Client has no session duration"/"Assignment has no start date"/"Assignment has no end date") → `SCHEDULE_CHANGE_UNCOMPUTABLE`(409).
+- 범위 밖(기록): BFF 8라우트·UI dict는 4c-3, `schedule-change.controller` ParseIntPipe raw는 carried, `service-record-entry`의 연장 불가 문구는 제공기록지 슬롯(3c-1 audit item 6).
+- Dispatch metadata: `Phase: 4c-2` · `Execution: DELEGATE` · `Audit: SOL` · `Agent: worker` · `Model: opencode-go/glm-5.3-flash` · `Paths: packages/shared/src/errors/problem-details.ts(+test), backend/application/services/schedule-change.service.ts(+spec), backend/vendor/shared-agent/**, docs/error-management.md, 관련 spec/e2e 단언` · `Depends: Task 4.3(4c-1)`
+
+**Task 4c-2 실행 결과 (2026-09-15):** worker unit `1b2b816e4`(base `fa608b1c0`) → 통합 `83dc3bcdb`(9 files, +492/−54). 배포 식별자 7개 등록 + 신규 `SCHEDULE_CHANGE_UNCOMPUTABLE`(409), 서비스 43개 throw 전량 `codeOnlyProblemBody`로 payload-only 전환(RESOURCE_NOT_FOUND ×16·lock ×7 재사용·계산 불가 ×5·나머지 코드 유지). red-first 18 failed→41/41.
+- 검증(통합 `83dc3bcdb`): backend 356/5,058, shared 369+86, mobile 1,630, frontend 1,550, 4종 타입·게이트·ci 통과, vendor 결정성. 감사 **SHIP/MEDIUM**(payload-only·상태 일치 정적 검증; 테스트 재실행은 오케스트레이터 근거).
+- carried: `service-record-entry` PLANNED_DATE_UNAVAILABLE 경로 wire 변경(status/code/message 보존, HTTP 테스트 없음), write-lock policy 자체 throw는 미변경(등록 코드라 동작 동일), UI dict 신규 코드 미반영(4c-3), `expectConflictCode` objectContaining 완화(minor), 8코드 HTTP 경계 테스트 공백.
+- 기록: inventory 서비스 행 migrated·컨트롤러/entry 노트·vendor_parity 갱신, `schedule-change-contract` finding 추가. unit worktree/branch 정리. 다음은 **4c-3(BFF 8라우트 + UI dict)**.
+
+**Task 4c-3: 일정 BFF 8라우트·UI dict 정렬** (feature, med) — 바인딩 2026-09-15, base `dcf64d096`
+- 웹 4라우트(approve/reject/apply/preview): raw 401 → `unauthorizedResponse`, catch의 raw passthrough/raw 500 → `errorResponse`(problem 검증·passthrough, 구형은 sanitize), 성공 shape은 `backendJsonResponse`+`withNoStore`로 모바일과 정렬.
+- 웹·모바일 로컬 400(English "Invalid schedule id/date") → 플랫폼 로컬 helper(`schedule-change-route-utils.ts`, `client-route-utils.ts` 패턴 + `localValidationResponse` 출력 계약)로 problem 본문(VALIDATION_FAILED, location path/body, 해요체). 공유 `localValidationResponse`는 비공개 유지.
+- 모바일 4라우트: raw 400만 동일 helper로 교체(나머지 helper 흐름 유지).
+- UI dict(웹 `features/service-records/utils/schedule-change-error.ts`, 모바일 `lib/service-records/schedule-change-error.ts`+test): 누락 등록 코드 추가(`SCHEDULE_CHANGE_UNCOMPUTABLE`, `REQUEST_NOT_PENDING`, `SERVICE_RECORD_PLANNED_DATE_UNAVAILABLE`) — 카탈로그 문구와 일치.
+- 테스트: 웹 approve/reject 라우트 테스트 신규, apply/preview 기존 테스트 갱신, 모바일 라우트 테스트 400 본문 갱신, dict 테스트.
+- 범위 밖(기록): `localValidationResponse` 공개 export, clients 라우트 로컬 400, 컨트롤러 ParseIntPipe, 공개 페이지 UI 재설계.
+- Dispatch metadata: `Phase: 4c-3` · `Execution: DELEGATE` · `Audit: SOL` · `Agent: worker` · `Model: opencode-go/glm-5.3-flash` · `Paths: frontend/src/app/api/schedule-change-requests/** (+helper/tests), mobile/src/app/api/schedule-change-requests/** (+helper/tests), frontend/src/features/service-records/utils/schedule-change-error.ts, mobile/src/lib/service-records/schedule-change-error.ts(+test)` · `Depends: Task 4.3(4c-2)`
+
+**Task 4c-3 실행 결과 (2026-09-15):** worker unit `11db7510c`(base `36af62790`) → 통합 `4ec3297e8`(19 files, +661/−116). 웹 4라우트(401→`unauthorizedResponse`, catch→`errorResponse` problem passthrough, success→`backendJsonResponse`+`withNoStore`), 모바일 4라우트 로컬 400→problem helper, 공통 헬퍼 계약(VALIDATION_FAILED·path/body pointer·ko-KR·problem+json, shared private `localValidationResponse` 모델), UI dict 양 플랫폼 8코드 완성. red-first web 8F/11P·mobile 6F/11P → 40/40·38/38.
+- 검증(통합 `4ec3297e8`): frontend 238/1,580, mobile 250/1,656, backend 356/5,058, shared 369+86, 3종 타입·UI 게이트(베이스라인 불변)·ci 통과. 감사 **SHIP/HIGH**(테스트 수 독립 검산 일치).
+- carried(auditor): 웹 helper의 scheduleId/request-id 쌍 미사용(테스트로 고정·dead export), `localValidationResponse` 계약 3중 복제(공유 export 제안), 웹 apply/preview scheduleId 미검증(기존), BFF error 본문에서 message/statusCode 별칭 제거(인레포 소비자 없음), `errorResponseMode` no-op 별칭(기존).
+- 기록: inventory BFF 8행 migrated·`schedule-bff-ui-alignment` finding 추가. unit worktree/branch 정리. **Phase 4c 완료(4c-1·4c-2·4c-3)** — 다음은 Phase 5(계약·문서 남은 웹/서버 경로).
+
+## Phase 5 — 계약·문서 남은 경로 (바인딩, 2026-09-15)
+
+정찰(`em-5-scout`) 분할: 5-1 가드+계약 발송(저위험) → 5-2 문서 컨트롤러/서비스 → 5-3 eformsign 컨트롤러(고위험: 정렬된 UI) → 5-4 envelope(ok/reason) 전환(최고위험·마지막).
+
+**Task 5-1: 계약 발송 가드 오류 코드화·가시화** (feature, high) — base `ed74acdf3`
+- 배경: `contract-client-assignment-guard`의 한국어 400 3종은 모든 호출부(create-and-send/dispatch/finalize)에서 envelope({success}/{ok})로 감싸지고, dispatch 경로의 `reason`은 웹·모바일 `getSafeHeadlessFailureMessage`가 한국어를 버리고 일반 문구로 표시한다 → 사용자에게 원인이 안 보임.
+- 카탈로그 3코드(신규): `CLIENT_ASSIGNMENT_REQUIRED`(409) · `DOCUMENT_PROVIDER_MISMATCH`(409) · `CLIENT_SERVICE_TERMINATED`(409).
+- 전환: ① 가드 3 throw → `ConflictException(codeOnlyProblemBody(...))`(문구는 카탈로그로 이관). ② `dispatch-document-headless.usecase` catch: 등록된 problem code가 있으면 `reason`을 그 코드 문자열로(없으면 기존 sanitize 유지) — progress emit도 동일. ③ 웹 `ContractCreationForm` 인라인 helper + 모바일 `lib/eformsign/headless-progress.getSafeHeadlessFailureMessage`에 3코드 → 한국어 문구 매핑 추가. ④ create-and-send(AI툴 경로)·finalize(스왈로우)는 범위 밖(기록).
+- 테스트: guard spec(코드), dispatch spec(reason 코드), 웹/모바일 helper 테스트(3케이스), 관련 e2e 단언 갱신.
+- 범위 밖: envelope(ok/reason) 전환 전체·문서/eformsign 컨트롤러(5-2/5-3), 서명된 계약 수정(별도 subphase).
+- Dispatch metadata: `Phase: 5-1` · `Execution: DELEGATE` · `Audit: SOL` · `Agent: worker` · `Model: opencode-go/glm-5.3-flash` · `Paths: packages/shared/src/errors/problem-details.ts(+test), backend/application/services/contract-client-assignment-guard.service.ts(+spec), backend/application/usecases/eformsign-doc/dispatch-document-headless.usecase.ts(+spec), frontend/src/components/app/contracts/ContractCreationForm.tsx(+test), mobile/src/lib/eformsign/headless-progress.ts(+test), backend/vendor/shared-agent/**, docs/error-management.md` · `Depends: Task 5.1 정찰`
+
+**Task 5-1 실행 결과 (2026-09-15):** worker unit `40358eb1e`(base `df9351612`) → 통합 `bafbad310`(14 files, +290/−29). 가드 3원인 코드화(`CLIENT_ASSIGNMENT_REQUIRED`·`DOCUMENT_PROVIDER_MISMATCH`·`CLIENT_SERVICE_TERMINATED`, 409), dispatch catch가 등록 코드 → `reason` 코드 문자열 매핑(그 외 sanitize 유지), 웹·모바일 `getSafeHeadlessFailureMessage` 3코드 문구 추가. red-first 4계층 확인.
+- 검증(통합 `bafbad310`): backend 357/5,059(첫 실행 flake 1건·재실행 green), frontend 238/1,582, mobile 250/1,658, shared 375+86, 4종 타입·게이트·ci·vendor 결정성. 감사 **SHIP/HIGH**(음성 분기 커버리지·dead fixture는 nonblocking).
+- carried(auditor): `registeredProblemCode` 부정 분기 테스트 공백, `eformsign.controller`의 가드 주입 dead(기존), dispatch `reason`/`uncertainReason`이 코드 문자열이 됨(외부 운영 툴 영향 가능·인레포 소비자 없음).
+- 기록: inventory 가드/dispatch 행 migrated + envelope 슬롯 노트, `contract-guard-codes` finding, vendor_parity 갱신. unit worktree/branch 정리. 다음은 **5-2(문서 컨트롤러/서비스)** — 이후 5-3(eformsign 컨트롤러, 고위험)·5-4(envelope, 최고위험).
+
+**Task 5-2: 문서 컨트롤러·서비스 오류 전환** (feature, med) — 바인딩 2026-09-15, base `fb17885db`
+- 전환(기존 코드 재사용, 카탈로그 추가 없음): `document.controller.ts` — tags 배열/형식 400 → `VALIDATION_FAILED` `/tags` INVALID_FORMAT, `tenant context unavailable` 403 → `ACCESS_DENIED`, `file is required` → `/file` REQUIRED, validationError → `VALIDATION_FAILED`, name>255 → `/name` OUT_OF_RANGE, `Document file not found` NotFound ×2 → `RESOURCE_NOT_FOUND`(404). `document.service.ts` — Forbidden L34 → `ACCESS_DENIED`(문맥 확인), NotFound ×2 → `RESOURCE_NOT_FOUND`(id 노출 제거), plain Error L145는 500 remap 유지. `document.entity.ts` L108/L120 한국어 Error는 도달 가능할 때만 전환(그 외 기록).
+- 소비자: 웹 BFF `file-storage/files` 경유(문제 passthrough 여부 확인, 필요 시 최소 정렬) — 모바일 소비자 없음.
+- 테스트: `document.controller.integration.spec.ts`(143/385/395/409/425/483) + service spec 갱신, red-first.
+- 범위 밖: eformsign 컨트롤러(5-3), envelope(5-4), 업로드 UI 재설계.
+- Dispatch metadata: `Phase: 5-2` · `Execution: DELEGATE` · `Audit: SOL` · `Agent: worker` · `Model: opencode-go/glm-5.3-flash` · `Paths: backend/interface/controllers/document.controller.ts(+spec), backend/application/services/document.service.ts(+spec), backend/domain/entities/document.entity.ts, frontend/src/app/api/file-storage/** [passthrough 확인 시만]` · `Depends: Task 5-1`
+
+**Task 5-2 실행 결과 (2026-09-15):** worker unit `f17073251`(base `5469fe57b`) → 통합 `45ce8fb47`(6 files, +253/−41). 문서 컨트롤러/서비스 전환(기존 코드 재사용, 카탈로그·vendor 불변): tags 4→`/tags`, tenant 403→`ACCESS_DENIED`, file required/validationError→`/file`, name>255→`/name` OUT_OF_RANGE, not-found ×2→`RESOURCE_NOT_FOUND`(id 제거), 웹 download BFF 404 특례 제거→problem passthrough. 엔티티 throw는 도달 불가/섀도우 확인 후 유지. red-first 14 failed→39/39.
+- 검증(통합 `45ce8fb47`): backend 356/5,064, frontend 238/1,582, mobile 250/1,658, shared 375+86, 3종 타입·게이트·ci. 감사 **SHIP/MEDIUM**.
+- carried(auditor): ① name>255 테스트가 pipe 분기를 검증(컨트롤러 분기 미도달) ② `validationError` 동적 detail이 제어문자 포함 시 500 폴백(고정 문구 권장) ③ 모바일 download BFF는 아직 404 problem 미정렬(no-consumer 주장 정정) ④ storage-path 가드의 `ACCESS_DENIED` 명명(충돌 성격).
+- 기록: inventory 문서 3행 + 웹 BFF 행 migrated, `document-contract` finding 추가. unit worktree/branch 정리. 다음은 **5-3(eformsign 컨트롤러, 고위험)**.
+
+**Task 5-3a: eformsign tombstone 코드 등록·전환** (feature, med) — 바인딩 2026-09-15, base `1c7b8cb6d`
+- 카탈로그 등록(기존 배포 식별자, 410): `EFORMSIGN_CREDENTIALS_SERVER_ONLY` · `EFORMSIGN_PROVIDER_OPERATION_SERVER_ONLY`.
+- 전환: 양 컨트롤러의 tombstone 7곳(`eformsign-doc` L186/194, `eformsign` L398/406/414/422/430) → `GoneException(codeOnlyProblemBody(...))` (410 유지, English `error` 필드 제거). 등록 즉시 전 사이트가 mapper로 problem化되므로 7곳을 한 유닛에서 함께 전환한다.
+- 소비자: 프론트/모바일 BFF가 자체 410 `{code}`를 author(불변, Next측); UI에 Gone/410 분기 없음(확인됨).
+- 테스트: tombstone 단언(eformsign.controller.integration.spec.ts:1423 등) 갱신, red-first.
+- 범위 밖: eformsign.controller의 나머지 raw {error}/BadRequest/ServiceUnavailable(5-3b), envelope(5-4).
+- Dispatch metadata: `Phase: 5-3a` · `Execution: DELEGATE` · `Audit: SOL` · `Agent: worker` · `Paths: packages/shared/src/errors/problem-details.ts(+test), backend/interface/controllers/{eformsign-doc,eformsign}.controller.ts [tombstone만], backend/vendor/shared-agent/**, docs/error-management.md, 관련 spec` · `Depends: Task 5-2`
+
+**Task 5-3a 실행 결과 (2026-09-16):** worker unit `22f8a3ce4`(base `2d22172b6`) → 통합 `88bb0b970`(8 files, +126/−35). tombstone 코드 2종 등록(410)·7사이트 전환. red-first shared 4F·integration 4F. 감사 **SHIP/HIGH**.
+- 검증(통합 `88bb0b970`): **교훈 — vendor 변경 유닛은 통합에서 먼저 `pnpm install --frozen-lockfile`로 `file:` 복사본을 갱신해야 함**(미갱신 시 type-check 실패·스퓨리어스 test 실패; 갱신 후 backend tc 0, 356/5,065 pass, flake 1회 재발). frontend 238/1,582, mobile 250/1,658, shared 379+86, 게이트·ci 통과.
+- carried(auditor): integration spec이 프로덕션 mapper 미경유(raw 직렬화 단언 — mapper는 코드 검증), eformsign-doc tombstone 2곳 직접 테스트 없음, BFF tombstone 14파일은 Next측 자체 410(정렬 여부 후속 판단), mapper 410 등록코드 테스트 공백.
+- 기록: inventory 컨트롤러 2행 migrated, `eformsign-tombstones` finding 추가. unit 정리. 다음은 **5-3b(eformsign.controller 나머지)**.
+
+**Task 5-3b: eformsign.controller 나머지 전환** (feature, high) — 바인딩 2026-09-16, base `5cd9b1463`
+- 전환(tombstone 제외): raw `HttpException({error})` ×12(L684/701/799/820/855/867/895/955/1048/1058/1069/1093) → 상태별 재사용 코드 매핑(400→`REQUEST_INVALID`/`VALIDATION_FAILED`(본문 파라미터면 pointer), 403→`ACCESS_DENIED`, 404→`RESOURCE_NOT_FOUND`, 502/503→`DEPENDENCY_UNAVAILABLE`/`UPSTREAM_*`), English `BadRequestException` ×5(L87/114/127/133/139) → `VALIDATION_FAILED`/`REQUEST_INVALID` 한국어 문구, `ServiceUnavailableException({...})` ×3(L828/912/972) → `DEPENDENCY_UNAVAILABLE`(503, payload의 소비자 확인 후 최소 보존/제거).
+- 소비자: eformsign-docs BFF/web·모바일 — 문제 passthrough 확인, 필요 시 최소 정렬. `{error}` 문자열을 읽는 소비자는 카탈로그 호환 별칭으로 유지됨.
+- 테스트: 해당 spec들의 raw 단언 갱신 + 신규 커버, red-first.
+- 범위 밖: eformsign-doc.controller(5-3a 완료), envelope(5-4).
+- Dispatch metadata: `Phase: 5-3b` · `Execution: DELEGATE` · `Audit: SOL` · `Agent: worker` · `Model: opencode-go/glm-5.3-flash` · `Paths: backend/interface/controllers/eformsign.controller.ts [tombstone 제외], backend/test/integration/eformsign.controller.integration.spec.ts, 소비자 BFF 확인 시 frontend/mobile eformsign-docs 라우트(최소), docs/error-management.md` · `Depends: Task 5-3a`
+
+**Task 5-3b 실행 결과 (2026-09-16):** worker unit `f06e71e84`(base `31b6dce86`) → 통합 `a6533b562`(2 files, +271/−75), **감사 FIX_REQUIRED(B1)** → 보정 `bd31791d3` → 통합 `3e71aec88`, 보정 감사 **SHIP/HIGH**.
+- 내용: 12 raw `{error}` → 상태별 재사용 코드(3×VALIDATION_FAILED 포인터·6×ACCESS_DENIED·RESOURCE_NOT_FOUND·2×INTERNAL_ERROR), 7 English BadRequest(`fileType/statusCategory/templateMatch/displayStatus/section/format` 쿼리 포인터), 3 ServiceUnavailable→DEPENDENCY_UNAVAILABLE. **B1**: mutation 500 fallback 2곳이 `codeOnlyProblemBody`(NOT_APPLIED)로 변환돼 모바일 재시도 가드가 "재시도 가능"으로 오판할 수 있었음 → `uncertainProblemBody`(UNKNOWN/CHECK_STATUS) 신설·교체, 단언 보강, 카운터팩추얼로 검증.
+- 검증(통합 `3e71aec88`): backend 356/5,075, frontend 238/1,582, mobile 250/1,658, shared 379+86, backend tc 0, 게이트·ci. 교훈: **500 fallback은 절대 NOT_APPLIED로 기본 변환하지 않는다(EM-STATE-01)**.
+- carried: integration spec이 mapper 미경유(기존), 파이프 섀도우 사이트 defense-in-depth, `throwHttpOrInternalError`·한국어 기존 사이트 유지, 503 읽기 outcome NOT_APPLIED(의미상 무해), korean-error-messages 데드 엔트리.
+- 기록: inventory 컨트롤러 행 갱신, `eformsign-controller-contract` finding 추가. unit 정리. 다음은 **5-4(envelope ok/reason, 최고위험)** — 이후 Phase 6.
+
+## Phase 5-4 — headless envelope 계약 (바인딩, 2026-09-16)
+
+**설계 결정(정찰 기반):** ambiguous/partial 결과는 HTTP 오류가 아니라 **업무 결과**(EM-STATE-01)이고, `fallbackHint`·문서 ID 복구 프로토콜은 유지 의무(플랜 "server-owned fallbackHint 재사용")이므로 **가산적 계약**을 채택한다: 기존 `{ok:false, reason, fallbackHint, …}` 필드를 바이트 동일하게 유지하고 `code`(등록)·`outcome`·`recovery`만 추가(EM-CHANGE-01/04 호환). 사전-쓰기 거절의 problem+json화는 후속(6.x) 판단으로 남긴다.
+
+**Task 5-4a: dispatch envelope 가산 계약** — base `ce01b87b7`
+- dispatch 11개 실패 분기에 `code`/`outcome`/`recovery` 추가. reason 토큰을 SCREAMING 코드로 등록(의미 1:1, reason은 호환 별칭으로 유지), outcome 매핑: 사전검증/중복/락/진행중 → NOT_APPLIED, already_accepted/uncertain/remote_unconfirmed/terminal → UNKNOWN+CHECK_STATUS, local_persist_failed → PARTIALLY_APPLIED+CHECK_STATUS, iframe 가능한 pre-send 실패 → NOT_APPLIED(+fallbackHint 유지).
+- must-NOT-change: iframe 게이트·duplicate force 재시도·local_persist adopt·fallbackHint/reason/문서 ID 필드(바이트 동일), worker `isAmbiguous` 입력.
+- Dispatch metadata: `Phase: 5-4a` · `Execution: DELEGATE` · `Audit: SOL` · `Agent: worker` · `Model: opencode-go/glm-5.3-flash` · `Paths: packages/shared/src/errors/problem-details.ts(+test), packages/shared/src/types/eformsign.ts, backend/application/usecases/eformsign-doc/dispatch-document-headless.usecase.ts(+spec), backend/interface/dto/eformsign-doc.dto.ts, backend/interface/controllers/eformsign-doc.controller.ts [dispatch 응답만], backend/vendor/shared-agent/**, docs/error-management.md, worker spec 단언` · `Depends: Task 5-3b`
+
+**Task 5-4a 실행 결과 (2026-09-16):** worker unit `a0457cc77`(base `5c972b86f`) → 통합 `75bd0816f`(12 files, +809/−7). dispatch 실패 11분기에 `code/outcome/recovery` 가산(11코드 등록), legacy 필드 바이트 동일(기계 감사: 제거 7줄 전부 슈퍼셋/리팩터). worker `isAmbiguous` 불변(가드 테스트 추가), 컨트롤러 envelope 스펙 신규. red-first 14F/22F/1F.
+- 검증(통합 `75bd0816f`): backend 357/5,082, frontend 238/1,582, mobile 250/1,658, shared 401+86, typecheck 0, 게이트·ci. 감사 **SHIP/HIGH**.
+- **flaky 정체 규명:** `receipt-pdf-verifier.service.spec.ts`(pdfjs capability) — base에서도 실패하는 기존 이슈(스태시 검증), 오늘의 flake 전부 이것으로 추정.
+- carried(auditor): catch의 SCREAMING 코드 비대칭(도달 불가·Phase 6 연계), post-send catch 방어(계획 명시), inventory 갱신(본 기록), 소비자 미채택(BFF passthrough라 백엔드 변경 불요), HTTP status 미전환(201 유지 — Phase 6 판단).
+- 기록: inventory 컨트롤러/dispatch 행 노트, `dispatch-envelope-contract` finding. unit 정리. 다음은 **5-4b(finalize envelope)** → 5-4c(소비자) → 5-4d(creation/AI) → Phase 6.
+
+**Task 5-4b: finalize envelope 가산 계약** — base `68100ab3b` (5-4a 동형)
+- finalize 실패 분기에 `code/outcome/recovery` 가산, legacy 필드 바이트 동일. 신규 코드: `DOCUMENT_FINALIZE_IN_PROGRESS`(409), `EFORMSIGN_TERMINAL_FAILURE`(502), `DOCUMENT_FINALIZE_UNCONFIRMED`(502), `DOCUMENT_FINALIZE_FAILED`(502). 재사용: `DOCUMENT_LOCK_UNAVAILABLE`·`DOCUMENT_LOCK_LOST`·`ACCESS_DENIED`·`DISPATCH_ALREADY_ACCEPTED`·`DISPATCH_UNCERTAIN`.
+- outcome: 락/진행중/authorization → NOT_APPLIED/NONE(권한은 ACCESS_DENIED 403), already-accepted/uncertain/pending → UNKNOWN+CHECK_STATUS, terminal failure → FAILED/NONE, catch → NOT_APPLIED/NONE(iframe/manual_check 조건 불변). `ok:true, completed:false`(advanced) 성공 분기 불변.
+- Dispatch: `Phase: 5-4b` · worker(glm) · `Paths: finalize-document-headless.usecase.ts(+spec), eformsign-doc.dto.ts, eformsign-doc.controller.ts [finalize만], shared types, catalog(+test)+vendor, docs` · `Audit: SOL` · `Depends: 5-4a`
+
+**Task 5-4b 실행 결과 (2026-09-16):** worker unit `32f023dec`(base `087638855`) → 통합 `c09d2253f`(12 files, +338/−7). finalize 9개 실패 분기 + 컨트롤러 denial에 code/outcome/recovery 가산(신규 4코드, 재사용 5코드), legacy 필드·삼항 불변. red-first 17F+8F. 감사 **SHIP**.
+- 검증: backend 357/5,083(flaky 1회→재실행 green), shared 409+86, tc 0. **flaky 풀 확장 확인:** 컨트롤러 integration 스펙(Employee/UserController)도 런당 랜덤 1건 실패 — base에서도 동일(기존 환경 flake).
+- carried: 4개 분기 직접 단언 미비(N1), 컨트롤러 denial 매핑 리터럴 중복(N2).
+- 기록: `finalize-envelope-contract` finding 추가. unit 정리. 다음은 **5-4c(웹/모바일 소비자 정렬)**.
+
+**Task 5-4c: headless 소비자 정렬** — base `6629eee55`
+- ① mobile legacy `useContractCreationFlow.ts`의 무조건 iframe 폴백(중복 위험) — 도달성 확인 후 안전 게이트 적용 또는 정식 은퇴. ② 웹 `ContractCreationForm`·웹 `contracts/page`(finalize)·모바일 `new/page`·모바일 `contracts/page`가 가산 `outcome`/`code`를 우선 분류로 채택(UNKNOWN→확인 필요+잠금, PARTIALLY_APPLIED→adopt, NOT_APPLIED→기존), legacy reason/fallbackHint 분기는 폴백으로 유지. ③ 테스트.
+- 범위 밖: 백엔드(불변), creation/AI(5-4d), reason 토큰 변경.
+- Dispatch: `Phase: 5-4c` · worker(glm) · `Paths: frontend/src/components/app/contracts/ContractCreationForm.tsx, frontend/src/app/(protected)/contracts/page.tsx, frontend/src/services/api.ts, mobile/src/app/(shell)/contracts/{new,page}.tsx, mobile/src/hooks/useContractCreationFlow.ts, mobile/src/app/(shell)/contracts/page.helpers.ts, mobile/src/lib/contracts/contract-operation-guard.ts, 대응 테스트` · `Audit: SOL`
+
+**Task 5-4c 실행 결과 (2026-09-16):** worker unit `981705e21`(base `17e439226`) → 통합 `53ff9d8fe` + 재앵커 `3bec2e441`. 4소비자 outcome-우선(UNKNOWN→확인필요+잠금, PARTIALLY_APPLIED→adopt) + legacy 분기 불변, **dead `useContractCreationFlow` 체인 8파일 은퇴**(도달성 4중 확인), `readHeadlessOutcome` 헬퍼. red-first mobile 5F·web 3F.
+- 검증: frontend 240/1,590(+8), mobile 250/1,666(+8), backend 357/5,083, shared 409+86, fe/mo tc 0, UI 재앵커 anchors-only(27/48·28/44 보존)·게이트 green, ci 31. 감사 **SHIP**.
+- 기록: `headless-consumer-alignment` finding. unit 정리. 다음은 **5-4d(creation/AI-tool)** → Phase 6.
+
+**Task 5-4d: creation/AI-tool 결과 계약 가산** — base `c7ebcbec7`
+- `create-and-send-contract.usecase.ts` 실패 결과에 `code`/`outcome`/`recovery` 가산(legacy `{success:false,error}` 불변, `uncertain`/`remoteDocumentId` 유지). outcome: 사전거절 NOT_APPLIED, uncertain/remote UNKNOWN+CHECK_STATUS. 코드는 재사용(가드 3코드·VALIDATION_FAILED 등) 우선.
+- 소비자: `tool-executor.service.ts`(AI툴)·`contract-external-agent-capabilities.provider.ts` — outcome/uncertain 우선 분류(legacy fallback), 테스트.
+- Dispatch: `Phase: 5-4d` · worker(glm) · `Paths: create-and-send-contract.usecase.ts(+spec), tool-executor.service.ts(+spec), contract-external-agent-capabilities.provider.ts(+spec), shared types(가산 optional)` · `Audit: SOL`
+
+**Task 5-4d 실행 결과 (2026-09-16):** worker unit `08912aafa`(base `c7ebcbec7`) → 통합 `cd02d5371`, **감사 FIX_REQUIRED(B1)** → 보정 `aff80c56a` → 통합 `052e2fe03`, 보정 감사 **SHIP/HIGH**. creation 실패에 code/outcome/recovery 가산(전부 기존 코드 재사용), tool-executor/agent-capability가 outcome UNKNOWN 우선 분류. B1: call-inbox e2e exact-equality 2곳이 가산 필드로 깨짐(jest가 test/e2e 제외라 미탐) → 단언 보정 + **`e2e:call-inbox` 로컬 실행 22/22 통과**로 검증. full backend 357/5,096, tc 0, eslint 0.
+- carried: N1 local-persist 패밀리를 UNKNOWN으로 분류(5-4a의 PARTIALLY_APPLIED와 상이 — 안전·기록된 선택), N2 헬퍼 중복(향후 추출), N3 null phone은 generic VALIDATION_FAILED.
+- 기록: inventory 3행 갱신·`creation-result-contract` finding. unit 정리. **Phase 5 완료(5-1~5-4d)** — 다음은 **Phase 6(나머지 전수)**.
+
+## Phase 6 — 바인딩·배치 (2026-09-16)
+
+**6a: 백엔드 agent·AI-chat 도메인** — base `c80fa1d53`. 대상: `backend/application/agent/*`(5) + `backend/application/ai-chat/*`(2) — raw 4xx/에이전트 실패 분류 전환(기존 코드 재사용 우선, 필요 시 최소 신규). 소비자는 AI챗/에이전트 런타임(비HTTP·in-process) — 분류 오류·raw message 비교·빈 성공 삼킴 점검. worker(glm) · Audit SOL.
+
+**Task 6a 실행 결과 (2026-09-16):** worker unit `8db72a46b`(base `c80fa1d53`) → 통합 `157bbc29d`(16 files, +618/−88). agent 5 + ai-chat 2 파일 49+ throw 전환(전부 기존 코드 재사용, 카탈로그·vendor 불변), tool-executor 가산 code/outcome. red-first 22F→246 focused; full backend 358/5,115. 감사 **SHIP**.
+- carried: runtime L364 403 의미 긴장, confirmation-mismatch 단일 body(안티프로빙), tool-executor outcome 기본값(read NOT_APPLIED vs mutation UNKNOWN), persistResultPart L855 미전환(범위 외).
+- 기록: `agent-chat-contract` finding. unit 정리. **Phase 6 계속: 다음 배치 = 백엔드 controllers/services 잔여 → 프론트/모바일 라우트 → UI.**
+
+**Task 6b: 공유 파서·인증 가드 전환** — base `e36210d03`
+- 대상: `backend/interface/parse-integer.ts`(parseInteger/parseOptionalInteger), `backend/interface/parse-boolean.ts`, `backend/infrastructure/auth/{call-ingest.guard,jwt.strategy,local.strategy,service-record.guard,rate-limit.guard}.ts`, `backend/infrastructure/tenant/tenant.guard.ts`.
+- 매핑: 파서 → `VALIDATION_FAILED`(pointer `/<name>`, min/max 위반 OUT_OF_RANGE·그 외 INVALID_FORMAT, location 생략 — path/query 혼용) 해요체, 400 유지. auth Unauthorized raw → `AUTH_REQUIRED`(401). rate-limit `{code:AUTH_RATE_LIMITED}` → 기존 `REQUEST_RATE_LIMITED`(429) 재사용. tenant.guard Forbidden → `ACCESS_DENIED`(403).
+- 범위 밖: `prisma-exception.filter.ts`(6c 별도), ParseUUIDPipe(Nest 내장 — carried), 컨트롤러/서비스 잔여.
+- Dispatch: worker(glm) · `Paths: 위 파일 + 대응 spec` · `Audit: SOL`
+
+**Task 6b 실행 결과 (2026-09-16/17):** worker `0dd877dbf`(base `416fcb09e`) → 통합 `b6443f90f` (8 파일 + specs). 전부 기존 코드 재사용, 카탈로그·vendor 불변. red-first 25F→45 focused; 360 suites/5,127; **call-inbox e2e 22/22 실검증**; 감사 SHIP. 통합 첫 실행 2F는 플레이크 풀(재실행 green, employee-schedule 25/25).
+- carried: rate-limit 429 본문 retryAfter 제거(헤더 유지, sanctioned), shared `AUTH_RATE_LIMITED` 죽은 키 정리(후속), ParseUUIDPipe(Nest 내장) 미전환.
+
+**Task 6c: Prisma 필터 + 설정·템플릿·알림 서비스** — base `58a9393f7`
+- 대상(7): `backend/infrastructure/filters/prisma-exception.filter.ts`, `application/services/{notification,system-admin,system-setting,system-template,system-template-mutation-guard,document-category}.service.ts`.
+- 매핑: Prisma P2002→REQUEST_CONFLICT(409), P2025→RESOURCE_NOT_FOUND(404), P2003→REQUEST_CONFLICT, P2000→VALIDATION_FAILED(400), P2024/P1001/P1002/P1008/P1017→DEPENDENCY_UNAVAILABLE(503), 기타 4xx→REQUEST_INVALID, >=500 기존 흐름 유지 — 필터 자체는 경계 공용이므로 status 보존 최우선. 기존 `{statusCode,code:prismaCode}` 소비자(웹 getUserErrorMessage 별도) 확인.
+- 서비스: 알림 Forbidden→ACCESS_DENIED; system-admin/setting/template/mutation-guard raw NotFound/Conflict/BadRequest→등록 코드(+errors 배열 VALIDATION_FAILED); document-category GLOBAL_CATEGORY_CONFLICT/P2002→REQUEST_CONFLICT.
+- worker(glm) · Audit SOL.
+
+**Task 6c 실행 결과 (2026-09-17):** worker `d18ac6956`(base `c02b250c5`) → 통합 `e4ee58dc2` (15 파일). red-first 20F→119; 362 suites/5,138; 감사 SHIP. 신규 코드 0.
+- carried: 필터 status 정정 2건(P2000 500→400, P1002/P1008 500→503), mutation-guard wire 필드 제거(unsupportedVariables — 소비자 무 확인), 내부 불변식 Error 4곳.
+- **dev 관찰(다음 sync 대비):** dev(96f4026ab)에 PR #704(sentry-400-advisories) 머지됨 — `backend/infrastructure/observability/http-advisory.spec.ts` 존재(우리 트리엔 없음), dev에서 로컬 실행 시 1건 실패(EMPLOYEE_ASSIGNMENT_UNAVAILABLE 400 매핑) — dev node_modules 미갱신 가능성 또는 dev 자체 이슈, **우리 범위 아님·다음 sync 때 확인**. dev에 untracked `mobile/AGENTS.md`(사용자 WIP) — 건드리지 말 것.
+
+## Phase 6 — 병렬 웨이브 (2026-09-17~)
+
+**웨이브1 = 6d1(백엔드 서비스5) + 6g1(FE api 32) + 6h1(MO api 29)** — base `3458d2403`
+- 6d1: admin-service-record-edit/admin-service-record/call-inbox/call-ingest-token/consultation-inquiry. 기존 코드 재사용; 상태 보존; raw 4xx→등록 코드.
+- 6g1/6h1: BFF raw 영문 `{error}`/passthrough → 공유 헬퍼 규약(`frontend/src/app/api/clients/route.ts` 참조, `@/lib/api/route-utils` errorResponse 계열). **packages/shared 편집 금지**(부족 코드는 리포트로). 리스트: `/tmp/em-6/wave1-fe.txt`, `/tmp/em-6/wave1-mo.txt`.
+- 규칙: 동일 카탈로그 writer는 백엔드 1유닛만; FE/MO는 코드 신규 등록 금지. worker×3 · Audit SOL ×3.
+
+**웨이브2 = 6d2(auth/auth-session/user/ai-chat 4서비스) + 6g2(FE api 31) + 6h2(MO api 29)** — base `582e806a1` (웨이브1 병합 후). 리스트 `/tmp/em-6/wave2-{fe,mo}.txt`.
+
+**인시던트 (2026-09-17 05:0x~05:5x KST):** z.ai 5시간 한도 소진("Usage limit reached for 5 hour", 리셋 04:52:25 베이징=05:52 KST 추정)으로 워커 6건(보정 3 + 웨이브2 3)이 rate-limit 중단. 추가로 opencode-go 폴백은 `--format json`에서 무출력(사실상 불가) → **폴백 무효** 확인. 교훈: 워커 디스패치에 `--fallback-model opencode-go/glm-5.3-flash` 필수(이번에 누락), 동시 실행 수 3 이하 유지.
+- 중단 시점 상태: 보정 워크트리 fe1(1파일 dirty)/mo1(6파일 dirty)/backend5(clean, 보정 미착수), 웨이브2 워크트리 auth4(4)/fe2(51)/mo2(33) dirty — 재개 워커가 이어서 완료해야 함.
+- 웨이브1은 이미 병합됨(`582e806a1`): BE 5153+1flaky(고립 52/52), FE 1679, MO 1696 — **보정 후 재감사 필요**(감사 3건 FIX_REQUIRED).
+
+**pdfjs 환경 플레이크 (2026-09-17):** `receipt-pdf-verifier.service.spec.ts` 1테스트가 통합·고립·base `582e806a1` 프로브 워크트리에서 모두 실패(`capability_unverified`) — 환경성 기존 이슈 확정(웨이브1·보정 무관). Phase 9 증거 실행에서 재확인 필요.
+
+**웨이브1 확정 (2026-09-17):** 6d1+6g1+6h1 → 초안 3건 FIX_REQUIRED(B1: 백엔드 충돌 extras 유실·FE 5xx-mutation outcome 위반·MO login 누락) → 보정 `b099ecb2e`/`cf6929a72`/`fdd2dad1a` → 재감사 **3건 SHIP**. 통합 `5f205c805`(병합+보정): BE 362/5159(+pdfjs 환성), FE 267/1685, MO 252/1701. 기록: 66행 migrated 확정(wave1: BE 5 + FE 32 + MO 29, 부모 대비 기계 대조 완료). 유닛 워크트리 정리 예정. 6.1 잔여는 wave2 확정 후 재산정.
+
+**기록 정정 (2026-09-17 19:4x KST):** 당초 "126행 migrated"·"6.1 잔여 130행"은 과대/미검증이었다 — 126행 중 60행(FE 31 + MO 29)은 wave2 리스트(`/tmp/em-6/wave2-{fe,mo}.txt`)와 정확히 일치하는 미병합분 선반영이었으므로 본 정정에서 parent 기준으로 legacy 복원했다(복원 후 부모 대비 migrated delta 정확히 66행, wave2 잔류 0행 기계 확인). wave2 유닛 `40d05d558`(FE 59파일)/`9d5bb5ae2`(MO 52파일)는 각 워크트리 HEAD에 존재하고 재감사 **2건 SHIP**(6g2b/6h2b) 확보 — 병합 `848366c3d`(FE)+`c107ca73a`(MO) 승인·완료, 해당 60행 migrated 확정(본 커밋). 6d2(auth4)는 muse-spark 모델로 재개·완료: 유닛 `3ea961431`(16파일 +1072/−200, BE 362/5167·타입·lint clean, 카탈로그 7코드 등록) → 재감사 **SHIP**(6d2b2, muse-spark 대체 — DeepSeek 체인 무응답) → 병합 `7cf970b03` 승인·완료, auth 4행 migrated 확정(본 커밋). 웨이브2 전체 확정: BE 4 + FE 31 + MO 29.
+
+**6h3 교정 (2026-09-18 00:0x KST):** 통합 게이트에서 공유 parity gate 1건 실패 — 6g2가 FE 3파일을 problem 계약으로 전환한 반면 모바일 대응분(11파일)이 퇴역 raw-English 헬퍼에 잔류, 동일 엔드포인트 cross-platform shape 분기 + 6h2 감사 grep 누락 + 인벤토리 오기 3·미분류 8. 교정 유닛 `aa2e32c60`(12파일 +402/−66, mobile 263/1775·공유 jest 27/423+scripts 86/86·타입·lint clean, 게이트 마커 현대화 포함) → 재감사 **SHIP**(6h3b) → 병합 `4f1ba8d1f` 승인·완료, 8행 재분류+3행 사유 갱신(본 커밋, migrated 249).
+
+**6g4 교정 (2026-09-18 01:0x KST):** FE 타입게이트에서 6g2 유닛의 `upstreamStatusProblemResponse` 2인자 호출 10곳 오류 — 3번째 `outcome` 인자 누락(6g2 워커·감사 모두 미검출, jest는 babel 변환이라 통과). 런타임 동일 수정(`403→NOT_APPLIED` 1곳, 나머지 `UNKNOWN` — 현 default와 동일) `2634f19f4`(6파일 10줄) → SELF 검증(tsc 0 + touched 15/56) → 병합 `eae389265` 승인·완료.
+
+**통합 게이트 (2026-09-18 01:0x KST, HEAD `eae389265`):** BE 362/362·5173 통과(초회 pnpm 스토어 stale로 12 실패 → relink 후 재실행, 잔여 3건은 병렬 플레이크·고립 통과 확인; pdfjs 환경 플레이크 별도), BE tsc 0·lint 0e, 공유 jest 27/423+scripts 86/86(parity 포함), MO 263/1775, FE 287/1743+tsc 0. 웨이브2+교정 close.
+
+**Phase 6.1 배치1 (2026-09-18):** 잔여 legacy 263행을 7개 유닛으로 분할(BE usecase 15+31·컨트롤러 25·FE BFF 40·MO BFF 22·FE 클라이언트 70·MO 클라이언트 57; 공유 3행은 verify-only). 6.1a(BE `247f7a2ad`, 신코드 0) → SHIP 61ab → 병합 `fa5c84b51`. 6.1e(MO `509d27f98`) → SHIP 61eb → 병합 `bce8f329b`. 6.1d(FE `3a37230c4`, 72파일) → SHIP 61db → 병합 `90e716462`. 77행 migrated 확정(본 커밋, migrated 326·legacy 186). 6.1b/6.1c 진행 중.
+- carried: 6d1 gated e2e 2건(live DB), 6g1 N2~N6(json 10파일·check-phone·area-templates read·stream boundary), 6h1 N4(agent passthrough)·AUTH_REFRESH_REPLAY_CONCURRENT 카탈로그 등록, pdfjs 환경 플레이크.
+
+**인시던트 · 6.1c 행 반영 (2026-09-22 03:xx KST):** 9/18 12:51 KST에 em-61f2·em-61g2·em-61bb 감사 세션이 프로바이더 장애(zai) → muse 폴백 → rate limit으로 연쇄 중단. 이후 `/tmp/em-6` 전체가 정리(슬립 중 tmp cleanup)로 소실 — 워커 브리프·리스트·로그 유실(git 작업물 무손실). 복구: 세션 export(`~/.local/state/agents/session-exports/opencode/`)에서 브리프 원문 복원, 리스트는 인벤토리 legacy 행에서 재생성(70 FE·57 MO·31 BE·25 controllers 일치 확인). 산출물을 내구성 경로 `/Users/jaino/Development/babyjamjam-admin/.bjj319-em/`로 이전. 6.1c 행 25건 migrated 반영(본 커밋, migrated 351·legacy 161). 61b 재감사(em-61bb2)·61f/61g 재개(em-61f3/em-61g3, 각 41/51 파일 잔여) 진행 중.
+
+**6.1 마감 (2026-09-22 05:1x KST):** 61f(002e86782, SHIP 61fb)·61g(686583ea3+f6af0485c+c812e1e20, SHIP 61gb) 병합. 잔여 3행(shared 어댑터: user-error-message/api-error-message/route-utils)은 verify-only → approved-exception(problem-contract 우선·살균 출력; English 401 기본값은 documented carried gap). **legacy 0 달성**: migrated 509·no-direct 282·approved-exception 5·removed 1. 중간 사고: /tmp 소실 복구 기록은 상단 인시던트 항목 참조.
+
+**6.1 통합 게이트 (HEAD `8fa96f1b2`+baseline 재핀 `442cd33b3`):** 전 항목 green — BE tsc 0·eslint 0·test 364/5201(2회차 user.controller.integration 401v400 병렬 플레이크, 고립 53/53 통과), UI baseline 게이트 0(6.1f/g 라인시프트 266건 재핀 — 배열 길이 전수 동일 검증, reviewed commit), 공유 27/423, MO tsc 0·test 268/1834, FE tsc 0·test 307/1812. middleware 401/403 바디에 코드 추가(AUTH_REQUIRED 신규 부착, AUTH_REFRESH_REPLAY_CONCURRENT/BRANCH_SELECTION_REQUIRED는 local-only session 신호로 카탈로그 밖 유지 — 6h1 carried 항목 종결). carried: e2e `service-record-write-lock-races-lifecycle-client.e2e.spec.ts` L429·478 퇴역 코드 pin → Phase 9 갱신; 61fb/61gb 잔여(비차단).
+
+**Phase 8 Task 8.1 (2026-09-22 05:2x KST, `7c1085a59`):** OSV 스캔(v2.6.0, `osv-scanner scan --lockfile=pnpm-lock.yaml`, CI security.yml과 동일 도구) 결과 1631 패키지 **취약점 0** — 의존성 변경(major/minor bump) 자체가 불필요. 미사용 suppression 2건 정리: uuid는 11.1.1로 이미 상향(제거 조건 충족), @hono/node-server 1.19.15는 어드바이저리가 더는 매치되지 않음(스캔이 unused ignore로 보고). 두 ignore 제거 후 suppression 없이 재스캔 → **No issues found**. osv-scanner.toml은 감사 정책 헤더만 유지. lockfile·package.json 무변경.
+
+**Phase 7 Task 7.1 (2026-09-22 05:3x KST, `e6e9e156b` → 병합):** 상태 전이 검증 완료 — (a)등록 성공+발송 실패 (b)접수 후 저장 실패=UNKNOWN+상태확인 (c)동시 claim(claim token CAS) (d)timeout/재claim (e)재시도 소진(terminal) (f)부분 접수 영속. **결함 1건 수정(red-first)**: `sms-retry.service.ts` — partial/uncertain 재시도 시 attempt 행에만 marker가 남고 source 행이 retryable로 남아 재시작/재클릭 시 **전체 수신자 재발송(중복)** 가능 → source 행에도 durable `retrySafety` fence + `retryById`가 uncertain-fenced를 `REQUEST_CONFLICT`로 거부. Phase 2a residual("mounted 화면 수명 밖 안전성") 종결. 검증: BE tsc 0, full 5205✓/0✗(run2; run1 webhook 401 병렬 플레이크→고립 28/28✓). 감사 **SHIP**(7-1b): non-CAS source fence 수용(attempt-row CAS가 동시성 fence), 잔여=기존 prod 행 backfill 미실시(다음 attempt 시 fence)·late-fence/`reconciled-*` 비-CAS 경합(log-visible, send-safety 무영향)·uncertain-gate 직접 spec·fence 관측성 carried.
+
+**Phase 9 Task 9.1 (2026-09-22 05:5x KST, `6fd792036` → 병합):** 전 항목 green. D1 인벤토리 감사(누락 0) 중 **1.1 스캔 창 누락 발견** — branch system-template 컨트롤러+4 BFF 프록시+`problem-bodies.ts` 헬퍼 → 정직한 6행 추가(803행, migrated 513·approved-exception 7). D2 어댑터 센서스 표(FE 1/MO 12/266 BFF 등). D3 raw-500 스캔: 위반 1건(`fetchNotifications/fetchUnreadCount` 실패를 `[]`/`0`으로 삼킴) red-first 수정(6 red→9 green), 잔여 14건은 local-capability 의미론 문서화. **D4 신규 intake 게이트** `packages/shared/scripts/raw-error-intake-gate.mjs`(인벤토리에서 스캔 루트/패턴 파생, 2036파일 0위반; 통합 검증 완료) — 새 원시 오류 유입 차단. D5 11개 시나리오 전부 PASS 증거 매핑(실환경 Sentry만 Phase 10 이월). D6 e2e 퇴역 핀 2건 `REQUEST_CONFLICT` 갱신(프로덕션 throw 검증). D7 exact-HEAD 전체 회귀 green(shared 27/423+node91, BE 364/5205/45skip, FE 308/1821, MO 268/1834, ui baseline 일치). 감사 **SHIP**(9-1b) — carried: BRANCH_CONTEXT_CHANGED 카탈로그 등록(갭), NotificationBell 전용 오류 UI(데이터 계약은 준수), live-DB/e2e 레인·실환경 Sentry(Phase 10).
+
+**Phase 10 Task 10.1 (2026-09-22 06:0x KST, `28132fded` → 병합):** `docs/error-management-live-verification.md`(204행) — 대상 정의 blanks·read-only 우선 절차·중지/정리 조건·증거 양식·승인 gate·Sentry(BJJ-317) 수신 검증 절차(공개 code/outcome/requestReference, 중복 0, PII/토큰 비노출). 인벤토리에 `live_verification: runbook-prepared; execution-not-approved; executed:false`. 감사 **SHIP**(10-1b). **실행은 미승인 상태** — main의 별도 승인 필요(문서·인벤토리 모두 명시).
+
+**Phase 11 Task 11.1 (2026-09-22 06:1x KST, `a764d7226` → 병합):** `docs/error-management-rollout.md`(121행) — 후보 SHA 고정(`06a8b68af` 기준, Phase 4b~10.1 140커밋), 단계별 감사 요약표, 배포 순서(backend→호환 클라이언트→어댑터 제거 gate), 롤백(이미지/SHA blanks + `retrySafety` marker-blind 버전 롤백 금지), 관측 blanks(수치 발명 없음), 종료 체크리스트(live verification gate OPEN → BJJ-319 종료 제안 불가 상태 정확 표기), 승인 게이트 명시. 감사 **SHIP**(11-1b).
+
+**세션 종합 (2026-09-22, 최종 HEAD `3e91b26d6`, clean):** Phase 6.1~11의 실행 가능한 작업 전부 완료 — 6.1(legacy 0, 통합 게이트 green) · 7.1(SMS 재발송 결함 수정+상태 전이 검증) · 8.1(OSV 0, suppression 정리) · 9.1(intake 게이트 신설+빈-성공 결함 수정+11 시나리오 증거+전체 회귀 green) · 10.1(실환경 검증 runbook) · 11.1(배포/롤백/관측 문서). 최종 재확인: intake gate 0위반·ui gate 0·OSV 0. **남은 2개 승인 게이트(사용자):** ① Phase 10 실환경 검증 실행(대상/건수/비용/중지 조건 확정+승인; runbook `docs/error-management-live-verification.md`) ② Phase 11 dev 병합 승인(후보 SHA 제시 필요; merge commit, squash 금지). BJJ-319 종료 제안은 ①의 실제 증거 확보 후에만.

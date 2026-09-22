@@ -1,4 +1,4 @@
-import { HttpStatus, ServiceUnavailableException } from "@nestjs/common";
+import { HttpException, HttpStatus, ServiceUnavailableException } from "@nestjs/common";
 import { ExecutionContext } from "@nestjs/common/interfaces";
 import { Request } from "express";
 import { RateLimitGuard } from "infrastructure/auth/rate-limit.guard";
@@ -57,16 +57,26 @@ describe("RateLimitGuard", () => {
         expect(queries[0].values[0]).not.toBe(queries[1].values[0]);
     });
 
-    it("should reject with 429 when either counter exceeds the maximum", async () => {
+    // The 429 carries the registered REQUEST_RATE_LIMITED problem body: the
+    // HTTP mapper keys on the code, so the legacy AUTH_RATE_LIMITED envelope
+    // would never reach the problem contract. The Retry-After signal stays on
+    // the response HEADERS (set before the limit assert), not the body.
+    it("should reject with a 429 REQUEST_RATE_LIMITED problem when either counter exceeds the maximum", async () => {
         prisma.$queryRaw.mockResolvedValueOnce(row(6));
 
-        await expect(guard.canActivate(createExecutionContext({
+        const error = await guard.canActivate(createExecutionContext({
             ip: "198.51.100.10",
             body: { email: "user@example.com" },
-        }))).rejects.toMatchObject({
-            status: HttpStatus.TOO_MANY_REQUESTS,
-            response: expect.objectContaining({ retryAfter: expect.any(Number) }),
+        })).then(() => null, (caught: unknown) => caught) as HttpException;
+
+        expect(error).toBeInstanceOf(HttpException);
+        expect(error.getStatus()).toBe(HttpStatus.TOO_MANY_REQUESTS);
+        expect(error.getResponse()).toMatchObject({
+            code: "REQUEST_RATE_LIMITED",
+            outcome: "NOT_APPLIED",
+            recovery: { action: "NONE", retry: { mode: "NEVER" } },
         });
+        expect(error.getResponse()).not.toHaveProperty("retryAfter");
         expect(prisma.$queryRaw).toHaveBeenCalledTimes(2);
     });
 
@@ -80,7 +90,10 @@ describe("RateLimitGuard", () => {
         await expect(guard.canActivate(createExecutionContext({
             ip: "198.51.100.10",
             body: { email: "user@example.com" },
-        }))).rejects.toMatchObject({ status: HttpStatus.TOO_MANY_REQUESTS });
+        }))).rejects.toMatchObject({
+            status: HttpStatus.TOO_MANY_REQUESTS,
+            response: expect.objectContaining({ code: "REQUEST_RATE_LIMITED" }),
+        });
 
         expect(prisma.$queryRaw).toHaveBeenCalledTimes(2);
     });
@@ -147,9 +160,16 @@ describe("RateLimitGuard", () => {
     it("should fail closed when the shared store is unavailable", async () => {
         prisma.$queryRaw.mockRejectedValue(new Error("database unavailable"));
 
-        await expect(guard.canActivate(createExecutionContext({
+        const error = await guard.canActivate(createExecutionContext({
             ip: "198.51.100.10",
             body: {},
-        }))).rejects.toBeInstanceOf(ServiceUnavailableException);
+        })).then(() => null, (caught: unknown) => caught) as ServiceUnavailableException;
+
+        expect(error).toBeInstanceOf(ServiceUnavailableException);
+        // The 503 stays an UNCODED legacy envelope on purpose: the production
+        // mapper remaps uncoded 503s to DEPENDENCY_UNAVAILABLE, and this path
+        // must keep relying on that remap (no problem body of its own).
+        expect(error.getResponse()).toEqual(expect.objectContaining({ statusCode: 503 }));
+        expect(error.getResponse()).not.toHaveProperty("code");
     });
 });

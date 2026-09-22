@@ -1,6 +1,9 @@
 import { FinalizeDocumentHeadlessUsecase } from "application/usecases/eformsign-doc/finalize-document-headless.usecase";
 import { EformsignOperationAlreadyRunningError } from "infrastructure/locking/eformsign-operation-lock.service";
 
+const RECOVERY_NONE = { action: "NONE", retry: { mode: "NEVER" } } as const;
+const RECOVERY_CHECK_STATUS = { action: "CHECK_STATUS", retry: { mode: "NEVER" } } as const;
+
 const TEST_PRINCIPAL = {
     userId: "test-user",
     branchId: "branch-1",
@@ -37,6 +40,9 @@ describe("FinalizeDocumentHeadlessUsecase", () => {
             ok: false,
             reason: "operation_in_progress",
             fallbackHint: "manual_check",
+            code: "DOCUMENT_FINALIZE_IN_PROGRESS",
+            outcome: "NOT_APPLIED",
+            recovery: RECOVERY_NONE,
         }));
         expect(credentialBoundary.withCredentials).not.toHaveBeenCalled();
         expect(headlessService.dispatchFinalize).not.toHaveBeenCalled();
@@ -184,6 +190,9 @@ describe("FinalizeDocumentHeadlessUsecase", () => {
                     ok: false,
                     reason: "eformsign reported success without submitting the document",
                     fallbackHint: "iframe",
+                    code: "DOCUMENT_FINALIZE_UNCONFIRMED",
+                    outcome: "UNKNOWN",
+                    recovery: RECOVERY_CHECK_STATUS,
                 }),
             );
         });
@@ -242,7 +251,13 @@ describe("FinalizeDocumentHeadlessUsecase", () => {
             await jest.runAllTimersAsync();
 
             await expect(result).resolves.toEqual(
-                expect.objectContaining({ ok: false, fallbackHint: "manual_check" }),
+                expect.objectContaining({
+                    ok: false,
+                    fallbackHint: "manual_check",
+                    code: "DOCUMENT_FINALIZE_UNCONFIRMED",
+                    outcome: "UNKNOWN",
+                    recovery: RECOVERY_CHECK_STATUS,
+                }),
             );
         });
 
@@ -419,6 +434,9 @@ describe("FinalizeDocumentHeadlessUsecase", () => {
                     ok: false,
                     reason: "eformsign_terminal_failure",
                     fallbackHint: "manual_check",
+                    code: "EFORMSIGN_TERMINAL_FAILURE",
+                    outcome: "FAILED",
+                    recovery: RECOVERY_NONE,
                 }));
             expect(progressService.emit).not.toHaveBeenCalledWith("p-1", "sent");
         });
@@ -434,7 +452,13 @@ describe("FinalizeDocumentHeadlessUsecase", () => {
             await jest.runAllTimersAsync();
 
             await expect(result).resolves.toEqual(
-                expect.objectContaining({ ok: false, fallbackHint: "manual_check" }),
+                expect.objectContaining({
+                    ok: false,
+                    fallbackHint: "manual_check",
+                    code: "DOCUMENT_FINALIZE_UNCONFIRMED",
+                    outcome: "UNKNOWN",
+                    recovery: RECOVERY_CHECK_STATUS,
+                }),
             );
         });
 
@@ -446,7 +470,13 @@ describe("FinalizeDocumentHeadlessUsecase", () => {
             await jest.runAllTimersAsync();
 
             await expect(result).resolves.toEqual(
-                expect.objectContaining({ ok: false, fallbackHint: "manual_check" }),
+                expect.objectContaining({
+                    ok: false,
+                    fallbackHint: "manual_check",
+                    code: "DOCUMENT_FINALIZE_UNCONFIRMED",
+                    outcome: "UNKNOWN",
+                    recovery: RECOVERY_CHECK_STATUS,
+                }),
             );
         });
 
@@ -469,6 +499,9 @@ describe("FinalizeDocumentHeadlessUsecase", () => {
                     ok: false,
                     reason: "headless SDK disconnected",
                     fallbackHint: "manual_check",
+                    code: "DOCUMENT_FINALIZE_FAILED",
+                    outcome: "NOT_APPLIED",
+                    recovery: RECOVERY_NONE,
                 }),
             );
         });
@@ -478,7 +511,13 @@ describe("FinalizeDocumentHeadlessUsecase", () => {
             const { usecase } = buildUsecase(fetchDocumentStatusCode, false);
 
             await expect(usecase.execute({ documentId: "doc-1" }, TEST_PRINCIPAL)).resolves.toEqual(
-                expect.objectContaining({ ok: false, fallbackHint: "iframe" }),
+                expect.objectContaining({
+                    ok: false,
+                    fallbackHint: "iframe",
+                    code: "DOCUMENT_FINALIZE_FAILED",
+                    outcome: "NOT_APPLIED",
+                    recovery: RECOVERY_NONE,
+                }),
             );
             expect(fetchDocumentStatusCode).not.toHaveBeenCalled();
         });

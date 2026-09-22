@@ -31,6 +31,10 @@ import {
 import { sha256CanonicalJson } from "application/services/eformsign-document-job.service";
 import type { ServiceRecordRevisionGenerationInput } from "domain/entities/eformsign-document-job.entity";
 import {
+    assertEformsignTemplateCanBeCreated,
+    normalizeEformsignTemplateId,
+} from "application/utils/eformsign-historical-template-policy";
+import {
     buildServiceRecordDocumentFields,
     chunkSessionsByTier,
     type ServiceRecordDayInput,
@@ -195,11 +199,17 @@ export class CreateAndSendServiceRecordSnapshotUsecase {
      */
     private getConfiguredTiers(): Array<{ tier: number; templateId: string }> {
         const tiers = SERVICE_RECORD_TEMPLATE_TIER_ENV_KEYS
-            .map(({ tier, envKey }) => ({ tier, templateId: this.configService.get<string>(envKey)?.trim() ?? "" }))
+            .map(({ tier, envKey }) => ({
+                tier,
+                templateId: normalizeEformsignTemplateId(this.configService.get<string>(envKey)),
+            }))
             .filter((entry) => entry.templateId !== "");
         const hasBase = tiers.some((entry) => entry.tier === SERVICE_RECORD_TEMPLATE_SESSIONS_PER_DOCUMENT);
         if (!hasBase) {
             throw new BadRequestException("EFORMSIGN_SERVICE_RECORD_TEMPLATE_ID is not configured.");
+        }
+        for (const tier of tiers) {
+            assertEformsignTemplateCanBeCreated(tier.templateId);
         }
         return tiers;
     }
@@ -359,6 +369,9 @@ export class CreateAndSendServiceRecordSnapshotUsecase {
         input: ServiceRecordRevisionGenerationInput,
         principal: EformsignProviderPrincipal,
     ): Promise<{ documentIds: string[]; documentVersion: number; chunkCount: number }> {
+        // Validate configured templates before reading revision state, claiming a chunk,
+        // writing a mirror row, or crossing the provider boundary.
+        const tiers = this.getConfiguredTiers();
         this.assertRevisionGenerationInput(input, principal);
         const revisionId = input.revisionId!;
         const revisionNumber = input.revisionNumber!;
@@ -390,7 +403,6 @@ export class CreateAndSendServiceRecordSnapshotUsecase {
         // value verbatim; it never recomputes or allocates a replacement.
         const documentVersion = this.resolveRevisionDocumentVersion(input);
         const frozen = this.buildFrozenRevisionSource(input);
-        const tiers = this.getConfiguredTiers();
         const tierNumbers = tiers.map((entry) => entry.tier);
         const templateIdByTier = new Map(tiers.map((entry) => [entry.tier, entry.templateId]));
         const existingRows = await this.prisma.service_record_snapshot_chunk.findMany({
@@ -1342,6 +1354,9 @@ export class CreateAndSendServiceRecordSnapshotUsecase {
         generation?: string;
         idempotencyKey?: string;
     }): Promise<string> {
+        params.templateId = normalizeEformsignTemplateId(params.templateId);
+        assertEformsignTemplateCanBeCreated(params.templateId);
+
         let status = params.chunkStatus;
         if (
             status === "CLAIMED"
@@ -1460,6 +1475,9 @@ export class CreateAndSendServiceRecordSnapshotUsecase {
         generation?: string;
         idempotencyKey?: string;
     }): Promise<string> {
+        params.templateId = normalizeEformsignTemplateId(params.templateId);
+        assertEformsignTemplateCanBeCreated(params.templateId);
+
         const documents = this.eformsignClient.findDocumentsByTitle
             ? await this.eformsignClient.findDocumentsByTitle(params.accessToken, params.chunk.documentName)
             : (await this.eformsignClient.getAllDocuments(params.accessToken))

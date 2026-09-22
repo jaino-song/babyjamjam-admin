@@ -15,6 +15,7 @@ import { BankAccountInfoService } from "application/services/bank-account-info.s
 import { JwtGuard } from "infrastructure/auth/jwt.guard";
 import { OwnerOrAdminGuard } from "infrastructure/auth/owner-or-admin.guard";
 import { CreateBankAccountInfoDto, UpdateBankAccountInfoDto } from "../dto/bank-account-info.dto";
+import { codeOnlyProblemBody, problemBody } from "application/utils/problem-bodies";
 
 @Controller("bank-account-infos")
 export class BankAccountInfoController {
@@ -63,7 +64,7 @@ export class BankAccountInfoController {
     private requireBranchId(req: any): string {
         const branchId = req.user?.branchId;
         if (!branchId) {
-            throw new ForbiddenException("Branch selection required");
+            throw new ForbiddenException(codeOnlyProblemBody("ACCESS_DENIED"));
         }
         return branchId;
     }
@@ -74,7 +75,12 @@ export class BankAccountInfoController {
     // this branch" and `PATCH` becomes "rewrite an arbitrary row in this branch".
     private requireArea(area: unknown): string {
         if (typeof area !== "string" || area.length === 0) {
-            throw new BadRequestException("area is required");
+            throw new BadRequestException(problemBody("VALIDATION_FAILED", {
+                pointer: "/area",
+                code: "REQUIRED",
+                detail: "area를 입력해 주세요.",
+                location: "query",
+            }));
         }
         return area;
     }

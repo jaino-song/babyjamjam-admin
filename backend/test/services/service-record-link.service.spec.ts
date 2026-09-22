@@ -19,6 +19,7 @@ import { IMessageLogRepository } from "domain/repositories/message-log.repositor
 import { IMessageTriggerJobRepository } from "domain/repositories/message-trigger-job.repository.interface";
 import { IMessageTriggerRuleBranchOverrideRepository } from "domain/repositories/message-trigger-rule-branch-override.repository.interface";
 import { PrismaService } from "infrastructure/database/prisma.service";
+import { createAgentAutomationTaskCommitReference } from "application/agent/agent-automation-storage.schema";
 
 describe("ServiceRecordLinkService", () => {
     const createPrisma = () => {
@@ -163,6 +164,41 @@ describe("ServiceRecordLinkService", () => {
             employeeName: "홍제공",
             serviceRecordUrl: "https://mobile.test/service-record/efl_token",
         }));
+    });
+
+    it("preserves the task commit reference on an automatic service-record link job", async () => {
+        const prisma = createPrisma();
+        const tokenService = createTokenService();
+        const jobRepository = createJobRepository();
+        const service = new ServiceRecordLinkService(
+            prisma as unknown as PrismaService,
+            tokenService as never,
+            createConfigService() as unknown as ConfigService,
+            jobRepository as unknown as IMessageTriggerJobRepository,
+            createLogRepository() as unknown as IMessageLogRepository,
+            createOverrideRepository() as unknown as IMessageTriggerRuleBranchOverrideRepository,
+            undefined,
+            undefined,
+            createBranchLock(prisma) as never,
+            createAutomationActivationService() as never,
+        );
+        prisma.employee_schedule.findUnique.mockResolvedValue(createSchedule());
+        const taskAutomationReference = createAgentAutomationTaskCommitReference({
+            actionId: "70000000-0000-4000-8000-000000000024",
+            taskId: "70000000-0000-4000-8000-000000000025",
+            taskRevision: 6,
+            authorities: [{
+                id: "70000000-0000-4000-8000-000000000021",
+                recordDigest: "c".repeat(64),
+                scopeDigest: "d".repeat(64),
+            }],
+            coverages: [],
+        });
+
+        await service.scheduleForServiceStart(10, { taskAutomationReference });
+
+        const job = jobRepository.promoteAutomaticSchedulingClaim.mock.calls[0]?.[2] as MessageTriggerJobEntity;
+        expect(job.payload.taskAutomationReference).toEqual(taskAutomationReference);
     });
 
     it("sendNow grants a 24-hour late token and upserts an immediate pending job", async () => {
@@ -735,6 +771,7 @@ describe("ServiceRecordLinkService", () => {
         );
         prisma.employee_schedule.findUnique.mockResolvedValue(createSchedule({ primaryEmployee: { id: 30, name: "홍제공", phone: "", birthday: "900101" } }));
         await expect(service.prepareLink(10, "01066211878")).rejects.toBeInstanceOf(BadRequestException);
+        await expect(service.prepareLink(10, "01066211878")).rejects.toMatchObject({ response: { code: "INVALID_PROVIDER_PHONE" } });
         await expect(service.sendNow(10, undefined, "01066211878")).rejects.toBeInstanceOf(BadRequestException);
         expect(tokenService.prepareLink).not.toHaveBeenCalled();
         expect(tokenService.issueLink).not.toHaveBeenCalled();
@@ -776,6 +813,7 @@ describe("ServiceRecordLinkService", () => {
 
         await expect(service.sendNow(10)).rejects.toBeInstanceOf(NotFoundException);
         await expect(service.prepareLink(10)).rejects.toBeInstanceOf(NotFoundException);
+        await expect(service.prepareLink(10)).rejects.toMatchObject({ response: { code: "RESOURCE_NOT_FOUND" } });
         expect(tokenService.reuseActiveLink).not.toHaveBeenCalled();
         expect(tokenService.issueLink).not.toHaveBeenCalled();
         expect(tokenService.prepareLink).not.toHaveBeenCalled();

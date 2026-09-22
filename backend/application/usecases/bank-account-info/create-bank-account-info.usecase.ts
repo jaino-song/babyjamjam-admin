@@ -1,4 +1,5 @@
 import { Inject, Injectable, NotFoundException } from "@nestjs/common";
+import { codeOnlyProblemBody } from "application/utils/problem-bodies";
 import { BankAccountInfoEntity } from "domain/entities/bank-account-info.entity";
 import { BANK_ACCOUNT_INFO_REPOSITORY, IBankAccountInfoRepository } from "domain/repositories/bank-account-info.repository.interface";
 
@@ -16,7 +17,9 @@ export class CreateBankAccountInfoUsecase {
         // response does not confirm another branch's area id exists.
         const owned = await this.bankAccountInfoRepository.areaBelongsToBranch(area, branchId);
         if (!owned) {
-            throw new NotFoundException(`Area ${area} not found`);
+            // The area id is caller-supplied: the registered code carries the
+            // 404 without confirming whether another branch owns the area.
+            throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
         }
         const bankAccountInfo = BankAccountInfoEntity.create(area, bankName, accNum);
         return this.bankAccountInfoRepository.create(bankAccountInfo);

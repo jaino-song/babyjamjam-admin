@@ -1,7 +1,7 @@
 import { NextRequest } from "next/server";
 
 import { proxySseStream } from "@/lib/api/sse-proxy";
-import { getAuthToken } from "@/lib/api/route-utils";
+import { authRequiredResponse, getAuthToken } from "@/lib/api/route-utils";
 import { createServerApiUrl } from "@/lib/api/server-base-url";
 
 export const dynamic = "force-dynamic";
@@ -12,7 +12,7 @@ export const maxDuration = 60;
 export async function GET(request: NextRequest) {
     const token = getAuthToken(request);
     if (!token) {
-        return new Response("Unauthorized", { status: 401 });
+        return authRequiredResponse();
     }
 
     const upstreamUrl = createServerApiUrl("/eformsign-docs/events");

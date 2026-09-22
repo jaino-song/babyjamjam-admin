@@ -12,6 +12,7 @@ import {
     type PrepareEformsignDispatchIntentInput,
     type ReconcileEformsignDispatchIntentInput,
 } from "domain/repositories/eformsign-dispatch-intent.repository.interface";
+import { codeOnlyProblemBody } from "application/utils/problem-bodies";
 import { PrismaService } from "infrastructure/database/prisma.service";
 
 type IntentRow = Prisma.eformsign_dispatch_intentGetPayload<Record<string, never>>;
@@ -113,7 +114,7 @@ export class SbEformsignDispatchIntentRepository implements IEformsignDispatchIn
     ): Promise<EformsignDispatchIntentEntity | null> {
         const normalizedProviderDocumentId = providerDocumentId.trim();
         if (!normalizedProviderDocumentId) {
-            throw new ConflictException("전자문서 provider id가 필요합니다.");
+            throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
         }
 
         const current = await this.prisma.eformsign_dispatch_intent.findFirst({
@@ -124,7 +125,7 @@ export class SbEformsignDispatchIntentRepository implements IEformsignDispatchIn
             current.providerDocumentId
             && current.providerDocumentId !== normalizedProviderDocumentId
         ) {
-            throw new ConflictException("전자문서 provider id가 기존 작업과 충돌합니다.");
+            throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
         }
         if (
             current.status !== EFORMSIGN_DISPATCH_INTENT_STATUS.STARTED
@@ -168,7 +169,7 @@ export class SbEformsignDispatchIntentRepository implements IEformsignDispatchIn
         if (!row) return null;
         if (updated.count === 0 && row.status === EFORMSIGN_DISPATCH_INTENT_STATUS.ACCEPTED) {
             if (row.providerDocumentId && row.providerDocumentId !== normalizedProviderDocumentId) {
-                throw new ConflictException("전자문서 provider id가 기존 작업과 충돌합니다.");
+                throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
             }
         }
         return this.toDomain(row);
@@ -190,7 +191,7 @@ export class SbEformsignDispatchIntentRepository implements IEformsignDispatchIn
             && current.providerDocumentId
             && providerDocumentId.trim() !== current.providerDocumentId
         ) {
-            throw new ConflictException("전자문서 provider id가 기존 작업과 충돌합니다.");
+            throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
         }
         if (current.status !== EFORMSIGN_DISPATCH_INTENT_STATUS.STARTED) {
             return this.toDomain(current);
@@ -266,7 +267,7 @@ export class SbEformsignDispatchIntentRepository implements IEformsignDispatchIn
             && row.providerDocumentId
             && input.providerDocumentId.trim() !== row.providerDocumentId
         ) {
-            throw new ConflictException("전자문서 provider id가 기존 작업과 충돌합니다.");
+            throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
         }
 
         if (
@@ -276,7 +277,7 @@ export class SbEformsignDispatchIntentRepository implements IEformsignDispatchIn
                 || row.status === EFORMSIGN_DISPATCH_INTENT_STATUS.RECONCILED_DELIVERED
             )
         ) {
-            throw new ConflictException("이미 전달된 전자문서는 미전달로 변경할 수 없습니다.");
+            throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
         }
 
         // A STARTED intent still owns an in-flight provider attempt. Marking it
@@ -288,7 +289,7 @@ export class SbEformsignDispatchIntentRepository implements IEformsignDispatchIn
             input.outcome === "not_delivered"
             && row.status === EFORMSIGN_DISPATCH_INTENT_STATUS.STARTED
         ) {
-            throw new ConflictException("진행 중인 전자문서는 미전달로 변경할 수 없습니다.");
+            throw new ConflictException(codeOnlyProblemBody("DOCUMENT_DISPATCH_IN_PROGRESS"));
         }
 
         if (
@@ -311,7 +312,7 @@ export class SbEformsignDispatchIntentRepository implements IEformsignDispatchIn
         const clearCreateReceipt = input.outcome === "not_delivered" && row.action === "create";
         const expectedAttemptCount = input.attemptCount ?? row.attemptCount;
         if (input.attemptCount !== undefined && input.attemptCount !== row.attemptCount) {
-            throw new ConflictException("전자문서 작업 시도가 변경되어 확인 결과를 적용할 수 없습니다.");
+            throw new ConflictException(codeOnlyProblemBody("SERVICE_RECORD_WRITE_TARGET_CHANGED"));
         }
         const updated = await this.prisma.eformsign_dispatch_intent.updateMany({
             where: {
@@ -348,7 +349,7 @@ export class SbEformsignDispatchIntentRepository implements IEformsignDispatchIn
                 where: { id: row.id, branchId: input.branchId },
             });
             if (current && current.attemptCount !== expectedAttemptCount) {
-                throw new ConflictException("전자문서 작업 시도가 변경되어 확인 결과를 적용할 수 없습니다.");
+                throw new ConflictException(codeOnlyProblemBody("SERVICE_RECORD_WRITE_TARGET_CHANGED"));
             }
             if (
                 input.outcome === "not_delivered"
@@ -399,7 +400,7 @@ export class SbEformsignDispatchIntentRepository implements IEformsignDispatchIn
                 && row.providerDocumentId !== input.providerDocumentId
             )
         ) {
-            throw new ConflictException("전자문서 작업 요청이 기존 작업과 충돌합니다.");
+            throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
         }
         return this.toDomain(row);
     }

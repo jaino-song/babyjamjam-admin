@@ -1,11 +1,10 @@
 "use client";
-import { getUserErrorMessage } from "@babyjamjam/shared";
 
 
 import { useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { CheckCircle, AlertTriangle } from "lucide-react";
-import { getResetPasswordErrorMessage } from "@babyjamjam/shared";
+import { normalizeApiError, getResetPasswordErrorMessage } from "@babyjamjam/shared";
 import { authApi } from "@/services/api";
 import { resetPasswordSchema, checkPasswordStrength, type ResetPasswordFormData } from "@/lib/validations/auth";
 import { CardContainer } from "@/components/auth/card-container";
@@ -58,7 +57,7 @@ export default function ResetPasswordPage() {
         setFieldErrors({});
 
         if (!token) {
-            setError(getUserErrorMessage("유효하지 않은 비밀번호 재설정 링크예요."));
+            setError("유효하지 않은 비밀번호 재설정 링크예요.");
             return;
         }
 
@@ -84,16 +83,22 @@ export default function ResetPasswordPage() {
             if (response.success) {
                 setIsSuccess(true);
             } else {
-                setError(getUserErrorMessage(response.message || "비밀번호 재설정에 실패했어요."));
+                // The upstream `message` field is never rendered; locally
+                // authored copy covers the unverified outcome.
+                setError("비밀번호 재설정에 실패했어요.");
             }
         } catch (err) {
             console.error("Reset password error:", err);
             const errorData = err && typeof err === "object" && "response" in err
                 ? (err as { response?: { data?: { code?: unknown } } }).response?.data
                 : undefined;
+            // Registered-code copy first (shared mapper), then the problem
+            // contract; upstream internals are never rendered.
+            const normalized = normalizeApiError(err, { locale: "ko-KR", operation: "mutation" });
             setError(
-                getUserErrorMessage(err, getResetPasswordErrorMessage(errorData?.code)
-                ?? "네트워크 오류가 발생했어요. 다시 시도해 주세요."),
+                getResetPasswordErrorMessage(errorData?.code)
+                ?? (normalized.verified ? normalized.message : null)
+                ?? "네트워크 오류가 발생했어요. 다시 시도해 주세요.",
             );
         } finally {
             setIsLoading(false);
@@ -176,7 +181,7 @@ export default function ResetPasswordPage() {
         >
             {error && (
                 <Alert variant="destructive" onClose={() => setError(null)}>
-                    {error && getUserErrorMessage(error)}
+                    {error}
                 </Alert>
             )}
 

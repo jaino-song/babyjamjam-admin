@@ -73,6 +73,7 @@ describe("SmsProviderAcceptanceService", () => {
 
         attempt.providerAcceptanceState = "started";
         await expect(service.beginProviderCall(attempt)).rejects.toThrow(ConflictException);
+        await expect(service.beginProviderCall(attempt)).rejects.toMatchObject({ response: { code: "REQUEST_CONFLICT" } });
     });
 
     it("converges duplicate preparation on the repository-owned attempt", async () => {
@@ -148,7 +149,7 @@ describe("SmsProviderAcceptanceService", () => {
                 actor: "operator-2",
                 reason: "conflicting operator decision",
             }),
-        ).rejects.toThrow("immutable");
+        ).rejects.toMatchObject({ response: { code: "SERVICE_RECORD_WRITE_TARGET_CHANGED" } });
         expect(repository.reconcileProviderAttempt).toHaveBeenCalledTimes(1);
     });
 

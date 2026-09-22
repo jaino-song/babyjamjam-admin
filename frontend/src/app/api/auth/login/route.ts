@@ -1,15 +1,8 @@
 import { cookies } from "next/headers";
 import { NextResponse, NextRequest } from "next/server";
 import { serverAPIClient } from "@/lib/api/server";
-import { AxiosError } from "axios";
+import { errorResponse } from "@/lib/api/route-utils";
 import { setAuthSessionCookies } from "@/lib/auth/session-cookies";
-
-interface APIErrorResponse {
-    statusCode: number;
-    message: string;
-    error: string;
-    code?: string;
-}
 
 export async function POST(request: NextRequest) {
     try {
@@ -40,26 +33,6 @@ export async function POST(request: NextRequest) {
             requiresBranchSelection: Boolean(data.requiresBranchSelection || data.requiresOrgSelection),
         }, { status: 200 });
     } catch (error) {
-        console.error("[Auth Login] Error:", error);
-
-        if (error instanceof AxiosError) {
-            const axiosError = error as AxiosError<APIErrorResponse>;
-            const status = axiosError.response?.status || 500;
-            const responseData = axiosError.response?.data;
-
-            if (responseData) {
-                return NextResponse.json(responseData, { status });
-            }
-
-            return NextResponse.json(
-                { error: axiosError.message || "Login failed" },
-                { status }
-            );
-        }
-
-        return NextResponse.json(
-            { error: "Internal Server Error" },
-            { status: 500 }
-        );
+        return errorResponse(error, "log in");
     }
 }

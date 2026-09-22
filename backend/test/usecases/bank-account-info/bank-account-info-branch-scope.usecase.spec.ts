@@ -63,12 +63,20 @@ describe("bank_account_info branch-ownership gates", () => {
             expect(repository.create).not.toHaveBeenCalled();
         });
 
-        it("reports 404 rather than 403, so the response does not confirm the foreign area exists", async () => {
+        it("reports 404 with the registered code and never confirms the foreign area", async () => {
             repository.areaBelongsToBranch.mockResolvedValue(false);
 
-            await expect(
-                usecase.execute(FOREIGN_AREA, "K-Bank", "123-456", BRANCH_A),
-            ).rejects.toThrow(`Area ${FOREIGN_AREA} not found`);
+            const error: unknown = await usecase.execute(FOREIGN_AREA, "K-Bank", "123-456", BRANCH_A)
+                .catch((caught: unknown) => caught);
+
+            expect(error).toBeInstanceOf(NotFoundException);
+            expect((error as NotFoundException).getResponse()).toEqual({
+                code: "RESOURCE_NOT_FOUND",
+                params: {},
+                outcome: "NOT_APPLIED",
+                recovery: { action: "NONE", retry: { mode: "NEVER" } },
+                message: expect.not.stringContaining(FOREIGN_AREA),
+            });
         });
     });
 

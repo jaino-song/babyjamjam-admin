@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 
 import { serverAPIClient } from "@/lib/api/server";
+import { errorResponse } from "@/lib/api/route-utils";
 
 export async function GET(request: NextRequest) {
   const phone = request.nextUrl.searchParams.get("phone");
@@ -17,10 +18,6 @@ export async function GET(request: NextRequest) {
 
     return NextResponse.json(data, { status });
   } catch (error) {
-    console.error("[API] Error checking auth phone:", error);
-    return NextResponse.json(
-      { error: "전화번호 중복 확인에 실패했습니다." },
-      { status: 503 },
-    );
+    return errorResponse(error, "check phone availability", "read");
   }
 }

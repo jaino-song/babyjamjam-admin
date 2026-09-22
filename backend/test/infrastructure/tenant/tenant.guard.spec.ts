@@ -96,19 +96,57 @@ describe('TenantGuard', () => {
         });
 
         describe('given user without branchid', () => {
-            it('should throw forbiddenexception', async () => {
+            it('should throw a forbidden ACCESS_DENIED problem', async () => {
                 // #given
                 const user = { userId: 'user-123', role: 'user' };
                 const mockContext = createMockContext(user);
 
+                // #when & #then: the public body carries only the registered
+                // code — the denial reason stays in the guard's log, not the
+                // response.
+                const error = await guard.canActivate(mockContext as any).then(
+                    () => null,
+                    (caught: unknown) => caught,
+                ) as ForbiddenException;
+                expect(error).toBeInstanceOf(ForbiddenException);
+                expect(error.getStatus()).toBe(403);
+                expect(error.getResponse()).toMatchObject({
+                    code: 'ACCESS_DENIED',
+                    outcome: 'NOT_APPLIED',
+                    recovery: { action: 'NONE', retry: { mode: 'NEVER' } },
+                });
+                expect(error.getResponse()).not.toHaveProperty('errors');
+            });
+        });
+
+        describe('given an owner whose branch is inactive', () => {
+            it('should throw the same forbidden ACCESS_DENIED problem', async () => {
+                // #given
+                const user = {
+                    userId: 'owner-123',
+                    branchId: 'org-123',
+                    role: 'owner',
+                };
+                mockPrismaService.branch.findUnique.mockResolvedValue({
+                    id: user.branchId,
+                    isActive: false,
+                });
+
                 // #when & #then
-                await expect(guard.canActivate(mockContext as any))
-                    .rejects.toThrow(ForbiddenException);
+                const error = await guard.canActivate({
+                    switchToHttp: () => ({ getRequest: () => ({ user }) }),
+                } as any).then(
+                    () => null,
+                    (caught: unknown) => caught,
+                ) as ForbiddenException;
+                expect(error).toBeInstanceOf(ForbiddenException);
+                expect(error.getStatus()).toBe(403);
+                expect(error.getResponse()).toMatchObject({ code: 'ACCESS_DENIED' });
             });
         });
 
         describe('given user not member of branch', () => {
-            it('should throw forbiddenexception', async () => {
+            it('should throw a forbidden ACCESS_DENIED problem', async () => {
                 // #given
                 const user = {
                     userId: 'user-123',
@@ -119,8 +157,18 @@ describe('TenantGuard', () => {
                 mockPrismaService.user_branch.findFirst.mockResolvedValue(null);
 
                 // #when & #then
-                await expect(guard.canActivate(mockContext as any))
-                    .rejects.toThrow(ForbiddenException);
+                const error = await guard.canActivate(mockContext as any).then(
+                    () => null,
+                    (caught: unknown) => caught,
+                ) as ForbiddenException;
+                expect(error).toBeInstanceOf(ForbiddenException);
+                expect(error.getStatus()).toBe(403);
+                expect(error.getResponse()).toMatchObject({
+                    code: 'ACCESS_DENIED',
+                    outcome: 'NOT_APPLIED',
+                    recovery: { action: 'NONE', retry: { mode: 'NEVER' } },
+                });
+                expect(error.getResponse()).not.toHaveProperty('errors');
             });
         });
 

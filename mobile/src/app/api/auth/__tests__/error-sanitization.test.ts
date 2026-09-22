@@ -215,4 +215,62 @@ describe("auth API error sanitization", () => {
       error: "Authentication refresh already in progress",
     });
   });
+
+  it("rejects link-password without a token with an AUTH_REQUIRED problem", async () => {
+    const request = new NextRequest("http://localhost/api/auth/link-password", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ password: "Password1!" }),
+    });
+
+    const response = await linkPassword(request);
+
+    expect(response.status).toBe(401);
+    expect(response.headers.get("content-type")).toBe("application/problem+json");
+    expect(response.headers.get("content-language")).toBe("ko-KR");
+    await expect(response.json()).resolves.toEqual(expect.objectContaining({
+      code: "AUTH_REQUIRED",
+      status: 401,
+      outcome: "NOT_APPLIED",
+      error: "Unauthorized",
+    }));
+    expect(mockPost).not.toHaveBeenCalled();
+  });
+
+  it("clears cookies with an AUTH_REQUIRED problem when no refresh token exists", async () => {
+    mockCookies.mockResolvedValue({ get: jest.fn(() => undefined) });
+
+    const response = await refresh();
+
+    expect(response.status).toBe(401);
+    await expect(response.json()).resolves.toEqual(expect.objectContaining({
+      code: "AUTH_REQUIRED",
+      status: 401,
+      outcome: "NOT_APPLIED",
+      error: "Unauthorized",
+    }));
+    expect(response.headers.get("set-cookie")).toMatch(/auth_token=;/);
+    expect(response.headers.get("set-cookie")).toMatch(/refresh_token=;/);
+    expect(mockPost).not.toHaveBeenCalled();
+  });
+
+  it("clears cookies with an AUTH_REQUIRED problem when the refresh response is unusable", async () => {
+    mockCookies.mockResolvedValue({
+      get: jest.fn((name: string) => {
+        if (name === "refresh_token") return { value: "refresh-token" };
+        return undefined;
+      }),
+    });
+    mockPost.mockResolvedValue({ data: {} });
+
+    const response = await refresh();
+
+    expect(response.status).toBe(401);
+    await expect(response.json()).resolves.toEqual(expect.objectContaining({
+      code: "AUTH_REQUIRED",
+      status: 401,
+    }));
+    expect(response.headers.get("set-cookie")).toMatch(/auth_token=;/);
+    expect(mockPost).toHaveBeenCalled();
+  });
 });

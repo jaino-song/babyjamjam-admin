@@ -1,6 +1,7 @@
 import { CreateAndSendServiceRecordSnapshotUsecase } from "application/usecases/eformsign-doc/create-and-send-service-record-snapshot.usecase";
 import { sha256CanonicalJson } from "application/services/eformsign-document-job.service";
 import type { ServiceRecordRevisionGenerationInput } from "domain/entities/eformsign-document-job.entity";
+import { LIST_ONLY_HISTORICAL_MATERNITY_TEMPLATE_IDS } from "application/utils/eformsign-historical-template-policy";
 
 describe("revised service-record snapshot boundary", () => {
     it("fails closed before credentials or provider calls", async () => {
@@ -42,6 +43,25 @@ describe("revised service-record snapshot boundary", () => {
         expect(harness.credentialBoundary.withCredentials).not.toHaveBeenCalled();
         expect(harness.eformsignClient.getTemplateReviewer).not.toHaveBeenCalled();
         expect(harness.eformsignClient.createDocument).not.toHaveBeenCalled();
+    });
+
+    it.each([
+        ...LIST_ONLY_HISTORICAL_MATERNITY_TEMPLATE_IDS,
+        ...LIST_ONLY_HISTORICAL_MATERNITY_TEMPLATE_IDS.map((templateId) => `  ${templateId}  `),
+    ])("rejects retired configured revision tiers before state, claim, or provider work: %s", async (templateId) => {
+        const harness = createRevisionHarness({ templateId });
+
+        await expect(harness.usecase.executeRevision(makeGenerationInput(), harness.principal))
+            .rejects.toThrow("historical list-only");
+
+        expect(harness.prisma.service_record_revision_document_state.findUnique).not.toHaveBeenCalled();
+        expect(harness.chunkDelegate.create).not.toHaveBeenCalled();
+        expect(harness.chunkDelegate.update).not.toHaveBeenCalled();
+        expect(harness.chunkDelegate.updateMany).not.toHaveBeenCalled();
+        expect(harness.credentialBoundary.withCredentials).not.toHaveBeenCalled();
+        expect(harness.eformsignClient.getTemplateReviewer).not.toHaveBeenCalled();
+        expect(harness.eformsignClient.createDocument).not.toHaveBeenCalled();
+        expect(harness.repository.promoteServiceRecordRevisionSnapshot).not.toHaveBeenCalled();
     });
 
     it("renders only the immutable payload and never rereads live case rows", async () => {
@@ -202,6 +222,7 @@ describe("revised service-record snapshot boundary", () => {
 type RevisionHarnessOptions = {
     existingChunkStatus?: string;
     sessionCount?: number;
+    templateId?: string;
 };
 
 type HarnessRow = {
@@ -436,7 +457,16 @@ function createRevisionHarness(options: RevisionHarnessOptions = {}) {
         eformsignClient as never,
         prisma as never,
         credentialBoundary as never,
-        { get: jest.fn().mockReturnValue("template-5") } as never,
+        {
+            get: jest.fn((key: string) => {
+                if (options.templateId !== undefined) {
+                    return key === "EFORMSIGN_SERVICE_RECORD_TEMPLATE_ID"
+                        ? options.templateId
+                        : undefined;
+                }
+                return "template-5";
+            }),
+        } as never,
         repository as never,
     );
     return {

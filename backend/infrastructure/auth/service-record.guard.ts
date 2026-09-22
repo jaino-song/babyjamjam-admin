@@ -11,6 +11,7 @@ import {
     ServiceRecordTokenService,
     ServiceRecordTokenContext,
 } from "application/services/service-record-token.service";
+import { codeOnlyProblemBody } from "application/utils/problem-bodies";
 
 /**
  * DB-backed bearer guard for the no-login service-record data endpoints (BJJ-247).
@@ -31,19 +32,19 @@ export class ServiceRecordGuard implements CanActivate {
         const authHeader = request.headers.authorization;
 
         if (!authHeader) {
-            throw new UnauthorizedException("Missing Authorization header");
+            throw new UnauthorizedException(codeOnlyProblemBody("AUTH_REQUIRED"));
         }
 
         const authMatch = authHeader.match(/^Bearer\s+(.+)$/);
         const token = authMatch?.[1]?.trim();
         if (!token) {
-            throw new UnauthorizedException("Invalid Authorization format");
+            throw new UnauthorizedException(codeOnlyProblemBody("AUTH_REQUIRED"));
         }
 
         const ctx = await this.tokenService.resolveAccess(token);
         if (!ctx) {
             this.logger.warn("Service record access rejected: unknown, unverified, revoked, or expired token");
-            throw new UnauthorizedException("Invalid or expired token");
+            throw new UnauthorizedException(codeOnlyProblemBody("AUTH_REQUIRED"));
         }
 
         tenantContextStore.setBranchId(ctx.branchId);

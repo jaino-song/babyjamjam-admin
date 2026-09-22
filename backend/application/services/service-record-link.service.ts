@@ -4,6 +4,7 @@ import { BadRequestException, Inject, Injectable, Logger, NotFoundException, Opt
 import { ConfigService } from "@nestjs/config";
 import { Prisma } from "@prisma/client";
 import { PrismaService } from "infrastructure/database/prisma.service";
+import { codeOnlyProblemBody, problemBody } from "application/utils/problem-bodies";
 import {
     SERVICE_RECORD_LINK_RESCHEDULED_REASON,
     SERVICE_RECORD_LINK_BRANCH_DISABLED_REASON,
@@ -49,6 +50,7 @@ import {
     DEFAULT_MOBILE_SERVICE_RECORD_BASE_URL,
 } from "./service-record-link-automation-effect-recipe";
 import { captureServiceRecordError } from "infrastructure/observability/service-record-sentry";
+import type { AgentAutomationTaskCommitReference } from "domain/entities/agent-automation-consent";
 
 const AUTOMATIC_SCHEDULING_LEASE_MINUTES = 10;
 const AUTOMATIC_SCHEDULING_RETRY_DELAY_MS = AUTOMATIC_SCHEDULING_LEASE_MINUTES * 60 * 1000;
@@ -104,12 +106,16 @@ export class ServiceRecordLinkService {
     }
 
     /** Ensure the assignment link exists and schedule the SMS for service-start day 15:00 KST. */
-    async scheduleForServiceStart(scheduleId: number): Promise<boolean> {
+    async scheduleForServiceStart(
+        scheduleId: number,
+        options: { taskAutomationReference?: AgentAutomationTaskCommitReference } = {},
+    ): Promise<boolean> {
         try {
             const { scheduledFor, employeeId, jobEnqueued } = await this.issueServiceRecordLinkJob(scheduleId, {
                 scheduledFor: null,
                 recordMissingPhoneFailure: true,
                 isManualSend: false,
+                taskAutomationReference: options.taskAutomationReference,
             });
             if (jobEnqueued) {
                 this.logger.log(
@@ -149,7 +155,12 @@ export class ServiceRecordLinkService {
             recipientPhone,
         });
         if (!result.jobId) {
-            throw new BadRequestException("제공기록지 링크 발송 작업을 생성하지 못했습니다");
+            throw new BadRequestException(problemBody("VALIDATION_FAILED", {
+                pointer: "/scheduleId",
+                code: "INVALID_VALUE",
+                detail: "제공기록지 링크 발송 작업을 생성하지 못했습니다",
+                location: "body",
+            }));
         }
         this.logger.log(
             `Service record link SMS manually scheduled for provider ${result.employeeId} schedule ${scheduleId} at ${result.scheduledFor.toISOString()}`
@@ -171,13 +182,18 @@ export class ServiceRecordLinkService {
             include: { primaryEmployee: true },
         });
         if (!schedule || !schedule.branchId || schedule.replaced) {
-            throw new NotFoundException("Assignment not found");
+            throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
         }
 
         const employee = schedule.primaryEmployee;
         const resolvedRecipientPhone = this.resolveRecipientPhone(employee.phone, recipientPhone);
         if (!resolvedRecipientPhone || !this.resolveRecipientPhone(employee.phone)) {
-            throw new BadRequestException("제공인력 전화번호가 없습니다");
+            throw new BadRequestException(problemBody("INVALID_PROVIDER_PHONE", {
+                pointer: "/recipientPhone",
+                code: "INVALID_VALUE",
+                detail: "제공인력 전화번호가 없습니다",
+                location: "body",
+            }));
         }
 
         const serviceRecordCase = await this.lifecycleService?.ensureForClient(schedule.clientId);
@@ -210,13 +226,18 @@ export class ServiceRecordLinkService {
             include: { primaryEmployee: true },
         });
         if (!schedule || !schedule.branchId || schedule.replaced) {
-            throw new NotFoundException("Assignment not found");
+            throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
         }
 
         const employee = schedule.primaryEmployee;
         const resolvedRecipientPhone = this.resolveRecipientPhone(employee.phone);
         if (!resolvedRecipientPhone || !this.resolveRecipientPhone(employee.phone)) {
-            throw new BadRequestException("제공인력 전화번호가 없습니다");
+            throw new BadRequestException(problemBody("INVALID_PROVIDER_PHONE", {
+                pointer: "/recipientPhone",
+                code: "INVALID_VALUE",
+                detail: "제공인력 전화번호가 없습니다",
+                location: "body",
+            }));
         }
 
         await this.cancelPendingServiceRecordJobs(scheduleId, "Service record link reset without resend");
@@ -295,6 +316,7 @@ export class ServiceRecordLinkService {
             preparedLinkToken?: string;
             isManualSend: boolean;
             recipientPhone?: string;
+            taskAutomationReference?: AgentAutomationTaskCommitReference;
         },
     ): Promise<{
         scheduledFor: Date;
@@ -307,7 +329,7 @@ export class ServiceRecordLinkService {
             include: { primaryEmployee: true, client: true },
         });
         if (!schedule || !schedule.branchId || schedule.replaced) {
-            throw new NotFoundException("Assignment not found");
+            throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
         }
 
         await this.ensureSystemRule(schedule.branchId, options.isManualSend);
@@ -348,7 +370,12 @@ export class ServiceRecordLinkService {
             const serviceRecordCase = await this.lifecycleService?.ensureForClient(schedule.clientId);
             if (options.preparedLinkToken) {
                 if (!resolvedRecipientPhone || !this.resolveRecipientPhone(employee.phone)) {
-                    throw new BadRequestException("제공인력 전화번호가 없습니다");
+                    throw new BadRequestException(problemBody("INVALID_PROVIDER_PHONE", {
+                pointer: "/recipientPhone",
+                code: "INVALID_VALUE",
+                detail: "제공인력 전화번호가 없습니다",
+                location: "body",
+            }));
                 }
 
                 const activated = await this.tokenService.activatePreparedLink({
@@ -363,7 +390,12 @@ export class ServiceRecordLinkService {
                     ),
                 });
                 if (!activated) {
-                    throw new BadRequestException("준비된 제공기록지 링크가 만료되었거나 유효하지 않습니다");
+                    throw new BadRequestException(problemBody("VALIDATION_FAILED", {
+                        pointer: "/scheduleId",
+                        code: "INVALID_VALUE",
+                        detail: "준비된 제공기록지 링크가 만료되었거나 유효하지 않습니다",
+                        location: "body",
+                    }));
                 }
             }
 
@@ -378,7 +410,12 @@ export class ServiceRecordLinkService {
 
             if (!resolvedRecipientPhone || !this.resolveRecipientPhone(employee.phone)) {
                 if (!options.recordMissingPhoneFailure) {
-                    throw new BadRequestException("제공인력 전화번호가 없습니다");
+                    throw new BadRequestException(problemBody("INVALID_PROVIDER_PHONE", {
+                pointer: "/recipientPhone",
+                code: "INVALID_VALUE",
+                detail: "제공인력 전화번호가 없습니다",
+                location: "body",
+            }));
                 }
 
                 this.logger.warn(
@@ -459,6 +496,9 @@ export class ServiceRecordLinkService {
                         serviceStartDate: this.formatDate(schedule.startDate),
                         serviceEndDate: this.formatDate(schedule.endDate),
                     },
+                    ...(options.taskAutomationReference
+                        ? { taskAutomationReference: options.taskAutomationReference }
+                        : {}),
                 },
             });
             const promote = (transaction?: Prisma.TransactionClient) => transaction
@@ -686,7 +726,12 @@ export class ServiceRecordLinkService {
                 );
                 if (unsupportedVariables.length > 0) {
                     throw new BadRequestException({
-                        message: "활성 자동 발송 규칙에서 입력할 수 없는 필수 템플릿 변수가 있습니다.",
+                        ...problemBody("VALIDATION_FAILED", {
+                            pointer: "/templateKey",
+                            code: "INVALID_VALUE",
+                            detail: "활성 자동 발송 규칙에서 입력할 수 없는 필수 템플릿 변수가 있습니다.",
+                            location: "body",
+                        }),
                         unsupportedVariables,
                     });
                 }

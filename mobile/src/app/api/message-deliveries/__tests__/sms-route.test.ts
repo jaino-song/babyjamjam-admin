@@ -73,7 +73,13 @@ describe("SMS delivery API route", () => {
     const response = await sendSms(request);
 
     expect(response.status).toBe(401);
-    await expect(response.json()).resolves.toEqual({ error: "Unauthorized" });
+    expect(response.headers.get("Content-Type")).toBe("application/problem+json");
+    await expect(response.json()).resolves.toEqual(expect.objectContaining({
+      code: "AUTH_REQUIRED",
+      status: 401,
+      outcome: "NOT_APPLIED",
+      error: "Unauthorized",
+    }));
     expect(mockPost).not.toHaveBeenCalled();
   });
 
@@ -126,6 +132,73 @@ describe("SMS delivery API route", () => {
       payload,
       expect.anything(),
     );
+  });
+
+  it("does not return or log raw upstream SMS error payloads", async () => {
+    mockPost.mockRejectedValue({
+      response: {
+        status: 502,
+        data: {
+          error: "provider trace /tmp/sms-worker",
+          code: "SMS_PROVIDER_ERROR",
+          diagnostics: { host: "sms.internal" },
+        },
+      },
+      code: "ERR_BAD_RESPONSE",
+      name: "AxiosError",
+    });
+
+    const response = await sendSms(createRequest(JSON.stringify(validSmsPayload)));
+
+    expect(response.status).toBe(502);
+    await expect(response.json()).resolves.toEqual({
+      error: expect.stringMatching(/[가-힣].*요[.!]?$/),
+      code: "SMS_PROVIDER_ERROR",
+    });
+
+    const logged = consoleErrorSpy.mock.calls
+      .flat()
+      .map((entry) => (typeof entry === "string" ? entry : JSON.stringify(entry)))
+      .join(" ");
+    expect(logged).not.toContain("/tmp/sms-worker");
+    expect(logged).not.toContain("sms.internal");
+  });
+
+  it("forwards a registered upstream problem body verbatim", async () => {
+    mockPost.mockRejectedValue({
+      response: {
+        status: 422,
+        data: {
+          type: "https://github.com/jaino-song/babyjamjam-admin/blob/main/docs/error-management.md#validation-failed",
+          title: "Validation failed",
+          status: 422,
+          detail: "입력 정보가 처리 조건에 맞지 않아요.",
+          code: "VALIDATION_FAILED",
+          requestId: "req-sms-1",
+          params: {},
+        },
+      },
+    });
+
+    const response = await sendSms(createRequest(JSON.stringify(validSmsPayload)));
+
+    expect(response.status).toBe(422);
+    expect(response.headers.get("Content-Type")).toBe("application/problem+json");
+    const body = await response.json();
+    expect(body).toMatchObject({ code: "VALIDATION_FAILED", status: 422, requestId: "req-sms-1" });
+  });
+
+  it("sanitizes an SMS transport failure into a Korean problem with a 500 status", async () => {
+    mockPost.mockRejectedValue(new Error("socket hang up"));
+
+    const response = await sendSms(createRequest(JSON.stringify(validSmsPayload)));
+
+    expect(response.status).toBe(500);
+    const body = await response.json();
+    expect(typeof body.error).toBe("string");
+    expect(body.error).toMatch(/[가-힣]/);
+    expect(body.code).not.toBe("UPSTREAM_ERROR");
+    expect(JSON.stringify(body)).not.toContain("socket hang up");
   });
 
   it("does not return or log raw upstream SMS error payloads", async () => {

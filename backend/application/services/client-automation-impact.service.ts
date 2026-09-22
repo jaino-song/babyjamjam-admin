@@ -1,21 +1,29 @@
 import type { Prisma } from "@prisma/client";
-import { Inject, Injectable } from "@nestjs/common";
+import { Inject, Injectable, Optional } from "@nestjs/common";
+import { ConfigService } from "@nestjs/config";
 import { agentBindingHash } from "domain/repositories/agent-linked-action.types";
 import { MESSAGE_TRIGGER_JOB_REPOSITORY, type IMessageTriggerJobRepository, type MessageTriggerJobReviewSnapshot } from "domain/repositories/message-trigger-job.repository.interface";
 import type { ClientAutomationImpact, ClientAutomationImpactPort, ClientAutomationWrite, ClientAutomationWriteValues } from "domain/ports/client-automation-impact.port";
 import type { AgentAutomationEffect } from "domain/entities/agent-automation-consent";
-import type { MessageTriggerRuleEntity } from "domain/entities/message-trigger-rule.entity";
+import { MessageTriggerRuleEntity } from "domain/entities/message-trigger-rule.entity";
 import { MessageTriggerEventType, MessageTriggerOffsetType, MessageTriggerRecipientType, MessageTriggerTemplateKey } from "domain/constants/message-trigger-catalog";
+import { SERVICE_RECORD_LINK_RULE_ID, getServiceRecordLinkScheduledFor } from "domain/constants/service-record-link-message";
 import { isManualMessageTriggerJob } from "domain/constants/message-trigger-job-ownership";
 import { agentAutomationScheduleIdentity, canonicalAgentAutomationEffects } from "application/agent/agent-automation-consent";
 import { normalizePhone } from "application/utils/normalize-phone";
 import { AligoDefaultSenderPolicyService } from "./aligo-default-sender-policy.service";
-import { ClientAutomationSourceReader } from "./client-automation-source.reader";
+import { ClientAutomationSourceReader, type ClientAutomationServiceRecordLinkSource } from "./client-automation-source.reader";
 import { SmsTriggerDeliveryService } from "./sms-trigger-delivery.service";
 import { describeClientMessageEffect, type ClientMessageEffectPolicy, type ClientMessageLogicalSubject } from "./client-message-effect-recipe";
 import { buildClientMessageRecipe, buildEmployeeAssignmentMessageRecipe, isMessageRecipeWithinMaterializationWindow,
     shouldSkipClientPreStartCatchUp,
     type ClientTriggerSource, type MessageTriggerJobRecipe } from "./message-trigger-recipes";
+import { MessageTriggerJobEntity } from "domain/entities/message-trigger-job.entity";
+import {
+    buildServiceRecordLinkPayload,
+    DEFAULT_MOBILE_SERVICE_RECORD_BASE_URL,
+    describeServiceRecordLinkEffect,
+} from "./service-record-link-automation-effect-recipe";
 
 const VERSION = "client-automation-impact-v1";
 const FIELDS = ["name", "phone", "type", "startDate", "endDate", "duration", "fullPrice", "grant", "actualPrice"] as const;
@@ -43,6 +51,10 @@ function jobVersion(job: MessageTriggerJobReviewSnapshot): string {
         updatedAt: job.updatedAt, claimToken: job.claimToken, dedupeKey: job.dedupeKey, canceledByUser: job.canceledByUser });
 }
 
+function validDate(value: Date): boolean {
+    return value instanceof Date && !Number.isNaN(value.getTime());
+}
+
 /** A failed preview is a finite denial descriptor, never a sendable content recipe. */
 function unavailableEffect(input: {
     branchId: string; subject: ClientMessageLogicalSubject; rule: MessageTriggerRuleEntity;
@@ -64,6 +76,94 @@ function unavailableEffect(input: {
 }
 
 /**
+ * Keep a dedicated schedule/link scope in the reviewed artifact even when the
+ * opaque service-record token or its global rule has not been provisioned yet.
+ * The descriptor is deliberately digest-only: it can support a deny/no-send
+ * coverage record, but it can never be promoted to a sendable recipe.
+ */
+function unavailableServiceRecordLinkEffect(input: {
+    branchId: string;
+    subject: ClientMessageLogicalSubject;
+    link: ClientAutomationServiceRecordLinkSource;
+    policy: ClientMessageEffectPolicy;
+    change: AgentAutomationEffect["change"];
+    reason: string;
+}): AgentAutomationEffect {
+    const schedule = input.link.schedule;
+    const employee = schedule.primaryEmployee;
+    const scheduleIdentity = (() => {
+        try { return agentAutomationScheduleIdentity(schedule.incarnationId); } catch { return null; }
+    })();
+    const scheduledFor = validDate(schedule.startDate) ? getServiceRecordLinkScheduledFor(schedule.startDate).toISOString() : null;
+    return {
+        kind: "service-record-link",
+        ruleId: SERVICE_RECORD_LINK_RULE_ID,
+        scheduleId: schedule.id,
+        recipientType: "primary-employee",
+        templateKey: MessageTriggerTemplateKey.SERVICE_RECORD_LINK,
+        change: input.change,
+        recipientDigest: agentBindingHash({
+            branchId: input.branchId,
+            subject: input.subject,
+            recipientType: "primary-employee",
+            receiver: normalizePhone(employee?.phone ?? "") || null,
+        }),
+        sourceDigest: agentBindingHash({
+            version: VERSION,
+            branchId: input.branchId,
+            subject: input.subject,
+            schedule: {
+                id: schedule.id,
+                incarnationId: scheduleIdentity,
+                clientId: schedule.clientId,
+                primaryEmployeeId: schedule.primaryEmployeeId,
+                startDate: validDate(schedule.startDate) ? schedule.startDate.toISOString() : null,
+                endDate: validDate(schedule.endDate) ? schedule.endDate.toISOString() : null,
+            },
+            serviceRecordCaseId: input.link.serviceRecordCase?.id ?? null,
+            tokenState: input.link.token ? "present-but-unusable" : "missing",
+        }),
+        templateDigest: agentBindingHash({
+            version: VERSION,
+            unavailable: input.reason,
+            templateKey: MessageTriggerTemplateKey.SERVICE_RECORD_LINK,
+        }),
+        policyDigest: agentBindingHash({ version: VERSION, ...input.policy }),
+        recipeDigest: agentBindingHash({
+            version: VERSION,
+            operation: "service-record-link",
+            scheduledFor,
+            eventType: MessageTriggerEventType.SERVICE_START,
+            offsetType: MessageTriggerOffsetType.SAME_DAY,
+            offsetDays: 0,
+            recipientType: MessageTriggerRecipientType.PRIMARY_EMPLOYEE,
+            scheduleIdentity,
+            reason: input.reason,
+        }),
+    };
+}
+
+function defaultServiceRecordLinkRule(): MessageTriggerRuleEntity {
+    const epoch = new Date(0);
+    return MessageTriggerRuleEntity.reconstitute(
+        SERVICE_RECORD_LINK_RULE_ID,
+        null,
+        "제공기록지 링크",
+        true,
+        MessageTriggerEventType.SERVICE_START,
+        MessageTriggerOffsetType.SAME_DAY,
+        0,
+        MessageTriggerRecipientType.PRIMARY_EMPLOYEE,
+        MessageTriggerTemplateKey.SERVICE_RECORD_LINK,
+        epoch,
+        epoch,
+        false,
+        false,
+        "15:00",
+    );
+}
+
+/**
  * Reads a complete bounded customer-rule delta. No provision, enrichment, intent,
  * job, log or customer write is reachable here. The caller still owns target CAS,
  * question persistence, review, committed authority and materialization.
@@ -75,6 +175,7 @@ export class ClientAutomationImpactService implements ClientAutomationImpactPort
         private readonly delivery: SmsTriggerDeliveryService,
         private readonly sender: AligoDefaultSenderPolicyService,
         @Inject(MESSAGE_TRIGGER_JOB_REPOSITORY) private readonly jobs: IMessageTriggerJobRepository,
+        @Optional() private readonly configService?: ConfigService,
     ) {}
 
     async planClientWrite(branchId: string, write: ClientAutomationWrite): Promise<ClientAutomationImpact> {
@@ -127,10 +228,17 @@ export class ClientAutomationImpactService implements ClientAutomationImpactPort
             pastTriggerEnabled: settings.pastTriggerEnabled, pastTriggerConfig: settings.pastTriggerConfig,
         };
         const rules = settings.rules.filter((rule) => rule.branchId === branchId && !rule.id.startsWith("system:") && !rule.id.startsWith("agent-sms:"));
-        const jobs = before ? (transaction ? await this.jobs.findForClientAutomationReview(branchId, before.id, rules.map((rule) => rule.id), transaction)
-            : await this.jobs.findForClientAutomationReview(branchId, before.id, rules.map((rule) => rule.id))) : [];
-        if (rules.length > 500 || jobs.length > 500 || jobs.some((job) => job.branchId !== branchId || job.clientId !== before!.id
-            || typeof job.canceledByUser !== "boolean" || !rules.some((rule) => rule.id === job.ruleId))) return this.unavailable("source-unavailable");
+        const serviceRecordRule = settings.rules.find((rule) => rule.id === SERVICE_RECORD_LINK_RULE_ID && rule.branchId === null);
+        // Keep the dedicated operation in the review/source guard even before
+        // the global rule is provisioned. This prevents a later reconciliation
+        // from inheriting a task mutation through an unreviewed legacy path.
+        const serviceRecordReviewRule = serviceRecordRule ?? defaultServiceRecordLinkRule();
+        const reviewRules = [...rules, serviceRecordReviewRule];
+        const reviewRuleIds = reviewRules.map((rule) => rule.id);
+        const jobs = before ? (transaction ? await this.jobs.findForClientAutomationReview(branchId, before.id, reviewRuleIds, transaction)
+            : await this.jobs.findForClientAutomationReview(branchId, before.id, reviewRuleIds)) : [];
+        if (reviewRules.length > 500 || jobs.length > 500 || jobs.some((job) => job.branchId !== branchId || job.clientId !== before!.id
+            || typeof job.canceledByUser !== "boolean" || !reviewRules.some((rule) => rule.id === job.ruleId))) return this.unavailable("source-unavailable");
         const effects: AgentAutomationEffect[] = [];
         const grandfatheredEffects: AgentAutomationEffect[] = [];
         const affected = new Map<string, MessageTriggerJobReviewSnapshot>();
@@ -192,6 +300,7 @@ export class ClientAutomationImpactService implements ClientAutomationImpactPort
         // A client-name correction refreshes existing active schedule recipes. It
         // never changes the source fingerprint format of legacy assignment jobs.
         let schedules: Awaited<ReturnType<ClientAutomationSourceReader["readClientAutomationSchedules"]>> = [];
+        let serviceRecordLinks: Awaited<ReturnType<ClientAutomationSourceReader["readClientAutomationServiceRecordLinks"]>> = [];
         const nameChanged = before && before.name !== after.name;
         const periodChanged = before && sourceHash([before.startDate, before.endDate]) !== sourceHash([after.startDate, after.endDate]);
         if (before && (nameChanged || periodChanged)) {
@@ -222,6 +331,123 @@ export class ClientAutomationImpactService implements ClientAutomationImpactPort
                 noteUnavailable("unsupported-content");
                 mutable.forEach((job) => affected.set(job.id, job));
             }
+
+            // The service-record-link owner uses the same customer task
+            // authority as generic rules, but it has a dedicated recipe and
+            // current token/case sources. A name correction changes the link
+            // body, so the latest active schedule must be reviewed again.
+            if (nameChanged && typeof this.sources.readClientAutomationServiceRecordLinks === "function") {
+                serviceRecordLinks = transaction
+                    ? await this.sources.readClientAutomationServiceRecordLinks(branchId, before.id, transaction)
+                    : await this.sources.readClientAutomationServiceRecordLinks(branchId, before.id);
+                if (serviceRecordLinks.length > 500) return this.unavailable("source-unavailable");
+
+                const latestScheduleId = serviceRecordLinks.at(-1)?.schedule.id ?? null;
+                for (const link of serviceRecordLinks) {
+                    const schedule = link.schedule;
+                    const previousJobs = jobs.filter((job) => job.ruleId === SERVICE_RECORD_LINK_RULE_ID
+                        && job.employeeScheduleId === schedule.id && !isManualMessageTriggerJob(job));
+                    const mutable = previousJobs.filter((job) => job.status === "pending" || job.status === "processing");
+                    if (previousJobs.some((job) => job.status === "dispatching" || job.status === "failed")) {
+                        noteUnavailable("source-unavailable"); complete = false; continue;
+                    }
+                    // ServiceRecordLinkService and the authority resolver use
+                    // the newest active assignment as the canonical provider.
+                    // Older rows are left untouched unless they already have a
+                    // mutable job, in which case review must fail closed.
+                    if (latestScheduleId !== null && schedule.id !== latestScheduleId) {
+                        if (mutable.length > 0) { noteUnavailable("source-unavailable"); complete = false; }
+                        continue;
+                    }
+                    let scheduleIdentity: string;
+                    try {
+                        scheduleIdentity = agentAutomationScheduleIdentity(schedule.incarnationId);
+                    } catch {
+                        // An invalid incarnation cannot safely anchor a deny/no-send
+                        // coverage row. Keep this source incomplete.
+                        noteUnavailable("source-unavailable"); complete = false; continue;
+                    }
+                    if (!validDate(schedule.startDate) || !validDate(schedule.endDate)) {
+                        // A malformed date changes the operation identity. Do not
+                        // manufacture an unavailable effect from an untrusted row.
+                        noteUnavailable("source-unavailable"); complete = false; continue;
+                    }
+                    const unavailableChange: AgentAutomationEffect["change"] = mutable.length ? "refresh" : "create";
+                    if (!serviceRecordRule) {
+                        effects.push(unavailableServiceRecordLinkEffect({ branchId, subject, link,
+                            policy, change: unavailableChange, reason: "missing-system-rule" }));
+                        noteUnavailable("source-unavailable");
+                        mutable.forEach((job) => affected.set(job.id, job));
+                        continue;
+                    }
+                    if (!link.token || !schedule.primaryEmployee) {
+                        effects.push(unavailableServiceRecordLinkEffect({ branchId, subject, link,
+                            policy, change: unavailableChange, reason: link.token ? "missing-recipient" : "missing-link-token" }));
+                        noteUnavailable("source-unavailable");
+                        mutable.forEach((job) => affected.set(job.id, job));
+                        continue;
+                    }
+                    const recipe = this.buildServiceRecordLinkRecipe(branchId, serviceRecordRule, link, after.name, now);
+                    if (!recipe) {
+                        effects.push(unavailableServiceRecordLinkEffect({ branchId, subject, link,
+                            policy, change: unavailableChange, reason: "link-recipe-unavailable" }));
+                        noteUnavailable("source-unavailable");
+                        mutable.forEach((job) => affected.set(job.id, job));
+                        continue;
+                    }
+                    const terminalDedupe = previousJobs.some((job) => job.dedupeKey === recipe.dedupeKey
+                        && (["sent", "failed"].includes(job.status) || job.canceledByUser));
+                    const eligible = !terminalDedupe && (settings.pastTriggerEnabled || recipe.scheduledFor > now);
+                    if (!eligible && mutable.length === 0) continue;
+                    const change: AgentAutomationEffect["change"] = !eligible ? "cancel" : mutable.length ? "refresh" : "create";
+                    const previewRecipe = this.buildServiceRecordLinkRecipe(branchId, serviceRecordRule, link, after.name, now);
+                    if (!previewRecipe) {
+                        effects.push(unavailableServiceRecordLinkEffect({ branchId, subject, link,
+                            policy, change, reason: "link-recipe-unavailable" }));
+                        noteUnavailable("source-unavailable");
+                        mutable.forEach((job) => affected.set(job.id, job));
+                        continue;
+                    }
+                    let described: AgentAutomationEffect | null = null;
+                    try {
+                        const deliveryJob = MessageTriggerJobEntity.create(previewRecipe);
+                        const snapshot = transaction
+                            ? await this.delivery.resolveCanonicalDeliverySnapshot(deliveryJob, transaction)
+                            : await this.delivery.resolveCanonicalDeliverySnapshot(deliveryJob);
+                        described = describeServiceRecordLinkEffect({
+                            branchId,
+                            subject,
+                            rule: serviceRecordRule,
+                            schedule: { ...schedule, client: { ...schedule.client, name: after.name } },
+                            serviceRecordCase: link.serviceRecordCase,
+                            token: link.token,
+                            scheduleIdentity,
+                            serviceRecordUrl: previewRecipe.payload.buttonUrl as string,
+                            sourcePayload: previewRecipe.payload as unknown as Record<string, unknown>,
+                            scheduledFor: previewRecipe.scheduledFor,
+                            dedupeKey: previewRecipe.dedupeKey,
+                            snapshot,
+                            change,
+                            policy,
+                            now,
+                        });
+                    } catch {
+                        described = null;
+                    }
+                    if (!described) {
+                        const unavailableReason = change === "cancel"
+                            ? "source-unavailable"
+                            : policy.dispatchEnabled && policy.senderApproved ? "unsupported-content" : "sender-unavailable";
+                        effects.push(unavailableServiceRecordLinkEffect({ branchId, subject, link,
+                            policy, change, reason: unavailableReason }));
+                        noteUnavailable(unavailableReason);
+                        mutable.forEach((job) => affected.set(job.id, job));
+                        continue;
+                    }
+                    effects.push(described);
+                    mutable.forEach((job) => affected.set(job.id, job));
+                }
+            }
         }
         if (effects.length > 500) return this.unavailable("source-unavailable");
         const canonical = canonicalAgentAutomationEffects(effects);
@@ -229,10 +455,61 @@ export class ClientAutomationImpactService implements ClientAutomationImpactPort
             effects: canonical, grandfatheredEffects: canonicalAgentAutomationEffects(grandfatheredEffects), complete, clientIdentity,
             sourceGuard: sourceHash({ version: VERSION, branchId, subject, before,
                 after: write.kind === "create" ? { ...after, createdAt: "committed-client-creation" } : after, policy,
-                rules: [...rules].sort((a, b) => a.id.localeCompare(b.id)),
+                rules: [...reviewRules].sort((a, b) => a.id.localeCompare(b.id)),
                 jobs: jobs.map((job) => ({ id: job.id, version: jobVersion(job) })).sort((a, b) => a.id.localeCompare(b.id)), schedules,
+                serviceRecordLinks,
                 grandfatheredEffects: canonicalAgentAutomationEffects(grandfatheredEffects) }),
             affectedJobs: [...affected.values()].map((job) => ({ id: job.id, version: jobVersion(job) })).sort((a, b) => a.id.localeCompare(b.id)) };
+    }
+
+    private buildServiceRecordLinkRecipe(
+        branchId: string,
+        rule: MessageTriggerRuleEntity,
+        link: ClientAutomationServiceRecordLinkSource,
+        clientName: string,
+        now: Date,
+    ): MessageTriggerJobRecipe | null {
+        const { schedule, token } = link;
+        const employee = schedule.primaryEmployee;
+        if (!token || !employee || !validDate(now) || !validDate(schedule.startDate) || !validDate(schedule.endDate)) return null;
+        if (!/^[A-Za-z0-9_-]+$/.test(token.linkTokenHash)) return null;
+        const configuredBase = this.configService?.get<string>(
+            "MOBILE_SERVICE_RECORD_BASE_URL",
+            DEFAULT_MOBILE_SERVICE_RECORD_BASE_URL,
+        ) ?? DEFAULT_MOBILE_SERVICE_RECORD_BASE_URL;
+        const base = configuredBase.trim().replace(/\/+$/, "");
+        let serviceRecordUrl: string;
+        try {
+            const parsed = new URL(`${base}/service-record/${token.linkTokenHash}`);
+            if (parsed.protocol !== "https:" || parsed.username || parsed.password || parsed.search || parsed.hash) return null;
+            serviceRecordUrl = parsed.toString();
+        } catch {
+            return null;
+        }
+        const scheduledFor = getServiceRecordLinkScheduledFor(schedule.startDate);
+        const payload = buildServiceRecordLinkPayload({
+            clientId: schedule.clientId,
+            clientName,
+            employeeId: employee.id,
+            employeeName: employee.name,
+            recipientPhone: employee.phone,
+            buttonUrl: serviceRecordUrl,
+            serviceRecordUrl,
+            serviceStartDate: schedule.startDate.toISOString().slice(0, 10),
+            serviceEndDate: schedule.endDate.toISOString().slice(0, 10),
+        });
+        return {
+            branchId,
+            ruleId: rule.id,
+            scheduledFor,
+            clientId: schedule.clientId,
+            employeeScheduleId: schedule.id,
+            recipientType: MessageTriggerRecipientType.PRIMARY_EMPLOYEE,
+            recipientPhone: employee.phone,
+            templateKey: MessageTriggerTemplateKey.SERVICE_RECORD_LINK,
+            dedupeKey: `${SERVICE_RECORD_LINK_RULE_ID}:schedule:${schedule.id}:primary`,
+            payload: payload as unknown as MessageTriggerJobRecipe["payload"],
+        };
     }
 
     private mergeSource(before: ClientTriggerSource | null, values: ClientAutomationWriteValues, now: Date): ClientTriggerSource {

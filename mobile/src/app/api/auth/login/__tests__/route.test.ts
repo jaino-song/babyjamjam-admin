@@ -88,7 +88,7 @@ describe("POST /api/auth/login", () => {
         expect(cookieSet).toHaveBeenCalled();
     });
 
-    it("returns the backend response when login fails (no cookies set)", async () => {
+    it("converts a failed login body through the problem boundary (no raw passthrough, no cookies set)", async () => {
         mockPost.mockResolvedValue({
             status: 401,
             data: { success: false, message: "이메일 또는 비밀번호가 올바르지 않아요." },
@@ -97,6 +97,9 @@ describe("POST /api/auth/login", () => {
         const response = await POST(createRequest(JSON.stringify(validBody)));
 
         expect(response.status).toBe(401);
+        await expect(response.json()).resolves.toEqual({
+            error: "이메일 또는 비밀번호가 올바르지 않아요.",
+        });
         expect(cookieSet).not.toHaveBeenCalled();
     });
 });

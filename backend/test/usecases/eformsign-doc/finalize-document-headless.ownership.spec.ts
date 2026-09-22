@@ -1,6 +1,8 @@
 import { FinalizeDocumentHeadlessUsecase } from "application/usecases/eformsign-doc/finalize-document-headless.usecase";
 import { EFORMSIGN_DOCUMENT_KIND } from "domain/entities/eformsign-doc.entity";
 
+const RECOVERY_NONE = { action: "NONE", retry: { mode: "NEVER" } } as const;
+
 const TEST_PRINCIPAL = {
     userId: "test-user",
     branchId: "branch-a",
@@ -82,6 +84,9 @@ describe("FinalizeDocumentHeadlessUsecase ownership boundary", () => {
             ok: false,
             reason: "authorization_denied",
             fallbackHint: "manual_check",
+            code: "ACCESS_DENIED",
+            outcome: "NOT_APPLIED",
+            recovery: RECOVERY_NONE,
         });
         expect(credentialBoundary.withCredentials).not.toHaveBeenCalled();
         expect(eformsignService.generateStaffCompletionOptions).not.toHaveBeenCalled();
@@ -138,6 +143,9 @@ describe("FinalizeDocumentHeadlessUsecase ownership boundary", () => {
             ok: false,
             reason: "authorization_denied",
             fallbackHint: "manual_check",
+            code: "ACCESS_DENIED",
+            outcome: "NOT_APPLIED",
+            recovery: RECOVERY_NONE,
         });
         expect(credentialBoundary.withCredentials).not.toHaveBeenCalled();
         expect(eformsignService.generateStaffCompletionOptions).not.toHaveBeenCalled();

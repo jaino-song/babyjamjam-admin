@@ -553,7 +553,15 @@ describe("EmployeeScheduleService assignment eligibility", () => {
             workAddress: "서울",
             startDate: "2026-08-01",
             endDate: "2026-08-31",
-        })).rejects.toThrow("Client not found for branch");
+        })).rejects.toMatchObject({
+            status: 404,
+            response: {
+                code: "RESOURCE_NOT_FOUND",
+                params: {},
+                outcome: "NOT_APPLIED",
+                recovery: { action: "NONE", retry: { mode: "NEVER" } },
+            },
+        });
 
         expect(clientRepository.findFirst).toHaveBeenCalledWith({
             where: { id: 100, branchId },

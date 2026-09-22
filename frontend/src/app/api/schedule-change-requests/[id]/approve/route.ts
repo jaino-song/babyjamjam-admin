@@ -1,7 +1,14 @@
-import { NextRequest, NextResponse } from "next/server";
-import { isAxiosError } from "axios";
+import { NextRequest } from "next/server";
 
 import { serverAPIClient } from "@/lib/api/server";
+import {
+    backendJsonResponse,
+    errorResponse,
+    getAuthHeaders,
+    getAuthToken,
+    unauthorizedResponse,
+    withNoStore,
+} from "@/lib/api/route-utils";
 
 type RouteParams = { params: Promise<{ id: string }> };
 
@@ -10,25 +17,19 @@ type RouteParams = { params: Promise<{ id: string }> };
 // backend status/body (409 REQUEST_STALE etc. must reach the browser).
 export async function POST(request: NextRequest, { params }: RouteParams) {
     const { id } = await params;
-    const token = request.cookies.get("auth_token")?.value;
+    const token = getAuthToken(request);
     if (!token) {
-        return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+        return unauthorizedResponse("Unauthorized");
     }
 
     try {
         const response = await serverAPIClient.post(
             `/schedule-change-requests/${encodeURIComponent(id)}/approve`,
             {},
-            { headers: { Authorization: `Bearer ${token}` } },
+            { headers: getAuthHeaders(token) },
         );
-        return NextResponse.json(response.data ?? {}, { status: response.status });
+        return withNoStore(backendJsonResponse(response));
     } catch (error) {
-        if (isAxiosError(error) && error.response) {
-            return NextResponse.json(error.response.data ?? { error: "Request failed" }, {
-                status: error.response.status,
-            });
-        }
-        console.error("approve schedule change request failed:", error);
-        return NextResponse.json({ error: "Failed to approve schedule change request" }, { status: 500 });
+        return errorResponse(error, "approve schedule change request");
     }
 }

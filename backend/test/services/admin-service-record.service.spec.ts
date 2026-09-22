@@ -1,4 +1,4 @@
-import { NotFoundException } from "@nestjs/common";
+import { ConflictException, ForbiddenException, NotFoundException } from "@nestjs/common";
 import { AdminServiceRecordService } from "application/services/admin-service-record.service";
 import { MessageTriggerService } from "application/services/message-trigger.service";
 import { ServiceRecordLinkService } from "application/services/service-record-link.service";
@@ -353,7 +353,16 @@ describe("AdminServiceRecordService", () => {
         );
         prisma.client.findFirst.mockResolvedValue(null);
 
-        await expect(service.getClientEditor("branch-1", 404)).rejects.toBeInstanceOf(NotFoundException);
+        const rejection = service.getClientEditor("branch-1", 404);
+        await expect(rejection).rejects.toBeInstanceOf(NotFoundException);
+        await expect(rejection).rejects.toMatchObject({
+            status: 404,
+            response: expect.objectContaining({
+                code: "RESOURCE_NOT_FOUND",
+                outcome: "NOT_APPLIED",
+                recovery: { action: "NONE", retry: { mode: "NEVER" } },
+            }),
+        });
 
         expect(prisma.client.findFirst).toHaveBeenCalledWith({
             where: { id: 404, branchId: "branch-1" },
@@ -631,7 +640,12 @@ describe("AdminServiceRecordService", () => {
         );
         prisma.employee_schedule.findFirst.mockResolvedValue(null);
 
-        await expect(service.sendLinkNow("branch-1", 10)).rejects.toBeInstanceOf(NotFoundException);
+        const rejection = service.sendLinkNow("branch-1", 10);
+        await expect(rejection).rejects.toBeInstanceOf(NotFoundException);
+        await expect(rejection).rejects.toMatchObject({
+            status: 404,
+            response: expect.objectContaining({ code: "RESOURCE_NOT_FOUND" }),
+        });
 
         expect(linkService.sendNow).not.toHaveBeenCalled();
     });
@@ -715,7 +729,16 @@ describe("AdminServiceRecordService", () => {
         );
         prisma.employee_schedule.findFirst.mockResolvedValue({ id: 10 });
 
-        await expect(service.resetLink("branch-1", 10)).rejects.toThrow("Authenticated administrator required");
+        const rejection = service.resetLink("branch-1", 10);
+        await expect(rejection).rejects.toBeInstanceOf(ForbiddenException);
+        await expect(rejection).rejects.toMatchObject({
+            status: 403,
+            response: expect.objectContaining({
+                code: "ACCESS_DENIED",
+                outcome: "NOT_APPLIED",
+                recovery: { action: "NONE", retry: { mode: "NEVER" } },
+            }),
+        });
         expect(linkService.resetLink).not.toHaveBeenCalled();
 
         await expect(service.resetLink("branch-1", 10, {
@@ -731,6 +754,146 @@ describe("AdminServiceRecordService", () => {
             actorUserId: "admin-1",
             branchId: "branch-1",
             scheduleId: 10,
+        });
+    });
+
+    describe("revision endpoints bind rejections to the registered problem contract", () => {
+        const buildService = (
+            prisma: ReturnType<typeof createPrisma>,
+            editRepository?: Record<string, jest.Mock>,
+        ) => new AdminServiceRecordService(
+            prisma as unknown as PrismaService,
+            createLinkService() as unknown as ServiceRecordLinkService,
+            createTriggerService() as unknown as MessageTriggerService,
+            undefined,
+            editRepository as never,
+        );
+
+        const expectProblemBody = async (
+            rejection: Promise<unknown>,
+            status: number,
+            code: string,
+        ) => {
+            await expect(rejection).rejects.toMatchObject({
+                status,
+                response: expect.objectContaining({
+                    code,
+                    outcome: "NOT_APPLIED",
+                    recovery: { action: "NONE", retry: { mode: "NEVER" } },
+                }),
+            });
+        };
+
+        it("returns a registered not-found body when the revision case is missing", async () => {
+            const prisma = createPrisma();
+            prisma.client.findFirst.mockResolvedValue({ id: 100 });
+            const editRepository = { listRevisionHistory: jest.fn().mockResolvedValue(null) };
+            const service = buildService(prisma, editRepository);
+
+            await expectProblemBody(
+                service.getRevisionHistory("branch-1", 100),
+                404,
+                "RESOURCE_NOT_FOUND",
+            );
+            expect(editRepository.listRevisionHistory).toHaveBeenCalledWith("branch-1", 100);
+        });
+
+        it("returns a registered conflict body when the edit repository is not bound", async () => {
+            const prisma = createPrisma();
+            prisma.client.findFirst.mockResolvedValue({ id: 100 });
+            const service = buildService(prisma);
+
+            await expectProblemBody(
+                service.getRevisionHistory("branch-1", 100),
+                409,
+                "REQUEST_CONFLICT",
+            );
+        });
+
+        it("maps a stale retry generation to the registered write-target-changed code", async () => {
+            const prisma = createPrisma();
+            const editRepository = {
+                findRevisionDocumentStateForBranch: jest.fn().mockResolvedValue({
+                    generation: "current-generation",
+                }),
+                retryRevisionDocumentState: jest.fn(),
+            };
+            const service = buildService(prisma, editRepository);
+
+            await expectProblemBody(
+                service.retryRevisionDocument("branch-1", "revision-1", "state-1", "expected-generation", "admin-1"),
+                409,
+                "SERVICE_RECORD_WRITE_TARGET_CHANGED",
+            );
+            expect(editRepository.retryRevisionDocumentState).not.toHaveBeenCalled();
+        });
+
+        it("maps an invalid retry generation to a registered conflict body", async () => {
+            const prisma = createPrisma();
+            const editRepository = {
+                findRevisionDocumentStateForBranch: jest.fn(),
+                retryRevisionDocumentState: jest.fn(),
+            };
+            const service = buildService(prisma, editRepository);
+
+            await expectProblemBody(
+                service.retryRevisionDocument("branch-1", "revision-1", "state-1", "", "admin-1"),
+                409,
+                "REQUEST_CONFLICT",
+            );
+            expect(editRepository.findRevisionDocumentStateForBranch).not.toHaveBeenCalled();
+        });
+
+        it("maps a lost retry race to a registered conflict body", async () => {
+            const prisma = createPrisma();
+            const editRepository = {
+                findRevisionDocumentStateForBranch: jest.fn().mockResolvedValue({
+                    generation: "current-generation",
+                }),
+                retryRevisionDocumentState: jest.fn().mockResolvedValue(null),
+            };
+            const service = buildService(prisma, editRepository);
+
+            await expectProblemBody(
+                service.retryRevisionDocument("branch-1", "revision-1", "state-1", "current-generation", "admin-1"),
+                409,
+                "REQUEST_CONFLICT",
+            );
+        });
+
+        it("returns a registered not-found body when the retry target document is missing", async () => {
+            const prisma = createPrisma();
+            const editRepository = {
+                findRevisionDocumentStateForBranch: jest.fn().mockResolvedValue(null),
+                retryRevisionDocumentState: jest.fn(),
+            };
+            const service = buildService(prisma, editRepository);
+
+            await expectProblemBody(
+                service.retryRevisionDocument("branch-1", "revision-1", "state-1", "expected-generation", "admin-1"),
+                404,
+                "RESOURCE_NOT_FOUND",
+            );
+            expect(editRepository.retryRevisionDocumentState).not.toHaveBeenCalled();
+        });
+
+        it("keeps ConflictException as the rejection type for revision conflicts", async () => {
+            const prisma = createPrisma();
+            const editRepository = {
+                findRevisionDocumentStateForBranch: jest.fn().mockResolvedValue({
+                    generation: "current-generation",
+                }),
+                retryRevisionDocumentState: jest.fn().mockResolvedValue(null),
+            };
+            const service = buildService(prisma, editRepository);
+
+            await expect(service.retryRevisionDocument(
+                "branch-1",
+                "revision-1",
+                "state-1",
+                "current-generation",
+                "admin-1",
+            )).rejects.toBeInstanceOf(ConflictException);
         });
     });
 });

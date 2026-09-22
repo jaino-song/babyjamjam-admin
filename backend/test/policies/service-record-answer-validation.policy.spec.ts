@@ -1,4 +1,4 @@
-import { BadRequestException } from "@nestjs/common";
+import { BadRequestException, HttpException } from "@nestjs/common";
 
 import { SERVICE_RECORD_FORM_LAYOUT } from "@babyjamjam/shared/constants/service-record-form-layout";
 import {
@@ -6,6 +6,16 @@ import {
     validateServiceRecordAnswers,
     validateServiceRecordEditText,
 } from "application/policies/service-record-answer-validation.policy";
+
+function problemBodyOf(fn: () => unknown): unknown {
+    try {
+        fn();
+    } catch (error) {
+        expect(error).toBeInstanceOf(HttpException);
+        return (error as HttpException).getResponse();
+    }
+    throw new Error("Expected validation to reject");
+}
 
 function canonicalPersistedLeafKeys(): string[] {
     return SERVICE_RECORD_FORM_LAYOUT.flatMap((section) => section.fields)
@@ -110,6 +120,16 @@ describe("service-record answer validation policy", () => {
         expect(() => validateServiceRecordAnswers({ perineum: ["열상", "열상"] })).toThrow(BadRequestException);
         expect(() => validateServiceRecordAnswers({ notes: "not an answer" })).toThrow(BadRequestException);
         expect(() => validateServiceRecordAnswers({ stool_color: "x".repeat(81) })).toThrow(BadRequestException);
+    });
+
+    it("carries VALIDATION_FAILED problem bodies on every rejection", () => {
+        expect(problemBodyOf(() => validateServiceRecordAnswers(null))).toMatchObject({ code: "VALIDATION_FAILED" });
+        expect(problemBodyOf(() => validateServiceRecordAnswers({ ...allAnswers(), branchId: "attacker" })))
+            .toMatchObject({ code: "VALIDATION_FAILED" });
+        expect(problemBodyOf(() => validateServiceRecordAnswers({ sitzBath: "unknown" })))
+            .toMatchObject({ code: "VALIDATION_FAILED" });
+        expect(problemBodyOf(() => validateServiceRecordEditText("x".repeat(41), "etcService")))
+            .toMatchObject({ code: "VALIDATION_FAILED" });
     });
 
     it("returns a clone so callers cannot mutate the validated input", () => {

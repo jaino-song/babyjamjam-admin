@@ -198,9 +198,10 @@ describe("AI chat API routes", () => {
     );
 
     expect(response.status).toBe(500);
+    // The non-catalog UPSTREAM_ERROR body is gone: the sanitized Korean
+    // status fallback keeps the 500 without inventing a code.
     await expect(response.json()).resolves.toEqual({
-      error: "Backend request failed",
-      code: "UPSTREAM_ERROR",
+      error: "서버 내부 오류로 요청을 처리하지 못했어요.",
     });
   });
 
@@ -306,7 +307,9 @@ describe("AI chat API routes", () => {
 
     expect(response.status).toBe(502);
     expect(response.headers.get("Content-Type")).toContain("text/event-stream");
-    await expect(response.text()).resolves.toContain("Streaming unavailable");
+    const transportBody = await response.text();
+    expect(transportBody).toContain("event: error");
+    expect(transportBody).toContain("UPSTREAM_INVALID_RESPONSE");
   });
 
   it("maps stream upstream errors without returning raw backend text", async () => {
@@ -325,8 +328,10 @@ describe("AI chat API routes", () => {
     expect(response.status).toBe(502);
     expect(response.headers.get("Content-Type")).toContain("text/event-stream");
     const body = await response.text();
-    expect(body).toContain("Streaming unavailable");
+    expect(body).toContain("event: error");
+    expect(body).toMatch(/[가-힣]/);
     expect(body).not.toContain("/internal/chat");
+    expect(body).not.toContain("stream stack");
   });
 
   it("rejects out-of-range history limits before proxying", async () => {
@@ -335,9 +340,12 @@ describe("AI chat API routes", () => {
     const response = await getChatHistory(createGetRequest("/api/ai/chat/history?limit=500"));
 
     expect(response.status).toBe(400);
-    await expect(response.json()).resolves.toEqual({
+    await expect(response.json()).resolves.toEqual(expect.objectContaining({
+      code: "VALIDATION_FAILED",
+      outcome: "NOT_APPLIED",
       error: "limit must be between 1 and 50",
-    });
+      errors: [expect.objectContaining({ pointer: "/limit", code: "OUT_OF_RANGE", location: "query" })],
+    }));
     expect(mockFetch).not.toHaveBeenCalled();
   });
 
@@ -347,9 +355,12 @@ describe("AI chat API routes", () => {
     const response = await getChatHistory(createGetRequest("/api/ai/chat/history?offset=-1"));
 
     expect(response.status).toBe(400);
-    await expect(response.json()).resolves.toEqual({
+    await expect(response.json()).resolves.toEqual(expect.objectContaining({
+      code: "VALIDATION_FAILED",
+      outcome: "NOT_APPLIED",
       error: "offset must be greater than or equal to 0",
-    });
+      errors: [expect.objectContaining({ pointer: "/offset", code: "OUT_OF_RANGE", location: "query" })],
+    }));
     expect(mockFetch).not.toHaveBeenCalled();
   });
 
@@ -385,8 +396,7 @@ describe("AI chat API routes", () => {
 
     expect(response.status).toBe(503);
     await expect(response.json()).resolves.toEqual({
-      error: "Backend request failed",
-      code: "UPSTREAM_ERROR",
+      error: "서버가 현재 요청을 처리할 수 없어요. 잠시 후 다시 시도해 주세요.",
     });
   });
 
@@ -399,7 +409,11 @@ describe("AI chat API routes", () => {
     );
 
     expect(response.status).toBe(400);
-    await expect(response.json()).resolves.toEqual({ error: "Invalid session id" });
+    await expect(response.json()).resolves.toEqual(expect.objectContaining({
+      code: "VALIDATION_FAILED",
+      error: "Invalid session id",
+      errors: [expect.objectContaining({ pointer: "/id", code: "INVALID_FORMAT", location: "path" })],
+    }));
     expect(mockFetch).not.toHaveBeenCalled();
   });
 
@@ -412,7 +426,11 @@ describe("AI chat API routes", () => {
     );
 
     expect(response.status).toBe(400);
-    await expect(response.json()).resolves.toEqual({ error: "Invalid session id" });
+    await expect(response.json()).resolves.toEqual(expect.objectContaining({
+      code: "VALIDATION_FAILED",
+      error: "Invalid session id",
+      errors: [expect.objectContaining({ pointer: "/id", code: "INVALID_FORMAT", location: "path" })],
+    }));
     expect(mockFetch).not.toHaveBeenCalled();
   });
 
@@ -431,9 +449,10 @@ describe("AI chat API routes", () => {
     );
 
     expect(response.status).toBe(500);
+    // An upstream JSON error object is sanitized member-by-member: no raw
+    // message surfaces and no non-catalog code is forwarded.
     await expect(response.json()).resolves.toEqual({
-      error: "Backend request failed",
-      code: "UPSTREAM_ERROR",
+      error: "서버 내부 오류로 요청을 처리하지 못했어요.",
     });
   });
 
@@ -452,10 +471,11 @@ describe("AI chat API routes", () => {
     );
 
     expect(response.status).toBe(409);
-    await expect(response.json()).resolves.toEqual({
-      error: "Backend request failed",
-      code: "UPSTREAM_ERROR",
-    });
+    const deleteBody = await response.json();
+    expect(deleteBody.error).toMatch(/[가-힣]/);
+    expect(deleteBody).not.toHaveProperty("code");
+    expect(JSON.stringify(deleteBody)).not.toContain("/internal/chat");
+    expect(JSON.stringify(deleteBody)).not.toContain("delete stack");
   });
 
   it("rejects malformed feedback JSON before proxying", async () => {

@@ -1,3 +1,4 @@
+import { BadRequestException } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 
 import { LinkMirroredEformsignDocByPhoneUsecase } from "application/usecases/eformsign-doc/link-mirrored-eformsign-doc-by-phone.usecase";
@@ -229,7 +230,15 @@ describe("LinkMirroredEformsignDocByPhoneUsecase", () => {
         });
         const { transaction, settings, usecase } = setup(document);
 
-        await expect(usecase.execute("doc-1")).rejects.toThrow("올바른 국내 전화번호 형식이 아닙니다.");
+        const error: unknown = await usecase.execute("doc-1").catch((caught: unknown) => caught);
+
+        expect(error).toBeInstanceOf(BadRequestException);
+        expect((error as BadRequestException).getResponse()).toMatchObject({
+            code: "VALIDATION_FAILED",
+            errors: expect.arrayContaining([
+                expect.objectContaining({ pointer: "/phone", location: "body" }),
+            ]),
+        });
 
         expect(settings.getClientAutoRegistrationEnabled).not.toHaveBeenCalled();
         expect(transaction.client.create).not.toHaveBeenCalled();

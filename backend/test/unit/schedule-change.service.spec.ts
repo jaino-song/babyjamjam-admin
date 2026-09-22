@@ -1,4 +1,9 @@
-import { BadRequestException, ConflictException } from "@nestjs/common";
+import {
+    BadRequestException,
+    ConflictException,
+    HttpException,
+    NotFoundException,
+} from "@nestjs/common";
 import { Prisma } from "@prisma/client";
 import { ScheduleChangeService } from "application/services/schedule-change.service";
 import { ServiceRecordTokenService } from "application/services/service-record-token.service";
@@ -119,6 +124,24 @@ const createPlannedSessions = (dates: string[]) => dates.map((serviceDate, offse
     provenanceVersion: "revision-1",
 }));
 
+const expectProblemResponse = (
+    error: unknown,
+    exceptionClass: new (...args: never[]) => HttpException,
+    status: number,
+    code: string,
+): void => {
+    expect(error).toBeInstanceOf(exceptionClass);
+    const exception = error as HttpException;
+    expect(exception.getStatus()).toBe(status);
+    expect(exception.getResponse()).toEqual(
+        expect.objectContaining({
+            code,
+            params: {},
+            outcome: "NOT_APPLIED",
+        }),
+    );
+};
+
 const expectConflictCode = async (
     action: () => Promise<unknown>,
     code: string,
@@ -127,8 +150,31 @@ const expectConflictCode = async (
         await action();
         throw new Error("Expected ConflictException");
     } catch (error) {
-        expect(error).toBeInstanceOf(ConflictException);
-        expect((error as ConflictException).getResponse()).toEqual({ code });
+        expectProblemResponse(error, ConflictException, 409, code);
+    }
+};
+
+const expectNotFoundCode = async (
+    action: () => Promise<unknown>,
+    code: string,
+): Promise<void> => {
+    try {
+        await action();
+        throw new Error("Expected NotFoundException");
+    } catch (error) {
+        expectProblemResponse(error, NotFoundException, 404, code);
+    }
+};
+
+const expectBadRequestCode = async (
+    action: () => Promise<unknown>,
+    code: string,
+): Promise<void> => {
+    try {
+        await action();
+        throw new Error("Expected BadRequestException");
+    } catch (error) {
+        expectProblemResponse(error, BadRequestException, 400, code);
     }
 };
 
@@ -266,7 +312,52 @@ describe("ScheduleChangeService", () => {
             );
             prismaService.service_record_day.findMany.mockResolvedValue([]);
 
-            await expect(service.preview(ctx)).rejects.toBeInstanceOf(BadRequestException);
+            await expectConflictCode(
+                () => service.preview(ctx),
+                "SCHEDULE_CHANGE_UNCOMPUTABLE",
+            );
+        });
+
+        it("should reject when the assignment has no start date to compute from", async () => {
+            prismaService.employee_schedule.findUnique.mockResolvedValue(
+                createSchedule({ startDate: null }),
+            );
+            prismaService.service_record_day.findMany.mockResolvedValue([]);
+
+            await expectConflictCode(
+                () => service.preview(ctx),
+                "SCHEDULE_CHANGE_UNCOMPUTABLE",
+            );
+        });
+
+        it("should reject with SERVICE_RECORD_PLANNED_DATE_UNAVAILABLE when the persisted plan is malformed", async () => {
+            prismaService.employee_schedule.findUnique.mockResolvedValue(createSchedule());
+            prismaService.service_record_case.findUnique.mockResolvedValue({
+                id: "case-1",
+                requiredSessionCount: 3,
+                plannedSessions: [{ broken: true }],
+            });
+            prismaService.service_record_day.findMany.mockResolvedValue([
+                createDay(1, "2026-07-01", true),
+            ]);
+
+            await expectConflictCode(
+                () => service.preview(ctx),
+                "SERVICE_RECORD_PLANNED_DATE_UNAVAILABLE",
+            );
+        });
+
+        it("should reject with RESOURCE_NOT_FOUND when the assignment is missing", async () => {
+            prismaService.employee_schedule.findUnique.mockResolvedValue(null);
+
+            await expectNotFoundCode(() => service.preview(ctx), "RESOURCE_NOT_FOUND");
+        });
+
+        it("should reject with RESOURCE_NOT_FOUND when the service record is missing", async () => {
+            prismaService.employee_schedule.findUnique.mockResolvedValue(createSchedule());
+            prismaService.service_record_case.findUnique.mockResolvedValue(null);
+
+            await expectNotFoundCode(() => service.preview(ctx), "RESOURCE_NOT_FOUND");
         });
     });
 
@@ -329,6 +420,22 @@ describe("ScheduleChangeService", () => {
             );
 
             await expectConflictCode(() => service.createRequest(ctx), "REQUEST_ALREADY_PENDING");
+        });
+
+        it("should reject with SCHEDULE_CHANGE_UNCOMPUTABLE when the assignment has no end date", async () => {
+            prismaService.employee_schedule.findUnique.mockResolvedValue(
+                createSchedule({ endDate: null }),
+            );
+            prismaService.schedule_change_request.findFirst.mockResolvedValue(null);
+            prismaService.service_record_day.findMany.mockResolvedValue([
+                createDay(1, "2026-07-01", true),
+            ]);
+
+            await expectConflictCode(
+                () => service.createRequest(ctx),
+                "SCHEDULE_CHANGE_UNCOMPUTABLE",
+            );
+            expect(prismaService.schedule_change_request.create).not.toHaveBeenCalled();
         });
     });
 
@@ -570,10 +677,42 @@ describe("ScheduleChangeService", () => {
         });
 
         it("should reject a calendar date that does not exist", async () => {
-            await expect(
-                service.applyAdminChange(SCHEDULE_ID, "2026-02-30", tenant),
-            ).rejects.toBeInstanceOf(BadRequestException);
+            await expectBadRequestCode(
+                () => service.applyAdminChange(SCHEDULE_ID, "2026-02-30", tenant),
+                "INVALID_SCHEDULE_DATE",
+            );
             expect(prismaService.$transaction).not.toHaveBeenCalled();
+        });
+
+        it("should reject with SCHEDULE_CHANGE_UNCOMPUTABLE when the assignment has no end date", async () => {
+            txPrismaService.employee_schedule.findFirst.mockResolvedValue(
+                createSchedule({ endDate: null }),
+            );
+
+            await expectConflictCode(
+                () => service.applyAdminChange(SCHEDULE_ID, "2026-07-23", tenant),
+                "SCHEDULE_CHANGE_UNCOMPUTABLE",
+            );
+        });
+
+        it("should map a changed admin write-lock target to SERVICE_RECORD_WRITE_TARGET_CHANGED", async () => {
+            txPrismaService.employee_schedule.findFirst
+                .mockResolvedValueOnce(createSchedule())
+                .mockResolvedValueOnce(null);
+            txPrismaService.service_record_case.findFirst.mockResolvedValue({
+                id: "case-1",
+                formVersion: 1,
+            });
+            txPrismaService.service_record_case.findUnique.mockResolvedValue({
+                id: "case-1",
+                branchId: BRANCH_ID,
+                clientId: CLIENT_ID,
+            });
+
+            await expectConflictCode(
+                () => service.applyAdminChange(SCHEDULE_ID, "2026-07-23", tenant),
+                "SERVICE_RECORD_WRITE_TARGET_CHANGED",
+            );
         });
     });
 
@@ -866,6 +1005,23 @@ describe("ScheduleChangeService", () => {
                 data: { status: "stale", decidedAt: expect.any(Date) },
             });
             expect(prismaService.schedule_change_request.update).not.toHaveBeenCalled();
+        });
+
+        it("should map a changed write-lock target to SERVICE_RECORD_WRITE_TARGET_CHANGED", async () => {
+            txPrismaService.schedule_change_request.findFirst.mockResolvedValue(createRequest());
+            txPrismaService.employee_schedule.findUnique
+                .mockResolvedValueOnce(createSchedule())
+                .mockResolvedValueOnce(null);
+            txPrismaService.service_record_case.findUnique.mockResolvedValue({
+                id: "case-1",
+                branchId: BRANCH_ID,
+                clientId: CLIENT_ID,
+            });
+
+            await expectConflictCode(
+                () => service.approve("request-1", tenant),
+                "SERVICE_RECORD_WRITE_TARGET_CHANGED",
+            );
         });
 
         it("should reject non-pending requests", async () => {

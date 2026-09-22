@@ -1,5 +1,5 @@
 "use client";
-import { getUserErrorMessage } from "@babyjamjam/shared";
+import { getUserErrorMessage, normalizeApiError } from "@babyjamjam/shared";
 
 
 import { useState, useCallback } from "react";
@@ -53,6 +53,13 @@ const getStepIndex = (step: Step): number => {
 
 const VOUCHER_UPLOAD_BASE =
   "mobile_prices_page_detail-sheet_stack_detail-page_upload_form";
+
+// Shared problem contract resolution — a registered problem body surfaces its
+// catalog copy; upstream Error.message / response strings never render.
+function mutationFailureMessage(error: unknown, fallback: string): string {
+  const normalized = normalizeApiError(error, { locale: "ko-KR", operation: "mutation" });
+  return normalized.verified ? normalized.message : fallback;
+}
 
 export function VoucherPriceUploadForm({ initialYear }: { initialYear?: number } = {}) {
   const [currentStep, setCurrentStep] = useState<Step>("upload");
@@ -190,8 +197,10 @@ export function VoucherPriceUploadForm({ initialYear }: { initialYear?: number }
             isLoading={parseImageMutation.isPending}
             error={
               parseImageMutation.isError
-                ? parseImageMutation.error?.message ||
-                "이미지 파싱에 실패했어요"
+                ? mutationFailureMessage(
+                    parseImageMutation.error,
+                    "이미지 파싱에 실패했어요",
+                  )
                 : null
             }
           />
@@ -264,7 +273,7 @@ export function VoucherPriceUploadForm({ initialYear }: { initialYear?: number }
           {bulkUpdateMutation.isError && (
             <Alert variant="destructive" className="mt-4 rounded-2xl">
               <AlertDescription>
-                업데이트 실패: {bulkUpdateMutation.error?.message || "알 수 없는 오류"}
+                업데이트 실패: {mutationFailureMessage(bulkUpdateMutation.error, "알 수 없는 오류")}
               </AlertDescription>
             </Alert>
           )}

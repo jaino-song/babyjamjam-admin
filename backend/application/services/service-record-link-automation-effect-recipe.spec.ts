@@ -174,4 +174,14 @@ describe("service-record-link automation effect recipe", () => {
         mutate(f);
         expect(describeServiceRecordLinkEffect(f.input)).toBeNull();
     });
+
+    it("ignores lifecycle bookkeeping changes that do not change the link payload", () => {
+        const f = fixture();
+        const before = describeServiceRecordLinkEffect(f.input);
+        f.input.serviceRecordCase!.version += 1;
+        f.input.serviceRecordCase!.updatedAt = new Date("2026-09-18T02:00:00Z");
+        const after = describeServiceRecordLinkEffect(f.input);
+        expect(after?.sourceDigest).toBe(before?.sourceDigest);
+        expect(after?.recipeDigest).toBe(before?.recipeDigest);
+    });
 });

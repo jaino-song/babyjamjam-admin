@@ -7,8 +7,8 @@ import {
     getAuthHeaders,
     getAuthToken,
     parseBody,
-    unauthorizedResponse,
 } from "@/lib/api/route-utils";
+import { unauthorizedProblemResponse } from "@/lib/api/problem-responses";
 import { invalidClientIdResponse, isValidClientId } from "../../client-route-utils";
 
 type RouteParams = { params: Promise<{ id: string }> };
@@ -27,7 +27,7 @@ const terminateServiceSchema = z
 export async function PATCH(request: NextRequest, { params }: RouteParams) {
     const token = getAuthToken(request);
     if (!token) {
-        return unauthorizedResponse("Unauthorized");
+        return unauthorizedProblemResponse();
     }
 
     const { id } = await params;
@@ -44,6 +44,6 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
         });
         return backendJsonResponse(backendResponse);
     } catch (error) {
-        return errorResponse(error, "terminate client service");
+        return errorResponse(error, "terminate client service", "mutation");
     }
 }

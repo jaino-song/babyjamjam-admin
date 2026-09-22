@@ -2,7 +2,12 @@ import { cookies } from "next/headers";
 import { NextRequest } from "next/server";
 import { z } from "zod";
 import { BACKEND_BASE_URL } from "@/lib/api/server";
-import { parseBody, upstreamJsonErrorResponse } from "@/lib/api/route-utils";
+import { parseBody } from "@/lib/api/route-utils";
+import {
+    unauthorizedProblemResponse,
+    upstreamBodyErrorResponse,
+    upstreamUnavailableProblemResponse,
+} from "@/lib/api/problem-responses";
 
 const BACKEND_URL = BACKEND_BASE_URL;
 
@@ -24,10 +29,7 @@ export async function POST(request: NextRequest) {
     const authToken = cookieStore.get("auth_token");
 
     if (!authToken) {
-        return new Response(JSON.stringify({ error: "Unauthorized" }), {
-            status: 401,
-            headers: { "Content-Type": "application/json" },
-        });
+        return unauthorizedProblemResponse();
     }
 
     const { data, response } = await parseBody(chatPersistSchema, request);
@@ -44,8 +46,8 @@ export async function POST(request: NextRequest) {
         });
 
         if (!backendResponse.ok) {
-            await backendResponse.text().catch(() => "");
-            return upstreamJsonErrorResponse(backendResponse.status);
+            const upstreamText = await backendResponse.text().catch(() => "");
+            return upstreamBodyErrorResponse(backendResponse.status, upstreamText, "persist chat");
         }
 
         const responseBody = await backendResponse.text();
@@ -54,6 +56,6 @@ export async function POST(request: NextRequest) {
             headers: { "Content-Type": "application/json" },
         });
     } catch {
-        return upstreamJsonErrorResponse(502);
+        return upstreamUnavailableProblemResponse("mutation");
     }
 }

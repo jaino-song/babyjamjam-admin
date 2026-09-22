@@ -80,7 +80,11 @@ describe("AdminServiceRecordController query boundary", () => {
         await request(app.getHttpServer())
             .get("/admin/service-records/client/42/editor")
             .query({ branchId: "22222222-2222-2222-2222-222222222222" })
-            .expect(400);
+            .expect(400)
+            .expect((res) => {
+                expect(res.body).toEqual(expect.objectContaining({ code: "VALIDATION_FAILED", outcome: "NOT_APPLIED" }));
+                expect(res.body.errors).toEqual(expect.arrayContaining([expect.objectContaining({ code: "UNEXPECTED_FIELD" })]));
+            });
 
         expect(adminService.getClientEditor).not.toHaveBeenCalled();
     });

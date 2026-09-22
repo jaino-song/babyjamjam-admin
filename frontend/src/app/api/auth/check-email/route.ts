@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { serverAPIClient } from "@/lib/api/server";
+import { errorResponse } from "@/lib/api/route-utils";
 
 export async function GET(request: NextRequest) {
   try {
@@ -15,7 +16,6 @@ export async function GET(request: NextRequest) {
 
     return NextResponse.json(data, { status });
   } catch (error) {
-    console.error("[API] Error checking auth email:", error);
-    return NextResponse.json({ exists: false });
+    return errorResponse(error, "check email availability", "read");
   }
 }

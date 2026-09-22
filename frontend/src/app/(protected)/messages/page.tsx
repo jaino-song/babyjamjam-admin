@@ -1,5 +1,5 @@
 "use client";
-import { getUserErrorMessage } from "@babyjamjam/shared";
+import { normalizeApiError } from "@babyjamjam/shared";
 
 
 import {
@@ -898,14 +898,20 @@ function MessageHistorySection() {
       const retriedRecord = await retryHistory(selectedRecord.id);
 
       if (retriedRecord.status === "failed") {
-        throw new Error(retriedRecord.errorMessage || "메시지를 재발송하지 못했어요");
+        // Upstream status detail is never forwarded; locally authored copy
+        // covers the failed retry outcome.
+        toast({ variant: "destructive", description: "메시지를 재발송하지 못했어요" });
+        return;
       }
 
       toast({ variant: "success", description: "재발송 요청을 접수했어요" });
     } catch (error) {
+      // Registered problem message (verified) or locally authored copy —
+      // upstream internals are never rendered.
+      const normalized = normalizeApiError(error, { locale: "ko-KR", operation: "mutation" });
       toast({
         variant: "destructive",
-        description: getUserErrorMessage(error, error instanceof Error ? error.message : "재발송을 요청하지 못했어요"),
+        description: normalized.verified ? normalized.message : "재발송을 요청하지 못했어요",
       });
     }
   }, [retryHistory, selectedRecord, toast]);
@@ -930,7 +936,7 @@ function MessageHistorySection() {
       // this dialog would just 409 again — the failure toast is the feedback,
       // the modal has nothing left to offer, so close it here too instead of
       // trapping the user behind a confirm button that can only fail.
-      toast({ variant: "destructive", description: getUserErrorMessage(MESSAGE_JOB_CANCEL_COPY.failure) });
+      toast({ variant: "destructive", description: MESSAGE_JOB_CANCEL_COPY.failure });
     } finally {
       setCancelDialogOpen(false);
     }

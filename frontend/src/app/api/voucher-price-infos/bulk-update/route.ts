@@ -1,10 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
 import { serverAPIClient } from "@/lib/api/server";
-
-// Helper: 요청에서 토큰 추출
-function getAuthToken(request: NextRequest): string | null {
-  return request.cookies.get("auth_token")?.value || null;
-}
+import {
+  authRequiredResponse,
+  errorResponse,
+  getAuthHeaders,
+  getAuthToken,
+  localValidationProblemResponse,
+  logUpstreamError,
+  upstreamStatusProblemResponse,
+} from "@/lib/api/route-utils";
 
 /**
  * POST /api/voucher-price-infos/bulk-update
@@ -14,25 +18,33 @@ export async function POST(request: NextRequest) {
   try {
     const token = getAuthToken(request);
     if (!token) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+      return authRequiredResponse();
     }
 
     const body = await request.json();
 
     // items 배열 검증
     if (!body.items || !Array.isArray(body.items) || body.items.length === 0) {
-      return NextResponse.json(
-        { error: "업데이트할 항목이 없습니다" },
-        { status: 400 },
-      );
+      return localValidationProblemResponse([
+        {
+          pointer: "/items",
+          code: "REQUIRED",
+          detail: "업데이트할 항목이 없어요.",
+          location: "body",
+        },
+      ]);
     }
 
     // year 검증
     if (!body.year || typeof body.year !== "number" || body.year < 2000 || body.year > 2100) {
-      return NextResponse.json(
-        { error: "유효한 연도를 입력해주세요 (2000-2100)" },
-        { status: 400 },
-      );
+      return localValidationProblemResponse([
+        {
+          pointer: "/year",
+          code: "OUT_OF_RANGE",
+          detail: "유효한 연도를 입력해 주세요 (2000-2100).",
+          location: "body",
+        },
+      ]);
     }
 
     // 백엔드 API 호출
@@ -40,31 +52,23 @@ export async function POST(request: NextRequest) {
       "/voucher-price-infos/bulk-update",
       body,
       {
-        headers: {
-          Authorization: `Bearer ${token}`,
-          "Content-Type": "application/json",
-        },
+        headers: getAuthHeaders(token),
       },
     );
 
     return NextResponse.json(response.data);
   } catch (error) {
-    console.error("[API] Error bulk updating voucher prices:", error);
+    const status = (error as { response?: { status?: number } }).response?.status;
 
-    // axios 에러 처리
-    if (error && typeof error === "object" && "response" in error) {
-      const axiosError = error as { response?: { status: number; data: unknown } };
-      if (axiosError.response) {
-        return NextResponse.json(
-          axiosError.response.data || { error: "업데이트 실패" },
-          { status: axiosError.response.status },
-        );
-      }
+    // A transport failure has no upstream status: answer with the registered
+    // 500 problem instead of a raw Korean body.
+    if (!status) {
+      logUpstreamError("bulk update voucher price infos", error);
+      return upstreamStatusProblemResponse(500, "bulk update voucher price infos", "UNKNOWN");
     }
 
-    return NextResponse.json(
-      { error: "바우처 가격 정보 업데이트에 실패했습니다" },
-      { status: 500 },
-    );
+    // An upstream failure keeps its status; a problem+json body is propagated
+    // faithfully, anything else is sanitized to the Korean catalog copy.
+    return errorResponse(error, "bulk update voucher price infos", "mutation");
   }
 }

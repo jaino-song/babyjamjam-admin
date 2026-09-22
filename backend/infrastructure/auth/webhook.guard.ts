@@ -10,6 +10,7 @@ import { ConfigService } from "@nestjs/config";
 import { Request } from "express";
 import * as crypto from "crypto";
 
+import { codeOnlyProblemBody } from "application/utils/problem-bodies";
 import { resolveEformsignWebhookAllowedCompanyIds } from "infrastructure/auth/eformsign-webhook-config";
 
 /**
@@ -32,25 +33,25 @@ export class WebhookGuard implements CanActivate {
 
         if (!authHeader) {
             this.logger.warn("Webhook request rejected: Missing Authorization header");
-            throw new UnauthorizedException("Missing Authorization header");
+            throw new UnauthorizedException(codeOnlyProblemBody("AUTH_REQUIRED"));
         }
 
         const authMatch = authHeader.match(/^Bearer\s+(.+)$/);
         const token = authMatch?.[1]?.trim();
         if (!token) {
             this.logger.warn("Webhook request rejected: Invalid Authorization format");
-            throw new UnauthorizedException("Invalid Authorization format");
+            throw new UnauthorizedException(codeOnlyProblemBody("AUTH_REQUIRED"));
         }
 
         const expectedToken = this.configService.get<string>("EFORMSIGN_WEBHOOK_SECRET")?.trim() ?? "";
         if (!expectedToken) {
             this.logger.error("EFORMSIGN_WEBHOOK_SECRET not configured");
-            throw new UnauthorizedException("Webhook authentication not configured");
+            throw new UnauthorizedException(codeOnlyProblemBody("AUTH_REQUIRED"));
         }
 
         if (!this.secureCompare(token, expectedToken)) {
             this.logger.warn("Webhook request rejected: Invalid token");
-            throw new UnauthorizedException("Invalid token");
+            throw new UnauthorizedException(codeOnlyProblemBody("AUTH_REQUIRED"));
         }
 
         this.assertAllowedCompanyId(request);
@@ -64,14 +65,14 @@ export class WebhookGuard implements CanActivate {
             : "";
         if (!companyId) {
             this.logger.warn("Webhook request rejected: Missing company_id");
-            throw new ForbiddenException("Unknown company id");
+            throw new ForbiddenException(codeOnlyProblemBody("ACCESS_DENIED"));
         }
 
         const allowedCompanyIds = resolveEformsignWebhookAllowedCompanyIds(this.configService);
 
         if (allowedCompanyIds.length === 0) {
             this.logger.error("EFORMSIGN_WEBHOOK_ALLOWED_COMPANY_IDS or EFORMSIGN_COMPANY_ID not configured");
-            throw new ForbiddenException("Webhook tenant validation not configured");
+            throw new ForbiddenException(codeOnlyProblemBody("ACCESS_DENIED"));
         }
 
         const isAllowed = allowedCompanyIds.some((allowedCompanyId) => (
@@ -81,7 +82,7 @@ export class WebhookGuard implements CanActivate {
             this.logger.warn(
                 `Webhook request rejected: Unknown company_id ${this.maskIdentifier(companyId)}`,
             );
-            throw new ForbiddenException("Unknown company id");
+            throw new ForbiddenException(codeOnlyProblemBody("ACCESS_DENIED"));
         }
     }
 

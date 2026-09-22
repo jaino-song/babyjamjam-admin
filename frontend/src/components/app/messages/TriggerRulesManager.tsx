@@ -1,5 +1,4 @@
 "use client";
-import { getUserErrorMessage } from "@babyjamjam/shared";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -58,6 +57,8 @@ import {
   deriveRecipientTypesFromTemplates,
   getChannelTemplates,
   isTriggerRuleInChannel,
+  isTriggerTemplateInChannel,
+  SMS_TRIGGER_TEMPLATE_KEYS,
   SMS_TRIGGER_TO_SYSTEM_TEMPLATE,
   type TriggerMessageChannel,
 } from "@/features/message-triggers/channel";
@@ -74,6 +75,7 @@ import type {
   TriggerTemplateCatalogItem,
   TriggerTemplateKey,
 } from "@/features/message-triggers/types";
+import { getUserErrorMessage } from "@babyjamjam/shared";
 
 type RuleSelection = string | "new" | null;
 type RuleStatusFilter = "active" | "inactive";
@@ -171,11 +173,19 @@ const TRIGGER_RULE_DETAIL_TABS = [
 const TRIGGER_RULE_APPROVAL_MESSAGE =
   "메시지 발송 승인 후에 설정 가능합니다. 설정에서 메시지 발송 기능을 신청해 주세요.";
 const CLIENT_REGISTRATION_POLICY_QUERY_KEY = ["settings", "client-registration-policy"] as const;
+// Backend ownership classifies every SERVICE_END_NOTICE job as a manual message
+// (`isManualMessageTriggerJob`), so a scheduled rule using this template would
+// never be bound by automation authority and would survive the branch
+// trigger-dispatch fence. Keep the template out of the automatic-routine manager
+// until rule ownership distinguishes automatic receipt rules from the manual rule.
 const MANUAL_ONLY_TRIGGER_TEMPLATE_KEY = "SERVICE_END_NOTICE";
-
-const DEDICATED_TRIGGER_TEMPLATE_LABELS: Partial<Record<TriggerTemplateKey, string>> = {
-  SERVICE_RECORD_LINK: "제공기록지 작성 링크",
-};
+const TRIGGER_TEMPLATE_OPTION_SUFFIXES = {
+  serviceRecordLink: " · 제공기록지 전용 자동화에서 관리",
+  manualOnly: " · 수동 발송 전용",
+  eventAndRecipientMismatch: " · 선택한 이벤트·수신 대상과 맞지 않음",
+  eventMismatch: " · 선택한 이벤트와 맞지 않음",
+  recipientMismatch: " · 선택한 수신 대상과 맞지 않음",
+} as const;
 
 const TRIGGER_TEMPLATE_MESSAGE_FALLBACKS: Record<TriggerTemplateKey, string> = {
   CLIENT_WELCOME: `[아이미래 인천]
@@ -334,6 +344,55 @@ function isParentDisabledConflict(error: unknown): boolean {
   return getErrorStatus(error) === 409 && getErrorCode(error) === "MESSAGE_AUTOMATION_PARENT_DISABLED";
 }
 
+function getTemplateOptionPresentation(
+  template: TriggerTemplateCatalogItem,
+  eventType: TriggerEventType,
+  recipientType: TriggerRecipientType,
+) {
+  if (template.key === "SERVICE_RECORD_LINK") {
+    return {
+      label: `${template.name}${TRIGGER_TEMPLATE_OPTION_SUFFIXES.serviceRecordLink}`,
+      disabled: true,
+    };
+  }
+
+  if (template.key === MANUAL_ONLY_TRIGGER_TEMPLATE_KEY) {
+    return {
+      label: `${template.name}${TRIGGER_TEMPLATE_OPTION_SUFFIXES.manualOnly}`,
+      disabled: true,
+    };
+  }
+
+  const matchesEvent = template.allowedEventTypes.includes(eventType);
+  const matchesRecipient = template.allowedRecipientTypes.includes(recipientType);
+
+  if (!matchesEvent && !matchesRecipient) {
+    return {
+      label: `${template.name}${TRIGGER_TEMPLATE_OPTION_SUFFIXES.eventAndRecipientMismatch}`,
+      disabled: true,
+    };
+  }
+
+  if (!matchesEvent) {
+    return {
+      label: `${template.name}${TRIGGER_TEMPLATE_OPTION_SUFFIXES.eventMismatch}`,
+      disabled: true,
+    };
+  }
+
+  if (!matchesRecipient) {
+    return {
+      label: `${template.name}${TRIGGER_TEMPLATE_OPTION_SUFFIXES.recipientMismatch}`,
+      disabled: true,
+    };
+  }
+
+  return {
+    label: template.name,
+    disabled: false,
+  };
+}
+
 export function TriggerRulesManager({
   dataComponent,
   channel = "sms",
@@ -466,6 +525,66 @@ export function TriggerRulesManager({
       .filter((template) => template.key !== MANUAL_ONLY_TRIGGER_TEMPLATE_KEY),
     [channel, templateQuery.data],
   );
+  const visibleTemplates = useMemo(
+    () => {
+      const catalogTemplates = (templateQuery.data ?? []).filter((template) =>
+        isTriggerTemplateInChannel(template.key, channel),
+      );
+
+      if (
+        templateQuery.isLoading
+        || templateQuery.isError
+        || catalogTemplates.length === 0
+        || catalogTemplates.some((template) => template.key === "SERVICE_RECORD_LINK")
+      ) {
+        return catalogTemplates;
+      }
+
+      const dedicatedSystemTemplate = selectedSystemTemplateKey === "SERVICE_RECORD_LINK"
+        ? selectedSystemTemplate
+        : undefined;
+      const serviceRecordTemplate: TriggerTemplateCatalogItem = {
+        key: "SERVICE_RECORD_LINK",
+        name: dedicatedSystemTemplate?.name ?? "제공기록지 작성 링크",
+        description: dedicatedSystemTemplate?.description ?? "제공기록지 작성 링크입니다.",
+        allowedEventTypes: ["SERVICE_START"],
+        allowedRecipientTypes: ["PRIMARY_EMPLOYEE"],
+        requiredVariables: (dedicatedSystemTemplate?.requiredVariables ?? []).map(({ key, label }) => ({
+          key,
+          label,
+        })),
+        providers: { sms: { templateKey: "SERVICE_RECORD_LINK" } },
+      };
+      const serviceRecordOrder = SMS_TRIGGER_TEMPLATE_KEYS.indexOf("SERVICE_RECORD_LINK");
+      const canonicalPredecessor = SMS_TRIGGER_TEMPLATE_KEYS[serviceRecordOrder - 1];
+      const predecessorIndex = catalogTemplates.findIndex(
+        (template) => template.key === canonicalPredecessor,
+      );
+      const successorIndex = catalogTemplates.findIndex(
+        (template) => SMS_TRIGGER_TEMPLATE_KEYS.indexOf(template.key) > serviceRecordOrder,
+      );
+      // Keep the backend order intact and place the synthetic item next to its canonical neighbor.
+      const insertAt = predecessorIndex >= 0 ? predecessorIndex + 1 : successorIndex;
+
+      if (insertAt === -1) {
+        return [...catalogTemplates, serviceRecordTemplate];
+      }
+
+      return [
+        ...catalogTemplates.slice(0, insertAt),
+        serviceRecordTemplate,
+        ...catalogTemplates.slice(insertAt),
+      ];
+    },
+    [
+      channel,
+      selectedSystemTemplate,
+      selectedSystemTemplateKey,
+      templateQuery.data,
+      templateQuery.isError,
+      templateQuery.isLoading,
+    ],
+  );
 
   const eventOptions = useMemo(() => {
     const allowedEvents = new Set(deriveEventTypesFromTemplates(automaticChannelTemplates));
@@ -490,48 +609,13 @@ export function TriggerRulesManager({
       }));
   }, [getRecipientTypesForEvent, formState.eventType, isSelectedDedicatedRule, selectedRule]);
 
-  const availableTemplates = useMemo<TriggerTemplateCatalogItem[]>(() => {
-    if (isSelectedDedicatedRule && selectedRule) {
-      const currentTemplate = (templateQuery.data ?? []).find(
-        (template) => template.key === selectedRule.templateKey,
-      );
-      if (currentTemplate) return [currentTemplate];
-
-      return [{
-        key: selectedRule.templateKey,
-        name: selectedSystemTemplate?.name
-          ?? DEDICATED_TRIGGER_TEMPLATE_LABELS[selectedRule.templateKey]
-          ?? selectedRule.templateKey,
-        description: selectedSystemTemplate?.description ?? "전용 자동화에서 관리되는 메시지 템플릿입니다.",
-        allowedEventTypes: [selectedRule.eventType],
-        allowedRecipientTypes: [selectedRule.recipientType],
-        requiredVariables: (selectedSystemTemplate?.requiredVariables ?? []).map((variable) => ({
-          key: variable.key,
-          label: variable.label,
-        })),
-        providers: {
-          sms: {
-            templateKey: selectedSystemTemplateKey || selectedRule.templateKey,
-          },
-        },
-      }];
-    }
-    return deriveAvailableTemplates(automaticChannelTemplates, formState.eventType, formState.recipientType);
-  }, [
-    automaticChannelTemplates,
-    formState.eventType,
-    formState.recipientType,
-    isSelectedDedicatedRule,
-    selectedRule,
-    selectedSystemTemplate?.description,
-    selectedSystemTemplate?.name,
-    selectedSystemTemplate?.requiredVariables,
-    selectedSystemTemplateKey,
-    templateQuery.data,
-  ]);
+  const availableTemplates = useMemo<TriggerTemplateCatalogItem[]>(
+    () => deriveAvailableTemplates(automaticChannelTemplates, formState.eventType, formState.recipientType),
+    [automaticChannelTemplates, formState.eventType, formState.recipientType],
+  );
   const selectedTemplate = useMemo(() => {
-    return availableTemplates.find((template) => template.key === formState.templateKey) ?? null;
-  }, [availableTemplates, formState.templateKey]);
+    return visibleTemplates.find((template) => template.key === formState.templateKey) ?? null;
+  }, [formState.templateKey, visibleTemplates]);
   const isClientGreetingRule = formState.templateKey === "CLIENT_GREETING";
   const requiredTemplateVariables = useMemo(() => {
     const variables = [...(selectedTemplate?.requiredVariables ?? [])];
@@ -786,7 +870,7 @@ export function TriggerRulesManager({
         await showParentDisabledConflict();
         return;
       }
-      toast({ variant: "destructive", description: getUserErrorMessage("규칙 상태를 바꾸지 못했어요") });
+      toast({ variant: "destructive", description: "규칙 상태를 바꾸지 못했어요" });
     }
   };
 
@@ -870,7 +954,7 @@ export function TriggerRulesManager({
     if (unsupportedRequiredCustomVariables.length > 0) {
       toast({
         variant: "destructive",
-        description: getUserErrorMessage("자동 입력할 수 없는 필수 변수가 있어 규칙을 저장할 수 없어요"),
+        description: "자동 입력할 수 없는 필수 변수가 있어 규칙을 저장할 수 없어요",
       });
       return;
     }
@@ -881,12 +965,12 @@ export function TriggerRulesManager({
     }
 
     if (!dto.name.trim()) {
-      toast({ variant: "destructive", description: getUserErrorMessage("규칙 이름을 입력해 주세요") });
+      toast({ variant: "destructive", description: "규칙 이름을 입력해 주세요" });
       return;
     }
 
     if ((dto.offsetType === "BEFORE_DAYS" || dto.offsetType === "AFTER_DAYS") && (!dto.offsetDays || dto.offsetDays < 1)) {
-      toast({ variant: "destructive", description: getUserErrorMessage("일수는 1 이상이어야 해요") });
+      toast({ variant: "destructive", description: "일수는 1 이상이어야 해요" });
       return;
     }
 
@@ -916,7 +1000,7 @@ export function TriggerRulesManager({
         await showParentDisabledConflict();
         return;
       }
-      toast({ variant: "destructive", description: getUserErrorMessage("발송 규칙을 저장하지 못했어요") });
+      toast({ variant: "destructive", description: "발송 규칙을 저장하지 못했어요" });
     }
   };
 
@@ -928,7 +1012,7 @@ export function TriggerRulesManager({
       setSelectedRuleId(null);
       toast({ variant: "success", description: "발송 규칙을 삭제했어요" });
     } catch {
-      toast({ variant: "destructive", description: getUserErrorMessage("발송 규칙을 삭제하지 못했어요") });
+      toast({ variant: "destructive", description: "발송 규칙을 삭제하지 못했어요" });
     }
   };
   return (
@@ -1094,7 +1178,11 @@ export function TriggerRulesManager({
           ) : (
             <DetailPanel data-component="desktop_messages_sections_split-layout_detail-panel-3"
               isLoading={isDetailLoading}
-              title={effectiveSelectedRuleId === "new" ? "새 발송 규칙" : selectedRule?.name ?? "발송 규칙"}
+              title={effectiveSelectedRuleId === "new"
+                ? "새 발송 규칙"
+                : selectedRule
+                  ? selectedRule.name
+                  : "발송 규칙"}
               subtitle={isSelectedSystemRule
                 ? "내용은 고정되어 있지만 이 지점에서 발송 여부를 켜고 끌 수 있는 시스템 루틴입니다."
                 : copy.detailSubtitle}
@@ -1266,8 +1354,12 @@ export function TriggerRulesManager({
                           id="trigger-rule-template"
                           label="발송 템플릿"
                           value={formState.templateKey}
-                          options={availableTemplates.map((template) => ({
-                            label: template.name,
+                          options={visibleTemplates.map((template) => ({
+                            ...getTemplateOptionPresentation(
+                              template,
+                              formState.eventType,
+                              formState.recipientType,
+                            ),
                             value: template.key,
                           }))}
                           disabled={isSelectedDedicatedRule}

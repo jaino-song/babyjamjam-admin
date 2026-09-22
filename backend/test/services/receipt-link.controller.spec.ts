@@ -42,11 +42,17 @@ describe("ReceiptLinkController", () => {
 
     it("GET status maps expired and revoked links to 410, unknown links to 404, and returns the ok:true shape", async () => {
         tokenService.getStatus.mockResolvedValueOnce({ ok: false, reason: "expired" });
-        await request(app.getHttpServer()).get("/receipt-links/efr_x/status").expect(410, { reason: "expired" });
+        await request(app.getHttpServer()).get("/receipt-links/efr_x/status").expect(410).expect((res) => {
+            expect(res.body).toEqual(expect.objectContaining({ code: "REQUEST_EXPIRED", outcome: "NOT_APPLIED", reason: "expired" }));
+        });
         tokenService.getStatus.mockResolvedValueOnce({ ok: false, reason: "revoked" });
-        await request(app.getHttpServer()).get("/receipt-links/efr_x/status").expect(410, { reason: "revoked" });
+        await request(app.getHttpServer()).get("/receipt-links/efr_x/status").expect(410).expect((res) => {
+            expect(res.body).toEqual(expect.objectContaining({ code: "REQUEST_EXPIRED", outcome: "NOT_APPLIED", reason: "revoked" }));
+        });
         tokenService.getStatus.mockResolvedValueOnce({ ok: false, reason: "not_found" });
-        await request(app.getHttpServer()).get("/receipt-links/efr_x/status").expect(404, { reason: "not_found" });
+        await request(app.getHttpServer()).get("/receipt-links/efr_x/status").expect(404).expect((res) => {
+            expect(res.body).toEqual(expect.objectContaining({ code: "RESOURCE_NOT_FOUND", reason: "not_found" }));
+        });
         tokenService.getStatus.mockResolvedValueOnce({ ok: true, state: "pending", branchName: "인천 아이미래로", expiresAt: "2026-10-03T00:00:00.000Z", remainingAttempts: 5, lockedUntil: null });
         await request(app.getHttpServer()).get("/receipt-links/efr_x/status").expect(200).expect((res) => expect(res.body.branchName).toBe("인천 아이미래로"));
     });
@@ -73,7 +79,9 @@ describe("ReceiptLinkController", () => {
 
     it("POST verify returns 401 with remaining attempts, 423 when locked, 200 with the access token", async () => {
         tokenService.verifyBirthday.mockResolvedValueOnce({ ok: false, reason: "verification_failed", remainingAttempts: 3 });
-        await request(app.getHttpServer()).post("/receipt-links/efr_x/verify").send({ birthday: "000000" }).expect(401, { reason: "verification_failed", remainingAttempts: 3 });
+        await request(app.getHttpServer()).post("/receipt-links/efr_x/verify").send({ birthday: "000000" }).expect(401).expect((res) => {
+            expect(res.body).toEqual(expect.objectContaining({ code: "AUTH_REQUIRED", reason: "verification_failed", remainingAttempts: 3 }));
+        });
         tokenService.verifyBirthday.mockResolvedValueOnce({ ok: false, reason: "locked", lockedUntil: "2026-09-03T01:00:00.000Z" });
         await request(app.getHttpServer()).post("/receipt-links/efr_x/verify").send({ birthday: "000000" }).expect(423, { reason: "locked", lockedUntil: "2026-09-03T01:00:00.000Z" });
         tokenService.verifyBirthday.mockResolvedValueOnce({ ok: true, accessToken: "efra_a", clientName: "김산모" });
@@ -110,22 +118,32 @@ describe("ReceiptLinkController", () => {
         await request(app.getHttpServer())
             .post("/receipt-links/efr_x/verify")
             .send({ birthday: longBirthday })
-            .expect(400, { reason: "invalid_format" });
+            .expect(400)
+            .expect((res) => {
+                expect(res.body).toEqual(expect.objectContaining({ code: "VALIDATION_FAILED", reason: "invalid_format" }));
+                expect(res.body.errors).toEqual(expect.arrayContaining([expect.objectContaining({ pointer: "/birthday" })]));
+            });
 
         expect(tokenService.verifyBirthday).toHaveBeenCalledWith("efr_x", longBirthday, expect.any(Date));
     });
 
     it("POST verify with a missing birthday reaches the service as an empty string and returns its invalid_format shape", async () => {
         tokenService.verifyBirthday.mockResolvedValueOnce({ ok: false, reason: "invalid_format" });
-        await request(app.getHttpServer()).post("/receipt-links/efr_x/verify").send({}).expect(400, { reason: "invalid_format" });
+        await request(app.getHttpServer()).post("/receipt-links/efr_x/verify").send({}).expect(400).expect((res) => {
+            expect(res.body).toEqual(expect.objectContaining({ code: "VALIDATION_FAILED", reason: "invalid_format" }));
+        });
         expect(tokenService.verifyBirthday).toHaveBeenCalledWith("efr_x", "", expect.any(Date));
     });
 
     it("POST verify maps an unusable token to 410 (expired) and 404 (not_found) via the default branch", async () => {
         tokenService.verifyBirthday.mockResolvedValueOnce({ ok: false, reason: "expired" });
-        await request(app.getHttpServer()).post("/receipt-links/efr_x/verify").send({ birthday: "940315" }).expect(410, { reason: "expired" });
+        await request(app.getHttpServer()).post("/receipt-links/efr_x/verify").send({ birthday: "940315" }).expect(410).expect((res) => {
+            expect(res.body).toEqual(expect.objectContaining({ code: "REQUEST_EXPIRED", reason: "expired" }));
+        });
         tokenService.verifyBirthday.mockResolvedValueOnce({ ok: false, reason: "not_found" });
-        await request(app.getHttpServer()).post("/receipt-links/efr_x/verify").send({ birthday: "940315" }).expect(404, { reason: "not_found" });
+        await request(app.getHttpServer()).post("/receipt-links/efr_x/verify").send({ birthday: "940315" }).expect(404).expect((res) => {
+            expect(res.body).toEqual(expect.objectContaining({ code: "RESOURCE_NOT_FOUND", reason: "not_found" }));
+        });
     });
 
     it("GET access validates the access token without downloading the receipt image", async () => {
@@ -146,8 +164,8 @@ describe("ReceiptLinkController", () => {
     });
 
     it("GET access fails closed when the access token is absent or invalid", async () => {
-        await request(app.getHttpServer()).get("/receipt-links/efr_x/access").expect(401, {
-            reason: "access_required",
+        await request(app.getHttpServer()).get("/receipt-links/efr_x/access").expect(401).expect((res) => {
+            expect(res.body).toEqual(expect.objectContaining({ code: "AUTH_REQUIRED", reason: "access_required" }));
         });
         expect(tokenService.resolveAccess).not.toHaveBeenCalled();
 
@@ -155,7 +173,10 @@ describe("ReceiptLinkController", () => {
         await request(app.getHttpServer())
             .get("/receipt-links/efr_x/access")
             .set("X-Receipt-Access-Token", "stale")
-            .expect(401, { reason: "access_required" });
+            .expect(401)
+            .expect((res) => {
+                expect(res.body).toEqual(expect.objectContaining({ code: "AUTH_REQUIRED", reason: "access_required" }));
+            });
     });
 
     it("GET image requires the access token and streams the png with a download disposition on demand", async () => {
@@ -260,14 +281,17 @@ describe("ReceiptLinkController", () => {
 
     // F5: a missing storage object (e.g. reaped/never landed) must read as "link expired" (410),
     // not surface as an unhandled 500.
-    it("GET image returns 410 { reason: expired } when the storage object is missing", async () => {
+    it("GET image returns 410 REQUEST_EXPIRED with the expired reason alias when the storage object is missing", async () => {
         tokenService.resolveAccess.mockResolvedValue({ id: "t", storagePath: "receipts/b/1/missing.png", clientName: "김산모", expiresAt: new Date() });
         storage.download.mockRejectedValueOnce(new FileStorageObjectNotFoundError("receipts/b/1/missing.png", "download"));
 
         await request(app.getHttpServer())
             .get("/receipt-links/efr_x/image")
             .set("X-Receipt-Access-Token", "efra_a")
-            .expect(410, { reason: "expired" });
+            .expect(410)
+            .expect((res) => {
+                expect(res.body).toEqual(expect.objectContaining({ code: "REQUEST_EXPIRED", reason: "expired" }));
+            });
     });
 
     it("GET image percent-encodes an apostrophe in the client name for the RFC 5987 filename* value", async () => {

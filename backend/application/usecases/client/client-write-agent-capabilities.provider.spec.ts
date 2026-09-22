@@ -1095,7 +1095,7 @@ describe("ClientWriteAgentCapabilitiesProvider", () => {
         const clientRepository = { findByPhone: jest.fn().mockResolvedValue(null) };
         const transaction = {
             client: { findFirst: jest.fn().mockResolvedValue({ id: 7, createdAt: new Date("2026-09-18T00:00:00.000Z") }) },
-            employee_schedule: { findFirst: jest.fn() },
+            employee_schedule: { findFirst: jest.fn().mockResolvedValue({ incarnationId: "70000000-0000-4000-8000-000000000031" }) },
             agent_action: { updateMany: jest.fn() },
         };
         const prisma = {
@@ -1120,9 +1120,22 @@ describe("ClientWriteAgentCapabilitiesProvider", () => {
             policyDigest: "d".repeat(64),
             recipeDigest: "e".repeat(64),
         };
+        const serviceRecordLinkEffect = {
+            kind: "service-record-link",
+            ruleId: "system:service_record_link",
+            scheduleId: 18,
+            recipientType: "primary-employee",
+            templateKey: "SERVICE_RECORD_LINK",
+            change: "create",
+            recipientDigest: "1".repeat(64),
+            sourceDigest: "2".repeat(64),
+            templateDigest: "3".repeat(64),
+            policyDigest: "4".repeat(64),
+            recipeDigest: "5".repeat(64),
+        };
         const impact = {
             availability: "available",
-            effects: [effect],
+            effects: [effect, serviceRecordLinkEffect],
             complete: true,
             clientIdentity: null,
             sourceGuard: "f".repeat(64),
@@ -1195,7 +1208,124 @@ describe("ClientWriteAgentCapabilitiesProvider", () => {
             transaction,
             expect.objectContaining({ branchId: "branch-a", clientId: 7, taskOrigin: true }),
         );
+        expect(intent.persistScheduleIntent).toHaveBeenCalledWith(
+            transaction,
+            expect.objectContaining({ branchId: "branch-a", clientId: 7, scheduleId: 18, taskOrigin: true }),
+        );
+        // The reviewed artifact contained only the link effect for schedule 18:
+        // the schedule intent must not replace (cancel/rewrite) employee rows.
+        expect(intent.persistScheduleIntent).toHaveBeenCalledWith(
+            transaction,
+            expect.objectContaining({ branchId: "branch-a", clientId: 7, scheduleId: 18, replaceExisting: false }),
+        );
         expect(prisma.$transaction).not.toHaveBeenCalled();
+    });
+
+    it("replaces existing employee intents only for schedules the reviewed artifact actually re-staffed", async () => {
+        const createClient = { execute: jest.fn().mockResolvedValue({ id: 7, name: "합성고객" }) };
+        const updateClient = { execute: jest.fn(), executeApprovedTarget: jest.fn() };
+        const findClient = { execute: jest.fn().mockResolvedValue(null) };
+        const clientRepository = { findByPhone: jest.fn().mockResolvedValue(null) };
+        const transaction = {
+            client: { findFirst: jest.fn().mockResolvedValue({ id: 7, createdAt: new Date("2026-09-18T00:00:00.000Z") }) },
+            employee_schedule: { findFirst: jest.fn().mockResolvedValue({ incarnationId: "70000000-0000-4000-8000-000000000031" }) },
+            agent_action: { updateMany: jest.fn() },
+        };
+        const prisma = {
+            $transaction: jest.fn(),
+            area: { findFirst: jest.fn().mockResolvedValue({ id: "global" }) },
+        };
+        const serviceRecordLifecycle = {
+            validatePeriodChange: jest.fn().mockResolvedValue(undefined),
+            ensureForClient: jest.fn().mockResolvedValue(undefined),
+        };
+        const intent = { persistClientIntent: jest.fn().mockResolvedValue(undefined), persistScheduleIntent: jest.fn().mockResolvedValue(undefined) };
+        function digest(character: string): string { return character.repeat(64); }
+        function effect(kind: "employee-assignment" | "service-record-link", scheduleId: number) {
+            return {
+                kind, ruleId: kind === "service-record-link" ? "system:service_record_link" : "rule-assignment",
+                scheduleId,
+                recipientType: "primary-employee",
+                templateKey: kind === "service-record-link" ? "SERVICE_RECORD_LINK" : "EMPLOYEE_ASSIGNED",
+                change: kind === "service-record-link" ? "refresh" : "create",
+                recipientDigest: digest("1"), sourceDigest: digest("2"), templateDigest: digest("3"),
+                policyDigest: digest("4"), recipeDigest: digest("5"),
+            };
+        }
+        // Mixed artifact: schedule 18 got a link-only change (no employee
+        // mutation reviewed), schedule 20 got a reviewed employee-assignment
+        // effect, and schedule 19 has a canceled link effect that stages nothing.
+        const impact = {
+            availability: "available",
+            effects: [
+                effect("service-record-link", 18),
+                { ...effect("service-record-link", 19), change: "cancel" },
+                effect("employee-assignment", 20),
+            ],
+            complete: true,
+            clientIdentity: null,
+            sourceGuard: digest("f"),
+            affectedJobs: [],
+        };
+        const records = {
+            runTaskMutation: jest.fn(async (
+                _context: unknown,
+                _artifact: unknown,
+                prepare: (tx: typeof transaction) => Promise<{ clientId: number; result: Record<string, unknown> }>,
+                stage: (tx: typeof transaction, batch: unknown) => Promise<void>,
+            ) => {
+                await prepare(transaction);
+                await stage(transaction, {
+                    authorities: [{
+                        id: "70000000-0000-4000-8000-000000000024",
+                        recordDigest: "6".repeat(64),
+                        scopeDigest: "7".repeat(64),
+                    }],
+                    coverages: [],
+                });
+                return { actionId: "action-a", capability: "clients.create", resourceType: "client", resourceId: 7, result: { id: 7, name: "합성고객", status: "created" }, recordedAt: new Date().toISOString() };
+            }),
+        };
+        const provider = new ClientWriteAgentCapabilitiesProvider(
+            createClient as never,
+            updateClient as never,
+            findClient as never,
+            clientRepository as never,
+            prisma as never,
+            serviceRecordLifecycle as never,
+            undefined,
+            undefined,
+            intent as never,
+            { planClientWriteInTransaction: jest.fn().mockResolvedValue(impact) } as never,
+            records as never,
+        );
+        const capability = provider.getCapabilities().find((entry) => entry.meta.name === "clients.create")!;
+        await capability.execute({
+            principal: { userId: "user-a", branchId: "branch-a", globalRole: "admin", branchRole: "admin" },
+            sessionId: "session-a", traceId: "trace-a", locale: "ko", actionId: "action-a",
+            taskAutomation: {
+                actionId: "70000000-0000-4000-8000-000000000022",
+                taskId: "70000000-0000-4000-8000-000000000023",
+                taskRevision: 1,
+                capability: "clients.create", branchId: "branch-a", targetClientId: null, impact,
+                consent: { choice: "yes", binding: { recipientRef: "recipient-a", templateRef: "template-a", effectDigest: digest("1"), policyDigest: digest("2"), consentEventId: "event-a" } }, noSend: false },
+        } as never, { name: "합성고객", phone: "01012345678" });
+
+        // The canceled link effect for schedule 19 stages nothing; only
+        // schedules 18 and 20 persist intents.
+        expect(intent.persistScheduleIntent).toHaveBeenCalledTimes(2);
+        // Link-only consent: no employee replacement for schedule 18.
+        expect(intent.persistScheduleIntent).toHaveBeenNthCalledWith(
+            1,
+            transaction,
+            expect.objectContaining({ scheduleId: 18, replaceExisting: false, taskOrigin: true }),
+        );
+        // A reviewed employee-assignment effect may replace existing employee jobs.
+        expect(intent.persistScheduleIntent).toHaveBeenNthCalledWith(
+            2,
+            transaction,
+            expect.objectContaining({ scheduleId: 20, replaceExisting: true, taskOrigin: true }),
+        );
     });
 
     it("does not stage an intent or refresh assignment jobs for a declined task", async () => {

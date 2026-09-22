@@ -55,6 +55,21 @@ const CONTRACT_FORM_FIELDS: AgentFormField[] = [
     { name: "templateName", label: "템플릿 이름", type: "text" },
 ];
 
+/**
+ * BJJ-319 5-4d additive contract: the registered outcome classifies the
+ * failure first; the legacy `uncertain`/`remoteDocumentId` flags stay as the
+ * fallback so an unclassified shape keeps its uncertainty signal.
+ */
+function isUncertainContractResult(result: {
+    success: boolean;
+    outcome?: string;
+    uncertain?: boolean;
+    remoteDocumentId?: string;
+}): boolean {
+    return !result.success
+        && (result.outcome === "UNKNOWN" || result.uncertain === true || Boolean(result.remoteDocumentId));
+}
+
 @Injectable()
 @AgentCapabilityProvider()
 export class ContractExternalAgentCapabilitiesProvider implements AgentCapabilityProviderContract {
@@ -86,7 +101,7 @@ export class ContractExternalAgentCapabilitiesProvider implements AgentCapabilit
                 inspect: async (context, rawInput) => {
                     const input = ContractInputSchema.parse(rawInput);
                     const client = await this.findClientById.execute(context.principal.branchId, input.clientId);
-                    if (!client) throw new Error("Contract client was not found in the current branch");
+                    if (!client) throw new AgentActionCertainFailureError("Contract client was not found in the current branch");
                     const template = await this.resolveContractTemplate(context.principal.branchId, input.templateId);
                     const effectiveDate = new Date();
                     return {
@@ -106,7 +121,7 @@ export class ContractExternalAgentCapabilitiesProvider implements AgentCapabilit
                             ...this.bindTemplateInput(input, template),
                             idempotencyKey: context.actionId,
                         }, context.principal);
-                        if (!result.success && (result.uncertain || result.remoteDocumentId)) {
+                        if (isUncertainContractResult(result)) {
                             throw new AgentActionUncertainError("Contract provider result is uncertain", { remoteDocumentId: result.remoteDocumentId });
                         }
                         if (!result.success) return { success: false, status: "failed" };
@@ -126,7 +141,7 @@ export class ContractExternalAgentCapabilitiesProvider implements AgentCapabilit
                             clientSnapshot: staged.clientSnapshot,
                             clientTargetVersion: staged.targetVersion,
                         }, context.principal);
-                        if (!result.success && (result.uncertain || result.remoteDocumentId)) {
+                        if (isUncertainContractResult(result)) {
                             throw new AgentActionUncertainError("Contract provider result is uncertain", { remoteDocumentId: result.remoteDocumentId });
                         }
                         if (!result.success) return { success: false, status: "failed" };

@@ -1,7 +1,112 @@
 # BabyJamJam conversational AI implementation status
 
-Updated: 2026-09-18. Baseline: `4198fb991a59d63f14f529f54b1d66c1587ca76b`.
-Integration: `codex/bjj-conversation-v1`. Local implementation, deterministic verification, model quality and operational activation are separate results.
+Updated: 2026-09-18. Baseline: `origin/dev` at `55777f1facf7aafb3cbe19b322b6205a4c4860df`.
+Current verification: `/Users/jaino/Development/babyjamjam-admin/bjj-conversation-complete` on `feature/bjj-conversation-complete`, HEAD `a6e72806e`. Local implementation, deterministic verification, model quality and operational activation are separate results.
+
+## Preview promotion attempt — 2026-09-19
+
+PR [#731](https://github.com/jaino-song/babyjamjam-admin/pull/731) promoted `dev` to `preview` and merged at `92d5b63eec1cb04e0b7821b5424800751e8a711b1`. The preview push workflow was `35364445679`.
+
+- Backend type-check, lint, unit tests, auth observe/enforce E2E, conversation task E2E, immutable image build, database-patch wait and deployment-target resolution all passed.
+- The Lightsail deploy job stopped at AWS OIDC authentication with `Could not assume role with OIDC: Not authorized to perform sts:AssumeRoleWithWebIdentity` (`105667457833`). Systems Manager deployment did not run.
+- No preview backend deployment, runtime health check, authenticated preview browser QA, production database change or SMS/provider call is claimed. The blocker is the external AWS IAM trust/configuration boundary; no IAM or workflow bypass was made.
+
+This records preview promotion and deterministic pre-deploy evidence only. Preview runtime/browser proof, paid Google/OpenAI quality evaluation, human review and operational activation remain open.
+
+## Scope update — 2026-09-19
+
+Per user direction, AWS OIDC/IAM repair, preview deployment/runtime/browser proof, production database changes and
+operational activation are skipped for this continuation and remain unverified. The OpenAI staging runner passed its
+dry-run configuration check, but the local evaluation key is absent; a bounded live smoke refused with
+`MISSING_API_KEY` before network transport. No provider request or secret value was recorded. Paid model-quality
+evaluation and human review remain pending a configured evaluation key.
+
+## Google model evaluation refresh — 2026-09-19
+
+기존 로컬 Gemini 키로 `gemini-2.5-flash` current/improved profile과 합성 48개 사례 × 3회(**288 runs**)를
+완료했다. Redacted artifact는 [`2026-09-19-google-all.json`](../ai-conversation-quality/artifacts/2026-09-19-google-all.json)이다.
+
+- 286 responses / 2 errors (HTTP 503 1건, malformed response 1건); text 118, tool calls 168.
+- Required-token **223/324 (68.8%)**, structured-event **172/576 (29.9%)**.
+- p50 **2,169 ms**, p95 **7,631 ms**, max **22,931 ms**; usage/cost unavailable.
+- Fixture/assertion digest는 checked-in 평가 계약과 일치하며, 제안한 95% 기준에는 미달한다.
+
+OpenAI 비교는 평가 키가 없어 진행하지 못했고, human review와 품질 sign-off도 미완료다.
+
+## RV-04 real product AppModule path — 2026-09-19
+
+The guarded product evaluator is committed at `afca342d2` (`test(agent): harden guarded product evaluator`). This is the current-branch run that boots the real Nest `AppModule` against the disposable PostgreSQL database and exercises the task/action path instead of only the mocked evaluation harness.
+
+- The command completed with exit 0 against `127.0.0.1:55433/bjj_conversation_test`, with `AGENT_E2E=1`, `E2E_VENDOR_STUBS=1`, and `SCHEDULER_LEASE_MODE=off`.
+- Customer writes: create and update both **succeeded**; **3** synthetic client rows were observed before cleanup.
+- Action path: **4 proposed / 4 approved / 4 terminal / 4 succeeded**.
+- Terminal authority and coverage: **8** task-owned records/jobs observed; positive job evidence present; deny/no-send kept at **zero message logs and zero sends**; **8 intents / 8 jobs / 0 message logs**.
+- The runner refuses missing `--product`, unsafe database URLs, vendor-stub absence, scheduler lease mode, and mismatched datasource targets. It temporarily seeds only the disposable database's task flags, parent policy and default rules, then restores settings and removes all synthetic rows.
+- The real AppModule run made **0 provider calls** and sent **0 SMS**. The default `--product` path is unchanged.
+- Focused evaluator/application regression: **2 suites / 28 tests passed**. Full backend Jest at this branch: **401 suites passed, 1 skipped; 5,789 tests passed, 44 skipped; 1 snapshot passed**. Type-check, diff check, changed-file secret scan and `pnpm audit --prod` passed.
+
+This closes the local RV-04 product DB/AppModule evidence gap. AWS OIDC/IAM trust, preview runtime/browser proof, environment promotion, paid Google/OpenAI quality evaluation, human review and operational activation remain separate gates.
+
+## Verification refresh — Phase 8 authenticated browser contract — 2026-09-18
+
+The continuation worktree is `/Users/jaino/Development/babyjamjam-admin/bjj-conversation-complete` on `feature/bjj-conversation-complete`. This refresh uses synthetic authenticated storage and route stubs; it does not claim a live authenticated backend, provider, or SMS result.
+
+- Desktop Release A browser contract: **3 passed, 1 intentional skip** (the skipped case is the real-backend path). The passed cases cover shell/session controls, IME Enter isolation with sidebar focus restoration, and a task revision conflict that returns the latest server snapshot.
+- Mobile browser contract: **1 passed, 1 intentional skip**. The passed case covers the mobile shell, IME Enter isolation, drawer `aria-modal`/inert/focus restoration, task revision conflict, latest-draft refresh, and scroll-position retention. The skipped case is the real-backend path because `RUN_AGENT_REAL_E2E` was not enabled.
+- Mobile bottom-navigation regression: **9 tests passed**. The dedicated `/chat` agent shell now owns the full mobile viewport by excluding the shared V3 header and bottom navigation on that route; this prevents overlay controls from intercepting the shell's drawer interaction.
+- Frontend and mobile type-checks passed, and `git diff --check` passed. Browser runs used `RUN_AGENT_E2E=1`, `NEXT_PUBLIC_AGENT_SHELL_ENABLED=1`, loopback ports, synthetic auth, and mocked task/chat routes. The run made no external provider or SMS call.
+- Official Chrome visual acceptance was inspected in the authenticated local QA session on `/chat` without submitting a task or changing business data. At **375×812 CSS px**, the shell filled the viewport and exposed the menu, back, branch, prompt, input, and send controls; the root computed style was `display: grid`, `font-size: 16px`, `line-height: 24px`. At **1280×900 CSS px**, the sidebar rendered as a 256px column and the root grid resolved to `255.998px 1024px`; the screenshot and DOM snapshot matched the expected shell state. The QA tab and viewport were restored afterward.
+- This closes the deterministic Phase 8 browser-contract slice only. Official Chrome QA against a live authenticated backend, paid Google/OpenAI quality evaluation, human review, merge, deployment, production database changes, and operational activation remain separate gates. The current task branch also has the Phase 9 deterministic release evidence recorded below.
+
+## Verification refresh — Phase 7 integration item 1 — 2026-09-18
+
+The dedicated task worktree `/Users/jaino/Development/babyjamjam-admin/bjj-conversation-complete` is based on `origin/dev` at `55777f1facf7aafb3cbe19b322b6205a4c4860df`. The Phase 7 PostgreSQL/AppModule integration check was refreshed at commits `fad87a92b` and `5c423b6d6`.
+
+- The guarded disposable PostgreSQL/AppModule matrix passed **16 suites / 199 tests** with `AGENT_E2E=1`, `E2E_VENDOR_STUBS=1`, `SCHEDULER_LEASE_MODE=off`, and both datasource URLs explicitly bound to the approved loopback database `127.0.0.1:55433/bjj_conversation_test`.
+- The service-record-link scenario passed **6 tests**, including the real planner → client update → intent → service-record job → authority path, materialize-to-dispatch seal reuse, and refusal after a schema-valid forged task reference changes its `taskRevision` while the persisted terminal record remains unchanged.
+- Backend type-check, Nest build, production dependency audit (**0 known vulnerabilities**), diff check, and changed-file secret scan passed. No schema, dependency, environment, provider, or SMS transport change was made.
+- The test run created no provider request, SMS send, or message log. It is deterministic local evidence only; paid model quality, real SMS, deployment, environment-branch merge, production database changes, and operational activation remain separate gates.
+
+## Latest current-branch verification — 2026-09-18
+
+This section is the current attestation for the continuation branch. Earlier sections preserve historical phase records and must not be read as the latest counts.
+
+- Phase 7 focused regression: **3 suites / 66 tests passed**.
+- Guarded disposable PostgreSQL/AppModule matrix: **16 suites / 199 tests passed**. The run used a loopback disposable database, `AGENT_E2E=1`, `E2E_VENDOR_STUBS=1`, schedulers disabled, and no real provider or SMS transport.
+- Full backend Jest: **401 suites passed, 1 skipped; 5,786 tests passed, 44 skipped; 1 snapshot passed**.
+- Backend type-check, Nest build, capability manifest/drift (**47 capabilities**), frontend/mobile/shared type-checks, frontend/mobile production builds, dependency audit and changed-diff secret scan passed. The current diff adds no schema, dependency or environment changes.
+- Deterministic conversation harness: **48/48 passed** (development 32, holdout 16), with zero network calls, transport calls or safety errors. Fixture digest: `24ab8fb9498ba7472972c6d3a66b2d19274bc47787f96e5f34e9d8a1abc97d4a`; assertion digest: `8c6070f04f167f22e211d113d0fe6e64b2af8491057f861609f8d5d8c2042af4`.
+- Authenticated synthetic browser contracts: desktop **3 passed / 1 intentional skip**, mobile **1 passed / 1 intentional skip**, and mobile unit **9 passed**. Official Chrome visual acceptance at 375×812 and 1280×900 confirmed the `/chat` shell, desktop sidebar, DOM/computed style and `/chat` common-chrome hiding; the QA tab was restored.
+- Google/OpenAI staging runner: both-provider dry-run planned **576 runs** without transport; the holdout live run refused before transport with `MISSING_API_KEY` while both evaluation keys were unset. Paid model quality and human review therefore remain open.
+- No real SMS, production database mutation, environment-branch merge, deployment or operational activation has been performed on this branch.
+- Independent cumulative SOL FINAL at this exact HEAD: **SHIP / HIGH**, with no blocking findings.
+
+Current completion flags: implementation and deterministic verification **complete**; actual conversation quality **pending paid provider keys and human review**; operational application **pending deployment and activation gates**.
+
+## Phase 7 deterministic close — 2026-09-18
+
+The final service-record-link correction is integrated at `1d512cd3b1281cc28b42699dc3dd7394f591ee49` from task source `720425b8548599f2f647f58569ba3dc7fba031c4`. Trustworthy schedule scopes with unusable tokens, delivery snapshots, templates or sender policy now produce digest-only unavailable effects with `complete=true`, so explicit `no`/`noSend` customer writes can commit terminal coverage without acquiring send authority. Malformed schedule incarnation/date data remains incomplete and fails closed.
+
+- Focused planner/recipe regression: **2 suites / 34 tests passed**.
+- Guarded disposable PostgreSQL/AppModule matrix at the task SHA: **16 suites / 198 tests passed**. The no-send task path commits the customer update, persists service-record terminal coverage, and creates no service-record intent/job or message log.
+- Post-merge integration verification: **2 suites / 34 tests passed** and **16 suites / 198 guarded tests passed** at the integration SHA.
+- Full backend Jest at the task SHA: **396 suites passed, 1 skipped; 5,713 tests passed, 44 skipped; 1 snapshot passed**. Backend type-check, Nest build, capability drift (**47 capabilities**) and production dependency audit (**0 vulnerabilities**) passed.
+- Independent cumulative SOL FINAL at `720425b8548599f2f647f58569ba3dc7fba031c4` against `4dd69251ebde09ed1a2eaf8228c2a08080a73bef`: **SHIP / HIGH**, no blocking findings.
+
+This closes Phase 7 implementation and deterministic validation. Paid Google/OpenAI quality evaluation, human review, real SMS, production database changes, deployment, merge to environment branches and operational activation remain separate gates.
+
+## Phase 7 carrier correction — 2026-09-18
+
+The task-origin automation reference now follows a schedule intent into the dedicated service-record-link job. `ClientWriteAgentCapabilitiesProvider` includes reviewed `service-record-link` effects when staging schedule intents; `MessageAutomationIntentService` passes the digest-only commit reference to `ServiceRecordLinkService`; and the automatic link job persists that reference for the existing authority/recipe check. Legacy callers without a task reference retain the one-argument path and unchanged payload.
+
+- Focused regression: **3 suites / 135 tests passed**.
+- Guarded disposable PostgreSQL/AppModule agent E2E: **15 suites / 193 tests passed**, using `AGENT_E2E=1 E2E_VENDOR_STUBS=1 SCHEDULER_LEASE_MODE=off` against the approved loopback database `bjj_conversation_test`; the guard rejects model transport and vendor stubs prevent sender calls.
+- Full backend Jest: **396 suites passed, 1 skipped; 5,703 tests passed, 44 skipped; 1 snapshot passed**.
+- Backend type-check, Nest build, and capability manifest/drift (**47 capabilities**) passed.
+- The checked-in manifest digest was regenerated for the changed capability source.
+- Fresh independent SOL FINAL for this bounded slice: **SHIP / MEDIUM**, reviewed at integration SHA `33b8993e3a3c19b21a66c99479e799322a982ca9` against base `604c47bbc850c55c65a4d50694495d39de91af6d`; no blocking findings.
+
+This closes the carrier-correction slice only. Phase 7 plan-level close still requires the cumulative consent/provider matrix and final cumulative independent review. Real distributed lease ownership, paid provider quality, real SMS, production data, deployment, and operational activation remain separate gates.
 
 ## Latest continuation — integrated Phase 7/8 slices
 
@@ -25,7 +130,7 @@ Phase 7/8 implementation evidence is materially expanded, while Phase 9 merge/de
 | 4 — lifecycle and retention | Closed | Source `3b094cdfa13b20f1c08762b916c2f2f20ffcef9c`; shared23/backend436/DB73; SOL SHIP/HIGH |
 | 5 — conversation intake and context | Closed | Source `2d114d147b88fc208c86ed12679cf6f9101aca56`; shared25/backend498/DB93; cumulative SOL SHIP/HIGH |
 | 6 — atomic task/action approval | Closed | Source `4dd69251ebde09ed1a2eaf8228c2a08080a73bef`; shared25/backend535/DB114; cumulative SOL SHIP/HIGH |
-| 7 — client writes and automation consent | Integrated slices verified; plan-level close remains open | Guarded PostgreSQL/AppModule and remote full-flow/auth checks pass; cumulative consent/provider coverage and final cumulative SOL close remain |
+| 7 — client writes and automation consent | Closed for implementation and deterministic validation | Integrated at `1d512cd3b1281cc28b42699dc3dd7394f591ee49`; cumulative consent/provider and no-send coverage verified. Paid model quality, real SMS, production data and activation remain separate |
 | 8 — desktop and mobile | Integrated browser slices verified; final cross-screen acceptance remains open | Authenticated desktop and mobile real-backend paths pass; full keyboard/IME/focus/scroll acceptance remains |
 | 9 — cumulative QA and release preparation | Deterministic release evidence recorded; operational gates remain open | Release/rollback record and remote CI evidence are recorded; GitGuardian blocks merge, and deployment/production activation remain unperformed |
 

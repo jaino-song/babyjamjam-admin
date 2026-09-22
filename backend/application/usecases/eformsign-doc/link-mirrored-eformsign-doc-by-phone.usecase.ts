@@ -3,6 +3,7 @@ import { ConfigService } from "@nestjs/config";
 import { Prisma } from "@prisma/client";
 
 import { MessageTriggerService } from "application/services/message-trigger.service";
+import { codeOnlyProblemBody, problemBody } from "application/utils/problem-bodies";
 import { NotificationService } from "application/services/notification.service";
 import { persistClientMessageAutomationIntent, persistScheduleMessageAutomationIntent } from "application/services/message-automation-intent-writer";
 import { fulfillClientMessageAutomationIntent } from "application/services/client-message-automation-intent-fulfiller";
@@ -263,7 +264,12 @@ export class LinkMirroredEformsignDocByPhoneUsecase {
             assertValidPhone(phone);
         } catch (error) {
             if (error instanceof InvalidPhoneError) {
-                throw new BadRequestException(invalidPhoneFieldMessage("계약서의 고객 연락처"));
+                throw new BadRequestException(problemBody("VALIDATION_FAILED", {
+                    pointer: "/phone",
+                    code: "INVALID_FORMAT",
+                    detail: invalidPhoneFieldMessage("계약서의 고객 연락처"),
+                    location: "body",
+                }));
             }
             throw error;
         }
@@ -579,7 +585,12 @@ export class LinkMirroredEformsignDocByPhoneUsecase {
                             assertRequiredPhone(currentPhone);
                         } catch (error) {
                             if (error instanceof InvalidPhoneError) {
-                                throw new BadRequestException(invalidPhoneFieldMessage("계약서의 고객 연락처"));
+                                throw new BadRequestException(problemBody("VALIDATION_FAILED", {
+                                    pointer: "/phone",
+                                    code: "INVALID_FORMAT",
+                                    detail: invalidPhoneFieldMessage("계약서의 고객 연락처"),
+                                    location: "body",
+                                }));
                             }
                             throw error;
                         }
@@ -937,7 +948,7 @@ export class LinkMirroredEformsignDocByPhoneUsecase {
                 params.clientId,
             );
             if (!clientLocked) {
-                throw new ConflictException({ code: "SERVICE_RECORD_WRITE_TARGET_CHANGED" });
+                throw new ConflictException(codeOnlyProblemBody("SERVICE_RECORD_WRITE_TARGET_CHANGED"));
             }
         }
 
@@ -1089,7 +1100,7 @@ export class LinkMirroredEformsignDocByPhoneUsecase {
             select: { id: true, branchId: true, eDocId: true },
         });
         if (!rereadClient || rereadClient.branchId !== branchId) {
-            throw new ConflictException({ code: "SERVICE_RECORD_WRITE_TARGET_CHANGED" });
+            throw new ConflictException(codeOnlyProblemBody("SERVICE_RECORD_WRITE_TARGET_CHANGED"));
         }
         const rereadCase = await transaction.service_record_case.findUnique({
             where: { clientId: params.clientId },
@@ -1099,7 +1110,7 @@ export class LinkMirroredEformsignDocByPhoneUsecase {
             rereadCase
             && (rereadCase.branchId !== branchId || rereadCase.clientId !== params.clientId)
         ) {
-            throw new ConflictException({ code: "SERVICE_RECORD_WRITE_TARGET_CHANGED" });
+            throw new ConflictException(codeOnlyProblemBody("SERVICE_RECORD_WRITE_TARGET_CHANGED"));
         }
         return {
             branchId,

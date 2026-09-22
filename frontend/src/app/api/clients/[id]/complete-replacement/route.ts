@@ -1,22 +1,20 @@
 import { NextRequest, NextResponse } from "next/server";
 import { serverAPIClient } from "@/lib/api/server";
+import {
+    authRequiredResponse,
+    errorResponse,
+    getAuthHeaders,
+    getAuthToken,
+} from "@/lib/api/route-utils";
 
 type RouteParams = { params: Promise<{ id: string }> };
-
-function getAuthToken(request: NextRequest): string | null {
-    return request.cookies.get("auth_token")?.value || null;
-}
-
-function getAuthHeaders(token: string | null): Record<string, string> {
-    return token ? { Authorization: `Bearer ${token}` } : {};
-}
 
 // PATCH /api/clients/[id]/complete-replacement - Complete employee replacement
 export async function PATCH(request: NextRequest, { params }: RouteParams) {
     try {
         const token = getAuthToken(request);
         if (!token) {
-            return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+            return authRequiredResponse();
         }
 
         const { id } = await params;
@@ -26,10 +24,6 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
         });
         return NextResponse.json(response.data);
     } catch (error) {
-        console.error("[API] Error completing replacement:", error);
-        return NextResponse.json(
-            { error: "Failed to complete employee replacement" },
-            { status: 500 }
-        );
+        return errorResponse(error, "complete employee replacement", "mutation");
     }
 }

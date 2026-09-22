@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { CheckCircle, AlertTriangle, Loader2 } from "lucide-react";
+import { normalizeApiError } from "@babyjamjam/shared";
 import { authApi } from "@/services/api";
 import { AuthCard } from "@/components/auth/auth-card";
 import { FormField } from "@/components/auth/form-field";
@@ -13,6 +14,15 @@ import { safeStorageGetItem, safeStorageSetItem } from "@/lib/safe-storage";
 
 /** Canonical data-component base for the /verify-email route. */
 const VERIFY_EMAIL_BASE = "mobile_auth_verify-email";
+
+/** Problem-contract copy when verified; locally authored copy otherwise. */
+function verifiedOrCopy(payload: unknown, fallback: string): string {
+  const normalized = normalizeApiError(
+    { response: { status: 200, data: payload } },
+    { locale: "ko-KR", operation: "mutation" },
+  );
+  return normalized.verified ? normalized.message : fallback;
+}
 
 export default function VerifyEmailPage() {
     const router = useRouter();
@@ -45,10 +55,11 @@ export default function VerifyEmailPage() {
 
                 if (response.success) {
                     setStatus("success");
-                    setMessage(response.message || "이메일 인증이 완료되었습니다.");
+                    // The upstream `message` field is never rendered.
+                    setMessage(verifiedOrCopy(response, "이메일 인증이 완료되었습니다."));
                 } else {
                     setStatus("error");
-                    setMessage(response.message || "이메일 인증에 실패했어요.");
+                    setMessage(verifiedOrCopy(response, "이메일 인증에 실패했어요."));
                 }
             } catch (err) {
                 console.error("Email verification error:", err);
@@ -74,7 +85,10 @@ export default function VerifyEmailPage() {
             }
             setResendMessage({
                 type: response.success ? "success" : "error",
-                text: response.message || (response.success ? "인증 이메일이 재발송되었습니다." : "재발송에 실패했어요."),
+                // The upstream `message` field is never rendered.
+                text: verifiedOrCopy(response, response.success
+                    ? "인증 이메일이 재발송되었습니다."
+                    : "재발송에 실패했어요."),
             });
         } catch (err) {
             console.error("Resend verification error:", err);

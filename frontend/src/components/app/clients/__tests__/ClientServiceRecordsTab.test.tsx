@@ -549,7 +549,7 @@ describe("ClientServiceRecordsTab", () => {
         expect(collapsedHint.parentElement).toHaveAttribute("aria-hidden", "true");
     });
 
-    it("labels rejected manual sends as failures while preserving the server detail", async () => {
+    it("labels rejected manual sends as failures without forwarding the server detail", async () => {
         mutateAsync.mockRejectedValue({
             response: {
                 data: { message: "수신자 전화번호가 없어요" },
@@ -570,9 +570,15 @@ describe("ClientServiceRecordsTab", () => {
         await waitFor(() => {
             expect(toast).toHaveBeenCalledWith({
                 variant: "destructive",
-                description: "제공기록지 링크 발송에 실패했어요: 수신자 전화번호가 없어요",
+                description: "제공기록지 링크 발송에 실패했어요",
             });
         });
+        // EM v1.0: the raw upstream body message is never rendered.
+        expect(toast).not.toHaveBeenCalledWith(
+            expect.objectContaining({
+                description: expect.stringContaining("수신자 전화번호가 없어요"),
+            }),
+        );
     });
 
     it("normalizes uppercase completed document statuses", () => {

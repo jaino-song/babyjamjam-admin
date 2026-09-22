@@ -1,7 +1,10 @@
-import { BadRequestException } from "@nestjs/common";
+import { BadRequestException, ConflictException } from "@nestjs/common";
+import { createHash } from "crypto";
 
 import { sanitizeEformsignErrorMessage } from "../../../domain/utils/eformsign-error-message";
+import { codeOnlyProblemBody } from "../../utils/problem-bodies";
 import { clientProblemBody } from "../../usecases/client/client-write-validation";
+import { LegacyChatConfirmationService, hashLegacyChatPayload } from "../legacy-chat-confirmation.service";
 import { ToolExecutorService, type ToolExecutionResult } from "../tool-executor.service";
 
 const TEST_PRINCIPAL = { branchId: "branch-1", globalRole: "owner" };
@@ -375,5 +378,244 @@ describe("ToolExecutorService", () => {
             companyRegisteredDate: "tomorrow",
         })).resolves.toMatchObject({ success: false, error: expect.stringContaining("companyRegisteredDate") });
         expect(mocks.employeeService.create).not.toHaveBeenCalled();
+    });
+
+    describe("createAndSendContract uncertainty classification", () => {
+        const chatContext = {
+            userId: "user-1",
+            branchId: "branch-1",
+            sessionId: "session-1",
+            globalRole: "owner",
+            branchRole: "admin",
+        };
+        const dispatchArgs = { clientId: 7, areaId: "incheon" };
+
+        async function dispatchWithResult(result: Record<string, unknown>) {
+            const { mocks } = createExecutor();
+            const prismaIntentRows: Array<Record<string, unknown>> = [];
+            const prisma = {
+                legacy_chat_confirmation_intent: {
+                    create: jest.fn(({ data }: { data: Record<string, unknown> }) => {
+                        const row = {
+                            id: `intent-${prismaIntentRows.length + 1}`,
+                            expiresAt: new Date(Date.now() + 60_000),
+                            ...data,
+                        };
+                        prismaIntentRows.push(row);
+                        return Promise.resolve({ id: row.id, expiresAt: row.expiresAt });
+                    }),
+                    findFirst: jest.fn(({ where }: { where: { id: string } }) => {
+                        const row = prismaIntentRows.find((entry) => entry["id"] === where.id);
+                        return Promise.resolve(row ?? null);
+                    }),
+                    updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+                },
+            };
+            const confirmationService = new LegacyChatConfirmationService(prisma as never);
+            const boundExecutor = new ToolExecutorService(
+                mocks.clientService as never,
+                mocks.employeeService as never,
+                mocks.messageService as never,
+                mocks.areaTemplateService as never,
+                mocks.eformsignDocService as never,
+                mocks.voucherPriceInfoService as never,
+                mocks.bankAccountInfoService as never,
+                mocks.employeeScheduleService as never,
+                confirmationService,
+            );
+            mocks.areaTemplateService.findByArea.mockResolvedValue({
+                areaId: "incheon",
+                templateId: "template-1",
+                templateName: "표준계약서",
+            });
+            mocks.eformsignDocService.createAndSendContract.mockResolvedValue(result);
+
+            const proposal = await boundExecutor.execute(chatContext, "createAndSendContract", dispatchArgs, TEST_PRINCIPAL);
+            const consumed = await confirmationService.consumeIntent(chatContext, {
+                intentId: String(proposal.confirmationIntentId),
+                nonce: String(proposal.confirmationNonce),
+            });
+            const authorized = await boundExecutor.executeAuthorized(
+                chatContext,
+                "createAndSendContract",
+                dispatchArgs,
+                consumed,
+                TEST_PRINCIPAL,
+            );
+            return { result: authorized, mocks };
+        }
+
+        it("classifies an additive UNKNOWN outcome as uncertain", async () => {
+            const { result, mocks } = await dispatchWithResult({
+                success: false,
+                error: "계약서 발송 결과 확인이 필요합니다",
+                outcome: "UNKNOWN",
+            });
+            expect(result).toMatchObject({ success: false, uncertain: true });
+            expect(mocks.eformsignDocService.createAndSendContract).toHaveBeenCalledTimes(1);
+        });
+
+        it("keeps legacy uncertain and remoteDocumentId failures classified as uncertain", async () => {
+            const legacyUncertain = await dispatchWithResult({
+                success: false,
+                error: "계약서 발송 결과 확인이 필요합니다",
+                uncertain: true,
+            });
+            expect(legacyUncertain.result).toMatchObject({ success: false, uncertain: true });
+
+            const legacyRemoteId = await dispatchWithResult({
+                success: false,
+                error: "계약서 발송 결과 확인이 필요합니다",
+                remoteDocumentId: "remote-1",
+            });
+            expect(legacyRemoteId.result).toMatchObject({ success: false, uncertain: true });
+        });
+
+        it("keeps a NOT_APPLIED outcome a certain failure without an uncertainty flag", async () => {
+            const { result } = await dispatchWithResult({
+                success: false,
+                error: "고객의 제공인력 배정을 먼저 저장해 주세요.",
+                code: "CLIENT_ASSIGNMENT_REQUIRED",
+                outcome: "NOT_APPLIED",
+            });
+            expect(result).toEqual({
+                success: false,
+                error: "고객의 제공인력 배정을 먼저 저장해 주세요.",
+                code: "CLIENT_ASSIGNMENT_REQUIRED",
+                outcome: "NOT_APPLIED",
+            });
+        });
+    });
+
+    describe("additive problem classification on legacy failure results", () => {
+        // Legacy consumers (mobile confirm route, ai-chat functionResponse, the
+        // dashboard fast path) read success/error/message, so the code and
+        // outcome ride along additively: the legacy envelope keys are unchanged.
+        const authorizedContext = { userId: "user-1", branchId: "branch-1", sessionId: "session-1" };
+
+        /** Produce a genuinely consumed intent: the executor requires the
+         * WeakSet marker that only LegacyChatConfirmationService.consumeIntent
+         * sets, so the guard cannot be satisfied by a hand-built object. */
+        async function consumeIntent(toolName: string, args: Record<string, unknown>) {
+            const nonceHashOf = (nonce: string): string => createHash("sha256").update(nonce).digest("hex");
+            let stored: Record<string, unknown> | null = null;
+            const prisma = {
+                legacy_chat_confirmation_intent: {
+                    create: jest.fn(({ data }: { data: Record<string, unknown> }) => {
+                        stored = { id: "intent-1", expiresAt: new Date(Date.now() + 60_000), ...data };
+                        return Promise.resolve({ id: "intent-1", expiresAt: stored["expiresAt"] });
+                    }),
+                    findFirst: jest.fn().mockImplementation(() => Promise.resolve(stored)),
+                    updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+                },
+            };
+            const confirmationService = new LegacyChatConfirmationService(prisma as never);
+            const proposal = await confirmationService.createIntent(authorizedContext, toolName, args);
+            stored = {
+                id: "intent-1",
+                userId: authorizedContext.userId,
+                branchId: authorizedContext.branchId,
+                sessionId: authorizedContext.sessionId,
+                toolName,
+                payload: args,
+                payloadHash: hashLegacyChatPayload(args),
+                nonceHash: nonceHashOf(proposal.nonce),
+                expiresAt: new Date(Date.now() + 60_000),
+                consumedAt: null,
+            };
+            return confirmationService.consumeIntent(authorizedContext, {
+                intentId: proposal.intentId,
+                nonce: proposal.nonce,
+            });
+        }
+
+        it("classifies CUD validation failures as VALIDATION_FAILED before any service runs", async () => {
+            const { executor, mocks } = createExecutor();
+
+            await expect(executor.execute("branch-1", "createClient", {
+                confirmed: true,
+                primaryEmployeeId: 1,
+                careCenter: false,
+                voucherClient: true,
+            })).resolves.toMatchObject({
+                success: false,
+                code: "VALIDATION_FAILED",
+                outcome: "NOT_APPLIED",
+            });
+            expect(mocks.clientService.create).not.toHaveBeenCalled();
+        });
+
+        it("classifies unknown tools as REQUEST_INVALID without exposing a stack", async () => {
+            const { executor } = createExecutor();
+
+            await expect(executor.execute("branch-1", "definitelyNotATool", {}))
+                .resolves.toMatchObject({ success: false, code: "REQUEST_INVALID", outcome: "NOT_APPLIED" });
+        });
+
+        it("classifies an unconfirmed mutation attempt on the authorized path as ACCESS_DENIED", async () => {
+            const { executor, mocks } = createExecutor();
+
+            const result = await executor.executeAuthorized(
+                authorizedContext,
+                "createClient",
+                { name: "김산모" },
+                undefined,
+            );
+            expect(result).toMatchObject({ success: false, code: "ACCESS_DENIED", outcome: "NOT_APPLIED" });
+            expect(mocks.clientService.create).not.toHaveBeenCalled();
+        });
+
+        it("reuses the registered code and outcome of a problem-body rejection in the read path", async () => {
+            const { executor, mocks } = createExecutor();
+            mocks.clientService.findAllPaginated.mockRejectedValue(new BadRequestException(
+                codeOnlyProblemBody("RESOURCE_NOT_FOUND"),
+            ));
+
+            await expect(executor.execute("branch-1", "searchClients", { query: "김" }))
+                .resolves.toMatchObject({
+                    success: false,
+                    code: "RESOURCE_NOT_FOUND",
+                    outcome: "NOT_APPLIED",
+                });
+        });
+
+        it("leaves an unclassified plain rejection on the read path as NOT_APPLIED", async () => {
+            const { executor, mocks } = createExecutor();
+            mocks.clientService.findAllPaginated.mockRejectedValue(new Error("database unavailable"));
+
+            await expect(executor.execute("branch-1", "searchClients", { query: "김" }))
+                .resolves.toMatchObject({ success: false, outcome: "NOT_APPLIED" });
+        });
+
+        it("marks an unclassified plain rejection on the confirmed mutation path as UNKNOWN", async () => {
+            const { executor, mocks } = createExecutor();
+            const intent = await consumeIntent("terminateClientService", { clientId: 7 });
+            mocks.clientService.terminateService.mockRejectedValue(new Error("database unavailable"));
+
+            const result = await executor.executeAuthorized(
+                authorizedContext,
+                "terminateClientService",
+                { clientId: 7 },
+                intent,
+            );
+            expect(result).toMatchObject({ success: false, outcome: "UNKNOWN" });
+            expect(result).not.toHaveProperty("code");
+        });
+
+        it("keeps a problem-body rejection's own outcome on the confirmed mutation path", async () => {
+            const { executor, mocks } = createExecutor();
+            const intent = await consumeIntent("terminateClientService", { clientId: 7 });
+            mocks.clientService.terminateService.mockRejectedValue(new ConflictException(
+                codeOnlyProblemBody("REQUEST_CONFLICT"),
+            ));
+
+            const result = await executor.executeAuthorized(
+                authorizedContext,
+                "terminateClientService",
+                { clientId: 7 },
+                intent,
+            );
+            expect(result).toMatchObject({ success: false, code: "REQUEST_CONFLICT", outcome: "NOT_APPLIED" });
+        });
     });
 });

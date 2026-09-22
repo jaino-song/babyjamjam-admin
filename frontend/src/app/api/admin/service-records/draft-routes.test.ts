@@ -60,7 +60,12 @@ describe("service-record draft proxy routes", () => {
         );
 
         expect(response.status).toBe(401);
-        expect(response.headers.get("cache-control")).toBe("no-store");
+        expect(response.headers.get("cache-control")).toContain("no-store");
+        await expect(response.json()).resolves.toMatchObject({
+            code: "AUTH_REQUIRED",
+            status: 401,
+        });
+        expect(response.headers.get("Content-Type")).toContain("application/problem+json");
         expect(mockGet).not.toHaveBeenCalled();
     });
 
@@ -212,7 +217,9 @@ describe("service-record draft proxy routes", () => {
         );
 
         expect(response.status).toBe(status);
-        await expect(response.json()).resolves.toEqual({ code: `DRAFT_${status}` });
+        // errorResponse passes the legacy upstream `code` through and adds the
+        // ko-KR status copy as the compatibility `error` alias.
+        await expect(response.json()).resolves.toMatchObject({ code: `DRAFT_${status}` });
     });
 
     it.each([
@@ -250,7 +257,15 @@ describe("service-record draft proxy routes", () => {
                 );
 
         expect(response.status).toBe(400);
-        await expect(response.json()).resolves.toEqual({ error: "Invalid JSON body" });
+        // start/discard now speak the shared validation problem contract, like
+        // update/preview.
+        const body = await response.json();
+        expect(body).toMatchObject({
+            code: "VALIDATION_FAILED",
+            outcome: "NOT_APPLIED",
+            error: "Request body must be valid JSON",
+        });
+        expect(response.headers.get("Content-Type")).toContain("application/problem+json");
         expect(mockPost).not.toHaveBeenCalled();
         expect(mockPatch).not.toHaveBeenCalled();
     });
@@ -269,5 +284,54 @@ describe("service-record draft proxy routes", () => {
             {},
             { headers: { Authorization: "Bearer token-1" } },
         );
+    });
+
+    it("sanitizes an upstream draft-read failure instead of reflecting it", async () => {
+        mockGet.mockRejectedValue({
+            response: { status: 500, data: { message: "draft shard-9 exploded" } },
+        });
+        const consoleErrorSpy = jest.spyOn(console, "error").mockImplementation(() => undefined);
+
+        try {
+            const response = await getDraft(
+                createRequest("/api/admin/service-records/client/17/draft", "GET"),
+                { params: Promise.resolve({ clientId: "17" }) },
+            );
+
+            expect(response.status).toBe(500);
+            const body = await response.json();
+            expect(typeof body.error).toBe("string");
+            expect(JSON.stringify(body)).not.toContain("shard-9");
+        } finally {
+            consoleErrorSpy.mockRestore();
+        }
+    });
+
+    it("keeps an upstream confirm conflict code without its private message", async () => {
+        mockPost.mockRejectedValue({
+            response: {
+                status: 409,
+                data: { code: "DRAFT_VERSION_CONFLICT", message: "cas private internals" },
+            },
+        });
+        const consoleErrorSpy = jest.spyOn(console, "error").mockImplementation(() => undefined);
+
+        try {
+            const response = await confirmDraft(
+                createRequest("/api/admin/service-records/drafts/draft-1/confirm", "POST", {
+                    expectedDraftVersion: 1,
+                    previewId: "preview-1",
+                    idempotencyKey: "11111111-1111-4111-8111-111111111111",
+                }),
+                { params: Promise.resolve({ draftId: "draft-1" }) },
+            );
+
+            expect(response.status).toBe(409);
+            const body = await response.json();
+            expect(body).toMatchObject({ code: "DRAFT_VERSION_CONFLICT" });
+            expect(JSON.stringify(body)).not.toContain("cas private internals");
+        } finally {
+            consoleErrorSpy.mockRestore();
+        }
     });
 });

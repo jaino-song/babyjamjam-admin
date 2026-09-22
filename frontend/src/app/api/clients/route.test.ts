@@ -5,7 +5,7 @@ import { NextRequest } from "next/server";
 
 import { createProblemDetails } from "@babyjamjam/shared";
 import { serverAPIClient } from "@/lib/api/server";
-import { POST } from "./route";
+import { GET, POST } from "./route";
 
 jest.mock("@/lib/api/server", () => ({
     serverAPIClient: {
@@ -14,6 +14,7 @@ jest.mock("@/lib/api/server", () => ({
     },
 }));
 
+const mockGet = serverAPIClient.get as jest.Mock;
 const mockPost = serverAPIClient.post as jest.Mock;
 
 function createCreateRequest(body: object): NextRequest {
@@ -36,6 +37,7 @@ const createBody = {
 
 describe("POST /api/clients", () => {
     beforeEach(() => {
+        mockGet.mockReset();
         mockPost.mockReset();
     });
 
@@ -93,5 +95,50 @@ describe("POST /api/clients", () => {
             message: "이미 같은 전화번호의 고객이 있어요.",
             clientId: 73,
         });
+    });
+});
+
+describe("GET /api/clients", () => {
+    beforeEach(() => {
+        mockGet.mockReset();
+    });
+
+    afterEach(() => {
+        jest.restoreAllMocks();
+    });
+
+    it("rejects an unauthenticated list with a registered 401 problem body", async () => {
+        const response = await GET(new NextRequest("http://localhost/api/clients"));
+
+        expect(response.status).toBe(401);
+        await expect(response.json()).resolves.toMatchObject({
+            code: "AUTH_REQUIRED",
+            status: 401,
+        });
+        expect(response.headers.get("Content-Type")).toContain("application/problem+json");
+        expect(mockGet).not.toHaveBeenCalled();
+    });
+
+    it("sanitizes a legacy upstream failure instead of a raw English 500", async () => {
+        mockGet.mockRejectedValue({
+            response: { status: 500, data: { message: "client table missing on shard-7" } },
+        });
+        const consoleErrorSpy = jest.spyOn(console, "error").mockImplementation(() => undefined);
+
+        try {
+            const response = await GET(
+                new NextRequest("http://localhost/api/clients", {
+                    headers: { cookie: "auth_token=access-token" },
+                }),
+            );
+
+            expect(response.status).toBe(500);
+            const body = await response.json();
+            expect(typeof body.error).toBe("string");
+            expect(JSON.stringify(body)).not.toContain("shard-7");
+            expect(JSON.stringify(body)).not.toContain("Failed to fetch clients");
+        } finally {
+            consoleErrorSpy.mockRestore();
+        }
     });
 });

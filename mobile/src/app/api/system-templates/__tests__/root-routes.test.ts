@@ -71,7 +71,13 @@ describe("system-template root API routes", () => {
   it("requires auth before listing system templates", async () => {
     const response = await listSystemTemplates(noCookieRequest("/api/system-templates"));
     expect(response.status).toBe(401);
-    await expect(response.json()).resolves.toEqual({ error: "Unauthorized" });
+    expect(response.headers.get("Content-Type")).toBe("application/problem+json");
+    await expect(response.json()).resolves.toEqual(expect.objectContaining({
+      code: "AUTH_REQUIRED",
+      status: 401,
+      outcome: "NOT_APPLIED",
+      error: "Unauthorized",
+    }));
     expect(mockGet).not.toHaveBeenCalled();
   });
 
@@ -99,23 +105,24 @@ describe("system-template root API routes", () => {
     await expect(response.json()).resolves.toEqual({ error: "system template access denied" });
   });
 
-  it("preserves backend status and payload when fetching a system template", async () => {
-    mockGet.mockResolvedValue({
-      status: 404,
-      data: { error: "template not found" },
-    });
+    it("sanitizes a resolved non-2xx template fetch with the status preserved", async () => {
+        mockGet.mockResolvedValue({
+            status: 404,
+            data: { error: "template not found" },
+        });
 
-    const response = await getSystemTemplate(
-      createRequest("/api/system-templates/GREETING"),
-      { params: Promise.resolve({ key: "GREETING" }) },
-    );
+        const response = await getSystemTemplate(
+            createRequest("/api/system-templates/GREETING"),
+            { params: Promise.resolve({ key: "GREETING" }) },
+        );
 
-    expect(response.status).toBe(404);
-    await expect(response.json()).resolves.toEqual({
-      error: "Failed to fetch system template",
-      code: "UPSTREAM_ERROR",
+        expect(response.status).toBe(404);
+        const body = await response.json();
+        expect(typeof body.error).toBe("string");
+        expect(body.error).toMatch(/[가-힣]/);
+        expect(body.code).not.toBe("UPSTREAM_ERROR");
+        expect(JSON.stringify(body)).not.toContain("template not found");
     });
-  });
 
   it("forwards a validated template update to the backend path", async () => {
     mockPut.mockResolvedValue({

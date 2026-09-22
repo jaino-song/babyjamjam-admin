@@ -1,7 +1,6 @@
 "use client";
 import { formatBirthdayInput, isValidBirthdayIsoDate, normalizeBirthdayIsoDate } from "@babyjamjam/shared/utils/birthday";
 import {
-  getUserErrorMessage,
   normalizeApiError,
   type ProblemOutcome,
 } from "@babyjamjam/shared";
@@ -68,6 +67,7 @@ import {
   isValidIframeSuccessResponse,
   type ContractSubmissionAlert,
 } from "./page.helpers";
+import { readHeadlessOutcome } from "../contract-operation-guard";
 import styles from "./page.module.css";
 
 interface ContractDataDto {
@@ -516,7 +516,9 @@ export default function ContractCreationPage() {
   }, [startDate, voucherDuration, setEndDate]);
 
   const showErrorToast = (message: string) => {
-    toast({ variant: "destructive", description: getUserErrorMessage(message) });
+    // Locally authored validation copy renders verbatim — the legacy
+    // getUserErrorMessage string adapter is not applied to it.
+    toast({ variant: "destructive", description: message });
   };
 
   const showSubmissionFailure = (
@@ -964,6 +966,8 @@ export default function ContractCreationPage() {
           try { data = JSON.parse((event as MessageEvent).data) as HeadlessProgressEvent; }
           catch { return; }
           if (data.step === "failed") {
+            // getSafeHeadlessFailureMessage is a locally authored allowlist
+            // adapter: the upstream raw reason never reaches the UI verbatim.
             const errorHint = getSafeHeadlessFailureMessage(data.reason);
             setCreationProgress((current) => {
               const next = resolveFailedHeadlessProgress(
@@ -1040,11 +1044,22 @@ export default function ContractCreationPage() {
         headlessFailureStep = headless.failedStep;
         headlessFallbackHint = headless.fallbackHint;
 
+        // BJJ-319 5-4c: the structured outcome is the primary classification
+        // when the envelope carries it. An UNKNOWN verdict means the provider
+        // send boundary may already be crossed, so the response must surface
+        // the 확인 필요 copy and keep the submission locked — no iframe, no
+        // retry. Envelopes without the field keep the legacy branches below.
+        if (readHeadlessOutcome(headless.outcome) === "UNKNOWN") {
+          setProgressErrorHint(CONTRACT_OUTCOME_COPY.UNKNOWN.message);
+          showSubmissionFailure(headless, "UNKNOWN");
+          return;
+        }
+
         const remoteDocumentId = typeof headless.remoteDocumentId === "string"
           && headless.remoteDocumentId.trim().length > 0
           ? headless.remoteDocumentId
           : null;
-        if (headless.reason === "local_persist_failed" && remoteDocumentId) {
+        if ((headless.reason === "local_persist_failed" || readHeadlessOutcome(headless.outcome) === "PARTIALLY_APPLIED") && remoteDocumentId) {
           try {
             const adopted = await eformsignApi.adoptDocument(remoteDocumentId, finalClientId);
             if (adopted.warnings?.includes("mirror_sync_failed")) {
@@ -1071,6 +1086,15 @@ export default function ContractCreationPage() {
             setProgressErrorHint("전자문서 등록 상태를 확인할 수 없어 계약 목록에서 확인해 주세요.");
             showSubmissionFailure(error, "UNKNOWN");
           }
+          return;
+        }
+
+        if (readHeadlessOutcome(headless.outcome) === "PARTIALLY_APPLIED") {
+          // The verdict says the document exists but could not be adopted here
+          // and no remote id was provided to retry the adoption with. Surface
+          // the shared check-list copy and keep the submission locked.
+          setProgressErrorHint(CONTRACT_OUTCOME_COPY.PARTIALLY_APPLIED.message);
+          showSubmissionFailure(headless, "PARTIALLY_APPLIED");
           return;
         }
 

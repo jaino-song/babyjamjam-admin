@@ -178,7 +178,13 @@ describe("file-storage API routes", () => {
     );
 
     expect(response.status).toBe(400);
-    await expect(response.json()).resolves.toEqual({ error: "Invalid upload metadata" });
+    expect(response.headers.get("Content-Type")).toBe("application/problem+json");
+    await expect(response.json()).resolves.toEqual(expect.objectContaining({
+      code: "VALIDATION_FAILED",
+      status: 400,
+      outcome: "NOT_APPLIED",
+      error: "Invalid upload metadata",
+    }));
     expect(mockPost).not.toHaveBeenCalled();
   });
 
@@ -195,7 +201,13 @@ describe("file-storage API routes", () => {
     const response = await uploadFile(createUploadRequest({ file: "not-a-file" }));
 
     expect(response.status).toBe(400);
-    await expect(response.json()).resolves.toEqual({ error: "File is required" });
+    expect(response.headers.get("Content-Type")).toBe("application/problem+json");
+    await expect(response.json()).resolves.toEqual(expect.objectContaining({
+      code: "VALIDATION_FAILED",
+      status: 400,
+      outcome: "NOT_APPLIED",
+      error: "File is required",
+    }));
     expect(mockPost).not.toHaveBeenCalled();
   });
 
@@ -206,7 +218,15 @@ describe("file-storage API routes", () => {
     );
 
     expect(response.status).toBe(400);
-    await expect(response.json()).resolves.toEqual({ error: "Invalid file id" });
+    expect(response.headers.get("Content-Type")).toBe("application/problem+json");
+    const body = await response.json();
+    expect(body).toEqual(expect.objectContaining({
+      code: "VALIDATION_FAILED",
+      status: 400,
+      outcome: "NOT_APPLIED",
+      error: "Invalid file id",
+    }));
+    expect(body.errors[0].pointer).toBe("/fileId");
     expect(mockGet).not.toHaveBeenCalled();
   });
 
@@ -311,7 +331,15 @@ describe("file-storage API routes", () => {
     );
 
     expect(response.status).toBe(400);
-    await expect(response.json()).resolves.toEqual({ error: "Invalid file id" });
+    expect(response.headers.get("Content-Type")).toBe("application/problem+json");
+    const body = await response.json();
+    expect(body).toEqual(expect.objectContaining({
+      code: "VALIDATION_FAILED",
+      status: 400,
+      outcome: "NOT_APPLIED",
+      error: "Invalid file id",
+    }));
+    expect(body.errors[0].pointer).toBe("/fileId");
     expect(mockGet).not.toHaveBeenCalled();
   });
 

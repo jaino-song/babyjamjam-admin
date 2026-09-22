@@ -85,8 +85,25 @@ describe("ReceiptLinkManualSendService", () => {
 
     it("404s for an unknown document and 400s for a document without a client", async () => {
         await expect(makeService({ doc: null }).service.send({ branchId: BRANCH, documentId: "x", userId: null })).rejects.toBeInstanceOf(NotFoundException);
+        await expect(makeService({ doc: null }).service.send({ branchId: BRANCH, documentId: "x", userId: null }))
+            .rejects.toMatchObject({ response: { code: "RESOURCE_NOT_FOUND", reason: "document_not_found" } });
         await expect(makeService({ doc: { id: 1, documentId: "x", clientId: null } }).service.send({ branchId: BRANCH, documentId: "x", userId: null }))
             .rejects.toMatchObject({ response: { reason: "document_not_linked" } });
+    });
+
+    it("carries VALIDATION_FAILED on eligibility rejections while keeping the reason token", async () => {
+        const { service } = makeService({ preflight: async () => { throw new ReceiptLinkSkipError("not_voucher_client"); } });
+        await expect(service.send({ branchId: BRANCH, documentId: "doc-ext-1", userId: null }))
+            .rejects.toMatchObject({ response: { code: "VALIDATION_FAILED", reason: "not_voucher_client" } });
+
+        const mismatch = makeService();
+        await expect(mismatch.service.send({
+            branchId: BRANCH,
+            documentId: "doc-ext-1",
+            userId: "user-1",
+            expectedClientId: 8,
+            expectedRecipientPhone: "010-1234-5678",
+        })).rejects.toMatchObject({ response: { code: "VALIDATION_FAILED", reason: "recipient_mismatch" } });
     });
 
     // M4 fix-round-1: a doc row with no numeric id can never be pinned via preflight's

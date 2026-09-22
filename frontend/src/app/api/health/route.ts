@@ -1,21 +1,11 @@
 import { NextResponse } from "next/server";
 import { serverAPIClient } from "@/lib/api/server";
+import { logUpstreamError, upstreamStatusProblemResponse } from "@/lib/api/route-utils";
 
 export async function GET() {
-    const results: Record<string, unknown> = {
-        timestamp: new Date().toISOString(),
-        environment: process.env.NODE_ENV,
-        backendURL: serverAPIClient.defaults.baseURL,
-        hasBackendURL: !!serverAPIClient.defaults.baseURL,
-    };
-
     // Test 1: Check if backend URL is configured
     if (!serverAPIClient.defaults.baseURL) {
-        return NextResponse.json({
-            ...results,
-            status: "error",
-            message: "Backend URL not configured",
-        }, { status: 500 });
+        return upstreamStatusProblemResponse(500, "backend health check", "UNKNOWN");
     }
 
     // Test 2: Try to reach backend health endpoint
@@ -29,8 +19,11 @@ export async function GET() {
         const duration = Date.now() - startTime;
 
         return NextResponse.json({
-            ...results,
             status: "success",
+            timestamp: new Date().toISOString(),
+            environment: process.env.NODE_ENV,
+            backendURL: serverAPIClient.defaults.baseURL,
+            hasBackendURL: !!serverAPIClient.defaults.baseURL,
             backend: {
                 reachable: true,
                 status: response.status,
@@ -40,18 +33,10 @@ export async function GET() {
             }
         });
     } catch (error) {
-        const healthError = error as { message?: string; code?: string };
-        console.error("[Health Check] Backend unreachable:", healthError.message);
-
-        return NextResponse.json({
-            ...results,
-            status: "error",
-            message: "Backend unreachable",
-            backend: {
-                reachable: false,
-                error: healthError.message,
-                code: healthError.code,
-            }
-        }, { status: 503 });
+        // The raw upstream failure (message, code, stack) never reaches the
+        // client: the registered DEPENDENCY_UNAVAILABLE problem body keeps the
+        // 503 status while the diagnostics stay in the server log.
+        logUpstreamError("backend health check", error);
+        return upstreamStatusProblemResponse(503, "backend health check", "UNKNOWN");
     }
 }

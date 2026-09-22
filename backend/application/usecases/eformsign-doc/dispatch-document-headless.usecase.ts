@@ -1,4 +1,6 @@
-import { ConflictException, Inject, Injectable, Logger, Optional } from "@nestjs/common";
+import { ConflictException, HttpException, Inject, Injectable, Logger, Optional } from "@nestjs/common";
+import { PROBLEM_CATALOG } from "@babyjamjam/shared/errors/problem-details";
+import type { ProblemCode, ProblemOutcome, ProblemRecovery } from "@babyjamjam/shared/errors/problem-details";
 import { createHash } from "node:crypto";
 import { ContractDataDto } from "application/dto/contract.dto";
 import { EformsignService } from "application/services/eformsign.service";
@@ -49,6 +51,69 @@ const DISPATCH_CONFLICT_MANUAL_REVIEW_REASON = "dispatch_conflict_manual_review_
 
 class CreatedDocumentReconciliationDeadlineError extends Error {}
 
+const REGISTERED_PROBLEM_CODES: ReadonlySet<string> = new Set(Object.keys(PROBLEM_CATALOG));
+
+/**
+ * BJJ-319 phase 5-4a additive contract. The legacy `reason` token stays the
+ * compatibility alias; these are its registered problem-code counterparts with
+ * the business outcome and recovery guidance. `recovery.retry.mode` is always
+ * "NEVER": the dispatch protocol recovers through status checks, adoption and
+ * manual verification (EM-RETRY-06), never through an automatic re-send.
+ */
+const RECOVERY_NONE: ProblemRecovery = Object.freeze({ action: "NONE", retry: { mode: "NEVER" } } as const);
+const RECOVERY_CHECK_STATUS: ProblemRecovery = Object.freeze({ action: "CHECK_STATUS", retry: { mode: "NEVER" } } as const);
+
+const DISPATCH_REASON_PROBLEMS: Readonly<Record<string, {
+    code: ProblemCode;
+    outcome: ProblemOutcome;
+    recovery: ProblemRecovery;
+}>> = Object.freeze({
+    invalid_customer_phone: { code: "INVALID_CUSTOMER_PHONE", outcome: "NOT_APPLIED", recovery: RECOVERY_NONE },
+    invalid_provider_phone: { code: "INVALID_PROVIDER_PHONE", outcome: "NOT_APPLIED", recovery: RECOVERY_NONE },
+    operation_in_progress: { code: "DOCUMENT_DISPATCH_IN_PROGRESS", outcome: "NOT_APPLIED", recovery: RECOVERY_NONE },
+    operation_lock_unavailable: { code: "DOCUMENT_LOCK_UNAVAILABLE", outcome: "NOT_APPLIED", recovery: RECOVERY_NONE },
+    operation_lock_lost: { code: "DOCUMENT_LOCK_LOST", outcome: "NOT_APPLIED", recovery: RECOVERY_NONE },
+    duplicate_pending_document: { code: "DUPLICATE_PENDING_DOCUMENT", outcome: "NOT_APPLIED", recovery: RECOVERY_NONE },
+    dispatch_already_accepted: { code: "DISPATCH_ALREADY_ACCEPTED", outcome: "UNKNOWN", recovery: RECOVERY_CHECK_STATUS },
+    dispatch_uncertain_manual_reconciliation_required: { code: "DISPATCH_UNCERTAIN", outcome: "UNKNOWN", recovery: RECOVERY_CHECK_STATUS },
+    remote_unconfirmed: { code: "REMOTE_DOCUMENT_UNCONFIRMED", outcome: "UNKNOWN", recovery: RECOVERY_CHECK_STATUS },
+    local_persist_failed: { code: "DOCUMENT_LOCAL_PERSIST_FAILED", outcome: "PARTIALLY_APPLIED", recovery: RECOVERY_CHECK_STATUS },
+});
+
+/**
+ * The additive failure fields for a dispatch `reason`. Known reason tokens map
+ * 1:1 to their registered code; a reason that already IS a registered problem
+ * code (guard rejections surfaced by the catch) keeps its own code; anything
+ * else is a sanitized provider/infra failure covered by the catch-all code.
+ */
+function dispatchProblemFields(reason: string): {
+    code: ProblemCode;
+    outcome: ProblemOutcome;
+    recovery: ProblemRecovery;
+} {
+    const mapped = DISPATCH_REASON_PROBLEMS[reason];
+    if (mapped) return mapped;
+    if (REGISTERED_PROBLEM_CODES.has(reason)) {
+        return { code: reason as ProblemCode, outcome: "NOT_APPLIED", recovery: RECOVERY_NONE };
+    }
+    return { code: "DOCUMENT_DISPATCH_FAILED", outcome: "NOT_APPLIED", recovery: RECOVERY_NONE };
+}
+
+/**
+ * Guard rejections arrive as registered problem bodies; their public code is
+ * the stable dispatch reason the headless UI maps to its own copy. Everything
+ * else keeps the sanitized error message.
+ */
+function registeredProblemCode(error: unknown): ProblemCode | undefined {
+    if (!(error instanceof HttpException)) return undefined;
+    const response = error.getResponse();
+    if (typeof response !== "object" || response === null) return undefined;
+    const code = (response as { code?: unknown }).code;
+    return typeof code === "string" && REGISTERED_PROBLEM_CODES.has(code)
+        ? code as ProblemCode
+        : undefined;
+}
+
 function invalidContractPhoneField(contractData: ContractDataDto): string | null {
     const phoneFields: Array<[string, unknown]> = [
         ["customerContact", contractData.customerContact],
@@ -93,6 +158,14 @@ export interface DispatchHeadlessFailure {
     remoteDocumentId?: string;
     existingDocumentId?: string;
     dispatchIntentId?: string;
+    /**
+     * BJJ-319 phase 5-4a additive contract: every field above stays
+     * byte-identical; these classify the same failure with the registered
+     * problem code, the business outcome, and the recovery guidance.
+     */
+    code: ProblemCode;
+    outcome: ProblemOutcome;
+    recovery: ProblemRecovery;
 }
 
 export type DispatchHeadlessResult = DispatchHeadlessSuccess | DispatchHeadlessFailure;
@@ -143,13 +216,15 @@ export class DispatchDocumentHeadlessUsecase {
     ): Promise<DispatchHeadlessResult> {
         const invalidPhoneField = invalidContractPhoneField(params.contractData);
         if (invalidPhoneField) {
+            const invalidPhoneReason = invalidPhoneField === "customerContact"
+                ? "invalid_customer_phone"
+                : "invalid_provider_phone";
             return {
                 ok: false,
-                reason: invalidPhoneField === "customerContact"
-                    ? "invalid_customer_phone"
-                    : "invalid_provider_phone",
+                reason: invalidPhoneReason,
                 fallbackHint: "manual_check",
                 durationMs: 0,
+                ...dispatchProblemFields(invalidPhoneReason),
             };
         }
         if (!this.operationLock) {
@@ -168,6 +243,7 @@ export class DispatchDocumentHeadlessUsecase {
                     reason: "operation_in_progress",
                     fallbackHint: "manual_check",
                     durationMs: Date.now() - start,
+                    ...dispatchProblemFields("operation_in_progress"),
                 };
             }
             if (error instanceof EformsignOperationLockUnavailableError) {
@@ -177,6 +253,7 @@ export class DispatchDocumentHeadlessUsecase {
                     reason: "operation_lock_unavailable",
                     fallbackHint: "manual_check",
                     durationMs: Date.now() - start,
+                    ...dispatchProblemFields("operation_lock_unavailable"),
                 };
             }
             throw error;
@@ -228,6 +305,7 @@ export class DispatchDocumentHeadlessUsecase {
                         reason: "duplicate_pending_document",
                         existingDocumentId: duplicate.documentId,
                         durationMs: Date.now() - start,
+                        ...dispatchProblemFields("duplicate_pending_document"),
                     };
                 }
             }
@@ -276,6 +354,7 @@ export class DispatchDocumentHeadlessUsecase {
                             fallbackHint: "manual_check",
                             durationMs: Date.now() - start,
                             failedStep: latestProgressStep,
+                            ...dispatchProblemFields(DISPATCH_CONFLICT_MANUAL_REVIEW_REASON),
                         };
                     }
                     throw error;
@@ -288,6 +367,7 @@ export class DispatchDocumentHeadlessUsecase {
                         fallbackHint: "adopt-or-manual",
                         dispatchIntentId: claim.intent.id,
                         durationMs: Date.now() - start,
+                        ...dispatchProblemFields("dispatch_already_accepted"),
                     };
                 }
                 if (claim.disposition === "uncertain") {
@@ -298,6 +378,7 @@ export class DispatchDocumentHeadlessUsecase {
                         fallbackHint: "manual_check",
                         dispatchIntentId: claim.intent.id,
                         durationMs: Date.now() - start,
+                        ...dispatchProblemFields("dispatch_uncertain_manual_reconciliation_required"),
                     };
                 }
                 dispatchIntent = claim.intent;
@@ -327,6 +408,7 @@ export class DispatchDocumentHeadlessUsecase {
                     fallbackHint: "manual_check",
                     dispatchIntentId: dispatchIntent?.id,
                     durationMs: Date.now() - start,
+                    ...dispatchProblemFields("operation_lock_lost"),
                 };
             }
 
@@ -362,6 +444,7 @@ export class DispatchDocumentHeadlessUsecase {
                     dispatchIntentId: dispatchIntent?.id,
                     durationMs: result.durationMs,
                     failedStep: latestProgressStep,
+                    ...dispatchProblemFields(resultReason!),
                 };
             }
 
@@ -419,6 +502,7 @@ export class DispatchDocumentHeadlessUsecase {
                     dispatchIntentId: dispatchIntent?.id,
                     durationMs: result.durationMs,
                     failedStep: latestProgressStep,
+                    ...dispatchProblemFields("remote_unconfirmed"),
                 };
             }
 
@@ -475,6 +559,7 @@ export class DispatchDocumentHeadlessUsecase {
                         dispatchIntentId: dispatchIntent?.id,
                         durationMs: result.durationMs,
                         failedStep: latestProgressStep,
+                        ...dispatchProblemFields("local_persist_failed"),
                     };
                 }
             }
@@ -497,9 +582,11 @@ export class DispatchDocumentHeadlessUsecase {
                     dispatchIntentId: dispatchIntent?.id,
                     durationMs: Date.now() - start,
                     failedStep: latestProgressStep,
+                    ...dispatchProblemFields(reason),
                 };
             }
-            const reason = sanitizeEformsignErrorMessage(error || "unknown headless dispatch error");
+            const reason = registeredProblemCode(error)
+                ?? sanitizeEformsignErrorMessage(error || "unknown headless dispatch error");
             if (dispatchIntent) {
                 if (latestProgressStep === "creating" || latestProgressStep === "sent") {
                     await this.dispatchBoundary?.markUncertain(dispatchIntent, reason).catch((persistError) => {
@@ -518,6 +605,7 @@ export class DispatchDocumentHeadlessUsecase {
                 dispatchIntentId: dispatchIntent?.id,
                 durationMs: Date.now() - start,
                 failedStep: latestProgressStep,
+                ...dispatchProblemFields(reason),
             };
         }
     }

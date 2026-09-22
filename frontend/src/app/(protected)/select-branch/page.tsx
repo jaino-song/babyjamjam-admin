@@ -1,8 +1,8 @@
 "use client";
-import { getUserErrorMessage } from "@babyjamjam/shared";
 
 
 import { useCallback, useEffect, useState } from "react";
+import { normalizeApiError } from "@babyjamjam/shared";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useQueryClient } from "@tanstack/react-query";
 import { Building2 } from "lucide-react";
@@ -76,7 +76,8 @@ export default function SelectBranchPage() {
             await resetAuthorityState(queryClient);
             const result = await logout(pushEndpoint);
             if (!result.success) {
-                setError(getUserErrorMessage(result.error || "로그아웃에 실패했어요."));
+                // Server action already normalizes failures through the problem contract.
+                setError(result.error || "로그아웃에 실패했어요.");
                 setLoggingOut(false);
                 return;
             }
@@ -84,7 +85,9 @@ export default function SelectBranchPage() {
             router.replace("/login");
         } catch (err) {
             console.error("[Select Branch] Error logging out:", err);
-            setError(getUserErrorMessage(err, "로그아웃에 실패했어요."));
+            // Registered problem message (verified) or locally authored copy.
+            const normalized = normalizeApiError(err, { locale: "ko-KR", operation: "mutation" });
+            setError(normalized.verified ? normalized.message : "로그아웃에 실패했어요.");
             setLoggingOut(false);
         }
     }, [loggingOut, selecting, queryClient, router]);
@@ -100,7 +103,8 @@ export default function SelectBranchPage() {
             const result = await setCurrentBranch(branchId);
 
             if (!result.success) {
-                setError(getUserErrorMessage(result.error || "지점 선택에 실패했어요."));
+                // Server action already normalizes failures through the problem contract.
+                setError(result.error || "지점 선택에 실패했어요.");
                 setSelecting(null);
                 return false;
             }
@@ -109,7 +113,9 @@ export default function SelectBranchPage() {
             return true;
         } catch (err) {
             console.error("[Select Branch] Error selecting branch:", err);
-            setError(getUserErrorMessage(err, "지점 선택에 실패했어요."));
+            // Registered problem message (verified) or locally authored copy.
+            const normalized = normalizeApiError(err, { locale: "ko-KR", operation: "mutation" });
+            setError(normalized.verified ? normalized.message : "지점 선택에 실패했어요.");
             setSelecting(null);
             return false;
         }
@@ -122,7 +128,8 @@ export default function SelectBranchPage() {
                 const result = await getUserBranches();
 
                 if (!result.success) {
-                    setError(getUserErrorMessage(result.error || "지점 목록을 불러오는데 실패했어요."));
+                    // Server action already normalizes failures through the problem contract.
+                    setError(result.error || "지점 목록을 불러오는데 실패했어요.");
                     return;
                 }
 
@@ -139,7 +146,9 @@ export default function SelectBranchPage() {
                 setCurrentPage(1);
             } catch (err) {
                 console.error("[Select Branch] Error fetching branches:", err);
-                setError(getUserErrorMessage(err, "지점 목록을 불러오는데 실패했어요."));
+                // Registered problem message (verified) or locally authored copy.
+            const normalized = normalizeApiError(err, { locale: "ko-KR", operation: "mutation" });
+            setError(normalized.verified ? normalized.message : "지점 목록을 불러오는데 실패했어요.");
             } finally {
                 if (!keepLoadingForNavigation) {
                     setLoading(false);
@@ -191,7 +200,7 @@ export default function SelectBranchPage() {
             >
                 <div data-component="desktop_select-branch_error" className="flex flex-col items-center gap-4 text-center">
                     <p className="rounded-full bg-destructive/10 px-3 py-1 text-sm font-semibold text-destructive">
-                        {error && getUserErrorMessage(error)}
+                        {error}
                     </p>
                     <Button variant="outline" onClick={() => router.push(appendSafeReturnPath("/login", returnPath))}>
                         로그인 페이지로 돌아가기

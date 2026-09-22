@@ -1,6 +1,7 @@
 import { ConflictException, Injectable, NotFoundException } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
 import { PrismaService } from "infrastructure/database/prisma.service";
+import { codeOnlyProblemBody, problemBody } from "application/utils/problem-bodies";
 
 export interface DocumentCategory {
     id: string;
@@ -28,7 +29,7 @@ export class DocumentCategoryService {
         });
 
         if (!category) {
-            throw new NotFoundException("Document category not found");
+            throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
         }
     }
 
@@ -68,11 +69,14 @@ export class DocumentCategoryService {
             select: { id: true },
         });
         if (globalCategory) {
+            // 등록 코드 없이 두 충돌 원인을 구분해야 하므로 값 필드 포인터와 호환 별칭
+            // message로 원인 텍스트를 유지해요(EM-CAT-03: 새 코드 등록 없이 재사용).
             throw new ConflictException({
-                statusCode: 409,
-                code: "GLOBAL_CATEGORY_CONFLICT",
-                error: "Conflict",
-                field: "value",
+                ...problemBody("REQUEST_CONFLICT", {
+                    pointer: "/value",
+                    code: "INVALID_VALUE",
+                    detail: "전역 카테고리가 이미 같은 값을 사용해요.",
+                }),
                 message: `Category value '${params.value}' is already used by a global category`,
             });
         }
@@ -101,10 +105,11 @@ export class DocumentCategoryService {
             // surfacing a bare 409 through PrismaExceptionFilter.
             if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
                 throw new ConflictException({
-                    statusCode: 409,
-                    code: "P2002",
-                    error: "Conflict",
-                    field: "value",
+                    ...problemBody("REQUEST_CONFLICT", {
+                        pointer: "/value",
+                        code: "INVALID_VALUE",
+                        detail: "같은 지점에 이미 등록된 카테고리 값이에요.",
+                    }),
                     message: `Category value '${params.value}' already exists in this branch`,
                 });
             }

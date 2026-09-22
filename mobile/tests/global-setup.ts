@@ -2,6 +2,12 @@ import fs from "node:fs";
 import path from "node:path";
 import { request, type FullConfig } from "@playwright/test";
 
+// Every authenticated Playwright run — including the mocked agent lane
+// (RUN_AGENT_E2E=1) — holds a real backend session issued by the /api/auth/login
+// BFF route. There is deliberately no unsigned-token shortcut: tests with
+// unmocked authenticated requests must hit the backend with cookies a real
+// session would carry, and missing or invalid login config must fail loudly
+// here instead of being hidden behind a fabricated cookie.
 export default async function globalSetup(config: FullConfig) {
   const baseURL = process.env.BASE_URL
     ?? config.projects[0]?.use.baseURL
@@ -16,7 +22,10 @@ export default async function globalSetup(config: FullConfig) {
   });
   const loginResult = await response.json().catch(() => null) as { success?: boolean } | null;
   if (!response.ok() || loginResult?.success !== true) {
-    throw new Error(`Real E2E login failed with ${response.status()} and no successful session`);
+    throw new Error(
+      `E2E login through /api/auth/login failed with ${response.status()} and no successful session. `
+      + "Start the seeded local backend (db:seed:auth-e2e fixtures) or set E2E_AUTH_EMAIL/E2E_AUTH_PASSWORD.",
+    );
   }
 
   const branchId = process.env.E2E_BRANCH_ID

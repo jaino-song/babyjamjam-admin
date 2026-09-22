@@ -3,6 +3,7 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
 import { Activity, AlertTriangle, CheckCircle2, ListTodo } from 'lucide-react';
+import { normalizeApiError } from '@babyjamjam/shared';
 import { Button } from '@/components/ui/button';
 import { InfoCard, InfoRow, PageSection, StatsBar } from '@/components/app/v3';
 
@@ -59,11 +60,24 @@ export default function AgentDiagnosticsPage() {
   const queryClient = useQueryClient();
   const [disabling, setDisabling] = useState(false);
   const [confirmingDisable, setConfirmingDisable] = useState(false);
+  const [disableError, setDisableError] = useState<string | null>(null);
   const emergencyDisable = async () => {
     setDisabling(true);
+    setDisableError(null);
     try {
       const response = await fetch('/api/ai/agent/emergency-disable', { method: 'POST', credentials: 'same-origin' });
-      if (response.ok) await queryClient.invalidateQueries({ queryKey: ['agentDiagnostics'] });
+      if (response.ok) {
+        await queryClient.invalidateQueries({ queryKey: ['agentDiagnostics'] });
+      } else {
+        // Surface the mutation outcome — a registered problem body drives the
+        // copy; failures are never silently ignored.
+        const body: unknown = await response.json().catch(() => null);
+        const normalized = normalizeApiError(
+          { response: { status: response.status, data: body } },
+          { locale: 'ko-KR', operation: 'mutation' },
+        );
+        setDisableError(normalized.verified ? normalized.message : '긴급 비활성화에 실패했어요. 잠시 후 다시 시도해 주세요.');
+      }
     } finally {
       setDisabling(false);
       setConfirmingDisable(false);
@@ -93,6 +107,7 @@ export default function AgentDiagnosticsPage() {
       <InfoRow label="실제 런타임 평가" value={`${data?.evals.evidence.status ?? 'missing'} · ${data?.evals.evidence.caseCount ?? 0}/${data?.evals.requiredCases ?? 0} cases`} />
       <Button type="button" variant="destructive" disabled={disabling || data?.enabled === false} onClick={() => confirmingDisable ? void emergencyDisable() : setConfirmingDisable(true)}>{disabling ? '비활성화 중…' : confirmingDisable ? '확인: 전체 비활성화' : '긴급 비활성화'}</Button>
       {confirmingDisable && !disabling && <Button type="button" variant="outline" onClick={() => setConfirmingDisable(false)}>취소</Button>}
+      {disableError && <p data-slot="disable-error">{disableError}</p>}
     </InfoCard>
     <InfoCard data-component="desktop_admin_agent-diagnostics_actions" title="전체 대기·확인 필요 작업">
       {actions.length === 0

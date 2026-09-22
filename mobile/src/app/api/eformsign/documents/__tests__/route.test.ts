@@ -7,6 +7,7 @@ import { GET } from "../route";
 import { proxyLocalGetRequest } from "@/lib/api/route-utils";
 
 jest.mock("@/lib/api/route-utils", () => ({
+    getAuthToken: jest.fn(() => "auth-token"),
     proxyDeleteRequest: jest.fn(),
     proxyLocalGetRequest: jest.fn(),
 }));
@@ -27,7 +28,14 @@ describe("GET /api/eformsign/documents", () => {
         const response = await GET(createRequest("/api/eformsign/documents?limit=abc"));
 
         expect(response.status).toBe(400);
-        await expect(response.json()).resolves.toEqual({ error: "limit must be an integer" });
+        expect(response.headers.get("Content-Type")).toBe("application/problem+json");
+        await expect(response.json()).resolves.toEqual(expect.objectContaining({
+            code: "VALIDATION_FAILED",
+            status: 400,
+            outcome: "NOT_APPLIED",
+            error: "limit must be an integer",
+            errors: [{ pointer: "/limit", code: "INVALID_FORMAT", detail: "입력 형식이 올바르지 않아요.", location: "query" }],
+        }));
         expect(mockProxyLocalGetRequest).not.toHaveBeenCalled();
     });
 
@@ -35,7 +43,14 @@ describe("GET /api/eformsign/documents", () => {
         const response = await GET(createRequest("/api/eformsign/documents?limit=101"));
 
         expect(response.status).toBe(400);
-        await expect(response.json()).resolves.toEqual({ error: "limit must be between 1 and 100" });
+        expect(response.headers.get("Content-Type")).toBe("application/problem+json");
+        await expect(response.json()).resolves.toEqual(expect.objectContaining({
+            code: "VALIDATION_FAILED",
+            status: 400,
+            outcome: "NOT_APPLIED",
+            error: "limit must be between 1 and 100",
+            errors: [{ pointer: "/limit", code: "INVALID_FORMAT", detail: "입력 형식이 올바르지 않아요.", location: "query" }],
+        }));
         expect(mockProxyLocalGetRequest).not.toHaveBeenCalled();
     });
 
@@ -43,7 +58,14 @@ describe("GET /api/eformsign/documents", () => {
         const response = await GET(createRequest("/api/eformsign/documents?skip=-1"));
 
         expect(response.status).toBe(400);
-        await expect(response.json()).resolves.toEqual({ error: "skip must be greater than or equal to 0" });
+        expect(response.headers.get("Content-Type")).toBe("application/problem+json");
+        await expect(response.json()).resolves.toEqual(expect.objectContaining({
+            code: "VALIDATION_FAILED",
+            status: 400,
+            outcome: "NOT_APPLIED",
+            error: "skip must be greater than or equal to 0",
+            errors: [{ pointer: "/skip", code: "INVALID_FORMAT", detail: "입력 형식이 올바르지 않아요.", location: "query" }],
+        }));
         expect(mockProxyLocalGetRequest).not.toHaveBeenCalled();
     });
 

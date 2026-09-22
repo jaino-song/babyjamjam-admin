@@ -11,6 +11,7 @@ import {
     GET as getDocumentEvents,
     maxDuration as documentEventsMaxDuration,
 } from "../events/route";
+import { GET as getFinalizeProgress } from "../finalize-headless/progress/route";
 
 interface RouteCase {
     label: string;
@@ -140,5 +141,71 @@ describe.each(routeCases)("$label SSE proxy", ({ maxDuration, requestUrl, run })
         );
 
         expect(upstreamHeaders?.get("Last-Event-ID")).toBe("event-42");
+    });
+});
+
+describe("SSE route gates speak the problem contract", () => {
+    const originalFetch = globalThis.fetch;
+
+    afterEach(() => {
+        globalThis.fetch = originalFetch;
+        jest.restoreAllMocks();
+    });
+
+    it.each([
+        ["document events", getDocumentEvents, "http://localhost/api/eformsign-docs/events"],
+        [
+            "dispatch progress",
+            getDispatchProgress,
+            "http://localhost/api/eformsign-docs/dispatch-headless/progress?progressId=progress-1",
+        ],
+        [
+            "finalize progress",
+            getFinalizeProgress,
+            "http://localhost/api/eformsign-docs/finalize-headless/progress?progressId=progress-1",
+        ],
+    ])("rejects an unauthenticated %s subscription with AUTH_REQUIRED", async (_label, run, url) => {
+        const response = await run(new NextRequest(url));
+
+        expect(response.status).toBe(401);
+        await expect(response.json()).resolves.toMatchObject({
+            code: "AUTH_REQUIRED",
+            status: 401,
+        });
+        expect(response.headers.get("Content-Type")).toContain("application/problem+json");
+    });
+
+    it.each([
+        ["dispatch progress", getDispatchProgress, "http://localhost/api/eformsign-docs/dispatch-headless/progress"],
+        ["finalize progress", getFinalizeProgress, "http://localhost/api/eformsign-docs/finalize-headless/progress"],
+    ])("rejects a %s subscription without progressId with VALIDATION_FAILED", async (_label, run, url) => {
+        const response = await run(
+            new NextRequest(url, { headers: { cookie: "auth_token=auth-token" } }),
+        );
+
+        expect(response.status).toBe(400);
+        const body = await response.json();
+        expect(body).toMatchObject({ code: "VALIDATION_FAILED", status: 400 });
+        expect(body.errors).toMatchObject([{ pointer: "/progressId", code: "REQUIRED" }]);
+        expect(response.headers.get("Content-Type")).toContain("application/problem+json");
+    });
+
+    it("answers a failed finalize-progress upstream with an SSE error event carrying a registered code", async () => {
+        globalThis.fetch = jest.fn(() => Promise.resolve(
+            new Response(JSON.stringify({ message: "progress store secret" }), { status: 503 }),
+        )) as typeof fetch;
+
+        const response = await getFinalizeProgress(
+            new NextRequest(
+                "http://localhost/api/eformsign-docs/finalize-headless/progress?progressId=progress-1",
+                { headers: { cookie: "auth_token=auth-token" } },
+            ),
+        );
+
+        expect(response.status).toBe(503);
+        expect(response.headers.get("Content-Type")).toContain("text/event-stream");
+        const payload = await response.text();
+        expect(payload).toContain("DEPENDENCY_UNAVAILABLE");
+        expect(payload).not.toContain("progress store secret");
     });
 });

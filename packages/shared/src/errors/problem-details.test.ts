@@ -221,6 +221,50 @@ describe("catalog coverage", () => {
         "CLIENT_PHONE_ALREADY_REGISTERED",
         "EMPLOYEE_PHONE_ALREADY_REGISTERED",
         "EMPLOYEE_ACTIVE_ASSIGNMENT_BLOCKED",
+        "EMPLOYEE_ASSIGNMENT_NOT_ELIGIBLE",
+        "SERVICE_RECORD_WRITE_TARGET_CHANGED",
+        "EMPLOYEE_SCHEDULE_OVERLAP",
+        "SCHEDULE_RETENTION_BLOCKED",
+        "SERVICE_RECORD_PLANNED_DATE_UNAVAILABLE",
+        "INVALID_SCHEDULE_DATE",
+        "ALL_SESSIONS_SUBMITTED",
+        "REQUEST_ALREADY_PENDING",
+        "REQUEST_NOT_PENDING",
+        "SCHEDULE_DATE_NOT_POSTPONED",
+        "REQUEST_STALE",
+        "SCHEDULE_CHANGE_UNCOMPUTABLE",
+        // Registered contract-send guard codes (EM-CAT-03). BJJ-319 phase 5-1.
+        "CLIENT_ASSIGNMENT_REQUIRED",
+        "DOCUMENT_PROVIDER_MISMATCH",
+        "CLIENT_SERVICE_TERMINATED",
+        // Registered eformsign tombstone codes (EM-CAT-03; shipped identifiers verbatim). BJJ-319 phase 5-3a.
+        "EFORMSIGN_CREDENTIALS_SERVER_ONLY",
+        "EFORMSIGN_PROVIDER_OPERATION_SERVER_ONLY",
+        // Registered headless dispatch codes (EM-CAT-03; reason-token SCREAMING counterparts). BJJ-319 phase 5-4a.
+        "INVALID_CUSTOMER_PHONE",
+        "INVALID_PROVIDER_PHONE",
+        "DOCUMENT_DISPATCH_IN_PROGRESS",
+        "DOCUMENT_LOCK_UNAVAILABLE",
+        "DOCUMENT_LOCK_LOST",
+        "DUPLICATE_PENDING_DOCUMENT",
+        "DISPATCH_ALREADY_ACCEPTED",
+        "DISPATCH_UNCERTAIN",
+        "REMOTE_DOCUMENT_UNCONFIRMED",
+        "DOCUMENT_LOCAL_PERSIST_FAILED",
+        "DOCUMENT_DISPATCH_FAILED",
+        // Registered headless finalize codes (EM-CAT-03; reason-token counterparts). BJJ-319 phase 5-4b.
+        "DOCUMENT_FINALIZE_IN_PROGRESS",
+        "EFORMSIGN_TERMINAL_FAILURE",
+        "DOCUMENT_FINALIZE_UNCONFIRMED",
+        "DOCUMENT_FINALIZE_FAILED",
+        // Registered account-state and reset-link codes (EM-CAT-03; shipped auth identifiers). BJJ-319 phase 6d2.
+        "PENDING_APPROVAL",
+        "ACCOUNT_REJECTED",
+        "ACCOUNT_PROFILE_INCOMPLETE",
+        "NO_ACCESSIBLE_BRANCH",
+        "AUTH_RESET_TOKEN_INVALID",
+        "AUTH_RESET_TOKEN_EXPIRED",
+        "AUTH_RESET_TOKEN_USED",
     ];
 
     it.each(codes)("contains a complete bilingual entry for %s", (code) => {
@@ -269,6 +313,145 @@ describe("catalog coverage", () => {
         const entry = PROBLEM_CATALOG[code];
         expect(entry.status).toBe(409);
         expect(entry.statuses).toEqual([409]);
+        expect(entry.type).toBe(`https://github.com/jaino-song/babyjamjam-admin/blob/main/docs/error-management.md#${anchor}`);
+    });
+
+    const ASSIGNMENT_STATUS_CODES: Array<[ProblemCode, number, string]> = [
+        ["EMPLOYEE_ASSIGNMENT_NOT_ELIGIBLE", 400, "employee-assignment-not-eligible"],
+        ["SERVICE_RECORD_WRITE_TARGET_CHANGED", 409, "service-record-write-target-changed"],
+    ];
+
+    it.each(ASSIGNMENT_STATUS_CODES)("registers %s as status %s with kebab-case type anchor", (code, status, anchor) => {
+        const entry = PROBLEM_CATALOG[code];
+        expect(entry.status).toBe(status);
+        expect(entry.statuses).toEqual([status]);
+        expect(entry.type).toBe(`https://github.com/jaino-song/babyjamjam-admin/blob/main/docs/error-management.md#${anchor}`);
+    });
+
+    const AUTH_STATUS_403_CODES: Array<[ProblemCode, string]> = [
+        ["PENDING_APPROVAL", "pending-approval"],
+        ["ACCOUNT_REJECTED", "account-rejected"],
+        ["ACCOUNT_PROFILE_INCOMPLETE", "account-profile-incomplete"],
+        ["NO_ACCESSIBLE_BRANCH", "no-accessible-branch"],
+    ];
+
+    it.each(AUTH_STATUS_403_CODES)("registers %s as status 403 with kebab-case type anchor", (code, anchor) => {
+        const entry = PROBLEM_CATALOG[code];
+        expect(entry.status).toBe(403);
+        expect(entry.statuses).toEqual([403]);
+        expect(entry.type).toBe(`https://github.com/jaino-song/babyjamjam-admin/blob/main/docs/error-management.md#${anchor}`);
+    });
+
+    const AUTH_STATUS_400_CODES: Array<[ProblemCode, string]> = [
+        ["AUTH_RESET_TOKEN_INVALID", "auth-reset-token-invalid"],
+        ["AUTH_RESET_TOKEN_EXPIRED", "auth-reset-token-expired"],
+        ["AUTH_RESET_TOKEN_USED", "auth-reset-token-used"],
+    ];
+
+    it.each(AUTH_STATUS_400_CODES)("registers %s as status 400 with kebab-case type anchor", (code, anchor) => {
+        const entry = PROBLEM_CATALOG[code];
+        expect(entry.status).toBe(400);
+        expect(entry.statuses).toEqual([400]);
+        expect(entry.type).toBe(`https://github.com/jaino-song/babyjamjam-admin/blob/main/docs/error-management.md#${anchor}`);
+    });
+
+    const SCHEDULE_STATUS_409_CODES: Array<[ProblemCode, string]> = [
+        ["EMPLOYEE_SCHEDULE_OVERLAP", "employee-schedule-overlap"],
+        ["SCHEDULE_RETENTION_BLOCKED", "schedule-retention-blocked"],
+    ];
+
+    it.each(SCHEDULE_STATUS_409_CODES)("registers %s as status 409 with kebab-case type anchor", (code, anchor) => {
+        const entry = PROBLEM_CATALOG[code];
+        expect(entry.status).toBe(409);
+        expect(entry.statuses).toEqual([409]);
+        expect(entry.type).toBe(`https://github.com/jaino-song/babyjamjam-admin/blob/main/docs/error-management.md#${anchor}`);
+    });
+
+    const SCHEDULE_CHANGE_STATUS_400_CODES: Array<[ProblemCode, string]> = [
+        ["INVALID_SCHEDULE_DATE", "invalid-schedule-date"],
+    ];
+
+    it.each(SCHEDULE_CHANGE_STATUS_400_CODES)("registers %s as status 400 with kebab-case type anchor", (code, anchor) => {
+        const entry = PROBLEM_CATALOG[code];
+        expect(entry.status).toBe(400);
+        expect(entry.statuses).toEqual([400]);
+        expect(entry.type).toBe(`https://github.com/jaino-song/babyjamjam-admin/blob/main/docs/error-management.md#${anchor}`);
+    });
+
+    const SCHEDULE_CHANGE_STATUS_409_CODES: Array<[ProblemCode, string]> = [
+        ["SERVICE_RECORD_PLANNED_DATE_UNAVAILABLE", "service-record-planned-date-unavailable"],
+        ["ALL_SESSIONS_SUBMITTED", "all-sessions-submitted"],
+        ["REQUEST_ALREADY_PENDING", "request-already-pending"],
+        ["REQUEST_NOT_PENDING", "request-not-pending"],
+        ["SCHEDULE_DATE_NOT_POSTPONED", "schedule-date-not-postponed"],
+        ["REQUEST_STALE", "request-stale"],
+        ["SCHEDULE_CHANGE_UNCOMPUTABLE", "schedule-change-uncomputable"],
+    ];
+
+    it.each(SCHEDULE_CHANGE_STATUS_409_CODES)("registers %s as status 409 with kebab-case type anchor", (code, anchor) => {
+        const entry = PROBLEM_CATALOG[code];
+        expect(entry.status).toBe(409);
+        expect(entry.statuses).toEqual([409]);
+        expect(entry.type).toBe(`https://github.com/jaino-song/babyjamjam-admin/blob/main/docs/error-management.md#${anchor}`);
+    });
+
+    const CONTRACT_SEND_GUARD_STATUS_409_CODES: Array<[ProblemCode, string]> = [
+        ["CLIENT_ASSIGNMENT_REQUIRED", "client-assignment-required"],
+        ["DOCUMENT_PROVIDER_MISMATCH", "document-provider-mismatch"],
+        ["CLIENT_SERVICE_TERMINATED", "client-service-terminated"],
+    ];
+
+    it.each(CONTRACT_SEND_GUARD_STATUS_409_CODES)("registers %s as status 409 with kebab-case type anchor", (code, anchor) => {
+        const entry = PROBLEM_CATALOG[code];
+        expect(entry.status).toBe(409);
+        expect(entry.statuses).toEqual([409]);
+        expect(entry.type).toBe(`https://github.com/jaino-song/babyjamjam-admin/blob/main/docs/error-management.md#${anchor}`);
+    });
+
+    const EFORMSIGN_TOMBSTONE_STATUS_410_CODES: Array<[ProblemCode, string]> = [
+        ["EFORMSIGN_CREDENTIALS_SERVER_ONLY", "eformsign-credentials-server-only"],
+        ["EFORMSIGN_PROVIDER_OPERATION_SERVER_ONLY", "eformsign-provider-operation-server-only"],
+    ];
+
+    it.each(EFORMSIGN_TOMBSTONE_STATUS_410_CODES)("registers %s as status 410 with kebab-case type anchor", (code, anchor) => {
+        const entry = PROBLEM_CATALOG[code];
+        expect(entry.status).toBe(410);
+        expect(entry.statuses).toEqual([410]);
+        expect(entry.type).toBe(`https://github.com/jaino-song/babyjamjam-admin/blob/main/docs/error-management.md#${anchor}`);
+    });
+
+    const HEADLESS_DISPATCH_STATUS_CODES: Array<[ProblemCode, number, string]> = [
+        ["INVALID_CUSTOMER_PHONE", 400, "invalid-customer-phone"],
+        ["INVALID_PROVIDER_PHONE", 400, "invalid-provider-phone"],
+        ["DOCUMENT_DISPATCH_IN_PROGRESS", 409, "document-dispatch-in-progress"],
+        ["DOCUMENT_LOCK_UNAVAILABLE", 503, "document-lock-unavailable"],
+        ["DOCUMENT_LOCK_LOST", 409, "document-lock-lost"],
+        ["DUPLICATE_PENDING_DOCUMENT", 409, "duplicate-pending-document"],
+        ["DISPATCH_ALREADY_ACCEPTED", 409, "dispatch-already-accepted"],
+        ["DISPATCH_UNCERTAIN", 502, "dispatch-uncertain"],
+        ["REMOTE_DOCUMENT_UNCONFIRMED", 502, "remote-document-unconfirmed"],
+        ["DOCUMENT_LOCAL_PERSIST_FAILED", 502, "document-local-persist-failed"],
+        ["DOCUMENT_DISPATCH_FAILED", 502, "document-dispatch-failed"],
+    ];
+
+    it.each(HEADLESS_DISPATCH_STATUS_CODES)("registers %s as status %s with kebab-case type anchor", (code, status, anchor) => {
+        const entry = PROBLEM_CATALOG[code];
+        expect(entry.status).toBe(status);
+        expect(entry.statuses).toEqual([status]);
+        expect(entry.type).toBe(`https://github.com/jaino-song/babyjamjam-admin/blob/main/docs/error-management.md#${anchor}`);
+    });
+
+    const HEADLESS_FINALIZE_STATUS_CODES: Array<[ProblemCode, number, string]> = [
+        ["DOCUMENT_FINALIZE_IN_PROGRESS", 409, "document-finalize-in-progress"],
+        ["EFORMSIGN_TERMINAL_FAILURE", 502, "eformsign-terminal-failure"],
+        ["DOCUMENT_FINALIZE_UNCONFIRMED", 502, "document-finalize-unconfirmed"],
+        ["DOCUMENT_FINALIZE_FAILED", 502, "document-finalize-failed"],
+    ];
+
+    it.each(HEADLESS_FINALIZE_STATUS_CODES)("registers %s as status %s with kebab-case type anchor", (code, status, anchor) => {
+        const entry = PROBLEM_CATALOG[code];
+        expect(entry.status).toBe(status);
+        expect(entry.statuses).toEqual([status]);
         expect(entry.type).toBe(`https://github.com/jaino-song/babyjamjam-admin/blob/main/docs/error-management.md#${anchor}`);
     });
 });

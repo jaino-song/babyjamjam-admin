@@ -7,6 +7,7 @@ import { serverAPIClient } from "@/lib/api/server";
 
 import { POST as generateDocument } from "../generate-document/route";
 import { POST as generateSignature } from "../generate-signature/route";
+import { POST as generateStaffDocument } from "../generate-staff-document/route";
 
 jest.mock("@/lib/api/server", () => ({
     serverAPIClient: {
@@ -33,13 +34,21 @@ describe("retired eformsign provider routes", () => {
     it.each([
         ["signature", generateSignature, "/api/generate-signature"],
         ["document generation", generateDocument, "/api/generate-document"],
-    ])("returns a deterministic 410 for %s", async (_label, handler, path) => {
+        ["staff document generation", generateStaffDocument, "/api/generate-staff-document"],
+    ])("returns a deterministic 410 problem for %s", async (_label, handler, path) => {
         const response = await handler(createRequest(path, JSON.stringify({ executionTime: 1 })));
 
         expect(response.status).toBe(410);
-        await expect(response.json()).resolves.toMatchObject({
+        const body = await response.json();
+        expect(body).toMatchObject({
             code: "EFORMSIGN_PROVIDER_OPERATION_SERVER_ONLY",
+            status: 410,
+            outcome: "NOT_APPLIED",
         });
+        expect(typeof body.error).toBe("string");
+        expect(JSON.stringify(body)).not.toContain("server-mediated");
+        expect(JSON.stringify(body)).not.toContain("Use the server-mediated");
+        expect(response.headers.get("Content-Type")).toContain("application/problem+json");
         expect(response.headers.get("Cache-Control")).toContain("no-store");
         expect(mockPost).not.toHaveBeenCalled();
     });

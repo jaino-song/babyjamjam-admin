@@ -1,3 +1,5 @@
+import { normalizeApiError } from "@babyjamjam/shared";
+
 export const RECEIPT_LINK_REASON_MESSAGES: Record<string, string> = {
   not_voucher_client: "바우처 이용 산모가 아니어서 영수증 안내를 보낼 수 없어요.",
   missing_birthday: "산모 생년월일이 등록되지 않았습니다. 산모 정보를 먼저 수정해 주세요.",
@@ -13,12 +15,13 @@ export const RECEIPT_LINK_REASON_MESSAGES: Record<string, string> = {
 export const RECEIPT_LINK_SEND_FALLBACK_MESSAGE = "영수증 문자 발송에 실패했어요. 잠시 후 다시 시도해 주세요.";
 
 /**
- * Maps a receipt-link send failure to a user-facing message: known reason code first,
- * then the server's own message (some 4xx bodies carry a message without a mapped
- * reason, e.g. the 403 sender-approval case), then a generic fallback.
+ * Maps a receipt-link send failure to a user-facing message: registered reason
+ * code first, then the problem contract (a verified body drives the catalog
+ * copy), then a locally authored fallback. The raw upstream `message` field is
+ * never rendered.
  */
 export function describeReceiptLinkError(error: unknown): string {
-  const data = (error as { response?: { data?: { reason?: unknown; message?: unknown } } })?.response?.data;
+  const data = (error as { response?: { data?: { reason?: unknown } } })?.response?.data;
   const reason = data?.reason;
   if (
     typeof reason === "string" &&
@@ -26,9 +29,9 @@ export function describeReceiptLinkError(error: unknown): string {
   ) {
     return RECEIPT_LINK_REASON_MESSAGES[reason];
   }
-  const message = data?.message;
-  if (typeof message === "string" && message) {
-    return message;
+  const normalized = normalizeApiError(error, { locale: "ko-KR", operation: "mutation" });
+  if (normalized.verified) {
+    return normalized.message;
   }
   return RECEIPT_LINK_SEND_FALLBACK_MESSAGE;
 }

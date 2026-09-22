@@ -1,7 +1,6 @@
 "use client";
 
 import * as React from "react";
-import { getUserErrorMessage } from "@babyjamjam/shared";
 
 const TOAST_LIMIT = 1;
 const DEFAULT_TOAST_DURATION = 4000;
@@ -99,13 +98,13 @@ const addToRemoveQueue = (toastId: string) => {
   toastTimeouts.set(toastId, timeout);
 };
 
+// Destructive toasts carry display copy that callers already normalized through
+// the shared problem contract (normalizeApiError / resolveProblemPresentation)
+// or authored locally. The toast primitive no longer re-runs the legacy string
+// adapter over it, so registered-code outcomes are shown verbatim instead of
+// being re-interpreted.
 function normalizeErrorToast(toast: ToasterToast): ToasterToast {
-  if (toast.variant !== "destructive") return toast;
-  return {
-    ...toast,
-    title: toast.title ? getUserErrorMessage(toast.title, "요청을 처리하지 못했어요") : toast.title,
-    description: toast.description ? getUserErrorMessage(toast.description) : toast.description,
-  };
+  return toast;
 }
 
 export const reducer = (state: State, action: Action): State => {

@@ -1,10 +1,10 @@
 "use client";
-import { getUserErrorMessage } from "@babyjamjam/shared";
 
 
 import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Building2, Check } from "lucide-react";
+import { normalizeApiError } from "@babyjamjam/shared";
 
 import { useInitialUser } from "@/providers/UserProvider";
 import { useLocale } from "@/providers/LocaleProvider";
@@ -53,7 +53,9 @@ export default function SelectBranchPage() {
       await resetAuthorityState();
       const result = await setCurrentBranch(branchId);
       if (!result.success) {
-        setError(getUserErrorMessage(result.error || "지점 선택에 실패했어요."));
+        // Server action already normalizes the failure through the problem
+        // contract; render its copy verbatim.
+        setError(result.error || "지점 선택에 실패했어요.");
         setSubmitting(false);
         return false;
       }
@@ -66,7 +68,9 @@ export default function SelectBranchPage() {
       return true;
     } catch (err) {
       console.error("[Select Branch] Error selecting branch:", err);
-      setError(getUserErrorMessage(err, "지점 선택에 실패했어요."));
+      // Shared problem contract resolution — upstream internals are never
+      // rendered; the normalized message is already safe copy.
+      setError(normalizeApiError(err, { locale: "ko-KR", operation: "mutation" }).message);
       setSubmitting(false);
       return false;
     }
@@ -79,7 +83,7 @@ export default function SelectBranchPage() {
         const result = await getUserBranches();
 
         if (!result.success) {
-          setError(getUserErrorMessage(result.error || "지점 목록을 불러오는데 실패했어요."));
+          setError(result.error || "지점 목록을 불러오는데 실패했어요.");
           return;
         }
 
@@ -95,7 +99,9 @@ export default function SelectBranchPage() {
         setSelectedId((current) => current ?? fetched[0]?.id ?? null);
       } catch (err) {
         console.error("[Select Branch] Error fetching branches:", err);
-        setError(getUserErrorMessage(err, "지점 목록을 불러오는데 실패했어요."));
+        // Shared problem contract resolution — upstream internals are never
+        // rendered; the normalized message is already safe copy.
+        setError(normalizeApiError(err, { locale: "ko-KR", operation: "mutation" }).message);
       } finally {
         if (!keepLoadingForNavigation) {
           setLoading(false);
@@ -116,14 +122,18 @@ export default function SelectBranchPage() {
       await resetAuthorityState();
       const result = await logout(pushEndpoint);
       if (!result.success) {
-        setError(getUserErrorMessage(result.error || "로그아웃에 실패했어요."));
+        // Server action already normalizes the failure through the problem
+        // contract; render its copy verbatim.
+        setError(result.error || "로그아웃에 실패했어요.");
         setLoggingOut(false);
         return;
       }
       window.location.replace("/login");
     } catch (err) {
       console.error("[Select Branch] Error logging out:", err);
-      setError(getUserErrorMessage(err, "로그아웃에 실패했어요."));
+      // Shared problem contract resolution — upstream internals are never
+      // rendered; the normalized message is already safe copy.
+      setError(normalizeApiError(err, { locale: "ko-KR", operation: "mutation" }).message);
       setLoggingOut(false);
     }
   };
@@ -163,7 +173,7 @@ export default function SelectBranchPage() {
           <div className="branch-title" data-component={`${SELECT_BRANCH_BASE}_header_title`}>지점 선택</div>
         </div>
         <div className="auth-server-error" role="alert" data-component={`${SELECT_BRANCH_BASE}_error`}>
-          {error && getUserErrorMessage(error)}
+          {error}
         </div>
         <button
           type="button"

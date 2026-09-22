@@ -1,6 +1,6 @@
-import { getUserErrorMessage } from "@babyjamjam/shared";
 import { NextRequest, NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
+import { unauthorizedProblemResponse, upstreamBodyErrorResponse } from '@/lib/api/problem-responses';
 import { BACKEND_BASE_URL } from '@/lib/api/server';
 
 const API_BASE_URL = BACKEND_BASE_URL;
@@ -13,7 +13,7 @@ export async function GET(
   const cookieStore = await cookies();
   const token = cookieStore.get('auth_token')?.value;
   if (!token) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    return unauthorizedProblemResponse();
   }
 
   const response = await fetch(`${API_BASE_URL}/admin/feedback/${id}`, {
@@ -21,7 +21,8 @@ export async function GET(
   });
 
   if (!response.ok) {
-    return NextResponse.json({ error: getUserErrorMessage({ status: response.status }) }, { status: response.status });
+    const upstreamText = await response.text().catch(() => '');
+    return upstreamBodyErrorResponse(response.status, upstreamText, 'fetch feedback detail', 'read');
   }
 
   const data = await response.json();

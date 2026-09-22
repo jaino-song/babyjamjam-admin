@@ -21,6 +21,7 @@ import { AgentReleaseEvidenceService } from "application/agent/agent-release-evi
 import { CAPABILITY_CATALOG_BY_NAME } from "application/agent/capability-catalog";
 import { AgentFeedbackService } from "application/agent/agent-feedback.service";
 import { AgentTaskService } from "application/agent/agent-task.service";
+import { codeOnlyProblemBody, problemBody } from "application/utils/problem-bodies";
 
 type AgentRequest = Request & { tenant?: VerifiedTenantPrincipal };
 
@@ -72,7 +73,12 @@ export class AgentController {
         try {
             messages = AgentChatMessagesSchema.parse(dto.messages) as unknown as BjjUIMessage[];
         } catch {
-            throw new BadRequestException("Invalid agent messages");
+            throw new BadRequestException(problemBody("VALIDATION_FAILED", {
+                pointer: "/messages",
+                code: "INVALID_FORMAT",
+                detail: "에이전트 메시지 형식이 올바르지 않아요.",
+                location: "body",
+            }));
         }
 
         let result: Awaited<ReturnType<AgentRuntimeService["stream"]>>;
@@ -87,7 +93,7 @@ export class AgentController {
         } catch (error) {
             detachAbortListener();
             if (error instanceof HttpException) throw error;
-            throw new ServiceUnavailableException("Agent request unavailable");
+            throw new ServiceUnavailableException(codeOnlyProblemBody("DEPENDENCY_UNAVAILABLE"));
         }
         response.setHeader("X-Agent-Session-Id", result.sessionId);
         pipeUIMessageStreamToResponse({ response, stream: result.stream });
@@ -132,19 +138,19 @@ export class AgentController {
 
     @Post("agent/sessions/:id/compact")
     async compact(@Param("id") id: string, @Req() request: AgentRequest) {
-        if (!this.intelligence) throw new ServiceUnavailableException("Agent intelligence unavailable");
+        if (!this.intelligence) throw new ServiceUnavailableException(codeOnlyProblemBody("DEPENDENCY_UNAVAILABLE"));
         return this.intelligence.compact(id, this.owner(request));
     }
 
     @Post("agent/feedback")
     submitFeedback(@Body() dto: AgentFeedbackDto, @Req() request: AgentRequest) {
-        if (!this.feedback) throw new ServiceUnavailableException("Agent feedback unavailable");
+        if (!this.feedback) throw new ServiceUnavailableException(codeOnlyProblemBody("DEPENDENCY_UNAVAILABLE"));
         return this.feedback.submit(dto, this.owner(request));
     }
 
     @Get("agent/policy")
     policy(@Req() request: AgentRequest) {
-        if (!this.intelligence) throw new ServiceUnavailableException("Agent intelligence unavailable");
+        if (!this.intelligence) throw new ServiceUnavailableException(codeOnlyProblemBody("DEPENDENCY_UNAVAILABLE"));
         const query = typeof request.query["query"] === "string" ? request.query["query"] : "general";
         return this.intelligence.retrievePolicy(query, typeof request.query["locale"] === "string" ? request.query["locale"] : "ko");
     }
@@ -201,7 +207,7 @@ export class AgentController {
     @Get("agent/diagnostics/actions")
     @UseGuards(OwnerGuard)
     diagnosticsActions() {
-        if (!this.actions) throw new ServiceUnavailableException("Agent actions unavailable");
+        if (!this.actions) throw new ServiceUnavailableException(codeOnlyProblemBody("DEPENDENCY_UNAVAILABLE"));
         return this.actions.diagnosticsActions();
     }
 
@@ -224,7 +230,7 @@ export class AgentController {
 
     private requirePrincipal(request: AgentRequest): VerifiedTenantPrincipal {
         if (!request.tenant?.userId || !request.tenant.branchId) {
-            throw new ForbiddenException("Verified tenant principal missing");
+            throw new ForbiddenException(codeOnlyProblemBody("ACCESS_DENIED"));
         }
         return request.tenant;
     }

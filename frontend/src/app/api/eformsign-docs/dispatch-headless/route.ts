@@ -1,6 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { serverAPIClient } from "@/lib/api/server";
-import { errorResponse } from "@/lib/api/route-utils";
+import {
+  authRequiredResponse,
+  errorResponse,
+  localValidationProblemResponse,
+} from "@/lib/api/route-utils";
 
 function getAuthToken(request: NextRequest): string | null {
     return request.cookies.get("auth_token")?.value || null;
@@ -10,12 +14,19 @@ export async function POST(request: NextRequest) {
     try {
         const token = getAuthToken(request);
         if (!token) {
-            return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+            return authRequiredResponse();
         }
 
         const body = await request.json();
         if (!Number.isInteger(body?.clientId) || body.clientId < 1) {
-            return NextResponse.json({ error: "clientId is required" }, { status: 400 });
+            return localValidationProblemResponse([
+                {
+                    pointer: "/clientId",
+                    code: "REQUIRED",
+                    detail: "고객 식별자가 필요해요.",
+                    location: "body",
+                },
+            ]);
         }
 
         const response = await serverAPIClient.post("/eformsign-docs/dispatch-headless", body, {
@@ -28,6 +39,6 @@ export async function POST(request: NextRequest) {
 
         return NextResponse.json(response.data);
     } catch (error) {
-        return errorResponse(error, "headless eformsign dispatch");
+        return errorResponse(error, "headless eformsign dispatch", "mutation");
     }
 }

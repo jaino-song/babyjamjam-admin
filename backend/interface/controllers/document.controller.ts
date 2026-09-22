@@ -22,6 +22,7 @@ import { Response } from "express";
 import { FileInterceptor } from "@nestjs/platform-express";
 import { DocumentService } from "application/services/document.service";
 import { DocumentCategoryService } from "application/services/document-category.service";
+import { problemBody, codeOnlyProblemBody } from "application/utils/problem-bodies";
 import { UpdateDocumentDto, UploadDocumentDto } from "interface/dto/document.dto";
 import {
     DocumentEntity,
@@ -58,22 +59,42 @@ function parseDocumentTags(tags: string[] | string | undefined): string[] {
         try {
             parsed = JSON.parse(tags);
         } catch {
-            throw new BadRequestException("tags must be a valid JSON array");
+            throw new BadRequestException(problemBody("VALIDATION_FAILED", {
+                pointer: "/tags",
+                code: "INVALID_FORMAT",
+                detail: "태그 목록의 형식이 올바르지 않아요.",
+                location: "body",
+            }));
         }
     }
 
     if (!Array.isArray(parsed)) {
-        throw new BadRequestException("tags must be an array");
+        throw new BadRequestException(problemBody("VALIDATION_FAILED", {
+            pointer: "/tags",
+            code: "INVALID_FORMAT",
+            detail: "태그는 목록으로 입력해 주세요.",
+            location: "body",
+        }));
     }
 
     if (parsed.length > MAX_DOCUMENT_TAGS) {
-        throw new BadRequestException(`tags must contain ${MAX_DOCUMENT_TAGS} items or fewer`);
+        throw new BadRequestException(problemBody("VALIDATION_FAILED", {
+            pointer: "/tags",
+            code: "INVALID_FORMAT",
+            detail: `태그는 최대 ${MAX_DOCUMENT_TAGS}개까지 입력할 수 있어요.`,
+            location: "body",
+        }));
     }
 
     if (!parsed.every((tag): tag is string => (
         typeof tag === "string" && tag.length <= MAX_DOCUMENT_TAG_LENGTH
     ))) {
-        throw new BadRequestException(`each tag must be a string up to ${MAX_DOCUMENT_TAG_LENGTH} characters`);
+        throw new BadRequestException(problemBody("VALIDATION_FAILED", {
+            pointer: "/tags",
+            code: "INVALID_FORMAT",
+            detail: `각 태그는 ${MAX_DOCUMENT_TAG_LENGTH}자 이하로 입력해 주세요.`,
+            location: "body",
+        }));
     }
 
     return parsed;
@@ -103,7 +124,7 @@ function requireDocumentTenant(tenant: DocumentTenant): {
     globalRole?: string | null;
 } {
     if (!tenant.branchId || !tenant.userId) {
-        throw new ForbiddenException("tenant context unavailable");
+        throw new ForbiddenException(codeOnlyProblemBody("ACCESS_DENIED"));
     }
     return {
         branchId: tenant.branchId,
@@ -164,7 +185,12 @@ export class DocumentController {
         @Body() dto: UploadDocumentDto,
     ) {
         if (!file) {
-            throw new BadRequestException("file is required");
+            throw new BadRequestException(problemBody("VALIDATION_FAILED", {
+                pointer: "/file",
+                code: "REQUIRED",
+                detail: "파일을 첨부해 주세요.",
+                location: "body",
+            }));
         }
 
         const tags = parseDocumentTags(dto.tags);
@@ -175,12 +201,24 @@ export class DocumentController {
             size: file.size,
             bytes: file.buffer,
         });
-        if (validationError) throw new BadRequestException(validationError);
+        if (validationError) {
+            throw new BadRequestException(problemBody("VALIDATION_FAILED", {
+                pointer: "/file",
+                code: "INVALID_FORMAT",
+                detail: validationError,
+                location: "body",
+            }));
+        }
 
         const verifiedTenant = requireDocumentTenant(tenant);
         const documentName = dto.name?.trim() || file.originalname;
         if (documentName.length > 255) {
-            throw new BadRequestException("document name must be 255 characters or fewer");
+            throw new BadRequestException(problemBody("VALIDATION_FAILED", {
+                pointer: "/name",
+                code: "OUT_OF_RANGE",
+                detail: "문서 이름은 255자 이하로 입력해 주세요.",
+                location: "body",
+            }));
         }
         const mimeType = normalizeDocumentMimeType(file.mimetype);
         const branchId = verifiedTenant.branchId;
@@ -332,7 +370,7 @@ export class DocumentController {
             fileBuffer = await this.fileStorage.download(doc.storagepath);
         } catch (error) {
             if (isMissingStorageObjectError(error)) {
-                throw new NotFoundException("Document file not found");
+                throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
             }
 
             throw error;
@@ -404,7 +442,7 @@ export class DocumentController {
                 resolvedStorageUrl = await this.fileStorage.createSignedUrl(entity.storagepath);
             } catch (error) {
                 if (isMissingStorageObjectError(error)) {
-                    throw new NotFoundException("Document file not found");
+                    throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
                 }
 
                 throw error;

@@ -2,7 +2,13 @@ import { cookies } from "next/headers";
 import { NextRequest } from "next/server";
 import { z } from "zod";
 
-import { parseBody, upstreamJsonErrorResponse } from "@/lib/api/route-utils";
+import {
+    authRequiredResponse,
+    logUpstreamError,
+    parseBody,
+    parseUpstreamJsonObject,
+    upstreamStatusProblemResponse,
+} from "@/lib/api/route-utils";
 
 const isProduction = process.env.NODE_ENV === "production" || process.env.VERCEL_ENV === "preview";
 const BACKEND_URL = isProduction
@@ -22,10 +28,7 @@ export async function POST(request: NextRequest) {
     const authToken = cookieStore.get("auth_token");
 
     if (!authToken) {
-        return new Response(JSON.stringify({ error: "Unauthorized" }), {
-            status: 401,
-            headers: { "Content-Type": "application/json" },
-        });
+        return authRequiredResponse();
     }
 
     const { data, response } = await parseBody(chatConfirmSchema, request);
@@ -42,8 +45,23 @@ export async function POST(request: NextRequest) {
         });
 
         if (!backendResponse.ok) {
-            await backendResponse.text().catch(() => "");
-            return upstreamJsonErrorResponse(backendResponse.status);
+            const upstreamBody = await backendResponse.text().catch(() => "");
+            logUpstreamError(
+                "confirm chat intent",
+                { response: { status: backendResponse.status } },
+                upstreamBody,
+            );
+            // EM-STATE-01: an upstream 5xx leaves the application result
+            // unconfirmable (UNKNOWN), so the outcome default must not stamp
+            // NOT_APPLIED. A faithful upstream problem body is propagated;
+            // anything else is sanitized to the registered catalog copy.
+            return upstreamStatusProblemResponse(
+                backendResponse.status,
+                "confirm chat intent",
+                undefined,
+                "mutation",
+                parseUpstreamJsonObject(upstreamBody),
+            );
         }
 
         const responseBody = await backendResponse.text();
@@ -51,7 +69,9 @@ export async function POST(request: NextRequest) {
             status: backendResponse.status,
             headers: { "Content-Type": "application/json" },
         });
-    } catch {
-        return upstreamJsonErrorResponse(502);
+    } catch (error) {
+        // Transport failure: the intent may or may not have been applied.
+        logUpstreamError("confirm chat intent", error);
+        return upstreamStatusProblemResponse(502, "confirm chat intent", undefined, "mutation");
     }
 }
