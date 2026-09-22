@@ -3,6 +3,8 @@ import { z } from "zod";
 import { AgentEntitySelectPartSchema, type AgentTask } from "@babyjamjam/shared";
 import { DeterministicAgentLanguageModel } from "infrastructure/agent/deterministic-agent-language-model";
 import { AgentRuntimeService, buildAuthoritativeModelMessages, buildWriteToolInputSchema, redactModelValue } from "./agent-runtime.service";
+import { DECISION_KINDS, DECISION_MODES } from "./decision/decision-contracts";
+import { createDecisionTraceCollector } from "./decision/decision-trace";
 
 function buildEntityCapability(name: string, domain: string, execute: jest.Mock) {
     return {
@@ -2290,5 +2292,66 @@ describe("AgentRuntimeService", () => {
         expect(finish).toHaveBeenCalledTimes(2);
         expect(finish.mock.calls[0]).toHaveLength(5);
         expect(finish.mock.calls[1]).toHaveLength(5);
+    });
+
+    it("makes zero decision-layer calls when the agent is effectively disabled with intent enforce configured", async () => {
+        const capability = buildEntityCapability("clients.search", "clients", jest.fn());
+        // The exact result the real router returns when the kill switch
+        // (AGENT_ENABLED=false / emergency-disabled) leaves no enabled domain.
+        const route = jest.fn().mockResolvedValue({ domains: [], capabilities: [], disposition: "disabled" });
+        const decisions = {
+            createTurnContext: jest.fn().mockImplementation(async (createOptions: { signal: AbortSignal; sampleKey: string }) => ({
+                deadlineAt: Date.now() + 800,
+                signal: createOptions.signal,
+                sampleKey: createOptions.sampleKey,
+                collector: createDecisionTraceCollector(),
+            })),
+            routeDomains: jest.fn(),
+            classifyClientIntent: jest.fn(),
+        };
+        const decisionConfig = { getKindMode: jest.fn().mockResolvedValue(DECISION_MODES.enforce) };
+        // The orchestrator must be wired: without it the intent block is
+        // unreachable for the wrong reason and the regression is invisible.
+        const taskOrchestrator = {
+            resolveTurnOwnership: jest.fn(),
+            handleUserTurn: jest.fn().mockResolvedValue({ task: null, operations: [], replayed: false }),
+            filterWriteCapabilities: jest.fn().mockResolvedValue({ capabilities: [], taskMode: false }),
+        };
+        const sessions = {
+            create: jest.fn().mockResolvedValue({ id: "session-kill-switch", selectedEntities: {}, messages: [] }),
+            remove: jest.fn().mockResolvedValue(undefined),
+            appendMessages: jest.fn().mockResolvedValue(undefined),
+        };
+        const runtime = new AgentRuntimeService(
+            { list: () => [capability] } as never,
+            { isCapabilityEnabled: jest.fn().mockResolvedValue(false) } as never,
+            sessions as never,
+            { modelId: "deterministic-agent-v1", create: () => new DeterministicAgentLanguageModel([{ type: "text", text: "완료" }]) } as never,
+            { route } as never,
+            { start: jest.fn(), finish: jest.fn() } as never,
+            undefined,
+            undefined,
+            undefined,
+            taskOrchestrator as never,
+            decisions as never,
+            decisionConfig as never,
+        );
+
+        await expect(runtime.stream({
+            principal: { userId: "user-a", branchId: "branch-a", globalRole: "admin", branchRole: "admin" },
+            locale: "ko",
+            messages: [{ id: "message-kill-switch", role: "user", parts: [{ type: "text", text: "새 고객 등록해줘" }] }] as never,
+        })).rejects.toThrow("Agent is not enabled for this context");
+
+        // Enforce was genuinely configured for the intent kind, so the guard
+        // — not the mode — kept the turn silent.
+        expect(decisionConfig.getKindMode).toHaveBeenCalledWith(DECISION_KINDS.classifyClientIntent);
+        // Zero façade/port calls on the refused turn.
+        expect(decisions.classifyClientIntent).not.toHaveBeenCalled();
+        expect(decisions.routeDomains).not.toHaveBeenCalled();
+        // The intent block is unreachable, including its ownership consult.
+        expect(taskOrchestrator.resolveTurnOwnership).not.toHaveBeenCalled();
+        // The incumbent refusal behavior is preserved for the fresh session.
+        expect(sessions.remove).toHaveBeenCalledWith("session-kill-switch", { userId: "user-a", branchId: "branch-a" });
     });
 });
