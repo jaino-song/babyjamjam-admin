@@ -1,0 +1,257 @@
+# BabyJamJam conversational work AI v1 — implementation record
+
+## Authority and delivery boundary
+
+The user approved the detailed implementation plan on 2026-09-16 and requested implementation. Its section 3 retains a concrete pre-change confirmation for additive schema, shared build configuration and new evaluation dependencies. Source: [implementation plan](https://app.notion.com/p/3dd0b0492434814a9585c7a93eddcf30) and [PRD](https://app.notion.com/p/3dd0b0492434815b8766c0cd621b4b68), superseded by the explicit decisions below.
+
+- Base: `dev`, `4198fb991a59d63f14f529f54b1d66c1587ca76b`; remote synchronization confirmed at start.
+- Integration: `codex/bjj-conversation-v1`, sibling worktree `bjj-conversation-v1`.
+- Delivery: implementation, synthetic deterministic verification and desktop/mobile integration. Paid model evaluation, real external sends, deployment activation and environment-branch merge are excluded until separately authorized.
+- The untracked `dev/mobile/AGENTS.md` belongs to the user and is untouched.
+
+## Locked product decisions
+
+1. Desktop and the separate Next.js mobile app both receive task editing, restore, pause/resume, review and approval.
+2. Current registration wizard is the input authority: trimmed name, normalized 11-digit phone, completed duplicate check. Optional dates/address/service data remain optional and use existing domain validation. Defaults: `voucherClient=false`, `serviceStatus=pre_booking`.
+3. Automatic texts follow existing automation behavior only after an explicit yes/no choice and structured final approval. A yes is input, not execution authorization. A no or no-send constraint suppresses both creation and update-triggered automation.
+4. New drafts use existing protected database storage; no new field encryption/key. Editable/paused data expires 30 days after the last accepted mutation; completed/cancelled/definitively failed data expires 7 days after termination. Reads do not extend retention.
+5. Google and OpenAI evaluation adapters are prepared without paid calls. Current production model selection remains unchanged; no silent provider fallback.
+6. Business writes retain structured approval. No natural-language utterance invokes approval implicitly.
+
+## Load-bearing contracts
+
+- Server-owned `AgentTask` is scoped to user, branch and session; confirmed/tentative/source/issues/constraints are distinct. One editable task per session, multiple paused tasks. Read-only lookup never changes a paused task's target.
+- Bounded `set`, `clear`, `mark-tentative` operations; omission is a no-op. Create defaults never apply to omitted update fields. Resolve voucher values using existing business normalization before proposal hashing.
+- Public BFF routes: POST `/api/ai/agent/tasks`, GET/PATCH `/api/ai/agent/tasks/:id`, POST `/api/ai/agent/tasks/:id/commands`; commands select-target, pause, resume, prepare-review, cancel. Existing action approve gains task binding. Typed task snapshot/entity select/task patch contracts replace fabricated natural-language IDs.
+- Owner-scoped durable event dedupe: same ID/hash returns the immutable acceptance receipt and current snapshot without mutation; different hash is 409. Expired task or retry beyond 30 days is 410 where ownership is known. Minimal event tombstones survive while the owner session exists; no automatic remapping to a new session.
+- Canonical semantic request hashes include operation, task, expected revision and validated explicit changes, not transport metadata. Events do not copy raw PII.
+- Transaction lock order: session -> task -> action. Patch/increment/proposal invalidation are atomic; proposals attach only to unchanged revisions; approval validates owner/task revision/proposal revision/input hash and atomically claims execution. No model or external call inside transactions.
+- Reuse action receipt/reconciliation. Existing execution stale cutoff is 30 minutes, uncertain lookup every 5 minutes. Never retry effects on uncertain outcomes. Preserve identity/receipt/tombstone information until conclusive reconciliation.
+- Automation consent seals target/recipient, normalized effects, template/content and policy/display versions. Unrelated edits preserve consent only when the recomputed effect digest is identical. New reviews bind the current task revision; changed effects require a new explicit answer. Task-linked dispatch rechecks the seal.
+- Customer write, automation intent and effect receipt share the provider's existing transaction; postcommit fulfillment reuses existing outbox services. Do not call the separately transactional ClientService.create from that transaction.
+- Capture unambiguous protected input before model redaction. Multiple phone candidates and ambiguous partial corrections require selection. Model, new message snapshots, events and evaluation output do not duplicate raw sensitive draft data.
+- Draft TTL is not an all-system erasure promise: existing customer records and executed/uncertain audit receipts retain their established retention policy. Session cleanup must not delete live tasks or blocking actions.
+- Both clients use shared pure contracts/state rules; retain their distinct transport implementations. Existing legacy messages/actions stay readable. Rollback disables new tasks/reviews, not reconciliation or result reads.
+
+## Phases and evidence
+
+| Phase | Deliverable | State | Integration SHA / verification |
+| --- | --- | --- | --- |
+| 0 | Baseline, policies, ADR | complete | base above; ADR-013; 121 existing unit tests passed |
+| 1 | Shared contracts + 48-case evaluator (parallel) | complete | source close: 76d0445babb87f46ecab3a754323695cef9d0203; SOL SHIP; 19 shared tests, 8 evaluator tests, 48 harness cases |
+| 2 | Additive persistence + evaluation providers (parallel) | complete | source close d19ef533619f87add609767cc23e99ea447308bf; SOL SHIP; guarded DB14/14, final provider/evaluator39/39, migration compatibility |
+| 3 | Task create/read/patch, protected inputs, replay | complete | source724bddb9f688d05f4aa41a1088246f0e877a36a3; SOL SHIP/HIGH; 393 backend tests, 60 agent E2E tests |
+| 4 | Commands, retention, session lifecycle | pending | |
+| 5 | TurnContext, conversation policy, routing | pending | |
+| 6 | Atomic task/action approval binding | pending | |
+| 7 | Customer policy + automation consent/dispatch | pending | |
+| 8 | Desktop + mobile consumers (parallel) | pending | |
+| 9 | Cumulative deterministic QA, browser acceptance, audit | pending | |
+
+Every dependent phase starts from a committed, verified integration SHA. Independent writers use isolated unit branches/worktrees. Phase close includes task checks, integration checks and SOL review when shared contracts, state or security changes. Runtime model/effort metadata must report verified values; do not infer them from defaults.
+
+## Requirement coverage checklist
+
+- FR-01/02/05: questions mixed with inputs preserve facts; explanatory turns do not force writes.
+- FR-03/06/07: ordered choices, target continuity, pause/resume and actual action state.
+- FR-04/08/09: corrections, tentative dates, minimal required data, wizard/provider policy parity.
+- FR-10/13: versioned review, races, duplicate requests, interrupted execution and reconciliation.
+- FR-11/12: scoped protected input, same text/form task, reload, no stale identity restore.
+- FR-14/16: ordinary-language UI, honest capability/flag boundaries, mobile keyboard/IME/focus/scroll.
+- FR-15: 48 multi-turn fixtures, 32 development/16 holdout, semantic families do not cross split; failed actions/states cannot be scored as success.
+- NFR: user/branch isolation, concurrency, PII minimization, versioned telemetry, accessibility, reversible flags and migration compatibility.
+
+## Initial preflight evidence
+
+- Dedicated worktree created from synchronized dev; source checkout has only the pre-existing untracked mobile rule file.
+- `env-bootstrap` copied existing ignored backend/frontend environment files, without new keys.
+- `pnpm install --frozen-lockfile` passed; 1,472 packages installed from the frozen lockfile.
+- `env-check` passed with one existing STALE manifest key: `GEMINI_EXTRACTION_MODEL`; no DRIFT/LEAK/REVIEW/UNPARSED findings. No values recorded.
+- Vault lookup was attempted and failed with missing `@covenant-labs/vault-contracts`; no Vault files changed.
+- Plan independent review: APPROVE after explicit retention/replay/consent/policy corrections. This is a plan review, not an implementation audit.
+- Existing `action-coordinator.service.spec.ts` and `client-write-agent-capabilities.provider.spec.ts`: 2 suites / 121 tests passed. Logged assignment-refresh failures are expected injected negative paths. These baseline tests do not establish the new task behavior.
+- Prisma client generation passed. Docker is unavailable; an isolated ephemeral PostgreSQL 16.13 cluster was instead started on 127.0.0.1:55433. All 70 existing migrations applied successfully to its empty test database, with both Prisma URL variables explicitly pointing there. No operational database was used.
+- Phase 1 unit worktrees have independent frozen dependency installs and env-bootstrap. After the concrete schema/shared-build preview question, the user instructed `continue`; the previewed additive schema and shared include/vendor scope is authorized. Actual operational migration/deployment remains excluded.
+- Prepared [additive schema preview](./2026-09-16-agent-task-schema-preview.diff). Event task IDs deliberately have no cascading task foreign key, so an expired/purged task cannot erase the replay evidence while its owning session exists. Task data is purged separately from its minimal ownership tombstone.
+- The preview validates with Prisma 6.19.2. Existing migration history compared to the unchanged checked-in schema using a separate local shadow database: no difference detected. At that checkpoint the preview had not been applied. Phase2 later generated and applied the approved migration only to the isolated synthetic DB, as recorded below.
+- Shared source integrated at a999017c7 (unit 24dca62eb); 2 suites/16 tests and shared/frontend/mobile type checks passed in integration. Dedicated SOL audit was interrupted by provider quota, then resumed after a fresh usage check permitted work. No approval result is claimed until it returns.
+- Evaluation foundation integrated at 8ddcb4d80 (unit 5a63ecc58): 48 cases (32 development/16 holdout), independent state/execution assertions and explicit harness-only reporting. An unnecessary evaluation-local tsconfig was removed at 3874fe218 in favor of an explicit CommonJS runner flag; it was not part of the previewed build scope.
+- Dependency audit: 1,627 dependencies, zero reported vulnerabilities at this checkpoint; no dependency additions. Ignored environment files confirmed excluded from Git.
+- Integration backend type-check passed after the normal Prisma client generation step. The evaluation unit's earlier ungenerated-client errors did not reproduce in the prepared integration worktree.
+- SOL source audit at 17615c606 returned FIX_REQUIRED: constrain nested safe-reference strings, fix identity/revision/acknowledgement reducer behavior, match optional date/currency/birthday validation, establish one consent choice, and make chat patch parts reference accepted events. The correction unit also adds the missing task capability/session-create identity contract. Phase 1 remains open until corrected source, generated parity and repeat SOL review pass.
+- Before any new task migration, a synthetic legacy user/branch/session/rejected action was inserted in the isolated test DB. Original action JSON saved outside the repository for exact postmigration comparison (canonical hash c62963a51ce721628cd27ce220c8a9e4fd2a8504afbf11670e29895b09e37c51). This is a synthetic compatibility fixture, not an operational action or external execution.
+
+## Final acceptance and deferred gates
+
+Required implementation evidence: unit/integration checks; real database concurrency and migration compatibility; existing agent E2E and capability-manifest checks; shared vendor regeneration with no drift; desktop/mobile type/lint/build checks; UI architecture checks; authenticated loopback browser flows using `qa:fe`/`qa:mobile`; Aligo/vendor stubs with zero actual external effects; security review and cumulative independent audit.
+
+Deferred: real-model A/B/C/D comparison, three repetitions, frozen latency/cost budgets, human conversational review and production activation. Proposed quality targets (95% scenario success, all core repeats, <=5% needless repeat questions, human mean >=4/no core dimension <3, zero observed safety failures) are NOT proven by deterministic tests.
+
+Rollback keeps additive tables/columns and result/reconciliation reads. Disable new task creation and review issuance. Never destructively revert tables containing unresolved actions. Environment branch merge needs separate user approval.
+
+## Phase 1 correction verification
+
+- Corrected shared source/vendor integrated at `eefc21d2396340e0f3bdd10eb63478b7bb6004bd` (unit `a7b863a115c785026acb2da126ac18aa802f8587`). Structural reference fields now use UUIDs/digests; task revisions remain integer and existing action proposal revisions remain opaque tokens; identity/session resets and acknowledgements are handled separately; confirmed/tentative input validators and one consent authority are explicit.
+- Integration verification passed: two shared agent suites / 17 tests; shared, backend, desktop and mobile type checks; generated backend runtime rebuild followed by zero vendor difference. Corrective SOL review at that SHA still required three localized fixes: same-identity reset generation, SHA-256 customer target version distinct from integer task revision, and a fixed issue-code vocabulary. Phase 1 remains open pending their correction and re-review.
+- Phase 2 briefs were reviewed before dispatch. They now require a single task/event storage transaction with typed conflict/replay outcomes, adapter-owned active-slot derivation, parent-owned legacy migration proof, mandatory stateless provider continuation, explicit supported model profiles and error/metadata privacy checks. The corrected Phase 2 briefs received SOL APPROVE. No Phase 2 writer has started; both will pin the eventual Phase 1 close SHA.
+
+- Second correction integrated at `b6f1b3b48a9df4636bb4c1cde7907ef9bcc97785` (unit `eebb3c102`): request generation captured before dispatch and incremented on reset, separate SHA-256 customer target version, fixed issue-code vocabulary. All 19 shared tests, all four typechecks, generated vendor parity and diffcheck passed. Final amendment `76d0445babb87f46ecab3a754323695cef9d0203` removes the nullable state bypass. All integration checks were rerun successfully and SOL returned SHIP with no blockers or nonblocking findings at that exact SHA. Phase 1 is closed; this is contract/harness verification, not product runtime or model quality proof.
+
+## Phase 2 dispatch contract
+
+- SOL pre-dispatch review: APPROVE after typed UoW, active-slot enforcement, legacy migration workflow and provider continuation/privacy corrections. Storage and provider adapters have disjoint file ownership and start from the committed Phase 1 close record.
+- Storage changes are limited to the approved additive schema, a generated migration, task entity/repository port and adapter, focused unit tests and opt-in guarded local database tests. The parent alone generates/applies the migration and verifies exact legacy record equality.
+- Provider codecs use injected mock transport, fixed official endpoints, explicitly registered model profiles, stateless opaque continuation, bounded sanitized errors and no import-time network I/O. No SDK/dependency or operational route change is authorized or needed.
+
+### Rollout setting seam (preparation for Phase 3/5)
+
+The existing `AgentFlagsService` reads `agent.flags`, including open-ended capability booleans, and exposes `getSnapshot()` plus `isCapabilityEnabledFromSnapshot()`. No new environment variable or schema is needed for the task rollout. The new task create/review policy must require its own explicit `capabilities["conversation.tasks"] === true` AND the existing relevant capability gate. Merely inheriting `reversible-write` defaults is insufficient: an existing installation may already enable that risk. Disabling this new flag must preserve task/result reads and existing action reconciliation. This is a future implementation decision, not an implemented gate or an operational setting change.
+
+- Existing schema already has the client `(branchId, phoneNormalized)` unique index; no additional client constraint is needed for this feature. Customer IDs are integers, so UUID task choice references require a server-owned mapping to branch-scoped numeric customer IDs. This will be exercised by API/approval integration tests.
+
+### Phase 2 migration evidence
+
+- Storage unit schema checkpoint matched the approved additive preview and validated. Parent generated `20260916134542_add_agent_tasks` with `prisma migrate dev --create-only`; no hand-authored SQL. Reviewed SQL only adds task/event tables, nullable action task columns, indexes and foreign keys.
+- Applied to isolated PostgreSQL127.0.0.1:55433 `bjj_conversation_test` with both datasource URLs explicit. The pre-existing synthetic action retained exact old-column JSON/hash `c62963a51ce721628cd27ce220c8a9e4fd2a8504afbf11670e29895b09e37c51`; both new action fields were null.
+- Prisma generation passed. All71 migrations compared to the new schema through a separate local shadow database: no difference. Repository concurrency/replay/rollback tests and final source review are still pending. No operational DB migration occurred.
+
+### Phase 2 verification checkpoint
+
+- Provider codecs integrated at `cc62b8685` (unit `988e24857fb2cb65f4b795b3a541e00bf3064d9e`). Parent independently ran provider + conversation evaluator tests: 2 suites, 22 passed. No real model transport, paid calls, SDK/dependency or runtime route change. Phase5 owns the synthetic product-runtime bridge; codecs themselves do not produce product-state evidence. Actual provider profiles/live evaluation remain deferred.
+- Real DB tests exposed a UUID/text parameter mismatch in new owner row locks; corrected parameter casts preserve parameterization and the native UUID column types. The following run passed13/14; the remaining failure is the typed mapping of PostgreSQL's active-slot uniqueness conflict. Until that correction and full DB rerun pass, persistence and Phase2 remain open.
+- A post-write typed refusal now uses an explicit transaction abort, with rollback checked separately from database-error rollback. Initial compile narrowing failure was corrected with explicit return, not an unsafe union assertion.
+
+- Corrected active-slot conflict mapping now recognizes the exact real DB column pair/constraint; final guarded persistence run passed14/14 against the isolated PostgreSQL. Cases cover partial/tentative roundtrip, paused slots, scoped/session refusals, stale revisions, immutable replay, conflicting event payloads, one-revision updates, receipt insertion rollback, explicit typed abort rollback, durable no-op receipt after later edit, scoped event uniqueness, concurrent active create, and expired tombstones. Unit9/9 and pure TypeScript also passed after correction. Final integration audit remains pending.
+
+- Both units integrated at `9bd51570a3ec85433427da9a4cfba636efe7fb0b` (provider `cc62b8685`, storage unit `2818e6da13f88c339d174065979bc637249d4924`). Integration initially exposed stale installed `file:backend/vendor/shared-agent` contents from the older environment; refreshed frozen dependencies offline, regenerated Prisma, and reran. Final integration: five unit suites152tests passed, guarded realDB14/14 passed, backend TypeScript passed, harness48/48 passed with zero transport/network calls, diff-check passed. ESLint: zero errors, three unused helper warnings in the new storage files. No lockfile/dependency source changes. Independent FINAL SOL audit is in progress at this exact source SHA.
+- Phase3 pre-dispatch review requested explicit per-route request hashes, exhaustive state editability, a rollback/role gate matrix, a concrete HTTP409 envelope that survives the existing global error path, live-task filtering for restore, and production repository DI registration. These are being corrected before any Phase3 implementation dispatch.
+
+- FINAL SOL audit at `9bd51570a` returned FIX_REQUIRED for one provider-codec issue: validate nonempty encrypted OpenAI continuation and match unique declared function calls with their exact tool results before injected transport. Storage scope had no additional blocker or missing verification. Correction and zero-transport negative tests are in progress; three unused storage helpers are being removed separately.
+- Corrected Phase3 dispatch brief received SOL APPROVE (HIGH). Its ten-state rules, exact role/rollout matrix, task-local bounded409 through existing legacy4xx path, restore classification, canonical replay hashes and module registration are fixed; implementation waits for Phase2 corrected FINAL close.
+
+- OpenAI pairing correction integrated at `2a89606f2` (unit `7c1db02a46f49aac894ae79f074af9073f55450a`), parent focused22tests passed; unused storage helpers removed at `0d98d970d`, focused9tests and zero-warning ESLint passed. The original FINAL blocker is corrected pending repeat review.
+- Parent additionally found a stateless history-order concern: prepending opaque model output ahead of full prior user history (or supplying only delta messages without retaining the original input) can alter context. Official OpenAI [function-calling guide](https://developers.openai.com/api/docs/guides/function-calling) demonstrates chronological accumulated input, output items, then matching tool results. SOL is checking the minimal equivalent continuation contract for both evaluation providers before Phase2 close. No live model request or quality conclusion is involved.
+
+- SOL confirmed the history gap affects both providers and approved the concrete correction contract: initial input then delta-only messages; run-bound full chronological native history; continuation after text and tool outcomes; profile/model/version binding; bounded native-shape validation and exact multi-round mock tests. Direct parseResponse cannot claim resumable history. The single provider unit is implementing this correction before Phase2 closure.
+
+### Phase2 history correction re-review
+
+- Full chronological continuation integrated at `a38c4a19129c8bb678bf9fe648ce98c54677082b` (unit `abd0356cc55c2e84cb61b76c7bb57d3dd926b49d`). Parent verification: focused36/36; integrated5suites166tests; pure backendTypeScript; targetedzero-warningESLint; offlineharness48/48 andzerotransport; diffcheck allpassed.
+- FINAL SOL re-review at exacta38c4a191 closed the earlier OpenAI pairing blocker and accepted the continuation architecture, but returned FIX_REQUIRED for three localized validation gaps: recursive prototype-mutating JSONkeys, Google role/partownership, and the complete serializedsize of newlygeneratedcontinuations including system/binding/pendingcall data. Correction unit remains confined to provider codecs andtheir tests; Phase2 remainsopen.
+- Separate Phase3 readiness inspection confirmed explicit optional-field clear currently removes a key and becomes indistinguishable from omission after persistence. A narrow additive clearedFields contract/JSONcodec correction is in PLAN review before the API unit; no new Prisma schema, dependency or buildconfiguration is proposed. Product clear semantics are not yet implemented or claimed verified.
+
+### Phase2 close and Phase3 dispatch
+
+- Localized final fixes integrated at `d19ef533619f87add609767cc23e99ea447308bf` (unit `7d59b3829f287aee8c1045012a20ff40f9ad45cf`). Parent independently verified focused39/39, backendTypeScript, zero-warningfocusedESLint anddiffcheck; integrationfocused39/39 andTypeScript passed. No source changes tostorage since its verifiedunusedhelpercleanup. Earlier realDB14/14, legacyrecordequality, migrationparity and166-test integration remain applicable tounchangedscope.
+- FINAL SOL returned SHIP/HIGH at exactd19ef5336, no blockers, nonblockingfindings or missingverification inPhase2scope. Phase2 isclosed. This doesnot establishliveproviderquality orproductruntimebehavior.
+- Phase3 corrected API brief and additiveclear amendment both receivedPLANAPPROVE/HIGH. One isolatedLuna/maxunit will implement sharedclear markers/safeprojection/JSONcodec first, followedbyownedcreate/read/patch APIs, protectedinput, durable replay andsessionrestore. Sharedvendorrefresh isparent-owned betweencontractcheckpoint andAPIcompilation. No newPrismaschema, migration, dependency, buildsetting orauthcorechange isrequired.
+
+- Phase3 dispatched to `codex/unit/bjj-conv-task-api` at `/Users/jaino/Development/babyjamjam-admin/bjj-conv-task-api`, starting exactly `40b258a1b0dfbb125cb8ee7e42cc5aaa24223477`. Runtime role Luna implementation, gpt-5.6-luna/max, local sandbox; no nesteddelegation. Parent prepared env-bootstrap, frozenoffline1472-packageinstall with0downloads, Prisma generation, andenv-check withonlyexistingSTALEGEMINI_EXTRACTION_MODEL. Worktreecleanbeforedispatch. Shared/vendorcheckpoint precedes parentdependencyrefresh andAPIcompilation.
+
+### Phase 3 implementation corrections (in progress, 2026-09-17)
+
+- SOL approved an explicit `clearedFields` marker for permitted optional business fields. A missing field remains omitted; an explicit clear survives storage and restoration. Name, phone, and non-nullable booleans cannot be cleared. This changes shared JSON contracts and generated vendor output, not the SQL schema.
+- SOL also approved `discard-change` to withdraw a proposed field change without deleting the customer's stored value. The accepted transition must remove stale provenance and field-specific unresolved choices, recompute readiness, preserve a scoped target, and obey ordered operations, replay, and no-op rules. Implementation and final database verification are still in progress.
+- CI configuration correction `c734bd143` adds a second disposable PostgreSQL service to the existing auth E2E matrix. Task database suites use the exact guarded `127.0.0.1:55433/bjj_conversation_test` identity; other agent suites retain the original database. The same Jest pattern selects and excludes the two partitions. SOL PLAN: APPROVE/HIGH. Local YAML/selection verification currently proves 1 task suite + 3 other suites = all 4 configured suites with no overlap. Recheck after the API suite is integrated.
+- Hosted CI has not run. The local host has no actionlint; YAML parsing and actual installed Jest test selection were checked. Product activation, actual model evaluation, and external sends remain pending their separate gates.
+
+#### Phase 3 candidate verification and corrective review
+
+Candidate source: `5dd5550d32f0c21edee69f28da27f1b55234d9a6` (unit `406b124ce22f4531d6465551bd97b3f72897d7f3`). Parent verification passed 212 backend unit tests, 22 shared tests, and 17 guarded PostgreSQL tests. Shared/backend/frontend/mobile type checks, backend build, vendor regeneration parity, and capability drift (47 capabilities) passed. Full backend lint reported 0 errors and 93 warnings in unchanged files. The CI partition now selects 2 task suites and 3 other agent suites, with no omission or overlap.
+
+Migration correction `4613387d6` passed the repository's idempotency gate. Two SQL applications preserved schema and data digests with a synthetic legacy action, task, and event present; temporary task/event fixtures were removed afterward. Replaying the full migration chain in the isolated shadow database produced no schema difference. No deployed migration history was modified.
+
+Independent SOL FINAL decision: **FIX_REQUIRED/HIGH**. Five localized corrections are required before Phase 3 closes: reachable archived/expired session restoration; ambiguous/embedded phone refusal; update-specific readiness; no-op preservation of `review_ready` and retention; and final ordered consent validation. The review also requires real authenticated HTTP coverage of ownership, protected conflict snapshots, inactive-session restoration, and linked-action refusal. The restore reader amendment received PLAN APPROVE/HIGH. Corrections are in progress in the same isolated API unit; this candidate is not Phase 3 completion.
+
+#### Phase 3 corrected integration verification
+
+Source `53a46d184df87cd6d52db6e70c626de1f0bdb8dd` integrates correction unit `9f6f92c5e06fa0dbf580b62da6317e016a1b1878`. Parent independently verified 256 backend unit tests and all five agent E2E suites (59 tests). The E2E set includes 25 guarded database/API cases with real JWT and tenant guards, plus 14 full-AppModule runtime regressions. Archived/expired restoration, protected 409 snapshots, foreign scope refusals, and linked-action mutation refusal were exercised against the isolated synthetic PostgreSQL database.
+
+Backend/frontend/mobile type checks, backend build, capability drift (47 capabilities), CI selection partition (2 task + 3 other suites), and diff-check passed. Backend lint remains 0 errors and 93 pre-existing warnings. The CI verification helper used the existing Ruby YAML parser because the current Python environment lacked PyYAML; no project dependency changed. Shared/vendor and migration sources did not change in this correction, and their prior parity/compatibility evidence remains applicable.
+
+Full runtime tests used explicit isolated database URLs, synthetic auth fixtures, vendor stubs, disabled schedulers/storage bootstrap, and no Valkey connection. An additional parent verification wrapper rejected non-loopback Node socket connections. No actual external effect or model call was made. The corrected source is undergoing independent SOL FINAL re-review; Phase 3 is not closed until that decision returns.
+
+Corrected-source FINAL review at `53a46d184` returned **FIX_REQUIRED/HIGH** for three additional transition edge cases: same-value user confirmation must update non-user provenance while true no-ops retain review metadata; an intervening consent revocation must invalidate the old binding before a later yes; and proposed update phones must use the existing provider's 9–11-digit validation while creation remains exactly 11 digits. These localized corrections and regressions are assigned to the same unit. Phase4's exhaustive command, recovery-response and purge contract received PLAN APPROVE/HIGH, conditional on Phase3 FINAL SHIP.
+
+Latest corrected source `427eb4a7fd7a2a116f88292c3f429def1c394970` integrates unit `b76fb704d914bc03bf82960b2a802240a78ef8b3`. Parent reran both frozen unit and integration: 25 backend suites / 391 tests and all 5 agent E2E suites / 60 tests passed. Backend/frontend/mobile type checks, backend build, 47-capability manifest, exact CI suite partition, and diff-check passed. Full lint JSON confirms 0 errors, 93 warnings, and 0 warnings in any Phase3 changed file. The additional database case checks persisted provenance and review metadata. FINAL re-review is in progress at this exact source.
+
+Environment observation: the separate `dev` checkout has advanced to `96f4026ab40229d00ed13a4ead31b1f2223f3fc6` during parallel user work; its only untracked file remains `mobile/AGENTS.md`. This task retains the user-approved original baseline and isolated integration branch. No environment-branch synchronization, merge or deployment has been performed; any later integration into current dev requires fresh validation and its separate merge approval.
+
+### Phase 3 close
+
+FINAL SOL returned **SHIP/HIGH** at exact source `724bddb9f688d05f4aa41a1088246f0e877a36a3`, with no blocking findings, nonblocking findings, or missing verification in Phase3 scope. The final unit correction is `3a6e6681e84614b4cb495b8c86527d0e42b23ffd`. Both frozen unit and integration passed 393 backend tests and 60 agent E2E tests; all type checks, backend build, 47-capability manifest, CI suite partition and diff-check passed. Full lint remains 0 errors / 93 unchanged-file warnings. Shared and migration compatibility evidence remains valid because those sources were unchanged in the final corrections.
+
+Phase3 is closed. Phase4's lifecycle contract received SOL PLAN APPROVE/HIGH after exhaustive recovery-response, command/state and purge-projection bindings. Its reviewed restore/port/DI/shared interfaces are unchanged by the final Phase3 service-only corrections. Phase4 will start from this close commit in a separate local unit; no action execution, real model quality, automation delivery, UI or operational completion is implied.
+
+### Phase 4 dispatch
+
+Task4.1 starts from `de14e000ee382f599323226647f2167a934ed69c` in `/Users/jaino/Development/babyjamjam-admin/bjj-conv-lifecycle`, branch `codex/unit/bjj-conv-lifecycle`. Execution DELEGATE / audit SOL / standard / local; Luna implementation runtime gpt-5.6-luna, max, priority. The approved command/state, recovery-response and exact purge-projection contract is binding. Parent prepared a clean unit, bootstrapped existing environment, installed frozen offline dependencies and generated Prisma. Environment check has only the pre-existing stale model template warning. Shared restore metadata/vendor changes pause at a parent dependency-refresh checkpoint. No schema, dependency, build setting, environment variable, auth core or operational change is included.
+
+Phase5 received provisional SOL PLAN APPROVE/HIGH for the bounded model-operation allowlist, server-only choice production, atomic duplicate-create to existing-client-update transition, and session-scoped durable turn replay. Source evidence was read-only at `44e97ae52`; no Phase5 source implementation has started. Dispatch still requires Phase4 FINAL SHIP, an exact starting SHA and reconciliation of its transaction/service interfaces. The text redactor is explicitly not general name/address recognition; only captured, structured and known protected values receive the new strict reference boundary. Product evaluation must observe actual state and assert zero network calls rather than derive outcomes from fixture expectations.
+
+### Phase4 integrated verification and review checkpoint (2026-09-17)
+
+- Unit6ccca605 plus correctivef2e1b247 integrated asdf5b72fcb/414b9a050. Parent independently verified both unit and integration: shared2suites23tests; backend25suites409tests; backend/frontend/mobiletypes; backendbuild; manifest47capabilities; stablegeneratedvendor; fullbackendlint0errors93baselinewarnings0changed-filewarnings; clean diff. Guarded actualPostgreSQL/AppModuleHTTP6suites70tests passed on both. CI discovery3task+3other=6, disjoint/fullcoverage. HostedCI notrun.
+- FirstDB run exposed exact acceptance/expiry timestamp drift and owner object extra roleproperties entering Prismawhere. Both corrected with exactboundary and role-enrichedprincipal regressions before the passing runs.
+- FINAL SOL review at414b9a050 found3contract blockers despite passing automated checks: unpersisted terminal action must block archive; selected customer must trigger fresh readiness issues; missing/mismatched bidirectional task/action evidence must block purge and session destructive paths. Corrections and regressions are assigned to the original lifecycleunit. Phase4 remains OPEN, so Phase5 implementation has not started.
+- Phase5 final PLAN reconciliation APPROVE/HIGH atf2e1b247 (code identical414b9a050). Confirmed existingUoW atomic conversion/newtaskreceipt, server-only provenance origin/hash, strict renderedchoicehint, sanitizedlastInput/stablemessageIDs, oracle-free product observations with authoritativezero-networkcounter. Dispatch remains conditional on Phase4 FINAL SHIP and exactcloseSHA; no extra schema/dependency/build/authowner needed.
+
+### Phase 4 close
+
+Corrected source `3b094cdfa13b20f1c08762b916c2f2f20ffcef9c` incorporates unit commits `a3711a3f5`, `bad7d4965`, and `36168a218`. Archive preserves terminal actions with pending result persistence. Target selection recomputes readiness without copying unchanged customer values. All destructive lifecycle paths examine forward and reverse task/action evidence, preserving unresolved or inconsistent links while allowing settled historical links. Cleanup locks all candidate sessions, then tasks, then owned actions in stable order and rechecks before deleting; one failure rolls back the whole sweep.
+
+Parent independently verified both the frozen unit and integrated source: shared 23 tests; backend 26 suites / 436 tests; guarded PostgreSQL and full-AppModule HTTP 6 suites / 73 tests. Shared/backend/frontend/mobile type checks, backend build, 47-capability manifest, vendor stability, and diff check passed. Backend lint: 0 errors, 93 pre-existing warnings, 0 warnings in changed files. CI discovery selects 3 task suites and 3 other suites with no gap or overlap; hosted CI has not run.
+
+Additional real-database failures found during correction were fixed before these passing runs: UUID owner comparisons in archive locks and a scheduled cleanup condition that blocked settled terminal tasks. A positive scheduled-deletion case now proves actual deletion, alongside tests that preserve dangling or unresolved evidence.
+
+SOL FINAL decision: **SHIP/HIGH**, no blocking or nonblocking findings, at exact source `3b094cdfa13b20f1c08762b916c2f2f20ffcef9c`. Phase4 closure covers deterministic storage/lifecycle behavior only. Actual model quality, customer execution, automation delivery, web/mobile integration and operational activation remain outstanding.
+
+### Phase 5 dispatch contract
+
+Task5.1 uses the final SOL PLAN APPROVE/HIGH contract. Lifecycle corrections after its source reconciliation changed private evidence/readiness behavior without changing its shared/UoW interfaces. Its exact start will be this Phase4 close commit, in `/Users/jaino/Development/babyjamjam-admin/bjj-conv-context`, branch `codex/unit/bjj-conv-context`; one serial Luna implementation unit, gpt-5.6-luna / max / priority, local sandbox and independent SOL audit.
+
+Scope is protected conversation intake, current/paused context, strict model operations, server-issued choices, atomic transition from duplicate registration to an existing-customer update, durable turn replay and a synthetic product-runtime evaluation bridge. The explicit conversation.tasks gate and current Google runtime remain. No schema, dependency, auth-core or environment change is needed. A shared/vendor checkpoint precedes parent-owned dependency refresh. Phase6 owns atomic action binding, Phase7 messaging consent, and Phase8 screen integration.
+
+Phase5 dispatched at exact `beb75bae069fd4377e0eaa8da122cc23aacd3cd6`. Parent prepared the isolated unit with env-bootstrap, frozen offline installation (0 downloads), Prisma generation, and environment validation. Only the pre-existing stale GEMINI_EXTRACTION_MODEL template warning remains. No source dependency/lockfile or environment variable changes were made. Implementation is in progress; the shared checkpoint, independent verification and FINAL audit remain open.
+
+### Phase 5 close
+
+Reviewed source: `2d114d147b88fc208c86ed12679cf6f9101aca56`, diff base `673807e3ef8e808c2437d9138e03f698ddaf624f`. The serial core unit implements protected conversation intake, server task context, current-turn and field-specific model authority, canonical question/retry receipts, atomic duplicate-registration conversion, and committed selection references. A separate evaluation unit connects real runtime/task services to deterministic observations without fabricating action or SMS outcomes.
+
+Cumulative reviews required additional corrections for classifier masking, new-task routing, expired replay, authority origin hashes, post-write rollback, unbound legacy forms, summary privacy, read-only replay privacy and the unique-selection stream contract. New unbound client forms can create only when no active task exists; exact replay resolves the original receipt first. Nonclient forms retain their existing flow. Existing-task form editing belongs to the taskId/expectedRevision API in Phase8. Known-value protection unions pre-intake and newly accepted values, and safe summary projection removes the duplicate raw-summary path. Replay allows side-effect-free reads while preserving structural protected results. Unique/multiple selections use registered data-entity-select references rather than raw client IDs.
+
+Parent exact integrated verification: shared25 tests, backend498 tests across30 suites, all shared/backend/frontend/mobile types, backendbuild, capability manifest47, generated/installed vendor31, and clean diff. Full backend lint reports0errors93existingwarnings0changed-filewarnings. Actual guarded PostgreSQL/HTTP/AppModule group passes8suites93tests, including real JWT/TenantGuard chat and an actual runtime→persisted choice mapping→structured target selection round trip. CI discovery proves5task+3other suites with no gaps or overlap; hosted CI was not run.
+
+One integrated server-test attempt encountered a loopback HTTP connection timeout while concurrent validation was running. The unchanged source passed the serial rerun; the isolated corrective unit had also passed all93. Corrections to old test fixtures used valid issued form identity and one consistent expiry/cleanup time. No production lifecycle code changed for those test repairs.
+
+The product CLI intentionally reports the observed failing evaluation: exit1,0passed48failed0not_evaluated,158suppliedmismatches192missingobservations,0semantic events/network/transport/safety violations. Four fixture registration inputs lack the strict parser's explicit labels, the injected static model has no read-tool outcomes, and later action/provider evidence is not yet implemented. Current-host authority observations remain uninstrumented. These limitations are reported separately. The positive explicit-label evaluator case proves actual draft/receipt creation, retry and fresh-runtime restoration; the separate synthetic harness48/48 is not product acceptance or model quality.
+
+Final localized fixes also preserve the safe current task on active-form refusal and sanitize arbitrary retained summary status strings. Both have actual runtime/model-boundary regressions. Both final-source guarded runs passed without retry.
+
+Independent cumulative SOL FINAL decision: **SHIP/HIGH**, no blocking findings or required corrective actions, at exact source `2d114d147b88fc208c86ed12679cf6f9101aca56`. Phase5 is closed within its declared context/intake scope. Phases6–9, real model-quality evaluation, hostedCI, authenticated browser QA, environment merging, deployment and operational activation remain outstanding. No actual SMS or paid product-model evaluation was performed.
+
+### Phase6 discovery blocked after Phase5 closure
+
+Phase5 close commit: `a5409c55a9c596df9d3cd84a209432bd44934846`. At2026-09-17 09:51KST, the user-approved direct DeepSeek read-only explorer was retried for a bounded action/task transaction seam check. Its model requests failed with402InsufficientBalance through all built-in retries; inner explorer exit1 and no source findings. Context7 also reported an ancillary authentication warning. No alternative model, role or main-agent exploration was substituted, in accordance with the supplied fail-closed Explorer Model Policy.
+
+Phase6 implementation has not begun. Its prepared contract covers session→task→action locking, immutable review/revision binding, atomic correction versus claim, inactive-session recovery and seven-day terminal retention. After DeepSeek restoration, resume source reconciliation and independent PLAN review, then perform the approved direct implementation and real concurrency verification. Phases7–9 remain dependent and unfinished. No environment merge, deployment or operational activation occurred.
+
+### Phase6 exploration replacement authorized and verified
+
+User instruction: “탐색을 luna med fast로 대체”. This task-specific override replaces the prior DeepSeek-only exploration restriction while preserving OS-enforced read-only isolation. Three native ephemeral Codex scouts ran with explicit gpt-5.6-luna/medium/fast settings against clean source `b79cea5faa8324a0ec78fe1d18834a4945316eb2`; all completed with exit0 and concrete source findings. Configured fast may be shown as priority by the provider, whose separate service-tier metadata was not exposed. No global .codex/.agents files were edited.
+
+The scouts confirmed existing nullable action linkage columns are omitted from domain/create mappers; proposal creation owns a separate session-only transaction; approval claims are action-only CAS; task UoW already locks session then task; business status transitions are centralized in the action coordinator; existing result upsert permits inactive owned sessions; scheduled cleanup needs the prepared future-terminal guard. The existing owned action GET route supports review hydration, while safe task snapshots already carry action reference/revision metadata. The current prepare-review command only makes a task review_ready; Phase6 must add atomic action attachment.
+
+Prepared contract remains DIRECT main / Audit SOL / heavy / local. Main runtime exact model/effort/tier is recorded as unknown rather than inferred from persisted defaults. User-selected parent settings are preserved. Model override applies to exploration, not implementation/audit roles. Phase6 implementation waits for the current-source complete PLAN review. The isolated synthetic PostgreSQL cluster was restarted at127.0.0.1:55433; no business effect or product-model evaluation was performed. Vault retrieval was retried but still failed because @covenant-labs/vault-contracts is unavailable; no successful retrieval or Vault write is claimed.
+
+### Phase6 close
+
+Independent cumulative SOL FINAL **SHIP/HIGH**, no blocking findings or required corrective actions, at source `4dd69251ebde09ed1a2eaf8228c2a08080a73bef` against phase base `3b8ace335df3788b9a4d1eaf0426590657f4954a`. Audit checkout was detached and clean. The phase implements the approved live-operation and durable conversation-replay amendments with no schema, dependency, auth-core, UI or customer-provider changes.
+
+Task/action attachment, invalidation, cancellation and execution claim share session→task→action locking. Preparation/provider revalidation remain outside locks; action/task/event writes and execution attribution commit atomically. Closed recovery operations synchronize outcomes and retention without reviving inactive sessions; historical result repair cannot rewrite a newer task. Structured approval remains the sole execution authority. Conversation review/cancel markers come only from committed receipts and never from reparsing old intake text.
+
+Frozen verification: shared25, backend535/32suites, real guarded PostgreSQL/HTTP/AppModule114/9suites including21 task/action tests; shared/backend/frontend/mobile types; backendbuild; capabilitymanifest47; installedvendor31; diff; lint0errors93baselinewarnings0changedwarnings. CI discovery6task+3other exactly covers9; hostedCI unrun. Synthetic targetCAS/effectreceipt tests prove task/action behavior, not production customer/SMS integration.
+
+First candidate DB run94pass10fail104:8 malformed test-owner arguments and one obsolete mutation barrier were corrected; one HTTP426 remained unexplained. Baseline runtime14 and latest current full114 passed; no speculative product fix. Product evaluation remains exit1 with0/48 passed and mixed fixture/driver/instrumentation limitations. No paid model evaluation, real SMS, authenticated browser QA, environment merge, deployment or activation occurred.
+
+Phase7 source reconciliation confirms private rule planning plus persistence, concrete payload replacement, separate retry provider calls, and later scheduler rebuild paths. Its concrete implementation contract must preserve the approved consent chain through client+intent+receipt transaction, materialization, dispatch and retry, after temporary task and eventual action/session cleanup. Further code changes wait for its complete PLAN review.

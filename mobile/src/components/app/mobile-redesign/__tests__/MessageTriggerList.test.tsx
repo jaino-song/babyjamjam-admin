@@ -99,7 +99,7 @@ describe("MessageTriggerList", () => {
 
   it("renders only actual trigger rules instead of fallback rows", async () => {
     mockUseMessageTriggerRules.mockReturnValue({
-      data: [createRule()],
+      data: [createRule({ sendTime: "14:37" })],
       isError: false,
       isLoading: false,
     });
@@ -149,14 +149,13 @@ describe("MessageTriggerList", () => {
     expect(screen.queryByText("고객 등록 환영")).not.toBeInTheDocument();
 
     await waitFor(() => {
-      expect(screen.getByText(`${monthLabel()} 2건`)).toBeInTheDocument();
+      expect(screen.getByText(new RegExp(`${monthLabel()} 2건 · 서비스 시작 1일 전`))).toBeInTheDocument();
     });
-    expect(screen.getByText("서비스 시작 1일 전 · 고객")).toBeInTheDocument();
     expect(
       document.querySelector(
-        '[data-component="mobile_messages_triggers_test_list_meta"]',
+        '[data-component="mobile_messages_triggers_test_list_item-rule-start_copy_subtitle"]',
       ),
-    ).toHaveTextContent(`${monthLabel()} 2건 · 서비스 시작 1일 전 · 고객 · SMS`);
+    ).toHaveTextContent(`${monthLabel()} 2건 · 서비스 시작 1일 전 14:37 (한국 시간) · 고객 · SMS`);
   });
 
   it("updates the selected real rule when the toggle row is pressed", async () => {
@@ -217,7 +216,7 @@ describe("MessageTriggerList", () => {
     expect(onEdit).toHaveBeenCalledWith(rule);
     expect(updateMutate).not.toHaveBeenCalled();
 
-    fireEvent.click(screen.getByRole("button", { name: "실제 서비스 시작 규칙 비활성화" }));
+    fireEvent.click(screen.getByRole("switch", { name: "실제 서비스 시작 규칙 비활성화" }));
     expect(updateMutate).toHaveBeenCalledWith({ id: "rule-start", dto: { isActive: false } });
   });
 
@@ -238,12 +237,11 @@ describe("MessageTriggerList", () => {
     renderPage();
 
     expect(screen.getByText("서비스 시작 7일 전 서비스 안내")).toBeInTheDocument();
-    expect(screen.getByText("서비스 시작 7일 전 · 고객")).toBeInTheDocument();
+    expect(screen.getByText(/서비스 시작 7일 전 09:00 \(한국 시간\) · 고객 · SMS/)).toBeInTheDocument();
     const serviceInfoRow = screen.getByRole("button", { name: /서비스 시작 7일 전 서비스 안내/ });
-    expect(serviceInfoRow).toHaveAttribute("data-trigger-channel", "SMS");
-    expect(serviceInfoRow.querySelector('[data-component="mobile_messages_triggers_test_list_icon"]'))
-      .toHaveClass("trigger-icon-primary");
-    expect(serviceInfoRow.querySelector("svg")).toHaveClass("lucide-message-square-text");
+    const serviceInfoItem = serviceInfoRow.closest('[data-trigger-channel="SMS"]');
+    expect(serviceInfoItem).toHaveAttribute("data-trigger-channel", "SMS");
+    expect(serviceInfoItem?.querySelector("svg")).toHaveClass("lucide-message-square-text");
   });
 
   it("shows an empty state when no real trigger rule exists", () => {
@@ -266,7 +264,7 @@ describe("MessageTriggerList", () => {
     expect(screen.queryByRole("button", { name: "수동 발송 규칙 설정" })).not.toBeInTheDocument();
     expect(onEdit).not.toHaveBeenCalled();
 
-    const toggle = screen.getByRole("button", { name: "수동 발송 규칙 비활성화" });
+    const toggle = screen.getByRole("switch", { name: "수동 발송 규칙 비활성화" });
     expect(toggle).toBeEnabled();
     fireEvent.click(toggle);
     expect(branchActivationMutate).toHaveBeenCalledWith({ id: "rule-system", dto: { isActive: false } });

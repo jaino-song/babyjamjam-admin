@@ -2,7 +2,7 @@
 
 
 import { useState, type KeyboardEvent, type ReactNode } from "react";
-import { CalendarDays, CircleAlert, FileCheck2, MessageCircle, MoreVertical, RotateCcw, SquarePen, Trash2, User } from "lucide-react";
+import { CalendarDays, CircleAlert, FileCheck2, MessageCircle, MoreVertical, RotateCcw, Send, SquarePen, Trash2, User } from "lucide-react";
 
 import { Client } from "@/lib/client/types";
 import { getMobileClientBadges } from "@/lib/client/badges";
@@ -28,6 +28,7 @@ import {
   formatMessageFailureReason,
   getMessageChannelLabel,
   getMessageHistoryTitle,
+  getMessageHistoryTimestamp,
 } from "@babyjamjam/shared";
 import {
   DropdownMenu,
@@ -49,6 +50,7 @@ import { ClientServiceRecords } from "@/components/app/clients/client-service-re
 import { ServiceRecordLinkResetResultModal } from "@/components/app/clients/ServiceRecordLinkResetResultModal";
 import { ServiceScheduleChangeModal } from "@/components/app/clients/ServiceScheduleChangeModal";
 import { getScheduleChangeErrorMessage } from "@/lib/service-records/schedule-change-error";
+import { useSendClientReceipt } from "@/hooks/use-send-client-receipt";
 
 type UnknownRecord = Record<string, unknown>;
 
@@ -255,7 +257,6 @@ function firstValue(...values: Array<string | number | null | undefined>): strin
 
 function formatDate(dateStr: string | null | undefined): string {
   if (!dateStr) return "-";
-  if (/^\d{6}$/.test(dateStr)) return formatBirthdayYYMMDD(dateStr);
   const normalized = compactDateToIsoDate(dateStr) ?? yymmddToIsoDate(dateStr) ?? dateStr;
   const formatted = formatIsoDateParts(normalized);
   if (formatted) return formatted;
@@ -438,6 +439,8 @@ export interface ClientNotificationLogRecord {
   messageBody: string;
   errorMessage: string | null;
   createdAt: string;
+  lastAttemptAt?: string | null;
+  updatedAt?: string | null;
   ruleName: string | null;
   variables?: Record<string, unknown> | null;
 }
@@ -535,8 +538,8 @@ function notificationReceiverKey(receiver: string | null): string {
 
 function visibleNotificationLogs(logs: ClientNotificationLogRecord[]): ClientNotificationLogRecord[] {
   const sortedLogs = [...logs].sort((a, b) => {
-    const bTime = new Date(b.createdAt).getTime();
-    const aTime = new Date(a.createdAt).getTime();
+    const bTime = new Date(getMessageHistoryTimestamp(b)).getTime();
+    const aTime = new Date(getMessageHistoryTimestamp(a)).getTime();
     return (Number.isNaN(bTime) ? 0 : bTime) - (Number.isNaN(aTime) ? 0 : aTime);
   });
   const seenGreetingKeys = new Set<string>();
@@ -579,8 +582,8 @@ function notificationStatusTone(status: string): DetailRowTone {
   }
 }
 
-function formatNotificationTime(createdAt: string): string {
-  return formatMessageDateTimeCompact(createdAt);
+function formatNotificationTime(log: ClientNotificationLogRecord): string {
+  return formatMessageDateTimeCompact(getMessageHistoryTimestamp(log));
 }
 
 export function ClientDetailContent({
@@ -632,6 +635,8 @@ export function ClientDetailContent({
   const [isPreparingScheduleChange, setIsPreparingScheduleChange] = useState(false);
   const [isApplyingScheduleChange, setIsApplyingScheduleChange] = useState(false);
   const [isScheduleChangeDecisionPending, setIsScheduleChangeDecisionPending] = useState(false);
+  const [receiptSendConfirmOpen, setReceiptSendConfirmOpen] = useState(false);
+  const { isSending: isSendingReceipt, sendReceipt } = useSendClientReceipt();
 
   const handleResetServiceRecordLink = async () => {
     setIsResettingLink(true);
@@ -734,6 +739,11 @@ export function ClientDetailContent({
         variant: "destructive",
       });
     }
+  };
+
+  const handleConfirmReceiptSend = async () => {
+    await sendReceipt(client.id);
+    setReceiptSendConfirmOpen(false);
   };
 
   const handleScheduleChangeDecision = async (decision: "approve" | "reject") => {
@@ -984,10 +994,7 @@ export function ClientDetailContent({
     contractSignDate,
     serviceStartDate,
   );
-  const contractDocSentDate = firstValue(
-    isoDateFromTimestamp(contractDocument?.created_date),
-    serviceStartDate,
-  );
+  const contractDocSentDate = isoDateFromTimestamp(contractDocument?.created_date);
   const contractDocMetaDateLabel = isContractCompleted ? "완료 날짜" : "발송 날짜";
   const contractDocMetaDate = isContractCompleted ? contractDocCompletedDate : contractDocSentDate;
   const fullPrice = firstValue(
@@ -1052,6 +1059,15 @@ export function ClientDetailContent({
               >
                 <SquarePen className="size-[15px]" strokeWidth={2} />
                 수정
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                disabled={isSendingReceipt}
+                onClick={() => setReceiptSendConfirmOpen(true)}
+                className="min-h-[44px] gap-2 rounded-md px-3 py-2 text-[0.82rem] leading-none"
+                data-component={`${dataComponent}_header_menu_send-copayment-receipt`}
+              >
+                <Send className="size-[15px]" strokeWidth={2} />
+                {isSendingReceipt ? "영수증 발송 중..." : "본인부담금 영수증 발송"}
               </DropdownMenuItem>
               <DropdownMenuItem
                 disabled={isPreparingScheduleChange}
@@ -1119,6 +1135,23 @@ export function ClientDetailContent({
         pendingLabel="재설정 중..."
         isPending={isResettingLink}
         onApprove={() => void handleResetServiceRecordLink()}
+      />
+
+      <ApprovalTwoButtonModal
+        open={receiptSendConfirmOpen}
+        onOpenChange={(open) => {
+          if (!open && !isSendingReceipt) {
+            setReceiptSendConfirmOpen(false);
+          }
+        }}
+        data-component={`${dataComponent}_receipt-send-approval-modal`}
+        title="본인부담금 영수증 전송"
+        description={`${client.name} 산모님께 본인부담금 영수증 안내 메시지를 보낼까요?`}
+        isDescriptionVisuallyHidden={false}
+        approvalLabel="발송하기"
+        pendingLabel="발송 중..."
+        isPending={isSendingReceipt}
+        onApprove={() => void handleConfirmReceiptSend()}
       />
 
       <ServiceRecordLinkResetResultModal
@@ -1203,7 +1236,7 @@ export function ClientDetailContent({
       <MobileDetailTabPanel data-component={`${dataComponent}_tab-panel_basic`} name="clients" tabId="basic" activeTab={activeTab}>
         <InfoCard data-component={`${dataComponent}_tab-panel_basic_client-card`} title="고객 정보">
           <InfoRow label="이름" value={client.name} />
-          <InfoRow label="생년월일" value={formatDate(birthDate)} />
+          <InfoRow label="생년월일" value={birthDate ? formatBirthdayYYMMDD(birthDate) : "-"} />
           <InfoRow label="출산 예정일" value={formatDate(dueDate)} />
           <InfoRow label="연락처" value={phone ? formatKoreanPhoneNumber(phone) : "-"} />
           <InfoRow label="주소" value={address ?? "-"} />
@@ -1252,7 +1285,7 @@ export function ClientDetailContent({
             <InfoCard data-component={`${dataComponent}_tab-panel_contracts_activity-card`} title="최근 진행 상황" delay={60}>
               <InfoRow label="현재 단계" value={documentStatusLabel(client.documentStatus)} tone={docTone as never} />
               <InfoRow label="서명 대기자" value={client.hasSigned ? "-" : `고객 (${client.name})`} />
-              <InfoRow label="발송일" value={formatDate(serviceStartDate)} />
+              <InfoRow label="발송일" value={formatDate(contractDocSentDate)} />
               {isContractCompleted && <InfoRow label="완료일" value={formatDate(contractDocCompletedDate)} />}
             </InfoCard>
           </>
@@ -1275,13 +1308,18 @@ export function ClientDetailContent({
               channelLabel: notificationChannelLabel(selectedLog),
               statusLabel: notificationStatusLabel(selectedLog.status),
               statusTone: notificationStatusTone(selectedLog.status),
-              sentAtLabel: formatNotificationTime(selectedLog.createdAt),
+              sentAtLabel: formatNotificationTime(selectedLog),
               recipientName: selectedLog.recipientName?.trim() || client.name,
               recipientPhone: selectedLog.recipientPhone?.trim() || selectedLog.receiver?.trim() || "-",
               messageBody: selectedLog.messageBody?.trim()
                 ? selectedLog.messageBody
                 : "내용이 없습니다.",
-              failureReason: formatMessageFailureReason(selectedLog.errorMessage) || null,
+              failureReason: selectedLog.status === "failed"
+                ? formatMessageFailureReason(selectedLog.errorMessage) || null
+                : null,
+              cancelReason: selectedLog.status === "canceled"
+                ? formatMessageFailureReason(selectedLog.errorMessage) || null
+                : null,
             }}
             onBack={() => setSelectedEntry(null)}
           />
@@ -1321,7 +1359,7 @@ export function ClientDetailContent({
                       )
                     }
                     title={`${channel} · ${notificationTitle(log)}`}
-                    meta={formatNotificationTime(log.createdAt)}
+                    meta={formatNotificationTime(log)}
                     badge={notificationStatusLabel(log.status)}
                     tone={tone}
                     onClick={() => setSelectedEntry({ key: detailKey, log })}

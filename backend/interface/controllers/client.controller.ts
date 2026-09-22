@@ -1,7 +1,8 @@
 import { Body, Controller, Delete, Get, Param, ParseIntPipe, Query, Patch, Post, UseGuards } from "@nestjs/common";
 import { ClientService } from "application/services/client.service";
-import { CreateClientDto, UpdateClientDto, TerminateServiceDto, RequestReplacementDto } from "interface/dto/client.dto";
+import { CreateClientDto, CreateClientWithEmployeeActivationDto, UpdateClientDto, TerminateServiceDto, RequestReplacementDto } from "interface/dto/client.dto";
 import { JwtGuard } from "infrastructure/auth/jwt.guard";
+import { OwnerOrAdminGuard } from "infrastructure/auth/owner-or-admin.guard";
 import { CurrentTenant, TenantGuard } from "infrastructure/tenant";
 import { parseInteger } from "interface/parse-integer";
 
@@ -12,7 +13,24 @@ export class ClientController {
 
     @Post()
     create(@CurrentTenant() tenant: { branchId?: string }, @Body() dto: CreateClientDto) {
-        return this.clientService.create(tenant.branchId ?? "", {
+        return this.createClient(tenant.branchId ?? "", dto);
+    }
+
+    @Post("with-employee-activation")
+    @UseGuards(OwnerOrAdminGuard)
+    createWithEmployeeActivation(
+        @CurrentTenant() tenant: { branchId?: string },
+        @Body() dto: CreateClientWithEmployeeActivationDto,
+    ) {
+        return this.createClient(tenant.branchId ?? "", dto, dto.confirmedUnavailableEmployeeIds);
+    }
+
+    private createClient(
+        branchId: string,
+        dto: CreateClientDto,
+        confirmedUnavailableEmployeeIds?: number[],
+    ) {
+        return this.clientService.create(branchId, {
             name: dto.name,
             primaryEmployeeId: dto.primaryEmployeeId,
             secondaryEmployeeId: dto.secondaryEmployeeId ?? null,
@@ -21,6 +39,7 @@ export class ClientController {
             type: dto.type ?? null,
             duration: dto.duration ?? null,
             allowBusinessDayMismatch: dto.allowBusinessDayMismatch,
+            confirmedUnavailableEmployeeIds,
             fullPrice: dto.fullPrice ?? null,
             grant: dto.grant ?? null,
             actualPrice: dto.actualPrice ?? null,

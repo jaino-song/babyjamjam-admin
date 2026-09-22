@@ -33,6 +33,7 @@ import {
     SERVICE_RECORD_LINK_SMS_TITLE,
     SERVICE_RECORD_LINK_SMS_TRIGGER_TYPE,
 } from "domain/constants/service-record-link-message";
+import { STORED_MESSAGE_SETTINGS_POLICY_IDS } from "domain/constants/message-settings-policy";
 
 const MS_PER_MINUTE = 60 * 1000;
 const MS_PER_HOUR = 60 * MS_PER_MINUTE;
@@ -48,6 +49,8 @@ describe("SystemSettingController (Integration)", () => {
         const mockSystemSettingService = {
             getMessageAutomationPastTriggerConfig: jest.fn(),
             setMessageAutomationPastTriggerConfig: jest.fn(),
+            getMessageSettingsPolicyActivations: jest.fn(),
+            setMessageSettingsPolicyEnabled: jest.fn(),
         };
         const mockMessageSenderApprovalService = {
             approvePendingRequest: jest.fn(),
@@ -111,6 +114,11 @@ describe("SystemSettingController (Integration)", () => {
             sendIntervalMinutes: 1,
             ruleOrder: [],
         });
+        systemSettingService.getMessageSettingsPolicyActivations.mockResolvedValue(
+            Object.fromEntries(
+                STORED_MESSAGE_SETTINGS_POLICY_IDS.map((policyId) => [policyId, true]),
+            ) as Record<(typeof STORED_MESSAGE_SETTINGS_POLICY_IDS)[number], boolean>,
+        );
     });
 
     afterEach(async () => {
@@ -170,7 +178,23 @@ describe("SystemSettingController (Integration)", () => {
             expect(Reflect.getMetadata(GUARDS_METADATA, method) ?? []).toContain(OwnerOrAdminGuard);
         });
 
+        it("should expose an owner-only PUT route for policy activation", () => {
+            const method = SystemSettingController.prototype.updateMessageSettingsPolicyActivation;
+
+            expect(Reflect.getMetadata(PATH_METADATA, method)).toBe(
+                "message-policy-activations/:policyId",
+            );
+            expect(Reflect.getMetadata(METHOD_METADATA, method)).toBe(RequestMethod.PUT);
+            expect(Reflect.getMetadata(GUARDS_METADATA, method) ?? []).toContain(OwnerOrAdminGuard);
+        });
+
         it("should return policies with values computed from runtime constants", async () => {
+            systemSettingService.getMessageSettingsPolicyActivations.mockResolvedValue({
+                ...Object.fromEntries(
+                    STORED_MESSAGE_SETTINGS_POLICY_IDS.map((policyId) => [policyId, true]),
+                ),
+                "sms-retry": false,
+            } as Record<(typeof STORED_MESSAGE_SETTINGS_POLICY_IDS)[number], boolean>);
             const response = await controller.getMessageAutomationPolicies();
 
             expect(response.policies.map((policy: { id: string }) => policy.id)).toEqual([
@@ -190,9 +214,10 @@ describe("SystemSettingController (Integration)", () => {
                 requiresApproval: true,
             });
             expect(getPolicy(response, "sms-retry")).toMatchObject({
-                active: true,
+                active: false,
                 requiresApproval: false,
             });
+            expect(response.policyActivations["duplicate-send-confirmation"]).toBe(true);
             expect(getPolicy(response, "past-trigger")).toMatchObject({
                 active: true,
                 requiresApproval: true,
@@ -210,7 +235,7 @@ describe("SystemSettingController (Integration)", () => {
             expect(getRowValue(response, "trigger-dispatch", "dispatch-interval"))
                 .toBe(`${formatCronIntervalMinutes(TRIGGER_DISPATCH_CRON)}마다`);
             expect(getRowValue(response, "trigger-dispatch", "send-time"))
-                .toBe(`${formatKstHour(SEND_HOUR_KST)} KST`);
+                .toBe(`규칙별 설정 (기본 ${formatKstHour(SEND_HOUR_KST)} KST)`);
             expect(getRowValue(response, "trigger-job-retry", "retry-delay"))
                 .toBe(`${formatMinutes(TRIGGER_JOB_RETRY_DELAY_MS)} 후`);
             expect(getRowValue(response, "trigger-job-retry", "max-attempts"))
@@ -243,6 +268,54 @@ describe("SystemSettingController (Integration)", () => {
                 .toBe(SERVICE_RECORD_LINK_SMS_AUTOMATION_KEY);
             expect(getRowValue(response, "service-feedback-link", "template-key"))
                 .toBe(SERVICE_RECORD_LINK_SMS_LOG_TEMPLATE_KEY);
+        });
+
+        it("should project activation management from the resolved tenant roles", async () => {
+            const owner = await controller.getMessageAutomationPolicies({
+                branchId: "branch-1",
+                globalRole: "owner",
+                branchRole: "user",
+            });
+            const admin = await controller.getMessageAutomationPolicies({
+                branchId: "branch-1",
+                globalRole: "user",
+                branchRole: "admin",
+            });
+            const member = await controller.getMessageAutomationPolicies({
+                branchId: "branch-1",
+                globalRole: "user",
+                branchRole: "user",
+            });
+
+            expect(owner.canManageActivation).toBe(true);
+            expect(admin.canManageActivation).toBe(true);
+            expect(member.canManageActivation).toBe(false);
+        });
+
+        it("should update a branch-scoped policy activation", async () => {
+            systemSettingService.setMessageSettingsPolicyEnabled.mockResolvedValue(
+                new SystemSettingEntity(
+                    "branch:branch-1:message_policy:trigger-dispatch:enabled",
+                    "false",
+                    new Date("2026-09-15T00:00:00.000Z"),
+                ),
+            );
+
+            const response = await controller.updateMessageSettingsPolicyActivation(
+                { branchId: "branch-1" },
+                { policyId: "trigger-dispatch" },
+                { enabled: false },
+            );
+
+            expect(systemSettingService.setMessageSettingsPolicyEnabled).toHaveBeenCalledWith(
+                "branch-1",
+                "trigger-dispatch",
+                false,
+            );
+            expect(response).toEqual({
+                policyId: "trigger-dispatch",
+                enabled: false,
+            });
         });
 
         it("should update the branch-scoped past trigger config", async () => {

@@ -4,8 +4,12 @@ import { MessageTriggerRuleEntity } from "domain/entities/message-trigger-rule.e
 import type { Prisma } from "@prisma/client";
 
 export interface IMessageTriggerRuleRepository {
-    findAll(branchId: string): Promise<MessageTriggerRuleEntity[]>;
-    findById(branchId: string, id: string): Promise<MessageTriggerRuleEntity | null>;
+    findAll(branchId: string, transaction?: Prisma.TransactionClient): Promise<MessageTriggerRuleEntity[]>;
+    findById(
+        branchId: string,
+        id: string,
+        transaction?: Prisma.TransactionClient,
+    ): Promise<MessageTriggerRuleEntity | null>;
     findActiveByEventTypes(
         branchId: string,
         eventTypes: MessageTriggerEventType[],
@@ -54,7 +58,11 @@ export interface IMessageTriggerRuleRepository {
     markJobsStale(branchId: string, ruleId: string, transaction?: Prisma.TransactionClient): Promise<void>;
     /** Idempotent upsert of a branch-less system rule row (branchId null); update is a no-op. */
     ensureSystemRule(rule: MessageTriggerRuleEntity, transaction?: Prisma.TransactionClient): Promise<void>;
-    clearJobsStaleIfUnchanged(ruleId: string, updatedAtAtReadTime: Date): Promise<boolean>;
+    clearJobsStaleIfUnchanged(
+        ruleId: string,
+        updatedAtAtReadTime: Date,
+        transaction?: Prisma.TransactionClient,
+    ): Promise<boolean>;
     delete(branchId: string, id: string): Promise<void>;
     /** Delete only when the full branch-scoped approved snapshot still matches. */
     deleteIfTargetMatches(branchId: string, expected: MessageTriggerRuleEntity): Promise<boolean>;

@@ -1766,7 +1766,7 @@ function ContractDetailContent({
           <MobileDetailTabPanel data-component="mobile_contracts_detail-sheet_stack_detail-page_tab-panel-2" name="contracts" tabId="signers" activeTab={activeTab}>
             <InfoCard data-component="mobile_contracts_detail-panel_info-card-2" title="계약 정보" isLoading={isDetailLoading}>
               <InfoRow
-                label="계약서 종류"
+                label="문서번호"
                 value={<span style={{ fontFamily: "'SF Mono', monospace" }}>{contractNum}</span>}
               />
               <InfoRow label="현재 단계" value={statusLabel} tone={tones.infoTone} />
@@ -2561,7 +2561,7 @@ export default function ContractsPage() {
   const filteredDocuments = displayDocuments;
 
   const filterItems = useMemo(() => {
-    if (isContractsLoading) {
+    if (isContractsLoading && !isStatusCountsSuccess && !isStatusCountsError) {
       return FILTER_LABELS.map((label) => ({ label, count: "00", skeleton: true }));
     }
 
@@ -2579,7 +2579,7 @@ export default function ContractsPage() {
       counts[FILTER_BY_CATEGORY[categorizeSignal(signal)]] += 1;
     }
     return FILTER_LABELS.map((label) => ({ label, count: String(counts[label]) }));
-  }, [isContractsLoading, statusCountsData]);
+  }, [isContractsLoading, isStatusCountsError, isStatusCountsSuccess, statusCountsData]);
 
   const sectionsFull = useMemo(() => {
     type Section = {

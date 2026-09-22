@@ -1,4 +1,6 @@
 "use client";
+import Link from "next/link";
+import { getUserErrorMessage } from "@babyjamjam/shared";
 
 
 import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
@@ -48,6 +50,7 @@ import type {
 
 interface ClientServiceRecordsTabProps {
     "data-component": string;
+    layout?: "desktop" | "mobile";
     overview?: ServiceRecordOverview;
     clientId: number | null;
     isLoading: boolean;
@@ -58,6 +61,7 @@ interface ClientServiceRecordsTabProps {
     revisionHistory?: ServiceRecordRevisionHistoryResponse;
     isRevisionHistoryLoading?: boolean;
     isRevisionHistoryError?: boolean;
+    revisionHistoryErrorStatus?: number;
     isRevisionHistoryRefreshing?: boolean;
     onRefreshRevisionHistory?: () => void;
     onRetryRevisionDocument?: (
@@ -70,6 +74,7 @@ interface ClientServiceRecordsTabProps {
 
 const ClientServiceRecordsDataComponentContext = createContext<string | null>(null);
 const SEND_LINK_FAILURE_DESCRIPTION = "제공기록지 링크 발송에 실패했어요";
+const CANCELED_LINK_HINT = "자동 발송 예약이 취소되었습니다. 다시 보내려면 수동 전송하세요.";
 const MISSING_RECORD_ALERT_SESSION_COUNT = 2;
 const MISSING_RECORD_ALERT_HOUR_KST = 18;
 const KOREA_UTC_OFFSET = "+09:00";
@@ -115,6 +120,7 @@ export function ClientServiceRecordsTab({
 }
 
 function ClientServiceRecordsTabContent({
+    layout = "desktop",
     overview,
     clientId,
     isLoading,
@@ -125,6 +131,7 @@ function ClientServiceRecordsTabContent({
     revisionHistory,
     isRevisionHistoryLoading = false,
     isRevisionHistoryError = false,
+    revisionHistoryErrorStatus,
     isRevisionHistoryRefreshing = false,
     onRefreshRevisionHistory,
     onRetryRevisionDocument,
@@ -137,6 +144,17 @@ function ClientServiceRecordsTabContent({
     const record = overview?.record ?? null;
     const scheduleProjection = overview?.scheduleProjection;
     const hasAuthoritativeProjection = scheduleProjection !== undefined;
+    const isServiceRecordSourceUnavailable = scheduleProjection?.blockingReasons.some(
+        (reason) => reason.code === "SERVICE_RECORD_SOURCE_UNAVAILABLE",
+    ) ?? false;
+    const isNoServiceRecordCase = !isLoading
+        && !isError
+        && overview?.record === null
+        && assignments.length === 0
+        && isServiceRecordSourceUnavailable;
+    const isRevisionHistoryEmpty = isNoServiceRecordCase
+        && isRevisionHistoryError
+        && revisionHistoryErrorStatus === 404;
     const projectionEntries = scheduleProjection && scheduleProjection.blockingReasons.length === 0
         ? scheduleProjection.entries
         : [];
@@ -209,7 +227,7 @@ function ClientServiceRecordsTabContent({
     }
 
     if (isLoading) {
-        return <ClientServiceRecordsSkeleton />;
+        return <ClientServiceRecordsSkeleton layout={layout} />;
     }
 
     if (isError) {
@@ -244,17 +262,19 @@ function ClientServiceRecordsTabContent({
                     <>
                         <div
                             data-component={`${dataComponent}_overview-grid`}
-                            className="grid grid-cols-1 items-stretch gap-[calc(16px*var(--glint-ui-scale,1))] lg:grid-cols-3 [&>*]:content-start"
+                            className={cn("grid grid-cols-1 items-stretch [&>*]:content-start", layout === "desktop" ? "gap-[calc(16px*var(--glint-ui-scale,1))] lg:grid-cols-3" : "gap-3")}
                         >
                             <RecordStatusCard record={record} isRefreshing={isTextRefreshing} />
-                            <ServiceRecordHeaderCard
+                            {layout === "desktop" && (<ServiceRecordHeaderCard
                                 data-component={`${dataComponent}_overview-grid_header-card`}
                                 header={record.header}
                                 showStatusBadge={false}
                                 isLoading={isTextRefreshing}
-                            />
+                            />)}
                             {activeAssignment ? (
                                 <LinkStatusCard
+                                    layout={layout}
+                                    clientId={clientId}
                                     assignment={activeAssignment}
                                     isRefreshing={isTextRefreshing}
                                     isPending={sendingSchedule?.scheduleId === activeAssignment.scheduleId
@@ -276,6 +296,12 @@ function ClientServiceRecordsTabContent({
                                 <ServiceRecordInfoRow label="상태" value={<StatusPill variant="neutral">배정 대기</StatusPill>} />
                                 </InfoCard>
                             )}
+                            {layout === "mobile" && (<ServiceRecordHeaderCard
+                                data-component={`${dataComponent}_overview-grid_header-card`}
+                                header={record.header}
+                                showStatusBadge={false}
+                                isLoading={isTextRefreshing}
+                            />)}
                         </div>
                         {assignments.length > 1 && <AssignmentHistoryCard assignments={assignments} isRefreshing={isTextRefreshing} />}
                         <ServiceSessionsCard
@@ -310,6 +336,8 @@ function ClientServiceRecordsTabContent({
                             </div>
                         )}
                         <LinkStatusCard
+                            layout={layout}
+                            clientId={clientId}
                             assignment={assignment}
                             isRefreshing={isTextRefreshing}
                             isPending={sendingSchedule?.scheduleId === assignment.scheduleId
@@ -349,15 +377,16 @@ function ClientServiceRecordsTabContent({
                         {index < assignments.length - 1 && <div className="h-px bg-v3-border" />}
                     </div>
                 ))}
-                <RevisionHistoryCard
+                {layout === "desktop" && <RevisionHistoryCard
                     history={revisionHistory}
                     isLoading={isRevisionHistoryLoading}
                     isError={isRevisionHistoryError}
+                    isEmpty={isRevisionHistoryEmpty}
                     isRefreshing={isRevisionHistoryRefreshing}
                     onRefresh={onRefreshRevisionHistory}
                     onRetry={onRetryRevisionDocument}
                     retryingDocumentKey={retryingDocumentKey}
-                />
+                />}
             </div>
 
             <TwoButtonModal
@@ -378,13 +407,13 @@ function ClientServiceRecordsTabContent({
     );
 }
 
-function ClientServiceRecordsSkeleton() {
+function ClientServiceRecordsSkeleton({ layout }: { layout: "desktop" | "mobile" }) {
     const dataComponent = useClientServiceRecordsDataComponent();
     return (
         <div data-component={dataComponent} data-source-component="ClientServiceRecordsTab" className="space-y-[calc(16px*var(--glint-ui-scale,1))]">
             <div
                 data-component={`${dataComponent}_overview-grid`}
-                className="grid grid-cols-1 items-stretch gap-[calc(16px*var(--glint-ui-scale,1))] lg:grid-cols-3 [&>*]:content-start"
+                className={cn("grid grid-cols-1 items-stretch [&>*]:content-start", layout === "desktop" ? "gap-[calc(16px*var(--glint-ui-scale,1))] lg:grid-cols-3" : "gap-3")}
             >
                 <InfoCard
                     title="제공기록지 진행 상태"
@@ -401,7 +430,7 @@ function ClientServiceRecordsSkeleton() {
                     ))}
                 </InfoCard>
 
-                <InfoCard
+                {layout === "desktop" && (<InfoCard
                     title="서비스 기본정보"
                     data-component={`${dataComponent}_overview-grid_header-card`}
                 >
@@ -415,7 +444,7 @@ function ClientServiceRecordsSkeleton() {
                     ].map((label) => (
                         <ServiceRecordInfoRowSkeleton key={label} label={label} />
                     ))}
-                </InfoCard>
+                </InfoCard>)}
 
                 <InfoCard
                     title="제공기록지 작성 링크"
@@ -431,6 +460,21 @@ function ClientServiceRecordsSkeleton() {
                     ))}
                     <Skeleton className="mt-[calc(14px*var(--glint-ui-scale,1))] h-9 w-full rounded-full bg-white/70" />
                 </InfoCard>
+                {layout === "mobile" && (<InfoCard
+                    title="서비스 기본정보"
+                    data-component={`${dataComponent}_overview-grid_header-card`}
+                >
+                    {[
+                        "산모 성명",
+                        "산모 생년월일",
+                        "신생아 성명",
+                        "신생아 출생일자",
+                        "분만형태",
+                        "신생아 몸무게",
+                    ].map((label) => (
+                        <ServiceRecordInfoRowSkeleton key={label} label={label} />
+                    ))}
+                </InfoCard>)}
             </div>
 
             <InfoCard
@@ -457,7 +501,7 @@ function ClientServiceRecordsSkeleton() {
                 </div>
             </InfoCard>
 
-            <InfoCard
+            {layout === "desktop" && <InfoCard
                 title="수정본·문서 이력"
                 data-component={`${dataComponent}_revision-history`}
                 titleTrailing={<Skeleton className="h-8 w-20 bg-white/70" />}
@@ -469,7 +513,7 @@ function ClientServiceRecordsSkeleton() {
                 ].map((label) => (
                     <ServiceRecordInfoRowSkeleton key={label} label={label} />
                 ))}
-            </InfoCard>
+            </InfoCard>}
         </div>
     );
 }
@@ -631,10 +675,21 @@ const REVISION_DOCUMENT_OPERATION_LABELS: Record<ServiceRecordRevisionDocumentOp
     receipt_refresh: "영수증 연결",
 };
 
+const REVISION_DOCUMENT_REASON_LABELS: Record<string, string> = {
+    SERVICE_RECORD_REVISION_WAITING_FOR_COMPLETION: "모든 회차의 기록이 완료되면 문서를 생성합니다.",
+    PROVIDER_TIMEOUT: "문서 처리 응답을 확인하지 못했습니다.",
+};
+
+function getRevisionDocumentReasonLabel(reasonCode: string | null): string | null {
+    if (!reasonCode) return null;
+    return REVISION_DOCUMENT_REASON_LABELS[reasonCode] ?? null;
+}
+
 function RevisionHistoryCard({
     history,
     isLoading,
     isError,
+    isEmpty,
     isRefreshing,
     onRefresh,
     onRetry,
@@ -643,6 +698,7 @@ function RevisionHistoryCard({
     history?: ServiceRecordRevisionHistoryResponse;
     isLoading: boolean;
     isError: boolean;
+    isEmpty: boolean;
     isRefreshing: boolean;
     onRefresh?: () => void;
     onRetry?: (
@@ -665,6 +721,19 @@ function RevisionHistoryCard({
                 {["현재 확정본", "사용 가능 문서", "문서 작업"].map((label) => (
                     <ServiceRecordInfoRowSkeleton key={label} label={label} />
                 ))}
+            </InfoCard>
+        );
+    }
+
+    if (isEmpty) {
+        return (
+            <InfoCard data-component={dataComponent} title="수정본·문서 이력">
+                <div
+                    data-component={`${dataComponent}_empty`}
+                    className="py-[calc(12px*var(--glint-ui-scale,1))] text-[calc(12px*var(--glint-ui-scale,1))] text-v3-text-muted"
+                >
+                    아직 제공기록지 이력이 없습니다.
+                </div>
             </InfoCard>
         );
     }
@@ -782,6 +851,7 @@ function RevisionDocumentRow({
     onRetryError: () => void;
 }) {
     const statusMeta = REVISION_DOCUMENT_STATUS_META[document.status];
+    const reasonLabel = getRevisionDocumentReasonLabel(document.reasonCode);
     const documentKey = `${revisionId}:${document.id}`;
     const isRetrying = retryingDocumentKey === documentKey;
     const retryable = document.canRetry && document.generation !== "unknown" && Boolean(onRetry);
@@ -801,9 +871,9 @@ function RevisionDocumentRow({
                     {REVISION_DOCUMENT_OPERATION_LABELS[document.operation]}
                     {document.documentVersion ? ` · v${document.documentVersion}` : ""}
                 </div>
-                {document.reasonCode && (
+                {reasonLabel && (
                     <div className="mt-0.5 text-[calc(10.8px*var(--glint-ui-scale,1))] text-v3-text-muted">
-                        {document.reasonCode}
+                        {reasonLabel}
                     </div>
                 )}
             </div>
@@ -833,6 +903,8 @@ function getRecordStatusMeta(status: string): {
 }
 
 function LinkStatusCard({
+    layout = "desktop",
+    clientId,
     assignment,
     isRefreshing,
     isPending,
@@ -840,6 +912,8 @@ function LinkStatusCard({
     onSendLink,
     showStatusBadge = true,
 }: {
+    layout?: "desktop" | "mobile";
+    clientId?: number | null;
     assignment: ServiceRecordAssignment;
     isRefreshing: boolean;
     isPending: boolean;
@@ -852,6 +926,10 @@ function LinkStatusCard({
     const statusMeta = LINK_STATUS_META[link.status];
     const isResend = link.status === "sent" || link.status === "failed";
     const usesResendLayout = isResend || isSendingResend;
+    const expiryDate = new Date(`${assignment.endDate?.slice(0, 10)}T00:00:00.000Z`);
+    expiryDate.setUTCDate(expiryDate.getUTCDate() + 7);
+    const expiresAt = link.token?.expiresAt ?? (Number.isNaN(expiryDate.getTime())
+        ? null : `${expiryDate.toISOString().slice(0, 10)}T20:00:00+09:00`);
 
     return (
         <InfoCard
@@ -863,6 +941,7 @@ function LinkStatusCard({
                 </div>
             ) : undefined}
         >
+            {layout === "desktop" ? <>
             <ServiceRecordInfoRow label="제공인력 이름" value={employee.name} isRefreshing={isRefreshing} />
             <ServiceRecordInfoRow label="제공인력 연락처" value={formatKoreanPhoneNumber(employee.phone) || "-"} isRefreshing={isRefreshing} />
             <ServiceRecordInfoRow label="메시지 최근 발송" value={formatDateTimeKo(link.lastSentAt)} isRefreshing={isRefreshing} />
@@ -871,17 +950,26 @@ function LinkStatusCard({
                 value={<TokenVerificationValue assignment={assignment} />}
                 isRefreshing={isRefreshing}
             />
+            </> : <>
+                <ServiceRecordInfoRow label="제공인력" value={`${employee.name} · ${formatKoreanPhoneNumber(employee.phone) || "-"}`} isRefreshing={isRefreshing} />
+                <ServiceRecordInfoRow label="최근 발송" value={formatDateTimeKo(link.lastSentAt)} isRefreshing={isRefreshing} />
+                <ServiceRecordInfoRow label="발송 이력" value={link.sentCount > 0 ? `${link.sentCount}회` : "-"} isRefreshing={isRefreshing} />
+                <ServiceRecordInfoRow label="링크 인증" value={link.token?.verifiedAt ? "전화번호 인증 완료" : "미인증"} isRefreshing={isRefreshing} />
+                <ServiceRecordInfoRow label="링크 만료" value={formatDateTimeKo(expiresAt)} isRefreshing={isRefreshing} />
+            </>}
             <div className="mt-[calc(14px*var(--glint-ui-scale,1))] flex flex-col items-end">
                 {/* Stays mounted and collapses so the button glides up instead of jumping. */}
                 <div
-                    aria-hidden={usesResendLayout}
+                    aria-hidden={usesResendLayout || layout === "mobile"}
                     className={cn(
                         "grid w-full transition-[grid-template-rows,opacity] duration-500 ease-out motion-reduce:transition-none",
-                        usesResendLayout ? "grid-rows-[0fr] opacity-0" : "grid-rows-[1fr]",
+                        usesResendLayout || layout === "mobile" ? "grid-rows-[0fr] opacity-0" : "grid-rows-[1fr]",
                     )}
                 >
                     <p className="overflow-hidden pb-[calc(12px*var(--glint-ui-scale,1))] text-[calc(11.5px*var(--glint-ui-scale,1))] leading-6 text-v3-text-muted">
-                        서비스 시작일 15:00에 자동 발송됩니다. 지금 바로 보내려면 수동 전송하세요.
+                        {link.status === "canceled"
+                            ? CANCELED_LINK_HINT
+                            : "서비스 시작일 15:00에 자동 발송됩니다. 지금 바로 보내려면 수동 전송하세요."}
                     </p>
                 </div>
                 <Button
@@ -892,7 +980,7 @@ function LinkStatusCard({
                     // Explicit idle width so the switch to w-full interpolates instead of snapping from auto.
                     className={cn(
                         "shrink-0 duration-500 ease-out motion-reduce:transition-none",
-                        !usesResendLayout && "w-[calc(118px*var(--glint-ui-scale,1))]",
+                        layout === "mobile" ? "w-full" : !usesResendLayout && "w-[calc(118px*var(--glint-ui-scale,1))]",
                     )}
                     disabled={isPending}
                     aria-busy={isPending}
@@ -902,8 +990,11 @@ function LinkStatusCard({
                         : `${dataComponent}_actions_send`}
                 >
                     {isPending && <Loader2 aria-hidden className="animate-spin" />}
-                    {isResend ? "메시지 재전송" : "링크 수동 전송"}
+                    {isResend ? "메시지 재전송" : layout === "mobile" ? "제공기록지 링크 발송" : "링크 수동 전송"}
                 </Button>
+                {layout === "mobile" && clientId != null && <Button asChild variant="outline" className="mt-2 w-full" data-component={`${dataComponent}_actions_edit`}>
+                    <Link href={`/service-record-admin/${clientId}`}>제공기록지 수정</Link>
+                </Button>}
             </div>
         </InfoCard>
     );

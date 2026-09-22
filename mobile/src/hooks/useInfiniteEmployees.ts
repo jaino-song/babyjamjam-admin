@@ -80,6 +80,7 @@ export function useInfiniteEmployees({
   return {
     employees,
     allEmployees: query.data || [],
+    filteredEmployees: allFilteredEmployees,
     isLoading: query.isLoading,
     isFetchingNextPage: false,
     hasNextPage,

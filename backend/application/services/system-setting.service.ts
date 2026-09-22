@@ -1,7 +1,8 @@
-import { ConflictException, Injectable } from "@nestjs/common";
+import { ConflictException, Injectable, Optional, ServiceUnavailableException } from "@nestjs/common";
 import { createHash, randomUUID } from "node:crypto";
 import { AdminAuditActor, AdminAuditEventWriter } from "application/services/admin-audit-event.service";
 import { currentAdminAuditActor } from "application/services/admin-audit-context";
+import { MessageAutomationActivationService } from "application/services/message-automation-activation.service";
 import { GetSettingUsecase, UpdateSettingUsecase } from "application/usecases/system-setting";
 import { codeOnlyProblemBody } from "application/utils/problem-bodies";
 import {
@@ -12,8 +13,14 @@ import {
     DEFAULT_MESSAGE_AUTOMATION_PAST_TRIGGER_CONFIG,
     ContractAutoFinalizeConfig,
     DEFAULT_CONTRACT_AUTO_FINALIZE_CONFIG,
+    normalizeContractAutoFinalizeConfig,
 } from "domain/entities/system-setting.entity";
 import { SystemSettingAuditContext } from "domain/repositories/system-setting.repository.interface";
+import {
+    DEFAULT_MESSAGE_SETTINGS_POLICY_ENABLED,
+    STORED_MESSAGE_SETTINGS_POLICY_IDS,
+    StoredMessageSettingsPolicyId,
+} from "domain/constants/message-settings-policy";
 
 export type PwaDigestDeliveryStatus = "sent" | "retryable" | "uncertain";
 
@@ -38,6 +45,8 @@ export class SystemSettingService {
         private readonly getSettingUsecase: GetSettingUsecase,
         private readonly updateSettingUsecase: UpdateSettingUsecase,
         private readonly auditWriter?: AdminAuditEventWriter,
+        @Optional()
+        private readonly messageAutomationActivationService?: MessageAutomationActivationService,
     ) {}
 
     private getUserEmailNotificationPreferenceKey(userId: string): string {
@@ -46,6 +55,13 @@ export class SystemSettingService {
 
     private getMessageAutomationPastTriggerConfigKey(branchId: string): string {
         return `branch:${branchId}:message_automation:past_trigger`;
+    }
+
+    private getMessageSettingsPolicyEnabledKey(
+        branchId: string,
+        policyId: StoredMessageSettingsPolicyId,
+    ): string {
+        return `branch:${branchId}:message_policy:${policyId}:enabled`;
     }
 
     private getContractAutoFinalizeConfigKey(branchId: string): string {
@@ -146,10 +162,10 @@ export class SystemSettingService {
 
     async getMessageAutomationPastTriggerConfig(
         branchId: string,
+        readValue?: (key: string) => Promise<string | null>,
     ): Promise<MessageAutomationPastTriggerConfig> {
-        const value = await this.getSettingUsecase.execute(
-            this.getMessageAutomationPastTriggerConfigKey(branchId)
-        );
+        const key = this.getMessageAutomationPastTriggerConfigKey(branchId);
+        const value = readValue ? await readValue(key) : await this.getSettingUsecase.execute(key);
         return this.parseMessageAutomationPastTriggerConfig(value);
     }
 
@@ -168,6 +184,58 @@ export class SystemSettingService {
             : this.updateSettingUsecase.execute(key, value);
     }
 
+    async getMessageSettingsPolicyEnabled(
+        branchId: string,
+        policyId: StoredMessageSettingsPolicyId,
+        readValue?: (key: string) => Promise<string | null>,
+    ): Promise<boolean> {
+        const value = readValue ? (await readValue(this.getMessageSettingsPolicyEnabledKey(branchId, policyId)))
+            ?? String(DEFAULT_MESSAGE_SETTINGS_POLICY_ENABLED) : await this.getSettingUsecase.executeWithDefault(
+            this.getMessageSettingsPolicyEnabledKey(branchId, policyId),
+            String(DEFAULT_MESSAGE_SETTINGS_POLICY_ENABLED),
+        );
+
+        return value === "true";
+    }
+
+    async getMessageSettingsPolicyActivations(
+        branchId: string,
+    ): Promise<Record<StoredMessageSettingsPolicyId, boolean>> {
+        const entries = await Promise.all(
+            STORED_MESSAGE_SETTINGS_POLICY_IDS.map(async (policyId) => [
+                policyId,
+                await this.getMessageSettingsPolicyEnabled(branchId, policyId),
+            ] as const),
+        );
+
+        return Object.fromEntries(entries) as Record<StoredMessageSettingsPolicyId, boolean>;
+    }
+
+    async setMessageSettingsPolicyEnabled(
+        branchId: string,
+        policyId: StoredMessageSettingsPolicyId,
+        enabled: boolean,
+        actor?: AdminAuditActor,
+    ): Promise<SystemSettingEntity> {
+        actor = actor ?? currentAdminAuditActor();
+        if (policyId === "trigger-dispatch") {
+            if (!this.messageAutomationActivationService) {
+                throw new ServiceUnavailableException("Message automation activation is not configured");
+            }
+            return this.messageAutomationActivationService.setTriggerDispatchEnabled(branchId, enabled, actor);
+        }
+        const key = this.getMessageSettingsPolicyEnabledKey(branchId, policyId);
+        const value = String(enabled);
+        const auditContext = this.auditContext(
+            actor,
+            "system_setting.message_policy_activation.updated",
+            branchId,
+        );
+        return auditContext
+            ? this.updateSettingUsecase.execute(key, value, auditContext)
+            : this.updateSettingUsecase.execute(key, value);
+    }
+
     async getContractAutoFinalizeConfig(branchId: string): Promise<ContractAutoFinalizeConfig> {
         const value = await this.getSettingUsecase.execute(this.getContractAutoFinalizeConfigKey(branchId));
         return this.parseContractAutoFinalizeConfig(value);
@@ -179,7 +247,7 @@ export class SystemSettingService {
         actor?: AdminAuditActor,
     ): Promise<SystemSettingEntity> {
         actor = actor ?? currentAdminAuditActor();
-        const normalized = this.normalizeContractAutoFinalizeConfig(config);
+        const normalized = normalizeContractAutoFinalizeConfig(config);
         const key = this.getContractAutoFinalizeConfigKey(branchId);
         const value = JSON.stringify(normalized);
         const auditContext = this.auditContext(actor, "system_setting.contract_automation.updated", branchId);
@@ -432,26 +500,10 @@ export class SystemSettingService {
     private parseContractAutoFinalizeConfig(value: string | null): ContractAutoFinalizeConfig {
         if (!value) return DEFAULT_CONTRACT_AUTO_FINALIZE_CONFIG;
         try {
-            return this.normalizeContractAutoFinalizeConfig(JSON.parse(value));
+            return normalizeContractAutoFinalizeConfig(JSON.parse(value));
         } catch {
             return DEFAULT_CONTRACT_AUTO_FINALIZE_CONFIG;
         }
-    }
-
-    private normalizeContractAutoFinalizeConfig(config: unknown): ContractAutoFinalizeConfig {
-        if (typeof config !== "object" || config === null) return DEFAULT_CONTRACT_AUTO_FINALIZE_CONFIG;
-        const candidate = config as Partial<ContractAutoFinalizeConfig>;
-        return {
-            enabled: typeof candidate.enabled === "boolean"
-                ? candidate.enabled
-                : DEFAULT_CONTRACT_AUTO_FINALIZE_CONFIG.enabled,
-            graceDays: Number.isInteger(candidate.graceDays)
-                ? Math.min(Math.max(candidate.graceDays as number, 0), 30)
-                : DEFAULT_CONTRACT_AUTO_FINALIZE_CONFIG.graceDays,
-            maxAttempts: Number.isInteger(candidate.maxAttempts)
-                ? Math.min(Math.max(candidate.maxAttempts as number, 1), 10)
-                : DEFAULT_CONTRACT_AUTO_FINALIZE_CONFIG.maxAttempts,
-        };
     }
 
     private getPwaDigestDeliveryKey(deliveryKey: string): string {

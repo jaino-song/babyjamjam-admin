@@ -224,6 +224,28 @@ export function shiftServiceRecordScheduleSuffix(
     return { deltaBusinessDays, entries: validateServiceRecordScheduleVector(shifted, vector.length) };
 }
 
+/** A per-session correction moves later dates only with explicit approval. */
+export function moveServiceRecordSessionDate(
+    entries: ReadonlyArray<ServiceRecordPlannedSession>,
+    sessionIndex: number,
+    newDate: string,
+    shiftFollowing: boolean,
+): ServiceRecordScheduleShiftResult {
+    if (shiftFollowing) return shiftServiceRecordScheduleSuffix(entries, sessionIndex, newDate);
+    const vector = validateServiceRecordScheduleVector(entries);
+    const selected = vector.find((entry) => entry.sessionIndex === sessionIndex);
+    if (!selected) throw new ServiceRecordScheduleValidationError("INVALID_SESSION_INDEX", "수정할 회차를 찾을 수 없습니다.", sessionIndex);
+    assertBusinessDate(newDate, sessionIndex);
+    const deltaBusinessDays = diffBusinessDaysKr(newDate, selected.serviceDate);
+    return {
+        deltaBusinessDays: deltaBusinessDays ?? 0,
+        entries: validateServiceRecordScheduleVector(vector.map((entry) => ({
+            ...entry,
+            serviceDate: entry.sessionIndex === sessionIndex ? newDate : entry.serviceDate,
+        })), vector.length),
+    };
+}
+
 const DATE_ONLY_PREFIX = /^(\d{4})-(\d{2})-(\d{2})/;
 
 function datePartOf(value: string | null): string | null {

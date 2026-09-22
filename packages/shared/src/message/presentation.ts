@@ -229,7 +229,11 @@ export function getMessageChannelLabel(provider: string | null | undefined): str
   return "메시지";
 }
 
-export function getMessageHistoryTimestamp(record: MessageLogRecord): string {
+export function getMessageHistoryTimestamp(record: {
+  createdAt: string;
+  lastAttemptAt?: string | null;
+  updatedAt?: string | null;
+}): string {
   return record.lastAttemptAt ?? record.updatedAt ?? record.createdAt;
 }
 

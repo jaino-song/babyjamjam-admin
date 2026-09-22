@@ -89,6 +89,22 @@ function createPlannedSession(
     };
 }
 
+function createSourceUnavailableOverview(
+    blockerCode = "SERVICE_RECORD_SOURCE_UNAVAILABLE",
+): ServiceRecordOverview {
+    return {
+        record: null,
+        assignments: [],
+        scheduleProjection: {
+            entries: [],
+            blockingReasons: [{
+                code: blockerCode,
+                message: "서비스 예정 회차 근거를 확인할 수 없습니다.",
+            }],
+        },
+    };
+}
+
 describe("ClientServiceRecordsTab", () => {
     beforeEach(() => {
         mutateAsync.mockReset();
@@ -98,6 +114,18 @@ describe("ClientServiceRecordsTab", () => {
     afterEach(() => {
         jest.useRealTimers();
         jest.restoreAllMocks();
+    });
+
+    it("presents mobile link controls before basic information and sessions without sending on render", () => {
+        render(<ClientServiceRecordsTab data-component={TEST_COMPONENT}
+            layout="mobile" clientId={100} isLoading={false} isError={false}
+            overview={{ assignments: [createAssignment(1, "none")] }} />);
+        const headings = screen.getAllByRole("heading").map((heading) => heading.textContent);
+        expect(headings.slice(0, 3)).toEqual(["제공기록지 작성 링크", "서비스 기본정보", "회차별 제공기록"]);
+        expect(screen.getByRole("link", { name: "제공기록지 수정" })).toHaveAttribute("href", "/service-record-admin/100");
+        expect(screen.getByRole("button", { name: "제공기록지 링크 발송" })).toBeEnabled();
+        expect(screen.queryByText("수정 이력")).not.toBeInTheDocument();
+        expect(mutateAsync).not.toHaveBeenCalled();
     });
 
     it("keeps the service-record card containers mounted while loading", () => {
@@ -240,6 +268,50 @@ describe("ClientServiceRecordsTab", () => {
         expect(screen.getAllByText("제공기록지 작성 링크")).toHaveLength(3);
     });
 
+    it("shows cancellation guidance for a canceled link when the record card hides its status badge", () => {
+        const assignment = createAssignment(1, "canceled");
+        assignment.link.scheduledFor = "2026-07-01T15:00:00+09:00";
+        const overview: ServiceRecordOverview = {
+            record: {
+                id: "case-canceled-link",
+                status: "IN_PROGRESS",
+                startDate: "2026-07-01T00:00:00.000Z",
+                endDate: "2026-07-05T00:00:00.000Z",
+                totalSessions: 1,
+                completedAt: null,
+                finalizationDueAt: "2026-07-05T20:00:00+09:00",
+                finalizedAt: null,
+                documentsCompletedAt: null,
+                lastError: null,
+                header: null,
+                sessions: [],
+                signatureDocs: [],
+            },
+            assignments: [assignment],
+        };
+
+        const { container } = render(
+            <ClientServiceRecordsTab data-component={TEST_COMPONENT}
+                overview={overview}
+                clientId={100}
+                isLoading={false}
+                isError={false}
+            />,
+        );
+
+        const linkCard = container.querySelector<HTMLElement>(
+            `[data-component="${TEST_COMPONENT}_overview-grid_link-card"]`,
+        );
+        expect(linkCard).toHaveTextContent(
+            "자동 발송 예약이 취소되었습니다. 다시 보내려면 수동 전송하세요.",
+        );
+        expect(linkCard).not.toHaveTextContent(
+            "서비스 시작일 15:00에 자동 발송됩니다. 지금 바로 보내려면 수동 전송하세요.",
+        );
+        expect(linkCard).not.toHaveTextContent("발송 취소");
+        expect(screen.getByRole("button", { name: "링크 수동 전송" })).toBeEnabled();
+    });
+
     it("renders server-owned revision statuses and retries the pinned generation", async () => {
         const onRetry = jest.fn().mockResolvedValue(undefined);
         render(
@@ -267,6 +339,22 @@ describe("ClientServiceRecordsTab", () => {
                             documentVersion: 2,
                             canRetry: true,
                             reasonCode: "PROVIDER_TIMEOUT",
+                        }, {
+                            id: "state-2",
+                            operation: "record_snapshot",
+                            generation: "generation-2",
+                            status: "waiting_for_completion",
+                            documentVersion: null,
+                            canRetry: false,
+                            reasonCode: "SERVICE_RECORD_REVISION_WAITING_FOR_COMPLETION",
+                        }, {
+                            id: "state-3",
+                            operation: "record_snapshot",
+                            generation: "generation-3",
+                            status: "pending",
+                            documentVersion: 3,
+                            canRetry: true,
+                            reasonCode: "UNRECOGNIZED_REASON",
                         }],
                     }],
                 }}
@@ -275,12 +363,96 @@ describe("ClientServiceRecordsTab", () => {
         );
 
         expect(screen.queryByText("문서 이력을 확인할 수 없습니다")).not.toBeInTheDocument();
-        expect(screen.queryByText("기록 완료 대기")).not.toBeInTheDocument();
+        expect(screen.getByText("기록 완료 대기")).toBeInTheDocument();
         expect(screen.getByText("실패")).toBeInTheDocument();
-        expect(screen.getByText("PROVIDER_TIMEOUT")).toBeInTheDocument();
+        expect(screen.getByText("문서 처리 응답을 확인하지 못했습니다.")).toBeInTheDocument();
+        expect(screen.queryByText("PROVIDER_TIMEOUT")).not.toBeInTheDocument();
+        expect(screen.getByText("모든 회차의 기록이 완료되면 문서를 생성합니다.")).toBeInTheDocument();
+        expect(screen.queryByText("SERVICE_RECORD_REVISION_WAITING_FOR_COMPLETION")).not.toBeInTheDocument();
+        expect(screen.getByText("처리 대기")).toBeInTheDocument();
+        expect(screen.queryByText("UNRECOGNIZED_REASON")).not.toBeInTheDocument();
+        expect(screen.getAllByRole("button", { name: "다시 시도" })).toHaveLength(2);
 
-        fireEvent.click(screen.getByRole("button", { name: "다시 시도" }));
+        fireEvent.click(screen.getAllByRole("button", { name: "다시 시도" })[0]);
         await waitFor(() => expect(onRetry).toHaveBeenCalledWith("revision-1", "state-1", "generation-1"));
+    });
+
+    it("renders a truthful empty state for an intentional no-case revision 404", () => {
+        render(
+            <ClientServiceRecordsTab
+                data-component={TEST_COMPONENT}
+                overview={createSourceUnavailableOverview()}
+                clientId={100}
+                isLoading={false}
+                isError={false}
+                isRevisionHistoryError
+                revisionHistoryErrorStatus={404}
+            />,
+        );
+
+        expect(screen.getByText("아직 제공기록지 이력이 없습니다.")).toBeInTheDocument();
+        expect(screen.queryByText("문서 이력을 확인할 수 없습니다")).not.toBeInTheDocument();
+        expect(screen.queryByText("잠시 후 다시 조회해 주세요.")).not.toBeInTheDocument();
+    });
+
+    it.each([
+        ["500", 500],
+        ["network", undefined],
+    ] as const)("keeps the overview error when the overview request failed (%s)", (_label, status) => {
+        render(
+            <ClientServiceRecordsTab
+                data-component={TEST_COMPONENT}
+                overview={createSourceUnavailableOverview()}
+                clientId={100}
+                isLoading={false}
+                isError
+                isRevisionHistoryError
+                revisionHistoryErrorStatus={status}
+            />,
+        );
+
+        expect(screen.getByText("제공기록지 정보를 불러오지 못했습니다")).toBeInTheDocument();
+        expect(screen.queryByText("문서 이력을 확인할 수 없습니다")).not.toBeInTheDocument();
+        expect(screen.queryByText("아직 제공기록지 이력이 없습니다.")).not.toBeInTheDocument();
+    });
+
+    it.each([
+        ["500", 500],
+        ["network", undefined],
+        ["401", 401],
+        ["403", 403],
+    ] as const)("keeps the revision error for a successful no-case overview (%s)", (_label, status) => {
+        render(
+            <ClientServiceRecordsTab
+                data-component={TEST_COMPONENT}
+                overview={createSourceUnavailableOverview()}
+                clientId={100}
+                isLoading={false}
+                isError={false}
+                isRevisionHistoryError
+                revisionHistoryErrorStatus={status}
+            />,
+        );
+
+        expect(screen.getByText("문서 이력을 확인할 수 없습니다")).toBeInTheDocument();
+        expect(screen.queryByText("아직 제공기록지 이력이 없습니다.")).not.toBeInTheDocument();
+    });
+
+    it("keeps the revision error for a different 404 state", () => {
+        render(
+            <ClientServiceRecordsTab
+                data-component={TEST_COMPONENT}
+                overview={createSourceUnavailableOverview("OTHER_SOURCE_BLOCKER")}
+                clientId={100}
+                isLoading={false}
+                isError={false}
+                isRevisionHistoryError
+                revisionHistoryErrorStatus={404}
+            />,
+        );
+
+        expect(screen.getByText("문서 이력을 확인할 수 없습니다")).toBeInTheDocument();
+        expect(screen.queryByText("아직 제공기록지 이력이 없습니다.")).not.toBeInTheDocument();
     });
 
     it("shows a failure toast when manual sending resolves without a sent job", async () => {

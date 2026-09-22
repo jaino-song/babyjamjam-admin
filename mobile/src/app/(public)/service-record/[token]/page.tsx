@@ -189,7 +189,6 @@ export default function ServiceRecordPage() {
     const [scheduleChangeBusy, setScheduleChangeBusy] = useState(false);
     const [errorNotificationMessage, setErrorNotificationMessage] = useState<string | null>(null);
     const [pendingServiceDate, setPendingServiceDate] = useState<{ next: string; shift: number } | null>(null);
-
     const navigateTo = useCallback((
         nextScreen: Screen,
         options: { mode?: HistoryMode; day?: number; pageIdx?: number } = {},
@@ -334,8 +333,7 @@ export default function ServiceRecordPage() {
                     paymentConfirmed: Boolean(session.paymentConfirmed),
                 });
             } else {
-                const stored = readStoredFormState(token);
-                if (stored?.day === targetDay && stored.draft) setDraft(stored.draft);
+                setDraft(initializeUnlockedDraft(token, targetDay, ctx.sessions, defaultDateFromContext(ctx, targetDay)));
             }
             navigateTo("day", {
                 mode: "none",
@@ -397,7 +395,6 @@ export default function ServiceRecordPage() {
         },
         [ctx?.plannedSessionDates, ctx?.sessions, ctx?.startDate, plannedDateVectorValid],
     );
-
     async function submitPhone() {
         if (phone.replace(/\D/g, "").length < 10) { setPhoneError("휴대폰 번호를 입력해 주세요."); return; }
         setBusy(true); setPhoneError(null);
@@ -472,9 +469,7 @@ export default function ServiceRecordPage() {
             initialPageIdx = canRestoreDraft
                 ? Math.min(Math.max(stored?.pageIdx ?? 0, 0), DAY_PAGES.length - 1)
                 : 0;
-            setDraft(canRestoreDraft && stored?.draft
-                ? stored.draft
-                : { _date: defaultDate(d), ...DEFAULT_DAILY_ANSWERS });
+            setDraft(initializeUnlockedDraft(token, d, ctx?.sessions ?? [], defaultDateFromContext(ctx, d)));
         }
         navigateTo("day", { mode: "push", day: d, pageIdx: initialPageIdx });
     }
@@ -725,4 +720,68 @@ export default function ServiceRecordPage() {
             }}
         />
     );
+}
+
+function defaultDateFromContext(ctx: ServiceRecordContext | null, day: number): string {
+    const plannedDates = ctx?.plannedSessionDates;
+    if (plannedDates !== undefined) {
+        const isValidDateOnly = (value: string) => {
+            if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+            const [year, month, dayOfMonth] = value.split("-").map(Number);
+            const parsed = new Date(Date.UTC(year, month - 1, dayOfMonth));
+            return parsed.getUTCFullYear() === year
+                && parsed.getUTCMonth() === month - 1
+                && parsed.getUTCDate() === dayOfMonth;
+        };
+        const plannedDateVectorValid = Array.isArray(plannedDates)
+            && plannedDates.length === (ctx?.totalSessions ?? 0)
+            && new Set(plannedDates.map((session) => session.sessionIndex)).size === plannedDates.length
+            && new Set(plannedDates.map((session) => session.serviceDate)).size === plannedDates.length
+            && plannedDates.every((session) => (
+                Number.isSafeInteger(session.sessionIndex)
+                && session.sessionIndex > 0
+                && session.sessionIndex <= (ctx?.totalSessions ?? 0)
+                && isValidDateOnly(session.serviceDate)
+            ));
+        if (!plannedDateVectorValid) return "";
+        return plannedDates.find((session) => session.sessionIndex === day)?.serviceDate ?? "";
+    }
+    const sessions = ctx?.sessions ?? [];
+    const rawStart = ctx?.startDate ? ctx.startDate.slice(0, 10) : isoDateInKorea();
+    const start = isBusinessDayKr(rawStart) ? rawStart : nextBusinessDayKr(rawStart);
+    const chain = (sessionIndex: number): string => {
+        const row = sessions.find((session) => session.sessionIndex === sessionIndex);
+        if (row) return row.serviceDate.slice(0, 10);
+        if (sessionIndex <= 1) return start;
+        return nextBusinessDayKr(chain(sessionIndex - 1));
+    };
+    return chain(day);
+}
+
+function initializeUnlockedDraft(
+    token: string,
+    day: number,
+    sessions: ServiceRecordContext["sessions"],
+    defaultDate: string,
+): Record<string, unknown> {
+    const session = sessions.find((row) => row.sessionIndex === day);
+    const serverDraft: Record<string, unknown> = {
+        _date: defaultDate,
+        ...DEFAULT_DAILY_ANSWERS,
+        etcService: "",
+        notes: "",
+        paymentConfirmed: false,
+        ...(session
+            ? {
+                _date: session.serviceDate.slice(0, 10),
+                ...(session.answers ?? {}),
+                etcService: session.etcService ?? "",
+                notes: session.notes ?? "",
+                paymentConfirmed: Boolean(session.paymentConfirmed),
+            }
+            : {}),
+    };
+    const stored = readStoredFormState(token);
+    if (stored?.day !== day || !stored.draft) return serverDraft;
+    return { ...serverDraft, ...stored.draft };
 }

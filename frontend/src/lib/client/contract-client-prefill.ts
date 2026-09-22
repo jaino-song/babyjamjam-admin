@@ -1,4 +1,4 @@
-import { normalizeContractBirthday } from "@babyjamjam/shared/utils/birthday";
+import { normalizeBirthdayIsoDate } from "@babyjamjam/shared/utils/birthday";
 import type { EformsignContractClientCandidateResponse } from "@babyjamjam/shared/types/eformsign";
 
 import type { ClientFormData } from "@/features/clients/types";
@@ -18,7 +18,7 @@ export function contractCandidateToClientPrefill(
         name: candidate.name ?? "",
         phone: formatKoreanPhoneNumber(normalizedPhone),
         address: candidate.address ?? "",
-        birthday: normalizeContractBirthday(candidate.birthday, now) ?? "",
+        birthday: normalizeBirthdayIsoDate(candidate.birthday, now) ?? "",
         dueDate: candidate.dueDate ?? "",
         startDate: candidate.startDate ?? "",
         endDate: candidate.endDate ?? "",

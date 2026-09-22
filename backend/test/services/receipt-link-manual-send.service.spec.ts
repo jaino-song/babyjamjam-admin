@@ -6,7 +6,7 @@ import {
     MessageTriggerTemplateKey,
 } from "domain/constants/message-trigger-catalog";
 import { SERVICE_END_NOTICE_RULE_ID, SERVICE_END_NOTICE_SMS_TITLE } from "domain/constants/service-end-notice-message";
-import { MANUAL_DEDUPE_MARKER } from "application/services/receipt-link-delivery-enricher.service";
+import { MANUAL_DEDUPE_MARKER } from "domain/constants/service-end-notice-message";
 import { ReceiptLinkSkipError } from "application/services/receipt-link-issue.service";
 import { ReceiptLinkManualSendService } from "application/services/receipt-link-manual-send.service";
 

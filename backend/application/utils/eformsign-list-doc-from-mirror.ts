@@ -17,9 +17,9 @@ import type { EformsignListDoc } from "./eformsign-document-list";
  */
 /**
  * Where the mirror's own customer name rides along. Not a vendor field, and deliberately
- * not one the list rules read: filtering and searching must not see it, because the API
- * path's search index is built before enrichment and never sees a customer name either.
- * The page enrichment lifts it into `fields`, which is where the UI looks.
+ * not emitted as a vendor `fields` value: the mirror list service passes it explicitly to the
+ * shared search matcher, while page enrichment lifts it into `fields`, which is where the UI
+ * looks. Keeping it on a private key avoids changing the vendor-shaped list contract.
  */
 export const MIRROR_CUSTOMER_NAME_KEY = "_mirror_customer_name";
 
@@ -75,14 +75,9 @@ export function eformsignListDocFromMirror(document: EformsignDocEntity): Eforms
             : { [MIRROR_CUSTOMER_NAME_KEY]: document.customerName }),
         ...(document.clientId === null ? { [MIRROR_UNASSIGNED_KEY]: true } : {}),
         // No `fields`, deliberately, even though the mirror holds a customerName. The
-        // vendor's list endpoint is fetched without include_fields — only the
-        // single-document fetch asks for them — so the served search never sees a customer
-        // name from the document itself and matches on the local recipient name instead.
-        // Emitting one here would make the mirror find documents the served path cannot,
-        // and every such difference would be this mapper's, not the mirror's.
-        //
-        // Phase E may well decide the list should search customerName. That is a change in
-        // what the feature does and belongs in that decision, not inherited by accident.
+        // vendor-shaped list contract remains unchanged; the mirror list service carries
+        // this private value into the shared search matcher explicitly and page enrichment
+        // emits the display field only after filtering.
     };
 }
 

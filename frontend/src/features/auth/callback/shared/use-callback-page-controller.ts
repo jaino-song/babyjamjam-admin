@@ -1,12 +1,19 @@
 "use client";
 
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { normalizeApiError } from "@babyjamjam/shared";
 
 import { AUTH_ROUTES } from "@/lib/auth/routes";
 import { resetAuthorityState } from "@/lib/auth/authority-state";
+import { safeStorageGetItem, safeStorageRemoveItem } from "@/lib/safe-storage";
+import {
+  appendSafeReturnPath,
+  getSafeReturnPathFromSearchParams,
+  getSafeReturnPathFromStorage,
+  OAUTH_RETURN_PATH_STORAGE_KEY,
+} from "@/lib/auth/safe-return-path";
 import { exchangeToken } from "@/app/(auth)/callback/actions";
 import { getSafeCallbackError } from "@/lib/auth/auth-errors";
 
@@ -35,6 +42,14 @@ export function useCallbackPageController() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const [error, setError] = useState<string | null>(null);
+
+  const readReturnPath = useCallback(
+    () => getSafeReturnPathFromSearchParams(searchParams)
+      ?? getSafeReturnPathFromStorage(
+        safeStorageGetItem("session", OAUTH_RETURN_PATH_STORAGE_KEY),
+      ),
+    [searchParams],
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -79,15 +94,21 @@ export function useCallbackPageController() {
             return;
         }
 
+        const returnPath = readReturnPath();
+        safeStorageRemoveItem("session", OAUTH_RETURN_PATH_STORAGE_KEY);
+
         if (result.onboardingRequired) {
-          router.replace(result.onboardingRoute || "/kakao/onboarding");
+          router.replace(appendSafeReturnPath(
+            result.onboardingRoute || "/kakao/onboarding",
+            returnPath,
+          ));
           return;
         }
 
         if (result.requiresBranchSelection) {
-          router.replace("/select-branch");
+          router.replace(appendSafeReturnPath("/select-branch", returnPath));
         } else {
-          router.replace("/dashboard");
+          router.replace(returnPath || "/dashboard");
         }
       } catch (requestError) {
         if (cancelled) {
@@ -110,11 +131,15 @@ export function useCallbackPageController() {
     return () => {
       cancelled = true;
     };
-  }, [router, searchParams]);
+  }, [readReturnPath, router, searchParams]);
 
   return {
     error,
     status: error ? "error" : "loading",
-    goToLogin: () => router.push(AUTH_ROUTES.login),
+    goToLogin: () => {
+      const returnPath = readReturnPath();
+      safeStorageRemoveItem("session", OAUTH_RETURN_PATH_STORAGE_KEY);
+      router.push(appendSafeReturnPath(AUTH_ROUTES.login, returnPath));
+    },
   };
 }

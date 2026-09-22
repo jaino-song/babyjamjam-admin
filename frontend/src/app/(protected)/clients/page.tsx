@@ -19,6 +19,7 @@ import {
     RotateCcw,
     Trash2,
     FileSignature,
+    Send,
 } from "lucide-react";
 import {
     DropdownMenu,
@@ -31,6 +32,7 @@ import {
     useDeleteClient,
     useClient,
 } from "@/features/clients/hooks/use-clients";
+import { useSendClientReceipt } from "@/features/clients/hooks/use-send-client-receipt";
 import { serviceRecordsApi } from "@/features/service-records/api/service-records.api";
 import { getScheduleChangeErrorMessage } from "@/features/service-records/utils/schedule-change-error";
 import { useToast } from "@/hooks/use-toast";
@@ -307,6 +309,7 @@ export default function ClientsPage() {
 
     const { data, isLoading } = useClients(1, 50);
     const deleteClient = useDeleteClient();
+    const { isSending: isSendingReceipt, sendReceipt } = useSendClientReceipt();
 
     const { data: clientFromParam } = useClient(
         clientIdParam ? Number(clientIdParam) : 0
@@ -638,7 +641,7 @@ export default function ClientsPage() {
     return (
         <PageSection name="clients">
             <StatsBar
-                name="clients"
+                name="clients" density="responsive-square"
                 isLoading={isLoading}
                 items={[
                     { icon: Calendar, value: stats.thisMonthCount, label: "이번달 고객", counter: "명" },
@@ -874,6 +877,15 @@ export default function ClientsPage() {
                                                 <FileSignature className="w-4 h-4" />
                                                 제공기록지 보기
                                             </a>
+                                        </DropdownMenuItem>
+                                        <DropdownMenuItem
+                                            data-component="desktop_clients_sections_section-content_list-section_split-layout_detail-selection_detail-panel_header_menu_send-copayment-receipt"
+                                            disabled={isSendingReceipt}
+                                            onClick={() => void sendReceipt(activeSelectedClient.id)}
+                                            className="gap-2"
+                                        >
+                                            <Send className="w-4 h-4" />
+                                            {isSendingReceipt ? "영수증 발송 중..." : "본인부담금 영수증 발송"}
                                         </DropdownMenuItem>
                                         <DropdownMenuItem
                                             data-component="desktop_clients_sections_section-content_list-section_split-layout_detail-selection_detail-panel_header_menu_change-service-schedule"

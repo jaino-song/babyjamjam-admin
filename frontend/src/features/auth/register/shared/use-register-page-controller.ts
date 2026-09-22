@@ -8,6 +8,7 @@ import { normalizeApiError, type NormalizedApiError } from "@babyjamjam/shared";
 
 import { usePhoneDuplicateCheck } from "@/hooks/usePhoneDuplicateCheck";
 import { AUTH_ROUTES } from "@/lib/auth/routes";
+import { normalizeKoreanPhoneDigits } from "@/lib/phone";
 import { checkPasswordStrength, getEmailFormatError, registerSchema, sanitizeNameInput, type RegisterFormData } from "@/lib/validations/auth";
 import { authApi } from "@/services/api";
 
@@ -61,7 +62,8 @@ function formatBirthDateInput(value: string) {
 }
 
 function formatPhoneInput(value: string) {
-  const digits = value.replace(/\D/g, "").slice(0, 11);
+  // Country-code input is normalized first; the mobile-only prefix policy stays.
+  const digits = normalizeKoreanPhoneDigits(value).slice(0, 11);
 
   if (digits.length === 0) {
     return "";

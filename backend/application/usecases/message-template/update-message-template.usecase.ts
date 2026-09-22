@@ -1,6 +1,10 @@
 import { Inject, Injectable, BadRequestException, ConflictException, NotFoundException } from "@nestjs/common";
 import { codeOnlyProblemBody, problemBody } from "application/utils/problem-bodies";
-import { MessageTemplateEntity, TemplateVariable } from "domain/entities/message-template.entity";
+import {
+    MessageTemplateEntity,
+    TemplateVariable,
+    validateMessageTemplateRequiredFields,
+} from "domain/entities/message-template.entity";
 import { IMessageTemplateRepository, MESSAGE_TEMPLATE_REPOSITORY } from "domain/repositories/message-template.repository.interface";
 
 export type UpdateMessageTemplateParams = {
@@ -24,6 +28,11 @@ export class UpdateMessageTemplateUsecase {
         const existing = await this.messageTemplateRepository.findById(branchid, id);
         if (!existing) {
             throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
+        }
+
+        const requiredFieldsValidation = validateMessageTemplateRequiredFields(params);
+        if (!requiredFieldsValidation.valid) {
+            throw new BadRequestException(requiredFieldsValidation.errors.join(", "));
         }
 
         existing.update(params);
@@ -83,6 +92,12 @@ export class UpdateMessageTemplateUsecase {
             new Date(createdAtValue),
             new Date(updatedAtValue),
         );
+
+        const requiredFieldsValidation = validateMessageTemplateRequiredFields(params);
+        if (!requiredFieldsValidation.valid) {
+            throw new BadRequestException(requiredFieldsValidation.errors.join(", "));
+        }
+
         existing.update(params);
 
         const validation = existing.validateVariables();

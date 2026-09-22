@@ -16,7 +16,11 @@ const mockedSettingsApi = jest.mocked(settingsApi);
 
 function renderSettings() {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
-  return render(<QueryClientProvider client={queryClient}><ClientRegistrationPolicySettings /></QueryClientProvider>);
+  return render(
+    <QueryClientProvider client={queryClient}>
+      <ClientRegistrationPolicySettings data-component="mobile_messages_automation_test_client-registration-policy" />
+    </QueryClientProvider>,
+  );
 }
 
 describe("ClientRegistrationPolicySettings", () => {

@@ -41,14 +41,25 @@ describe("runEformsignFinalizeGates", () => {
             ),
         } as unknown as FrameLocator;
         const page = {
-            evaluate: jest
-                .fn()
-                .mockResolvedValueOnce({ hasSuccess: false, hasError: false })
-                .mockResolvedValueOnce(false)
-                .mockResolvedValueOnce({ hasSuccess: false, hasError: false })
-                .mockResolvedValueOnce(false)
-                .mockResolvedValueOnce({ hasSuccess: false, hasError: false })
-                .mockResolvedValueOnce(true),
+            evaluate: jest.fn().mockImplementation((fn: unknown) => {
+                const source = String(fn);
+                if (source.includes("__eformsignSuccess") && source.includes("__eformsignError")) {
+                    return Promise.resolve({ hasSuccess: false, hasError: false });
+                }
+                if (source.includes("__eformsignSuccess")) return Promise.resolve(false);
+                if (source.includes("__eformsignDiagnostics")) {
+                    return Promise.resolve({
+                        actionPresent: false,
+                        actionType: "unknown",
+                        actionCode: "unknown",
+                        successCountBucket: "0",
+                        successCode: "unknown",
+                        errorPresent: false,
+                        bootErrorPresent: false,
+                    });
+                }
+                return Promise.resolve(undefined);
+            }),
             waitForTimeout: jest.fn().mockResolvedValue(undefined),
         } as unknown as Page;
         const onProgress = jest.fn();
@@ -118,7 +129,9 @@ describe("runEformsignFinalizeGates", () => {
         );
         expect(popupSendButton.click).toHaveBeenCalledTimes(1);
         expect((eformsignFrame as unknown as { getByRole: jest.Mock }).getByRole).not.toHaveBeenCalled();
-        expect(log).toHaveBeenCalledWith("[finalize-gate] clicked popup 전송");
+        expect(log).toHaveBeenCalledWith(
+            expect.stringContaining('"action":"send_popup"'),
+        );
     });
 
     it("returns a success latch after top-level send for vendor-state reconciliation", async () => {
@@ -142,6 +155,15 @@ describe("runEformsignFinalizeGates", () => {
                 .fn()
                 .mockResolvedValueOnce({ hasSuccess: false, hasError: false })
                 .mockResolvedValueOnce(false)
+                .mockResolvedValueOnce({
+                    actionPresent: false,
+                    actionType: "unknown",
+                    actionCode: "unknown",
+                    successCountBucket: "0",
+                    successCode: "unknown",
+                    errorPresent: false,
+                    bootErrorPresent: false,
+                })
                 .mockResolvedValueOnce({ hasSuccess: true, hasError: false })
                 .mockResolvedValueOnce(true),
             waitForTimeout: jest.fn().mockResolvedValue(undefined),
@@ -189,7 +211,8 @@ describe("runEformsignFinalizeGates", () => {
 
         expect(result).toBe("request-send-attempted");
         expect(popupSendButton.click).toHaveBeenCalledTimes(1);
-        expect(log).toHaveBeenCalledTimes(1);
+        expect(log).toHaveBeenCalledTimes(2);
+        expect(log).toHaveBeenCalledWith(expect.stringContaining('"action":"send_popup"'));
         expect(log).toHaveBeenCalledWith(
             "[finalize-gate] popup 전송 click outcome is ambiguous; reconciling without retry",
         );
@@ -197,10 +220,12 @@ describe("runEformsignFinalizeGates", () => {
 
     it("uses the finalize dialog selector in an abort snapshot", async () => {
         const snapshot = {
-            visibleButtons: ["전송"],
-            guideButtonLabel: null,
-            footerMessages: ["필수 입력 항목(1)"],
+            visibleButtonCount: 1,
+            guideButtonVisible: false,
+            headerButtonVisible: false,
             requestSendDialogVisible: true,
+            inputCommentDialogVisible: true,
+            anyDialogVisible: true,
         };
         const body = {
             evaluate: jest.fn().mockResolvedValue(snapshot),

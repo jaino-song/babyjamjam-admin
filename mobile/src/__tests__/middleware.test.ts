@@ -14,7 +14,10 @@ const mockJwtDecode = jwtDecode as jest.Mock;
 
 function createRequest(pathname: string, cookie?: string, method = "GET"): NextRequest {
   return new NextRequest(`http://localhost${pathname}`, {
-    headers: cookie ? { cookie } : undefined,
+    headers: {
+      host: "localhost",
+      ...(cookie ? { cookie } : {}),
+    },
     method,
   });
 }
@@ -22,6 +25,157 @@ function createRequest(pathname: string, cookie?: string, method = "GET"): NextR
 describe("middleware API route protection", () => {
   beforeEach(() => {
     mockJwtDecode.mockReset();
+  });
+
+  afterEach(() => {
+    Object.defineProperty(process.env, "NODE_ENV", {
+      value: "test",
+      configurable: true,
+    });
+    delete process.env.LOCAL_AUTO_LOGIN_EMAIL;
+    delete process.env.LOCAL_AUTO_LOGIN_PASSWORD;
+    jest.restoreAllMocks();
+  });
+
+  it("creates a local development session before rendering the login page", async () => {
+    Object.defineProperty(process.env, "NODE_ENV", {
+      value: "development",
+      configurable: true,
+    });
+    process.env.LOCAL_AUTO_LOGIN_EMAIL = "developer@example.test";
+    process.env.LOCAL_AUTO_LOGIN_PASSWORD = "test-fixture";
+    mockJwtDecode.mockReturnValue({
+      sub: "user-1",
+      sid: "session-1",
+      role: "manager",
+      branchId: "branch-1",
+      type: "access",
+      exp: Math.floor(Date.now() / 1000) + 60,
+    });
+    jest.spyOn(global, "fetch").mockResolvedValue(new Response(JSON.stringify({
+      success: true,
+      accessToken: "local-access-token",
+      refreshToken: "local-refresh-token",
+      requiresBranchSelection: false,
+    }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    }));
+
+    const response = await middleware(createRequest("/login"));
+
+    expect(response.status).toBe(307);
+    expect(response.headers.get("location")).toBe("http://localhost/");
+    expect(response.cookies.get("auth_token")).toMatchObject({
+      value: "local-access-token",
+      httpOnly: true,
+    });
+    expect(response.cookies.get("refresh_token")).toMatchObject({
+      value: "local-refresh-token",
+      httpOnly: true,
+    });
+    expect(response.cookies.get("auto_login")?.value).toBe("1");
+    expect(response.cookies.get("selected_branch_id")?.value).toBe("branch-1");
+  });
+
+  it("replaces a stale branch cookie with the branch authorized by the local session", async () => {
+    Object.defineProperty(process.env, "NODE_ENV", {
+      value: "development",
+      configurable: true,
+    });
+    process.env.LOCAL_AUTO_LOGIN_EMAIL = "developer@example.test";
+    process.env.LOCAL_AUTO_LOGIN_PASSWORD = "test-fixture";
+    mockJwtDecode.mockReturnValue({
+      sub: "user-1",
+      sid: "session-1",
+      role: "manager",
+      branchId: "branch-new",
+      type: "access",
+      exp: Math.floor(Date.now() / 1000) + 60,
+    });
+    jest.spyOn(global, "fetch").mockResolvedValue(new Response(JSON.stringify({
+      success: true,
+      accessToken: "local-access-token",
+      refreshToken: "local-refresh-token",
+      requiresBranchSelection: false,
+    }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    }));
+
+    const response = await middleware(createRequest(
+      "/login",
+      "selected_branch_id=branch-stale",
+    ));
+
+    expect(response.status).toBe(307);
+    expect(response.headers.get("location")).toBe("http://localhost/");
+    expect(response.cookies.get("selected_branch_id")?.value).toBe("branch-new");
+  });
+
+  it("clears a stale branch cookie when the local session requires branch selection", async () => {
+    Object.defineProperty(process.env, "NODE_ENV", {
+      value: "development",
+      configurable: true,
+    });
+    process.env.LOCAL_AUTO_LOGIN_EMAIL = "developer@example.test";
+    process.env.LOCAL_AUTO_LOGIN_PASSWORD = "test-fixture";
+    mockJwtDecode.mockReturnValue({
+      sub: "user-1",
+      sid: "session-1",
+      role: "manager",
+      type: "access",
+      exp: Math.floor(Date.now() / 1000) + 60,
+    });
+    jest.spyOn(global, "fetch").mockResolvedValue(new Response(JSON.stringify({
+      success: true,
+      accessToken: "local-access-token",
+      refreshToken: "local-refresh-token",
+      requiresBranchSelection: true,
+    }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    }));
+
+    const response = await middleware(createRequest(
+      "/clients",
+      "selected_branch_id=branch-stale",
+    ));
+
+    expect(response.status).toBe(307);
+    expect(response.headers.get("location")).toBe("http://localhost/select-branch");
+    expect(response.cookies.get("selected_branch_id")?.value).toBe("");
+  });
+
+  it("never creates a local session for protected API requests", async () => {
+    Object.defineProperty(process.env, "NODE_ENV", {
+      value: "development",
+      configurable: true,
+    });
+    process.env.LOCAL_AUTO_LOGIN_EMAIL = "developer@example.test";
+    process.env.LOCAL_AUTO_LOGIN_PASSWORD = "test-fixture";
+    const fetchMock = jest.spyOn(global, "fetch");
+
+    const response = await middleware(createRequest("/api/clients"));
+
+    expect(response.status).toBe(401);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("keeps the regular login page in production", async () => {
+    Object.defineProperty(process.env, "NODE_ENV", {
+      value: "production",
+      configurable: true,
+    });
+    process.env.LOCAL_AUTO_LOGIN_EMAIL = "developer@example.test";
+    process.env.LOCAL_AUTO_LOGIN_PASSWORD = "test-fixture";
+    const fetchMock = jest.spyOn(global, "fetch");
+
+    const response = await middleware(createRequest("/login"));
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("x-middleware-next")).toBe("1");
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it("redirects the login page to home when a valid access token exists", async () => {

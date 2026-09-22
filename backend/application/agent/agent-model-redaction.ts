@@ -40,6 +40,23 @@ const FREE_TEXT_REDACTIONS = [
     /(?<![A-Za-z0-9_-])\d{6,}(?![A-Za-z0-9_-])/g,
 ];
 
+/**
+ * Server intake labels are useful to the parser, but their values must never
+ * cross a model boundary. Keep this matcher deliberately finite: arbitrary
+ * Korean prose is still handled by the ordinary regex redactions and is not
+ * treated as an inferred identity.
+ */
+const EXPLICIT_LABELED_REDACTIONS = [
+    /((?:이름|성명)\s*[:：]\s*)([^,，\n]{1,120})/gu,
+    /(주소\s*[:：]\s*)([^,，\n]{1,300})/gu,
+    /((?:전화번호|휴대폰|연락처)\s*[:：]\s*)([+()\d\s.-]{7,40})/gu,
+    /(서비스\s*유형\s*[:：]\s*)([^,，\n]{1,40})/gu,
+    /((?:startDate|시작일|이용\s*시작일)\s*[:：]\s*)([^,，\n]{1,100})/gu,
+    /((?:endDate|종료일|이용\s*종료일)\s*[:：]\s*)([^,，\n]{1,100})/gu,
+    /((?:dueDate|출산\s*예정일|예정일)\s*[:：]\s*)([^,，\n]{1,100})/gu,
+    /((?:birthDate|출생일)\s*[:：]\s*)([^,，\n]{1,100})/gu,
+];
+
 const OPERATIONAL_IDENTIFIER_SHAPE = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/;
 const HEX_HASH_SHAPE = /^[A-F0-9]{32,128}$/i;
 const ULID_SHAPE = /^[0-9A-HJKMNP-TV-Z]{26}$/i;
@@ -118,6 +135,25 @@ function isExcludedKey(key: string, parentKey = ""): boolean {
 
 export function redactFreeText(text: string): string {
     return FREE_TEXT_REDACTIONS.reduce((value, pattern) => value.replace(pattern, "[redacted]"), text);
+}
+
+export function redactExplicitLabeledText(text: string): string {
+    return EXPLICIT_LABELED_REDACTIONS.reduce((value, pattern) => value.replace(pattern, "$1[protected]"), text);
+}
+
+/** Replace only server-known values; never infer or extract additional values. */
+export function redactKnownValues(text: string, values: readonly unknown[] = []): string {
+    const known = [...new Set(values
+        .filter((value): value is string => typeof value === "string")
+        .map((value) => value.trim())
+        .filter((value) => value.length >= 2))]
+        .sort((left, right) => right.length - left.length);
+    return known.reduce((value, knownValue) => value.split(knownValue).join("[protected]"), text);
+}
+
+/** The bounded prompt used by the optional capability classifier. */
+export function redactClassifierText(text: string, knownValues: readonly unknown[] = []): string {
+    return redactKnownValues(redactFreeText(redactExplicitLabeledText(text)), knownValues).slice(0, 240);
 }
 
 function isAllowedOperationalIdentifier(value: string): boolean {

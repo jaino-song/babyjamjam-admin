@@ -1,4 +1,5 @@
 "use client";
+import { formatBirthdayInput, isValidBirthdayIsoDate, normalizeBirthdayIsoDate } from "@babyjamjam/shared/utils/birthday";
 import { useState, useEffect, useMemo, useRef } from "react";
 import {
     findOutOfPocketPriceInfo,
@@ -26,6 +27,7 @@ import {
 } from "@/lib/client/types";
 import { useLocale } from "@/providers/LocaleProvider";
 import { t } from "@/lib/i18n/translations";
+import { formatKoreanPhoneNumber } from "@/lib/phone";
 import { getErrorMessage } from "@/lib/errors/api-error-mapper";
 import voucherOptions from "../messages/templates/json/voucher.json";
 
@@ -102,21 +104,6 @@ const formatPrice = (price: number | string): string => {
 const parsePrice = (value: string | null | undefined): string => {
     if (!value) return "";
     return value.replace(/,/g, "");
-};
-
-// Format phone number as XXX-XXXX-XXXX
-const formatPhoneNumber = (value: string): string => {
-    // Remove all non-digit characters
-    const digits = value.replace(/\D/g, "");
-
-    // Apply formatting based on length
-    if (digits.length <= 3) {
-        return digits;
-    } else if (digits.length <= 7) {
-        return `${digits.slice(0, 3)}-${digits.slice(3)}`;
-    } else {
-        return `${digits.slice(0, 3)}-${digits.slice(3, 7)}-${digits.slice(7, 11)}`;
-    }
 };
 
 // Format ISO date string to yyyy-MM-dd for HTML date input
@@ -280,7 +267,7 @@ export function ClientFormDialog({ open, onClose, client, onSuccess }: ClientFor
         const nextFormData = client
             ? {
                 name: client.name,
-                birthday: client.birthday || "",
+                birthday: normalizeBirthdayIsoDate(client.birthday) ?? client.birthday ?? "",
                 dueDate: formatDateForInput(client.dueDate),
                 address: client.address || "",
                 phone: client.phone || "",
@@ -364,7 +351,7 @@ export function ClientFormDialog({ open, onClose, client, onSuccess }: ClientFor
             setErrorAndScroll(t(locale, "clients.form.error-name-required"));
             return;
         }
-        if (!formData.birthday?.trim()) {
+        if (!isValidBirthdayIsoDate(formData.birthday ?? "")) {
             setErrorAndScroll(t(locale, "clients.form.error-birthday-required"));
             return;
         }
@@ -614,10 +601,11 @@ export function ClientFormDialog({ open, onClose, client, onSuccess }: ClientFor
                                 <Label htmlFor="birthday">{t(locale, "clients.form.birthday")}</Label>
                                 <Input
                                     id="birthday"
-                                    placeholder="YYMMDD"
+                                    placeholder="YYYY-MM-DD"
+                                    inputMode="numeric"
                                     value={formData.birthday ?? ""}
-                                    onChange={(e) => handleChange("birthday", e.target.value)}
-                                    maxLength={6}
+                                    onChange={(e) => handleChange("birthday", formatBirthdayInput(e.target.value))}
+                                    maxLength={10}
                                 />
                                 <p className="text-xs text-muted-foreground">
                                     {t(locale, "clients.form.birthday-helper")}
@@ -638,8 +626,8 @@ export function ClientFormDialog({ open, onClose, client, onSuccess }: ClientFor
                                     id="phone"
                                     placeholder="010-1234-5678"
                                     value={formData.phone ?? ""}
-                                    onChange={(e) => handleChange("phone", formatPhoneNumber(e.target.value))}
-                                    maxLength={13}
+                                    onChange={(e) => handleChange("phone", formatKoreanPhoneNumber(e.target.value))}
+                                    maxLength={20}
                                     error={fieldErrorMessageIds.phone.length > 0}
                                     aria-invalid={fieldErrorMessageIds.phone.length > 0}
                                     aria-describedby={fieldErrorMessageIds.phone.join(" ") || undefined}

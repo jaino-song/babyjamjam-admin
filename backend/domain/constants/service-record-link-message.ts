@@ -8,6 +8,14 @@ export const SERVICE_RECORD_LINK_SCHEDULING_RETRY_REASON =
 export const SERVICE_RECORD_LINK_RESCHEDULED_REASON = "Service record link rescheduled";
 export const SERVICE_RECORD_LINK_BRANCH_DISABLED_REASON = "Service record link branch disabled";
 
+/** Exact key shape emitted by ServiceRecordLinkService.sendNow manual jobs. */
+export const SERVICE_RECORD_LINK_MANUAL_DEDUPE_PATTERN =
+    "^system:service_record_link:schedule:[0-9]+:primary:manual:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$";
+
+export function isServiceRecordLinkManualDedupeKey(value: string): boolean {
+    return new RegExp(SERVICE_RECORD_LINK_MANUAL_DEDUPE_PATTERN).test(value);
+}
+
 const KST_OFFSET = "+09:00";
 
 export function atKstHour(date: Date, hour: number): Date {

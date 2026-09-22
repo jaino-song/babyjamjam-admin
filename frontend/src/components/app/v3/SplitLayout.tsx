@@ -329,8 +329,27 @@ export function SplitLayout({
   useLayoutEffect(() => {
     measureAndApplyMode();
 
+    const parent = splitLayoutRef.current?.parentElement;
+    let observedWidth = parent?.getBoundingClientRect().width;
+    let measureFrame = 0;
+    const resizeObserver = parent && typeof ResizeObserver !== "undefined"
+      ? new ResizeObserver(() => {
+          const nextWidth = parent.getBoundingClientRect().width;
+          if (nextWidth === observedWidth) return;
+          observedWidth = nextWidth;
+          window.cancelAnimationFrame(measureFrame);
+          measureFrame = window.requestAnimationFrame(measureAndApplyMode);
+        })
+      : null;
+    // Shell scaling can change the available width after the window resize event.
+    if (parent) resizeObserver?.observe(parent);
+
     window.addEventListener("resize", measureAndApplyMode);
-    return () => window.removeEventListener("resize", measureAndApplyMode);
+    return () => {
+      window.removeEventListener("resize", measureAndApplyMode);
+      resizeObserver?.disconnect();
+      window.cancelAnimationFrame(measureFrame);
+    };
   }, [measureAndApplyMode, childArray.length]);
 
   const mobileOffset = columns === 3

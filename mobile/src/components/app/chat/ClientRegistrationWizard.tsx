@@ -1,5 +1,7 @@
 "use client";
 import { normalizeApiError } from "@babyjamjam/shared";
+import { formatBirthdayInput } from "@babyjamjam/shared/utils/birthday";
+import { getUserErrorMessage } from "@babyjamjam/shared";
 
 
 import { useMemo, useState } from "react";
@@ -98,7 +100,7 @@ export function ClientRegistrationWizard({ onCreated }: ClientRegistrationWizard
     const isBasicsValid =
         name.trim().length > 0 &&
         phone.replace(/\D/g, "").length === 11 &&
-        birthday.replace(/\D/g, "").length === 6 &&
+        isValidClientBirthdayInput(birthday) &&
         address.trim().length > 0 &&
         isStrictIsoDate(dueDate);
 
@@ -267,9 +269,10 @@ export function ClientRegistrationWizard({ onCreated }: ClientRegistrationWizard
                             <Input
                                 id="birthday"
                                 value={birthday}
-                                onChange={(e) => setBirthday(e.target.value)}
-                                placeholder="YYMMDD"
-                                maxLength={6}
+                                onChange={(e) => setBirthday(formatBirthdayInput(e.target.value))}
+                                placeholder="YYYY-MM-DD"
+                                inputMode="numeric"
+                                maxLength={10}
                             />
                         </div>
                         <div className="space-y-2">

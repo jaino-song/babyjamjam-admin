@@ -116,7 +116,7 @@ describeDisposable("SbSystemTemplateRepository branch snapshots (local PostgreSQ
 
     it("freezes every current template on the first semantic edit", async () => {
         const branchId = await createBranch();
-        const initialReminder = `global-${testMarker}-${SystemTemplateKey.SERVICE_END_REMINDER}`;
+        const initialReminder = `global-${testMarker}-${SystemTemplateKey.REMINDER}`;
         const branchGreeting = `branch-${testMarker}-greeting`;
 
         const result = await repository.updateBranchTemplate(
@@ -133,21 +133,21 @@ describeDisposable("SbSystemTemplateRepository branch snapshots (local PostgreSQ
         expect(snapshot?.version).toBe(1);
         expect(Object.keys(snapshot?.templates ?? {})).toHaveLength(templateKeys.length);
         expect(snapshot?.templates[SystemTemplateKey.GREETING]?.content).toBe(branchGreeting);
-        expect(snapshot?.templates[SystemTemplateKey.SERVICE_END_REMINDER]?.content).toBe(initialReminder);
+        expect(snapshot?.templates[SystemTemplateKey.REMINDER]?.content).toBe(initialReminder);
 
-        const updatedReminder = `global-updated-${testMarker}-${SystemTemplateKey.SERVICE_END_REMINDER}`;
+        const updatedReminder = `global-updated-${testMarker}-${SystemTemplateKey.REMINDER}`;
         await prisma.system_template.update({
-            where: { templateKey: SystemTemplateKey.SERVICE_END_REMINDER },
+            where: { templateKey: SystemTemplateKey.REMINDER },
             data: { content: updatedReminder },
         });
 
-        const frozenReminder = await repository.findByBranchKey(branchId, SystemTemplateKey.SERVICE_END_REMINDER);
+        const frozenReminder = await repository.findByBranchKey(branchId, SystemTemplateKey.REMINDER);
         expect(frozenReminder?.content).toBe(initialReminder);
 
         const otherBranchId = await createBranch();
         const otherBranchReminder = await repository.findByBranchKey(
             otherBranchId,
-            SystemTemplateKey.SERVICE_END_REMINDER,
+            SystemTemplateKey.REMINDER,
         );
         expect(otherBranchReminder?.content).toBe(updatedReminder);
     });
@@ -166,7 +166,7 @@ describeDisposable("SbSystemTemplateRepository branch snapshots (local PostgreSQ
         const branchReminder = `branch-${testMarker}-reminder`;
         await repository.updateBranchTemplate(
             branchId,
-            SystemTemplateKey.SERVICE_END_REMINDER,
+            SystemTemplateKey.REMINDER,
             branchReminder,
             "user-b",
             undefined,
@@ -179,7 +179,7 @@ describeDisposable("SbSystemTemplateRepository branch snapshots (local PostgreSQ
             data: { content: globalInfo },
         });
 
-        expect((await repository.findByBranchKey(branchId, SystemTemplateKey.SERVICE_END_REMINDER))?.content)
+        expect((await repository.findByBranchKey(branchId, SystemTemplateKey.REMINDER))?.content)
             .toBe(branchReminder);
         expect((await repository.findByBranchKey(branchId, SystemTemplateKey.INFO))?.content)
             .toBe(`global-${testMarker}-${SystemTemplateKey.INFO}`);
@@ -274,7 +274,7 @@ describeDisposable("SbSystemTemplateRepository branch snapshots (local PostgreSQ
             ),
             repository.updateBranchTemplate(
                 branchId,
-                SystemTemplateKey.SERVICE_END_REMINDER,
+                SystemTemplateKey.REMINDER,
                 `concurrent-${testMarker}-reminder`,
                 "user-b",
                 undefined,
@@ -288,7 +288,7 @@ describeDisposable("SbSystemTemplateRepository branch snapshots (local PostgreSQ
         expect(Object.keys(snapshot?.templates ?? {})).toHaveLength(templateKeys.length);
         expect(snapshot?.templates[SystemTemplateKey.GREETING]?.content)
             .toBe(`concurrent-${testMarker}-greeting`);
-        expect(snapshot?.templates[SystemTemplateKey.SERVICE_END_REMINDER]?.content)
+        expect(snapshot?.templates[SystemTemplateKey.REMINDER]?.content)
             .toBe(`concurrent-${testMarker}-reminder`);
     });
 

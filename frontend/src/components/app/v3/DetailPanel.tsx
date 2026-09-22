@@ -34,6 +34,8 @@ interface DetailPanelProps {
   trailing?: React.ReactNode;
   /** Optional stepper rendered on the right side of the structured header */
   stepper?: React.ReactNode;
+  /** Controls whether the stepper shares the title row or renders below it. */
+  stepperPlacement?: "inline" | "below-title";
   /** Optional action row rendered between header and tabs. */
   headerAction?: React.ReactNode;
   /** Optional back button rendered at the top of the header. Overrides SplitLayout compact back behavior. */
@@ -109,6 +111,7 @@ export function DetailPanel({
   badgesRight,
   trailing,
   stepper,
+  stepperPlacement = "inline",
   headerAction,
   backAction,
   compactBackLabel = "목록으로 돌아가기",
@@ -148,6 +151,7 @@ export function DetailPanel({
     ) : subtitle;
   const hasStructuredHeader = !!resolvedTitle;
   const hasHeaderTrailing = !!stepper || !!trailing;
+  const shouldPlaceStepperBelowTitle = stepperPlacement === "below-title" && !!stepper;
   const renderedTabs =
     isLoading &&
     React.isValidElement<React.ComponentProps<typeof DetailTabs>>(tabs) &&
@@ -156,7 +160,14 @@ export function DetailPanel({
       : tabs;
 
   const renderedHeader = hasStructuredHeader ? (
-    <div className="flex items-center justify-between gap-[calc(16px*var(--glint-ui-scale,1))]">
+    <div className={cn(
+      "flex justify-between gap-[calc(16px*var(--glint-ui-scale,1))]",
+      shouldPlaceStepperBelowTitle
+        ? "flex-col items-stretch"
+        : stepper
+          ? "flex-col items-stretch md:flex-row md:items-center"
+          : "items-center",
+    )}>
       <div className="flex min-w-0 items-center gap-[calc(12px*var(--glint-ui-scale,1))]">
         {avatar}
         <PanelTitleGroup
@@ -172,7 +183,10 @@ export function DetailPanel({
         />
       </div>
       {hasHeaderTrailing ? (
-        <div className="flex shrink-0 items-center gap-[calc(8px*var(--glint-ui-scale,1))]">
+        <div className={cn(
+          "flex shrink-0 items-center gap-[calc(8px*var(--glint-ui-scale,1))]",
+          shouldPlaceStepperBelowTitle && "w-full min-w-0 max-w-full justify-center overflow-x-auto",
+        )}>
           {stepper}
           {trailing}
         </div>
@@ -184,6 +198,7 @@ export function DetailPanel({
     <div
       data-component={dataComponent}
       data-slot="detail-panel"
+      data-has-stepper={stepper ? "true" : undefined}
       data-source-component={sourceComponent}
       className="relative flex h-full min-h-0 flex-col overflow-hidden rounded-[28px] bg-white shadow-v3"
     >

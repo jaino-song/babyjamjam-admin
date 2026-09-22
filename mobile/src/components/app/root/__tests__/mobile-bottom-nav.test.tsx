@@ -33,6 +33,23 @@ describe("MobileBottomNav", () => {
     expect(screen.getByRole("link", { name: "전체" })).toHaveAttribute("aria-current", "page");
   });
 
+  it("leaves the dedicated agent shell full-screen on the chat route", () => {
+    mockUsePathname.mockReturnValue("/chat");
+
+    render(<MobileBottomNav />);
+
+    expect(screen.queryByRole("navigation")).not.toBeInTheDocument();
+  });
+
+  it("keeps All active on the consultations route", () => {
+    mockUsePathname.mockReturnValue("/consultations");
+
+    render(<MobileBottomNav />);
+
+    expect(screen.getByRole("link", { name: "전체" })).toHaveAttribute("aria-current", "page");
+    expect(screen.getByRole("link", { name: "전체" })).toHaveAttribute("data-visual-active", "true");
+  });
+
   it("does not mark All active on notification settings", () => {
     mockUsePathname.mockReturnValue("/notification");
 

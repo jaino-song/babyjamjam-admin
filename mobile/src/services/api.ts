@@ -17,6 +17,9 @@ import type {
     MessageAutomationPoliciesResponse,
     MessageAutomationPolicy,
     MessageAutomationPolicyRow,
+    MessageSettingsPolicyActivation,
+    MessageSettingsPolicyId,
+    StoredMessageSettingsPolicyId,
     MessageSenderApprovalResponse,
     MessageSenderApprovalStatus,
 } from "@babyjamjam/shared/types/message";
@@ -53,6 +56,15 @@ export interface ContractDataDto {
 export interface ServiceRecordTemplateIdResponse {
     templateId: string | null;
     templateIds?: string[];
+}
+
+export interface ReceiptLinkPreparation {
+    clientId: number;
+    clientName: string;
+    recipientPhone: string;
+    documentId: string;
+    receiptUrl: string;
+    expiresAt: string;
 }
 
 export interface ContractAutoFinalizeConfig {
@@ -466,8 +478,19 @@ export const eformsignApi = {
         `/api/eformsign/documents/${encodeURIComponent(documentId)}/download_files?fileType=document&format=receipt-png`,
     getDocumentPreviewUrl: (documentId: string): string =>
         `/api/eformsign/documents/${encodeURIComponent(documentId)}/download_files?fileType=document`,
-    sendReceiptLink: async (documentId: string): Promise<{ jobId: string; scheduledFor: string; clientName: string }> => {
-        const { data } = await api.post('/receipt-links/send', { documentId });
+    prepareReceiptLink: async (clientId: number): Promise<ReceiptLinkPreparation> => {
+        const { data } = await api.post<ReceiptLinkPreparation>('/receipt-links/prepare', { clientId });
+        return data;
+    },
+    sendReceiptLink: async (
+        documentId: string,
+        expected?: { clientId?: number; recipientPhone?: string },
+    ): Promise<{ jobId: string; scheduledFor: string; clientName: string }> => {
+        const { data } = await api.post('/receipt-links/send', {
+            documentId,
+            ...(expected?.clientId !== undefined ? { clientId: expected.clientId } : {}),
+            ...(expected?.recipientPhone !== undefined ? { recipientPhone: expected.recipientPhone } : {}),
+        });
         return data;
     },
     getInProgressDocuments: async (): Promise<EformsignDocumentsResponse> => {
@@ -516,6 +539,9 @@ export type {
     MessageAutomationPoliciesResponse,
     MessageAutomationPolicy,
     MessageAutomationPolicyRow,
+    MessageSettingsPolicyActivation,
+    MessageSettingsPolicyId,
+    StoredMessageSettingsPolicyId,
     MessageSenderApprovalResponse,
     MessageSenderApprovalStatus,
 };
@@ -565,6 +591,16 @@ export const settingsApi = {
         config: MessageAutomationPastTriggerConfig,
     ): Promise<MessageAutomationPastTriggerConfig> => {
         const { data } = await api.put("/settings/message-automation-policies/past-trigger", config);
+        return data;
+    },
+    updateMessageSettingsPolicyActivation: async (
+        policyId: StoredMessageSettingsPolicyId,
+        enabled: boolean,
+    ): Promise<MessageSettingsPolicyActivation> => {
+        const { data } = await api.put(
+            `/settings/message-policy-activations/${policyId}`,
+            { enabled },
+        );
         return data;
     },
     requestMessageSenderApproval: async (): Promise<MessageSenderApprovalResponse> => {

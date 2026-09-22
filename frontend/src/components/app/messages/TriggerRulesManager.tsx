@@ -1,10 +1,7 @@
 "use client";
 
-
-/* eslint-disable react-hooks/set-state-in-effect -- controlled form state is synchronized when list selection and template availability change */
-
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   BellRing,
   CalendarClock,
@@ -25,6 +22,7 @@ import {
   DetailTabs,
   DetailTabPanels,
   InfoCard,
+  InfoRow,
   type SplitLayoutMode,
 } from "@/components/app/v3";
 import { Switch } from "@/components/ui/switch";
@@ -33,7 +31,13 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { TitleSelectMolecule } from "@/components/ui/title-select-molecule";
 import { TitleTextInputMolecule } from "@/components/ui/title-text-input-molecule";
-import { settingsApi } from "@/services/api";
+import { TwoButtonModal } from "@/components/app/ui/TwoButtonModal";
+import {
+  settingsApi,
+  type ClientRegistrationPolicy,
+  type ClientRegistrationPolicyPatch,
+  type MessageAutomationPoliciesResponse,
+} from "@/services/api";
 import { useToast } from "@/hooks/use-toast";
 import {
   useMessageTriggerRules,
@@ -41,8 +45,10 @@ import {
   useCreateMessageTriggerRule,
   useUpdateMessageTriggerRule,
   useUpdateMessageTriggerRuleBranchActivation,
+  useActivateMessageTriggerRuleWithParent,
   useDeleteMessageTriggerRule,
 } from "@/features/message-triggers/hooks/use-message-triggers";
+import { messageTriggerKeys } from "@/features/message-triggers/hooks/keys";
 import {
   CONFIGURABLE_SMS_TRIGGER_TEMPLATE_KEYS,
   MESSAGE_TRIGGER_AUTOMATIC_VARIABLE_KEYS,
@@ -51,6 +57,8 @@ import {
   deriveRecipientTypesFromTemplates,
   getChannelTemplates,
   isTriggerRuleInChannel,
+  isTriggerTemplateInChannel,
+  SMS_TRIGGER_TEMPLATE_KEYS,
   SMS_TRIGGER_TO_SYSTEM_TEMPLATE,
   type TriggerMessageChannel,
 } from "@/features/message-triggers/channel";
@@ -67,6 +75,7 @@ import type {
   TriggerTemplateCatalogItem,
   TriggerTemplateKey,
 } from "@/features/message-triggers/types";
+import { getUserErrorMessage } from "@babyjamjam/shared";
 
 type RuleSelection = string | "new" | null;
 type RuleStatusFilter = "active" | "inactive";
@@ -121,13 +130,14 @@ const RECIPIENT_LABELS: Record<TriggerRecipientType, string> = {
 
 const RECIPIENT_TYPE_ORDER = Object.keys(RECIPIENT_LABELS) as TriggerRecipientType[];
 
-function getDefaultFormState(): RuleFormState {
+function getDefaultFormState(isActive = true): RuleFormState {
   return {
     name: "",
-    isActive: true,
+    isActive,
     eventType: "SERVICE_START",
     offsetType: "BEFORE_DAYS",
     offsetDays: 7,
+    sendTime: "09:00",
     recipientType: "CLIENT",
     templateKey: "SERVICE_INFO",
   };
@@ -162,10 +172,13 @@ const TRIGGER_RULE_DETAIL_TABS = [
 
 const TRIGGER_RULE_APPROVAL_MESSAGE =
   "메시지 발송 승인 후에 설정 가능합니다. 설정에서 메시지 발송 기능을 신청해 주세요.";
-
-const DEDICATED_TRIGGER_TEMPLATE_LABELS: Partial<Record<TriggerTemplateKey, string>> = {
-  SERVICE_RECORD_LINK: "제공기록지 작성 링크",
-};
+const CLIENT_REGISTRATION_POLICY_QUERY_KEY = ["settings", "client-registration-policy"] as const;
+const TRIGGER_TEMPLATE_OPTION_SUFFIXES = {
+  serviceRecordLink: " · 제공기록지 전용 자동화에서 관리",
+  eventAndRecipientMismatch: " · 선택한 이벤트·수신 대상과 맞지 않음",
+  eventMismatch: " · 선택한 이벤트와 맞지 않음",
+  recipientMismatch: " · 선택한 수신 대상과 맞지 않음",
+} as const;
 
 const TRIGGER_TEMPLATE_MESSAGE_FALLBACKS: Record<TriggerTemplateKey, string> = {
   CLIENT_WELCOME: `[아이미래 인천]
@@ -240,14 +253,27 @@ const TRIGGER_TEMPLATE_MESSAGE_FALLBACKS: Record<TriggerTemplateKey, string> = {
 감사합니다 :)`,
 };
 
-function toFormState(rule: MessageTriggerRule | null): RuleFormState {
+const LEGACY_SERVICE_END_NOTICE_SYSTEM_SUFFIX = " (수동 발송)";
+
+function getRuleDisplayName(rule: MessageTriggerRule): string {
+  if (rule.branchId !== null || rule.templateKey !== "SERVICE_END_NOTICE") {
+    return rule.name;
+  }
+
+  return rule.name.endsWith(LEGACY_SERVICE_END_NOTICE_SYSTEM_SUFFIX)
+    ? rule.name.slice(0, -LEGACY_SERVICE_END_NOTICE_SYSTEM_SUFFIX.length)
+    : rule.name;
+}
+
+function toFormState(rule: MessageTriggerRule | null, isActiveOverride?: boolean): RuleFormState {
   if (!rule) return getDefaultFormState();
   return {
-    name: rule.name,
-    isActive: rule.isActive,
+    name: getRuleDisplayName(rule),
+    isActive: isActiveOverride ?? rule.isActive,
     eventType: rule.eventType,
     offsetType: rule.offsetType,
     offsetDays: rule.offsetDays,
+    sendTime: rule.sendTime ?? "09:00",
     recipientType: rule.recipientType,
     templateKey: rule.templateKey,
   };
@@ -256,6 +282,7 @@ function toFormState(rule: MessageTriggerRule | null): RuleFormState {
 function normalizeDto(dto: RuleFormState): CreateMessageTriggerRuleDto {
   return {
     ...dto,
+    sendTime: dto.offsetType === "IMMEDIATE" ? "09:00" : dto.sendTime,
     offsetDays:
       dto.offsetType === "BEFORE_DAYS" || dto.offsetType === "AFTER_DAYS"
         ? Number(dto.offsetDays || 0)
@@ -272,11 +299,96 @@ function getRuleSummary(rule: RuleFormState) {
     timingLabel = `${timingLabel.replace("N", String(rule.offsetDays || 0))}`;
   }
 
-  return `${eventLabel} · ${timingLabel} · ${recipientLabel}`;
+  const timeLabel = rule.offsetType === "IMMEDIATE" ? "" : ` ${rule.sendTime ?? "09:00"} (한국 시간)`;
+  return `${eventLabel} · ${timingLabel}${timeLabel} · ${recipientLabel}`;
 }
 
 function getRuleIcon(eventType: TriggerEventType) {
   return EVENT_OPTIONS.find((option) => option.value === eventType)?.icon ?? BellRing;
+}
+
+const MESSAGE_AUTOMATION_POLICIES_QUERY_KEY = [
+  "settings",
+  "message-automation-policies",
+] as const;
+const PARENT_DISABLED_RETRY_MESSAGE =
+  "이 지점의 메시지 자동 발송이 꺼져 있어요. 설정을 새로고침한 뒤 다시 시도해 주세요.";
+
+function getErrorStatus(error: unknown): number | undefined {
+  if (!error || typeof error !== "object" || !("response" in error)) {
+    return undefined;
+  }
+
+  const status = (error as { response?: { status?: unknown } }).response?.status;
+  return typeof status === "number" ? status : undefined;
+}
+
+function getErrorCode(error: unknown): string | undefined {
+  if (!error || typeof error !== "object" || !("response" in error)) {
+    return undefined;
+  }
+
+  const payload = (error as { response?: { data?: unknown } }).response?.data;
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+    return undefined;
+  }
+
+  const code = (payload as { code?: unknown }).code;
+  if (typeof code === "string") return code;
+
+  const nestedError = (payload as { error?: unknown }).error;
+  if (nestedError && typeof nestedError === "object" && !Array.isArray(nestedError)) {
+    const nestedCode = (nestedError as { code?: unknown }).code;
+    if (typeof nestedCode === "string") return nestedCode;
+  }
+
+  return undefined;
+}
+
+function isParentDisabledConflict(error: unknown): boolean {
+  return getErrorStatus(error) === 409 && getErrorCode(error) === "MESSAGE_AUTOMATION_PARENT_DISABLED";
+}
+
+function getTemplateOptionPresentation(
+  template: TriggerTemplateCatalogItem,
+  eventType: TriggerEventType,
+  recipientType: TriggerRecipientType,
+) {
+  if (template.key === "SERVICE_RECORD_LINK") {
+    return {
+      label: `${template.name}${TRIGGER_TEMPLATE_OPTION_SUFFIXES.serviceRecordLink}`,
+      disabled: true,
+    };
+  }
+
+  const matchesEvent = template.allowedEventTypes.includes(eventType);
+  const matchesRecipient = template.allowedRecipientTypes.includes(recipientType);
+
+  if (!matchesEvent && !matchesRecipient) {
+    return {
+      label: `${template.name}${TRIGGER_TEMPLATE_OPTION_SUFFIXES.eventAndRecipientMismatch}`,
+      disabled: true,
+    };
+  }
+
+  if (!matchesEvent) {
+    return {
+      label: `${template.name}${TRIGGER_TEMPLATE_OPTION_SUFFIXES.eventMismatch}`,
+      disabled: true,
+    };
+  }
+
+  if (!matchesRecipient) {
+    return {
+      label: `${template.name}${TRIGGER_TEMPLATE_OPTION_SUFFIXES.recipientMismatch}`,
+      disabled: true,
+    };
+  }
+
+  return {
+    label: template.name,
+    disabled: false,
+  };
 }
 
 export function TriggerRulesManager({
@@ -287,20 +399,32 @@ export function TriggerRulesManager({
   channel?: TriggerMessageChannel;
 }) {
   const { toast } = useToast();
+  const queryClient = useQueryClient();
   const [selectedRuleId, setSelectedRuleId] = useState<RuleSelection>(null);
   const [isRuleDetailDismissed, setIsRuleDetailDismissed] = useState(false);
   const [splitLayoutMode, setSplitLayoutMode] = useState<SplitLayoutMode | null>(null);
   const [statusFilter, setStatusFilter] = useState<RuleStatusFilter>("active");
   const [activeDetailTab, setActiveDetailTab] = useState<TriggerRuleDetailTab>("settings");
   const [formState, setFormState] = useState<RuleFormState>(() => getDefaultFormState());
+  const [parentActivationRule, setParentActivationRule] = useState<MessageTriggerRule | null>(null);
+  const [parentActivationError, setParentActivationError] = useState<string | null>(null);
+  const [isParentActivationPending, setIsParentActivationPending] = useState(false);
+  const parentActivationPendingRef = useRef(false);
+  const newRuleDefaultIsActiveRef = useRef(true);
+  const previousSelectedRuleRef = useRef<RuleSelection>(null);
   const component = (suffix: string) => `${dataComponent}_${suffix}`;
   const isCompactSplitLayout = splitLayoutMode === "compact";
   const copy = CHANNEL_COPY[channel];
 
-  const { data: rulesData = [], isLoading } = useMessageTriggerRules();
+  const {
+    data: rulesData = [],
+    isLoading,
+    refetch: refetchMessageTriggerRules,
+  } = useMessageTriggerRules();
   const createMutation = useCreateMessageTriggerRule();
   const updateMutation = useUpdateMessageTriggerRule();
   const branchActivationMutation = useUpdateMessageTriggerRuleBranchActivation();
+  const parentActivationMutation = useActivateMessageTriggerRuleWithParent();
   const deleteMutation = useDeleteMessageTriggerRule();
 
   const rules = useMemo(() => (Array.isArray(rulesData) ? rulesData : []), [rulesData]);
@@ -309,7 +433,71 @@ export function TriggerRulesManager({
     queryKey: ["settings", "message-sender-approval"],
     queryFn: settingsApi.getMessageSenderApproval,
   });
+  const {
+    data: messageAutomationPolicies,
+    isLoading: isMessageAutomationPoliciesLoading,
+    isError: isMessageAutomationPoliciesError,
+    refetch: refetchMessageAutomationPolicies,
+  } = useQuery<MessageAutomationPoliciesResponse>({
+    queryKey: MESSAGE_AUTOMATION_POLICIES_QUERY_KEY,
+    queryFn: settingsApi.getMessageAutomationPolicies,
+  });
+  const {
+    data: clientRegistrationPolicy,
+    isLoading: isClientRegistrationPolicyLoading,
+    isError: isClientRegistrationPolicyError,
+    refetch: refetchClientRegistrationPolicy,
+  } = useQuery<ClientRegistrationPolicy>({
+    queryKey: CLIENT_REGISTRATION_POLICY_QUERY_KEY,
+    queryFn: settingsApi.getClientRegistrationPolicy,
+  });
+  const updateClientRegistrationPolicyMutation = useMutation({
+    mutationFn: settingsApi.updateClientRegistrationPolicy,
+    onMutate: async (patch: ClientRegistrationPolicyPatch) => {
+      await queryClient.cancelQueries({ queryKey: CLIENT_REGISTRATION_POLICY_QUERY_KEY });
+      const previous = queryClient.getQueryData<ClientRegistrationPolicy>(CLIENT_REGISTRATION_POLICY_QUERY_KEY);
+      queryClient.setQueryData<ClientRegistrationPolicy>(
+        CLIENT_REGISTRATION_POLICY_QUERY_KEY,
+        (current) => current ? { ...current, ...patch } : current,
+      );
+      return { previous };
+    },
+    onError: (error, _patch, context) => {
+      if (context?.previous) {
+        queryClient.setQueryData(CLIENT_REGISTRATION_POLICY_QUERY_KEY, context.previous);
+      }
+      toast({
+        variant: "destructive",
+        description: getUserErrorMessage(error, "자동 등록 고객의 인사 문자 설정을 저장하지 못했어요"),
+      });
+    },
+    onSuccess: (savedPolicy) => {
+      queryClient.setQueryData(CLIENT_REGISTRATION_POLICY_QUERY_KEY, savedPolicy);
+      toast({ variant: "success", description: "자동 등록 고객의 인사 문자 설정을 저장했어요" });
+    },
+    onSettled: async () => {
+      await queryClient.invalidateQueries({ queryKey: CLIENT_REGISTRATION_POLICY_QUERY_KEY });
+    },
+  });
   const isTriggerRulesLocked = !isSenderApprovalLoading && senderApproval?.isApproved === false;
+  const isAdminOrOwner = messageAutomationPolicies?.canManageActivation === true;
+  const triggerDispatchPolicy = messageAutomationPolicies?.policies?.find(
+    (policy) => policy.id === "trigger-dispatch",
+  );
+  const triggerDispatchActive =
+    isMessageAutomationPoliciesLoading || isMessageAutomationPoliciesError
+      ? null
+      : typeof triggerDispatchPolicy?.active === "boolean"
+      ? triggerDispatchPolicy.active
+      : typeof messageAutomationPolicies?.policyActivations?.["trigger-dispatch"] === "boolean"
+        ? messageAutomationPolicies.policyActivations["trigger-dispatch"]
+        : null;
+  const isTriggerDispatchAvailable =
+    !isMessageAutomationPoliciesLoading &&
+    !isMessageAutomationPoliciesError &&
+    triggerDispatchPolicy !== undefined &&
+    triggerDispatchActive !== null;
+  const isTriggerDispatchOff = isTriggerDispatchAvailable && triggerDispatchActive === false;
   const effectiveSelectedRuleId = isTriggerRulesLocked ? null : selectedRuleId;
 
   const selectedRule =
@@ -330,22 +518,82 @@ export function TriggerRulesManager({
   const selectedSystemTemplateKey = SMS_TRIGGER_TO_SYSTEM_TEMPLATE[formState.templateKey] ?? "";
   const { data: selectedSystemTemplate } = useSystemTemplate(selectedSystemTemplateKey);
 
-  const channelTemplates = useMemo(
+  const automaticChannelTemplates = useMemo(
     () => getChannelTemplates(templateQuery.data ?? [], channel),
     [channel, templateQuery.data],
   );
+  const visibleTemplates = useMemo(
+    () => {
+      const catalogTemplates = (templateQuery.data ?? []).filter((template) =>
+        isTriggerTemplateInChannel(template.key, channel),
+      );
+
+      if (
+        templateQuery.isLoading
+        || templateQuery.isError
+        || catalogTemplates.length === 0
+        || catalogTemplates.some((template) => template.key === "SERVICE_RECORD_LINK")
+      ) {
+        return catalogTemplates;
+      }
+
+      const dedicatedSystemTemplate = selectedSystemTemplateKey === "SERVICE_RECORD_LINK"
+        ? selectedSystemTemplate
+        : undefined;
+      const serviceRecordTemplate: TriggerTemplateCatalogItem = {
+        key: "SERVICE_RECORD_LINK",
+        name: dedicatedSystemTemplate?.name ?? "제공기록지 작성 링크",
+        description: dedicatedSystemTemplate?.description ?? "제공기록지 작성 링크입니다.",
+        allowedEventTypes: ["SERVICE_START"],
+        allowedRecipientTypes: ["PRIMARY_EMPLOYEE"],
+        requiredVariables: (dedicatedSystemTemplate?.requiredVariables ?? []).map(({ key, label }) => ({
+          key,
+          label,
+        })),
+        providers: { sms: { templateKey: "SERVICE_RECORD_LINK" } },
+      };
+      const serviceRecordOrder = SMS_TRIGGER_TEMPLATE_KEYS.indexOf("SERVICE_RECORD_LINK");
+      const canonicalPredecessor = SMS_TRIGGER_TEMPLATE_KEYS[serviceRecordOrder - 1];
+      const predecessorIndex = catalogTemplates.findIndex(
+        (template) => template.key === canonicalPredecessor,
+      );
+      const successorIndex = catalogTemplates.findIndex(
+        (template) => SMS_TRIGGER_TEMPLATE_KEYS.indexOf(template.key) > serviceRecordOrder,
+      );
+      // Keep the backend order intact and place the synthetic item next to its canonical neighbor.
+      const insertAt = predecessorIndex >= 0 ? predecessorIndex + 1 : successorIndex;
+
+      if (insertAt === -1) {
+        return [...catalogTemplates, serviceRecordTemplate];
+      }
+
+      return [
+        ...catalogTemplates.slice(0, insertAt),
+        serviceRecordTemplate,
+        ...catalogTemplates.slice(insertAt),
+      ];
+    },
+    [
+      channel,
+      selectedSystemTemplate,
+      selectedSystemTemplateKey,
+      templateQuery.data,
+      templateQuery.isError,
+      templateQuery.isLoading,
+    ],
+  );
 
   const eventOptions = useMemo(() => {
-    const allowedEvents = new Set(deriveEventTypesFromTemplates(channelTemplates));
+    const allowedEvents = new Set(deriveEventTypesFromTemplates(automaticChannelTemplates));
     return EVENT_OPTIONS.filter((option) => allowedEvents.has(option.value));
-  }, [channelTemplates]);
+  }, [automaticChannelTemplates]);
 
   const getRecipientTypesForEvent = useCallback(
     (eventType: TriggerEventType): TriggerRecipientType[] => {
-      const allowed = new Set(deriveRecipientTypesFromTemplates(channelTemplates, eventType));
+      const allowed = new Set(deriveRecipientTypesFromTemplates(automaticChannelTemplates, eventType));
       return RECIPIENT_TYPE_ORDER.filter((recipientType) => allowed.has(recipientType));
     },
-    [channelTemplates],
+    [automaticChannelTemplates],
   );
 
   const recipientOptions = useMemo(() => {
@@ -358,48 +606,14 @@ export function TriggerRulesManager({
       }));
   }, [getRecipientTypesForEvent, formState.eventType, isSelectedDedicatedRule, selectedRule]);
 
-  const availableTemplates = useMemo<TriggerTemplateCatalogItem[]>(() => {
-    if (isSelectedDedicatedRule && selectedRule) {
-      const currentTemplate = (templateQuery.data ?? []).find(
-        (template) => template.key === selectedRule.templateKey,
-      );
-      if (currentTemplate) return [currentTemplate];
-
-      return [{
-        key: selectedRule.templateKey,
-        name: selectedSystemTemplate?.name
-          ?? DEDICATED_TRIGGER_TEMPLATE_LABELS[selectedRule.templateKey]
-          ?? selectedRule.templateKey,
-        description: selectedSystemTemplate?.description ?? "전용 자동화에서 관리되는 메시지 템플릿입니다.",
-        allowedEventTypes: [selectedRule.eventType],
-        allowedRecipientTypes: [selectedRule.recipientType],
-        requiredVariables: (selectedSystemTemplate?.requiredVariables ?? []).map((variable) => ({
-          key: variable.key,
-          label: variable.label,
-        })),
-        providers: {
-          sms: {
-            templateKey: selectedSystemTemplateKey || selectedRule.templateKey,
-          },
-        },
-      }];
-    }
-    return deriveAvailableTemplates(channelTemplates, formState.eventType, formState.recipientType);
-  }, [
-    channelTemplates,
-    formState.eventType,
-    formState.recipientType,
-    isSelectedDedicatedRule,
-    selectedRule,
-    selectedSystemTemplate?.description,
-    selectedSystemTemplate?.name,
-    selectedSystemTemplate?.requiredVariables,
-    selectedSystemTemplateKey,
-    templateQuery.data,
-  ]);
+  const availableTemplates = useMemo<TriggerTemplateCatalogItem[]>(
+    () => deriveAvailableTemplates(automaticChannelTemplates, formState.eventType, formState.recipientType),
+    [automaticChannelTemplates, formState.eventType, formState.recipientType],
+  );
   const selectedTemplate = useMemo(() => {
-    return availableTemplates.find((template) => template.key === formState.templateKey) ?? null;
-  }, [availableTemplates, formState.templateKey]);
+    return visibleTemplates.find((template) => template.key === formState.templateKey) ?? null;
+  }, [formState.templateKey, visibleTemplates]);
+  const isClientGreetingRule = formState.templateKey === "CLIENT_GREETING";
   const requiredTemplateVariables = useMemo(() => {
     const variables = [...(selectedTemplate?.requiredVariables ?? [])];
     const knownKeys = new Set(variables.map((variable) => variable.key));
@@ -426,10 +640,10 @@ export function TriggerRulesManager({
     : TRIGGER_TEMPLATE_MESSAGE_FALLBACKS[formState.templateKey];
   const filteredRules = useMemo(() => {
     return rules.filter((rule) =>
-      rule.isActive === (statusFilter === "active") &&
+      (isTriggerDispatchOff ? false : rule.isActive) === (statusFilter === "active") &&
       isTriggerRuleInChannel(rule, channel)
     );
-  }, [channel, rules, statusFilter]);
+  }, [channel, isTriggerDispatchOff, rules, statusFilter]);
 
   useEffect(() => {
     if (isTriggerRulesLocked) return;
@@ -466,11 +680,28 @@ export function TriggerRulesManager({
 
   useEffect(() => {
     if (effectiveSelectedRuleId === "new") {
-      setFormState(getDefaultFormState());
+      setFormState((current) => {
+        const isEnteringNewDraft = previousSelectedRuleRef.current !== "new";
+        const next = isEnteringNewDraft
+          ? getDefaultFormState(newRuleDefaultIsActiveRef.current)
+          : current;
+        return isTriggerDispatchAvailable && triggerDispatchActive === true
+          ? next
+          : { ...next, isActive: false };
+      });
+      previousSelectedRuleRef.current = effectiveSelectedRuleId;
       return;
     }
-    setFormState(toFormState(selectedRule));
-  }, [channel, effectiveSelectedRuleId, selectedRule]);
+    previousSelectedRuleRef.current = effectiveSelectedRuleId;
+    setFormState(toFormState(selectedRule, isTriggerDispatchOff ? false : undefined));
+  }, [
+    channel,
+    effectiveSelectedRuleId,
+    isTriggerDispatchAvailable,
+    isTriggerDispatchOff,
+    selectedRule,
+    triggerDispatchActive,
+  ]);
 
   useEffect(() => {
     // Wait until the catalog has loaded before reconciling the form against derived options.
@@ -524,21 +755,23 @@ export function TriggerRulesManager({
     return filteredRules.map((rule): TriggerRuleListItem => ({
       kind: "trigger-rule",
       id: rule.id,
-      title: rule.name,
+      title: getRuleDisplayName(rule),
       subtitle: `${rule.branchId === null ? "시스템 자동화 · " : ""}${getRuleSummary(toFormState(rule))}`,
-      active: rule.isActive,
+      active: isTriggerDispatchOff ? false : rule.isActive,
       icon: getRuleIcon(rule.eventType),
       rule,
     }));
-  }, [filteredRules]);
+  }, [filteredRules, isTriggerDispatchOff]);
 
   const hasChanges = useMemo(() => {
     if (effectiveSelectedRuleId === "new") {
       return !!formState.name.trim();
     }
     if (!selectedRule) return false;
-    return JSON.stringify(normalizeDto(formState)) !== JSON.stringify(normalizeDto(toFormState(selectedRule)));
-  }, [effectiveSelectedRuleId, formState, selectedRule]);
+    return JSON.stringify(normalizeDto(formState)) !== JSON.stringify(
+      normalizeDto(toFormState(selectedRule, isTriggerDispatchOff ? false : undefined)),
+    );
+  }, [effectiveSelectedRuleId, formState, isTriggerDispatchOff, selectedRule]);
 
   const isSaving = createMutation.isPending || updateMutation.isPending;
   const isDetailPendingSelection =
@@ -550,12 +783,40 @@ export function TriggerRulesManager({
   const isDetailLoading = isLoading || isDetailPendingSelection;
   const hasVisibleDetailPanel = isDetailLoading || effectiveSelectedRuleId !== null;
 
+  const invalidateMessageAutomationCaches = async () => {
+    await Promise.all([
+      queryClient.invalidateQueries({ queryKey: messageTriggerKeys.all }),
+      queryClient.invalidateQueries({ queryKey: messageTriggerKeys.upcoming() }),
+      queryClient.invalidateQueries({ queryKey: messageTriggerKeys.history() }),
+      queryClient.invalidateQueries({ queryKey: MESSAGE_AUTOMATION_POLICIES_QUERY_KEY }),
+    ]);
+  };
+
+  const refreshMessageAutomationState = () => {
+    return Promise.all([
+      refetchMessageTriggerRules(),
+      refetchMessageAutomationPolicies(),
+    ]);
+  };
+
+  const showParentDisabledConflict = async () => {
+    await invalidateMessageAutomationCaches();
+    toast({ variant: "destructive", description: PARENT_DISABLED_RETRY_MESSAGE });
+  };
+
   const handleCreateNew = () => {
     if (isTriggerRulesLocked) return;
+    if (!isTriggerDispatchAvailable) {
+      void refreshMessageAutomationState();
+      toast({ variant: "destructive", description: PARENT_DISABLED_RETRY_MESSAGE });
+      return;
+    }
     setIsRuleDetailDismissed(false);
-    setStatusFilter("active");
+    const isActive = triggerDispatchActive === true;
+    newRuleDefaultIsActiveRef.current = isActive;
+    setStatusFilter(isActive ? "active" : "inactive");
     setSelectedRuleId("new");
-    setFormState(getDefaultFormState());
+    setFormState(getDefaultFormState(isActive));
   };
 
   const handleRuleSelect = (ruleId: string) => {
@@ -564,9 +825,29 @@ export function TriggerRulesManager({
   };
 
   const handleRuleActiveToggle = async (rule: MessageTriggerRule, checked: boolean) => {
-    try {
-      if (isTriggerRulesLocked || rule.isLockedByGlobal) return;
+    if (isTriggerRulesLocked || rule.isLockedByGlobal) return;
 
+    if (checked && !isTriggerDispatchAvailable) {
+      await refreshMessageAutomationState();
+      toast({ variant: "destructive", description: PARENT_DISABLED_RETRY_MESSAGE });
+      return;
+    }
+
+    if (checked && isTriggerDispatchOff) {
+      if (!isAdminOrOwner) {
+        toast({
+          variant: "destructive",
+          description: "이 지점의 메시지 자동 발송을 켤 권한이 없어요.",
+        });
+        return;
+      }
+
+      setParentActivationError(null);
+      setParentActivationRule(rule);
+      return;
+    }
+
+    try {
       if (rule.branchId === null) {
         await branchActivationMutation.mutateAsync({ id: rule.id, dto: { isActive: checked } });
       } else {
@@ -580,8 +861,75 @@ export function TriggerRulesManager({
         setFormState((current) => ({ ...current, isActive: checked }));
       }
       toast({ variant: "success", description: checked ? "발송 규칙을 켰어요" : "발송 규칙을 껐어요" });
-    } catch {
+    } catch (error) {
+      if (isParentDisabledConflict(error)) {
+        await showParentDisabledConflict();
+        return;
+      }
       toast({ variant: "destructive", description: "규칙 상태를 바꾸지 못했어요" });
+    }
+  };
+
+  const handleConfirmParentActivation = async () => {
+    const rule = parentActivationRule;
+    if (!rule || parentActivationMutation.isPending || isParentActivationPending || parentActivationPendingRef.current) return;
+
+    parentActivationPendingRef.current = true;
+    setIsParentActivationPending(true);
+    setParentActivationError(null);
+    try {
+      await parentActivationMutation.mutateAsync(rule.id);
+      await invalidateMessageAutomationCaches();
+      const [rulesResult, policiesResult] = await refreshMessageAutomationState();
+      const refreshedRules = rulesResult?.data;
+      const refreshedPolicies = policiesResult?.data;
+      if (
+        rulesResult?.isError === true ||
+        policiesResult?.isError === true ||
+        !Array.isArray(refreshedRules) ||
+        !refreshedPolicies
+      ) {
+        setParentActivationError(PARENT_DISABLED_RETRY_MESSAGE);
+        return;
+      }
+
+      const refreshedRule = refreshedRules.find((currentRule) => currentRule.id === rule.id);
+      const refreshedTriggerDispatchPolicy = refreshedPolicies?.policies?.find(
+        (policy) => policy.id === "trigger-dispatch",
+      );
+      const refreshedParentActive = typeof refreshedTriggerDispatchPolicy?.active === "boolean"
+        ? refreshedTriggerDispatchPolicy.active
+        : refreshedPolicies?.policyActivations?.["trigger-dispatch"];
+
+      if (!refreshedRule || typeof refreshedParentActive !== "boolean") {
+        setParentActivationError(PARENT_DISABLED_RETRY_MESSAGE);
+        return;
+      }
+
+      setFormState(toFormState(refreshedRule, refreshedParentActive === false ? false : undefined));
+      if (refreshedParentActive === true && refreshedRule.isActive === true) {
+        setStatusFilter("active");
+      } else if (refreshedParentActive === false) {
+        setStatusFilter("inactive");
+      }
+      setSelectedRuleId(rule.id);
+      setParentActivationRule(null);
+      if (refreshedParentActive === false || refreshedRule?.isActive === false) {
+        toast({ variant: "destructive", description: PARENT_DISABLED_RETRY_MESSAGE });
+      } else {
+        toast({ variant: "success", description: "메시지 자동 발송과 선택한 규칙을 켰어요" });
+      }
+    } catch (error) {
+      if (isParentDisabledConflict(error)) {
+        await showParentDisabledConflict();
+      }
+      const message = isParentDisabledConflict(error)
+        ? PARENT_DISABLED_RETRY_MESSAGE
+        : getUserErrorMessage(error, "규칙을 켜지 못했어요. 잠시 후 다시 시도해 주세요");
+      setParentActivationError(message);
+    } finally {
+      parentActivationPendingRef.current = false;
+      setIsParentActivationPending(false);
     }
   };
 
@@ -592,6 +940,11 @@ export function TriggerRulesManager({
 
   const handleSave = async () => {
     if (isTriggerRulesLocked || isSelectedSystemRule) return;
+    if (!isTriggerDispatchAvailable) {
+      await refreshMessageAutomationState();
+      toast({ variant: "destructive", description: PARENT_DISABLED_RETRY_MESSAGE });
+      return;
+    }
     const dto = normalizeDto(formState);
 
     if (unsupportedRequiredCustomVariables.length > 0) {
@@ -599,6 +952,11 @@ export function TriggerRulesManager({
         variant: "destructive",
         description: "자동 입력할 수 없는 필수 변수가 있어 규칙을 저장할 수 없어요",
       });
+      return;
+    }
+
+    if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(dto.sendTime ?? "")) {
+      toast({ variant: "destructive", description: "발송 시각을 입력해 주세요 (한국 시간)." });
       return;
     }
 
@@ -612,16 +970,32 @@ export function TriggerRulesManager({
       return;
     }
 
+    if (dto.isActive && isTriggerDispatchOff) {
+      await refreshMessageAutomationState();
+      toast({ variant: "destructive", description: PARENT_DISABLED_RETRY_MESSAGE });
+      return;
+    }
+
     try {
       if (selectedRuleId === "new" || !selectedRule) {
-        const created = await createMutation.mutateAsync(dto);
+        const created = await createMutation.mutateAsync({
+          ...dto,
+          isActive: triggerDispatchActive === true ? dto.isActive : false,
+        });
+        if (!created.isActive) {
+          setStatusFilter("inactive");
+        }
         setSelectedRuleId(created.id);
         toast({ variant: "success", description: "발송 규칙을 만들었어요" });
       } else {
         await updateMutation.mutateAsync({ id: selectedRule.id, dto });
         toast({ variant: "success", description: "발송 규칙을 저장했어요" });
       }
-    } catch {
+    } catch (error) {
+      if (isParentDisabledConflict(error)) {
+        await showParentDisabledConflict();
+        return;
+      }
       toast({ variant: "destructive", description: "발송 규칙을 저장하지 못했어요" });
     }
   };
@@ -648,6 +1022,34 @@ export function TriggerRulesManager({
         data-slot="trigger-rules-layout"
         className="flex h-full min-h-0 flex-1 flex-col"
       >
+        {isMessageAutomationPoliciesLoading ? (
+          <InfoCard
+            title="메시지 자동 발송 상태"
+            description="이 지점의 메시지 자동 발송 설정을 불러오는 중이에요."
+            data-component={component("trigger-dispatch-loading")}
+          >
+            <InfoRow label="상태" value="설정 정보를 불러오는 중이에요." />
+          </InfoCard>
+        ) : !isTriggerDispatchAvailable ? (
+          <InfoCard
+            title="메시지 자동 발송 상태"
+            description="이 지점의 메시지 자동 발송 설정을 확인할 수 없어요."
+            data-component={component("trigger-dispatch-error")}
+          >
+            <InfoRow label="상태" value="설정 정보를 불러오지 못했어요." />
+            <div className="mt-3 flex justify-end">
+              <Button
+                type="button"
+                variant="neutral"
+                size="sm"
+                onClick={() => void refreshMessageAutomationState()}
+                data-component={component("trigger-dispatch-retry")}
+              >
+                다시 시도
+              </Button>
+            </div>
+          </InfoCard>
+        ) : null}
         <SplitLayout data-component="desktop_messages_sections_split-layout"
           hasSelection={hasVisibleDetailPanel}
           onBack={handleBackToRuleList}
@@ -715,7 +1117,16 @@ export function TriggerRulesManager({
                             <Switch
                               aria-label={`${item.title} 활성화`}
                               checked={item.active}
-                              disabled={isTriggerRulesLocked || item.rule.isLockedByGlobal === true || updateMutation.isPending || branchActivationMutation.isPending}
+                              disabled={
+                                isTriggerRulesLocked ||
+                                item.rule.isLockedByGlobal === true ||
+                                updateMutation.isPending ||
+                                branchActivationMutation.isPending ||
+                                parentActivationMutation.isPending ||
+                                isParentActivationPending ||
+                                !isTriggerDispatchAvailable ||
+                                (isTriggerDispatchOff && !isAdminOrOwner)
+                              }
                               onClick={(event) => event.stopPropagation()}
                               onCheckedChange={(checked) => {
                                 void handleRuleActiveToggle(item.rule, checked);
@@ -763,7 +1174,11 @@ export function TriggerRulesManager({
           ) : (
             <DetailPanel data-component="desktop_messages_sections_split-layout_detail-panel-3"
               isLoading={isDetailLoading}
-              title={effectiveSelectedRuleId === "new" ? "새 발송 규칙" : selectedRule?.name ?? "발송 규칙"}
+              title={effectiveSelectedRuleId === "new"
+                ? "새 발송 규칙"
+                : selectedRule
+                  ? getRuleDisplayName(selectedRule)
+                  : "발송 규칙"}
               subtitle={isSelectedSystemRule
                 ? "내용은 고정되어 있지만 이 지점에서 발송 여부를 켜고 끌 수 있는 시스템 루틴입니다."
                 : copy.detailSubtitle}
@@ -797,7 +1212,7 @@ export function TriggerRulesManager({
                     size="sm"
                     width="sm"
                     onClick={handleSave}
-                    disabled={!hasChanges || isSaving || unsupportedRequiredCustomVariables.length > 0}
+                    disabled={!hasChanges || isSaving || unsupportedRequiredCustomVariables.length > 0 || !isTriggerDispatchAvailable}
                     data-component={component("trigger-rules-save")}
                   >
                     {isSaving ? "저장 중..." : "저장"}
@@ -883,6 +1298,20 @@ export function TriggerRulesManager({
                           triggerDataComponent={component("trigger-rules-offset-select")}
                         />
 
+                        {formState.offsetType !== "IMMEDIATE" && (
+                          <TitleTextInputMolecule
+                            id="trigger-rule-send-time"
+                            label="발송 시각 (한국 시간)"
+                            type="time"
+                            step={60}
+                            value={formState.sendTime ?? "09:00"}
+                            disabled={isSelectedSystemRule}
+                            onValueChange={(sendTime) => setFormState((current) => ({ ...current, sendTime }))}
+                            dataComponent={component("trigger-rules-send-time")}
+                            inputDataComponent={component("trigger-rules-send-time_input")}
+                          />
+                        )}
+
                         <TitleSelectMolecule
                           id="trigger-rule-recipient"
                           label="수신 대상"
@@ -921,8 +1350,12 @@ export function TriggerRulesManager({
                           id="trigger-rule-template"
                           label="발송 템플릿"
                           value={formState.templateKey}
-                          options={availableTemplates.map((template) => ({
-                            label: template.name,
+                          options={visibleTemplates.map((template) => ({
+                            ...getTemplateOptionPresentation(
+                              template,
+                              formState.eventType,
+                              formState.recipientType,
+                            ),
                             value: template.key,
                           }))}
                           disabled={isSelectedDedicatedRule}
@@ -935,6 +1368,65 @@ export function TriggerRulesManager({
                           dataComponent={component("trigger-rules-template")}
                           triggerDataComponent={component("trigger-rules-template-select")}
                         />
+
+                        {isClientGreetingRule ? (
+                          <InfoCard
+                            title="추가 발송 조건"
+                            description={isClientRegistrationPolicyLoading
+                              ? "고객 자동 등록 설정을 불러오는 중이에요."
+                              : isClientRegistrationPolicyError
+                                ? "고객 자동 등록 설정을 불러오지 못했어요. 다시 시도해 주세요."
+                                : clientRegistrationPolicy?.clientAutoRegistration
+                                  ? "전자문서로 자동 등록된 고객에게 인사 문자를 보낼지 별도로 정합니다."
+                                  : "고객 자동 등록이 꺼져 있어도 미리 설정할 수 있어요. 자동 등록을 켜면 이 조건이 적용됩니다."}
+                            data-component={component("trigger-rules-client-registration-condition")}
+                            className="md:col-span-2"
+                          >
+                            <div className="-mt-1">
+                              {isClientRegistrationPolicyLoading ? (
+                                <InfoRow
+                                  data-component={component("trigger-rules-client-registration-condition-loading")}
+                                  label="상태"
+                                  value="설정 정보를 불러오는 중이에요."
+                                />
+                              ) : isClientRegistrationPolicyError ? (
+                                <>
+                                  <InfoRow
+                                    data-component={component("trigger-rules-client-registration-condition-error")}
+                                    label="상태"
+                                    value="설정 정보를 불러오지 못했어요."
+                                  />
+                                  <div className="mt-3 flex justify-end">
+                                    <Button
+                                      type="button"
+                                      variant="neutral"
+                                      size="sm"
+                                      onClick={() => void refetchClientRegistrationPolicy()}
+                                      data-component={component("trigger-rules-client-registration-condition-retry")}
+                                    >
+                                      다시 시도
+                                    </Button>
+                                  </div>
+                                </>
+                              ) : (
+                                <InfoRow
+                                  data-component={component("trigger-rules-client-registration-condition-toggle")}
+                                  label="전자문서 자동 등록 고객에게도 발송"
+                                  value={(
+                                    <Switch
+                                      aria-label="전자문서 자동 등록 고객에게도 발송"
+                                      checked={clientRegistrationPolicy?.greetingOnAutoRegistration === true}
+                                      disabled={clientRegistrationPolicy === undefined || updateClientRegistrationPolicyMutation.isPending}
+                                      onCheckedChange={(checked) => {
+                                        updateClientRegistrationPolicyMutation.mutate({ greetingOnAutoRegistration: checked });
+                                      }}
+                                    />
+                                  )}
+                                />
+                              )}
+                            </div>
+                          </InfoCard>
+                        ) : null}
 
                         <InfoCard
                           title="필수 자동 입력 정보"
@@ -1018,6 +1510,36 @@ export function TriggerRulesManager({
             </DetailPanel>
           )}
         </SplitLayout>
+        <TwoButtonModal
+          open={parentActivationRule !== null}
+          onOpenChange={(open) => {
+            if (open || parentActivationMutation.isPending || isParentActivationPending || parentActivationPendingRef.current) return;
+            setParentActivationRule(null);
+            setParentActivationError(null);
+          }}
+          title="이 지점의 메시지 자동 발송을 켤까요?"
+          description={parentActivationRule
+            ? `메시지 자동 발송과 선택한 “${parentActivationRule.name}” 규칙을 함께 켭니다. 다른 꺼진 규칙은 그대로 유지됩니다.`
+            : "메시지 자동 발송과 선택한 규칙을 함께 켭니다. 다른 꺼진 규칙은 그대로 유지됩니다."}
+          isDescriptionVisuallyHidden={false}
+          size="detail"
+          cancelLabel="취소"
+          approvalLabel="확인"
+          pendingLabel="처리 중..."
+          isPending={parentActivationMutation.isPending || isParentActivationPending}
+          onApprove={() => void handleConfirmParentActivation()}
+          dataComponent={component("trigger-rules-parent-activation-modal")}
+        >
+          {parentActivationError ? (
+            <p
+              role="alert"
+              data-component={component("trigger-rules-parent-activation-modal-error")}
+              className="text-sm text-v3-burgundy"
+            >
+              {parentActivationError}
+            </p>
+          ) : null}
+        </TwoButtonModal>
       </div>
     </section>
   );

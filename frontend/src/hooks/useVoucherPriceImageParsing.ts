@@ -76,11 +76,19 @@ export function useBulkUpdateVoucherPrices() {
 
       return data;
     },
-    onSuccess: async () => {
-      // 모든 바우처 가격 정보 쿼리 무효화
-      await queryClient.invalidateQueries({
-        queryKey: voucherQueryKeys.voucherPriceInfos(""),
-      });
+    onSuccess: async (_result, { year }) => {
+      // 업로드된 연도의 모든 가격 조회와 연도 목록을 최신 상태로 만든다.
+      await Promise.all([
+        queryClient.invalidateQueries({
+          queryKey: voucherQueryKeys.voucherPriceInfosRoot,
+        }),
+        queryClient.invalidateQueries({
+          queryKey: voucherQueryKeys.allVoucherPriceInfos(year),
+        }),
+        queryClient.invalidateQueries({
+          queryKey: voucherQueryKeys.voucherYears,
+        }),
+      ]);
     },
   });
 }

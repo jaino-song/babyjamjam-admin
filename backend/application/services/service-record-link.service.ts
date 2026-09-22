@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 
-import { BadRequestException, Inject, Injectable, Logger, NotFoundException, Optional } from "@nestjs/common";
+import { BadRequestException, Inject, Injectable, Logger, NotFoundException, Optional, ServiceUnavailableException } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { Prisma } from "@prisma/client";
 import { PrismaService } from "infrastructure/database/prisma.service";
@@ -40,11 +40,17 @@ import {
     MESSAGE_TRIGGER_RULE_BRANCH_OVERRIDE_REPOSITORY,
     IMessageTriggerRuleBranchOverrideRepository,
 } from "domain/repositories/message-trigger-rule-branch-override.repository.interface";
-import { isRuleActiveForBranch } from "domain/utils/message-trigger-rule-activation";
 import { ServiceRecordTokenService } from "./service-record-token.service";
 import { ServiceRecordLifecycleService } from "./service-record-lifecycle.service";
 import { MessageTemplateAutomationLockService } from "./message-template-automation-lock.service";
+import { MessageAutomationBranchLockService } from "./message-automation-branch-lock.service";
+import { MessageAutomationActivationService } from "./message-automation-activation.service";
+import {
+    buildServiceRecordLinkMessage,
+    DEFAULT_MOBILE_SERVICE_RECORD_BASE_URL,
+} from "./service-record-link-automation-effect-recipe";
 import { captureServiceRecordError } from "infrastructure/observability/service-record-sentry";
+import type { AgentAutomationTaskCommitReference } from "domain/entities/agent-automation-consent";
 
 const AUTOMATIC_SCHEDULING_LEASE_MINUTES = 10;
 const AUTOMATIC_SCHEDULING_RETRY_DELAY_MS = AUTOMATIC_SCHEDULING_LEASE_MINUTES * 60 * 1000;
@@ -90,6 +96,8 @@ export class ServiceRecordLinkService {
         private readonly automationLock: MessageTemplateAutomationLockService =
             new MessageTemplateAutomationLockService(prisma),
         @Optional() private readonly lifecycleService?: ServiceRecordLifecycleService,
+        @Optional() private readonly branchLock?: MessageAutomationBranchLockService,
+        @Optional() private readonly automationActivationService?: MessageAutomationActivationService,
     ) {}
 
     /** Backward-compatible wrapper: now schedules the SMS instead of sending immediately. */
@@ -98,12 +106,16 @@ export class ServiceRecordLinkService {
     }
 
     /** Ensure the assignment link exists and schedule the SMS for service-start day 15:00 KST. */
-    async scheduleForServiceStart(scheduleId: number): Promise<boolean> {
+    async scheduleForServiceStart(
+        scheduleId: number,
+        options: { taskAutomationReference?: AgentAutomationTaskCommitReference } = {},
+    ): Promise<boolean> {
         try {
             const { scheduledFor, employeeId, jobEnqueued } = await this.issueServiceRecordLinkJob(scheduleId, {
                 scheduledFor: null,
                 recordMissingPhoneFailure: true,
                 isManualSend: false,
+                taskAutomationReference: options.taskAutomationReference,
             });
             if (jobEnqueued) {
                 this.logger.log(
@@ -304,6 +316,7 @@ export class ServiceRecordLinkService {
             preparedLinkToken?: string;
             isManualSend: boolean;
             recipientPhone?: string;
+            taskAutomationReference?: AgentAutomationTaskCommitReference;
         },
     ): Promise<{
         scheduledFor: Date;
@@ -319,7 +332,7 @@ export class ServiceRecordLinkService {
             throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
         }
 
-        await this.ensureSystemRule();
+        await this.ensureSystemRule(schedule.branchId, options.isManualSend);
         const employee = schedule.primaryEmployee;
         const resolvedRecipientPhone = this.resolveRecipientPhone(
             employee.phone,
@@ -330,14 +343,6 @@ export class ServiceRecordLinkService {
         const automaticDedupeKey = this.buildDedupeKey(scheduleId, false);
         let automaticSchedulingClaim: AutomaticSchedulingClaim | null = null;
         if (!options.isManualSend) {
-            const rule = await this.prisma.message_trigger_rule.findUnique({
-                where: { id: SERVICE_RECORD_LINK_RULE_ID },
-                select: { isActive: true },
-            });
-            const override = await this.overrideRepository.findOne(schedule.branchId, SERVICE_RECORD_LINK_RULE_ID);
-            if (!rule || !isRuleActiveForBranch(rule.isActive, override?.isActive)) {
-                return { scheduledFor, employeeId: employee.id, jobEnqueued: false, jobId: null };
-            }
             automaticSchedulingClaim = await this.claimAutomaticScheduling({
                 branchId: schedule.branchId,
                 scheduleId,
@@ -456,18 +461,11 @@ export class ServiceRecordLinkService {
 
             const url = this.buildServiceRecordUrl(linkToken);
             const clientName = schedule.client?.name ?? "고객";
-            const message = `[사회서비스 제공자 품질평가 A등급]
-안녕하세요, 인천 아이미래로 입니다 :)
-
-${employee.name} 관리사님, ${clientName} 산모님의 서비스 제공기록지 작성 링크입니다.
-매일 서비스 제공 완료 직전에 서비스 세부사항 기록 후에, 산모님께 승인을 받으시면 됩니다.
-
-최초 접속 시에 관리사님의 전화번호 인증이 필요합니다. 링크 접속 후 휴대폰 번호로 본인확인하고, 방문일마다 기록을 남겨주세요.
-
-감사합니다.
-
-제공기록지 링크
-${url}`;
+            const message = buildServiceRecordLinkMessage({
+                clientName,
+                employeeName: employee.name,
+                serviceRecordUrl: url,
+            });
 
             const pendingJob = MessageTriggerJobEntity.create({
                 branchId: schedule.branchId,
@@ -498,14 +496,25 @@ ${url}`;
                         serviceStartDate: this.formatDate(schedule.startDate),
                         serviceEndDate: this.formatDate(schedule.endDate),
                     },
+                    ...(options.taskAutomationReference
+                        ? { taskAutomationReference: options.taskAutomationReference }
+                        : {}),
                 },
             });
-            const persistedJob = automaticSchedulingClaim
-                ? await this.jobRepository.promoteAutomaticSchedulingClaim(
-                    automaticSchedulingClaim.id,
-                    automaticSchedulingClaim.claimVersion,
+            const promote = (transaction?: Prisma.TransactionClient) => transaction
+                ? this.jobRepository.promoteAutomaticSchedulingClaim(
+                    automaticSchedulingClaim!.id,
+                    automaticSchedulingClaim!.claimVersion,
                     pendingJob,
+                    transaction,
                 )
+                : this.jobRepository.promoteAutomaticSchedulingClaim(
+                    automaticSchedulingClaim!.id,
+                    automaticSchedulingClaim!.claimVersion,
+                    pendingJob,
+                );
+            const persistedJob = automaticSchedulingClaim
+                ? await this.branchLock!.runExclusive(schedule.branchId, (transaction) => promote(transaction))
                 : await this.jobRepository.upsertPending(pendingJob);
 
             if (!persistedJob) {
@@ -561,7 +570,24 @@ ${url}`;
                 serviceEndDate: params.serviceEndDate,
             },
         };
-        const claimed = await this.prisma.$queryRaw<Array<{ id: string; claim_version: string }>>(Prisma.sql`
+        const claimInTransaction = async (transaction: Prisma.TransactionClient) => {
+            if (!this.automationActivationService || !this.branchLock) {
+                throw new ServiceUnavailableException("Message automation activation is not configured");
+            }
+            if (!(await this.automationActivationService.getTriggerDispatchEnabled(params.branchId, transaction))) {
+                return [] as Array<{ id: string; claim_version: string }>;
+            }
+            const rule = await transaction.message_trigger_rule.findUnique({
+                where: { id: SERVICE_RECORD_LINK_RULE_ID },
+                select: { branchId: true, isActive: true },
+            });
+            const override = await transaction.message_trigger_rule_branch_override.findUnique({
+                where: { branchId_ruleId: { branchId: params.branchId, ruleId: SERVICE_RECORD_LINK_RULE_ID } },
+            });
+            if (!rule || rule.branchId !== null || !rule.isActive || override?.isActive === false) {
+                return [] as Array<{ id: string; claim_version: string }>;
+            }
+            return transaction.$queryRaw<Array<{ id: string; claim_version: string }>>(Prisma.sql`
             INSERT INTO "message_trigger_job" (
                 branch_id,
                 rule_id,
@@ -652,7 +678,10 @@ ${url}`;
                 )
             )
             RETURNING id, updated_at::text AS claim_version;
-        `);
+            `);
+        };
+
+        const claimed = await this.branchLock!.runExclusive(params.branchId, claimInTransaction);
 
         const [claim] = claimed;
         return claim
@@ -678,11 +707,16 @@ ${url}`;
         `);
     }
 
-    private async ensureSystemRule(): Promise<void> {
-        await this.automationLock.runExclusive(
+    private async ensureSystemRule(branchId?: string, allowParentDisabled = true): Promise<void> {
+        const ensure = (transaction?: Prisma.TransactionClient) => this.automationLock.runExclusive(
             SystemTemplateKey.SERVICE_RECORD_LINK,
-            async (transaction) => {
-                const template = await transaction.system_template.findUnique({
+            async (writeTransaction) => {
+                if (branchId && !allowParentDisabled) {
+                    if (!(await this.automationActivationService!.getTriggerDispatchEnabled(branchId, writeTransaction))) {
+                        return;
+                    }
+                }
+                const template = await writeTransaction.system_template.findUnique({
                     where: { templateKey: SystemTemplateKey.SERVICE_RECORD_LINK },
                     select: { customVariables: true },
                 });
@@ -702,7 +736,7 @@ ${url}`;
                     });
                 }
 
-                await transaction.message_trigger_rule.upsert({
+                await writeTransaction.message_trigger_rule.upsert({
                     where: { id: SERVICE_RECORD_LINK_RULE_ID },
                     create: {
                         id: SERVICE_RECORD_LINK_RULE_ID,
@@ -720,7 +754,16 @@ ${url}`;
                     update: {},
                 });
             },
+            transaction,
         );
+        if (branchId && !allowParentDisabled) {
+            if (!this.branchLock || !this.automationActivationService) {
+                throw new ServiceUnavailableException("Message automation activation is not configured");
+            }
+            await this.branchLock.runExclusive(branchId, (transaction) => ensure(transaction));
+            return;
+        }
+        await ensure();
     }
 
     private async recordPermanentFailure(params: {
@@ -796,7 +839,7 @@ ${url}`;
 
     private buildServiceRecordUrl(linkToken: string): string {
         const base = this.configService
-            .get<string>("MOBILE_SERVICE_RECORD_BASE_URL", "https://m.admin.babyjamjam.com")
+            .get<string>("MOBILE_SERVICE_RECORD_BASE_URL", DEFAULT_MOBILE_SERVICE_RECORD_BASE_URL)
             .replace(/\/+$/, "");
         return `${base}/service-record/${linkToken}`;
     }

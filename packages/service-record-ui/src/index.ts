@@ -10,16 +10,31 @@ export {
     formatMonthDayKo,
     formatReviewFieldValue,
     formatShortDate,
+    getServiceRecordHeaderErrors,
+    getServiceRecordHeaderFieldError,
+    getServiceRecordNumericErrors,
+    getServiceRecordNumericFieldError,
     hasDisplayValue,
+    hasInvalidServiceRecordNumericAnswers,
     isDailyItemComplete,
+    isServiceRecordHeaderComplete,
 } from "./form-definition";
-export type { DailyItem, DayPage, ItemType } from "./form-definition";
+export type {
+    DailyItem,
+    DailyItemCount,
+    DayPage,
+    ItemType,
+    ServiceRecordHeaderErrors,
+    ServiceRecordHeaderValidationKey,
+    ServiceRecordNumericErrors,
+} from "./form-definition";
 export type {
     PendingServiceDate,
     ProviderSlotProps,
     ScheduleChangePreview,
     ServiceDateDisplaySlotProps,
     ServiceDateEditorSlotProps,
+    ServiceRecordAdminSessionActionProps,
     ServiceRecordContext,
     ServiceRecordScreen,
     ServiceRecordSession,

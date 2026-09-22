@@ -7,6 +7,7 @@ import {
     createRouteUtils,
     invalidSystemTemplateKeyResponse,
     logUpstreamError,
+    messageTriggerUpstreamErrorResponse,
     parseBody,
     systemTemplateBackendJsonResponse,
     systemTemplateUpstreamErrorResponse,
@@ -104,6 +105,68 @@ describe("logUpstreamError", () => {
         expect(logged.body).toBe("Set-Cookie: [REDACTED]");
         expect(JSON.stringify(logged)).not.toContain("first-secret");
         expect(JSON.stringify(logged)).not.toContain("second-secret");
+    });
+});
+
+describe("message-trigger upstream error boundary", () => {
+    function upstreamError(status: number, data: unknown) {
+        return { response: { status, data } };
+    }
+
+    beforeEach(() => {
+        jest.spyOn(console, "error").mockImplementation(() => undefined);
+    });
+
+    afterEach(() => {
+        jest.restoreAllMocks();
+    });
+
+    it.each([
+        {
+            label: "direct code",
+            data: {
+                code: "MESSAGE_AUTOMATION_PARENT_DISABLED",
+                message: "internal branch identifier and database details",
+            },
+        },
+        {
+            label: "nested code",
+            data: {
+                error: {
+                    code: "MESSAGE_AUTOMATION_PARENT_DISABLED",
+                    message: "internal branch identifier and database details",
+                },
+            },
+        },
+    ])("forwards only the allowlisted parent-disabled code for a 409 ($label)", async ({ data }) => {
+        const response = messageTriggerUpstreamErrorResponse(
+            upstreamError(409, data),
+            "update message trigger rule",
+        );
+
+        expect(response.status).toBe(409);
+        const body = await response.json();
+        expect(body).toEqual({
+            error: "Failed to update message trigger rule",
+            code: "MESSAGE_AUTOMATION_PARENT_DISABLED",
+        });
+        expect(JSON.stringify(body)).not.toContain("internal branch identifier");
+    });
+
+    it.each([
+        { status: 409, data: { code: "OTHER_CONFLICT" } },
+        { status: 422, data: { code: "MESSAGE_AUTOMATION_PARENT_DISABLED" } },
+    ])("keeps the generic contract for status $status or an unknown code", async ({ status, data }) => {
+        const response = messageTriggerUpstreamErrorResponse(
+            upstreamError(status, data),
+            "update message trigger rule",
+        );
+
+        expect(response.status).toBe(status);
+        await expect(response.json()).resolves.toEqual({
+            error: "Failed to update message trigger rule",
+            code: "UPSTREAM_ERROR",
+        });
     });
 });
 

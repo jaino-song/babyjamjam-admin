@@ -1,3 +1,4 @@
+import { isValidBirthdayIsoDate } from "@babyjamjam/shared/utils/birthday";
 import { BadRequestException, ConflictException, Inject, Injectable, Logger, Optional } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
 import { z } from "zod";
@@ -11,17 +12,21 @@ import type { AgentFormField } from "@babyjamjam/shared";
 import { clientAgentTargetSnapshot, clientAgentTargetVersion } from "./client-agent-target";
 import { AgentActionCertainFailureError } from "application/agent/action-coordinator.service";
 import { readAgentActionEffect, recordAgentActionEffect } from "application/agent/agent-action-effect-receipt";
+import type { AgentContext } from "application/agent/agent-context";
+import { AgentAutomationRecordRefusedError, AgentAutomationRecordStoreService, agentAutomationTaskCommitReference, type AgentAutomationCommittedBatch, type AgentAutomationTaskMutation } from "application/agent/agent-automation-record-store.service";
+import type { AgentTaskAutomationArtifact } from "application/agent/agent-task-automation-artifact";
+import { canonicalTaskAutomationImpact } from "application/agent/agent-task-automation-artifact";
+import { agentAutomationGrandfatheredFingerprint } from "application/agent/agent-automation-coverage";
+import { agentAutomationScheduleIdentity } from "application/agent/agent-automation-consent";
+import { agentBindingHash } from "domain/repositories/agent-linked-action.types";
+import type { AgentAutomationCoverageScope, AgentAutomationEffect, AgentAutomationGrandfatheredScope } from "domain/entities/agent-automation-consent";
 import { normalizeClientPricing } from "domain/services/client-pricing";
-import { clientDurationOutOfRangeMessage, CLIENT_DURATION_NEEDS_SERVICE_PERIOD_MESSAGE } from "domain/entities/client.entity";
+import { normalizeClientCreateInput, normalizeClientUpdateInput, normalizeMergedClientPricing } from "./client-write-normalization";
 import {
-    assertClientDurationMatchesDates,
     assertAllowedClientArea,
     assertAllowedServiceStatus,
     assertPhoneAvailable,
     assertClientPhoneInput,
-    clientProblemBody,
-    deriveClientDuration,
-    mergeAndValidateClientServicePeriod,
     parseClientDate,
 } from "./client-write-validation";
 import { CLIENT_REPOSITORY, IClientRepository } from "domain/repositories/client.repository.interface";
@@ -35,6 +40,7 @@ import {
 } from "application/usecases/voucher-price-info/resolve-voucher-service-selection.usecase";
 import { MessageTriggerService } from "application/services/message-trigger.service";
 import { MessageAutomationIntentService } from "application/services/message-automation-intent.service";
+import { CLIENT_AUTOMATION_IMPACT, type ClientAutomationImpactPort, type ClientAutomationWriteValues } from "domain/ports/client-automation-impact.port";
 
 const DateOnlyInput = z.string().regex(/^\d{4}-\d{2}-\d{2}$/).refine((value) => {
     const parsed = new Date(`${value}T00:00:00Z`);
@@ -50,21 +56,9 @@ const KoreanWonInput = z.string().trim().regex(
     "Amount must be a whole Korean-won value with no trailing text or decimals",
 );
 
-function isCalendarValidYymmdd(value: string): boolean {
-    if (!/^\d{6}$/.test(value)) return false;
-
-    const year = Number(value.slice(0, 2));
-    const month = Number(value.slice(2, 4));
-    const day = Number(value.slice(4, 6));
-    if (month < 1 || month > 12 || day < 1) return false;
-
-    const daysInMonth = [31, year % 4 === 0 ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
-    return day <= (daysInMonth[month - 1] ?? 0);
-}
-
 const ClientBirthdaySchema = z.string()
-    .regex(/^\d{6}$/, "Birthday must be six numeric YYMMDD digits")
-    .refine(isCalendarValidYymmdd, "Birthday must be a calendar-valid YYMMDD date")
+    .regex(/^\d{4}-\d{2}-\d{2}$/, "Birthday must use YYYY-MM-DD")
+    .refine(isValidBirthdayIsoDate, "Birthday must be a valid YYYY-MM-DD date")
     .nullable()
     .optional();
 
@@ -175,43 +169,15 @@ function validationErrorMessage(error: BadRequestException | ConflictException):
     return error.message;
 }
 
-type ClientPricingUpdate = {
-    voucherClient?: boolean;
-    type?: string | null;
-    duration?: number | null;
-    fullPrice?: string | null;
-    grant?: string | null;
-    actualPrice?: string | null;
-};
-
-function hasPricingUpdate(updates: ClientPricingUpdate): boolean {
-    return updates.voucherClient !== undefined
-        || updates.type !== undefined
-        || updates.duration !== undefined
-        || updates.fullPrice !== undefined
-        || updates.grant !== undefined
-        || updates.actualPrice !== undefined;
-}
-
-function normalizeMergedClientPricing(
-    existing: {
-        voucherClient: boolean;
-        type: string | null;
-        fullPrice: string | null;
-        grant: string | null;
-        actualPrice: string | null;
-    },
-    updates: ClientPricingUpdate,
-) {
-    if (!hasPricingUpdate(updates)) return undefined;
-
-    return normalizeClientPricing({
-        voucherClient: updates.voucherClient ?? existing.voucherClient,
-        type: updates.type === undefined ? existing.type : updates.type,
-        fullPrice: updates.fullPrice === undefined ? existing.fullPrice : updates.fullPrice,
-        grant: updates.grant === undefined ? existing.grant : updates.grant,
-        actualPrice: updates.actualPrice === undefined ? existing.actualPrice : updates.actualPrice,
-    });
+function normalizeAgentClientWrite<T>(normalize: () => T): T {
+    try {
+        return normalize();
+    } catch (error) {
+        if (error instanceof BadRequestException || error instanceof ConflictException) {
+            throw new AgentActionCertainFailureError(validationErrorMessage(error));
+        }
+        throw error;
+    }
 }
 
 async function validateClientServicePeriod(
@@ -234,23 +200,6 @@ async function validateClientServicePeriod(
     }
 }
 
-/**
- * Resolve the duration to persist on an update: duration is the contracted
- * session count and authoritative once set, so a supplied value (including
- * an explicit null clear) always wins over the date-derived count. When the
- * caller omits duration, it is left untouched (`undefined`, no field
- * change) unless the existing client has no duration yet and the period is
- * now complete, in which case the derived count fills it.
- */
-function resolveClientDuration(
-    existingDuration: number | null,
-    suppliedDuration: number | null | undefined,
-    derivedDuration: number | null,
-): number | null | undefined {
-    if (suppliedDuration !== undefined) return suppliedDuration;
-    return existingDuration === null && derivedDuration !== null ? derivedDuration : undefined;
-}
-
 async function validateClientWrite(
     prisma: PrismaService,
     repository: Pick<IClientRepository, "findByPhone">,
@@ -264,39 +213,11 @@ async function validateClientWrite(
         endDate?: Date | null;
         duration?: number | null;
     },
-): Promise<number | null> {
+): Promise<void> {
     try {
         assertAllowedServiceStatus(updates.serviceStatus);
         await assertAllowedClientArea(prisma, branchId, updates.areaId);
         await assertPhoneAvailable(repository, branchId, updates.phone, existing?.id);
-        const mergedServicePeriod = mergeAndValidateClientServicePeriod(existing, {
-            startDate: updates.startDate,
-            endDate: updates.endDate,
-        });
-        const derivedDuration = deriveClientDuration(
-            mergedServicePeriod.startDate,
-            mergedServicePeriod.endDate,
-        );
-        assertClientDurationMatchesDates(updates.duration, derivedDuration);
-        const hasDateUpdate = existing !== null
-            && (updates.startDate !== undefined || updates.endDate !== undefined);
-        if (hasDateUpdate && derivedDuration !== null && updates.duration === null) {
-            throw new BadRequestException(clientProblemBody("CLIENT_DURATION_OUT_OF_RANGE", {
-                pointer: "/duration",
-                code: "OUT_OF_RANGE",
-                detail: clientDurationOutOfRangeMessage(derivedDuration),
-                location: "body",
-            }));
-        }
-        if (hasDateUpdate && derivedDuration === null && updates.duration !== undefined && updates.duration !== null) {
-            throw new BadRequestException(clientProblemBody("CLIENT_DURATION_NEEDS_SERVICE_PERIOD", {
-                pointer: "/duration",
-                code: "INVALID_VALUE",
-                detail: CLIENT_DURATION_NEEDS_SERVICE_PERIOD_MESSAGE,
-                location: "body",
-            }));
-        }
-        return derivedDuration;
     } catch (error) {
         if (error instanceof BadRequestException || error instanceof ConflictException) {
             throw new AgentActionCertainFailureError(validationErrorMessage(error));
@@ -321,6 +242,8 @@ export class ClientWriteAgentCapabilitiesProvider implements AgentCapabilityProv
         @Optional() private readonly voucherServiceSelection?: ResolveVoucherServiceSelectionUsecase,
         @Optional() private readonly triggerService?: MessageTriggerService,
         @Optional() private readonly messageAutomationIntentService?: MessageAutomationIntentService,
+        @Optional() @Inject(CLIENT_AUTOMATION_IMPACT) private readonly automationImpact?: ClientAutomationImpactPort,
+        @Optional() private readonly automationRecords?: AgentAutomationRecordStoreService,
     ) {}
 
     getCapabilities(): CapabilityDefinition[] {
@@ -345,6 +268,13 @@ export class ClientWriteAgentCapabilitiesProvider implements AgentCapabilityProv
                 inputSchema: CreateClientSchema,
                 outputSchema: ClientWriteOutputSchema,
                 formFields: CLIENT_FORM_FIELDS,
+                planAutomationImpact: async (context, rawInput, taskId) => {
+                    if (!this.automationImpact) throw new Error("Automation planning unavailable");
+                    const input = CreateClientSchema.parse(rawInput);
+                    const values = normalizeClientCreateInput(input);
+                    return this.automationImpact.planClientWrite(context.principal.branchId,
+                        { kind: "create", taskId, values: this.automationValues(values) });
+                },
                 canonicalizeInput: (_context, input: CreateClientInput) => {
                     assertAgentClientPhone(input.phone);
                     if (isVoucherServiceLabel(input.type)) {
@@ -385,46 +315,14 @@ export class ClientWriteAgentCapabilitiesProvider implements AgentCapabilityProv
                 execute: async (context, rawInput) => {
                     const input = CreateClientSchema.parse(rawInput);
                     assertAgentClientPhone(input.phone);
-                    const dates = {
-                        startDate: parseClientDate(input.startDate, "startDate") ?? null,
-                        endDate: parseClientDate(input.endDate, "endDate") ?? null,
-                    };
-                    const derivedDuration = await validateClientWrite(this.prisma, this.clientRepository, context.principal.branchId, null, {
-                        ...dates,
-                        areaId: input.areaId,
-                        phone: input.phone,
-                        serviceStatus: input.serviceStatus,
-                        duration: input.duration,
-                    });
-                    const normalizedPricing = normalizeClientPricing({
-                        voucherClient: input.voucherClient ?? false,
-                        type: input.type ?? null,
-                        fullPrice: input.fullPrice ?? null,
-                        grant: input.grant ?? null,
-                        actualPrice: input.actualPrice ?? null,
-                    });
+                    const write = normalizeAgentClientWrite(() => normalizeClientCreateInput(input));
+                    await validateClientWrite(this.prisma, this.clientRepository, context.principal.branchId, null, write);
                     try {
+                        if (context.taskAutomation) {
+                            return await this.executeTaskClientMutation(context, "clients.create", write);
+                        }
                         return await this.prisma.$transaction(async (transaction) => {
-                            const client = await this.createClient.execute(context.principal.branchId, {
-                                name: input.name,
-                                address: input.address ?? null,
-                                phone: input.phone,
-                                type: normalizedPricing.type,
-                                duration: input.duration ?? derivedDuration ?? null,
-                                fullPrice: normalizedPricing.fullPrice,
-                                grant: normalizedPricing.grant,
-                                actualPrice: normalizedPricing.actualPrice,
-                                startDate: dates.startDate,
-                                endDate: dates.endDate,
-                                careCenter: input.careCenter ?? null,
-                                voucherClient: input.voucherClient ?? false,
-                                birthday: input.birthday ?? null,
-                                dueDate: parseClientDate(input.dueDate, "dueDate") ?? null,
-                                birthDate: parseClientDate(input.birthDate, "birthDate") ?? null,
-                                serviceStatus: input.serviceStatus ?? null,
-                                breastPump: input.breastPump ?? false,
-                                areaId: input.areaId ?? null,
-                            }, transaction);
+                            const client = await this.createClient.execute(context.principal.branchId, write, transaction);
                             await this.serviceRecordLifecycleService.ensureForClient(client.id, transaction);
                             const result = { id: client.id, name: client.name, status: "created" };
                             await recordAgentActionEffect(transaction, context, "clients.create", "client", client.id, result);
@@ -448,6 +346,17 @@ export class ClientWriteAgentCapabilitiesProvider implements AgentCapabilityProv
                 inputSchema: UpdateClientSchema,
                 outputSchema: ClientWriteOutputSchema,
                 formFields: CLIENT_UPDATE_FORM_FIELDS,
+                planAutomationImpact: async (context, rawInput) => {
+                    if (!this.automationImpact) throw new Error("Automation planning unavailable");
+                    const input = UpdateClientSchema.parse(rawInput);
+                    const existing = await this.findClient.execute(context.principal.branchId, input.id);
+                    if (!existing || !input.targetVersion || clientAgentTargetVersion(existing) !== input.targetVersion) {
+                        throw new Error("Automation target unavailable");
+                    }
+                    const values = normalizeClientUpdateInput(existing, input);
+                    return this.automationImpact.planClientWrite(context.principal.branchId,
+                        { kind: "update", clientId: input.id, values: this.automationValues(values) });
+                },
                 canonicalizeInput: async (context, input: UpdateClientInput) => {
                     assertAgentClientPhone(input.phone);
                     const existing = await this.findClient.execute(context.principal.branchId, input.id);
@@ -466,22 +375,13 @@ export class ClientWriteAgentCapabilitiesProvider implements AgentCapabilityProv
                     assertAgentClientPhone(input.phone);
                     const existing = await this.findClient.execute(context.principal.branchId, input.id);
                     if (!existing) throw new AgentActionCertainFailureError("Client no longer exists");
-                    const updates = input;
-                    const parsedUpdates = {
-                        ...updates,
-                        startDate: parseClientDate(updates.startDate, "startDate"),
-                        endDate: parseClientDate(updates.endDate, "endDate"),
-                    };
-                    const normalizedPricing = normalizeMergedClientPricing(existing, updates);
-                    const derivedDuration = await validateClientWrite(this.prisma, this.clientRepository, context.principal.branchId, existing, {
-                        ...parsedUpdates,
-                        ...normalizedPricing,
-                    });
+                    const parsedUpdates = normalizeAgentClientWrite(() => normalizeClientUpdateInput(existing, input));
+                    await validateClientWrite(this.prisma, this.clientRepository, context.principal.branchId, existing, parsedUpdates);
                     await validateClientServicePeriod(this.serviceRecordLifecycleService, {
                         clientId: existing.id,
                         startDate: parsedUpdates.startDate,
                         endDate: parsedUpdates.endDate,
-                        duration: resolveClientDuration(existing.duration, parsedUpdates.duration, derivedDuration),
+                        duration: parsedUpdates.duration,
                     });
                     return {
                         targetVersion: clientAgentTargetVersion(existing),
@@ -507,27 +407,16 @@ export class ClientWriteAgentCapabilitiesProvider implements AgentCapabilityProv
                     if (!existing) throw new AgentActionCertainFailureError("Client no longer exists");
                     const { id, targetVersion, ...updates } = input;
                     void targetVersion;
-                    const parsedUpdates = {
-                        ...updates,
-                        ...normalizeMergedClientPricing(existing, updates),
-                        startDate: parseClientDate(updates.startDate, "startDate"),
-                        endDate: parseClientDate(updates.endDate, "endDate"),
-                        dueDate: parseClientDate(updates.dueDate, "dueDate"),
-                        birthDate: parseClientDate(updates.birthDate, "birthDate"),
-                    };
-                    const derivedDuration = await validateClientWrite(this.prisma, this.clientRepository, context.principal.branchId, existing, parsedUpdates);
-                    const duration = resolveClientDuration(existing.duration, parsedUpdates.duration, derivedDuration);
+                    const parsedUpdates = normalizeAgentClientWrite(() => normalizeClientUpdateInput(existing, updates));
+                    await validateClientWrite(this.prisma, this.clientRepository, context.principal.branchId, existing, parsedUpdates);
                     await validateClientServicePeriod(this.serviceRecordLifecycleService, {
                         clientId: existing.id,
                         startDate: parsedUpdates.startDate,
                         endDate: parsedUpdates.endDate,
-                        duration,
+                        duration: parsedUpdates.duration,
                     });
                     try {
-                        const client = await this.updateClient.execute(context.principal.branchId, id, {
-                            ...parsedUpdates,
-                            ...(duration === undefined ? {} : { duration }),
-                        });
+                        const client = await this.updateClient.execute(context.principal.branchId, id, parsedUpdates);
                         await this.serviceRecordLifecycleService.ensureForClient(client.id);
                         await this.refreshEmployeeAssignmentJobsAfterProfileChange(
                             context.principal.branchId,
@@ -547,44 +436,41 @@ export class ClientWriteAgentCapabilitiesProvider implements AgentCapabilityProv
                     if (!existing) throw new AgentActionCertainFailureError("Client no longer exists");
                     const { id, targetVersion, ...updates } = input;
                     void targetVersion;
-                    const parsedUpdates = {
-                        ...updates,
-                        ...normalizeMergedClientPricing(existing, updates),
-                        startDate: parseClientDate(updates.startDate, "startDate"),
-                        endDate: parseClientDate(updates.endDate, "endDate"),
-                        dueDate: parseClientDate(updates.dueDate, "dueDate"),
-                        birthDate: parseClientDate(updates.birthDate, "birthDate"),
-                    };
-                    const derivedDuration = await validateClientWrite(this.prisma, this.clientRepository, context.principal.branchId, existing, parsedUpdates);
-                    const duration = resolveClientDuration(existing.duration, parsedUpdates.duration, derivedDuration);
+                    const parsedUpdates = normalizeAgentClientWrite(() => normalizeClientUpdateInput(existing, updates));
+                    await validateClientWrite(this.prisma, this.clientRepository, context.principal.branchId, existing, parsedUpdates);
                     try {
-                        const result = await this.prisma.$transaction(async (transaction) => {
-                            await validateClientServicePeriod(this.serviceRecordLifecycleService, {
-                                clientId: existing.id,
-                                startDate: parsedUpdates.startDate,
-                                endDate: parsedUpdates.endDate,
-                                duration,
-                            }, transaction);
-                            const client = await this.updateClient.executeApprovedTarget(
+                        const result = context.taskAutomation
+                            ? await this.executeTaskClientMutation(context, "clients.update", parsedUpdates, expectedTargetVersion)
+                            : await this.prisma.$transaction(async (transaction) => {
+                                await validateClientServicePeriod(this.serviceRecordLifecycleService, {
+                                    clientId: existing.id,
+                                    startDate: parsedUpdates.startDate,
+                                    endDate: parsedUpdates.endDate,
+                                    duration: parsedUpdates.duration,
+                                }, transaction);
+                                const client = await this.updateClient.executeApprovedTarget(
+                                    context.principal.branchId,
+                                    id,
+                                    parsedUpdates,
+                                    expectedTargetVersion,
+                                    transaction,
+                                );
+                                await this.serviceRecordLifecycleService.ensureForClient(client.id, transaction);
+                                const result = { id: client.id, name: client.name, status: "updated" };
+                                await recordAgentActionEffect(transaction, context, "clients.update", "client", client.id, result);
+                                return result;
+                            });
+                        // Task-origin automation is staged through the reviewed
+                        // artifact. The legacy refresh path is intentionally
+                        // skipped so a declined task cannot rebuild assignment
+                        // jobs outside the authority transaction.
+                        if (!context.taskAutomation) {
+                            await this.refreshEmployeeAssignmentJobsAfterProfileChange(
                                 context.principal.branchId,
-                                id,
-                                {
-                                    ...parsedUpdates,
-                                    ...(duration === undefined ? {} : { duration }),
-                                },
-                                expectedTargetVersion,
-                                transaction,
+                                existing.id,
+                                input.name !== undefined,
                             );
-                            await this.serviceRecordLifecycleService.ensureForClient(client.id, transaction);
-                            const result = { id: client.id, name: client.name, status: "updated" };
-                            await recordAgentActionEffect(transaction, context, "clients.update", "client", client.id, result);
-                            return result;
-                        });
-                        await this.refreshEmployeeAssignmentJobsAfterProfileChange(
-                            context.principal.branchId,
-                            existing.id,
-                            input.name !== undefined,
-                        );
+                        }
                         return result;
                     } catch (error) {
                         if (error instanceof ClientTargetVersionMismatchError) {
@@ -613,6 +499,217 @@ export class ClientWriteAgentCapabilitiesProvider implements AgentCapabilityProv
                 },
             },
         ];
+    }
+
+    private automationValues(values: ClientAutomationWriteValues): ClientAutomationWriteValues {
+        const { name, phone, type, startDate, endDate, duration, fullPrice, grant, actualPrice, areaId } = values;
+        return { name, phone, type, startDate, endDate, duration, fullPrice, grant, actualPrice, areaId };
+    }
+
+    /**
+     * Execute a customer mutation through the reviewed task artifact. The
+     * record store owns the branch lock, CAS receipt, append-only authority,
+     * and terminal evidence. This callback performs only the customer write
+     * and lifecycle repair; intent staging stays in the same transaction.
+     */
+    private async executeTaskClientMutation(
+        context: AgentContext,
+        capability: "clients.create" | "clients.update",
+        updates: ClientAutomationWriteValues,
+        expectedTargetVersion?: string,
+    ): Promise<Record<string, unknown>> {
+        const artifact = context.taskAutomation;
+        const records = this.automationRecords;
+        if (!artifact || artifact.capability !== capability || !records) {
+            throw new AgentActionCertainFailureError("Automation execution is unavailable; review the task again");
+        }
+
+        try {
+            let committedClientId: number | null = artifact.targetClientId;
+            const receipt = await records.runTaskMutation(
+                context,
+                artifact,
+                async (transaction): Promise<AgentAutomationTaskMutation> => {
+                    const impact = await this.planTaskAutomationImpact(transaction, context, artifact, updates);
+                    const reviewedImpact = canonicalTaskAutomationImpact(artifact.impact);
+                    if (agentBindingHash(impact) !== agentBindingHash(reviewedImpact)) {
+                        throw new AgentActionCertainFailureError("Automation changed; review the latest task question");
+                    }
+
+                    let client: { id: number; name: string };
+                    if (capability === "clients.create") {
+                        client = await this.createClient.execute(
+                            context.principal.branchId,
+                            updates as unknown as Parameters<CreateClientUsecase["execute"]>[1],
+                            transaction,
+                        );
+                    } else {
+                        if (!artifact.targetClientId || !expectedTargetVersion) {
+                            throw new AgentActionCertainFailureError("The approved customer target is unavailable");
+                        }
+                        await validateClientServicePeriod(this.serviceRecordLifecycleService, {
+                            clientId: artifact.targetClientId,
+                            startDate: updates.startDate,
+                            endDate: updates.endDate,
+                            duration: updates.duration,
+                        }, transaction);
+                        client = await this.updateClient.executeApprovedTarget(
+                            context.principal.branchId,
+                            artifact.targetClientId,
+                            updates as unknown as Parameters<UpdateClientUsecase["executeApprovedTarget"]>[2],
+                            expectedTargetVersion,
+                            transaction,
+                        );
+                    }
+                    await this.serviceRecordLifecycleService.ensureForClient(client.id, transaction);
+                    committedClientId = client.id;
+                    const committed = await transaction.client.findFirst({
+                        where: { id: client.id, branchId: context.principal.branchId },
+                        select: { id: true, createdAt: true },
+                    });
+                    if (!committed?.createdAt) {
+                        throw new AgentActionCertainFailureError("The customer write could not be verified");
+                    }
+                    const result = { id: client.id, name: client.name, status: capability === "clients.create" ? "created" : "updated" };
+                    return {
+                        clientId: client.id,
+                        result,
+                        coverages: await this.taskCoverageCandidates(transaction, artifact, committed.id, committed.createdAt),
+                        affectedJobs: impact.affectedJobs,
+                    };
+                },
+                async (transaction, batch) => {
+                    await this.stageTaskAutomation(transaction, artifact, batch, committedClientId);
+                },
+            );
+            return receipt.result;
+        } catch (error) {
+            if (error instanceof AgentActionCertainFailureError) throw error;
+            if (error instanceof AgentAutomationRecordRefusedError) {
+                throw new AgentActionCertainFailureError("The approved automation task is no longer valid; review it again");
+            }
+            if (isClientBranchPhoneUniqueViolation(error)) throw clientPhoneConflictError();
+            throw error;
+        }
+    }
+
+    private async planTaskAutomationImpact(
+        transaction: Prisma.TransactionClient,
+        context: AgentContext,
+        artifact: AgentTaskAutomationArtifact,
+        values: ClientAutomationWriteValues,
+    ) {
+        const planner = this.automationImpact as (ClientAutomationImpactPort & {
+            planClientWriteInTransaction?: ClientAutomationImpactPort["planClientWriteInTransaction"];
+        }) | undefined;
+        if (!planner?.planClientWriteInTransaction) {
+            throw new AgentActionCertainFailureError("Automation source cannot be checked at the write boundary");
+        }
+        const write = artifact.capability === "clients.create"
+            ? { kind: "create" as const, taskId: artifact.taskId, values: this.automationValues(values) }
+            : { kind: "update" as const, clientId: artifact.targetClientId!, values: this.automationValues(values) };
+        return canonicalTaskAutomationImpact(await planner.planClientWriteInTransaction(
+            transaction,
+            context.principal.branchId,
+            write,
+        ));
+    }
+
+    private async taskCoverageCandidates(
+        transaction: Prisma.TransactionClient,
+        artifact: AgentTaskAutomationArtifact,
+        clientId: number,
+        createdAt: Date,
+    ): Promise<Array<{ scope: AgentAutomationCoverageScope; grandfatheredScopes: AgentAutomationGrandfatheredScope[] }>> {
+        const clientIdentity = agentBindingHash({ version: 1, resource: "client", id: clientId, createdAt: createdAt.toISOString() });
+        const effects = artifact.impact.effects.length > 0
+            ? artifact.impact.effects
+            : [{ kind: "client-rule", ruleId: "coverage-only", scheduleId: null, recipientType: "client" } as AgentAutomationEffect];
+        const grandfatheredEffects = artifact.impact.grandfatheredEffects ?? [];
+        const candidates: Array<{ scope: AgentAutomationCoverageScope; grandfatheredScopes: AgentAutomationGrandfatheredScope[] }> = [];
+        const seen = new Set<string>();
+        for (const effect of [...effects, ...grandfatheredEffects]) {
+            let scheduleIdentity: string | null = null;
+            if (effect.scheduleId !== null) {
+                const schedule = await transaction.employee_schedule.findFirst({
+                    where: { id: effect.scheduleId, branchId: artifact.branchId, clientId },
+                    select: { incarnationId: true },
+                });
+                if (!schedule) throw new AgentActionCertainFailureError("The automation schedule changed; review the task again");
+                scheduleIdentity = agentAutomationScheduleIdentity(schedule.incarnationId);
+            }
+            const scope: AgentAutomationCoverageScope = {
+                branchId: artifact.branchId,
+                clientId,
+                clientIdentity,
+                kind: effect.kind,
+                scheduleId: effect.scheduleId,
+                scheduleIdentity,
+                recipientType: effect.recipientType,
+            };
+            const key = agentBindingHash(scope);
+            if (seen.has(key)) continue;
+            seen.add(key);
+            const grandfatheredScopes = grandfatheredEffects
+                .filter((member) => member.kind === effect.kind && member.scheduleId === effect.scheduleId
+                    && member.recipientType === effect.recipientType)
+                .map((member) => ({
+                    scope: { ...scope, ruleId: member.ruleId },
+                    fingerprint: agentAutomationGrandfatheredFingerprint(member),
+                }));
+            candidates.push({ scope, grandfatheredScopes });
+        }
+        if (artifact.capability === "clients.create" && !candidates.some(({ scope }) => scope.kind === "client-rule")) {
+            candidates.push({ scope: { branchId: artifact.branchId, clientId, clientIdentity, kind: "client-rule", scheduleId: null, scheduleIdentity: null, recipientType: "client" }, grandfatheredScopes: [] });
+        }
+        return candidates;
+    }
+
+    private async stageTaskAutomation(
+        transaction: Prisma.TransactionClient,
+        artifact: AgentTaskAutomationArtifact,
+        batch: AgentAutomationCommittedBatch,
+        clientId: number | null,
+    ): Promise<void> {
+        if (artifact.consent.choice !== "yes" || artifact.noSend) return;
+        if (!this.messageAutomationIntentService || clientId === null) {
+            throw new AgentActionCertainFailureError("Automation intent storage is unavailable; review the task again");
+        }
+        const intentAt = new Date();
+        const taskAutomationReference = agentAutomationTaskCommitReference({
+            actionId: artifact.actionId,
+            taskId: artifact.taskId,
+            taskRevision: artifact.taskRevision,
+            batch,
+        });
+        const clientEffects = artifact.impact.effects.some((effect) => effect.kind === "client-rule" && effect.change !== "cancel");
+        if (clientEffects) {
+            await this.messageAutomationIntentService.persistClientIntent(transaction, {
+                branchId: artifact.branchId,
+                clientId,
+                includePast: true,
+                suppressGreeting: false,
+                intentAt,
+                taskOrigin: true,
+                taskAutomationReference,
+            });
+        }
+        const scheduleIds = [...new Set(artifact.impact.effects
+            .filter((effect) => (effect.kind === "employee-assignment" || effect.kind === "service-record-link")
+                && effect.scheduleId !== null && effect.change !== "cancel")
+            .map((effect) => effect.scheduleId!))].sort((left, right) => left - right);
+        for (const scheduleId of scheduleIds) {
+            await this.messageAutomationIntentService.persistScheduleIntent(transaction, {
+                branchId: artifact.branchId,
+                clientId,
+                scheduleId,
+                includePast: true,
+                intentAt,
+                replaceExisting: true,
+                taskOrigin: true,
+                taskAutomationReference,
+            });
+        }
     }
 
     private async refreshEmployeeAssignmentJobsAfterProfileChange(

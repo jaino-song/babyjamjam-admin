@@ -8,7 +8,7 @@ import { createSchedulerLeaseMock } from "../../test/utils/mocks/scheduler-lease
 describe("AgentSessionService", () => {
     const owner = { userId: "user-a", branchId: "branch-a" };
     const repository = {
-        create: jest.fn(), list: jest.fn(), findOwned: jest.fn(), updateOwned: jest.fn(),
+        create: jest.fn(), list: jest.fn(), findOwned: jest.fn(), findOwnedForRestore: jest.fn(), updateOwned: jest.fn(),
         archiveOwned: jest.fn(), unarchiveOwned: jest.fn(), deleteOwned: jest.fn(), appendMessages: jest.fn(),
         upsertActionResultMessage: jest.fn(), deleteExpired: jest.fn(),
     } as jest.Mocked<IAgentSessionRepository>;
@@ -50,6 +50,27 @@ describe("AgentSessionService", () => {
 
         await expect(service.assertActive("session-a", owner)).rejects.toBeInstanceOf(NotFoundException);
         expect(repository.findOwned).toHaveBeenCalledWith("session-a", owner);
+    });
+
+    it("reads archived and expired owned sessions through the restore-only seam", async () => {
+        const session = {
+            id: "session-a", ...owner, locale: "ko", title: null, summary: null, selectedEntities: {},
+            model: "stub", agentVersion: "v1", createdAt: new Date(), updatedAt: new Date(),
+            expiresAt: new Date(Date.now() - 1_000), archivedAt: null, messages: [],
+        };
+        repository.findOwnedForRestore.mockResolvedValue(session);
+        const service = new AgentSessionService(repository, new ConfigService(), createSchedulerLeaseMock());
+
+        await expect(service.getForRestore("session-a", owner)).resolves.toBe(session);
+        expect(repository.findOwnedForRestore).toHaveBeenCalledWith("session-a", owner);
+        expect(repository.findOwned).not.toHaveBeenCalled();
+    });
+
+    it("keeps restore ownership failures indistinguishable from missing sessions", async () => {
+        repository.findOwnedForRestore.mockResolvedValue(null);
+        const service = new AgentSessionService(repository, new ConfigService(), createSchedulerLeaseMock());
+
+        await expect(service.getForRestore("session-a", owner)).rejects.toBeInstanceOf(NotFoundException);
     });
 
     it("uses configurable retention and clears entity memory without moving branches", async () => {
@@ -129,5 +150,24 @@ describe("AgentSessionService", () => {
 
         await expect(service.cleanupExpired(new Date())).resolves.toBe(0);
         expect(repository.deleteExpired).not.toHaveBeenCalled();
+    });
+
+    it("purges expired task payloads before deleting eligible sessions under the shared lease", async () => {
+        const taskRepository = { purgeExpired: jest.fn().mockResolvedValue(2) };
+        repository.deleteExpired.mockResolvedValue(1);
+        const service = new AgentSessionService(
+            repository,
+            new ConfigService(),
+            createSchedulerLeaseMock(true),
+            taskRepository as never,
+        );
+        const now = new Date("2026-09-17T00:00:00.000Z");
+
+        await expect(service.cleanupExpired(now)).resolves.toBe(1);
+        expect(taskRepository.purgeExpired).toHaveBeenCalledWith(now);
+        expect(repository.deleteExpired).toHaveBeenCalledWith(now);
+        expect(taskRepository.purgeExpired.mock.invocationCallOrder[0]).toBeLessThan(
+            repository.deleteExpired.mock.invocationCallOrder[0]!,
+        );
     });
 });

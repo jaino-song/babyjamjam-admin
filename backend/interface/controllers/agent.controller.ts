@@ -20,6 +20,7 @@ import type { BjjUIMessage } from "@babyjamjam/shared";
 import { AgentReleaseEvidenceService } from "application/agent/agent-release-evidence.service";
 import { CAPABILITY_CATALOG_BY_NAME } from "application/agent/capability-catalog";
 import { AgentFeedbackService } from "application/agent/agent-feedback.service";
+import { AgentTaskService } from "application/agent/agent-task.service";
 import { codeOnlyProblemBody, problemBody } from "application/utils/problem-bodies";
 
 type AgentRequest = Request & { tenant?: VerifiedTenantPrincipal };
@@ -53,6 +54,7 @@ export class AgentController {
         @Optional() private readonly intelligence?: AgentIntelligenceService,
         @Optional() private readonly releaseEvidence?: AgentReleaseEvidenceService,
         @Optional() private readonly feedback?: AgentFeedbackService,
+        @Optional() private readonly tasks?: AgentTaskService,
     ) {}
 
     @Post("agent/chat")
@@ -103,8 +105,17 @@ export class AgentController {
     }
 
     @Get("agent/sessions/:id")
-    get(@Param("id") id: string, @Req() request: AgentRequest) {
-        return this.sessions.get(id, this.owner(request));
+    async get(
+        @Param("id") id: string,
+        @Req() request: AgentRequest,
+        @Res({ passthrough: true }) response?: Response,
+    ) {
+        const principal = this.requirePrincipal(request);
+        response?.setHeader("Cache-Control", "no-store");
+        const session = await this.sessions.getForRestore(id, { userId: principal.userId, branchId: principal.branchId });
+        if (!this.tasks) throw new ServiceUnavailableException("Agent task service unavailable");
+        const restore = await this.tasks.restoreSession(principal, id);
+        return { ...session, ...restore };
     }
 
     @Patch("agent/sessions/:id")

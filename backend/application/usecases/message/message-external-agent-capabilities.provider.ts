@@ -17,6 +17,7 @@ import {
 import { MessageTriggerJobEntity } from "domain/entities/message-trigger-job.entity";
 import {
     AGENT_SMS_RULE_ID_PREFIX,
+    AGENT_SMS_RETRY_DEDUPE_KEY_PREFIX,
     MessageTriggerEventType,
     MessageTriggerOffsetType,
     MessageTriggerRecipientType,
@@ -100,12 +101,14 @@ const AutomationRuleMutableSchema = z.object({
     eventType: z.enum(MessageTriggerEventType),
     offsetType: z.enum(MessageTriggerOffsetType),
     offsetDays: z.number().int().nonnegative().max(365),
+    sendTime: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/),
     recipientType: z.enum(MessageTriggerRecipientType),
     templateKey: z.enum(MessageTriggerTemplateKey),
 });
 const AutomationRuleBaseSchema = AutomationRuleMutableSchema.extend({
     isActive: z.boolean().default(true),
     offsetDays: z.number().int().nonnegative().max(365).default(0),
+    sendTime: AutomationRuleMutableSchema.shape.sendTime.default("09:00"),
 });
 const AUTOMATION_RULE_MUTABLE_KEYS = Object.keys(AutomationRuleMutableSchema.shape);
 const AutomationRuleUpdateSchema = AutomationRuleMutableSchema.partial().extend({ id: z.string().min(1).max(200) }).superRefine((value, context) => {
@@ -118,7 +121,7 @@ const AutomationRuleActiveSchema = AutomationRuleIdSchema.extend({ isActive: z.b
 const AutomationRuleOutputSchema = z.object({ status: z.string(), id: z.string(), isActive: z.boolean().optional() });
 const AutomationRulesOutputSchema = z.object({ rules: z.array(z.object({
     id: z.string(), name: z.string(), isActive: z.boolean(), eventType: z.string(), offsetType: z.string(),
-    offsetDays: z.number().int(), recipientType: z.string(), templateKey: z.string(), isDefault: z.boolean(), jobsStale: z.boolean(), updatedAt: z.string(),
+    offsetDays: z.number().int(), sendTime: z.string(), recipientType: z.string(), templateKey: z.string(), isDefault: z.boolean(), jobsStale: z.boolean(), updatedAt: z.string(),
 })) });
 const SMS_FIELDS: AgentFormField[] = [
     { name: "receiver", label: "수신번호", type: "text", required: true },
@@ -136,6 +139,7 @@ const AUTOMATION_RULE_FIELDS: AgentFormField[] = [
     { name: "eventType", label: "이벤트 유형", type: "text", required: true },
     { name: "offsetType", label: "실행 시점 유형", type: "text", required: true },
     { name: "offsetDays", label: "기준일 차이", type: "number" },
+    { name: "sendTime", label: "발송 시각 (HH:mm, 한국 시간)", type: "text" },
     { name: "recipientType", label: "수신자 유형", type: "text", required: true },
     { name: "templateKey", label: "템플릿 키", type: "text", required: true },
 ];
@@ -151,6 +155,7 @@ function mergedAutomationRuleValidationInput(
         eventType: updates.eventType ?? rule.eventType,
         offsetType: updates.offsetType ?? rule.offsetType,
         offsetDays: updates.offsetDays ?? rule.offsetDays,
+        sendTime: updates.sendTime ?? rule.sendTime,
         recipientType: updates.recipientType ?? rule.recipientType,
         templateKey: updates.templateKey ?? rule.templateKey,
     };
@@ -218,7 +223,7 @@ export class MessageExternalAgentCapabilitiesProvider implements AgentCapability
                 inputSchema: z.object({}).default({}), outputSchema: AutomationRulesOutputSchema,
                 execute: async (context, rawInput) => {
                     z.object({}).parse(rawInput);
-                    const rules = await this.messageTriggerService.listRules(context.principal.branchId);
+                    const rules = await this.messageTriggerService.listRulesReadOnly(context.principal.branchId);
                     return { rules: rules.map((rule) => this.ruleView(rule)) };
                 },
             },
@@ -542,7 +547,7 @@ export class MessageExternalAgentCapabilitiesProvider implements AgentCapability
     }
 
     private ruleView(rule: MessageTriggerRuleEntity) {
-        return { id: rule.id, name: rule.name, isActive: rule.isActive, eventType: rule.eventType, offsetType: rule.offsetType, offsetDays: rule.offsetDays, recipientType: rule.recipientType, templateKey: rule.templateKey, isDefault: rule.isDefault, jobsStale: rule.jobsStale, updatedAt: rule.updatedAt.toISOString() };
+        return { id: rule.id, name: rule.name, isActive: rule.isActive, eventType: rule.eventType, offsetType: rule.offsetType, offsetDays: rule.offsetDays, sendTime: rule.sendTime, recipientType: rule.recipientType, templateKey: rule.templateKey, isDefault: rule.isDefault, jobsStale: rule.jobsStale, updatedAt: rule.updatedAt.toISOString() };
     }
 
     private ruleTargetVersion(rule: MessageTriggerRuleEntity): string {
@@ -666,7 +671,7 @@ export class MessageExternalAgentCapabilitiesProvider implements AgentCapability
             recipientType: source.recipientType,
             recipientPhone: source.recipientPhone,
             templateKey: source.templateKey,
-            dedupeKey: `agent-sms-retry:${context.actionId}`,
+            dedupeKey: `${AGENT_SMS_RETRY_DEDUPE_KEY_PREFIX}${context.actionId}`,
             payload: {
                 ...source.payload,
                 memberId: `agent-action:${context.actionId}`,
@@ -736,7 +741,7 @@ export class MessageExternalAgentCapabilitiesProvider implements AgentCapability
         const job = jobId
             ? await this.prisma.message_trigger_job.findFirst({ where: { id: jobId, branchId: context.principal.branchId } })
             : actionId
-                ? await this.prisma.message_trigger_job.findFirst({ where: { branchId: context.principal.branchId, OR: [{ dedupeKey: `agent-sms:${actionId}` }, { dedupeKey: `agent-sms-retry:${actionId}` }] } })
+                ? await this.prisma.message_trigger_job.findFirst({ where: { branchId: context.principal.branchId, OR: [{ dedupeKey: `agent-sms:${actionId}` }, { dedupeKey: `${AGENT_SMS_RETRY_DEDUPE_KEY_PREFIX}${actionId}` }] } })
                 : null;
         if (!job || job.status === "pending" || job.status === "processing" || job.status === "dispatching") {
             return { status: "uncertain" as const, reason: "SMS delivery is not terminal" };

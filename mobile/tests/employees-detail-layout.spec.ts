@@ -4,7 +4,7 @@ const MOCK_EMPLOYEES = [
   {
     id: 101,
     name: "김정인",
-    workArea: ["incheon-namdong"],
+    workArea: ["인천 남동구"],
     phone: "010-1111-2222",
     grade: "A",
     openToNextWork: true,
@@ -24,7 +24,7 @@ const MOCK_EMPLOYEES = [
   {
     id: 103,
     name: "오류테스트",
-    workArea: ["incheon-namdong"],
+    workArea: ["인천 남동구"],
     phone: "010-5555-6666",
     grade: "A",
     openToNextWork: false,
@@ -116,6 +116,62 @@ async function mockEmployeesApi(page: Page) {
 test.use({ hasTouch: true, viewport: { width: 390, height: 844 } });
 
 test.describe("employees mobile detail layout", () => {
+  test("filters visible rows and counts by search within the selected status", async ({ page }) => {
+    await mockEmployeesApi(page);
+    await page.goto("/employees");
+    const rows = page.locator('[data-component="mobile_employees_detail-sheet_stack_list-page_content_list-card_body_section_row"]');
+    const search = page.getByRole("textbox", { name: "이름, 근무 지역 검색" });
+    await expect(rows).toHaveCount(3);
+
+    await page.getByRole("button", { name: /^배정 불가/ }).click();
+    await expect(rows).toHaveCount(1);
+    await search.fill("존재하지않는직원");
+    await expect(rows).toHaveCount(0);
+    await expect(page.getByText("조건에 맞는 제공인력이 없습니다.")).toBeVisible();
+
+    await search.fill("");
+    await expect(rows).toHaveCount(1);
+    await expect(rows).toContainText("박지영");
+    await page.getByRole("button", { name: /^전체/ }).click();
+    await search.fill("남동");
+    await expect(rows).toHaveCount(2);
+    await expect(rows.filter({ hasText: "박지영" })).toHaveCount(0);
+    await search.fill("김정인");
+    await expect(rows).toHaveCount(1);
+    await expect(rows).toContainText("김정인");
+    await search.fill("");
+    await expect(rows).toHaveCount(3);
+  });
+
+  test("loads all search matches beyond the first page and resets when cleared", async ({ page }) => {
+    await mockEmployeesApi(page);
+    const matches = Array.from({ length: 12 }, (_, index) => ({
+      ...MOCK_EMPLOYEES[0],
+      id: 400 + index,
+      name: `검색대상 ${index + 1}`,
+    }));
+    await page.route("**/api/employees", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify([...MOCK_EMPLOYEES, ...matches]),
+      });
+    });
+    await page.goto("/employees");
+    const rows = page.locator('[data-component="mobile_employees_detail-sheet_stack_list-page_content_list-card_body_section_row"]');
+    const search = page.getByRole("textbox", { name: "이름, 근무 지역 검색" });
+    await expect(rows).toHaveCount(8);
+    await search.fill("검색대상");
+    await expect(rows).toHaveCount(8);
+    await expect(page.getByRole("button", { name: "전체 12", exact: true })).toBeVisible();
+    await page.getByRole("button", { name: "더 많은 항목 불러오기" }).click();
+    await expect(rows).toHaveCount(12);
+    await expect(rows.filter({ hasText: "검색대상" })).toHaveCount(12);
+    await search.fill("");
+    await expect(page.getByRole("button", { name: "전체 15", exact: true })).toBeVisible();
+    await expect(rows).toHaveCount(8);
+  });
+
   test("uses the shared absolute detail-sheet geometry", async ({ page }) => {
     await mockEmployeesApi(page);
 

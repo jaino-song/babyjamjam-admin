@@ -236,6 +236,44 @@ describe("eformsignApi document download URLs", () => {
     });
 });
 
+describe("eformsignApi receipt-link flow", () => {
+    it("prepares a receipt link for the selected client", async () => {
+        const { apiModule, mockPost } = await loadApiModule();
+        const prepared = {
+            clientId: 7,
+            clientName: "김고객",
+            recipientPhone: "01012345678",
+            documentId: "doc-7",
+            receiptUrl: "https://example.test/receipt/doc-7",
+            expiresAt: "2026-07-31T00:00:00.000Z",
+        };
+        mockPost.mockResolvedValue({ data: prepared });
+
+        await expect(apiModule.eformsignApi.prepareReceiptLink(7)).resolves.toEqual(prepared);
+        expect(mockPost).toHaveBeenCalledWith("/receipt-links/prepare", { clientId: 7 });
+    });
+
+    it("pins client identity and recipient phone when sending a prepared receipt link", async () => {
+        const { apiModule, mockPost } = await loadApiModule();
+        const result = {
+            jobId: "job-7",
+            scheduledFor: "2026-07-16T01:00:00.000Z",
+            clientName: "김고객",
+        };
+        mockPost.mockResolvedValue({ data: result });
+
+        await expect(apiModule.eformsignApi.sendReceiptLink("doc-7", {
+            clientId: 7,
+            recipientPhone: "01012345678",
+        })).resolves.toEqual(result);
+        expect(mockPost).toHaveBeenCalledWith("/receipt-links/send", {
+            documentId: "doc-7",
+            clientId: 7,
+            recipientPhone: "01012345678",
+        });
+    });
+});
+
 describe("eformsignApi.getDocumentClientCandidate", () => {
     it("requests the mobile candidate proxy with an encoded document ID", async () => {
         const { apiModule, mockGet } = await loadApiModule();

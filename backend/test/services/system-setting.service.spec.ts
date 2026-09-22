@@ -100,6 +100,59 @@ describe("SystemSettingService", () => {
         });
     });
 
+    describe("message settings policy activation", () => {
+        it("should default each branch policy to enabled", async () => {
+            getSettingUsecase.executeWithDefault.mockResolvedValue("true");
+
+            const result = await service.getMessageSettingsPolicyEnabled(
+                "branch-1",
+                "trigger-dispatch",
+            );
+
+            expect(getSettingUsecase.executeWithDefault).toHaveBeenCalledWith(
+                "branch:branch-1:message_policy:trigger-dispatch:enabled",
+                "true",
+            );
+            expect(result).toBe(true);
+        });
+
+        it("should persist a disabled branch policy", async () => {
+            const entity = new SystemSettingEntity(
+                "branch:branch-1:message_policy:sms-retry:enabled",
+                "false",
+                new Date(),
+            );
+            updateSettingUsecase.execute.mockResolvedValue(entity);
+
+            const result = await service.setMessageSettingsPolicyEnabled(
+                "branch-1",
+                "sms-retry",
+                false,
+            );
+
+            expect(updateSettingUsecase.execute).toHaveBeenCalledWith(
+                "branch:branch-1:message_policy:sms-retry:enabled",
+                "false",
+            );
+            expect(result).toBe(entity);
+        });
+
+        it("should load every policy activation for the branch", async () => {
+            getSettingUsecase.executeWithDefault.mockResolvedValue("true");
+
+            const result = await service.getMessageSettingsPolicyActivations("branch-1");
+
+            expect(result).toEqual({
+                "trigger-dispatch": true,
+                "trigger-job-retry": true,
+                "sms-retry": true,
+                "past-trigger": true,
+                "duplicate-send-confirmation": true,
+            });
+            expect(getSettingUsecase.executeWithDefault).toHaveBeenCalledTimes(5);
+        });
+    });
+
     describe("contract auto-finalize config", () => {
         it("defaults missing or invalid values", async () => {
             getSettingUsecase.execute.mockResolvedValue("{invalid");

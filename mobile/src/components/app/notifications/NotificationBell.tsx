@@ -437,6 +437,7 @@ export function NotificationBell({
                     <Button
                         variant="ghost"
                         size="icon"
+                        aria-label="알림 열기"
                         onClick={handleClick}
                         data-component={dataComponent}
                         data-testid="notification-bell"

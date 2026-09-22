@@ -72,9 +72,11 @@ describe("ClientService", () => {
             findMany: jest.fn().mockResolvedValue([]),
             },
             employee: {
+                updateMany: jest.fn().mockResolvedValue({ count: 0 }),
                 findMany: jest.fn().mockImplementation(({ where }) =>
                     Promise.resolve(where.id.in.map((id: number) => ({
                         id,
+                        name: `Employee ${id}`,
                         branchId: where.branchId ?? "org-1",
                         deletedAt: null,
                         openToNextWork: true,
@@ -1448,6 +1450,170 @@ describe("ClientService", () => {
                 expect(createClientUsecase.executeWithInitialSchedule).not.toHaveBeenCalled();
             });
 
+            it("activates selected unavailable employees and creates the client in one transaction after confirmation", async () => {
+                const mockClient = createClientEntity();
+                createClientUsecase.executeWithInitialSchedule.mockResolvedValue({
+                    client: mockClient,
+                    scheduleId: 10,
+                });
+                prismaService.employee.findMany
+                    .mockResolvedValueOnce([
+                        { id: 5, name: "Employee 5", branchId, deletedAt: null, openToNextWork: false },
+                        { id: 6, name: "Employee 6", branchId, deletedAt: null, openToNextWork: false },
+                    ])
+                    .mockResolvedValueOnce([
+                        { id: 5, name: "Employee 5", branchId, deletedAt: null, openToNextWork: true },
+                        { id: 6, name: "Employee 6", branchId, deletedAt: null, openToNextWork: true },
+                    ]);
+
+                await service.create(branchId, {
+                    name: "New Client",
+                    primaryEmployeeId: 5,
+                    secondaryEmployeeId: 6,
+                    confirmedUnavailableEmployeeIds: [5, 6],
+                    careCenter: false,
+                    voucherClient: true,
+                    breastPump: false,
+                });
+
+                expect(prismaService.employee.updateMany).toHaveBeenCalledWith({
+                    where: {
+                        id: { in: [5, 6] },
+                        branchId,
+                        deletedAt: null,
+                        openToNextWork: false,
+                    },
+                    data: { openToNextWork: true },
+                });
+                expect(prismaService.employee.updateMany.mock.invocationCallOrder[0]).toBeLessThan(
+                    createClientUsecase.executeWithInitialSchedule.mock.invocationCallOrder[0]!,
+                );
+                expect(createClientUsecase.executeWithInitialSchedule).toHaveBeenCalled();
+            });
+
+            it("returns the server-current unavailable employee identities before any mutation", async () => {
+                prismaService.employee.findMany.mockResolvedValueOnce([
+                    { id: 5, name: "김관리", branchId, deletedAt: null, openToNextWork: false },
+                ]);
+
+                await expect(service.create(branchId, {
+                    name: "New Client",
+                    primaryEmployeeId: 5,
+                    careCenter: false,
+                    voucherClient: true,
+                    breastPump: false,
+                })).rejects.toMatchObject({
+                    response: {
+                        code: "EMPLOYEE_ACTIVATION_CONFIRMATION_REQUIRED",
+                        unavailableEmployees: [{ id: 5, name: "김관리" }],
+                    },
+                });
+
+                expect(prismaService.employee.updateMany).not.toHaveBeenCalled();
+                expect(createClientUsecase.executeWithInitialSchedule).not.toHaveBeenCalled();
+            });
+
+            it("rejects and re-prompts when the locked unavailable set differs from the confirmed set", async () => {
+                prismaService.employee.findMany.mockResolvedValueOnce([
+                    { id: 5, name: "김주", branchId, deletedAt: null, openToNextWork: false },
+                    { id: 6, name: "이보조", branchId, deletedAt: null, openToNextWork: false },
+                ]);
+
+                await expect(service.create(branchId, {
+                    name: "New Client",
+                    primaryEmployeeId: 5,
+                    secondaryEmployeeId: 6,
+                    confirmedUnavailableEmployeeIds: [5],
+                    careCenter: false,
+                    voucherClient: true,
+                    breastPump: false,
+                })).rejects.toMatchObject({
+                    response: {
+                        code: "EMPLOYEE_ACTIVATION_CONFIRMATION_REQUIRED",
+                        unavailableEmployees: [
+                            { id: 5, name: "김주" },
+                            { id: 6, name: "이보조" },
+                        ],
+                    },
+                });
+
+                expect(prismaService.employee.updateMany).not.toHaveBeenCalled();
+                expect(createClientUsecase.executeWithInitialSchedule).not.toHaveBeenCalled();
+            });
+
+            it("does not activate or assign an employee outside the client branch after confirmation", async () => {
+                prismaService.employee.findMany.mockResolvedValue([]);
+
+                await expect(service.create(branchId, {
+                    name: "New Client",
+                    primaryEmployeeId: 999,
+                    confirmedUnavailableEmployeeIds: [999],
+                    careCenter: false,
+                    voucherClient: true,
+                    breastPump: false,
+                })).rejects.toThrow("선택한 제공인력이 해당 지점 소속이 아니거나 배정 가능한 상태가 아니에요.");
+
+                expect(prismaService.employee.updateMany).not.toHaveBeenCalled();
+                expect(createClientUsecase.executeWithInitialSchedule).not.toHaveBeenCalled();
+            });
+
+            it("does not activate or assign a soft-deleted employee after confirmation", async () => {
+                prismaService.employee.findMany.mockResolvedValue([
+                    { id: 5, name: "Deleted", branchId, deletedAt: new Date(), openToNextWork: false },
+                ]);
+
+                await expect(service.create(branchId, {
+                    name: "New Client",
+                    primaryEmployeeId: 5,
+                    confirmedUnavailableEmployeeIds: [5],
+                    careCenter: false,
+                    voucherClient: true,
+                    breastPump: false,
+                })).rejects.toThrow("선택한 제공인력이 해당 지점 소속이 아니거나 배정 가능한 상태가 아니에요.");
+
+                expect(prismaService.employee.updateMany).not.toHaveBeenCalled();
+                expect(createClientUsecase.executeWithInitialSchedule).not.toHaveBeenCalled();
+            });
+
+            it("keeps activation inside the client-create transaction when creation fails", async () => {
+                let employeeIsAvailable = false;
+                prismaService.employee.findMany.mockImplementation(({ where }) => Promise.resolve(
+                    where.id.in.map((id: number) => ({
+                        id,
+                        name: `Employee ${id}`,
+                        branchId,
+                        deletedAt: null,
+                        openToNextWork: employeeIsAvailable,
+                    })),
+                ));
+                prismaService.employee.updateMany.mockImplementation(async () => {
+                    employeeIsAvailable = true;
+                    return { count: 1 };
+                });
+                prismaService.$transaction.mockImplementationOnce(async (callback) => {
+                    const originalAvailability = employeeIsAvailable;
+                    try {
+                        return await callback(prismaService);
+                    } catch (error) {
+                        employeeIsAvailable = originalAvailability;
+                        throw error;
+                    }
+                });
+                createClientUsecase.executeWithInitialSchedule.mockRejectedValueOnce(new Error("create failed"));
+
+                await expect(service.create(branchId, {
+                    name: "New Client",
+                    primaryEmployeeId: 5,
+                    confirmedUnavailableEmployeeIds: [5],
+                    careCenter: false,
+                    voucherClient: true,
+                    breastPump: false,
+                })).rejects.toThrow("create failed");
+
+                expect(prismaService.employee.updateMany).toHaveBeenCalled();
+                expect(employeeIsAvailable).toBe(false);
+            });
+
             it("creates a new client when no client with that phone exists in the branch", async () => {
                 // Arrange — findByPhone returns null (no duplicate)
                 clientRepository.findByPhone.mockResolvedValue(null);
@@ -2675,6 +2841,71 @@ describe("ClientService", () => {
                     name: "지원자 2",
                     phone: "010-0000-2222",
                 },
+            });
+        });
+
+        describe("hasSigned contract projection", () => {
+            const clientWithDocument = () => {
+                const client = createClientEntity();
+                client.eDocId = "document-1";
+                return client;
+            };
+
+            it("stays false while the customer signing step is current", async () => {
+                listClientsUsecase.execute.mockResolvedValue([clientWithDocument()]);
+                prismaService.eformsign_doc.findMany.mockResolvedValue([
+                    { clientId: 1, statusType: "060", stepType: "05", stepName: "고객 서명" },
+                ]);
+
+                const [result] = await service.findAll(branchId);
+
+                expect(result?.hasSigned).toBe(false);
+            });
+
+            it("is true when an in-progress document is at the provider review step", async () => {
+                listClientsUsecase.execute.mockResolvedValue([clientWithDocument()]);
+                prismaService.eformsign_doc.findMany.mockResolvedValue([
+                    { clientId: 1, statusType: "070", stepType: "06", stepName: "제공기관 확인" },
+                ]);
+
+                const [result] = await service.findAll(branchId);
+
+                expect(result?.hasSigned).toBe(true);
+            });
+
+            it("is true for a completed document even when step fields are absent", async () => {
+                listClientsUsecase.execute.mockResolvedValue([clientWithDocument()]);
+                prismaService.eformsign_doc.findMany.mockResolvedValue([
+                    { clientId: 1, statusType: "003" },
+                ]);
+
+                const [result] = await service.findAll(branchId);
+
+                expect(result?.hasSigned).toBe(true);
+            });
+
+            it.each(["071", "042", "049", "080", "999"])(
+                "fails closed for dead or unknown status %s",
+                async (statusType) => {
+                    listClientsUsecase.execute.mockResolvedValue([clientWithDocument()]);
+                    prismaService.eformsign_doc.findMany.mockResolvedValue([
+                        { clientId: 1, statusType, stepType: "06", stepName: "제공기관 확인" },
+                    ]);
+
+                    const [result] = await service.findAll(branchId);
+
+                    expect(result?.hasSigned).toBe(false);
+                },
+            );
+
+            it("fails closed when the client has no latest contract document", async () => {
+                const client = clientWithDocument();
+                listClientsUsecase.execute.mockResolvedValue([client]);
+                prismaService.eformsign_doc.findMany.mockResolvedValue([]);
+
+                const [result] = await service.findAll(branchId);
+
+                expect(result?.hasSigned).toBe(false);
             });
         });
 
@@ -3934,17 +4165,22 @@ describe("ClientService", () => {
 
         it.each(invalidCases)(
             "refuses %s during client assignment without writes or side effects",
-            async (_label, employees, primaryEmployeeId, secondaryEmployeeId) => {
+            async (label, employees, primaryEmployeeId, secondaryEmployeeId) => {
                 prismaService.employee.findMany.mockResolvedValue(employees);
 
-                await expect(service.create(branchId, {
+                const creation = service.create(branchId, {
                     name: "Invalid Assignment",
                     primaryEmployeeId,
                     secondaryEmployeeId,
                     careCenter: false,
                     voucherClient: true,
                     breastPump: false,
-                })).rejects.toBeInstanceOf(BadRequestException);
+                });
+                if (label.includes("unavailable")) {
+                    await expect(creation).rejects.toBeInstanceOf(ConflictException);
+                } else {
+                    await expect(creation).rejects.toBeInstanceOf(BadRequestException);
+                }
 
                 expectNoAssignmentResidue();
             },

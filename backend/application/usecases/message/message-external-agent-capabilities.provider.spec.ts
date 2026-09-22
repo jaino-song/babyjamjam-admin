@@ -1,3 +1,4 @@
+import { createLegacyAutomationDeliveryGate } from "../../../test/fixtures/legacy-automation-delivery-gate";
 import { NotFoundException } from "@nestjs/common";
 
 import { AligoService } from "application/services/aligo.service";
@@ -57,7 +58,7 @@ describe("MessageExternalAgentCapabilitiesProvider", () => {
         const rule = MessageTriggerRuleEntity.reconstitute(
             "rule-a", principal.branchId, "시작 알림", true,
             MessageTriggerEventType.SERVICE_START, MessageTriggerOffsetType.BEFORE_DAYS, 1,
-            MessageTriggerRecipientType.CLIENT, MessageTriggerTemplateKey.SERVICE_START_REMINDER,
+            MessageTriggerRecipientType.CLIENT, MessageTriggerTemplateKey.SERVICE_INFO,
             now, now,
         );
         const repository = {
@@ -69,6 +70,7 @@ describe("MessageExternalAgentCapabilitiesProvider", () => {
         const delivery = {
             dispatchPendingJobNow: jest.fn().mockResolvedValue({ status: "sent" }),
             listRules: jest.fn().mockResolvedValue([rule]),
+            listRulesReadOnly: jest.fn().mockResolvedValue([rule]),
             getRule: jest.fn().mockResolvedValue(rule),
             createRule: jest.fn().mockResolvedValue(rule),
             updateRule: jest.fn().mockImplementation(async (_branchId, _id, updates) => Object.assign(rule, updates)),
@@ -112,7 +114,7 @@ describe("MessageExternalAgentCapabilitiesProvider", () => {
             aligoService as unknown as AligoService,
             { getByKey: jest.fn() } as never,
             { save: jest.fn() } as never,
-        );
+        undefined, undefined, createLegacyAutomationDeliveryGate());
         const senderApproval = { ensureApproved: jest.fn().mockResolvedValue(undefined) };
         const provider = new MessageExternalAgentCapabilitiesProvider(
             prisma as never,
@@ -433,7 +435,7 @@ describe("MessageExternalAgentCapabilitiesProvider", () => {
             aligoService,
             systemTemplateService as never,
             { save: jest.fn().mockImplementation(async (log: unknown) => log) } as never,
-        );
+        undefined, undefined, createLegacyAutomationDeliveryGate());
         const triggerDelivery = new MessageTriggerDeliveryService(smsDelivery);
         const senderApproval = {
             getApprovedBranchIds: jest.fn().mockResolvedValue(new Set([principal.branchId])),
@@ -469,7 +471,22 @@ describe("MessageExternalAgentCapabilitiesProvider", () => {
                     transaction: unknown,
                 ) => work(transaction)),
             } as never,
-        );
+        undefined, undefined, undefined, undefined, undefined, createLegacyAutomationDeliveryGate({
+                $transaction: jest.fn().mockImplementation(async (work: (transaction: unknown) => Promise<unknown>) =>
+                    work({
+                        $queryRaw: jest.fn().mockImplementation(async () => [{
+                            status: "processing",
+                            claim_token: "claim-a",
+                            branch_id: principal.branchId,
+                            rule_id: source.ruleId,
+                            client_id: source.clientId,
+                            employee_schedule_id: source.employeeScheduleId,
+                            recipient_type: source.recipientType,
+                            template_key: source.templateKey,
+                            payload: stagedRetry?.payload ?? source.payload,
+                        }]),
+                    })),
+            } as never, undefined));
         const recipientPrisma = {
             client: {
                 findFirst: jest.fn().mockResolvedValue({ id: 1, name: "테스트 고객", phone: "01012345678" }),
@@ -629,6 +646,18 @@ describe("MessageExternalAgentCapabilitiesProvider", () => {
         expect(repository.upsertPending).not.toHaveBeenCalled();
     });
 
+    it("binds automation approval to the persisted send time", async () => {
+        const { delivery, capabilities } = setup();
+        const update = capabilities.find((entry) => entry.meta.name === "automation.update")!;
+        const rule = await delivery.getRule(principal.branchId, "rule-a");
+        rule.sendTime = "14:37";
+        const inspection = await update.inspect!(context, { id: "rule-a", sendTime: "15:42" });
+        expect(inspection.targetSnapshot).toEqual(expect.objectContaining({ sendTime: "14:37" }));
+        rule.sendTime = "16:00";
+        await expect(update.revalidate!(context, { id: "rule-a", sendTime: "15:42" }, inspection.targetVersion!))
+            .resolves.toEqual(expect.objectContaining({ valid: false }));
+    });
+
     it("uses the canonical automation service for branch-scoped lifecycle operations", async () => {
         const { delivery, capabilities } = setup();
         const list = capabilities.find((entry) => entry.meta.name === "automation.list");
@@ -638,7 +667,8 @@ describe("MessageExternalAgentCapabilitiesProvider", () => {
         const inspection = await setActive!.inspect!(context, { id: "rule-a", isActive: false });
         const updated = await setActive!.execute(context, { id: "rule-a", isActive: false }) as { isActive: boolean };
 
-        expect(delivery.listRules).toHaveBeenCalledWith(principal.branchId);
+        expect(delivery.listRulesReadOnly).toHaveBeenCalledWith(principal.branchId);
+        expect(delivery.listRules).not.toHaveBeenCalled();
         expect(listed.rules).toEqual([expect.objectContaining({ id: "rule-a" })]);
         expect(inspection.targetVersion).toHaveLength(64);
         expect(setActive!.meta.approvalPolicy).toBe("strong");
@@ -650,7 +680,8 @@ describe("MessageExternalAgentCapabilitiesProvider", () => {
         ["invalid recipient", { recipientType: MessageTriggerRecipientType.PRIMARY_EMPLOYEE }, "Invalid recipient for selected event type"],
         ["invalid offset", { offsetType: MessageTriggerOffsetType.IMMEDIATE }, "Invalid offset type for selected event type"],
         ["non-positive offset days", { offsetDays: 0 }, "Offset days must be greater than 0"],
-        ["non-configurable template", { templateKey: MessageTriggerTemplateKey.EMPLOYEE_ASSIGNED }, "일반 자동 전송 규칙에서 사용할 수 없는 템플릿입니다."],
+        ["retired employee-assigned template", { templateKey: MessageTriggerTemplateKey.EMPLOYEE_ASSIGNED }, "SMS 발송 채널이 없는 템플릿입니다."],
+        ["retired service-start template", { templateKey: MessageTriggerTemplateKey.SERVICE_START_REMINDER }, "SMS 발송 채널이 없는 템플릿입니다."],
     ] as Array<[string, Record<string, unknown>, string]>)
     ("rejects %s during automation creation inspection", async (_label, overrides, message) => {
         const { prisma, delivery, capabilities } = setup();
@@ -675,7 +706,8 @@ describe("MessageExternalAgentCapabilitiesProvider", () => {
         ["invalid recipient", { recipientType: MessageTriggerRecipientType.PRIMARY_EMPLOYEE }, "Invalid recipient for selected event type"],
         ["invalid offset", { offsetType: MessageTriggerOffsetType.IMMEDIATE }, "Invalid offset type for selected event type"],
         ["non-positive offset days", { offsetDays: 0 }, "Offset days must be greater than 0"],
-        ["non-configurable template", { templateKey: MessageTriggerTemplateKey.EMPLOYEE_ASSIGNED }, "일반 자동 전송 규칙에서 사용할 수 없는 템플릿입니다."],
+        ["retired employee-assigned template", { templateKey: MessageTriggerTemplateKey.EMPLOYEE_ASSIGNED }, "SMS 발송 채널이 없는 템플릿입니다."],
+        ["retired service-start template", { templateKey: MessageTriggerTemplateKey.SERVICE_START_REMINDER }, "SMS 발송 채널이 없는 템플릿입니다."],
     ] as Array<[string, Record<string, unknown>, string]>)
     ("rejects %s during merged automation update inspection", async (_label, overrides, message) => {
         const { delivery, capabilities } = setup();
@@ -769,7 +801,7 @@ describe("MessageExternalAgentCapabilitiesProvider", () => {
             result: { status: "created", id: "rule-a", isActive: true },
         });
 
-        expect(delivery.createRule).toHaveBeenCalledWith(principal.branchId, input, expect.objectContaining({ agent_action: expect.any(Object) }));
+        expect(delivery.createRule).toHaveBeenCalledWith(principal.branchId, { ...input, sendTime: "09:00" }, expect.objectContaining({ agent_action: expect.any(Object) }));
         expect(prisma.agent_action.updateMany).toHaveBeenCalledWith(expect.objectContaining({
             where: expect.objectContaining({ id: context.actionId, capability: "automation.create" }),
         }));
@@ -791,7 +823,7 @@ describe("MessageExternalAgentCapabilitiesProvider", () => {
         };
 
         await expect(create.execute(context, input)).rejects.toThrow("receipt could not be persisted");
-        expect(delivery.createRule).toHaveBeenCalledWith(principal.branchId, input, expect.objectContaining({ agent_action: expect.any(Object) }));
+        expect(delivery.createRule).toHaveBeenCalledWith(principal.branchId, { ...input, sendTime: "09:00" }, expect.objectContaining({ agent_action: expect.any(Object) }));
     });
 
     it("rejects id-only automation updates before the canonical service is called", async () => {

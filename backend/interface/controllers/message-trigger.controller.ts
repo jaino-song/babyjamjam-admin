@@ -12,6 +12,7 @@ import {
     CreateMessageTriggerRuleDto,
     UpdateMessageTriggerRuleDto,
     UpdateMessageTriggerRuleBranchActivationDto,
+    UpdateMessageTriggerRuleActivationWithParentDto,
 } from "interface/dto/message-trigger.dto";
 import { parseInteger } from "interface/parse-integer";
 import { SmsProviderReconciliationDto } from "interface/dto/sms-provider-reconciliation.dto";
@@ -46,6 +47,19 @@ export class MessageTriggerController {
         @Param("id") id: string,
     ) {
         return this.triggerService.cancelJobByUser(tenant.branchId ?? "", id);
+    }
+
+    @Get("message-logs/page")
+    listHistoryPage(
+        @CurrentTenant() tenant: { branchId?: string },
+        @Query("limit") limit?: string,
+        @Query("cursor") cursor?: string,
+    ) {
+        return this.triggerService.listHistoryPage(
+            tenant.branchId ?? "",
+            parseInteger(limit, "limit", { defaultValue: 500, min: 1, max: 500 }),
+            cursor,
+        );
     }
 
     @Get("message-logs")
@@ -121,6 +135,27 @@ export class MessageTriggerController {
         @Body() dto: UpdateMessageTriggerRuleBranchActivationDto,
     ) {
         return this.triggerService.updateRuleBranchActivation(tenant.branchId ?? "", id, dto.isActive);
+    }
+
+    @Put("message-trigger-rules/:id/activation-with-parent")
+    @UseGuards(OwnerOrAdminGuard)
+    activateRuleWithParent(
+        @CurrentTenant() tenant: { branchId?: string; userId?: string; globalRole?: string; branchRole?: string },
+        @Param("id") id: string,
+        @Body() _dto: UpdateMessageTriggerRuleActivationWithParentDto,
+    ) {
+        void _dto;
+        return this.triggerService.activateRuleWithParent(
+            tenant.branchId ?? "",
+            id,
+            {
+                actor: {
+                    userId: tenant.userId,
+                    globalRole: tenant.globalRole,
+                    branchRole: tenant.branchRole,
+                },
+            },
+        );
     }
 
     @Delete("message-trigger-rules/:id")

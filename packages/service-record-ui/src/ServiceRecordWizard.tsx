@@ -9,8 +9,11 @@ import {
     formatMonthDayKo,
     formatReviewFieldValue,
     formatShortDate,
+    getServiceRecordNumericErrors,
     hasDisplayValue,
     isDailyItemComplete,
+    isServiceRecordHeaderComplete,
+    type ServiceRecordNumericErrors,
 } from "./form-definition";
 import type {
     ServiceRecordWizardSlots,
@@ -21,6 +24,12 @@ import type {
 const COMPONENT_SUFFIX = {
     topBar: "top-bar",
     body: "body",
+} as const;
+
+const HEADER_FIELD_ERROR_COMPONENT_SUFFIX = {
+    momBirth: "mom-birth",
+    babyBirth: "baby-birth",
+    babyWeight: "baby-weight",
 } as const;
 
 function TextInput({
@@ -80,6 +89,7 @@ function DailyField({
     onFieldChange,
     onToggleMulti,
     readOnly = false,
+    numericErrors = {},
 }: {
     dataComponent: string;
     item: (typeof DAILY_ITEMS)[number];
@@ -87,6 +97,7 @@ function DailyField({
     onFieldChange: (key: string, value: unknown) => void;
     onToggleMulti: (key: string, option: string) => void;
     readOnly?: boolean;
+    numericErrors?: ServiceRecordNumericErrors;
 }) {
     const value = draft[item.key];
 
@@ -131,23 +142,33 @@ function DailyField({
     if (item.type === "counts") {
         return (
             <div data-component={`${dataComponent}_count-options`} data-slot="segrow" className="segrow">
-                {item.counts?.map((count) => (
-                    <div data-component={`${dataComponent}_count-options_row`} data-slot="segnum" className="segnum" key={count.k}>
-                        <span>{count.label}</span>
-                        <input
-                            data-slot="segnum-input"
-                            type="number"
-                            aria-label={count.label}
-                            inputMode={count.k === "temp" ? "decimal" : "numeric"}
-                            min="0"
-                            step={count.k === "temp" ? "0.1" : "1"}
-                            value={(draft[`${item.key}_${count.k}`] as string) ?? ""}
-                            disabled={readOnly}
-                            onChange={(event) => onFieldChange(`${item.key}_${count.k}`, event.target.value)}
-                        />
-                        <span>{count.unit}</span>
-                    </div>
-                ))}
+                {item.counts?.map((count) => {
+                    const fieldKey = `${item.key}_${count.k}`;
+                    const error = numericErrors[fieldKey];
+                    const errorId = `${dataComponent}-${item.key}-${count.k}-error`;
+                    return (
+                        <div data-slot="segnum-field" className="segnum-field" key={count.k}>
+                            <div data-component={`${dataComponent}_count-options_row`} data-slot="segnum" className="segnum">
+                                <span>{count.label}</span>
+                                <input
+                                    data-slot="segnum-input"
+                                    type="number"
+                                    aria-label={count.label}
+                                    aria-invalid={error ? "true" : undefined}
+                                    aria-describedby={error ? errorId : undefined}
+                                    inputMode={count.k === "temp" ? "decimal" : "numeric"}
+                                    min={count.min ?? 0}
+                                    step={count.step ?? 1}
+                                    value={(draft[fieldKey] as string) ?? ""}
+                                    disabled={readOnly}
+                                    onChange={(event) => onFieldChange(fieldKey, event.target.value)}
+                                />
+                                <span>{count.unit}</span>
+                            </div>
+                            {error ? <p id={errorId} data-component={`${dataComponent}_${item.key}-${count.k}-error`} data-slot="err" className="err" role="alert">{error}</p> : null}
+                        </div>
+                    );
+                })}
             </div>
         );
     }
@@ -287,6 +308,7 @@ export function ServiceRecordWizard({
     editing,
     readOnly = false,
     adminMode = false,
+    headerErrors = {},
     changedSessionIndexes,
     clientSignature,
     busy,
@@ -343,8 +365,9 @@ export function ServiceRecordWizard({
     const isMomConfirmationPage = Boolean(currentDayPage.confirmation);
     const signatureValue = currentSession?.clientSignature ?? clientSignature;
     const isSignatureLocked = Boolean(currentSession?.clientSignature);
-    const isHeaderComplete = HEADER_FIELDS.every((field) => hasDisplayValue(header[field.k]))
-        && hasDisplayValue(header.deliveryType);
+    const isHeaderComplete = isServiceRecordHeaderComplete(header);
+    const numericErrors = getServiceRecordNumericErrors(draft);
+    const hasInvalidNumericAnswers = Object.keys(numericErrors).length > 0;
     const plannedDateForSession = (sessionIndex: number): string | undefined => plannedDateBySession?.get(sessionIndex);
     const displayDateForSession = (sessionIndex: number, session?: { serviceDate: string }): string => (
         session?.serviceDate?.slice(0, 10)
@@ -353,7 +376,14 @@ export function ServiceRecordWizard({
     );
     const isCurrentPageComplete = currentDayPage.items.every((index) => {
         const item = DAILY_ITEMS[index];
-        return item ? isDailyItemComplete(item, draft) : false;
+        if (!item || !isDailyItemComplete(item, draft)) return false;
+        if (item.type !== "counts") return true;
+        return (item.counts ?? []).every((count) => !numericErrors[`${item.key}_${count.k}`]);
+    });
+    const hasInvalidNumericAnswersOnCurrentPage = currentDayPage.items.some((index) => {
+        const item = DAILY_ITEMS[index];
+        return item?.type === "counts"
+            && (item.counts ?? []).some((count) => numericErrors[`${item.key}_${count.k}`]);
     });
     const renderServiceDateDisplay = (
         sessionIndex: number,
@@ -374,6 +404,9 @@ export function ServiceRecordWizard({
                 : screen === "service"
                     ? 12
                     : 5;
+    const babyWeightInputId = "service-record-header-babyWeight";
+    const babyWeightErrorId = `${babyWeightInputId}-error`;
+    const babyWeightError = headerErrors.babyWeight;
 
     const handlePhoneChange = (event: ChangeEvent<HTMLInputElement>) => onPhoneChange(event.target.value);
 
@@ -443,12 +476,27 @@ export function ServiceRecordWizard({
                         <div data-component={child("body_service-title")} data-slot="step-title" className="step-title">서비스 기본정보</div>
                         <div data-component={child("body_readonly-row")} data-slot="ro" className="ro"><span>제공인력</span><b>{context.employee?.name ?? "정보 없음"}</b></div>
                         <div data-component={child("body_readonly-row-2")} data-slot="ro" className="ro"><span>제공기관</span><b>{context.org?.name ?? "인천 아이미래로"}</b></div>
-                        {HEADER_FIELDS.slice(0, 4).map((field) => (
-                            <div data-component={child("body_field")} data-slot="fld" className="fld" key={field.k}>
-                                <label data-slot="lab" className="lab">{field.label}</label>
-                                <TextInput placeholder={field.ph} value={header[field.k] ?? ""} disabled={readOnly} onChange={(event) => onHeaderChange(field.k, event.target.value)} />
-                            </div>
-                        ))}
+                        {HEADER_FIELDS.slice(0, 4).map((field) => {
+                            const inputId = `service-record-header-${field.k}`;
+                            const errorId = `${inputId}-error`;
+                            const fieldError = headerErrors[field.k as keyof typeof headerErrors];
+                            const errorComponentSuffix = HEADER_FIELD_ERROR_COMPONENT_SUFFIX[field.k as keyof typeof HEADER_FIELD_ERROR_COMPONENT_SUFFIX];
+                            return (
+                                <div data-component={child("body_field")} data-slot="fld" className="fld" key={field.k}>
+                                    <label data-slot="lab" className="lab" htmlFor={inputId}>{field.label}</label>
+                                    <TextInput
+                                        id={inputId}
+                                        placeholder={field.ph}
+                                        value={header[field.k] ?? ""}
+                                        disabled={readOnly}
+                                        aria-invalid={fieldError ? "true" : undefined}
+                                        aria-describedby={fieldError ? errorId : undefined}
+                                        onChange={(event) => onHeaderChange(field.k, event.target.value)}
+                                    />
+                                    {fieldError ? <p id={errorId} data-component={child(`body_field-${errorComponentSuffix}-error`)} data-slot="err" className="err" role="alert">{fieldError}</p> : null}
+                                </div>
+                            );
+                        })}
                         <div data-component={child("body_delivery-field")} data-slot="fld" className="fld">
                             <label data-slot="lab" className="lab">분만형태</label>
                             <FieldOptions
@@ -461,10 +509,21 @@ export function ServiceRecordWizard({
                             />
                         </div>
                         <div data-component={child("body_field-2")} data-slot="fld" className="fld">
-                            <label data-slot="lab" className="lab">{HEADER_FIELDS[4].label}</label>
-                            <TextInput placeholder={HEADER_FIELDS[4].ph} value={header.babyWeight ?? ""} disabled={readOnly} onChange={(event) => onHeaderChange(HEADER_FIELDS[4].k, event.target.value)} />
+                            <label data-slot="lab" className="lab" htmlFor={babyWeightInputId}>{HEADER_FIELDS[4].label}</label>
+                            <TextInput
+                                id={babyWeightInputId}
+                                placeholder={HEADER_FIELDS[4].ph}
+                                value={header.babyWeight ?? ""}
+                                disabled={readOnly}
+                                aria-invalid={babyWeightError ? "true" : undefined}
+                                aria-describedby={babyWeightError ? babyWeightErrorId : undefined}
+                                onChange={(event) => onHeaderChange(HEADER_FIELDS[4].k, event.target.value)}
+                            />
+                            {babyWeightError ? <p id={babyWeightErrorId} data-component={child("body_field-baby-weight-error")} data-slot="err" className="err" role="alert">{babyWeightError}</p> : null}
                         </div>
-                        <button data-slot="btn" className="btn primary" disabled={readOnly || busy || !isHeaderComplete} onClick={() => onSaveHeader()}>{busy ? "저장 중…" : adminMode ? "초안 저장" : "다음"}</button>
+                        {adminMode && slots?.adminHeaderAction ? slots.adminHeaderAction({ isHeaderComplete, headerErrors }) : (
+                            <button data-slot="btn" className="btn primary" disabled={readOnly || busy || !isHeaderComplete} onClick={() => onSaveHeader()}>{busy ? "저장 중…" : adminMode ? "초안 저장" : "다음"}</button>
+                        )}
                     </>
                 )}
 
@@ -540,18 +599,27 @@ export function ServiceRecordWizard({
                         >
                             이전
                         </button>
-                        <div data-component={child("body_date-chip")} data-slot="datechip" className="datechip">
-                            {day}회차{editing ? " · " : ""}
-                            {editing
-                                ? renderServiceDateDisplay(
-                                    day,
-                                    currentServiceDate,
-                                    "body_date-chip_date-display",
-                                    formatMonthDayKo(currentServiceDate),
-                                )
-                                : null}
+                        <div data-slot="date-row" className={adminMode ? "date-row" : undefined}>
+                            <div data-component={child("body_date-chip")} data-slot="datechip" className="datechip">
+                                {day}회차{editing ? " · " : ""}
+                                {editing
+                                    ? renderServiceDateDisplay(
+                                        day,
+                                        currentServiceDate,
+                                        "body_date-chip_date-display",
+                                        formatMonthDayKo(currentServiceDate),
+                                    )
+                                    : null}
+                            </div>
+                            {adminMode && slots?.serviceDateEditor ? slots.serviceDateEditor({
+                                "data-component": child("body_date-edit"),
+                                sessionIndex: day,
+                                serviceDate: currentServiceDate,
+                                disabled: readOnly || busy,
+                                onOpen: () => onOpenServiceDateEditor?.(day),
+                            }) : null}
                         </div>
-                        {!readOnly && (!editing || adminMode) && pageIdx === 0 && (
+                        {!readOnly && !adminMode && !editing && pageIdx === 0 && (
                             <div data-component={child("body_service-date-field")} data-slot="fld" className="fld">
                                 <label data-slot="lab" className="lab">제공일자</label>
                                 {adminEditing && slots?.serviceDateEditor ? (
@@ -575,13 +643,13 @@ export function ServiceRecordWizard({
                         <div data-component={child("body_day-title")} data-slot="step-title" className="step-title">{currentDayPage.title}</div>
                         {isMomConfirmationPage ? (
                             <>
-                                {editing && (
+                                {editing && !adminMode && (
                                     <div data-component={child("body_resign-notice")} data-slot="notice" className="notice">
                                         <span>이미 제출된 회차입니다.</span>
                                     </div>
                                 )}
                                 <div data-component={child("body_handover-banner")} data-slot="handover" className="handover">
-                                    <b>최종 기록을 확인해 주세요.</b>
+                                    <b>{adminMode ? "관리자 수정 내용을 확인해 주세요." : "최종 기록을 확인해 주세요."}</b>
                                 </div>
                                 <MomConfirmationReview
                                     dataComponent={child("body_review")}
@@ -613,6 +681,7 @@ export function ServiceRecordWizard({
                                                 onFieldChange={onFieldChange}
                                                 onToggleMulti={onToggleMulti}
                                                 readOnly={readOnly}
+                                                numericErrors={numericErrors}
                                             />
                                         </div>
                                     );
@@ -621,14 +690,18 @@ export function ServiceRecordWizard({
                         )}
                         {isMomConfirmationPage ? (
                             <div data-component={child("body_confirmation-action")} data-slot="nav" className="nav confirmation-nav">
-                                <button data-slot="btn" className="btn submit" disabled={readOnly || busy || (!adminMode && !signatureValue)} onClick={onOpenSubmitModal}>{readOnly ? "조회 전용" : adminMode ? (busy ? "저장 중…" : "초안 저장") : "확인"}</button>
+                                {adminMode && slots?.adminSessionAction
+                                    ? typeof slots.adminSessionAction === "function"
+                                        ? slots.adminSessionAction({ hasInvalidNumericAnswers })
+                                        : slots.adminSessionAction
+                                    : <button data-slot="btn" className="btn submit" disabled={readOnly || busy || (!adminMode && !signatureValue) || hasInvalidNumericAnswers} onClick={onOpenSubmitModal}>{readOnly ? "조회 전용" : adminMode ? (busy ? "저장 중…" : "초안 저장") : "확인"}</button>}
                             </div>
                         ) : (
                             <div data-component={child("body_nav")} data-slot="nav" className="nav">
                                 <button
                                     data-slot="btn"
                                     className="btn primary"
-                                    disabled={!readOnly && !adminMode && !isCurrentPageComplete}
+                                    disabled={!readOnly && (adminMode ? hasInvalidNumericAnswersOnCurrentPage : !isCurrentPageComplete)}
                                     onClick={onNextPage}
                                 >
                                     {readOnly || adminMode ? "다음" : editing ? "저장" : "다음"}

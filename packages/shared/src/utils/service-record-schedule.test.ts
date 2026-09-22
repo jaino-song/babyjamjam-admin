@@ -1,5 +1,6 @@
 import {
     getExpectedSessionDateFromRecords,
+    moveServiceRecordSessionDate,
     shiftServiceRecordScheduleSuffix,
     validateServiceRecordScheduleVector,
 } from "./service-record-schedule";
@@ -54,6 +55,19 @@ describe("shiftServiceRecordScheduleSuffix", () => {
         employeeId: 20,
         provenanceVersion: "case-7",
     }));
+
+    it("changes only the selected day when no suffix move was approved", () => {
+        const result = moveServiceRecordSessionDate(vector, 1, "2026-09-04", false);
+        expect(result.entries.map((row) => row.serviceDate)).toEqual(["2026-09-04", ...vector.slice(1).map((row) => row.serviceDate)]);
+    });
+
+    it("rejects an overlapping day until the suffix move is approved", () => {
+        expect(() => moveServiceRecordSessionDate(vector, 1, "2026-09-08", false)).toThrow();
+        const result = moveServiceRecordSessionDate(vector, 1, "2026-09-08", true);
+        expect(result.entries.slice(0, 6).map((row) => row.serviceDate)).toEqual([
+            "2026-09-08", "2026-09-09", "2026-09-10", "2026-09-11", "2026-09-14", "2026-09-15",
+        ]);
+    });
 
     it("moves the selected and later sessions by one signed business-day delta", () => {
         const shifted = shiftServiceRecordScheduleSuffix(vector, 3, "2026-09-11");

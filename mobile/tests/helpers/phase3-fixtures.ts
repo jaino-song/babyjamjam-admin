@@ -147,7 +147,7 @@ export async function fillPhase3BasicInfo(
 ) {
   await page.getByPlaceholder("홍길동").fill(values.name ?? "홍테스트 고객");
   await page.getByPlaceholder("010-1234-5678").fill(values.phone ?? "01011112222");
-  await page.locator(phase3Selectors.birthday).fill(values.birthday ?? "950101");
+  await page.locator(phase3Selectors.birthday).fill(values.birthday ?? "19950101");
   await page.locator(phase3Selectors.dueDate).fill(values.dueDate ?? "2026-09-01");
   await page.getByPlaceholder("서울시 강남구...").fill(values.address ?? "인천광역시 연수구 테스트로 10");
 

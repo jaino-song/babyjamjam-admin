@@ -178,12 +178,12 @@ function installEventSourceStub() {
 
 function installFormState(overrides: Record<string, unknown> = {}) {
   const setter = () => jest.fn();
-  mockUseFormStore.mockReturnValue({
+  const state = {
     clientId: 7,
     isManualEntry: false,
     name: "테스트 고객",
     phone: "010-1234-5678",
-    birthday: "900101",
+    birthday: "1958-03-03",
     dueDate: "",
     address: "인천시",
     employeeId: 11,
@@ -232,7 +232,9 @@ function installFormState(overrides: Record<string, unknown> = {}) {
     setArea: setter(),
     setPreservePrefilledPrices: setter(),
     ...overrides,
-  });
+  };
+  mockUseFormStore.mockReturnValue(state);
+  return state;
 }
 
 async function renderReadyPage() {
@@ -242,6 +244,20 @@ async function renderReadyPage() {
   fireEvent.click(screen.getByRole("button", { name: "다음" }));
   fireEvent.click(screen.getByRole("button", { name: "다음" }));
   return screen.getByRole("button", { name: "계약서 생성" });
+}
+
+function getDateInput(label: string): HTMLInputElement {
+  return screen.getByLabelText(new RegExp(label)) as HTMLInputElement;
+}
+
+function expectNoContractSideEffects(): void {
+  expect(mockCreateClient).not.toHaveBeenCalled();
+  expect(mockUpdateClient).not.toHaveBeenCalled();
+  expect(mockDispatchHeadless).not.toHaveBeenCalled();
+  expect(mockGenerateDocument).not.toHaveBeenCalled();
+  expect(mockCreateDocRecord).not.toHaveBeenCalled();
+  expect(mockAdoptDocument).not.toHaveBeenCalled();
+  expect(mockOpenDocument).not.toHaveBeenCalled();
 }
 
 beforeEach(() => {
@@ -257,6 +273,14 @@ beforeEach(() => {
 });
 
 describe("contract creation mutation lifecycle", () => {
+  it.each(["1905-01-01", "2005-01-01", "1958-03-03"])("preserves birthday %s in the live route payload", async (birthday) => {
+    installFormState({ birthday, clientId: null, isManualEntry: true, name: "새로운 고객", phone: "010-6621-1878" });
+    mockDispatchHeadless.mockResolvedValue({ ok: true });
+    const submit = await renderReadyPage();
+    fireEvent.click(submit);
+    await waitFor(() => expect(mockCreateClient).toHaveBeenCalledWith(expect.objectContaining({ birthday })));
+  });
+
   it("sends at most once on a same-tick double click and locks an unknown result", async () => {
     const pending = deferred<unknown>();
     mockDispatchHeadless.mockReturnValue(pending.promise);
@@ -275,6 +299,102 @@ describe("contract creation mutation lifecycle", () => {
     });
     expect(submit).toBeDisabled();
     expect(mockDispatchHeadless).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    "template_workflow_config_invalid",
+    "template_workflow_unsupported",
+    "template_workflow_config_unavailable",
+  ])("keeps %s unlocked for a safe retry without reopening the iframe or rewriting the client", async (reason) => {
+    mockDispatchHeadless
+      .mockResolvedValueOnce({ ok: false, reason, failedStep: "client-started", durationMs: 1 })
+      .mockResolvedValueOnce({ ok: true, documentId: "doc-retried", durationMs: 1 });
+
+    const submit = await renderReadyPage();
+    fireEvent.click(submit);
+
+    await waitFor(() => {
+      expect(screen.getByRole("alert")).toHaveTextContent("이번 요청에서 계약서를 발송하지 않았어요.");
+    });
+    expect(screen.getByRole("alert")).toHaveTextContent("입력한 고객 정보와 날짜는 그대로 남아 있어요.");
+    expect(submit).not.toBeDisabled();
+    expect(mockOpenDocument).not.toHaveBeenCalled();
+    expect(mockCreateClient).not.toHaveBeenCalled();
+    expect(mockUpdateClient).toHaveBeenCalledTimes(1);
+
+    fireEvent.click(submit);
+    await waitFor(() => expect(mockDispatchHeadless).toHaveBeenCalledTimes(2));
+    expect(mockDispatchHeadless.mock.calls[1]?.[1]).toBe(7);
+    expect(mockCreateClient).not.toHaveBeenCalled();
+    expect(mockUpdateClient).toHaveBeenCalledTimes(1);
+    expect(mockOpenDocument).not.toHaveBeenCalled();
+  });
+
+  it("updates the retained client before retry when date and assignment values change", async () => {
+    const formState = installFormState();
+    mockDispatchHeadless
+      .mockResolvedValueOnce({
+        ok: false,
+        reason: "template_workflow_config_unavailable",
+        failedStep: "client-started",
+        durationMs: 1,
+      })
+      .mockResolvedValueOnce({ ok: true, documentId: "doc-retried", durationMs: 1 });
+
+    const submit = await renderReadyPage();
+    fireEvent.click(submit);
+    await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent("이번 요청에서 계약서를 발송하지 않았어요."));
+
+    formState.employeeId = 12;
+    formState.employeeName = "박수정";
+    formState.employeePhone = "01011112222";
+    formState.startDate = "2026-09-11";
+    formState.endDate = "2026-09-17";
+    fireEvent.change(getDateInput("시작일"), { target: { value: "260911" } });
+
+    fireEvent.click(submit);
+    await waitFor(() => expect(mockDispatchHeadless).toHaveBeenCalledTimes(2));
+
+    expect(mockCreateClient).not.toHaveBeenCalled();
+    expect(mockUpdateClient).toHaveBeenCalledTimes(2);
+    expect(mockUpdateClient.mock.calls[1]?.[0]).toEqual(expect.objectContaining({
+      id: 7,
+      dto: expect.objectContaining({
+        primaryEmployeeId: 12,
+        startDate: "2026-09-11",
+        endDate: "2026-09-17",
+      }),
+    }));
+    expect(mockDispatchHeadless.mock.calls[1]?.[0]).toEqual(expect.objectContaining({
+      caretaker1Name: "박수정",
+      caretaker1Contact: "01011112222",
+      startDate: "2026-09-11",
+      endDate: "2026-09-17",
+    }));
+    expect(mockDispatchHeadless.mock.calls[1]?.[1]).toBe(7);
+  });
+
+  it("retains an auto-registered client id across a known pre-send retry", async () => {
+    installFormState({
+      clientId: null,
+      isManualEntry: true,
+      name: "새로운 고객",
+      phone: "010-6621-1878",
+    });
+    mockCreateClient.mockResolvedValue({ id: 73 });
+    mockDispatchHeadless
+      .mockResolvedValueOnce({ ok: false, reason: "template_workflow_config_unavailable", durationMs: 1 })
+      .mockResolvedValueOnce({ ok: true, documentId: "doc-retried", durationMs: 1 });
+
+    const submit = await renderReadyPage();
+    fireEvent.click(submit);
+    await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent("이번 요청에서 계약서를 발송하지 않았어요."));
+
+    fireEvent.click(submit);
+    await waitFor(() => expect(mockDispatchHeadless).toHaveBeenCalledTimes(2));
+    expect(mockCreateClient).toHaveBeenCalledTimes(1);
+    expect(mockDispatchHeadless.mock.calls[0]?.[1]).toBe(73);
+    expect(mockDispatchHeadless.mock.calls[1]?.[1]).toBe(73);
   });
 
   it("keeps a confirmed partial outcome locked with its request id", async () => {
@@ -344,6 +464,77 @@ describe("contract creation mutation lifecycle", () => {
     expect(mockPush).not.toHaveBeenCalled();
     act(() => jest.advanceTimersByTime(3_000));
     expect(mockPush).toHaveBeenCalledWith("/contracts");
+  });
+});
+
+describe("contract date validation", () => {
+  const DATE_RANGE_ERROR = "종료일은 시작일과 같거나 이후로 입력해 주세요.";
+
+  it("shows a concrete range error, disables creation, and runs no side effects", async () => {
+    installFormState({ startDate: "2026-09-21", endDate: "2026-09-20" });
+
+    const submit = await renderReadyPage();
+
+    expect(screen.getByTestId("contract-creation-date-range-error")).toHaveTextContent(DATE_RANGE_ERROR);
+    expect(submit).toBeDisabled();
+    expectNoContractSideEffects();
+  });
+
+  it("rejects an incomplete visible date instead of using the stale canonical value", async () => {
+    const submit = await renderReadyPage();
+    const endDateInput = getDateInput("종료일");
+
+    fireEvent.change(endDateInput, { target: { value: "2609" } });
+
+    expect(endDateInput).toHaveValue("2609");
+    expect(screen.getByTestId("contract-creation-date-range-error")).toHaveTextContent("종료일");
+    expect(submit).toBeDisabled();
+    expectNoContractSideEffects();
+  });
+
+  it("rejects an impossible payment date and preserves the entered value", async () => {
+    const submit = await renderReadyPage();
+    const paymentDateInput = getDateInput("본인부담금 수령 날짜");
+
+    fireEvent.change(paymentDateInput, { target: { value: "260231" } });
+
+    expect(paymentDateInput).toHaveValue("260231");
+    expect(screen.getByTestId("contract-creation-date-range-error")).toHaveTextContent("본인부담금");
+    expect(submit).toBeDisabled();
+    expectNoContractSideEffects();
+  });
+
+  it("re-enables creation after correcting a reversed end date and uses the corrected identity", async () => {
+    installFormState({ startDate: "2026-09-21", endDate: "2026-09-20" });
+    mockDispatchHeadless.mockResolvedValue({ ok: true, documentId: "doc-1", durationMs: 1 });
+
+    const submit = await renderReadyPage();
+    const endDateInput = getDateInput("종료일");
+    fireEvent.change(endDateInput, { target: { value: "260921" } });
+
+    expect(endDateInput).toHaveValue("260921");
+    expect(screen.queryByTestId("contract-creation-date-range-error")).not.toBeInTheDocument();
+    expect(submit).not.toBeDisabled();
+
+    fireEvent.click(submit);
+    await waitFor(() => expect(mockUpdateClient).toHaveBeenCalledTimes(1));
+    expect(mockUpdateClient).toHaveBeenCalledWith(expect.objectContaining({
+      id: 7,
+      dto: expect.objectContaining({
+        name: "테스트 고객",
+        phone: "010-1234-5678",
+        startDate: "2026-09-21",
+        endDate: "2026-09-21",
+      }),
+    }));
+    expect(mockDispatchHeadless).toHaveBeenCalledWith(
+      expect.objectContaining({
+        startDate: "2026-09-21",
+        endDate: "2026-09-21",
+      }),
+      7,
+      expect.any(String),
+    );
   });
 });
 

@@ -57,15 +57,17 @@ function documentDetail(
 
 describe("extractEformsignContractClientCandidate", () => {
     it.each([
-        ["1986.7.9", "860709"],
-        ["1986년 7월 9일", "860709"],
-        ["1986. 7. 9.", "860709"],
-        ["1986 07 09", "860709"],
-        ["86.07.09", "860709"],
-        ["86.7.9", "860709"],
-        ["１９８６．７．９", "860709"],
-        ["1986-07-09 00:00:00", "860709"],
-        ["1986-07-09T23:00:00-09:00", "860709"],
+        ["1905-01-01", "1905-01-01"],
+        ["580303", "1958-03-03"],
+        ["1986.7.9", "1986-07-09"],
+        ["1986년 7월 9일", "1986-07-09"],
+        ["1986. 7. 9.", "1986-07-09"],
+        ["1986 07 09", "1986-07-09"],
+        ["86.07.09", "1986-07-09"],
+        ["86.7.9", "1986-07-09"],
+        ["１９８６．７．９", "1986-07-09"],
+        ["1986-07-09 00:00:00", "1986-07-09"],
+        ["1986-07-09T23:00:00-09:00", "1986-07-09"],
         ["1986-07-09Tgarbage", null],
         ["860709abc", null],
         ["1986111", null],
@@ -73,12 +75,12 @@ describe("extractEformsignContractClientCandidate", () => {
         ["860709-2******", null],
         ["2099-07-09", null],
         ["1986.07/09", null],
-        ["1986.07.09", "860709"],
-        ["1986-7-9", "860709"],
-        ["1986/7/9", "860709"],
-        ["19860709", "860709"],
-        ["860709", "860709"],
-        ["2000.2.29", "000229"],
+        ["1986.07.09", "1986-07-09"],
+        ["1986-7-9", "1986-07-09"],
+        ["1986/7/9", "1986-07-09"],
+        ["19860709", "1986-07-09"],
+        ["860709", "1986-07-09"],
+        ["2000.2.29", "2000-02-29"],
         ["1986.2.30", null],
         ["1986.02.30", null],
         ["198679", null],
@@ -97,7 +99,7 @@ describe("extractEformsignContractClientCandidate", () => {
             name: "김고객",
             phone: "01012345678",
             address: "서울시 중구",
-            birthday: "920304",
+            birthday: "1992-03-04",
             duration: 15,
             fullPrice: "1500000",
             grant: "1000000",
@@ -192,5 +194,84 @@ describe("extractEformsignContractClientCandidate", () => {
                 phone: "01012345678",
             }),
         );
+    });
+
+    it.each([
+        ["이용자 생년월일", "1986. 7. 9."],
+        ["생년월일", "1986-07-09"],
+    ])(
+        "extracts birthday from keyed detail field maps returned by document APIs (%s)",
+        (fieldId, rawBirthday) => {
+            const detail = documentDetail({
+                fields: [],
+                detail_template_info: [{
+                    field_values: {
+                        "이용자 성명": "김고객",
+                        [fieldId]: rawBirthday,
+                    },
+                }],
+            });
+
+            expect(extractEformsignContractClientPrefillCandidate(detail)).toEqual(
+                expect.objectContaining({
+                    name: "김고객",
+                    birthday: "1986-07-09",
+                }),
+            );
+        },
+    );
+
+    it("normalizes a nested keyed birthday value wrapper", () => {
+        const detail = documentDetail({
+            fields: [],
+            detail_template_info: [{
+                field_values: {
+                    "이용자 성명": "김고객",
+                    "이용자 생년월일": { value: "1986-07-09" },
+                },
+            }],
+        });
+
+        expect(extractEformsignContractClientPrefillCandidate(detail)).toEqual(
+            expect.objectContaining({
+                name: "김고객",
+                birthday: "1986-07-09",
+            }),
+        );
+    });
+
+    it("uses the exact 본인부담금 keyed value after receipt date keys", () => {
+        const detail = documentDetail({
+            fields: [],
+            detail_template_info: [{
+                field_values: {
+                    "이용자 성명": "김고객",
+                    "본인부담금 수령 년도": "2026",
+                    "본인부담금 수령 월": "08",
+                    "본인부담금 수령 일": "14",
+                    "본인부담금": "500,000원",
+                },
+            }],
+        });
+
+        expect(extractEformsignContractClientPrefillCandidate(detail)?.actualPrice)
+            .toBe("500000");
+    });
+
+    it("does not infer actualPrice from receipt date keys without exact 본인부담금", () => {
+        const detail = documentDetail({
+            fields: [],
+            detail_template_info: [{
+                field_values: {
+                    "이용자 성명": "김고객",
+                    "본인부담금 수령 년도": "2026",
+                    "본인부담금 수령 월": "08",
+                    "본인부담금 수령 일": "14",
+                },
+            }],
+        });
+
+        expect(extractEformsignContractClientPrefillCandidate(detail)?.actualPrice)
+            .toBeNull();
     });
 });

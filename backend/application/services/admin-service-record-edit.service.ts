@@ -1,5 +1,6 @@
 import { BadRequestException, ConflictException, Inject, Injectable, NotFoundException } from "@nestjs/common";
 import { createHash, randomUUID } from "node:crypto";
+import { normalizeContractBirthday } from "@babyjamjam/shared/utils/birthday";
 
 import { codeOnlyProblemBody, problemBody } from "application/utils/problem-bodies";
 import {
@@ -72,6 +73,8 @@ const EDITABLE_SESSION_KEYS = new Set([
 ]);
 const MAX_CHANGES_BYTES = 64 * 1024;
 const DATE_ONLY_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
+const SERVICE_RECORD_HEADER_DATE_PATTERN = /^\d{6}$/;
+const SERVICE_RECORD_HEADER_WEIGHT_PATTERN = /^(?:\d+(?:\.\d+)?|\.\d+)$/;
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 type SourceSnapshot = ServiceRecordEditSource;
@@ -83,6 +86,32 @@ interface LoadedSource {
 
 function isPlainRecord(value: unknown): value is Record<string, unknown> {
     return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function validateServiceRecordHeaderValue(key: string, value: string): void {
+    if (!value) return;
+
+    if (key === "momBirth" || key === "babyBirth") {
+        if (!SERVICE_RECORD_HEADER_DATE_PATTERN.test(value) || normalizeContractBirthday(value) === null) {
+            throw new BadRequestException({
+                code: "SERVICE_RECORD_HEADER_DATE_INVALID",
+                message: key === "momBirth"
+                    ? "산모 생년월일은 YYMMDD 6자리의 유효한 날짜로 입력해 주세요."
+                    : "신생아 출생일자는 YYMMDD 6자리의 유효한 날짜로 입력해 주세요.",
+            });
+        }
+        return;
+    }
+
+    if (key === "babyWeight") {
+        const numeric = Number(value);
+        if (!SERVICE_RECORD_HEADER_WEIGHT_PATTERN.test(value) || !Number.isFinite(numeric) || numeric <= 0) {
+            throw new BadRequestException({
+                code: "SERVICE_RECORD_HEADER_WEIGHT_INVALID",
+                message: "신생아 몸무게는 0보다 큰 숫자로 입력해 주세요.",
+            });
+        }
+    }
 }
 
 function jsonValue(value: unknown): ServiceRecordEditJsonValue {
@@ -1210,7 +1239,9 @@ export class AdminServiceRecordEditService {
                     location: "body",
                 }));
             }
-            output[key] = value.trim();
+            const normalized = value.trim();
+            validateServiceRecordHeaderValue(key, normalized);
+            output[key] = normalized;
         }
         return output;
     }

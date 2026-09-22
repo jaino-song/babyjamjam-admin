@@ -1,3 +1,6 @@
+import { AgentAutomationDispatchUncertainError } from "../../domain/errors/agent-automation-dispatch-uncertain.error";
+import { createLegacyAutomationDeliveryGate } from "../fixtures/legacy-automation-delivery-gate";
+import { buildClientTemplateVariables } from "../../application/services/message-trigger-recipes";
 import { ConflictException, NotFoundException } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
 import { createHash } from "node:crypto";
@@ -23,6 +26,7 @@ import {
     MessageTriggerJobEntity,
     MessageTriggerJobStatus,
 } from "domain/entities/message-trigger-job.entity";
+import { MessageLogEntity } from "domain/entities/message-log.entity";
 import { MessageTriggerRuleEntity } from "domain/entities/message-trigger-rule.entity";
 import { TriggerJobDeferredError } from "domain/errors/trigger-job-deferred.error";
 import {
@@ -30,6 +34,9 @@ import {
     SERVICE_RECORD_LINK_SCHEDULING_RETRY_REASON,
 } from "domain/constants/service-record-link-message";
 import { SMS_DELIVERY_SNAPSHOT_VARIABLE } from "application/services/sms-trigger-delivery.service";
+import { createAgentAutomationTaskCommitReference } from "application/agent/agent-automation-storage.schema";
+import { SbMessageLogRepository } from "infrastructure/database/repositories/sb.message-log.repository";
+import { SbMessageTriggerJobRepository } from "infrastructure/database/repositories/sb.message-trigger-job.repository";
 
 jest.mock("infrastructure/database/schema-capabilities", () => ({
     hasColumn: jest.fn().mockResolvedValue(true),
@@ -61,24 +68,13 @@ describe("MessageTriggerService", () => {
             rule: MessageTriggerRuleEntity,
             includePast: boolean,
         ) => Promise<void>;
+        applyRetroactiveSendConfig: (
+            branchId: string,
+            candidates: Array<{ rule: MessageTriggerRuleEntity; job: MessageTriggerJobEntity }>,
+            stableBatchAt?: Date,
+        ) => Promise<Array<{ rule: MessageTriggerRuleEntity; job: MessageTriggerJobEntity }>>;
         recoverApprovedBranches: () => Promise<void>;
         processStaleRuleRebuilds: () => Promise<void>;
-        buildClientTemplateVariables: (
-            rule: MessageTriggerRuleEntity,
-            client: {
-                name: string;
-                phone: string | null;
-                type?: string | null;
-                startDate?: Date | null;
-                endDate?: Date | null;
-                createdAt?: Date | null;
-                duration?: number | null;
-                fullPrice?: string | null;
-                grant?: string | null;
-                actualPrice?: string | null;
-                area?: { bankAccountInfo: { bankName: string | null; accNum: string | null } | null } | null;
-            },
-        ) => Record<string, string>;
         buildEmployeeAssignmentJob: (
             rule: MessageTriggerRuleEntity,
             schedule: EmployeeAssignmentScheduleSource,
@@ -113,7 +109,7 @@ describe("MessageTriggerService", () => {
             overrides.offsetType ?? MessageTriggerOffsetType.IMMEDIATE,
             overrides.offsetDays ?? 0,
             overrides.recipientType ?? MessageTriggerRecipientType.CLIENT,
-            overrides.templateKey ?? MessageTriggerTemplateKey.CLIENT_WELCOME,
+            overrides.templateKey ?? MessageTriggerTemplateKey.CLIENT_GREETING,
             overrides.createdAt ?? new Date("2026-06-01T00:00:00.000Z"),
             overrides.updatedAt ?? new Date("2026-06-01T00:00:00.000Z"),
             overrides.isDefault ?? false,
@@ -165,6 +161,33 @@ describe("MessageTriggerService", () => {
             overrides.nextAttemptAt ?? null,
         );
 
+    const createLog = (overrides: Partial<{
+        id: number;
+        triggerJobId: string | null;
+        createdAt: Date;
+        updatedAt: Date;
+    }> = {}) => MessageLogEntity.reconstitute(
+        overrides.id ?? 1,
+        branchId,
+        "aligo_sms",
+        "CLIENT_GREETING",
+        overrides.triggerJobId ?? null,
+        "010-1234-5678",
+        1,
+        "안녕하세요",
+        {},
+        "sent",
+        null,
+        null,
+        1,
+        overrides.updatedAt ?? new Date("2026-06-01T00:00:00.000Z"),
+        null,
+        overrides.createdAt ?? new Date("2026-06-01T00:00:00.000Z"),
+        overrides.updatedAt ?? new Date("2026-06-01T00:00:00.000Z"),
+        "고객",
+        "010-1234-5678",
+    );
+
     const createMessageLogRepository = () => ({
         findSentTriggerJobIdsSystemScope: jest.fn<Promise<Set<string>>, [string[]]>().mockResolvedValue(
             new Set<string>(),
@@ -175,6 +198,7 @@ describe("MessageTriggerService", () => {
             new Set<string>(),
         ),
         findRecentByBranch: jest.fn().mockResolvedValue([]),
+        findHistoryPageByBranch: jest.fn().mockResolvedValue([]),
     });
 
     /** Default: no branch override present, matching pre-feature behaviour (global rule always governs). */
@@ -197,7 +221,15 @@ describe("MessageTriggerService", () => {
             .fn<Promise<Map<string, Date | null>>, [string[]]>()
             .mockImplementation(async (branchIds) =>
                 new Map(branchIds.map((id) => [id, new Date("2026-06-05T00:00:00.000Z")]))
-            ),
+        ),
+    });
+
+    const createAutomationActivationService = () => ({
+        getTriggerDispatchEnabled: jest.fn().mockResolvedValue(true),
+        assertTriggerDispatchEnabled: jest.fn().mockResolvedValue(undefined),
+        setTriggerDispatchEnabled: jest.fn().mockResolvedValue(undefined),
+        setGlobalRuleBranchActivation: jest.fn().mockResolvedValue(undefined),
+        activateRuleWithParent: jest.fn(),
     });
 
     const createSystemTemplateService = () => {
@@ -230,7 +262,24 @@ describe("MessageTriggerService", () => {
         }),
     });
 
-    const createService = () => {
+    const createBranchLock = (prisma?: unknown) => ({
+        runExclusive: jest.fn().mockImplementation(async (
+            _branchId: string,
+            work: (transaction: unknown) => Promise<unknown>,
+            transaction?: unknown,
+        ) => {
+            if (transaction) return work(transaction);
+            const runTransaction = (prisma as {
+                $transaction?: (operation: (transaction: unknown) => Promise<unknown>) => Promise<unknown>;
+            } | undefined)?.$transaction;
+            if (runTransaction) return runTransaction(work);
+            return work(prisma ?? {});
+        }),
+    });
+
+    const createService = (systemSettingService?: {
+        getMessageSettingsPolicyEnabled: jest.Mock;
+    }) => {
         const ruleRepository = {
             findAll: jest.fn(),
             findById: jest.fn(),
@@ -265,6 +314,7 @@ describe("MessageTriggerService", () => {
             }),
             findUpcomingPendingByBranch: jest.fn().mockResolvedValue([]),
             findTerminalByBranch: jest.fn().mockResolvedValue([]),
+            findHistoryPageByBranch: jest.fn().mockResolvedValue([]),
             hasActiveJobsBefore: jest.fn().mockResolvedValue(false),
             upsertPending: jest.fn().mockResolvedValue(undefined),
             cancelPendingByUser: jest.fn().mockResolvedValue(true),
@@ -299,6 +349,29 @@ describe("MessageTriggerService", () => {
         const systemTemplateService = createSystemTemplateService();
         const templateAutomationLock = createTemplateAutomationLock(prisma);
         const overrideRepository = createOverrideRepository();
+        const messageAutomationActivationService = createAutomationActivationService();
+        const messageAutomationBranchLockService = createBranchLock(prisma);
+        messageAutomationActivationService.setGlobalRuleBranchActivation.mockImplementation(
+            async (targetBranchId: string, ruleId: string, isActive: boolean) => {
+                const global = await prisma.message_trigger_rule.findUnique({ where: { id: ruleId } });
+                if (!global || global.branchId !== null) throw new NotFoundException(`Trigger rule ${ruleId} not found`);
+                if (isActive && global.isActive === false) throw new ConflictException("Global rule is disabled");
+                await overrideRepository.upsert(targetBranchId, ruleId, isActive);
+                if (!isActive) {
+                    await overrideRepository.cancelJobsForBranchRule(
+                        targetBranchId,
+                        ruleId,
+                        SERVICE_RECORD_LINK_BRANCH_DISABLED_REASON,
+                        SERVICE_RECORD_LINK_SCHEDULING_RETRY_REASON,
+                    );
+                }
+                return createRule({
+                    id: ruleId,
+                    branchId: null,
+                    isActive: global.isActive === true && isActive,
+                });
+            },
+        );
         const service = new MessageTriggerService(
             prisma as never,
             {} as never,
@@ -308,9 +381,11 @@ describe("MessageTriggerService", () => {
             messageLogRepository as never,
             systemTemplateService as never,
             templateAutomationLock as never,
-            undefined,
+            systemSettingService as never,
             overrideRepository as never,
-        );
+            messageAutomationActivationService as never,
+            messageAutomationBranchLockService as never,
+        undefined, createLegacyAutomationDeliveryGate(prisma as never, messageAutomationBranchLockService as never));
 
         const internals = service as unknown as ServiceInternals;
         jest.spyOn(internals, "hasTriggerSchema").mockResolvedValue(true);
@@ -322,16 +397,27 @@ describe("MessageTriggerService", () => {
             prisma,
             ruleRepository,
             jobRepository,
+            messageLogRepository,
             messageSenderApprovalService,
             systemTemplateService,
             overrideRepository,
             templateAutomationLock,
+            messageAutomationActivationService,
+            messageAutomationBranchLockService,
         };
     };
 
-    const createDispatchService = () => {
-        const deliveryService = {
-            sendJob: jest.fn().mockResolvedValue(true),
+    const createDispatchService = (systemSettingService?: {
+        getMessageSettingsPolicyEnabled: jest.Mock;
+    }) => {
+        const sendJob = jest.fn().mockResolvedValue(true);
+        const deliveryService: { sendJob: jest.Mock; prepareJob: jest.Mock; sendPreparedJob: jest.Mock } = {
+            sendJob,
+            prepareJob: jest.fn(async (job: MessageTriggerJobEntity) => {
+                job.payload.templateVariables[SMS_DELIVERY_SNAPSHOT_VARIABLE] = "synthetic-trigger-prepared";
+                return { serializedSnapshot: "synthetic-trigger-prepared", snapshot: { snapshotHash: "synthetic" } };
+            }),
+            sendPreparedJob: jest.fn(async (job: MessageTriggerJobEntity) => sendJob(job)),
         };
         const jobRepository = {
             cancelOrphanedPending: jest.fn().mockResolvedValue(0),
@@ -374,7 +460,7 @@ describe("MessageTriggerService", () => {
             employee_schedule: { findFirst: jest.Mock };
         };
         const transaction: DispatchTransaction = {
-            $queryRaw: jest.fn().mockResolvedValue([{ status: "processing", claim_token: "claim-a" }]),
+            $queryRaw: jest.fn().mockResolvedValue([{ payload: { templateVariables: { [SMS_DELIVERY_SNAPSHOT_VARIABLE]: "synthetic-trigger-prepared" } }, status: "processing", claim_token: "claim-a" }]),
             message_trigger_job: {
                 findUnique: jest.fn().mockImplementation(async ({ where }: { where: { id: string } }) =>
                     claimedJobRead(where.id)),
@@ -383,6 +469,7 @@ describe("MessageTriggerService", () => {
                 findFirst: employeeScheduleFindFirst,
             },
         };
+        const messageAutomationActivationService = createAutomationActivationService();
         const prisma = {
             message_trigger_job: {
                 findUnique: jest.fn().mockResolvedValue(null),
@@ -394,6 +481,7 @@ describe("MessageTriggerService", () => {
                 async (operation: (transaction: DispatchTransaction) => Promise<unknown>) => operation(transaction),
             ),
         };
+        const messageAutomationBranchLockService = createBranchLock(prisma);
         const service = new MessageTriggerService(
             prisma as never,
             deliveryService as never,
@@ -403,7 +491,11 @@ describe("MessageTriggerService", () => {
             messageLogRepository as never,
             createSystemTemplateService() as never,
             createTemplateAutomationLock(prisma) as never,
-        );
+            systemSettingService as never,
+            createOverrideRepository() as never,
+            messageAutomationActivationService as never,
+            messageAutomationBranchLockService as never,
+        undefined, createLegacyAutomationDeliveryGate(prisma as never, messageAutomationBranchLockService as never));
 
         jest.spyOn(service as unknown as ServiceInternals, "hasTriggerSchema").mockResolvedValue(true);
 
@@ -417,6 +509,8 @@ describe("MessageTriggerService", () => {
             prisma,
             transaction,
             claimedJobRead,
+            messageAutomationActivationService,
+            messageAutomationBranchLockService,
         };
     };
 
@@ -444,6 +538,21 @@ describe("MessageTriggerService", () => {
         expect(rebuildSpy.mock.invocationCallOrder[0]!).toBeLessThan(
             jobRepository.findDuePendingSystemScope.mock.invocationCallOrder[0]!,
         );
+    });
+
+    it("omits private automation authority from upcoming jobs without changing stored payload", async () => {
+        const { service, jobRepository, ruleRepository } = createService();
+        const job = createJob({ id: "job-private-authority", status: "pending" });
+        // Projection must omit malformed carriers too; parsing is a delivery boundary.
+        job.payload.agentAutomationSeal = { private: "synthetic-authority" } as never;
+        const stored = structuredClone(job.payload);
+        jobRepository.findUpcomingPendingByBranch.mockResolvedValue([job]);
+        ruleRepository.findAll.mockResolvedValue([createRule({ id: job.ruleId })]);
+        const result = await service.listUpcomingJobs(branchId);
+        expect(result).toHaveLength(1);
+        expect(result[0]!.payload).not.toHaveProperty("agentAutomationSeal");
+        expect(result[0]!.payload.recipientName).toBe(job.payload.recipientName);
+        expect(job.payload).toEqual(stored);
     });
 
     it("includes manual scheduled SMS logs in the upcoming list", async () => {
@@ -865,6 +974,156 @@ describe("MessageTriggerService", () => {
         });
     });
 
+    it("rejects an explicit automatic activation while the branch parent is disabled before writing the rule", async () => {
+        const {
+            prisma,
+            ruleRepository,
+            jobRepository,
+            messageSenderApprovalService,
+            systemTemplateService,
+            overrideRepository,
+            templateAutomationLock,
+            messageLogRepository,
+        } = createService();
+        const parentDisabled = new ConflictException({
+            code: "MESSAGE_AUTOMATION_PARENT_DISABLED",
+            message: "Message automation parent is disabled",
+        });
+        const activationService = {
+            getTriggerDispatchEnabled: jest.fn().mockResolvedValue(true),
+            assertTriggerDispatchEnabled: jest.fn().mockRejectedValue(parentDisabled),
+        };
+        const branchLock = {
+            runExclusive: jest.fn(async (
+                _branchId: string,
+                work: (transaction: unknown) => Promise<unknown>,
+            ) => work({})),
+        };
+        const service = new MessageTriggerService(
+            prisma as never,
+            {} as never,
+            messageSenderApprovalService as never,
+            ruleRepository as never,
+            jobRepository as never,
+            messageLogRepository as never,
+            systemTemplateService as never,
+            templateAutomationLock as never,
+            undefined,
+            overrideRepository as never,
+            activationService as never,
+            branchLock as never,
+        undefined, createLegacyAutomationDeliveryGate(prisma as never, branchLock as never));
+        jest.spyOn(service as unknown as ServiceInternals, "hasTriggerSchema").mockResolvedValue(true);
+        ruleRepository.findById.mockResolvedValue(createRule({ id: "rule-parent-off", isActive: false }));
+
+        await expect(service.updateRule("branch-1", "rule-parent-off", { isActive: true }))
+            .rejects.toMatchObject({ response: { code: "MESSAGE_AUTOMATION_PARENT_DISABLED" } });
+
+        expect(activationService.assertTriggerDispatchEnabled).toHaveBeenCalled();
+        expect(ruleRepository.update).not.toHaveBeenCalled();
+        expect(jobRepository.upsertPendingForRuleGeneration).not.toHaveBeenCalled();
+    });
+
+    it.each([undefined, "16:09"])("uses the locked rule time unless a new time is requested (%s)", async (sendTime) => {
+        const { service, ruleRepository } = createService();
+        const staleRule = createRule({ id: "rule-send-time-lock", isActive: false });
+        staleRule.sendTime = "10:00";
+        const rule = createRule({ id: "rule-send-time-lock", isActive: false });
+        rule.sendTime = "14:37";
+        ruleRepository.findById.mockResolvedValueOnce(staleRule).mockResolvedValue(rule);
+        ruleRepository.update.mockImplementation(async (
+            _branchId: string,
+            persisted: MessageTriggerRuleEntity,
+        ) => persisted);
+
+        await service.updateRule(branchId, rule.id, { name: "Changed under lock", sendTime });
+
+        expect(ruleRepository.update).toHaveBeenCalledWith(
+            branchId,
+            expect.objectContaining({ id: rule.id, sendTime: sendTime ?? "14:37", isActive: false }),
+            expect.any(Object),
+        );
+    });
+
+    it("clamps a metadata-only update to the locked inactive row after a concurrent parent-off fence", async () => {
+        const { service, ruleRepository } = createService();
+        const staleActiveRule = createRule({
+            id: "rule-metadata-race",
+            isActive: true,
+            jobsStale: false,
+        });
+        const lockedInactiveRule = createRule({
+            id: staleActiveRule.id,
+            isActive: false,
+            jobsStale: false,
+        });
+        ruleRepository.findById
+            .mockResolvedValueOnce(staleActiveRule)
+            .mockResolvedValueOnce(lockedInactiveRule)
+            .mockResolvedValueOnce(lockedInactiveRule);
+        ruleRepository.update.mockImplementation(async (
+            _branchId: string,
+            persisted: MessageTriggerRuleEntity,
+        ) => persisted);
+
+        await service.updateRule(branchId, staleActiveRule.id, { name: "메타데이터만 수정" });
+
+        expect(ruleRepository.update).toHaveBeenCalledWith(
+            branchId,
+            expect.objectContaining({
+                id: staleActiveRule.id,
+                name: "메타데이터만 수정",
+                isActive: false,
+            }),
+            expect.any(Object),
+        );
+    });
+
+    it("validates the candidate read after the branch lock when its template changes", async () => {
+        const {
+            service,
+            ruleRepository,
+            systemTemplateService,
+            templateAutomationLock,
+            messageAutomationActivationService,
+            messageAutomationBranchLockService,
+        } = createService();
+        const lockedCandidate = createRule({
+            id: "rule-template-race",
+            templateKey: MessageTriggerTemplateKey.CLIENT_GREETING,
+            eventType: MessageTriggerEventType.CLIENT_CREATED,
+            recipientType: MessageTriggerRecipientType.CLIENT,
+        });
+        let lockHeld = false;
+        messageAutomationBranchLockService.runExclusive.mockImplementationOnce(async (
+            _branchId: string,
+            work: (transaction: unknown) => Promise<unknown>,
+        ) => {
+            lockHeld = true;
+            return work({});
+        });
+        ruleRepository.findAll.mockImplementation(async () => {
+            expect(lockHeld).toBe(true);
+            return [lockedCandidate];
+        });
+        messageAutomationActivationService.activateRuleWithParent.mockResolvedValue(lockedCandidate);
+
+        await expect(service.activateRuleWithParent(branchId, lockedCandidate.id)).resolves.toBe(lockedCandidate);
+
+        expect(templateAutomationLock.runExclusive).toHaveBeenCalledWith(
+            SystemTemplateKey.GREETING,
+            expect.any(Function),
+            expect.any(Object),
+        );
+        expect(systemTemplateService.getByKeyForBranch).toHaveBeenCalledWith(branchId, SystemTemplateKey.GREETING);
+        expect(messageAutomationActivationService.activateRuleWithParent).toHaveBeenCalledWith(
+            branchId,
+            lockedCandidate.id,
+            undefined,
+            expect.any(Object),
+        );
+    });
+
     it("createRule synchronously reconciles the new rule generation before returning", async () => {
         const {
             service,
@@ -918,7 +1177,7 @@ describe("MessageTriggerService", () => {
         expect(templateAutomationLock.runExclusive).toHaveBeenCalledWith(
             SystemTemplateKey.GREETING,
             expect.any(Function),
-            undefined,
+            expect.any(Object),
         );
         expect(ruleRepository.markJobsStale).toHaveBeenCalledWith(
             branchId,
@@ -931,11 +1190,19 @@ describe("MessageTriggerService", () => {
             staleRule.updatedAt,
             true,
             "규칙 재생성",
+            expect.any(Object),
+            expect.any(Object),
         );
-        expect(internals.rebuildJobsForRule).toHaveBeenCalledWith(branchId, staleRule, false);
+        expect(internals.rebuildJobsForRule).toHaveBeenCalledWith(
+            branchId,
+            staleRule,
+            false,
+            expect.any(Object),
+        );
         expect(ruleRepository.clearJobsStaleIfUnchanged).toHaveBeenCalledWith(
             staleRule.id,
             staleRule.updatedAt,
+            expect.any(Object),
         );
     });
 
@@ -1086,7 +1353,11 @@ describe("MessageTriggerService", () => {
             offsetType: MessageTriggerOffsetType.IMMEDIATE,
             recipientType: MessageTriggerRecipientType.CLIENT,
             templateKey,
-        })).rejects.toThrow("일반 자동 전송 규칙에서 사용할 수 없는 템플릿입니다.");
+        })).rejects.toThrow(
+            templateKey === MessageTriggerTemplateKey.SERVICE_RECORD_LINK
+                ? "일반 자동 전송 규칙에서 사용할 수 없는 템플릿입니다."
+                : "SMS 발송 채널이 없는 템플릿입니다.",
+        );
         expect(ruleRepository.create).not.toHaveBeenCalled();
     });
 
@@ -1218,6 +1489,17 @@ describe("MessageTriggerService", () => {
             .rejects.toMatchObject({ response: { code: "VALIDATION_FAILED" } });
     });
 
+    it.each([undefined, "23:59"])("preserves or updates sendTime without losing the generation fence (%s)", async (sendTime) => {
+        const { service, ruleRepository, jobRepository } = createService();
+        const rule = createRule();
+        rule.sendTime = "14:37";
+        ruleRepository.findById.mockResolvedValue(rule);
+        ruleRepository.update.mockImplementation(async (_branch, updated) => updated);
+        await service.updateRule(branchId, rule.id, { name: "시간 검증", ...(sendTime === undefined ? {} : { sendTime }) });
+        expect(ruleRepository.update).toHaveBeenCalledWith(branchId, expect.objectContaining({ sendTime: sendTime ?? "14:37" }), expect.any(Object));
+        expect(jobRepository.cancelPendingByRuleId).toHaveBeenCalledWith(rule.id, "Rule updated");
+    });
+
     it("updateRule cancels the old generation and reconciles the new generation before returning", async () => {
         const { service, internals, ruleRepository, jobRepository } = createService();
         const existingRule = createRule({
@@ -1259,6 +1541,7 @@ describe("MessageTriggerService", () => {
         ruleRepository.findById
             .mockResolvedValueOnce(existingRule)
             .mockResolvedValueOnce(staleRule)
+            .mockResolvedValueOnce(staleRule)
             .mockResolvedValueOnce(reconciledRule);
         ruleRepository.update.mockResolvedValue(updatedRule);
 
@@ -1282,11 +1565,19 @@ describe("MessageTriggerService", () => {
             staleRule.updatedAt,
             true,
             "규칙 재생성",
+            expect.any(Object),
+            expect.any(Object),
         );
-        expect(internals.rebuildJobsForRule).toHaveBeenCalledWith(branchId, staleRule, false);
+        expect(internals.rebuildJobsForRule).toHaveBeenCalledWith(
+            branchId,
+            staleRule,
+            false,
+            expect.any(Object),
+        );
         expect(ruleRepository.clearJobsStaleIfUnchanged).toHaveBeenCalledWith(
             staleRule.id,
             staleRule.updatedAt,
+            expect.any(Object),
         );
     });
 
@@ -1302,6 +1593,7 @@ describe("MessageTriggerService", () => {
             eventType: existingRule.eventType,
             offsetType: existingRule.offsetType,
             offsetDays: existingRule.offsetDays,
+            sendTime: existingRule.sendTime,
             recipientType: existingRule.recipientType,
             templateKey: existingRule.templateKey,
             isDefault: existingRule.isDefault,
@@ -1348,6 +1640,7 @@ describe("MessageTriggerService", () => {
             eventType: existingRule.eventType,
             offsetType: existingRule.offsetType,
             offsetDays: existingRule.offsetDays,
+            sendTime: existingRule.sendTime,
             recipientType: existingRule.recipientType,
             templateKey: existingRule.templateKey,
             isDefault: existingRule.isDefault,
@@ -1379,7 +1672,11 @@ describe("MessageTriggerService", () => {
         await dispatcher.service.dispatchPendingJobNow(job.id, { expectedBranchId: job.branchId! });
         await expect(updatePromise).resolves.toBe(updatedRule);
 
-        expect(dispatcher.jobRepository.claimPendingWithRuleFence).toHaveBeenCalledWith(job.id, job.branchId);
+        expect(dispatcher.jobRepository.claimPendingWithRuleFence).toHaveBeenCalledWith(
+            job.id,
+            job.branchId,
+            expect.any(Object),
+        );
         expect(dispatcher.deliveryService.sendJob).not.toHaveBeenCalled();
     });
 
@@ -1504,7 +1801,11 @@ describe("MessageTriggerService", () => {
             messageLogRepository as never,
             createSystemTemplateService() as never,
             createTemplateAutomationLock() as never,
-        );
+            undefined,
+            createOverrideRepository() as never,
+            createAutomationActivationService() as never,
+            createBranchLock() as never,
+        undefined, createLegacyAutomationDeliveryGate({} as never, createBranchLock() as never));
 
         const greetingRule = createRule({
             id: "rule-greeting-new",
@@ -1568,7 +1869,11 @@ describe("MessageTriggerService", () => {
 
         await service.dispatchDueJobs();
 
-        expect(jobRepository.claimPendingWithRuleFence).toHaveBeenCalledWith(job.id, job.branchId);
+        expect(jobRepository.claimPendingWithRuleFence).toHaveBeenCalledWith(
+            job.id,
+            job.branchId,
+            expect.any(Object),
+        );
         expect(deliveryService.sendJob).not.toHaveBeenCalled();
         expect(jobRepository.update).not.toHaveBeenCalled();
     });
@@ -1597,7 +1902,11 @@ describe("MessageTriggerService", () => {
         await service.dispatchDueJobs();
 
         expect(messageSenderApprovalService.getApprovedBranchIds).toHaveBeenCalledWith([branchId]);
-        expect(jobRepository.claimPendingWithRuleFence).toHaveBeenCalledWith(job.id, job.branchId);
+        expect(jobRepository.claimPendingWithRuleFence).toHaveBeenCalledWith(
+            job.id,
+            job.branchId,
+            expect.any(Object),
+        );
         expect(deliveryService.sendJob).not.toHaveBeenCalled();
         expect(job.status).toBe("canceled");
         expect(job.cancelReason).toBe("메시지 발송 승인 필요");
@@ -1617,6 +1926,141 @@ describe("MessageTriggerService", () => {
         expect(deliveryService.sendJob).toHaveBeenCalledWith(job);
         expect(job.status).toBe("sent");
         expect(jobRepository.update).toHaveBeenCalledWith(job);
+    });
+
+    it("cancels a queued automatic service-end notice when the client was already notified", async () => {
+        const dispatcher = createDispatchService();
+        const job = createJob({
+            clientId: 7,
+            templateKey: MessageTriggerTemplateKey.SERVICE_END_NOTICE,
+            dedupeKey: "rule-service-end-notice:client:7:CLIENT:2026-09-16T03:00:00.000Z",
+        });
+        dispatcher.jobRepository.findDuePendingSystemScope.mockResolvedValue([job]);
+        dispatcher.claimedJobRead.mockResolvedValue(job);
+        dispatcher.transaction.$queryRaw
+            .mockResolvedValueOnce([{ service_end_notice_sent_at: new Date("2026-09-15T03:00:00.000Z") }])
+            .mockResolvedValueOnce([{ payload: { templateVariables: { [SMS_DELIVERY_SNAPSHOT_VARIABLE]: "synthetic-trigger-prepared" } }, status: "processing", claim_token: "claim-a" }])
+            .mockResolvedValueOnce([{ id: job.id }]);
+
+        await dispatcher.service.dispatchDueJobs();
+
+        expect(dispatcher.deliveryService.sendJob).not.toHaveBeenCalled();
+        expect(job.status).toBe("canceled");
+        expect(job.cancelReason).toBe("서비스 종료 안내가 이미 발송됨");
+    });
+
+    it("still allows an explicitly requested manual service-end notice", async () => {
+        const dispatcher = createDispatchService();
+        const job = createJob({
+            clientId: 7,
+            templateKey: MessageTriggerTemplateKey.SERVICE_END_NOTICE,
+            dedupeKey: "system:service_end_notice:client:7:manual:request-1",
+        });
+        dispatcher.jobRepository.findDuePendingSystemScope.mockResolvedValue([job]);
+        dispatcher.claimedJobRead.mockResolvedValue(job);
+
+        await dispatcher.service.dispatchDueJobs();
+
+        expect(dispatcher.deliveryService.sendJob).toHaveBeenCalledWith(job);
+        expect(job.status).toBe("sent");
+    });
+
+    it("blocks an already-sent automatic service-end notice before receipt-link preparation", async () => {
+        const dispatcher = createDispatchService();
+        const job = createJob({
+            clientId: 7,
+            templateKey: MessageTriggerTemplateKey.SERVICE_END_NOTICE,
+            dedupeKey: "rule-service-end-notice:client:7:CLIENT:2026-09-16T03:00:00.000Z",
+        });
+        const prepareJob = jest.fn();
+        const sendPreparedJob = jest.fn();
+        Object.assign(dispatcher.deliveryService, { prepareJob, sendPreparedJob });
+        dispatcher.jobRepository.findDuePendingSystemScope.mockResolvedValue([job]);
+        dispatcher.claimedJobRead.mockResolvedValue(job);
+        dispatcher.transaction.$queryRaw.mockResolvedValueOnce([{
+            service_end_notice_sent_at: new Date("2026-09-15T03:00:00.000Z"),
+        }]);
+
+        await dispatcher.service.dispatchDueJobs();
+
+        expect(prepareJob).not.toHaveBeenCalled();
+        expect(sendPreparedJob).not.toHaveBeenCalled();
+        expect(job.status).toBe("canceled");
+        expect(job.cancelReason).toBe("서비스 종료 안내가 이미 발송됨");
+    });
+
+    it("leaves initial pending jobs untouched while branch dispatch is disabled", async () => {
+        const systemSettingService = {
+            getMessageSettingsPolicyEnabled: jest.fn().mockResolvedValue(false),
+        };
+        const { service, deliveryService, jobRepository, messageAutomationActivationService } = createDispatchService(systemSettingService);
+        const job = createJob();
+        jobRepository.findDuePendingSystemScope.mockResolvedValue([job]);
+        messageAutomationActivationService.getTriggerDispatchEnabled.mockResolvedValue(false);
+
+        await service.dispatchDueJobs();
+
+        expect(messageAutomationActivationService.getTriggerDispatchEnabled).toHaveBeenCalledWith(branchId);
+        expect(jobRepository.claimPendingWithRuleFence).not.toHaveBeenCalled();
+        expect(deliveryService.sendJob).not.toHaveBeenCalled();
+        expect(job.status).toBe("pending");
+    });
+
+    it("leaves retry jobs pending while only trigger retry is disabled", async () => {
+        const systemSettingService = {
+            getMessageSettingsPolicyEnabled: jest.fn(async (
+                _branchId: string,
+                policyId: string,
+            ) => policyId !== "trigger-job-retry"),
+        };
+        const { service, deliveryService, jobRepository } = createDispatchService(systemSettingService);
+        const job = createJob({ attempts: 1, nextAttemptAt: new Date() });
+        jobRepository.findDuePendingSystemScope.mockResolvedValue([job]);
+
+        await service.dispatchDueJobs();
+
+        expect(jobRepository.claimPendingWithRuleFence).not.toHaveBeenCalled();
+        expect(deliveryService.sendJob).not.toHaveBeenCalled();
+        expect(job.status).toBe("pending");
+    });
+
+    it("drops past-due catch-up candidates while past-trigger handling is disabled", async () => {
+        const systemSettingService = {
+            getMessageSettingsPolicyEnabled: jest.fn().mockResolvedValue(false),
+        };
+        const { internals } = createService(systemSettingService);
+        const past = { rule: createRule(), job: createJob({ scheduledFor: new Date(Date.now() - 1_000) }) };
+        const future = { rule: createRule({ id: "rule-2" }), job: createJob({ id: "job-2", scheduledFor: new Date(Date.now() + 60_000) }) };
+
+        await expect(
+            internals.applyRetroactiveSendConfig(branchId, [past, future]),
+        ).resolves.toEqual([future]);
+        expect(systemSettingService.getMessageSettingsPolicyEnabled).toHaveBeenCalledWith(
+            branchId,
+            "past-trigger",
+        );
+    });
+
+    it("keeps a post-CAS admission refusal dispatching for uncertain reconciliation", async () => {
+        const { service, deliveryService, jobRepository } = createDispatchService();
+        const job = createJob(); jobRepository.findDuePendingSystemScope.mockResolvedValue([job]);
+        deliveryService.sendPreparedJob.mockRejectedValue(new AgentAutomationDispatchUncertainError());
+        await service.dispatchDueJobs();
+        expect(job.status).toBe("dispatching");
+        expect(job.attempts).toBe(0); expect(job.nextAttemptAt).toBeNull();
+        expect(deliveryService.sendJob).not.toHaveBeenCalled();
+        // Only the pre-CAS prepared snapshot is written, never the stale result.
+        expect(jobRepository.update).toHaveBeenCalledTimes(1);
+    });
+
+    it("refuses the automatic one-step compatibility path before provider authorization", async () => {
+        const { service, deliveryService, jobRepository, transaction } = createDispatchService();
+        Object.assign(deliveryService, { prepareJob: undefined, sendPreparedJob: undefined });
+        const job = createJob(); jobRepository.findDuePendingSystemScope.mockResolvedValue([job]);
+        await service.dispatchDueJobs();
+        expect(job.status).toBe("canceled");
+        expect(deliveryService.sendJob).not.toHaveBeenCalled();
+        expect(transaction.$queryRaw).not.toHaveBeenCalled();
     });
 
     it("persists preparation before authorization and sends only the frozen snapshot", async () => {
@@ -1910,7 +2354,7 @@ describe("MessageTriggerService", () => {
         const job = createJob();
         jobRepository.findDuePendingSystemScope.mockResolvedValue([job]);
         jobRepository.claimPendingWithRuleFence.mockResolvedValue("claim-a");
-        transaction.$queryRaw.mockResolvedValueOnce([{
+        transaction.$queryRaw.mockResolvedValueOnce([{ payload: { templateVariables: { [SMS_DELIVERY_SNAPSHOT_VARIABLE]: "synthetic-trigger-prepared" } },
             status: "processing",
             claim_token: "claim-b",
         }]);
@@ -1938,10 +2382,11 @@ describe("MessageTriggerService", () => {
         let queryCount = 0;
         transaction.$queryRaw.mockImplementation(async () => {
             queryCount += 1;
-            if (queryCount === 1) {
+            if (queryCount === 1) { return [{ payload: { templateVariables: { [SMS_DELIVERY_SNAPSHOT_VARIABLE]: "synthetic-trigger-prepared" } }, status: "processing", claim_token: "claim-a" }]; }
+            if (queryCount === 2) {
                 authorizationReadStarted();
                 await authorizationReadReleased;
-                return [{ status: "processing", claim_token: "claim-a" }];
+                return [{ payload: { templateVariables: { [SMS_DELIVERY_SNAPSHOT_VARIABLE]: "synthetic-trigger-prepared" } }, status: "processing", claim_token: "claim-a" }];
             }
             return cancellationWon ? [] : [{ id: job.id }];
         });
@@ -1955,7 +2400,7 @@ describe("MessageTriggerService", () => {
         await dispatchPromise;
 
         expect(deliveryService.sendJob).not.toHaveBeenCalled();
-        expect(jobRepository.update).not.toHaveBeenCalled();
+        expect(jobRepository.update).toHaveBeenCalledTimes(1); // Only the pre-CAS snapshot write.
         expect(job.status).toBe("processing");
     });
 
@@ -1970,7 +2415,11 @@ describe("MessageTriggerService", () => {
 
         expect(jobRepository.findByIdInBranch).toHaveBeenCalledWith(job.branchId, job.id);
         expect(jobRepository.findDuePendingSystemScope).not.toHaveBeenCalled();
-        expect(jobRepository.claimPendingWithRuleFence).toHaveBeenCalledWith(job.id, job.branchId);
+        expect(jobRepository.claimPendingWithRuleFence).toHaveBeenCalledWith(
+            job.id,
+            job.branchId,
+            expect.any(Object),
+        );
         expect(deliveryService.sendJob).toHaveBeenCalledWith(job);
         expect(job.status).toBe("sent");
         expect(result.status).toBe("sent");
@@ -2028,12 +2477,13 @@ describe("MessageTriggerService", () => {
         let queryCount = 0;
         dispatcher.transaction.$queryRaw.mockImplementation(async () => {
             queryCount += 1;
-            if (queryCount === 1) {
+            if (queryCount === 1) { return [{ payload: { templateVariables: { [SMS_DELIVERY_SNAPSHOT_VARIABLE]: "synthetic-trigger-prepared" } }, status: "processing", claim_token: "claim-a" }]; }
+            if (queryCount === 2) {
                 events.push("schedule-lock");
                 return [{ id: schedule.id }];
             }
-            if (queryCount === 2) {
-                return [{ status: "processing", claim_token: "claim-a" }];
+            if (queryCount === 3) {
+                return [{ payload: { templateVariables: { [SMS_DELIVERY_SNAPSHOT_VARIABLE]: "synthetic-trigger-prepared" } }, status: "processing", claim_token: "claim-a" }];
             }
             return [{ id: job.id }];
         });
@@ -2123,13 +2573,14 @@ describe("MessageTriggerService", () => {
         let queryCount = 0;
         dispatcher.transaction.$queryRaw.mockImplementation(async () => {
             queryCount += 1;
-            if (queryCount === 1) {
+            if (queryCount === 1) { return [{ payload: { templateVariables: { [SMS_DELIVERY_SNAPSHOT_VARIABLE]: "synthetic-trigger-prepared" } }, status: "processing", claim_token: "claim-a" }]; }
+            if (queryCount === 2) {
                 lockWaitStarted();
                 await replacementDone;
                 return [{ id: schedule.id }];
             }
-            if (queryCount === 2) {
-                return [{ status: "processing", claim_token: "claim-a" }];
+            if (queryCount === 3) {
+                return [{ payload: { templateVariables: { [SMS_DELIVERY_SNAPSHOT_VARIABLE]: "synthetic-trigger-prepared" } }, status: "processing", claim_token: "claim-a" }];
             }
             return [{ id: job.id }];
         });
@@ -2330,7 +2781,7 @@ describe("MessageTriggerService", () => {
 
         expect(dispatcher.deliveryService.sendJob).not.toHaveBeenCalled();
         expect(dispatcher.prisma.employee_schedule.findFirst).not.toHaveBeenCalled();
-        expect(dispatcher.jobRepository.update).not.toHaveBeenCalled();
+        expect(dispatcher.jobRepository.update).toHaveBeenCalledTimes(1); // Only the pre-CAS snapshot write.
     });
 
     it("leaves a claimed assignment retryable when the final schedule read fails", async () => {
@@ -2351,7 +2802,7 @@ describe("MessageTriggerService", () => {
         await dispatcher.service.dispatchDueJobs();
 
         expect(dispatcher.deliveryService.sendJob).not.toHaveBeenCalled();
-        expect(dispatcher.jobRepository.update).not.toHaveBeenCalled();
+        expect(dispatcher.jobRepository.update).toHaveBeenCalledTimes(1); // Only the pre-CAS snapshot write.
         expect(job.status).toBe("processing");
     });
 
@@ -2389,7 +2840,11 @@ describe("MessageTriggerService", () => {
 
             await service.dispatchDueJobs();
 
-            expect(jobRepository.claimPendingWithRuleFence).toHaveBeenCalledWith(job.id, job.branchId);
+            expect(jobRepository.claimPendingWithRuleFence).toHaveBeenCalledWith(
+                job.id,
+                job.branchId,
+                expect.any(Object),
+            );
             expect(deliveryService.sendJob).not.toHaveBeenCalled();
             expect(job.status).toBe("canceled");
             expect(job.cancelReason).toBe("기존 발송 예정 24시간 경과");
@@ -2605,7 +3060,12 @@ describe("MessageTriggerService", () => {
             inactiveDefault.id,
             expect.any(Object),
         );
-        expect(rebuildSpy).toHaveBeenCalledWith(inactiveDefault.branchId, inactiveDefault, false);
+        expect(rebuildSpy).toHaveBeenCalledWith(
+            inactiveDefault.branchId,
+            inactiveDefault,
+            false,
+            expect.any(Object),
+        );
     });
 
     it("a failing per-job status write does not abort the rest of the batch", async () => {
@@ -2617,14 +3077,14 @@ describe("MessageTriggerService", () => {
         }).logger;
         jest.spyOn(logger, "error").mockImplementation(() => undefined);
         jobRepository.findDuePendingSystemScope.mockResolvedValue([firstJob, secondJob]);
-        jobRepository.update.mockRejectedValueOnce(new Error("write failed"));
+        jobRepository.update.mockResolvedValueOnce(undefined).mockRejectedValueOnce(new Error("write failed"));
 
         await service.dispatchDueJobs();
 
         expect(deliveryService.sendJob).toHaveBeenCalledTimes(2);
         expect(firstJob.status).toBe("sent");
         expect(secondJob.status).toBe("sent");
-        expect(jobRepository.update).toHaveBeenCalledTimes(2);
+        expect(jobRepository.update).toHaveBeenCalledTimes(4);
     });
 
     it("processStaleRuleRebuilds rebuilds an active stale rule and clears the flag when unchanged", async () => {
@@ -2646,10 +3106,16 @@ describe("MessageTriggerService", () => {
 
         expect(ruleRepository.findStaleRules).toHaveBeenCalledWith(10);
         expect(jobRepository.cancelPendingByRuleId).toHaveBeenCalledWith(staleRule.id, "규칙 재생성");
-        expect(rebuildSpy).toHaveBeenCalledWith(staleRule.branchId, staleRule, false);
+        expect(rebuildSpy).toHaveBeenCalledWith(
+            staleRule.branchId,
+            staleRule,
+            false,
+            expect.any(Object),
+        );
         expect(ruleRepository.clearJobsStaleIfUnchanged).toHaveBeenCalledWith(
             staleRule.id,
             staleRule.updatedAt,
+            expect.any(Object),
         );
         expect(jobRepository.cancelPendingOlderThan).not.toHaveBeenCalled();
     });
@@ -2735,7 +3201,11 @@ describe("MessageTriggerService", () => {
                 createMessageLogRepository() as never,
                 createSystemTemplateService() as never,
                 createTemplateAutomationLock() as never,
-            );
+                undefined,
+                createOverrideRepository() as never,
+                createAutomationActivationService() as never,
+                createBranchLock(prisma) as never,
+            undefined, createLegacyAutomationDeliveryGate(prisma as never, createBranchLock(prisma) as never));
             const staleRule = createRule({
                 id: "rule-stale-past-cleanup",
                 jobsStale: true,
@@ -2757,6 +3227,7 @@ describe("MessageTriggerService", () => {
             expect(ruleRepository.clearJobsStaleIfUnchanged).toHaveBeenCalledWith(
                 staleRule.id,
                 staleRule.updatedAt,
+                expect.any(Object),
             );
         } finally {
             jest.useRealTimers();
@@ -2798,16 +3269,19 @@ describe("MessageTriggerService", () => {
         expect(ruleRepository.clearJobsStaleIfUnchanged).toHaveBeenCalledWith(
             staleRule.id,
             staleRule.updatedAt,
+            expect.any(Object),
         );
         expect(ruleRepository.clearJobsStaleIfUnchanged).toHaveBeenCalledWith(
             editedRule.id,
             editedRule.updatedAt,
+            expect.any(Object),
         );
         expect(internals.rebuildJobsForRule).toHaveBeenNthCalledWith(
             2,
             editedRule.branchId,
             editedRule,
             false,
+            expect.any(Object),
         );
     });
 
@@ -2833,7 +3307,35 @@ describe("MessageTriggerService", () => {
         expect(ruleRepository.clearJobsStaleIfUnchanged).toHaveBeenCalledWith(
             inactiveRule.id,
             inactiveRule.updatedAt,
+            expect.any(Object),
         );
+    });
+
+    it("drains older OFF-branch rules so the bounded stale queue reaches an enabled branch", async () => {
+        const { service, ruleRepository, messageAutomationActivationService } = createDispatchService();
+        const disabledRules = Array.from({ length: 12 }, (_, index) => createRule({
+            id: `off-rule-${index}`,
+            branchId,
+            isActive: index === 0, // Legacy active bits must not rebuild under an OFF parent.
+            jobsStale: true,
+        }));
+        const enabledRule = createRule({ id: "enabled-branch-rule", branchId: "other-branch", jobsStale: true });
+        const queue = [...disabledRules, enabledRule];
+        messageAutomationActivationService.getTriggerDispatchEnabled.mockImplementation(async (id: string) => id !== branchId);
+        ruleRepository.findStaleRules.mockImplementation(async () => queue.filter((rule) => rule.jobsStale).slice(0, 10));
+        ruleRepository.clearJobsStaleIfUnchanged.mockImplementation(async (id: string) => {
+            queue.find((rule) => rule.id === id)!.jobsStale = false;
+            return true;
+        });
+        const internals = service as unknown as ServiceInternals;
+        const rebuildSpy = jest.spyOn(internals, "rebuildJobsForRule").mockResolvedValue(undefined);
+
+        await internals.processStaleRuleRebuilds();
+        await internals.processStaleRuleRebuilds();
+
+        expect(queue.every((rule) => !rule.jobsStale)).toBe(true);
+        expect(rebuildSpy).toHaveBeenCalledTimes(1);
+        expect(rebuildSpy).toHaveBeenCalledWith(enabledRule.branchId, enabledRule, false, expect.any(Object));
     });
 
     it("does not rebuild or clear when a second stale worker loses the generation fence", async () => {
@@ -2860,6 +3362,8 @@ describe("MessageTriggerService", () => {
             staleRule.updatedAt,
             true,
             "규칙 재생성",
+            expect.any(Object),
+            expect.any(Object),
         );
         expect(rebuildSpy).not.toHaveBeenCalled();
         expect(ruleRepository.clearJobsStaleIfUnchanged).not.toHaveBeenCalled();
@@ -2905,6 +3409,7 @@ describe("MessageTriggerService", () => {
         expect(ruleRepository.clearJobsStaleIfUnchanged).toHaveBeenCalledWith(
             secondRule.id,
             secondRule.updatedAt,
+            expect.any(Object),
         );
         expect(logger.error).toHaveBeenCalledWith(
             expect.stringContaining(firstRule.id),
@@ -2913,7 +3418,6 @@ describe("MessageTriggerService", () => {
     });
 
     it("maps the service information name variable from the client name", () => {
-        const { internals } = createService();
         const rule = createRule({
             eventType: MessageTriggerEventType.SERVICE_START,
             offsetType: MessageTriggerOffsetType.BEFORE_DAYS,
@@ -2921,7 +3425,7 @@ describe("MessageTriggerService", () => {
             templateKey: MessageTriggerTemplateKey.SERVICE_INFO,
         });
 
-        const variables = internals.buildClientTemplateVariables(rule, {
+        const variables = buildClientTemplateVariables(rule, {
             name: "김지니",
             phone: "010-1234-5678",
             type: "A가1형",
@@ -2938,7 +3442,6 @@ describe("MessageTriggerService", () => {
     });
 
     it("maps CLIENT_GREETING template variables from the client", () => {
-        const { internals } = createService();
         const rule = createRule({
             eventType: MessageTriggerEventType.CLIENT_CREATED,
             offsetType: MessageTriggerOffsetType.IMMEDIATE,
@@ -2946,7 +3449,7 @@ describe("MessageTriggerService", () => {
             templateKey: MessageTriggerTemplateKey.CLIENT_GREETING,
         });
 
-        const variables = internals.buildClientTemplateVariables(rule, {
+        const variables = buildClientTemplateVariables(rule, {
             name: "김산모",
             phone: "010-9999-0000",
             type: null,
@@ -2963,7 +3466,6 @@ describe("MessageTriggerService", () => {
     });
 
     it("maps PRICE_INFO template variables including price/bank fields (data-minimization scoping)", () => {
-        const { internals } = createService();
         const rule = createRule({
             eventType: MessageTriggerEventType.SERVICE_START,
             offsetType: MessageTriggerOffsetType.BEFORE_DAYS,
@@ -2971,7 +3473,7 @@ describe("MessageTriggerService", () => {
             templateKey: MessageTriggerTemplateKey.PRICE_INFO,
         });
 
-        const variables = internals.buildClientTemplateVariables(rule, {
+        const variables = buildClientTemplateVariables(rule, {
             name: "이고객",
             phone: "010-5555-6666",
             type: "B형",
@@ -3011,7 +3513,6 @@ describe("MessageTriggerService", () => {
     // payload). If a future change makes the builder start supplying it, this must fail
     // so DELIVERY_TIME_VARIABLES above is consciously updated rather than silently stale.
     it("does not derive receiptUrl for SERVICE_END_NOTICE from the client record today", () => {
-        const { internals } = createService();
         const rule = createRule({
             eventType: MessageTriggerEventType.SERVICE_START,
             offsetType: MessageTriggerOffsetType.BEFORE_DAYS,
@@ -3019,7 +3520,7 @@ describe("MessageTriggerService", () => {
             templateKey: MessageTriggerTemplateKey.SERVICE_END_NOTICE,
         });
 
-        const variables = internals.buildClientTemplateVariables(rule, {
+        const variables = buildClientTemplateVariables(rule, {
             name: "자동발송 테스트",
             phone: "010-6621-1878",
             type: "A가1형",
@@ -3039,7 +3540,6 @@ describe("MessageTriggerService", () => {
     it.each(CONFIGURABLE_SMS_TRIGGER_TEMPLATE_KEYS)(
         "builds every required %s variable from a complete client record",
         (templateKey) => {
-            const { internals } = createService();
             const rule = createRule({
                 eventType: MessageTriggerEventType.SERVICE_START,
                 offsetType: MessageTriggerOffsetType.BEFORE_DAYS,
@@ -3047,7 +3547,7 @@ describe("MessageTriggerService", () => {
                 templateKey,
             });
 
-            const variables = internals.buildClientTemplateVariables(rule, {
+            const variables = buildClientTemplateVariables(rule, {
                 name: "자동발송 테스트",
                 phone: "010-6621-1878",
                 type: "A가1형",
@@ -3079,6 +3579,7 @@ describe("MessageTriggerService", () => {
         type: string | null;
         startDate: Date | null;
         endDate: Date | null;
+        serviceEndNoticeSentAt: Date | null;
         createdAt: Date | null;
     }> = {}) => {
         const ruleRepository = {
@@ -3121,6 +3622,7 @@ describe("MessageTriggerService", () => {
                     type: null,
                     startDate: null,
                     endDate: null,
+                    serviceEndNoticeSentAt: null,
                     createdAt: new Date("2026-06-27T00:00:00.000Z"),
                     ...clientOverrides,
                 }),
@@ -3134,6 +3636,8 @@ describe("MessageTriggerService", () => {
                 ruleOrder: [],
             }),
         };
+        const messageAutomationActivationService = createAutomationActivationService();
+        const messageAutomationBranchLockService = createBranchLock(prisma);
         const service = new MessageTriggerService(
             prisma as never,
             {} as never,
@@ -3144,7 +3648,10 @@ describe("MessageTriggerService", () => {
             createSystemTemplateService() as never,
             createTemplateAutomationLock(prisma) as never,
             systemSettingService as never,
-        );
+            createOverrideRepository() as never,
+            messageAutomationActivationService as never,
+            messageAutomationBranchLockService as never,
+        undefined, createLegacyAutomationDeliveryGate(prisma as never, messageAutomationBranchLockService as never));
         return {
             service,
             ruleRepository,
@@ -3152,6 +3659,8 @@ describe("MessageTriggerService", () => {
             prisma,
             messageSenderApprovalService,
             systemSettingService,
+            messageAutomationActivationService,
+            messageAutomationBranchLockService,
         };
     };
 
@@ -3219,6 +3728,8 @@ describe("MessageTriggerService", () => {
         };
         const messageLogRepository = createMessageLogRepository();
         const messageSenderApprovalService = createMessageSenderApprovalService();
+        const messageAutomationActivationService = createAutomationActivationService();
+        const messageAutomationBranchLockService = createBranchLock(prisma);
         const service = new MessageTriggerService(
             prisma as never,
             {} as never,
@@ -3228,13 +3739,19 @@ describe("MessageTriggerService", () => {
             messageLogRepository as never,
             createSystemTemplateService() as never,
             createTemplateAutomationLock(prisma) as never,
-        );
+            undefined,
+            createOverrideRepository() as never,
+            messageAutomationActivationService as never,
+            messageAutomationBranchLockService as never,
+        undefined, createLegacyAutomationDeliveryGate(prisma as never, messageAutomationBranchLockService as never));
         return {
             service,
             ruleRepository,
             jobRepository,
             prisma,
             messageSenderApprovalService,
+            messageAutomationActivationService,
+            messageAutomationBranchLockService,
         };
     };
 
@@ -3431,6 +3948,53 @@ describe("MessageTriggerService", () => {
         expect(persistedJob?.dedupeKey).toContain(":client:42:");
     });
 
+    it("does not enqueue an automatic service-end notice after one was already sent", async () => {
+        const serviceEndNoticeRule = createRule({
+            id: "rule-service-end-notice",
+            eventType: MessageTriggerEventType.SERVICE_END,
+            offsetType: MessageTriggerOffsetType.BEFORE_DAYS,
+            offsetDays: 0,
+            templateKey: MessageTriggerTemplateKey.SERVICE_END_NOTICE,
+        });
+        const sync = createSyncService({
+            endDate: new Date("2026-08-01T00:00:00.000Z"),
+            serviceEndNoticeSentAt: new Date("2026-07-31T03:00:00.000Z"),
+        });
+        sync.ruleRepository.findActiveByEventTypes.mockResolvedValue([serviceEndNoticeRule]);
+
+        await sync.service.syncClientRulesForClient(branchId, 1, true);
+
+        expect(sync.jobRepository.upsertPending).not.toHaveBeenCalled();
+    });
+
+    it("stamps a task commit reference on every materialized task-origin client job", async () => {
+        const greetingRule = createRule({
+            id: "rule-task-reference",
+            eventType: MessageTriggerEventType.CLIENT_CREATED,
+            offsetType: MessageTriggerOffsetType.IMMEDIATE,
+            templateKey: MessageTriggerTemplateKey.CLIENT_GREETING,
+        });
+        const sync = createSyncService();
+        sync.ruleRepository.findActiveByEventTypes.mockResolvedValue([greetingRule]);
+        const taskAutomationReference = createAgentAutomationTaskCommitReference({
+            actionId: "70000000-0000-4000-8000-000000000004",
+            taskId: "70000000-0000-4000-8000-000000000005",
+            taskRevision: 4,
+            authorities: [{ id: "70000000-0000-4000-8000-000000000001", recordDigest: "a".repeat(64), scopeDigest: "b".repeat(64) }],
+            coverages: [],
+        });
+
+        await sync.service.syncClientRulesForClient(branchId, 1, true, false, {
+            stableBatchAt: new Date("2026-06-27T00:00:00.000Z"),
+            preserveExisting: true,
+            taskOrigin: true,
+            taskAutomationReference,
+        });
+
+        const materialized = sync.jobRepository.upsertPending.mock.calls[0]?.[0] as MessageTriggerJobEntity | undefined;
+        expect(materialized?.payload.taskAutomationReference).toEqual(taskAutomationReference);
+    });
+
     it("rebuildJobsForRule is a no-op for an unapproved branch", async () => {
         const prisma = {
             client: {
@@ -3452,7 +4016,11 @@ describe("MessageTriggerService", () => {
             createMessageLogRepository() as never,
             createSystemTemplateService() as never,
             createTemplateAutomationLock(prisma) as never,
-        );
+            undefined,
+            createOverrideRepository() as never,
+            createAutomationActivationService() as never,
+            createBranchLock(prisma) as never,
+        undefined, createLegacyAutomationDeliveryGate(prisma as never, createBranchLock(prisma) as never));
         const serviceInfoRule = createRule({
             id: "rule-service-info",
             eventType: MessageTriggerEventType.SERVICE_START,
@@ -3567,6 +4135,8 @@ describe("MessageTriggerService", () => {
             pendingGreeting,
             greetingRule.updatedAt,
             false,
+            false,
+            expect.any(Object),
         );
         expect(pendingGreeting.recipientPhone).toBe("010-9999-0000");
         expect(pendingGreeting.payload).toMatchObject({
@@ -3659,6 +4229,31 @@ describe("MessageTriggerService", () => {
             clientId: 1,
             templateKey: MessageTriggerTemplateKey.SERVICE_INFO,
         });
+        } finally {
+            jest.useRealTimers();
+        }
+    });
+
+    it.each([
+        [MessageTriggerOffsetType.SAME_DAY, 0, "00:00", "2026-07-14T15:00:00.000Z"],
+        [MessageTriggerOffsetType.BEFORE_DAYS, 1, "10:37", "2026-07-14T01:37:00.000Z"],
+        [MessageTriggerOffsetType.AFTER_DAYS, 2, "23:59", "2026-07-17T14:59:00.000Z"],
+    ])("schedules %s at configured KST time %s %s", async (offsetType, offsetDays, sendTime, expected) => {
+        jest.useFakeTimers().setSystemTime(new Date("2026-07-09T00:00:00.000Z"));
+        try {
+            const rule = createRule({
+                id: "rule-configured-time",
+                eventType: MessageTriggerEventType.SERVICE_START,
+                offsetType, offsetDays,
+                templateKey: MessageTriggerTemplateKey.SERVICE_INFO,
+            });
+            Object.assign(rule, { sendTime });
+            const sync = createSyncService({ startDate: new Date("2026-07-14T16:30:00.000Z") });
+            sync.ruleRepository.findActiveByEventTypes.mockResolvedValue([rule]);
+            await sync.service.syncClientRulesForClient(branchId, 1, false);
+            const job = sync.jobRepository.upsertPending.mock.calls[0][0];
+            expect(job.scheduledFor.toISOString()).toBe(expected);
+            expect(job.dedupeKey).toContain(expected);
         } finally {
             jest.useRealTimers();
         }
@@ -3968,6 +4563,7 @@ describe("MessageTriggerService", () => {
             employeeRule.updatedAt,
             false,
             true,
+            expect.any(Object),
         );
     });
 
@@ -4326,5 +4922,397 @@ describe("MessageTriggerService", () => {
         expect(ruleRepository.findAll).toHaveBeenCalledWith(branchId);
         expect(ruleRepository.create).toHaveBeenCalledTimes(2);
         expect(internals.rebuildJobsForRule).toHaveBeenCalledTimes(2);
+    });
+
+    describe("listHistoryPage", () => {
+        it("fills a page boundary from terminal jobs after the log source", async () => {
+            const { service, ruleRepository, messageLogRepository, jobRepository } = createService();
+            ruleRepository.findAll.mockResolvedValue([]);
+            messageLogRepository.findHistoryPageByBranch.mockResolvedValue([
+                createLog({ id: 40 }),
+            ]);
+            jobRepository.findHistoryPageByBranch.mockResolvedValue([
+                createJob({ id: "00000000-0000-4000-8000-0000000000f0", status: "failed" }),
+                createJob({ id: "00000000-0000-4000-8000-0000000000a0", status: "canceled" }),
+            ]);
+
+            const result = await service.listHistoryPage(branchId, 2);
+
+            expect(result.items.map((item) => item.id)).toEqual([
+                40,
+                "job:00000000-0000-4000-8000-0000000000f0",
+            ]);
+            expect(result.page.hasMore).toBe(true);
+            expect(messageLogRepository.findHistoryPageByBranch).toHaveBeenCalledWith(
+                branchId,
+                expect.objectContaining({ after: null, limit: 3 }),
+            );
+            expect(jobRepository.findHistoryPageByBranch).toHaveBeenCalledWith(
+                branchId,
+                expect.objectContaining({ after: null, limit: 2 }),
+            );
+        });
+
+        it.each(["pending", "processing", "sent"])(
+            "keeps current-state pagination usable when a terminal row becomes %s midwalk",
+            async (nextStatus) => {
+                const { service, prisma, ruleRepository } = createService();
+                ruleRepository.findAll.mockResolvedValue([]);
+                const firstJob = createJob({
+                    id: "00000000-0000-4000-8000-0000000000f0",
+                    status: "failed",
+                    createdAt: new Date("2024-01-01T00:00:00.000Z"),
+                });
+                const lookaheadJob = createJob({
+                    id: "00000000-0000-4000-8000-0000000000a0",
+                    status: "failed",
+                    createdAt: new Date("2024-01-02T00:00:00.000Z"),
+                });
+                const mutableUpdate = new Date(Date.now() + 60_000);
+                firstJob.updatedAt = mutableUpdate;
+                lookaheadJob.updatedAt = mutableUpdate;
+                const rows = [firstJob, lookaheadJob];
+                type HistoryJobQuery = {
+                    where: {
+                        branchId?: string;
+                        status?: { in?: string[] };
+                        createdAt?: { lte?: Date };
+                        updatedAt?: { lte?: Date };
+                        OR?: unknown[];
+                        AND?: Array<{ id?: { lt?: string } }>;
+                    };
+                    take?: number;
+                };
+                prisma.message_trigger_job.findMany.mockImplementation(async (query: HistoryJobQuery) => {
+                    const cutoff = query.where.createdAt?.lte;
+                    const afterId = query.where.AND?.[0]?.id?.lt;
+                    const candidates = rows.filter((row) => {
+                        if (row.branchId !== query.where.branchId) return false;
+                        if (afterId !== undefined && row.id >= afterId) return false;
+                        if (cutoff !== undefined && row.createdAt > cutoff) return false;
+                        if (query.where.status?.in && !query.where.status.in.includes(row.status)) return false;
+                        if (query.where.OR) {
+                            return row.status === "failed"
+                                ? row.updatedAt <= cutoff!
+                                : row.status === "canceled"
+                                    && row.canceledAt !== null
+                                    && row.canceledAt <= cutoff!;
+                        }
+                        return true;
+                    });
+                    return candidates
+                        .sort((left, right) => right.id.localeCompare(left.id))
+                        .slice(0, query.take ?? candidates.length);
+                });
+
+                const serviceInternals = service as unknown as {
+                    messageLogRepository: unknown;
+                    jobRepository: unknown;
+                };
+                serviceInternals.messageLogRepository = new SbMessageLogRepository(prisma as never);
+                serviceInternals.jobRepository = new SbMessageTriggerJobRepository(prisma as never);
+
+                const firstPage = await service.listHistoryPage(branchId, 1);
+                expect(firstPage.items.map((item) => item.id)).toEqual([
+                    "job:00000000-0000-4000-8000-0000000000f0",
+                ]);
+                expect(firstPage.page.hasMore).toBe(true);
+
+                lookaheadJob.status = nextStatus as MessageTriggerJobStatus;
+                const continuation = await service.listHistoryPage(
+                    branchId,
+                    1,
+                    firstPage.page.nextCursor ?? undefined,
+                );
+                expect(continuation.items).toEqual([]);
+                expect(continuation.page.hasMore).toBe(false);
+            },
+        );
+
+        it("includes a pending row that becomes failed below the cursor and defers one above it to a fresh poll", async () => {
+            const { service, prisma, ruleRepository } = createService();
+            ruleRepository.findAll.mockResolvedValue([]);
+            const rows = [
+                createJob({
+                    id: "00000000-0000-4000-8000-0000000000f0",
+                    status: "failed",
+                    createdAt: new Date("2024-01-01T00:00:00.000Z"),
+                }),
+                createJob({
+                    id: "00000000-0000-4000-8000-0000000000e0",
+                    status: "failed",
+                    createdAt: new Date("2024-01-02T00:00:00.000Z"),
+                }),
+                createJob({
+                    id: "00000000-0000-4000-8000-0000000000a0",
+                    status: "pending",
+                    createdAt: new Date("2024-01-03T00:00:00.000Z"),
+                }),
+                createJob({
+                    id: "ffffffff-ffff-4fff-8fff-ffffffffffff",
+                    status: "pending",
+                    createdAt: new Date("2024-01-04T00:00:00.000Z"),
+                }),
+            ];
+            type HistoryJobQuery = {
+                where: {
+                    branchId?: string;
+                    status?: { in?: string[] };
+                    createdAt?: { lte?: Date };
+                    AND?: Array<{ id?: { lt?: string } }>;
+                };
+                take?: number;
+            };
+            prisma.message_trigger_job.findMany.mockImplementation(async (query: HistoryJobQuery) => {
+                const cutoff = query.where.createdAt?.lte;
+                const afterId = query.where.AND?.[0]?.id?.lt;
+                return rows
+                    .filter((row) => row.branchId === query.where.branchId)
+                    .filter((row) => query.where.status?.in?.includes(row.status) ?? false)
+                    .filter((row) => cutoff === undefined || row.createdAt <= cutoff)
+                    .filter((row) => afterId === undefined || row.id < afterId)
+                    .sort((left, right) => right.id.localeCompare(left.id))
+                    .slice(0, query.take ?? rows.length);
+            });
+
+            const serviceInternals = service as unknown as {
+                messageLogRepository: unknown;
+                jobRepository: unknown;
+            };
+            serviceInternals.messageLogRepository = new SbMessageLogRepository(prisma as never);
+            serviceInternals.jobRepository = new SbMessageTriggerJobRepository(prisma as never);
+
+            const firstPage = await service.listHistoryPage(branchId, 1);
+            expect(firstPage.items.map((item) => item.id)).toEqual([
+                "job:00000000-0000-4000-8000-0000000000f0",
+            ]);
+            expect(firstPage.page.hasMore).toBe(true);
+
+            const snapshotAt = new Date(firstPage.page.snapshotAt);
+            rows[2]!.status = "failed";
+            rows[2]!.updatedAt = new Date(snapshotAt.getTime() + 1_000);
+            rows[3]!.status = "failed";
+            rows[3]!.updatedAt = new Date(snapshotAt.getTime() + 1_000);
+
+            const continuation = await service.listHistoryPage(
+                branchId,
+                2,
+                firstPage.page.nextCursor ?? undefined,
+            );
+            expect(continuation.items.map((item) => item.id)).toEqual([
+                "job:00000000-0000-4000-8000-0000000000e0",
+                "job:00000000-0000-4000-8000-0000000000a0",
+            ]);
+            expect(continuation.items.some((item) => item.id === "job:ffffffff-ffff-4fff-8fff-ffffffffffff")).toBe(false);
+
+            const freshPage = await service.listHistoryPage(branchId, 2);
+            expect(freshPage.items.map((item) => item.id)).toEqual([
+                "job:ffffffff-ffff-4fff-8fff-ffffffffffff",
+                "job:00000000-0000-4000-8000-0000000000f0",
+            ]);
+        });
+
+        it("walks more than 200 static records while an ordinary pending job becomes processing and sent", async () => {
+            const { service, prisma, ruleRepository } = createService();
+            ruleRepository.findAll.mockResolvedValue([]);
+            const logRows = Array.from({ length: 205 }, (_, index) => {
+                const id = 205 - index;
+                return createLog({
+                    id,
+                    createdAt: new Date(1_704_067_200_000 + index * 60_000),
+                    updatedAt: new Date(1_704_067_200_000 + index * 60_000),
+                });
+            });
+            const terminalRows = [
+                createJob({ id: "00000000-0000-4000-8000-0000000000f0", status: "failed" }),
+                createJob({ id: "00000000-0000-4000-8000-0000000000e0", status: "canceled" }),
+                createJob({ id: "00000000-0000-4000-8000-0000000000d0", status: "failed" }),
+            ];
+            const ordinaryJob = createJob({
+                id: "00000000-0000-4000-8000-0000000000b0",
+                status: "pending",
+            });
+            const jobRows = [...terminalRows, ordinaryJob];
+            type LogHistoryQuery = {
+                where?: { AND?: Array<{ id?: { lt?: number } }> };
+                take?: number;
+            };
+            type JobHistoryQuery = {
+                where: {
+                    branchId?: string;
+                    status?: { in?: string[] };
+                    createdAt?: { lte?: Date };
+                    updatedAt?: { gte?: Date; lte?: Date };
+                    AND?: Array<{ id?: { lt?: string } }>;
+                };
+                take?: number;
+            };
+            prisma.message_log.findMany.mockImplementation(async (query: LogHistoryQuery) => {
+                const afterId = query.where?.AND?.[0]?.id?.lt;
+                return logRows
+                    .filter((row) => afterId === undefined || row.id < afterId)
+                    .slice(0, query.take ?? logRows.length);
+            });
+            prisma.message_trigger_job.findMany.mockImplementation(async (query: JobHistoryQuery) => {
+                const afterId = query.where.AND?.[0]?.id?.lt;
+                const cutoff = query.where.createdAt?.lte;
+                return jobRows
+                    .filter((row) => row.branchId === query.where.branchId)
+                    .filter((row) => query.where.status?.in === undefined || query.where.status.in.includes(row.status))
+                    .filter((row) => cutoff === undefined || row.createdAt <= cutoff)
+                    .filter((row) => query.where.updatedAt?.gte === undefined || row.updatedAt >= query.where.updatedAt.gte)
+                    .filter((row) => query.where.updatedAt?.lte === undefined || row.updatedAt <= query.where.updatedAt.lte)
+                    .filter((row) => afterId === undefined || row.id < afterId)
+                    .sort((left, right) => right.id.localeCompare(left.id))
+                    .slice(0, query.take ?? terminalRows.length);
+            });
+
+            const serviceInternals = service as unknown as {
+                messageLogRepository: unknown;
+                jobRepository: unknown;
+            };
+            serviceInternals.messageLogRepository = new SbMessageLogRepository(prisma as never);
+            serviceInternals.jobRepository = new SbMessageTriggerJobRepository(prisma as never);
+
+            const ids: Array<number | string> = [];
+            let cursor: string | undefined;
+            let firstSnapshotAt: Date | undefined;
+            type HistoryPageResult = Awaited<ReturnType<MessageTriggerService["listHistoryPage"]>>;
+            let finalPage: HistoryPageResult | undefined;
+            for (let pageIndex = 0; pageIndex < 10; pageIndex += 1) {
+                ordinaryJob.status = pageIndex === 0
+                    ? "pending"
+                    : pageIndex === 1
+                        ? "processing"
+                        : "sent";
+                if (pageIndex > 0 && firstSnapshotAt) {
+                    ordinaryJob.updatedAt = new Date(firstSnapshotAt.getTime() + pageIndex * 1_000);
+                }
+                const result = await service.listHistoryPage(branchId, 50, cursor);
+                if (pageIndex === 0) {
+                    firstSnapshotAt = new Date(result.page.snapshotAt);
+                }
+                finalPage = result;
+                ids.push(...result.items.map((item) => item.id));
+                if (!result.page.hasMore) break;
+                cursor = result.page.nextCursor ?? undefined;
+            }
+
+            expect(ids).toHaveLength(208);
+            expect(new Set(ids.map(String)).size).toBe(208);
+            expect(ids.slice(0, 3)).toEqual([205, 204, 203]);
+            expect(ids.slice(-3)).toEqual([
+                "job:00000000-0000-4000-8000-0000000000f0",
+                "job:00000000-0000-4000-8000-0000000000e0",
+                "job:00000000-0000-4000-8000-0000000000d0",
+            ]);
+            expect(ids).not.toContain("job:00000000-0000-4000-8000-0000000000b0");
+            expect(ordinaryJob.status).toBe("sent");
+            expect(finalPage?.page.hasMore).toBe(false);
+            expect(prisma.message_log.findMany).toHaveBeenCalledTimes(5);
+        });
+
+        it("walks older-created logs exactly once through the real service and repositories", async () => {
+            const { service, prisma, ruleRepository } = createService();
+            ruleRepository.findAll.mockResolvedValue([]);
+            const logRows = [5, 4, 3, 2, 1].map((id) => createLog({
+                id,
+                createdAt: new Date(`2024-01-0${id}T00:00:00.000Z`),
+                // A retry/update timestamp must not move the immutable id
+                // cursor or cause an older row to disappear.
+                updatedAt: new Date("2026-09-17T00:00:00.000Z"),
+            }));
+            prisma.message_log.findMany.mockImplementation(async (query: { where?: { AND?: Array<{ id?: { lt?: number } }> } }) => {
+                const beforeId = query.where?.AND?.[0]?.id?.lt;
+                return logRows.filter((row) => beforeId === undefined || row.id < beforeId);
+            });
+            prisma.message_trigger_job.findMany.mockResolvedValue([]);
+
+            const serviceInternals = service as unknown as {
+                messageLogRepository: unknown;
+                jobRepository: unknown;
+            };
+            serviceInternals.messageLogRepository = new SbMessageLogRepository(prisma as never);
+            serviceInternals.jobRepository = new SbMessageTriggerJobRepository(prisma as never);
+
+            const ids: Array<number | string> = [];
+            let cursor: string | undefined;
+            for (let pageIndex = 0; pageIndex < 10; pageIndex += 1) {
+                const result = await service.listHistoryPage(branchId, 2, cursor);
+                ids.push(...result.items.map((item) => item.id));
+                if (!result.page.hasMore) break;
+                cursor = result.page.nextCursor ?? undefined;
+            }
+
+            expect(ids).toEqual([5, 4, 3, 2, 1]);
+            expect(new Set(ids.map(String)).size).toBe(5);
+            expect(prisma.message_log.findMany).toHaveBeenCalledTimes(3);
+        });
+
+        it("does not query logs after a terminal-job cursor and preserves repository UUID order", async () => {
+            const { service, ruleRepository, messageLogRepository, jobRepository } = createService();
+            ruleRepository.findAll.mockResolvedValue([]);
+            messageLogRepository.findHistoryPageByBranch.mockResolvedValue([]);
+            jobRepository.findHistoryPageByBranch.mockResolvedValue([
+                createJob({ id: "00000000-0000-4000-8000-0000000000ff", status: "failed" }),
+                createJob({ id: "ffffffff-ffff-4fff-8fff-ffffffffffff", status: "failed" }),
+                createJob({ id: "00000000-0000-4000-8000-000000000001", status: "failed" }),
+            ]);
+
+            const firstPage = await service.listHistoryPage(branchId, 2);
+            expect(firstPage.items.map((item) => item.id)).toEqual([
+                "job:00000000-0000-4000-8000-0000000000ff",
+                "job:ffffffff-ffff-4fff-8fff-ffffffffffff",
+            ]);
+            expect(firstPage.page.nextCursor).toBeTruthy();
+
+            messageLogRepository.findHistoryPageByBranch.mockClear();
+            jobRepository.findHistoryPageByBranch.mockResolvedValue([]);
+            await service.listHistoryPage(branchId, 2, firstPage.page.nextCursor!);
+
+            expect(messageLogRepository.findHistoryPageByBranch).not.toHaveBeenCalled();
+            expect(jobRepository.findHistoryPageByBranch).toHaveBeenLastCalledWith(
+                branchId,
+                expect.objectContaining({
+                    after: {
+                        source: "job",
+                        nativeId: "ffffffff-ffff-4fff-8fff-ffffffffffff",
+                    },
+                    limit: 3,
+                }),
+            );
+        });
+
+        it("rejects a cursor whose snapshot is in the future", async () => {
+            const { service } = createService();
+            const futureCursor = Buffer.from(JSON.stringify({
+                v: 1,
+                branchId,
+                snapshotAt: new Date(Date.now() + 60_000).toISOString(),
+                source: "job",
+                nativeId: "00000000-0000-4000-8000-000000000001",
+            })).toString("base64url");
+
+            await expect(service.listHistoryPage(branchId, 2, futureCursor)).rejects.toThrow(
+                "메시지 발송 기록 페이지 커서가 올바르지 않습니다.",
+            );
+        });
+
+        it("rejects a malformed terminal-job cursor before querying either source", async () => {
+            const { service, messageLogRepository, jobRepository } = createService();
+            const malformedCursor = Buffer.from(JSON.stringify({
+                v: 1,
+                branchId,
+                snapshotAt: new Date(Date.now() - 60_000).toISOString(),
+                source: "job",
+                nativeId: "not-a-uuid",
+            })).toString("base64url");
+
+            await expect(service.listHistoryPage(branchId, 2, malformedCursor)).rejects.toThrow(
+                "메시지 발송 기록 페이지 커서가 올바르지 않습니다.",
+            );
+            expect(messageLogRepository.findHistoryPageByBranch).not.toHaveBeenCalled();
+            expect(jobRepository.findHistoryPageByBranch).not.toHaveBeenCalled();
+        });
     });
 });

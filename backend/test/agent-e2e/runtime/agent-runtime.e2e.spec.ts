@@ -175,7 +175,7 @@ describeAgentE2E("Release A runtime with Postgres, Valkey, and the deterministic
             .expect(403);
     });
 
-    it("does not revive an expired owned session", async () => {
+    it("restores an expired owned session without reviving mutations", async () => {
         const expired = await prisma.agent_session.create({
             data: {
                 userId: USER_ID,
@@ -186,7 +186,17 @@ describeAgentE2E("Release A runtime with Postgres, Valkey, and the deterministic
                 expiresAt: new Date(Date.now() - 1_000),
             },
         });
-        await request(app.getHttpServer()).get(`/ai/agent/sessions/${expired.id}`).expect(404);
+        const restored = await request(app.getHttpServer())
+            .get(`/ai/agent/sessions/${expired.id}`)
+            .expect(200)
+            .expect(({ body }) => {
+                expect(body).toMatchObject({
+                    activeTaskId: null,
+                    pausedTaskIds: [],
+                    taskRestoreStatus: "session_expired",
+                });
+            });
+        expect(restored.headers["cache-control"]).toBe("no-store");
         await request(app.getHttpServer())
             .post("/ai/agent/chat")
             .send({
@@ -307,6 +317,7 @@ describeAgentE2E("Release A runtime with Postgres, Valkey, and the deterministic
                 eventType: currentRule!.eventType,
                 offsetType: currentRule!.offsetType,
                 offsetDays: currentRule!.offsetDays,
+                sendTime: currentRule!.sendTime,
                 recipientType: currentRule!.recipientType,
                 templateKey: currentRule!.templateKey,
                 isDefault: currentRule!.isDefault,
@@ -398,20 +409,27 @@ describeAgentE2E("Release A runtime with Postgres, Valkey, and the deterministic
                 jobsStale: false,
             },
         });
+        // Automatic admission requires an actual customer source. This case
+        // isolates the dispatcher/rule CAS, rather than malformed job handling.
+        const client = await prisma.client.create({ data: {
+            branchId: BRANCH_ID, name: "E2E 수신자", phone: `010${String(Date.now()).slice(-8)}`,
+            voucherClient: false,
+        } });
         const job = await prisma.message_trigger_job.create({
             data: {
                 branchId: BRANCH_ID,
                 ruleId,
+                clientId: client.id,
                 status: "pending",
                 scheduledFor: new Date(),
                 recipientType: MessageTriggerRecipientType.CLIENT,
-                recipientPhone: "01012345678",
+                recipientPhone: client.phone,
                 templateKey: "INFO",
                 dedupeKey,
                 payload: {
-                    memberId: "agent-e2e-dispatch-wins",
+                    memberId: String(client.id),
                     recipientName: "E2E 수신자",
-                    recipientPhone: "01012345678",
+                    recipientPhone: client.phone,
                     messageBody: "dispatch wins payload",
                     templateVariables: {},
                 },
@@ -447,6 +465,7 @@ describeAgentE2E("Release A runtime with Postgres, Valkey, and the deterministic
                 eventType: currentRule!.eventType,
                 offsetType: currentRule!.offsetType,
                 offsetDays: currentRule!.offsetDays,
+                sendTime: currentRule!.sendTime,
                 recipientType: currentRule!.recipientType,
                 templateKey: currentRule!.templateKey,
                 isDefault: currentRule!.isDefault,
@@ -483,6 +502,7 @@ describeAgentE2E("Release A runtime with Postgres, Valkey, and the deterministic
             releaseGate();
             sendSpy.mockRestore();
             await prisma.message_trigger_rule.deleteMany({ where: { id: ruleId } });
+            await prisma.client.delete({ where: { id: client.id } });
             await prisma.branch.update({
                 where: { id: BRANCH_ID },
                 data: {
@@ -494,7 +514,10 @@ describeAgentE2E("Release A runtime with Postgres, Valkey, and the deterministic
         }
     }, 30_000);
 
-    it("reconciles a same-dedupe stale rebuild before the rebuilt pending job is delivered", async () => {
+    it.each([
+        { templateKey: MessageTriggerTemplateKey.SERVICE_INFO, expectedStatus: "sent", expectedSendCount: 1 },
+        { templateKey: MessageTriggerTemplateKey.SERVICE_START_REMINDER, expectedStatus: "canceled", expectedSendCount: 0 },
+    ])("reconciles a same-dedupe stale rebuild for $templateKey as $expectedStatus", async ({ templateKey, expectedStatus, expectedSendCount }) => {
         const suffix = Date.now();
         const ruleId = `agent-e2e-rebuild-rule-${suffix}`;
         const clientPhone = `010${String(suffix).slice(-8)}`;
@@ -544,7 +567,7 @@ describeAgentE2E("Release A runtime with Postgres, Valkey, and the deterministic
                     offsetType: "BEFORE_DAYS",
                     offsetDays: 1,
                     recipientType: MessageTriggerRecipientType.CLIENT,
-                    templateKey: "SERVICE_START_REMINDER",
+                    templateKey,
                     isDefault: false,
                     jobsStale: true,
                     createdAt: oldGenerationAt,
@@ -570,7 +593,7 @@ describeAgentE2E("Release A runtime with Postgres, Valkey, and the deterministic
                     clientId: client.id,
                     recipientType: MessageTriggerRecipientType.CLIENT,
                     recipientPhone: clientPhone,
-                    templateKey: "SERVICE_START_REMINDER",
+                    templateKey,
                     dedupeKey,
                     payload: {
                         memberId: String(client.id),
@@ -610,9 +633,9 @@ describeAgentE2E("Release A runtime with Postgres, Valkey, and the deterministic
             expect(sendSpy).not.toHaveBeenCalled();
 
             await expect(triggerService.dispatchPendingJobNow(job.id, { expectedBranchId: BRANCH_ID })).resolves.toEqual(
-                expect.objectContaining({ id: job.id, status: "sent" }),
+                expect.objectContaining({ id: job.id, status: expectedStatus }),
             );
-            expect(sendSpy).toHaveBeenCalledTimes(1);
+            expect(sendSpy).toHaveBeenCalledTimes(expectedSendCount);
         } finally {
             sendSpy.mockRestore();
             await prisma.message_trigger_rule.deleteMany({ where: { id: ruleId } });
@@ -723,6 +746,7 @@ describeAgentE2E("Release A runtime with Postgres, Valkey, and the deterministic
                 eventType: r1Rule!.eventType,
                 offsetType: r1Rule!.offsetType,
                 offsetDays: r1Rule!.offsetDays,
+                sendTime: r1Rule!.sendTime,
                 recipientType: r1Rule!.recipientType,
                 templateKey: r1Rule!.templateKey,
                 isDefault: r1Rule!.isDefault,

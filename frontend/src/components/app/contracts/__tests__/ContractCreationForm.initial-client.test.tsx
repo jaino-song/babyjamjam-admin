@@ -26,6 +26,26 @@ const mockUpdateClientMutateAsync = jest.fn().mockResolvedValue({});
 const mockDeleteClientMutateAsync = jest.fn().mockResolvedValue({});
 
 let mockClients: Client[] = [];
+const mockAreaTemplates = [
+  {
+    id: "area-template-namdonggu",
+    areaId: "Namdonggu",
+    templateId: "template-namdonggu",
+    templateName: "남동구 산모 계약서",
+  },
+  {
+    id: "area-template-seogu",
+    areaId: "Seogu",
+    templateId: "template-seogu",
+    templateName: "서구 산모 계약서",
+  },
+  {
+    id: "area-template-incheon",
+    areaId: "인천",
+    templateId: "template-incheon",
+    templateName: "인천 산모 계약서",
+  },
+];
 
 jest.mock("next/navigation", () => ({
   useRouter: () => ({ push: jest.fn(), replace: jest.fn(), refresh: jest.fn() }),
@@ -73,7 +93,7 @@ jest.mock("@/hooks/useEmployees", () => ({
 jest.mock("@/hooks", () => ({
   useVoucherPriceInfos: () => ({ data: [], isLoading: false }),
   useVoucherYears: () => ({ data: [2026], isLoading: false }),
-  useAreaTemplates: () => ({ data: [], isLoading: false }),
+  useAreaTemplates: () => ({ data: mockAreaTemplates, isLoading: false }),
 }));
 
 // The SSE channel is orthogonal here; a no-op source keeps the headless
@@ -214,7 +234,7 @@ describe("ContractCreationForm — initialClient mode", () => {
     const state = useFormStore.getState();
     expect(state.name).toBe(clientA.name);
     expect(state.phone).toBe(clientA.phone);
-    expect(state.birthday).toBe(clientA.birthday);
+    expect(state.birthday).toBe("1995-01-01");
     expect(state.address).toBe(clientA.address);
     expect(state.dueDate).toBe(clientA.dueDate);
     expect(state.birthDate).toBe(clientA.birthDate);

@@ -72,6 +72,55 @@ describe("client API routes", () => {
     consoleErrorSpy.mockRestore();
   });
 
+  it.each([true, false])("uses the dedicated phone check and preserves exists=%s", async (exists) => {
+    mockGet.mockResolvedValue({ data: { exists } });
+
+    const response = await checkClientPhone(createRequest("/api/clients/check-phone?phone=010-1234-5678"));
+
+    expect(mockGet).toHaveBeenCalledTimes(1);
+    expect(mockGet).toHaveBeenCalledWith("/clients/check-phone", {
+      params: { phone: "01012345678" },
+      headers: { Authorization: "Bearer auth-token" },
+    });
+    expect(response.status).toBe(200);
+    expect(response.headers.get("Cache-Control")).toBe("no-store, max-age=0");
+    await expect(response.json()).resolves.toEqual({ exists });
+  });
+
+  it.each(["", "?phone=abc", "?phone=010123"])("does not query the backend for incomplete phone input %s", async (query) => {
+    const response = await checkClientPhone(createRequest(`/api/clients/check-phone${query}`));
+
+    expect(mockGet).not.toHaveBeenCalled();
+    await expect(response.json()).resolves.toEqual({ exists: false });
+  });
+
+  it.each([undefined, null, {}, { exists: "false" }])("rejects a malformed phone check response %p", async (data) => {
+    mockGet.mockResolvedValue({ data });
+
+    const response = await checkClientPhone(createRequest("/api/clients/check-phone?phone=01012345678"));
+
+    expect(response.status).toBe(502);
+    expect(response.headers.get("Cache-Control")).toBe("no-store, max-age=0");
+    expect(await response.json()).not.toHaveProperty("exists");
+  });
+
+  it("does not mark a failed phone check as available or log request secrets", async () => {
+    const error = Object.assign(new Error("Request failed with status code 400"), {
+      config: { headers: { Authorization: "Bearer private-test-token" }, params: { phone: "01012345678" } },
+    });
+    mockGet.mockRejectedValue(error);
+
+    const response = await checkClientPhone(createRequest("/api/clients/check-phone?phone=01012345678"));
+
+    expect(response.status).toBe(502);
+    const body = await response.json();
+    expect(body).not.toHaveProperty("exists");
+    expect(body.error).toContain("확인하지 못했습니다");
+    expect(consoleErrorSpy).toHaveBeenCalledWith("[API] Error checking phone");
+    expect(JSON.stringify(consoleErrorSpy.mock.calls)).not.toContain("private-test-token");
+    expect(JSON.stringify(body)).not.toContain("01012345678");
+  });
+
   it("preserves backend status and payload when listing clients", async () => {
     mockGet.mockResolvedValue({
       status: 403,
@@ -134,6 +183,60 @@ describe("client API routes", () => {
     expect(response.status).toBe(201);
     await expect(response.json()).resolves.toEqual({ id: 7 });
     expect(mockPost).toHaveBeenCalledWith("/clients", payload, expect.any(Object));
+  });
+
+  it("routes confirmed employee activation through the protected backend endpoint", async () => {
+    mockPost.mockResolvedValue({ status: 201, data: { id: 8 } });
+
+    const payload = {
+      name: "Baby Kim",
+      careCenter: false,
+      voucherClient: true,
+      breastPump: false,
+      primaryEmployeeId: 12,
+      confirmedUnavailableEmployeeIds: [12],
+    };
+
+    const response = await createClient(
+      createRequest("/api/clients", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      }),
+    );
+
+    expect(response.status).toBe(201);
+    expect(mockPost).toHaveBeenCalledWith(
+      "/clients/with-employee-activation",
+      payload,
+      expect.any(Object),
+    );
+  });
+
+  it("preserves a validated server-authoritative employee confirmation response", async () => {
+    const confirmation = {
+      code: "EMPLOYEE_ACTIVATION_CONFIRMATION_REQUIRED",
+      unavailableEmployees: [{ id: 12, name: "김관리" }],
+    };
+    mockPost.mockRejectedValue({ response: { status: 409, data: confirmation } });
+
+    const response = await createClient(
+      createRequest("/api/clients", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: "Baby Kim",
+          careCenter: false,
+          voucherClient: true,
+          breastPump: false,
+          primaryEmployeeId: 12,
+        }),
+      }),
+    );
+
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toEqual(confirmation);
+    expect(mockPost).toHaveBeenCalledWith("/clients", expect.any(Object), expect.any(Object));
   });
 
   it("surfaces a safe backend validation message through the client error mapper", async () => {

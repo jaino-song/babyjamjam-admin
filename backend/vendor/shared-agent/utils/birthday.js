@@ -2,26 +2,9 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.formatBirthdayYYMMDD = formatBirthdayYYMMDD;
 exports.normalizeContractBirthday = normalizeContractBirthday;
-const YYMMDD_PATTERN = /^\d{6}$/;
-/**
- * Century pivot for a 2-digit birth year: fixed threshold at `yy >= 70`.
- *
- * This mirrors mobile's existing `yymmddToIsoDate` helper (duplicated
- * verbatim in mobile/src/app/(shell)/clients/page.tsx:70-81 and
- * mobile/src/components/app/clients/client-detail.tsx:140-151), which is
- * the canonical rule per this task's "use mobile's existing logic as canon
- * when it exists" instruction. It is a fixed threshold, not relative to the
- * current year: frontend/src/lib/date/format-client-birthday.ts instead
- * pivots on `CURRENT_YEAR % 100` (and additionally reads Korean resident-
- * registration-number century digits when present) — a different, more
- * sophisticated implementation for a different input shape (8-digit and
- * resident-registration-number birthdays) that this module intentionally
- * does not replace. `formatBirthdayYYMMDD` only covers the plain 6-digit
- * `YYMMDD` case actually used at the mobile call sites above.
- */
-function resolveBirthYear(yy) {
-    return yy >= 70 ? 1900 + yy : 2000 + yy;
-}
+exports.normalizeBirthdayIsoDate = normalizeBirthdayIsoDate;
+exports.isValidBirthdayIsoDate = isValidBirthdayIsoDate;
+exports.formatBirthdayInput = formatBirthdayInput;
 function isValidCalendarDate(year, month, day) {
     if (month < 1 || month > 12 || day < 1 || day > 31)
         return false;
@@ -30,22 +13,10 @@ function isValidCalendarDate(year, month, day) {
         date.getUTCMonth() === month - 1 &&
         date.getUTCDate() === day);
 }
-/**
- * Formats a 6-digit `YYMMDD` client birthday as `YYYY.MM.DD`.
- *
- * Returns `raw` unchanged when it is not exactly 6 digits or does not
- * resolve to a real calendar date (e.g. `"991332"` or non-numeric input).
- */
+/** 기존 6자리와 YYYY-MM-DD 생년월일을 네 자리 연도로 표시한다. */
 function formatBirthdayYYMMDD(raw) {
-    if (!YYMMDD_PATTERN.test(raw))
-        return raw;
-    const yy = Number(raw.slice(0, 2));
-    const month = Number(raw.slice(2, 4));
-    const day = Number(raw.slice(4, 6));
-    const year = resolveBirthYear(yy);
-    if (!isValidCalendarDate(year, month, day))
-        return raw;
-    return `${year}.${String(month).padStart(2, "0")}.${String(day).padStart(2, "0")}`;
+    const iso = normalizeBirthdayIsoDate(raw);
+    return iso ? iso.replace(/-/g, ".") : raw;
 }
 const MIN_CONTRACT_BIRTH_YEAR = 1900;
 const KOREAN_DATE_FORMAT = new Intl.DateTimeFormat("en-US", {
@@ -85,6 +56,11 @@ function contractBirthdayParts(raw) {
  * 한국 날짜 기준 오늘 이후이거나 1900년 이전인 날짜는 추측하지 않고 null을 반환한다.
  */
 function normalizeContractBirthday(raw, now = new Date()) {
+    const iso = normalizeBirthdayIsoDate(raw, now);
+    return iso ? iso.slice(2).replace(/-/g, "") : null;
+}
+/** 기존 생년월일을 읽되 명시된 네 자리 연도를 보존한다. 신규 입력 검증과는 구분한다. */
+function normalizeBirthdayIsoDate(raw, now = new Date()) {
     const value = raw?.normalize("NFKC").trim().replace(/\s+/g, " ");
     if (!value || Number.isNaN(now.getTime()))
         return null;
@@ -105,5 +81,18 @@ function normalizeContractBirthday(raw, now = new Date()) {
     const todayKey = todayYear * 10000 + Number(today.month) * 100 + Number(today.day);
     if (dateKey > todayKey)
         return null;
-    return `${String(year).slice(-2)}${String(month).padStart(2, "0")}${String(day).padStart(2, "0")}`;
+    return `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+}
+/** 신규 생년월일은 세기를 추측하지 않는 YYYY-MM-DD 형식만 허용한다. */
+function isValidBirthdayIsoDate(raw, now = new Date()) {
+    return /^\d{4}-\d{2}-\d{2}$/.test(raw) && normalizeBirthdayIsoDate(raw, now) === raw;
+}
+/** 입력 중에는 일부 값도 유지하고, 여덟 자리 숫자에 날짜 구분자를 붙인다. */
+function formatBirthdayInput(value) {
+    const digits = value.replace(/\D/g, "").slice(0, 8);
+    if (digits.length <= 4)
+        return digits;
+    if (digits.length <= 6)
+        return `${digits.slice(0, 4)}-${digits.slice(4)}`;
+    return `${digits.slice(0, 4)}-${digits.slice(4, 6)}-${digits.slice(6)}`;
 }

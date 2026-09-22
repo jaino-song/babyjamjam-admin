@@ -1,4 +1,5 @@
 "use client";
+import { isValidBirthdayIsoDate, normalizeBirthdayIsoDate } from "@babyjamjam/shared/utils/birthday";
 
 import { useState } from "react";
 import { normalizeApiError } from "@babyjamjam/shared";
@@ -82,8 +83,7 @@ const FIELD_LABELS: Record<string, string> = {
 
 /**
  * `kind` decides how a keystroke is reshaped, not just the input's type: the
- * three ISO dates are typed straight in as YYYY-MM-DD rather than going through
- * the native picker, and birthday stays plain because it is YYMMDD, not ISO.
+ * dates, including birthdays, use YYYY-MM-DD with an explicit four-digit year.
  */
 const TEXT_FIELDS = [
   { field: "name", type: "text", kind: "plain" },
@@ -93,7 +93,7 @@ const TEXT_FIELDS = [
   // The actual delivery date, distinct from the due date above — a
   // "아기 낳았어요" call is what fills it in.
   { field: "birthDate", type: "text", kind: "date" },
-  { field: "birthday", type: "text", kind: "plain" },
+  { field: "birthday", type: "text", kind: "date" },
   { field: "startDate", type: "text", kind: "date" },
   { field: "endDate", type: "text", kind: "date" },
   { field: "duration", type: "number", kind: "plain" },
@@ -294,7 +294,8 @@ function NewClientReview({
   const [fields, setFields] = useState<Record<string, string>>(() => {
     const seed: Record<string, string> = {};
     for (const { field } of TEXT_FIELDS) {
-      seed[field] = formatFieldValue(field, proposalString(proposals, field));
+      const raw = proposalString(proposals, field);
+      seed[field] = formatFieldValue(field, field === "birthday" ? normalizeBirthdayIsoDate(raw) ?? raw : raw);
     }
     if (!seed.phone && draft.callRecord.callerPhone) {
       seed.phone = formatPhoneNumber(draft.callRecord.callerPhone);
@@ -328,6 +329,10 @@ function NewClientReview({
     const name = fields.name?.trim() ?? "";
     if (!name) {
       toast({ title: "산모명을 입력해 주세요", variant: "destructive" });
+      return;
+    }
+    if (fields.birthday && !isValidBirthdayIsoDate(fields.birthday)) {
+      toast({ title: "생년월일을 YYYY-MM-DD 형식으로 입력해 주세요", variant: "destructive" });
       return;
     }
     const durationRaw = fields.duration?.trim() ?? "";
@@ -480,7 +485,9 @@ function ClientUpdateReview({
           p.field,
           p.value === null || p.value === undefined
             ? ""
-            : formatFieldValue(p.field, String(p.value)),
+            : p.field === "birthday"
+              ? normalizeBirthdayIsoDate(String(p.value)) ?? String(p.value)
+              : formatFieldValue(p.field, String(p.value)),
         ]),
     ),
   );
@@ -507,6 +514,14 @@ function ClientUpdateReview({
         changes[proposal.field] = proposal.value;
       } else {
         const raw = editedValues[proposal.field] ?? "";
+        if (proposal.field === "birthday") {
+          if (raw && !isValidBirthdayIsoDate(raw)) {
+            toast({ title: "생년월일을 YYYY-MM-DD 형식으로 입력해 주세요", variant: "destructive" });
+            return;
+          }
+          changes.birthday = raw || null;
+          continue;
+        }
         // coerce numeric fields
         if (typeof proposal.value === "number") {
           const n = Number(raw);

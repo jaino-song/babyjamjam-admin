@@ -1065,10 +1065,16 @@ test.describe("Mobile contracts list rows", () => {
     await expect(backButton).toHaveText("돌아가기");
     await expect(receiptButton).toHaveText("영수증");
     await expect(downloadButton).toHaveText("다운로드");
-    await expect(receiptButton).toHaveAttribute("href", /\/api\/eformsign\/documents\/doc-completed\/download_files\?fileType=document&format=receipt-png$/);
-    await expect(receiptButton).toHaveAttribute("download", "완료고객 산모님 영수증.png");
-    await expect(downloadButton).toHaveAttribute("href", /\/api\/eformsign\/documents\/doc-completed\/download_files\?fileType=document$/);
-    await expect(downloadButton).toHaveAttribute("download", "완료고객 계약서.pdf");
+    const receiptDownloadPromise = page.waitForEvent("download");
+    await receiptButton.click();
+    const receiptDownload = await receiptDownloadPromise;
+    expect(receiptDownload.suggestedFilename()).toBe("완료고객 산모님 영수증.png");
+    expect(await receiptDownload.failure()).toBeNull();
+    const pdfDownloadPromise = page.waitForEvent("download");
+    await downloadButton.click();
+    const pdfDownload = await pdfDownloadPromise;
+    expect(pdfDownload.suggestedFilename()).toBe("완료고객 계약서.pdf");
+    expect(await pdfDownload.failure()).toBeNull();
     await expect(backButton).toHaveCSS("transition-property", "color, background-color, opacity, transform");
     await expect(backButton).toHaveCSS("transition-duration", "0.16s, 0.16s, 0.16s, 0.16s");
     await expect(receiptButton).toHaveCSS("border-top-width", "0px");
@@ -1248,7 +1254,7 @@ test.describe("Mobile contracts list rows", () => {
     await page.getByRole("button", { name: "계약서 정보" }).click();
 
     const contractInfo = page.locator(".info-card", { hasText: "계약 정보" });
-    await expect(contractInfo).toContainText("계약서 종류");
+    await expect(contractInfo).toContainText("문서번호");
     await expect(contractInfo).not.toContainText("계약 번호");
     await expect(contractInfo).not.toContainText("계약서 유형");
     await expect(contractInfo).toContainText("생성일");

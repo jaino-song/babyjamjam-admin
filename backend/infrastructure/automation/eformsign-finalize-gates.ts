@@ -5,13 +5,22 @@ import {
     EFORMSIGN_GATE_POLL_MS,
     EFORMSIGN_PRE_SEND_CLICK_TIMEOUT_LIMIT,
     FINALIZE_REQUEST_SEND_DIALOG_SELECTOR,
+    classifyGateLocator,
+    createGateDiagnostic,
     createGateErrorWithSnapshot,
-    findVisibleEnabledLocator,
+    findVisibleEnabledLocatorWithSelection,
     getGateClickOutcome,
+    getEformsignDialogPresence,
     getEformsignGateSnapshot,
     isSuccessLatched,
+    readEformsignSdkDiagnosticSummary,
     throwIfEformsignErrorLatched,
     tryClickGateLocator,
+} from "./eformsign-gate-utils";
+import type {
+    EformsignDiagnosticAction,
+    EformsignDiagnosticSelectedCategory,
+    GateLocatorSelection,
 } from "./eformsign-gate-utils";
 import type { EformsignHeadlessProgressStep } from "application/services/eformsign-headless-progress.service";
 
@@ -51,6 +60,36 @@ export async function runEformsignFinalizeGates(
         else console.log(message);
     };
 
+    const logActionDiagnostic = async (
+        action: EformsignDiagnosticAction,
+        selection: GateLocatorSelection | null,
+        selectedCategory: EformsignDiagnosticSelectedCategory,
+    ): Promise<void> => {
+        try {
+            const dialogPresence = await getEformsignDialogPresence(
+                eformsignFrame,
+                FINALIZE_REQUEST_SEND_DIALOG_SELECTOR,
+            );
+            const sdkSummary = await readEformsignSdkDiagnosticSummary(page).catch(() => undefined);
+            const diagnostic = createGateDiagnostic(
+                "finalize",
+                action,
+                selectedCategory,
+                selection,
+                dialogPresence,
+                sdkSummary,
+            );
+            logMessage(`[finalize-gate] diagnostic ${JSON.stringify(diagnostic)}`);
+        } catch {
+            // Diagnostics are best-effort and must never alter the gate outcome.
+        }
+    };
+
+    const classifySelection = async (
+        selection: GateLocatorSelection,
+    ): Promise<EformsignDiagnosticSelectedCategory> =>
+        classifyGateLocator(selection.locator).catch(() => "unknown" as const);
+
     const noteAction = (action: string): void => {
         lastAction = action;
         if (firstActionAt !== null) return;
@@ -64,11 +103,21 @@ export async function runEformsignFinalizeGates(
         const snapshot = await getEformsignGateSnapshot(
             eformsignFrame,
             FINALIZE_REQUEST_SEND_DIALOG_SELECTOR,
-        ).catch((error: unknown) => `unavailable (${error instanceof Error ? error.message : String(error)})`);
-        const line =
-            `[finalize-gate] waiting ${Date.now() - startedAt}ms; lastAction: ${lastAction}; ` +
-            `snapshot: ${JSON.stringify(snapshot)}`;
-        logMessage(line);
+        ).catch(() => null);
+        const sdkSummary = await readEformsignSdkDiagnosticSummary(page).catch(() => undefined);
+        const diagnostic = createGateDiagnostic(
+            "finalize",
+            "other",
+            "unknown",
+            null,
+            snapshot ?? {
+                requestSendDialogVisible: "unknown",
+                inputCommentDialogVisible: "unknown",
+                anyDialogVisible: "unknown",
+            },
+            sdkSummary,
+        );
+        logMessage(`[finalize-gate] diagnostic ${JSON.stringify(diagnostic)}`);
     };
 
     // Finalize prefill (서비스 종료일) is applied via the SDK options before the
@@ -102,6 +151,23 @@ export async function runEformsignFinalizeGates(
         return false;
     };
 
+    const tryPreSendClickWithDiagnostic = async (
+        locator: Locator,
+        clickAction: string,
+        diagnosticAction: EformsignDiagnosticAction,
+        selection: GateLocatorSelection,
+        selectedCategory: EformsignDiagnosticSelectedCategory,
+    ): Promise<boolean> => {
+        try {
+            const clicked = await tryPreSendClick(locator, clickAction);
+            await logActionDiagnostic(diagnosticAction, selection, selectedCategory);
+            return clicked;
+        } catch (error) {
+            await logActionDiagnostic(diagnosticAction, selection, selectedCategory);
+            throw error;
+        }
+    };
+
     try {
         while (Date.now() < deadline) {
             await throwIfEformsignErrorLatched(page);
@@ -111,10 +177,7 @@ export async function runEformsignFinalizeGates(
                 // top-level 전송. The caller always verifies this latch against the
                 // vendor's current workflow state; an unchanged document is still
                 // rejected and sent to the iframe fallback.
-                logMessage(
-                    `[finalize-gate] terminal success latched after ${Date.now() - startedAt}ms; ` +
-                        `lastAction: ${lastAction}`,
-                );
+                logMessage("[finalize-gate] terminal success latched");
                 return "success-latched";
             }
 
@@ -122,20 +185,26 @@ export async function runEformsignFinalizeGates(
 
             const requestSendDialog = eformsignFrame.locator(FINALIZE_REQUEST_SEND_DIALOG_SELECTOR);
 
-            const requestSendButton = await findVisibleEnabledLocator(
+            const requestSendButton = await findVisibleEnabledLocatorWithSelection(
                 requestSendDialog.getByRole("button", { name: "전송" }),
             );
             if (requestSendButton) {
+                const selectedCategory = await classifySelection(requestSendButton);
                 // The durable fence must commit before any provider-side send.
                 await emitCreating();
-                if (!(await tryClickGateLocator(requestSendButton))) {
+                let clicked = false;
+                try {
+                    clicked = await tryClickGateLocator(requestSendButton.locator);
+                } finally {
+                    await logActionDiagnostic("send_popup", requestSendButton, selectedCategory);
+                }
+                if (!clicked) {
                     lastAction = "popup 전송 click outcome ambiguous; reconciling";
                     const message =
                         "[finalize-gate] popup 전송 click outcome is ambiguous; reconciling without retry";
                     logMessage(message);
                     return "request-send-attempted";
                 }
-                logMessage("[finalize-gate] clicked popup 전송");
                 return "request-send-clicked";
             }
 
@@ -157,20 +226,26 @@ export async function runEformsignFinalizeGates(
             const topLevelSendButton = requestSendDialogVisible
                 || (topLevelSendAttempted && !popupWaitExpired)
                 ? null
-                : await findVisibleEnabledLocator(eformsignFrame.getByRole("button", { name: "전송" }));
+                : await findVisibleEnabledLocatorWithSelection(eformsignFrame.getByRole("button", { name: "전송" }));
             if (topLevelSendButton) {
+                const selectedCategory = await classifySelection(topLevelSendButton);
                 topLevelSendAttempted = true;
                 topLevelSendClickCount += 1;
                 topLevelSendPopupWaitPolls = 0;
                 await emitCreating();
-                if (!(await tryClickGateLocator(topLevelSendButton))) {
+                let clicked = false;
+                try {
+                    clicked = await tryClickGateLocator(topLevelSendButton.locator);
+                } finally {
+                    await logActionDiagnostic("send_top_level", topLevelSendButton, selectedCategory);
+                }
+                if (!clicked) {
                     lastAction = "top-level 전송 click outcome ambiguous; waiting for popup";
                     noteAction(lastAction);
                     await page.waitForTimeout(EFORMSIGN_GATE_POLL_MS);
                     continue;
                 }
-                logMessage("[finalize-gate] clicked top-level 전송");
-                noteAction("clicked top-level 전송");
+                noteAction("send_top_level");
                 await page.waitForTimeout(250);
                 continue;
             }
@@ -181,16 +256,22 @@ export async function runEformsignFinalizeGates(
             }
 
             // mode:"02" sometimes shows a 확인 dialog before allowing 전송.
-            const confirmButton = await findVisibleEnabledLocator(
+            const confirmButton = await findVisibleEnabledLocatorWithSelection(
                 eformsignFrame.getByRole("button", { name: "확인" }),
             );
             if (confirmButton) {
-                if (!(await tryPreSendClick(confirmButton, "확인"))) {
+                const selectedCategory = await classifySelection(confirmButton);
+                if (!(await tryPreSendClickWithDiagnostic(
+                    confirmButton.locator,
+                    "confirm",
+                    "confirm",
+                    confirmButton,
+                    selectedCategory,
+                ))) {
                     await page.waitForTimeout(EFORMSIGN_GATE_POLL_MS);
                     continue;
                 }
-                logMessage("[finalize-gate] clicked 확인");
-                noteAction("clicked 확인");
+                noteAction("confirm");
                 await page.waitForTimeout(250);
                 continue;
             }

@@ -19,7 +19,10 @@ import {
 import {
     MessageAutomationPastTriggerConfigDto,
     MessageAutomationPoliciesResponseDto,
+    MessageSettingsPolicyActivationResponseDto,
+    MessageSettingsPolicyParamsDto,
     UpdateMessageAutomationPastTriggerConfigDto,
+    UpdateMessageSettingsPolicyActivationDto,
 } from "interface/dto/message-automation-policy.dto";
 import { TenantGuard, CurrentTenant } from "infrastructure/tenant";
 import { MessageSenderApprovalService } from "application/services/message-sender-approval.service";
@@ -95,12 +98,38 @@ export class SystemSettingController {
     @Get("message-automation-policies")
     @UseGuards(TenantGuard)
     async getMessageAutomationPolicies(
-        @CurrentTenant() tenant?: { branchId?: string },
+        @CurrentTenant() tenant?: { branchId?: string; globalRole?: string; branchRole?: string },
     ): Promise<MessageAutomationPoliciesResponseDto> {
-        const pastTriggerConfig = await this.systemSettingService.getMessageAutomationPastTriggerConfig(
-            tenant?.branchId ?? "",
+        const branchId = tenant?.branchId ?? "";
+        const [pastTriggerConfig, policyActivations] = await Promise.all([
+            this.systemSettingService.getMessageAutomationPastTriggerConfig(branchId),
+            this.systemSettingService.getMessageSettingsPolicyActivations(branchId),
+        ]);
+        const canManageActivation = tenant?.globalRole === "owner" || tenant?.branchRole === "admin";
+        return MessageAutomationPoliciesResponseDto.from(pastTriggerConfig, policyActivations, canManageActivation);
+    }
+
+    @Put("message-policy-activations/:policyId")
+    @UseGuards(TenantGuard, OwnerOrAdminGuard)
+    async updateMessageSettingsPolicyActivation(
+        @CurrentTenant() tenant: SettingsTenant,
+        @Param() params: MessageSettingsPolicyParamsDto,
+        @Body() dto: UpdateMessageSettingsPolicyActivationDto,
+    ): Promise<MessageSettingsPolicyActivationResponseDto> {
+        const entity = await runWithAdminAuditActor({
+            userId: tenant.userId,
+            globalRole: tenant.globalRole,
+            branchRole: tenant.branchRole,
+        }, () => this.systemSettingService.setMessageSettingsPolicyEnabled(
+            tenant.branchId ?? "",
+            params.policyId,
+            dto.enabled,
+        ));
+
+        return MessageSettingsPolicyActivationResponseDto.from(
+            params.policyId,
+            entity.value === "true",
         );
-        return MessageAutomationPoliciesResponseDto.from(pastTriggerConfig);
     }
 
     @Put("message-automation-policies/past-trigger")

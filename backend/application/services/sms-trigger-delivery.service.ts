@@ -1,3 +1,4 @@
+import type { Prisma } from "@prisma/client";
 import { Inject, Injectable, Logger, Optional } from "@nestjs/common";
 import { createHash } from "node:crypto";
 import { AligoService } from "application/services/aligo.service";
@@ -22,6 +23,10 @@ import {
     SERVICE_END_NOTICE_SMS_TRIGGER_TYPE,
 } from "domain/constants/service-end-notice-message";
 import { MessageTriggerJobEntity } from "domain/entities/message-trigger-job.entity";
+import { SMS_DELIVERY_SNAPSHOT_VARIABLE } from "domain/constants/sms-delivery-snapshot";
+import { isReservedAutomationJob } from "domain/constants/agent-automation-storage";
+import { AgentAutomationDispatchUncertainError } from "domain/errors/agent-automation-dispatch-uncertain.error";
+import { AgentAutomationDeliveryGateService } from "./agent-automation-delivery-gate.service";
 import { TriggerJobDeferredError } from "domain/errors/trigger-job-deferred.error";
 import {
     MessageLogEntity,
@@ -39,6 +44,7 @@ import {
     SmsProviderAcceptanceService,
 } from "./sms-provider-acceptance.service";
 import { SmsTriggerDeliverySkipError, SmsTriggerPayloadEnricherRegistry } from "./sms-trigger-payload-enricher.registry";
+import { buildAutomationRetrySealVariables } from "./automation-retry-seal";
 
 export interface SmsTemplateDeliveryConfig {
     smsLogTemplateKey: string;
@@ -55,7 +61,7 @@ export interface SmsTemplateDeliveryConfig {
  * adopt a different title, template key, or provider routing rule.
  */
 export const SMS_DELIVERY_CONFIG_VERSION = "sms-template-delivery-v1";
-export const SMS_DELIVERY_SNAPSHOT_VARIABLE = "__smsDeliverySnapshot";
+export { SMS_DELIVERY_SNAPSHOT_VARIABLE };
 
 export interface SmsTriggerDeliverySnapshot {
     readonly templateKey: MessageTriggerTemplateKey;
@@ -116,40 +122,12 @@ class MissingSmsTemplateVariablesError extends Error {
  * bumped and every pending approval re-approved.
  */
 export const SMS_TEMPLATE_DELIVERY: Partial<Record<MessageTriggerTemplateKey, SmsTemplateDeliveryConfig>> = {
-    [MessageTriggerTemplateKey.CLIENT_WELCOME]: {
-        smsLogTemplateKey: "client_welcome_sms",
-        automationKey: "CLIENT_WELCOME_SMS",
-        triggerType: "client_created",
-        title: "고객 등록 안내",
-        systemTemplateKey: SystemTemplateKey.CLIENT_WELCOME,
-    },
-    [MessageTriggerTemplateKey.SERVICE_START_REMINDER]: {
-        smsLogTemplateKey: "service_start_reminder_sms",
-        automationKey: "SERVICE_START_REMINDER_SMS",
-        triggerType: "service_start_reminder",
-        title: "서비스 시작 알림",
-        systemTemplateKey: SystemTemplateKey.SERVICE_START_REMINDER,
-    },
     [MessageTriggerTemplateKey.SERVICE_INFO]: {
         smsLogTemplateKey: "service_info_sms",
         automationKey: "SERVICE_INFO_SMS",
         triggerType: "service_start_before_7_days",
         title: "서비스 안내",
         systemTemplateKey: SystemTemplateKey.SERVICE_INFO,
-    },
-    [MessageTriggerTemplateKey.SERVICE_END_REMINDER]: {
-        smsLogTemplateKey: "service_end_reminder_sms",
-        automationKey: "SERVICE_END_REMINDER_SMS",
-        triggerType: "service_end_reminder",
-        title: "서비스 종료 알림",
-        systemTemplateKey: SystemTemplateKey.SERVICE_END_REMINDER,
-    },
-    [MessageTriggerTemplateKey.EMPLOYEE_ASSIGNED]: {
-        smsLogTemplateKey: "employee_assigned_sms",
-        automationKey: "EMPLOYEE_ASSIGNED_SMS",
-        triggerType: "employee_assigned",
-        title: "직원 배정 알림",
-        systemTemplateKey: SystemTemplateKey.EMPLOYEE_ASSIGNED,
     },
     [MessageTriggerTemplateKey.CLIENT_GREETING]: {
         smsLogTemplateKey: "client_greeting_sms",
@@ -222,6 +200,8 @@ export class SmsTriggerDeliveryService {
         private readonly acceptanceService?: SmsProviderAcceptanceService,
         @Optional()
         private readonly enricherRegistry?: SmsTriggerPayloadEnricherRegistry,
+        @Optional()
+        private readonly automationDeliveryGate?: AgentAutomationDeliveryGateService,
     ) {}
 
     canHandle(templateKey: MessageTriggerTemplateKey): boolean {
@@ -234,6 +214,7 @@ export class SmsTriggerDeliveryService {
      * this resolver so they share one immutable snapshot contract.
      */
     async resolveDeliverySnapshot(job: MessageTriggerJobEntity): Promise<Readonly<SmsTriggerDeliverySnapshot>> {
+        this.assertDeliveryJob(job);
         if (!job.branchId) {
             throw new Error(`SMS trigger job ${job.id} is missing branchId`);
         }
@@ -256,7 +237,8 @@ export class SmsTriggerDeliveryService {
     }
 
     /** Resolve the current provider-bound target without trusting staged data. */
-    async resolveCanonicalDeliverySnapshot(job: MessageTriggerJobEntity): Promise<Readonly<SmsTriggerDeliverySnapshot>> {
+    async resolveCanonicalDeliverySnapshot(job: MessageTriggerJobEntity, transaction?: Prisma.TransactionClient): Promise<Readonly<SmsTriggerDeliverySnapshot>> {
+        this.assertDeliveryJob(job);
         if (!job.branchId) {
             throw new Error(`SMS trigger job ${job.id} is missing branchId`);
         }
@@ -264,7 +246,7 @@ export class SmsTriggerDeliveryService {
         if (!config) {
             throw new Error(`SMS trigger template ${job.templateKey} is not supported`);
         }
-        return this.resolveCanonicalSnapshot(job, config);
+        return this.resolveCanonicalSnapshot(job, config, transaction);
     }
 
     /**
@@ -358,6 +340,12 @@ export class SmsTriggerDeliveryService {
     }
 
     async sendJob(job: MessageTriggerJobEntity): Promise<boolean> {
+        this.assertDeliveryJob(job);
+        if (!this.automationDeliveryGate || !await this.automationDeliveryGate.permitsDirectManualJob(job)) {
+            if (job.status === "dispatching") throw new AgentAutomationDispatchUncertainError();
+            job.cancel("문자 동의 또는 발송 대상 확인이 필요합니다");
+            return false;
+        }
         if (!job.branchId) {
             throw new Error(`SMS trigger job ${job.id} is missing branchId`);
         }
@@ -417,6 +405,11 @@ export class SmsTriggerDeliveryService {
      * failed preparation can never leave a job in `dispatching`.
      */
     async prepareJob(job: MessageTriggerJobEntity): Promise<SmsTriggerDeliveryPreparation | null> {
+        this.assertDeliveryJob(job);
+        if (!this.automationDeliveryGate || !await this.automationDeliveryGate.consumePreparation(job)) {
+            job.cancel("문자 동의 또는 발송 대상 확인이 필요합니다");
+            return null;
+        }
         if (!job.branchId) {
             throw new Error(`SMS trigger job ${job.id} is missing branchId`);
         }
@@ -493,6 +486,9 @@ export class SmsTriggerDeliveryService {
         job: MessageTriggerJobEntity,
         preparation: SmsTriggerDeliveryPreparation,
     ): Promise<boolean> {
+        this.assertDeliveryJob(job);
+        if (!this.automationDeliveryGate) throw new AgentAutomationDispatchUncertainError();
+        await this.automationDeliveryGate.consumeDispatch(job, preparation);
         if (!job.branchId) {
             throw new Error(`SMS trigger job ${job.id} is missing branchId`);
         }
@@ -501,9 +497,13 @@ export class SmsTriggerDeliveryService {
             return false;
         }
         if (job.payload.templateVariables[SMS_DELIVERY_SNAPSHOT_VARIABLE] !== preparation.serializedSnapshot) {
-            throw new Error("SMS prepared delivery snapshot changed before provider dispatch");
+            throw new AgentAutomationDispatchUncertainError();
         }
         return this.sendSmsJob(job, config, preparation.snapshot);
+    }
+
+    private assertDeliveryJob(job: MessageTriggerJobEntity): void {
+        if (isReservedAutomationJob(job)) throw new SmsTriggerDeliverySkipError("Internal automation records cannot be delivered");
     }
 
     /**
@@ -621,6 +621,7 @@ export class SmsTriggerDeliveryService {
     private async resolveCanonicalSnapshot(
         job: MessageTriggerJobEntity,
         config: SmsTemplateDeliveryConfig,
+        transaction?: Prisma.TransactionClient,
     ): Promise<Readonly<SmsTriggerDeliverySnapshot>> {
         const branchId = job.branchId;
         if (!branchId) {
@@ -638,7 +639,7 @@ export class SmsTriggerDeliveryService {
         const usesPayloadMessage = config.usePayloadMessage || payload.templateVariables["triggerType"] === "agent_scheduled";
         const template = usesPayloadMessage
             ? this.resolvePayloadTemplate(job)
-            : await this.resolveSystemTemplate(config.systemTemplateKey, branchId);
+            : await this.resolveSystemTemplate(config.systemTemplateKey, branchId, transaction);
         const missingVariableKeys = template.requiredVariableKeys.filter(
             (key) => !baseVariables[key]?.trim(),
         );
@@ -696,12 +697,14 @@ export class SmsTriggerDeliveryService {
     private async resolveSystemTemplate(
         systemTemplateKey: SystemTemplateKey | undefined,
         branchId: string,
+        transaction?: Prisma.TransactionClient,
     ): Promise<ResolvedSmsTemplate> {
         if (!systemTemplateKey) {
             throw new Error("systemTemplateKey is required for templated SMS delivery");
         }
         try {
-            const template = await this.systemTemplateService.getByKeyForBranch(branchId, systemTemplateKey);
+            const template = transaction ? await this.systemTemplateService.getByKeyForBranch(branchId, systemTemplateKey, transaction)
+                : await this.systemTemplateService.getByKeyForBranch(branchId, systemTemplateKey);
             const content = template.content;
             const hash = this.hash(content);
             const updatedAt = template.updatedAt instanceof Date && !Number.isNaN(template.updatedAt.getTime())
@@ -781,6 +784,7 @@ export class SmsTriggerDeliveryService {
         if (params.config.systemTemplateKey) {
             variables["systemTemplateKey"] = params.config.systemTemplateKey;
         }
+        Object.assign(variables, buildAutomationRetrySealVariables(params.job, params.snapshot.snapshotHash));
 
         const providerAcceptanceKey = buildSmsProviderAcceptanceKey(
             "automation",

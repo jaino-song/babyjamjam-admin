@@ -1,20 +1,15 @@
 import { NextRequest, NextResponse } from "next/server";
 import { serverAPIClient } from "@/lib/api/server";
-import { getAuthToken, getAuthHeaders } from "@/lib/api/route-utils";
+import { getAuthToken, getAuthHeaders, NO_STORE_CACHE_CONTROL } from "@/lib/api/route-utils";
 import { unauthorizedProblemResponse } from "@/lib/api/problem-responses";
 
-interface ClientPhone {
-  phone?: string | null;
+interface CheckPhoneResponse {
+  exists?: boolean;
 }
 
-interface PaginatedClientsResponse {
-  data?: ClientPhone[];
-  total?: number;
-  page?: number;
-  limit?: number;
-}
+const headers = { "Cache-Control": NO_STORE_CACHE_CONTROL };
 
-// GET /api/clients/check-phone?phone=01096411878
+// GET /api/clients/check-phone
 export async function GET(request: NextRequest) {
   try {
     const token = getAuthToken(request);
@@ -24,64 +19,30 @@ export async function GET(request: NextRequest) {
 
     const phone = request.nextUrl.searchParams.get("phone");
     if (!phone) {
-      return NextResponse.json({ exists: false });
+      return NextResponse.json({ exists: false }, { headers });
     }
 
     const targetDigits = phone.replace(/\D/g, "");
     if (targetDigits.length !== 11) {
-      return NextResponse.json({ exists: false });
+      return NextResponse.json({ exists: false }, { headers });
     }
 
-    const limit = 500;
-    let page = 1;
-    let exists = false;
+    const response = await serverAPIClient.get<CheckPhoneResponse>("/clients/check-phone", {
+      params: { phone: targetDigits },
+      headers: getAuthHeaders(token),
+    });
 
-    while (!exists) {
-      const response = await serverAPIClient.get<PaginatedClientsResponse | ClientPhone[]>("/clients", {
-        params: { page, limit },
-        headers: getAuthHeaders(token),
-      });
-
-      const payload = response.data;
-      const clients = Array.isArray(payload)
-        ? payload
-        : Array.isArray(payload?.data)
-          ? payload.data
-          : [];
-
-      if (clients.length === 0) {
-        break;
-      }
-
-      exists = clients.some(
-        (client) => (client.phone ?? "").replace(/\D/g, "") === targetDigits,
-      );
-
-      if (exists) {
-        break;
-      }
-
-      if (Array.isArray(payload)) {
-        break;
-      }
-
-      const total = typeof payload?.total === "number" ? payload.total : undefined;
-      const currentPage = typeof payload?.page === "number" ? payload.page : page;
-
-      if (total !== undefined && currentPage * limit >= total) {
-        break;
-      }
-
-      if (clients.length < limit) {
-        break;
-      }
-
-      page += 1;
+    if (typeof response.data?.exists !== "boolean") {
+      throw new Error("Invalid phone check response");
     }
 
-    return NextResponse.json({ exists });
-  } catch (error) {
-    console.error("[API] Error checking phone:", error);
-    return NextResponse.json({ exists: false });
+    return NextResponse.json({ exists: response.data.exists }, { headers });
+  } catch {
+    // Axios errors can contain the authorization header and the queried phone.
+    console.error("[API] Error checking phone");
+    return NextResponse.json(
+      { error: "연락처 중복 여부를 확인하지 못했습니다. 잠시 후 다시 시도해 주세요." },
+      { status: 502, headers },
+    );
   }
 }

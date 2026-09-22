@@ -1,6 +1,7 @@
 import type {
   MessageAutomationPolicy,
   MessageAutomationPolicyRow,
+  MessageSettingsPolicyId,
   MessageSenderApprovalResponse,
 } from "@babyjamjam/shared/types/message";
 import {
@@ -66,9 +67,13 @@ function formatRequestedAt(requestedAt: string): string {
 export function buildSettingsListItems({
   approval,
   policies,
+  clientAutoRegistration = false,
+  policyActivations,
 }: {
   approval: MessageSenderApprovalResponse | undefined;
   policies: MessageAutomationPolicy[] | undefined;
+  clientAutoRegistration?: boolean;
+  policyActivations?: Partial<Record<MessageSettingsPolicyId, boolean>>;
 }): SettingsListItem[] {
   const items: SettingsListItem[] = [];
 
@@ -106,20 +111,22 @@ export function buildSettingsListItems({
       id: CLIENT_REGISTRATION_POLICY_ITEM_ID,
       title: "고객 자동 등록",
       subtitle: "전자문서 고객 등록과 인사 문자 발송을 관리합니다.",
-      statusLabel: "활성",
+      statusLabel: getPolicyStatusLabel(clientAutoRegistration),
       icon: UserPlus,
       kind: "client-registration-policy",
-      active: true,
+      active: clientAutoRegistration,
       requiresApproval: false,
     },
     {
       id: DUPLICATE_SEND_POLICY_ITEM_ID,
       title: "중복 전송 확인",
       subtitle: "72시간 내 같은 번호와 같은 메시지는 전송 전 확인합니다.",
-      statusLabel: "활성",
+      statusLabel: getPolicyStatusLabel(
+        policyActivations?.[DUPLICATE_SEND_POLICY_ITEM_ID] ?? true,
+      ),
       icon: Repeat2,
       kind: "duplicate-send-policy",
-      active: true,
+      active: policyActivations?.[DUPLICATE_SEND_POLICY_ITEM_ID] ?? true,
       requiresApproval: true,
       rows: DUPLICATE_SEND_ROWS,
     },

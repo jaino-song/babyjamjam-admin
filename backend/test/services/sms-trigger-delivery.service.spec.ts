@@ -1,3 +1,4 @@
+import { createLegacyAutomationDeliveryGate } from "../fixtures/legacy-automation-delivery-gate";
 import { Prisma } from "@prisma/client";
 import { AligoService } from "application/services/aligo.service";
 import {
@@ -20,6 +21,8 @@ import { BranchSystemTemplateSnapshotError } from "domain/entities/branch-system
 import { TriggerJobDeferredError } from "domain/errors/trigger-job-deferred.error";
 import { MessageLogEntity } from "domain/entities/message-log.entity";
 import { IMessageLogRepository } from "domain/repositories/message-log.repository.interface";
+import { MESSAGE_AUTOMATION_INTENT_RULE_ID } from "domain/constants/message-automation-intent";
+import { AGENT_AUTOMATION_RECORD_DEDUPE_PREFIX, AGENT_AUTOMATION_RECORD_PAYLOAD_KEY } from "domain/constants/agent-automation-storage";
 
 describe("SmsTriggerDeliveryService", () => {
     // F7: adding a new template key to the catalog cannot change an existing key's configHash —
@@ -77,6 +80,26 @@ describe("SmsTriggerDeliveryService", () => {
             clientVersion: "test",
         });
 
+    it.each(["rule", "dedupe", "payload"])("refuses internal %s carriers before templates, enrichment, logs or provider calls", async (carrier) => {
+        const job = createServiceInfoJob();
+        if (carrier === "rule") Object.assign(job, { ruleId: MESSAGE_AUTOMATION_INTENT_RULE_ID });
+        if (carrier === "dedupe") Object.assign(job, { dedupeKey: `${AGENT_AUTOMATION_RECORD_DEDUPE_PREFIX}synthetic` });
+        if (carrier === "payload") Object.assign(job.payload, { [AGENT_AUTOMATION_RECORD_PAYLOAD_KEY]: null });
+        const aligo = { sendSms: jest.fn() };
+        const templates = { getTemplate: jest.fn() };
+        const logs = { create: jest.fn() };
+        const enrichers = { enrich: jest.fn() };
+        const service = new SmsTriggerDeliveryService(aligo as never, templates as never, logs as never, undefined, enrichers as never, createLegacyAutomationDeliveryGate());
+        for (const operation of [() => service.resolveDeliverySnapshot(job), () => service.resolveCanonicalDeliverySnapshot(job), () => service.prepareJob(job),
+            () => service.sendJob(job), () => service.sendPreparedJob(job, {} as never)]) {
+            await expect(operation()).rejects.toThrow("Internal automation records cannot be delivered");
+        }
+        expect(aligo.sendSms).not.toHaveBeenCalled();
+        expect(templates.getTemplate).not.toHaveBeenCalled();
+        expect(logs.create).not.toHaveBeenCalled();
+        expect(enrichers.enrich).not.toHaveBeenCalled();
+    });
+
     it("sends the service information trigger through SMS instead of alimtalk", async () => {
         const aligoService = {
             sendSms: jest.fn().mockResolvedValue({
@@ -108,7 +131,7 @@ describe("SmsTriggerDeliveryService", () => {
             aligoService as unknown as AligoService,
             systemTemplateService as unknown as SystemTemplateService,
             logRepository as unknown as IMessageLogRepository,
-        );
+        undefined, undefined, createLegacyAutomationDeliveryGate());
 
         await expect(service.sendJob(createServiceInfoJob())).resolves.toBe(true);
 
@@ -157,7 +180,7 @@ describe("SmsTriggerDeliveryService", () => {
             aligoService as unknown as AligoService,
             systemTemplateService as unknown as SystemTemplateService,
             logRepository as unknown as IMessageLogRepository,
-        );
+        undefined, undefined, createLegacyAutomationDeliveryGate());
 
         const job = createServiceInfoJob();
         const snapshot = await service.resolveDeliverySnapshot(job);
@@ -195,7 +218,7 @@ describe("SmsTriggerDeliveryService", () => {
             aligoService as unknown as AligoService,
             systemTemplateService as unknown as SystemTemplateService,
             logRepository as unknown as IMessageLogRepository,
-        );
+        undefined, undefined, createLegacyAutomationDeliveryGate());
         const job = createServiceInfoJob();
         const snapshot = await service.resolveDeliverySnapshot(job);
         job.payload.templateVariables["retrySafety"] = "pending-agent-retry";
@@ -234,7 +257,7 @@ describe("SmsTriggerDeliveryService", () => {
             aligoService as unknown as AligoService,
             systemTemplateService as unknown as SystemTemplateService,
             logRepository as unknown as IMessageLogRepository,
-        );
+        undefined, undefined, createLegacyAutomationDeliveryGate());
         const job = createServiceInfoJob();
         const snapshot = await service.resolveDeliverySnapshot(job);
         const staged = JSON.parse(service.serializeSnapshot(snapshot)) as Record<string, unknown>;
@@ -260,7 +283,7 @@ describe("SmsTriggerDeliveryService", () => {
             aligoService as unknown as AligoService,
             systemTemplateService as unknown as SystemTemplateService,
             logRepository as unknown as IMessageLogRepository,
-        );
+        undefined, undefined, createLegacyAutomationDeliveryGate());
         const job = createServiceInfoJob();
         const snapshot = await service.resolveDeliverySnapshot(job);
         job.payload.templateVariables["retrySafety"] = "pending-agent-retry";
@@ -272,70 +295,19 @@ describe("SmsTriggerDeliveryService", () => {
         expect(aligoService.sendSms).not.toHaveBeenCalled();
     });
 
-    it("sends a CLIENT_WELCOME job through Aligo and records the SMS contract", async () => {
-        const job = MessageTriggerJobEntity.reconstitute(
-            "job-client-welcome",
-            branchId,
-            "rule-client-welcome",
-            "pending",
-            new Date("2026-07-17T00:00:00.000Z"),
-            null,
-            null,
-            null,
-            7,
-            null,
-            MessageTriggerRecipientType.CLIENT,
-            "010-1234-5678",
-            MessageTriggerTemplateKey.CLIENT_WELCOME,
-            "rule-client-welcome:7",
-            {
-                clientId: 7,
-                clientName: "김산모",
-                memberId: "7",
-                recipientName: "김산모",
-                recipientPhone: "010-1234-5678",
-                templateVariables: {
-                    clientName: "김산모",
-                    registrationDate: "2026-07-17",
-                    serviceType: "바우처",
-                },
-            },
-            new Date("2026-07-17T00:00:00.000Z"),
-            new Date("2026-07-17T00:00:00.000Z"),
-        );
-        const aligoService = {
-            sendSms: jest.fn().mockResolvedValue({
-                request: { receiver: "01012345678", msgType: "LMS", testModeYn: "N" },
-                response: { result_code: 1, message: "성공", msg_id: 275, success_cnt: 1, error_cnt: 0 },
-            }),
-        };
-        const systemTemplateService = {
-            getByKeyForBranch: jest.fn().mockResolvedValue({
-                content: "{{clientName}}님 {{registrationDate}} 등록 완료 ({{serviceType}})",
-            }),
-        };
-        const logRepository = { save: jest.fn().mockImplementation(async (log: MessageLogEntity) => log) };
+    it.each([
+        MessageTriggerTemplateKey.CLIENT_WELCOME,
+        MessageTriggerTemplateKey.SERVICE_START_REMINDER,
+        MessageTriggerTemplateKey.SERVICE_END_REMINDER,
+        MessageTriggerTemplateKey.EMPLOYEE_ASSIGNED,
+    ])("does not handle retired fixed-event template %s", (templateKey) => {
         const service = new SmsTriggerDeliveryService(
-            aligoService as unknown as AligoService,
-            systemTemplateService as unknown as SystemTemplateService,
-            logRepository as unknown as IMessageLogRepository,
-        );
+            { sendSms: jest.fn() } as unknown as AligoService,
+            { getByKeyForBranch: jest.fn() } as unknown as SystemTemplateService,
+            { save: jest.fn() } as unknown as IMessageLogRepository,
+        undefined, undefined, createLegacyAutomationDeliveryGate());
 
-        await expect(service.sendJob(job)).resolves.toBe(true);
-
-        expect(systemTemplateService.getByKeyForBranch).toHaveBeenCalledWith(branchId, SystemTemplateKey.CLIENT_WELCOME);
-        expect(aligoService.sendSms).toHaveBeenCalledWith(expect.objectContaining({
-            receiver: "010-1234-5678",
-            message: "김산모님 2026-07-17 등록 완료 (바우처)",
-            title: "고객 등록 안내",
-        }));
-        const savedLog = logRepository.save.mock.calls[0]?.[0] as MessageLogEntity;
-        expect(savedLog.templateKey).toBe("client_welcome_sms");
-        expect(savedLog.status).toBe("sent");
-        expect(savedLog.variables).toEqual(expect.objectContaining({
-            automationKey: "CLIENT_WELCOME_SMS",
-            systemTemplateKey: SystemTemplateKey.CLIENT_WELCOME,
-        }));
+        expect(service.canHandle(templateKey)).toBe(false);
     });
 
     it("sends the CLIENT_GREETING trigger through SMS with the same log contract as the retired sender", async () => {
@@ -400,7 +372,7 @@ describe("SmsTriggerDeliveryService", () => {
             aligoService as unknown as AligoService,
             systemTemplateService as unknown as SystemTemplateService,
             logRepository as unknown as IMessageLogRepository,
-        );
+        undefined, undefined, createLegacyAutomationDeliveryGate());
 
         await expect(service.sendJob(greetingJob)).resolves.toBe(true);
 
@@ -440,7 +412,7 @@ describe("SmsTriggerDeliveryService", () => {
             aligoService as unknown as AligoService,
             systemTemplateService as unknown as SystemTemplateService,
             logRepository as unknown as IMessageLogRepository,
-        );
+        undefined, undefined, createLegacyAutomationDeliveryGate());
         const job = createServiceInfoJob();
         job.branchId = null;
 
@@ -471,7 +443,7 @@ describe("SmsTriggerDeliveryService", () => {
             aligoService as unknown as AligoService,
             systemTemplateService as unknown as SystemTemplateService,
             logRepository as unknown as IMessageLogRepository,
-        );
+        undefined, undefined, createLegacyAutomationDeliveryGate());
 
         const error = await captureError(service.sendJob(createServiceInfoJob()));
 
@@ -496,7 +468,7 @@ describe("SmsTriggerDeliveryService", () => {
             aligoService as unknown as AligoService,
             systemTemplateService as unknown as SystemTemplateService,
             logRepository as unknown as IMessageLogRepository,
-        );
+        undefined, undefined, createLegacyAutomationDeliveryGate());
 
         await expect(service.sendJob(createServiceInfoJob())).rejects.toBe(readError);
         expect(aligoService.sendSms).not.toHaveBeenCalled();
@@ -514,7 +486,7 @@ describe("SmsTriggerDeliveryService", () => {
             aligoService as unknown as AligoService,
             systemTemplateService as unknown as SystemTemplateService,
             logRepository as unknown as IMessageLogRepository,
-        );
+        undefined, undefined, createLegacyAutomationDeliveryGate());
 
         const error = await captureError(service.sendJob(createServiceInfoJob()));
 
@@ -557,7 +529,7 @@ describe("SmsTriggerDeliveryService", () => {
             aligoService as unknown as AligoService,
             systemTemplateService as unknown as SystemTemplateService,
             logRepository as unknown as IMessageLogRepository,
-        );
+        undefined, undefined, createLegacyAutomationDeliveryGate());
 
         const error = await captureError(service.sendJob(createServiceInfoJob()));
 
@@ -603,7 +575,7 @@ describe("SmsTriggerDeliveryService", () => {
             aligoService as unknown as AligoService,
             systemTemplateService as unknown as SystemTemplateService,
             logRepository as unknown as IMessageLogRepository,
-        );
+        undefined, undefined, createLegacyAutomationDeliveryGate());
 
         await expect(service.sendJob(createServiceInfoJob())).rejects.toThrow("database unavailable");
 
@@ -634,7 +606,7 @@ describe("SmsTriggerDeliveryService", () => {
             aligoService as unknown as AligoService,
             systemTemplateService as unknown as SystemTemplateService,
             logRepository as unknown as IMessageLogRepository,
-        );
+        undefined, undefined, createLegacyAutomationDeliveryGate());
 
         await expect(service.sendJob(createServiceInfoJob())).rejects.toBe(providerError);
 
@@ -695,6 +667,9 @@ describe("SmsTriggerDeliveryService", () => {
             aligoService as unknown as AligoService,
             systemTemplateService as unknown as SystemTemplateService,
             logRepository as unknown as IMessageLogRepository,
+            undefined,
+            undefined,
+            createLegacyAutomationDeliveryGate(),
         );
 
         const error = await captureError(service.sendJob(createServiceInfoJob()));
@@ -749,7 +724,7 @@ https://mobile.test/service-record/efl_token`;
             overrides.aligoService as unknown as AligoService,
             (overrides.systemTemplateService ?? { getByKeyForBranch: jest.fn() }) as unknown as SystemTemplateService,
             overrides.logRepository as unknown as IMessageLogRepository,
-        );
+        undefined, undefined, createLegacyAutomationDeliveryGate());
 
     const createServiceRecordJob = () =>
         MessageTriggerJobEntity.reconstitute(
@@ -966,7 +941,7 @@ describe("SMS system-template variable coverage", () => {
             aligoService as unknown as AligoService,
             systemTemplateService as unknown as SystemTemplateService,
             logRepository as unknown as IMessageLogRepository,
-        );
+        undefined, undefined, createLegacyAutomationDeliveryGate());
         return { aligoService, logRepository, service };
     };
 
@@ -1142,7 +1117,7 @@ describe("PRICE_INFO data guard", () => {
                 getByKeyForBranch: jest.fn().mockResolvedValue({ content: "총 금액 {{fullPrice}}원 / {{bankName}} {{accNum}}" }),
             }) as unknown as SystemTemplateService,
             overrides.logRepository as unknown as IMessageLogRepository,
-        );
+        undefined, undefined, createLegacyAutomationDeliveryGate());
 
     it("cancels a PRICE_INFO job and does not send when price/bank data is missing", async () => {
         const aligoService = { sendSms: jest.fn() };

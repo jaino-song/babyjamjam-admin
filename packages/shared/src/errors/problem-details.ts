@@ -94,7 +94,9 @@ export type ProblemCode =
     | "NO_ACCESSIBLE_BRANCH"
     | "AUTH_RESET_TOKEN_INVALID"
     | "AUTH_RESET_TOKEN_EXPIRED"
-    | "AUTH_RESET_TOKEN_USED";
+    | "AUTH_RESET_TOKEN_USED"
+    // Registered assignment-unavailable advisory (safe HTTP 400; dev-side addition).
+    | "EMPLOYEE_ASSIGNMENT_UNAVAILABLE";
 
 export type ProblemOutcome =
     | "NOT_APPLIED"
@@ -293,6 +295,7 @@ const PROBLEM_CODES: readonly ProblemCode[] = [
     "AUTH_RESET_TOKEN_INVALID",
     "AUTH_RESET_TOKEN_EXPIRED",
     "AUTH_RESET_TOKEN_USED",
+    "EMPLOYEE_ASSIGNMENT_UNAVAILABLE",
 ];
 
 const PROBLEM_ERROR_CODES: readonly ProblemErrorCode[] = [
@@ -709,6 +712,17 @@ const PROBLEM_DEFINITIONS: Readonly<
         detail: {
             "ko-KR": "같은 전화번호의 관리사가 이미 등록되어 있어요.",
             "en-US": "An employee with the same phone number is already registered.",
+        },
+    },
+    EMPLOYEE_ASSIGNMENT_UNAVAILABLE: {
+        status: 400,
+        title: {
+            "ko-KR": "다음 서비스 배정이 비활성화되어 있어요",
+            "en-US": "Employee is unavailable for new assignments",
+        },
+        detail: {
+            "ko-KR": "선택한 제공인력의 다음 서비스 배정이 비활성화되어 있어요. 제공인력 정보에서 다음 서비스 배정을 활성화하거나 다른 제공인력을 선택해 주세요.",
+            "en-US": "The selected employee is unavailable for new assignments. Enable next-service assignment in their profile or select another employee.",
         },
     },
     EMPLOYEE_ACTIVE_ASSIGNMENT_BLOCKED: {

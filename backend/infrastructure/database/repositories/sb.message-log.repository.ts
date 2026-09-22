@@ -1,7 +1,12 @@
 import { Injectable, Logger } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
 
-import { IMessageLogRepository } from "domain/repositories/message-log.repository.interface";
+import {
+    IMessageLogRepository,
+    MessageHistoryPageQuery,
+    MessageRetryInvocation,
+    MessageRetryStartResult,
+} from "domain/repositories/message-log.repository.interface";
 import { MessageLogEntity } from "domain/entities/message-log.entity";
 import { MessageLogMapper } from "infrastructure/database/mapper/message-log.mapper";
 import { PrismaService } from "infrastructure/database/prisma.service";
@@ -9,6 +14,10 @@ import {
     SERVICE_RECORD_LINK_RULE_ID,
     SERVICE_RECORD_LINK_SMS_LOG_TEMPLATE_KEY,
 } from "domain/constants/service-record-link-message";
+import {
+    SERVICE_END_NOTICE_ALREADY_SENT_CANCEL_REASON,
+    SERVICE_END_NOTICE_SMS_LOG_TEMPLATE_KEY,
+} from "domain/constants/service-end-notice-message";
 
 @Injectable()
 export class SbMessageLogRepository implements IMessageLogRepository {
@@ -37,12 +46,20 @@ export class SbMessageLogRepository implements IMessageLogRepository {
         return MessageLogMapper.toDomain(row);
     }
 
-    async update(log: MessageLogEntity): Promise<MessageLogEntity> {
-        const row = await this.prisma.message_log.update({
-            where: { id: log.id, ...this.branchWhereFragment(log) },
-            data: MessageLogMapper.toPrismaUpdate(log),
-        });
-        return MessageLogMapper.toDomain(row);
+    async update(log: MessageLogEntity, transaction?: Prisma.TransactionClient): Promise<MessageLogEntity> {
+        const run = async (client: Prisma.TransactionClient): Promise<MessageLogEntity> => {
+            const row = await client.message_log.update({
+                where: { id: log.id, ...this.branchWhereFragment(log) },
+                data: MessageLogMapper.toPrismaUpdate(log),
+            });
+            if (this.isDeliveredServiceEndNotice(log)) {
+                await this.stampServiceEndNoticeSent(client, log);
+            }
+            return MessageLogMapper.toDomain(row);
+        };
+        if (transaction) return run(transaction);
+        if (this.isDeliveredServiceEndNotice(log)) return this.prisma.$transaction(run);
+        return run(this.prisma);
     }
 
     async prepareProviderAttempt(log: MessageLogEntity): Promise<MessageLogEntity> {
@@ -83,14 +100,15 @@ export class SbMessageLogRepository implements IMessageLogRepository {
         }
     }
 
-    async claimProviderAttempt(log: MessageLogEntity): Promise<MessageLogEntity | null> {
+    async claimProviderAttempt(log: MessageLogEntity, transaction?: Prisma.TransactionClient): Promise<MessageLogEntity | null> {
         if (!log.providerAcceptanceKey || !log.providerAcceptanceFingerprint) {
             throw new Error("SMS provider acceptance key and fingerprint are required before dispatch");
         }
 
         const branchWhere = this.branchWhereFragment(log);
+        const client = transaction ?? this.prisma;
 
-        const claimed = await this.prisma.message_log.updateMany({
+        const claimed = await client.message_log.updateMany({
             where: {
                 id: log.id,
                 ...branchWhere,
@@ -105,7 +123,7 @@ export class SbMessageLogRepository implements IMessageLogRepository {
         });
         if (claimed.count !== 1) return null;
 
-        const row = await this.prisma.message_log.findUnique({
+        const row = await client.message_log.findUnique({
             where: { id: log.id, ...branchWhere },
         });
         return row ? MessageLogMapper.toDomain(row) : null;
@@ -149,6 +167,10 @@ export class SbMessageLogRepository implements IMessageLogRepository {
             });
             if (claimed.count !== 1) return null;
 
+            if (outcome === "delivered") {
+                await this.stampServiceEndNoticeSent(transaction, currentEntity);
+            }
+
             const updated = await transaction.message_log.findUnique({
                 where: { id: log.id, ...branchWhere },
             });
@@ -156,12 +178,85 @@ export class SbMessageLogRepository implements IMessageLogRepository {
         });
     }
 
+    private isDeliveredServiceEndNotice(log: MessageLogEntity): boolean {
+        return log.templateKey === SERVICE_END_NOTICE_SMS_LOG_TEMPLATE_KEY
+            && log.status === "sent"
+            && (
+                log.providerAcceptanceState === "accepted"
+                || log.providerAcceptanceState === "reconciled_delivered"
+            )
+            && log.providerAcceptedAt !== null
+            && log.branchId !== null
+            && log.clientId !== null;
+    }
+
+    private async stampServiceEndNoticeSent(
+        transaction: Prisma.TransactionClient,
+        log: MessageLogEntity,
+    ): Promise<void> {
+        if (!this.isDeliveredServiceEndNotice(log)) return;
+
+        await transaction.client.updateMany({
+            where: {
+                id: log.clientId!,
+                branchId: log.branchId!,
+                serviceEndNoticeSentAt: null,
+            },
+            data: { serviceEndNoticeSentAt: log.providerAcceptedAt! },
+        });
+    }
+
     async startRetryAttempt(
         sourceLog: MessageLogEntity,
         retryLog: MessageLogEntity,
-    ): Promise<MessageLogEntity | null> {
-        return this.prisma.$transaction(async (transaction) => {
+        invocation: MessageRetryInvocation,
+        transaction?: Prisma.TransactionClient,
+    ): Promise<MessageRetryStartResult> {
+        const run = async (transaction: Prisma.TransactionClient): Promise<MessageRetryStartResult> => {
             const claimedAt = new Date(Date.now());
+            if (
+                invocation === "automatic"
+                && sourceLog.templateKey === SERVICE_END_NOTICE_SMS_LOG_TEMPLATE_KEY
+                && sourceLog.branchId !== null
+                && sourceLog.clientId !== null
+            ) {
+                const clients = await transaction.$queryRaw<Array<{
+                    service_end_notice_sent_at: Date | null;
+                }>>(Prisma.sql`
+                    SELECT service_end_notice_sent_at
+                    FROM "client"
+                    WHERE id = ${sourceLog.clientId}
+                      AND branch_id = ${sourceLog.branchId}::uuid
+                    FOR UPDATE
+                `);
+                const client = clients[0];
+                if (!client) return { kind: "lost" };
+                if (client.service_end_notice_sent_at !== null) {
+                    const suppressed = await transaction.message_log.updateMany({
+                        where: {
+                            id: sourceLog.id,
+                            branchId: sourceLog.branchId,
+                            status: sourceLog.status,
+                            nextRetryAt: sourceLog.nextRetryAt,
+                            updatedAt: sourceLog.updatedAt,
+                        },
+                        data: {
+                            status: "failed",
+                            errorMessage: SERVICE_END_NOTICE_ALREADY_SENT_CANCEL_REASON,
+                            nextRetryAt: null,
+                            updatedAt: claimedAt,
+                        },
+                    });
+                    if (suppressed.count !== 1) return { kind: "lost" };
+
+                    sourceLog.status = "failed";
+                    sourceLog.errorMessage = SERVICE_END_NOTICE_ALREADY_SENT_CANCEL_REASON;
+                    sourceLog.nextRetryAt = null;
+                    sourceLog.updatedAt = claimedAt;
+                    return { kind: "suppressed", log: sourceLog };
+                }
+            }
+
             const claimed = await transaction.message_log.updateMany({
                 where: {
                     id: sourceLog.id,
@@ -177,14 +272,15 @@ export class SbMessageLogRepository implements IMessageLogRepository {
             });
 
             if (claimed.count !== 1) {
-                return null;
+                return { kind: "lost" };
             }
 
             const row = await transaction.message_log.create({
                 data: MessageLogMapper.toPrismaCreate(retryLog),
             });
-            return MessageLogMapper.toDomain(row);
-        });
+            return { kind: "started", log: MessageLogMapper.toDomain(row) };
+        };
+        return transaction ? run(transaction) : this.prisma.$transaction(run);
     }
 
     async findByIdInBranch(branchId: string, id: number): Promise<MessageLogEntity | null> {
@@ -280,6 +376,33 @@ export class SbMessageLogRepository implements IMessageLogRepository {
             orderBy: { createdAt: "desc" },
             take: limit,
             skip,
+        });
+        return rows.map(MessageLogMapper.toDomain);
+    }
+
+    async findHistoryPageByBranch(
+        branchId: string,
+        query: MessageHistoryPageQuery,
+    ): Promise<MessageLogEntity[]> {
+        const after = query.after;
+        const afterWhere = after?.source === "log"
+            ? { id: { lt: Number(after.nativeId) } }
+            : undefined;
+
+        const rows = await this.prisma.message_log.findMany({
+            where: {
+                branchId,
+                // The first page establishes this application-time insertion
+                // cutoff; continuations reuse it. Rows committed after the
+                // first read, or made visible late, may be deferred until the
+                // next fresh history poll. Native id ordering is used for the
+                // cursor, so timestamptz(6) precision never enters the
+                // continuation tuple.
+                createdAt: { lte: query.snapshotAt },
+                ...(afterWhere ? { AND: [afterWhere] } : {}),
+            },
+            orderBy: { id: "desc" },
+            take: query.limit,
         });
         return rows.map(MessageLogMapper.toDomain);
     }

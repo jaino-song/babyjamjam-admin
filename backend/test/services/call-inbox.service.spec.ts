@@ -130,6 +130,16 @@ describe("CallInboxService", () => {
         expectNoNewClientSideEffects();
     });
 
+    it.each(["1905-01-01", "2005-01-01", "1958-03-03"])("confirmNewClient preserves birthday %s", async (birthday) => {
+        prisma.client_draft.findFirst.mockResolvedValue(pendingDraft);
+        prisma.client_draft.updateMany.mockResolvedValue({ count: 1 });
+        clientService.create.mockResolvedValue({ id: 77 });
+        await expect(service.confirmNewClient("branch-1", "user-1", "draft-1", {
+            fields: { name: "김서연", birthday },
+        })).resolves.toEqual({ clientId: 77 });
+        expect(clientService.create).toHaveBeenCalledWith("branch-1", expect.objectContaining({ birthday }));
+    });
+
     it("confirmNewClient: accepts explicit booleans while optional fields remain omitted", async () => {
         prisma.client_draft.findFirst.mockResolvedValue(pendingDraft);
         prisma.client_draft.updateMany.mockResolvedValue({ count: 1 });

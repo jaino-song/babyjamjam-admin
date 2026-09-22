@@ -11,7 +11,8 @@ const ALL_FILTER = "전체";
 const DASHBOARD_ROUTE_BODY_CLASS = "mobile-dashboard-route";
 
 import { useDashboardAnalytics } from "@/hooks/useDashboardAnalytics";
-import { clientQueryKeys, useClients, useDeleteClient } from "@/hooks/useClients";
+import { clientQueryKeys, useDeleteClient } from "@/hooks/useClients";
+import { useInfiniteClients } from "@/hooks/useInfiniteClients";
 import { useClientMessageHistory } from "@/hooks/useClientMessageHistory";
 import { useListInfiniteScroll } from "@/hooks/useListInfiniteScroll";
 import type { Client } from "@/lib/client/types";
@@ -24,7 +25,10 @@ import { MobileTwoButtonModal } from "@/components/app/ui/MobileTwoButtonModal";
 import { ClientDetailContent, type DetailTabId } from "@/components/app/clients/client-detail";
 import { DashboardRedesign } from "@/components/app/mobile-redesign/DashboardRedesign";
 import { ListLoadMoreSentinel } from "@/components/app/mobile-redesign/primitives";
-import { deriveDashboardAnalyticsFromClients } from "@/lib/dashboard/analytics";
+import {
+  deriveDashboardAnalyticsFromClients,
+  isServiceStartingWithinWeek,
+} from "@/lib/dashboard/analytics";
 import type {
   DashboardRedesignFilter,
   DashboardRedesignProps,
@@ -179,16 +183,24 @@ export default function DashboardPage() {
   // 60s staleTime: dashboard revisits within the window reuse the cache
   // instead of re-firing analytics + clients (and the eformsign sync burst
   // their invalidations cascade into) on every mount.
-  const { data: analytics, isLoading: analyticsLoading } = useDashboardAnalytics({
+  const {
+    data: analytics, isLoading: analyticsLoading, isError: analyticsError,
+    isFetching: analyticsFetching, refetch: refetchAnalytics,
+  } = useDashboardAnalytics({
     staleTime: 60_000,
   });
-  const { data: clientsData, isLoading: clientsLoading } = useClients(1, 50, undefined, {
+  const {
+    allClients,
+    isLoading: clientsLoading,
+    isError: clientsError,
+    isFetching: clientsFetching,
+    refetch: refetchClients,
+  } = useInfiniteClients({
     staleTime: 60_000,
   });
   const user = useInitialUser();
   const [activeFilter, setActiveFilter] = useState<string>(ALL_FILTER);
 
-  const clients = useMemo<Client[]>(() => clientsData?.data ?? [], [clientsData?.data]);
   useEffect(() => {
     document.body.classList.add(DASHBOARD_ROUTE_BODY_CLASS);
     return () => {
@@ -268,7 +280,8 @@ export default function DashboardPage() {
   const dashboardData = useMemo<
     Omit<DashboardRedesignProps, "activeFilter" | "onFilterChange"> & { allRows: ListRow[] }
   >(() => {
-    const derivedAnalytics = deriveDashboardAnalyticsFromClients(clients);
+    const now = new Date();
+    const derivedAnalytics = deriveDashboardAnalyticsFromClients(allClients, now);
     const active = analytics?.activeClients ?? derivedAnalytics.activeClients;
     const upcoming = analytics?.upcomingThisMonth ?? derivedAnalytics.upcomingThisMonth;
     const pendingReview =
@@ -305,32 +318,22 @@ export default function DashboardPage() {
       return { analytics: dashboardAnalytics, sections: [], filters, allRows: [], loading: true };
     }
 
-    const today = new Date();
+    const today = new Date(now);
     today.setHours(0, 0, 0, 0);
-    const weekFromNow = new Date(today);
-    weekFromNow.setDate(today.getDate() + 7);
-    weekFromNow.setHours(23, 59, 59, 999);
     const monthFromNow = new Date(today);
     monthFromNow.setDate(today.getDate() + 30);
     monthFromNow.setHours(23, 59, 59, 999);
 
-    const actionRequired = clients
+    const actionRequired = allClients
       // Decided by the backend so this list matches the clients page badges.
       .filter((c) => Boolean(c.actionRequired))
       .sort((a, b) => (b.updatedAt ? new Date(b.updatedAt).getTime() : 0) - (a.updatedAt ? new Date(a.updatedAt).getTime() : 0) || b.id - a.id);
 
-    const upcomingClients = clients
-      .filter((c) => {
-        if (!c.startDate || c.serviceStatus === "terminated")
-          return false;
-        const d = new Date(c.startDate);
-        if (Number.isNaN(d.getTime())) return false;
-        d.setHours(0, 0, 0, 0);
-        return d >= today && d <= weekFromNow;
-      })
+    const upcomingClients = allClients
+      .filter((c) => isServiceStartingWithinWeek(c, now))
       .sort((a, b) => new Date(a.startDate!).getTime() - new Date(b.startDate!).getTime());
 
-    const endingSoon = clients
+    const endingSoon = allClients
       .filter((c) => {
         if (!c.endDate || c.serviceStatus !== "active") return false;
         const d = new Date(c.endDate);
@@ -432,7 +435,7 @@ export default function DashboardPage() {
     ];
 
     return { analytics: dashboardAnalytics, sections: allSections, filters, allRows, loading: false };
-  }, [analytics, clients, clientsLoading, openClient]);
+  }, [allClients, analytics, clientsLoading, openClient]);
 
   const sectionsFull = useMemo(() => {
     if (activeFilter === ALL_FILTER) {
@@ -481,6 +484,12 @@ export default function DashboardPage() {
             onFilterChange={setActiveFilter}
             analyticsLoading={(analyticsLoading || clientsLoading) && !analytics}
             loading={dashboardData.loading}
+            isError={clientsError}
+            isAnalyticsError={analyticsError}
+            isRetrying={clientsFetching}
+            isRetryingAnalytics={analyticsFetching}
+            onRetry={() => { void refetchClients(); }}
+            onRetryAnalytics={() => { void refetchAnalytics(); }}
             scrollRef={scrollContainerRef}
             loadMore={isInitialLoad && hasMore}
             onLoadMore={loadMore}

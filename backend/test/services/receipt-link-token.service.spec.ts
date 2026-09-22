@@ -187,6 +187,16 @@ describe("normalizeBirthdayInput", () => {
 });
 
 describe("ReceiptLinkTokenService", () => {
+    it.each([
+        ["1958-03-03", "580303"],
+        ["1905-01-01", "050101"],
+        ["2005-01-01", "050101"],
+    ])("keeps public six-digit verification compatible with stored birthday %s", async (birthday, input) => {
+        const { service } = makeService();
+        const link = await issue(service, { birthday });
+        expect(await service.verifyBirthday(link.linkToken, input, NOW)).toMatchObject({ ok: true });
+    });
+
     // F4: these constants are otherwise only ever asserted against themselves (e.g.
     // `remainingAttempts: RECEIPT_LINK_MAX_FAILED_ATTEMPTS`), so a change to their literal
     // values would pass every other test in this file silently.

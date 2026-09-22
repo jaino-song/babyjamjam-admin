@@ -48,7 +48,7 @@ const clearPrefillName = jest.fn();
 const validClient = {
     id: 1,
     name: "김고객",
-    birthday: "900101",
+    birthday: "1990-01-01",
     dueDate: "2026-10-10",
     address: "인천",
     phone: "010-1234-5678",
@@ -75,7 +75,7 @@ const renderDialog = (onClose = jest.fn(), onSuccess = jest.fn()) => {
 const fillRequiredFields = async () => {
     const user = userEvent.setup();
     await user.type(screen.getByLabelText(/이름/), "김고객");
-    await user.type(screen.getByLabelText(/생년월일/), "900101");
+    await user.type(screen.getByLabelText(/생년월일/), "1990-01-01");
     await user.type(screen.getByLabelText(/출산 예정일/), "2026-10-10");
     await user.type(screen.getByLabelText(/연락처/), "01012345678");
     await user.type(screen.getByLabelText(/주소/), "인천");
@@ -223,6 +223,26 @@ describe("ClientFormDialog mutation error presentation", () => {
         expect(screen.getByText("다시 실행하기 전에 작업 상태를 확인해 주세요.")).toBeInTheDocument();
         fireEvent.click(submitButton());
         expect(mutateAsync).toHaveBeenCalledTimes(1);
+    });
+
+    it("explains disabled next-service assignment on edit and keeps the form retryable", async () => {
+        const problem = createProblemDetails({
+            code: "EMPLOYEE_ASSIGNMENT_UNAVAILABLE",
+            requestId: "12345678-1234-4234-8234-123456789abc",
+            outcome: "NOT_APPLIED",
+        });
+        const mutateAsync = jest.fn().mockRejectedValue({ response: { status: 400, data: problem } });
+        mockUseUpdateClient.mockReturnValue({ mutateAsync, isPending: false } as unknown as ReturnType<typeof useUpdateClient>);
+        const onClose = jest.fn();
+        render(<ClientFormDialog open onClose={onClose} client={validClient as ComponentProps<typeof ClientFormDialog>["client"]} />);
+        await waitFor(() => expect(screen.getByLabelText(/이름/)).toHaveValue("김고객"));
+        fireEvent.click(screen.getByRole("button", { name: "저장" }));
+        const alert = await screen.findByRole("alert");
+        expect(alert).toHaveTextContent("다음 서비스 배정이 비활성화되어 있어요");
+        expect(alert).toHaveTextContent("다른 제공인력을 선택해 주세요");
+        expect(screen.getByRole("button", { name: "저장" })).not.toBeDisabled();
+        expect(screen.getByLabelText(/이름/)).toHaveValue("김고객");
+        expect(onClose).not.toHaveBeenCalled();
     });
 
     it("preserves a failed edit when the same customer is refreshed", async () => {

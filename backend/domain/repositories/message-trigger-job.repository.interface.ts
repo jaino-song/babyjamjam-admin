@@ -1,10 +1,15 @@
 import { MessageTriggerJobEntity } from "domain/entities/message-trigger-job.entity";
+import type { Prisma } from "@prisma/client";
+import type { MessageHistoryPageQuery } from "domain/repositories/message-log.repository.interface";
 
 export interface MessageTriggerJobCancellationScope {
     clientId?: number;
     employeeScheduleId?: number;
     scheduledBefore?: Date;
 }
+
+/** Internal review read; user cancellation is needed to match the existing upsert fence. */
+export type MessageTriggerJobReviewSnapshot = MessageTriggerJobEntity & { readonly canceledByUser: boolean };
 
 export interface IMessageTriggerJobRepository {
     create(job: MessageTriggerJobEntity): Promise<MessageTriggerJobEntity>;
@@ -16,7 +21,7 @@ export interface IMessageTriggerJobRepository {
      * returned token is unique to this processing attempt and must be supplied
      * to every terminal update/fence before a provider call.
      */
-    claimPendingWithRuleFence(id: string, branchId: string | null): Promise<string | null>;
+    claimPendingWithRuleFence(id: string, branchId: string | null, transaction?: Prisma.TransactionClient): Promise<string | null>;
     findDuePendingSystemScope(limit?: number): Promise<MessageTriggerJobEntity[]>;
     findStaleProcessingSystemScope(cutoff: Date, limit?: number): Promise<MessageTriggerJobEntity[]>;
     findUpcomingPendingByBranch(
@@ -26,6 +31,15 @@ export interface IMessageTriggerJobRepository {
     findTerminalByBranch(
         branchId: string,
         limit?: number,
+    ): Promise<MessageTriggerJobEntity[]>;
+    /**
+     * Read current failed/canceled history in the same immutable tuple order
+     * as message logs. The application cutoff fences immutable createdAt only;
+     * current status is intentionally read as of each request.
+     */
+    findHistoryPageByBranch(
+        branchId: string,
+        query: MessageHistoryPageQuery,
     ): Promise<MessageTriggerJobEntity[]>;
     /**
      * Terminal (failed or canceled) jobs for a branch whose terminal
@@ -55,6 +69,8 @@ export interface IMessageTriggerJobRepository {
     /** Whether a rule still has active jobs persisted before its current version fence. */
     hasActiveJobsBefore(branchId: string, ruleId: string, before: Date): Promise<boolean>;
     findPendingByRuleIdsAndClientId(ruleIds: string[], clientId: number): Promise<MessageTriggerJobEntity[]>;
+    /** Bounded, ordered read of actual automation generations, including terminal dedupe rows. */
+    findForClientAutomationReview(branchId: string, clientId: number, ruleIds: string[], transaction?: Prisma.TransactionClient): Promise<MessageTriggerJobReviewSnapshot[]>;
     findPendingByRuleIdsAndEmployeeScheduleId(
         ruleIds: string[],
         employeeScheduleId: number,
@@ -86,6 +102,7 @@ export interface IMessageTriggerJobRepository {
         markerId: string,
         expectedClaimVersion: string,
         job: MessageTriggerJobEntity,
+        transaction?: Prisma.TransactionClient,
     ): Promise<MessageTriggerJobEntity | null>;
     /**
      * Cancel mutable pending jobs only while the branch-scoped rule is at the
@@ -99,6 +116,7 @@ export interface IMessageTriggerJobRepository {
         expectedJobsStale: boolean,
         reason: string,
         scope?: MessageTriggerJobCancellationScope,
+        transaction?: Prisma.TransactionClient,
     ): Promise<number | null>;
     upsertPending(job: MessageTriggerJobEntity): Promise<MessageTriggerJobEntity>;
     /**
@@ -111,6 +129,7 @@ export interface IMessageTriggerJobRepository {
         expectedUpdatedAt: Date,
         expectedJobsStale: boolean,
         preserveExisting?: boolean,
+        transaction?: Prisma.TransactionClient,
     ): Promise<MessageTriggerJobEntity | null>;
     /**
      * Lock and compare a rejected source job, then create the action-bound

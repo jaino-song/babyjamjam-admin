@@ -5,12 +5,13 @@ import {
     Inject,
     Injectable,
     NotFoundException,
+    Optional,
 } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
 import { createHash, randomUUID } from "node:crypto";
 import { Cron, CronExpression } from "@nestjs/schedule";
 
-import type { AgentActionRisk, AgentActionStatus } from "@babyjamjam/shared";
+import type { AgentActionRisk, AgentActionStatus, AgentCapabilityMeta } from "@babyjamjam/shared";
 import type { BjjUIMessage } from "@babyjamjam/shared";
 import type { AgentActionEntity, AgentActionOwner } from "domain/entities/agent-action.entity";
 import { AGENT_ACTION_REPOSITORY, type IAgentActionRepository } from "domain/repositories/agent-action.repository.interface";
@@ -22,7 +23,14 @@ import { AgentFlagsService } from "./agent-flags.service";
 import { AgentActionSweepLockService } from "infrastructure/locking/agent-action-sweep-lock.service";
 import { AgentSessionService } from "./agent-session.service";
 import { SchedulerLeaseService } from "application/services/scheduler-lease.service";
+import type { AgentTaskEntity } from "domain/entities/agent-task.entity";
+import { AGENT_TASK_REPOSITORY, type IAgentTaskRepository } from "domain/repositories/agent-task.repository.interface";
+import { agentBindingHash, agentTaskSourceHash, agentLinkedProposalRevision, type PreparedAgentTaskReview, type AgentLinkedActionRecoveryOutcome } from "domain/repositories/agent-linked-action.types";
+import type { AgentTaskReviewPort } from "./agent-task-review.port";
 import type { AgentReconciliationOutcome } from "./capability.types";
+import { canonicalTaskAutomationImpact, prepareTaskAutomationArtifact, TASK_AUTOMATION_ARTIFACT_KEY,
+    taskAutomationEffectiveMeta, taskAutomationFromAction, taskAutomationPublicSummary,
+    type AgentTaskAutomationArtifact } from "./agent-task-automation-artifact";
 
 const APPROVAL_PENDING_STATUSES: AgentActionStatus[] = ["proposed", "approved"];
 const TERMINAL_STATUSES: AgentActionStatus[] = ["succeeded", "failed", "uncertain", "rejected", "expired", "cancelled"];
@@ -115,6 +123,8 @@ function toEntity(record: ActionRecord): AgentActionEntity {
     return {
         id: record.id,
         sessionId: record.sessionId,
+        taskId: record.taskId ?? null,
+        taskRevision: record.taskRevision ?? null,
         userId: record.userId,
         branchId: record.branchId,
         capability: record.capability,
@@ -146,7 +156,7 @@ function toEntity(record: ActionRecord): AgentActionEntity {
 }
 
 @Injectable()
-export class ActionCoordinatorService {
+export class ActionCoordinatorService implements AgentTaskReviewPort {
     constructor(
         private readonly prisma: PrismaService,
         private readonly registry: CapabilityRegistryService,
@@ -155,7 +165,102 @@ export class ActionCoordinatorService {
         private readonly sessions: AgentSessionService,
         @Inject(AGENT_ACTION_REPOSITORY) private readonly actionRepository: IAgentActionRepository,
         private readonly schedulerLease: SchedulerLeaseService,
+        @Optional() @Inject(AGENT_TASK_REPOSITORY) private readonly tasks?: IAgentTaskRepository,
     ) {}
+
+    async prepareTaskReview(task: AgentTaskEntity, principal: VerifiedTenantPrincipal): Promise<PreparedAgentTaskReview> {
+        if (task.userId !== principal.userId || task.branchId !== principal.branchId) throw new NotFoundException("Agent task not found");
+        await this.sessions.assertActive(task.sessionId, principal);
+        const capability = this.registry.get(task.capabilityId);
+        if (!capability.meta.sideEffect || capability.meta.risk === "read"
+            || !await this.flags.isCapabilityEnabled(capability.meta, principal)) throw new ForbiddenException("Capability disabled");
+        const target = task.draft.server.references.target;
+        if (task.capabilityId === "clients.update" && (!target || !task.targetVersion || target.targetRef !== task.targetRef)) {
+            throw new ConflictException("Task target requires confirmation");
+        }
+        const rawInput = {
+            ...task.draft.confirmed,
+            ...Object.fromEntries(task.draft.clearedFields.map((field) => [field, null])),
+            ...(task.capabilityId === "clients.update" ? { id: target!.clientId, targetVersion: task.targetVersion } : {}),
+        };
+        const traceId = randomUUID();
+        const context = { principal, sessionId: task.sessionId, traceId, locale: "ko" };
+        const parsed = capability.inputSchema.parse(rawInput);
+        const normalized = capability.canonicalizeInput
+            ? capability.inputSchema.parse(await capability.canonicalizeInput(context, parsed)) : parsed;
+        const inspection = await capability.inspect?.(context, normalized);
+        if (task.capabilityId === "clients.update" && inspection?.targetVersion !== task.targetVersion) {
+            throw new ConflictException("Task target changed; confirm the target again");
+        }
+        const id = randomUUID();
+        let taskAutomation: AgentTaskAutomationArtifact | undefined;
+        if (capability.planAutomationImpact || task.draft.server.automation) {
+            try {
+                if (!capability.planAutomationImpact) throw new Error("Missing automation planner");
+                taskAutomation = prepareTaskAutomationArtifact(task, id, normalized,
+                    await capability.planAutomationImpact(context, normalized, task.taskId));
+            } catch {
+                throw new ConflictException("Automation changed; review the latest task question");
+            }
+        }
+        const effectiveMeta = taskAutomation ? taskAutomationEffectiveMeta(capability.meta, taskAutomation) : capability.meta;
+        if (!await this.flags.isCapabilityEnabled(effectiveMeta, principal)) throw new ForbiddenException("Capability disabled");
+        const proposal = {
+            capability: task.capabilityId, title: inspection?.title ?? capability.meta.description,
+            summary: inspection?.summary ?? capability.meta.description, input: normalized,
+            targetSnapshot: inspection?.targetSnapshot ?? null, targetVersion: inspection?.targetVersion ?? null,
+            provider: inspection?.provider ?? null, estimatedCost: inspection?.estimatedCost ?? null, locale: "ko",
+            ...(taskAutomation ? { [TASK_AUTOMATION_ARTIFACT_KEY]: taskAutomation, automation: taskAutomationPublicSummary(taskAutomation) } : {}),
+        };
+        const inputHash = agentBindingHash(normalized);
+        const reviewedRevision = task.revision + 1;
+        const proposalRevision = agentLinkedProposalRevision(task.taskId, reviewedRevision,
+            { capability: task.capabilityId, capabilityVersion: capability.meta.version, risk: effectiveMeta.risk, proposal });
+        const now = new Date();
+        return structuredClone({ taskId: task.taskId, sourceRevision: task.revision, sourceHash: agentTaskSourceHash(task),
+            action: { id, sessionId: task.sessionId, userId: task.userId, branchId: task.branchId,
+                capability: task.capabilityId, capabilityVersion: capability.meta.version, risk: effectiveMeta.risk,
+                proposal, proposalRevision, inputHash, targetSnapshot: proposal.targetSnapshot, targetVersion: proposal.targetVersion,
+                authorizationContext: { userId: principal.userId, branchId: principal.branchId, globalRole: principal.globalRole,
+                    branchRole: principal.branchRole, traceId, approvalPolicy: effectiveMeta.approvalPolicy },
+                expiresAt: new Date(now.getTime() + DEFAULT_ACTION_TTL_MS), idempotencyKey: `agent-action:${id}`,
+                requestDedupeKey: agentBindingHash({ sessionId: task.sessionId, taskId: task.taskId, reviewedRevision, inputHash }),
+                dedupeExpiresAt: new Date(now.getTime() + REQUEST_DEDUPE_WINDOW_MS) } });
+    }
+
+    private async claimLinkedAction(action: AgentActionEntity, principal: VerifiedTenantPrincipal,
+        effectiveMeta: AgentCapabilityMeta, acknowledgementToken?: string): Promise<boolean> {
+        if (!this.tasks || !action.taskId || !action.taskRevision) throw new ConflictException("Task action binding unavailable");
+        const capability = this.registry.get(action.capability);
+        const evidence = {
+            actionId: action.id, taskId: action.taskId, taskRevision: action.taskRevision,
+            proposalRevision: action.proposalRevision, inputHash: action.inputHash,
+            targetHash: agentBindingHash({ snapshot: action.targetSnapshot, version: action.targetVersion }),
+            capability: action.capability, capabilityVersion: capability.meta.version, risk: effectiveMeta.risk,
+            acknowledgement: effectiveMeta.approvalPolicy === "strong" ? { token: acknowledgementToken ?? "" } : "standard" as const,
+            actorId: principal.userId,
+        };
+        const result = await this.tasks.withTransaction({ sessionId: action.sessionId, userId: principal.userId, branchId: principal.branchId }, async (tx) => {
+            if ((await tx.lockSession()).status !== "locked") return { status: "state_conflict" as const };
+            if ((await tx.lockTask(action.taskId!)).status !== "locked") return { status: "state_conflict" as const };
+            return tx.applyLinkedAction({ kind: "claim-execution", evidence, transitionAt: new Date() });
+        });
+        if (result.status !== "ok" || !["applied", "already_applied"].includes(result.value.status)) {
+            throw new ConflictException("Task or review changed; review the latest task");
+        }
+        return result.value.status === "applied";
+    }
+
+    private async recoverLinkedAction(action: AgentActionEntity, outcome: AgentLinkedActionRecoveryOutcome): Promise<AgentActionEntity | null> {
+        if (!this.tasks || !action.taskId) throw new ConflictException("Task action binding unavailable");
+        const result = await this.tasks.withLinkedActionRecoveryTransaction({
+            userId: action.userId, branchId: action.branchId, sessionId: action.sessionId, taskId: action.taskId, actionId: action.id,
+        }, (tx) => tx.applyOutcome(outcome));
+        if (result.status !== "ok") throw new ConflictException("Task action recovery unavailable");
+        if (result.value.status === "applied") return result.value.action;
+        if (result.value.status === "already_applied" || result.value.status === "state_conflict") return null;
+        throw new ConflictException("Task action recovery binding mismatch");
+    }
 
     async propose(input: AgentActionProposalInput): Promise<AgentActionEntity> {
         await this.sessions.assertActive(input.sessionId, {
@@ -375,6 +480,28 @@ export class ActionCoordinatorService {
         return records.map(toEntity);
     }
 
+    /** Owned UI projection. Execution receipts and private consent recipes never cross REST. */
+    publicAction(action: AgentActionEntity) {
+        const proposalKeys = ["capability", "title", "summary", "input", "targetSnapshot", "targetVersion", "provider", "estimatedCost", "locale", "automation"];
+        const authorizationKeys = ["userId", "branchId", "globalRole", "branchRole", "traceId", "approvalPolicy"];
+        return { ...action,
+            proposal: Object.fromEntries(proposalKeys.filter((key) => key in action.proposal).map((key) => [key, action.proposal[key]])),
+            authorizationContext: Object.fromEntries(authorizationKeys.filter((key) => key in action.authorizationContext)
+                .map((key) => [key, action.authorizationContext[key]])),
+            ...(action.authorizationContext["approvalPolicy"] === "strong" && APPROVAL_PENDING_STATUSES.includes(action.status)
+                ? { acknowledgementToken: this.strongAcknowledgementToken(action) } : {}),
+        };
+    }
+
+    private automationForAction(action: AgentActionEntity): AgentTaskAutomationArtifact | undefined {
+        const capability = this.registry.get(action.capability);
+        const present = TASK_AUTOMATION_ARTIFACT_KEY in action.proposal;
+        if (!present && (!action.taskId || !capability.planAutomationImpact)) return undefined;
+        const artifact = taskAutomationFromAction(action, capability.meta);
+        if (!artifact || !capability.planAutomationImpact) throw new ConflictException("Task automation binding changed; create a new review");
+        return artifact;
+    }
+
     async approve(
         id: string,
         principal: VerifiedTenantPrincipal,
@@ -383,10 +510,12 @@ export class ActionCoordinatorService {
     ): Promise<AgentActionExecutionResult> {
         const owner = { userId: principal.userId, branchId: principal.branchId };
         const action = await this.get(id, owner);
+        if (action.taskId && action.status === "executing") return { action, result: action.result };
         if (TERMINAL_STATUSES.includes(action.status)) {
             await this.persistResultPart(action.id, action, action.status as Parameters<ActionCoordinatorService["persistResultPart"]>[2]);
             return { action, result: action.result };
         }
+        if ((action.taskId == null) !== (action.taskRevision == null)) throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
         if (!["proposed", "approved"].includes(action.status)) throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
         if (action.expiresAt.getTime() <= Date.now()) {
             await this.expire(id, owner);
@@ -404,11 +533,14 @@ export class ActionCoordinatorService {
         if (hasTargetVersion && !capability.executeApprovedTarget) {
             throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
         }
-        if (capability.meta.approvalPolicy === "strong"
+        const taskAutomation = this.automationForAction(action);
+        const effectiveMeta = taskAutomation ? taskAutomationEffectiveMeta(capability.meta, taskAutomation) : capability.meta;
+        if (effectiveMeta.approvalPolicy === "strong"
             && acknowledgementToken !== this.strongAcknowledgementToken(action)) {
             throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
         }
-        if (!await this.flags.isCapabilityEnabled(capability.meta, principal)) {
+        if (!await this.flags.isCapabilityEnabled(capability.meta, principal)
+            || !await this.flags.isCapabilityEnabled(effectiveMeta, principal)) {
             throw new ForbiddenException(codeOnlyProblemBody("ACCESS_DENIED"));
         }
         const proposal = jsonObject(action.proposal);
@@ -422,7 +554,17 @@ export class ActionCoordinatorService {
             locale: typeof proposal["locale"] === "string" ? proposal["locale"] : "ko",
             ...(hasTargetVersion ? { approvedTargetVersion: targetVersion } : {}),
             ...(action.targetSnapshot ? { approvedTargetSnapshot: action.targetSnapshot } : {}),
+            ...(taskAutomation ? { taskAutomation } : {}),
         };
+        if (taskAutomation) {
+            try {
+                const current = canonicalTaskAutomationImpact(await capability.planAutomationImpact!(actionContext,
+                    capability.inputSchema.parse(proposal["input"]), taskAutomation.taskId));
+                if (agentBindingHash(current) !== agentBindingHash(taskAutomation.impact)) throw new Error("Changed automation impact");
+            } catch {
+                throw new ConflictException("Automation changed; review the latest task question");
+            }
+        }
         if (hasTargetVersion) {
             if (!capability.revalidate) {
                 throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
@@ -434,6 +576,13 @@ export class ActionCoordinatorService {
                 throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
             }
         }
+        if (action.taskId) {
+            if (action.inputHash !== agentBindingHash(proposal["input"])) throw new ConflictException("Action input changed");
+            if (!await this.claimLinkedAction(action, principal, effectiveMeta, acknowledgementToken)) {
+                const latest = await this.get(id, owner);
+                return { action: latest, result: latest.result };
+            }
+        } else {
         if (action.status === "proposed") {
             const approved = await this.prisma.agent_action.updateMany({
                 where: { id, ...owner, status: "proposed", expiresAt: { gt: new Date() } },
@@ -453,6 +602,8 @@ export class ActionCoordinatorService {
             const latest = await this.get(id, owner);
             if (TERMINAL_STATUSES.includes(latest.status)) return { action: latest, result: latest.result };
             throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
+        }
+
         }
 
         let providerResult: unknown;
@@ -542,16 +693,13 @@ export class ActionCoordinatorService {
             // The provider already returned after it may have committed a side effect.
             // Never rewrite that outcome as a certain failure.
             try {
-                await this.prisma.agent_action.updateMany({
-                    where: { id, ...owner, status: "executing" },
-                    data: {
+                await this.transitionExecuting(id, owner, {
                         status: "uncertain",
                         error: {
                             code: "terminal_state_persistence_failed",
                             message: "Execution completed but its terminal state could not be recorded; reconcile before retrying",
                         },
                         executedAt: new Date(),
-                    },
                 });
             } catch {
                 // The expiry sweep will move a stranded executing row to uncertain.
@@ -575,6 +723,19 @@ export class ActionCoordinatorService {
         owner: AgentActionOwner,
         data: Prisma.agent_actionUpdateManyMutationInput,
     ): Promise<AgentActionEntity | null> {
+        const action = await this.get(id, owner);
+        if (action.taskId) {
+            const status = data.status;
+            if (status !== "uncertain" && status !== "succeeded" && status !== "failed" && status !== "cancelled") {
+                throw new ConflictException("Invalid execution outcome");
+            }
+            return this.recoverLinkedAction(action, {
+                ...(status === "uncertain" ? { kind: "execution-uncertain" as const } : { kind: "execution-terminal" as const, status }),
+                transitionAt: data.executedAt instanceof Date ? data.executedAt : new Date(),
+                ...(data.result === undefined ? {} : { result: data.result }),
+                ...(data.error === undefined ? {} : { error: data.error === Prisma.JsonNull ? null : jsonObject(data.error) }),
+            });
+        }
         const updated = await this.prisma.agent_action.updateMany({
             where: { id, ...owner, status: "executing" },
             data,
@@ -584,6 +745,14 @@ export class ActionCoordinatorService {
 
     async reject(id: string, principal: VerifiedTenantPrincipal, reason?: string): Promise<AgentActionEntity> {
         const owner = { userId: principal.userId, branchId: principal.branchId };
+        const original = await this.get(id, owner);
+        if (original.taskId) {
+            const rejected = await this.recoverLinkedAction(original, { kind: "review-rejected", actorId: principal.userId, transitionAt: new Date(), reason });
+            const latest = rejected ?? await this.get(id, owner);
+            if (latest.status !== "rejected") throw new ConflictException("Action is no longer pending approval");
+            await this.persistResultPart(id, latest, "rejected");
+            return latest;
+        }
         const updated = await this.prisma.agent_action.updateMany({
             where: { id, ...owner, status: "proposed" },
             data: {
@@ -614,6 +783,11 @@ export class ActionCoordinatorService {
         const capability = this.registry.get(action.capability);
         if (!capability.reconcile) throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
         const proposal = jsonObject(action.proposal);
+        // Historical linked actions predate automation artifacts. Preserve their
+        // read-only result lookup, but never hand them to a newly added recovery
+        // writer without a stored automation artifact.
+        const legacyTaskRead = !!action.taskId && !(TASK_AUTOMATION_ARTIFACT_KEY in proposal) && !("automation" in proposal);
+        const taskAutomation = legacyTaskRead ? undefined : this.automationForAction(action);
         const actionContext = {
             principal,
             sessionId: action.sessionId,
@@ -622,9 +796,10 @@ export class ActionCoordinatorService {
                 ? action.authorizationContext["traceId"]
                 : randomUUID(),
             locale: typeof proposal["locale"] === "string" ? proposal["locale"] : "ko",
+            ...(taskAutomation ? { taskAutomation } : {}),
         };
         const uncertainty = action.error ? jsonObject(action.error["details"]) : null;
-        await capability.recover?.(actionContext, proposal["input"], uncertainty);
+        if (!legacyTaskRead) await capability.recover?.(actionContext, proposal["input"], uncertainty);
         const outcome = await capability.reconcile(actionContext, proposal["input"], uncertainty);
         if (outcome.status === "uncertain") return action;
         return this.applyReconciliationOutcome(action, capability, outcome);
@@ -643,6 +818,15 @@ export class ActionCoordinatorService {
             throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
         }
         const result = parsedResult?.success ? parsedResult.data : undefined;
+        if (action.taskId) {
+            const reconciled = await this.recoverLinkedAction(action, { kind: "reconciliation-terminal", status: outcome.status,
+                transitionAt: new Date(), result, error: outcome.status === "failed"
+                    ? { code: "provider_reconciled_failed", message: outcome.reason ?? "Provider reported failure" } : null });
+            const latest = reconciled ?? await this.get(action.id, owner);
+            if (TERMINAL_STATUSES.includes(latest.status)) await this.persistResultPart(latest.id, latest,
+                latest.status as Parameters<ActionCoordinatorService["persistResultPart"]>[2]);
+            return latest;
+        }
         const updated = await this.prisma.agent_action.updateMany({
             where: { id: action.id, ...owner, status: "uncertain" },
             data: {
@@ -671,7 +855,14 @@ export class ActionCoordinatorService {
         return reconciled;
     }
 
-    async expire(id: string, owner: AgentActionOwner): Promise<boolean> {
+    async expire(id: string, owner: AgentActionOwner, now = new Date()): Promise<boolean> {
+        const action = await this.get(id, owner);
+        if (action.taskId) {
+            const expired = await this.recoverLinkedAction(action, { kind: "review-expired", transitionAt: now, deadline: now });
+            if (!expired) return false;
+            await this.persistResultPart(id, expired, "expired");
+            return true;
+        }
         const updated = await this.prisma.agent_action.updateMany({
             where: { id, ...owner, status: { in: APPROVAL_PENDING_STATUSES }, expiresAt: { lte: new Date() } },
             data: { status: "expired" },
@@ -691,6 +882,10 @@ export class ActionCoordinatorService {
         let expiredCount = 0;
         for (const candidate of candidates) {
             const owner = { userId: candidate.userId, branchId: candidate.branchId };
+            if (candidate.taskId) {
+                if (await this.expire(candidate.id, owner, now)) expiredCount += 1;
+                continue;
+            }
             const updated = await this.prisma.agent_action.updateMany({
                 where: { id: candidate.id, ...owner, status: { in: APPROVAL_PENDING_STATUSES }, expiresAt: { lte: now } },
                 data: { status: "expired" },
@@ -708,6 +903,12 @@ export class ActionCoordinatorService {
         });
         for (const candidate of interrupted) {
             const owner = { userId: candidate.userId, branchId: candidate.branchId };
+            if (candidate.taskId) {
+                const uncertain = await this.recoverLinkedAction(toEntity(candidate), { kind: "stale-execution", transitionAt: now,
+                    observedUpdatedAt: candidate.updatedAt, cutoff: executionCutoff });
+                if (uncertain) { await this.persistResultPart(uncertain.id, uncertain, "uncertain"); expiredCount += 1; }
+                continue;
+            }
             const updated = await this.prisma.agent_action.updateMany({
                 where: { id: candidate.id, ...owner, status: "executing", updatedAt: { lte: executionCutoff } },
                 data: {
@@ -854,7 +1055,7 @@ export class ActionCoordinatorService {
                     status,
                     summary,
                     completedAt: new Date().toISOString(),
-                    ...(action.result && typeof action.result === "object" && !Array.isArray(action.result)
+                    ...(!action.taskId && action.result && typeof action.result === "object" && !Array.isArray(action.result)
                         ? { result: action.result }
                         : {}),
                 },
@@ -863,6 +1064,13 @@ export class ActionCoordinatorService {
         const owner = { userId: action.userId, branchId: action.branchId };
         const persisted = await this.sessions.upsertActionResultMessage(action.sessionId, owner, message);
         if (persisted === false) throw new Error("Agent action result message was not persisted");
+        if (action.taskId) {
+            if (!this.tasks) throw new ConflictException("Task action recovery unavailable");
+            const marked = await this.tasks.withLinkedActionRecoveryTransaction({ ...owner, sessionId: action.sessionId,
+                taskId: action.taskId, actionId }, (tx) => tx.markResultPartPersisted({ expectedStatus: status, persistedAt: new Date() }));
+            if (marked.status !== "ok" || !marked.value) throw new ConflictException("Task result persistence raced with another outcome");
+            return;
+        }
         await this.prisma.agent_action.updateMany({
             where: { id: actionId, ...owner, resultPartPersistedAt: null },
             data: { resultPartPersistedAt: new Date() },

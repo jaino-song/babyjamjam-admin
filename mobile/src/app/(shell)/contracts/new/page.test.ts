@@ -3,6 +3,7 @@ import { createProblemDetails } from "@babyjamjam/shared";
 
 import {
   buildContractSubmissionAlert,
+  buildHeadlessProviderFailureAlert,
   canUseContractIframeFallback,
   focusContractValidationErrors,
   isHeadlessSuccessResponse,
@@ -12,6 +13,29 @@ import {
 const source = fs.readFileSync(require.resolve("./page"), "utf8");
 
 describe("mobile contract creation compensation flow", () => {
+  it.each([
+    "template_workflow_config_invalid",
+    "template_workflow_unsupported",
+    "template_workflow_config_unavailable",
+  ] as const)("maps %s to an unlocked, actionable pre-send failure", (reason) => {
+    const alert = buildHeadlessProviderFailureAlert(reason);
+
+    expect(alert).toMatchObject({
+      title: "계약서 생성을 처리하지 못했어요",
+      outcome: "FAILED",
+      locked: false,
+      verified: false,
+    });
+    expect(alert?.message).toMatch(/^이번 요청에서 계약서를 발송하지 않았어요\./);
+    expect(alert?.message).toContain("입력한 고객 정보와 날짜는 그대로 남아 있어요.");
+    expect(alert?.message).toContain("다시 시도해 주세요.");
+  });
+
+  it("does not trust an unrecognized or malformed headless reason", () => {
+    expect(buildHeadlessProviderFailureAlert("template_workflow_config_invalid ")).toBeNull();
+    expect(buildHeadlessProviderFailureAlert({ reason: "template_workflow_config_invalid" })).toBeNull();
+  });
+
   it("does not navigate after adoption leaves the local mirror incomplete", () => {
     const branch = source.slice(
       source.indexOf('headless.reason === "local_persist_failed"'),

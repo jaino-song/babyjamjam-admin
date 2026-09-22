@@ -162,7 +162,7 @@ describe("UpdateEmployeeScheduleUsecase", () => {
 
         expect(error).toBeInstanceOf(BadRequestException);
         expect((error as BadRequestException).getResponse()).toMatchObject({
-            code: "EMPLOYEE_ASSIGNMENT_NOT_ELIGIBLE",
+            code: "EMPLOYEE_ASSIGNMENT_UNAVAILABLE",
         });
         expect(repository.update).not.toHaveBeenCalled();
     });

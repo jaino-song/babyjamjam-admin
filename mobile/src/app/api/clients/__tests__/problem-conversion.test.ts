@@ -231,23 +231,36 @@ describe("clients BFF problem conversion (BJJ-319 6.1e)", () => {
         expect(JSON.stringify(body)).not.toContain("/tmp/clients");
     });
 
-    it("keeps the check-phone degraded contract without leaking backend details", async () => {
-        mockGet.mockRejectedValue(new Error("backend unavailable"));
-
-        const response = await checkPhone(request("/api/clients/check-phone?phone=01012345678"));
-
-        expect(response.status).toBe(200);
-        await expect(response.json()).resolves.toEqual({ exists: false });
-    });
-
-    it("keeps the check-phone success shape", async () => {
-        mockGet.mockResolvedValue({
-            status: 200,
-            data: { data: [{ phone: "010-1234-5678" }], total: 1, page: 1, limit: 500 },
+    // dev sync: the route now uses the dedicated /clients/check-phone endpoint
+    // (dev commit 185c2bc58); the failure contract is a sanitized 502 rather
+    // than the old pagination loop's fail-open 200.
+    it("surfaces a sanitized 502 when the dedicated check-phone endpoint fails", async () => {
+        mockGet.mockRejectedValue({
+            response: {
+                status: 502,
+                data: { message: "database host clients-db.internal returned SELECT * FROM Client" },
+            },
         });
 
         const response = await checkPhone(request("/api/clients/check-phone?phone=01012345678"));
 
+        expect(response.status).toBe(502);
+        const body = await response.json();
+        expect(typeof body.error).toBe("string");
+        expect(body.error).toMatch(/[가-힣]/);
+        expect(JSON.stringify(body)).not.toContain("clients-db.internal");
+        expect(JSON.stringify(body)).not.toContain("SELECT * FROM Client");
+    });
+
+    it("keeps the check-phone success shape over the dedicated endpoint", async () => {
+        mockGet.mockResolvedValue({ status: 200, data: { exists: true } });
+
+        const response = await checkPhone(request("/api/clients/check-phone?phone=01012345678"));
+
+        expect(mockGet).toHaveBeenCalledWith("/clients/check-phone", {
+            params: { phone: "01012345678" },
+            headers: { Authorization: "Bearer auth-token" },
+        });
         expect(response.status).toBe(200);
         await expect(response.json()).resolves.toEqual({ exists: true });
     });

@@ -60,6 +60,7 @@ export function ChatInput({
             <Input
                 ref={inputRef}
                 type="text"
+                aria-label="질문 입력"
                 value={value}
                 onChange={(e) => setValue(e.target.value)}
                 onKeyDown={handleKeyDown}
@@ -78,6 +79,7 @@ export function ChatInput({
             <Button
                 variant="ghost"
                 size="icon"
+                aria-label="전송"
                 onClick={handleSubmit}
                 disabled={disabled || !value.trim()}
                 className={cn(

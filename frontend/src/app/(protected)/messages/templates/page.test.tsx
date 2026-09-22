@@ -3,6 +3,7 @@ import { fireEvent, render, screen, waitFor, within } from "@testing-library/rea
 import TemplatesPage from "./page";
 
 const mockDeleteMutateAsync = jest.fn();
+const mockUpdateMutate = jest.fn();
 const mockToast = jest.fn();
 
 jest.mock("@/features/message-templates/hooks/use-message-templates", () => ({
@@ -36,7 +37,7 @@ jest.mock("@/hooks/use-message-templates", () => ({
     isLoading: false,
   }),
   useUpdateMessageTemplate: () => ({
-    mutate: jest.fn(),
+    mutate: mockUpdateMutate,
     isPending: false,
   }),
 }));
@@ -112,6 +113,7 @@ jest.mock("@/components/ui/skeleton", () => ({
 describe("TemplatesPage deletion", () => {
   beforeEach(() => {
     mockDeleteMutateAsync.mockReset();
+    mockUpdateMutate.mockReset();
     mockToast.mockReset();
     mockDeleteMutateAsync.mockResolvedValue(undefined);
   });
@@ -157,6 +159,48 @@ describe("TemplatesPage deletion", () => {
           description: "지점 템플릿을 삭제하지 못했어요",
         }),
       ),
+    );
+  });
+
+  it("blocks whitespace-only saves, exposes independent Korean errors, and preserves input", () => {
+    render(<TemplatesPage />);
+    fireEvent.click(screen.getByRole("button", { name: "검수 템플릿" }));
+
+    const nameInput = screen.getByLabelText(/지점 템플릿 이름/);
+    const contentInput = screen.getByLabelText(/템플릿 내용/);
+    fireEvent.change(nameInput, { target: { value: " \t" } });
+    fireEvent.change(contentInput, { target: { value: "\n\t" } });
+    fireEvent.click(screen.getByRole("button", { name: "저장" }));
+
+    expect(mockUpdateMutate).not.toHaveBeenCalled();
+    expect(nameInput).toHaveValue(" \t");
+    expect(contentInput).toHaveValue("\n\t");
+    expect(screen.getByText("템플릿 이름은 공백 이외의 문자를 포함해야 합니다.")).toBeInTheDocument();
+    expect(screen.getByText("템플릿 내용은 공백 이외의 문자를 포함해야 합니다.")).toBeInTheDocument();
+    expect(screen.getByText("입력한 템플릿 이름과 내용을 확인해 주세요.")).toBeInTheDocument();
+
+    fireEvent.change(nameInput, { target: { value: "  유효한 이름  " } });
+
+    expect(screen.queryByText("템플릿 이름은 공백 이외의 문자를 포함해야 합니다.")).not.toBeInTheDocument();
+    expect(screen.getByText("템플릿 내용은 공백 이외의 문자를 포함해야 합니다.")).toBeInTheDocument();
+  });
+
+  it("sends valid multiline strings exactly as entered after local validation", () => {
+    render(<TemplatesPage />);
+    fireEvent.click(screen.getByRole("button", { name: "검수 템플릿" }));
+
+    const name = "  유효한 이름  ";
+    const content = "첫 줄\n둘째 줄\n\t셋째 줄  ";
+    fireEvent.change(screen.getByLabelText(/지점 템플릿 이름/), { target: { value: name } });
+    fireEvent.change(screen.getByLabelText(/템플릿 내용/), { target: { value: content } });
+    fireEvent.click(screen.getByRole("button", { name: "저장" }));
+
+    expect(mockUpdateMutate).toHaveBeenCalledWith(
+      {
+        id: "template-1",
+        request: { name, content, variables: [] },
+      },
+      expect.objectContaining({ onSuccess: expect.any(Function), onError: expect.any(Function) }),
     );
   });
 });

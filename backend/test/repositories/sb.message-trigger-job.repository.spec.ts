@@ -8,6 +8,8 @@ import {
     TRIGGER_JOB_MAX_ATTEMPTS,
     TRIGGER_JOB_RETRY_DELAY_MS,
 } from "domain/constants/message-automation-policy";
+import { AGENT_AUTOMATION_RECORD_DEDUPE_PREFIX, AGENT_AUTOMATION_RECORD_PAYLOAD_KEY } from "domain/constants/agent-automation-storage";
+import { ordinaryAutomationJobWhere } from "application/utils/message-automation-record-sql";
 import { MESSAGE_AUTOMATION_INTENT_RULE_ID } from "domain/constants/message-automation-intent";
 import {
     SERVICE_RECORD_LINK_RULE_ID,
@@ -204,6 +206,23 @@ describe("SbMessageTriggerJobRepository", () => {
             },
         });
 
+    it.each(["rule", "dedupe", "payload"])("refuses reserved %s carriers without database access", async (carrier) => {
+        const job = createJob();
+        if (carrier === "rule") Object.assign(job, { ruleId: MESSAGE_AUTOMATION_INTENT_RULE_ID });
+        if (carrier === "dedupe") Object.assign(job, { dedupeKey: `${AGENT_AUTOMATION_RECORD_DEDUPE_PREFIX}synthetic` });
+        if (carrier === "payload") Object.assign(job.payload, { [AGENT_AUTOMATION_RECORD_PAYLOAD_KEY]: null });
+        for (const operation of [() => repository.create(job), () => repository.update(job), () => repository.upsertPending(job)]) {
+            await expect(operation()).rejects.toThrow("Internal automation records are not delivery jobs");
+        }
+        await expect(repository.upsertPendingForRuleGeneration(job, now, false)).resolves.toBeNull();
+        await expect(repository.promoteAutomaticSchedulingClaim("marker", now.toISOString(), job)).resolves.toBeNull();
+        await expect(repository.claimProviderRejectedForRetry("branch-1", job.id, "version", "snapshot", job, createJob())).resolves.toBeNull();
+        await expect(repository.claimProviderRejectedForRetry("branch-1", "source", "version", "snapshot", createJob(), job)).resolves.toBeNull();
+        expect(queryRaw).not.toHaveBeenCalled();
+        expect(prisma.$transaction).not.toHaveBeenCalled();
+        for (const method of Object.values(messageTriggerJobModel)) expect(method).not.toHaveBeenCalled();
+    });
+
     const targetVersion = (job: MessageTriggerJobEntity, snapshotHash: string): string => createHash("sha256").update(JSON.stringify({
         id: job.id,
         branchId: job.branchId,
@@ -260,6 +279,30 @@ describe("SbMessageTriggerJobRepository", () => {
         jest.useRealTimers();
     });
 
+    it("reads a bounded tenant/client/rule review snapshot with terminal rows and explicit cancellation intact", async () => {
+        messageTriggerJobModel.findMany.mockResolvedValue([
+            createRow({ id: "job-1", status: "sent" }),
+            createRow({ id: "job-2", status: "canceled", canceledByUser: true }),
+        ]);
+        const result = await repository.findForClientAutomationReview("branch-1", 1, ["rule-1"]);
+        expect(messageTriggerJobModel.findMany).toHaveBeenCalledWith({
+            where: { ...ordinaryAutomationJobWhere(), branchId: "branch-1", clientId: 1, ruleId: { in: ["rule-1"] } },
+            orderBy: { id: "asc" }, take: 501,
+        });
+        expect(result).toEqual([
+            expect.objectContaining({ id: "job-1", status: "sent", canceledByUser: false }),
+            expect.objectContaining({ id: "job-2", status: "canceled", canceledByUser: true }),
+        ]);
+        expect(messageTriggerJobModel.updateMany).not.toHaveBeenCalled();
+        expect(messageTriggerJobModel.create).not.toHaveBeenCalled();
+        expect(prisma.$transaction).not.toHaveBeenCalled();
+    });
+
+    it("does not broaden an empty rule set into a customer history query", async () => {
+        expect(await repository.findForClientAutomationReview("branch-1", 1, [])).toEqual([]);
+        expect(messageTriggerJobModel.findMany).not.toHaveBeenCalled();
+    });
+
     it("claimPendingWithRuleFence atomically locks the rule and claims the pending job", async () => {
         queryRaw.mockResolvedValueOnce([{ id: "job-1", claim_token: "claim-a" }]);
 
@@ -294,7 +337,7 @@ describe("SbMessageTriggerJobRepository", () => {
         const result = await repository.update(staleAttempt);
 
         expect(messageTriggerJobModel.updateMany).toHaveBeenCalledWith({
-            where: { id: staleAttempt.id, claimToken: "claim-a", branchId: "branch-1" },
+            where: { ...ordinaryAutomationJobWhere(), id: staleAttempt.id, claimToken: "claim-a", branchId: "branch-1" },
             data: expect.objectContaining({ claimToken: "claim-a" }),
         });
         expect(messageTriggerJobModel.update).not.toHaveBeenCalled();
@@ -318,7 +361,7 @@ describe("SbMessageTriggerJobRepository", () => {
         await expect(repository.hasActiveJobsBefore("branch-1", "rule-1", now)).resolves.toBe(true);
         await expect(repository.hasActiveJobsBefore("branch-1", "rule-1", now)).resolves.toBe(false);
         expect(messageTriggerJobModel.findFirst).toHaveBeenCalledWith({
-            where: {
+            where: { ...ordinaryAutomationJobWhere(),
                 branchId: "branch-1",
                 ruleId: "rule-1",
                 status: { in: ["pending", "processing", "dispatching"] },
@@ -334,7 +377,7 @@ describe("SbMessageTriggerJobRepository", () => {
         await repository.findDuePendingSystemScope(25);
 
         expect(messageTriggerJobModel.findMany).toHaveBeenCalledWith({
-            where: {
+            where: { ...ordinaryAutomationJobWhere(),
                 status: "pending",
                 scheduledFor: { lte: now },
                 OR: [{ nextAttemptAt: null }, { nextAttemptAt: { lte: now } }],
@@ -353,7 +396,7 @@ describe("SbMessageTriggerJobRepository", () => {
         await repository.findUpcomingPendingByBranch("branch-1", 25);
 
         expect(messageTriggerJobModel.findMany).toHaveBeenCalledWith({
-            where: {
+            where: { ...ordinaryAutomationJobWhere(),
                 branchId: "branch-1",
                 status: { in: ["pending", "processing", "dispatching"] },
             },
@@ -368,7 +411,7 @@ describe("SbMessageTriggerJobRepository", () => {
         await repository.findTerminalByBranch("branch-1", 25);
 
         expect(messageTriggerJobModel.findMany).toHaveBeenCalledWith({
-            where: {
+            where: { ...ordinaryAutomationJobWhere(),
                 branchId: "branch-1",
                 ruleId: { not: MESSAGE_AUTOMATION_INTENT_RULE_ID },
                 status: { in: ["failed", "canceled"] },
@@ -447,7 +490,7 @@ describe("SbMessageTriggerJobRepository", () => {
             repository.countRecentUndeliveredByBranch("branch-1", since, until),
         ).resolves.toBe(73);
         expect(messageTriggerJobModel.count).toHaveBeenCalledWith({
-            where: {
+            where: { ...ordinaryAutomationJobWhere(),
                 branchId: "branch-1",
                 ruleId: { not: MESSAGE_AUTOMATION_INTENT_RULE_ID },
                 canceledByUser: false,
@@ -465,12 +508,37 @@ describe("SbMessageTriggerJobRepository", () => {
         await repository.findHistoryByBranch("branch-1", 25);
 
         expect(messageTriggerJobModel.findMany).toHaveBeenCalledWith({
-            where: {
+            where: { ...ordinaryAutomationJobWhere(),
                 branchId: "branch-1",
                 ruleId: { not: MESSAGE_AUTOMATION_INTENT_RULE_ID },
             },
             orderBy: [{ updatedAt: "desc" }, { id: "desc" }],
             take: 25,
+        });
+    });
+
+    it("findHistoryPageByBranch uses current terminal status, UUID ordering, and cutoff log suppression", async () => {
+        messageTriggerJobModel.findMany.mockResolvedValue([]);
+        const snapshotAt = new Date("2026-07-09T00:00:00.123Z");
+        const afterId = "00000000-0000-4000-8000-000000000042";
+
+        await repository.findHistoryPageByBranch("branch-1", {
+            snapshotAt,
+            after: { source: "job", nativeId: afterId },
+            limit: 11,
+        });
+
+        expect(messageTriggerJobModel.findMany).toHaveBeenCalledWith({
+            where: {
+                branchId: "branch-1",
+                ruleId: { not: MESSAGE_AUTOMATION_INTENT_RULE_ID },
+                status: { in: ["failed", "canceled"] },
+                logs: { none: { branchId: "branch-1", createdAt: { lte: snapshotAt } } },
+                createdAt: { lte: snapshotAt },
+                AND: [{ id: { lt: afterId } }],
+            },
+            orderBy: { id: "desc" },
+            take: 11,
         });
     });
 
@@ -496,10 +564,10 @@ describe("SbMessageTriggerJobRepository", () => {
         const normalizedSqlText = sqlText.replace(/\s+/g, " ");
         expect(normalizedSqlText).toContain('ON CONFLICT ("dedupe_key") DO UPDATE SET');
         expect(normalizedSqlText).toContain(
-            'WHERE "message_trigger_job"."status" IN (\'pending\', \'canceled\')',
+            'AND "message_trigger_job"."status" IN (\'pending\', \'canceled\')',
         );
         expect(messageTriggerJobModel.findUnique).toHaveBeenCalledWith({
-            where: { dedupeKey: "rule-1:client:1" },
+            where: { ...ordinaryAutomationJobWhere(), dedupeKey: "rule-1:client:1" },
         });
         expect(result.status).toBe("sent");
         expect(result.attempts).toBe(2);
@@ -537,7 +605,7 @@ describe("SbMessageTriggerJobRepository", () => {
         expect(result.updatedAt).toEqual(rebuiltAt);
         const sqlText = getSqlText(queryRaw.mock.calls[0][0]).replace(/\s+/g, " ");
         expect(sqlText).toContain("date_trunc('milliseconds', clock_timestamp())");
-        expect(sqlText).toContain('WHERE "message_trigger_job"."status" IN (\'pending\', \'canceled\')');
+        expect(sqlText).toContain('AND "message_trigger_job"."status" IN (\'pending\', \'canceled\')');
     });
 
     it("does not resurrect a failed same-dedupe job after its message-log retry path takes ownership", async () => {
@@ -554,7 +622,7 @@ describe("SbMessageTriggerJobRepository", () => {
         expect(result.attempts).toBe(1);
         const sqlText = getSqlText(queryRaw.mock.calls[0][0]).replace(/\s+/g, " ");
         expect(sqlText).toContain(
-            'WHERE "message_trigger_job"."status" IN (\'pending\', \'canceled\')',
+            'AND "message_trigger_job"."status" IN (\'pending\', \'canceled\')',
         );
     });
 
@@ -578,7 +646,7 @@ describe("SbMessageTriggerJobRepository", () => {
         // message-log retry path and must not become a second provider submission.
         const sqlText = getSqlText(queryRaw.mock.calls[0][0]).replace(/\s+/g, " ");
         expect(sqlText).toContain(
-            "WHERE \"message_trigger_job\".\"status\" IN ('pending', 'canceled') "
+            "AND \"message_trigger_job\".\"status\" IN ('pending', 'canceled') "
             + "AND NOT (\"message_trigger_job\".\"status\" = 'canceled' AND \"message_trigger_job\".\"canceled_by_user\" = true)",
         );
     });
@@ -766,7 +834,7 @@ describe("SbMessageTriggerJobRepository", () => {
         const sqlText = getSqlText(conflictQuery).replace(/\s+/g, " ");
         expect(sqlText).toContain('ON CONFLICT ("dedupe_key") DO UPDATE SET');
         expect(sqlText).toContain(
-            'WHERE "message_trigger_job"."status" = \'canceled\' '
+            'AND "message_trigger_job"."status" = \'canceled\' '
             + 'AND "message_trigger_job"."canceled_by_user" = false '
             + 'AND "message_trigger_job"."cancel_reason" =',
         );
@@ -974,7 +1042,7 @@ describe("SbMessageTriggerJobRepository", () => {
         const result = await repository.findSentByRuleIdAndEmployeeScheduleId("rule-employee", 77);
 
         expect(messageTriggerJobModel.findMany).toHaveBeenCalledWith({
-            where: {
+            where: { ...ordinaryAutomationJobWhere(),
                 ruleId: "rule-employee",
                 employeeScheduleId: 77,
                 status: "sent",
@@ -989,7 +1057,7 @@ describe("SbMessageTriggerJobRepository", () => {
         await expect(repository.cancelPendingByRuleId("rule-1", "rule disabled")).resolves.toBe(3);
 
         expect(messageTriggerJobModel.updateMany).toHaveBeenCalledWith({
-            where: { ruleId: "rule-1", status: { in: ["pending", "processing"] } },
+            where: { ...ordinaryAutomationJobWhere(), ruleId: "rule-1", status: { in: ["pending", "processing"] } },
             data: {
                 status: "canceled",
                 canceledAt: now,
@@ -1007,7 +1075,7 @@ describe("SbMessageTriggerJobRepository", () => {
         ).resolves.toBe(2);
 
         expect(messageTriggerJobModel.updateMany).toHaveBeenCalledWith({
-            where: {
+            where: { ...ordinaryAutomationJobWhere(),
                 branchId: "branch-1",
                 status: { in: ["pending", "processing"] },
                 OR: [
@@ -1032,7 +1100,7 @@ describe("SbMessageTriggerJobRepository", () => {
         ).resolves.toBe(2);
 
         expect(messageTriggerJobModel.updateMany).toHaveBeenCalledWith({
-            where: {
+            where: { ...ordinaryAutomationJobWhere(),
                 branchId: "branch-1",
                 status: { in: ["pending", "processing"] },
                 clientId: null,
@@ -1054,7 +1122,7 @@ describe("SbMessageTriggerJobRepository", () => {
         await repository.findRecoverableOrphanedClientJobs("branch-1", 25);
 
         expect(messageTriggerJobModel.findMany).toHaveBeenCalledWith({
-            where: {
+            where: { ...ordinaryAutomationJobWhere(),
                 branchId: "branch-1",
                 clientId: null,
                 employeeScheduleId: null,
@@ -1083,7 +1151,7 @@ describe("SbMessageTriggerJobRepository", () => {
         ).resolves.toBe(2);
 
         expect(messageTriggerJobModel.updateMany).toHaveBeenCalledWith({
-            where: {
+            where: { ...ordinaryAutomationJobWhere(),
                 id: { in: ["job-1", "job-2"] },
                 status: "canceled",
                 clientId: null,
@@ -1104,7 +1172,7 @@ describe("SbMessageTriggerJobRepository", () => {
         ).resolves.toBe(2);
 
         expect(messageTriggerJobModel.updateMany).toHaveBeenCalledWith({
-            where: {
+            where: { ...ordinaryAutomationJobWhere(),
                 ruleId: "rule-1",
                 status: { in: ["pending", "processing"] },
                 scheduledFor: { lt: cutoff },
@@ -1135,7 +1203,7 @@ describe("SbMessageTriggerJobRepository", () => {
         ).resolves.toBe(false);
 
         expect(messageTriggerJobModel.updateMany).toHaveBeenCalledWith({
-            where: { id: "job-1", branchId: "branch-1", status: { in: ["pending", "processing"] } },
+            where: { ...ordinaryAutomationJobWhere(), id: "job-1", branchId: "branch-1", status: { in: ["pending", "processing"] } },
             data: {
                 status: "canceled",
                 canceledAt: now,
@@ -1164,7 +1232,7 @@ describe("SbMessageTriggerJobRepository", () => {
         const result = await repository.findStaleProcessingSystemScope(cutoff, 10);
 
         expect(messageTriggerJobModel.findMany).toHaveBeenCalledWith({
-            where: {
+            where: { ...ordinaryAutomationJobWhere(),
                 status: { in: ["processing", "dispatching"] },
                 updatedAt: { lt: cutoff },
             },
@@ -1180,7 +1248,7 @@ describe("SbMessageTriggerJobRepository", () => {
         await expect(repository.findByIdInBranch("branch-1", "job-1")).resolves.toBeNull();
 
         expect(messageTriggerJobModel.findFirst).toHaveBeenCalledWith({
-            where: { id: "job-1", branchId: "branch-1" },
+            where: { ...ordinaryAutomationJobWhere(), id: "job-1", branchId: "branch-1" },
         });
     });
 
@@ -1202,11 +1270,11 @@ describe("SbMessageTriggerJobRepository", () => {
         await repository.update(job);
 
         expect(messageTriggerJobModel.updateMany).toHaveBeenCalledWith({
-            where: { id: job.id, claimToken: "claim-a", branchId: "branch-1" },
+            where: { ...ordinaryAutomationJobWhere(), id: job.id, claimToken: "claim-a", branchId: "branch-1" },
             data: expect.any(Object),
         });
         expect(messageTriggerJobModel.findUnique).toHaveBeenCalledWith({
-            where: { id: job.id, branchId: "branch-1" },
+            where: { ...ordinaryAutomationJobWhere(), id: job.id, branchId: "branch-1" },
         });
     });
 
@@ -1217,7 +1285,7 @@ describe("SbMessageTriggerJobRepository", () => {
         await repository.update(job);
 
         expect(messageTriggerJobModel.update).toHaveBeenCalledWith({
-            where: { id: job.id, branchId: "branch-1" },
+            where: { ...ordinaryAutomationJobWhere(), id: job.id, branchId: "branch-1" },
             data: expect.any(Object),
         });
     });
@@ -1231,7 +1299,7 @@ describe("SbMessageTriggerJobRepository", () => {
         await repository.update(job);
 
         expect(messageTriggerJobModel.update).toHaveBeenCalledWith({
-            where: { id: job.id },
+            where: { ...ordinaryAutomationJobWhere(), id: job.id },
             data: expect.any(Object),
         });
         expect(warnSpy).toHaveBeenCalledWith(

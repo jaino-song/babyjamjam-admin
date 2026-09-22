@@ -61,10 +61,20 @@ jest.mock("@/hooks/useEmployees", () => ({
     useEmployees: () => ({ data: [], isLoading: false }),
 }));
 
+// dev sync: the submit button now requires an area template for the selected
+// area (`isAreaTemplateSelectionValid`), mirroring the sibling iframe-fallback
+// test's fixture.
+const mockAreaTemplates = [{
+    id: "area-template-1",
+    areaId: "인천",
+    templateId: "template-1",
+    templateName: "인천 산모 계약서",
+}];
+
 jest.mock("@/hooks", () => ({
     useVoucherPriceInfos: () => ({ data: [], isLoading: false }),
     useVoucherYears: () => ({ data: [2026], isLoading: false }),
-    useAreaTemplates: () => ({ data: [], isLoading: false }),
+    useAreaTemplates: () => ({ data: mockAreaTemplates, isLoading: false }),
 }));
 
 jest.mock("@/lib/sse/reconnecting-event-source", () => ({

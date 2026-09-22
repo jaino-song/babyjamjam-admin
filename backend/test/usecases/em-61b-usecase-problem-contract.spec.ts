@@ -50,7 +50,7 @@ describe("BJJ-319 6.1b usecase problem contract", () => {
 
     it("get-version-content NotFound carries RESOURCE_NOT_FOUND", async () => {
         const usecase = new GetVersionContentUseCase({ getVersionByNumber: jest.fn().mockResolvedValue(null) } as never);
-        const body = await rejectedBody(usecase.execute(SystemTemplateKey.CLIENT_WELCOME, 3));
+        const body = await rejectedBody(usecase.execute(SystemTemplateKey.GREETING, 3));
         expect(body).toMatchObject({ code: "RESOURCE_NOT_FOUND" });
     });
 
@@ -58,7 +58,7 @@ describe("BJJ-319 6.1b usecase problem contract", () => {
         const repository = { getVersionByNumber: jest.fn().mockResolvedValue(null) } as never;
         const automationLock = { runExclusive: jest.fn(async (_key: unknown, work: (tx: never) => Promise<unknown>) => work({} as never)) } as never;
         const usecase = new RollbackToVersionUseCase(repository, { assertValid: jest.fn() } as never, automationLock);
-        const body = await rejectedBody(usecase.execute(SystemTemplateKey.CLIENT_WELCOME, 3, "user-a"));
+        const body = await rejectedBody(usecase.execute(SystemTemplateKey.GREETING, 3, "user-a"));
         expect(body).toMatchObject({ code: "RESOURCE_NOT_FOUND" });
     });
 

@@ -50,14 +50,6 @@ const MANUAL_BUILTIN_TYPE_BY_TEMPLATE_KEY: Readonly<Record<string, LegacyBuiltin
   SERVICE_END_NOTICE: "service-end-notice",
 };
 
-/** Automation-only rows remain visible for editing but cannot be manually sent. */
-export const RETIRED_MANUAL_TEMPLATE_KEYS = new Set([
-  "CLIENT_WELCOME",
-  "SERVICE_START_REMINDER",
-  "SERVICE_END_REMINDER",
-  "EMPLOYEE_ASSIGNED",
-]);
-
 const LEGACY_ID_BY_KEY = new Map<string, string>(Object.entries(LEGACY_SYSTEM_TEMPLATE_IDS));
 
 /**
@@ -155,8 +147,7 @@ export function buildSystemTemplateCatalog(
         requiredVariables: template.requiredVariables,
         template,
         legacyType,
-        manualSendAvailability:
-          RETIRED_MANUAL_TEMPLATE_KEYS.has(templateKey) || !legacyType ? "disabled" : "available",
+        manualSendAvailability: legacyType ? "available" : "disabled",
       },
     ];
   });

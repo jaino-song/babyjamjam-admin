@@ -42,6 +42,20 @@ describe("MessageTemplateWriteAgentCapabilitiesProvider", () => {
         }));
     });
 
+    it("preserves valid multiline create strings exactly", async () => {
+        const { capabilities, createTemplate } = setup();
+        const capability = capabilities.find((entry) => entry.meta.name === "messages.createTemplate")!;
+        const input = {
+            name: "  생성 템플릿  ",
+            content: "첫 줄\n둘째 줄\n\t셋째 줄  ",
+            variables: [],
+        };
+
+        await capability.execute(context, input);
+
+        expect(createTemplate.execute).toHaveBeenCalledWith("branch-a", input, expect.anything());
+    });
+
     it("does not report success when the action receipt cannot be persisted", async () => {
         const { capabilities, transaction } = setup();
         transaction.agent_action.updateMany.mockResolvedValue({ count: 0 });
@@ -56,6 +70,40 @@ describe("MessageTemplateWriteAgentCapabilitiesProvider", () => {
         const capability = capabilities.find((entry) => entry.meta.name === "messages.updateTemplate")!;
 
         expect(capability.inputSchema.safeParse({ id: "template-a" }).success).toBe(false);
+    });
+
+    it("rejects whitespace-only template fields before an approved update can mutate", async () => {
+        const { capabilities, updateTemplate } = setup();
+        const capability = capabilities.find((entry) => entry.meta.name === "messages.updateTemplate")!;
+
+        await expect(capability.executeApprovedTarget!(
+            context,
+            { id: "template-a", name: " \n" },
+            "2026-08-03T01:00:00.000Z",
+        )).rejects.toThrow("템플릿 이름은 공백 이외의 문자를 포함해야 합니다.");
+
+        expect(updateTemplate.executeApproved).not.toHaveBeenCalled();
+    });
+
+    it("preserves approved template field strings exactly", async () => {
+        const { capabilities, updateTemplate } = setup();
+        const capability = capabilities.find((entry) => entry.meta.name === "messages.updateTemplate")!;
+        const name = "  승인 템플릿  ";
+        const content = "첫 줄\n둘째 줄\n";
+
+        await capability.executeApprovedTarget!(
+            context,
+            { id: "template-a", name, content },
+            "2026-08-03T01:00:00.000Z",
+        );
+
+        expect(updateTemplate.executeApproved).toHaveBeenCalledWith(
+            "branch-a",
+            "template-a",
+            { name, content },
+            new Date("2026-08-03T01:00:00.000Z"),
+            undefined,
+        );
     });
 
     it("uses an immutable inspected template snapshot for approved updates", async () => {

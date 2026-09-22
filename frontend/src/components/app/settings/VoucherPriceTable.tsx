@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useMemo, useCallback } from "react";
-import { CreditCard } from "lucide-react";
+import { CreditCard, Upload } from "lucide-react";
 
 import { useAllVoucherPriceInfos, useVoucherYears } from "@/hooks";
 import { ContentPaper } from "@/components/app/root/content-paper";
@@ -18,7 +18,17 @@ import {
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Separator } from "@/components/ui/separator";
+import { Button } from "@/components/ui/button";
+import {
+  Sheet,
+  SheetClose,
+  SheetContent,
+  SheetDescription,
+  SheetHeader,
+  SheetTitle,
+} from "@/components/ui/sheet";
 import { cn } from "@/lib/utils";
+import { VoucherPriceUploadForm } from "./VoucherPriceUploadForm";
 
 function formatTypeLabel(typeCode: string | null): string {
   if (!typeCode) return "-";
@@ -138,6 +148,7 @@ const TABLE_TEXT_CLASS_NAME = "text-[0.76rem] xl:text-sm";
 export function VoucherPriceTable() {
   const currentYear = new Date().getFullYear();
   const [selectedYear, setSelectedYear] = useState<number>(currentYear);
+  const [isUploadOpen, setIsUploadOpen] = useState(false);
 
   const { data: years = [], isLoading: isYearsLoading } = useVoucherYears();
   const { data: prices = [], isLoading: isPricesLoading } = useAllVoucherPriceInfos(selectedYear);
@@ -191,6 +202,7 @@ export function VoucherPriceTable() {
   }, [sortedPrices, selectedCategories, selectedSubtypes, selectedGrades, selectedDurations]);
 
   return (
+    <>
     <ContentPaper
       variant="v3"
       className="flex h-full flex-col overflow-hidden"
@@ -209,6 +221,17 @@ export function VoucherPriceTable() {
             <p className="text-xs text-muted-foreground xl:text-sm">연도별 바우처 가격 정보를 확인합니다.</p>
           </div>
           <div className="flex shrink-0 items-center gap-1.5 xl:gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="gap-1.5 whitespace-nowrap"
+              data-component="desktop_settings_voucher-price-table_header_upload"
+              onClick={() => setIsUploadOpen(true)}
+            >
+              <Upload className="size-4" aria-hidden="true" />
+              이미지 업로드
+            </Button>
             <Label htmlFor="price-table-year" className="text-xs whitespace-nowrap xl:text-sm">연도</Label>
             <CompactDateSelect
               id="price-table-year"
@@ -329,5 +352,28 @@ export function VoucherPriceTable() {
 
       </div>
     </ContentPaper>
+    <Sheet open={isUploadOpen} onOpenChange={setIsUploadOpen}>
+      <SheetContent
+        side="right"
+        className="w-full overflow-y-auto sm:max-w-3xl"
+        data-component="desktop_settings_voucher-price-upload_sheet"
+      >
+        <SheetHeader>
+          <SheetTitle>가격표 이미지 업로드</SheetTitle>
+          <SheetDescription>
+            기존 요금표 이미지 인식 및 미리보기 흐름으로 연도별 가격을 업데이트합니다.
+          </SheetDescription>
+        </SheetHeader>
+        <div className="px-4 pb-6">
+          <VoucherPriceUploadForm />
+        </div>
+        <SheetClose asChild>
+          <Button type="button" variant="outline" className="mx-4 mb-6">
+            닫기
+          </Button>
+        </SheetClose>
+      </SheetContent>
+    </Sheet>
+    </>
   );
 }

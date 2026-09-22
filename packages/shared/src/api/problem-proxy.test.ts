@@ -27,6 +27,19 @@ describe("problem proxy", () => {
         expect(getUserErrorMessage({ response: { status: 400, data: body } })).toBe(problem.detail);
     });
 
+    it("preserves the assignment-disabled explanation through both proxy presenters", async () => {
+        const problem = createProblemDetails({
+            code: "EMPLOYEE_ASSIGNMENT_UNAVAILABLE", requestId: "assignment-request", outcome: "NOT_APPLIED",
+        });
+        const response = errorResponse({ response: { status: 400, data: problem } }, "update-client");
+        const body = await response.json();
+        expect(response.status).toBe(400);
+        expect(normalizeApiError({ response: { status: 400, data: body } })).toMatchObject({
+            verified: true, message: problem.detail, problem: { code: problem.code, outcome: "NOT_APPLIED" },
+        });
+        expect(sanitizeUpstreamClientError(problem, "fallback", 400)).toMatchObject({ code: problem.code, detail: problem.detail });
+    });
+
     it("does not route mismatched identifiers through legacy message inference", () => {
         const problem = createProblemDetails({ code: "CONTRACT_ALREADY_SIGNED", requestId: "request-2" });
         const payload = sanitizeUpstreamClientError({ ...problem, type: "https://invalid.example/other" }, "fallback", 409);

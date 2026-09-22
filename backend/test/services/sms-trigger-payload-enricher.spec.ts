@@ -1,3 +1,5 @@
+import { AgentAutomationDispatchUncertainError } from "../../domain/errors/agent-automation-dispatch-uncertain.error";
+import { createLegacyAutomationDeliveryGate } from "../fixtures/legacy-automation-delivery-gate";
 import { MessageTriggerRecipientType, MessageTriggerTemplateKey } from "domain/constants/message-trigger-catalog";
 import { SERVICE_END_NOTICE_DEFAULT_CONTENT } from "domain/constants/service-end-notice-message";
 import { MessageTriggerJobEntity } from "domain/entities/message-trigger-job.entity";
@@ -49,7 +51,7 @@ function makeService(registry: SmsTriggerPayloadEnricherRegistry) {
     const aligo = { sendSms: jest.fn() };
     const templates = { getByKeyForBranch: jest.fn().mockResolvedValue(defaultBranchTemplate()) };
     const logRepository = { create: jest.fn(), update: jest.fn() };
-    const service = new SmsTriggerDeliveryService(aligo as never, templates as never, logRepository as never, undefined, registry);
+    const service = new SmsTriggerDeliveryService(aligo as never, templates as never, logRepository as never, undefined, registry, createLegacyAutomationDeliveryGate());
     const sendSmsJob = jest.spyOn(service as unknown as SendSmsJobSpy, "sendSmsJob").mockResolvedValue(true);
     return { service, sendSmsJob, aligo };
 }
@@ -255,7 +257,7 @@ describe("SmsTriggerDeliveryService prepared delivery boundary", () => {
             logRepository as never,
             undefined,
             registry,
-        );
+        createLegacyAutomationDeliveryGate());
         const sendSmsJob = jest
             .spyOn(service as unknown as { sendSmsJob: (...args: unknown[]) => Promise<boolean> }, "sendSmsJob")
             .mockResolvedValue(true);
@@ -297,7 +299,7 @@ describe("SmsTriggerDeliveryService prepared delivery boundary", () => {
             { save: jest.fn(), update: jest.fn() } as never,
             undefined,
             registry,
-        );
+        createLegacyAutomationDeliveryGate());
         const job = makeJob();
 
         await expect(service.prepareJob(job)).resolves.toBeNull();
@@ -320,14 +322,14 @@ describe("SmsTriggerDeliveryService prepared delivery boundary", () => {
             { save: jest.fn(), update: jest.fn() } as never,
             undefined,
             registry,
-        );
+        createLegacyAutomationDeliveryGate());
         const job = makeJob();
         const preparation = await service.prepareJob(job);
 
         job.payload.templateVariables[SMS_DELIVERY_SNAPSHOT_VARIABLE] = "tampered";
 
         await expect(service.sendPreparedJob(job, preparation as SmsTriggerDeliveryPreparation))
-            .rejects.toThrow("prepared delivery snapshot changed");
+            .rejects.toThrow(AgentAutomationDispatchUncertainError);
     });
 
     it("issues the receipt link during preparation and never enriches again for the prepared send", async () => {
@@ -346,7 +348,7 @@ describe("SmsTriggerDeliveryService prepared delivery boundary", () => {
             { save: jest.fn(), update: jest.fn() } as never,
             undefined,
             registry,
-        );
+        createLegacyAutomationDeliveryGate());
         const sendSmsJob = jest
             .spyOn(service as unknown as { sendSmsJob: (...args: unknown[]) => Promise<boolean> }, "sendSmsJob")
             .mockResolvedValue(true);
@@ -408,7 +410,7 @@ describe("SmsTriggerDeliveryService.sendJob enricher vs duplicate-dispatch conve
             })),
             update: jest.fn(),
         };
-        const service = new SmsTriggerDeliveryService(aligo as never, templates as never, logRepository as never, undefined, registry);
+        const service = new SmsTriggerDeliveryService(aligo as never, templates as never, logRepository as never, undefined, registry, createLegacyAutomationDeliveryGate());
         const job = makeJob();
 
         await expect(service.sendJob(job)).resolves.toBe(true);

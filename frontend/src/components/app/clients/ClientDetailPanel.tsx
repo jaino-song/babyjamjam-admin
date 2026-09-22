@@ -144,6 +144,20 @@ const getScheduleChangeErrorCode = (error: unknown): string | null => {
     return typeof data.code === "string" ? data.code : null;
 };
 
+const getErrorResponseStatus = (error: unknown): number | undefined => {
+    if (!error || typeof error !== "object" || !("response" in error)) {
+        return undefined;
+    }
+
+    const response = error.response;
+    if (!response || typeof response !== "object" || !("status" in response)) {
+        return undefined;
+    }
+
+    const status = response.status;
+    return typeof status === "number" ? status : undefined;
+};
+
 const formatPrice = (price: string | null): string => {
     if (!price) return "-";
     const cleaned = price.replace(/,/g, "");
@@ -456,6 +470,10 @@ export interface ClientDetailPanelProps {
     client: Client;
     /** Page-specific trailing action (e.g. edit/delete menu, or a link-only menu). */
     trailing: ReactNode;
+    /** Stack basic information when embedded in a narrow detail pane. */
+    basicInfoColumns?: 1 | 2;
+    /** Mobile presentation for an embedded sliding detail pane. */
+    layout?: "desktop" | "mobile";
     /** Called after a schedule-change request is approved/rejected so the caller can clear its own local client state. */
     onScheduleChangeDecided?: (clientId: number) => void;
     /** Prefix applied to every `data-component` attribute rendered by this panel. */
@@ -479,6 +497,8 @@ export interface ClientDetailPanelProps {
 function ClientDetailPanelBody({
     client,
     trailing,
+    layout = "desktop",
+    basicInfoColumns = layout === "mobile" ? 1 : 2,
     onScheduleChangeDecided,
     dataComponentPrefix = "desktop_clients-detail_panel",
     messageHistoryDataComponentPrefix = "desktop_clients-detail_panel_message-history",
@@ -826,12 +846,13 @@ function ClientDetailPanelBody({
             >
                 <DetailTabPanels
                     activeTab={activeDetailTab}
+                    durationMs={layout === "mobile" ? 0 : undefined}
                     dataComponent={`${dataComponentPrefix}_content`}
                     panelDataComponent={`${dataComponentPrefix}_content_panel`}
                     idPrefix={idPrefix}
-                    className={tabPanelsClassName}
-                    trackClassName={tabPanelsTrackClassName}
-                    panelClassName={tabPanelsPanelClassName}
+                    className={cn(tabPanelsClassName, layout === "mobile" && "flex flex-[1_0_auto] flex-col")}
+                    trackClassName={cn(tabPanelsTrackClassName, layout === "mobile" && "flex-auto")}
+                    panelClassName={cn(tabPanelsPanelClassName, layout === "mobile" && "flex flex-col [&[aria-hidden=false]]:self-stretch")}
                     panels={[
                         ...(activeScheduleChange
                             ? [
@@ -895,8 +916,8 @@ function ClientDetailPanelBody({
                         {
                             key: "basic",
                             children: (
-                                <div data-component={`${dataComponentPrefix}_content_basic_grid`} className="grid grid-cols-2 gap-4">
-                                    <InfoCard data-component={`${dataComponentPrefix}_content_basic_grid_client-card`} title="고객 정보" className="col-start-1 row-start-1 row-end-3">
+                                <div data-component={`${dataComponentPrefix}_content_basic_grid`} className={cn("grid gap-4", basicInfoColumns === 1 ? "grid-cols-1" : "grid-cols-2")}>
+                                    <InfoCard data-component={`${dataComponentPrefix}_content_basic_grid_client-card`} title="고객 정보" className={basicInfoColumns === 2 ? "col-start-1 row-start-1 row-end-3" : undefined}>
                                         <InfoRow
                                             label={t(locale, "clients.form.name")}
                                             value={client.name}
@@ -925,7 +946,7 @@ function ClientDetailPanelBody({
                                         />
                                     </InfoCard>
 
-                                    <InfoCard data-component={`${dataComponentPrefix}_content_basic_grid_employee-card`} title="담당 관리사" className="col-start-1 row-start-3 row-end-5">
+                                    <InfoCard data-component={`${dataComponentPrefix}_content_basic_grid_employee-card`} title="담당 관리사" className={basicInfoColumns === 2 ? "col-start-1 row-start-3 row-end-5" : undefined}>
                                         <InfoRow
                                             label={t(locale, "clients.form.primary-employee")}
                                             value={
@@ -954,7 +975,7 @@ function ClientDetailPanelBody({
                                         />
                                     </InfoCard>
 
-                                    <InfoCard data-component={`${dataComponentPrefix}_content_basic_grid_service-card`} title="서비스 정보" className="col-start-2 row-start-1 row-end-5 content-start">
+                                    <InfoCard data-component={`${dataComponentPrefix}_content_basic_grid_service-card`} title="서비스 정보" className={cn("content-start", basicInfoColumns === 2 && "col-start-2 row-start-1 row-end-5")}>
                                         <InfoRow
                                             label={t(locale, "clients.form.voucher-type")}
                                             value={client.type ? getClientDisplayLabel(client.type) : "-"}
@@ -1026,6 +1047,7 @@ function ClientDetailPanelBody({
                             children: (
                                 <ClientServiceRecordsTab
                                     data-component={`${dataComponentPrefix}_service-records`}
+                                    layout={layout}
                                     overview={serviceRecordsQuery.data}
                                     clientId={clientId}
                                     isLoading={serviceRecordsQuery.isLoading}
@@ -1039,6 +1061,7 @@ function ClientDetailPanelBody({
                                     revisionHistory={revisionHistoryQuery.data}
                                     isRevisionHistoryLoading={revisionHistoryQuery.isLoading}
                                     isRevisionHistoryError={revisionHistoryQuery.isError}
+                                    revisionHistoryErrorStatus={getErrorResponseStatus(revisionHistoryQuery.error)}
                                     isRevisionHistoryRefreshing={revisionHistoryQuery.isFetching && !revisionHistoryQuery.isLoading}
                                     onRefreshRevisionHistory={() => void revisionHistoryQuery.refetch()}
                                     onRetryRevisionDocument={(revisionId, documentStateId, expectedGeneration) =>
@@ -1068,5 +1091,11 @@ function ClientDetailPanelBody({
  * remount-on-select behavior.
  */
 export function ClientDetailPanel(props: ClientDetailPanelProps) {
-    return <ClientDetailPanelBody key={props.client.id} {...props} />;
+    if (props.layout !== "mobile") return <ClientDetailPanelBody key={props.client.id} {...props} />;
+    return <div
+        data-component={`${props.dataComponentPrefix ?? "desktop_clients-detail_panel"}_presentation`}
+        data-slot="client-detail-presentation"
+        data-layout={props.layout ?? "desktop"}
+        className="flex h-full min-h-0 flex-1 flex-col"
+    ><ClientDetailPanelBody key={props.client.id} {...props} /></div>;
 }

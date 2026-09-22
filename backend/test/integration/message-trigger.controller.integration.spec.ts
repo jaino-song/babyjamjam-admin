@@ -45,6 +45,7 @@ describe("MessageTriggerController (Integration)", () => {
         listRules: jest.Mock;
         listUpcomingJobs: jest.Mock;
         listHistory: jest.Mock;
+        listHistoryPage: jest.Mock;
         cancelJobByUser: jest.Mock;
         createRule: jest.Mock;
         getRule: jest.Mock;
@@ -158,6 +159,7 @@ describe("MessageTriggerController (Integration)", () => {
             listRules: jest.fn(),
             listUpcomingJobs: jest.fn(),
             listHistory: jest.fn(),
+            listHistoryPage: jest.fn(),
             cancelJobByUser: jest.fn(),
             createRule: jest.fn(),
             getRule: jest.fn(),
@@ -215,6 +217,23 @@ describe("MessageTriggerController (Integration)", () => {
 
     afterEach(async () => {
         await app.close();
+    });
+
+    describe("rule sendTime validation", () => {
+        it.each(["24:00", "09:60", "9:00", "09:00:00", "", null])("rejects invalid update %s before persistence", async (sendTime) => {
+            const response = await request(app.getHttpServer())
+                .patch("/message-trigger-rules/rule-1").send({ sendTime });
+            expect(response.status).toBe(400);
+            expect(triggerService.updateRule).not.toHaveBeenCalled();
+        });
+        it("passes minute-precision KST time to the owning tenant service", async () => {
+            triggerService.updateRule.mockResolvedValue({ ...createMockRule(), sendTime: "23:59" });
+            const response = await request(app.getHttpServer())
+                .patch("/message-trigger-rules/rule-1").send({ sendTime: "23:59" });
+            expect(response.status).toBe(200);
+            expect(response.body.sendTime).toBe("23:59");
+            expect(triggerService.updateRule).toHaveBeenCalledWith(branchId, "rule-1", expect.objectContaining({ sendTime: "23:59" }));
+        });
     });
 
     describe("GET /message-trigger-rules", () => {
@@ -298,6 +317,36 @@ describe("MessageTriggerController (Integration)", () => {
 
             expect(response.status).toBe(200);
             expect(triggerService.listHistory).toHaveBeenCalledWith(branchId, 25, 50);
+        });
+    });
+
+    describe("GET /message-logs/page", () => {
+        it("uses the bounded default page size and forwards a cursor", async () => {
+            triggerService.listHistoryPage.mockResolvedValue({
+                items: [createMockHistoryRecord()],
+                page: {
+                    snapshotAt: "2026-09-17T00:00:00.000Z",
+                    nextCursor: "cursor-v1",
+                    hasMore: true,
+                },
+            });
+
+            const response = await request(app.getHttpServer())
+                .get("/message-logs/page")
+                .query({ cursor: "cursor-v1" });
+
+            expect(response.status).toBe(200);
+            expect(response.body.page).toEqual(expect.objectContaining({ hasMore: true }));
+            expect(triggerService.listHistoryPage).toHaveBeenCalledWith(branchId, 500, "cursor-v1");
+        });
+
+        it("rejects a page size above the bounded maximum", async () => {
+            const response = await request(app.getHttpServer())
+                .get("/message-logs/page")
+                .query({ limit: 501 });
+
+            expect(response.status).toBe(400);
+            expect(triggerService.listHistoryPage).not.toHaveBeenCalled();
         });
     });
 

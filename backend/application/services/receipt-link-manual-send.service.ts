@@ -17,7 +17,7 @@ import { MessageTriggerJobEntity } from "domain/entities/message-trigger-job.ent
 import { IMessageTriggerJobRepository, MESSAGE_TRIGGER_JOB_REPOSITORY } from "domain/repositories/message-trigger-job.repository.interface";
 import { normalizePhone } from "application/utils/normalize-phone";
 import { codeOnlyProblemBody, problemBody } from "application/utils/problem-bodies";
-import { MANUAL_DEDUPE_MARKER } from "./receipt-link-delivery-enricher.service";
+import { MANUAL_DEDUPE_MARKER } from "domain/constants/service-end-notice-message";
 import { MessageSenderApprovalService } from "./message-sender-approval.service";
 import { ReceiptLinkIssueService, ReceiptLinkSkipError } from "./receipt-link-issue.service";
 

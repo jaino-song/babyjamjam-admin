@@ -7,7 +7,7 @@ import {
 
 
 import { isAxiosError } from "axios";
-import { useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Calendar, Loader2, Send, X } from "lucide-react";
 
@@ -21,7 +21,7 @@ import { useMessageHistory } from "@/features/message-triggers/hooks/use-message
 import type { MessageLogRecord } from "@/features/message-triggers/types";
 import { serviceRecordsApi } from "@/features/service-records/api/service-records.api";
 import { useToast } from "@/hooks/use-toast";
-import { eformsignApi, messageDeliveryApi } from "@/services/api";
+import { eformsignApi, messageDeliveryApi, settingsApi } from "@/services/api";
 import type { Client } from "@/lib/client/types";
 import {
   formatKoreanPhoneNumber,
@@ -302,6 +302,12 @@ export function TemplateSendForm({
   const serviceSendIdRef = useRef(0);
   const receiptSendIdRef = useRef(0);
   const { data: historyData = [], refetch: refetchHistory } = useMessageHistory();
+  const { data: messagePolicies } = useQuery({
+    queryKey: ["settings", "message-automation-policies"],
+    queryFn: settingsApi.getMessageAutomationPolicies,
+  });
+  const duplicateSendConfirmationEnabled =
+    messagePolicies?.policyActivations?.["duplicate-send-confirmation"] ?? true;
   const {
     clientId,
     name,
@@ -530,16 +536,18 @@ export function TemplateSendForm({
         return [...currentQueue, currentQueueItem];
       }
 
-      // For requiresRecipientName templates, update the queued entry in place so
-      // a name correction always propagates (instead of being silently dropped).
-      // For phone-only templates, the phone is the full identity — skip as before.
-      if (requiresRecipientName) {
-        const updated = [...currentQueue];
-        updated[existingIndex] = currentQueueItem;
-        return updated;
-      }
+      const existingItem = currentQueue[existingIndex];
+      const shouldUpdateIdentity = requiresRecipientName
+        || existingItem.clientId !== currentQueueItem.clientId;
+      const shouldUpdateMessage = existingItem.message !== currentQueueItem.message;
 
-      return currentQueue;
+      if (!shouldUpdateIdentity && !shouldUpdateMessage) return currentQueue;
+
+      const updated = [...currentQueue];
+      updated[existingIndex] = shouldUpdateIdentity
+        ? currentQueueItem
+        : { ...existingItem, message: currentQueueItem.message };
+      return updated;
     });
   }, [currentQueueItem, requiresRecipientName]);
 
@@ -1044,6 +1052,11 @@ export function TemplateSendForm({
     }
 
     const snapshot = createSmsSubmissionSnapshot(recipients);
+    if (!duplicateSendConfirmationEnabled) {
+      submissionGuardRef.current = "sending";
+      await sendMessages(snapshot.recipients);
+      return;
+    }
     submissionGuardRef.current = "checking";
     const lookupId = ++smsLookupIdRef.current;
     let duplicates: DuplicateSendMatch[];
@@ -1150,15 +1163,7 @@ export function TemplateSendForm({
               data-component="desktop_messages_sections_template-send-form_phone-field"
               className="min-w-0 w-full"
             >
-              {templateId === "builtin:greeting" ? (
-                <ContactInput
-                  phone={phone}
-                  setPhone={handlePhoneChange}
-                  label="휴대 전화번호"
-                  placeholder="010-0000-0000"
-                  required
-                />
-              ) : phoneAutocompleteField}
+              {phoneAutocompleteField}
             </div>
             {children ? <TemplateFieldGrid layout="stack">{children}</TemplateFieldGrid> : null}
           </>

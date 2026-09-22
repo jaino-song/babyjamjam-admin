@@ -1,6 +1,6 @@
 import fs from "node:fs";
 
-const source = fs.readFileSync(require.resolve("./page"), "utf8");
+const source = fs.readFileSync(require.resolve("@/components/app/employees/EmployeeDirectoryManager"), "utf8");
 
 describe("EmployeesPage deletion conflicts", () => {
   it("should close the confirmation and show the backend conflict guidance", () => {
@@ -13,7 +13,7 @@ describe("EmployeesPage deletion conflicts", () => {
     expect(handler).toContain('operation: "mutation"');
     expect(handler).toContain("normalizeApiError");
     expect(handler).not.toContain("getApiErrorMessage");
-    expect(source).toContain('dataComponent="desktop_employees_delete-error-notification"');
+    expect(source).toContain('dataComponent={`${dataComponent}_delete-error-notification`}');
   });
 
   it("uses semantic stat colors for assignment availability", () => {
@@ -31,4 +31,5 @@ describe("EmployeesPage deletion conflicts", () => {
     expect(source).toContain('unavailable: allEmployees.filter((e: Employee) => e.status === "unavailable").length');
     expect(source).toContain("OPEN_TO_NEXT_WORK_LABELS");
   });
+
 });

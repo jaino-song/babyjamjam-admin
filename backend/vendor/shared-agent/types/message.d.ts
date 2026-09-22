@@ -27,19 +27,19 @@ export declare const messageTriggerRecipientTypeSchema: z.ZodEnum<{
     SECONDARY_EMPLOYEE: "SECONDARY_EMPLOYEE";
 }>;
 export declare const messageTriggerTemplateKeySchema: z.ZodEnum<{
+    SERVICE_INFO: "SERVICE_INFO";
+    CLIENT_GREETING: "CLIENT_GREETING";
+    PRICE_INFO: "PRICE_INFO";
+    REMINDER: "REMINDER";
+    THANKS: "THANKS";
+    SURVEY: "SURVEY";
+    INFO: "INFO";
+    SERVICE_END_NOTICE: "SERVICE_END_NOTICE";
+    EMPLOYEE_ASSIGNED: "EMPLOYEE_ASSIGNED";
+    SERVICE_RECORD_LINK: "SERVICE_RECORD_LINK";
     CLIENT_WELCOME: "CLIENT_WELCOME";
     SERVICE_START_REMINDER: "SERVICE_START_REMINDER";
     SERVICE_END_REMINDER: "SERVICE_END_REMINDER";
-    EMPLOYEE_ASSIGNED: "EMPLOYEE_ASSIGNED";
-    PRICE_INFO: "PRICE_INFO";
-    THANKS: "THANKS";
-    SURVEY: "SURVEY";
-    SERVICE_INFO: "SERVICE_INFO";
-    SERVICE_RECORD_LINK: "SERVICE_RECORD_LINK";
-    SERVICE_END_NOTICE: "SERVICE_END_NOTICE";
-    REMINDER: "REMINDER";
-    INFO: "INFO";
-    CLIENT_GREETING: "CLIENT_GREETING";
 }>;
 /**
  * Variables each scheduler can derive without operator input.
@@ -88,6 +88,8 @@ export interface MessageTriggerRule {
     eventType: MessageTriggerEventType;
     offsetType: MessageTriggerOffsetType;
     offsetDays: number;
+    /** HH:mm in Asia/Seoul; absent on older servers means 09:00. */
+    sendTime?: string;
     recipientType: MessageTriggerRecipientType;
     templateKey: MessageTriggerTemplateKey;
     createdAt: string;
@@ -116,25 +118,26 @@ export declare const createMessageTriggerRuleSchema: z.ZodObject<{
         AFTER_DAYS: "AFTER_DAYS";
     }>;
     offsetDays: z.ZodOptional<z.ZodNumber>;
+    sendTime: z.ZodOptional<z.ZodString>;
     recipientType: z.ZodEnum<{
         CLIENT: "CLIENT";
         PRIMARY_EMPLOYEE: "PRIMARY_EMPLOYEE";
         SECONDARY_EMPLOYEE: "SECONDARY_EMPLOYEE";
     }>;
     templateKey: z.ZodEnum<{
+        SERVICE_INFO: "SERVICE_INFO";
+        CLIENT_GREETING: "CLIENT_GREETING";
+        PRICE_INFO: "PRICE_INFO";
+        REMINDER: "REMINDER";
+        THANKS: "THANKS";
+        SURVEY: "SURVEY";
+        INFO: "INFO";
+        SERVICE_END_NOTICE: "SERVICE_END_NOTICE";
+        EMPLOYEE_ASSIGNED: "EMPLOYEE_ASSIGNED";
+        SERVICE_RECORD_LINK: "SERVICE_RECORD_LINK";
         CLIENT_WELCOME: "CLIENT_WELCOME";
         SERVICE_START_REMINDER: "SERVICE_START_REMINDER";
         SERVICE_END_REMINDER: "SERVICE_END_REMINDER";
-        EMPLOYEE_ASSIGNED: "EMPLOYEE_ASSIGNED";
-        PRICE_INFO: "PRICE_INFO";
-        THANKS: "THANKS";
-        SURVEY: "SURVEY";
-        SERVICE_INFO: "SERVICE_INFO";
-        SERVICE_RECORD_LINK: "SERVICE_RECORD_LINK";
-        SERVICE_END_NOTICE: "SERVICE_END_NOTICE";
-        REMINDER: "REMINDER";
-        INFO: "INFO";
-        CLIENT_GREETING: "CLIENT_GREETING";
     }>;
 }, z.core.$loose>;
 /** Runtime validation for `PATCH/PUT /message-trigger-rules/:id`. */
@@ -154,25 +157,26 @@ export declare const updateMessageTriggerRuleSchema: z.ZodObject<{
         AFTER_DAYS: "AFTER_DAYS";
     }>>;
     offsetDays: z.ZodOptional<z.ZodOptional<z.ZodNumber>>;
+    sendTime: z.ZodOptional<z.ZodOptional<z.ZodString>>;
     recipientType: z.ZodOptional<z.ZodEnum<{
         CLIENT: "CLIENT";
         PRIMARY_EMPLOYEE: "PRIMARY_EMPLOYEE";
         SECONDARY_EMPLOYEE: "SECONDARY_EMPLOYEE";
     }>>;
     templateKey: z.ZodOptional<z.ZodEnum<{
+        SERVICE_INFO: "SERVICE_INFO";
+        CLIENT_GREETING: "CLIENT_GREETING";
+        PRICE_INFO: "PRICE_INFO";
+        REMINDER: "REMINDER";
+        THANKS: "THANKS";
+        SURVEY: "SURVEY";
+        INFO: "INFO";
+        SERVICE_END_NOTICE: "SERVICE_END_NOTICE";
+        EMPLOYEE_ASSIGNED: "EMPLOYEE_ASSIGNED";
+        SERVICE_RECORD_LINK: "SERVICE_RECORD_LINK";
         CLIENT_WELCOME: "CLIENT_WELCOME";
         SERVICE_START_REMINDER: "SERVICE_START_REMINDER";
         SERVICE_END_REMINDER: "SERVICE_END_REMINDER";
-        EMPLOYEE_ASSIGNED: "EMPLOYEE_ASSIGNED";
-        PRICE_INFO: "PRICE_INFO";
-        THANKS: "THANKS";
-        SURVEY: "SURVEY";
-        SERVICE_INFO: "SERVICE_INFO";
-        SERVICE_RECORD_LINK: "SERVICE_RECORD_LINK";
-        SERVICE_END_NOTICE: "SERVICE_END_NOTICE";
-        REMINDER: "REMINDER";
-        INFO: "INFO";
-        CLIENT_GREETING: "CLIENT_GREETING";
     }>>;
 }, z.core.$loose>;
 export declare const CreateMessageTriggerRuleSchema: z.ZodObject<{
@@ -191,25 +195,26 @@ export declare const CreateMessageTriggerRuleSchema: z.ZodObject<{
         AFTER_DAYS: "AFTER_DAYS";
     }>;
     offsetDays: z.ZodOptional<z.ZodNumber>;
+    sendTime: z.ZodOptional<z.ZodString>;
     recipientType: z.ZodEnum<{
         CLIENT: "CLIENT";
         PRIMARY_EMPLOYEE: "PRIMARY_EMPLOYEE";
         SECONDARY_EMPLOYEE: "SECONDARY_EMPLOYEE";
     }>;
     templateKey: z.ZodEnum<{
+        SERVICE_INFO: "SERVICE_INFO";
+        CLIENT_GREETING: "CLIENT_GREETING";
+        PRICE_INFO: "PRICE_INFO";
+        REMINDER: "REMINDER";
+        THANKS: "THANKS";
+        SURVEY: "SURVEY";
+        INFO: "INFO";
+        SERVICE_END_NOTICE: "SERVICE_END_NOTICE";
+        EMPLOYEE_ASSIGNED: "EMPLOYEE_ASSIGNED";
+        SERVICE_RECORD_LINK: "SERVICE_RECORD_LINK";
         CLIENT_WELCOME: "CLIENT_WELCOME";
         SERVICE_START_REMINDER: "SERVICE_START_REMINDER";
         SERVICE_END_REMINDER: "SERVICE_END_REMINDER";
-        EMPLOYEE_ASSIGNED: "EMPLOYEE_ASSIGNED";
-        PRICE_INFO: "PRICE_INFO";
-        THANKS: "THANKS";
-        SURVEY: "SURVEY";
-        SERVICE_INFO: "SERVICE_INFO";
-        SERVICE_RECORD_LINK: "SERVICE_RECORD_LINK";
-        SERVICE_END_NOTICE: "SERVICE_END_NOTICE";
-        REMINDER: "REMINDER";
-        INFO: "INFO";
-        CLIENT_GREETING: "CLIENT_GREETING";
     }>;
 }, z.core.$loose>;
 export declare const UpdateMessageTriggerRuleSchema: z.ZodObject<{
@@ -228,25 +233,26 @@ export declare const UpdateMessageTriggerRuleSchema: z.ZodObject<{
         AFTER_DAYS: "AFTER_DAYS";
     }>>;
     offsetDays: z.ZodOptional<z.ZodOptional<z.ZodNumber>>;
+    sendTime: z.ZodOptional<z.ZodOptional<z.ZodString>>;
     recipientType: z.ZodOptional<z.ZodEnum<{
         CLIENT: "CLIENT";
         PRIMARY_EMPLOYEE: "PRIMARY_EMPLOYEE";
         SECONDARY_EMPLOYEE: "SECONDARY_EMPLOYEE";
     }>>;
     templateKey: z.ZodOptional<z.ZodEnum<{
+        SERVICE_INFO: "SERVICE_INFO";
+        CLIENT_GREETING: "CLIENT_GREETING";
+        PRICE_INFO: "PRICE_INFO";
+        REMINDER: "REMINDER";
+        THANKS: "THANKS";
+        SURVEY: "SURVEY";
+        INFO: "INFO";
+        SERVICE_END_NOTICE: "SERVICE_END_NOTICE";
+        EMPLOYEE_ASSIGNED: "EMPLOYEE_ASSIGNED";
+        SERVICE_RECORD_LINK: "SERVICE_RECORD_LINK";
         CLIENT_WELCOME: "CLIENT_WELCOME";
         SERVICE_START_REMINDER: "SERVICE_START_REMINDER";
         SERVICE_END_REMINDER: "SERVICE_END_REMINDER";
-        EMPLOYEE_ASSIGNED: "EMPLOYEE_ASSIGNED";
-        PRICE_INFO: "PRICE_INFO";
-        THANKS: "THANKS";
-        SURVEY: "SURVEY";
-        SERVICE_INFO: "SERVICE_INFO";
-        SERVICE_RECORD_LINK: "SERVICE_RECORD_LINK";
-        SERVICE_END_NOTICE: "SERVICE_END_NOTICE";
-        REMINDER: "REMINDER";
-        INFO: "INFO";
-        CLIENT_GREETING: "CLIENT_GREETING";
     }>>;
 }, z.core.$loose>;
 export declare const createMessageTriggerRuleDtoSchema: z.ZodObject<{
@@ -265,25 +271,26 @@ export declare const createMessageTriggerRuleDtoSchema: z.ZodObject<{
         AFTER_DAYS: "AFTER_DAYS";
     }>;
     offsetDays: z.ZodOptional<z.ZodNumber>;
+    sendTime: z.ZodOptional<z.ZodString>;
     recipientType: z.ZodEnum<{
         CLIENT: "CLIENT";
         PRIMARY_EMPLOYEE: "PRIMARY_EMPLOYEE";
         SECONDARY_EMPLOYEE: "SECONDARY_EMPLOYEE";
     }>;
     templateKey: z.ZodEnum<{
+        SERVICE_INFO: "SERVICE_INFO";
+        CLIENT_GREETING: "CLIENT_GREETING";
+        PRICE_INFO: "PRICE_INFO";
+        REMINDER: "REMINDER";
+        THANKS: "THANKS";
+        SURVEY: "SURVEY";
+        INFO: "INFO";
+        SERVICE_END_NOTICE: "SERVICE_END_NOTICE";
+        EMPLOYEE_ASSIGNED: "EMPLOYEE_ASSIGNED";
+        SERVICE_RECORD_LINK: "SERVICE_RECORD_LINK";
         CLIENT_WELCOME: "CLIENT_WELCOME";
         SERVICE_START_REMINDER: "SERVICE_START_REMINDER";
         SERVICE_END_REMINDER: "SERVICE_END_REMINDER";
-        EMPLOYEE_ASSIGNED: "EMPLOYEE_ASSIGNED";
-        PRICE_INFO: "PRICE_INFO";
-        THANKS: "THANKS";
-        SURVEY: "SURVEY";
-        SERVICE_INFO: "SERVICE_INFO";
-        SERVICE_RECORD_LINK: "SERVICE_RECORD_LINK";
-        SERVICE_END_NOTICE: "SERVICE_END_NOTICE";
-        REMINDER: "REMINDER";
-        INFO: "INFO";
-        CLIENT_GREETING: "CLIENT_GREETING";
     }>;
 }, z.core.$loose>;
 export declare const updateMessageTriggerRuleDtoSchema: z.ZodObject<{
@@ -302,25 +309,26 @@ export declare const updateMessageTriggerRuleDtoSchema: z.ZodObject<{
         AFTER_DAYS: "AFTER_DAYS";
     }>>;
     offsetDays: z.ZodOptional<z.ZodOptional<z.ZodNumber>>;
+    sendTime: z.ZodOptional<z.ZodOptional<z.ZodString>>;
     recipientType: z.ZodOptional<z.ZodEnum<{
         CLIENT: "CLIENT";
         PRIMARY_EMPLOYEE: "PRIMARY_EMPLOYEE";
         SECONDARY_EMPLOYEE: "SECONDARY_EMPLOYEE";
     }>>;
     templateKey: z.ZodOptional<z.ZodEnum<{
+        SERVICE_INFO: "SERVICE_INFO";
+        CLIENT_GREETING: "CLIENT_GREETING";
+        PRICE_INFO: "PRICE_INFO";
+        REMINDER: "REMINDER";
+        THANKS: "THANKS";
+        SURVEY: "SURVEY";
+        INFO: "INFO";
+        SERVICE_END_NOTICE: "SERVICE_END_NOTICE";
+        EMPLOYEE_ASSIGNED: "EMPLOYEE_ASSIGNED";
+        SERVICE_RECORD_LINK: "SERVICE_RECORD_LINK";
         CLIENT_WELCOME: "CLIENT_WELCOME";
         SERVICE_START_REMINDER: "SERVICE_START_REMINDER";
         SERVICE_END_REMINDER: "SERVICE_END_REMINDER";
-        EMPLOYEE_ASSIGNED: "EMPLOYEE_ASSIGNED";
-        PRICE_INFO: "PRICE_INFO";
-        THANKS: "THANKS";
-        SURVEY: "SURVEY";
-        SERVICE_INFO: "SERVICE_INFO";
-        SERVICE_RECORD_LINK: "SERVICE_RECORD_LINK";
-        SERVICE_END_NOTICE: "SERVICE_END_NOTICE";
-        REMINDER: "REMINDER";
-        INFO: "INFO";
-        CLIENT_GREETING: "CLIENT_GREETING";
     }>>;
 }, z.core.$loose>;
 export type CreateMessageTriggerRuleDto = z.infer<typeof createMessageTriggerRuleSchema>;
@@ -523,9 +531,19 @@ export interface MessageAutomationPastTriggerConfig {
     sendIntervalMinutes: number;
     ruleOrder: string[];
 }
+export declare const MESSAGE_SETTINGS_POLICY_IDS: readonly ["trigger-dispatch", "trigger-job-retry", "sms-retry", "past-trigger", "service-feedback-link", "duplicate-send-confirmation"];
+export type MessageSettingsPolicyId = (typeof MESSAGE_SETTINGS_POLICY_IDS)[number];
+export declare const STORED_MESSAGE_SETTINGS_POLICY_IDS: readonly ["trigger-dispatch", "trigger-job-retry", "sms-retry", "past-trigger", "duplicate-send-confirmation"];
+export type StoredMessageSettingsPolicyId = (typeof STORED_MESSAGE_SETTINGS_POLICY_IDS)[number];
+export declare const SERVICE_RECORD_LINK_RULE_ID = "system:service_record_link";
+export interface MessageSettingsPolicyActivation {
+    policyId: StoredMessageSettingsPolicyId;
+    enabled: boolean;
+}
 export interface MessageAutomationPoliciesResponse {
     policies: MessageAutomationPolicy[];
     pastTriggerConfig: MessageAutomationPastTriggerConfig;
+    policyActivations?: Partial<Record<MessageSettingsPolicyId, boolean>>;
 }
 export interface SystemAdminBranchUser {
     id: string;

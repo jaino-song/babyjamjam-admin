@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useMemo } from "react";
+import { useCallback, useMemo, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { MessageSquareText, type LucideIcon } from "lucide-react";
 import {
@@ -9,7 +9,12 @@ import {
   getMessageTemplateLabel,
 } from "@babyjamjam/shared";
 
-import { Skeleton } from "@/components/ui/skeleton";
+import {
+  SettingsListCard,
+  SettingsListItem,
+  SettingsListRowsSkeleton,
+} from "@/components/app/mobile-redesign/settings/SettingsListCard";
+import { Switch } from "@/components/ui/switch";
 import {
   useMessageTriggerRules,
   useUpdateMessageTriggerRuleBranchActivation,
@@ -67,16 +72,17 @@ function getRuleTimingLabel(rule: MessageTriggerRule) {
     return `${eventLabel} 즉시`;
   }
 
+  const timeLabel = `${rule.sendTime ?? "09:00"} (한국 시간)`;
   if (rule.offsetType === "SAME_DAY") {
-    return `${eventLabel} 당일`;
+    return `${eventLabel} 당일 ${timeLabel}`;
   }
 
   const dayLabel = `${Math.max(rule.offsetDays, 0)}일`;
   if (rule.offsetType === "BEFORE_DAYS") {
-    return `${eventLabel} ${dayLabel} 전`;
+    return `${eventLabel} ${dayLabel} 전 ${timeLabel}`;
   }
 
-  return `${eventLabel} ${dayLabel} 후`;
+  return `${eventLabel} ${dayLabel} 후 ${timeLabel}`;
 }
 
 function isCurrentMonthLog(log: MessageLogRecord) {
@@ -118,12 +124,25 @@ function compareTriggerRules(first: MessageTriggerRule, second: MessageTriggerRu
   return getRuleTitle(first).localeCompare(getRuleTitle(second), "ko-KR");
 }
 
+function toDataComponentToken(value: string) {
+  return value
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+}
+
 export function MessageTriggerList({
   "data-component": dataComponent,
   onEdit,
+  onCreate,
+  selectedId = null,
+  beforeItems,
 }: {
   "data-component": string;
   onEdit?: (rule: MessageTriggerRule) => void;
+  onCreate?: () => void;
+  selectedId?: string | null;
+  beforeItems?: ReactNode;
 }) {
   const sub = (suffix: string) => `${dataComponent}_${suffix}`;
   const {
@@ -195,11 +214,16 @@ export function MessageTriggerList({
   const isTogglePending = updateRuleMutation.isPending || branchActivationMutation.isPending;
 
   return (
-    <div className="section-block message-trigger-list" data-component={dataComponent}>
-        <div className="section-header message-trigger-list-header" data-component={sub("header")}>자동 전송 트리거</div>
-
-        {displayRows.map((row) => {
-          const Icon = row.icon;
+    <SettingsListCard
+      data-component={dataComponent}
+      title="자동 전송"
+      count={displayRows.length}
+      subtitle="메시지 자동 전송 규칙을 정할 수 있어요"
+      actionLabel={onCreate ? "+ 규칙" : undefined}
+      onAction={onCreate}
+    >
+      {beforeItems}
+      {displayRows.map((row) => {
           const rowActive = row.rule.isActive;
           const rowKey = row.rule.id;
           const triggerKey = row.rule.templateKey;
@@ -210,118 +234,64 @@ export function MessageTriggerList({
           // TriggerRulesManager.tsx:525,564,712).
           const isSystemRule = row.rule.branchId === null;
 
-          const iconAndInfo = (
-            <>
-              <div
-                className={`trigger-icon trigger-icon-${row.tone}`}
-                data-component={sub("icon")}
-              >
-                <Icon size={18} strokeWidth={2.5} />
-              </div>
+          const countLabel = isLogsLoading
+            ? "발송 건수 집계 중"
+            : isLogsError
+              ? "집계 실패"
+              : `${monthLabel} ${row.monthlyCount ?? 0}건`;
+          const itemBase = sub(`item-${toDataComponentToken(rowKey)}`);
 
-              <div className="trigger-info" data-component={sub("info")}>
-                <div className="trigger-title" data-component={sub("title")}>{row.title}</div>
-                <div className="trigger-meta" data-component={sub("meta")}>
-                  <span className={`send-stat ${isLogsError || (row.failedCount ?? 0) > 0 ? "fail" : ""}`}>
-                    {isLogsLoading ? (
-                      <span data-slot="skeleton" className="message-count-skeleton" aria-label="발송 건수 집계 중" />
-                    ) : isLogsError ? (
-                      "집계 실패"
-                    ) : (
-                      `${monthLabel} ${row.monthlyCount ?? 0}건`
-                    )}
-                  </span>
-                  {" · "}
-                  <span>{row.timingLabel}</span>
-                  {" · "}
-                  <span>{row.channelLabel}</span>
-                </div>
-              </div>
-            </>
-          );
-
-          return onEdit ? (
-            <div
+          return (
+            <SettingsListItem
               key={rowKey}
-              className="list-item message-trigger-row"
-              data-component={sub("row")}
-              data-trigger-id={triggerId}
-              data-trigger-key={triggerKey}
-              data-trigger-channel={row.channelLabel}
-            >
-              {isSystemRule ? (
-                <div className="flex min-w-0 flex-1 items-center gap-3 text-left">
-                  {iconAndInfo}
-                </div>
-              ) : (
-                <button
-                  type="button"
-                  className="flex min-w-0 flex-1 items-center gap-3 text-left"
-                  aria-label={`${row.title} 설정`}
-                  onClick={() => onEdit(row.rule)}
-                >
-                  {iconAndInfo}
-                </button>
-              )}
-              <button
-                type="button"
-                className="flex min-h-11 min-w-11 items-center justify-end"
-                aria-label={`${row.title} ${rowActive ? "비활성화" : "활성화"}`}
-                aria-pressed={rowActive}
-                disabled={isTogglePending || row.rule.isLockedByGlobal === true}
-                onClick={() => handleToggle(row)}
-              >
-                <span className={`toggle ${rowActive ? "on" : ""}`} aria-hidden="true" />
-              </button>
-            </div>
-          ) : (
-            <button
-              key={rowKey}
-              type="button"
-              className="list-item message-trigger-row"
-              aria-pressed={rowActive}
-              data-component={sub("row")}
-              data-trigger-id={triggerId}
-              data-trigger-key={triggerKey}
-              data-trigger-channel={row.channelLabel}
-              disabled={isTogglePending || row.rule.isLockedByGlobal === true}
-              onClick={() => handleToggle(row)}
-            >
-              {iconAndInfo}
-              <span className={`toggle ${rowActive ? "on" : ""}`} aria-hidden="true" />
-            </button>
+              data-component={itemBase}
+              icon={row.icon}
+              title={row.title}
+              subtitle={`${countLabel} · ${row.timingLabel} · ${row.channelLabel}`}
+              isSelected={selectedId === rowKey}
+              onSelect={onEdit
+                ? isSystemRule
+                  ? undefined
+                  : () => onEdit(row.rule)
+                : () => handleToggle(row)}
+              isDisabled={!onEdit && (isTogglePending || row.rule.isLockedByGlobal === true)}
+              showChevron={Boolean(onEdit && !isSystemRule)}
+              dataAttributes={{
+                "data-trigger-id": triggerId,
+                "data-trigger-key": triggerKey,
+                "data-trigger-channel": row.channelLabel,
+              }}
+              control={onEdit ? (
+                <Switch
+                  data-component={`${itemBase}_trailing_switch`}
+                  thumbDataComponent={`${itemBase}_trailing_switch_thumb`}
+                  aria-label={`${row.title} ${rowActive ? "비활성화" : "활성화"}`}
+                  checked={rowActive}
+                  disabled={isTogglePending || row.rule.isLockedByGlobal === true}
+                  className="[--v3-ui-scale:var(--glint-ui-scale,1)]"
+                  onClick={(event) => event.stopPropagation()}
+                  onCheckedChange={() => handleToggle(row)}
+                />
+              ) : undefined}
+            />
           );
-        })}
+      })}
 
-        {isRulesLoading && (
-          Array.from({ length: 4 }).map((_, index) => (
-            <div
-              key={`message-trigger-skeleton-${index}`}
-              className="list-item message-trigger-row message-trigger-row-skeleton"
-              data-component={sub("row-skeleton")}
-              aria-hidden="true"
-            >
-              <Skeleton className="trigger-icon bg-v3-dim-white animate-pulse" />
-              <div className="trigger-info" data-component={sub("row-skeleton_info")}>
-                <Skeleton className="h-4 w-28 bg-v3-dim-white animate-pulse" />
-                <Skeleton className="mt-2 h-3 w-36 bg-v3-dim-white animate-pulse" />
-              </div>
-              <Skeleton className="h-[22px] w-[38px] rounded-full bg-v3-dim-white animate-pulse" />
-            </div>
-          ))
-        )}
+      {isRulesLoading ? (
+        <SettingsListRowsSkeleton data-component={sub("items_loading")} />
+      ) : null}
 
-        {!isRulesLoading && isRulesError && (
-          <div className="message-empty-state" data-component={sub("error")}>
-            자동 전송 트리거를 불러오지 못했습니다.
-          </div>
-        )}
+      {!isRulesLoading && isRulesError ? (
+        <div className="message-empty-state" data-component={sub("items_error")}>
+          자동 전송 트리거를 불러오지 못했습니다.
+        </div>
+      ) : null}
 
-        {!isRulesLoading && !isRulesError && displayRows.length === 0 && (
-          <div className="message-empty-state" data-component={sub("empty")}>
-            등록된 자동 전송 트리거가 없습니다.
-          </div>
-        )}
-    </div>
+      {!isRulesLoading && !isRulesError && displayRows.length === 0 ? (
+        <div className="message-empty-state" data-component={sub("items_empty")}>
+          등록된 자동 전송 트리거가 없습니다.
+        </div>
+      ) : null}
+    </SettingsListCard>
   );
 }

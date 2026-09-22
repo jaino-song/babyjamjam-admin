@@ -9,6 +9,10 @@ import {
     EformsignDocumentJobType,
 } from "domain/entities/eformsign-document-job.entity";
 import {
+    DEFAULT_CONTRACT_AUTO_FINALIZE_CONFIG,
+    normalizeContractAutoFinalizeConfig,
+} from "domain/entities/system-setting.entity";
+import {
     EformsignDocumentJobList,
     EformsignDocumentJobSummary,
     AuthorizeEformsignDocumentJobForDispatchInput,
@@ -764,18 +768,36 @@ export class SbEformsignDocumentJobRepository implements IEformsignDocumentJobRe
                 row.auto_finalize_outcome_recorded_at = recordedAt;
             }
             if (status === "failed" && recordedAttempts !== null) {
+                const maxAttempts = await this.getContractAutoFinalizeMaxAttempts(tx, row.branch_id);
                 await tx.$executeRaw(Prisma.sql`
                     UPDATE "eformsign_document_job"
-                    SET active_key = ${recordedAttempts < 3 ? null : row.active_key}
+                    SET active_key = ${recordedAttempts < maxAttempts ? null : row.active_key}
                     WHERE id = ${id}::uuid
                 `);
-                if (recordedAttempts < 3) row.active_key = null;
+                if (recordedAttempts < maxAttempts) row.active_key = null;
             }
             return new EformsignDocumentJobEntity({
                 ...this.toDomain(row),
                 autoFinalizeOutcomeAttempts: recordedAttempts,
             });
         });
+    }
+
+    private async getContractAutoFinalizeMaxAttempts(
+        tx: Prisma.TransactionClient,
+        branchId: string,
+    ): Promise<number> {
+        const setting = await tx.system_setting.findUnique({
+            where: { key: `branch:${branchId}:contract_automation:auto_finalize` },
+            select: { value: true },
+        });
+        if (!setting?.value) return DEFAULT_CONTRACT_AUTO_FINALIZE_CONFIG.maxAttempts;
+
+        try {
+            return normalizeContractAutoFinalizeConfig(JSON.parse(setting.value)).maxAttempts;
+        } catch {
+            return DEFAULT_CONTRACT_AUTO_FINALIZE_CONFIG.maxAttempts;
+        }
     }
 
     private async updateOne(query: Prisma.Sql) {

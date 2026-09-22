@@ -1,4 +1,5 @@
 "use client";
+import { isValidBirthdayIsoDate, normalizeBirthdayIsoDate } from "@babyjamjam/shared/utils/birthday";
 import {
     getUserErrorMessage,
     normalizeApiError,
@@ -223,7 +224,7 @@ export function EmployeeFormDialog({
                 phone: employee.phone,
                 grade: normalizeEmployeeGrade(employee.grade),
                 openToNextWork: employee.openToNextWork,
-                birthday: employee.birthday ?? "",
+                birthday: normalizeBirthdayIsoDate(employee.birthday) ?? employee.birthday ?? "",
             }
             : {
                 ...initialFormData,
@@ -371,6 +372,11 @@ export function EmployeeFormDialog({
             return;
         }
 
+        if (formData.birthday && !isValidBirthdayIsoDate(formData.birthday)) {
+            setError({ message: t(locale, "clients.form.error-birthday-required"), fieldErrors: [] });
+            return;
+        }
+
         setIsSubmitting(true);
         try {
             if (isEditMode && employee) {
@@ -469,7 +475,7 @@ export function EmployeeFormDialog({
             open={open}
             onClose={handleClose}
             title={dialogTitle}
-            closeLabel="새 제공인력 등록 닫기"
+            closeLabel={`${dialogTitle} 닫기`}
             closeDisabled={isLoading}
             secondaryAction={{
                 label: t(locale, "common.cancel"),

@@ -8,10 +8,12 @@ import { AuthPanel } from "@/components/auth/auth-panel";
 import { FormField } from "@/components/auth/form-field";
 import { SelectField } from "@/components/auth/select-field";
 import { Button } from "@/components/ui/button";
+import { normalizeKoreanPhoneDigits } from "@/lib/phone";
 import { Alert } from "@/components/ui/alert";
 import { Spinner } from "@/components/ui/spinner";
 import { REGISTERABLE_ROLE_OPTIONS } from "@/lib/constants/roles";
 import { kakaoOnboardingSchema, type KakaoOnboardingFormData } from "@/lib/validations/auth";
+import { appendSafeReturnPath } from "@/lib/auth/safe-return-path";
 import { completeKakaoOnboarding } from "./actions";
 
 const PANEL_CLASS_NAME = "gap-5 !p-5 sm:!p-6 [&_[data-component='auth-kakao-onboarding-title']]:!text-[1.72rem] md:[&_[data-component='auth-kakao-onboarding-title']]:!text-[1.5rem] [&_[data-component='auth-kakao-onboarding-subtitle']]:!max-w-[34ch] [&_[data-component='auth-kakao-onboarding-subtitle']]:!text-[0.82rem] md:[&_[data-component='auth-kakao-onboarding-subtitle']]:!text-[0.76rem]";
@@ -26,6 +28,7 @@ interface OnboardingFormProps {
     role?: KakaoOnboardingFormData["role"];
     title?: string;
     subtitle?: string;
+    returnPath?: string | null;
 }
 
 function formatBirthDateInput(value: string) {
@@ -43,7 +46,8 @@ function formatBirthDateInput(value: string) {
 }
 
 function formatPhoneInput(value: string) {
-    const digits = value.replace(/\D/g, "").slice(0, 11);
+    // Country-code input is normalized first; the mobile-only prefix policy stays.
+    const digits = normalizeKoreanPhoneDigits(value).slice(0, 11);
 
     if (digits.length === 0) {
         return "";
@@ -80,6 +84,7 @@ export function OnboardingForm({
     role,
     title = "카카오 가입 마무리",
     subtitle = "카카오에서 받은 계정 정보는 그대로 사용하고, 추가 정보만 입력해 주세요.",
+    returnPath,
 }: OnboardingFormProps) {
     const router = useRouter();
     const [formData, setFormData] = useState<Partial<KakaoOnboardingFormData>>({
@@ -122,7 +127,7 @@ export function OnboardingForm({
                 return;
             }
 
-            router.replace("/login?authError=PENDING_APPROVAL");
+            router.replace(appendSafeReturnPath("/login?authError=PENDING_APPROVAL", returnPath));
         });
     };
 
@@ -202,7 +207,7 @@ export function OnboardingForm({
                     onChange={handleFieldChange("phone")}
                     error={errors.phone}
                     inputMode="numeric"
-                    maxLength={13}
+                    maxLength={20}
                     placeholder="010-1234-5678"
                     disabled={isPending}
                     data-component="desktop_auth_kakao-onboarding_form_phone-field"

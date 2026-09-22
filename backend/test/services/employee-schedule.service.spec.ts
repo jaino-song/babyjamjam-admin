@@ -3,7 +3,7 @@ import { CreateEmployeeScheduleUsecase } from "application/usecases/employee-sch
 import { EmployeeScheduleEntity } from "domain/entities/employee-schedule.entity";
 
 describe("EmployeeScheduleService", () => {
-    const createService = () => {
+    const createService = (agentAutomationRecordStore?: { appendScheduleWriteFence: jest.Mock }) => {
         const createUsecase = { execute: jest.fn() };
         const findByIdUsecase = { execute: jest.fn() };
         const listUsecase = { execute: jest.fn() };
@@ -48,6 +48,7 @@ describe("EmployeeScheduleService", () => {
                 messageAutomationIntentService as never,
                 serviceRecordLinkService as never,
                 serviceRecordLifecycleService as never,
+                agentAutomationRecordStore as never,
             ),
             createUsecase,
             updateUsecase,
@@ -59,6 +60,7 @@ describe("EmployeeScheduleService", () => {
             serviceRecordLifecycleService,
             findByIdUsecase,
             deleteUsecase,
+            agentAutomationRecordStore,
         };
     };
 
@@ -319,6 +321,56 @@ describe("EmployeeScheduleService", () => {
 
         expect(messageAutomationIntentService.persistScheduleIntent).toHaveBeenCalled();
         expect(messageAutomationIntentService.fulfillScheduleIntent).toHaveBeenCalled();
+    });
+
+    it("routes schedule create, update and delete through the trusted ordinary schedule owner", async () => {
+        const agentAutomationRecordStore = {
+            appendScheduleWriteFence: jest.fn().mockResolvedValue(undefined),
+        };
+        const {
+            service,
+            createUsecase,
+            updateUsecase,
+            findByIdUsecase,
+            transaction,
+        } = createService(agentAutomationRecordStore);
+        const created = { id: 10, clientId: 1, endDate: new Date("2026-08-31T00:00:00.000Z") } as EmployeeScheduleEntity;
+        createUsecase.execute.mockResolvedValue(created);
+        updateUsecase.execute.mockResolvedValue(created);
+        findByIdUsecase.execute.mockResolvedValue(created);
+
+        await service.create("branch-1", {
+            clientId: 1,
+            primaryEmployeeId: 2,
+            secondaryEmployeeId: null,
+            workAddress: "서울",
+            startDate: "2026-07-03",
+            endDate: "2026-07-12",
+        });
+        await service.update("branch-1", 10, { workAddress: "부산" });
+        await service.delete("branch-1", 10);
+
+        expect(agentAutomationRecordStore.appendScheduleWriteFence).toHaveBeenCalledTimes(4);
+        expect(agentAutomationRecordStore.appendScheduleWriteFence).toHaveBeenNthCalledWith(
+            1,
+            transaction,
+            expect.objectContaining({ branchId: "branch-1", clientId: 1, scheduleIds: [] }),
+        );
+        expect(agentAutomationRecordStore.appendScheduleWriteFence).toHaveBeenNthCalledWith(
+            2,
+            transaction,
+            expect.objectContaining({ branchId: "branch-1", clientId: 1, scheduleIds: [10] }),
+        );
+        expect(agentAutomationRecordStore.appendScheduleWriteFence).toHaveBeenNthCalledWith(
+            3,
+            transaction,
+            expect.objectContaining({ branchId: "branch-1", clientId: 1, scheduleIds: [10] }),
+        );
+        expect(agentAutomationRecordStore.appendScheduleWriteFence).toHaveBeenNthCalledWith(
+            4,
+            transaction,
+            expect.objectContaining({ branchId: "branch-1", clientId: 1, scheduleIds: [10] }),
+        );
     });
 });
 

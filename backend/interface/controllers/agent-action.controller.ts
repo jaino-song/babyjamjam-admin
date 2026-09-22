@@ -16,39 +16,40 @@ export class AgentActionController {
     constructor(private readonly actions: ActionCoordinatorService) {}
 
     @Get()
-    list(@Req() request: AgentActionRequest) {
-        return this.actions.list(this.owner(request));
+    async list(@Req() request: AgentActionRequest) {
+        return (await this.actions.list(this.owner(request))).map((action) => this.actions.publicAction(action));
     }
 
     @Get(":id")
-    get(@Param("id") id: string, @Req() request: AgentActionRequest) {
-        return this.actions.get(id, this.owner(request));
+    async get(@Param("id") id: string, @Req() request: AgentActionRequest) {
+        return this.actions.publicAction(await this.actions.get(id, this.owner(request)));
     }
 
     @Post(":id/approve")
-    approve(
+    async approve(
         @Param("id") id: string,
         @Body() dto: AgentActionApproveDto,
         @Req() request: AgentActionRequest,
     ) {
-        return this.actions.approve(id, this.principal(request), dto.expectedRevision, dto.acknowledgementToken);
+        const result = await this.actions.approve(id, this.principal(request), dto.expectedRevision, dto.acknowledgementToken);
+        return { ...result, action: this.actions.publicAction(result.action) };
     }
 
     @Post(":id/reject")
-    reject(
+    async reject(
         @Param("id") id: string,
         @Body() dto: AgentActionRejectDto,
         @Req() request: AgentActionRequest,
     ) {
-        return this.actions.reject(id, this.principal(request), dto.reason);
+        return this.actions.publicAction(await this.actions.reject(id, this.principal(request), dto.reason));
     }
 
     @Post(":id/reconcile")
-    reconcile(
+    async reconcile(
         @Param("id") id: string,
         @Req() request: AgentActionRequest,
     ) {
-        return this.actions.reconcile(id, this.principal(request));
+        return this.actions.publicAction(await this.actions.reconcile(id, this.principal(request)));
     }
 
     private owner(request: AgentActionRequest) {

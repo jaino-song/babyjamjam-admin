@@ -13,6 +13,9 @@ interface ExpandableSearchProps {
   placeholder?: string;
   expandedWidth?: string;
   className?: string;
+  openLabel?: string;
+  closeLabel?: string;
+  inputLabel?: string;
 }
 
 export function ExpandableSearch({
@@ -22,16 +25,20 @@ export function ExpandableSearch({
   placeholder = "검색...",
   expandedWidth = "w-20",
   className,
+  openLabel = "검색 열기",
+  closeLabel = "검색 닫기",
+  inputLabel = "검색어",
 }: ExpandableSearchProps) {
   const [expanded, setExpanded] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
   const handleToggle = () => {
-    setExpanded((prev) => {
-      if (!prev) setTimeout(() => inputRef.current?.focus(), 50);
-      else onChange("");
-      return !prev;
-    });
+    if (!expanded) {
+      setTimeout(() => inputRef.current?.focus(), 50);
+    } else {
+      onChange("");
+    }
+    setExpanded(!expanded);
   };
 
   const handleBlur = () => {
@@ -42,6 +49,7 @@ export function ExpandableSearch({
     <div data-component={dataComponent} data-slot="expandable-search" className={cn("flex items-center gap-1.5", className)}>
       <button
         onClick={handleToggle}
+        aria-label={expanded ? closeLabel : openLabel}
         className="flex h-[44px] w-[44px] items-center justify-center rounded-2xl hover:bg-v3-dim-white"
       >
         <Search className={expanded ? "hidden" : "w-[18px] h-[18px] text-v3-text-muted"} />
@@ -49,6 +57,7 @@ export function ExpandableSearch({
       <Input
         ref={inputRef}
         type="text"
+        aria-label={inputLabel}
         placeholder={placeholder}
         value={value}
         onChange={(e) => onChange(e.target.value)}

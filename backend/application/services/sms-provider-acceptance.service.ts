@@ -1,4 +1,5 @@
 import { ConflictException, Inject, Injectable, InternalServerErrorException, NotFoundException } from "@nestjs/common";
+import type { Prisma } from "@prisma/client";
 import { createHash } from "node:crypto";
 import { codeOnlyProblemBody } from "application/utils/problem-bodies";
 import {
@@ -89,16 +90,22 @@ export class SmsProviderAcceptanceService {
         return this.logRepository.save(log);
     }
 
-    async beginProviderCall(log: MessageLogEntity): Promise<MessageLogEntity> {
+    async beginProviderCall(
+        log: MessageLogEntity,
+        transaction?: Prisma.TransactionClient,
+    ): Promise<MessageLogEntity> {
         if (log.providerAcceptanceState !== "prepared") {
             throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
         }
 
         const repository = this.logRepository as IMessageLogRepository & {
-            claimProviderAttempt?: (attempt: MessageLogEntity) => Promise<MessageLogEntity | null>;
+            claimProviderAttempt?: (
+                attempt: MessageLogEntity,
+                transaction?: Prisma.TransactionClient,
+            ) => Promise<MessageLogEntity | null>;
         };
         if (typeof repository.claimProviderAttempt === "function") {
-            const claimed = await repository.claimProviderAttempt(log);
+            const claimed = await repository.claimProviderAttempt(log, transaction);
             if (!claimed) {
                 throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
             }
@@ -106,7 +113,7 @@ export class SmsProviderAcceptanceService {
         }
 
         log.markProviderCallStarted();
-        await this.logRepository.update(log);
+        await this.logRepository.update(log, transaction);
         return log;
     }
 

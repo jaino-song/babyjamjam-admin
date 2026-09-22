@@ -2,6 +2,7 @@ import { ConflictException } from "@nestjs/common";
 import { CreateAndSendContractUsecase } from "application/usecases/eformsign-doc/create-and-send-contract.usecase";
 import { EformsignApiError } from "infrastructure/api/eformsign-api.error";
 import { codeOnlyProblemBody } from "application/utils/problem-bodies";
+import { LIST_ONLY_HISTORICAL_MATERNITY_TEMPLATE_IDS } from "application/utils/eformsign-historical-template-policy";
 
 const TEST_PRINCIPAL = { branchId: "branch-1", globalRole: "owner" };
 const RECOVERY_NONE = { action: "NONE", retry: { mode: "NEVER" } };
@@ -15,6 +16,38 @@ const createBoundary = () => ({
 });
 
 describe("CreateAndSendContractUsecase", () => {
+    it.each([
+        ...LIST_ONLY_HISTORICAL_MATERNITY_TEMPLATE_IDS,
+        ...LIST_ONLY_HISTORICAL_MATERNITY_TEMPLATE_IDS.map((templateId) => `  ${templateId}  `),
+    ])("rejects historical templates before any client, claim, durable, credential, or provider work: %s", async (templateId) => {
+        const createDocument = jest.fn();
+        const findById = jest.fn();
+        const withCredentials = createBoundary();
+        const assignmentGuard = { assertLiveAssignedClient: jest.fn() };
+        const persistDocument = jest.fn();
+        const dispatchBoundary = { claim: jest.fn() };
+        const usecase = new CreateAndSendContractUsecase(
+            { createDocument } as never,
+            { findById } as never,
+            withCredentials as never,
+            { execute: persistDocument } as never,
+            assignmentGuard as never,
+            dispatchBoundary as never,
+        );
+
+        await expect(usecase.execute("branch-1", {
+            clientId: 55,
+            templateId,
+        }, TEST_PRINCIPAL)).rejects.toThrow("historical list-only");
+
+        expect(findById).not.toHaveBeenCalled();
+        expect(assignmentGuard.assertLiveAssignedClient).not.toHaveBeenCalled();
+        expect(withCredentials.withCredentials).not.toHaveBeenCalled();
+        expect(dispatchBoundary.claim).not.toHaveBeenCalled();
+        expect(persistDocument).not.toHaveBeenCalled();
+        expect(createDocument).not.toHaveBeenCalled();
+    });
+
     it("rejects a malformed persisted client phone before assignment, credentials, or provider work", async () => {
         const createDocument = jest.fn();
         const withCredentials = createBoundary();

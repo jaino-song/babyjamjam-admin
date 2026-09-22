@@ -1,4 +1,8 @@
 import { EformsignTemplateScopeService } from "application/services/eformsign-template-scope.service";
+import {
+    isListOnlyHistoricalMaternityTemplateId,
+    LIST_ONLY_HISTORICAL_MATERNITY_TEMPLATE_IDS,
+} from "application/utils/eformsign-historical-template-policy";
 import { SERVICE_RECORD_TEMPLATE_TIER_ENV_KEYS } from "application/usecases/eformsign-doc/service-record-field-ids";
 import { AreaTemplateEntity } from "domain/entities/area-template.entity";
 
@@ -61,24 +65,43 @@ describe("EformsignTemplateScopeService", () => {
             });
 
             await expect(service.resolveTemplateFilter("maternity", "branch-1")).resolves.toEqual({
-                templateId: "template-a,template-b",
+                templateId: [
+                    "template-a",
+                    "template-b",
+                    ...LIST_ONLY_HISTORICAL_MATERNITY_TEMPLATE_IDS,
+                ].join(","),
                 templateMatch: "include",
             });
             expect(areaTemplateService.findAll).toHaveBeenCalledWith("branch-1");
         });
 
-        it("dedupes template ids registered under multiple areas", async () => {
+        it("dedupes active and list-only template ids", async () => {
             const { service } = createService({
                 areaTemplates: [
                     areaTemplate("area-1", "template-a"),
                     areaTemplate("area-2", "template-a"),
+                    areaTemplate("area-3", LIST_ONLY_HISTORICAL_MATERNITY_TEMPLATE_IDS[0]),
                 ],
             });
 
             await expect(service.resolveTemplateFilter("maternity", "branch-1")).resolves.toEqual({
-                templateId: "template-a",
+                templateId: [
+                    "template-a",
+                    ...LIST_ONLY_HISTORICAL_MATERNITY_TEMPLATE_IDS,
+                ].join(","),
                 templateMatch: "include",
             });
+        });
+
+        it("marks retired maternity ids as list-only without exposing them through the registry", () => {
+            expect(LIST_ONLY_HISTORICAL_MATERNITY_TEMPLATE_IDS).toEqual([
+                "d1591da29590495d800f55f1d1fc1378",
+                "e63c528b0375478d83e30ff8a9ed1967",
+            ]);
+            expect(isListOnlyHistoricalMaternityTemplateId(
+                LIST_ONLY_HISTORICAL_MATERNITY_TEMPLATE_IDS[0],
+            )).toBe(true);
+            expect(isListOnlyHistoricalMaternityTemplateId("active-template")).toBe(false);
         });
 
         it("falls back to excluding service-record templates when no maternity template is registered", async () => {

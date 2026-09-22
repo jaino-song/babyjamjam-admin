@@ -8,6 +8,8 @@ import {
     EFORMSIGN_MAX_DOWNLOAD_BYTES,
     EformsignService,
 } from "application/services/eformsign.service";
+import type { EformsignTemplateWorkflow } from "application/utils/eformsign-template-workflow";
+import { LIST_ONLY_HISTORICAL_MATERNITY_TEMPLATE_IDS } from "application/utils/eformsign-historical-template-policy";
 
 function generateEformsignPrivateKeyHex(): string {
     const { privateKey } = crypto.generateKeyPairSync("ec", { namedCurve: "prime256v1" });
@@ -31,6 +33,39 @@ function createConfigService(overrides: Record<string, string | undefined> = {})
             return values[key];
         }),
     } as unknown as ConfigService;
+}
+
+const CUSTOMER_PHONE = "010-2222-3333";
+const ISSUER_PHONE = "010-4444-5555";
+
+function createContractData(overrides: Partial<ContractDataDto> = {}): ContractDataDto {
+    return {
+        customerName: "김고객",
+        customerContact: CUSTOMER_PHONE,
+        customerDOB: "900101",
+        customerAddress: "주소",
+        caretaker1Name: "이담당",
+        caretaker1Contact: "010-9999-8888",
+        type: "A",
+        days: "5",
+        area: "Seoul",
+        contractDuration: "2026-06-03 ~ 2026-06-07",
+        startYear: "26",
+        startMonth: "06",
+        startDay: "03",
+        startDate: "2026-06-03",
+        endYear: "26",
+        endMonth: "06",
+        endDay: "07",
+        endDate: "2026-06-07",
+        paymentYear: "26",
+        paymentMonth: "06",
+        paymentDay: "03",
+        fullPrice: "100000",
+        grant: "50000",
+        actualPrice: "50000",
+        ...overrides,
+    };
 }
 
 describe("EformsignService", () => {
@@ -339,6 +374,49 @@ describe("EformsignService", () => {
         expect(result.total_rows).toBe(4);
     });
 
+    it.each(LIST_ONLY_HISTORICAL_MATERNITY_TEMPLATE_IDS)(
+        "rejects list-only historical template %s when explicitly requested for creation",
+        (templateId) => {
+            const service = new EformsignService(createConfigService());
+
+            expect(() => service.resolveEffectiveTemplateId(templateId)).toThrow(
+                "historical list-only",
+            );
+            expect(() => service.generateDocumentOptions(
+                createContractData(),
+                "access-token",
+                "refresh-token",
+                templateId,
+            )).toThrow("historical list-only");
+        },
+    );
+
+    it("rejects a configured list-only fallback when the area template is missing", () => {
+        const service = new EformsignService(createConfigService({
+            EFORMSIGN_TEMPLATE_ID: LIST_ONLY_HISTORICAL_MATERNITY_TEMPLATE_IDS[0],
+        }));
+
+        expect(() => service.resolveEffectiveTemplateId()).toThrow("historical list-only");
+        expect(() => service.generateDocumentOptions(
+            createContractData(),
+            "access-token",
+            "refresh-token",
+        )).toThrow("historical list-only");
+    });
+
+    it("rejects a retired fallback before an incomplete provider configuration can mask it", () => {
+        const service = new EformsignService(createConfigService({
+            EFORMSIGN_TEMPLATE_ID: LIST_ONLY_HISTORICAL_MATERNITY_TEMPLATE_IDS[0],
+            EFORMSIGN_API_URL: undefined,
+        }));
+
+        expect(() => service.generateDocumentOptions(
+            createContractData(),
+            "access-token",
+            "refresh-token",
+        )).toThrow("historical list-only");
+    });
+
     it("uses payment collection date fields and reviewer step for provider confirmation", () => {
         const service = new EformsignService(createConfigService());
         const contractData: ContractDataDto = {
@@ -395,6 +473,104 @@ describe("EformsignService", () => {
                 }),
             ]),
         );
+    });
+
+    it("maps validated participant and reviewer sequences without changing provider identities", () => {
+        const service = new EformsignService(createConfigService());
+        const workflow: EformsignTemplateWorkflow = {
+            templateId: "template-override",
+            steps: [],
+            recipients: [
+                { seq: "9", type: "participant", identity: "customer" },
+                { seq: "12", type: "participant", identity: "institution" },
+                { seq: "18", type: "reviewer", identity: "institution" },
+            ],
+        };
+
+        const options = service.generateDocumentOptions(
+            {
+                customerName: "김고객",
+                customerContact: "010-1234-5678",
+                customerDOB: "900101",
+                customerAddress: "주소",
+                caretaker1Name: "이담당",
+                caretaker1Contact: "010-9999-8888",
+                type: "A",
+                days: "5",
+                area: "Seoul",
+                contractDuration: "2026-06-03 ~ 2026-06-07",
+                startYear: "26",
+                startMonth: "06",
+                startDay: "03",
+                startDate: "2026-06-03",
+                endYear: "26",
+                endMonth: "06",
+                endDay: "07",
+                endDate: "2026-06-07",
+                paymentYear: "26",
+                paymentMonth: "06",
+                paymentDay: "03",
+                fullPrice: "100000",
+                grant: "50000",
+                actualPrice: "50000",
+            },
+            "access-token",
+            "refresh-token",
+            "template-override",
+            workflow,
+        );
+
+        expect(options.mode.template_id).toBe("template-override");
+        expect(options.prefill.recipients).toEqual([
+            {
+                step_idx: "9",
+                step_type: "05",
+                name: "김고객",
+                id: "",
+                sms: "010-1234-5678",
+                use_sms: true,
+            },
+            {
+                step_idx: "12",
+                step_type: "05",
+                name: "제공기관 확인",
+                id: "staff@example.com",
+                use_mail: false,
+                use_sms: false,
+            },
+            {
+                step_idx: "18",
+                step_type: "06",
+                name: "제공기관 확인",
+                id: "staff@example.com",
+                use_mail: false,
+                use_sms: false,
+            },
+        ]);
+        expect(JSON.stringify(options.prefill.recipients)).not.toContain("이담당");
+    });
+
+    it.each([
+        ["a distinct issuer phone", ISSUER_PHONE],
+        ["no issuer phone", undefined],
+    ] as const)("prefills the customer phone in the PDF field with %s", (_caseName, issuerPhone) => {
+        const service = new EformsignService(createConfigService());
+        const options = service.generateDocumentOptions(
+            createContractData(issuerPhone ? { issuerPhone } : {}),
+            "access-token",
+            "refresh-token",
+        );
+
+        expect(options.prefill.fields).toEqual(expect.arrayContaining([
+            { id: "이용자 연락처", value: CUSTOMER_PHONE, enabled: true },
+        ]));
+        expect(options.prefill.recipients).toEqual(expect.arrayContaining([
+            expect.objectContaining({
+                name: "김고객",
+                sms: CUSTOMER_PHONE,
+                use_sms: true,
+            }),
+        ]));
     });
 
     it("round-trips formatted whole-won prices as canonical provider values", () => {

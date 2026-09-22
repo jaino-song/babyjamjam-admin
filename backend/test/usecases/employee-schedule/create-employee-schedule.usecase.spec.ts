@@ -74,11 +74,11 @@ describe("CreateEmployeeScheduleUsecase assignment eligibility", () => {
     ]> = [
         ["wrong branch", [{ ...eligible(), branchId: "branch-b" }], {}, "EMPLOYEE_ASSIGNMENT_NOT_ELIGIBLE"],
         ["soft deleted", [{ ...eligible(), deletedAt: new Date("2026-01-01T00:00:00.000Z") }], {}, "EMPLOYEE_ASSIGNMENT_NOT_ELIGIBLE"],
-        ["unavailable", [{ ...eligible(), openToNextWork: false }], {}, "EMPLOYEE_ASSIGNMENT_NOT_ELIGIBLE"],
+        ["unavailable", [{ ...eligible(), openToNextWork: false }], {}, "EMPLOYEE_ASSIGNMENT_UNAVAILABLE"],
         ["missing", [], {}, "EMPLOYEE_ASSIGNMENT_NOT_ELIGIBLE"],
         ["wrong branch secondary", [eligible(), { ...eligible(3), branchId: "branch-b" }], { secondaryEmployeeId: 3 }, "EMPLOYEE_ASSIGNMENT_NOT_ELIGIBLE"],
         ["soft deleted secondary", [eligible(), { ...eligible(3), deletedAt: new Date("2026-01-01T00:00:00.000Z") }], { secondaryEmployeeId: 3 }, "EMPLOYEE_ASSIGNMENT_NOT_ELIGIBLE"],
-        ["unavailable secondary", [eligible(), { ...eligible(3), openToNextWork: false }], { secondaryEmployeeId: 3 }, "EMPLOYEE_ASSIGNMENT_NOT_ELIGIBLE"],
+        ["unavailable secondary", [eligible(), { ...eligible(3), openToNextWork: false }], { secondaryEmployeeId: 3 }, "EMPLOYEE_ASSIGNMENT_UNAVAILABLE"],
         ["missing secondary", [eligible()], { secondaryEmployeeId: 999 }, "EMPLOYEE_ASSIGNMENT_NOT_ELIGIBLE"],
         ["same employee in both roles", [eligible()], { secondaryEmployeeId: 2 }, "VALIDATION_FAILED"],
     ];

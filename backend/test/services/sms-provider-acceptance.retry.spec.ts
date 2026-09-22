@@ -67,8 +67,9 @@ describe("SMS provider acceptance and retry boundary", () => {
             startRetryAttempt: jest.fn().mockImplementation(async (
                 _sourceLog: MessageLogEntity,
                 draft: MessageLogEntity,
-            ) =>
-                MessageLogEntity.reconstitute(
+            ) => ({
+                kind: "started" as const,
+                log: MessageLogEntity.reconstitute(
                     78,
                     draft.branchId,
                     draft.provider,
@@ -97,7 +98,7 @@ describe("SMS provider acceptance and retry boundary", () => {
                     draft.providerReconciledBy,
                     draft.providerReconciliationReason,
                 ),
-            ),
+            })),
         };
         return repository;
     };
@@ -272,13 +273,13 @@ describe("SMS partial acceptance survives process restart as a durable resend ba
             }),
             startRetryAttempt: jest.fn(async (sourceLog: MessageLogEntity, draft: MessageLogEntity) => {
                 const source = rows.get(sourceLog.id);
-                if (!source) return null;
+                if (!source) return { kind: "lost" } as const;
                 // Same CAS as the production repository: the source must still
                 // own its retry schedule, otherwise the retry was claimed.
                 const current = MessageLogEntity.reconstitute(...source.fields);
                 if (current.nextRetryAt?.getTime() !== sourceLog.nextRetryAt?.getTime()
                     || current.status !== sourceLog.status) {
-                    return null;
+                    return { kind: "lost" } as const;
                 }
                 current.nextRetryAt = null;
                 current.updatedAt = new Date();
@@ -295,7 +296,7 @@ describe("SMS partial acceptance survives process restart as a durable resend ba
                         draft.providerReconciliationReason] as Parameters<typeof MessageLogEntity.reconstitute>,
                 );
                 rows.set(persisted.id, snapshot(persisted));
-                return MessageLogEntity.reconstitute(...snapshot(persisted).fields);
+                return { kind: "started" as const, log: MessageLogEntity.reconstitute(...snapshot(persisted).fields) };
             }),
             findPendingRetriesSystemScope: jest.fn(async () =>
                 [...rows.values()]

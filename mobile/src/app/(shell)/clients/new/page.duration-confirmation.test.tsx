@@ -14,7 +14,12 @@ let mockSearchParams = new URLSearchParams();
 let mockEditingClient: Client | undefined;
 let mockEditingContractDocument: object | undefined;
 let mockLatePrefill: Record<string, unknown> = {};
-let mockEmployees: Array<{ id: number; name: string; phone: string }> = [];
+let mockEmployees: Array<{
+  id: number;
+  name: string;
+  phone: string;
+  openToNextWork?: boolean;
+}> = [];
 const mockOutOfPocketPrices = [{ id: 1, duration: 15, fullPrice: "1" }];
 const mockEmptyPrices: never[] = [];
 
@@ -90,7 +95,7 @@ jest.mock("@/lib/eformsign/client-prefill", () => ({
 
 const initialForm = {
   name: "기간 확인 고객",
-  birthday: "900101",
+  birthday: "1958-03-03",
   dueDate: "2026-08-01",
   birthDate: "",
   address: "인천시",
@@ -198,12 +203,208 @@ describe("mobile client service date confirmation", () => {
     renderCreate();
     act(() => {
       useClientWizardStore.getState().setField("endDate", "2026-09-23");
+      useClientWizardStore.getState().setField("dueDate", "");
+      useClientWizardStore.getState().setField("birthDate", "");
     });
 
     fireEvent.click(screen.getByRole("button", { name: "등록" }));
     await waitFor(() => expect(mockCreateClient).toHaveBeenCalledTimes(1));
     expect(mockCreateClient.mock.calls[0][0]).not.toHaveProperty("allowBusinessDayMismatch");
+    expect(mockCreateClient).toHaveBeenCalledWith(expect.objectContaining({
+      dueDate: null,
+      birthDate: null,
+    }));
     expect(screen.queryByRole("dialog", { name: "서비스 기간 확인" })).not.toBeInTheDocument();
+  });
+
+  it("allows the basic-details step without due or birth dates", async () => {
+    mockSearchParams = new URLSearchParams("clientId=7");
+    mockEditingClient = {
+      ...editingClient(),
+      phone: "010-1234-5678",
+      dueDate: null,
+      birthDate: null,
+    };
+    render(<NewClientPage />);
+
+    await waitFor(() => expect(useClientWizardStore.getState().phone).toBe("010-1234-5678"));
+    expect(screen.getByRole("button", { name: "다음" })).toBeEnabled();
+
+    fireEvent.click(screen.getByRole("button", { name: "다음" }));
+
+    await waitFor(() => expect(useClientWizardStore.getState().currentStep).toBe(1));
+  });
+
+  it("confirms activation before assigning an unavailable employee and completing registration", async () => {
+    mockEmployees = [{
+      id: 17,
+      name: "김관리",
+      phone: "010-1111-2222",
+      openToNextWork: false,
+    }];
+    const confirmationError = {
+      response: {
+        status: 409,
+        data: {
+          code: "EMPLOYEE_ACTIVATION_CONFIRMATION_REQUIRED",
+          unavailableEmployees: [{ id: 17, name: "김관리" }],
+        },
+      },
+    };
+    mockCreateClient
+      .mockRejectedValueOnce(confirmationError)
+      .mockRejectedValueOnce(confirmationError)
+      .mockResolvedValueOnce({ id: 1 });
+    renderCreate();
+    act(() => {
+      useClientWizardStore.getState().setField("primaryEmployeeId", 17);
+      useClientWizardStore.getState().setField("endDate", "2026-09-23");
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "등록" }));
+    const modal = await screen.findByRole("dialog", { name: "제공인력 배정 확인" });
+
+    expect(within(modal).getByText(
+      "김관리 제공인력은 현재 배정이 불가한 상태입니다. 배정 가능 상태로 전환하고 배정을 진행할까요?",
+    )).toBeInTheDocument();
+    expect(mockCreateClient).toHaveBeenCalledTimes(1);
+
+    fireEvent.click(within(modal).getByRole("button", { name: "취소" }));
+    expect(mockCreateClient).toHaveBeenCalledTimes(1);
+
+    fireEvent.click(screen.getByRole("button", { name: "등록" }));
+    fireEvent.click(within(
+      await screen.findByRole("dialog", { name: "제공인력 배정 확인" }),
+    ).getByRole("button", { name: "확인" }));
+
+    await waitFor(() => expect(mockCreateClient).toHaveBeenCalledWith(expect.objectContaining({
+      primaryEmployeeId: 17,
+      confirmedUnavailableEmployeeIds: [17],
+    })));
+    expect(mockPush).toHaveBeenCalledWith("/clients");
+  });
+
+  it("opens the modal from the server-current unavailable set when the employee snapshot is stale", async () => {
+    mockEmployees = [{
+      id: 17,
+      name: "예전 이름",
+      phone: "010-1111-2222",
+      openToNextWork: true,
+    }];
+    mockCreateClient
+      .mockRejectedValueOnce({
+        response: {
+          status: 409,
+          data: {
+            code: "EMPLOYEE_ACTIVATION_CONFIRMATION_REQUIRED",
+            unavailableEmployees: [{ id: 17, name: "김관리" }],
+          },
+        },
+      })
+      .mockResolvedValueOnce({ id: 1 });
+    renderCreate();
+    act(() => {
+      useClientWizardStore.getState().setField("primaryEmployeeId", 17);
+      useClientWizardStore.getState().setField("endDate", "2026-09-23");
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "등록" }));
+    const modal = await screen.findByRole("dialog", { name: "제공인력 배정 확인" });
+    expect(within(modal).getByText(
+      "김관리 제공인력은 현재 배정이 불가한 상태입니다. 배정 가능 상태로 전환하고 배정을 진행할까요?",
+    )).toBeInTheDocument();
+
+    fireEvent.click(within(modal).getByRole("button", { name: "확인" }));
+    await waitFor(() => expect(mockCreateClient).toHaveBeenCalledTimes(2));
+    expect(mockCreateClient).toHaveBeenLastCalledWith(expect.objectContaining({
+      confirmedUnavailableEmployeeIds: [17],
+    }));
+    expect(mockPush).toHaveBeenCalledWith("/clients");
+  });
+
+  it("re-prompts with the changed locked employee set before activating anyone", async () => {
+    mockEmployees = [
+      { id: 17, name: "김주", phone: "010-1111-2222", openToNextWork: false },
+      { id: 23, name: "이보조", phone: "010-3333-4444", openToNextWork: true },
+    ];
+    mockCreateClient
+      .mockRejectedValueOnce({
+        response: {
+          status: 409,
+          data: {
+            code: "EMPLOYEE_ACTIVATION_CONFIRMATION_REQUIRED",
+            unavailableEmployees: [{ id: 17, name: "김주" }],
+          },
+        },
+      })
+      .mockRejectedValueOnce({
+        response: {
+          status: 409,
+          data: {
+            code: "EMPLOYEE_ACTIVATION_CONFIRMATION_REQUIRED",
+            unavailableEmployees: [
+              { id: 17, name: "김주" },
+              { id: 23, name: "이보조" },
+            ],
+          },
+        },
+      })
+      .mockResolvedValueOnce({ id: 1 });
+    renderCreate();
+    act(() => {
+      useClientWizardStore.getState().setField("primaryEmployeeId", 17);
+      useClientWizardStore.getState().setField("secondaryEmployeeId", 23);
+      useClientWizardStore.getState().setField("endDate", "2026-09-23");
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "등록" }));
+    let modal = await screen.findByRole("dialog", { name: "제공인력 배정 확인" });
+    expect(within(modal).getByText(/김주 제공인력은/)).toBeInTheDocument();
+    fireEvent.click(within(modal).getByRole("button", { name: "확인" }));
+
+    modal = await screen.findByRole("dialog", { name: "제공인력 배정 확인" });
+    expect(within(modal).getByText(/김주, 이보조 제공인력은/)).toBeInTheDocument();
+    fireEvent.click(within(modal).getByRole("button", { name: "확인" }));
+
+    await waitFor(() => expect(mockCreateClient).toHaveBeenCalledTimes(3));
+    expect(mockCreateClient).toHaveBeenLastCalledWith(expect.objectContaining({
+      confirmedUnavailableEmployeeIds: [17, 23],
+    }));
+  });
+
+  it("chains the duration confirmation into employee activation confirmation", async () => {
+    mockEmployees = [{
+      id: 17,
+      name: "김관리",
+      phone: "010-1111-2222",
+      openToNextWork: false,
+    }];
+    mockCreateClient
+      .mockRejectedValueOnce({
+        response: {
+          status: 409,
+          data: {
+            code: "EMPLOYEE_ACTIVATION_CONFIRMATION_REQUIRED",
+            unavailableEmployees: [{ id: 17, name: "김관리" }],
+          },
+        },
+      })
+      .mockResolvedValueOnce({ id: 1 });
+    renderCreate();
+    act(() => useClientWizardStore.getState().setField("primaryEmployeeId", 17));
+
+    fireEvent.click(screen.getByRole("button", { name: "등록" }));
+    const durationModal = await screen.findByRole("dialog", { name: "서비스 기간 확인" });
+    fireEvent.click(within(durationModal).getByRole("button", { name: "확인" }));
+
+    const employeeModal = await screen.findByRole("dialog", { name: "제공인력 배정 확인" });
+    expect(mockCreateClient).toHaveBeenCalledTimes(1);
+    fireEvent.click(within(employeeModal).getByRole("button", { name: "확인" }));
+
+    await waitFor(() => expect(mockCreateClient).toHaveBeenCalledWith(expect.objectContaining({
+      allowBusinessDayMismatch: true,
+      confirmedUnavailableEmployeeIds: [17],
+    })));
   });
 
   it("invalidates a pending confirmation when the period changes", async () => {

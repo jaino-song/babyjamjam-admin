@@ -1,3 +1,4 @@
+import type { Prisma } from "@prisma/client";
 import { BadRequestException, Injectable } from "@nestjs/common";
 import { SystemTemplateWithRegistryDto } from "application/dto/system-template-with-registry.dto";
 import {
@@ -47,8 +48,9 @@ export class SystemTemplateService {
         return entities.map((entity) => this.enrichFromRegistry(entity));
     }
 
-    async getByKeyForBranch(branchId: string, key: string): Promise<SystemTemplateWithRegistryDto> {
-        const entity = await this.getByKeyUseCase.executeForBranch(branchId, this.toKey(key));
+    async getByKeyForBranch(branchId: string, key: string, transaction?: Prisma.TransactionClient): Promise<SystemTemplateWithRegistryDto> {
+        const entity = transaction ? await this.getByKeyUseCase.executeForBranch(branchId, this.toKey(key), transaction)
+            : await this.getByKeyUseCase.executeForBranch(branchId, this.toKey(key));
         return this.enrichFromRegistry(entity);
     }
 

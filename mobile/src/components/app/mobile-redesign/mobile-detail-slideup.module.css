@@ -108,6 +108,10 @@
   line-height: normal;
 }
 
+.actionButton:only-child {
+  grid-column: 1 / -1;
+}
+
 .secondaryAction {
   background: hsl(220 20% 97%);
   color: hsl(var(--v3-text));

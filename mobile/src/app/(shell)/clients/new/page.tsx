@@ -1,4 +1,5 @@
 "use client";
+import { formatBirthdayInput, isValidBirthdayIsoDate, normalizeBirthdayIsoDate } from "@babyjamjam/shared/utils/birthday";
 import {
   getUserErrorMessage,
   normalizeApiError,
@@ -41,6 +42,7 @@ import { useClientDialogStore } from "@/stores/client-dialog-store";
 import { useClientWizardStore } from "@/stores/client-wizard-store";
 import { useLocale } from "@/providers/LocaleProvider";
 import { t } from "@/lib/i18n/translations";
+import { formatKoreanPhoneNumber, normalizeKoreanPhoneDigits } from "@/lib/phone";
 import voucherOptions from "@/components/app/messages/templates/json/voucher.json";
 import { calcEndDateBusinessDays } from "@/lib/date/business-days";
 import {
@@ -132,13 +134,6 @@ function Field({
   );
 }
 
-const formatPhoneNumber = (value: string): string => {
-  const digits = value.replace(/\D/g, "");
-  if (digits.length <= 3) return digits;
-  if (digits.length <= 7) return `${digits.slice(0, 3)}-${digits.slice(3)}`;
-  return `${digits.slice(0, 3)}-${digits.slice(3, 7)}-${digits.slice(7, 11)}`;
-};
-
 const formatPrice = (price: number | string): string => {
   if (!price && price !== 0) return "";
   const cleaned = typeof price === "string" ? price.replace(/,/g, "") : String(price);
@@ -171,8 +166,6 @@ const resolveVoucherTypeValue = (value: string | null | undefined): string | und
   ))?.value;
 };
 
-const normalizePhoneDigits = (value: string | null | undefined): string => (value ?? "").replace(/\D/g, "");
-
 const findEmployeeByContractPrefill = (
   employees: readonly Employee[],
   name: string | undefined,
@@ -180,11 +173,11 @@ const findEmployeeByContractPrefill = (
 ): Employee | undefined => {
   if (!name) return undefined;
   const trimmedName = name.trim();
-  const phoneDigits = normalizePhoneDigits(phone);
+  const phoneDigits = normalizeKoreanPhoneDigits(phone);
 
   return employees.find((employee) => {
     if (employee.name.trim() !== trimmedName) return false;
-    return !phoneDigits || normalizePhoneDigits(employee.phone) === phoneDigits;
+    return !phoneDigits || normalizeKoreanPhoneDigits(employee.phone) === phoneDigits;
   }) ?? employees.find((employee) => employee.name.trim() === trimmedName);
 };
 
@@ -259,6 +252,10 @@ export default function NewClientPage() {
   const [hasPhoneDuplicateCheckFailed, setHasPhoneDuplicateCheckFailed] = useState(false);
   const [lastCheckedPhoneDigits, setLastCheckedPhoneDigits] = useState<string | null>(null);
   const [pendingDurationConfirmation, setPendingDurationConfirmation] = useState<string | null>(null);
+  const [pendingUnavailableEmployeeConfirmation, setPendingUnavailableEmployeeConfirmation] = useState<{
+    employees: Array<{ id: number; name: string }>;
+    confirmedPeriod?: string;
+  } | null>(null);
   const [errorState, setErrorState] = useState<NormalizedApiError | null>(null);
   const [hasUnknownMutationOutcome, setHasUnknownMutationOutcome] = useState(false);
   const lastInitializedFormKeyRef = useRef<string | null>(null);
@@ -369,7 +366,7 @@ export default function NewClientPage() {
     reset();
 
     if (prefillClient.name !== undefined) setField("name", prefillClient.name);
-    if (prefillClient.birthday !== undefined) setField("birthday", prefillClient.birthday);
+    if (prefillClient.birthday !== undefined) setField("birthday", normalizeBirthdayIsoDate(prefillClient.birthday) ?? prefillClient.birthday);
     if (prefillClient.dueDate !== undefined) setField("dueDate", toIsoDate(prefillClient.dueDate));
     if (prefillClient.address !== undefined) setField("address", prefillClient.address);
     if (prefillClient.phone !== undefined) setField("phone", prefillClient.phone);
@@ -413,7 +410,7 @@ export default function NewClientPage() {
     previousServicePeriodRef.current = null;
 
     setField("name", editingClient.name);
-    setField("birthday", editingClient.birthday ?? "");
+    setField("birthday", normalizeBirthdayIsoDate(editingClient.birthday) ?? editingClient.birthday ?? "");
     setField("dueDate", normalizeIsoDate(editingClient.dueDate));
     setField("birthDate", normalizeIsoDate(editingClient.birthDate));
     setField("address", editingClient.address ?? "");
@@ -474,7 +471,7 @@ export default function NewClientPage() {
     );
     const hydratedStore = useClientWizardStore.getState();
 
-    if (!hydratedStore.birthday && prefill.birthday) setField("birthday", prefill.birthday);
+    if (!hydratedStore.birthday && prefill.birthday) setField("birthday", normalizeBirthdayIsoDate(prefill.birthday) ?? prefill.birthday);
     if (!hydratedStore.dueDate && prefill.dueDate) setField("dueDate", toIsoDate(prefill.dueDate));
     if (!hydratedStore.address && prefill.address) setField("address", prefill.address);
     if (!hydratedStore.phone && prefill.phone) setField("phone", prefill.phone);
@@ -784,8 +781,7 @@ export default function NewClientPage() {
     switch (step) {
       case 0:
         if (!store.name.trim()) return false;
-        if (store.birthday.replace(/\D/g, "").length !== 6) return false;
-        if (!store.dueDate) return false;
+        if (!isValidBirthdayIsoDate(store.birthday)) return false;
         if (phoneDigits.length !== 11) return false;
         if (isUsingOriginalPhone) return true;
 
@@ -821,10 +817,8 @@ export default function NewClientPage() {
     if (step === 0) {
       if (!store.name.trim()) {
         showErrorToast(t(locale, "clients.form.error-name-required"));
-      } else if (store.birthday.replace(/\D/g, "").length !== 6) {
+      } else if (!isValidBirthdayIsoDate(store.birthday)) {
         showErrorToast(t(locale, "clients.form.error-birthday-required"));
-      } else if (!store.dueDate) {
-        showErrorToast(t(locale, "clients.form.error-due-date-required"));
       } else if (phoneDigits.length !== 11) {
         showErrorToast(t(locale, "clients.form.error-phone-required"));
       } else if (hasPhoneDuplicateCheckFailed) {
@@ -842,7 +836,10 @@ export default function NewClientPage() {
     setCurrentStep(newStep);
   };
 
-  const handleComplete = async (confirmedPeriod?: string) => {
+  const handleComplete = async (
+    confirmedPeriod?: string,
+    confirmedUnavailableEmployeeIds?: number[],
+  ) => {
     if (submissionInFlightRef.current || hasUnknownMutationOutcome) return;
     if (!validateStep(currentStep)) return;
 
@@ -851,11 +848,12 @@ export default function NewClientPage() {
       setPendingDurationConfirmation(periodKey);
       return;
     }
+    setPendingDurationConfirmation(null);
 
     const durationConfirmation = hasMismatch && confirmedPeriod === periodKey
       ? { allowBusinessDayMismatch: true }
       : {};
-    setPendingDurationConfirmation(null);
+    setPendingUnavailableEmployeeConfirmation(null);
     submissionInFlightRef.current = true;
 
     try {
@@ -871,6 +869,9 @@ export default function NewClientPage() {
         type: store.voucherClient ? store.type || null : null,
         duration: effectiveDuration || null,
         ...durationConfirmation,
+        ...(confirmedUnavailableEmployeeIds
+          ? { confirmedUnavailableEmployeeIds }
+          : {}),
         fullPrice: store.fullPrice || null,
         grant: store.voucherClient ? store.grant || null : "0",
         actualPrice: store.voucherClient ? store.actualPrice || null : store.fullPrice || null,
@@ -892,6 +893,34 @@ export default function NewClientPage() {
       startNavigation();
       router.push(clientsReturnHref);
     } catch (err: unknown) {
+      const responseData = (err as { response?: { data?: unknown } } | null)?.response?.data;
+      if (
+        editingClientId === null
+        && responseData
+        && typeof responseData === "object"
+        && !Array.isArray(responseData)
+        && (responseData as { code?: unknown }).code === "EMPLOYEE_ACTIVATION_CONFIRMATION_REQUIRED"
+        && Array.isArray((responseData as { unavailableEmployees?: unknown }).unavailableEmployees)
+      ) {
+        const unavailableEmployees = (
+          responseData as { unavailableEmployees: unknown[] }
+        ).unavailableEmployees.flatMap((employee) => {
+          if (!employee || typeof employee !== "object" || Array.isArray(employee)) return [];
+          const { id, name } = employee as { id?: unknown; name?: unknown };
+          return Number.isInteger(id) && typeof name === "string"
+            ? [{ id: id as number, name }]
+            : [];
+        });
+        if (unavailableEmployees.length > 0) {
+          setPendingUnavailableEmployeeConfirmation({
+            employees: unavailableEmployees,
+            ...(confirmedPeriod ? { confirmedPeriod } : {}),
+          });
+          setErrorState(null);
+          setHasUnknownMutationOutcome(false);
+          return;
+        }
+      }
       const normalized = normalizeApiError(err, {
         locale: locale === "en" ? "en-US" : "ko-KR",
         operation: "mutation",
@@ -1135,10 +1164,10 @@ export default function NewClientPage() {
                         id="phone"
                         data-component="mobile_clients-new_screen_root_page_wizard_form-scroll_basic-contact-card_phone-field_phone-input"
                         value={store.phone}
-                        onChange={(e) => setField("phone", formatPhoneNumber(e.target.value))}
+                        onChange={(e) => setField("phone", formatKoreanPhoneNumber(e.target.value))}
                         type="tel"
                         inputMode="numeric"
-                        maxLength={13}
+                        maxLength={20}
                         placeholder="010-1234-5678"
                         error={fieldErrorMessageIds.phone.length > 0}
                         aria-invalid={fieldErrorMessageIds.phone.length > 0}
@@ -1148,15 +1177,15 @@ export default function NewClientPage() {
                   </div>
 
                   <div className={styles.formCard} data-component="mobile_clients-new_screen_root_page_wizard_form-scroll_basic-details-card">
-                    <Field data-component="mobile_clients-new_screen_root_page_wizard_form-scroll_basic-details-card_birthday-field" label="생년월일" htmlFor="birthday">
+                    <Field data-component="mobile_clients-new_screen_root_page_wizard_form-scroll_basic-details-card_birthday-field" label="생년월일" htmlFor="birthday" required>
                       <Input
                         id="birthday"
                         data-component="mobile_clients-new_screen_root_page_wizard_form-scroll_basic-details-card_birthday-field_birthday-input"
                         value={store.birthday}
-                        onChange={(e) => setField("birthday", e.target.value)}
+                        onChange={(e) => setField("birthday", formatBirthdayInput(e.target.value))}
                         inputMode="numeric"
-                        maxLength={6}
-                        placeholder="YYMMDD"
+                        maxLength={10}
+                        placeholder="YYYY-MM-DD"
                         error={fieldErrorMessageIds.birthday.length > 0}
                         aria-invalid={fieldErrorMessageIds.birthday.length > 0}
                         aria-describedby={fieldErrorMessageIds.birthday.join(" ") || undefined}
@@ -1430,6 +1459,7 @@ export default function NewClientPage() {
                     <div className={styles.formCardTitle} data-component="mobile_clients-new_screen_root_page_wizard_form-scroll_contract-status-card_card-title">계약 상태</div>
                     <FormNativeSelect
                       id="serviceStatus"
+                      aria-label="계약 상태"
                       data-component="mobile_clients-new_screen_root_page_wizard_form-scroll_contract-status-card_select-wrap"
                       value={store.serviceStatus}
                       onValueChange={(value) => setField("serviceStatus", value as ServiceStatus)}
@@ -1528,6 +1558,29 @@ export default function NewClientPage() {
         onConfirm={() => {
           if (pendingDurationConfirmation !== null) {
             void handleComplete(pendingDurationConfirmation);
+          }
+        }}
+      />
+      <MobileTwoButtonModal
+        data-component="mobile_clients-new_screen_root_unavailable-employee-confirmation"
+        open={pendingUnavailableEmployeeConfirmation !== null}
+        title="제공인력 배정 확인"
+        description={`${pendingUnavailableEmployeeConfirmation?.employees.map((employee) => employee.name).join(", ") ?? "선택한"} 제공인력은 현재 배정이 불가한 상태입니다. 배정 가능 상태로 전환하고 배정을 진행할까요?`}
+        cancelLabel="취소"
+        confirmLabel="확인"
+        confirmVariant="default"
+        actionOrder="cancel-confirm"
+        loading={isSaving}
+        onOpenChange={(open) => {
+          if (!open) setPendingUnavailableEmployeeConfirmation(null);
+        }}
+        onCancel={() => setPendingUnavailableEmployeeConfirmation(null)}
+        onConfirm={() => {
+          if (pendingUnavailableEmployeeConfirmation !== null) {
+            void handleComplete(
+              pendingUnavailableEmployeeConfirmation.confirmedPeriod,
+              pendingUnavailableEmployeeConfirmation.employees.map((employee) => employee.id),
+            );
           }
         }}
       />

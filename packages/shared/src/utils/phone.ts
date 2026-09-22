@@ -16,24 +16,28 @@ export function normalizePhoneDigits(value: PhoneInput, maxLength = 11): string 
  *
  * This key is deliberately separate from the value stored/displayed by a
  * caller: it is only for matching records that use different formatting or
- * the +82 country-code representation.
+ * the +82 / 0082 country-code representation.
  */
 export function normalizeKoreanPhoneLookupKey(value: PhoneInput): string {
   const digits = stripPhoneFormatting(value);
   if (!digits) return "";
 
-  if (digits.startsWith("82")) {
-    const domesticDigits = digits.slice(2);
+  // Some providers send the international access prefix instead of "+".
+  const nationalDigits = digits.startsWith("0082") ? digits.slice(2) : digits;
+  if (!nationalDigits) return "";
+
+  if (nationalDigits.startsWith("82")) {
+    const domesticDigits = nationalDigits.slice(2);
     if (!domesticDigits) return "";
     return domesticDigits.startsWith("0") ? domesticDigits : `0${domesticDigits}`;
   }
 
   // Some provider payloads omit the leading 0 from a 1xx number.
-  if (/^1\d{9}$/.test(digits)) return `0${digits}`;
+  if (/^1\d{9}$/.test(nationalDigits)) return `0${nationalDigits}`;
 
   // Lookup normalization must preserve overlong values so validation can
   // reject them before a display formatter truncates the value.
-  return digits;
+  return nationalDigits;
 }
 
 export const normalizeKoreanPhoneForLookup = normalizeKoreanPhoneLookupKey;

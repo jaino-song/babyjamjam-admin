@@ -3,6 +3,7 @@ import { Prisma } from "@prisma/client";
 
 import type { AgentContext } from "./agent-context";
 import type { PrismaService } from "infrastructure/database/prisma.service";
+import { AgentAutomationReceiptMetadataSchema } from "./agent-automation-storage.schema";
 
 const AgentActionEffectReceiptSchema = z.object({
     actionId: z.string().min(1),
@@ -11,6 +12,7 @@ const AgentActionEffectReceiptSchema = z.object({
     resourceId: z.union([z.string().min(1), z.number().int().positive()]),
     result: z.record(z.string(), z.unknown()),
     recordedAt: z.string().datetime({ offset: true }),
+    metadata: z.object({ automation: AgentAutomationReceiptMetadataSchema }).strict().optional(),
 }).strict();
 
 export type AgentActionEffectReceipt = z.infer<typeof AgentActionEffectReceiptSchema>;
@@ -28,6 +30,7 @@ export async function recordAgentActionEffect(
     resourceType: string,
     resourceId: string | number,
     result: Record<string, unknown>,
+    metadata?: unknown,
 ): Promise<AgentActionEffectReceipt> {
     if (!context.actionId) throw new Error("Action identity is required to record an effect receipt");
     const receipt = AgentActionEffectReceiptSchema.parse({
@@ -37,6 +40,7 @@ export async function recordAgentActionEffect(
         resourceId,
         result,
         recordedAt: new Date().toISOString(),
+        ...(metadata === undefined ? {} : { metadata }),
     });
     const updated = await prisma.agent_action.updateMany({
         where: {
@@ -45,6 +49,10 @@ export async function recordAgentActionEffect(
             branchId: context.principal.branchId,
             capability,
             status: "executing",
+            ...(receipt.metadata ? {
+                taskId: receipt.metadata.automation.taskId,
+                taskRevision: receipt.metadata.automation.taskRevision,
+            } : {}),
         },
         data: { effectReceipt: receipt as Prisma.InputJsonValue, effectRecordedAt: new Date(receipt.recordedAt) },
     });

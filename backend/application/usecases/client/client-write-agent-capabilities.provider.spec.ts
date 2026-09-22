@@ -673,9 +673,12 @@ describe("ClientWriteAgentCapabilitiesProvider", () => {
     });
 
     it.each([
-        ["leap day", "240229"],
-        ["century leap day", "000229"],
-    ])("accepts a calendar-valid YYMMDD birthday for create and update (%s)", async (_label, birthday) => {
+        ["leap day", "2024-02-29"],
+        ["century leap day", "2000-02-29"],
+        ["nineteen hundreds", "1905-01-01"],
+        ["two thousands", "2005-01-01"],
+        ["original reported year", "1958-03-03"],
+    ])("accepts a calendar-valid YYYY-MM-DD birthday for create and update (%s)", async (_label, birthday) => {
         const { capabilities, createClient, updateClient, transaction } = setup();
         const create = capabilities.find((entry) => entry.meta.name === "clients.create")!;
         const update = capabilities.find((entry) => entry.meta.name === "clients.update")!;
@@ -1083,5 +1086,171 @@ describe("ClientWriteAgentCapabilitiesProvider", () => {
             status: "succeeded",
             result: { id: 1, name: "홍길동", status: "updated" },
         });
+    });
+
+    it("routes an approved task through the automation record store and stages a task-origin intent", async () => {
+        const createClient = { execute: jest.fn().mockResolvedValue({ id: 7, name: "합성고객" }) };
+        const updateClient = { execute: jest.fn(), executeApprovedTarget: jest.fn() };
+        const findClient = { execute: jest.fn().mockResolvedValue(null) };
+        const clientRepository = { findByPhone: jest.fn().mockResolvedValue(null) };
+        const transaction = {
+            client: { findFirst: jest.fn().mockResolvedValue({ id: 7, createdAt: new Date("2026-09-18T00:00:00.000Z") }) },
+            employee_schedule: { findFirst: jest.fn().mockResolvedValue({ incarnationId: "70000000-0000-4000-8000-000000000031" }) },
+            agent_action: { updateMany: jest.fn() },
+        };
+        const prisma = {
+            $transaction: jest.fn(),
+            area: { findFirst: jest.fn().mockResolvedValue({ id: "global" }) },
+        };
+        const serviceRecordLifecycle = {
+            validatePeriodChange: jest.fn().mockResolvedValue(undefined),
+            ensureForClient: jest.fn().mockResolvedValue(undefined),
+        };
+        const intent = { persistClientIntent: jest.fn().mockResolvedValue(undefined), persistScheduleIntent: jest.fn() };
+        const effect = {
+            kind: "client-rule",
+            ruleId: "rule-client",
+            scheduleId: null,
+            recipientType: "client",
+            templateKey: "CLIENT_GREETING",
+            change: "create",
+            recipientDigest: "a".repeat(64),
+            sourceDigest: "b".repeat(64),
+            templateDigest: "c".repeat(64),
+            policyDigest: "d".repeat(64),
+            recipeDigest: "e".repeat(64),
+        };
+        const serviceRecordLinkEffect = {
+            kind: "service-record-link",
+            ruleId: "system:service_record_link",
+            scheduleId: 18,
+            recipientType: "primary-employee",
+            templateKey: "SERVICE_RECORD_LINK",
+            change: "create",
+            recipientDigest: "1".repeat(64),
+            sourceDigest: "2".repeat(64),
+            templateDigest: "3".repeat(64),
+            policyDigest: "4".repeat(64),
+            recipeDigest: "5".repeat(64),
+        };
+        const impact = {
+            availability: "available",
+            effects: [effect, serviceRecordLinkEffect],
+            complete: true,
+            clientIdentity: null,
+            sourceGuard: "f".repeat(64),
+            affectedJobs: [],
+        };
+        let preparedMutation: { clientId: number; result: Record<string, unknown> } | undefined;
+        const automationRecords = {
+            runTaskMutation: jest.fn(async (
+                _context: unknown,
+                _artifact: unknown,
+                prepare: (tx: typeof transaction) => Promise<{ clientId: number; result: Record<string, unknown>; coverages: unknown[] }>,
+                stage: (tx: typeof transaction, batch: { authorities: unknown[]; coverages: unknown[] }) => Promise<void>,
+            ) => {
+                preparedMutation = await prepare(transaction);
+                await stage(transaction, {
+                    authorities: [{
+                        id: "70000000-0000-4000-8000-000000000021",
+                        recordDigest: "a".repeat(64),
+                        scope: {
+                            branchId: "branch-a",
+                            clientId: 7,
+                            clientIdentity: "b".repeat(64),
+                            kind: "client-rule",
+                            ruleId: "rule-client",
+                            scheduleId: null,
+                            scheduleIdentity: null,
+                            recipientType: "client",
+                        },
+                    }],
+                    coverages: [],
+                });
+                return {
+                    actionId: "action-a",
+                    capability: "clients.create",
+                    resourceType: "client",
+                    resourceId: preparedMutation.clientId,
+                    result: preparedMutation.result,
+                    recordedAt: new Date().toISOString(),
+                };
+            }),
+        };
+        const provider = new ClientWriteAgentCapabilitiesProvider(
+            createClient as never,
+            updateClient as never,
+            findClient as never,
+            clientRepository as never,
+            prisma as never,
+            serviceRecordLifecycle as never,
+            undefined,
+            undefined,
+            intent as never,
+            { planClientWriteInTransaction: jest.fn().mockResolvedValue(impact) } as never,
+            automationRecords as never,
+        );
+        const capability = provider.getCapabilities().find((entry) => entry.meta.name === "clients.create")!;
+        const result = await capability.execute({
+            principal: { userId: "user-a", branchId: "branch-a", globalRole: "admin", branchRole: "admin" },
+            sessionId: "session-a", traceId: "trace-a", locale: "ko", actionId: "action-a",
+            taskAutomation: {
+                actionId: "70000000-0000-4000-8000-000000000022",
+                taskId: "70000000-0000-4000-8000-000000000023",
+                taskRevision: 1,
+                capability: "clients.create", branchId: "branch-a", targetClientId: null, impact,
+                consent: { choice: "yes", binding: { recipientRef: "recipient-a", templateRef: "template-a", effectDigest: "1".repeat(64), policyDigest: "2".repeat(64), consentEventId: "event-a" } }, noSend: false },
+        } as never, { name: "합성고객", phone: "01012345678" });
+
+        expect(result).toEqual({ id: 7, name: "합성고객", status: "created" });
+        expect(automationRecords.runTaskMutation).toHaveBeenCalledTimes(1);
+        expect(intent.persistClientIntent).toHaveBeenCalledWith(
+            transaction,
+            expect.objectContaining({ branchId: "branch-a", clientId: 7, taskOrigin: true }),
+        );
+        expect(intent.persistScheduleIntent).toHaveBeenCalledWith(
+            transaction,
+            expect.objectContaining({ branchId: "branch-a", clientId: 7, scheduleId: 18, taskOrigin: true }),
+        );
+        expect(prisma.$transaction).not.toHaveBeenCalled();
+    });
+
+    it("does not stage an intent or refresh assignment jobs for a declined task", async () => {
+        const setupResult = setup();
+        const transaction = {
+            client: { findFirst: jest.fn().mockResolvedValue({ id: 1, createdAt: new Date("2026-09-18T00:00:00.000Z") }) },
+            employee_schedule: { findFirst: jest.fn() },
+            agent_action: { updateMany: jest.fn() },
+        };
+        const effect = {
+            kind: "client-rule", ruleId: "rule-client", scheduleId: null, recipientType: "client", templateKey: "CLIENT_GREETING", change: "refresh",
+            recipientDigest: "a".repeat(64), sourceDigest: "b".repeat(64), templateDigest: "c".repeat(64), policyDigest: "d".repeat(64), recipeDigest: "e".repeat(64),
+        };
+        const impact = { availability: "available", effects: [effect], complete: true, clientIdentity: "1".repeat(64), sourceGuard: "f".repeat(64), affectedJobs: [] };
+        const records = {
+            runTaskMutation: jest.fn(async (_context: unknown, _artifact: unknown, prepare: (tx: typeof transaction) => Promise<unknown>, stage: (tx: typeof transaction, batch: unknown) => Promise<void>) => {
+                await prepare(transaction);
+                await stage(transaction, { authorities: [], coverages: [] });
+                return { actionId: "action-a", capability: "clients.update", resourceType: "client", resourceId: 1, result: { id: 1, name: "홍길동", status: "updated" }, recordedAt: new Date().toISOString() };
+            }),
+        };
+        const provider = new ClientWriteAgentCapabilitiesProvider(
+            setupResult.createClient as never, setupResult.updateClient as never, setupResult.findClient as never,
+            setupResult.clientRepository as never, { ...setupResult.prisma, area: { findFirst: jest.fn().mockResolvedValue({ id: "global" }) } } as never,
+            setupResult.serviceRecordLifecycle as never, undefined, setupResult.triggerService as never,
+            setupResult.messageAutomationIntentService as never,
+            { planClientWriteInTransaction: jest.fn().mockResolvedValue(impact) } as never,
+            records as never,
+        );
+        const update = provider.getCapabilities().find((entry) => entry.meta.name === "clients.update")!;
+        await update.executeApprovedTarget!({
+            principal: { userId: "user-a", branchId: "branch-a", globalRole: "admin", branchRole: "admin" },
+            sessionId: "session-a", traceId: "trace-a", locale: "ko", actionId: "action-a",
+            taskAutomation: { capability: "clients.update", taskId: "task-a", branchId: "branch-a", targetClientId: 1, targetVersion: "approved-target", impact,
+                consent: { choice: "no", binding: null }, noSend: false },
+        } as never, { id: 1, name: "새 이름" }, "approved-target");
+
+        expect(setupResult.messageAutomationIntentService.persistScheduleIntent).not.toHaveBeenCalled();
+        expect(setupResult.triggerService.syncEmployeeAssignmentRulesForClient).not.toHaveBeenCalled();
     });
 });

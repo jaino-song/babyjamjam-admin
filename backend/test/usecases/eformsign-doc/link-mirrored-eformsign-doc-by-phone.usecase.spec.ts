@@ -839,7 +839,7 @@ describe("LinkMirroredEformsignDocByPhoneUsecase", () => {
                 name: "김고객",
                 phone: "010-1234-5678",
                 address: "서울시 중구",
-                birthday: "920304",
+                birthday: "1992-03-04",
                 branchId: "branch-1",
                 eDocId: "doc-1",
                 suppressGreetingSms: true,

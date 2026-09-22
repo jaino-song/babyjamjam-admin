@@ -11,6 +11,7 @@ import {
     type ProblemError,
     type ProblemOutcome,
 } from "@babyjamjam/shared";
+import { isValidBirthdayIsoDate, normalizeBirthdayIsoDate } from "@babyjamjam/shared/utils/birthday";
 import { useCreateClient, useUpdateClient } from "@/hooks/useClients";
 import { useClientPhoneDuplicateCheck } from "@/hooks/useClientPhoneDuplicateCheck";
 import {
@@ -32,6 +33,7 @@ import {
 import type { Employee } from "@/hooks/useEmployees";
 import { useLocale } from "@/providers/LocaleProvider";
 import { t } from "@/lib/i18n/translations";
+import { formatKoreanPhoneNumber } from "@/lib/phone";
 import { getErrorMessage } from "@/lib/errors/prisma-error-mapper";
 import { cn } from "@/lib/utils";
 import { calcEndDateBusinessDays, countBusinessDaysKr } from "@/lib/date/business-days";
@@ -222,21 +224,6 @@ const formatPrice = (price: number | string): string => {
 const parsePrice = (value: string | null | undefined): string => {
     if (!value) return "";
     return value.replace(/,/g, "");
-};
-
-// Format phone number as XXX-XXXX-XXXX
-const formatPhoneNumber = (value: string): string => {
-    // Remove all non-digit characters
-    const digits = value.replace(/\D/g, "");
-
-    // Apply formatting based on length
-    if (digits.length <= 3) {
-        return digits;
-    } else if (digits.length <= 7) {
-        return `${digits.slice(0, 3)}-${digits.slice(3)}`;
-    } else {
-        return `${digits.slice(0, 3)}-${digits.slice(3, 7)}-${digits.slice(7, 11)}`;
-    }
 };
 
 const getPhoneDuplicateCheckFailedMessage = (locale: "ko" | "en"): string =>
@@ -811,6 +798,7 @@ function ClientFormContent({
 
             nextFormData = {
                 ...nextFormData,
+                birthday: normalizeBirthdayIsoDate(nextFormData.birthday) ?? nextFormData.birthday,
                 startDate: normalizeDateForCompactState(nextFormData.startDate),
                 endDate: normalizeDateForCompactState(nextFormData.endDate),
             };
@@ -999,7 +987,7 @@ function ClientFormContent({
             setErrorAndScroll(t(locale, "clients.form.error-name-required"));
             return;
         }
-        if (!formData.birthday?.trim()) {
+        if (!isValidBirthdayIsoDate(formData.birthday ?? "")) {
             setErrorAndScroll(t(locale, "clients.form.error-birthday-required"));
             return;
         }
@@ -1078,9 +1066,9 @@ function ClientFormContent({
                     type: formData.voucherClient ? formData.type : null,
                     duration: formData.duration || null,
                     ...durationConfirmation,
-                    fullPrice: formData.fullPrice,
-                    grant: formData.voucherClient ? formData.grant : "0",
-                    actualPrice: formData.voucherClient ? formData.actualPrice : formData.fullPrice,
+                    fullPrice: formData.fullPrice || null,
+                    grant: formData.voucherClient ? formData.grant || null : "0",
+                    actualPrice: formData.voucherClient ? formData.actualPrice || null : formData.fullPrice || null,
                     startDate: normalizedStartDate || null,
                     endDate: normalizedEndDate || null,
                     careCenter: formData.careCenter,
@@ -1131,7 +1119,7 @@ function ClientFormContent({
 
     const isBasicStepValid = isLegacyNoopEdit || Boolean(
         formData.name.trim()
-        && formData.birthday?.trim()
+        && isValidBirthdayIsoDate(formData.birthday ?? "")
         && (!formData.dueDate?.trim() || isValidIsoDateInput(formData.dueDate))
         && formData.address?.trim()
         && isPhoneCheckReady
@@ -1150,7 +1138,7 @@ function ClientFormContent({
     const requiredFieldProgressText = `필수 항목 4개 중 ${
         [
             Boolean(formData.name.trim()),
-            isValidCompactDateInput(formData.birthday ?? ""),
+            isValidBirthdayIsoDate(formData.birthday ?? ""),
             Boolean(formData.address?.trim()),
             Boolean(formData.phone?.trim()),
         ].filter(Boolean).length
@@ -1301,13 +1289,15 @@ function ClientFormContent({
                     data-component={`${base}_basic-grid_field-birthday`}
                     htmlFor="birthday"
                     label={t(locale, "clients.form.birthday")}
+                    required
                 >
                     <FormTextInput
                         id="birthday"
-                        placeholder="YYMMDD"
+                        placeholder="YYYY-MM-DD"
+                        inputMode="numeric"
                         value={formData.birthday ?? ""}
-                        onChange={(e) => handleChange("birthday", e.target.value)}
-                        maxLength={6}
+                        onChange={(e) => handleChange("birthday", formatIsoDateInput(e.target.value))}
+                        maxLength={10}
                     />
                     <FormHelperText data-component={`${base}_basic-grid_field-birthday_helper`}>
                         {t(locale, "clients.form.birthday-helper")}
@@ -1350,6 +1340,7 @@ function ClientFormContent({
                     data-component={`${base}_basic-grid_field-phone`}
                     htmlFor="phone"
                     label={t(locale, "clients.form.phone")}
+                    required
                     labelAccessory={phoneInlineMessage ? (
                         <FormHelperText
                             id="clients-form-dialog-phone-helper"
@@ -1370,10 +1361,10 @@ function ClientFormContent({
                         placeholder="010-1234-5678"
                         value={formData.phone ?? ""}
                         onChange={(e) => {
-                            handleChange("phone", formatPhoneNumber(e.target.value));
+                            handleChange("phone", formatKoreanPhoneNumber(e.target.value));
                             clearFormError();
                         }}
-                        maxLength={13}
+                        maxLength={20}
                         error={hasPhoneStatusError || phoneErrorIds.length > 0}
                         aria-describedby={combineAriaDescribedBy(
                             phoneInlineMessage ? "clients-form-dialog-phone-helper" : undefined,
@@ -1407,6 +1398,7 @@ function ClientFormContent({
                     data-component={`${base}_basic-grid_field-address`}
                     htmlFor="address"
                     label={t(locale, "clients.form.address")}
+                    required
                     className="sm:col-span-2"
                 >
                     <FormTextInput
@@ -1744,13 +1736,15 @@ function ClientFormContent({
                 data-component={`${base}_birthday-input`}
                 htmlFor="birthday"
                 label={t(locale, "clients.form.birthday")}
+                required
             >
                 <FormTextInput
                     id="birthday"
-                    placeholder="YYMMDD"
+                    placeholder="YYYY-MM-DD"
+                    inputMode="numeric"
                     value={formData.birthday ?? ""}
-                    onChange={(event) => handleChange("birthday", event.target.value)}
-                    maxLength={6}
+                    onChange={(event) => handleChange("birthday", formatIsoDateInput(event.target.value))}
+                    maxLength={10}
                 />
             </FormField>
 
@@ -1788,6 +1782,7 @@ function ClientFormContent({
                 data-component={`${base}_phone-input`}
                 htmlFor="phone"
                 label={t(locale, "clients.form.phone")}
+                required
                 labelAccessory={phoneInlineMessage ? (
                     <FormHelperText
                         id="clients-form-panel-phone-helper"
@@ -1808,10 +1803,10 @@ function ClientFormContent({
                     placeholder="010-1234-5678"
                     value={formData.phone ?? ""}
                     onChange={(event) => {
-                        handleChange("phone", formatPhoneNumber(event.target.value));
+                        handleChange("phone", formatKoreanPhoneNumber(event.target.value));
                         clearFormError();
                     }}
-                    maxLength={13}
+                    maxLength={20}
                     error={hasPhoneStatusError || phoneErrorIds.length > 0}
                     aria-describedby={combineAriaDescribedBy(
                         phoneInlineMessage ? "clients-form-panel-phone-helper" : undefined,
@@ -1845,6 +1840,7 @@ function ClientFormContent({
                 data-component={`${base}_address-input`}
                 htmlFor="address"
                 label={t(locale, "clients.form.address")}
+                required
                 className={PANEL_FULL_FIELD_CLASS_NAME}
             >
                 <FormTextInput

@@ -34,9 +34,17 @@ describe("MessageTriggerEditor", () => {
 
   it("creates a mobile automation rule with the same rule fields as desktop", async () => {
     const onClose = jest.fn();
-    render(<MessageTriggerEditor rule={null} onClose={onClose} />);
+    render(
+      <MessageTriggerEditor
+        data-component="mobile_messages_automation_test_editor"
+        rule={null}
+        onClose={onClose}
+      />,
+    );
 
     fireEvent.change(screen.getByLabelText("규칙 이름"), { target: { value: "서비스 시작 안내" } });
+    expect(screen.getByLabelText("발송 시각 (한국 시간)")).toHaveValue("09:00");
+    fireEvent.change(screen.getByLabelText("발송 시각 (한국 시간)"), { target: { value: "23:59" } });
     fireEvent.click(screen.getByRole("button", { name: "규칙 저장" }));
 
     await waitFor(() => expect(createRule).toHaveBeenCalledWith({
@@ -45,15 +53,27 @@ describe("MessageTriggerEditor", () => {
       eventType: "SERVICE_START",
       offsetType: "BEFORE_DAYS",
       offsetDays: 7,
+      sendTime: "23:59",
       recipientType: "CLIENT",
       templateKey: "SERVICE_INFO",
     }));
     expect(onClose).toHaveBeenCalled();
   });
 
+  it("does not require a hidden time after switching to immediate sending", async () => {
+    render(<MessageTriggerEditor data-component="mobile_messages_automation_test_editor" rule={null} onClose={jest.fn()} />);
+    fireEvent.change(screen.getByLabelText("규칙 이름"), { target: { value: "즉시 안내" } });
+    fireEvent.change(screen.getByLabelText("발송 시각 (한국 시간)"), { target: { value: "" } });
+    fireEvent.change(screen.getByLabelText("발송 이벤트"), { target: { value: "CLIENT_CREATED" } });
+    expect(screen.queryByLabelText("발송 시각 (한국 시간)")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "규칙 저장" }));
+    await waitFor(() => expect(createRule).toHaveBeenCalledWith(expect.objectContaining({ offsetType: "IMMEDIATE", sendTime: "09:00" })));
+  });
+
   it("updates and deletes an existing rule", async () => {
     const onClose = jest.fn();
     render(<MessageTriggerEditor
+      data-component="mobile_messages_automation_test_editor"
       rule={{
         id: "rule-1",
         branchId: "branch-1",
