@@ -1,0 +1,56 @@
+{
+  "schemaVersion": 1,
+  "rubricVersion": "judge-rubric-v1",
+  "role": "semantic-judge",
+  "scope": "Advisory semantic judging of Jev decision-layer outputs on the synthetic corpus in this directory. The rubric governs how a judge may score model behavior; it never rewrites outcomes, labels, or deterministic test results.",
+  "binding": {
+    "advisoryOnly": "Judge scores are advisory observability signals and NEVER replace reference labels (AC-16). The corpus labels (acceptable/unacceptable with labelProvenance) remain the only release-gating ground truth. A judge score must never be written into a reference label field, and a judge/reference disagreement must never silently override the reference.",
+    "agreementIsNotAccuracy": "Agreement with the incumbent baseline is NOT accuracy (AC-15). Counting identical selections between two systems says nothing about correctness against the corpus labels. Any judge report must keep agreement counts structurally separate from correctness metrics.",
+    "securityTestsAreDeterministic": "Deterministic security and validation checks (label-vocabulary rejection, provenance gating, dataset digest, transport refusal rules) are pass/fail and are never judged. A judge may never soften, reinterpret, or waive a failed deterministic check.",
+    "noRawPayloads": "Judge inputs are bounded machine tokens and numbers from adapter-validated evidence. Raw provider payloads, prompts, and credential material are never judge inputs and are never retained in reports."
+  },
+  "decisionKinds": {
+    "route-domains": {
+      "questionVersion": "v1",
+      "criteria": [
+        "Each permitted domain carries an independent yesProbability in [0,1]; the values are never normalized into a distribution.",
+        "A high probability on a domain the corpus labels unacceptable is a judge finding to report, never a relabeling of the case.",
+        "Evidence with status unavailable and a failure reason is scored as non-answered, never guessed or interpolated."
+      ],
+      "acceptableOutcomes": ["accepted-with-domain-scores", "unavailable"],
+      "notes": "Reference labels are corpus domain names. The evaluation CLI derives a selection deterministically (argmax yesProbability, ties keep corpus declaration order); a judge scores the full score vector, not only the argmax."
+    },
+    "classify-client-intent": {
+      "questionVersion": "v1",
+      "criteria": [
+        "Exactly one intent label from the fixed five-label vocabulary is chosen.",
+        "Per-label probabilities are complete over the criteria and each lies in [0,1].",
+        "The chosen label is the argmax of the returned probabilities.",
+        "An off-vocabulary choice or probability is a validation failure, not a judge reclassification opportunity."
+      ],
+      "acceptableOutcomes": ["create", "update_related", "read", "ambiguous", "unrelated", "unavailable"],
+      "notes": "Reference labels come from the corpus acceptable/unacceptable lists. Judges may flag near-miss distributions (for example a narrow margin between the chosen and an unacceptable label) as advisory findings only."
+    },
+    "evaluate-clarification": {
+      "questionVersion": "v1",
+      "criteria": [
+        "Each of the five judgment aspects (mutationRequested, targetUnambiguous, valueUnambiguous, sufficientEvidence, clarificationRequired) is answered independently in [0,1].",
+        "The judgments are never normalized into a distribution.",
+        "The corpus evaluates the resulting binary outcome; judges may score the full judgment vector but must not collapse it into the outcome label."
+      ],
+      "acceptableOutcomes": ["clarification-required", "clarification-not-required", "unavailable"],
+      "notes": "The evaluation CLI binarizes with the deterministic convention clarificationRequired >= 0.5 maps to clarification-required; this threshold is an evaluation-harness convention, not a production policy, and judges must report raw judgments alongside any outcome opinion."
+    },
+    "rank-candidates": {
+      "questionVersion": "v1",
+      "criteria": [
+        "The answer is one of the supplied candidate labels or the fixed alternatives none / insufficient_evidence.",
+        "Per-label probabilities are complete over the criteria and each lies in [0,1].",
+        "The chosen label is the argmax of the returned probabilities.",
+        "A match outcome must name a candidate from the supplied choice set; no candidate may be invented."
+      ],
+      "acceptableOutcomes": ["match", "none", "insufficient_evidence", "unavailable"],
+      "notes": "The corpus evaluates the outcome token, not a specific production choice set. The live runner executes these cases with a single deterministic placeholder candidate (label candidate-1, no facts); scores under this convention measure the pinned model on the synthetic scenario only and must never be presented as production candidate-ranking accuracy."
+    }
+  }
+}
