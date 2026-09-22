@@ -580,6 +580,35 @@ describe("ConversationTaskOrchestratorService", () => {
         expect(createFromConversation).not.toHaveBeenCalled();
     });
 
+    it("refuses a suppressed mutation before any task store read or resolution", async () => {
+        // The runtime's clarification seam reuses the existing allowMutation
+        // guard. This case proves the guard is structural: the refusal fires
+        // before the task store is consulted at all, so no resolution, no
+        // revision check, and no persistence can observe the attempt.
+        const current = task({ confirmed: { name: "기존 이름" }, revision: 3 });
+        const get = jest.fn();
+        const listForConversation = jest.fn();
+        const patchFromConversation = jest.fn();
+        const createFromConversation = jest.fn();
+        const { orchestrator } = build({ get, listForConversation, patchFromConversation, createFromConversation });
+
+        await expect(orchestrator.applyModelMutation({
+            principal,
+            sessionId,
+            capabilityId: "clients.create",
+            taskId: current.taskId,
+            expectedRevision: current.revision,
+            intakeEventId: randomUUID(),
+            operations: [{ op: "set", field: "name", value: "억제된 변경 시도" }],
+            allowMutation: false,
+        })).rejects.toMatchObject({ response: expect.objectContaining({ message: "Question turn is read-only" }) });
+
+        expect(get).not.toHaveBeenCalled();
+        expect(listForConversation).not.toHaveBeenCalled();
+        expect(patchFromConversation).not.toHaveBeenCalled();
+        expect(createFromConversation).not.toHaveBeenCalled();
+    });
+
     it("maps a create request to the existing clients.create entry point without producing operations", async () => {
         const { orchestrator, tasks } = build();
         const text = "새로 상담한 이수진 산모 등록해줘";
