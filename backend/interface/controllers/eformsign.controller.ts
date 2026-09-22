@@ -36,11 +36,9 @@ import {
     EformsignTemplateScopeService,
     type EformsignListSection,
 } from "application/services/eformsign-template-scope.service";
-import { EformsignPermanentPurgeRequest } from "domain/repositories/eformsign-document-mirror.repository.interface";
 import { GetContractClientCandidateUsecase } from "application/usecases/eformsign-doc/get-contract-client-candidate.usecase";
 import {
     EformsignApiError,
-    isEformsignDocumentAbsentError,
 } from "infrastructure/api/eformsign-api.error";
 import {
     documentSearchIndex,
@@ -57,6 +55,7 @@ import {
     normalizeEformsignStepType,
 } from "domain/utils/eformsign-status-code";
 import { sanitizeEformsignErrorMessage } from "application/utils/eformsign-error-message";
+import { CancelEformsignDocumentsUsecase } from "application/usecases/eformsign-doc/cancel-eformsign-documents.usecase";
 
 function throwHttpOrInternalError(error: unknown): never {
     if (error instanceof HttpException) {
@@ -208,6 +207,7 @@ export class EformsignController {
         private readonly getContractClientCandidateUsecase: GetContractClientCandidateUsecase,
         private readonly credentialBoundary: EformsignCredentialBoundary,
         private readonly rasterizer: PdfPageRasterizerService,
+        private readonly cancelEformsignDocumentsUsecase: CancelEformsignDocumentsUsecase,
     ) { }
 
     /**
@@ -675,130 +675,44 @@ export class EformsignController {
     async deleteDocuments(
         @CurrentTenant() tenant: EformsignProviderPrincipal,
         @Query("is_permanent") isPermanent: string,
-        @Body() body: DeleteDocumentsRequestDto
+        @Body() body: DeleteDocumentsRequestDto,
     ) {
-        let requestedDocumentIds: string[] = [];
-        let permanentPurgeRequests: EformsignPermanentPurgeRequest[] = [];
         try {
             if (!body.document_ids || !Array.isArray(body.document_ids) || body.document_ids.length === 0) {
                 throw new HttpException(
                     { error: "document_ids array is required and must not be empty" },
-                    HttpStatus.BAD_REQUEST
+                    HttpStatus.BAD_REQUEST,
                 );
             }
-            // is_permanent no longer selects a behaviour. A delete now always cancels at the
-            // vendor and purges locally; the old recoverable variant hid the document from
-            // every list anyway, so it was never recoverable. The parameter is still parsed so
-            // existing clients that send it keep working unchanged.
+            // Keep parsing the legacy query parameter for client compatibility; all deletes
+            // now use the durable cancellation boundary and its branch-scoped purge fence.
             parseBooleanQuery(isPermanent, "is_permanent", false);
-            requestedDocumentIds = [...new Set(body.document_ids)];
-            const allowedDocuments = await this.filterDocumentsByBranch(
-                tenant.branchId ?? "",
-                requestedDocumentIds.map((id) => ({ id })),
-                { includePermanentPurgePending: true },
-            );
-            if (allowedDocuments.length !== requestedDocumentIds.length) {
+            const branchId = tenant.branchId?.trim();
+            const actorUserId = tenant.userId?.trim();
+            if (!branchId || !actorUserId) {
                 throw new HttpException(
                     { error: "Document access forbidden" },
                     HttpStatus.FORBIDDEN,
                 );
             }
-            // Persist before the vendor call: a timeout after eformsign accepted the
-            // cancellation must not leave local PII without a durable retry record.
-            permanentPurgeRequests = await this.documentMirrorService.requestPermanentPurge(
-                requestedDocumentIds,
-            );
-            // Cancel, not delete. Cancelling expires the recipient's signing link — the whole
-            // point, since deletions are usually mis-sends — while leaving the document and its
-            // audit trail at eformsign.
-            const result = await this.credentialBoundary.withCredentials(
+            const documentIds = [...new Set(body.document_ids)];
+            return await this.cancelEformsignDocumentsUsecase.execute(
+                {
+                    branchId,
+                    documentIds,
+                    actorUserId,
+                    reason: "관리자 삭제",
+                },
                 tenant,
-                "document.cancel",
-                ({ accessToken }) => this.eformsignService.cancelDocuments(
-                    accessToken,
-                    requestedDocumentIds,
-                ),
             );
-            const cancelledDocumentIds = successfulDeletedDocumentIds(result);
-            const uncancelledDocumentIds = requestedDocumentIds.filter(
-                (documentId) => !cancelledDocumentIds.includes(documentId),
-            );
-            // eformsign only cancels in-progress documents, so every completed, rejected or
-            // already-cancelled one comes back refused. Those have no live signing link left to
-            // revoke, so the local purge proceeds — otherwise a completed contract could never
-            // be deleted at all.
-            const terminalDocumentIds = await this.documentMirrorService
-                .findTerminalDocumentIds(uncancelledDocumentIds);
-            const purgeableDocumentIds = [
-                ...new Set([...cancelledDocumentIds, ...terminalDocumentIds]),
-            ];
-            // Anything left was neither cancelled nor already finished, so its signing link may
-            // still be live. Purging it would destroy the local record while leaving the
-            // document signable — the exact failure this flow exists to prevent.
-            const unresolvedDocumentIds = uncancelledDocumentIds.filter(
-                (documentId) => !terminalDocumentIds.includes(documentId),
-            );
-            // Of those, release the purge intent only for vendor-definitive refusals. Transient
-            // and unrecognised outcomes keep their generation-fenced intent so reconciliation
-            // can finish the job later — a purge request hides the document from local reads,
-            // and one document's failure must not strand an unrelated document's intent.
-            const definitiveFailureDocumentIds = new Set(
-                failedDeletedDocumentIds(result, requestedDocumentIds),
-            );
-            const definitiveFailurePurgeRequests = permanentPurgeRequests.filter((request) =>
-                unresolvedDocumentIds.includes(request.documentId)
-                && definitiveFailureDocumentIds.has(request.documentId),
-            );
-            if (definitiveFailurePurgeRequests.length > 0) {
-                const cleanupErrors: unknown[] = [];
-                try {
-                    await this.documentMirrorService.clearPermanentPurgeRequest(
-                        definitiveFailurePurgeRequests,
-                    );
-                } catch (error) {
-                    cleanupErrors.push(error);
-                }
-                try {
-                    await this.documentMirrorService.purgeDocuments(purgeableDocumentIds);
-                } catch (error) {
-                    cleanupErrors.push(error);
-                }
-
-                if (cleanupErrors.length > 0) {
-                    throw new AggregateError(
-                        cleanupErrors,
-                        "Document cleanup was incomplete",
-                    );
-                }
-            } else {
-                await this.documentMirrorService.purgeDocuments(purgeableDocumentIds);
-                // Preserve the previous empty-clear call after a successful purge,
-                // while ensuring it cannot run after a failed local purge.
-                await this.documentMirrorService.clearPermanentPurgeRequest([]);
-            }
-            return { ...result, unresolved_document_ids: unresolvedDocumentIds };
         } catch (error) {
-            const apiError = error instanceof EformsignApiError ? error : null;
-            const isConfirmedDocumentAbsence = isEformsignDocumentAbsentError(error);
-            if (
-                apiError !== null
-                && apiError.status >= 400
-                && apiError.status < 500
-                // A confirmed absence may mean the document is already gone at the vendor,
-                // so there is nothing left to cancel. Retain the generation-fenced intent
-                // until reconciliation can purge the local detail and PDFs safely.
-                && !isConfirmedDocumentAbsence
-                && ![408, 429].includes(apiError.status)
-            ) {
-                await this.documentMirrorService.clearPermanentPurgeRequest(permanentPurgeRequests);
-            }
             if (error instanceof HttpException) {
                 throw error;
             }
             const message = sanitizeEformsignErrorMessage(error);
             throw new HttpException(
                 { error: message },
-                HttpStatus.INTERNAL_SERVER_ERROR
+                HttpStatus.INTERNAL_SERVER_ERROR,
             );
         }
     }
@@ -1095,60 +1009,5 @@ export class EformsignController {
                 HttpStatus.INTERNAL_SERVER_ERROR
             );
         }
-    }
-}
-
-function successfulDeletedDocumentIds(result: unknown): string[] {
-    if (typeof result !== "object" || result === null) {
-        return [];
-    }
-    const resultBody = (result as Record<string, unknown>)["result"];
-    if (typeof resultBody !== "object" || resultBody === null) {
-        return [];
-    }
-    const successResult = (resultBody as Record<string, unknown>)["success_result"];
-    if (!Array.isArray(successResult)) {
-        return [];
-    }
-    return successResult.filter(
-        (documentId): documentId is string =>
-            typeof documentId === "string" && documentId.trim().length > 0,
-    );
-}
-
-function failedDeletedDocumentIds(result: unknown, requestedDocumentIds: string[]): string[] {
-    if (typeof result !== "object" || result === null) return [];
-    const resultBody = (result as Record<string, unknown>)["result"];
-    if (typeof resultBody !== "object" || resultBody === null) return [];
-    const failures = (resultBody as Record<string, unknown>)["fail_result"];
-    if (!Array.isArray(failures)) return [];
-
-    const requested = new Set(requestedDocumentIds);
-    return [...new Set(failures.flatMap((failure) => {
-        if (typeof failure !== "object" || failure === null) return [];
-        const { document_id: documentId, code } = failure as Record<string, unknown>;
-        const normalizedId = typeof documentId === "string" ? documentId.trim() : "";
-        return classifyEformsignDeleteFailureCode(code) === "clear"
-            && normalizedId
-            && requested.has(normalizedId)
-            ? [normalizedId]
-            : [];
-    }))];
-}
-
-/** Vendor application codes, not HTTP statuses. Unknown outcomes retain intent. */
-function classifyEformsignDeleteFailureCode(code: unknown): "clear" | "retain" {
-    const normalized = typeof code === "string"
-        ? code.trim()
-        : typeof code === "number" && Number.isInteger(code)
-            ? String(code)
-            : "";
-
-    switch (normalized) {
-        case "4000164": // token lacks authority to delete this document
-            return "clear";
-        case "4000031": // already deleted; reconcile must verify vendor 404 before purge
-        default:
-            return "retain";
     }
 }

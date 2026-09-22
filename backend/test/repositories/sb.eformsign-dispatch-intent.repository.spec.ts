@@ -80,6 +80,141 @@ describe("SbEformsignDispatchIntentRepository", () => {
         }));
     });
 
+    it("locks the mirror and refuses a claim while a purge fence is active", async () => {
+        const prepared = baseRow({ status: "prepared" });
+        const tx = {
+            $queryRaw: jest.fn().mockResolvedValue([
+                {
+                    id: prepared.localDocumentId,
+                    permanentPurgeRequestedAt: new Date("2026-08-29T00:02:00.000Z"),
+                },
+            ]),
+            eformsign_dispatch_intent: {
+                findFirst: jest.fn().mockResolvedValue(prepared),
+                updateMany: jest.fn(),
+            },
+        };
+        const prisma = {
+            $transaction: jest.fn(async (callback) => callback(tx)),
+        };
+        const repository = new SbEformsignDispatchIntentRepository({
+            ...prisma,
+            eformsign_dispatch_intent: tx.eformsign_dispatch_intent,
+        } as never);
+
+        await expect(repository.claim(prepared.id, prepared.branchId))
+            .rejects.toBeInstanceOf(ConflictException);
+        expect(tx.$queryRaw).toHaveBeenCalledTimes(1);
+        expect(tx.eformsign_dispatch_intent.updateMany).not.toHaveBeenCalled();
+    });
+
+    it("refuses a claim when the locked scope has a pending cancellation", async () => {
+        const prepared = baseRow({ status: "prepared" });
+        const pendingCancellation = baseRow({
+            id: "cancel-intent-1",
+            action: "cancel",
+            status: "uncertain",
+            providerDocumentId: "provider-1",
+        });
+        const findFirst = jest.fn()
+            .mockResolvedValueOnce(prepared)
+            .mockResolvedValueOnce(pendingCancellation);
+        const tx = {
+            $queryRaw: jest.fn()
+                .mockResolvedValueOnce([
+                    { id: prepared.localDocumentId, statusType: "001", permanentPurgeRequestedAt: null },
+                ])
+                .mockResolvedValueOnce([]),
+            eformsign_dispatch_intent: {
+                findFirst,
+                updateMany: jest.fn(),
+            },
+        };
+        const prisma = {
+            $transaction: jest.fn(async (callback) => callback(tx)),
+        };
+        const repository = new SbEformsignDispatchIntentRepository({
+            ...prisma,
+            eformsign_dispatch_intent: tx.eformsign_dispatch_intent,
+        } as never);
+
+        await expect(repository.claim(prepared.id, prepared.branchId))
+            .rejects.toBeInstanceOf(ConflictException);
+        expect(findFirst).toHaveBeenCalledTimes(2);
+        expect(tx.eformsign_dispatch_intent.updateMany).not.toHaveBeenCalled();
+    });
+
+    it("rejects a stale prepared create after cancellation purged its mirror", async () => {
+        const preparedCreate = baseRow({
+            action: "create",
+            status: "prepared",
+            providerDocumentId: null,
+            generation: "old-live-generation",
+        });
+        const tx = {
+            $queryRaw: jest.fn()
+                .mockResolvedValueOnce([
+                    {
+                        id: preparedCreate.localDocumentId,
+                        statusType: "049",
+                        permanentPurgeRequestedAt: null,
+                    },
+                ])
+                .mockResolvedValueOnce([{ id: "cancel-intent-1" }]),
+            eformsign_dispatch_intent: {
+                findFirst: jest.fn().mockResolvedValue(preparedCreate),
+                updateMany: jest.fn(),
+            },
+        };
+        const prisma = {
+            $transaction: jest.fn(async (callback) => callback(tx)),
+        };
+        const repository = new SbEformsignDispatchIntentRepository({
+            ...prisma,
+            eformsign_dispatch_intent: tx.eformsign_dispatch_intent,
+        } as never);
+
+        await expect(repository.claim(preparedCreate.id, preparedCreate.branchId))
+            .rejects.toThrow("전자문서가 이미 삭제되어 기존 작업을 재개할 수 없습니다.");
+        expect(tx.eformsign_dispatch_intent.updateMany).not.toHaveBeenCalled();
+        // The caller must refresh generation through the retained cancel intent
+        // (`reissue:<cancel-intent-id>`) before attempting a new create.
+    });
+
+    it("rejects a stale generation when the accepted cancellation is retained after a live mirror read", async () => {
+        const preparedCreate = baseRow({
+            action: "create",
+            status: "prepared",
+            providerDocumentId: null,
+            generation: "old-live-generation",
+        });
+        const tx = {
+            $queryRaw: jest.fn()
+                .mockResolvedValueOnce([
+                    {
+                        id: preparedCreate.localDocumentId,
+                        statusType: "001",
+                        permanentPurgeRequestedAt: null,
+                    },
+                ])
+                .mockResolvedValueOnce([{ id: "cancel-intent-1" }]),
+            eformsign_dispatch_intent: {
+                findFirst: jest.fn().mockResolvedValue(preparedCreate),
+                updateMany: jest.fn(),
+            },
+        };
+        const prisma = { $transaction: jest.fn(async (callback) => callback(tx)) };
+        const repository = new SbEformsignDispatchIntentRepository({
+            ...prisma,
+            eformsign_dispatch_intent: tx.eformsign_dispatch_intent,
+        } as never);
+
+        await expect(repository.claim(preparedCreate.id, preparedCreate.branchId))
+            .rejects.toThrow("전자문서가 취소되어 기존 generation을 재개할 수 없습니다.");
+        expect(tx.$queryRaw).toHaveBeenCalledTimes(2);
+        expect(tx.eformsign_dispatch_intent.updateMany).not.toHaveBeenCalled();
+    });
+
     it("does not overwrite a terminal provider receipt from a late response", async () => {
         const accepted = baseRow({
             status: "accepted",

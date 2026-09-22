@@ -247,4 +247,52 @@ describe("EformsignDispatchBoundaryService", () => {
             reason: " ",
         })).rejects.toBeInstanceOf(ForbiddenException);
     });
+
+    it("uses a retained successful cancellation as the next create generation", async () => {
+        const cancellation = makeIntent({
+            id: "cancel-intent-9",
+            action: "cancel",
+            generation: "cancel:doc-1:source-1",
+            providerDocumentId: "doc-1",
+            status: EFORMSIGN_DISPATCH_INTENT_STATUS.ACCEPTED,
+            providerAcceptedAt: new Date(),
+        });
+        const repository = {
+            findPendingCancellation: jest.fn().mockResolvedValue(null),
+            findLatestSuccessfulCancellation: jest.fn().mockResolvedValue(cancellation),
+        };
+        const service = new EformsignDispatchBoundaryService(repository as never);
+
+        await expect(service.resolveCreateGeneration({
+            branchId: "branch-1",
+            clientId: 7,
+            assignmentId: 13,
+            templateId: "template-1",
+        })).resolves.toBe("reissue:cancel-intent-9");
+        expect(repository.findLatestSuccessfulCancellation).toHaveBeenCalledWith({
+            branchId: "branch-1",
+            clientId: 7,
+            assignmentId: 13,
+            templateId: "template-1",
+        });
+    });
+
+    it("blocks create generation while a cancellation is pending", async () => {
+        const repository = {
+            findPendingCancellation: jest.fn().mockResolvedValue(makeIntent({
+                action: "cancel",
+                status: EFORMSIGN_DISPATCH_INTENT_STATUS.UNCERTAIN,
+            })),
+            findLatestSuccessfulCancellation: jest.fn(),
+        };
+        const service = new EformsignDispatchBoundaryService(repository as never);
+
+        await expect(service.resolveCreateGeneration({
+            branchId: "branch-1",
+            clientId: 7,
+            assignmentId: 13,
+            templateId: "template-1",
+        })).rejects.toBeInstanceOf(ConflictException);
+        expect(repository.findLatestSuccessfulCancellation).not.toHaveBeenCalled();
+    });
 });

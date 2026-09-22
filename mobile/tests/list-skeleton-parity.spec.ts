@@ -95,16 +95,15 @@ test.describe("list skeleton parity", () => {
       },
     );
     await page.route(
-      (url) => url.pathname === "/api/voucher-price-infos/type",
+      (url) => url.pathname === "/api/voucher-price-infos/contract-view",
       async (route) => {
         await rowsReady;
-        const type = new URL(route.request().url()).searchParams.get("type") ?? "A통합-1형";
         await route.fulfill({
           status: 200,
           contentType: "application/json",
           body: JSON.stringify([
-            { id: 1, type, duration: "10", fullPrice: "2196000", grant: "1734000", actualPrice: "462000" },
-            { id: 2, type, duration: "15", fullPrice: "2500000", grant: "1900000", actualPrice: "600000" },
+            { type: "D-통합1형", duration: "10", fullPrice: "2196000", grant: "1734000", actualPrice: "462000", year: 2026 },
+            { type: "D-특수1형", duration: "15", fullPrice: "2500000", grant: "1900000", actualPrice: "600000", year: 2026 },
           ]),
         });
       },
@@ -152,16 +151,15 @@ test.describe("list skeleton parity", () => {
       },
     );
     await page.route(
-      (url) => url.pathname === "/api/voucher-price-infos/type",
+      (url) => url.pathname === "/api/voucher-price-infos/contract-view",
       async (route) => {
         await rowsReady;
-        const type = new URL(route.request().url()).searchParams.get("type") ?? "A통합-1형";
         await route.fulfill({
           status: 200,
           contentType: "application/json",
           body: JSON.stringify([
-            { id: 1, type, duration: "10", fullPrice: "2196000", grant: "1734000", actualPrice: "462000" },
-            { id: 2, type, duration: "15", fullPrice: "2500000", grant: "1900000", actualPrice: "600000" },
+            { type: "D-통합1형", duration: "10", fullPrice: "2196000", grant: "1734000", actualPrice: "462000", year: 2026 },
+            { type: "D-특수1형", duration: "15", fullPrice: "2500000", grant: "1900000", actualPrice: "600000", year: 2026 },
           ]),
         });
       },

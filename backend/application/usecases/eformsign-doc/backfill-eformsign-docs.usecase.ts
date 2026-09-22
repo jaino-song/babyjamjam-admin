@@ -5,6 +5,11 @@ import { UNASSIGNED_TERMINAL_STATUS_CODES } from "domain/constants/eformsign-doc
 import { EformsignService } from "application/services/eformsign.service";
 import { sanitizeEformsignErrorMessage } from "application/utils/eformsign-error-message";
 import {
+    classifyEformsignCancellationError,
+    classifyEformsignCancellationResult,
+    sanitizeEformsignCancellationReceipt,
+} from "application/utils/eformsign-cancellation";
+import {
     EFORMSIGN_DOC_REPOSITORY,
     EformsignDocStaleUpdateError,
     IEformsignDocRepository,
@@ -18,6 +23,15 @@ import {
 import {
     isEformsignDocumentAbsentError,
 } from "infrastructure/api/eformsign-api.error";
+import {
+    EFORMSIGN_CANCELLATION_REPOSITORY,
+    type EformsignCancellationTarget,
+    type IEformsignCancellationRepository,
+} from "domain/repositories/eformsign-cancellation.repository.interface";
+import {
+    EFORMSIGN_DOCUMENT_MIRROR_REPOSITORY,
+    type IEformsignDocumentMirrorRepository,
+} from "domain/repositories/eformsign-document-mirror.repository.interface";
 
 import { MirrorUnassignedEformsignDocUsecase } from "./mirror-unassigned-eformsign-doc.usecase";
 import {
@@ -29,6 +43,9 @@ import {
 const BACKFILL_PAGE_SIZE = 100;
 // Slack for very small lists, where doubling the page count barely adds anything.
 const BACKFILL_MIN_PAGE_BUDGET = 20;
+// No user identity is implied by a backfill worker. The UUID-shaped marker is
+// accepted by the audit column without creating or impersonating a user row.
+const BACKFILL_ACTOR_ID = "00000000-0000-0000-0000-000000000000";
 
 export type EformsignBackfillDocumentType = "01" | "03" | "04";
 
@@ -121,6 +138,13 @@ function cloneSummary(summary: EformsignDocsBackfillSummary): EformsignDocsBackf
     };
 }
 
+function hasExactProviderDocumentIdentity(
+    detail: Pick<EformsignApiDocumentResponse, "id"> | { id?: unknown } | null | undefined,
+    expectedDocumentId: string,
+): boolean {
+    return typeof detail?.id === "string" && detail.id === expectedDocumentId;
+}
+
 @Injectable()
 export class BackfillEformsignDocsUsecase {
     private readonly logger = new Logger(BackfillEformsignDocsUsecase.name);
@@ -133,9 +157,13 @@ export class BackfillEformsignDocsUsecase {
         private readonly eformsignDocRepository: IEformsignDocRepository,
         private readonly mirrorEformsignDocUsecase: MirrorUnassignedEformsignDocUsecase,
         @Optional()
-        private readonly documentMirrorService?: EformsignDocumentMirrorService,
+        private readonly documentMirrorService: EformsignDocumentMirrorService | undefined = undefined,
         @Optional()
-        private readonly eformsignService?: EformsignService,
+        private readonly eformsignService: EformsignService | undefined = undefined,
+        @Inject(EFORMSIGN_CANCELLATION_REPOSITORY)
+        private readonly cancellationRepository: IEformsignCancellationRepository,
+        @Inject(EFORMSIGN_DOCUMENT_MIRROR_REPOSITORY)
+        private readonly mirrorRepository: IEformsignDocumentMirrorRepository,
     ) {}
 
     async execute(
@@ -683,6 +711,13 @@ export class BackfillEformsignDocsUsecase {
                     if (!this.isAuthenticationError(error)) throw error;
                     detail = await verify(await refreshAccessToken());
                 }
+                // A detail response is provider evidence only for the exact id
+                // requested by this sweep. Do not sync or reconcile a response
+                // whose id is missing or belongs to another document: the local
+                // mirror and any durable purge fence must remain untouched.
+                if (!hasExactProviderDocumentIdentity(detail, documentId)) {
+                    throw new Error("Provider detail identity could not be verified");
+                }
                 // syncDocumentWithToken tolerates a stale list projection while still
                 // converging detail and files; do not reintroduce that stale-write gap.
                 await this.documentMirrorService.syncDocumentWithToken(accessToken(), documentId, {
@@ -697,6 +732,7 @@ export class BackfillEformsignDocsUsecase {
                         // fences every writer of statusType, so the local row is frozen at
                         // whatever it was when the delete began.
                         detail.current_status?.status_type,
+                        detail.id,
                         accessToken,
                         refreshAccessToken,
                     );
@@ -710,7 +746,19 @@ export class BackfillEformsignDocsUsecase {
                     );
                 }
                 if (hasPermanentPurgeIntent) {
-                    await this.documentMirrorService.purgeDocuments([documentId]);
+                    // A vendor absence is authoritative only after a durable cancel
+                    // intent owns the same branch/document scope. Reconcile through the
+                    // cancellation writer so it clears the fence and applies the local
+                    // tombstone atomically; never call the legacy mirror purge directly.
+                    const cancellationTarget = await this.beginBackfillCancellation(documentId);
+                    await this.cancellationRepository.reconcile({
+                        branchId: cancellationTarget.branchId,
+                        intentId: cancellationTarget.cancellationIntent.id,
+                        actorUserId: BACKFILL_ACTOR_ID,
+                        reason: "backfill provider absence confirmed",
+                        outcome: "delivered",
+                        providerDocumentId: cancellationTarget.providerDocumentId,
+                    });
                 } else {
                     await this.documentMirrorService.markDocumentsDeleted([documentId]);
                 }
@@ -731,21 +779,31 @@ export class BackfillEformsignDocsUsecase {
     private async retryConfirmedPresentPermanentPurge(
         documentId: string,
         vendorStatusType: string | undefined,
+        providerDocumentId: string | undefined,
         accessToken: () => string,
         refreshAccessToken: () => Promise<string>,
     ): Promise<void> {
+        // Keep this guard inside the alternate retry path as well as at the
+        // caller. Future backfill entry points must not turn a status-only
+        // response for another document into delivered proof and purge.
+        if (!hasExactProviderDocumentIdentity({ id: providerDocumentId }, documentId)) {
+            throw new Error("Provider detail identity could not be verified");
+        }
         const documentMirrorService = this.documentMirrorService;
         const eformsignService = this.eformsignService;
         if (!documentMirrorService || !eformsignService) {
             throw new Error("Permanent eformsign purge retry dependencies are unavailable");
         }
 
-        // Allocate a new generation immediately before the retry. A definitive
-        // vendor rejection may clear only this retry's intent, never a newer one.
-        const requests = await documentMirrorService.requestPermanentPurge([documentId]);
-        const request = requests.find((candidate) => candidate.documentId === documentId);
-        if (!request) {
-            throw new Error(`Could not persist permanent eformsign purge retry for ${documentId}`);
+        // Every retry first establishes the cancel intent and purge fence in one
+        // branch-scoped transaction. There is deliberately no local request/purge
+        // fallback: without the durable writer this worker must fail closed.
+        const cancellationTarget = await this.beginBackfillCancellation(documentId);
+        if (
+            cancellationTarget.cancellationIntent.status === "accepted"
+            || cancellationTarget.cancellationIntent.status === "reconciled_delivered"
+        ) {
+            return;
         }
 
         const cancelWithToken = (token: string) =>
@@ -762,42 +820,92 @@ export class BackfillEformsignDocsUsecase {
             }
         } catch (error) {
             if (isEformsignDocumentAbsentError(error)) {
-                await documentMirrorService.purgeDocuments([documentId]);
-                return;
-            }
-            if (isDefinitivePermanentDeleteHttpFailure(error)) {
-                await documentMirrorService.clearPermanentPurgeRequest([request]);
+                await this.cancellationRepository.reconcile({
+                    branchId: cancellationTarget.branchId,
+                    intentId: cancellationTarget.cancellationIntent.id,
+                    actorUserId: BACKFILL_ACTOR_ID,
+                    reason: "backfill provider absence confirmed",
+                    outcome: "delivered",
+                    providerDocumentId: cancellationTarget.providerDocumentId,
+                });
+            } else {
+                const classified = classifyEformsignCancellationError(error);
+                await this.persistBackfillCancellationOutcome(
+                    cancellationTarget,
+                    classified,
+                );
             }
             throw error;
         }
 
-        const successfulIds = successfulPermanentDeleteDocumentIds(result);
-        if (successfulIds.includes(documentId)) {
-            await documentMirrorService.purgeDocuments([documentId]);
-            return;
-        }
-
-        // eformsign refuses to cancel a document that is no longer in progress. Such a
-        // document has no live signing link left to revoke, so finish the purge rather
-        // than retrying a call that can never succeed — otherwise every sweep from here
-        // on reattempts it forever.
-        //
-        // This reads the vendor's status deliberately. The mirror cannot answer: a live
-        // purge intent fences every writer of statusType (the staleGuard, saveDetail,
-        // claimCompletionStatus, updateDocument), so the local row stays frozen at its
-        // pre-delete status for as long as the intent survives — which is exactly the
-        // situation this branch exists to end.
+        const outcome = classifyEformsignCancellationResult(result, [documentId])[0];
         if (vendorStatusType !== undefined
-            && UNASSIGNED_TERMINAL_STATUS_CODES.has(vendorStatusType)) {
-            await documentMirrorService.purgeDocuments([documentId]);
+            && UNASSIGNED_TERMINAL_STATUS_CODES.has(vendorStatusType)
+            && outcome?.decision !== "accepted") {
+            await this.cancellationRepository.reconcile({
+                branchId: cancellationTarget.branchId,
+                intentId: cancellationTarget.cancellationIntent.id,
+                actorUserId: BACKFILL_ACTOR_ID,
+                reason: "backfill provider terminal status confirmed",
+                outcome: "delivered",
+                providerDocumentId: cancellationTarget.providerDocumentId,
+            });
             return;
         }
+        if (outcome) await this.persistBackfillCancellationOutcome(cancellationTarget, outcome);
+    }
 
-        if (failedPermanentDeleteDocumentIds(result, [documentId]).includes(documentId)) {
-            await documentMirrorService.clearPermanentPurgeRequest([request]);
+    private async beginBackfillCancellation(
+        documentId: string,
+    ): Promise<EformsignCancellationTarget> {
+        if (!this.cancellationRepository || !this.mirrorRepository) {
+            throw new Error("Durable eformsign cancellation dependencies are unavailable");
         }
-        // Unknown outcomes deliberately retain the new durable intent. The next
-        // reconciliation verifies the document's state before purging.
+        const state = await this.mirrorRepository.findState(documentId);
+        if (!state?.branchId) {
+            throw new Error("Cannot establish branch ownership for eformsign cancellation retry");
+        }
+        const result = await this.cancellationRepository.begin({
+            branchId: state.branchId,
+            documentIds: [documentId],
+            actorUserId: BACKFILL_ACTOR_ID,
+            reason: "backfill permanent purge cancellation retry",
+        });
+        const target = result.targets[0];
+        if (!target) {
+            throw new Error("Could not establish durable eformsign cancellation target");
+        }
+        return target;
+    }
+
+    private async persistBackfillCancellationOutcome(
+        target: EformsignCancellationTarget,
+        outcome: ReturnType<typeof classifyEformsignCancellationResult>[number]
+        | ReturnType<typeof classifyEformsignCancellationError>,
+    ): Promise<void> {
+        const receipt = sanitizeEformsignCancellationReceipt({
+            decision: outcome.decision,
+            documentId: target.documentId,
+            vendorCode: outcome.vendorCode,
+            source: "eformsign_backfill_cancel",
+        });
+        if (outcome.decision === "accepted") {
+            await this.cancellationRepository.completeAccepted({ target, providerReceipt: receipt });
+        } else if (outcome.decision === "authoritative_refusal") {
+            await this.cancellationRepository.clearAuthoritativeRefusal({
+                target,
+                actorUserId: BACKFILL_ACTOR_ID,
+                reason: outcome.reason,
+                providerReceipt: receipt,
+            });
+        } else {
+            await this.cancellationRepository.markUncertain({
+                target,
+                reason: outcome.reason,
+                providerDocumentId: target.providerDocumentId,
+                providerReceipt: receipt,
+            });
+        }
     }
 
     private async persistDocument(
@@ -929,74 +1037,5 @@ export class BackfillEformsignDocsUsecase {
             totalCount,
             summary: cloneSummary(params.summary),
         });
-    }
-}
-
-function successfulPermanentDeleteDocumentIds(result: unknown): string[] {
-    if (typeof result !== "object" || result === null) {
-        return [];
-    }
-    const resultBody = (result as Record<string, unknown>)["result"];
-    if (typeof resultBody !== "object" || resultBody === null) {
-        return [];
-    }
-    const successResult = (resultBody as Record<string, unknown>)["success_result"];
-    if (!Array.isArray(successResult)) {
-        return [];
-    }
-    return successResult.filter(
-        (documentId): documentId is string =>
-            typeof documentId === "string" && documentId.trim().length > 0,
-    );
-}
-
-function failedPermanentDeleteDocumentIds(
-    result: unknown,
-    requestedDocumentIds: string[],
-): string[] {
-    if (typeof result !== "object" || result === null) return [];
-    const resultBody = (result as Record<string, unknown>)["result"];
-    if (typeof resultBody !== "object" || resultBody === null) return [];
-    const failures = (resultBody as Record<string, unknown>)["fail_result"];
-    if (!Array.isArray(failures)) return [];
-
-    const requested = new Set(requestedDocumentIds);
-    return [...new Set(failures.flatMap((failure) => {
-        if (typeof failure !== "object" || failure === null) return [];
-        const { document_id: documentId, code } = failure as Record<string, unknown>;
-        const normalizedId = typeof documentId === "string" ? documentId.trim() : "";
-        return classifyPermanentDeleteFailureCode(code) === "clear"
-            && normalizedId
-            && requested.has(normalizedId)
-            ? [normalizedId]
-            : [];
-    }))];
-}
-
-function isDefinitivePermanentDeleteHttpFailure(error: unknown): boolean {
-    return typeof error === "object"
-        && error !== null
-        && "status" in error
-        && typeof error.status === "number"
-        && error.status >= 400
-        && error.status < 500
-        && error.status !== 408
-        && error.status !== 429;
-}
-
-/** Vendor application codes, not HTTP statuses. Unknown outcomes retain intent. */
-function classifyPermanentDeleteFailureCode(code: unknown): "clear" | "retain" {
-    const normalized = typeof code === "string"
-        ? code.trim()
-        : typeof code === "number" && Number.isInteger(code)
-            ? String(code)
-            : "";
-
-    switch (normalized) {
-        case "4000164": // token lacks authority to delete this document
-            return "clear";
-        case "4000031": // already deleted; verify vendor absence before purge
-        default:
-            return "retain";
     }
 }

@@ -1,4 +1,4 @@
-import { ExecutionContext, INestApplication, ValidationPipe } from "@nestjs/common";
+import { ConflictException, ExecutionContext, INestApplication, ValidationPipe } from "@nestjs/common";
 import { Test, TestingModule } from "@nestjs/testing";
 import request from "supertest";
 import { ConfigService } from "@nestjs/config";
@@ -16,6 +16,7 @@ import { TenantGuard } from "infrastructure/tenant";
 import { EformsignDocController } from "interface/controllers/eformsign-doc.controller";
 import type { EformsignDocumentJobEntity } from "domain/entities/eformsign-document-job.entity";
 import { EformsignDispatchBoundaryService } from "application/services/eformsign-dispatch-boundary.service";
+import { CancelEformsignDocumentsUsecase } from "application/usecases/eformsign-doc/cancel-eformsign-documents.usecase";
 
 const validContractData = {
     customerName: "산모",
@@ -82,7 +83,8 @@ describe("EformsignDocumentJobController (Integration)", () => {
         getSummary: jest.Mock;
         listForBranch: jest.Mock;
     };
-    let dispatchBoundary: { reconcile: jest.Mock; findById?: jest.Mock };
+    let dispatchBoundary: { reconcile: jest.Mock; findById: jest.Mock };
+    let cancellationUsecase: { reconcile: jest.Mock };
 
     const authGuard = {
         canActivate: (context: ExecutionContext) => {
@@ -113,6 +115,18 @@ describe("EformsignDocumentJobController (Integration)", () => {
                 reconciledOutcome: "not_delivered",
                 providerDocumentId: null,
             }),
+            findById: jest.fn().mockResolvedValue(null),
+        };
+        cancellationUsecase = {
+            reconcile: jest.fn().mockResolvedValue({
+                intent: {
+                    id: "11111111-1111-4111-8111-111111111111",
+                    status: "reconciled_not_delivered",
+                    reconciledOutcome: "not_delivered",
+                    providerDocumentId: "provider-doc-1",
+                },
+                clearedPurgeFence: true,
+            }),
         };
 
         const moduleFixture: TestingModule = await Test.createTestingModule({
@@ -136,6 +150,7 @@ describe("EformsignDocumentJobController (Integration)", () => {
                 },
                 { provide: EformsignDocumentJobService, useValue: documentJobService },
                 { provide: EformsignDispatchBoundaryService, useValue: dispatchBoundary },
+                { provide: CancelEformsignDocumentsUsecase, useValue: cancellationUsecase },
             ],
         })
             .overrideGuard(JwtGuard)
@@ -275,6 +290,78 @@ describe("EformsignDocumentJobController (Integration)", () => {
             reason: "provider receipt lookup confirms no delivery",
             providerDocumentId: undefined,
         });
+    });
+
+    it("routes cancel intent reconciliation through the durable cancellation use case", async () => {
+        const intentId = "11111111-1111-4111-8111-111111111111";
+        dispatchBoundary.findById.mockResolvedValueOnce({
+            id: intentId,
+            action: "cancel",
+            status: "uncertain",
+            reconciledOutcome: null,
+            providerDocumentId: "provider-doc-1",
+        });
+
+        const response = await request(app.getHttpServer())
+            .post(`/eformsign-docs/dispatch-intents/${intentId}/reconcile`)
+            .send({
+                outcome: "not_delivered",
+                reason: "provider receipt lookup confirms no delivery",
+                providerDocumentId: "provider-doc-1",
+            });
+
+        expect(response.status).toBe(200);
+        expect(response.body).toEqual({
+            intentId,
+            status: "reconciled_not_delivered",
+            outcome: "not_delivered",
+            providerDocumentId: "provider-doc-1",
+        });
+        expect(cancellationUsecase.reconcile).toHaveBeenCalledWith(
+            {
+                branchId: "branch-a",
+                intentId,
+                outcome: "not_delivered",
+                actorUserId: "user-a",
+                reason: "provider receipt lookup confirms no delivery",
+                providerDocumentId: "provider-doc-1",
+            },
+            expect.objectContaining({
+                branchId: "branch-a",
+                userId: "user-a",
+                branchRole: "admin",
+            }),
+        );
+        expect(dispatchBoundary.reconcile).not.toHaveBeenCalled();
+    });
+
+    it("fails closed when durable delivered reconciliation cannot prove provider state", async () => {
+        const intentId = "11111111-1111-4111-8111-111111111111";
+        dispatchBoundary.findById.mockResolvedValueOnce({
+            id: intentId,
+            action: "cancel",
+            status: "uncertain",
+            reconciledOutcome: null,
+            providerDocumentId: "provider-doc-1",
+        });
+        cancellationUsecase.reconcile.mockRejectedValueOnce(
+            new ConflictException("provider 취소 결과를 확인할 수 없어 수동 재검증이 필요합니다."),
+        );
+
+        const response = await request(app.getHttpServer())
+            .post(`/eformsign-docs/dispatch-intents/${intentId}/reconcile`)
+            .send({
+                outcome: "delivered",
+                reason: "operator supplied delivery assertion",
+                providerDocumentId: "provider-doc-1",
+            });
+
+        expect(response.status).toBe(409);
+        expect(cancellationUsecase.reconcile).toHaveBeenCalledWith(
+            expect.objectContaining({ outcome: "delivered" }),
+            expect.objectContaining({ branchId: "branch-a", branchRole: "admin" }),
+        );
+        expect(dispatchBoundary.reconcile).not.toHaveBeenCalled();
     });
 
     it("reads only the current branch's dispatch intent summary", async () => {
