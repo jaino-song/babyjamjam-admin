@@ -20,6 +20,7 @@ import {
 import {
     assertProductDisposableE2eGuard,
     formatProductDisposableE2eReport,
+    resolveProductDisposableE2eStatus,
 } from "../../../evals/conversation/product-disposable-e2e";
 import { createHarnessValidationAdapter, createNoNetworkMockTransport } from "../../../evals/conversation/mock-transport";
 
@@ -126,6 +127,28 @@ describe("deterministic multi-turn conversation evaluation foundation", () => {
         expect(report).toContain("provider calls: 0");
         expect(report).not.toContain("01000000041");
         expect(report).not.toContain("9a000000-0000-4000-8000-000000000041");
+    });
+
+    it("passes the disposable lane only with create, update, positive job, deny, and zero-send evidence", () => {
+        const complete = {
+            createStatus: "succeeded",
+            updateStatus: "succeeded" as const,
+            jobs: 1,
+            messageLogs: 0,
+            denyStatus: "succeeded",
+        };
+        expect(resolveProductDisposableE2eStatus(complete)).toBe("passed");
+
+        const missingEvidence = [
+            { ...complete, createStatus: "failed" },
+            { ...complete, updateStatus: "blocked" as const },
+            { ...complete, jobs: 0 },
+            { ...complete, denyStatus: "blocked" },
+            { ...complete, messageLogs: 2 },
+        ];
+        for (const outcome of missingEvidence) {
+            expect(resolveProductDisposableE2eStatus(outcome)).toBe("blocked");
+        }
     });
 
     it("does not let success prose pass when current state and structured evidence are absent", async () => {
