@@ -6,6 +6,13 @@
  * refusal gates with precise messages and zero provider calls, and prove the
  * success path entirely through the SDK's injected fetch seam — no test
  * touches the network and no real credential is ever read.
+ *
+ * Evidence-bridge specs prove the offline report → jev-evidence-v1
+ * conversion end-to-end: the emitted document parses under the readiness
+ * checker's own strict schema and, with a synthetic attestation and a
+ * synthetic profile fixture, reaches ready:true through the checker's own
+ * evaluation. Every attestation count in this file is SYNTHETIC and labelled
+ * as such — none of it is production evidence.
  */
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -18,6 +25,14 @@ import {
     PINNED_MODEL_ID,
 } from "../../infrastructure/agent/typesafe-jev-decision.service";
 import {
+    EVIDENCE_REPORT_SCHEMA_VERSION,
+    evaluateJevReadiness,
+    parseEvidenceReport,
+    READINESS_REASONS,
+    RELEASE_PROFILE_SCHEMA_VERSION,
+} from "./check-jev-readiness";
+import {
+    ATTESTATION_SCHEMA_VERSION,
     CLARIFICATION_BINARIZATION_THRESHOLD,
     EVAL_DIR_RELATIVE,
     LIVE_CONSENT_FLAG,
@@ -32,6 +47,7 @@ import {
 const FIXTURE_PATH = resolve(__dirname, "../../../evals/agent/jev/fixtures-v1.json");
 const RUBRIC_PATH = resolve(__dirname, "../../../evals/agent/jev/judge-rubric-v1.json");
 const WORKFLOW_PATH = resolve(__dirname, "../../../.github/workflows/agent-evals.yml");
+const DRAFT_PROFILE_PATH = resolve(__dirname, "../../../evals/agent/jev/release-profile-v1.json");
 
 const FIXED_NOW = new Date("2026-09-23T00:00:00.000Z");
 const LATER_NOW = new Date("2026-09-23T12:34:56.789Z");
@@ -43,13 +59,20 @@ const TEST_ENV: Record<string, string> = {
 
 const RAW_FIXTURE = JSON.parse(readFileSync(FIXTURE_PATH, "utf8")) as {
     domains: string[];
-    cases: Array<{ id: string; labelProvenance: string; text: string; decisionKind: string }>;
+    cases: Array<{
+        id: string;
+        labelProvenance: string;
+        text: string;
+        decisionKind: string;
+        split: string;
+    }>;
 };
 const CORPUS_TEXTS = new Set(RAW_FIXTURE.cases.map((item) => item.text));
 const FULL_KIND_COUNTS: Record<string, number> = {};
 for (const item of RAW_FIXTURE.cases) {
     FULL_KIND_COUNTS[item.decisionKind] = (FULL_KIND_COUNTS[item.decisionKind] ?? 0) + 1;
 }
+const HOLDOUT_COUNT = RAW_FIXTURE.cases.filter((item) => item.split === "holdout").length;
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -166,6 +189,55 @@ function writeCorpusVariant(dir: string, name: string, mutate: (root: {
 
 function readReport(path: string): JevRunReport {
     return JSON.parse(readFileSync(path, "utf8")) as JevRunReport;
+}
+
+// ---------------------------------------------------------------------------
+// Evidence-bridge helpers (all counts SYNTHETIC, labelled as such)
+// ---------------------------------------------------------------------------
+
+function writeJsonFile(dir: string, name: string, value: unknown): string {
+    const path = join(dir, name);
+    writeFileSync(path, `${JSON.stringify(value, null, 2)}\n`, "utf8");
+    return path;
+}
+
+/**
+ * Synthetic attestation fixture. The comparison counts are invented for the
+ * tests: "none" fits a fixture run (nothing evaluated, so nothing comparable),
+ * "all" fits a fully-evaluated live-stub run. None of this is real evidence.
+ */
+function syntheticAttestation(comparisons: "none" | "all"): Record<string, unknown> {
+    const perKind: Record<string, { agreedCount: number; comparableCount: number }> = {};
+    for (const [kind, count] of Object.entries(FULL_KIND_COUNTS)) {
+        perKind[kind] = comparisons === "all"
+            ? { agreedCount: count, comparableCount: count }
+            : { agreedCount: 0, comparableCount: 0 };
+    }
+    return {
+        schemaVersion: ATTESTATION_SCHEMA_VERSION,
+        attestedBy: "synthetic spec operator (not a real person)",
+        attestedAt: "2026-09-23",
+        modelId: PINNED_MODEL_ID,
+        holdoutSplit: { present: true, caseCount: HOLDOUT_COUNT },
+        humanReference: { present: true, caseCount: RAW_FIXTURE.cases.length },
+        humanReferenceComparisons: perKind,
+        notes: "SYNTHETIC spec fixture — invented counts for tests only, never production evidence.",
+    };
+}
+
+/** Writes an attestation variant and runs a fixture-mode evidence conversion, expecting a refusal. */
+async function fixtureEvidenceRefusal(
+    dir: string,
+    name: string,
+    mutate: (root: Record<string, unknown>) => void,
+): Promise<Extract<JevRunResult, { ok: false }>> {
+    const root = syntheticAttestation("none");
+    mutate(root);
+    const attestationPath = writeJsonFile(dir, name, root);
+    return requireRefusal(await runJevEvaluation(fixtureOptions(join(dir, `report-${name}.json`), {
+        evidenceOut: join(dir, `evidence-${name}.json`),
+        attestation: attestationPath,
+    })));
 }
 
 // ---------------------------------------------------------------------------
@@ -517,6 +589,392 @@ describe("live mode with an injected fetch stub", () => {
         }
         expect(ok.report.summary.overall.unavailableCount).toBe(2);
         expect(ok.report.summary.overall.precision).toBeNull();
+    });
+});
+
+// ---------------------------------------------------------------------------
+// Evidence bridge: report + operator attestation → jev-evidence-v1
+// ---------------------------------------------------------------------------
+
+describe("evidence bridge", () => {
+    it("fixture mode: --evidence-out with an attestation emits a checker-parseable evidence document without inventing values", async () => {
+        const dir = newWorkDir();
+        const output = join(dir, "report.json");
+        const evidenceOut = join(dir, "evidence.json");
+        const attestationPath = writeJsonFile(dir, "attestation.json", syntheticAttestation("none"));
+        const guard = throwingFetch();
+
+        const ok = requireOk(await runJevEvaluation(fixtureOptions(output, {
+            evidenceOut,
+            attestation: attestationPath,
+            fetchImpl: guard.fetch,
+        })));
+
+        // The conversion is offline: the transport is never reached.
+        expect(guard.calls).toEqual([]);
+        expect(ok.evidencePath).toBe(resolve(evidenceOut));
+        expect(existsSync(evidenceOut)).toBe(true);
+
+        // The report itself is unchanged: still schemaVersion 1, fixture shape.
+        const report = readReport(output);
+        expect(report.schemaVersion).toBe(1);
+        expect(report.mode).toBe("fixture");
+
+        const evidence: unknown = JSON.parse(readFileSync(evidenceOut, "utf8"));
+        // The checker's own strict schema (exact keys, closed vocab) accepts it.
+        expect(() => parseEvidenceReport(evidence)).not.toThrow();
+        const parsed = parseEvidenceReport(evidence);
+        expect((evidence as Record<string, unknown>)["schemaVersion"]).toBe(EVIDENCE_REPORT_SCHEMA_VERSION);
+        // Fixture mode runs no model, so the modelId is the operator's
+        // attested declaration of what the bundle is for.
+        expect(parsed.modelId).toBe(PINNED_MODEL_ID);
+        expect(Object.keys(evidence as object).sort()).toEqual([
+            "datasetDigest",
+            "kinds",
+            "modelId",
+            "notes",
+            "questionVersion",
+            "schemaVersion",
+        ]);
+
+        const byKind = new Map(parsed.kinds.map((entry) => [entry.decisionKind, entry]));
+        for (const kind of Object.values(DECISION_KINDS)) {
+            const entry = byKind.get(kind);
+            expect(entry).toBeDefined();
+            const row = report.summary.byKind[kind];
+            // Raw counts are mapped from the report, never invented; the
+            // human-reference comparisons come from the attestation (zero
+            // here: a fixture run evaluates nothing, so nothing is comparable).
+            expect(entry?.rawCounts).toEqual({
+                acceptedCount: row.acceptedCount,
+                abstainedCount: row.abstainedCount,
+                correctCount: row.correctCount,
+                evaluatedCount: row.evaluatedCount,
+                humanReferenceComparisons: { agreedCount: 0, comparableCount: 0 },
+                labeledCount: row.labeledCount,
+                missingPredictionCount: row.missingPredictionCount,
+                unavailableCount: row.unavailableCount,
+            });
+            // Zero denominators carry their true counts but no value: the
+            // report computed null there and nothing is fabricated instead.
+            expect(entry?.metrics.abstentionRate).toEqual({ denominator: 0, numerator: 0 });
+            expect(entry?.metrics.precision).toEqual({ denominator: 0, numerator: 0 });
+            expect(entry?.metrics.agreement).toEqual({ denominator: 0, numerator: 0 });
+            expect(entry?.metrics.coverage).toEqual({
+                denominator: row.labeledCount,
+                numerator: row.acceptedCount,
+                value: 0,
+            });
+            // Holdout presence/count agree with the report's own split counts.
+            expect(entry?.holdoutSplit).toEqual({ caseCount: HOLDOUT_COUNT, present: true });
+        }
+
+        // Byte-stable: the evidence carries no timestamps of its own.
+        const evidenceOut2 = join(dir, "evidence-2.json");
+        await runJevEvaluation(fixtureOptions(join(dir, "report-2.json"), {
+            evidenceOut: evidenceOut2,
+            attestation: attestationPath,
+            fetchImpl: throwingFetch().fetch,
+        }));
+        expect(readFileSync(evidenceOut, "utf8")).toBe(readFileSync(evidenceOut2, "utf8"));
+    });
+
+    it("fixture-mode evidence fails the readiness gate closed against the committed draft profile (by design)", async () => {
+        const dir = newWorkDir();
+        const attestationPath = writeJsonFile(dir, "attestation.json", syntheticAttestation("none"));
+        await runJevEvaluation(fixtureOptions(join(dir, "report.json"), {
+            evidenceOut: join(dir, "evidence.json"),
+            attestation: attestationPath,
+        }));
+
+        const evidence: unknown = JSON.parse(readFileSync(join(dir, "evidence.json"), "utf8"));
+        const profile: unknown = JSON.parse(readFileSync(DRAFT_PROFILE_PATH, "utf8"));
+        const result = evaluateJevReadiness(profile, evidence, LATER_NOW);
+
+        expect(result.ready).toBe(false);
+        const tokens = new Set(result.reasons.map((item) => item.token));
+        // Fixture evidence has no evaluated cases, so its zero metric
+        // denominators and zero coverage block — the designed fail-closed
+        // outcome, not a tool failure.
+        expect(tokens.has(READINESS_REASONS.metricDenominatorZero)).toBe(true);
+        expect(tokens.has(READINESS_REASONS.coverageBelowFloor)).toBe(true);
+        // Blocked for the right reasons: nothing mismatched, and the attested
+        // holdout/human-reference presences are honored.
+        expect(tokens.has(READINESS_REASONS.evidenceModelMismatch)).toBe(false);
+        expect(tokens.has(READINESS_REASONS.evidenceQuestionVersionMismatch)).toBe(false);
+        expect(tokens.has(READINESS_REASONS.evidenceDatasetDigestMismatch)).toBe(false);
+        expect(tokens.has(READINESS_REASONS.holdoutSplitMissing)).toBe(false);
+        expect(tokens.has(READINESS_REASONS.humanReferenceMissing)).toBe(false);
+    });
+
+    it("reaches ready: true end-to-end through the checker's own evaluation on synthetic fixtures", async () => {
+        const dir = newWorkDir();
+        const stub = liveStubFetch();
+        const attestationPath = writeJsonFile(dir, "attestation.json", syntheticAttestation("all"));
+        const ok = requireOk(await runJevEvaluation(liveOptions(join(dir, "live-report.json"), {
+            evidenceOut: join(dir, "live-evidence.json"),
+            attestation: attestationPath,
+            fetchImpl: stub.fetch,
+        })));
+
+        const evidence: unknown = JSON.parse(readFileSync(join(dir, "live-evidence.json"), "utf8"));
+        expect(() => parseEvidenceReport(evidence)).not.toThrow();
+
+        // Synthetic profile fixture (never the committed draft profile): the
+        // pinned ids come from this very run; the thresholds mirror the
+        // draft's proposed examples. enabled:false + a placeholder approval
+        // reference keeps the approval boundary intact.
+        const report = ok.report;
+        const profile = {
+            enabled: false,
+            kinds: Object.values(DECISION_KINDS).map((kind) => ({
+                approvalReference: "PENDING: synthetic placeholder, not an approval",
+                approvedScope: ["branch", "internal"],
+                datasetDigest: report.datasetDigest,
+                decisionKind: kind,
+                modelId: PINNED_MODEL_ID,
+                questionVersion: report.summary.questionVersion,
+                thresholds: {
+                    maxAbstentionRate: 0.5,
+                    minAgreement: 0.95,
+                    minCoverage: 0.9,
+                    requireHoldoutSplit: true,
+                    requireHumanReference: true,
+                },
+            })),
+            notes: "SYNTHETIC spec profile — proves the gate math, not a real release configuration",
+            profileVersion: "synthetic-ready-profile",
+            schemaVersion: RELEASE_PROFILE_SCHEMA_VERSION,
+        };
+        const result = evaluateJevReadiness(profile, evidence, LATER_NOW);
+        expect(result.ready).toBe(true);
+        expect(result.reasons).toEqual([]);
+    });
+
+    it("readiness blocks on a mismatched model, question version, and dataset digest", async () => {
+        const dir = newWorkDir();
+        const attestationPath = writeJsonFile(dir, "attestation.json", syntheticAttestation("all"));
+        await runJevEvaluation(liveOptions(join(dir, "live-report.json"), {
+            evidenceOut: join(dir, "live-evidence.json"),
+            attestation: attestationPath,
+            fetchImpl: liveStubFetch().fetch,
+        }));
+        const evidence = JSON.parse(readFileSync(join(dir, "live-evidence.json"), "utf8")) as Record<string, unknown>;
+        const report = readReport(join(dir, "live-report.json"));
+        const profile = {
+            enabled: false,
+            kinds: Object.values(DECISION_KINDS).map((kind) => ({
+                approvalReference: "PENDING: synthetic placeholder, not an approval",
+                approvedScope: ["branch", "internal"],
+                datasetDigest: report.datasetDigest,
+                decisionKind: kind,
+                modelId: PINNED_MODEL_ID,
+                questionVersion: report.summary.questionVersion,
+                thresholds: {
+                    maxAbstentionRate: 0.5,
+                    minAgreement: 0.95,
+                    minCoverage: 0.9,
+                    requireHoldoutSplit: true,
+                    requireHumanReference: true,
+                },
+            })),
+            profileVersion: "synthetic-ready-profile",
+            schemaVersion: RELEASE_PROFILE_SCHEMA_VERSION,
+        };
+
+        const cases: Array<[string, unknown, string]> = [
+            ["modelId", "synthetic-other-model-2.0.0", READINESS_REASONS.evidenceModelMismatch],
+            ["questionVersion", "v9", READINESS_REASONS.evidenceQuestionVersionMismatch],
+            ["datasetDigest", "b".repeat(64), READINESS_REASONS.evidenceDatasetDigestMismatch],
+        ];
+        for (const [field, value, token] of cases) {
+            const mutated = { ...evidence, [field]: value };
+            const result = evaluateJevReadiness(profile, mutated, LATER_NOW);
+            expect(result.ready).toBe(false);
+            expect(result.reasons.map((item) => item.token)).toContain(token);
+        }
+    });
+
+    it("keeps the evidence document free of credentials, corpus text, and per-case data", async () => {
+        const dir = newWorkDir();
+        const attestationPath = writeJsonFile(dir, "attestation.json", syntheticAttestation("all"));
+        await runJevEvaluation(liveOptions(join(dir, "live-report.json"), {
+            evidenceOut: join(dir, "live-evidence.json"),
+            attestation: attestationPath,
+            fetchImpl: liveStubFetch().fetch,
+        }));
+        const serialized = readFileSync(join(dir, "live-evidence.json"), "utf8");
+        const evidence = JSON.parse(serialized) as Record<string, unknown>;
+
+        expect(serialized).not.toContain(CANARY_KEY);
+        for (const text of CORPUS_TEXTS) {
+            expect(serialized).not.toContain(text);
+        }
+
+        const keys: string[] = [];
+        const walk = (value: unknown): void => {
+            if (Array.isArray(value)) {
+                for (const item of value) walk(item);
+                return;
+            }
+            if (typeof value === "object" && value !== null) {
+                for (const [key, item] of Object.entries(value)) {
+                    keys.push(key);
+                    walk(item);
+                }
+            }
+        };
+        walk(evidence);
+        expect(keys.filter((key) => /api[-_]?key|secret|token|authorization|password|bearer/i.test(key))).toEqual([]);
+
+        // Counts and tokens only — no cases, predictions, or score payloads.
+        expect(evidence["cases"]).toBeUndefined();
+        for (const entry of evidence["kinds"] as Array<Record<string, unknown>>) {
+            expect(Object.keys(entry).sort()).toEqual([
+                "decisionKind",
+                "holdoutSplit",
+                "humanReference",
+                "metrics",
+                "rawCounts",
+            ]);
+        }
+    });
+
+    it("refuses --evidence-out without --attestation and --attestation without --evidence-out", async () => {
+        const dir = newWorkDir();
+        const guard = throwingFetch();
+        const missingAttestation = requireRefusal(await runJevEvaluation(fixtureOptions(
+            join(dir, "report.json"),
+            { evidenceOut: join(dir, "evidence.json"), fetchImpl: guard.fetch },
+        )));
+        expect(missingAttestation.errorCode).toBe("evidence-out-requires-attestation");
+        expect(missingAttestation.message).toContain("--attestation");
+        expect(guard.calls).toEqual([]);
+
+        const orphanAttestation = requireRefusal(await runJevEvaluation(fixtureOptions(
+            join(dir, "report-2.json"),
+            { attestation: join(dir, "attestation.json"), fetchImpl: guard.fetch },
+        )));
+        expect(orphanAttestation.errorCode).toBe("attestation-requires-evidence-out");
+        expect(orphanAttestation.message).toContain("--evidence-out");
+        expect(guard.calls).toEqual([]);
+    });
+
+    it("refuses a missing or unparseable attestation file", async () => {
+        const dir = newWorkDir();
+        const missingPath = join(dir, "no-such-attestation.json");
+        const missing = requireRefusal(await runJevEvaluation(fixtureOptions(join(dir, "report.json"), {
+            evidenceOut: join(dir, "evidence.json"),
+            attestation: missingPath,
+        })));
+        expect(missing.errorCode).toBe("attestation-unreadable");
+        expect(missing.message).toContain(missingPath);
+
+        const brokenPath = join(dir, "broken.json");
+        writeFileSync(brokenPath, "{ not json", "utf8");
+        const broken = requireRefusal(await runJevEvaluation(fixtureOptions(join(dir, "report-2.json"), {
+            evidenceOut: join(dir, "evidence-2.json"),
+            attestation: brokenPath,
+        })));
+        expect(broken.errorCode).toBe("attestation-invalid");
+        expect(broken.message).toContain("not valid JSON");
+    });
+
+    it("refuses incomplete attestations with a precise field-level reason", async () => {
+        const dir = newWorkDir();
+
+        const missingAuthor = await fixtureEvidenceRefusal(dir, "a1.json", (root) => {
+            delete root["attestedBy"];
+        });
+        expect(missingAuthor.errorCode).toBe("attestation-invalid");
+        expect(missingAuthor.message).toContain('"attestedBy"');
+
+        const wrongSchema = await fixtureEvidenceRefusal(dir, "a2.json", (root) => {
+            root["schemaVersion"] = "attestation-v9";
+        });
+        expect(wrongSchema.errorCode).toBe("attestation-invalid");
+        expect(wrongSchema.message).toContain(ATTESTATION_SCHEMA_VERSION);
+
+        const unknownKey = await fixtureEvidenceRefusal(dir, "a3.json", (root) => {
+            root["extra"] = "not allowed";
+        });
+        expect(unknownKey.errorCode).toBe("attestation-invalid");
+        expect(unknownKey.message).toContain('Unknown attestation key "extra"');
+
+        const missingKind = await fixtureEvidenceRefusal(dir, "a4.json", (root) => {
+            delete (root["humanReferenceComparisons"] as Record<string, unknown>)["rank-candidates"];
+        });
+        expect(missingKind.errorCode).toBe("attestation-invalid");
+        expect(missingKind.message).toContain('"rank-candidates"');
+
+        const badDate = await fixtureEvidenceRefusal(dir, "a5.json", (root) => {
+            root["attestedAt"] = "09/2026";
+        });
+        expect(badDate.errorCode).toBe("attestation-invalid");
+        expect(badDate.message).toContain("YYYY-MM-DD");
+
+        const agreedBeyondComparable = await fixtureEvidenceRefusal(dir, "a6.json", (root) => {
+            (root["humanReferenceComparisons"] as Record<string, unknown>)["route-domains"] = {
+                agreedCount: 2,
+                comparableCount: 1,
+            };
+        });
+        expect(agreedBeyondComparable.errorCode).toBe("attestation-invalid");
+        expect(agreedBeyondComparable.message).toContain("exceeds");
+
+        const presentWithoutCases = await fixtureEvidenceRefusal(dir, "a7.json", (root) => {
+            root["holdoutSplit"] = { caseCount: 0, present: true };
+        });
+        expect(presentWithoutCases.errorCode).toBe("attestation-invalid");
+        expect(presentWithoutCases.message).toContain("positive case count");
+
+        const absentWithCases = await fixtureEvidenceRefusal(dir, "a8.json", (root) => {
+            root["holdoutSplit"] = { caseCount: 5, present: false };
+        });
+        expect(absentWithCases.errorCode).toBe("attestation-invalid");
+        expect(absentWithCases.message).toContain("caseCount 0");
+    });
+
+    it("refuses attestations that do not describe this exact report", async () => {
+        const dir = newWorkDir();
+
+        // A fixture run evaluates nothing, so attested comparisons cannot exist.
+        const comparisonsWithoutPredictions = await fixtureEvidenceRefusal(dir, "b1.json", (root) => {
+            (root["humanReferenceComparisons"] as Record<string, unknown>)["classify-client-intent"] = {
+                agreedCount: 1,
+                comparableCount: 16,
+            };
+        });
+        expect(comparisonsWithoutPredictions.errorCode).toBe("attestation-mismatch");
+        expect(comparisonsWithoutPredictions.message).toContain("evaluated only 0 case(s)");
+
+        // A stale holdout count (truncated run or changed corpus) is refused.
+        const staleHoldout = await fixtureEvidenceRefusal(dir, "b2.json", (root) => {
+            root["holdoutSplit"] = { caseCount: HOLDOUT_COUNT - 1, present: true };
+        });
+        expect(staleHoldout.errorCode).toBe("attestation-mismatch");
+        expect(staleHoldout.message).toContain("holdout");
+
+        // A live run whose attestation names a different model is refused
+        // before any provider call happens.
+        const liveDir = newWorkDir();
+        const stub = liveStubFetch();
+        const attestationPath = writeJsonFile(liveDir, "attestation.json", {
+            ...syntheticAttestation("all"),
+            modelId: "synthetic-other-model-9.9.9",
+        });
+        const modelMismatch = requireRefusal(await runJevEvaluation(liveOptions(
+            join(liveDir, "report.json"),
+            {
+                attestation: attestationPath,
+                evidenceOut: join(liveDir, "evidence.json"),
+                fetchImpl: stub.fetch,
+            },
+        )));
+        expect(modelMismatch.errorCode).toBe("attestation-mismatch");
+        expect(modelMismatch.message).toContain("synthetic-other-model-9.9.9");
+        expect(modelMismatch.message).toContain(PINNED_MODEL_ID);
+        expect(stub.calls).toEqual([]);
     });
 });
 
