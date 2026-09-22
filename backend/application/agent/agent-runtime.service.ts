@@ -397,7 +397,19 @@ export class AgentRuntimeService {
             await this.traces.finish(trace, "failed", undefined, "setup", stepMetadata);
             throw new ForbiddenException("Current user message missing");
         }
-        if (turn && this.decisions && this.taskOrchestrator && !formSubmission && intentMode !== DECISION_MODES.off) {
+        // Kill-switch guard: when the agent is effectively disabled for this
+        // principal the router reports `disposition: "disabled"` (no enabled
+        // domains), and an empty offer is the precondition of the not-enabled
+        // refusal below. The intent block — the only decision-layer provider
+        // call outside the router — must be unreachable in both cases, so no
+        // paid intent call precedes the refusal. Skipping it here changes no
+        // outcome: with an empty offer `decideClientIntent` can map no write
+        // entry point, and a bound turn never consulted the classifier.
+        if (
+            turn && this.decisions && this.taskOrchestrator && !formSubmission && intentMode !== DECISION_MODES.off
+            && routed.disposition !== "disabled"
+            && routed.capabilities.length > 0
+        ) {
             if (intentMode === DECISION_MODES.enforce) {
                 // Trusted structural facts bind the turn before any
                 // classifier is consulted. A bound turn is never retargeted
