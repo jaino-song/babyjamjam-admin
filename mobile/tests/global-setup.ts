@@ -2,52 +2,16 @@ import fs from "node:fs";
 import path from "node:path";
 import { request, type FullConfig } from "@playwright/test";
 
+// Every authenticated Playwright run — including the mocked agent lane
+// (RUN_AGENT_E2E=1) — holds a real backend session issued by the /api/auth/login
+// BFF route. There is deliberately no unsigned-token shortcut: tests with
+// unmocked authenticated requests must hit the backend with cookies a real
+// session would carry, and missing or invalid login config must fail loudly
+// here instead of being hidden behind a fabricated cookie.
 export default async function globalSetup(config: FullConfig) {
   const baseURL = process.env.BASE_URL
     ?? config.projects[0]?.use.baseURL
     ?? "http://localhost:3002";
-  if (process.env.RUN_AGENT_E2E === "1" && process.env.RUN_AGENT_REAL_E2E !== "1") {
-    const url = new URL(baseURL);
-    fs.writeFileSync(
-      path.resolve(process.cwd(), "auth.json"),
-      JSON.stringify({
-        cookies: [
-          {
-            name: "auth_token",
-            value: "eyJhbGciOiJub25lIiwidHlwIjoiSldUIn0.eyJzdWIiOiJlMmUtdXNlciIsInJvbGUiOiJhZG1pbiIsImJyYW5jaElkIjoiMjAwMDAwMDAtMDAwMC00MDAwLTgwMDAtMDAwMDAwMDAwMDAxIiwiYnJhbmNoUm9sZSI6ImFkbWluIiwidHlwZSI6ImFjY2VzcyIsInNpZCI6ImFnZW50LWUyZSIsImV4cCI6NDEwMjQ0NDgwMH0.",
-            domain: url.hostname,
-            path: "/",
-            expires: -1,
-            httpOnly: true,
-            secure: url.protocol === "https:",
-            sameSite: "Lax",
-          },
-          {
-            name: "selected_branch_id",
-            value: "20000000-0000-4000-8000-000000000001",
-            domain: url.hostname,
-            path: "/",
-            expires: -1,
-            httpOnly: false,
-            secure: url.protocol === "https:",
-            sameSite: "Lax",
-          },
-          {
-            name: "e2e_auth",
-            value: "1",
-            domain: url.hostname,
-            path: "/",
-            expires: -1,
-            httpOnly: true,
-            secure: url.protocol === "https:",
-            sameSite: "Lax",
-          },
-        ],
-        origins: [],
-      }),
-    );
-    return;
-  }
   const context = await request.newContext({ baseURL });
   const response = await context.post("/api/auth/login", {
     data: {
@@ -58,7 +22,10 @@ export default async function globalSetup(config: FullConfig) {
   });
   const loginResult = await response.json().catch(() => null) as { success?: boolean } | null;
   if (!response.ok() || loginResult?.success !== true) {
-    throw new Error(`Real E2E login failed with ${response.status()} and no successful session`);
+    throw new Error(
+      `E2E login through /api/auth/login failed with ${response.status()} and no successful session. `
+      + "Start the seeded local backend (db:seed:auth-e2e fixtures) or set E2E_AUTH_EMAIL/E2E_AUTH_PASSWORD.",
+    );
   }
 
   const branchId = process.env.E2E_BRANCH_ID
