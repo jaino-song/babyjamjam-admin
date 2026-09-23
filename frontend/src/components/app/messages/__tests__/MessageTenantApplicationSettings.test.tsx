@@ -463,14 +463,21 @@ describe("MessageTenantApplicationSettings", () => {
     });
   });
 
-  it("hides manual-only SERVICE_END_NOTICE rules from automatic ordering while preserving their saved position", async () => {
+  it("hides only the manual receipt-send system rule from automatic ordering while preserving its saved position", async () => {
     const manualOnlyRule: MessageTriggerRule = {
       ...DEFAULT_TRIGGER_RULES[0],
-      id: "manual-service-end-notice",
-      name: "수동 영수증 안내",
+      id: "system:service_end_notice",
+      branchId: null,
+      name: "서비스 종료 안내 (수동 발송)",
       templateKey: "SERVICE_END_NOTICE",
     };
-    const triggerRules = [manualOnlyRule, DEFAULT_TRIGGER_RULES[0]];
+    const automaticReceiptRule: MessageTriggerRule = {
+      ...DEFAULT_TRIGGER_RULES[0],
+      id: "branch-service-end-notice",
+      name: "자동 영수증 안내",
+      templateKey: "SERVICE_END_NOTICE",
+    };
+    const triggerRules = [manualOnlyRule, DEFAULT_TRIGGER_RULES[0], automaticReceiptRule];
     mockSettingsQueries(true, {
       ...DEFAULT_AUTOMATION_POLICIES,
       pastTriggerConfig: {
@@ -484,6 +491,7 @@ describe("MessageTenantApplicationSettings", () => {
 
     expect(screen.queryByText(manualOnlyRule.name)).not.toBeInTheDocument();
     expect(screen.getByText(DEFAULT_TRIGGER_RULES[0].name)).toBeInTheDocument();
+    expect(screen.getByText(automaticReceiptRule.name)).toBeInTheDocument();
 
     const intervalInput = screen.getByRole("spinbutton", { name: "늦은 등록 자동 전송 간격" });
     fireEvent.change(intervalInput, { target: { value: "2" } });
@@ -492,7 +500,7 @@ describe("MessageTenantApplicationSettings", () => {
     await waitFor(() => {
       expect(mockedSettingsApi.updateMessageAutomationPastTriggerConfig).toHaveBeenCalledWith({
         sendIntervalMinutes: 2,
-        ruleOrder: [manualOnlyRule.id, DEFAULT_TRIGGER_RULES[0].id],
+        ruleOrder: [manualOnlyRule.id, DEFAULT_TRIGGER_RULES[0].id, automaticReceiptRule.id],
       });
     });
   });
