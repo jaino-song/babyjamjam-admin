@@ -7,12 +7,16 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
 import { DECISION_KINDS } from "../../application/agent/decision/decision-contracts";
-import { DECISION_QUESTION_VERSION } from "../../application/agent/decision/decision-questions";
+import {
+    DECISION_QUESTION_VERSION,
+    ROUTE_DOMAIN_DESCRIPTIONS,
+} from "../../application/agent/decision/decision-questions";
 import {
     computeEvaluationReport,
     detectScenarioLeakage,
     JevEvaluationError,
     parseJevCorpus,
+    parsePredictionsFile,
     type EvaluationReport,
     type JevCorpus,
     type JevPrediction,
@@ -447,6 +451,70 @@ describe("computeEvaluationReport", () => {
     });
 });
 
+describe("parsePredictionsFile", () => {
+    function predictionsCorpus(): JevCorpus {
+        return { cases: [], datasetDigest: "x", questionVersion: DECISION_QUESTION_VERSION };
+    }
+
+    const predictionsArray: JevPrediction[] = [prediction("t-1", "accepted", "create")];
+
+    it("returns the predictions array unchanged when questionVersion matches the corpus", () => {
+        const raw = { questionVersion: DECISION_QUESTION_VERSION, predictions: predictionsArray };
+        expect(parsePredictionsFile(raw, predictionsCorpus())).toBe(raw.predictions);
+    });
+
+    it("refuses a missing questionVersion field, naming it", () => {
+        const raw = { predictions: predictionsArray };
+        expect(() => parsePredictionsFile(raw, predictionsCorpus())).toThrow(JevEvaluationError);
+        try {
+            parsePredictionsFile(raw, predictionsCorpus());
+            throw new Error("expected parsePredictionsFile to throw");
+        } catch (error) {
+            expect(error).toBeInstanceOf(JevEvaluationError);
+            expect((error as JevEvaluationError).code).toBe("invalid-predictions");
+            expect((error as Error).message).toContain("questionVersion");
+        }
+    });
+
+    it("refuses a missing predictions field, naming it", () => {
+        const raw = { questionVersion: DECISION_QUESTION_VERSION };
+        try {
+            parsePredictionsFile(raw, predictionsCorpus());
+            throw new Error("expected parsePredictionsFile to throw");
+        } catch (error) {
+            expect(error).toBeInstanceOf(JevEvaluationError);
+            expect((error as Error).message).toContain("predictions");
+        }
+    });
+
+    it("refuses a stale questionVersion, naming both the file's and the corpus's version", () => {
+        const raw = { questionVersion: "v1", predictions: predictionsArray };
+        try {
+            parsePredictionsFile(raw, predictionsCorpus());
+            throw new Error("expected parsePredictionsFile to throw");
+        } catch (error) {
+            expect(error).toBeInstanceOf(JevEvaluationError);
+            expect((error as Error).message).toContain("v1");
+            expect((error as Error).message).toContain(DECISION_QUESTION_VERSION);
+        }
+    });
+
+    it("refuses an unknown extra key", () => {
+        const raw = { questionVersion: DECISION_QUESTION_VERSION, predictions: predictionsArray, extra: 1 };
+        expect(() => parsePredictionsFile(raw, predictionsCorpus())).toThrow(/Unknown predictions file key "extra"/);
+    });
+
+    it("refuses a non-object root", () => {
+        expect(() => parsePredictionsFile(null, predictionsCorpus())).toThrow(JevEvaluationError);
+        expect(() => parsePredictionsFile([], predictionsCorpus())).toThrow(JevEvaluationError);
+    });
+
+    it("refuses a non-array predictions field", () => {
+        const raw = { questionVersion: DECISION_QUESTION_VERSION, predictions: "not-an-array" };
+        expect(() => parsePredictionsFile(raw, predictionsCorpus())).toThrow(/must be an array/);
+    });
+});
+
 describe("wilsonInterval95", () => {
     it("returns null without an accepted denominator", () => {
         expect(wilsonInterval95(0, 0)).toBeNull();
@@ -509,6 +577,23 @@ describe("committed fixtures-v1.json invariants", () => {
             const text = String(entry["text"]);
             expect(text.toLowerCase()).not.toContain("010-");
             expect(text).not.toMatch(/{{\s*EVAL_/);
+        }
+    });
+
+    // run-jev-evaluation.ts uses this file's top-level `domains` array as
+    // `permittedDomains` for every live routeDomains case. A domain added
+    // here without a matching ROUTE_DOMAIN_DESCRIPTIONS entry would make
+    // every live route-domains case fail closed with question-mismatch,
+    // while fixture (non-live) mode would never notice.
+    it("declares only domains that have routeDomains question text", () => {
+        const domains = (raw as unknown as { domains: unknown }).domains;
+        expect(Array.isArray(domains)).toBe(true);
+        expect((domains as unknown[]).length).toBeGreaterThan(0);
+        for (const domain of domains as unknown[]) {
+            expect(typeof domain).toBe("string");
+            expect(
+                Object.prototype.hasOwnProperty.call(ROUTE_DOMAIN_DESCRIPTIONS, domain as string),
+            ).toBe(true);
         }
     });
 });

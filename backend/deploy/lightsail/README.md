@@ -1,5 +1,12 @@
 # Lightsail Backend Environments
 
+> **Preview is retired here (2026-09-23, BJJ-341).** The preview backend runs on
+> Google Cloud Run (`backend/deploy/cloudrun/`, runbook
+> `docs/plans/2026-09-23-preview-cloud-run.md`). `resolve-deploy-target` never
+> routes `preview` to Lightsail, and the `preview.api.babyjamjam.com` DNS records
+> are deleted. The preview paths below and in these scripts are inert and are
+> kept until they are removed separately.
+
 The Seoul Lightsail host runs production and preview as separate logical
 environments on one VM. This mirrors Railway's environment model without
 creating a second billable Lightsail instance.
