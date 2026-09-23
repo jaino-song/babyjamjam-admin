@@ -16,6 +16,7 @@ export {
     getServiceRecordNumericFieldError,
     hasDisplayValue,
     hasInvalidServiceRecordNumericAnswers,
+    hasServiceRecordHeaderValues,
     isDailyItemComplete,
     isServiceRecordHeaderComplete,
 } from "./form-definition";

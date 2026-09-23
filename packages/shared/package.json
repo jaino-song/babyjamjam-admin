@@ -35,6 +35,7 @@
         "./utils/business-days": "./src/utils/business-days.ts",
         "./utils/service-record-schedule": "./src/utils/service-record-schedule.ts",
         "./utils/birthday": "./src/utils/birthday.ts",
+        "./utils/service-record-input": "./src/utils/service-record-input.ts",
         "./utils/phone": "./src/utils/phone.ts",
         "./utils/korean-search": "./src/utils/korean-search.ts",
         "./eslint-plugin": "./eslint-plugin/index.mjs",

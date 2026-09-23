@@ -1,6 +1,7 @@
 import { BadRequestException, ConflictException, Inject, Injectable, NotFoundException } from "@nestjs/common";
 import { createHash, randomUUID } from "node:crypto";
-import { normalizeContractBirthday } from "@babyjamjam/shared/utils/birthday";
+import { isValidBirthdayIsoDate, normalizeContractBirthday } from "@babyjamjam/shared/utils/birthday";
+import { getServiceRecordHeaderFieldError } from "@babyjamjam/shared/utils/service-record-input";
 
 import { codeOnlyProblemBody, problemBody } from "application/utils/problem-bodies";
 import {
@@ -73,7 +74,7 @@ const EDITABLE_SESSION_KEYS = new Set([
 ]);
 const MAX_CHANGES_BYTES = 64 * 1024;
 const DATE_ONLY_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
-const SERVICE_RECORD_HEADER_DATE_PATTERN = /^\d{6}$/;
+const SERVICE_RECORD_HEADER_LEGACY_DATE_PATTERN = /^\d{6}$/;
 const SERVICE_RECORD_HEADER_WEIGHT_PATTERN = /^(?:\d+(?:\.\d+)?|\.\d+)$/;
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -88,16 +89,43 @@ function isPlainRecord(value: unknown): value is Record<string, unknown> {
     return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+/**
+ * New saves are ISO (YYYY-MM-DD) and must be a real calendar date between
+ * 1900-01-01 and today (Korean calendar, shared ISO input policy). Legacy
+ * six-digit writes stay valid during the client rollout with the same
+ * century-pivot and range semantics as before.
+ */
+function isValidServiceRecordBirthday(value: string): boolean {
+    return isValidBirthdayIsoDate(value)
+        || (SERVICE_RECORD_HEADER_LEGACY_DATE_PATTERN.test(value) && normalizeContractBirthday(value) !== null);
+}
+
 function validateServiceRecordHeaderValue(key: string, value: string): void {
     if (!value) return;
 
     if (key === "momBirth" || key === "babyBirth") {
-        if (!SERVICE_RECORD_HEADER_DATE_PATTERN.test(value) || normalizeContractBirthday(value) === null) {
+        if (!value.trim()) return; // whitespace-only stays an explicit blank clear
+        // The supplied string must be valid exactly as sent: a padded value is
+        // rejected rather than trimmed into a valid date.
+        if (value !== value.trim() || !isValidServiceRecordBirthday(value)) {
             throw new BadRequestException({
                 code: "SERVICE_RECORD_HEADER_DATE_INVALID",
                 message: key === "momBirth"
-                    ? "산모 생년월일은 YYMMDD 6자리의 유효한 날짜로 입력해 주세요."
-                    : "신생아 출생일자는 YYMMDD 6자리의 유효한 날짜로 입력해 주세요.",
+                    ? "산모 생년월일은 YYYY-MM-DD 형식의 유효한 날짜로 입력해 주세요."
+                    : "신생아 출생일자는 YYYY-MM-DD 형식의 유효한 날짜로 입력해 주세요.",
+            });
+        }
+        return;
+    }
+
+    if (key === "momName" || key === "babyName" || key === "deliveryType") {
+        // Same shared field policy the employee service-record header write
+        // path enforces (spacing rules, 분만형태 options).
+        const policyError = getServiceRecordHeaderFieldError(key, value);
+        if (policyError) {
+            throw new BadRequestException({
+                code: key === "deliveryType" ? "SERVICE_RECORD_HEADER_DELIVERY_TYPE_INVALID" : "SERVICE_RECORD_HEADER_NAME_INVALID",
+                message: policyError,
             });
         }
         return;
@@ -1240,7 +1268,15 @@ export class AdminServiceRecordEditService {
                 }));
             }
             const normalized = value.trim();
-            validateServiceRecordHeaderValue(key, normalized);
+            if (key === "momBirth" || key === "babyBirth") {
+                // Fixed-width birthdays are validated exactly as supplied, so a
+                // padded value can never be trimmed into a valid date; the
+                // stored value is identical because accepted values are
+                // trim-stable. Whitespace-only stays an explicit blank clear.
+                validateServiceRecordHeaderValue(key, value);
+            } else {
+                validateServiceRecordHeaderValue(key, normalized);
+            }
             output[key] = normalized;
         }
         return output;

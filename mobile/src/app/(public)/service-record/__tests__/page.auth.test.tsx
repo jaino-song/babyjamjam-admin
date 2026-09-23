@@ -293,8 +293,8 @@ describe("ServiceRecordPage authentication restoration", () => {
         expect(await screen.findByText("제공기록표")).toBeInTheDocument();
         await user.click(screen.getByRole("button", { name: "기록 시작" }));
 
-        const etcService = screen.getByPlaceholderText("추가사항에 대한 기록 필요 시 기재");
-        const notes = screen.getByPlaceholderText("서비스 제공 관련 특이사항 기록 필요 시 기재");
+        const etcService = screen.getByRole("textbox", { name: "기타 서비스 (필요 시 기재)" });
+        const notes = screen.getByRole("textbox", { name: "특이사항 (필요 시 기재)" });
 
         expect(etcService).toHaveAttribute("maxlength", "40");
         expect(notes).toHaveAttribute("maxlength", "80");
@@ -526,8 +526,8 @@ describe("ServiceRecordPage authentication restoration", () => {
 
         await user.click(screen.getByRole("button", { name: "다음" }));
         await user.click(screen.getByRole("button", { name: "다음" }));
-        expect(screen.getByPlaceholderText("추가사항에 대한 기록 필요 시 기재")).toHaveValue("");
-        expect(screen.getByPlaceholderText("서비스 제공 관련 특이사항 기록 필요 시 기재")).toHaveValue("");
+        expect(screen.getByRole("textbox", { name: "기타 서비스 (필요 시 기재)" })).toHaveValue("");
+        expect(screen.getByRole("textbox", { name: "특이사항 (필요 시 기재)" })).toHaveValue("");
         expect(screen.getByRole("button", { name: /결제 확인 완료/ })).toHaveAttribute("aria-pressed", "false");
     });
 

@@ -18,6 +18,10 @@
       "types": "./utils/birthday.d.ts",
       "require": "./utils/birthday.js"
     },
+    "./utils/service-record-input": {
+      "types": "./utils/service-record-input.d.ts",
+      "require": "./utils/service-record-input.js"
+    },
     "./utils/service-record-schedule": {
       "types": "./utils/service-record-schedule.d.ts",
       "require": "./utils/service-record-schedule.js"

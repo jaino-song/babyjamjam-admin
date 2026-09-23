@@ -18,13 +18,13 @@
 | maxScale=1 안전 불변식 | Valkey가 없는 첫 버전에서 **절대 1 초과 금지** | `VALKEY_URL` 미설정 시 eformsign operation lock이 in-process만 존재 → 인스턴스가 정확히 하나여야 안전 |
 | 스케줄러 OFF | `SCHEDULERS_ENABLED=false`를 매니페스트에 하드코딩(백엔드 기본값은 true — 누락 금지), scheduler lease는 standby(`SCHEDULER_LEASE_MODE=off`), `EFORMSIGN_RECONCILE_ALLOW_UNLOCKED=false`로 reconcile sweep은 preview에서 미실행 | preview에서 발송·잡 중복 방지 (devops 규칙 §5) |
 | Aligo SMS 비활성 | `ALIGO_API_KEY`/`ALIGO_USER_ID`/`ALIGO_SENDER_PHONE`을 매니페스트에 빈 값으로 하드코딩 (fallback host `backend/deploy/fallback-server/compose.yml`와 동일 패턴) | Cloud Run은 Aligo에 등록된 고정 발신 IP가 없음 (운영자 결정 2026-09-23). **귀결: Phase 10 SMS 발송 시나리오는 preview에서 실행 불가.** reject된 대안: Direct VPC egress + Cloud NAT 고정 IP를 Aligo에 등록(유휴 ~$4-5/월) — preview에 SMS가 필요해지면 이 경로 |
-| 기타 매니페스트 값 | `PRODUCTION_FRONTEND_URL=https://staff.babyjamjam.com` 하드코딩(`NODE_ENV=production`에서 백엔드가 auth redirect를 이 값으로 만듦), `SENTRY_ENVIRONMENT=preview` | 제외 키 목록은 `backend/deploy/cloudrun/excluded-keys.txt`. `SENTRY_DSN`, `AUTH_EMAIL_TOKEN_HMAC_SECRET`은 의도적으로 미배포 — 프로덕션 백엔드 env에도 없고, preview는 프로덕션을 따른다 (§3.7) |
+| 기타 매니페스트 값 | `PRODUCTION_FRONTEND_URL=https://preview.admin.babyjamjam.com` 하드코딩(`NODE_ENV=production`에서 백엔드가 auth redirect를 이 값으로 만듦), `SENTRY_ENVIRONMENT=preview` | 제외 키 목록은 `backend/deploy/cloudrun/excluded-keys.txt`. `SENTRY_DSN`, `AUTH_EMAIL_TOKEN_HMAC_SECRET`은 의도적으로 미배포 — 프로덕션 백엔드 env에도 없고, preview는 프로덕션을 따른다 (§3.7) |
 | 프로덕션 무변경 | main → Lightsail / LightNode fallback 경로 그대로 | 이 결정은 preview에만 적용 |
 
 ## 2. 아키텍처
 
 ```
-브라우저 ──▶ Vercel preview (staff.babyjamjam.com / preview 모바일 프로젝트)
+브라우저 ──▶ Vercel preview (preview.admin.babyjamjam.com / preview.m.admin.babyjamjam.com)
               │  일반 API: 같은 오리진 /api/* → Next.js 서버가 백엔드 호출
               │  (NEXT_PUBLIC_API_BASE_URL = <SERVICE_URL>, frontend/src/lib/api/client.ts)
               ▼
@@ -91,24 +91,13 @@ gcloud artifacts repositories create babyjamjam \
   --description="babyjamjam backend preview images" \
   --project="$PROJECT_ID"
 
-cat > /tmp/ar-cleanup-policy.yaml <<'EOF'
-cleanupPolicies:
-  delete-old:
-    id: delete-old
-    action: DELETE
-    condition:
-      tagState: ANY
-      olderThan: 2592000s
-  keep-recent-10:
-    id: keep-recent-10
-    action: KEEP
-    mostRecentVersions:
-      keepCount: 10
+cat > /tmp/ar-cleanup-policy.json <<'EOF'
+[{"name":"delete-old","action":{"type":"Delete"},"condition":{"tagState":"any","olderThan":"2592000s"}},{"name":"keep-recent-10","action":{"type":"Keep"},"mostRecentVersions":{"keepCount":10}}]
 EOF
 
 gcloud artifacts repositories set-cleanup-policies babyjamjam \
   --location="$REGION" \
-  --policy=/tmp/ar-cleanup-policy.yaml \
+  --policy=/tmp/ar-cleanup-policy.json \
   --project="$PROJECT_ID" \
   --no-dry-run
 ```
@@ -221,7 +210,7 @@ echo "$SERVICE_URL"
       프로덕션이 LightNode fallback에서 운영되는 동안)에서 만든다 — preview는 프로덕션과 같은 값
 - [ ] preview 전용 오버라이드 두 개만 env 파일에서 바꾼다: `KAKAO_CALLBACK_URL` =
       `${SERVICE_URL}/auth/kakao/callback` (§3.6의 `SERVICE_URL` 그대로), `PRODUCTION_MOBILE_FRONTEND_URL`
-      = preview 모바일 프론트엔드 URL (`NODE_ENV=production`에서 모바일 카카오 로그인이 여기로 redirect한다)
+      = `https://preview.m.admin.babyjamjam.com` (preview 모바일 프론트엔드; `NODE_ENV=production`에서 모바일 카카오 로그인이 여기로 redirect한다)
 - [ ] 카카오 디벨로퍼스(Kakao Developers) → 앱 설정에 같은 URI를 Redirect URI로 등록
 - [ ] `SENTRY_DSN`과 `AUTH_EMAIL_TOKEN_HMAC_SECRET`는 **일부러 배포하지 않는다** — 프로덕션 백엔드 env에도
       둘 다 없다(프로덕션 호스트 키 목록 확인). `SENTRY_DSN` unset → 프로덕션 백엔드는 Sentry가 꺼져 있고
@@ -304,7 +293,7 @@ NEXT_PUBLIC_API_BASE_URL = <SERVICE_URL>
 
 수용 기준:
 
-1. `https://staff.babyjamjam.com/api/...` 요청이 Cloud Run에 도착한다 — Cloud Run 요청 로그에서
+1. `https://preview.admin.babyjamjam.com/api/...` 요청이 Cloud Run에 도착한다 — Cloud Run 요청 로그에서
    해당 요청 확인 (`gcloud run services logs read babyjamjam-api-preview --region="$REGION"`).
 2. preview 로그인이 동작한다 — JWT 로그인과 카카오 로그인 둘 다 (카카오는
    `${SERVICE_URL}/auth/kakao/callback`으로 되돌아와 nonce 쿠키가 유실되지 않아야 한다).
