@@ -137,7 +137,7 @@ jobs:
           backend/deploy/fallback-server/ci/workflow-contract.test.sh
           backend/deploy/fallback-server/ci/ci-deployer-contract.test.sh
           backend/deploy/ci/wait-database-patches.test.sh
-          node --test backend/deploy/fallback-server/ci/*.test.mjs
+          node --test backend/deploy/fallback-server/ci/*.test.mjs backend/deploy/cloudrun/*.test.mjs
 
       # pdfjs-dist is ESM-only and its Jest VM import can outlive a neighboring
       # CommonJS test environment when both suites share a worker. Keep the
@@ -449,6 +449,225 @@ jobs:
       - name: Resolve the exclusive backend target
         id: resolve
         run: node backend/deploy/fallback-server/ci/resolve-deploy-target.mjs >> "$GITHUB_OUTPUT"
+
+  deploy-cloudrun:
+    name: deploy Cloud Run preview backend
+    if: >-
+      always() &&
+      github.event_name == 'push' &&
+      github.ref_name == 'preview' &&
+      needs.build-lightsail-image.result == 'success' &&
+      needs.wait-database-patches.result == 'success' &&
+      needs.resolve-backend-deploy-target.result == 'success' &&
+      needs.resolve-backend-deploy-target.outputs.target == 'cloudrun'
+    needs: [build-lightsail-image, wait-database-patches, resolve-backend-deploy-target]
+    timeout-minutes: 30
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+      packages: read
+    concurrency:
+      group: deploy-cloudrun-preview
+      cancel-in-progress: false
+    env:
+      GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+      GCP_REGION: asia-northeast3
+      CLOUD_RUN_SERVICE: babyjamjam-api-preview
+      IMAGE_DIGEST: ${{ needs.build-lightsail-image.outputs.digest }}
+      GHCR_IMAGE: ghcr.io/jaino-song/babyjamjam-admin-backend
+
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+
+      - name: Validate deployment configuration
+        env:
+          GCP_WIF_PROVIDER: ${{ vars.GCP_WIF_PROVIDER }}
+          GCP_PREVIEW_DEPLOYER_SA: ${{ vars.GCP_PREVIEW_DEPLOYER_SA }}
+        run: |
+          set -euo pipefail
+          if [[ -z "$GCP_PROJECT_ID" || -z "$GCP_WIF_PROVIDER" || -z "$GCP_PREVIEW_DEPLOYER_SA" ]]; then
+            echo "::error::GCP bootstrap not done — see docs/plans/2026-09-23-preview-cloud-run.md"
+            exit 1
+          fi
+          [[ "$IMAGE_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]
+
+      - name: Authenticate to Google Cloud with GitHub OIDC
+        uses: google-github-actions/auth@c200f3691d83b41bf9bbd8638997a462592937ed # v2.1.13
+        with:
+          workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
+          service_account: ${{ vars.GCP_PREVIEW_DEPLOYER_SA }}
+
+      - name: Set up gcloud CLI
+        uses: google-github-actions/setup-gcloud@e427ad8a34f8676edf47cf7d7925499adf3eb74f # v2.2.1
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Configure Artifact Registry docker credential helper
+        run: |
+          set -euo pipefail
+          gcloud auth configure-docker asia-northeast3-docker.pkg.dev --quiet
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
+
+      - name: Copy the commit image to Artifact Registry
+        run: |
+          set -euo pipefail
+          ar_image="asia-northeast3-docker.pkg.dev/${GCP_PROJECT_ID}/babyjamjam/backend"
+          docker buildx imagetools create --tag "${ar_image}:${GITHUB_SHA}" "${GHCR_IMAGE}@${IMAGE_DIGEST}"
+          ar_digest="$(docker buildx imagetools inspect "${ar_image}:${GITHUB_SHA}" --format '{{json .Manifest}}' | jq -r .digest)"
+          if [[ "$ar_digest" != "$IMAGE_DIGEST" ]]; then
+            echo "::error::Artifact Registry digest mismatch — copied '$ar_digest', built '$IMAGE_DIGEST'"
+            exit 1
+          fi
+          {
+            echo "AR_IMAGE=${ar_image}"
+            echo "AR_DIGEST=${ar_digest}"
+          } >> "$GITHUB_ENV"
+
+      - name: Render the Knative manifest and replace the Cloud Run service
+        run: |
+          set -euo pipefail
+          IMAGE="${AR_IMAGE}@${AR_DIGEST}" PROJECT_ID="$GCP_PROJECT_ID" \
+            envsubst '${IMAGE} ${PROJECT_ID}' \
+            < backend/deploy/cloudrun/service.preview.yaml \
+            > "$RUNNER_TEMP/service.yaml"
+          if grep -Fq -- '${' "$RUNNER_TEMP/service.yaml"; then
+            echo "::error::Rendered service manifest still contains an unresolved placeholder"
+            exit 1
+          fi
+          # `services replace` blocks until the new revision is ready or the
+          # operation fails, so the invariant checks below observe a settled service.
+          gcloud run services replace "$RUNNER_TEMP/service.yaml" \
+            --project "$GCP_PROJECT_ID" \
+            --region "$GCP_REGION"
+
+      - name: Verify the deployed service invariants
+        run: |
+          set -euo pipefail
+          service_json="$(gcloud run services describe "$CLOUD_RUN_SERVICE" \
+            --project "$GCP_PROJECT_ID" \
+            --region "$GCP_REGION" \
+            --format=json)"
+
+          fail_check() {
+            echo "::error::$1 (actual: $2)"
+            exit 1
+          }
+
+          latest_created="$(jq -r '.status.latestCreatedRevisionName // ""' <<<"$service_json")"
+          latest_ready="$(jq -r '.status.latestReadyRevisionName // ""' <<<"$service_json")"
+          ready_condition="$(jq -r '.status.conditions[]? | select(.type == "Ready") | .status' <<<"$service_json")"
+          [[ -n "$latest_created" ]] \
+            || fail_check "latest created revision is missing" "absent"
+          [[ "$latest_ready" == "$latest_created" ]] \
+            || fail_check "latest ready revision must equal the latest created revision" "$latest_ready != $latest_created"
+          [[ "$ready_condition" == "True" ]] \
+            || fail_check "service Ready condition must be True" "${ready_condition:-absent}"
+
+          traffic_percent="$(jq -r --arg revision "$latest_ready" \
+            '[.status.traffic[]? | select(.revisionName == $revision) | .percent] | add // 0' \
+            <<<"$service_json")"
+          [[ "$traffic_percent" == "100" ]] \
+            || fail_check "100% of traffic must be on the latest ready revision" "${traffic_percent}% on $latest_ready"
+
+          expected_image="${AR_IMAGE}@${AR_DIGEST}"
+          deployed_image="$(jq -r '.spec.template.spec.containers[0].image // ""' <<<"$service_json")"
+          [[ "$deployed_image" == "$expected_image" ]] \
+            || fail_check "container image must be the copied Artifact Registry digest" "$deployed_image"
+
+          max_scale="$(jq -r '.spec.template.metadata.annotations["autoscaling.knative.dev/maxScale"] // ""' <<<"$service_json")"
+          [[ "$max_scale" == "1" ]] \
+            || fail_check "maxScale annotation must be exactly 1 (no autoscaling default)" "${max_scale:-absent}"
+          min_scale="$(jq -r '.spec.template.metadata.annotations["autoscaling.knative.dev/minScale"] // "0"' <<<"$service_json")"
+          [[ "$min_scale" == "0" ]] \
+            || fail_check "minScale annotation must resolve to 0" "$min_scale"
+          container_concurrency="$(jq -r '.spec.template.spec.containerConcurrency // -1' <<<"$service_json")"
+          [[ "$container_concurrency" == "8" ]] \
+            || fail_check "containerConcurrency must be 8" "$container_concurrency"
+
+          expected_service_account="babyjamjam-preview-runtime@${GCP_PROJECT_ID}.iam.gserviceaccount.com"
+          deployed_service_account="$(jq -r '.spec.template.spec.serviceAccountName // ""' <<<"$service_json")"
+          [[ "$deployed_service_account" == "$expected_service_account" ]] \
+            || fail_check "serviceAccountName must be the preview runtime identity" "$deployed_service_account"
+
+          plain_env_value() {
+            jq -r --arg name "$1" \
+              '[.spec.template.spec.containers[0].env[]? | select(.name == $name)][0]
+               | if . == null then "<missing>" elif .valueFrom != null then "<secretKeyRef>" else (.value // "<absent>") end' \
+              <<<"$service_json"
+          }
+          schedulers_enabled="$(plain_env_value SCHEDULERS_ENABLED)"
+          [[ "$schedulers_enabled" == "false" ]] \
+            || fail_check "SCHEDULERS_ENABLED must be the plain value 'false'" "$schedulers_enabled"
+          lease_mode_env="$(plain_env_value SCHEDULER_LEASE_MODE)"
+          [[ "$lease_mode_env" == "off" ]] \
+            || fail_check "SCHEDULER_LEASE_MODE must be the plain value 'off'" "$lease_mode_env"
+
+          # Aligo is disabled on preview (operator decision 2026-09-23): the key
+          # must exist as a plain empty value, never as a Secret Manager ref.
+          aligo_state="$(jq -r --arg name "ALIGO_API_KEY" \
+            '[.spec.template.spec.containers[0].env[]? | select(.name == $name)][0]
+             | if . == null then "<missing>" elif .valueFrom != null then "<secretKeyRef>" elif .value == "" then "<plain-empty>" else "<plain-non-empty>" end' \
+            <<<"$service_json")"
+          [[ "$aligo_state" == "<plain-empty>" ]] \
+            || fail_check "ALIGO_API_KEY must be a plain empty value (Aligo disabled on preview)" "$aligo_state"
+
+          {
+            echo "SERVICE_URL=$(jq -r '.status.url // ""' <<<"$service_json")"
+            echo "DEPLOYED_REVISION=${latest_ready}"
+          } >> "$GITHUB_ENV"
+
+      - name: Smoke the service health endpoints
+        run: |
+          set -euo pipefail
+          if [[ -z "$SERVICE_URL" ]]; then
+            echo "::error::Cloud Run did not report a service URL"
+            exit 1
+          fi
+
+          # No -f and `|| true`: the first requests pay the cold start and may
+          # fail; only the final state after the whole retry window is fatal.
+          health_code="0"
+          for _attempt in $(seq 1 18); do
+            health_code="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 10 "$SERVICE_URL/health/ready" || true)"
+            if [[ "$health_code" == "200" ]]; then
+              break
+            fi
+            sleep 5
+          done
+          if [[ "$health_code" != "200" ]]; then
+            echo "::error::/health/ready never returned 200 within the retry window (last status: $health_code)"
+            exit 1
+          fi
+
+          # ADR-010: with SCHEDULERS_ENABLED=false the lease mode resolves to
+          # "standby" (resolveSchedulerLeaseMode) and a passive host must never
+          # hold the background-owner lease. /health/lease answers 200 always.
+          if ! curl -sS --max-time 10 "$SERVICE_URL/health/lease" \
+              | jq -e '.mode == "standby" and .held == false' >/dev/null; then
+            echo "::error::/health/lease must report mode 'standby' with held=false"
+            exit 1
+          fi
+
+      - name: Write the deployment summary
+        run: |
+          set -euo pipefail
+          {
+            printf '%s\n' "## Preview backend deployed to Cloud Run (BJJ-341)"
+            printf -- '- Service URL: %s\n' "$SERVICE_URL"
+            printf -- '- Revision: %s\n' "$DEPLOYED_REVISION"
+            printf -- '- AR image: %s@%s\n' "$AR_IMAGE" "$AR_DIGEST"
+            printf -- '- Source GHCR image: %s@%s\n' "$GHCR_IMAGE" "$IMAGE_DIGEST"
+          } >> "$GITHUB_STEP_SUMMARY"
 
   deploy-lightsail:
     name: deploy Lightsail backend

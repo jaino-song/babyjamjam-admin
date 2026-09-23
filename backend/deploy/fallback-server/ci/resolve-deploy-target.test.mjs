@@ -13,8 +13,8 @@ function hash(records) {
     .digest("hex");
 }
 
-test("preview always targets Lightsail without production routing secrets", () => {
-  assert.equal(resolveDeployTarget({ refName: "preview" }), "lightsail");
+test("preview always targets Cloud Run without production routing secrets", () => {
+  assert.equal(resolveDeployTarget({ refName: "preview" }), "cloudrun");
 });
 
 test("main targets LightNode only when the authoritative A-record hash matches", () => {
