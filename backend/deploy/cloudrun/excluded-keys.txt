@@ -1,0 +1,15 @@
+# Keys excluded from the preview Cloud Run deployment (BJJ-341).
+# Single source of truth: read by sync-secrets.sh (undeployed-key guard) and
+# service-manifest.test.mjs (reverse-completeness check).
+# Format: one `KEY  # reason` per line. Blank lines and leading-# comments are ignored.
+DEVELOPMENT_API_BASE_URL  # local dev only
+DEVELOPMENT_FRONTEND_URL  # local dev only
+DEVELOPMENT_MOBILE_FRONTEND_URL  # local dev only
+MOBILE_SERVICE_RECORD_BASE_URL  # env.tpl comment: local-only service record testing
+MOBILE_RECEIPT_BASE_URL  # local LAN value; unset falls back to https://m.admin.babyjamjam.com
+GEMINI_CHAT_MODEL  # optional; code default applies when unset (see gemini-chat.gateway.ts)
+GEMINI_CHAT_TEMPERATURE  # optional; code default applies when unset (see gemini-chat.gateway.ts)
+GEMINI_CHAT_MAX_OUTPUT_TOKENS  # optional; code default applies when unset (see gemini-chat.gateway.ts)
+GEMINI_CHAT_TIMEOUT_MS  # optional; code default applies when unset (see gemini-chat.gateway.ts)
+GEMINI_EXTRACTION_MODEL  # optional; code default applies when unset (see gemini-chat.gateway.ts)
+NEXT_PUBLIC_API_BASE_URL  # frontend-only: no non-test backend/.ts source reads it
