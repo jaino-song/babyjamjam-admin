@@ -7,7 +7,10 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
 import { DECISION_KINDS } from "../../application/agent/decision/decision-contracts";
-import { DECISION_QUESTION_VERSION } from "../../application/agent/decision/decision-questions";
+import {
+    DECISION_QUESTION_VERSION,
+    ROUTE_DOMAIN_DESCRIPTIONS,
+} from "../../application/agent/decision/decision-questions";
 import {
     computeEvaluationReport,
     detectScenarioLeakage,
@@ -509,6 +512,23 @@ describe("committed fixtures-v1.json invariants", () => {
             const text = String(entry["text"]);
             expect(text.toLowerCase()).not.toContain("010-");
             expect(text).not.toMatch(/{{\s*EVAL_/);
+        }
+    });
+
+    // run-jev-evaluation.ts uses this file's top-level `domains` array as
+    // `permittedDomains` for every live routeDomains case. A domain added
+    // here without a matching ROUTE_DOMAIN_DESCRIPTIONS entry would make
+    // every live route-domains case fail closed with question-mismatch,
+    // while fixture (non-live) mode would never notice.
+    it("declares only domains that have routeDomains question text", () => {
+        const domains = (raw as unknown as { domains: unknown }).domains;
+        expect(Array.isArray(domains)).toBe(true);
+        expect((domains as unknown[]).length).toBeGreaterThan(0);
+        for (const domain of domains as unknown[]) {
+            expect(typeof domain).toBe("string");
+            expect(
+                Object.prototype.hasOwnProperty.call(ROUTE_DOMAIN_DESCRIPTIONS, domain as string),
+            ).toBe(true);
         }
     });
 });
