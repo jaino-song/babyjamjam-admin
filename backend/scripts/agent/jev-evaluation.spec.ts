@@ -16,6 +16,7 @@ import {
     detectScenarioLeakage,
     JevEvaluationError,
     parseJevCorpus,
+    parsePredictionsFile,
     type EvaluationReport,
     type JevCorpus,
     type JevPrediction,
@@ -447,6 +448,70 @@ describe("computeEvaluationReport", () => {
             .toThrow(/Unknown prediction key/);
         expect(() => computeEvaluationReport(corpus, "not-an-array" as unknown as JevPrediction[]))
             .toThrow(/must be an array/);
+    });
+});
+
+describe("parsePredictionsFile", () => {
+    function predictionsCorpus(): JevCorpus {
+        return { cases: [], datasetDigest: "x", questionVersion: DECISION_QUESTION_VERSION };
+    }
+
+    const predictionsArray: JevPrediction[] = [prediction("t-1", "accepted", "create")];
+
+    it("returns the predictions array unchanged when questionVersion matches the corpus", () => {
+        const raw = { questionVersion: DECISION_QUESTION_VERSION, predictions: predictionsArray };
+        expect(parsePredictionsFile(raw, predictionsCorpus())).toBe(raw.predictions);
+    });
+
+    it("refuses a missing questionVersion field, naming it", () => {
+        const raw = { predictions: predictionsArray };
+        expect(() => parsePredictionsFile(raw, predictionsCorpus())).toThrow(JevEvaluationError);
+        try {
+            parsePredictionsFile(raw, predictionsCorpus());
+            throw new Error("expected parsePredictionsFile to throw");
+        } catch (error) {
+            expect(error).toBeInstanceOf(JevEvaluationError);
+            expect((error as JevEvaluationError).code).toBe("invalid-predictions");
+            expect((error as Error).message).toContain("questionVersion");
+        }
+    });
+
+    it("refuses a missing predictions field, naming it", () => {
+        const raw = { questionVersion: DECISION_QUESTION_VERSION };
+        try {
+            parsePredictionsFile(raw, predictionsCorpus());
+            throw new Error("expected parsePredictionsFile to throw");
+        } catch (error) {
+            expect(error).toBeInstanceOf(JevEvaluationError);
+            expect((error as Error).message).toContain("predictions");
+        }
+    });
+
+    it("refuses a stale questionVersion, naming both the file's and the corpus's version", () => {
+        const raw = { questionVersion: "v1", predictions: predictionsArray };
+        try {
+            parsePredictionsFile(raw, predictionsCorpus());
+            throw new Error("expected parsePredictionsFile to throw");
+        } catch (error) {
+            expect(error).toBeInstanceOf(JevEvaluationError);
+            expect((error as Error).message).toContain("v1");
+            expect((error as Error).message).toContain(DECISION_QUESTION_VERSION);
+        }
+    });
+
+    it("refuses an unknown extra key", () => {
+        const raw = { questionVersion: DECISION_QUESTION_VERSION, predictions: predictionsArray, extra: 1 };
+        expect(() => parsePredictionsFile(raw, predictionsCorpus())).toThrow(/Unknown predictions file key "extra"/);
+    });
+
+    it("refuses a non-object root", () => {
+        expect(() => parsePredictionsFile(null, predictionsCorpus())).toThrow(JevEvaluationError);
+        expect(() => parsePredictionsFile([], predictionsCorpus())).toThrow(JevEvaluationError);
+    });
+
+    it("refuses a non-array predictions field", () => {
+        const raw = { questionVersion: DECISION_QUESTION_VERSION, predictions: "not-an-array" };
+        expect(() => parsePredictionsFile(raw, predictionsCorpus())).toThrow(/must be an array/);
     });
 });
 
