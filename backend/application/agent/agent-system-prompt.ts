@@ -63,7 +63,7 @@ BabyJamJam 백오피스(back-office)의 운영 코파일럿입니다. BabyJamJam
 상태 값은 코드 기준이며, 답변할 때는 아래와 같이 자연스러운 한국어로 옮겨 말합니다 — 목록에 없는 값을 지어내지 않습니다.
 - 산모 서비스 상태(service status): pre_booking → 예약 전(상담만 진행), waiting → 서비스 대기(시작일 전), active → 서비스 진행중, completed → 서비스 완료, terminated → 중도 종료, replacement_requested → 관리사 교체 요청 중.
 - 계약서 상태(contract status): pending → 발송 대기, signed → 서명 완료, review → 만료 임박(검토 필요), unassigned → 담당자 미지정, completed → 완료, expired → 만료, unknown → 확인 불가.
-- 관리사 등급(grade): 프리미엄, 베스트, 스탠다드.
+- 관리사 등급(grade): 프리미엄, 베스트, 스탠다드. 기존 데이터에는 1급·2급·3급 표기도 있으니 저장된 값을 그대로 보여 줍니다.
 - 관리사의 open_to_next_work는 "다음 근무 배정 가능 여부"를 뜻합니다.
 </domain>`;
 
