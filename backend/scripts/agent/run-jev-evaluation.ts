@@ -309,7 +309,10 @@ export interface JevRunOptions {
     readonly env?: Readonly<Record<string, string | undefined>>;
     /** Test seam: transport override handed to the production adapter. */
     readonly fetchImpl?: Fetch;
-    /** Test seam: clock for generatedAt and per-case deadlines. */
+    /** Test seam: clock for report timestamps (generatedAt) only. Live-mode
+     *  per-case deadlines always derive from the real wall clock
+     *  (Date.now()), the same clock the production adapter checks them
+     *  against. */
     readonly now?: () => Date;
 }
 
@@ -975,9 +978,13 @@ async function runLiveCase(
     service: TypeSafeJevDecisionService,
     item: JevCase,
     domains: readonly string[],
-    now: () => Date,
 ): Promise<LiveCaseOutcome> {
-    const deadlineAt = now().getTime() + LIVE_DEADLINE_MS;
+    // Deadline must be computed on the same clock the adapter checks it
+    // against (Date.now()), never the test-injected report clock — the
+    // adapter always compares deadlineAt to the real wall clock, so a
+    // deadline derived from an injected `now` can silently expire before
+    // any request is made once wall time drifts from the injected value.
+    const deadlineAt = Date.now() + LIVE_DEADLINE_MS;
     const signal = new AbortController().signal;
     const base = {
         questionVersion: DECISION_QUESTION_VERSION,
@@ -1218,7 +1225,7 @@ async function executeRun(options: JevRunOptions): Promise<JevRunResult> {
 
         for (const item of selected) {
             perKindCalls[item.decisionKind] += 1;
-            const outcome = await runLiveCase(service, item, domains, now);
+            const outcome = await runLiveCase(service, item, domains);
             outcomes.set(item.id, outcome);
             if (outcome.status === DECISION_STATUSES.accepted && outcome.failureReason === null) {
                 perKindAccepted[item.decisionKind] += 1;

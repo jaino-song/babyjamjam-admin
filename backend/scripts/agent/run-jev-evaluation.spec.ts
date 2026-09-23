@@ -590,6 +590,30 @@ describe("live mode with an injected fetch stub", () => {
         expect(ok.report.summary.overall.unavailableCount).toBe(2);
         expect(ok.report.summary.overall.precision).toBeNull();
     });
+
+    it("derives per-case deadlines from the real wall clock, not the injected report clock", async () => {
+        // Regression for the mixed-clock bomb: an injected `now` far in the
+        // past or far in the future must never affect whether the adapter
+        // sees a case as already past its deadline. Only `generatedAt`
+        // should track the injected clock.
+        for (const injectedNow of [
+            new Date("2000-01-01T00:00:00.000Z"),
+            new Date("2100-01-01T00:00:00.000Z"),
+        ]) {
+            const dir = newWorkDir();
+            const output = join(dir, "live-report.json");
+            const stub = liveStubFetch();
+
+            const ok = requireOk(await runJevEvaluation(liveOptions(output, {
+                fetchImpl: stub.fetch,
+                now: () => injectedNow,
+            })));
+
+            expect(stub.calls).toHaveLength(RAW_FIXTURE.cases.length);
+            expect(ok.report.generatedAt).toBe(injectedNow.toISOString());
+            expect(ok.report.live?.failures).toEqual([]);
+        }
+    });
 });
 
 // ---------------------------------------------------------------------------
