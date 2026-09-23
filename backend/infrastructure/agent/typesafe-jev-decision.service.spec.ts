@@ -10,7 +10,9 @@ import {
 } from "../../application/agent/decision/decision-contracts";
 import {
     CLARIFICATION_JUDGMENT_KEYS,
+    CLARIFICATION_JUDGMENT_QUESTIONS,
     DECISION_QUESTION_VERSION,
+    routeDomainQuestion,
 } from "../../application/agent/decision/decision-questions";
 import type {
     ClassifyClientIntentRequest,
@@ -93,7 +95,7 @@ function routeDomainsRequest(
         ...baseRequest(),
         kind: DECISION_KINDS.routeDomains,
         redactedText: "고객 문의 텍스트",
-        permittedDomains: ["grooming", "scheduling"],
+        permittedDomains: ["clients", "schedules"],
         ...overrides,
     };
 }
@@ -150,8 +152,8 @@ describe("TypeSafeJevDecisionService", () => {
         it("accepts complete noul answers in the requested domain order", async () => {
             const { fetch } = stubFetch(() => jsonResponse(
                 systemOneBody({
-                    grooming: { type: "noul", noul: 0.9 },
-                    scheduling: { type: "noul", noul: 0.1 },
+                    clients: { type: "noul", noul: 0.9 },
+                    schedules: { type: "noul", noul: 0.1 },
                 }),
                 200,
                 "req-123",
@@ -170,16 +172,16 @@ describe("TypeSafeJevDecisionService", () => {
             expect(evidence.usage).toEqual({ inputTokens: 120, outputTokens: 30 });
             expect(evidence.latencyMs).toBeGreaterThanOrEqual(0);
             expect(evidence.domains).toEqual([
-                { domain: "grooming", yesProbability: 0.9 },
-                { domain: "scheduling", yesProbability: 0.1 },
+                { domain: "clients", yesProbability: 0.9 },
+                { domain: "schedules", yesProbability: 0.1 },
             ]);
         });
 
-        it("sends the pinned model, catalog question text, and domain-keyed questions", async () => {
+        it("sends the pinned model and distinct per-domain question text", async () => {
             const { fetch, calls } = stubFetch(() => jsonResponse(
                 systemOneBody({
-                    grooming: { type: "noul", noul: 0.5 },
-                    scheduling: { type: "noul", noul: 0.5 },
+                    clients: { type: "noul", noul: 0.5 },
+                    schedules: { type: "noul", noul: 0.5 },
                 }),
             ));
             const service = serviceWith(fetch);
@@ -192,18 +194,40 @@ describe("TypeSafeJevDecisionService", () => {
             const body = JSON.parse(String(call.init.body)) as {
                 model: string;
                 state: { text: string };
-                questions: Record<string, unknown>;
+                questions: Record<string, { instructions: string }>;
             };
             expect(body.model).toBe(PINNED_MODEL_ID);
             expect(body.model).not.toBe("jev-latest");
             expect(body.model).not.toBe("jev-preview");
             expect(body.state).toEqual({ text: "고객 문의 텍스트" });
-            expect(Object.keys(body.questions).sort()).toEqual(["grooming", "scheduling"]);
+            expect(Object.keys(body.questions).sort()).toEqual(["clients", "schedules"]);
+            for (const domain of ["clients", "schedules"]) {
+                expect(body.questions[domain]?.instructions).toBe(routeDomainQuestion(domain));
+            }
+            expect(body.questions["clients"]?.instructions).not.toBe(
+                body.questions["schedules"]?.instructions,
+            );
+        });
+
+        it("fails closed with question-mismatch, without calling the provider, for a permitted domain with no question text", async () => {
+            const { fetch, calls } = stubFetch(() => jsonResponse(
+                systemOneBody({ "unknown-domain": { type: "noul", noul: 0.5 } }),
+            ));
+            const service = serviceWith(fetch);
+
+            const evidence = await service.routeDomains(
+                routeDomainsRequest({ permittedDomains: ["unknown-domain"] }),
+            );
+
+            expect(evidence.status).toBe(DECISION_STATUSES.unavailable);
+            expect(evidence.failureReason).toBe(DECISION_FAILURE_REASONS.questionMismatch);
+            expect(evidence.domains).toEqual([]);
+            expect(calls.length).toBe(0);
         });
 
         it("returns invalid-output when a domain answer is missing", async () => {
             const { fetch } = stubFetch(() => jsonResponse(
-                systemOneBody({ grooming: { type: "noul", noul: 0.9 } }),
+                systemOneBody({ clients: { type: "noul", noul: 0.9 } }),
             ));
             const service = serviceWith(fetch);
 
@@ -218,8 +242,8 @@ describe("TypeSafeJevDecisionService", () => {
         it("returns invalid-output when an answer has the wrong type", async () => {
             const { fetch } = stubFetch(() => jsonResponse(
                 systemOneBody({
-                    grooming: { type: "choice", choice: "x", confidence: 1, probabilities: {} },
-                    scheduling: { type: "noul", noul: 0.1 },
+                    clients: { type: "choice", choice: "x", confidence: 1, probabilities: {} },
+                    schedules: { type: "noul", noul: 0.1 },
                 }),
             ));
             const service = serviceWith(fetch);
@@ -233,7 +257,7 @@ describe("TypeSafeJevDecisionService", () => {
 
         it("returns invalid-output for a non-finite probability", async () => {
             const { fetch } = stubFetch(() => jsonResponse(
-                '{"answers":{"grooming":{"type":"noul","noul":1e999},"scheduling":{"type":"noul","noul":0.1}},"model":"jev-1.13.0","usage":{"input_tokens":1,"output_tokens":1}}',
+                '{"answers":{"clients":{"type":"noul","noul":1e999},"schedules":{"type":"noul","noul":0.1}},"model":"jev-1.13.0","usage":{"input_tokens":1,"output_tokens":1}}',
             ));
             const service = serviceWith(fetch);
 
@@ -247,8 +271,8 @@ describe("TypeSafeJevDecisionService", () => {
         it("returns invalid-output for an out-of-range probability", async () => {
             const { fetch } = stubFetch(() => jsonResponse(
                 systemOneBody({
-                    grooming: { type: "noul", noul: 1.5 },
-                    scheduling: { type: "noul", noul: 0.1 },
+                    clients: { type: "noul", noul: 1.5 },
+                    schedules: { type: "noul", noul: 0.1 },
                 }),
             ));
             const service = serviceWith(fetch);
@@ -502,7 +526,7 @@ describe("TypeSafeJevDecisionService", () => {
             const call = requireDefined(calls[0]);
             const body = JSON.parse(String(call.init.body)) as {
                 state: { text: string; missingFields: string[]; targetConfirmed: boolean };
-                questions: Record<string, unknown>;
+                questions: Record<string, { instructions: string }>;
             };
             expect(body.state.text).toBe("고객 문의 텍스트");
             expect(body.state.missingFields).toEqual(["visitDate"]);
@@ -510,6 +534,11 @@ describe("TypeSafeJevDecisionService", () => {
             expect(Object.keys(body.questions).sort()).toEqual(
                 [...CLARIFICATION_JUDGMENT_KEYS].sort(),
             );
+            for (const key of CLARIFICATION_JUDGMENT_KEYS) {
+                expect(body.questions[key]?.instructions).toBe(CLARIFICATION_JUDGMENT_QUESTIONS[key]);
+            }
+            const texts = CLARIFICATION_JUDGMENT_KEYS.map((key) => CLARIFICATION_JUDGMENT_QUESTIONS[key]);
+            expect(new Set(texts).size).toBe(texts.length);
         });
 
         it("returns invalid-output when a judgment answer is missing", async () => {
@@ -836,7 +865,7 @@ describe("TypeSafeJevDecisionService", () => {
         it("rejects answers when the returned model does not match the pin", async () => {
             const { fetch } = stubFetch(() => jsonResponse(
                 systemOneBody(
-                    { grooming: { type: "noul", noul: 0.9 }, scheduling: { type: "noul", noul: 0.1 } },
+                    { clients: { type: "noul", noul: 0.9 }, schedules: { type: "noul", noul: 0.1 } },
                     "jev-1.13.1",
                 ),
             ));

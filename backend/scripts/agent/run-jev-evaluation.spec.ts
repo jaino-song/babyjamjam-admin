@@ -21,6 +21,7 @@ import { join, resolve } from "node:path";
 import type { Fetch } from "@typesafe-ai/sdk";
 
 import { DECISION_KINDS } from "../../application/agent/decision/decision-contracts";
+import { DECISION_QUESTION_VERSION } from "../../application/agent/decision/decision-questions";
 import {
     PINNED_MODEL_ID,
 } from "../../infrastructure/agent/typesafe-jev-decision.service";
@@ -1045,7 +1046,7 @@ describe("judge rubric", () => {
 
         expect(Object.keys(rubric.decisionKinds).sort()).toEqual(Object.values(DECISION_KINDS).sort());
         for (const [kind, entry] of Object.entries(rubric.decisionKinds)) {
-            expect(entry.questionVersion).toBe("v1");
+            expect(entry.questionVersion).toBe(DECISION_QUESTION_VERSION);
             expect(entry.criteria.length).toBeGreaterThan(0);
             expect(entry.acceptableOutcomes.length).toBeGreaterThan(0);
             expect(entry.notes.length).toBeGreaterThan(0);

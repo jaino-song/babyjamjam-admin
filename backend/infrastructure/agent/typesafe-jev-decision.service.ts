@@ -49,8 +49,10 @@ import type {
 import {
     CANDIDATE_OUTCOME_LABELS,
     CLARIFICATION_JUDGMENT_KEYS,
+    CLARIFICATION_JUDGMENT_QUESTIONS,
     DECISION_QUESTION_CATALOG,
     DECISION_QUESTION_VERSION,
+    routeDomainQuestion,
     type ClarificationJudgmentKey,
 } from "../../application/agent/decision/decision-questions";
 import type { AgentDecisionPort } from "../../application/agent/decision/agent-decision.port";
@@ -239,10 +241,16 @@ export class TypeSafeJevDecisionService implements AgentDecisionPort {
             };
         }
 
-        const catalog = DECISION_QUESTION_CATALOG[DECISION_KINDS.routeDomains];
+        // Fail closed BEFORE constructing the client or making any provider
+        // call when any permitted domain has no question text. Here
+        // `question-mismatch` means "no question text for a permitted
+        // domain" (the same failure token is also used for profile/evidence
+        // version mismatch elsewhere) — this is not a new failure reason.
         const questions: Record<string, NoulQuestion> = {};
         for (const domain of request.permittedDomains) {
-            questions[domain] = noul(catalog.questionText);
+            const text = routeDomainQuestion(domain);
+            if (text === null) return failure(DECISION_FAILURE_REASONS.questionMismatch);
+            questions[domain] = noul(text);
         }
 
         try {
@@ -413,10 +421,9 @@ export class TypeSafeJevDecisionService implements AgentDecisionPort {
         const apiKey = this.readApiKey();
         if (apiKey === null) return failure(DECISION_FAILURE_REASONS.authError);
 
-        const catalog = DECISION_QUESTION_CATALOG[DECISION_KINDS.evaluateClarification];
         const questions: Record<string, NoulQuestion> = {};
         for (const key of CLARIFICATION_JUDGMENT_KEYS) {
-            questions[key] = noul(catalog.questionText);
+            questions[key] = noul(CLARIFICATION_JUDGMENT_QUESTIONS[key]);
         }
 
         try {

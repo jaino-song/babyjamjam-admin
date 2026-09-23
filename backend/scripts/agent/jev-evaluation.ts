@@ -422,7 +422,7 @@ export interface JevPrediction {
 
 const PREDICTION_KEYS: readonly string[] = ["caseId", "selection", "status"];
 
-const PREDICTIONS_FILE_KEYS: readonly string[] = ["predictions"];
+const PREDICTIONS_FILE_KEYS: readonly string[] = ["questionVersion", "predictions"];
 
 /**
  * Per decision-kind metrics.
@@ -690,7 +690,10 @@ const USAGE = [
     "Offline evaluation tooling for the Jev semantic decision layer.",
     "Without --predictions the corpus is validated and the dataset digest plus",
     "scenario-leakage findings are printed. With --predictions the evaluation",
-    "report JSON is printed (or written to --out).",
+    "report JSON is printed (or written to --out). The --predictions file must be",
+    "a JSON object with a required \"questionVersion\" field (must equal the",
+    "corpus's questionVersion) and a required \"predictions\" array; a file that",
+    "cannot say which question version it was produced against is refused.",
     "Exits non-zero on an invalid corpus, scenario leakage, or missing predictions.",
 ].join("\n");
 
@@ -734,6 +737,56 @@ function readJsonFile(path: string, description: string): unknown {
     }
 }
 
+/**
+ * Parses and validates a `--predictions` CLI input file. The file must
+ * declare which question version it was produced against: a predictions
+ * file that cannot say which questions produced it is refused rather than
+ * silently relabeled as current (computeEvaluationReport stamps every
+ * report with the corpus's questionVersion regardless of the predictions'
+ * real provenance, so this is the only place that provenance can be
+ * checked).
+ */
+export function parsePredictionsFile(raw: unknown, corpus: JevCorpus): JevPrediction[] {
+    if (!isPlainObject(raw)) {
+        throw new JevEvaluationError("invalid-predictions", "Predictions file root must be a JSON object");
+    }
+    for (const key of Object.keys(raw)) {
+        if (!PREDICTIONS_FILE_KEYS.includes(key)) {
+            throw new JevEvaluationError("invalid-predictions", `Unknown predictions file key "${key}"`);
+        }
+    }
+    for (const key of PREDICTIONS_FILE_KEYS) {
+        if (!(key in raw)) {
+            throw new JevEvaluationError(
+                "invalid-predictions",
+                `Predictions file is missing required key "${key}"`,
+            );
+        }
+    }
+    const questionVersion = raw["questionVersion"];
+    if (typeof questionVersion !== "string" || questionVersion.trim().length === 0) {
+        throw new JevEvaluationError(
+            "invalid-predictions",
+            'Predictions file field "questionVersion" must be a non-empty string',
+        );
+    }
+    if (questionVersion !== corpus.questionVersion) {
+        throw new JevEvaluationError(
+            "invalid-predictions",
+            `Predictions file questionVersion "${questionVersion}" does not match the corpus questionVersion `
+            + `"${corpus.questionVersion}"; the predictions must be regenerated at the current question version`,
+        );
+    }
+    const predictions = raw["predictions"];
+    if (!Array.isArray(predictions)) {
+        throw new JevEvaluationError(
+            "invalid-predictions",
+            'Predictions file field "predictions" must be an array',
+        );
+    }
+    return predictions as JevPrediction[];
+}
+
 function runCli(argv: readonly string[]): void {
     const options = parseCliArgs(argv);
 
@@ -764,24 +817,9 @@ function runCli(argv: readonly string[]): void {
     }
 
     const predictionsRaw = readJsonFile(options.predictions, "predictions file");
-    if (!isPlainObject(predictionsRaw)) {
-        throw new JevEvaluationError("invalid-predictions", "Predictions file root must be a JSON object");
-    }
-    const predictionFileKeys = Object.keys(predictionsRaw);
-    for (const key of predictionFileKeys) {
-        if (!PREDICTIONS_FILE_KEYS.includes(key)) {
-            throw new JevEvaluationError("invalid-predictions", `Unknown predictions file key "${key}"`);
-        }
-    }
-    if (!PREDICTIONS_FILE_KEYS.every((key) => key in predictionsRaw)) {
-        throw new JevEvaluationError("invalid-predictions", "Predictions file is missing required key \"predictions\"");
-    }
-    const predictions = predictionsRaw["predictions"];
-    if (!Array.isArray(predictions)) {
-        throw new JevEvaluationError("invalid-predictions", "Predictions file field \"predictions\" must be an array");
-    }
+    const predictions = parsePredictionsFile(predictionsRaw, parsedCorpus);
 
-    const report = computeEvaluationReport(parsedCorpus, predictions as JevPrediction[]);
+    const report = computeEvaluationReport(parsedCorpus, predictions);
     const reportJson = JSON.stringify(report, null, 2);
     if (options.out !== null) {
         writeFileSync(options.out, `${reportJson}\n`, "utf8");
