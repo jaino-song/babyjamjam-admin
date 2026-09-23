@@ -386,11 +386,11 @@ describe("Real AgentAutomationAuthorityService + real ClientAutomationImpactServ
     const recipe = buildClientMessageRecipe(rule, before, new Date("2026-09-01T00:00:00.000Z"));
     if (!recipe) throw new Error("test setup: recipe must build");
 
-    function buildUnenrichedJob(): MessageTriggerJobEntity {
+    function buildUnenrichedJob(fromRecipe = recipe!): MessageTriggerJobEntity {
         return MessageTriggerJobEntity.reconstitute(
-            jobId, branchId, ruleId, "processing", recipe!.scheduledFor, null, null, null,
-            clientId, null, MessageTriggerRecipientType.CLIENT, recipe!.recipientPhone ?? null,
-            MessageTriggerTemplateKey.SERVICE_END_NOTICE, recipe!.dedupeKey, { ...recipe!.payload },
+            jobId, branchId, ruleId, "processing", fromRecipe.scheduledFor, null, null, null,
+            clientId, null, MessageTriggerRecipientType.CLIENT, fromRecipe.recipientPhone ?? null,
+            MessageTriggerTemplateKey.SERVICE_END_NOTICE, fromRecipe.dedupeKey, { ...fromRecipe.payload },
             new Date("2026-06-01T00:00:00.000Z"), new Date("2026-06-01T00:00:00.000Z"),
         );
     }
@@ -437,7 +437,7 @@ describe("Real AgentAutomationAuthorityService + real ClientAutomationImpactServ
         return { coverage, taskReference };
     }
 
-    function buildRealAuthorityChain(coverage: AgentAutomationCoverage) {
+    function buildRealAuthorityChain(coverage: AgentAutomationCoverage, source: ClientTriggerSource = before) {
         const records = {
             readLineageEvidence: jest.fn().mockResolvedValue({ batch: { authorities: [], coverages: [coverage] }, creationSubjects: [] }),
             verifyTaskCommitReference: jest.fn().mockResolvedValue(true),
@@ -445,7 +445,7 @@ describe("Real AgentAutomationAuthorityService + real ClientAutomationImpactServ
         const authority = new AgentAutomationAuthorityService(records);
         const sources = {
             readClientAutomationSettings: jest.fn().mockResolvedValue(settings),
-            readClientAutomationSource: jest.fn().mockResolvedValue(before),
+            readClientAutomationSource: jest.fn().mockResolvedValue(source),
         };
         const sender = { read: jest.fn().mockReturnValue(senderRead) };
         const service = new AgentAutomationJobAuthorityService(authority, sources as never, sender as never);
@@ -492,15 +492,19 @@ describe("Real AgentAutomationAuthorityService + real ClientAutomationImpactServ
         );
         expect(dispatchResult).toEqual({ status: "legacy" });
 
-        // Control: tampering a non-link field (name) after enrichment is still refused.
-        const tamperedJob = enrich(buildUnenrichedJob(), "https://example.test/receipt/real-link-a")
-            .withPayloadOverride({ taskAutomationReference: taskReference });
-        tamperedJob.payload.templateVariables["name"] = "다른이름";
-        const { service: tamperService } = buildRealAuthorityChain(coverage);
-        const tamperResult = await tamperService.checkAutomaticJob(
-            buildTransaction(tamperedJob), tamperedJob, "dispatch", render, preparedSnapshotHash,
+        // Control: the client is renamed after coverage was recorded, and the job is
+        // rebuilt from the renamed source so it passes the source-payload equality
+        // check. Only the grandfathered fingerprint (which binds the rendered text
+        // around the link) can refuse it.
+        const renamed: ClientTriggerSource = { ...before, name: "다른이름" };
+        const renamedRecipe = buildClientMessageRecipe(rule, renamed, new Date("2026-09-01T00:00:00.000Z"));
+        if (!renamedRecipe) throw new Error("test setup: renamed recipe must build");
+        const renamedJob = buildUnenrichedJob(renamedRecipe).withPayloadOverride({ taskAutomationReference: taskReference });
+        const { service: renamedService } = buildRealAuthorityChain(coverage, renamed);
+        const renamedResult = await renamedService.checkAutomaticJob(
+            buildTransaction(renamedJob), renamedJob, "materialize", render,
         );
-        expect(tamperResult).toMatchObject({ status: "refused" });
+        expect(renamedResult).toEqual({ status: "refused", reason: "automation-consent-denied" });
     });
 
     it("b) an agent CREATE with a future end date makes planClientWrite report availability \"available\" with the SERVICE_END_NOTICE effect present", async () => {
@@ -516,7 +520,7 @@ describe("Real AgentAutomationAuthorityService + real ClientAutomationImpactServ
         expect(effect?.change).toBe("create");
     });
 
-    it("c) tamper: the real link changes between preparation and dispatch is refused, and this catch is load-bearing (proven by disabling it)", async () => {
+    it("c) tamper: the real link changes between preparation and dispatch is refused", async () => {
         const impact = buildImpactService();
         const plan = await impact.planClientWrite(branchId, { kind: "update", clientId, values: { fullPrice: "999999" } });
         const grandfathered = plan.grandfatheredEffects!.find((entry) => entry.templateKey === MessageTriggerTemplateKey.SERVICE_END_NOTICE)!;
