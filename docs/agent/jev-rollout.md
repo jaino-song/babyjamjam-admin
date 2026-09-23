@@ -133,6 +133,19 @@ cannot provide come exclusively from an operator-authored JSON file
   consumed such evidence is treated as failed.
 - Passing the checker is still not enablement: the approval reference in the
   profile is metadata, not authority (§6), and the human gates of §1 remain.
+- **Question version.** Evidence and acceptance profiles are bound to the
+  decision question version (`DECISION_QUESTION_VERSION` in
+  `backend/application/agent/decision/decision-questions.ts`, currently `v2`;
+  carried as `questionVersion` in reports, evidence, profiles and traces). A
+  version bump invalidates every earlier evaluation report, evidence document
+  and stored `agent.decisions.jev` acceptance profile for all four kinds:
+  regenerate evidence at the new version and re-author the profiles before any
+  shadow/enforce step, and move any kind running in `enforce` with an older
+  profile to `shadow`/`off` before deploying. A stored profile at an older
+  version is refused at runtime with `question-mismatch` (fail closed). The
+  same `question-mismatch` token is also returned when a permitted route domain
+  has no question text in `ROUTE_DOMAIN_DESCRIPTIONS`, so check both causes
+  when it appears.
 
 ## 2. Disable first (recovery order)
 
