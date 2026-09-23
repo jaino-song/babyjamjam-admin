@@ -616,7 +616,7 @@ jobs:
           # must exist as a plain empty value, never as a Secret Manager ref.
           aligo_state="$(jq -r --arg name "ALIGO_API_KEY" \
             '[.spec.template.spec.containers[0].env[]? | select(.name == $name)][0]
-             | if . == null then "<missing>" elif .valueFrom != null then "<secretKeyRef>" elif .value == "" then "<plain-empty>" else "<plain-non-empty>" end' \
+             | if . == null then "<missing>" elif .valueFrom != null then "<secretKeyRef>" elif (.value // "") == "" then "<plain-empty>" else "<plain-non-empty>" end' \
             <<<"$service_json")"
           [[ "$aligo_state" == "<plain-empty>" ]] \
             || fail_check "ALIGO_API_KEY must be a plain empty value (Aligo disabled on preview)" "$aligo_state"
