@@ -9,10 +9,11 @@ export function manualMessageTriggerJobPredicate(columns: {
 }): Prisma.Sql {
     const predicates = MANUAL_MESSAGE_JOB_MATCHERS.map((matcher) => {
         switch (matcher.kind) {
-            case "template": return Prisma.sql`${columns.templateKey} = ${matcher.templateKey}`;
             case "rule-prefix": return Prisma.sql`left(${columns.ruleId}, ${matcher.prefix.length}::integer) = ${matcher.prefix}`;
             case "dedupe-prefix": return Prisma.sql`left(${columns.dedupeKey}, ${matcher.prefix.length}::integer) = ${matcher.prefix}`;
             case "rule-dedupe": return Prisma.sql`(${columns.ruleId} = ${matcher.ruleId} AND ${columns.dedupeKey} ~ ${matcher.pattern})`;
+            // Rule-level only (see isManualMessageTriggerRule); never contributes to job ownership.
+            case "rule-id": return Prisma.sql`FALSE`;
         }
     });
     return Prisma.sql`(${Prisma.join(predicates, " OR ")})`;
