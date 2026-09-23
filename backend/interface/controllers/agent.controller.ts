@@ -178,6 +178,7 @@ export class AgentController {
         return {
             agentVersion: AGENT_VERSION,
             model: this.models.modelId,
+            thinkingLevel: this.models.thinkingLevel ?? null,
             releaseCommitSha: process.env["AGENT_RELEASE_COMMIT_SHA"]
                 ?? process.env["RAILWAY_GIT_COMMIT_SHA"]
                 ?? process.env["GITHUB_SHA"]

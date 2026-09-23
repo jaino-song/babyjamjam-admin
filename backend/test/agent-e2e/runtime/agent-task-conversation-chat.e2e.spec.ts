@@ -101,6 +101,7 @@ describeAgentE2E("authenticated AppModule conversation chat proof", () => {
         model = createRecordingModel();
         const modelFactory = {
             modelId: "babyjamjam-agent-e2e-v1",
+            providerOptions: () => ({}),
             create: jest.fn(() => model),
         };
         const moduleRef = await Test.createTestingModule({ imports: [AppModule] })

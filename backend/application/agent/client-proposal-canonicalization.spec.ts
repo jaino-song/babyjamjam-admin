@@ -306,7 +306,7 @@ describe("client proposal pricing canonicalization", () => {
             { isCapabilityEnabled: jest.fn().mockResolvedValue(true) } as never,
             sessions as never,
             {
-                modelId: "deterministic-agent-v1",
+                modelId: "deterministic-agent-v1", providerOptions: () => ({}),
                 create: () => new DeterministicAgentLanguageModel([{
                     type: "tool-call",
                     toolName: "clients_update",
