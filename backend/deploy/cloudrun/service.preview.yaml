@@ -77,7 +77,7 @@ spec:
             - name: ALIGO_SENDER_PHONE
               value: ""
             # Secret env: Secret Manager secret id == env var name, version latest.
-            # Excluded (not deployed): DEVELOPMENT_API_BASE_URL, DEVELOPMENT_FRONTEND_URL, DEVELOPMENT_MOBILE_FRONTEND_URL, MOBILE_SERVICE_RECORD_BASE_URL, MOBILE_RECEIPT_BASE_URL, GEMINI_CHAT_MODEL, GEMINI_CHAT_TEMPERATURE, GEMINI_CHAT_MAX_OUTPUT_TOKENS, GEMINI_CHAT_TIMEOUT_MS, GEMINI_EXTRACTION_MODEL, NEXT_PUBLIC_API_BASE_URL.
+            # Excluded (not deployed): DEVELOPMENT_API_BASE_URL, DEVELOPMENT_FRONTEND_URL, DEVELOPMENT_MOBILE_FRONTEND_URL, MOBILE_SERVICE_RECORD_BASE_URL, MOBILE_RECEIPT_BASE_URL, GEMINI_CHAT_MODEL, GEMINI_CHAT_TEMPERATURE, GEMINI_CHAT_MAX_OUTPUT_TOKENS, GEMINI_CHAT_TIMEOUT_MS, GEMINI_EXTRACTION_MODEL, NEXT_PUBLIC_API_BASE_URL, ALIGO_API_URL, ALIGO_SENDER_KEY, CHANNELTALK_API_URL.
             - name: DATABASE_URL
               valueFrom:
                 secretKeyRef:
@@ -187,21 +187,6 @@ spec:
               valueFrom:
                 secretKeyRef:
                   name: EFORMSIGN_WEBHOOK_SECRET
-                  key: latest
-            - name: ALIGO_API_URL
-              valueFrom:
-                secretKeyRef:
-                  name: ALIGO_API_URL
-                  key: latest
-            - name: ALIGO_SENDER_KEY
-              valueFrom:
-                secretKeyRef:
-                  name: ALIGO_SENDER_KEY
-                  key: latest
-            - name: CHANNELTALK_API_URL
-              valueFrom:
-                secretKeyRef:
-                  name: CHANNELTALK_API_URL
                   key: latest
             - name: CHANNELTALK_ACCESS_KEY
               valueFrom:

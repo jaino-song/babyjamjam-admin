@@ -80,7 +80,9 @@ gcloud services enable \
 
 ### 3.3 Artifact Registry 저장소 + cleanup policy
 
-preview push마다 이미지가 하나씩 쌓이므로 cleanup policy로 최근 10개만 유지한다.
+preview push마다 이미지가 하나씩 쌓이므로 cleanup policy로 30일(2592000s) 경과 이미지를 삭제하고
+최근 10개는 유지한다. **DELETE 규칙이 없는 KEEP-only 정책은 아무것도 지우지 않는다** — 삭제 규칙이
+반드시 함께 있어야 한다.
 
 ```bash
 gcloud artifacts repositories create babyjamjam \
@@ -91,6 +93,12 @@ gcloud artifacts repositories create babyjamjam \
 
 cat > /tmp/ar-cleanup-policy.yaml <<'EOF'
 cleanupPolicies:
+  delete-old:
+    id: delete-old
+    action: DELETE
+    condition:
+      tagState: ANY
+      olderThan: 2592000s
   keep-recent-10:
     id: keep-recent-10
     action: KEEP
@@ -101,7 +109,8 @@ EOF
 gcloud artifacts repositories set-cleanup-policies babyjamjam \
   --location="$REGION" \
   --policy=/tmp/ar-cleanup-policy.yaml \
-  --project="$PROJECT_ID"
+  --project="$PROJECT_ID" \
+  --no-dry-run
 ```
 
 ### 3.4 서비스 계정
@@ -211,6 +220,15 @@ echo "$SERVICE_URL"
 - [ ] `PRODUCTION_MOBILE_FRONTEND_URL` = preview 모바일 프론트엔드 URL (`NODE_ENV=production`에서
       모바일 카카오 로그인이 여기로 redirect한다)
 - [ ] `DATABASE_URL` = Supabase pooler (preview = prod 공유 DB, devops-deployment-rules.md §1-4)
+- [ ] `SENTRY_DSN` = preview용 Sentry DSN (필수). 이 키는 `env.tpl`에 없는 runtime-only 키라
+      preview env 파일에 직접 넣어야 하고, 빠지면 sync가 exit 1로 실패한다
+- [ ] `AUTH_EMAIL_TOKEN_HMAC_SECRET` **는 프로덕션 실횻값과 같아야 한다** — 프로덕션 env에 이 키가
+      설정돼 있으면 그 값, unset이면 프로덕션의 `JWT_SECRET`. 같은 DB를 공유하므로 프로덕션의
+      outbox worker가 자기 시크릿으로 이메일 토큰을 재구성한다. preview 값이 다르면 preview에서
+      요청한 비밀번호 재설정/인증 링크가 깨진다. 이 키도 `env.tpl`에 없으므로 preview env 파일에
+      직접 넣어야 하고, 빠지면 sync가 exit 1로 실패한다
+- [ ] Supabase 네트워크 제한(Network Restrictions)이 이 프로젝트에 활성화돼 있는지 확인 — Cloud Run의
+      egress IP는 고정되지 않으므로 제한이 켜져 있으면 DB 연결이 막혀 `/health/ready` 검증이 실패한다
 
 ```bash
 # 드라이런: 시크릿 생성/버전 추가 없이 계획과 누락 키만 검토
@@ -222,8 +240,10 @@ backend/deploy/cloudrun/sync-secrets.sh <preview-env-file> "$PROJECT_ID"
 
 - 스크립트는 매니페스트(`service.preview.yaml`)에서 시크릿 이름을 읽고, env 파일을 source하지 않고
   파싱하며, 바뀐 버전만 추가하고, 값을 절대 출력하지 않는다.
-- exit 3 = env 파일에 있는데 매니페스트가 배포도 제외(excluded-keys.txt)도 하지 않는 키 목록.
-  키를 매니페스트에 넣을지 excluded-keys.txt에 넣을지 결정하고 재동기화한다.
+- exit 3 = env 파일에 있는데 매니페스트가 배포도 제외(excluded-keys.txt)도 하지 않는 키 목록
+  (`not-deployed: KEY`). **키마다 판단한다** — 백엔드가 읽는 키면 매니페스트에 secretKeyRef를
+  추가(코드 변경 + PR), 읽지 않는 키면 excluded-keys.txt에 사유와 함께 추가한다. 그 판단 이후에만
+  `--allow-undeployed`를 쓴다.
 
 ### 3.8 GitHub Repository Variables
 
@@ -318,7 +338,8 @@ gcloud run services update-traffic babyjamjam-api-preview \
   vCPU·메모리 사용 시간과 요청 수·egress로만 발생한다.
 - 남는 소액 고정 비용:
   - **Secret Manager** — 무료 활성 버전 6개를 넘는 시크릿마다 ~$0.06/시크릿/월. ~40개 시크릿이므로 월 수천 원 수준.
-  - **Artifact Registry** 저장소 요금 — cleanup policy(최근 10개 유지)로 상한이 묶여 있다.
+  - **Artifact Registry** 저장소 요금 — cleanup policy(30일 경과 이미지 삭제 + 최근 10개 유지)로
+    상한이 묶여 있다.
 - **min=1 상시 가동을 권하지 않는 이유:** 항상 1 vCPU/2Gi 인스턴스가 떠 있어 월 수만 원대 과금이
   새로 생긴다. preview는 QA 세션 외 시간에 트래픽이 없으므로 min=0 + cold start(≈수 초~십 수 초)가
   충분하고, 부족한 기간만 §5의 임시 min=1로 운영한다.

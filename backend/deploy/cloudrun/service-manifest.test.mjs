@@ -7,7 +7,16 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+    chmodSync,
+    existsSync,
+    mkdirSync,
+    mkdtempSync,
+    readdirSync,
+    readFileSync,
+    rmSync,
+    writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -246,6 +255,110 @@ function runScript(envFile, extraArgs = []) {
     });
 }
 
+// ------------------------------------------------- stub gcloud (real sync path)
+
+// Writes an executable bash stub named `gcloud` (bash 3.2 compatible, macOS
+// /bin/bash) into binDir. It keeps a per-key version store under storeDir and
+// appends its argv (never stdin) to storeDir/argv.log. It implements exactly
+// the argument orders sync-secrets.sh uses:
+//   gcloud secrets describe KEY --project=...
+//   gcloud secrets create KEY --project=... --replication-policy=automatic
+//   gcloud secrets versions access latest --secret=KEY --project=...
+//   gcloud secrets versions add KEY --project=... --data-file=-
+function writeStubGcloud(binDir, storeDir) {
+    mkdirSync(binDir, { recursive: true });
+    mkdirSync(storeDir, { recursive: true });
+    const stub = [
+        "#!/bin/bash",
+        "# Test stub for gcloud: per-key version store in a temp directory.",
+        "# Records argv only; stdin bytes go to version files, never to the log.",
+        `STORE="${storeDir}"`,
+        `LOG="${storeDir}/argv.log"`,
+        'printf \'%s\\n\' "$*" >> "$LOG"',
+        'cmd="$2"',
+        'case "$cmd" in',
+        "  describe)",
+        '    [ -d "$STORE/keys/$3" ] && exit 0',
+        "    exit 1",
+        "    ;;",
+        "  create)",
+        '    mkdir -p "$STORE/keys/$3"',
+        '    echo 0 > "$STORE/keys/$3/latest"',
+        "    exit 0",
+        "    ;;",
+        "  versions)",
+        '    sub="$3"',
+        '    if [ "$sub" = "add" ]; then',
+        '      key="$4"',
+        '      datafile=""',
+        '      for a in "$@"; do',
+        '        case "$a" in',
+        '          --data-file=*) datafile="${a#--data-file=}" ;;',
+        "        esac",
+        "      done",
+        '      if [ "$datafile" = "-" ]; then',
+        '        dir="$STORE/keys/$key"',
+        '        mkdir -p "$dir"',
+        '        next=$(( $(cat "$dir/latest" 2>/dev/null || echo 0) + 1 ))',
+        '        cat > "$dir/v$next"',
+        '        echo "$next" > "$dir/latest"',
+        "        exit 0",
+        "      fi",
+        "      exit 1",
+        '    elif [ "$sub" = "access" ]; then',
+        '      secret=""',
+        '      for a in "$@"; do',
+        '        case "$a" in',
+        '          --secret=*) secret="${a#--secret=}" ;;',
+        "        esac",
+        "      done",
+        '      dir="$STORE/keys/$secret"',
+        '      if [ -d "$dir" ]; then',
+        '        latest="$(cat "$dir/latest" 2>/dev/null || echo 0)"',
+        '        if [ "$latest" != "0" ] && [ -f "$dir/v$latest" ]; then',
+        '          cat "$dir/v$latest"',
+        "          exit 0",
+        "        fi",
+        "      fi",
+        "      exit 1",
+        "    fi",
+        "    exit 1",
+        "    ;;",
+        "  *)",
+        "    exit 1",
+        "    ;;",
+        "esac",
+    ];
+    const gcloud = join(binDir, "gcloud");
+    writeFileSync(gcloud, stub.join("\n") + "\n");
+    chmodSync(gcloud, 0o755);
+}
+
+// Runs the script with the stub gcloud FIRST on PATH (shasum still resolves
+// from /usr/bin).
+function stubRun(envFile, binDir, extraArgs = []) {
+    return spawnSync(scriptPath, [envFile, "test-project", ...extraArgs], {
+        encoding: "utf8",
+        env: { ...process.env, PATH: `${binDir}:/usr/bin:/bin` },
+    });
+}
+
+function stubLatestVersion(storeDir, key) {
+    return readFileSync(join(storeDir, "keys", key, "latest"), "utf8").trim();
+}
+
+function stubVersionCount(storeDir, key) {
+    return readdirSync(join(storeDir, "keys", key)).filter((f) => /^v\d+$/.test(f)).length;
+}
+
+function stubLatestBytes(storeDir, key) {
+    return readFileSync(join(storeDir, "keys", key, `v${stubLatestVersion(storeDir, key)}`));
+}
+
+function stubHasKey(storeDir, key) {
+    return existsSync(join(storeDir, "keys", key));
+}
+
 function makeTempEnvFile(testName, lines) {
     const dir = mkdtempSync(join(tmpdir(), `cloudrun-manifest-${testName}-`));
     const file = join(dir, "backend.env");
@@ -290,13 +403,36 @@ test("safety invariants of the preview service manifest", () => {
     assert.equal(container.ports[0].name, "http1");
     assert.equal(container.ports[0].containerPort, "3001");
     assert.equal(container.startupProbe.httpGet.path, "/health");
-    assert.ok(container.startupProbe.timeoutSeconds * container.startupProbe.failureThreshold <= 240,
-        "startup probe budget must stay within the 240s Cloud Run cap");
+    const probe = container.startupProbe;
+    // Cloud Run caps the startup-probe window at 240s; initialDelaySeconds
+    // (default 0) counts toward it, so it must be part of the budget.
+    const initialDelaySeconds = probe.initialDelaySeconds === undefined ? 0 : Number(probe.initialDelaySeconds);
+    assert.ok(
+        initialDelaySeconds + Number(probe.periodSeconds) * Number(probe.failureThreshold) <= 240,
+        "startup probe budget (initialDelaySeconds + periodSeconds * failureThreshold) must stay within the 240s Cloud Run cap",
+    );
+    assert.ok(
+        Number(probe.timeoutSeconds) <= Number(probe.periodSeconds),
+        "startup probe timeoutSeconds must not exceed periodSeconds",
+    );
+    assert.equal(
+        String(probe.httpGet.port),
+        String(container.ports[0].containerPort),
+        "startup probe port must target the container port",
+    );
 
     assert.equal(plain.get("SCHEDULERS_ENABLED"), "false");
     assert.equal(plain.get("SCHEDULER_LEASE_MODE"), "off");
     assert.equal(plain.get("EFORMSIGN_RECONCILE_ALLOW_UNLOCKED"), "false");
     assert.equal(plain.get("APP_PORT"), "3001");
+});
+
+test("service-level ingress stays absent or all (Vercel server calls and browser Kakao navigation must reach it)", () => {
+    const ingress = manifest.metadata.annotations?.["run.googleapis.com/ingress"];
+    assert.ok(
+        ingress === undefined || ingress === "all",
+        `metadata.annotations["run.googleapis.com/ingress"] must be absent or "all" (got: ${JSON.stringify(ingress)})`,
+    );
 });
 
 test("plain env is exactly the agreed literal set (Aligo blanked, preview passive)", () => {
@@ -465,5 +601,137 @@ test("malformed env lines report only the line number and never the content", ()
         assert.ok(!combined.includes("dummyvalue-bad"));
     } finally {
         rmSync(b.dir, { recursive: true, force: true });
+    }
+});
+
+// Decoded value of each dummyLine form: the quoted and export forms decode to
+// the plain value; the "x=" form proves values containing "=" survive the
+// first-"=" split (only the first "=" separates key from value).
+function intendedDummyValue(name, i) {
+    const v = `dummy-${name}-value`;
+    return i % 4 === 2 ? `x=${v}=end` : v;
+}
+
+test("sync-secrets.sh real (non-dry-run) path via stub gcloud: created/unchanged/updated, values never leak", () => {
+    const root = mkdtempSync(join(tmpdir(), "cloudrun-syncstub-"));
+    const binDir = join(root, "bin");
+    const storeDir = join(root, "store");
+    const envFile = join(root, "backend.env");
+    try {
+        writeStubGcloud(binDir, storeDir);
+
+        // Duplicate key: the LAST occurrence must win (dotenv semantics).
+        const dupKey = secrets[3];
+        const dupValue = `dummy-${dupKey}-dupvalue`;
+        const lines = secrets.map((name, i) => dummyLine(name, i));
+        lines.push(`${dupKey}=${dupValue}`);
+        writeFileSync(envFile, lines.join("\n") + "\n", { mode: 0o600 });
+
+        const expected = new Map(secrets.map((name, i) => [name, intendedDummyValue(name, i)]));
+        expected.set(dupKey, dupValue);
+
+        // Run 1 — nothing exists yet: every key is created with exact bytes.
+        const r1 = stubRun(envFile, binDir);
+        assert.equal(r1.status, 0, `exit ${r1.status}; stderr: ${r1.stderr}`);
+        const out1 = r1.stdout.split("\n").map((l) => l.trim()).filter(Boolean);
+        assert.deepEqual(out1.sort(), secrets.map((k) => `${k}: created`).sort());
+        for (const [key, value] of expected) {
+            assert.ok(stubLatestBytes(storeDir, key).equals(Buffer.from(value, "utf8")),
+                `stored bytes for ${key} must equal the intended dummy value`);
+        }
+
+        // Run 2 — unchanged input: nothing is touched, no new versions.
+        const r2 = stubRun(envFile, binDir);
+        assert.equal(r2.status, 0, `exit ${r2.status}; stderr: ${r2.stderr}`);
+        const out2 = r2.stdout.split("\n").map((l) => l.trim()).filter(Boolean);
+        assert.deepEqual(out2.sort(), secrets.map((k) => `${k}: unchanged`).sort());
+        for (const key of secrets) {
+            assert.equal(stubVersionCount(storeDir, key), 1,
+                `${key} must gain no new version on an unchanged re-run`);
+        }
+
+        // Run 3 — rotate exactly one value: exactly that key updates, with
+        // exactly one new version.
+        const changedKey = secrets[0];
+        const rotatedValue = `rotated-${changedKey}-secret`;
+        const lines3 = secrets.map((name, i) =>
+            name === changedKey ? `${name}=${rotatedValue}` : dummyLine(name, i));
+        lines3.push(`${dupKey}=${dupValue}`); // duplicate still present: last wins
+        writeFileSync(envFile, lines3.join("\n") + "\n", { mode: 0o600 });
+        const r3 = stubRun(envFile, binDir);
+        assert.equal(r3.status, 0, `exit ${r3.status}; stderr: ${r3.stderr}`);
+        const out3 = r3.stdout.split("\n").map((l) => l.trim()).filter(Boolean);
+        const expected3 = secrets.map((k) => `${k}: ${k === changedKey ? "updated" : "unchanged"}`);
+        assert.deepEqual(out3.sort(), expected3.sort());
+        assert.equal(stubVersionCount(storeDir, changedKey), 2,
+            "the changed key must gain exactly one new version");
+        assert.ok(stubLatestBytes(storeDir, changedKey).equals(Buffer.from(rotatedValue, "utf8")));
+        for (const key of secrets.slice(1)) {
+            assert.equal(stubVersionCount(storeDir, key), 1, `${key} must not gain a version`);
+        }
+
+        // No dummy value ever reaches stdout, stderr, or the stub's argv log
+        // (the script must move values through stdin only).
+        const argvLog = readFileSync(join(storeDir, "argv.log"), "utf8");
+        const forbidden = secrets.map((name) => `dummy-${name}-value`);
+        forbidden.push(dupValue, rotatedValue);
+        for (const out of [r1.stdout + r1.stderr, r2.stdout + r2.stderr, r3.stdout + r3.stderr, argvLog]) {
+            for (const s of forbidden) {
+                assert.ok(!out.includes(s), "secret value material must never be printed or logged");
+            }
+        }
+    } finally {
+        rmSync(root, { recursive: true, force: true });
+    }
+});
+
+test("parser matches dotenv: trims value whitespace before unquoting; refuses unquoted ' #' fail-closed", () => {
+    const root = mkdtempSync(join(tmpdir(), "cloudrun-parse-"));
+    const binDir = join(root, "bin");
+    const storeDir = join(root, "store");
+    const envFile = join(root, "backend.env");
+    const write = (ls) => writeFileSync(envFile, ls.join("\n") + "\n", { mode: 0o600 });
+    try {
+        writeStubGcloud(binDir, storeDir);
+        const [k1, k2, k3] = secrets;
+        // The real sync path requires every manifest secret to be present, so
+        // each syncable env file pads the uninteresting keys with dummies.
+        const padLines = (...skip) =>
+            secrets.filter((n) => !skip.includes(n)).map((n, i) => dummyLine(n, i));
+
+        // KEY= spaced  ->  "spaced";  KEY= "q"  ->  q
+        write([`${k1}=  spaced-${k1}  `, `${k2}=  "quoted-${k2}"`, ...padLines(k1, k2)]);
+        const r = stubRun(envFile, binDir);
+        assert.equal(r.status, 0, `exit ${r.status}; stderr: ${r.stderr}`);
+        assert.ok(stubLatestBytes(storeDir, k1).equals(Buffer.from(`spaced-${k1}`, "utf8")),
+            "surrounding whitespace must be trimmed before the value is stored");
+        assert.ok(stubLatestBytes(storeDir, k2).equals(Buffer.from(`quoted-${k2}`, "utf8")),
+            'whitespace before an opening quote must not end up in the value');
+
+        // Quoted values keep "#" literally.
+        write([`${k1}="hash-${k1} # not-a-comment"`, ...padLines(k1)]);
+        const rq = stubRun(envFile, binDir);
+        assert.equal(rq.status, 0, `exit ${rq.status}; stderr: ${rq.stderr}`);
+        assert.ok(stubLatestBytes(storeDir, k1).equals(Buffer.from(`hash-${k1} # not-a-comment`, "utf8")),
+            "a quoted value must keep '#' literally");
+
+        // Unquoted " #" (space-hash): refuse the line, print only line+verdict,
+        // and never reach gcloud with any value. k1 and k3 both have changed
+        // values pending, so a non-aborting run would add versions for them.
+        const poison = `poison-${k3}-value`;
+        const k1Versions = stubVersionCount(storeDir, k1);
+        const k3Versions = stubVersionCount(storeDir, k3);
+        write([`${k1}=ok-${k1}`, `${k3}=${poison} # trailing comment`]);
+        const rx = stubRun(envFile, binDir);
+        assert.equal(rx.status, 1);
+        const combined = rx.stdout + rx.stderr;
+        assert.ok(combined.includes("line 2: invalid"), `expected "line 2: invalid", got: ${combined}`);
+        assert.ok(!combined.includes(poison), "refused value must never be printed");
+        assert.equal(stubVersionCount(storeDir, k1), k1Versions,
+            "a refused file must abort before any secret version is added");
+        assert.equal(stubVersionCount(storeDir, k3), k3Versions,
+            "a refused file must abort before any secret version is added");
+    } finally {
+        rmSync(root, { recursive: true, force: true });
     }
 });
