@@ -142,10 +142,14 @@ cannot provide come exclusively from an operator-authored JSON file
   regenerate evidence at the new version and re-author the profiles before any
   shadow/enforce step, and move any kind running in `enforce` with an older
   profile to `shadow`/`off` before deploying. A stored profile at an older
-  version is refused at runtime with `question-mismatch` (fail closed). The
-  same `question-mismatch` token is also returned when a permitted route domain
-  has no question text in `ROUTE_DOMAIN_DESCRIPTIONS`, so check both causes
-  when it appears.
+  version is refused at runtime (fail closed): under `enforce`,
+  `AgentDecisionService.evaluate` returns `not-evaluated` with reason
+  `ineligible` and falls back to the baseline selection, and the observation is
+  recorded before that compatibility check, so it carries no mismatch token.
+  Treat `ineligible` under `enforce` as the stale-profile symptom and compare
+  the stored profile's `questionVersion` with `DECISION_QUESTION_VERSION`.
+  `question-mismatch` is a different failure: a permitted route domain has no
+  question text in `ROUTE_DOMAIN_DESCRIPTIONS`.
 
 ## 2. Disable first (recovery order)
 
