@@ -483,6 +483,7 @@ describeAgentE2E("task automation durable retry and recovery", () => {
             .overrideProvider(AgentModelFactory)
             .useValue({
                 modelId: "unused-retry-recovery-proof",
+                providerOptions: () => ({}),
                 create: jest.fn(() => {
                     throw new Error("No model call is allowed in retry recovery proof");
                 }),
