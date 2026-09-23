@@ -54,7 +54,8 @@ import {
 const UNIFIED_SENDER_PHONE = "010-9641-1878";
 const DUPLICATE_SEND_POLICY_ITEM_ID = "duplicate-send-confirmation";
 const SERVICE_RECORD_LINK_POLICY_ID = "service-feedback-link";
-const MANUAL_ONLY_TRIGGER_TEMPLATE_KEY = "SERVICE_END_NOTICE";
+// Branchless system rule anchoring manual receipt-link sends; not an automatic routine.
+const MANUAL_SERVICE_END_NOTICE_RULE_ID = "system:service_end_notice";
 const SMS_RETRY_POLICY_ID = "sms-retry";
 const PAST_TRIGGER_POLICY_ID = "past-trigger";
 const TRIGGER_DISPATCH_POLICY_ID = "trigger-dispatch";
@@ -367,7 +368,7 @@ export function MessageTenantApplicationSettings() {
     () => (Array.isArray(triggerRulesData) ? triggerRulesData : [])
       .filter((rule) =>
         (isTriggerDispatchAvailable && triggerDispatchActive === false ? false : rule.isActive) &&
-        rule.templateKey !== MANUAL_ONLY_TRIGGER_TEMPLATE_KEY &&
+        rule.id !== MANUAL_SERVICE_END_NOTICE_RULE_ID &&
         isTriggerRuleInChannel(rule, "sms"),
       ),
     [isTriggerDispatchAvailable, triggerDispatchActive, triggerRulesData],

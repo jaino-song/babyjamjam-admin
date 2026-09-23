@@ -5,6 +5,7 @@ import {
     MessageTriggerTemplateKey,
 } from "domain/constants/message-trigger-catalog";
 import { MessageTriggerRuleEntity } from "domain/entities/message-trigger-rule.entity";
+import { SERVICE_END_NOTICE_RULE_ID } from "domain/constants/service-end-notice-message";
 import { PrismaService } from "infrastructure/database/prisma.service";
 import { SbMessageTriggerRuleRepository } from "infrastructure/database/repositories/sb.message-trigger-rule.repository";
 
@@ -106,6 +107,28 @@ describe("SbMessageTriggerRuleRepository", () => {
             data: expect.objectContaining({ sendTime: "14:37" }),
         }));
     });
+
+    it(
+        "findById(branchId, id) queries by an equality match on a real branchId, so it can never " +
+        "resolve the branchless SERVICE_END_NOTICE system row (BJJ-342: this is what guarantees " +
+        "message-trigger.service.ts's updateRule/updateRuleApprovedTarget resolveParams' `current` " +
+        "is never the system row, and runRuleTemplateMutation can safely assume automatic there)",
+        async () => {
+            const realBranchId = "branch-1";
+            // A real Postgres row for the system rule has branch_id IS NULL. Prisma
+            // compiles `where: { branchId: realBranchId }` to a strict `branch_id = $1`
+            // equality predicate, which SQL NULL comparison semantics never satisfy —
+            // simulated here by the mock resolving null for that exact query shape.
+            messageTriggerRuleModel.findFirst.mockResolvedValue(null);
+
+            const rule = await repository.findById(realBranchId, SERVICE_END_NOTICE_RULE_ID);
+
+            expect(rule).toBeNull();
+            expect(messageTriggerRuleModel.findFirst).toHaveBeenCalledWith({
+                where: { id: SERVICE_END_NOTICE_RULE_ID, branchId: realBranchId },
+            });
+        },
+    );
 
     it("findAll includes the fixed global automation alongside branch rules", async () => {
         messageTriggerRuleModel.findMany.mockResolvedValue([

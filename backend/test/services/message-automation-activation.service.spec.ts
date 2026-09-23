@@ -1,8 +1,10 @@
 import { Prisma } from "@prisma/client";
+import { BadRequestException } from "@nestjs/common";
 import { MessageAutomationActivationService } from "application/services/message-automation-activation.service";
 import { MessageAutomationBranchLockService } from "application/services/message-automation-branch-lock.service";
 import { AdminAuditEventWriter } from "application/services/admin-audit-event.service";
 import { MessageAutomationDatabase } from "domain/repositories/message-automation-database.repository.interface";
+import { SERVICE_END_NOTICE_RULE_ID } from "domain/constants/service-end-notice-message";
 
 describe("MessageAutomationActivationService send time", () => {
     const branchId = "20000000-0000-4000-8000-000000009161";
@@ -52,5 +54,85 @@ describe("MessageAutomationActivationService send time", () => {
         expect(rule.sendTime).toBe("14:37");
         const selection = transaction.$queryRaw.mock.calls[0][0] as Prisma.Sql;
         expect(selection.sql).toContain('send_time AS "sendTime"');
+    });
+});
+
+describe("MessageAutomationActivationService SERVICE_END_NOTICE ownership (BJJ-342)", () => {
+    const branchId = "20000000-0000-4000-8000-000000009161";
+    const actor = { userId: "10000000-0000-4000-8000-000000009161", globalRole: "owner" };
+
+    const buildTransaction = (rule: Record<string, unknown>) => {
+        let overrideActive = false;
+        return {
+            $queryRaw: jest.fn().mockResolvedValue([rule]),
+            system_setting: { findUnique: jest.fn().mockResolvedValue({ value: "true" }) },
+            message_trigger_rule: {
+                findUnique: jest.fn(async () => ({ ...rule })),
+                update: jest.fn(async ({ data }: { data: Record<string, unknown> }) => Object.assign(rule, data)),
+            },
+            message_trigger_rule_branch_override: {
+                findUnique: jest.fn(async () => ({ isActive: overrideActive })),
+                upsert: jest.fn(async ({ update }: { update: { isActive: boolean } }) => { overrideActive = update.isActive; }),
+            },
+        };
+    };
+
+    const buildService = (transaction: unknown) => new MessageAutomationActivationService(
+        {} as MessageAutomationDatabase,
+        { runExclusive: jest.fn((_branch, work) => work(transaction)) } as unknown as MessageAutomationBranchLockService,
+        { append: jest.fn().mockResolvedValue(undefined) } as unknown as AdminAuditEventWriter,
+    );
+
+    it("activates a branch SERVICE_END_NOTICE rule like any other automatic rule", async () => {
+        const rule = {
+            id: "30000000-0000-4000-8000-000000009162",
+            branchId,
+            name: "서비스 종료 안내",
+            isActive: false,
+            eventType: "SERVICE_END",
+            offsetType: "SAME_DAY",
+            offsetDays: 0,
+            sendTime: null,
+            recipientType: "CLIENT",
+            templateKey: "SERVICE_END_NOTICE",
+            isDefault: false,
+            jobsStale: false,
+            createdAt: new Date("2026-09-16T00:00:00Z"),
+            updatedAt: new Date("2026-09-16T00:00:00Z"),
+        };
+        const transaction = buildTransaction(rule);
+        const service = buildService(transaction);
+
+        const activated = await service.activateRuleWithParent(branchId, rule.id, { actor });
+
+        expect(activated.isActive).toBe(true);
+        expect(transaction.message_trigger_rule.update).toHaveBeenCalledWith(
+            expect.objectContaining({ where: { id: rule.id }, data: expect.objectContaining({ isActive: true }) }),
+        );
+    });
+
+    it("still rejects the SERVICE_END_NOTICE system manual row", async () => {
+        const systemRule = {
+            id: SERVICE_END_NOTICE_RULE_ID,
+            branchId: null,
+            name: "서비스 종료 안내 (수동 발송)",
+            isActive: true,
+            eventType: "SERVICE_END",
+            offsetType: "SAME_DAY",
+            offsetDays: 0,
+            sendTime: null,
+            recipientType: "CLIENT",
+            templateKey: "SERVICE_END_NOTICE",
+            isDefault: false,
+            jobsStale: false,
+            createdAt: new Date("2026-09-16T00:00:00Z"),
+            updatedAt: new Date("2026-09-16T00:00:00Z"),
+        };
+        const transaction = buildTransaction(systemRule);
+        const service = buildService(transaction);
+
+        await expect(service.activateRuleWithParent(branchId, SERVICE_END_NOTICE_RULE_ID, { actor }))
+            .rejects.toThrow(BadRequestException);
+        expect(transaction.message_trigger_rule.update).not.toHaveBeenCalled();
     });
 });
