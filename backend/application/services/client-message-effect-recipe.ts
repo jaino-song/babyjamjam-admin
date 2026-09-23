@@ -6,6 +6,7 @@ import { MessageTriggerJobEntity } from "domain/entities/message-trigger-job.ent
 import type { MessageTriggerRuleEntity } from "domain/entities/message-trigger-rule.entity";
 import type { MessageAutomationPastTriggerConfig } from "domain/entities/system-setting.entity";
 import { buildClientMessageRecipe, type ClientTriggerSource } from "./message-trigger-recipes";
+import { withServiceEndNoticePreviewLink } from "./service-end-notice-preview";
 import type { SmsTriggerDeliveryService } from "./sms-trigger-delivery.service";
 
 /** Creation is a bounded recipe; the committed authority later binds the actual row incarnation. */
@@ -73,7 +74,14 @@ export async function describeClientMessageEffect(input: {
         return { status: "unavailable", reason: "sender-unavailable" };
     }
     try {
-        const snapshot = await input.delivery.resolveCanonicalDeliverySnapshot(MessageTriggerJobEntity.create(recipe));
+        // The raw recipe never carries SERVICE_END_NOTICE's receipt link (it is
+        // written only by ReceiptLinkDeliveryEnricher at real delivery time),
+        // but the system template requires it. Render a placeholder-patched
+        // preview copy instead of the raw recipe job; `recipe.payload` itself
+        // (used below for sourceDigest) is untouched.
+        const snapshot = await input.delivery.resolveCanonicalDeliverySnapshot(
+            withServiceEndNoticePreviewLink(MessageTriggerJobEntity.create(recipe)),
+        );
         const scheduling = rule.offsetType === MessageTriggerOffsetType.IMMEDIATE
             ? { kind: "materialization-time" }
             : rule.eventType === MessageTriggerEventType.CLIENT_CREATED && subject.kind === "task-client"

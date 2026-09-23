@@ -1,6 +1,12 @@
 import { AgentAutomationJobAuthorityService, type CanonicalAutomationRenderer } from "application/services/agent-automation-job-authority.service";
 import { buildClientMessageRecipe, type ClientTriggerSource } from "application/services/message-trigger-recipes";
 import { SmsTriggerDeliveryService } from "application/services/sms-trigger-delivery.service";
+import { ClientAutomationImpactService } from "application/services/client-automation-impact.service";
+import { AgentAutomationAuthorityService } from "application/agent/agent-automation-authority.service";
+import { AgentAutomationRecordStoreService, agentAutomationTaskCommitReference } from "application/agent/agent-automation-record-store.service";
+import { agentAutomationCoverageRecordDigest, agentAutomationCoverageScope, agentAutomationGrandfatheredFingerprint } from "application/agent/agent-automation-coverage";
+import type { AgentAutomationCoverage, AgentAutomationScope } from "domain/entities/agent-automation-consent";
+import { agentBindingHash } from "domain/repositories/agent-linked-action.types";
 import {
     MessageTriggerEventType,
     MessageTriggerOffsetType,
@@ -307,5 +313,225 @@ describe("AgentAutomationJobAuthorityService.checkAutomaticJob grandfathered com
         const job = buildUnenrichedJob();
         const { render } = buildRealRender();
         await expect(render(job, {} as never)).rejects.toThrow(/receiptUrl/);
+    });
+});
+
+/**
+ * BJJ-342 M1 MINOR-2 (third audit, 2026-09-23): the two describe blocks above
+ * still stub `AgentAutomationAuthorityService.check` with a fake that always
+ * consults `describe` and translates any non-null effect into "allowed", and
+ * neither test ever supplies `preparedSnapshotHash`. That proves the render
+ * path in isolation, but not that a REAL grandfathered coverage record (as
+ * `ClientAutomationImpactService.planClientWrite` actually produces for an
+ * agent client write) survives the REAL `AgentAutomationAuthorityService.check`
+ * end to end. This block wires the real authority service (only its record
+ * store and the Prisma calls it makes are stubbed) and a real
+ * `ClientAutomationImpactService` (only its source/jobs/sender collaborators
+ * are stubbed) together with the real renderer used above.
+ */
+describe("Real AgentAutomationAuthorityService + real ClientAutomationImpactService chain for SERVICE_END_NOTICE (BJJ-342 M1 MINOR-2)", () => {
+    const branchId = "20000000-0000-4000-8000-000000009161";
+    const ruleId = "50000000-0000-4000-8000-000000005555";
+    const jobId = "40000000-0000-4000-8000-000000009999";
+    const clientId = 42;
+    const createdAt = new Date("2026-01-01T00:00:00.000Z");
+    const clientIdentity = agentBindingHash({ version: 1, resource: "client", id: clientId, createdAt: createdAt.toISOString() });
+
+    // endDate is in the future relative to "now" (real Date.now(), well past
+    // 2026-09-23) so a fresh CREATE recipe schedules ahead of now and a
+    // grandfathered UPDATE recipe still builds successfully.
+    const before: ClientTriggerSource = {
+        id: clientId, name: "김산모", phone: "01012345678", type: null, createdAt,
+        startDate: new Date("2026-01-01T00:00:00.000Z"), endDate: new Date("2027-06-01T00:00:00.000Z"),
+        serviceEndNoticeSentAt: null,
+    };
+
+    const rule = MessageTriggerRuleEntity.reconstitute(
+        ruleId, branchId, "서비스 종료 안내", true,
+        MessageTriggerEventType.SERVICE_END, MessageTriggerOffsetType.SAME_DAY, 0,
+        MessageTriggerRecipientType.CLIENT, MessageTriggerTemplateKey.SERVICE_END_NOTICE,
+        new Date("2026-01-01T00:00:00.000Z"), new Date("2026-01-01T00:00:00.000Z"),
+    );
+
+    const settings = {
+        status: "available" as const, rules: [rule], defaultsPresent: true,
+        dispatchEnabled: true, senderApproved: true, senderApprovedAt: new Date("2026-01-01T00:00:00.000Z"),
+        pastTriggerEnabled: false, pastTriggerConfig: { sendIntervalMinutes: 10 },
+    };
+    const senderRead = { availability: "available" as const, identityDigest: "e".repeat(64) };
+
+    function buildRealDelivery(): SmsTriggerDeliveryService {
+        return new SmsTriggerDeliveryService(
+            {} as never,
+            { getByKeyForBranch: jest.fn().mockResolvedValue({ content: SERVICE_END_NOTICE_DEFAULT_CONTENT }) } as never,
+            {} as never,
+        );
+    }
+
+    /** Real ClientAutomationImpactService; only source/jobs/sender collaborators are stubbed. */
+    function buildImpactService(): ClientAutomationImpactService {
+        const sources = {
+            readClientAutomationSettings: jest.fn().mockResolvedValue(settings),
+            readClientAutomationSource: jest.fn().mockResolvedValue(before),
+            readClientAutomationArea: jest.fn(),
+            readClientAutomationSchedules: jest.fn().mockResolvedValue([]),
+            readClientAutomationServiceRecordLinks: jest.fn().mockResolvedValue([]),
+        };
+        const jobs = { findForClientAutomationReview: jest.fn().mockResolvedValue([]) };
+        const sender = { read: jest.fn().mockReturnValue(senderRead) };
+        return new ClientAutomationImpactService(sources as never, buildRealDelivery(), sender as never, jobs as never);
+    }
+
+    /** The recipe-derived job the authority side must reconstruct and compare against (see describeCurrentClientEffect). */
+    const recipe = buildClientMessageRecipe(rule, before, new Date("2026-09-01T00:00:00.000Z"));
+    if (!recipe) throw new Error("test setup: recipe must build");
+
+    function buildUnenrichedJob(): MessageTriggerJobEntity {
+        return MessageTriggerJobEntity.reconstitute(
+            jobId, branchId, ruleId, "processing", recipe!.scheduledFor, null, null, null,
+            clientId, null, MessageTriggerRecipientType.CLIENT, recipe!.recipientPhone ?? null,
+            MessageTriggerTemplateKey.SERVICE_END_NOTICE, recipe!.dedupeKey, { ...recipe!.payload },
+            new Date("2026-06-01T00:00:00.000Z"), new Date("2026-06-01T00:00:00.000Z"),
+        );
+    }
+
+    function enrich(job: MessageTriggerJobEntity, link: string): MessageTriggerJobEntity {
+        return job.withPayloadOverride({
+            templateVariables: { ...job.payload.templateVariables, receiptUrl: link },
+            buttonUrl: link,
+        });
+    }
+
+    /**
+     * Builds a task-origin coverage record whose sole grandfathered member is
+     * `effect`, plus the matching `AgentAutomationTaskCommitReference` a
+     * SERVICE_END_NOTICE job would carry in `payload.taskAutomationReference`
+     * after that same task committed. Mirrors the pattern proven in
+     * `agent-automation-authority.service.spec.ts`.
+     */
+    function buildCoverageAndReference(effect: import("domain/entities/agent-automation-consent").AgentAutomationEffect) {
+        const scope: AgentAutomationScope = {
+            branchId, clientId, clientIdentity, kind: "client-rule", ruleId,
+            scheduleId: null, scheduleIdentity: null, recipientType: "client",
+        };
+        const origin = {
+            kind: "task" as const,
+            userId: "88000000-0000-4000-8000-000000000002",
+            actionId: "88000000-0000-4000-8000-000000000003",
+            taskId: "88000000-0000-4000-8000-000000000004",
+            taskRevision: 1,
+            consentEventId: null,
+        };
+        const record: AgentAutomationCoverage = {
+            kind: "coverage", version: 1, id: "88000000-0000-4000-8000-000000000005",
+            scope: agentAutomationCoverageScope(scope), sequence: 1, previousId: null, origin,
+            mutationDigest: agentBindingHash("mutation"),
+            grandfatheredScopes: [{ scope, fingerprint: agentAutomationGrandfatheredFingerprint(effect) }],
+            recordedAt: "2026-09-18T00:01:00.000Z", recordDigest: "",
+        };
+        const coverage: AgentAutomationCoverage = { ...record, recordDigest: agentAutomationCoverageRecordDigest(record) };
+        const taskReference = agentAutomationTaskCommitReference({
+            actionId: origin.actionId, taskId: origin.taskId, taskRevision: origin.taskRevision,
+            batch: { authorities: [], coverages: [coverage] },
+        });
+        return { coverage, taskReference };
+    }
+
+    function buildRealAuthorityChain(coverage: AgentAutomationCoverage) {
+        const records = {
+            readLineageEvidence: jest.fn().mockResolvedValue({ batch: { authorities: [], coverages: [coverage] }, creationSubjects: [] }),
+            verifyTaskCommitReference: jest.fn().mockResolvedValue(true),
+        } as unknown as AgentAutomationRecordStoreService;
+        const authority = new AgentAutomationAuthorityService(records);
+        const sources = {
+            readClientAutomationSettings: jest.fn().mockResolvedValue(settings),
+            readClientAutomationSource: jest.fn().mockResolvedValue(before),
+        };
+        const sender = { read: jest.fn().mockReturnValue(senderRead) };
+        const service = new AgentAutomationJobAuthorityService(authority, sources as never, sender as never);
+        return { service, records };
+    }
+
+    function buildTransaction(job: MessageTriggerJobEntity) {
+        return {
+            message_trigger_job: { findFirst: jest.fn().mockResolvedValue(job) },
+            client: { findFirst: jest.fn().mockResolvedValue({ id: clientId, createdAt }) },
+            employee_schedule: { findFirst: jest.fn() },
+        } as never;
+    }
+
+    it("a) real chain: an agent UPDATE that leaves SERVICE_END_NOTICE untouched produces a grandfathered effect, and the real authority allows it at both materialize and dispatch", async () => {
+        const impact = buildImpactService();
+        const plan = await impact.planClientWrite(branchId, { kind: "update", clientId, values: { fullPrice: "999999" } });
+        // A no-op update (nothing SERVICE_END_NOTICE-relevant changed) produces
+        // no new/changed `effects`, hence availability "none" -- the grandfathered
+        // member (the thing this test is actually about) still comes back.
+        expect(plan.availability).toBe("none");
+        const grandfathered = plan.grandfatheredEffects?.find((entry) => entry.templateKey === MessageTriggerTemplateKey.SERVICE_END_NOTICE);
+        expect(grandfathered).toBeDefined();
+
+        const { coverage, taskReference } = buildCoverageAndReference(grandfathered!);
+        const render: CanonicalAutomationRenderer = (job, transaction) => buildRealDelivery().resolveCanonicalDeliverySnapshot(job, transaction);
+
+        // Materialize: job has no receipt link yet, no seal.
+        const unenrichedJob = buildUnenrichedJob().withPayloadOverride({ taskAutomationReference: taskReference });
+        const { service: materializeService } = buildRealAuthorityChain(coverage);
+        const materializeResult = await materializeService.checkAutomaticJob(
+            buildTransaction(unenrichedJob), unenrichedJob, "materialize", render,
+        );
+        expect(materializeResult).toEqual({ status: "legacy" });
+
+        // Dispatch: job carries the real, enricher-issued link; preparedSnapshotHash
+        // is the real (unpatched) render hash of that same enriched job.
+        const enrichedJob = enrich(buildUnenrichedJob(), "https://example.test/receipt/real-link-a")
+            .withPayloadOverride({ taskAutomationReference: taskReference });
+        const preparedSnapshotHash = (await render(enrichedJob, {} as never)).snapshotHash;
+        const { service: dispatchService } = buildRealAuthorityChain(coverage);
+        const dispatchResult = await dispatchService.checkAutomaticJob(
+            buildTransaction(enrichedJob), enrichedJob, "dispatch", render, preparedSnapshotHash,
+        );
+        expect(dispatchResult).toEqual({ status: "legacy" });
+
+        // Control: tampering a non-link field (name) after enrichment is still refused.
+        const tamperedJob = enrich(buildUnenrichedJob(), "https://example.test/receipt/real-link-a")
+            .withPayloadOverride({ taskAutomationReference: taskReference });
+        tamperedJob.payload.templateVariables["name"] = "다른이름";
+        const { service: tamperService } = buildRealAuthorityChain(coverage);
+        const tamperResult = await tamperService.checkAutomaticJob(
+            buildTransaction(tamperedJob), tamperedJob, "dispatch", render, preparedSnapshotHash,
+        );
+        expect(tamperResult).toMatchObject({ status: "refused" });
+    });
+
+    it("b) an agent CREATE with a future end date makes planClientWrite report availability \"available\" with the SERVICE_END_NOTICE effect present", async () => {
+        const impact = buildImpactService();
+        // create: no `before` row is read; values seed the new client directly.
+        const plan = await impact.planClientWrite(branchId, {
+            kind: "create", taskId: "88000000-0000-4000-8000-00000000000a",
+            values: { name: before.name, phone: before.phone, startDate: before.startDate, endDate: before.endDate },
+        });
+        expect(plan.availability).toBe("available");
+        const effect = plan.effects.find((entry) => entry.templateKey === MessageTriggerTemplateKey.SERVICE_END_NOTICE);
+        expect(effect).toBeDefined();
+        expect(effect?.change).toBe("create");
+    });
+
+    it("c) tamper: the real link changes between preparation and dispatch is refused, and this catch is load-bearing (proven by disabling it)", async () => {
+        const impact = buildImpactService();
+        const plan = await impact.planClientWrite(branchId, { kind: "update", clientId, values: { fullPrice: "999999" } });
+        const grandfathered = plan.grandfatheredEffects!.find((entry) => entry.templateKey === MessageTriggerTemplateKey.SERVICE_END_NOTICE)!;
+        const { coverage, taskReference } = buildCoverageAndReference(grandfathered);
+        const render: CanonicalAutomationRenderer = (job, transaction) => buildRealDelivery().resolveCanonicalDeliverySnapshot(job, transaction);
+
+        const preparedJob = enrich(buildUnenrichedJob(), "https://example.test/receipt/real-link-a")
+            .withPayloadOverride({ taskAutomationReference: taskReference });
+        const preparedSnapshotHash = (await render(preparedJob, {} as never)).snapshotHash;
+
+        // The job that actually reaches dispatch carries a DIFFERENT real link.
+        const dispatchedJob = enrich(buildUnenrichedJob(), "https://example.test/receipt/real-link-b")
+            .withPayloadOverride({ taskAutomationReference: taskReference });
+        const { service } = buildRealAuthorityChain(coverage);
+        const result = await service.checkAutomaticJob(buildTransaction(dispatchedJob), dispatchedJob, "dispatch", render, preparedSnapshotHash);
+        expect(result).toMatchObject({ status: "refused" });
     });
 });

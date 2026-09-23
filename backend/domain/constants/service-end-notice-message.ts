@@ -28,14 +28,30 @@ export const SERVICE_END_NOTICE_BUTTON_URL_PAYLOAD_KEY = "buttonUrl";
 
 /**
  * Fixed placeholder substituted for the two enricher-owned fields above ONLY
- * inside effect-preview/comparison rendering (authority materialize/dispatch
- * checks, impact previews) -- never in the real delivery render path. The
- * template requires `receiptUrl` (system-template-registry.ts), and the real
- * value does not exist yet at materialize time (pre-enrichment) and would
- * otherwise make a pre- vs. post-enrichment comparison render diverge on the
- * URL text at dispatch time. Using the SAME fixed value on both sides of any
- * such comparison keeps the rendered text (and its digest) stable while the
- * real send still renders and hashes the actual, enricher-issued link.
+ * inside effect-preview/comparison rendering -- never in the real delivery
+ * render path. Applied by the shared `withServiceEndNoticePreviewLink` helper
+ * (application/services/service-end-notice-preview.ts), which is used from
+ * two places: inside `describeClientMessageEffect`
+ * (client-message-effect-recipe.ts), on the recipe-built job it renders
+ * internally -- this covers BOTH `client-automation-impact.service.ts`'s
+ * impact-preview calls and `agent-automation-job-authority.service.ts`'s
+ * authority materialize/dispatch checks, since both go through
+ * `describeClientMessageEffect` -- and directly inside
+ * `agent-automation-job-authority.service.ts`'s own
+ * `describeCurrentClientEffect`, on the actual stored/candidate job it
+ * renders itself (a render `describeClientMessageEffect` does not control).
+ * The helper is idempotent, so applying it in both places is safe.
+ *
+ * The template requires `receiptUrl` (system-template-registry.ts), and the
+ * real value does not exist yet at materialize time (pre-enrichment), on a
+ * freshly built recipe (which never carries it at all), or in an impact
+ * preview (which never delivers anything) -- and would otherwise make a
+ * pre- vs. post-enrichment comparison render diverge on the URL text at
+ * dispatch time. Using the SAME fixed value on both sides of any such
+ * comparison keeps the rendered text (and its digest) stable while the real
+ * send still renders and hashes the actual, enricher-issued link (the
+ * prepared-snapshot check in `describeCurrentClientEffect` deliberately
+ * renders the job UNPATCHED for that reason).
  */
 export const SERVICE_END_NOTICE_PREVIEW_RECEIPT_URL = "https://placeholder.invalid/receipt/preview";
 

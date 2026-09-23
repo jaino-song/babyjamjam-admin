@@ -5,11 +5,6 @@ import { AgentAutomationAuthorityService, type AgentAutomationAuthorityCheck, ty
 import { AGENT_AUTOMATION_JOB_SEAL_PAYLOAD_KEY, isReservedAutomationJob } from "domain/constants/agent-automation-storage";
 import { MessageTriggerEventType, MessageTriggerOffsetType, MessageTriggerRecipientType, MessageTriggerTemplateKey } from "domain/constants/message-trigger-catalog";
 import { isManualMessageTriggerJob } from "domain/constants/message-trigger-job-ownership";
-import {
-    SERVICE_END_NOTICE_BUTTON_URL_PAYLOAD_KEY,
-    SERVICE_END_NOTICE_PREVIEW_RECEIPT_URL,
-    SERVICE_END_NOTICE_RECEIPT_URL_TEMPLATE_VARIABLE,
-} from "domain/constants/service-end-notice-message";
 import { SERVICE_RECORD_LINK_RULE_ID } from "domain/constants/service-record-link-message";
 import type { MessageTriggerJobEntity } from "domain/entities/message-trigger-job.entity";
 import { agentBindingHash } from "domain/repositories/agent-linked-action.types";
@@ -27,6 +22,7 @@ import {
 import type { SmsTriggerDeliverySnapshot } from "./sms-trigger-delivery.service";
 import { agentAutomationConcreteJobDigest, agentAutomationSourcePayload } from "./agent-automation-job-binding";
 import { buildClientMessageRecipe, buildEmployeeAssignmentMessageRecipe, buildMessageRecipeDedupeKey } from "./message-trigger-recipes";
+import { withServiceEndNoticePreviewLink } from "./service-end-notice-preview";
 import { z } from "zod";
 import { parseAgentAutomationTaskCommitReference } from "application/agent/agent-automation-storage.schema";
 import type { AgentAutomationTaskCommitReference } from "domain/entities/agent-automation-consent";
@@ -168,9 +164,14 @@ export class AgentAutomationJobAuthorityService {
                 // required variable) or make the two renders diverge on link
                 // text alone. Substituting the SAME fixed preview value on
                 // both sides for this structural (recipe-vs-job) comparison
-                // keeps it a text comparison only.
-                const current = await render(this.withServiceEndNoticePreviewLink(currentJob), transaction);
-                const candidate = await render(this.withServiceEndNoticePreviewLink(job), transaction);
+                // keeps it a text comparison only. `describeClientMessageEffect`
+                // already applies this same substitution to the recipe-built
+                // `currentJob` before handing it to us, so patching it again
+                // here is a redundant no-op (the helper is idempotent) kept
+                // for defensive clarity -- `job` (candidate) is the render
+                // this callback owns and must patch itself.
+                const current = await render(withServiceEndNoticePreviewLink(currentJob), transaction);
+                const candidate = await render(withServiceEndNoticePreviewLink(job), transaction);
                 if (current.snapshotHash !== candidate.snapshotHash) {
                     throw new Error("Automation job no longer matches its current source");
                 }
@@ -414,23 +415,6 @@ export class AgentAutomationJobAuthorityService {
             change: input.change,
             policy,
             now: new Date(),
-        });
-    }
-
-    /**
-     * A throwaway comparison/preview view of a SERVICE_END_NOTICE job with its
-     * enricher-owned receiptUrl/buttonUrl forced to a fixed placeholder.
-     * No-op for every other template. See the doc comment at the
-     * `resolveCanonicalDeliverySnapshot` call site above for why.
-     */
-    private withServiceEndNoticePreviewLink(job: MessageTriggerJobEntity): MessageTriggerJobEntity {
-        if (job.templateKey !== MessageTriggerTemplateKey.SERVICE_END_NOTICE) return job;
-        return job.withPayloadOverride({
-            templateVariables: {
-                ...job.payload.templateVariables,
-                [SERVICE_END_NOTICE_RECEIPT_URL_TEMPLATE_VARIABLE]: SERVICE_END_NOTICE_PREVIEW_RECEIPT_URL,
-            },
-            [SERVICE_END_NOTICE_BUTTON_URL_PAYLOAD_KEY]: SERVICE_END_NOTICE_PREVIEW_RECEIPT_URL,
         });
     }
 
