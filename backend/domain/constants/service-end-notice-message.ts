@@ -1,10 +1,59 @@
 export const MANUAL_DEDUPE_MARKER = ":manual:";
 export const SERVICE_END_NOTICE_RULE_ID = "system:service_end_notice";
+
+/**
+ * Exact key shape emitted by ReceiptLinkManualSendService.send manual jobs:
+ * `${SERVICE_END_NOTICE_RULE_ID}:client:${clientId}${MANUAL_DEDUPE_MARKER}${randomUUID()}`.
+ * Mirrors SERVICE_RECORD_LINK_MANUAL_DEDUPE_PATTERN's precedent.
+ */
+export const SERVICE_END_NOTICE_MANUAL_DEDUPE_PATTERN =
+    `^${SERVICE_END_NOTICE_RULE_ID}:client:[0-9]+${MANUAL_DEDUPE_MARKER}[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`;
 export const SERVICE_END_NOTICE_SMS_LOG_TEMPLATE_KEY = "service_end_notice_sms";
 export const SERVICE_END_NOTICE_SMS_AUTOMATION_KEY = "SERVICE_END_NOTICE_SMS";
 export const SERVICE_END_NOTICE_SMS_TITLE = "서비스 종료 안내";
 export const SERVICE_END_NOTICE_SMS_TRIGGER_TYPE = "service_end_notice";
 export const SERVICE_END_NOTICE_ALREADY_SENT_CANCEL_REASON = "서비스 종료 안내가 이미 발송됨";
+
+/**
+ * Exact key paths `ReceiptLinkDeliveryEnricher` writes into a SERVICE_END_NOTICE
+ * job's payload at delivery time (`payload.templateVariables[RECEIPT_URL]` and
+ * `payload.[BUTTON_URL]`). The automation binding excludes these from the bound
+ * source payload for this template only: the link is server-derived from the
+ * client id, and the rendered message text is still covered by the delivery
+ * snapshot/provider hash at send time. Shared here so the enricher and the
+ * binding cannot drift apart on the exact key names.
+ */
+export const SERVICE_END_NOTICE_RECEIPT_URL_TEMPLATE_VARIABLE = "receiptUrl";
+export const SERVICE_END_NOTICE_BUTTON_URL_PAYLOAD_KEY = "buttonUrl";
+
+/**
+ * Fixed placeholder substituted for the two enricher-owned fields above ONLY
+ * inside effect-preview/comparison rendering -- never in the real delivery
+ * render path. Applied by the shared `withServiceEndNoticePreviewLink` helper
+ * (application/services/service-end-notice-preview.ts), which is used from
+ * two places: inside `describeClientMessageEffect`
+ * (client-message-effect-recipe.ts), on the recipe-built job it renders
+ * internally -- this covers BOTH `client-automation-impact.service.ts`'s
+ * impact-preview calls and `agent-automation-job-authority.service.ts`'s
+ * authority materialize/dispatch checks, since both go through
+ * `describeClientMessageEffect` -- and directly inside
+ * `agent-automation-job-authority.service.ts`'s own
+ * `describeCurrentClientEffect`, on the actual stored/candidate job it
+ * renders itself (a render `describeClientMessageEffect` does not control).
+ * The helper is idempotent, so applying it in both places is safe.
+ *
+ * The template requires `receiptUrl` (system-template-registry.ts), and the
+ * real value does not exist yet at materialize time (pre-enrichment), on a
+ * freshly built recipe (which never carries it at all), or in an impact
+ * preview (which never delivers anything) -- and would otherwise make a
+ * pre- vs. post-enrichment comparison render diverge on the URL text at
+ * dispatch time. Using the SAME fixed value on both sides of any such
+ * comparison keeps the rendered text (and its digest) stable while the real
+ * send still renders and hashes the actual, enricher-issued link (the
+ * prepared-snapshot check in `describeCurrentClientEffect` deliberately
+ * renders the job UNPATCHED for that reason).
+ */
+export const SERVICE_END_NOTICE_PREVIEW_RECEIPT_URL = "https://placeholder.invalid/receipt/preview";
 
 export const SERVICE_END_NOTICE_DEFAULT_CONTENT = `[사회서비스 제공자 품질평가 A등급]
 안녕하세요, 인천 아이미래로 입니다 :)

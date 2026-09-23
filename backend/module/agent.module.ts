@@ -3,6 +3,8 @@ import { DiscoveryModule } from "@nestjs/core";
 
 import { DatabaseModule } from "infrastructure/database/database.module";
 import { AgentFlagsService } from "application/agent/agent-flags.service";
+import { AgentDecisionConfigService } from "application/agent/decision/agent-decision-config.service";
+import { AGENT_DECISION_PORT, AgentDecisionService } from "application/agent/decision/agent-decision.service";
 import { ActionCoordinatorService } from "application/agent/action-coordinator.service";
 import { AgentRateLimitService } from "application/agent/agent-rate-limit.service";
 import { AgentRuntimeService } from "application/agent/agent-runtime.service";
@@ -16,6 +18,7 @@ import { OwnerGuard } from "infrastructure/auth/owner.guard";
 import { PrismaAgentSessionRepository } from "infrastructure/database/repositories/prisma-agent-session.repository";
 import { PrismaAgentActionRepository } from "infrastructure/database/repositories/prisma-agent-action.repository";
 import { AgentModelFactory } from "infrastructure/agent/agent-model.factory";
+import { TypeSafeJevDecisionService } from "infrastructure/agent/typesafe-jev-decision.service";
 import { AgentActionSweepLockService } from "infrastructure/locking/agent-action-sweep-lock.service";
 import { AgentController } from "interface/controllers/agent.controller";
 import { AgentActionController } from "interface/controllers/agent-action.controller";
@@ -45,6 +48,10 @@ import { SbClientRepository } from "infrastructure/database/repositories/sb.clie
     controllers: [AgentController, AgentActionController, AgentTaskController],
     providers: [
         AgentFlagsService,
+        AgentDecisionConfigService,
+        TypeSafeJevDecisionService,
+        { provide: AGENT_DECISION_PORT, useExisting: TypeSafeJevDecisionService },
+        AgentDecisionService,
         ActionCoordinatorService,
         { provide: AGENT_TASK_REVIEW, useExisting: ActionCoordinatorService },
         AgentActionSweepLockService,

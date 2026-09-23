@@ -1,0 +1,260 @@
+# BabyJamJam preview backend service on Google Cloud Run (BJJ-341).
+# Purpose: Knative Serving v1 manifest for `gcloud run services replace` in
+# region asia-northeast3. Rendered by CI with envsubst over exactly two
+# placeholders (IMAGE = full image ref with digest, PROJECT_ID = GCP project):
+#     envsubst < service.preview.yaml | gcloud run services replace - --project <project>
+# The image is the existing backend/Dockerfile.lightsail; the app reads
+# APP_HOST/APP_PORT (not Cloud Run's PORT) per backend/infrastructure/config/runtime-config.ts.
+# Rationale: maxScale 1: without VALKEY_URL, eformsign operation locks are in-process only, so exactly one instance may serve. Schedulers are off (lease standby); the reconcile sweep never runs here. Aligo is blanked: no registered outbound IP.
+apiVersion: serving.knative.dev/v1
+kind: Service
+metadata:
+  name: babyjamjam-api-preview
+  labels:
+    cloud.googleapis.com/location: asia-northeast3
+spec:
+  template:
+    metadata:
+      annotations:
+        autoscaling.knative.dev/minScale: "0"
+        autoscaling.knative.dev/maxScale: "1"
+        run.googleapis.com/startup-cpu-boost: "true"
+    spec:
+      containerConcurrency: 8
+      timeoutSeconds: 300
+      serviceAccountName: babyjamjam-preview-runtime@${PROJECT_ID}.iam.gserviceaccount.com
+      containers:
+        - image: ${IMAGE}
+          ports:
+            - name: http1
+              containerPort: 3001
+          resources:
+            limits:
+              cpu: "1"
+              memory: 2Gi
+          startupProbe:
+            httpGet:
+              path: /health
+              port: 3001
+            timeoutSeconds: 10
+            periodSeconds: 10
+            failureThreshold: 12
+          env:
+            # Plain env (literal values).
+            - name: NODE_ENV
+              value: "production"
+            - name: APP_HOST
+              value: "0.0.0.0"
+            - name: APP_PORT
+              value: "3001"
+            - name: DATABASE_CONNECTION_MODE
+              value: "shared"
+            - name: TENANT_ISOLATION_MODE
+              value: "observe"
+            - name: SCHEDULERS_ENABLED
+              value: "false"
+            - name: SCHEDULER_LEASE_MODE
+              value: "off"
+            - name: SCHEDULER_LEASE_HOLDER_ID
+              value: "preview"
+            - name: EFORMSIGN_RECONCILE_ALLOW_UNLOCKED
+              value: "false"
+            - name: SERVICE_RECORD_AUTO_FINALIZE_ENABLED
+              value: "false"
+            - name: PREVIEW_FRONTEND_URL
+              value: "https://preview.admin.babyjamjam.com"
+            - name: PRODUCTION_FRONTEND_URL
+              value: "https://preview.admin.babyjamjam.com"
+            - name: SENTRY_ENVIRONMENT
+              value: "preview"
+            # Aligo disabled (operator decision 2026-09-23): Cloud Run has no
+            # Aligo-registered outbound IP; mirrors
+            # backend/deploy/fallback-server/compose.yml lines 29-34.
+            - name: ALIGO_API_KEY
+              value: ""
+            - name: ALIGO_USER_ID
+              value: ""
+            - name: ALIGO_SENDER_PHONE
+              value: ""
+            # Secret env: Secret Manager secret id == env var name, version latest.
+            # Excluded (not deployed): DEVELOPMENT_API_BASE_URL, DEVELOPMENT_FRONTEND_URL, DEVELOPMENT_MOBILE_FRONTEND_URL, MOBILE_SERVICE_RECORD_BASE_URL, MOBILE_RECEIPT_BASE_URL, GEMINI_CHAT_MODEL, GEMINI_CHAT_TEMPERATURE, GEMINI_CHAT_MAX_OUTPUT_TOKENS, GEMINI_CHAT_TIMEOUT_MS, GEMINI_EXTRACTION_MODEL, NEXT_PUBLIC_API_BASE_URL, ALIGO_API_URL, ALIGO_SENDER_KEY, CHANNELTALK_API_URL.
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: DATABASE_URL
+                  key: latest
+            - name: DIRECT_URL
+              valueFrom:
+                secretKeyRef:
+                  name: DIRECT_URL
+                  key: latest
+            - name: JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: JWT_SECRET
+                  key: latest
+            - name: KAKAO_CLIENT_ID
+              valueFrom:
+                secretKeyRef:
+                  name: KAKAO_CLIENT_ID
+                  key: latest
+            - name: KAKAO_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: KAKAO_CLIENT_SECRET
+                  key: latest
+            - name: KAKAO_CALLBACK_URL
+              valueFrom:
+                secretKeyRef:
+                  name: KAKAO_CALLBACK_URL
+                  key: latest
+            - name: PRODUCTION_MOBILE_FRONTEND_URL
+              valueFrom:
+                secretKeyRef:
+                  name: PRODUCTION_MOBILE_FRONTEND_URL
+                  key: latest
+            - name: SUPABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: SUPABASE_URL
+                  key: latest
+            - name: SUPABASE_SERVICE_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: SUPABASE_SERVICE_KEY
+                  key: latest
+            - name: GEMINI_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: GEMINI_API_KEY
+                  key: latest
+            - name: EFORMSIGN_USER_EMAIL
+              valueFrom:
+                secretKeyRef:
+                  name: EFORMSIGN_USER_EMAIL
+                  key: latest
+            - name: EFORMSIGN_API_URL
+              valueFrom:
+                secretKeyRef:
+                  name: EFORMSIGN_API_URL
+                  key: latest
+            - name: EFORMSIGN_DOC_API_URL
+              valueFrom:
+                secretKeyRef:
+                  name: EFORMSIGN_DOC_API_URL
+                  key: latest
+            - name: EFORMSIGN_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: EFORMSIGN_API_KEY
+                  key: latest
+            - name: EFORMSIGN_PRIVATE_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: EFORMSIGN_PRIVATE_KEY
+                  key: latest
+            - name: EFORMSIGN_COMPANY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: EFORMSIGN_COMPANY_ID
+                  key: latest
+            - name: EFORMSIGN_TEMPLATE_ID
+              valueFrom:
+                secretKeyRef:
+                  name: EFORMSIGN_TEMPLATE_ID
+                  key: latest
+            - name: EFORMSIGN_FEEDBACK_TEMPLATE_ID
+              valueFrom:
+                secretKeyRef:
+                  name: EFORMSIGN_FEEDBACK_TEMPLATE_ID
+                  key: latest
+            - name: EFORMSIGN_FEEDBACK_TEMPLATE_ID_10
+              valueFrom:
+                secretKeyRef:
+                  name: EFORMSIGN_FEEDBACK_TEMPLATE_ID_10
+                  key: latest
+            - name: EFORMSIGN_FEEDBACK_TEMPLATE_ID_15
+              valueFrom:
+                secretKeyRef:
+                  name: EFORMSIGN_FEEDBACK_TEMPLATE_ID_15
+                  key: latest
+            - name: EFORMSIGN_FEEDBACK_TEMPLATE_ID_20
+              valueFrom:
+                secretKeyRef:
+                  name: EFORMSIGN_FEEDBACK_TEMPLATE_ID_20
+                  key: latest
+            - name: EFORMSIGN_WEBHOOK_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: EFORMSIGN_WEBHOOK_SECRET
+                  key: latest
+            - name: CHANNELTALK_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: CHANNELTALK_ACCESS_KEY
+                  key: latest
+            - name: CHANNELTALK_ACCESS_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: CHANNELTALK_ACCESS_SECRET
+                  key: latest
+            - name: VAPID_PUBLIC_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: VAPID_PUBLIC_KEY
+                  key: latest
+            - name: VAPID_PRIVATE_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: VAPID_PRIVATE_KEY
+                  key: latest
+            - name: VAPID_EMAIL
+              valueFrom:
+                secretKeyRef:
+                  name: VAPID_EMAIL
+                  key: latest
+            - name: RESEND_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: RESEND_API_KEY
+                  key: latest
+            - name: RESEND_FROM_EMAIL
+              valueFrom:
+                secretKeyRef:
+                  name: RESEND_FROM_EMAIL
+                  key: latest
+            - name: RECEIPT_LINK_HASH_SALT
+              valueFrom:
+                secretKeyRef:
+                  name: RECEIPT_LINK_HASH_SALT
+                  key: latest
+            - name: EFORMSIGN_SERVICE_RECORD_TEMPLATE_ID
+              valueFrom:
+                secretKeyRef:
+                  name: EFORMSIGN_SERVICE_RECORD_TEMPLATE_ID
+                  key: latest
+            - name: EFORMSIGN_SERVICE_RECORD_TEMPLATE_ID_10
+              valueFrom:
+                secretKeyRef:
+                  name: EFORMSIGN_SERVICE_RECORD_TEMPLATE_ID_10
+                  key: latest
+            - name: EFORMSIGN_SERVICE_RECORD_TEMPLATE_ID_15
+              valueFrom:
+                secretKeyRef:
+                  name: EFORMSIGN_SERVICE_RECORD_TEMPLATE_ID_15
+                  key: latest
+            - name: EFORMSIGN_SERVICE_RECORD_TEMPLATE_ID_20
+              valueFrom:
+                secretKeyRef:
+                  name: EFORMSIGN_SERVICE_RECORD_TEMPLATE_ID_20
+                  key: latest
+            # Intentionally NOT deployed (operator decision 2026-09-23, BJJ-341):
+            # SENTRY_DSN and AUTH_EMAIL_TOKEN_HMAC_SECRET. Production's backend
+            # env contains neither (verified by key listing on the production
+            # host) and preview mirrors production's credentials:
+            # SENTRY_DSN unset → Sentry is off on the production backend, so it
+            # stays off here too; AUTH_EMAIL_TOKEN_HMAC_SECRET unset →
+            # backend/application/services/auth-email-token.service.ts falls
+            # back to the shared JWT_SECRET, keeping email-token HMACs identical
+            # to production (its outbox worker rebuilds tokens with its own
+            # secret over the shared DB).

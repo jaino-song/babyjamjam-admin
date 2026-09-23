@@ -917,7 +917,7 @@ export class MessageTriggerService {
             // concurrent metadata update changes the rule.
             const candidate = (await this.ruleRepository.findAll(branchId)).find((rule) => rule.id === id);
             if (!candidate) throw new NotFoundException(`Trigger rule ${id} not found`);
-            if (candidate.templateKey !== MessageTriggerTemplateKey.SERVICE_END_NOTICE) {
+            if (!isManualMessageTriggerRule(candidate)) {
                 const systemTemplateKey = this.getRuleSystemTemplateKey(candidate.templateKey);
                 if (!systemTemplateKey) throw new BadRequestException("SMS 발송 채널이 없는 템플릿입니다.");
                 await this.templateAutomationLock.runExclusive(
@@ -979,7 +979,10 @@ export class MessageTriggerService {
         await this.ensureTriggerSchemaReady();
         await this.messageSenderApprovalService.ensureApproved(branchId);
         this.validateRule(params);
-        const isAutomaticRule = params.templateKey !== MessageTriggerTemplateKey.SERVICE_END_NOTICE;
+        // A newly created rule always gets a fresh, DB-generated id — it can never be the
+        // SERVICE_END_NOTICE system manual row (id = SERVICE_END_NOTICE_RULE_ID), so a new
+        // branch rule is always automatic regardless of templateKey (BJJ-342).
+        const isAutomaticRule = true;
         if (isAutomaticRule && !this.messageAutomationActivationService) {
             throw new ServiceUnavailableException("Message automation activation is not configured");
         }
@@ -1004,9 +1007,9 @@ export class MessageTriggerService {
             transaction,
             {
                 resolveParams: async (writeTransaction) => {
+                    // Same reasoning as isAutomaticRule above: a new rule is never the system row.
                     if (
-                        persistedParams.templateKey !== MessageTriggerTemplateKey.SERVICE_END_NOTICE
-                        && !(await this.messageAutomationActivationService!.getTriggerDispatchEnabled(branchId, writeTransaction))
+                        !(await this.messageAutomationActivationService!.getTriggerDispatchEnabled(branchId, writeTransaction))
                     ) {
                         if (params.isActive === true) {
                             return { ...persistedParams, isActive: true };
@@ -1063,7 +1066,7 @@ export class MessageTriggerService {
                 if (!current) throw new NotFoundException(`Trigger rule ${id} not found`);
                 effectiveRule = current;
                 const templateKey = params.templateKey ?? current.templateKey;
-                const automatic = templateKey !== MessageTriggerTemplateKey.SERVICE_END_NOTICE;
+                const automatic = !isManualMessageTriggerRule({ id: current.id, templateKey });
                 if (automatic && !this.messageAutomationActivationService) {
                     throw new ServiceUnavailableException("Message automation activation is not configured");
                 }
@@ -1133,7 +1136,7 @@ export class MessageTriggerService {
             templateKey: params.templateKey ?? expected.templateKey,
         };
         if (
-            nextState.templateKey !== MessageTriggerTemplateKey.SERVICE_END_NOTICE
+            !isManualMessageTriggerRule({ id: expected.id, templateKey: nextState.templateKey })
             && !this.messageAutomationActivationService
         ) {
             throw new ServiceUnavailableException("Message automation activation is not configured");
@@ -1179,7 +1182,7 @@ export class MessageTriggerService {
                     const current = await this.ruleRepository.findById(branchId, id, transaction);
                     if (!current) return nextState;
                     const templateKey = params.templateKey ?? current.templateKey;
-                    const automatic = templateKey !== MessageTriggerTemplateKey.SERVICE_END_NOTICE;
+                    const automatic = !isManualMessageTriggerRule({ id: current.id, templateKey });
                     if (automatic && !this.messageAutomationActivationService) {
                         throw new ServiceUnavailableException("Message automation activation is not configured");
                     }
@@ -2237,12 +2240,17 @@ export class MessageTriggerService {
             resolveParams?: (transaction: Prisma.TransactionClient) => Promise<UpsertRuleParams>;
         } = {},
     ): Promise<T> {
-        const initiallyAutomatic = params.templateKey !== MessageTriggerTemplateKey.SERVICE_END_NOTICE;
+        // No rule id is available at this generic mutation layer (createRule has none yet;
+        // updateRule/updateRuleApprovedTarget resolve the real id and ownership themselves
+        // inside resolveParams before this point). Neither caller ever targets the branchless
+        // SERVICE_END_NOTICE system row here, so both this initial guess and the refined
+        // decision below are unconditionally automatic (BJJ-342).
+        const initiallyAutomatic = true;
         const runWithBranchLock = async (branchTransaction: Prisma.TransactionClient): Promise<T> => {
             const effectiveParams = options.resolveParams
                 ? await options.resolveParams(branchTransaction)
                 : params;
-            const isAutomaticRule = effectiveParams.templateKey !== MessageTriggerTemplateKey.SERVICE_END_NOTICE;
+            const isAutomaticRule = true;
             if (
                 isAutomaticRule
                 && (!this.messageAutomationActivationService || !this.messageAutomationBranchLockService)

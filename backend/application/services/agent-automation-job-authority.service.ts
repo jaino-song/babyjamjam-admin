@@ -22,6 +22,7 @@ import {
 import type { SmsTriggerDeliverySnapshot } from "./sms-trigger-delivery.service";
 import { agentAutomationConcreteJobDigest, agentAutomationSourcePayload } from "./agent-automation-job-binding";
 import { buildClientMessageRecipe, buildEmployeeAssignmentMessageRecipe, buildMessageRecipeDedupeKey } from "./message-trigger-recipes";
+import { withServiceEndNoticePreviewLink } from "./service-end-notice-preview";
 import { z } from "zod";
 import { parseAgentAutomationTaskCommitReference } from "application/agent/agent-automation-storage.schema";
 import type { AgentAutomationTaskCommitReference } from "domain/entities/agent-automation-consent";
@@ -119,7 +120,7 @@ export class AgentAutomationJobAuthorityService {
         // Immediate jobs retain their original materialization time at dispatch.
         // Catch-up jobs retain the raw recipe time plus the final stable batch
         // schedule. Neither is rebuilt from the dispatch wall clock.
-        const source = agentAutomationSourcePayload(job.payload);
+        const source = agentAutomationSourcePayload(job.payload, job.templateKey);
         const catchUp = source["catchUp"] === undefined ? undefined : catchUpSchema.parse(source["catchUp"]);
         const recipeTime = new Date(catchUp?.originalScheduledFor ?? job.scheduledFor);
         const concrete = buildClientMessageRecipe(rule, client, recipeTime);
@@ -154,11 +155,38 @@ export class AgentAutomationJobAuthorityService {
                 senderApprovedAt: settings.senderApprovedAt?.toISOString() ?? null,
                 pastTriggerEnabled: settings.pastTriggerEnabled, pastTriggerConfig: settings.pastTriggerConfig,
             }, delivery: { resolveCanonicalDeliverySnapshot: async (currentJob) => {
-                const current = await render(currentJob, transaction);
-                const candidate = await render(job, transaction);
-                if (current.snapshotHash !== candidate.snapshotHash
-                    || (preparedSnapshotHash !== undefined && candidate.snapshotHash !== preparedSnapshotHash)) {
+                // SERVICE_END_NOTICE's receiptUrl/buttonUrl are enricher-owned:
+                // absent pre-enrichment (materialize, and always on the
+                // recipe-built `currentJob`, which never carries them) and
+                // real post-enrichment (dispatch, on the actual `job`). The
+                // system template requires receiptUrl, so rendering either
+                // side with its real/missing value would throw (missing
+                // required variable) or make the two renders diverge on link
+                // text alone. Substituting the SAME fixed preview value on
+                // both sides for this structural (recipe-vs-job) comparison
+                // keeps it a text comparison only. `describeClientMessageEffect`
+                // already applies this same substitution to the recipe-built
+                // `currentJob` before handing it to us, so patching it again
+                // here is a redundant no-op (the helper is idempotent) kept
+                // for defensive clarity -- `job` (candidate) is the render
+                // this callback owns and must patch itself.
+                const current = await render(withServiceEndNoticePreviewLink(currentJob), transaction);
+                const candidate = await render(withServiceEndNoticePreviewLink(job), transaction);
+                if (current.snapshotHash !== candidate.snapshotHash) {
                     throw new Error("Automation job no longer matches its current source");
+                }
+                if (preparedSnapshotHash !== undefined) {
+                    // The prepared-snapshot check must prove the REAL staged
+                    // render (with the real, enricher-issued link) is exactly
+                    // what is about to be authorized, so it renders the job
+                    // unpatched. By the time preparedSnapshotHash is supplied
+                    // (authorizeDispatch, after prepareJob has enriched and
+                    // staged the job), the real link is present and this
+                    // render does not throw.
+                    const realCandidate = await render(job, transaction);
+                    if (realCandidate.snapshotHash !== preparedSnapshotHash) {
+                        throw new Error("Automation job no longer matches its current source");
+                    }
                 }
                 return current;
             } } });
@@ -193,7 +221,7 @@ export class AgentAutomationJobAuthorityService {
         const schedule = schedules.find(({ id }) => id === input.scope.scheduleId);
         if (!schedule || rule.templateKey !== job.templateKey || rule.recipientType !== job.recipientType) return null;
 
-        const source = agentAutomationSourcePayload(job.payload);
+        const source = agentAutomationSourcePayload(job.payload, job.templateKey);
         const concrete = buildEmployeeAssignmentMessageRecipe(rule, schedule, job.scheduledFor);
         if (concrete && taskReference) concrete.payload = { ...concrete.payload, taskAutomationReference: taskReference };
         if (!concrete || job.scheduledFor.getTime() !== concrete.scheduledFor.getTime()
@@ -322,7 +350,7 @@ export class AgentAutomationJobAuthorityService {
             },
         });
 
-        const payload = agentAutomationSourcePayload(job.payload);
+        const payload = agentAutomationSourcePayload(job.payload, job.templateKey);
         const variables = payload["templateVariables"];
         if (!variables || typeof variables !== "object" || Array.isArray(variables)) return null;
         const buttonUrl = payload["buttonUrl"];
@@ -473,7 +501,7 @@ export class AgentAutomationJobAuthorityService {
                 || (["pending", "processing", "dispatching"].includes(predecessor.status)
                     && (predecessor.sentAt !== null || predecessor.canceledAt !== null))) return false;
 
-            const predecessorSource = agentAutomationSourcePayload(predecessor.payload);
+            const predecessorSource = agentAutomationSourcePayload(predecessor.payload, predecessor.templateKey);
             const parsed = catchUpSchema.safeParse(predecessorSource["catchUp"]);
             if (!parsed.success) return false;
             const predecessorCatchUp = parsed.data;

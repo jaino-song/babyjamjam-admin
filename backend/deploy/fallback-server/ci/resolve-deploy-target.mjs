@@ -33,7 +33,7 @@ export function resolveDeployTarget({
   fallbackDnsSha256,
   lightsailDnsSha256,
 }) {
-  if (refName === "preview") return "lightsail";
+  if (refName === "preview") return "cloudrun";
   if (refName !== "main") {
     throw new Error("Only preview and main may resolve a backend deployment target.");
   }

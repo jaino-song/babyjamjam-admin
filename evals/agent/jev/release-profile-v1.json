@@ -1,0 +1,72 @@
+{
+  "schemaVersion": "jev-release-profile-v1",
+  "profileVersion": "release-profile-v1-draft",
+  "enabled": false,
+  "notes": "DRAFT, OFF BY DEFAULT. This profile is an example of the release-profile shape; the threshold values below are proposed examples, not approved gates. The approvalReference in every kind is a PLACEHOLDER and is NOT an approval — operator approval is a separate human gate (see docs/agent/jev-rollout.md). The datasetDigest pins the committed synthetic fixture corpus (evals/agent/jev/fixtures-v1.json); no live evaluation evidence exists yet, so checking this profile without evidence fails closed with reason token 'evidence-missing' by design.",
+  "kinds": [
+    {
+      "decisionKind": "route-domains",
+      "modelId": "jev-1.13.0",
+      "questionVersion": "v1",
+      "datasetDigest": "a40a13bdff4a8e4475f438b37c1334197b1581bf13af55b459923815b3abeb54",
+      "thresholds": {
+        "minCoverage": 0.9,
+        "minAgreement": 0.95,
+        "maxAbstentionRate": 0.5,
+        "requireHoldoutSplit": true,
+        "requireHumanReference": true
+      },
+      "approvedScope": ["branch", "internal"],
+      "approvalReference": "PENDING: operator approval required — this JSON reference is not an approval",
+      "notes": "DRAFT: P0 routing gate; thresholds are proposed examples."
+    },
+    {
+      "decisionKind": "classify-client-intent",
+      "modelId": "jev-1.13.0",
+      "questionVersion": "v1",
+      "datasetDigest": "a40a13bdff4a8e4475f438b37c1334197b1581bf13af55b459923815b3abeb54",
+      "thresholds": {
+        "minCoverage": 0.9,
+        "minAgreement": 0.95,
+        "maxAbstentionRate": 0.5,
+        "requireHoldoutSplit": true,
+        "requireHumanReference": true
+      },
+      "approvedScope": ["branch", "internal"],
+      "approvalReference": "PENDING: operator approval required — this JSON reference is not an approval",
+      "notes": "DRAFT: P0 intent gate; thresholds are proposed examples."
+    },
+    {
+      "decisionKind": "evaluate-clarification",
+      "modelId": "jev-1.13.0",
+      "questionVersion": "v1",
+      "datasetDigest": "a40a13bdff4a8e4475f438b37c1334197b1581bf13af55b459923815b3abeb54",
+      "thresholds": {
+        "minCoverage": 0.9,
+        "minAgreement": 0.95,
+        "maxAbstentionRate": 0.5,
+        "requireHoldoutSplit": true,
+        "requireHumanReference": true
+      },
+      "approvedScope": ["branch", "internal"],
+      "approvalReference": "PENDING: operator approval required — this JSON reference is not an approval",
+      "notes": "DRAFT: P1 clarification-advice gate; thresholds are proposed examples."
+    },
+    {
+      "decisionKind": "rank-candidates",
+      "modelId": "jev-1.13.0",
+      "questionVersion": "v1",
+      "datasetDigest": "a40a13bdff4a8e4475f438b37c1334197b1581bf13af55b459923815b3abeb54",
+      "thresholds": {
+        "minCoverage": 0.9,
+        "minAgreement": 0.95,
+        "maxAbstentionRate": 0.5,
+        "requireHoldoutSplit": true,
+        "requireHumanReference": true
+      },
+      "approvedScope": ["branch", "internal"],
+      "approvalReference": "PENDING: operator approval required — this JSON reference is not an approval",
+      "notes": "DRAFT: P1 candidate-ranking gate; thresholds are proposed examples."
+    }
+  ]
+}
