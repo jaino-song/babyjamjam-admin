@@ -2596,4 +2596,10 @@ describe("describeAgentStreamError", () => {
         expect(describeAgentStreamError(error)).toBe("AI_InvalidToolInputError <- TypeValidationError");
         expect(describeAgentStreamError("raw text")).toBe("string");
     });
+
+    it("adds a short uppercase error code such as a Prisma code, never a free-form one", () => {
+        expect(describeAgentStreamError(Object.assign(new Error("column x"), { name: "PrismaClientKnownRequestError", code: "P2022" }))).toBe("PrismaClientKnownRequestError(P2022)");
+        expect(describeAgentStreamError(Object.assign(new Error("m"), { name: "E", code: "contains value 010" }))).toBe("E");
+        expect(describeAgentStreamError(Object.assign(new Error("m"), { name: "PrismaClientKnownRequestError", code: "P2010", meta: { code: "42703", message: "column \"x\" does not exist" } }))).toBe("PrismaClientKnownRequestError(P2010/42703)");
+    });
 });

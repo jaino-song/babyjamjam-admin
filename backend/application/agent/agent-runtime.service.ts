@@ -281,8 +281,12 @@ export function describeAgentStreamError(error: unknown): string {
         ));
         return `${error.name} [${summary.join(", ")}]`;
     }
+    const code = (error as { code?: unknown }).code;
+    const sqlState = (error as { meta?: { code?: unknown } }).meta?.code;
+    const codes = [code, sqlState].filter((value): value is string => typeof value === "string" && /^[A-Z0-9][A-Z0-9_]{1,15}$/.test(value));
+    const name = codes.length > 0 ? `${error.name}(${codes.join("/")})` : error.name;
     const cause = (error as { cause?: unknown }).cause;
-    return cause instanceof Error ? `${error.name} <- ${describeAgentStreamError(cause)}` : error.name;
+    return cause instanceof Error ? `${name} <- ${describeAgentStreamError(cause)}` : name;
 }
 
 @Injectable()
