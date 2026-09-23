@@ -1,9 +1,67 @@
+import { createHash } from "node:crypto";
+
 import { DOMAIN_TERMS } from "../capability-router.service";
 import {
     CLARIFICATION_JUDGMENT_KEYS,
+    CLARIFICATION_JUDGMENT_QUESTIONS,
+    DECISION_QUESTION_CATALOG,
+    DECISION_QUESTION_VERSION,
     ROUTE_DOMAIN_DESCRIPTIONS,
+    ROUTE_DOMAIN_QUESTION_TEMPLATE,
     routeDomainQuestion,
 } from "./decision-questions";
+
+// Serializes with keys sorted recursively (never relying on insertion
+// order) so the digest below is stable regardless of how object literals
+// are written in decision-questions.ts.
+function sortKeysDeep(value: unknown): unknown {
+    if (Array.isArray(value)) return value.map(sortKeysDeep);
+    if (value !== null && typeof value === "object") {
+        const record = value as Record<string, unknown>;
+        const out: Record<string, unknown> = {};
+        for (const key of Object.keys(record).sort()) {
+            out[key] = sortKeysDeep(record[key]);
+        }
+        return out;
+    }
+    return value;
+}
+
+function currentQuestionDigest(): { version: string; digest: string } {
+    const catalogEntries: Record<string, { questionText: string; labels: readonly string[] }> = {};
+    for (const kind of Object.keys(DECISION_QUESTION_CATALOG).sort()) {
+        const def =
+            DECISION_QUESTION_CATALOG[kind as keyof typeof DECISION_QUESTION_CATALOG];
+        catalogEntries[kind] = { questionText: def.questionText, labels: def.labels };
+    }
+
+    const canonical = sortKeysDeep({
+        routeDomainQuestionTemplate: ROUTE_DOMAIN_QUESTION_TEMPLATE,
+        routeDomainDescriptions: ROUTE_DOMAIN_DESCRIPTIONS,
+        clarificationJudgmentQuestions: CLARIFICATION_JUDGMENT_QUESTIONS,
+        catalog: catalogEntries,
+    });
+
+    const digest = createHash("sha256").update(JSON.stringify(canonical)).digest("hex");
+    return { version: DECISION_QUESTION_VERSION, digest };
+}
+
+// Question text changed — bump DECISION_QUESTION_VERSION, regenerate
+// evaluation evidence and stored acceptance profiles, then re-pin this
+// digest. This pin exists because rewording any description/question
+// while leaving the version at "v2" would otherwise keep every other test
+// green: a v2 acceptance profile calibrated on the old wording would then
+// silently apply to different questions.
+const PINNED_QUESTION_DIGEST = {
+    version: "v2",
+    digest: "0cf08a2d1796d9c4860dd7ac552dbe761fcb8cac63e0e798fdd1a2a33fcb2027",
+};
+
+describe("question text is pinned to DECISION_QUESTION_VERSION", () => {
+    it("matches the pinned digest for the current question version", () => {
+        expect(currentQuestionDigest()).toEqual(PINNED_QUESTION_DIGEST);
+    });
+});
 
 // The router's static domain terms and the routeDomains question
 // descriptions must cover exactly the same domain set: a domain the router

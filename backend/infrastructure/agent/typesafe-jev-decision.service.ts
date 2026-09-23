@@ -246,16 +246,11 @@ export class TypeSafeJevDecisionService implements AgentDecisionPort {
         // `question-mismatch` means "no question text for a permitted
         // domain" (the same failure token is also used for profile/evidence
         // version mismatch elsewhere) — this is not a new failure reason.
-        const domainQuestions: Record<string, string> = {};
+        const questions: Record<string, NoulQuestion> = {};
         for (const domain of request.permittedDomains) {
             const text = routeDomainQuestion(domain);
             if (text === null) return failure(DECISION_FAILURE_REASONS.questionMismatch);
-            domainQuestions[domain] = text;
-        }
-
-        const questions: Record<string, NoulQuestion> = {};
-        for (const domain of request.permittedDomains) {
-            questions[domain] = noul(domainQuestions[domain]);
+            questions[domain] = noul(text);
         }
 
         try {
