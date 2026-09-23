@@ -6,8 +6,15 @@ import {
     IsOptional,
     IsString,
     ValidateBy,
+    ValidateIf,
+    ValidationArguments,
     ValidationOptions,
 } from "class-validator";
+
+import {
+    getServiceRecordHeaderFieldError,
+    type ServiceRecordHeaderValidationKey,
+} from "@babyjamjam/shared/utils/service-record-input";
 
 import { SERVICE_RECORD_TEXT_LIMITS } from "domain/constants/service-record-text-limits";
 
@@ -45,14 +52,30 @@ export class VerifyServiceRecordPhoneDto {
     phone!: string;
 }
 
-/** One-time service header (top of the 제공기록지). */
+/** Server and UI share the same strict rules; no normalization occurs here. */
+function IsServiceRecordHeaderInput(key: ServiceRecordHeaderValidationKey): PropertyDecorator {
+    return ValidateBy({
+        name: "isServiceRecordHeaderInput",
+        validator: {
+            validate(value: unknown): boolean {
+                return getServiceRecordHeaderFieldError(key, value, new Date(), { required: true }) === null;
+            },
+            defaultMessage(args: ValidationArguments): string {
+                return getServiceRecordHeaderFieldError(key, args.value, new Date(), { required: true })
+                    ?? "입력 형식을 확인해 주세요.";
+            },
+        },
+    });
+}
+
+/** Partial updates stay supported, but supplied empty/null/malformed values are rejected. */
 export class SaveServiceHeaderDto {
-    @IsOptional() @IsString() momName?: string;
-    @IsOptional() @IsString() momBirth?: string;
-    @IsOptional() @IsString() babyName?: string;
-    @IsOptional() @IsString() babyBirth?: string;
-    @IsOptional() @IsString() deliveryType?: string;
-    @IsOptional() @IsString() babyWeight?: string;
+    @ValidateIf((_object, value) => value !== undefined) @IsServiceRecordHeaderInput("momName") momName?: string;
+    @ValidateIf((_object, value) => value !== undefined) @IsServiceRecordHeaderInput("momBirth") momBirth?: string;
+    @ValidateIf((_object, value) => value !== undefined) @IsServiceRecordHeaderInput("babyName") babyName?: string;
+    @ValidateIf((_object, value) => value !== undefined) @IsServiceRecordHeaderInput("babyBirth") babyBirth?: string;
+    @ValidateIf((_object, value) => value !== undefined) @IsServiceRecordHeaderInput("deliveryType") deliveryType?: string;
+    @ValidateIf((_object, value) => value !== undefined) @IsServiceRecordHeaderInput("babyWeight") babyWeight?: string;
 }
 
 /** A single service session's record (used for both draft save and final submit). */

@@ -16,9 +16,9 @@ test.beforeEach(async ({ page }) => {
 
 const header = {
   momName: "김산모",
-  momBirth: "900101",
+  momBirth: "1990-01-01",
   babyName: "김아기",
-  babyBirth: "260714",
+  babyBirth: "2026-07-14",
   babyWeight: "3.2",
   deliveryType: "자연분만",
 };
@@ -104,6 +104,7 @@ test("서비스 제공일자가 오늘과 달라도 경고만 표시하고 기�
 test("마지막 회차 제출 후 별도 버튼 없이 최종 제출을 완료한다", async ({ page }) => {
   const token = "final-service-record";
   let headerSaved = false;
+  let headerRequestBody: Record<string, unknown> | null = null;
   let submitted = false;
   let finalizeCalls = 0;
   let submittedBody: Record<string, unknown> | null = null;
@@ -113,6 +114,7 @@ test("마지막 회차 제출 후 별도 버튼 없이 최종 제출을 완료�
   await page.route(`**/api/service-record/${token}/verify`, (route) => route.fulfill({ status: 201, json: { ok: true, accessToken: "access-token" } }));
   await page.route(`**/api/service-record/${token}/header`, async (route) => {
     headerSaved = true;
+    headerRequestBody = route.request().postDataJSON() as Record<string, unknown>;
     await route.fulfill({ json: { ok: true } });
   });
   await page.route(`**/api/service-record/${token}/sessions/1/submit`, async (route) => {
@@ -138,11 +140,20 @@ test("마지막 회차 제출 후 별도 버튼 없이 최종 제출을 완료�
   }));
 
   await page.goto(`/service-record/${token}`);
-  await page.getByPlaceholder("예) 홍길동").fill(header.momName);
-  await page.getByPlaceholder("예) 900101").fill(header.momBirth);
-  await page.getByPlaceholder("예) 홍아기").fill(header.babyName);
-  await page.getByPlaceholder("예) 260615").fill(header.babyBirth);
-  await page.getByPlaceholder("예) 3.2").fill(header.babyWeight);
+  const momBirth = page.getByLabel("산모 생년월일 (YYYY-MM-DD)");
+  const babyBirth = page.getByLabel("신생아 출생일자 (YYYY-MM-DD)");
+  // Both birthday placeholders are identical, so the distinct accessible
+  // labels are the only unambiguous way to target each field.
+  await expect(momBirth).toHaveAttribute("placeholder", "1999-01-01");
+  await expect(babyBirth).toHaveAttribute("placeholder", "1999-01-01");
+  await page.getByLabel("산모 성명", { exact: true }).fill(header.momName);
+  await momBirth.fill("19900101");
+  await page.getByLabel("신생아 성명", { exact: true }).fill(header.babyName);
+  await babyBirth.fill("20260714");
+  await page.getByLabel("신생아 몸무게 (kg)").fill(header.babyWeight);
+  // Eight-digit entries format into the ISO contract while typing.
+  await expect(momBirth).toHaveValue(header.momBirth);
+  await expect(babyBirth).toHaveValue(header.babyBirth);
   await page.getByRole("button", { name: "다음", exact: true }).click();
 
   await page.getByRole("button", { name: "기록 시작" }).click();
@@ -172,6 +183,14 @@ test("마지막 회차 제출 후 별도 버튼 없이 최종 제출을 완료�
   await expect(page.getByText("최종 제출 완료", { exact: true })).toBeVisible();
   await expect(page.getByText("제공기록지 제출이 완료되었습니다.", { exact: true })).toBeVisible();
   expect(finalizeCalls).toBe(0);
+  expect(headerRequestBody).toMatchObject({
+    momName: header.momName,
+    momBirth: header.momBirth,
+    babyName: header.babyName,
+    babyBirth: header.babyBirth,
+    babyWeight: header.babyWeight,
+    deliveryType: header.deliveryType,
+  });
   expect(submittedBody).toMatchObject({
     clientSignature: expect.any(String),
     momApproval: "approved",
@@ -206,17 +225,25 @@ test("기본정보 저장 실패 시 입력값을 보존하고 다음 단계로 
   }));
 
   await page.goto(`/service-record/${token}`);
-  await page.getByPlaceholder("예) 홍길동").fill(header.momName);
-  await page.getByPlaceholder("예) 900101").fill(header.momBirth);
-  await page.getByPlaceholder("예) 홍아기").fill(header.babyName);
-  await page.getByPlaceholder("예) 260615").fill(header.babyBirth);
-  await page.getByPlaceholder("예) 3.2").fill(header.babyWeight);
+  const momBirth = page.getByLabel("산모 생년월일 (YYYY-MM-DD)");
+  const babyBirth = page.getByLabel("신생아 출생일자 (YYYY-MM-DD)");
+  await expect(momBirth).toHaveAttribute("placeholder", "1999-01-01");
+  await expect(babyBirth).toHaveAttribute("placeholder", "1999-01-01");
+  await page.getByLabel("산모 성명", { exact: true }).fill(header.momName);
+  await momBirth.fill("19900101");
+  await page.getByLabel("신생아 성명", { exact: true }).fill(header.babyName);
+  await babyBirth.fill("20260714");
+  await page.getByLabel("신생아 몸무게 (kg)").fill(header.babyWeight);
+  await expect(momBirth).toHaveValue(header.momBirth);
+  await expect(babyBirth).toHaveValue(header.babyBirth);
   await page.getByRole("button", { name: "다음", exact: true }).click();
 
   await expect(page.getByText("기본정보 저장에 실패했어요.", { exact: true })).toBeVisible();
   await expect(page.locator('[data-component="mobile_service-record_wizard_body_service-title"]')).toHaveText("서비스 기본정보");
 
   await page.reload();
-  await expect(page.getByPlaceholder("예) 홍길동")).toHaveValue(header.momName);
-  await expect(page.getByPlaceholder("예) 홍아기")).toHaveValue(header.babyName);
+  await expect(page.getByLabel("산모 성명", { exact: true })).toHaveValue(header.momName);
+  await expect(momBirth).toHaveValue(header.momBirth);
+  await expect(page.getByLabel("신생아 성명", { exact: true })).toHaveValue(header.babyName);
+  await expect(babyBirth).toHaveValue(header.babyBirth);
 });

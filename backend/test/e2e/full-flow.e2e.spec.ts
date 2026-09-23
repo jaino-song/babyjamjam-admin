@@ -876,6 +876,7 @@ describeE2E("BJJ-275 full connected flow", () => {
         const employeePhone = `0108${runId}`.slice(0, 11);
         const clientPhone = `0109${runId}`.slice(0, 11);
         const { startDate, endDate } = createTwoBusinessDayServicePeriod();
+        const babyBirth = isoDateInKorea();
 
         const clientRes = await request(app.getHttpServer()).post("/clients").send({
             name: `전체흐름고객-${runId}`,
@@ -959,11 +960,11 @@ describeE2E("BJJ-275 full connected flow", () => {
 
         const header = await request(app.getHttpServer()).put("/service-record/header").set(auth).send({
             momName: "전체흐름산모",
-            momBirth: "900101",
+            momBirth: "1990-01-01",
             babyName: "전체흐름아기",
-            babyBirth: startDate.replaceAll("-", "").slice(2),
+            babyBirth,
             deliveryType: "자연분만",
-            babyWeight: "3.2kg",
+            babyWeight: "3.2",
         });
         expect(header.status).toBe(200);
 
@@ -986,6 +987,7 @@ describeE2E("BJJ-275 full connected flow", () => {
 
         const context = await request(app.getHttpServer()).get("/service-record/context").set(auth);
         expect(context.status).toBe(200);
+        expect(context.body.header).toMatchObject({ momBirth: "1990-01-01", babyBirth, babyWeight: "3.2" });
         expect(context.body.sessions).toEqual(expect.arrayContaining([
             expect.objectContaining({ sessionIndex: 1, locked: true }),
         ]));
