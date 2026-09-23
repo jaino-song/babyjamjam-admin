@@ -2,7 +2,7 @@ import { z } from "zod";
 
 import { AgentEntitySelectPartSchema, type AgentTask } from "@babyjamjam/shared";
 import { DeterministicAgentLanguageModel } from "infrastructure/agent/deterministic-agent-language-model";
-import { AgentRuntimeService, buildAuthoritativeModelMessages, buildWriteToolInputSchema, redactModelValue } from "./agent-runtime.service";
+import { AgentRuntimeService, buildAuthoritativeModelMessages, buildWriteToolInputSchema, describeAgentStreamError, redactModelValue } from "./agent-runtime.service";
 import { DECISION_KINDS, DECISION_MODES } from "./decision/decision-contracts";
 import { createDecisionTraceCollector } from "./decision/decision-trace";
 
@@ -2580,5 +2580,20 @@ describe("AgentRuntimeService", () => {
         expect(taskOrchestrator.resolveTurnOwnership).not.toHaveBeenCalled();
         // The incumbent refusal behavior is preserved for the fresh session.
         expect(sessions.remove).toHaveBeenCalledWith("session-kill-switch", { userId: "user-a", branchId: "branch-a" });
+    });
+});
+
+describe("describeAgentStreamError", () => {
+    it("reports validation issues by path and code only, never values", () => {
+        const error = Object.assign(new Error("Too small: 01012345678"), { name: "ZodError", issues: [{ path: ["schedules", 0, "primaryEmployeeId"], code: "too_small", message: "01012345678" }] });
+        const described = describeAgentStreamError(error);
+        expect(described).toBe("ZodError [schedules.0.primaryEmployeeId:too_small]");
+        expect(described).not.toContain("0101234");
+    });
+
+    it("reports only error names through a cause chain and for non-errors", () => {
+        const error = Object.assign(new Error("input {\"query\":\"홍길동\"}"), { name: "AI_InvalidToolInputError", cause: Object.assign(new Error("secret"), { name: "TypeValidationError" }) });
+        expect(describeAgentStreamError(error)).toBe("AI_InvalidToolInputError <- TypeValidationError");
+        expect(describeAgentStreamError("raw text")).toBe("string");
     });
 });

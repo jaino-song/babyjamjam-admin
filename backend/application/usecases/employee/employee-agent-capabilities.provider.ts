@@ -7,7 +7,8 @@ import { FindEmployeeByIdUsecase } from "./find-employee-by-id.usecase";
 import { ListEmployeesUsecase } from "./list-employees.usecase";
 
 const EmployeeSummarySchema = z.object({
-    id: z.number().int().positive(),
+    // Legacy data includes employee id 0, so ids are non-negative, not positive.
+    id: z.number().int().nonnegative(),
     name: z.string(),
     grade: z.string(),
     workArea: z.array(z.string()),
@@ -29,7 +30,7 @@ const SearchOutputSchema = z.discriminatedUnion("kind", [
     }),
 ]);
 const GetInputSchema = z.object({
-    id: z.number().int().positive().describe("The employee's numeric id, from employees.search — not a name."),
+    id: z.number().int().nonnegative().describe("The employee's numeric id, from employees.search — not a name."),
 });
 const GetOutputSchema = z.object({ kind: z.literal("entity"), entity: EmployeeSummarySchema });
 

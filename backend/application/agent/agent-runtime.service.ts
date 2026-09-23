@@ -1,4 +1,4 @@
-import { ForbiddenException, Injectable, InternalServerErrorException, Optional } from "@nestjs/common";
+import { ForbiddenException, Injectable, InternalServerErrorException, Logger, Optional } from "@nestjs/common";
 import { randomUUID } from "crypto";
 import { z } from "zod";
 import {
@@ -267,8 +267,28 @@ export function buildAuthoritativeModelMessages(
     return [...history, redactedCurrentMessage];
 }
 
+/**
+ * Describes a stream/tool error for server logs without values: tool inputs and
+ * outputs can carry personal data, so only the error name and, for validation
+ * errors, the issue paths and codes are logged.
+ */
+export function describeAgentStreamError(error: unknown): string {
+    if (!(error instanceof Error)) return typeof error;
+    const issues = (error as { issues?: unknown }).issues;
+    if (Array.isArray(issues)) {
+        const summary = issues.slice(0, 5).map((issue: { path?: unknown; code?: unknown }) => (
+            `${Array.isArray(issue.path) ? issue.path.join(".") : "?"}:${typeof issue.code === "string" ? issue.code : "?"}`
+        ));
+        return `${error.name} [${summary.join(", ")}]`;
+    }
+    const cause = (error as { cause?: unknown }).cause;
+    return cause instanceof Error ? `${error.name} <- ${describeAgentStreamError(cause)}` : error.name;
+}
+
 @Injectable()
 export class AgentRuntimeService {
+    private readonly logger = new Logger(AgentRuntimeService.name);
+
     constructor(
         private readonly registry: CapabilityRegistryService,
         private readonly flags: AgentFlagsService,
@@ -1175,14 +1195,16 @@ export class AgentRuntimeService {
                     // so no trace of provider thinking — content or marker —
                     // ever reaches the client stream.
                     sendReasoning: false,
-                    onError: () => {
+                    onError: (error) => {
+                        this.logger.warn(`agent model/tool stream error: ${describeAgentStreamError(error)}`);
                         streamFailureCategory = "provider";
                         return "요청을 처리하지 못했습니다. 잠시 후 다시 시도해 주세요.";
                     },
                 })));
             },
             onFinish: persistCompletion,
-            onError: () => {
+            onError: (error) => {
+                this.logger.warn(`agent stream error: ${describeAgentStreamError(error)}`);
                 streamFailureCategory = "provider";
                 void finishTrace("failed", undefined, "provider");
                 return "요청을 처리하지 못했습니다. 잠시 후 다시 시도해 주세요.";

@@ -5,7 +5,8 @@ import { AgentCapabilityProvider } from "application/agent/capability.decorator"
 import type { AgentCapabilityProviderContract, CapabilityDefinition } from "application/agent/capability.types";
 import { ListEmployeeSchedulesUsecase } from "./list-employee-schedules.usecase";
 
-const ScheduleSchema = z.object({ id: z.number().int().positive(), clientId: z.number().int().positive(), primaryEmployeeId: z.number().int().positive(), secondaryEmployeeId: z.number().int().positive().nullable(), startDate: z.string(), endDate: z.string(), replaced: z.boolean() });
+// Legacy data includes employee id 0, so employee ids are non-negative.
+const ScheduleSchema = z.object({ id: z.number().int().positive(), clientId: z.number().int().positive(), primaryEmployeeId: z.number().int().nonnegative(), secondaryEmployeeId: z.number().int().nonnegative().nullable(), startDate: z.string(), endDate: z.string(), replaced: z.boolean() });
 const InputSchema = z.object({
     date: z.string().date().optional().describe(
         "Optional ISO date (YYYY-MM-DD). When given, only schedules overlapping that date are returned; omit to list all current/upcoming schedules."
