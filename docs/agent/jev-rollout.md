@@ -72,7 +72,10 @@ pnpm --filter ./backend exec ts-node scripts/agent/run-jev-evaluation.ts \
 
 # Real model evidence — external calls; every live gate applies
 # (--consent=live-provider-call, TYPESAFE_API_KEY, synthetic-only corpus
-# inside evals/agent/jev/, pinned model id):
+# inside evals/agent/jev/, pinned model id). Use TypeSafe direct: Vercel AI
+# Gateway serves only the unpinned `typesafe-ai/jev` alias and answers the
+# pinned jev-1.13.0 with 404 model_not_found (probed 2026-09-23), which the
+# run records as provider-error:
 pnpm --filter ./backend exec ts-node scripts/agent/run-jev-evaluation.ts \
   --mode=live \
   --input=../evals/agent/jev/fixtures-v1.json \
