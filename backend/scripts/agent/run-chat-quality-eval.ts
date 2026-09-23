@@ -47,7 +47,7 @@
  *
  * PII: transcripts contain customer names, addresses, and phone numbers from
  * the local dev database. Point `--output` outside the repo (e.g. under
- * `$TMPDIR`) — the CLI warns when the path resolves inside this git worktree.
+ * `$TMPDIR`) — the CLI refuses a path that resolves inside this git worktree.
  */
 import { execFileSync } from "node:child_process";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -378,16 +378,16 @@ function buildJudgeCaller(apiKey: string, modelId: string): JudgeCaller {
     };
 }
 
-/** Warns (does not fail) when an output path resolves inside this worktree — transcripts carry real customer PII. */
-function warnIfOutputInsideRepo(outputPath: string): void {
+/** Refuses an output path inside this worktree — transcripts carry real customer PII and must never be committed. */
+function refuseOutputInsideRepo(outputPath: string): void {
     const resolved = resolve(outputPath);
     const rel = relative(REPO_ROOT, resolved);
-    const insideRepo = rel !== "" && !rel.startsWith("..") && !isAbsolute(rel);
+    const insideRepo = rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
     if (insideRepo) {
-        console.error(
-            `Warning: --output "${outputPath}" resolves inside this git worktree. Report transcripts contain `
-            + "real customer names, addresses, and phone numbers from the local dev database. Consider "
-            + "pointing --output outside the repo (e.g. under $TMPDIR).",
+        throw new Error(
+            `--output "${outputPath}" resolves inside this git worktree. Report transcripts contain `
+            + "real customer names, addresses, and phone numbers from the local dev database; "
+            + "point --output outside the repo (e.g. under $TMPDIR).",
         );
     }
 }
@@ -418,7 +418,7 @@ async function runOnce(args: RunCliArgs): Promise<number> {
         throw error;
     }
 
-    warnIfOutputInsideRepo(args.output);
+    refuseOutputInsideRepo(args.output);
 
     const { scenarios, version, manifestCapabilities } = loadScenarios();
     const selected = selectScenarios(scenarios, args.target, args.only);
