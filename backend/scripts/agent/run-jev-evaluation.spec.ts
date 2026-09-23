@@ -34,9 +34,11 @@ import {
 import {
     ATTESTATION_SCHEMA_VERSION,
     CLARIFICATION_BINARIZATION_THRESHOLD,
+    computeLiveDeadline,
     EVAL_DIR_RELATIVE,
     LIVE_CONSENT_FLAG,
     LIVE_CONSENT_VALUE,
+    LIVE_DEADLINE_MS,
     RUBRIC_FILENAME,
     runJevEvaluation,
     type JevRunOptions,
@@ -613,6 +615,19 @@ describe("live mode with an injected fetch stub", () => {
             expect(ok.report.generatedAt).toBe(injectedNow.toISOString());
             expect(ok.report.live?.failures).toEqual([]);
         }
+    });
+
+    it("bounds the live per-case deadline to now + LIVE_DEADLINE_MS, never an effectively-infinite value", () => {
+        // runLiveCase computes `computeLiveDeadline(Date.now())` on the real
+        // wall clock for every corpus case (never the injected report clock —
+        // see the comment at that call site). Pin the pure computation
+        // directly: it must stay a finite, near-term budget, not something an
+        // unbounded-deadline mutation could silently pass as.
+        const now = Date.now();
+        const deadline = computeLiveDeadline(now);
+        expect(deadline).toBe(now + LIVE_DEADLINE_MS);
+        expect(deadline).toBeGreaterThan(now);
+        expect(deadline).toBeLessThanOrEqual(now + LIVE_DEADLINE_MS);
     });
 });
 

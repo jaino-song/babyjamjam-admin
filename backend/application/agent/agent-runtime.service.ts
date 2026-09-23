@@ -123,7 +123,7 @@ const CLARIFICATION_MEMORY_LIMIT = 256;
  */
 function buildClarificationFacts(turn: ConversationTaskTurnResult, askedAtRevision: number | null): ClarificationFacts {
     const task = turn.task;
-    if (!task) throw new Error("Clarification facts require a task snapshot");
+    if (!task) throw new InternalServerErrorException(uncertainProblemBody("INTERNAL_ERROR"));
     let missingFields: readonly string[];
     try {
         const safe = projectTaskForSafeChat(task);
