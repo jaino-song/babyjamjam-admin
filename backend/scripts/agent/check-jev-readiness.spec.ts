@@ -10,6 +10,7 @@ import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSy
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
+import { DECISION_QUESTION_VERSION } from "../../application/agent/decision/decision-questions";
 import {
     EVIDENCE_REPORT_SCHEMA_VERSION,
     evaluateJevReadiness,
@@ -50,7 +51,7 @@ function syntheticProfile(): MutableRecord {
             {
                 decisionKind: "classify-client-intent",
                 modelId: SYNTHETIC_MODEL_ID,
-                questionVersion: "v1",
+                questionVersion: DECISION_QUESTION_VERSION,
                 datasetDigest: SYNTHETIC_DIGEST,
                 thresholds: {
                     minCoverage: 0.5,
@@ -70,7 +71,7 @@ function syntheticEvidence(): MutableRecord {
     return {
         schemaVersion: EVIDENCE_REPORT_SCHEMA_VERSION,
         modelId: SYNTHETIC_MODEL_ID,
-        questionVersion: "v1",
+        questionVersion: DECISION_QUESTION_VERSION,
         datasetDigest: SYNTHETIC_DIGEST,
         notes: "SYNTHETIC evaluation evidence — hand-computed counts, not a real run",
         kinds: [
@@ -170,6 +171,39 @@ describe("failure modes block with precise reasons", () => {
         expect(result.ready).toBe(false);
         expect(tokens(result)).toEqual([READINESS_REASONS.evidenceQuestionVersionMismatch]);
         expect(result.reasons[0]!.detail).toContain("questionVersion");
+    });
+
+    it("blocks a profile pinned to a stale question version, even with otherwise-passing evidence", () => {
+        const profile = mutatedProfile((item) => {
+            const kind = (item["kinds"] as MutableRecord[])[0]!;
+            kind["questionVersion"] = "v1";
+        });
+        const evidence = mutatedEvidence((item) => {
+            item["questionVersion"] = "v1";
+        });
+        const result = check(profile, evidence);
+        expect(result.ready).toBe(false);
+        expect(tokens(result)).toEqual([READINESS_REASONS.profileQuestionVersionStale]);
+        expect(result.reasons[0]!.detail).toContain("v1");
+        expect(result.reasons[0]!.detail).toContain(DECISION_QUESTION_VERSION);
+    });
+
+    it("blocks a stale profile with reasons for both stale-version and missing evidence when evidence is null", () => {
+        const profile = mutatedProfile((item) => {
+            const kind = (item["kinds"] as MutableRecord[])[0]!;
+            kind["questionVersion"] = "v1";
+        });
+        const result = check(profile, null);
+        expect(result.ready).toBe(false);
+        expect(tokens(result)).toEqual([
+            READINESS_REASONS.profileQuestionVersionStale,
+            READINESS_REASONS.evidenceMissing,
+        ]);
+    });
+
+    it("does not flag profile-question-version-stale when the profile matches the shipping version", () => {
+        const result = check();
+        expect(tokens(result)).not.toContain(READINESS_REASONS.profileQuestionVersionStale);
     });
 
     it("blocks on a mismatched dataset digest", () => {
@@ -414,14 +448,18 @@ describe("no mutation", () => {
         return readFileSync(CHECKER_PATH, "utf8");
     }
 
-    it("imports nothing beyond node:fs readFileSync and the decision contracts", () => {
+    it("imports nothing beyond node:fs readFileSync, the decision contracts, and decision-questions", () => {
         const source = checkerSource();
         const importModules = [
             ...source.matchAll(/import\s+(?:type\s+)?(?:\{[^}]*\}|\*\s+as\s+\w+|\w+)\s+from\s+"([^"]+)"/g),
         ].map((match) => match[1]!);
         expect(importModules.length).toBeGreaterThan(0);
         for (const module of importModules) {
-            expect(["node:fs", "../../application/agent/decision/decision-contracts"]).toContain(module);
+            expect([
+                "node:fs",
+                "../../application/agent/decision/decision-contracts",
+                "../../application/agent/decision/decision-questions",
+            ]).toContain(module);
         }
         // The only node builtin import is readFileSync — no write-capable fs API.
         expect(source).toContain('import { readFileSync } from "node:fs";');

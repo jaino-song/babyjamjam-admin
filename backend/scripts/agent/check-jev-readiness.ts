@@ -37,7 +37,11 @@
  * human-reference facts are attested, never measured, by the tooling.
  *
  * The file system is read-only: only readFileSync is imported, results are
- * printed to stdout, and nothing is ever written.
+ * printed to stdout, and nothing is ever written. Besides node:fs, the only
+ * other imports are the decision contracts (decision kind vocabulary) and
+ * DECISION_QUESTION_VERSION (the shipping question version, used to flag a
+ * profile pinned to a stale question version) — both are pure, I/O-free
+ * modules, so the checker stays offline and read-only.
  */
 import { readFileSync } from "node:fs";
 
@@ -45,6 +49,7 @@ import {
     DECISION_KINDS,
     type DecisionKind,
 } from "../../application/agent/decision/decision-contracts";
+import { DECISION_QUESTION_VERSION } from "../../application/agent/decision/decision-questions";
 
 // ---------------------------------------------------------------------------
 // Vocabulary
@@ -72,6 +77,7 @@ export const PLACEHOLDER_APPROVAL_PREFIXES = ["pending:", "not-approved:", "plac
 /** Machine-token reasons. The detail field carries the human explanation. */
 export const READINESS_REASONS = {
     profileInvalid: "profile-invalid",
+    profileQuestionVersionStale: "profile-question-version-stale",
     evidenceMissing: "evidence-missing",
     evidenceInvalid: "evidence-invalid",
     evidenceModelMismatch: "evidence-model-mismatch",
@@ -661,6 +667,14 @@ export function evaluateJevReadiness(
 
 function checkProfileSemantics(profile: JevReleaseProfile, reasons: ReadinessReason[]): void {
     for (const kind of profile.kinds) {
+        if (kind.questionVersion !== DECISION_QUESTION_VERSION) {
+            reasons.push(reason(
+                READINESS_REASONS.profileQuestionVersionStale,
+                `Decision kind "${kind.decisionKind}": profile questionVersion "${kind.questionVersion}" `
+                + `does not match the shipping DECISION_QUESTION_VERSION "${DECISION_QUESTION_VERSION}"; `
+                + "regenerate evidence and re-author the profile",
+            ));
+        }
         const invalidScopes = kind.approvedScope.filter(
             (scope) => !(ALLOWED_APPROVED_SCOPES as readonly string[]).includes(scope),
         );
