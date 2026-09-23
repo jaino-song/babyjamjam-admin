@@ -248,14 +248,13 @@ spec:
                 secretKeyRef:
                   name: EFORMSIGN_SERVICE_RECORD_TEMPLATE_ID_20
                   key: latest
-            # RUNTIME_ONLY secrets (read by the backend, absent from env.tpl).
-            - name: SENTRY_DSN
-              valueFrom:
-                secretKeyRef:
-                  name: SENTRY_DSN
-                  key: latest
-            - name: AUTH_EMAIL_TOKEN_HMAC_SECRET
-              valueFrom:
-                secretKeyRef:
-                  name: AUTH_EMAIL_TOKEN_HMAC_SECRET
-                  key: latest
+            # Intentionally NOT deployed (operator decision 2026-09-23, BJJ-341):
+            # SENTRY_DSN and AUTH_EMAIL_TOKEN_HMAC_SECRET. Production's backend
+            # env contains neither (verified by key listing on the production
+            # host) and preview mirrors production's credentials:
+            # SENTRY_DSN unset → Sentry is off on the production backend, so it
+            # stays off here too; AUTH_EMAIL_TOKEN_HMAC_SECRET unset →
+            # backend/application/services/auth-email-token.service.ts falls
+            # back to the shared JWT_SECRET, keeping email-token HMACs identical
+            # to production (its outbox worker rebuilds tokens with its own
+            # secret over the shared DB).

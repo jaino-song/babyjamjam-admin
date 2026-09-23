@@ -18,7 +18,7 @@
 | maxScale=1 안전 불변식 | Valkey가 없는 첫 버전에서 **절대 1 초과 금지** | `VALKEY_URL` 미설정 시 eformsign operation lock이 in-process만 존재 → 인스턴스가 정확히 하나여야 안전 |
 | 스케줄러 OFF | `SCHEDULERS_ENABLED=false`를 매니페스트에 하드코딩(백엔드 기본값은 true — 누락 금지), scheduler lease는 standby(`SCHEDULER_LEASE_MODE=off`), `EFORMSIGN_RECONCILE_ALLOW_UNLOCKED=false`로 reconcile sweep은 preview에서 미실행 | preview에서 발송·잡 중복 방지 (devops 규칙 §5) |
 | Aligo SMS 비활성 | `ALIGO_API_KEY`/`ALIGO_USER_ID`/`ALIGO_SENDER_PHONE`을 매니페스트에 빈 값으로 하드코딩 (fallback host `backend/deploy/fallback-server/compose.yml`와 동일 패턴) | Cloud Run은 Aligo에 등록된 고정 발신 IP가 없음 (운영자 결정 2026-09-23). **귀결: Phase 10 SMS 발송 시나리오는 preview에서 실행 불가.** reject된 대안: Direct VPC egress + Cloud NAT 고정 IP를 Aligo에 등록(유휴 ~$4-5/월) — preview에 SMS가 필요해지면 이 경로 |
-| 기타 매니페스트 값 | `PRODUCTION_FRONTEND_URL=https://staff.babyjamjam.com` 하드코딩(`NODE_ENV=production`에서 백엔드가 auth redirect를 이 값으로 만듦), `SENTRY_ENVIRONMENT=preview` | 제외 키 목록은 `backend/deploy/cloudrun/excluded-keys.txt`. `SENTRY_DSN`, `AUTH_EMAIL_TOKEN_HMAC_SECRET`은 runtime-only 시크릿으로 배포 |
+| 기타 매니페스트 값 | `PRODUCTION_FRONTEND_URL=https://staff.babyjamjam.com` 하드코딩(`NODE_ENV=production`에서 백엔드가 auth redirect를 이 값으로 만듦), `SENTRY_ENVIRONMENT=preview` | 제외 키 목록은 `backend/deploy/cloudrun/excluded-keys.txt`. `SENTRY_DSN`, `AUTH_EMAIL_TOKEN_HMAC_SECRET`은 의도적으로 미배포 — 프로덕션 백엔드 env에도 없고, preview는 프로덕션을 따른다 (§3.7) |
 | 프로덕션 무변경 | main → Lightsail / LightNode fallback 경로 그대로 | 이 결정은 preview에만 적용 |
 
 ## 2. 아키텍처
@@ -210,23 +210,29 @@ echo "$SERVICE_URL"
 
 ### 3.7 시크릿 동기화
 
-먼저 preview env 파일을 준비한다(운영자 제공). Lightsail 호스트는 2026-09-03 중단 보고가 있어
-거기서 값을 끌어온다는 가정을 하지 않는다. 값은 절대 문서·채팅에 붙이지 않는다.
+먼저 preview env 파일을 만든다. preview는 프로덕션 자격증명을 그대로 쓴다(운영자 결정 2026-09-23):
+프로덕션이 LightNode fallback에서 운영되는 동안 프로덕션 호스트의
+`/opt/babyjamjam-fallback-server/backend.env`를 기준으로 preview env 파일을 만든다. 값은 절대
+문서·채팅에 붙이지 않는다.
 
 **동기화 전 체크리스트:**
 
-- [ ] `KAKAO_CALLBACK_URL` = `${SERVICE_URL}/auth/kakao/callback` (§3.6의 `SERVICE_URL` 그대로)
+- [ ] env 파일은 프로덕션 백엔드 env(프로덕션 호스트 `/opt/babyjamjam-fallback-server/backend.env`,
+      프로덕션이 LightNode fallback에서 운영되는 동안)에서 만든다 — preview는 프로덕션과 같은 값
+- [ ] preview 전용 오버라이드 두 개만 env 파일에서 바꾼다: `KAKAO_CALLBACK_URL` =
+      `${SERVICE_URL}/auth/kakao/callback` (§3.6의 `SERVICE_URL` 그대로), `PRODUCTION_MOBILE_FRONTEND_URL`
+      = preview 모바일 프론트엔드 URL (`NODE_ENV=production`에서 모바일 카카오 로그인이 여기로 redirect한다)
 - [ ] 카카오 디벨로퍼스(Kakao Developers) → 앱 설정에 같은 URI를 Redirect URI로 등록
-- [ ] `PRODUCTION_MOBILE_FRONTEND_URL` = preview 모바일 프론트엔드 URL (`NODE_ENV=production`에서
-      모바일 카카오 로그인이 여기로 redirect한다)
+- [ ] `SENTRY_DSN`과 `AUTH_EMAIL_TOKEN_HMAC_SECRET`는 **일부러 배포하지 않는다** — 프로덕션 백엔드 env에도
+      둘 다 없다(프로덕션 호스트 키 목록 확인). `SENTRY_DSN` unset → 프로덕션 백엔드는 Sentry가 꺼져 있고
+      preview도 그것을 따른다. `AUTH_EMAIL_TOKEN_HMAC_SECRET` unset →
+      `backend/application/services/auth-email-token.service.ts`가 `JWT_SECRET`로 폴백하고, preview는
+      프로덕션의 `JWT_SECRET`을 쓰므로 email-token HMAC이 프로덕션과 동일하게 유지된다 — 같은 DB를 공유하므로
+      프로덕션의 outbox worker가 자기 시크릿으로 이메일 토큰을 재구성하기 때문에 필수다. 두 키가 env 파일에
+      들어 있으면 sync가 exit 3(not-deployed)으로 멈춰 판단을 요구한다 — env 파일에서 빼면 된다
+- [ ] `JWT_SECRET` 공유의 귀결: preview가 발급한 JWT도 프로덕션에 유효하다 (같은 DB, 같은 사용자) —
+      운영자가 수용함 (2026-09-23)
 - [ ] `DATABASE_URL` = Supabase pooler (preview = prod 공유 DB, devops-deployment-rules.md §1-4)
-- [ ] `SENTRY_DSN` = preview용 Sentry DSN (필수). 이 키는 `env.tpl`에 없는 runtime-only 키라
-      preview env 파일에 직접 넣어야 하고, 빠지면 sync가 exit 1로 실패한다
-- [ ] `AUTH_EMAIL_TOKEN_HMAC_SECRET` **는 프로덕션 실횻값과 같아야 한다** — 프로덕션 env에 이 키가
-      설정돼 있으면 그 값, unset이면 프로덕션의 `JWT_SECRET`. 같은 DB를 공유하므로 프로덕션의
-      outbox worker가 자기 시크릿으로 이메일 토큰을 재구성한다. preview 값이 다르면 preview에서
-      요청한 비밀번호 재설정/인증 링크가 깨진다. 이 키도 `env.tpl`에 없으므로 preview env 파일에
-      직접 넣어야 하고, 빠지면 sync가 exit 1로 실패한다
 - [ ] Supabase 네트워크 제한(Network Restrictions)이 이 프로젝트에 활성화돼 있는지 확인 — Cloud Run의
       egress IP는 고정되지 않으므로 제한이 켜져 있으면 DB 연결이 막혀 `/health/ready` 검증이 실패한다
 

@@ -234,10 +234,11 @@ const EXPECTED_PLAIN_ENV = new Map([
 ]);
 
 // Secrets the backend reads that env.tpl does not list. Deployed anyway.
-const RUNTIME_ONLY_SECRETS = {
-    SENTRY_DSN: "Sentry activates only when the DSN is set; backend reads it but env.tpl omits it",
-    AUTH_EMAIL_TOKEN_HMAC_SECRET: "read by backend/application/services/auth-email-token.service.ts; absent from env.tpl",
-};
+// Empty since BJJ-341 (unit F): the two former entries — SENTRY_DSN and
+// AUTH_EMAIL_TOKEN_HMAC_SECRET — are intentionally NOT deployed (see the
+// dedicated test below). The mechanism stays so a future runtime-only secret
+// can be added here with a reason.
+const RUNTIME_ONLY_SECRETS = {};
 
 const manifestText = readFileSync(manifestPath, "utf8");
 const manifest = parseYaml(manifestText);
@@ -460,8 +461,10 @@ test("only ${IMAGE} and ${PROJECT_ID} placeholders exist and no other $ remains"
 });
 
 test("every secret key exists in backend/env.tpl or is a RUNTIME_ONLY key", () => {
-    // RUNTIME_ONLY keys are deliberately absent from env.tpl; test 8 asserts
-    // each of them individually with its reason.
+    // RUNTIME_ONLY keys are deliberately absent from env.tpl; the "every
+    // secret is in env.tpl or in RUNTIME_ONLY" test asserts each entry with
+    // its reason. SENTRY_DSN and AUTH_EMAIL_TOKEN_HMAC_SECRET are covered by
+    // their dedicated not-deployed test instead.
     for (const name of secrets) {
         const known = envTplKeys.has(name) || RUNTIME_ONLY_SECRETS[name] !== undefined;
         assert.ok(known, `secret ${name} is neither in backend/env.tpl nor RUNTIME_ONLY`);
@@ -498,6 +501,23 @@ test("every secret is in env.tpl or in RUNTIME_ONLY (with reason per key)", () =
     }
     for (const name of Object.keys(RUNTIME_ONLY_SECRETS)) {
         assert.ok(secretSet.has(name), `RUNTIME_ONLY secret ${name} must be deployed`);
+    }
+});
+
+test("SENTRY_DSN and AUTH_EMAIL_TOKEN_HMAC_SECRET are intentionally not deployed", () => {
+    // Operator decision 2026-09-23: preview mirrors production's credentials,
+    // and production's backend env contains NEITHER key (verified by key
+    // listing on the production host).
+    // - SENTRY_DSN unset → Sentry activates only when the DSN is set, so it is
+    //   off on the production backend; preview mirrors that.
+    // - AUTH_EMAIL_TOKEN_HMAC_SECRET unset →
+    //   backend/application/services/auth-email-token.service.ts falls back to
+    //   JWT_SECRET. Preview uses production's JWT_SECRET, so email-token HMACs
+    //   stay identical to production — required because production's outbox
+    //   worker rebuilds tokens with its own secret over the shared DB.
+    for (const name of ["SENTRY_DSN", "AUTH_EMAIL_TOKEN_HMAC_SECRET"]) {
+        assert.ok(!secretSet.has(name), `${name} must not be deployed as a secret`);
+        assert.ok(!plain.has(name), `${name} must not be deployed as plain env`);
     }
 });
 
