@@ -94,6 +94,26 @@ describe("AgentMobileShell drawer accessibility", () => {
         );
     });
 
+    it("shows no fallback warning for a normal reply carrying step-start markers around tool output", () => {
+        mockMessages.push({
+            id: "assistant-step-flow",
+            role: "assistant",
+            parts: [
+                { type: "step-start" },
+                { type: "text", text: "안내 문구입니다." },
+                { type: "tool-lookup", state: "output-available", output: { ok: true } },
+                { type: "step-start" },
+                { type: "text", text: "마무리 문구입니다." },
+            ],
+        });
+
+        render(<AgentMobileShell />);
+
+        expect(screen.queryByText(/새 형식/)).not.toBeInTheDocument();
+        expect(screen.getByText("안내 문구입니다.")).toBeInTheDocument();
+        expect(screen.getByText("마무리 문구입니다.")).toBeInTheDocument();
+    });
+
     it("offers a refresh action when another screen changed the task draft", () => {
         mockTaskNeedsReconciliation = true;
 

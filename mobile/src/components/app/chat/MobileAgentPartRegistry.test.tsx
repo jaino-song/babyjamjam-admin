@@ -3,6 +3,13 @@ import { AgentTaskSchema, type AgentTask } from "@babyjamjam/shared/agent";
 
 import { MobileAgentPartRegistry } from "./MobileAgentPartRegistry";
 
+const registryProps = {
+    onEntitySelect: jest.fn(),
+    onApproveAction: jest.fn(),
+    onRejectAction: jest.fn(),
+    onSubmitForm: jest.fn(),
+};
+
 if (typeof globalThis.ResizeObserver === "undefined") {
     Object.defineProperty(globalThis, "ResizeObserver", {
         configurable: true,
@@ -494,5 +501,150 @@ describe("MobileAgentPartRegistry", () => {
         />);
 
         expect(screen.getByText("초안이 버전 5으로 업데이트되었습니다.")).toHaveAttribute("data-slot", "task-patch");
+    });
+});
+
+describe("MobileAgentPartRegistry step and reasoning parts", () => {
+    it("shows no fallback for step-start markers surrounding tool output in a normal reply", () => {
+        const parts = [
+            { type: "step-start" },
+            { type: "text", text: "안내 문구입니다." },
+            { type: "tool-lookup", state: "output-available", output: { ok: true } },
+            { type: "step-start" },
+            { type: "text", text: "마무리 문구입니다." },
+        ];
+
+        render(
+            <>
+                {parts.map((part, index) => (
+                    <MobileAgentPartRegistry
+                        key={index}
+                        data-component={`mobile_chat_tests_agent-part-registry_step-flow_part-${index}`}
+                        part={part}
+                        {...registryProps}
+                    />
+                ))}
+            </>,
+        );
+
+        expect(screen.queryByText(/새 형식/)).not.toBeInTheDocument();
+    });
+
+    it("renders nothing for a reasoning part and never leaks its text", () => {
+        const { container } = render(<MobileAgentPartRegistry
+            data-component="mobile_chat_tests_agent-part-registry_reasoning"
+            part={{ type: "reasoning", text: "내부 사고 과정입니다." }}
+            {...registryProps}
+        />);
+
+        expect(container).toBeEmptyDOMElement();
+        expect(screen.queryByText(/새 형식/)).not.toBeInTheDocument();
+        expect(screen.queryByText("내부 사고 과정입니다.")).not.toBeInTheDocument();
+    });
+
+    it("still shows the fallback for a genuinely unknown data-* part", () => {
+        render(<MobileAgentPartRegistry
+            data-component="mobile_chat_tests_agent-part-registry_unknown-data"
+            part={{ type: "data-xyz", data: { anything: true } }}
+            {...registryProps}
+        />);
+
+        expect(screen.getByText(/새 형식/)).toBeInTheDocument();
+    });
+});
+
+describe("MobileAgentPartRegistry text markdown rendering", () => {
+    it("renders a markdown table with its cells", () => {
+        const text = "| a | b |\n| --- | --- |\n| 1 | 2 |";
+        render(<MobileAgentPartRegistry
+            data-component="mobile_chat_tests_agent-part-registry_text-table"
+            part={{ type: "text", text }}
+            {...registryProps}
+        />);
+
+        expect(screen.getByRole("table")).toBeInTheDocument();
+        expect(screen.getByText("1")).toBeInTheDocument();
+        expect(screen.getByText("2")).toBeInTheDocument();
+    });
+
+    it("renders bold markdown as a strong element", () => {
+        render(<MobileAgentPartRegistry
+            data-component="mobile_chat_tests_agent-part-registry_text-bold"
+            part={{ type: "text", text: "**굵게**" }}
+            {...registryProps}
+        />);
+
+        expect(screen.getByText("굵게").tagName).toBe("STRONG");
+    });
+
+    it("keeps the data-component and data-slot on the text wrapper", () => {
+        render(<MobileAgentPartRegistry
+            data-component="mobile_chat_tests_agent-part-registry_text-wrapper"
+            part={{ type: "text", text: "안녕하세요" }}
+            {...registryProps}
+        />);
+
+        const wrapper = screen.getByText("안녕하세요").closest('[data-slot="text"]');
+        expect(wrapper).toHaveAttribute("data-component", "mobile_chat_tests_agent-part-registry_text-wrapper");
+    });
+
+    it("does not render a script tag or an inline event-handler image from model text", () => {
+        render(<MobileAgentPartRegistry
+            data-component="mobile_chat_tests_agent-part-registry_text-xss"
+            part={{ type: "text", text: '<script>bad()</script><img src=x onerror="bad()">' }}
+            {...registryProps}
+        />);
+
+        // react-markdown (no rehype-raw) escapes raw HTML to inert text — it
+        // must never become a real <script> or <img> element.
+        expect(document.querySelector("script")).not.toBeInTheDocument();
+        expect(document.querySelector("img")).not.toBeInTheDocument();
+    });
+
+    it("never renders a markdown image as an <img>, only its alt text", () => {
+        render(<MobileAgentPartRegistry
+            data-component="mobile_chat_tests_agent-part-registry_text-image"
+            part={{ type: "text", text: "![대체텍스트](https://evil.test/x.png)" }}
+            {...registryProps}
+        />);
+
+        expect(document.querySelector("img")).not.toBeInTheDocument();
+        expect(screen.getByText("대체텍스트")).toBeInTheDocument();
+    });
+
+    it("opens external http(s) links in a new tab with a safe rel", () => {
+        render(<MobileAgentPartRegistry
+            data-component="mobile_chat_tests_agent-part-registry_text-link-external"
+            part={{ type: "text", text: "[문서](https://example.com/doc)" }}
+            {...registryProps}
+        />);
+
+        const link = screen.getByRole("link", { name: "문서" });
+        expect(link).toHaveAttribute("href", "https://example.com/doc");
+        expect(link).toHaveAttribute("target", "_blank");
+        expect(link).toHaveAttribute("rel", "noopener noreferrer");
+    });
+
+    it("keeps a relative in-app link same-tab without target=_blank", () => {
+        render(<MobileAgentPartRegistry
+            data-component="mobile_chat_tests_agent-part-registry_text-link-relative"
+            part={{ type: "text", text: "[내부](/clients/1)" }}
+            {...registryProps}
+        />);
+
+        const link = screen.getByRole("link", { name: "내부" });
+        expect(link).toHaveAttribute("href", "/clients/1");
+        expect(link).not.toHaveAttribute("target");
+    });
+
+    it("renders any other link scheme as plain text instead of a clickable link", () => {
+        render(<MobileAgentPartRegistry
+            data-component="mobile_chat_tests_agent-part-registry_text-link-unsafe"
+            part={{ type: "text", text: "[클릭](javascript:alert(1))" }}
+            {...registryProps}
+        />);
+
+        expect(screen.queryByRole("link")).not.toBeInTheDocument();
+        expect(screen.getByText("클릭")).toBeInTheDocument();
     });
 });
