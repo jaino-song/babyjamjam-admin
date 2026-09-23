@@ -143,7 +143,6 @@ function taskSafeEntityMemory(value: Record<string, unknown>, protectTaskEntityD
  * already-asked fact below. The bound evicts the oldest entry first.
  */
 const CLARIFICATION_MEMORY_LIMIT = 256;
-const MAX_AGENT_STEPS = 6;
 
 /**
  * Structural clarification facts, built from existing committed state only
@@ -1134,15 +1133,10 @@ export class AgentRuntimeService {
             }),
             tools,
             stopWhen: [
-                stepCountIs(MAX_AGENT_STEPS),
+                stepCountIs(6),
                 ({ steps }) => steps.some((step) => step.toolCalls.some((call) => writeToolNames.has(call.toolName))),
             ],
-            // The last allowed step runs without tools, so a long lookup chain
-            // still ends in an answer instead of stopping after a tool call.
-            prepareStep: ({ steps }) => ({
-                system: buildSystemPrompt(),
-                ...(steps.length >= MAX_AGENT_STEPS - 1 ? { toolChoice: "none" as const } : {}),
-            }),
+            prepareStep: () => ({ system: buildSystemPrompt() }),
             providerOptions: this.models.providerOptions(),
             // Thinking tokens count against this cap on Gemini, so `high`
             // gets a larger budget. A stub `AgentModelFactory` without a

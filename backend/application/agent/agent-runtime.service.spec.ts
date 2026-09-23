@@ -966,43 +966,6 @@ describe("AgentRuntimeService", () => {
         }
     });
 
-    it("disables tools on the last allowed step so a long lookup chain still ends in an answer", async () => {
-        const capability = buildEntityCapability("clients.search", "clients", jest.fn().mockResolvedValue({ kind: "entity", entity: { id: 1, name: "Client" } }));
-        const sessions = {
-            create: jest.fn().mockResolvedValue({ id: "session-last-step", selectedEntities: {}, messages: [] }),
-            update: jest.fn().mockResolvedValue({ id: "session-last-step" }),
-            appendMessages: jest.fn().mockResolvedValue(undefined),
-        };
-        const model = new DeterministicAgentLanguageModel([
-            ...Array.from({ length: 5 }, () => ({ type: "tool-call" as const, toolName: "clients_search", input: { query: "Client" } })),
-            { type: "text", text: "찾은 내용을 정리했습니다." },
-        ]);
-        const modelStream = jest.spyOn(model, "doStream");
-        const runtime = new AgentRuntimeService(
-            {} as never,
-            { isCapabilityEnabled: jest.fn().mockResolvedValue(true) } as never,
-            sessions as never,
-            { modelId: "deterministic-agent-v1", providerOptions: () => ({}), create: () => model } as never,
-            { route: jest.fn().mockResolvedValue({ domains: ["clients"], capabilities: [capability] }) } as never,
-            { start: jest.fn().mockResolvedValue({ id: "trace-last-step", startedAt: Date.now() }), finish: jest.fn().mockResolvedValue(undefined) } as never,
-        );
-
-        const result = await runtime.stream({
-            principal: { userId: "user-a", branchId: "branch-a", globalRole: "admin", branchRole: "admin" },
-            locale: "ko",
-            messages: [{ id: "message-last-step", role: "user", parts: [{ type: "text", text: "최근 계약서 상태 어때?" }] }] as never,
-        });
-        const reader = result.stream.getReader();
-        while (!(await reader.read()).done) {
-            // Drain so every step runs.
-        }
-
-        const toolChoices = modelStream.mock.calls.map((call) => (call[0] as { toolChoice?: { type: string } }).toolChoice?.type);
-        expect(toolChoices).toHaveLength(6);
-        expect(toolChoices.slice(0, 5)).not.toContain("none");
-        expect(toolChoices[5]).toBe("none");
-    });
-
     it("defaults maxOutputTokens to 4096 and omits thinkingLevel when the model factory reports no thinking level", async () => {
         const capability = buildEntityCapability("clients.search", "clients", jest.fn().mockResolvedValue({ kind: "entity", entity: { id: 1, name: "Client" } }));
         const sessions = {
