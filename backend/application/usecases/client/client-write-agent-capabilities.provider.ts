@@ -694,10 +694,19 @@ export class ClientWriteAgentCapabilitiesProvider implements AgentCapabilityProv
                 taskAutomationReference,
             });
         }
-        const scheduleIds = [...new Set(artifact.impact.effects
+        const scheduleEffects = artifact.impact.effects
             .filter((effect) => (effect.kind === "employee-assignment" || effect.kind === "service-record-link")
-                && effect.scheduleId !== null && effect.change !== "cancel")
-            .map((effect) => effect.scheduleId!))].sort((left, right) => left - right);
+                && effect.scheduleId !== null && effect.change !== "cancel");
+        // Replacing existing employee-assignment jobs cancels pending
+        // EMPLOYEE_ASSIGNED rows and rewrites the schedule recovery row. That
+        // replacement is legitimate only when the reviewed artifact actually
+        // contained an employee-assignment effect for the schedule; a
+        // link-only consent must not cancel or replace employee mutations it
+        // never reviewed.
+        const employeeAffectedScheduleIds = new Set(scheduleEffects
+            .filter((effect) => effect.kind === "employee-assignment")
+            .map((effect) => effect.scheduleId!));
+        const scheduleIds = [...new Set(scheduleEffects.map((effect) => effect.scheduleId!))].sort((left, right) => left - right);
         for (const scheduleId of scheduleIds) {
             await this.messageAutomationIntentService.persistScheduleIntent(transaction, {
                 branchId: artifact.branchId,
@@ -705,7 +714,7 @@ export class ClientWriteAgentCapabilitiesProvider implements AgentCapabilityProv
                 scheduleId,
                 includePast: true,
                 intentAt,
-                replaceExisting: true,
+                replaceExisting: employeeAffectedScheduleIds.has(scheduleId),
                 taskOrigin: true,
                 taskAutomationReference,
             });
