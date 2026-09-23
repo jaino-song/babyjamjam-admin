@@ -2372,7 +2372,10 @@ describe("AgentRuntimeService", () => {
             principal: { userId: "user-a", branchId: "branch-a", globalRole: "admin", branchRole: "admin" },
             locale: "ko",
             messages: [{ id: "message-kill-switch", role: "user", parts: [{ type: "text", text: "새 고객 등록해줘" }] }] as never,
-        })).rejects.toThrow("Agent is not enabled for this context");
+        })).rejects.toMatchObject({
+            status: 403,
+            response: expect.objectContaining({ code: "ACCESS_DENIED", outcome: "NOT_APPLIED" }),
+        });
 
         // Enforce was genuinely configured for the intent kind, so the guard
         // — not the mode — kept the turn silent.
