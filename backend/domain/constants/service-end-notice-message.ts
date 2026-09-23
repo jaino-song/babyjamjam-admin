@@ -1,5 +1,13 @@
 export const MANUAL_DEDUPE_MARKER = ":manual:";
 export const SERVICE_END_NOTICE_RULE_ID = "system:service_end_notice";
+
+/**
+ * Exact key shape emitted by ReceiptLinkManualSendService.send manual jobs:
+ * `${SERVICE_END_NOTICE_RULE_ID}:client:${clientId}${MANUAL_DEDUPE_MARKER}${randomUUID()}`.
+ * Mirrors SERVICE_RECORD_LINK_MANUAL_DEDUPE_PATTERN's precedent.
+ */
+export const SERVICE_END_NOTICE_MANUAL_DEDUPE_PATTERN =
+    `^${SERVICE_END_NOTICE_RULE_ID}:client:[0-9]+${MANUAL_DEDUPE_MARKER}[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`;
 export const SERVICE_END_NOTICE_SMS_LOG_TEMPLATE_KEY = "service_end_notice_sms";
 export const SERVICE_END_NOTICE_SMS_AUTOMATION_KEY = "SERVICE_END_NOTICE_SMS";
 export const SERVICE_END_NOTICE_SMS_TITLE = "서비스 종료 안내";
