@@ -647,4 +647,18 @@ describe("MobileAgentPartRegistry text markdown rendering", () => {
         expect(screen.queryByRole("link")).not.toBeInTheDocument();
         expect(screen.getByText("클릭")).toBeInTheDocument();
     });
+
+    it("never renders protocol-relative hosts as links", () => {
+        render(<MobileAgentPartRegistry
+            data-component="mobile_chat_tests_agent-part-registry_text-link-protocol-relative"
+            part={{ type: "text", text: "[외부1](//evil.test/x) [외부2](/\\evil.test/x)" }}
+            {...registryProps}
+        />);
+
+        expect(screen.queryByRole("link", { name: "외부1" })).not.toBeInTheDocument();
+        expect(screen.getByText("외부1")).toBeInTheDocument();
+        for (const anchor of Array.from(document.querySelectorAll("a"))) {
+            expect(new URL(anchor.getAttribute("href") ?? "", "https://app.test").origin).toBe("https://app.test");
+        }
+    });
 });

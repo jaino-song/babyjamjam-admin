@@ -53,6 +53,18 @@ type AgentPartRegistryProps = {
 // http(s) (opened in a new tab) and same-origin absolute paths (same tab);
 // anything else (javascript:, data:, mailto:, bare text that still parsed as
 // a link, etc.) renders as plain text.
+// Same-origin check on the exact href value react-markdown renders (after its
+// urlTransform), resolved the way a browser would: "//host", "/\\host" and
+// similar forms resolve to another origin and are rejected.
+const SAME_ORIGIN_SENTINEL = "https://same-origin.invalid";
+function isSameOriginPath(href: string): boolean {
+    if (!href.startsWith("/")) return false;
+    try {
+        return new URL(href, SAME_ORIGIN_SENTINEL).origin === SAME_ORIGIN_SENTINEL;
+    } catch {
+        return false;
+    }
+}
 const AGENT_TEXT_MARKDOWN_COMPONENTS: Components = {
     img: ({ alt }) => <>{alt ?? ""}</>,
     a: ({ href, children, ...props }) => {
@@ -63,7 +75,7 @@ const AGENT_TEXT_MARKDOWN_COMPONENTS: Components = {
                 </a>
             );
         }
-        if (typeof href === "string" && href.startsWith("/")) {
+        if (typeof href === "string" && isSameOriginPath(href)) {
             return (
                 <a href={href} {...props}>
                     {children}

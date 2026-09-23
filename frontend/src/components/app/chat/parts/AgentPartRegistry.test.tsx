@@ -364,6 +364,23 @@ describe("AgentPartRegistry", () => {
         expect(screen.queryByText(/새 형식/)).not.toBeInTheDocument();
     });
 
+    it("keeps same-origin paths as same-tab links but never protocol-relative hosts", () => {
+        const message = {
+            id: "assistant-markdown-links",
+            role: "assistant",
+            parts: [{ type: "text", text: "[내부](/clients/1) [외부1](//evil.test/x) [외부2](/\\evil.test/x)" }],
+        } as unknown as UIMessage;
+        render(<AgentPartRegistry data-component={dataComponent} message={message} />);
+        const internal = screen.getByRole("link", { name: "내부" });
+        expect(internal).toHaveAttribute("href", "/clients/1");
+        expect(internal).not.toHaveAttribute("target");
+        expect(screen.queryByRole("link", { name: "외부1" })).not.toBeInTheDocument();
+        expect(screen.getByText("외부1")).toBeInTheDocument();
+        for (const anchor of Array.from(document.querySelectorAll("a"))) {
+            expect(new URL(anchor.getAttribute("href") ?? "", "https://app.test").origin).toBe("https://app.test");
+        }
+    });
+
     it("still falls back for a genuinely unknown data-* part", () => {
         const message = {
             id: "assistant-unknown-data-part",

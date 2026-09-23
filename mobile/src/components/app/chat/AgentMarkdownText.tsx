@@ -13,13 +13,25 @@ import remarkGfm from "remark-gfm";
 //   a new tab) or same-origin relative paths starting with "/"; anything
 //   else (javascript:, mailto:, bare text, …) renders as plain text
 const HTTP_URL_PATTERN = /^https?:\/\//i;
+// Same-origin check on the exact href value react-markdown renders (after its
+// urlTransform), resolved the way a browser would: "//host", "/\\host" and
+// similar forms resolve to another origin and are rejected.
+const SAME_ORIGIN_SENTINEL = "https://same-origin.invalid";
+function isSameOriginPath(href: string): boolean {
+    if (!href.startsWith("/")) return false;
+    try {
+        return new URL(href, SAME_ORIGIN_SENTINEL).origin === SAME_ORIGIN_SENTINEL;
+    } catch {
+        return false;
+    }
+}
 
 function AgentMarkdownLink({ href, children }: { href?: string; children?: ReactNode }) {
     const url = typeof href === "string" ? href : "";
     if (HTTP_URL_PATTERN.test(url)) {
         return <a href={url} target="_blank" rel="noopener noreferrer">{children}</a>;
     }
-    if (url.startsWith("/")) {
+    if (isSameOriginPath(url)) {
         return <a href={url}>{children}</a>;
     }
     return <>{children}</>;
