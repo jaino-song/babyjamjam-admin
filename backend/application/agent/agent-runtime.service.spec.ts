@@ -929,6 +929,7 @@ describe("AgentRuntimeService", () => {
             {
                 modelId: "deterministic-agent-v1",
                 thinkingLevel: "high",
+                maxOutputTokens: () => 8192,
                 providerOptions: () => ({ google: { thinkingConfig: { includeThoughts: false, thinkingLevel: "high" } } }),
                 create: () => model,
             } as never,
@@ -966,7 +967,7 @@ describe("AgentRuntimeService", () => {
         }
     });
 
-    it("defaults maxOutputTokens to 4096 and omits thinkingLevel when the model factory reports no thinking level", async () => {
+    it("falls back to maxOutputTokens 4096 for a model factory double without the method, and omits thinkingLevel", async () => {
         const capability = buildEntityCapability("clients.search", "clients", jest.fn().mockResolvedValue({ kind: "entity", entity: { id: 1, name: "Client" } }));
         const sessions = {
             create: jest.fn().mockResolvedValue({ id: "session-default-tokens", selectedEntities: {}, messages: [] }),
@@ -2601,5 +2602,13 @@ describe("describeAgentStreamError", () => {
         expect(describeAgentStreamError(Object.assign(new Error("column x"), { name: "PrismaClientKnownRequestError", code: "P2022" }))).toBe("PrismaClientKnownRequestError(P2022)");
         expect(describeAgentStreamError(Object.assign(new Error("m"), { name: "E", code: "contains value 010" }))).toBe("E");
         expect(describeAgentStreamError(Object.assign(new Error("m"), { name: "PrismaClientKnownRequestError", code: "P2010", meta: { code: "42703", message: "column \"x\" does not exist" } }))).toBe("PrismaClientKnownRequestError(P2010/42703)");
+        expect(describeAgentStreamError(Object.assign(new Error("m"), { name: "E", code: "01012345678" }))).toBe("E");
+        expect(describeAgentStreamError(Object.assign(new Error("m"), { name: "E", meta: { code: "01012345678" } }))).toBe("E");
+    });
+
+    it("stops at a bounded depth on an error chain that loops back on itself", () => {
+        const looping = Object.assign(new Error("m"), { name: "Loop" });
+        (looping as { cause?: unknown }).cause = looping;
+        expect(describeAgentStreamError(looping)).toBe("Loop <- Loop <- Loop <- Loop <- Loop <- Loop");
     });
 });

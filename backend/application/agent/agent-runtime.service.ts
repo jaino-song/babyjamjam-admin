@@ -272,8 +272,9 @@ export function buildAuthoritativeModelMessages(
  * outputs can carry personal data, so only the error name and, for validation
  * errors, the issue paths and codes are logged.
  */
-export function describeAgentStreamError(error: unknown): string {
+export function describeAgentStreamError(error: unknown, depth = 0): string {
     if (!(error instanceof Error)) return typeof error;
+    if (depth >= 5) return error.name;
     const issues = (error as { issues?: unknown }).issues;
     if (Array.isArray(issues)) {
         const summary = issues.slice(0, 5).map((issue: { path?: unknown; code?: unknown }) => (
@@ -281,12 +282,18 @@ export function describeAgentStreamError(error: unknown): string {
         ));
         return `${error.name} [${summary.join(", ")}]`;
     }
+    // Error codes must contain a letter (P2010, ECONNRESET), so a digit-only
+    // value such as a phone number is never logged; the digit-only form is
+    // accepted only as a 5-character Postgres SQLSTATE in meta.code.
     const code = (error as { code?: unknown }).code;
     const sqlState = (error as { meta?: { code?: unknown } }).meta?.code;
-    const codes = [code, sqlState].filter((value): value is string => typeof value === "string" && /^[A-Z0-9][A-Z0-9_]{1,15}$/.test(value));
+    const codes = [
+        typeof code === "string" && /^(?=[A-Z0-9_]*[A-Z])[A-Z0-9_]{2,16}$/.test(code) ? code : null,
+        typeof sqlState === "string" && /^[0-9A-Z]{5}$/.test(sqlState) ? sqlState : null,
+    ].filter((value): value is string => value !== null);
     const name = codes.length > 0 ? `${error.name}(${codes.join("/")})` : error.name;
     const cause = (error as { cause?: unknown }).cause;
-    return cause instanceof Error ? `${name} <- ${describeAgentStreamError(cause)}` : name;
+    return cause instanceof Error ? `${name} <- ${describeAgentStreamError(cause, depth + 1)}` : name;
 }
 
 @Injectable()
@@ -1138,12 +1145,9 @@ export class AgentRuntimeService {
             ],
             prepareStep: () => ({ system: buildSystemPrompt() }),
             providerOptions: this.models.providerOptions(),
-            // Thinking tokens count against this cap on Gemini, so `high`
-            // gets a larger budget. A stub `AgentModelFactory` without a
-            // `thinkingLevel` getter reads as `undefined` here, which is not
-            // `"high"`, so it safely falls back to 4096 with no code change
-            // required in any test double.
-            maxOutputTokens: this.models.thinkingLevel === "high" ? 8192 : 4096,
+            // The factory owns the cap (thinking tokens count against it on
+            // Gemini). A test double without the method falls back to 4096.
+            maxOutputTokens: this.models.maxOutputTokens?.() ?? 4096,
             abortSignal: input.signal,
         });
         const persistCompletion: NonNullable<UIMessageStreamOptions<BjjUIMessage>["onFinish"]> = async ({ responseMessage, isAborted }) => {

@@ -92,9 +92,9 @@ describe("AgentModelFactory", () => {
     });
 
     describe("maxOutputTokens", () => {
-        it("is 4096 when thinkingLevel is unset", () => {
+        it("is 8192 when thinkingLevel is unset, since the model then picks its own thinking depth", () => {
             const factory = new AgentModelFactory(new ConfigService({ GEMINI_API_KEY: "test" }));
-            expect(factory.maxOutputTokens()).toBe(4096);
+            expect(factory.maxOutputTokens()).toBe(8192);
         });
 
         it("is 4096 for low/medium", () => {

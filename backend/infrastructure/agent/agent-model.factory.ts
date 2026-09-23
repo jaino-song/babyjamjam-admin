@@ -80,9 +80,10 @@ export class AgentModelFactory {
 
     /**
      * `maxOutputTokens` for the runtime `streamText` call. Thinking tokens
-     * count against this cap on Gemini, so `high` gets a larger budget.
+     * count against this cap on Gemini, so `high` gets a larger budget, and so
+     * does the unset default, where the model picks its own thinking depth.
      */
     maxOutputTokens(): number {
-        return this.thinkingLevel === "high" ? 8192 : 4096;
+        return this.thinkingLevel === null || this.thinkingLevel === "high" ? 8192 : 4096;
     }
 }
