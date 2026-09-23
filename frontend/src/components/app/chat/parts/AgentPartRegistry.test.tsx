@@ -308,4 +308,69 @@ describe("AgentPartRegistry", () => {
         fireEvent.submit(form!);
         expect(onSubmitForm).toHaveBeenNthCalledWith(2, "settings-form", { enabled: false });
     });
+
+    it("does not show the fallback for step-start parts around a tool call in a normal reply", () => {
+        const message = {
+            id: "assistant-step-start",
+            role: "assistant",
+            parts: [
+                { type: "step-start" },
+                { type: "text", text: "조회할게요." },
+                { type: "tool-clients_search", state: "output-available", output: { kind: "entity", entity: { id: 1, name: "홍길동" } } },
+                { type: "step-start" },
+                { type: "text", text: "결과예요." },
+            ],
+        } as unknown as UIMessage;
+        render(<AgentPartRegistry data-component={dataComponent} message={message} />);
+        expect(screen.queryByText(/새 형식/)).not.toBeInTheDocument();
+        expect(screen.getByText("조회할게요.")).toBeInTheDocument();
+        expect(screen.getByText("결과예요.")).toBeInTheDocument();
+    });
+
+    it("renders nothing for reasoning parts, never the fallback or the thinking text", () => {
+        const message = {
+            id: "assistant-reasoning",
+            role: "assistant",
+            parts: [{ type: "reasoning", text: "내부 사고 과정 비밀" }],
+        } as unknown as UIMessage;
+        render(<AgentPartRegistry data-component={dataComponent} message={message} />);
+        expect(screen.queryByText(/새 형식/)).not.toBeInTheDocument();
+        expect(screen.queryByText("내부 사고 과정 비밀")).not.toBeInTheDocument();
+    });
+
+    it("renders markdown text parts as real markdown, not raw syntax", () => {
+        const message = {
+            id: "assistant-markdown",
+            role: "assistant",
+            parts: [{ type: "text", text: "**중요**\n\n| a | b |\n| --- | --- |\n| 1 | 2 |\n" }],
+        } as unknown as UIMessage;
+        render(<AgentPartRegistry data-component={dataComponent} message={message} />);
+        expect(screen.getByText("중요").tagName).toBe("STRONG");
+        expect(screen.getByRole("table")).toBeInTheDocument();
+        expect(screen.getByText("1").closest("td, th")).toBeTruthy();
+        expect(screen.queryByText(/\| --- \|/)).not.toBeInTheDocument();
+        expect(document.querySelector(`[data-component="${dataComponent}_text"]`)).toBeInTheDocument();
+    });
+
+    it("does not render an <img> element or a <script> element from a malicious text part", () => {
+        const message = {
+            id: "assistant-markdown-unsafe",
+            role: "assistant",
+            parts: [{ type: "text", text: "![a](https://evil.test/x.png)\n\n<script>alert(1)</script>\n\n<img src=x onerror=alert(1)>" }],
+        } as unknown as UIMessage;
+        render(<AgentPartRegistry data-component={dataComponent} message={message} />);
+        expect(document.querySelector("img")).not.toBeInTheDocument();
+        expect(document.querySelector("script")).not.toBeInTheDocument();
+        expect(screen.queryByText(/새 형식/)).not.toBeInTheDocument();
+    });
+
+    it("still falls back for a genuinely unknown data-* part", () => {
+        const message = {
+            id: "assistant-unknown-data-part",
+            role: "assistant",
+            parts: [{ type: "data-xyz", data: { anything: true } }],
+        } as unknown as UIMessage;
+        render(<AgentPartRegistry data-component={dataComponent} message={message} />);
+        expect(screen.getByText(/새 형식/)).toBeInTheDocument();
+    });
 });
