@@ -95,7 +95,18 @@ export const LIVE_CONSENT_VALUE = "live-provider-call";
 export const EVAL_DIR_RELATIVE = "evals/agent/jev";
 export const RUBRIC_FILENAME = "judge-rubric-v1.json";
 /** Per-case wall-clock budget handed to the production adapter. */
-const LIVE_DEADLINE_MS = 5000;
+export const LIVE_DEADLINE_MS = 5000;
+
+/**
+ * Pure per-case deadline computation, isolated so a test can assert the
+ * live-mode deadline is actually bounded to `now + LIVE_DEADLINE_MS` (a
+ * finite, near-term wall-clock budget) rather than an effectively-infinite
+ * value — a mutation on the call site below would otherwise pass every
+ * existing test undetected.
+ */
+export function computeLiveDeadline(now: number): number {
+    return now + LIVE_DEADLINE_MS;
+}
 /** Fixed choice-set revision token for rank-candidates evaluation requests. */
 const EVAL_CHOICE_SET_REVISION = "jev-eval-v1";
 /** Deterministic placeholder candidate for rank-candidates evaluation. */
@@ -984,7 +995,7 @@ async function runLiveCase(
     // adapter always compares deadlineAt to the real wall clock, so a
     // deadline derived from an injected `now` can silently expire before
     // any request is made once wall time drifts from the injected value.
-    const deadlineAt = Date.now() + LIVE_DEADLINE_MS;
+    const deadlineAt = computeLiveDeadline(Date.now());
     const signal = new AbortController().signal;
     const base = {
         questionVersion: DECISION_QUESTION_VERSION,

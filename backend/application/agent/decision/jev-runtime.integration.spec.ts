@@ -545,6 +545,68 @@ describe("Jev runtime integration (P0 decision layer)", () => {
         }
     });
 
+    it("enforce guard: a non-enforce router disposition of \"clarify\" never becomes the zero-tool clarification turn", async () => {
+        // The real CapabilityRouterService can never return "clarify" outside
+        // enforce mode (see its own disposition contract comment), so this
+        // combination cannot occur end-to-end today. It still has to be
+        // pinned directly: `clarifyTurn`'s `routeMode === enforce` term is the
+        // only thing standing between an off/shadow router result and the
+        // zero-tool clarification behavior, and no other existing test can
+        // exercise that term because the router itself never emits "clarify"
+        // outside enforce. Inject a router double to force the combination.
+        for (const routeMode of [DECISION_MODES.shadow, DECISION_MODES.off]) {
+            const capabilities = [clientSearchCapability()];
+            const decisions = {
+                createTurnContext: jest.fn().mockImplementation(async (createOptions: { signal: AbortSignal; sampleKey: string }) => ({
+                    deadlineAt: Date.now() + 800,
+                    signal: createOptions.signal,
+                    sampleKey: createOptions.sampleKey,
+                    collector: createDecisionTraceCollector(),
+                })),
+                routeDomains: jest.fn(),
+                classifyClientIntent: jest.fn(),
+            };
+            const decisionConfig = {
+                getKindMode: jest.fn().mockImplementation(async (kind: string) => (
+                    kind === DECISION_KINDS.routeDomains ? routeMode : DECISION_MODES.off
+                )),
+            };
+            const router = { route: jest.fn().mockResolvedValue({ domains: [], capabilities: [], disposition: "clarify" }) };
+            const sessions = {
+                create: jest.fn().mockResolvedValue({ id: "session-nonenforce-clarify", selectedEntities: {}, messages: [] }),
+                appendMessages: jest.fn().mockResolvedValue(undefined),
+                remove: jest.fn().mockResolvedValue(undefined),
+            };
+            const runtime = new AgentRuntimeService(
+                { list: () => capabilities } as never,
+                { isCapabilityEnabled: jest.fn().mockResolvedValue(true) } as never,
+                sessions as never,
+                { modelId: "deterministic-agent-v1", create: () => new DeterministicAgentLanguageModel([{ type: "text", text: "완료" }]) } as never,
+                router as never,
+                { start: jest.fn(), finish: jest.fn() } as never,
+                undefined,
+                undefined,
+                undefined,
+                undefined,
+                decisions as never,
+                decisionConfig as never,
+            );
+
+            // A non-enforce "clarify" disposition with zero offered
+            // capabilities and no live task must fall through to the exact
+            // incumbent feature-disabled-shaped refusal, never the zero-tool
+            // clarification turn.
+            await expect(runtime.stream({
+                principal: PRINCIPAL,
+                locale: "ko",
+                messages: [userMessage(`message-nonenforce-clarify-${routeMode}`, "고객을 찾아줘")],
+            })).rejects.toMatchObject({
+                status: 403,
+                response: expect.objectContaining({ code: "ACCESS_DENIED" }),
+            });
+        }
+    });
+
     it("bound turn bypass: owned turns skip inference and are never retargeted by text", async () => {
         for (const ownership of [
             { replayed: true, activeTask: false, formBound: false, command: false, isQuestion: false },
@@ -756,8 +818,12 @@ describe("Jev runtime integration (P0 decision layer)", () => {
             status: 403,
             response: expect.objectContaining({ code: "ACCESS_DENIED", outcome: "NOT_APPLIED" }),
         });
-        // Off-mode kinds make no façade call even though the deps are wired.
+        // Every kind here is enforce (not off): the router's feature-disabled
+        // check (no capability enabled anywhere) short-circuits before the
+        // enforce path ever calls the façade, so getKindMode still runs but
+        // routeDomains is never invoked.
         expect(decisionConfig.getKindMode).toHaveBeenCalledWith(DECISION_KINDS.routeDomains);
+        expect(decisions.routeDomains).not.toHaveBeenCalled();
         // `disabled` is never `clarify`: a session created on this turn is
         // still removed, exactly as the incumbent feature-disabled refusal.
         expect(sessions.remove).toHaveBeenCalledWith("session-disabled", expect.objectContaining({ userId: PRINCIPAL.userId, branchId: PRINCIPAL.branchId }));
