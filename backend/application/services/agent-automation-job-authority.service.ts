@@ -119,7 +119,7 @@ export class AgentAutomationJobAuthorityService {
         // Immediate jobs retain their original materialization time at dispatch.
         // Catch-up jobs retain the raw recipe time plus the final stable batch
         // schedule. Neither is rebuilt from the dispatch wall clock.
-        const source = agentAutomationSourcePayload(job.payload);
+        const source = agentAutomationSourcePayload(job.payload, job.templateKey);
         const catchUp = source["catchUp"] === undefined ? undefined : catchUpSchema.parse(source["catchUp"]);
         const recipeTime = new Date(catchUp?.originalScheduledFor ?? job.scheduledFor);
         const concrete = buildClientMessageRecipe(rule, client, recipeTime);
@@ -193,7 +193,7 @@ export class AgentAutomationJobAuthorityService {
         const schedule = schedules.find(({ id }) => id === input.scope.scheduleId);
         if (!schedule || rule.templateKey !== job.templateKey || rule.recipientType !== job.recipientType) return null;
 
-        const source = agentAutomationSourcePayload(job.payload);
+        const source = agentAutomationSourcePayload(job.payload, job.templateKey);
         const concrete = buildEmployeeAssignmentMessageRecipe(rule, schedule, job.scheduledFor);
         if (concrete && taskReference) concrete.payload = { ...concrete.payload, taskAutomationReference: taskReference };
         if (!concrete || job.scheduledFor.getTime() !== concrete.scheduledFor.getTime()
@@ -322,7 +322,7 @@ export class AgentAutomationJobAuthorityService {
             },
         });
 
-        const payload = agentAutomationSourcePayload(job.payload);
+        const payload = agentAutomationSourcePayload(job.payload, job.templateKey);
         const variables = payload["templateVariables"];
         if (!variables || typeof variables !== "object" || Array.isArray(variables)) return null;
         const buttonUrl = payload["buttonUrl"];
@@ -473,7 +473,7 @@ export class AgentAutomationJobAuthorityService {
                 || (["pending", "processing", "dispatching"].includes(predecessor.status)
                     && (predecessor.sentAt !== null || predecessor.canceledAt !== null))) return false;
 
-            const predecessorSource = agentAutomationSourcePayload(predecessor.payload);
+            const predecessorSource = agentAutomationSourcePayload(predecessor.payload, predecessor.templateKey);
             const parsed = catchUpSchema.safeParse(predecessorSource["catchUp"]);
             if (!parsed.success) return false;
             const predecessorCatchUp = parsed.data;

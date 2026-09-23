@@ -14,6 +14,18 @@ export const SERVICE_END_NOTICE_SMS_TITLE = "서비스 종료 안내";
 export const SERVICE_END_NOTICE_SMS_TRIGGER_TYPE = "service_end_notice";
 export const SERVICE_END_NOTICE_ALREADY_SENT_CANCEL_REASON = "서비스 종료 안내가 이미 발송됨";
 
+/**
+ * Exact key paths `ReceiptLinkDeliveryEnricher` writes into a SERVICE_END_NOTICE
+ * job's payload at delivery time (`payload.templateVariables[RECEIPT_URL]` and
+ * `payload.[BUTTON_URL]`). The automation binding excludes these from the bound
+ * source payload for this template only: the link is server-derived from the
+ * client id, and the rendered message text is still covered by the delivery
+ * snapshot/provider hash at send time. Shared here so the enricher and the
+ * binding cannot drift apart on the exact key names.
+ */
+export const SERVICE_END_NOTICE_RECEIPT_URL_TEMPLATE_VARIABLE = "receiptUrl";
+export const SERVICE_END_NOTICE_BUTTON_URL_PAYLOAD_KEY = "buttonUrl";
+
 export const SERVICE_END_NOTICE_DEFAULT_CONTENT = `[사회서비스 제공자 품질평가 A등급]
 안녕하세요, 인천 아이미래로 입니다 :)
 
