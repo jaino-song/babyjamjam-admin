@@ -30,7 +30,7 @@
 | 브랜치 | 역할 | 프론트(Vercel) | 백엔드 | DB 패치 잡 |
 |---|---|---|---|---|
 | `dev` | 통합 대상. 모든 feature/fix PR의 목적지 | 빌드 안 함 (2026-08-06부터, [외부] Ignored Build Step) | 배포 없음. 로컬 `localhost:3001`로 테스트 | `apply-dev` (prisma 경로 push 시) |
-| `preview` | 릴리스 후보 검증 | preview 빌드 | Lightsail `preview` 컨테이너 (`preview.api.babyjamjam.com`), push 시 자동 | `apply-preview` |
+| `preview` | 릴리스 후보 검증 | preview 빌드 | Google Cloud Run `babyjamjam-api-preview` (`*.run.app`, asia-northeast3, min 0 / max 1), push 시 `deploy-cloudrun` 잡이 자동(`apply-preview` 뒤, BJJ-341부터). runbook: `docs/plans/2026-09-23-preview-cloud-run.md` | `apply-preview` |
 | `main` | 프로덕션 | production 빌드 (`admin.babyjamjam.com`, `m.admin.babyjamjam.com`) | **AWS Lightsail** `production` 컨테이너 (`api.babyjamjam.com`), push 시 자동(같은 커밋의 `apply-production` 패치 성공 뒤). 장애 시 **LightNode VPS Fallback Server**(API-only warm standby) | `apply-production` |
 
 규칙:
@@ -61,7 +61,7 @@ PR을 `dev`에 열면 아래 워크플로가 돌고, 필수 체크는 GitHub 브
 
 1. **로컬 최소 검증은 README의 목록 그대로.** `pnpm lint`, `pnpm lint:ui-architecture`, 앱별 `type-check`, `pnpm test`, `pnpm build`. CI가 잡아줄 것을 기다리지 않는다.
 2. **`lint:ui-architecture` baseline은 늘어날 수 없다.** 새 위반은 실패. 파일을 정리했으면 `docs/design-system/ui-debt-baseline.json`에서 제거한다.
-3. **preview push의 `deploy Lightsail backend` 잡이 빨간 것은 코드 문제가 아닐 수 있다.** 2026-08-30부터 AWS OIDC trust policy 오류(`Not authorized to perform sts:AssumeRoleWithWebIdentity`, PreviewDeployRole)로 실패 중. `gh run list --workflow=backend-ci.yml --branch=preview`로 `pull_request` 런과 `push` 런을 나눠 보고, `pull_request`가 green이면 PR은 정상이다. 수리는 IAM 쪽 별도 작업.
+3. **preview push의 `deploy Lightsail backend` 잡이 빨간 것은 코드 문제가 아닐 수 있다.** 2026-08-30부터 AWS OIDC trust policy 오류(`Not authorized to perform sts:AssumeRoleWithWebIdentity`, PreviewDeployRole)로 실패 중. `gh run list --workflow=backend-ci.yml --branch=preview`로 `pull_request` 런과 `push` 런을 나눠 보고, `pull_request`가 green이면 PR은 정상이다. 수리는 IAM 쪽 별도 작업. **업데이트(BJJ-341, 2026-09-23): preview는 더 이상 Lightsail에 배포하지 않는다(Cloud Run `deploy-cloudrun`으로 전환).** GCP 부트스트랩(`docs/plans/2026-09-23-preview-cloud-run.md` §3)이 끝난 뒤부터 이 OIDC 실패는 preview에 적용되지 않는다 — 프로덕션(main) Lightsail 경로에는 그대로 적용된다.
 4. **CI 상태 조회에 `gh run list --commit <sha>`를 쓰지 않는다.** 실행이 있어도 빈 결과를 돌려준다 (2026-08-06 오보 사고). 다음을 쓴다:
    ```
    gh run list --branch <branch> --limit 6 --json headSha,name,status,conclusion \
@@ -103,7 +103,7 @@ PR을 `dev`에 열면 아래 워크플로가 돌고, 필수 체크는 GitHub 브
 - 사고: `eformsign_doc` 컬럼(PR #407, 2026-07-28). 앱은 배포됐는데 프로덕션 DB에 컬럼이 없던 하루 동안 호환 SELECT가 `templateId`를 null로 채워 **10분 중복 발송 가드가 조용히 무력화**됐다. 2026-07-29 11:52 수동 dispatch로 복구.
 - 같은 유형: PR #616(2026-09-03). `backend-ci`가 `database-patches.yml`의 production 승인 대기와 무관하게 ~20분 만에 배포를 끝냈고, 새 코드가 아직 없던 `employee_schedule.terminated_at`/`scheduler_lease`를 조회해 데스크톱 목록이 500으로 빈 상태가 됐다.
 - 승격 후 확인: `git show origin/main:.github/workflows/database-patches.yml | grep -c '<패치 이름>'`.
-- **이 사고 이후 `backend-ci`는 `preview`/`main` push에서 같은 커밋의 `Database Patches` 런이 성공할 때까지 기다린다** (잡 `wait for database patches`, `backend/deploy/ci/wait-database-patches.sh`). `resolve-backend-deploy-target`(따라서 `deploy-lightsail`/`deploy-lightnode`도)이 이 잡 뒤에 걸린다. 2026-09-03 오너 결정으로 GitHub `Production` environment의 필수 리뷰어를 제거해 **production 패치도 preview와 같이 main push에서 자동 적용**된다. 따라서 정상 경로는 push → 패치 자동 적용 → (수 분 뒤) 배포 자동 이어짐이고, 패치가 실패하면 배포는 실행되지 않는다. 이 대기 잡은 `backend-deploy-wait-<ref>` concurrency 그룹(`cancel-in-progress: true`)으로 묶여 있어, 같은 브랜치에 더 새로운 커밋이 push되면 이전 커밋의 대기 잡이 취소되고(따라서 그 커밋의 배포도 실행되지 않고) 최신 커밋만 배포로 이어진다 — 오래된 커밋이 나중에 도착해 최신 커밋의 배포를 덮어쓰는 경합을 막는다. 패치 런 출현 대기는 최대 10분, 완료 대기는 최대 120분이며 초과 시 스크립트가 `::error::`로 실패한다(잡 자체의 `timeout-minutes: 150`은 상한일 뿐, 정상적으로 도달하는 종료 경로가 아니다). 실패 시 Database Patches 런을 고치거나 승인한 뒤 **먼저 Database Patches push 런의 실패한 잡을 재실행**하고, **그다음 Backend CI의 실패한 잡을 재실행**한다 — `workflow_dispatch`로 별도 실행한 복구 런은 게이트를 통과시키지 못한다(스크립트는 이 커밋의 push 트리거 런만 본다). 이 자동화의 전제는 §3.1의 멱등 SQL 원칙과 dev → preview → main 승격 열차에서 같은 패치가 먼저 두 번 실행된다는 점이다. `backend/prisma/**` 변경이 없는 push는 지연 없이 통과한다(패치 런이 없어도 됨을 diff로 판별).
+- **이 사고 이후 `backend-ci`는 `preview`/`main` push에서 같은 커밋의 `Database Patches` 런이 성공할 때까지 기다린다** (잡 `wait for database patches`, `backend/deploy/ci/wait-database-patches.sh`). `resolve-backend-deploy-target`(따라서 그 뒤의 배포 잡도 — preview는 BJJ-341부터 `deploy-cloudrun`, main은 `deploy-lightsail`/`deploy-lightnode`)이 이 잡 뒤에 걸린다. 2026-09-03 오너 결정으로 GitHub `Production` environment의 필수 리뷰어를 제거해 **production 패치도 preview와 같이 main push에서 자동 적용**된다. 따라서 정상 경로는 push → 패치 자동 적용 → (수 분 뒤) 배포 자동 이어짐이고, 패치가 실패하면 배포는 실행되지 않는다. 이 대기 잡은 `backend-deploy-wait-<ref>` concurrency 그룹(`cancel-in-progress: true`)으로 묶여 있어, 같은 브랜치에 더 새로운 커밋이 push되면 이전 커밋의 대기 잡이 취소되고(따라서 그 커밋의 배포도 실행되지 않고) 최신 커밋만 배포로 이어진다 — 오래된 커밋이 나중에 도착해 최신 커밋의 배포를 덮어쓰는 경합을 막는다. 패치 런 출현 대기는 최대 10분, 완료 대기는 최대 120분이며 초과 시 스크립트가 `::error::`로 실패한다(잡 자체의 `timeout-minutes: 150`은 상한일 뿐, 정상적으로 도달하는 종료 경로가 아니다). 실패 시 Database Patches 런을 고치거나 승인한 뒤 **먼저 Database Patches push 런의 실패한 잡을 재실행**하고, **그다음 Backend CI의 실패한 잡을 재실행**한다 — `workflow_dispatch`로 별도 실행한 복구 런은 게이트를 통과시키지 못한다(스크립트는 이 커밋의 push 트리거 런만 본다). 이 자동화의 전제는 §3.1의 멱등 SQL 원칙과 dev → preview → main 승격 열차에서 같은 패치가 먼저 두 번 실행된다는 점이다. `backend/prisma/**` 변경이 없는 push는 지연 없이 통과한다(패치 런이 없어도 됨을 diff로 판별).
 
 ### 3.4 프로덕션 수동 적용 함정 (2026-07-16 실측)
 
@@ -121,6 +121,7 @@ PR을 `dev`에 열면 아래 워크플로가 돌고, 필수 체크는 GitHub 브
 ## 4. 백엔드 배포 (Lightsail)
 
 `preview`/`main` push → `backend-ci.yml`이 `backend/Dockerfile.lightsail`로 **불변 커밋 이미지**(`ghcr.io/jaino-song/babyjamjam-admin-backend:<sha>`)를 빌드 → OIDC로 브랜치 스코프 역할을 얻어 **고정 SSM 문서**로 호스트에 그 이미지를 활성화. 호스트는 이미지를 빌드하지 않는다.
+**preview는 BJJ-341(2026-09-23)부터 이 경로를 벗어난다:** 같은 GHCR 이미지를 `deploy-cloudrun` 잡이 Artifact Registry로 복사해 Cloud Run `babyjamjam-api-preview`에 배포하며, preview env는 호스트 `backend.env`가 아니라 **Secret Manager + 매니페스트**(`backend/deploy/cloudrun/service.preview.yaml`)에 산다. runbook: `docs/plans/2026-09-23-preview-cloud-run.md`. 아래 표의 Lightsail 규칙은 main에 적용된다.
 
 | 항목 | 규칙 |
 |---|---|
@@ -130,7 +131,7 @@ PR을 `dev`에 열면 아래 워크플로가 돌고, 필수 체크는 GitHub 브
 | 수동 운영 | `lightsail-operations.yml` (`status` / `deploy` / `operator-upgrade`, environment 선택) 또는 `backend/deploy/lightsail/lightsail-cli.sh` (gh CLI 인증 사용, 로컬 AWS 자격 불필요) |
 | 롤백 | 호스트의 설치된 CI operator가 `previous-image-tag`로 되돌린다. 저장소의 `rollback.sh`는 **retired** — 직접 실행하면 거부한다. 롤백도 `lightsail-operations.yml`을 통해서만 |
 | 헬스 | `GET /health`(liveness, 항상 200), `GET /health/ready`(DB `SELECT 1` + revocation 플래그, 실패 시 503). 배포 후 두 엔드포인트를 확인한다 |
-| preview 스케줄러 | `backend.env`에 `SCHEDULERS_ENABLED=false`, `SERVICE_RECORD_AUTO_FINALIZE_ENABLED=false` 필수. deploy/rollback 스크립트가 fail-closed로 거부한다 |
+| preview 스케줄러 | preview는 BJJ-341부터 Cloud Run 매니페스트(`backend/deploy/cloudrun/service.preview.yaml`)에 스케줄러 플래그가 하드코딩된다 — `SCHEDULERS_ENABLED=false`(백엔드 기본값은 true, 매니페스트에서 누락 금지) 외 lease·reconcile 값은 runbook §1 참고. 과거 Lightsail preview에 적용되던 `backend.env` fail-closed 규칙(`SCHEDULERS_ENABLED=false`, `SERVICE_RECORD_AUTO_FINALIZE_ENABLED=false`)은 Lightsail deploy/rollback 스크립트에 그대로 남아 있다 |
 | 시크릿 | 호스트 `/opt/babyjamjam/environments/<env>/backend.env`는 root 0600. 커밋 금지, 터미널에 전문 출력 금지 |
 
 ### 4.1 Fallback Server (LightNode VPS)
@@ -160,7 +161,7 @@ Railway 관련 (역사·잔존 — 프로덕션 런타임 아님):
 
 | 플래그 | 위치 | 규칙 |
 |---|---|---|
-| `SCHEDULERS_ENABLED` | Lightsail `backend.env` | production 런타임 **하나**만 true. preview는 항상 false |
+| `SCHEDULERS_ENABLED` | Lightsail `backend.env` (main) · Cloud Run preview 매니페스트 하드코딩 (BJJ-341부터) | production 런타임 **하나**만 true. preview는 항상 false (백엔드 기본값 true — 매니페스트 누락 금지) |
 | `CONTRACT_AUTO_FINALIZE_ENABLED`, `CONTRACT_AUTO_FINALIZE_SINCE` | 백엔드 env | 계약서 자동 검토완료 스케줄러(매일 17:00 KST). SINCE(YYYY-MM-DD)는 배포일 = 백로그 울타리, 없으면 에러 로그 후 no-op. 켜기 전 `eformsign_doc` 자동완료 컬럼 3개 패치(20260808000000) 선적용. 브랜치별 세부 설정은 DB(`system_setting`, `branch:<id>:contract_automation:auto_finalize`)이며 UI 계약서 → 자동화에서 편집 |
 | `EFORMSIGN_DOCUMENT_JOBS_ACCEPTING_ENABLED` | 백엔드 env | 문서 잡 큐 수락. 위 스케줄러의 전제 |
 | `SERVICE_RECORD_AUTO_FINALIZE_ENABLED` | 백엔드 env | 제공기록지 자동 완료. 로컬 실기기 테스트에도 필요 |
