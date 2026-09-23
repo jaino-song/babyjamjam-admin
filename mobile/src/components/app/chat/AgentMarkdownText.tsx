@@ -51,7 +51,7 @@ type Props = {
 
 export function AgentMarkdownText({ "data-component": dataComponent, text }: Props) {
     return (
-        <div data-component={dataComponent} data-slot="text" className="break-words">
+        <div data-component={dataComponent} data-slot="text" className="markdown-content break-words">
             <ReactMarkdown remarkPlugins={[remarkGfm]} components={agentMarkdownComponents}>
                 {text}
             </ReactMarkdown>

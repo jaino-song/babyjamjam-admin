@@ -586,6 +586,8 @@ describe("MobileAgentPartRegistry text markdown rendering", () => {
 
         const wrapper = screen.getByText("안녕하세요").closest('[data-slot="text"]');
         expect(wrapper).toHaveAttribute("data-component", "mobile_chat_tests_agent-part-registry_text-wrapper");
+        // Markdown list, link and table styles in globals.css are scoped to .markdown-content.
+        expect(wrapper).toHaveClass("markdown-content");
     });
 
     it("does not render a script tag or an inline event-handler image from model text", () => {

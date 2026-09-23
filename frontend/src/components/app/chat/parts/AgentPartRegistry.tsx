@@ -67,7 +67,8 @@ function isSameOriginPath(href: string): boolean {
 }
 const AGENT_TEXT_MARKDOWN_COMPONENTS: Components = {
     img: ({ alt }) => <>{alt ?? ""}</>,
-    a: ({ href, children, ...props }) => {
+    // `node` is react-markdown's AST node; spreading it would add a junk DOM attribute.
+    a: ({ href, children, node: _node, ...props }) => {
         if (typeof href === "string" && /^https?:\/\//i.test(href)) {
             return (
                 <a href={href} target="_blank" rel="noopener noreferrer" {...props}>

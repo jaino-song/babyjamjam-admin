@@ -374,6 +374,7 @@ describe("AgentPartRegistry", () => {
         const internal = screen.getByRole("link", { name: "내부" });
         expect(internal).toHaveAttribute("href", "/clients/1");
         expect(internal).not.toHaveAttribute("target");
+        expect(internal).not.toHaveAttribute("node");
         expect(screen.queryByRole("link", { name: "외부1" })).not.toBeInTheDocument();
         expect(screen.getByText("외부1")).toBeInTheDocument();
         for (const anchor of Array.from(document.querySelectorAll("a"))) {
