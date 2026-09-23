@@ -1,8 +1,10 @@
 "use client";
 
 import type { UIMessage } from "ai";
+import type { Components } from "react-markdown";
 import { Button } from "@/components/ui/button";
 import { AgentActionApprovalCard } from "@/components/app/ui/AgentActionApprovalCard";
+import { ChatMarkdown } from "../ChatMarkdown";
 import { ActionResultPart } from "./ActionResultPart";
 import { FormRequestPart } from "./FormRequestPart";
 import { ErrorPart } from "./ErrorPart";
@@ -45,13 +47,52 @@ type AgentPartRegistryProps = {
     taskBusy?: boolean;
 };
 
+// Model-authored text can contain markdown links/images. Images are a
+// zero-click exfiltration channel (a bare URL fetch fires on render), so we
+// never render an <img> element — only its alt text. Links are restricted to
+// http(s) (opened in a new tab) and same-origin absolute paths (same tab);
+// anything else (javascript:, data:, mailto:, bare text that still parsed as
+// a link, etc.) renders as plain text.
+const AGENT_TEXT_MARKDOWN_COMPONENTS: Components = {
+    img: ({ alt }) => <>{alt ?? ""}</>,
+    a: ({ href, children, ...props }) => {
+        if (typeof href === "string" && /^https?:\/\//i.test(href)) {
+            return (
+                <a href={href} target="_blank" rel="noopener noreferrer" {...props}>
+                    {children}
+                </a>
+            );
+        }
+        if (typeof href === "string" && href.startsWith("/")) {
+            return (
+                <a href={href} {...props}>
+                    {children}
+                </a>
+            );
+        }
+        return <>{children}</>;
+    },
+};
+
 export function AgentPartRegistry({ "data-component": dataComponent, message, task, onTaskEntitySelect, onTaskPatch, onTaskCommand, onEntitySelect, onFeedback, onApproveAction, onRejectAction, onSubmitForm, onRetry, terminalActionIds, isBusy = false, taskBusy = false }: AgentPartRegistryProps) {
     const component = (suffix: string) => `${dataComponent}_${suffix}`;
 
     return (
         <div data-component={dataComponent} data-source-component="AgentPartRegistry" className="flex flex-col gap-3">
             {message.parts.map((part, index) => {
-                if (part.type === "text") return <p key={index} data-component={component("text")} data-slot="text" className="whitespace-pre-wrap break-words">{part.text}</p>;
+                // step-start marks the beginning of each model step (one per
+                // tool call round-trip) and carries nothing worth showing;
+                // reasoning is server-suppressed but must never leak into the
+                // UI if it arrives anyway. Both render nothing, not the
+                // "can't display this" fallback.
+                if (part.type === "step-start" || part.type === "reasoning") return null;
+                if (part.type === "text") {
+                    return (
+                        <div key={index} data-component={component("text")} data-slot="text" className="markdown-content break-words">
+                            <ChatMarkdown components={AGENT_TEXT_MARKDOWN_COMPONENTS}>{part.text}</ChatMarkdown>
+                        </div>
+                    );
+                }
                 const toolPart = part as unknown as { type?: string; state?: string; output?: unknown; errorText?: string; toolName?: string };
                 if (toolPart.type === "dynamic-tool" || toolPart.type?.startsWith("tool-")) {
                     const toolName = toolPart.toolName ?? toolPart.type?.slice(5).replaceAll("_", ".") ?? "agent";

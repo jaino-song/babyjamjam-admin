@@ -1,10 +1,9 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { CodeBlock } from "./CodeBlock";
+import { ChatMarkdown } from "./ChatMarkdown";
 import { MarkdownContent } from "./MarkdownContent";
 import { ToolIndicator } from "./tool-indicator";
 import { MessageFeedback } from "./message-feedback";
@@ -108,13 +107,12 @@ export function AssistantMessage({
                 {isToolExecuting && message.isStreaming && (
                     <ToolIndicator toolName={currentTool || null} isExecuting={true} />
                 )}
-                <MarkdownContent>
+                <MarkdownContent data-component="desktop_chat_page_markdown">
                     {wizardContent ? (
                         wizardContent
                     ) : (
                         <>
-                            <ReactMarkdown
-                                remarkPlugins={[remarkGfm]}
+                            <ChatMarkdown
                                 components={{
                                     code: ({ className, children, ...props }) => {
                                         const match = /language-(\w+)/.exec(className || "");
@@ -132,15 +130,10 @@ export function AssistantMessage({
                                             </code>
                                         );
                                     },
-                                    table: ({ children }) => (
-                                        <div className="table-wrapper">
-                                            <table>{children}</table>
-                                        </div>
-                                    ),
                                 }}
                             >
                                 {message.content}
-                            </ReactMarkdown>
+                            </ChatMarkdown>
 
                             {message.isStreaming && (
                                 <span className="inline-block w-2 h-4 bg-foreground ml-1 animate-blink" />
