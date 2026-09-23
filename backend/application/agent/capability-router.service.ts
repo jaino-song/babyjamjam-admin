@@ -10,7 +10,7 @@ import { redactClassifierText } from "./agent-model-redaction";
 import type { DecisionMode } from "./decision/decision-contracts";
 import type { AgentDecisionService, DecisionTurnContext } from "./decision/agent-decision.service";
 
-const DOMAIN_TERMS: Record<string, RegExp> = {
+export const DOMAIN_TERMS: Record<string, RegExp> = {
     clients: /(산모|고객|client|mother)/i,
     employees: /(관리사|직원|employee|caregiver)/i,
     schedules: /(일정|스케줄|schedule|calendar)/i,

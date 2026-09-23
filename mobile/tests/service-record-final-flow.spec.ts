@@ -163,8 +163,8 @@ test("마지막 회차 제출 후 별도 버튼 없이 최종 제출을 완료�
   await page.getByRole("button", { name: "다음", exact: true }).click();
 
   await page.getByLabel("체온").fill("36.5");
-  const breastFeedingField = page.locator('[data-component="mobile_service-record_wizard_body_day-field"]').filter({ hasText: "⑧ 모유수유" });
-  const formulaFeedingField = page.locator('[data-component="mobile_service-record_wizard_body_day-field"]').filter({ hasText: "⑨ 분유수유" });
+  const breastFeedingField = page.locator('[data-component="mobile_service-record_wizard_body_day-field_breast-feeding"]');
+  const formulaFeedingField = page.locator('[data-component="mobile_service-record_wizard_body_day-field_formula-feeding"]');
   await breastFeedingField.getByRole("spinbutton").fill("5");
   await formulaFeedingField.getByLabel("횟수").fill("4");
   await formulaFeedingField.getByLabel("회당").fill("80");
