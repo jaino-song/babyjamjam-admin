@@ -73,8 +73,11 @@ find_env_index() {
 }
 
 # Parse the env file WITHOUT source/eval: line by line, skipping blanks and
-# # comments, accepting KEY=VALUE and "export KEY=VALUE", stripping one layer
-# of matching surrounding quotes. Values may contain "=".
+# # comments, accepting KEY=VALUE and "export KEY=VALUE", trimming surrounding
+# whitespace off the value before stripping one layer of matching surrounding
+# quotes. Values may contain "=". A quoted value keeps "#" literally; an
+# unquoted value containing " #" (dotenv inline-comment syntax) is refused
+# instead of being guessed at.
 parse_env_file() {
     local file="$1"
     local raw line key value lineno=0
@@ -107,7 +110,18 @@ parse_env_file() {
             echo "line $lineno: invalid" >&2
             exit 1
         fi
-        value="$(strip_one_quote_layer "$value")"
+        value="$(trim "$value")"
+        case "$value" in
+            \"* | \'*)
+                value="$(strip_one_quote_layer "$value")"
+                ;;
+            *" #"*)
+                # dotenv would treat this as an inline comment; guessing either
+                # way silently diverges, so refuse the line (never print it).
+                echo "line $lineno: invalid" >&2
+                exit 1
+                ;;
+        esac
         if find_env_index "$key"; then
             ENV_VALUES[$REPLY_INDEX]="$value"
         else
