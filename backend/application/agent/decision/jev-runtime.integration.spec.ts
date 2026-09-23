@@ -42,6 +42,25 @@ function clientWriteCapability(name: "clients.create" | "clients.update") {
     };
 }
 
+function readCapability(name: string, domain: string) {
+    return {
+        meta: {
+            name,
+            domain,
+            version: "1.0.0",
+            description: `Search ${domain}`,
+            risk: "read" as const,
+            requiredRoles: ["admin"],
+            renderer: "activity" as const,
+            flagKey: `agent.capability.${name}`,
+            sideEffect: false,
+        },
+        inputSchema: z.object({}),
+        outputSchema: z.object({ kind: z.literal("entity"), entity: z.object({ id: z.number(), name: z.string() }) }),
+        execute: jest.fn().mockResolvedValue({ kind: "entity", entity: { id: 1, name: "결과" } }),
+    };
+}
+
 function clientSearchCapability() {
     return {
         meta: {
@@ -97,7 +116,7 @@ interface RuntimeHarnessOptions {
     intentResult?: DecisionPolicyResult<"read" | "create" | "update_related" | "ambiguous" | "unrelated">;
     ownership?: { replayed: boolean; activeTask: boolean; formBound: boolean; command: boolean; isQuestion: boolean };
     handleUserTurnTask?: AgentTask | null;
-    capabilities?: ReturnType<typeof clientWriteCapability | typeof clientSearchCapability>[];
+    capabilities?: ReturnType<typeof clientWriteCapability | typeof clientSearchCapability | typeof readCapability>[];
     routeDomainsResult?: DecisionPolicyResult<readonly string[]>;
     modelScript?: Array<{ type: "tool-call"; toolName: string; input: Record<string, unknown> } | { type: "text"; text: string }>;
 }
@@ -119,8 +138,9 @@ interface RuntimeHarness {
         applyModelMutation: jest.Mock;
     };
     traces: { start: jest.Mock; finish: jest.Mock };
-    sessions: { create: jest.Mock; appendMessages: jest.Mock; update: jest.Mock };
+    sessions: { create: jest.Mock; appendMessages: jest.Mock; update: jest.Mock; remove: jest.Mock };
     turnContexts: DecisionTurnContext[];
+    model: DeterministicAgentLanguageModel;
 }
 
 function buildHarness(options: RuntimeHarnessOptions): RuntimeHarness {
@@ -195,14 +215,15 @@ function buildHarness(options: RuntimeHarnessOptions): RuntimeHarness {
         { getSnapshot: jest.fn().mockResolvedValue({}), isCapabilityEnabledFromSnapshot: jest.fn().mockReturnValue(true) } as never,
         undefined,
     );
+    const model = new DeterministicAgentLanguageModel(options.modelScript ?? [
+        { type: "tool-call", toolName: "clients_create", input: { operations: [{ op: "clear", field: "address" }] } },
+        { type: "text", text: "완료했습니다." },
+    ]);
     const runtime = new AgentRuntimeService(
         { list: () => capabilities } as never,
         { isCapabilityEnabled: jest.fn().mockResolvedValue(true) } as never,
         sessions as never,
-        { modelId: "deterministic-agent-v1", create: () => new DeterministicAgentLanguageModel(options.modelScript ?? [
-            { type: "tool-call", toolName: "clients_create", input: { operations: [{ op: "clear", field: "address" }] } },
-            { type: "text", text: "완료했습니다." },
-        ]) } as never,
+        { modelId: "deterministic-agent-v1", create: () => model } as never,
         router as never,
         traces as never,
         undefined,
@@ -220,6 +241,7 @@ function buildHarness(options: RuntimeHarnessOptions): RuntimeHarness {
         traces,
         sessions,
         turnContexts,
+        model,
     };
 }
 
@@ -325,19 +347,202 @@ describe("Jev runtime integration (P0 decision layer)", () => {
         expect(drained.chunks.every((chunk) => (chunk as { type: string }).type !== "data-task-snapshot" || true)).toBe(true);
     });
 
-    it("enforce routing abstention offers no capabilities and keeps the incumbent feature-disabled refusal", async () => {
+    it("enforce routing abstention answers a zero-tool clarification turn, not the feature-disabled refusal", async () => {
+        const harness = buildHarness({
+            modes: { routeDomains: DECISION_MODES.enforce, classifyClientIntent: DECISION_MODES.enforce },
+            capabilities: [clientSearchCapability()],
+            modelScript: [{ type: "text", text: "무엇을 도와드릴까요?" }],
+        });
+        // Record one route-domains observation into the turn's collector, the
+        // same pattern the classify-client-intent façade mock uses above.
+        harness.decisions.routeDomains.mockImplementation(async (context: DecisionTurnContext) => {
+            context.collector.record({
+                kind: "semantic-decision-v1",
+                decisionKind: "route-domains",
+                mode: "enforce",
+                model: "jev-1.13.0",
+                profileVersion: "profile-v1",
+                questionVersion: "v1",
+                labels: [],
+                scores: [],
+                latencyMs: 1,
+                outcome: "abstain",
+                reason: "low-confidence",
+                disagreement: null,
+                usage: null,
+                missing: false,
+                droppedReason: null,
+            });
+            return { status: "abstain", selection: null, baselineSelection: ["clients"], reason: "low-confidence", profileVersion: "profile-v1" };
+        });
+        const doStreamSpy = jest.spyOn(harness.model, "doStream");
+
+        // A text with no keyword match leaves matched empty; the enforce
+        // router consults the façade and abstains — the bug this test used
+        // to encode converted that into the feature-disabled 403. It must
+        // now be a normal traced turn with zero tools instead.
+        const result = await harness.runtime.stream({
+            principal: PRINCIPAL,
+            locale: "ko",
+            messages: [userMessage("message-no-keyword", "도와줘")],
+        });
+        await drainStream(result.stream);
+        await until(() => harness.traces.finish.mock.calls.length > 0);
+
+        expect(doStreamSpy).toHaveBeenCalledTimes(1);
+        const streamOptions = doStreamSpy.mock.calls[0]?.[0] as { tools?: unknown; prompt?: Array<{ role: string; content: string }> };
+        expect(streamOptions.tools).toBeUndefined();
+        const systemPrompt = streamOptions.prompt?.[0]?.content ?? "";
+        expect(systemPrompt).toContain("Ask the user one short clarifying question about what they want to do");
+
+        // No entry point to clients.create/clients.update was requested of
+        // the orchestrator.
+        expect(harness.taskOrchestrator.handleUserTurn).toHaveBeenCalledWith(expect.objectContaining({ capabilityId: undefined }));
+        expect(harness.taskOrchestrator.applyModelMutation).not.toHaveBeenCalled();
+
+        // The routing observation reached trace finalization.
+        expect(harness.traces.finish).toHaveBeenCalledTimes(1);
+        const [, outcomeArg, , , stepMetadataArg, decisionEventsArg] = harness.traces.finish.mock.calls[0] as unknown[];
+        expect(outcomeArg).toBe("succeeded");
+        expect(stepMetadataArg).toEqual([]);
+        const decisionEvents = decisionEventsArg as Array<{ kind: string; decisionKind: string }>;
+        expect(decisionEvents?.length).toBe(1);
+        expect(decisionEvents?.[0]?.decisionKind).toBe("route-domains");
+    });
+
+    it("enforce deterministic (>2 keyword match) routing abstention also yields the zero-tool clarification turn", async () => {
+        const harness = buildHarness({
+            modes: { routeDomains: DECISION_MODES.enforce, classifyClientIntent: DECISION_MODES.enforce },
+            // Three enabled domains whose keywords all appear in the text
+            // below: matched.length (3) exceeds 2, so the router abstains
+            // deterministically before any façade call.
+            capabilities: [clientSearchCapability(), readCapability("employees.search", "employees"), readCapability("schedules.search", "schedules")],
+            modelScript: [{ type: "text", text: "무엇을 도와드릴까요?" }],
+        });
+        const doStreamSpy = jest.spyOn(harness.model, "doStream");
+
+        const result = await harness.runtime.stream({
+            principal: PRINCIPAL,
+            locale: "ko",
+            messages: [userMessage("message-many-keywords", "산모 관리사 일정 관련해서 도와줘")],
+        });
+        await drainStream(result.stream);
+        await until(() => harness.traces.finish.mock.calls.length > 0);
+
+        expect(harness.decisions.routeDomains).not.toHaveBeenCalled();
+        const streamOptions = doStreamSpy.mock.calls[0]?.[0] as { tools?: unknown };
+        expect(streamOptions.tools).toBeUndefined();
+
+        // This path never called the façade, so it produced no observation:
+        // finish keeps the exact incumbent 5-argument form.
+        expect(harness.traces.finish).toHaveBeenCalledTimes(1);
+        const finishCall = harness.traces.finish.mock.calls[0] as unknown[];
+        expect(finishCall).toHaveLength(5);
+        expect(finishCall[1]).toBe("succeeded");
+    });
+
+    it("enforce clarify with a live owned task keeps its existing continuation and task tool byte-for-byte", async () => {
+        const harness = buildHarness({
+            modes: { routeDomains: DECISION_MODES.enforce, classifyClientIntent: DECISION_MODES.enforce },
+            handleUserTurnTask: taskSnapshot("clients.create"),
+            routeDomainsResult: { status: "abstain", selection: null, baselineSelection: ["clients"], reason: "low-confidence", profileVersion: "profile-v1" },
+            modelScript: [
+                { type: "tool-call", toolName: "clients_create", input: { operations: [{ op: "clear", field: "address" }] } },
+                { type: "text", text: "완료했습니다." },
+            ],
+        });
+        const doStreamSpy = jest.spyOn(harness.model, "doStream");
+
+        const result = await harness.runtime.stream({
+            principal: PRINCIPAL,
+            locale: "ko",
+            messages: [userMessage("message-owned-no-keyword", "도와줘")],
+        });
+        await drainStream(result.stream);
+        await until(() => harness.taskOrchestrator.applyModelMutation.mock.calls.length > 0);
+
+        // A router "clarify" on a turn a live task owns must not become the
+        // zero-tool clarification behavior: the task tool is exposed exactly
+        // as it already is today.
+        const firstCallOptions = doStreamSpy.mock.calls[0]?.[0] as { tools?: unknown; prompt?: Array<{ role: string; content: string }> };
+        expect(firstCallOptions.tools).toBeDefined();
+        expect(JSON.stringify(firstCallOptions.tools)).toContain("clients_create");
+        const systemPrompt = firstCallOptions.prompt?.[0]?.content ?? "";
+        expect(systemPrompt).not.toContain("Ask the user one short clarifying question about what they want to do");
+        expect(harness.taskOrchestrator.applyModelMutation).toHaveBeenCalledWith(expect.objectContaining({ capabilityId: "clients.create" }));
+    });
+
+    it("enforce clarify turn does not remove a session created this turn and persists the transcript", async () => {
         const harness = buildHarness({
             modes: { routeDomains: DECISION_MODES.enforce, classifyClientIntent: DECISION_MODES.enforce },
             capabilities: [clientSearchCapability()],
             routeDomainsResult: { status: "abstain", selection: null, baselineSelection: ["clients"], reason: "low-confidence", profileVersion: "profile-v1" },
+            modelScript: [{ type: "text", text: "무엇을 도와드릴까요?" }],
         });
-        // A text with no keyword match leaves matched empty; the enforce router
-        // consults the façade and the abstention yields no capability.
-        await expect(harness.runtime.stream({
+
+        const result = await harness.runtime.stream({
             principal: PRINCIPAL,
             locale: "ko",
-            messages: [userMessage("message-no-keyword", "도와줘")],
-        })).rejects.toThrow("Agent is not enabled for this context");
+            messages: [userMessage("message-no-keyword-persist", "도와줘")],
+        });
+        await drainStream(result.stream);
+        await until(() => harness.sessions.appendMessages.mock.calls.length > 0);
+
+        expect(harness.sessions.remove).not.toHaveBeenCalled();
+        const [, , persistedMessages] = harness.sessions.appendMessages.mock.calls[0] as [string, unknown, unknown[]];
+        const roles = (persistedMessages as Array<{ role: string }>).map((message) => message.role);
+        expect(roles).toEqual(["user", "assistant"]);
+    });
+
+    it("enforce provider-unavailable routing also yields the zero-tool clarification turn", async () => {
+        const harness = buildHarness({
+            modes: { routeDomains: DECISION_MODES.enforce, classifyClientIntent: DECISION_MODES.enforce },
+            capabilities: [clientSearchCapability()],
+            routeDomainsResult: { status: "unavailable", selection: null, baselineSelection: ["clients"], reason: "transport-error", profileVersion: null },
+            modelScript: [{ type: "text", text: "무엇을 도와드릴까요?" }],
+        });
+        const doStreamSpy = jest.spyOn(harness.model, "doStream");
+
+        const result = await harness.runtime.stream({
+            principal: PRINCIPAL,
+            locale: "ko",
+            messages: [userMessage("message-provider-unavailable", "도와줘")],
+        });
+        await drainStream(result.stream);
+        await until(() => harness.traces.finish.mock.calls.length > 0);
+
+        const streamOptions = doStreamSpy.mock.calls[0]?.[0] as { tools?: unknown };
+        expect(streamOptions.tools).toBeUndefined();
+        expect(harness.taskOrchestrator.applyModelMutation).not.toHaveBeenCalled();
+    });
+
+    it("off and shadow keep the incumbent capabilities offered and never add the clarification instruction", async () => {
+        for (const modes of [
+            { routeDomains: DECISION_MODES.off, classifyClientIntent: DECISION_MODES.off },
+            { routeDomains: DECISION_MODES.shadow, classifyClientIntent: DECISION_MODES.shadow },
+        ]) {
+            const harness = buildHarness({
+                modes,
+                capabilities: [clientSearchCapability()],
+                routeDomainsResult: { status: "abstain", selection: null, baselineSelection: ["clients"], reason: "low-confidence", profileVersion: "profile-v1" },
+                modelScript: [{ type: "text", text: "완료했습니다." }],
+            });
+            const doStreamSpy = jest.spyOn(harness.model, "doStream");
+
+            const result = await harness.runtime.stream({
+                principal: PRINCIPAL,
+                locale: "ko",
+                messages: [userMessage("message-off-shadow", "도와줘")],
+            });
+            await drainStream(result.stream);
+
+            const streamOptions = doStreamSpy.mock.calls[0]?.[0] as { tools?: unknown; prompt?: Array<{ role: string; content: string }> };
+            // The router contract guarantees off/shadow never return
+            // "clarify": the incumbent read capability stays offered.
+            expect(JSON.stringify(streamOptions.tools)).toContain("clients_search");
+            const systemPrompt = streamOptions.prompt?.[0]?.content ?? "";
+            expect(systemPrompt).not.toContain("Ask the user one short clarifying question about what they want to do");
+        }
     });
 
     it("bound turn bypass: owned turns skip inference and are never retargeted by text", async () => {
@@ -527,10 +732,11 @@ describe("Jev runtime integration (P0 decision layer)", () => {
             { getSnapshot: jest.fn().mockResolvedValue({}), isCapabilityEnabledFromSnapshot: jest.fn().mockReturnValue(false) } as never,
             undefined,
         );
+        const sessions = { create: jest.fn().mockResolvedValue({ id: "session-disabled", selectedEntities: {}, messages: [] }), appendMessages: jest.fn().mockResolvedValue(undefined), remove: jest.fn().mockResolvedValue(undefined) };
         const runtime = new AgentRuntimeService(
             { list: () => capabilities } as never,
             { isCapabilityEnabled: jest.fn().mockResolvedValue(true) } as never,
-            { create: jest.fn().mockResolvedValue({ id: "session-disabled", selectedEntities: {}, messages: [] }), appendMessages: jest.fn().mockResolvedValue(undefined), remove: jest.fn().mockResolvedValue(undefined) } as never,
+            sessions as never,
             { modelId: "deterministic-agent-v1", create: () => new DeterministicAgentLanguageModel([{ type: "text", text: "완료" }]) } as never,
             router as never,
             { start: jest.fn(), finish: jest.fn() } as never,
@@ -546,8 +752,14 @@ describe("Jev runtime integration (P0 decision layer)", () => {
             principal: PRINCIPAL,
             locale: "ko",
             messages: [userMessage("message-disabled", "고객을 찾아줘")],
-        })).rejects.toThrow("Agent is not enabled for this context");
+        })).rejects.toMatchObject({
+            status: 403,
+            response: expect.objectContaining({ code: "ACCESS_DENIED", outcome: "NOT_APPLIED" }),
+        });
         // Off-mode kinds make no façade call even though the deps are wired.
         expect(decisionConfig.getKindMode).toHaveBeenCalledWith(DECISION_KINDS.routeDomains);
+        // `disabled` is never `clarify`: a session created on this turn is
+        // still removed, exactly as the incumbent feature-disabled refusal.
+        expect(sessions.remove).toHaveBeenCalledWith("session-disabled", expect.objectContaining({ userId: PRINCIPAL.userId, branchId: PRINCIPAL.branchId }));
     });
 });
