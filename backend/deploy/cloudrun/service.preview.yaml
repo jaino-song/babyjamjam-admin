@@ -62,9 +62,9 @@ spec:
             - name: SERVICE_RECORD_AUTO_FINALIZE_ENABLED
               value: "false"
             - name: PREVIEW_FRONTEND_URL
-              value: "https://staff.babyjamjam.com"
+              value: "https://preview.admin.babyjamjam.com"
             - name: PRODUCTION_FRONTEND_URL
-              value: "https://staff.babyjamjam.com"
+              value: "https://preview.admin.babyjamjam.com"
             - name: SENTRY_ENVIRONMENT
               value: "preview"
             # Aligo disabled (operator decision 2026-09-23): Cloud Run has no
