@@ -647,11 +647,15 @@ export function transportFailureCheckResults(checks: ScenarioChecks): CheckResul
 // ---------------------------------------------------------------------------
 
 export const JudgeScoreSchema = z.object({
-    intent: z.union([z.literal(0), z.literal(1), z.literal(2)]),
-    depth: z.union([z.literal(0), z.literal(1), z.literal(2)]),
-    grounding: z.union([z.literal(0), z.literal(1), z.literal(2)]),
-    format: z.union([z.literal(0), z.literal(1)]),
-    rationale: z.string().trim().min(1).max(400),
+    // Gemini structured output rejects numeric literal enums, so scores are
+    // bounded integers instead of unions of literals.
+    intent: z.number().int().min(0).max(2),
+    depth: z.number().int().min(0).max(2),
+    grounding: z.number().int().min(0).max(2),
+    format: z.number().int().min(0).max(1),
+    // The prompt asks for <= 400 chars; a longer rationale must not turn a
+    // valid score into a judgeError.
+    rationale: z.string().trim().min(1).max(2000),
 }).strict();
 export type JudgeScore = z.infer<typeof JudgeScoreSchema>;
 
