@@ -22,7 +22,7 @@ export class DashboardAgentCapabilitiesProvider implements AgentCapabilityProvid
                 name: "dashboard.summary",
                 domain: "dashboard",
                 version: "1.0.0",
-                description: "Summarize branch client counts without exposing personal contact data",
+                description: "Give a quick headline count of clients in the current branch, without exposing any personal contact data. Use for: 전체 산모 수, 진행중인 고객 수, 대시보드 요약. Input: none. Returns: totalClients, activeClients. For a breakdown by service status, use analytics.summary instead.",
                 risk: "read",
                 requiredRoles: ["owner", "admin", "manager", "user"],
                 renderer: "activity",
