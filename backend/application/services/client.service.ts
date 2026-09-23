@@ -36,6 +36,7 @@ import {
     assertEmployeeAssignmentShape,
     type EmployeeAssignmentCandidate,
 } from "application/policies/employee-assignment-eligibility.policy";
+import { codeOnlyProblemBody, problemBody } from "application/utils/problem-bodies";
 import {
     assertNoActiveEmployeeScheduleOverlap,
     employeeScheduleHandoverPeriod,
@@ -929,7 +930,12 @@ export class ClientService {
 
             assertEmployeeAssignmentShape(newPrimaryEmployeeId, newSecondaryEmployeeId);
             if (newPrimaryEmployeeId === null) {
-                throw new BadRequestException("배정을 만들려면 주 담당 인력이 필요합니다.");
+                throw new BadRequestException(problemBody("VALIDATION_FAILED", {
+                    pointer: "/primaryEmployeeId",
+                    code: "REQUIRED",
+                    detail: "배정을 만들려면 주 담당 인력이 필요해요.",
+                    location: "body",
+                }));
             }
 
             const retainedEmployeeIds = new Set(
@@ -1087,7 +1093,7 @@ export class ClientService {
             const autoRegistrationEnabled = await this.systemSettingService
                 .getClientAutoRegistrationEnabled(branchid);
             if (!autoRegistrationEnabled) {
-                throw new ConflictException("자동 고객 등록이 꺼져 있습니다. 고객을 먼저 등록한 뒤 계약서를 생성해 주세요.");
+                throw new ConflictException({ ...codeOnlyProblemBody("REQUEST_CONFLICT"), message: "자동 고객 등록이 꺼져 있습니다. 고객을 먼저 등록한 뒤 계약서를 생성해 주세요." });
             }
             const greetingEnabled = await this.systemSettingService
                 .getGreetingOnAutoRegistrationEnabled(branchid);
@@ -1862,7 +1868,7 @@ export class ClientService {
                     && lockedClient.branchId !== branchid
                 ))
             ) {
-                throw new ConflictException({ code: "SERVICE_RECORD_WRITE_TARGET_CHANGED" });
+                throw new ConflictException(codeOnlyProblemBody("SERVICE_RECORD_WRITE_TARGET_CHANGED"));
             }
             // Narrow unit doubles do not expose the complete service-record
             // delegates. Production always takes the locked reread above;
@@ -1968,7 +1974,12 @@ export class ClientService {
                     || secondaryEmployeeId !== currentSecondaryEmployeeId;
                 if (assignmentChanged) {
                     if (primaryEmployeeId === null) {
-                        throw new BadRequestException("배정을 만들려면 주 담당 인력이 필요합니다.");
+                        throw new BadRequestException(problemBody("VALIDATION_FAILED", {
+                            pointer: "/primaryEmployeeId",
+                            code: "REQUIRED",
+                            detail: "배정을 만들려면 주 담당 인력이 필요해요.",
+                            location: "body",
+                        }));
                     }
                     const retainedEmployeeIds = new Set(
                         [currentPrimaryEmployeeId, currentSecondaryEmployeeId]
@@ -2079,10 +2090,10 @@ export class ClientService {
                     data: clientUpdateData,
                 });
                 if (result.count === 0) {
-                    throw new NotFoundException(`고객을 찾을 수 없습니다. (id: ${id})`);
+                    throw new NotFoundException(clientCodeOnlyProblemBody("RESOURCE_NOT_FOUND", "고객을 찾을 수 없습니다."));
                 }
             } else if (!currentClient) {
-                throw new NotFoundException(`고객을 찾을 수 없습니다. (id: ${id})`);
+                throw new NotFoundException(clientCodeOnlyProblemBody("RESOURCE_NOT_FOUND", "고객을 찾을 수 없습니다."));
             }
             await this.serviceRecordLifecycleService?.ensureForClient(id, transaction);
             if (
@@ -2117,7 +2128,7 @@ export class ClientService {
         }
         const updatedClient = await this.findClientByIdUsecase.execute(branchid, id);
         if (!updatedClient) {
-            throw new NotFoundException(`고객을 찾을 수 없습니다. (id: ${id})`);
+            throw new NotFoundException(clientCodeOnlyProblemBody("RESOURCE_NOT_FOUND", "고객을 찾을 수 없습니다."));
         }
         const updatedPhone = normalizePhone(updatedClient.phone);
         if (updatedPhone) {
@@ -2169,7 +2180,7 @@ export class ClientService {
     ): Promise<ClientEntity> {
         const client = await this.findClientByIdUsecase.execute(branchid, clientId);
         if (!client) {
-            throw new NotFoundException(`고객을 찾을 수 없습니다. (id: ${clientId})`);
+            throw new NotFoundException(clientCodeOnlyProblemBody("RESOURCE_NOT_FOUND", "고객을 찾을 수 없습니다."));
         }
         this.logger.log(
             `Terminating service for client ${clientId}` +
@@ -2272,9 +2283,14 @@ export class ClientService {
     ): Promise<ClientEntity> {
         const client = await this.findClientByIdUsecase.execute(branchid, clientId);
         if (!client) {
-            throw new NotFoundException(`고객을 찾을 수 없습니다. (id: ${clientId})`);
+            throw new NotFoundException(clientCodeOnlyProblemBody("RESOURCE_NOT_FOUND", "고객을 찾을 수 없습니다."));
         }
-        assertEmployeeAssignmentShape(newPrimaryEmployeeId, newSecondaryEmployeeId ?? null);
+        // The replacement DTO spells its request-body fields with the `new`
+        // prefix, so the shape problems must carry those pointers for UIs.
+        assertEmployeeAssignmentShape(newPrimaryEmployeeId, newSecondaryEmployeeId ?? null, {
+            primary: "/newPrimaryEmployeeId",
+            secondary: "/newSecondaryEmployeeId",
+        });
 
         // This preflight only validates the caller's snapshot. The actual
         // replacement period is derived again from the locked client below.
@@ -2321,7 +2337,7 @@ export class ClientService {
                     && lockedClient.branchId !== branchid
                 ))
             ) {
-                throw new ConflictException({ code: "SERVICE_RECORD_WRITE_TARGET_CHANGED" });
+                throw new ConflictException(codeOnlyProblemBody("SERVICE_RECORD_WRITE_TARGET_CHANGED"));
             }
             const currentClient = lockedClient ?? client;
             mergeAndValidateClientServicePeriod(currentClient, {});
@@ -2364,7 +2380,7 @@ export class ClientService {
                 data: { serviceStatus: SERVICE_STATUS.REPLACEMENT_REQUESTED },
             });
             if (updateResult.count === 0) {
-                throw new NotFoundException(`고객을 찾을 수 없습니다. (id: ${clientId})`);
+                throw new NotFoundException(clientCodeOnlyProblemBody("RESOURCE_NOT_FOUND", "고객을 찾을 수 없습니다."));
             }
 
             if (currentSchedule) {
@@ -2415,7 +2431,7 @@ export class ClientService {
 
         const updatedClient = await this.findClientByIdUsecase.execute(branchid, clientId);
         if (!updatedClient) {
-            throw new NotFoundException(`고객을 찾을 수 없습니다. (id: ${clientId})`);
+            throw new NotFoundException(clientCodeOnlyProblemBody("RESOURCE_NOT_FOUND", "고객을 찾을 수 없습니다."));
         }
         return updatedClient;
     }
@@ -2428,7 +2444,7 @@ export class ClientService {
     async completeReplacement(branchid: string, clientId: number): Promise<ClientEntity> {
         const client = await this.findClientByIdUsecase.execute(branchid, clientId);
         if (!client) {
-            throw new NotFoundException(`고객을 찾을 수 없습니다. (id: ${clientId})`);
+            throw new NotFoundException(clientCodeOnlyProblemBody("RESOURCE_NOT_FOUND", "고객을 찾을 수 없습니다."));
         }
 
         if (client.serviceStatus !== SERVICE_STATUS.REPLACEMENT_REQUESTED) {

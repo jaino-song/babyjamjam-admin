@@ -165,6 +165,18 @@ describe("ContractExternalAgentCapabilitiesProvider approval-bound dispatch", ()
         expect(serializedInspection).not.toContain("900101");
     });
 
+    it("fails inspection as a certain failure when the contract client left the branch", async () => {
+        const { provider, createAndSend } = setup(null as never);
+        const capability = provider.getCapabilities()[0]!;
+
+        await expect(capability.inspect!(context, {
+            clientId: 7,
+            templateId: "template-1",
+        })).rejects.toBeInstanceOf(AgentActionCertainFailureError);
+
+        expect(createAndSend.execute).not.toHaveBeenCalled();
+    });
+
     it("refuses dispatch when the locked target changed after preliminary revalidation", async () => {
         const original = client();
         const changed = client({ name: "다른 고객" });
@@ -336,6 +348,63 @@ describe("ContractExternalAgentCapabilitiesProvider approval-bound dispatch", ()
         }, { remoteDocumentId: "remote-1" })).resolves.toEqual({
             status: "uncertain",
             reason: "Local contract projection repair failed",
+        });
+    });
+
+    describe("additive result contract classification", () => {
+        const dispatchInput = {
+            clientId: 7,
+            templateId: "template-1",
+            templateName: "표준계약서",
+        };
+
+        it("classifies an additive UNKNOWN outcome as uncertain even without legacy flags", async () => {
+            const { provider, createAndSend } = setup();
+            createAndSend.execute.mockResolvedValue({ success: false, outcome: "UNKNOWN" });
+            const capability = provider.getCapabilities()[0]!;
+
+            await expect(capability.execute(context, dispatchInput))
+                .rejects.toMatchObject({ name: "AgentActionUncertainError" });
+        });
+
+        it("keeps legacy uncertain and remoteDocumentId failures classified as uncertain", async () => {
+            const legacyUncertain = setup();
+            legacyUncertain.createAndSend.execute.mockResolvedValue({ success: false, uncertain: true });
+            await expect(legacyUncertain.provider.getCapabilities()[0]!.execute(context, dispatchInput))
+                .rejects.toMatchObject({ name: "AgentActionUncertainError" });
+
+            const legacyRemoteId = setup();
+            legacyRemoteId.createAndSend.execute.mockResolvedValue({ success: false, remoteDocumentId: "remote-1" });
+            await expect(legacyRemoteId.provider.getCapabilities()[0]!.execute(context, dispatchInput))
+                .rejects.toMatchObject({ name: "AgentActionUncertainError" });
+        });
+
+        it("keeps a NOT_APPLIED outcome a certain failure without legacy flags", async () => {
+            const { provider, createAndSend } = setup();
+            createAndSend.execute.mockResolvedValue({
+                success: false,
+                code: "CLIENT_ASSIGNMENT_REQUIRED",
+                outcome: "NOT_APPLIED",
+            });
+            const capability = provider.getCapabilities()[0]!;
+
+            await expect(capability.execute(context, dispatchInput)).resolves.toEqual({
+                success: false,
+                status: "failed",
+            });
+        });
+
+        it("classifies an additive UNKNOWN outcome as uncertain on the approval-bound path", async () => {
+            const current = client();
+            const { provider, createAndSend } = setup(current, [template()]);
+            const { capability, inspection } = await inspectDispatch(provider);
+            createAndSend.execute.mockResolvedValue({ success: false, outcome: "UNKNOWN" });
+
+            await expect(capability.executeApprovedTarget!({
+                ...context,
+                approvedTargetSnapshot: inspection.targetSnapshot,
+            }, dispatchInput, clientAgentTargetVersion(current as never)))
+                .rejects.toMatchObject({ name: "AgentActionUncertainError" });
         });
     });
 });

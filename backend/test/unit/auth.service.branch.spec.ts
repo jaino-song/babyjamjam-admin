@@ -268,7 +268,15 @@ describe("AuthService - Multi-Tenancy Enhancement", () => {
 
                 // #then
                 await expect(action).rejects.toThrow(ForbiddenException);
-                await expect(action).rejects.toThrow("접근 가능한 지점이 없습니다. 관리자에게 문의해 주세요.");
+                await expect(action()).rejects.toMatchObject({
+                    status: 403,
+                    response: expect.objectContaining({
+                        code: "NO_ACCESSIBLE_BRANCH",
+                        params: {},
+                        outcome: "NOT_APPLIED",
+                        recovery: { action: "NONE", retry: { mode: "NEVER" } },
+                    }),
+                });
                 expect(jwtService.signAsync).not.toHaveBeenCalled();
             });
         });
@@ -346,7 +354,15 @@ describe("AuthService - Multi-Tenancy Enhancement", () => {
 
                 // #then
                 await expect(action).rejects.toThrow(ForbiddenException);
-                await expect(action).rejects.toThrow("User does not belong to this branch");
+                await expect(action()).rejects.toMatchObject({
+                    status: 403,
+                    response: expect.objectContaining({
+                        code: "ACCESS_DENIED",
+                        params: {},
+                        outcome: "NOT_APPLIED",
+                        recovery: { action: "NONE", retry: { mode: "NEVER" } },
+                    }),
+                });
             });
         });
 
@@ -390,7 +406,15 @@ describe("AuthService - Multi-Tenancy Enhancement", () => {
 
                 // #then
                 await expect(action).rejects.toThrow(UnauthorizedException);
-                await expect(action).rejects.toThrow("User not found");
+                await expect(action()).rejects.toMatchObject({
+                    status: 401,
+                    response: expect.objectContaining({
+                        code: "AUTH_REQUIRED",
+                        params: {},
+                        outcome: "NOT_APPLIED",
+                        recovery: { action: "NONE", retry: { mode: "NEVER" } },
+                    }),
+                });
             });
         });
 
@@ -489,7 +513,15 @@ describe("AuthService - Multi-Tenancy Enhancement", () => {
 
                 // #then
                 await expect(action).rejects.toThrow(ForbiddenException);
-                await expect(action).rejects.toThrow("User does not belong to target branch");
+                await expect(action()).rejects.toMatchObject({
+                    status: 403,
+                    response: expect.objectContaining({
+                        code: "ACCESS_DENIED",
+                        params: {},
+                        outcome: "NOT_APPLIED",
+                        recovery: { action: "NONE", retry: { mode: "NEVER" } },
+                    }),
+                });
             });
         });
     });

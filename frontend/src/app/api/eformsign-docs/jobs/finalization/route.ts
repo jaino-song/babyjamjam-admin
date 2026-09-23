@@ -1,20 +1,20 @@
 import { NextRequest } from "next/server";
 
-import { errorResponse } from "@babyjamjam/shared/api";
 import { serverAPIClient } from "@/lib/api/server";
 import {
+    authRequiredResponse,
     backendJsonResponse,
+    errorResponse,
     getAuthHeaders,
     getAuthToken,
     invalidJsonResponse,
     readJsonObjectBody,
-    unauthorizedResponse,
 } from "@/lib/api/route-utils";
 
 export async function POST(request: NextRequest) {
     const token = getAuthToken(request);
     if (!token) {
-        return unauthorizedResponse("Authentication required. Please log in.");
+        return authRequiredResponse();
     }
 
     try {
@@ -24,6 +24,6 @@ export async function POST(request: NextRequest) {
         });
         return backendJsonResponse(response);
     } catch (error) {
-        return invalidJsonResponse(error) ?? errorResponse(error, "enqueue eformsign document finalization");
+        return invalidJsonResponse(error) ?? errorResponse(error, "enqueue eformsign document finalization", "mutation");
     }
 }

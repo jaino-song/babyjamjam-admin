@@ -70,6 +70,19 @@ describe("mobile contracts action lifecycle", () => {
     expect(source).not.toContain('console.warn("[finalize]');
   });
 
+  // BJJ-319 5-4c: the envelope `outcome` is classified inside
+  // parseFinalizeHeadlessResult (guard test covers it); the page must keep
+  // settling every ok:false through that guard rather than reading
+  // `outcome` or `fallbackHint` off the envelope directly.
+  it("routes the finalize envelope through the outcome-aware guard classification", () => {
+    expect(source).toContain("parseFinalizeHeadlessResult(headless)");
+    expect(source).not.toContain("headless.fallbackHint");
+    expect(source).not.toContain("headless.outcome");
+    // UNKNOWN settles through the blocked presentation (확인 필요 + no replay),
+    // so the iframe handoff decision stays keyed on the guard's verdict.
+    expect(source).toContain('headlessResult.kind === "iframe" ? "iframe" : undefined');
+  });
+
   it("wires the receipt-link send action through a busy confirm modal", () => {
     expect(source).toContain("setIsSendingReceiptLink(true)");
     expect(source).toContain("disabled: isSendingReceiptLink");

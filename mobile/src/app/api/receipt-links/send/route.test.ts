@@ -23,6 +23,14 @@ function createRequest(body: unknown, authenticated = true) {
   });
 }
 
+function createRawRequest(rawBody: string, authenticated = true) {
+  return new NextRequest("http://localhost/api/receipt-links/send", {
+    method: "POST",
+    headers: authenticated ? { cookie: "auth_token=token-1" } : {},
+    body: rawBody,
+  });
+}
+
 describe("POST /api/receipt-links/send", () => {
   beforeEach(() => {
     mockPost.mockReset();
@@ -68,5 +76,16 @@ describe("POST /api/receipt-links/send", () => {
 
     expect(response.status).toBe(400);
     expect(mockPost).not.toHaveBeenCalled();
+  });
+
+  it("rejects malformed JSON with a 400 problem and never calls the backend", async () => {
+    const response = await POST(createRawRequest("{not-valid-json"));
+
+    expect(response.status).toBe(400);
+    expect(mockPost).not.toHaveBeenCalled();
+    const body = await response.json();
+    expect(body.code).toBe("VALIDATION_FAILED");
+    expect(body.status).toBe(400);
+    expect(body.error).toBe("Request body must be valid JSON");
   });
 });

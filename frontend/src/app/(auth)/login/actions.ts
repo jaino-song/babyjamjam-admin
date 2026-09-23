@@ -4,6 +4,7 @@ import { cookies } from "next/headers";
 import { serverAPIClient } from "@/lib/api/server";
 import axios, { AxiosError } from "axios";
 import { clearAuthSessionCookies, setAuthSessionCookies } from "@/lib/auth/session-cookies";
+import { normalizeApiError, type NormalizedApiError } from "@babyjamjam/shared";
 
 interface APIErrorResponse {
     statusCode: number;
@@ -60,11 +61,32 @@ function isLoginOnboardingResponse(data: LoginResponsePayload): data is LoginOnb
 }
 
 function isBackendConnectionError(error: AxiosError): boolean {
+    // Transport state only: no response at all, or an axios transport code.
+    // The raw "Network Error" message text is never compared.
     return (
         !error.response ||
-        error.message === "Network Error" ||
         (typeof error.code === "string" && NETWORK_ERROR_CODES.has(error.code))
     );
+}
+
+function normalizeLoginFailure(status: number, data: unknown): NormalizedApiError {
+    return normalizeApiError(
+        { response: { status, data } },
+        { locale: "ko-KR", operation: "mutation" },
+    );
+}
+
+/** Registered-code discriminator for the unverified-email login failure. */
+function isEmailVerificationProblem(normalized: NormalizedApiError): boolean {
+    return normalized.verified
+        && normalized.problem?.code === "ACCESS_DENIED"
+        && (normalized.problem.errors ?? []).some((problemError) => problemError.pointer === "/email");
+}
+
+function readLegacyCode(data: unknown): string | undefined {
+    if (!data || typeof data !== "object" || Array.isArray(data)) return undefined;
+    const code = (data as { code?: unknown }).code;
+    return typeof code === "string" && code.length > 0 ? code : undefined;
 }
 
 export async function loginWithEmail(email: string, password: string, autoLogin = true): Promise<LoginResult> {
@@ -73,14 +95,19 @@ export async function loginWithEmail(email: string, password: string, autoLogin 
 
         // Handle error responses
         if (status >= 400 || !data.success) {
-            const message = typeof data === "object" && data && "message" in data
-                ? data.message
-                : undefined;
+            const normalized = normalizeLoginFailure(status, data);
+            const emailVerificationRequired = isEmailVerificationProblem(normalized);
             return {
                 success: false,
-                error: message || "이메일 또는 비밀번호가 올바르지 않아요.",
-                authErrorCode: "code" in data && typeof data.code === "string" ? data.code : undefined,
-                emailVerificationRequired: message?.includes("이메일 인증"),
+                // Registered problem message (verified) or locally authored
+                // copy — the upstream body message is never forwarded.
+                error: emailVerificationRequired
+                    ? "이메일 인증이 필요해요. 이메일을 확인해 주세요."
+                    : (normalized.verified ? normalized.message : "이메일 또는 비밀번호가 올바르지 않아요."),
+                authErrorCode: normalized.verified && normalized.problem
+                    ? normalized.problem.code
+                    : readLegacyCode(data),
+                emailVerificationRequired,
             };
         }
 
@@ -139,18 +166,27 @@ export async function loginWithEmail(email: string, password: string, autoLogin 
                 return { success: false, error: "로그인 서버에 연결할 수 없어요. 백엔드 서버를 확인해 주세요." };
             }
 
-            const apiMessage = axiosError.response?.data?.message;
+            const responseStatus = axiosError.response?.status ?? 500;
+            const responseBody: unknown = axiosError.response?.data;
+            const normalized = normalizeLoginFailure(responseStatus, responseBody);
+            const emailVerificationRequired = isEmailVerificationProblem(normalized);
             return {
                 success: false,
-                error: apiMessage || "로그인에 실패했어요.",
-                authErrorCode: axiosError.response?.data?.code,
-                emailVerificationRequired: apiMessage?.includes("이메일 인증"),
+                // Registered problem message (verified) or locally authored
+                // copy — the upstream body message is never forwarded.
+                error: emailVerificationRequired
+                    ? "이메일 인증이 필요해요. 이메일을 확인해 주세요."
+                    : (normalized.verified ? normalized.message : "로그인에 실패했어요."),
+                authErrorCode: normalized.verified && normalized.problem
+                    ? normalized.problem.code
+                    : readLegacyCode(responseBody),
+                emailVerificationRequired,
             };
         }
 
         return {
             success: false,
-            error: error instanceof Error ? error.message : "알 수 없는 오류가 발생했어요."
+            error: "알 수 없는 오류로 로그인에 실패했어요."
         };
     }
 }

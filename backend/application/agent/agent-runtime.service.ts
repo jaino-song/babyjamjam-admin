@@ -1,4 +1,4 @@
-import { ForbiddenException, Injectable, Optional } from "@nestjs/common";
+import { ForbiddenException, Injectable, InternalServerErrorException, Optional } from "@nestjs/common";
 import { randomUUID } from "crypto";
 import { z } from "zod";
 import {
@@ -16,6 +16,7 @@ import type { BjjUIMessage } from "@babyjamjam/shared";
 import type { AgentTaskDisplayedChoiceHint } from "@babyjamjam/shared";
 import type { VerifiedTenantPrincipal } from "infrastructure/tenant/tenant.context";
 import { AgentModelFactory } from "infrastructure/agent/agent-model.factory";
+import { codeOnlyProblemBody, uncertainProblemBody } from "application/utils/problem-bodies";
 import { AgentFlagsService } from "./agent-flags.service";
 import { AgentSessionService } from "./agent-session.service";
 import { CapabilityRegistryService } from "./capability-registry.service";
@@ -41,7 +42,10 @@ export const AGENT_VERSION = process.env["AGENT_VERSION"]?.trim() || "operationa
 
 export function buildWriteToolInputSchema(schema: z.ZodType): z.ZodObject {
     if (!(schema instanceof z.ZodObject)) {
-        throw new Error("Write capability input schemas must be Zod objects");
+        // A non-object write schema is a capability registration defect. Declare
+        // the same facts the HTTP mapper stamps for an uncoded 500 on a mutation
+        // (INTERNAL_ERROR, UNKNOWN, CHECK_STATUS) instead of a bare Error.
+        throw new InternalServerErrorException(uncertainProblemBody("INTERNAL_ERROR"));
     }
     // Keep canonical names, types, descriptions, and enum hints in the model's
     // tool schema while allowing missing fields to reach the form-recovery path.
@@ -395,7 +399,7 @@ export class AgentRuntimeService {
             const trace = await this.traces.start(session.id, input.principal, this.models.modelId, AGENT_VERSION, routed.domains);
             const stepMetadata = offered.map((capability) => ({ capability: capability.meta.name, version: capability.meta.version, risk: capability.meta.risk }));
             await this.traces.finish(trace, "failed", undefined, "setup", stepMetadata);
-            throw new ForbiddenException("Current user message missing");
+            throw new ForbiddenException(codeOnlyProblemBody("ACCESS_DENIED"));
         }
         // Kill-switch guard: when the agent is effectively disabled for this
         // principal the router reports `disposition: "disabled"` (no enabled
@@ -625,7 +629,7 @@ export class AgentRuntimeService {
         }
         if (offered.length === 0 && !conversationTask?.task) {
             if (createdSession) await this.sessions.remove(session.id, owner);
-            throw new ForbiddenException("Agent is not enabled for this context");
+            throw new ForbiddenException(codeOnlyProblemBody("ACCESS_DENIED"));
         }
         const trace = await this.traces.start(session.id, input.principal, this.models.modelId, AGENT_VERSION, routed.domains);
         const traceId = trace.id;
@@ -824,10 +828,10 @@ export class AgentRuntimeService {
                 inputSchema: requiresApproval ? buildWriteToolInputSchema(capability.inputSchema) : capability.inputSchema,
                 execute: async (rawInput) => {
                     if (!await this.flags.isCapabilityEnabled(capability.meta, input.principal)) {
-                        throw new ForbiddenException("Capability disabled");
+                        throw new ForbiddenException(codeOnlyProblemBody("ACCESS_DENIED"));
                     }
                     if (requiresApproval) {
-                        if (!this.actions) throw new ForbiddenException("Action coordinator unavailable");
+                        if (!this.actions) throw new ForbiddenException(codeOnlyProblemBody("ACCESS_DENIED"));
                         const effectiveInput = submittedCapability?.meta.name === capability.meta.name && formSubmission
                             ? formSubmission.values
                             : rawInput;

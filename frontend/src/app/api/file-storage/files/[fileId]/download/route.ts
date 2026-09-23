@@ -70,12 +70,11 @@ export async function GET(
             headers,
         });
     } catch (error) {
-        if (error && typeof error === "object" && "response" in error) {
-            const axiosError = error as { response?: { status: number } };
-            if (axiosError.response?.status === 404) {
-                return NextResponse.json({ error: "Document not found" }, { status: 404 });
-            }
-        }
+        // All upstream errors — including 404 problem bodies — flow through the
+        // shared sanitizing errorResponse so a registered problem contract
+        // passes through and legacy text is replaced with safe copy. The
+        // former bespoke 404 mapping here replaced the upstream body with a
+        // local message, dropping the problem contract.
         return errorResponse(error, "download document");
     }
 }

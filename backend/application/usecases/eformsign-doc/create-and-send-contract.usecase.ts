@@ -1,4 +1,6 @@
-import { Injectable, Inject, Logger, Optional } from "@nestjs/common";
+import { Injectable, Inject, Logger, Optional, HttpException } from "@nestjs/common";
+import { PROBLEM_CATALOG } from "@babyjamjam/shared/errors/problem-details";
+import type { ProblemCode, ProblemOutcome, ProblemRecovery } from "@babyjamjam/shared/errors/problem-details";
 import { createHash } from "node:crypto";
 import { EFORMSIGN_CLIENT_REPOSITORY, IEformsignClientRepository } from "domain/repositories/eformsign.client.interface";
 import { CLIENT_REPOSITORY, IClientRepository } from "domain/repositories/client.repository.interface";
@@ -56,6 +58,59 @@ export interface CreateAndSendContractResult {
     error?: string;
     remoteDocumentId?: string;
     uncertain?: boolean;
+    /**
+     * BJJ-319 phase 5-4d additive failure contract (failures only). Every
+     * legacy field above stays byte-identical; these classify the same failure
+     * with the registered problem code, the business outcome, and the recovery
+     * guidance. `recovery.retry.mode` is always "NEVER": recovery runs through
+     * status checks and manual verification (EM-RETRY-06), never an automatic
+     * re-send.
+     */
+    code?: ProblemCode;
+    outcome?: ProblemOutcome;
+    recovery?: ProblemRecovery;
+}
+
+const REGISTERED_PROBLEM_CODES: ReadonlySet<string> = new Set(Object.keys(PROBLEM_CATALOG));
+const RECOVERY_NONE: ProblemRecovery = Object.freeze({ action: "NONE", retry: { mode: "NEVER" } } as const);
+const RECOVERY_CHECK_STATUS: ProblemRecovery = Object.freeze({ action: "CHECK_STATUS", retry: { mode: "NEVER" } } as const);
+
+/**
+ * Guard rejections arrive as registered problem bodies (assignment guard);
+ * their public code is reused verbatim. Everything else has no closer
+ * registered code than the confirmed dispatch-failure catch-all.
+ */
+function registeredProblemCode(error: unknown): ProblemCode | undefined {
+    if (!(error instanceof HttpException)) return undefined;
+    const response = error.getResponse();
+    if (typeof response !== "object" || response === null) return undefined;
+    const code = (response as { code?: unknown }).code;
+    return typeof code === "string" && REGISTERED_PROBLEM_CODES.has(code)
+        ? code as ProblemCode
+        : undefined;
+}
+
+/**
+ * The additive failure fields for the catch path. A provider attempt whose
+ * outcome was not proven rejected leaves the business result unknown (status
+ * check required); everything else is a confirmed failure that did not apply.
+ */
+function catchProblemFields(options: {
+    providerAttempted: boolean;
+    certainProviderRejection: boolean;
+    remoteDocumentId?: string;
+    error: unknown;
+}): { code: ProblemCode; outcome: ProblemOutcome; recovery: ProblemRecovery } {
+    if (options.providerAttempted && !options.certainProviderRejection) {
+        return options.remoteDocumentId
+            ? { code: "REMOTE_DOCUMENT_UNCONFIRMED", outcome: "UNKNOWN", recovery: RECOVERY_CHECK_STATUS }
+            : { code: "DISPATCH_UNCERTAIN", outcome: "UNKNOWN", recovery: RECOVERY_CHECK_STATUS };
+    }
+    return {
+        code: registeredProblemCode(options.error) ?? "DOCUMENT_DISPATCH_FAILED",
+        outcome: "NOT_APPLIED",
+        recovery: RECOVERY_NONE,
+    };
 }
 
 function normalizeContractAmount(value: string | null): string {
@@ -91,17 +146,35 @@ export class CreateAndSendContractUsecase {
 
         const client = params.clientSnapshot ?? await this.clientRepository.findById(branchid, clientId);
         if (!client) {
-            return { success: false, error: "고객을 찾을 수 없습니다" };
+            return {
+                success: false,
+                error: "고객을 찾을 수 없습니다",
+                code: "RESOURCE_NOT_FOUND",
+                outcome: "NOT_APPLIED",
+                recovery: RECOVERY_NONE,
+            };
         }
 
         if (!client.phone) {
-            return { success: false, error: "고객 연락처가 없습니다" };
+            return {
+                success: false,
+                error: "고객 연락처가 없습니다",
+                code: "VALIDATION_FAILED",
+                outcome: "NOT_APPLIED",
+                recovery: RECOVERY_NONE,
+            };
         }
         try {
             assertValidPhone(client.phone);
         } catch (error) {
             if (error instanceof InvalidPhoneError) {
-                return { success: false, error: "고객 연락처가 유효하지 않습니다" };
+                return {
+                    success: false,
+                    error: "고객 연락처가 유효하지 않습니다",
+                    code: "INVALID_CUSTOMER_PHONE",
+                    outcome: "NOT_APPLIED",
+                    recovery: RECOVERY_NONE,
+                };
             }
             throw error;
         }
@@ -175,6 +248,9 @@ export class CreateAndSendContractUsecase {
                             success: false,
                             error: "계약서 발송 결과를 확인할 수 없습니다",
                             uncertain: true,
+                            code: "REMOTE_DOCUMENT_UNCONFIRMED",
+                            outcome: "UNKNOWN",
+                            recovery: RECOVERY_CHECK_STATUS,
                         };
                     }
 
@@ -223,6 +299,9 @@ export class CreateAndSendContractUsecase {
                         error: "계약서 발송 결과 확인이 필요합니다",
                         remoteDocumentId: acceptedDocumentId,
                         uncertain: true,
+                        code: "REMOTE_DOCUMENT_UNCONFIRMED",
+                        outcome: "UNKNOWN",
+                        recovery: RECOVERY_CHECK_STATUS,
                     };
                 }
                 if (claim.disposition === "uncertain") {
@@ -233,6 +312,9 @@ export class CreateAndSendContractUsecase {
                             ? { remoteDocumentId: claim.intent.providerDocumentId }
                             : {}),
                         uncertain: true,
+                        code: "DISPATCH_UNCERTAIN",
+                        outcome: "UNKNOWN",
+                        recovery: RECOVERY_CHECK_STATUS,
                     };
                 }
                 dispatchIntent = claim.intent;
@@ -317,6 +399,9 @@ export class CreateAndSendContractUsecase {
                                 error: "계약서 발송 결과 확인이 필요합니다",
                                 remoteDocumentId: result.documentId,
                                 uncertain: true,
+                                code: "REMOTE_DOCUMENT_UNCONFIRMED",
+                                outcome: "UNKNOWN",
+                                recovery: RECOVERY_CHECK_STATUS,
                             };
                         }
                     }
@@ -379,6 +464,12 @@ export class CreateAndSendContractUsecase {
                 error: error instanceof Error ? safeError : "계약서 생성에 실패했습니다",
                 ...(remoteDocumentId ? { remoteDocumentId } : {}),
                 ...(providerAttempted ? { uncertain: !certainProviderRejection } : {}),
+                ...catchProblemFields({
+                    providerAttempted,
+                    certainProviderRejection,
+                    remoteDocumentId,
+                    error,
+                }),
             };
         }
     }

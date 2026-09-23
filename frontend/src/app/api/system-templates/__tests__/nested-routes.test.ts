@@ -46,8 +46,9 @@ describe("system-template nested API routes", () => {
         );
 
         expect(response.status).toBe(401);
-        await expect(response.json()).resolves.toEqual({
-            error: "Authentication required. Please log in.",
+        await expect(response.json()).resolves.toMatchObject({
+            code: "AUTH_REQUIRED",
+            status: 401,
         });
         expect(mockGet).not.toHaveBeenCalled();
     });
@@ -86,10 +87,10 @@ describe("system-template nested API routes", () => {
         );
 
         expect(response.status).toBe(409);
-        await expect(response.json()).resolves.toEqual({
-            error: "Failed to rollback system template",
-            code: "UPSTREAM_ERROR",
-        });
+        const body = await response.json();
+        expect(typeof body.error).toBe("string");
+        expect(body.code).not.toBe("UPSTREAM_ERROR");
+        expect(JSON.stringify(body)).not.toContain("Version is already current");
         expect(mockPost).toHaveBeenCalledWith(
             "/system-templates/GREETING/rollback/2",
             {},

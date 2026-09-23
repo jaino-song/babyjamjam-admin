@@ -10,6 +10,7 @@ import {
     type IAgentSessionRepository,
 } from "domain/repositories/agent-session.repository.interface";
 import { SchedulerLeaseService } from "application/services/scheduler-lease.service";
+import { codeOnlyProblemBody } from "application/utils/problem-bodies";
 import { AGENT_TASK_REPOSITORY, type IAgentTaskRepository } from "domain/repositories/agent-task.repository.interface";
 
 export const DEFAULT_AGENT_RETENTION_DAYS = 30;
@@ -29,7 +30,7 @@ export class AgentSessionService {
 
     async get(id: string, owner: AgentSessionOwner) {
         const session = await this.repository.findOwned(id, owner);
-        if (!session) throw new NotFoundException("Agent session not found");
+        if (!session) throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
         return session;
     }
 
@@ -55,40 +56,40 @@ export class AgentSessionService {
 
     async update(id: string, owner: AgentSessionOwner, patch: AgentSessionPatch) {
         const session = await this.repository.updateOwned(id, owner, patch);
-        if (!session) throw new NotFoundException("Agent session not found");
+        if (!session) throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
         return session;
     }
 
     async archive(id: string, owner: AgentSessionOwner): Promise<void> {
         const result = await this.repository.archiveOwned(id, owner, new Date());
         if (result === "blocked") {
-            throw new ConflictException("Agent session has a nonterminal action");
+            throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
         }
         if (result === "not_found") {
-            throw new NotFoundException("Agent session not found");
+            throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
         }
     }
 
     async unarchive(id: string, owner: AgentSessionOwner): Promise<void> {
         const result = await this.repository.unarchiveOwned(id, owner);
         if (result === "not_found") {
-            throw new NotFoundException("Agent session not found");
+            throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
         }
     }
 
     async remove(id: string, owner: AgentSessionOwner) {
         const result = await this.repository.deleteOwned(id, owner);
         if (result === "blocked") {
-            throw new ConflictException("Agent session has a nonterminal action");
+            throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
         }
         if (result === "not_found") {
-            throw new NotFoundException("Agent session not found");
+            throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
         }
     }
 
     async appendMessages(id: string, owner: AgentSessionOwner, messages: BjjUIMessage[], traceId?: string) {
         if (!await this.repository.appendMessages(id, owner, messages, traceId)) {
-            throw new NotFoundException("Agent session not found");
+            throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
         }
     }
 
@@ -99,7 +100,7 @@ export class AgentSessionService {
         traceId?: string,
     ): Promise<boolean> {
         if (!await this.repository.upsertActionResultMessage(id, owner, message, traceId)) {
-            throw new NotFoundException("Agent session not found");
+            throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
         }
         return true;
     }

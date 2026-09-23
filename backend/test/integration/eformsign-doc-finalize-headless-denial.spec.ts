@@ -97,13 +97,18 @@ describe("POST /eformsign-docs/finalize-headless (denied targets)", () => {
         expect(finalizeHeadlessUsecase.execute).not.toHaveBeenCalled();
 
         // Now legible: the frontend maps `authorization_denied` to a sentence
-        // about client registration instead of a generic failure toast.
+        // about client registration instead of a generic failure toast. The
+        // additive 5-4b fields name the registered code, outcome, and recovery
+        // for the same refusal without changing any legacy field.
         expect(response.status).toBe(201);
         expect(response.body).toEqual({
             ok: false,
             durationMs: 0,
             reason: "authorization_denied",
             fallbackHint: "manual_check",
+            code: "ACCESS_DENIED",
+            outcome: "NOT_APPLIED",
+            recovery: { action: "NONE", retry: { mode: "NEVER" } },
         });
     });
 
@@ -132,5 +137,35 @@ describe("POST /eformsign-docs/finalize-headless (denied targets)", () => {
 
         expect(response.body).toEqual({ ok: true, completed: true, durationMs: 12 });
         expect(finalizeHeadlessUsecase.execute).toHaveBeenCalledTimes(1);
+    });
+
+    it("forwards the usecase failure's code, outcome, and recovery without dropping legacy fields", async () => {
+        eformsignDocService.findByDocumentId.mockResolvedValue({ documentId: "document-1" });
+        finalizeHeadlessUsecase.execute.mockResolvedValue({
+            ok: false,
+            reason: "operation_in_progress",
+            fallbackHint: "manual_check",
+            dispatchIntentId: "intent-7",
+            durationMs: 4,
+            code: "DOCUMENT_FINALIZE_IN_PROGRESS",
+            outcome: "NOT_APPLIED",
+            recovery: { action: "NONE", retry: { mode: "NEVER" } },
+        });
+
+        const response = await request(app.getHttpServer())
+            .post("/eformsign-docs/finalize-headless")
+            .send({ documentId: "document-1" });
+
+        expect(response.status).toBe(201);
+        expect(response.body).toEqual({
+            ok: false,
+            durationMs: 4,
+            reason: "operation_in_progress",
+            fallbackHint: "manual_check",
+            dispatchIntentId: "intent-7",
+            code: "DOCUMENT_FINALIZE_IN_PROGRESS",
+            outcome: "NOT_APPLIED",
+            recovery: { action: "NONE", retry: { mode: "NEVER" } },
+        });
     });
 });

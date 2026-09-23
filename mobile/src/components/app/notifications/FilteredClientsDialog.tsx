@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { X } from "lucide-react";
+import { normalizeApiError } from "@babyjamjam/shared";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Spinner } from "@/components/ui/spinner";
@@ -72,6 +73,7 @@ export function FilteredClientsDialog({
     const [editingClient, setEditingClient] = useState<Client | null>(null);
     const [formDialogOpen, setFormDialogOpen] = useState(false);
     const [deleteTargetClientId, setDeleteTargetClientId] = useState<number | null>(null);
+    const [deleteFailureMessage, setDeleteFailureMessage] = useState<string | null>(null);
 
     const { data: filteredClients, isLoading: filteredLoading, error: filteredError } =
         useFilteredClients(filterType || "");
@@ -108,6 +110,11 @@ export function FilteredClientsDialog({
     };
 
     const handleDeleteConfirm = async () => {
+        // The failure dialog's only action dismisses the surfaced outcome.
+        if (deleteFailureMessage !== null) {
+            setDeleteFailureMessage(null);
+            return;
+        }
         if (deleteTargetClientId === null) return;
 
         try {
@@ -119,6 +126,11 @@ export function FilteredClientsDialog({
             }
         } catch (err) {
             console.error("Failed to delete client:", err);
+            // The mutation outcome is surfaced through the dialog's destructive
+            // alert instead of being silently swallowed.
+            setDeleteFailureMessage(
+                normalizeApiError(err, { locale: "ko-KR", operation: "mutation" }).message,
+            );
             setDeleteTargetClientId(null);
         }
     };
@@ -207,14 +219,17 @@ export function FilteredClientsDialog({
             />
 
             <ApprovalTwoButtonModal
-                open={deleteTargetClientId !== null}
+                open={deleteTargetClientId !== null || deleteFailureMessage !== null}
                 onOpenChange={(nextOpen) => {
-                    if (!nextOpen) setDeleteTargetClientId(null);
+                    if (!nextOpen) {
+                        setDeleteTargetClientId(null);
+                        setDeleteFailureMessage(null);
+                    }
                 }}
                 data-component="mobile_notifications_filtered-clients_dialog_delete-approval"
-                title="고객을 삭제하시겠습니까?"
-                description="삭제한 고객 정보는 복구할 수 없어요."
-                approvalLabel="삭제"
+                title={deleteFailureMessage ? "삭제하지 못했어요" : "고객을 삭제하시겠습니까?"}
+                description={deleteFailureMessage ?? "삭제한 고객 정보는 복구할 수 없어요."}
+                approvalLabel={deleteFailureMessage ? "확인" : "삭제"}
                 pendingLabel="삭제 중..."
                 approvalVariant="destructive"
                 isPending={deleteClient.isPending}

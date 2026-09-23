@@ -1,5 +1,4 @@
 "use client";
-import { getUserErrorMessage } from "@babyjamjam/shared";
 
 
 import { useState } from "react";
@@ -56,7 +55,7 @@ export function CallIngestTokenSection({ branchId }: CallIngestTokenSectionProps
       setRevokeTarget(null);
     },
     onError: () => {
-      toast({ variant: "destructive", description: getUserErrorMessage("토큰을 취소하지 못했어요") });
+      toast({ variant: "destructive", description: "토큰을 취소하지 못했어요" });
     },
   });
 

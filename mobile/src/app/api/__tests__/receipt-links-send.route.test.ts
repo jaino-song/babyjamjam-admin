@@ -60,10 +60,10 @@ describe("POST /api/receipt-links/send", () => {
     expect(response.status).toBe(500);
   });
 
-  it("does not forward a 5xx upstream body", async () => {
+  it("does not forward a 5xx upstream body and preserves the upstream status", async () => {
     mockPost.mockRejectedValue({ response: { status: 502, data: { message: "at Object.<anonymous> (/app/dist/…)" } } });
     const response = await POST(request({ documentId: "doc-1" }));
-    expect(response.status).toBe(500);
+    expect(response.status).toBe(502);
     expect(await response.json()).toEqual({ error: expect.stringMatching(/[가-힣].*요[.!]?$/) });
   });
 });

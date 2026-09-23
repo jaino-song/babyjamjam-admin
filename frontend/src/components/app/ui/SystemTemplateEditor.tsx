@@ -1,6 +1,6 @@
 'use client';
 
-import { getUserErrorMessage } from '@babyjamjam/shared';
+import { normalizeApiError } from '@babyjamjam/shared';
 
 import {
   forwardRef,
@@ -387,11 +387,12 @@ export const SystemTemplateEditor = forwardRef<
       });
       return true;
     } catch (error) {
+      // Registered problem message (verified) or locally authored copy —
+      // the Error.message internals are never rendered.
+      const normalized = normalizeApiError(error, { locale: 'ko-KR', operation: 'mutation' });
       toast({
         variant: 'destructive',
-        description: getUserErrorMessage(
-          error instanceof Error ? error.message : '템플릿을 저장하지 못했어요',
-        ),
+        description: normalized.verified ? normalized.message : '템플릿을 저장하지 못했어요',
       });
       return false;
     }

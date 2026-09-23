@@ -479,6 +479,7 @@ function realTokenService(): ServiceRecordTokenService {
 
 function expectRequestNotPending(error: unknown): void {
     expect(error).toBeInstanceOf(ConflictException);
+    expect((error as ConflictException).getStatus()).toBe(409);
     expect((error as ConflictException).getResponse()).toEqual(
         expect.objectContaining({ code: "REQUEST_NOT_PENDING" }),
     );

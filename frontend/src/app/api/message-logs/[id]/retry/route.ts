@@ -1,14 +1,14 @@
-import { isAxiosError } from "axios";
 import { NextRequest, NextResponse } from "next/server";
 
 import { serverAPIClient } from "@/lib/api/server";
+import { authRequiredResponse, errorResponse } from "@/lib/api/route-utils";
 
 type RouteParams = { params: Promise<{ id: string }> };
 
 export async function POST(request: NextRequest, { params }: RouteParams) {
     const token = request.cookies.get("auth_token")?.value;
     if (!token) {
-        return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+        return authRequiredResponse();
     }
 
     const { id } = await params;
@@ -22,13 +22,6 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
 
         return NextResponse.json(response.data ?? {}, { status: response.status });
     } catch (error) {
-        if (isAxiosError(error) && error.response) {
-            return NextResponse.json(error.response.data ?? { error: "Request failed" }, {
-                status: error.response.status,
-            });
-        }
-
-        console.error("message history retry failed:", error);
-        return NextResponse.json({ error: "Failed to retry message" }, { status: 500 });
+        return errorResponse(error, "retry message log", "mutation");
     }
 }

@@ -1,10 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { serverAPIClient } from "@/lib/api/server";
 import {
+  authRequiredResponse,
+  errorResponse,
   getAuthHeaders,
   getAuthToken,
   getUpstreamErrorStatus,
-  unauthorizedResponse,
 } from "@/lib/api/route-utils";
 
 type RouteParams = { params: Promise<{ documentId: string }> };
@@ -53,7 +54,7 @@ async function proxyPreview(
 
     if (!authToken) {
       return includeBody
-        ? unauthorizedResponse("Authentication required. Please log in.")
+        ? authRequiredResponse()
         : new NextResponse(null, { status: 401 });
     }
 
@@ -113,10 +114,7 @@ async function proxyPreview(
       return headErrorResponse(error);
     }
 
-    return NextResponse.json(
-      { error: error instanceof Error ? error.message : "Failed to preview eformsign document" },
-      { status: 500 }
-    );
+    return errorResponse(error, "preview eformsign document", "read");
   }
 }
 

@@ -47,7 +47,7 @@ describe("POST /api/message-logs/[id]/retry", () => {
         );
     });
 
-    it("preserves a backend conflict response", async () => {
+    it("answers a legacy conflict with sanitized Korean copy on the upstream status", async () => {
         mockPost.mockRejectedValue(
             new AxiosError("Conflict", "ERR_BAD_RESPONSE", undefined, undefined, {
                 status: 409,
@@ -63,7 +63,10 @@ describe("POST /api/message-logs/[id]/retry", () => {
         });
 
         expect(response.status).toBe(409);
-        expect(await response.json()).toEqual({ message: "이미 재발송이 진행 중입니다." });
+        const body = await response.json();
+        expect(typeof body.error).toBe("string");
+        expect(body.error).toMatch(/[가-힣]/);
+        expect(JSON.stringify(body)).not.toContain('"message"');
     });
 
     it("requires authentication before forwarding", async () => {
@@ -72,6 +75,10 @@ describe("POST /api/message-logs/[id]/retry", () => {
         });
 
         expect(response.status).toBe(401);
+        await expect(response.json()).resolves.toMatchObject({
+            code: "AUTH_REQUIRED",
+            status: 401,
+        });
         expect(mockPost).not.toHaveBeenCalled();
     });
 });

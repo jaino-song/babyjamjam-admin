@@ -1,8 +1,7 @@
 "use client";
-import { getUserErrorMessage } from "@babyjamjam/shared";
-
 
 import { useMemo, useState } from "react";
+import { normalizeApiError } from "@babyjamjam/shared";
 import { BellRing, Trash2 } from "lucide-react";
 
 import { InputField } from "@/components/app/v3/InputField";
@@ -135,11 +134,12 @@ export function MessageTriggerEditor({
     }
     const name = form.name.trim();
     if (!name) {
-      setError(getUserErrorMessage("규칙 이름을 입력해 주세요."));
+      // Local validation copy is authored by this repo — render as-is.
+      setError("규칙 이름을 입력해 주세요.");
       return;
     }
     if (templates.length === 0) {
-      setError(getUserErrorMessage("선택한 조건에 사용할 수 있는 SMS 템플릿이 없습니다."));
+      setError("선택한 조건에 사용할 수 있는 SMS 템플릿이 없습니다.");
       return;
     }
 
@@ -159,8 +159,11 @@ export function MessageTriggerEditor({
         await createMutation.mutateAsync(dto);
       }
       onClose();
-    } catch {
-      setError(getUserErrorMessage("자동 전송 규칙을 저장하지 못했습니다. 다시 시도해 주세요."));
+    } catch (saveError) {
+      // Shared problem contract resolution — a registered body surfaces its
+      // catalog copy; the locally authored fallback covers unverified failures.
+      const normalized = normalizeApiError(saveError, { locale: "ko-KR", operation: "mutation" });
+      setError(normalized.verified ? normalized.message : "자동 전송 규칙을 저장하지 못했습니다. 다시 시도해 주세요.");
     }
   };
 
@@ -171,9 +174,11 @@ export function MessageTriggerEditor({
       await deleteMutation.mutateAsync(rule.id);
       setDeleteOpen(false);
       onClose();
-    } catch {
+    } catch (deleteError) {
       setDeleteOpen(false);
-      setError(getUserErrorMessage("자동 전송 규칙을 삭제하지 못했습니다. 다시 시도해 주세요."));
+      // Shared problem contract resolution — see handleSave.
+      const normalized = normalizeApiError(deleteError, { locale: "ko-KR", operation: "mutation" });
+      setError(normalized.verified ? normalized.message : "자동 전송 규칙을 삭제하지 못했습니다. 다시 시도해 주세요.");
     }
   };
 
@@ -298,7 +303,7 @@ export function MessageTriggerEditor({
           />
         </label>
 
-        {error ? <p className="text-sm font-semibold text-v3-burgundy" role="alert">{error && getUserErrorMessage(error)}</p> : null}
+        {error ? <p className="text-sm font-semibold text-v3-burgundy" role="alert">{error}</p> : null}
 
         <div className="flex gap-2" data-component={`${dataComponent}_form_actions`}>
           {rule ? (

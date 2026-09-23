@@ -1,4 +1,5 @@
 import { Inject, Injectable, NotFoundException } from "@nestjs/common";
+import { codeOnlyProblemBody } from "application/utils/problem-bodies";
 import { MessageTemplateAutomationLockService } from "application/services/message-template-automation-lock.service";
 import { SystemTemplateMutationGuardService } from "application/services/system-template-mutation-guard.service";
 import { SystemTemplateKey } from "domain/constants/system-template-registry";
@@ -21,12 +22,12 @@ export class RollbackToVersionUseCase {
         transaction,
       );
       if (!version) {
-        throw new NotFoundException(`Version ${versionNumber} not found`);
+        throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
       }
 
       const template = await this.repository.findByKey(key, transaction);
       if (!template) {
-        throw new NotFoundException(`Template ${key} not found`);
+        throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
       }
 
       // Versions predate custom-variable metadata. A rollback is safe only if

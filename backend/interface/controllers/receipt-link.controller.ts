@@ -22,6 +22,7 @@ import { FILE_STORAGE_PORT, FileStorageObjectNotFoundError, FileStoragePort } fr
 import { RateLimitGuard } from "infrastructure/auth/rate-limit.guard";
 import { ReceiptLinkTokenService, ReceiptLinkUnusableReason } from "application/services/receipt-link-token.service";
 import { VerifyReceiptBirthdayDto } from "interface/dto/receipt-link.dto";
+import { codeOnlyProblemBody, problemBody } from "application/utils/problem-bodies";
 
 function buildContentDisposition(type: "inline" | "attachment", filename: string): string {
     const ascii = filename.replace(/[^\x20-\x7e]/g, "_").replace(/"/g, "");
@@ -35,7 +36,12 @@ function buildContentDisposition(type: "inline" | "attachment", filename: string
 }
 
 function unusableToHttp(reason: ReceiptLinkUnusableReason): HttpException {
-    return reason === "not_found" ? new NotFoundException({ reason }) : new GoneException({ reason });
+    // `reason` stays as a compatibility alias: the mobile BFF label map and receipt
+    // page key on it. The problem `code` is additive. Expired/revoked links are
+    // tombstones (410 kept); unknown tokens stay 404.
+    return reason === "not_found"
+        ? new NotFoundException({ ...codeOnlyProblemBody("RESOURCE_NOT_FOUND"), reason })
+        : new GoneException({ ...codeOnlyProblemBody("REQUEST_EXPIRED"), reason });
 }
 
 /** Public, unauthenticated endpoints for the mother-facing receipt page. */
@@ -78,11 +84,21 @@ export class ReceiptLinkController {
         if (result.ok) return { ok: result.ok, accessToken: result.accessToken, clientName: result.clientName };
         switch (result.reason) {
             case "verification_failed":
-                throw new UnauthorizedException({ reason: result.reason, remainingAttempts: result.remainingAttempts });
+                throw new UnauthorizedException({ ...codeOnlyProblemBody("AUTH_REQUIRED"), reason: result.reason, remainingAttempts: result.remainingAttempts });
             case "locked":
+                // No registered catalog code covers the attempt-lockout 423; the legacy
+                // `{reason, lockedUntil}` shape stays until one is registered (gap G-01).
                 throw new HttpException({ reason: result.reason, lockedUntil: result.lockedUntil }, HttpStatus.LOCKED);
             case "invalid_format":
-                throw new BadRequestException({ reason: result.reason });
+                throw new BadRequestException({
+                    ...problemBody("VALIDATION_FAILED", {
+                        pointer: "/birthday",
+                        code: "INVALID_FORMAT",
+                        detail: "생년월일 6자리를 입력해 주세요.",
+                        location: "body",
+                    }),
+                    reason: result.reason,
+                });
             default:
                 throw unusableToHttp(result.reason);
         }
@@ -98,7 +114,7 @@ export class ReceiptLinkController {
     ) {
         const accessToken = headerToken?.trim() ?? "";
         const access = accessToken ? await this.tokenService.resolveAccess(token, accessToken, new Date()) : null;
-        if (!access) throw new UnauthorizedException({ reason: "access_required" });
+        if (!access) throw new UnauthorizedException({ ...codeOnlyProblemBody("AUTH_REQUIRED"), reason: "access_required" });
         return { ok: true, clientName: access.clientName };
     }
 
@@ -114,7 +130,7 @@ export class ReceiptLinkController {
     ): Promise<void> {
         const accessToken = headerToken?.trim() || authorization?.replace(/^Bearer\s+/i, "").trim() || "";
         const access = accessToken ? await this.tokenService.resolveAccess(token, accessToken, new Date()) : null;
-        if (!access) throw new UnauthorizedException({ reason: "access_required" });
+        if (!access) throw new UnauthorizedException({ ...codeOnlyProblemBody("AUTH_REQUIRED"), reason: "access_required" });
 
         let png: Buffer;
         try {
@@ -124,7 +140,7 @@ export class ReceiptLinkController {
             // the expiry sweep in a race with a still-live token row. Reads as "link expired",
             // not an unhandled 500.
             if (error instanceof FileStorageObjectNotFoundError) {
-                throw new GoneException({ reason: "expired" });
+                throw new GoneException({ ...codeOnlyProblemBody("REQUEST_EXPIRED"), reason: "expired" });
             }
             throw error;
         }

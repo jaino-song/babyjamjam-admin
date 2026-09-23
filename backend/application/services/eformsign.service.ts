@@ -1,4 +1,4 @@
-import { BadRequestException, Inject, Injectable, Logger, Optional } from "@nestjs/common";
+import { BadGatewayException, BadRequestException, Inject, Injectable, Logger, Optional, PayloadTooLargeException, ServiceUnavailableException } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import * as crypto from "crypto";
 import {
@@ -26,6 +26,7 @@ import {
 import { normalizeEformsignStatusCode } from "domain/utils/eformsign-status-code";
 import { normalizeKoreanWon } from "domain/value-objects/money.vo";
 import { assertRequiredPhone, invalidPhoneFieldMessage, InvalidPhoneError } from "domain/utils/normalize-phone";
+import { codeOnlyProblemBody, problemBody } from "application/utils/problem-bodies";
 import type { EformsignTemplateWorkflow } from "application/utils/eformsign-template-workflow";
 import {
     assertEformsignTemplateCanBeCreated,
@@ -57,7 +58,12 @@ function assertEformPhone(phone: string | null | undefined, field: string): void
         assertRequiredPhone(phone);
     } catch (error) {
         if (error instanceof InvalidPhoneError) {
-            throw new BadRequestException(invalidPhoneFieldMessage(field));
+            throw new BadRequestException(problemBody("VALIDATION_FAILED", {
+                pointer: `/${field}`,
+                code: "INVALID_VALUE",
+                detail: invalidPhoneFieldMessage(field),
+                location: "body",
+            }));
         }
         throw error;
     }
@@ -296,7 +302,7 @@ export class EformsignService {
             doc?.template?.id ??
             doc?.template_id;
         if (!templateId) {
-            throw new Error(`Cannot resolve template_id for document ${documentId}`);
+            throw new BadGatewayException(codeOnlyProblemBody("UPSTREAM_INVALID_RESPONSE"));
         }
 
         const prefill = this.buildStaffCompletionPrefill(prefillEndDate);
@@ -336,7 +342,12 @@ export class EformsignService {
         }
 
         if (!ISO_END_DATE_REGEX.test(prefillEndDate)) {
-            throw new BadRequestException("prefillEndDate must match YYYY-MM-DD");
+            throw new BadRequestException(problemBody("VALIDATION_FAILED", {
+                pointer: "/prefillEndDate",
+                code: "INVALID_VALUE",
+                detail: "prefillEndDate must match YYYY-MM-DD",
+                location: "body",
+            }));
         }
 
         const [year, month, day] = prefillEndDate.split("-");
@@ -380,8 +391,8 @@ export class EformsignService {
         });
 
         if (!response.ok) {
-            const errorData = await response.text();
-            throw new Error(`Failed to get in-progress documents: ${response.status} - ${errorData}`);
+            await response.text();
+            throw new BadGatewayException(codeOnlyProblemBody("UPSTREAM_INVALID_RESPONSE"));
         }
 
         return await response.json();
@@ -414,8 +425,8 @@ export class EformsignService {
         });
 
         if (!response.ok) {
-            const errorData = await response.text();
-            throw new Error(`Failed to get completed documents: ${response.status} - ${errorData}`);
+            await response.text();
+            throw new BadGatewayException(codeOnlyProblemBody("UPSTREAM_INVALID_RESPONSE"));
         }
 
         return await response.json();
@@ -448,8 +459,8 @@ export class EformsignService {
         });
 
         if (!response.ok) {
-            const errorData = await response.text();
-            throw new Error(`Failed to get rejected documents: ${response.status} - ${errorData}`);
+            await response.text();
+            throw new BadGatewayException(codeOnlyProblemBody("UPSTREAM_INVALID_RESPONSE"));
         }
 
         return await response.json();
@@ -485,8 +496,8 @@ export class EformsignService {
         });
 
         if (!response.ok) {
-            const errorData = await response.text();
-            throw new Error(`Failed to get document: ${response.status} - ${errorData}`);
+            await response.text();
+            throw new BadGatewayException(codeOnlyProblemBody("UPSTREAM_INVALID_RESPONSE"));
         }
 
         return await response.json();
@@ -786,7 +797,7 @@ export class EformsignService {
             const currentRecipient = document?.current_status?.step_recipients?.[0];
 
             if (!currentRecipient) {
-                throw new Error("Failed to determine the current recipient for phone override");
+                throw new BadGatewayException(codeOnlyProblemBody("UPSTREAM_INVALID_RESPONSE"));
             }
 
             const member: {
@@ -844,8 +855,8 @@ export class EformsignService {
         );
 
         if (!response.ok) {
-            const errorData = await response.text();
-            throw new Error(`Failed to re-request document: ${response.status} - ${errorData}`);
+            await response.text();
+            throw new BadGatewayException(codeOnlyProblemBody("UPSTREAM_INVALID_RESPONSE"));
         }
 
         const result = await response.json();
@@ -945,7 +956,7 @@ export class EformsignService {
         });
 
         if (!docRes.ok) {
-            throw new Error(`Failed to get document ${documentId} for staff completion: ${docRes.status} ${await docRes.text()}`);
+            throw new BadGatewayException(codeOnlyProblemBody("UPSTREAM_INVALID_RESPONSE"));
         }
 
         return await docRes.json();
@@ -953,7 +964,7 @@ export class EformsignService {
 
     private assertConfigured() {
         if (!this.isConfigured) {
-            throw new Error("Eformsign integration is not configured.");
+            throw new ServiceUnavailableException(codeOnlyProblemBody("DEPENDENCY_UNAVAILABLE"));
         }
     }
 }
@@ -972,17 +983,13 @@ async function readResponseBodyWithLimit(
         && Number.isFinite(contentLength)
         && contentLength > maxBytes
     ) {
-        throw new Error(
-            `Eformsign download exceeds the local mirror size limit (${maxBytes} bytes)`,
-        );
+        throw new PayloadTooLargeException(codeOnlyProblemBody("PAYLOAD_TOO_LARGE"));
     }
 
     if (!response.body) {
         const body = Buffer.from(await waitForDownloadBody(response.arrayBuffer(), signal));
         if (body.length > maxBytes) {
-            throw new Error(
-                `Eformsign download exceeds the local mirror size limit (${maxBytes} bytes)`,
-            );
+            throw new PayloadTooLargeException(codeOnlyProblemBody("PAYLOAD_TOO_LARGE"));
         }
         return body;
     }
@@ -1007,9 +1014,7 @@ async function readResponseBodyWithLimit(
         totalBytes += value.byteLength;
         if (totalBytes > maxBytes) {
             await reader.cancel().catch(() => undefined);
-            throw new Error(
-                `Eformsign download exceeds the local mirror size limit (${maxBytes} bytes)`,
-            );
+            throw new PayloadTooLargeException(codeOnlyProblemBody("PAYLOAD_TOO_LARGE"));
         }
         chunks.push(Buffer.from(
             value.buffer,

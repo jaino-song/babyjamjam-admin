@@ -2,6 +2,7 @@ import { Injectable, UnauthorizedException } from "@nestjs/common";
 import { PassportStrategy } from "@nestjs/passport";
 import { Strategy } from "passport-local";
 import { AuthService } from "../../application/services/auth.service";
+import { codeOnlyProblemBody } from "application/utils/problem-bodies";
 
 @Injectable()
 export class LocalStrategy extends PassportStrategy(Strategy) {
@@ -20,7 +21,7 @@ export class LocalStrategy extends PassportStrategy(Strategy) {
         const result = await this.authService.validateEmailPassword(email, password);
 
         if (!result || ("onboardingRequired" in result && result.onboardingRequired)) {
-            throw new UnauthorizedException('이메일 또는 비밀번호가 올바르지 않습니다.');
+            throw new UnauthorizedException(codeOnlyProblemBody("AUTH_REQUIRED"));
         }
 
         const validatedResult = result as { user: string };

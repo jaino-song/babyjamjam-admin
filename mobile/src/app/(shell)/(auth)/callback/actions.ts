@@ -11,6 +11,7 @@ import {
     decodeAccessBranchId,
     getRefreshSessionMaxAgeSeconds,
 } from "@/lib/auth/session-policy";
+import { normalizeApiError } from "@babyjamjam/shared";
 
 interface TokenPayload {
     sub: string;
@@ -43,6 +44,35 @@ type TokenExchangeResponse = TokenExchangeSuccessResponse | TokenExchangeOnboard
 const PENDING_KAKAO_SIGNUP_COOKIE = "pending_kakao_signup";
 const PENDING_ACCOUNT_ONBOARDING_COOKIE = "pending_account_onboarding";
 
+// Locally authored failure copy — upstream body messages and Error.message
+// internals are never forwarded to the client flow.
+const TOKEN_EXCHANGE_FAILURE_COPY = "카카오 로그인에 실패했어요. 다시 로그인해 주세요.";
+const TOKEN_EXCHANGE_UNREACHABLE_COPY = "로그인 서버에 연결할 수 없어요. 잠시 후 다시 시도해 주세요.";
+
+const TRANSPORT_ERROR_CODES = new Set([
+    "ECONNABORTED",
+    "ECONNREFUSED",
+    "ECONNRESET",
+    "EHOSTUNREACH",
+    "ENOTFOUND",
+    "ETIMEDOUT",
+    "EAI_AGAIN",
+]);
+
+function isTransportFailure(error: AxiosError): boolean {
+    // Compare transport state (no response, or an axios transport code) —
+    // never the raw "Network Error" message text.
+    return !error.response || (typeof error.code === "string" && TRANSPORT_ERROR_CODES.has(error.code));
+}
+
+function tokenExchangeFailure(status: number, data: unknown): string {
+    const normalized = normalizeApiError(
+        { response: { status, data } },
+        { locale: "ko-KR", operation: "mutation" },
+    );
+    return normalized.verified ? normalized.message : TOKEN_EXCHANGE_FAILURE_COPY;
+}
+
 function isOnboardingResponse(data: TokenExchangeResponse): data is TokenExchangeOnboardingResponse {
     return "onboardingRequired" in data && data.onboardingRequired === true;
 }
@@ -58,7 +88,7 @@ export async function exchangeToken(code: string): Promise<{
         console.log("[Server Action] Exchanging token for code");
         
         if (!code) {
-            return { success: false, error: "Authorization Code Required" };
+            return { success: false, error: "인증 코드가 없어요. 다시 로그인해 주세요." };
         }
 
         const { data } = await serverAPIClient.post<TokenExchangeResponse>("/auth/token", { code });
@@ -174,19 +204,22 @@ export async function exchangeToken(code: string): Promise<{
                 status: axiosError.response?.status,
             });
 
-            if (axiosError.code === 'ECONNABORTED' || axiosError.message === 'Network Error') {
-                return { success: false, error: "Backend server unreachable. Please try again later." };
+            if (isTransportFailure(axiosError)) {
+                return { success: false, error: TOKEN_EXCHANGE_UNREACHABLE_COPY };
             }
 
-            return { 
-                success: false, 
-                error: axiosError.response?.data?.message || "Token Exchange Failed" 
+            return {
+                success: false,
+                error: tokenExchangeFailure(
+                    axiosError.response?.status ?? 500,
+                    axiosError.response?.data,
+                ),
             };
         }
 
-        return { 
-            success: false, 
-            error: error instanceof Error ? error.message : "Unknown error" 
+        return {
+            success: false,
+            error: TOKEN_EXCHANGE_FAILURE_COPY,
         };
     }
 }

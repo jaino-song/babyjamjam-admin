@@ -1,5 +1,10 @@
 import { NextRequest } from "next/server";
-import { getAuthToken } from "@/lib/api/route-utils";
+import {
+  authRequiredResponse,
+  getAuthToken,
+  localValidationProblemResponse,
+  upstreamSseProblemErrorResponse,
+} from "@/lib/api/route-utils";
 import { createServerApiUrl } from "@/lib/api/server-base-url";
 
 export const dynamic = "force-dynamic";
@@ -8,12 +13,19 @@ export const runtime = "nodejs";
 export async function GET(request: NextRequest) {
     const token = getAuthToken(request);
     if (!token) {
-        return new Response("Unauthorized", { status: 401 });
+        return authRequiredResponse();
     }
 
     const progressId = request.nextUrl.searchParams.get("progressId");
     if (!progressId) {
-        return new Response("progressId is required", { status: 400 });
+        return localValidationProblemResponse([
+            {
+                pointer: "/progressId",
+                code: "REQUIRED",
+                detail: "진행 상황 식별자가 필요해요.",
+                location: "query",
+            },
+        ]);
     }
 
     const upstreamUrl = createServerApiUrl(
@@ -31,7 +43,10 @@ export async function GET(request: NextRequest) {
     });
 
     if (!upstream.ok || !upstream.body) {
-        return new Response(null, { status: upstream.status });
+        // SSE transports cannot carry problem+json; the error event carries
+        // the registered catalog code instead, and the upstream body stays
+        // server-side.
+        return upstreamSseProblemErrorResponse(upstream.status);
     }
 
     return new Response(upstream.body, {

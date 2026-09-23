@@ -2,13 +2,12 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { serverAPIClient } from "@/lib/api/server";
 import {
+  errorResponse,
   getAuthHeaders,
   getAuthToken,
-  getUpstreamErrorStatus,
-  logUpstreamError,
   parseBody,
-  sanitizeUpstreamClientError,
 } from "@/lib/api/route-utils";
+import { unauthorizedProblemResponse } from "@/lib/api/problem-responses";
 
 // Mirrors backend SendSmsMessageDto. This is a PAID send path, so the two
 // fields the backend marks @IsNotEmpty — receiver and message — are required
@@ -28,7 +27,7 @@ export async function POST(request: NextRequest) {
   try {
     const token = getAuthToken(request);
     if (!token) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+      return unauthorizedProblemResponse();
     }
 
     const { data, response: invalidBody } = await parseBody(sendSmsSchema, request);
@@ -41,21 +40,6 @@ export async function POST(request: NextRequest) {
     });
     return NextResponse.json(response.data, { status: response.status });
   } catch (error) {
-    if (error && typeof error === "object" && "response" in error) {
-      const axiosErr = error as { response?: { status?: number; data?: unknown } };
-      if (axiosErr.response) {
-        const status = getUpstreamErrorStatus(error);
-        logUpstreamError("API send SMS", error);
-        return NextResponse.json(
-          sanitizeUpstreamClientError(axiosErr.response.data, "Failed to send SMS", status),
-          { status },
-        );
-      }
-    }
-    logUpstreamError("API send SMS", error);
-    return NextResponse.json(
-      { error: "Failed to send SMS" },
-      { status: 500 },
-    );
+    return errorResponse(error, "send SMS delivery", "mutation");
   }
 }

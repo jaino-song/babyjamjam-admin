@@ -1444,7 +1444,7 @@ describe("ClientService", () => {
                     careCenter: false,
                     voucherClient: true,
                     breastPump: false,
-                })).rejects.toThrow("선택한 제공인력이 해당 지점 소속이 아니거나 배정 가능한 상태가 아닙니다.");
+                })).rejects.toMatchObject({ response: { code: "EMPLOYEE_ASSIGNMENT_NOT_ELIGIBLE" } });
 
                 expect(createClientUsecase.execute).not.toHaveBeenCalled();
                 expect(createClientUsecase.executeWithInitialSchedule).not.toHaveBeenCalled();
@@ -1551,7 +1551,7 @@ describe("ClientService", () => {
                     careCenter: false,
                     voucherClient: true,
                     breastPump: false,
-                })).rejects.toThrow("선택한 제공인력이 해당 지점 소속이 아니거나 배정 가능한 상태가 아닙니다.");
+                })).rejects.toThrow("선택한 제공인력이 해당 지점 소속이 아니거나 배정 가능한 상태가 아니에요.");
 
                 expect(prismaService.employee.updateMany).not.toHaveBeenCalled();
                 expect(createClientUsecase.executeWithInitialSchedule).not.toHaveBeenCalled();
@@ -1569,7 +1569,7 @@ describe("ClientService", () => {
                     careCenter: false,
                     voucherClient: true,
                     breastPump: false,
-                })).rejects.toThrow("선택한 제공인력이 해당 지점 소속이 아니거나 배정 가능한 상태가 아닙니다.");
+                })).rejects.toThrow("선택한 제공인력이 해당 지점 소속이 아니거나 배정 가능한 상태가 아니에요.");
 
                 expect(prismaService.employee.updateMany).not.toHaveBeenCalled();
                 expect(createClientUsecase.executeWithInitialSchedule).not.toHaveBeenCalled();
@@ -3695,9 +3695,11 @@ describe("ClientService", () => {
                 findClientByIdUsecase.execute.mockResolvedValue(null);
 
                 // Act & Assert
-                await expect(service.terminateService(branchId, 999))
-                    .rejects
-                    .toThrow("고객을 찾을 수 없습니다. (id: 999)");
+                const error = await service.terminateService(branchId, 999).catch((cause: unknown) => cause);
+                expect(error).toBeInstanceOf(NotFoundException);
+                expect((error as NotFoundException).getResponse()).toMatchObject({
+                    code: "RESOURCE_NOT_FOUND",
+                });
             });
         });
     });
@@ -3746,7 +3748,12 @@ describe("ClientService", () => {
             findClientByIdUsecase.execute.mockResolvedValue(createClientEntity());
 
             await expect(service.requestReplacement(branchId, 1, 7, 7))
-                .rejects.toThrow("주담당과 부담당은 같은 직원일 수 없습니다.");
+                .rejects.toMatchObject({
+                    response: {
+                        code: "VALIDATION_FAILED",
+                        errors: [{ pointer: "/newSecondaryEmployeeId", code: "INVALID_FORMAT" }],
+                    },
+                });
         });
 
         it("keeps status and existing schedule unchanged when replacement schedule creation fails", async () => {
@@ -3895,9 +3902,11 @@ describe("ClientService", () => {
                 findClientByIdUsecase.execute.mockResolvedValue(null);
 
                 // Act & Assert
-                await expect(service.requestReplacement(branchId, 999, 7))
-                    .rejects
-                    .toThrow("고객을 찾을 수 없습니다. (id: 999)");
+                const error = await service.requestReplacement(branchId, 999, 7).catch((cause: unknown) => cause);
+                expect(error).toBeInstanceOf(NotFoundException);
+                expect((error as NotFoundException).getResponse()).toMatchObject({
+                    code: "RESOURCE_NOT_FOUND",
+                });
             });
         });
     });
@@ -4282,9 +4291,11 @@ describe("ClientService", () => {
                 findClientByIdUsecase.execute.mockResolvedValue(null);
 
                 // Act & Assert
-                await expect(service.completeReplacement(branchId, 999))
-                    .rejects
-                    .toThrow("고객을 찾을 수 없습니다. (id: 999)");
+                const error = await service.completeReplacement(branchId, 999).catch((cause: unknown) => cause);
+                expect(error).toBeInstanceOf(NotFoundException);
+                expect((error as NotFoundException).getResponse()).toMatchObject({
+                    code: "RESOURCE_NOT_FOUND",
+                });
             });
         });
     });

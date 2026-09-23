@@ -1,4 +1,4 @@
-import { ForbiddenException, Logger } from "@nestjs/common";
+import { Logger } from "@nestjs/common";
 import { DailyDigestSection, NotificationService } from "application/services/notification.service";
 import { NotificationEntity } from "domain/entities/notification.entity";
 import { UserEntity } from "domain/entities/user.entity";
@@ -129,7 +129,14 @@ describe("NotificationService", () => {
 
         await expect(
             service.sendNotification(branchId, "foreign-user", "title", "body"),
-        ).rejects.toBeInstanceOf(ForbiddenException);
+        ).rejects.toMatchObject({
+            status: 403,
+            response: expect.objectContaining({
+                code: "ACCESS_DENIED",
+                outcome: "NOT_APPLIED",
+                recovery: { action: "NONE", retry: { mode: "NEVER" } },
+            }),
+        });
 
         expect(sendNotificationUsecase.execute).not.toHaveBeenCalled();
         expect(emailPort.send).not.toHaveBeenCalled();

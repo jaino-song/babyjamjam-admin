@@ -1,13 +1,13 @@
 export class EmployeeScheduleDateRangeError extends Error {
     constructor() {
-        super("Employee schedule start date must be on or before end date");
+        super("시작일은 종료일보다 늦을 수 없어요.");
         this.name = "EmployeeScheduleDateRangeError";
     }
 }
 
 export class EmployeeScheduleRoleError extends Error {
     constructor() {
-        super("Primary and secondary employees must be different");
+        super("주담당과 부담당은 같은 직원일 수 없어요.");
         this.name = "EmployeeScheduleRoleError";
     }
 }

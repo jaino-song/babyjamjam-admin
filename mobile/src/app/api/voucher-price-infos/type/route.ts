@@ -1,13 +1,14 @@
 import { NextRequest } from "next/server";
 
 import { serverAPIClient } from "@/lib/api/server";
-import { backendJsonResponse, errorResponse, getAuthHeaders, getAuthToken, unauthorizedResponse } from "@/lib/api/route-utils";
+import { backendJsonResponse, errorResponse, getAuthHeaders, getAuthToken } from "@/lib/api/route-utils";
+import { unauthorizedProblemResponse } from "@/lib/api/problem-responses";
 
 export async function GET(request: NextRequest) {
     try {
         const token = getAuthToken(request);
         if (!token) {
-            return unauthorizedResponse("Unauthorized");
+            return unauthorizedProblemResponse();
         }
 
         const searchParams = request.nextUrl.searchParams;

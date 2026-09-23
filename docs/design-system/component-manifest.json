@@ -1730,21 +1730,6 @@
         ]
       },
       {
-        "name": "ContractCreationScreen",
-        "layer": "organism",
-        "import": "@/components/app/contracts",
-        "file": "mobile/src/components/app/contracts/ContractCreationScreen.tsx",
-        "exports": [
-          "ContractCreationScreen"
-        ],
-        "replaces": [
-          "contracts/new page-local form assembly"
-        ],
-        "requiredFor": [
-          "contracts/new route assembly"
-        ]
-      },
-      {
         "name": "ContractPdfViewer",
         "layer": "organism",
         "import": "@/components/app/contracts/contract-pdf-viewer",

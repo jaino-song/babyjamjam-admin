@@ -1,5 +1,4 @@
 "use client";
-import { getUserErrorMessage } from "@babyjamjam/shared";
 
 
 import { type CSSProperties, useCallback, useMemo, useState } from "react";
@@ -132,7 +131,7 @@ function BranchTemplateDetail({
       { id: template.id, request: { name, content, variables: template.variables } },
       {
         onSuccess: () => toast({ variant: "success", description: "지점 템플릿을 저장했어요" }),
-        onError: () => toast({ variant: "destructive", description: getUserErrorMessage("지점 템플릿을 저장하지 못했어요") }),
+        onError: () => toast({ variant: "destructive", description: "지점 템플릿을 저장하지 못했어요" }),
       },
     );
   };
@@ -147,7 +146,7 @@ function BranchTemplateDetail({
       onDeleted();
       toast({ variant: "success", description: "지점 템플릿을 삭제했어요" });
     } catch {
-      toast({ variant: "destructive", description: getUserErrorMessage("지점 템플릿을 삭제하지 못했어요") });
+      toast({ variant: "destructive", description: "지점 템플릿을 삭제하지 못했어요" });
     }
   };
 

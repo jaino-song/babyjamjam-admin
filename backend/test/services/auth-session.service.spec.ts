@@ -1,3 +1,4 @@
+import { ForbiddenException } from "@nestjs/common";
 import { JwtService } from "@nestjs/jwt";
 
 import { AuthSessionService } from "application/services/auth-session.service";
@@ -146,10 +147,62 @@ describe("AuthSessionService", () => {
         await expect(service.rotateRefreshToken(
             `30000000-0000-4000-8000-000000000001.${secret}`,
         )).rejects.toMatchObject({
+            status: 401,
             response: expect.objectContaining({
                 code: "AUTH_REFRESH_REPLAY_CONCURRENT",
+                params: {},
+                outcome: "NOT_APPLIED",
+                recovery: { action: "NONE", retry: { mode: "NEVER" } },
             }),
         });
         expect(tx.auth_session.updateMany).not.toHaveBeenCalled();
+    });
+
+    it("generalizes unparseable refresh tokens to an AUTH_REQUIRED problem body", async () => {
+        await expect(service.rotateRefreshToken("not-a-refresh-token")).rejects.toMatchObject({
+            status: 401,
+            response: expect.objectContaining({
+                code: "AUTH_REQUIRED",
+                params: {},
+                outcome: "NOT_APPLIED",
+                recovery: { action: "NONE", retry: { mode: "NEVER" } },
+            }),
+        });
+    });
+
+    it("returns the registered ACCOUNT_REJECTED problem body when rotating for a rejected account", async () => {
+        const secret = "c".repeat(32);
+        const secretHash = (service as unknown as { hashSecret(secret: string): string })
+            .hashSecret(secret);
+        tx.auth_refresh_token.findUnique.mockResolvedValue({
+            id: "30000000-0000-4000-8000-000000000001",
+            sessionId: "40000000-0000-4000-8000-000000000001",
+            secretHash,
+            expiresAt: new Date(Date.now() + 60_000),
+            usedAt: null,
+            revokedAt: null,
+            session: {
+                id: "40000000-0000-4000-8000-000000000001",
+                userId: user.id,
+                selectedBranchId: null,
+                expiresAt: new Date(Date.now() + 60_000),
+                revokedAt: null,
+                user: { ...user, approvalStatus: "rejected" },
+            },
+        });
+
+        const rejection = service.rotateRefreshToken(
+            `30000000-0000-4000-8000-000000000001.${secret}`,
+        );
+        await expect(rejection).rejects.toBeInstanceOf(ForbiddenException);
+        await expect(rejection).rejects.toMatchObject({
+            status: 403,
+            response: expect.objectContaining({
+                code: "ACCOUNT_REJECTED",
+                params: {},
+                outcome: "NOT_APPLIED",
+                recovery: { action: "NONE", retry: { mode: "NEVER" } },
+            }),
+        });
     });
 });

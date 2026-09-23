@@ -4,6 +4,7 @@ import {
     SERVICE_RECORD_FORM_LAYOUT,
     type ServiceRecordFieldDescriptor,
 } from "@babyjamjam/shared/constants/service-record-form-layout";
+import { codeOnlyProblemBody, problemBody } from "application/utils/problem-bodies";
 import { SERVICE_RECORD_TEXT_LIMITS } from "domain/constants/service-record-text-limits";
 
 const MAX_ANSWERS_BYTES = 16 * 1024;
@@ -74,8 +75,8 @@ export class ServiceRecordAnswerValidationError extends Error {
     }
 }
 
-function fail(message: string): never {
-    throw new ServiceRecordAnswerValidationError(message);
+function fail(key: string): never {
+    throw new ServiceRecordAnswerValidationError(`제공기록 입력값이 올바르지 않습니다: ${key}`);
 }
 
 function isPlainRecord(value: unknown): value is Record<string, unknown> {
@@ -84,7 +85,7 @@ function isPlainRecord(value: unknown): value is Record<string, unknown> {
 
 function assertString(value: unknown, key: string, maxLength = MAX_ANSWER_STRING_LENGTH): string {
     if (typeof value !== "string" || value.length > maxLength) {
-        fail(`Invalid service-record field: ${key}`);
+        fail(key);
     }
     return value;
 }
@@ -103,9 +104,9 @@ function isStepAligned(value: number, step: number): boolean {
 
 function assertNumeric(value: unknown, key: string, numeric: { min: number; step: number }): string | number {
     if (typeof value === "string") {
-        if (value.length > MAX_ANSWER_STRING_LENGTH) fail(`Invalid service-record field: ${key}`);
+        if (value.length > MAX_ANSWER_STRING_LENGTH) fail(key);
         if (value === "") return value;
-        if (!isNumericString(value)) fail(`Invalid service-record field: ${key}`);
+        if (!isNumericString(value)) fail(key);
     }
 
     const parsed = typeof value === "number"
@@ -114,18 +115,18 @@ function assertNumeric(value: unknown, key: string, numeric: { min: number; step
             ? Number(value)
             : Number.NaN;
     if (!Number.isFinite(parsed) || parsed < numeric.min || !isStepAligned(parsed - numeric.min, numeric.step)) {
-        fail(`Invalid service-record field: ${key}`);
+        fail(key);
     }
     if (numeric.step === 1 && !Number.isSafeInteger(parsed)) {
-        fail(`Invalid service-record field: ${key}`);
+        fail(key);
     }
     if (typeof value === "number" || typeof value === "string") return value;
-    return fail(`Invalid service-record field: ${key}`);
+    return fail(key);
 }
 
 function assertScalar(value: unknown, key: string): string | number {
     if (typeof value === "number") {
-        if (!Number.isFinite(value)) fail(`Invalid service-record field: ${key}`);
+        if (!Number.isFinite(value)) fail(key);
         return value;
     }
     return assertString(value, key);
@@ -134,22 +135,22 @@ function assertScalar(value: unknown, key: string): string | number {
 function assertAllowedOption(value: unknown, key: string, options: readonly string[]): string {
     const normalized = assertString(value, key);
     if (!options.includes(normalized)) {
-        fail(`Invalid service-record field: ${key}`);
+        fail(key);
     }
     return normalized;
 }
 
 function validateAnswerValue(key: string, value: unknown): unknown {
     const definition = ANSWER_DEFINITIONS.get(key);
-    if (!definition) fail(`Invalid service-record field: ${key}`);
+    if (!definition) fail(key);
 
     if (definition.kind === "multi") {
         if (!Array.isArray(value) || value.length > MAX_MULTI_VALUE_COUNT) {
-            fail(`Invalid service-record field: ${key}`);
+            fail(key);
         }
         const values = value.map((item) => assertAllowedOption(item, key, definition.options));
         if (new Set(values).size !== values.length) {
-            fail(`Invalid service-record field: ${key}`);
+            fail(key);
         }
         return values;
     }
@@ -163,7 +164,7 @@ function validateAnswerValue(key: string, value: unknown): unknown {
     }
 
     if (definition.kind === "check") {
-        if (typeof value !== "boolean") fail(`Invalid service-record field: ${key}`);
+        if (typeof value !== "boolean") fail(key);
         return value;
     }
 
@@ -177,32 +178,52 @@ function validateAnswerValue(key: string, value: unknown): unknown {
  */
 export function validateServiceRecordAnswers(raw: unknown): Record<string, unknown> {
     if (!isPlainRecord(raw)) {
-        throw new BadRequestException({ code: "SERVICE_RECORD_ANSWER_INVALID" });
+        throw new BadRequestException(codeOnlyProblemBody("VALIDATION_FAILED"));
     }
 
     let serialized: string;
     try {
         serialized = JSON.stringify(raw);
     } catch {
-        throw new BadRequestException({ code: "SERVICE_RECORD_ANSWER_INVALID" });
+        throw new BadRequestException(codeOnlyProblemBody("VALIDATION_FAILED"));
     }
     if (Buffer.byteLength(serialized, "utf8") > MAX_ANSWERS_BYTES) {
-        throw new BadRequestException("제공기록 입력값이 너무 큽니다.");
+        throw new BadRequestException(problemBody("VALIDATION_FAILED", {
+            pointer: "/answers",
+            code: "INVALID_VALUE",
+            detail: "제공기록 입력값이 너무 큽니다.",
+            location: "body",
+        }));
     }
 
     const answers: Record<string, unknown> = {};
     for (const [key, value] of Object.entries(raw)) {
         if (!SERVICE_RECORD_LAYOUT_ANSWER_KEYS.has(key)) {
-            throw new BadRequestException(`Unknown service-record field: ${key}`);
+            throw new BadRequestException(problemBody("VALIDATION_FAILED", {
+                pointer: "/answers",
+                code: "UNEXPECTED_FIELD",
+                detail: `알 수 없는 제공기록 항목입니다: ${key}`,
+                location: "body",
+            }));
         }
         if (Array.isArray(value) && value.some((item) => typeof item !== "string" || item.length > MAX_MULTI_VALUE_LENGTH)) {
-            throw new BadRequestException(`Invalid service-record field: ${key}`);
+            throw new BadRequestException(problemBody("VALIDATION_FAILED", {
+                pointer: "/answers",
+                code: "INVALID_VALUE",
+                detail: `제공기록 입력값이 올바르지 않습니다: ${key}`,
+                location: "body",
+            }));
         }
         try {
             answers[key] = validateAnswerValue(key, value);
         } catch (error) {
             if (error instanceof ServiceRecordAnswerValidationError) {
-                throw new BadRequestException(error.message);
+                throw new BadRequestException(problemBody("VALIDATION_FAILED", {
+                    pointer: "/answers",
+                    code: "INVALID_VALUE",
+                    detail: error.message,
+                    location: "body",
+                }));
             }
             throw error;
         }
@@ -217,7 +238,12 @@ export function validateServiceRecordEditText(
 ): string {
     const maxLength = SERVICE_RECORD_TEXT_LIMITS[key];
     if (typeof value !== "string" || value.length > maxLength) {
-        throw new BadRequestException(`입력값은 ${maxLength}자를 넘을 수 없습니다.`);
+        throw new BadRequestException(problemBody("VALIDATION_FAILED", {
+            pointer: `/${key}`,
+            code: "INVALID_VALUE",
+            detail: `입력값은 ${maxLength}자를 넘을 수 없습니다.`,
+            location: "body",
+        }));
     }
     return value.trim();
 }

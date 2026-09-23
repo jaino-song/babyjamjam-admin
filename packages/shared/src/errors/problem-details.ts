@@ -32,7 +32,7 @@ export type ProblemCode =
     | "MESSAGE_SEND_REJECTED"
     | "MESSAGE_SEND_ALREADY_REQUESTED"
     | "MESSAGE_REQUEST_KEY_CONFLICT"
-    // Provisional client codes pending EM spec reconciliation (BJJ-319).
+    // Registered client/employee codes (EM-CAT-01 satisfied; spec examples are illustrative). BJJ-319 reconciliation 2026-09-14.
     | "CLIENT_SERVICE_PERIOD_INVALID"
     | "CLIENT_SERVICE_PERIOD_UNCOMPUTABLE"
     | "CLIENT_DURATION_OUT_OF_RANGE"
@@ -43,6 +43,59 @@ export type ProblemCode =
     | "CLIENT_PHONE_ALREADY_REGISTERED"
     | "EMPLOYEE_PHONE_ALREADY_REGISTERED"
     | "EMPLOYEE_ACTIVE_ASSIGNMENT_BLOCKED"
+    // Registered assignment codes (EM-CAT-01; SERVICE_RECORD_WRITE_TARGET_CHANGED keeps its shipped identifier per EM-CAT-03). BJJ-319 phase 4b.
+    | "EMPLOYEE_ASSIGNMENT_NOT_ELIGIBLE"
+    | "SERVICE_RECORD_WRITE_TARGET_CHANGED"
+    // Registered employee-schedule codes (EM-CAT-03). BJJ-319 phase 4c-1.
+    | "EMPLOYEE_SCHEDULE_OVERLAP"
+    | "SCHEDULE_RETENTION_BLOCKED"
+    // Registered schedule-change codes (EM-CAT-03). BJJ-319 phase 4c-2.
+    | "SERVICE_RECORD_PLANNED_DATE_UNAVAILABLE"
+    | "INVALID_SCHEDULE_DATE"
+    | "ALL_SESSIONS_SUBMITTED"
+    | "REQUEST_ALREADY_PENDING"
+    | "REQUEST_NOT_PENDING"
+    | "SCHEDULE_DATE_NOT_POSTPONED"
+    | "REQUEST_STALE"
+    | "SCHEDULE_CHANGE_UNCOMPUTABLE"
+    // Registered contract-send guard codes (EM-CAT-03). BJJ-319 phase 5-1.
+    | "CLIENT_ASSIGNMENT_REQUIRED"
+    | "DOCUMENT_PROVIDER_MISMATCH"
+    | "CLIENT_SERVICE_TERMINATED"
+    // Registered eformsign tombstone codes (EM-CAT-03; shipped identifiers verbatim). BJJ-319 phase 5-3a.
+    | "EFORMSIGN_CREDENTIALS_SERVER_ONLY"
+    | "EFORMSIGN_PROVIDER_OPERATION_SERVER_ONLY"
+    // Registered headless dispatch codes (EM-CAT-03; SCREAMING counterparts of the
+    // dispatch reason tokens, which stay as compatibility aliases). BJJ-319 phase 5-4a.
+    | "INVALID_CUSTOMER_PHONE"
+    | "INVALID_PROVIDER_PHONE"
+    | "DOCUMENT_DISPATCH_IN_PROGRESS"
+    | "DOCUMENT_LOCK_UNAVAILABLE"
+    | "DOCUMENT_LOCK_LOST"
+    | "DUPLICATE_PENDING_DOCUMENT"
+    | "DISPATCH_ALREADY_ACCEPTED"
+    | "DISPATCH_UNCERTAIN"
+    | "REMOTE_DOCUMENT_UNCONFIRMED"
+    | "DOCUMENT_LOCAL_PERSIST_FAILED"
+    | "DOCUMENT_DISPATCH_FAILED"
+    // Registered headless finalize codes (EM-CAT-03; counterparts of the finalize
+    // reason tokens and vendor outcomes, which stay as compatibility aliases).
+    // BJJ-319 phase 5-4b.
+    | "DOCUMENT_FINALIZE_IN_PROGRESS"
+    | "EFORMSIGN_TERMINAL_FAILURE"
+    | "DOCUMENT_FINALIZE_UNCONFIRMED"
+    | "DOCUMENT_FINALIZE_FAILED"
+    // Registered account-state and reset-link codes (EM-CAT-03; shipped auth
+    // identifiers formalized — frontend/mobile login modals and the shared
+    // reset-password error map already key on these). BJJ-319 phase 6d2.
+    | "PENDING_APPROVAL"
+    | "ACCOUNT_REJECTED"
+    | "ACCOUNT_PROFILE_INCOMPLETE"
+    | "NO_ACCESSIBLE_BRANCH"
+    | "AUTH_RESET_TOKEN_INVALID"
+    | "AUTH_RESET_TOKEN_EXPIRED"
+    | "AUTH_RESET_TOKEN_USED"
+    // Registered assignment-unavailable advisory (safe HTTP 400; dev-side addition).
     | "EMPLOYEE_ASSIGNMENT_UNAVAILABLE";
 
 export type ProblemOutcome =
@@ -184,7 +237,7 @@ const PROBLEM_CODES: readonly ProblemCode[] = [
     "MESSAGE_SEND_REJECTED",
     "MESSAGE_SEND_ALREADY_REQUESTED",
     "MESSAGE_REQUEST_KEY_CONFLICT",
-    // Provisional client codes pending EM spec reconciliation (BJJ-319).
+    // Registered client/employee codes (EM-CAT-01 satisfied; spec examples are illustrative). BJJ-319 reconciliation 2026-09-14.
     "CLIENT_SERVICE_PERIOD_INVALID",
     "CLIENT_SERVICE_PERIOD_UNCOMPUTABLE",
     "CLIENT_DURATION_OUT_OF_RANGE",
@@ -195,6 +248,53 @@ const PROBLEM_CODES: readonly ProblemCode[] = [
     "CLIENT_PHONE_ALREADY_REGISTERED",
     "EMPLOYEE_PHONE_ALREADY_REGISTERED",
     "EMPLOYEE_ACTIVE_ASSIGNMENT_BLOCKED",
+    // Registered assignment codes (EM-CAT-01; SERVICE_RECORD_WRITE_TARGET_CHANGED keeps its shipped identifier per EM-CAT-03). BJJ-319 phase 4b.
+    "EMPLOYEE_ASSIGNMENT_NOT_ELIGIBLE",
+    "SERVICE_RECORD_WRITE_TARGET_CHANGED",
+    // Registered employee-schedule codes (EM-CAT-03). BJJ-319 phase 4c-1.
+    "EMPLOYEE_SCHEDULE_OVERLAP",
+    "SCHEDULE_RETENTION_BLOCKED",
+    // Registered schedule-change codes (EM-CAT-03). BJJ-319 phase 4c-2.
+    "SERVICE_RECORD_PLANNED_DATE_UNAVAILABLE",
+    "INVALID_SCHEDULE_DATE",
+    "ALL_SESSIONS_SUBMITTED",
+    "REQUEST_ALREADY_PENDING",
+    "REQUEST_NOT_PENDING",
+    "SCHEDULE_DATE_NOT_POSTPONED",
+    "REQUEST_STALE",
+    "SCHEDULE_CHANGE_UNCOMPUTABLE",
+    // Registered contract-send guard codes (EM-CAT-03). BJJ-319 phase 5-1.
+    "CLIENT_ASSIGNMENT_REQUIRED",
+    "DOCUMENT_PROVIDER_MISMATCH",
+    "CLIENT_SERVICE_TERMINATED",
+    // Registered eformsign tombstone codes (EM-CAT-03; shipped identifiers verbatim). BJJ-319 phase 5-3a.
+    "EFORMSIGN_CREDENTIALS_SERVER_ONLY",
+    "EFORMSIGN_PROVIDER_OPERATION_SERVER_ONLY",
+    // Registered headless dispatch codes (EM-CAT-03; reason-token counterparts). BJJ-319 phase 5-4a.
+    "INVALID_CUSTOMER_PHONE",
+    "INVALID_PROVIDER_PHONE",
+    "DOCUMENT_DISPATCH_IN_PROGRESS",
+    "DOCUMENT_LOCK_UNAVAILABLE",
+    "DOCUMENT_LOCK_LOST",
+    "DUPLICATE_PENDING_DOCUMENT",
+    "DISPATCH_ALREADY_ACCEPTED",
+    "DISPATCH_UNCERTAIN",
+    "REMOTE_DOCUMENT_UNCONFIRMED",
+    "DOCUMENT_LOCAL_PERSIST_FAILED",
+    "DOCUMENT_DISPATCH_FAILED",
+    // Registered headless finalize codes (EM-CAT-03; reason-token counterparts). BJJ-319 phase 5-4b.
+    "DOCUMENT_FINALIZE_IN_PROGRESS",
+    "EFORMSIGN_TERMINAL_FAILURE",
+    "DOCUMENT_FINALIZE_UNCONFIRMED",
+    "DOCUMENT_FINALIZE_FAILED",
+    // Registered account-state and reset-link codes (EM-CAT-03; shipped auth identifiers). BJJ-319 phase 6d2.
+    "PENDING_APPROVAL",
+    "ACCOUNT_REJECTED",
+    "ACCOUNT_PROFILE_INCOMPLETE",
+    "NO_ACCESSIBLE_BRANCH",
+    "AUTH_RESET_TOKEN_INVALID",
+    "AUTH_RESET_TOKEN_EXPIRED",
+    "AUTH_RESET_TOKEN_USED",
     "EMPLOYEE_ASSIGNMENT_UNAVAILABLE",
 ];
 
@@ -514,7 +614,7 @@ const PROBLEM_DEFINITIONS: Readonly<
             "en-US": "The request key was already used with different message content.",
         },
     },
-    // Provisional client codes pending EM spec reconciliation (BJJ-319).
+    // Registered client/employee codes (EM-CAT-01 satisfied; spec examples are illustrative). BJJ-319 reconciliation 2026-09-14.
     CLIENT_SERVICE_PERIOD_INVALID: {
         status: 400,
         title: {
@@ -634,6 +734,444 @@ const PROBLEM_DEFINITIONS: Readonly<
         detail: {
             "ko-KR": "진행 중인 배정이 있는 관리사는 삭제할 수 없어요. 배정 종료 또는 교체 후 다시 시도해 주세요.",
             "en-US": "This employee has active assignments and cannot be deleted. End or replace the assignments and try again.",
+        },
+    },
+    EMPLOYEE_ASSIGNMENT_NOT_ELIGIBLE: {
+        status: 400,
+        title: {
+            "ko-KR": "배정할 수 없는 제공인력이에요",
+            "en-US": "This employee cannot be assigned",
+        },
+        detail: {
+            "ko-KR": "선택한 제공인력이 해당 지점 소속이 아니거나 배정 가능한 상태가 아니에요.",
+            "en-US": "The selected employee does not belong to the branch or is not available for assignment.",
+        },
+    },
+    SERVICE_RECORD_WRITE_TARGET_CHANGED: {
+        status: 409,
+        title: {
+            "ko-KR": "작업 대상이 변경됐어요",
+            "en-US": "The write target changed",
+        },
+        detail: {
+            "ko-KR": "작업 도중 대상 정보가 바뀌어 요청을 적용하지 않았어요. 최신 상태를 확인한 뒤 다시 시도해 주세요.",
+            "en-US": "The target changed while the request was in progress, so it was not applied. Check the latest state and try again.",
+        },
+    },
+    EMPLOYEE_SCHEDULE_OVERLAP: {
+        status: 409,
+        title: {
+            "ko-KR": "일정이 겹쳐요",
+            "en-US": "Schedule dates overlap",
+        },
+        detail: {
+            "ko-KR": "같은 고객의 활성 일정과 기간이 겹쳐요.",
+            "en-US": "An active schedule for this client overlaps the requested dates.",
+        },
+    },
+    SCHEDULE_RETENTION_BLOCKED: {
+        status: 409,
+        title: {
+            "ko-KR": "일정을 삭제할 수 없어요",
+            "en-US": "Cannot delete the schedule",
+        },
+        detail: {
+            "ko-KR": "일정이 시작했거나 연결된 운영 또는 이력 데이터가 있어 삭제할 수 없어요.",
+            "en-US": "This schedule has started or has linked operational or history data and cannot be deleted.",
+        },
+    },
+    // Registered schedule-change codes (EM-CAT-03). BJJ-319 phase 4c-2.
+    SERVICE_RECORD_PLANNED_DATE_UNAVAILABLE: {
+        status: 409,
+        title: {
+            "ko-KR": "저장된 예정 회차를 확인할 수 없어요",
+            "en-US": "Planned session dates are unavailable",
+        },
+        detail: {
+            "ko-KR": "저장된 예정 회차 정보를 확인할 수 없어 일정을 변경할 수 없어요.",
+            "en-US": "The stored planned session dates could not be read, so the schedule cannot be changed.",
+        },
+    },
+    INVALID_SCHEDULE_DATE: {
+        status: 400,
+        title: {
+            "ko-KR": "선택한 날짜로 변경할 수 없어요",
+            "en-US": "The selected date cannot be used",
+        },
+        detail: {
+            "ko-KR": "선택한 날짜로는 회차 일정을 변경할 수 없어요.",
+            "en-US": "The session schedule cannot be changed to the selected date.",
+        },
+    },
+    ALL_SESSIONS_SUBMITTED: {
+        status: 409,
+        title: {
+            "ko-KR": "모든 회차가 제출됐어요",
+            "en-US": "All sessions were submitted",
+        },
+        detail: {
+            "ko-KR": "모든 회차가 이미 제출되어 일정을 변경할 수 없어요.",
+            "en-US": "Every session has already been submitted, so the schedule cannot be changed.",
+        },
+    },
+    REQUEST_ALREADY_PENDING: {
+        status: 409,
+        title: {
+            "ko-KR": "대기 중인 일정 변경 요청이 있어요",
+            "en-US": "A schedule change request is pending",
+        },
+        detail: {
+            "ko-KR": "처리 대기 중인 일정 변경 요청이 있어 새 요청을 만들 수 없어요.",
+            "en-US": "A schedule change request is already pending, so a new one cannot be created.",
+        },
+    },
+    REQUEST_NOT_PENDING: {
+        status: 409,
+        title: {
+            "ko-KR": "이미 처리된 요청이에요",
+            "en-US": "The request was already decided",
+        },
+        detail: {
+            "ko-KR": "이미 처리됐거나 취소된 요청이라 다시 처리할 수 없어요.",
+            "en-US": "This request was already approved or canceled, so it cannot be processed again.",
+        },
+    },
+    SCHEDULE_DATE_NOT_POSTPONED: {
+        status: 409,
+        title: {
+            "ko-KR": "이후 날짜로만 변경할 수 있어요",
+            "en-US": "Only a later date is allowed",
+        },
+        detail: {
+            "ko-KR": "기존 회차보다 이후 날짜로만 일정을 적용할 수 있어요.",
+            "en-US": "The schedule can only be applied to a date after the existing session.",
+        },
+    },
+    REQUEST_STALE: {
+        status: 409,
+        title: {
+            "ko-KR": "요청을 적용할 수 없어요",
+            "en-US": "The request can no longer be applied",
+        },
+        detail: {
+            "ko-KR": "요청 이후 일정이 바뀌어 적용할 수 없어요. 최신 상태를 확인해 주세요.",
+            "en-US": "The schedule changed after the request was created, so it cannot be applied. Check the latest state.",
+        },
+    },
+    SCHEDULE_CHANGE_UNCOMPUTABLE: {
+        status: 409,
+        title: {
+            "ko-KR": "일정을 계산할 수 없어요",
+            "en-US": "The schedule could not be calculated",
+        },
+        detail: {
+            "ko-KR": "고객 회기 정보나 배정 기간이 없어 일정을 계산할 수 없어요. 정보를 확인한 뒤 다시 시도해 주세요.",
+            "en-US": "The client's session count or assignment period is missing, so the schedule could not be calculated. Check the information and try again.",
+        },
+    },
+    // Registered contract-send guard codes (EM-CAT-03). BJJ-319 phase 5-1.
+    CLIENT_ASSIGNMENT_REQUIRED: {
+        status: 409,
+        title: {
+            "ko-KR": "고객 배정이 필요해요",
+            "en-US": "Client assignment required",
+        },
+        detail: {
+            "ko-KR": "고객의 제공인력 배정을 먼저 저장해 주세요.",
+            "en-US": "Save the client's provider assignment first.",
+        },
+    },
+    DOCUMENT_PROVIDER_MISMATCH: {
+        status: 409,
+        title: {
+            "ko-KR": "제공인력 정보가 일치하지 않아요",
+            "en-US": "Provider information does not match",
+        },
+        detail: {
+            "ko-KR": "전자문서의 제공인력과 고객 배정 정보가 일치하지 않아요.",
+            "en-US": "The document provider does not match the client's saved assignment.",
+        },
+    },
+    CLIENT_SERVICE_TERMINATED: {
+        status: 409,
+        title: {
+            "ko-KR": "해지된 고객이에요",
+            "en-US": "This client's service has ended",
+        },
+        detail: {
+            "ko-KR": "해지된 고객에게는 전자문서를 발송할 수 없어요.",
+            "en-US": "Documents cannot be sent to a client whose service has ended.",
+        },
+    },
+    // Registered eformsign tombstone codes (EM-CAT-03; shipped identifiers verbatim). BJJ-319 phase 5-3a.
+    EFORMSIGN_CREDENTIALS_SERVER_ONLY: {
+        status: 410,
+        title: {
+            "ko-KR": "서버 전용 기능이에요",
+            "en-US": "Server-only feature",
+        },
+        detail: {
+            "ko-KR": "전자서명 자격증명은 서버에서만 사용할 수 있어요.",
+            "en-US": "eformsign credentials can only be used on the server.",
+        },
+    },
+    EFORMSIGN_PROVIDER_OPERATION_SERVER_ONLY: {
+        status: 410,
+        title: {
+            "ko-KR": "서버 전용 작업이에요",
+            "en-US": "Server-only operation",
+        },
+        detail: {
+            "ko-KR": "이 전자서명 작업은 서버에서만 실행할 수 있어요. 자동 발송 절차를 이용해 주세요.",
+            "en-US": "This eformsign operation can only run on the server. Use the automated dispatch flow instead.",
+        },
+    },
+    // Registered headless dispatch codes (EM-CAT-03; reason-token counterparts). BJJ-319 phase 5-4a.
+    // ko copy reuses the sentences the web/mobile dispatch UIs already show for the
+    // matching reason tokens where one exists; the rest are authored (해요체).
+    INVALID_CUSTOMER_PHONE: {
+        status: 400,
+        title: {
+            "ko-KR": "계약서 연락처를 확인해 주세요",
+            "en-US": "Check the contract contact",
+        },
+        detail: {
+            "ko-KR": "계약서에 입력한 고객 연락처가 올바르지 않아요.",
+            "en-US": "The customer contact entered on the contract is invalid.",
+        },
+    },
+    INVALID_PROVIDER_PHONE: {
+        status: 400,
+        title: {
+            "ko-KR": "제공인력 연락처를 확인해 주세요",
+            "en-US": "Check the provider contact",
+        },
+        detail: {
+            "ko-KR": "계약서에 입력한 제공인력 연락처가 올바르지 않아요.",
+            "en-US": "The provider contact entered on the contract is invalid.",
+        },
+    },
+    DOCUMENT_DISPATCH_IN_PROGRESS: {
+        status: 409,
+        title: {
+            "ko-KR": "이 문서를 처리하는 중이에요",
+            "en-US": "This document is already being processed",
+        },
+        detail: {
+            "ko-KR": "이 문서를 처리하는 중이에요. 잠시 후 다시 시도해 주세요.",
+            "en-US": "This document is already being processed. Try again shortly.",
+        },
+    },
+    DOCUMENT_LOCK_UNAVAILABLE: {
+        status: 503,
+        title: {
+            "ko-KR": "처리 순서를 확보하지 못했어요",
+            "en-US": "Could not secure the processing slot",
+        },
+        detail: {
+            "ko-KR": "처리 순서를 확보하지 못했어요. 잠시 후 다시 시도해 주세요.",
+            "en-US": "The processing slot could not be secured. Try again shortly.",
+        },
+    },
+    DOCUMENT_LOCK_LOST: {
+        status: 409,
+        title: {
+            "ko-KR": "처리 순서를 유지하지 못했어요",
+            "en-US": "The processing slot was lost",
+        },
+        detail: {
+            "ko-KR": "처리 순서를 확보하지 못했어요. 잠시 후 다시 시도해 주세요.",
+            "en-US": "The processing slot could not be secured. Try again shortly.",
+        },
+    },
+    DUPLICATE_PENDING_DOCUMENT: {
+        status: 409,
+        title: {
+            "ko-KR": "최근 생성된 진행 중 문서가 있어요",
+            "en-US": "A recent pending document exists",
+        },
+        detail: {
+            "ko-KR": "최근 생성된 진행 중 문서가 있어 계약 목록에서 상태를 확인해 주세요.",
+            "en-US": "A recently created pending document exists, so check its status in the contract list.",
+        },
+    },
+    DISPATCH_ALREADY_ACCEPTED: {
+        status: 409,
+        title: {
+            "ko-KR": "이미 처리를 접수했어요",
+            "en-US": "The request was already accepted",
+        },
+        detail: {
+            "ko-KR": "이 단계는 이미 처리를 접수했어요. 문서 상태가 갱신되면 다음 단계를 진행할 수 있어요.",
+            "en-US": "This step already accepted the request, so the next step can continue once the document status updates.",
+        },
+    },
+    DISPATCH_UNCERTAIN: {
+        status: 502,
+        title: {
+            "ko-KR": "직전 요청의 처리 결과를 확인하지 못했어요",
+            "en-US": "The previous request result is unconfirmed",
+        },
+        detail: {
+            "ko-KR": "직전 요청의 처리 결과를 확인하지 못했어요. eformsign에서 문서 상태를 확인한 뒤 다시 시도해 주세요.",
+            "en-US": "We can’t confirm the result of the previous request. Check the document status in eformsign before trying again.",
+        },
+    },
+    REMOTE_DOCUMENT_UNCONFIRMED: {
+        status: 502,
+        title: {
+            "ko-KR": "문서 생성 상태를 확인할 수 없어요",
+            "en-US": "The document creation result is unconfirmed",
+        },
+        detail: {
+            "ko-KR": "문서 생성 상태를 확인할 수 없어요. 전자문서 목록에서 확인 후 다시 시도해 주세요.",
+            "en-US": "We can’t confirm whether the document was created. Check the e-form document list before trying again.",
+        },
+    },
+    DOCUMENT_LOCAL_PERSIST_FAILED: {
+        status: 502,
+        title: {
+            "ko-KR": "생성된 문서 등록에 실패했어요",
+            "en-US": "The created document could not be registered",
+        },
+        detail: {
+            "ko-KR": "문서는 생성되었으나 등록에 실패했어요. 잠시 후 다시 시도해 주세요.",
+            "en-US": "The document was created but could not be registered. Try again shortly.",
+        },
+    },
+    DOCUMENT_DISPATCH_FAILED: {
+        status: 502,
+        title: {
+            "ko-KR": "전자문서 발송에 실패했어요",
+            "en-US": "Document dispatch failed",
+        },
+        detail: {
+            "ko-KR": "백엔드 자동 처리에 실패했어요. 재시도하거나 수동 입력을 사용해 주세요.",
+            "en-US": "The automated backend processing failed. Retry or use manual entry.",
+        },
+    },
+    // Registered headless finalize codes (EM-CAT-03; reason-token counterparts). BJJ-319 phase 5-4b.
+    // ko copy reuses the sentences the web finalize UI already shows for the
+    // matching reason tokens where one exists; the rest are authored (해요체).
+    DOCUMENT_FINALIZE_IN_PROGRESS: {
+        status: 409,
+        title: {
+            "ko-KR": "이 문서를 처리하는 중이에요",
+            "en-US": "This document is already being processed",
+        },
+        detail: {
+            "ko-KR": "이 문서를 처리하는 중이에요. 잠시 후 다시 시도해 주세요.",
+            "en-US": "This document is already being processed. Try again shortly.",
+        },
+    },
+    EFORMSIGN_TERMINAL_FAILURE: {
+        status: 502,
+        title: {
+            "ko-KR": "문서가 종료 상태로 처리됐어요",
+            "en-US": "The document ended in a terminal state",
+        },
+        detail: {
+            "ko-KR": "eformsign에서 문서가 종료 상태로 처리됐어요. 문서 상태를 확인해 주세요.",
+            "en-US": "eformsign moved the document into a terminal state. Check the document status.",
+        },
+    },
+    DOCUMENT_FINALIZE_UNCONFIRMED: {
+        status: 502,
+        title: {
+            "ko-KR": "완료 처리 결과를 확인할 수 없어요",
+            "en-US": "The finalize result is unconfirmed",
+        },
+        detail: {
+            "ko-KR": "완료 처리 결과를 확인하지 못했어요. eformsign에서 문서 상태를 확인한 뒤 다시 시도해 주세요.",
+            "en-US": "We can’t confirm the finalize result. Check the document status in eformsign before trying again.",
+        },
+    },
+    DOCUMENT_FINALIZE_FAILED: {
+        status: 502,
+        title: {
+            "ko-KR": "전자문서 완료 처리에 실패했어요",
+            "en-US": "Document finalize failed",
+        },
+        detail: {
+            "ko-KR": "백엔드 자동 완료 처리에 실패했어요. 재시도하거나 화면에서 직접 완료 처리해 주세요.",
+            "en-US": "The automated backend finalize failed. Retry or finish the step manually.",
+        },
+    },
+    PENDING_APPROVAL: {
+        status: 403,
+        title: {
+            "ko-KR": "승인 대기 중이에요",
+            "en-US": "Awaiting approval",
+        },
+        detail: {
+            "ko-KR": "관리자 승인 대기 중이에요. 승인된 후에 로그인할 수 있어요.",
+            "en-US": "Your account is awaiting admin approval. You can sign in once it is approved.",
+        },
+    },
+    ACCOUNT_REJECTED: {
+        status: 403,
+        title: {
+            "ko-KR": "가입이 거부되었어요",
+            "en-US": "Sign-up rejected",
+        },
+        detail: {
+            "ko-KR": "가입이 거부되었어요. 자세한 내용은 관리자에게 문의해 주세요.",
+            "en-US": "This sign-up was rejected. Contact an administrator for details.",
+        },
+    },
+    ACCOUNT_PROFILE_INCOMPLETE: {
+        status: 403,
+        title: {
+            "ko-KR": "가입 정보가 누락되었어요",
+            "en-US": "Sign-up details incomplete",
+        },
+        detail: {
+            "ko-KR": "가입 정보가 누락되었어요. 오너에게 문의해 주세요.",
+            "en-US": "Required sign-up details are missing. Contact an administrator.",
+        },
+    },
+    NO_ACCESSIBLE_BRANCH: {
+        status: 403,
+        title: {
+            "ko-KR": "접근 가능한 지점이 없어요",
+            "en-US": "No accessible branch",
+        },
+        detail: {
+            "ko-KR": "접근 가능한 지점이 없어요. 관리자에게 문의해 주세요.",
+            "en-US": "There is no branch you can access. Contact an administrator.",
+        },
+    },
+    AUTH_RESET_TOKEN_INVALID: {
+        status: 400,
+        title: {
+            "ko-KR": "재설정 링크가 올바르지 않아요",
+            "en-US": "Reset link is invalid",
+        },
+        detail: {
+            "ko-KR": "이 재설정 링크는 유효하지 않아요. 새 재설정 이메일을 요청해 주세요.",
+            "en-US": "This reset link is not valid. Request a new reset email.",
+        },
+    },
+    AUTH_RESET_TOKEN_EXPIRED: {
+        status: 400,
+        title: {
+            "ko-KR": "재설정 링크가 만료되었어요",
+            "en-US": "Reset link expired",
+        },
+        detail: {
+            "ko-KR": "재설정 링크가 만료되었어요. 새 재설정 이메일을 요청해 주세요.",
+            "en-US": "This reset link has expired. Request a new reset email.",
+        },
+    },
+    AUTH_RESET_TOKEN_USED: {
+        status: 400,
+        title: {
+            "ko-KR": "이미 사용된 재설정 링크예요",
+            "en-US": "Reset link already used",
+        },
+        detail: {
+            "ko-KR": "이미 사용된 재설정 링크예요. 새 재설정 이메일을 요청해 주세요.",
+            "en-US": "This reset link has already been used. Request a new reset email.",
         },
     },
 };

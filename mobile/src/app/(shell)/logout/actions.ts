@@ -2,6 +2,7 @@
 
 import { cookies } from "next/headers";
 import { serverAPIClient } from "@/lib/api/server";
+import { normalizeApiError } from "@babyjamjam/shared";
 
 export async function logout(pushEndpoint?: string): Promise<{ success: boolean; error?: string }> {
   let serverLogoutError: string | undefined;
@@ -20,10 +21,22 @@ export async function logout(pushEndpoint?: string): Promise<{ success: boolean;
         }, {
           headers: token ? { Authorization: `Bearer ${token}` } : undefined,
         });
-      } catch {
+      } catch (logoutError) {
         // Local cookies are still cleared below, but report the server failure
-        // so callers do not claim that the session was fully revoked.
-        serverLogoutError = "서버 로그아웃에 실패했어요. 다시 시도해 주세요.";
+        // so callers do not claim that the session was fully revoked. A
+        // registered problem body drives the copy; the local fallback stays.
+        let message: string | null = null;
+        if (logoutError && typeof logoutError === "object" && "isAxiosError" in logoutError) {
+          const axiosError = logoutError as { response?: { status?: number; data?: unknown } };
+          if (axiosError.response) {
+            const normalized = normalizeApiError(
+              { response: { status: axiosError.response.status ?? 500, data: axiosError.response.data } },
+              { locale: "ko-KR", operation: "mutation" },
+            );
+            if (normalized.verified) message = normalized.message;
+          }
+        }
+        serverLogoutError = message ?? "서버 로그아웃에 실패했어요. 다시 시도해 주세요.";
       }
     }
 

@@ -497,7 +497,7 @@ describe("ServiceRecordTokenService", () => {
         const resend = await svc.issueLink({ ...params, scheduleId: 11, employeeId: 8, expectedPhone: "01033334444" });
         expect(resend.linkToken).toBe(first.linkToken);
         expect(prisma.__rows).toHaveLength(1);
-        await expect(svc.issueLink(params)).rejects.toThrow("no longer current");
+        await expect(svc.issueLink(params)).rejects.toMatchObject({ response: { code: "SERVICE_RECORD_WRITE_TARGET_CHANGED" } });
     });
 
     it("rejects an old session and old phone as soon as the registered phone changes", async () => {
@@ -525,7 +525,7 @@ describe("ServiceRecordTokenService", () => {
     it("rejects a branch mismatch and refuses access when no current assignment remains", async () => {
         const { prisma, svc } = setup();
         const params = { branchId: "b1", scheduleId: 10, employeeId: 7, expectedPhone: "01011112222", expiresAt: future() };
-        await expect(svc.issueLink({ ...params, branchId: "b2" })).rejects.toThrow("no longer current");
+        await expect(svc.issueLink({ ...params, branchId: "b2" })).rejects.toMatchObject({ response: { code: "SERVICE_RECORD_WRITE_TARGET_CHANGED" } });
         const first = await svc.issueLink(params);
         const auth = await svc.verifyPhoneAndMintAccess(first.linkToken, params.expectedPhone);
         prisma.__schedules[0]!.replaced = true;

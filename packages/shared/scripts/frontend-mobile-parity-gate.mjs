@@ -462,8 +462,8 @@ function validateMessageTriggerBffs(sources) {
     if (!hasSharedImport(source, "types/message")) {
       errors.push(`${route.path} must import ${route.schema} from @babyjamjam/shared/types/message.`);
     }
-    if (!source.includes("messageTriggerUpstreamErrorResponse")) {
-      errors.push(`${route.path} must use shared messageTriggerUpstreamErrorResponse policy.`);
+    if (!source.includes("errorResponse") && !source.includes("upstreamBodyErrorResponse")) {
+      errors.push(`${route.path} must use shared problem-boundary errorResponse policy.`);
     }
 
     const importsSharedApi = hasSharedImport(source, "api");
@@ -513,8 +513,8 @@ function validateSystemTemplateBffs(sources) {
     if (!source.includes("systemTemplateBackendJsonResponse")) {
       errors.push(`${helper} must use shared systemTemplateBackendJsonResponse policy.`);
     }
-    if (!source.includes("systemTemplateUpstreamErrorResponse")) {
-      errors.push(`${helper} must use shared systemTemplateUpstreamErrorResponse policy.`);
+    if (!source.includes("errorResponse") && !source.includes("upstreamBodyErrorResponse")) {
+      errors.push(`${helper} must use shared problem-boundary errorResponse policy.`);
     }
     if (!source.includes('from "@/lib/api/route-utils"')) {
       errors.push(`${helper} must consume the platform route-utils adapter for shared system-template policy.`);

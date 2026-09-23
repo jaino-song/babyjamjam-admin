@@ -1,10 +1,9 @@
 "use client";
-import { getUserErrorMessage } from "@babyjamjam/shared";
 
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { MESSAGE_HISTORY_STATUS_LABELS } from "@babyjamjam/shared";
+import { MESSAGE_HISTORY_STATUS_LABELS, normalizeApiError } from "@babyjamjam/shared";
 import { formatBirthdayYYMMDD } from "@babyjamjam/shared/utils/birthday";
 
 import { Button } from "@/components/ui/button";
@@ -732,11 +731,15 @@ function ClientDetailPanelBody({
     };
 
     const showScheduleChangeErrorToast = (error: unknown, fallbackMessage: string) => {
+        // Registered-code copy first, then the problem contract, then locally
+        // authored copy — upstream internals are never rendered.
+        const stale = getScheduleChangeErrorCode(error) === "REQUEST_STALE";
+        const normalized = normalizeApiError(error, { locale: "ko-KR", operation: "mutation" });
         toast({
             variant: "destructive",
-            description: getUserErrorMessage(getScheduleChangeErrorCode(error) === "REQUEST_STALE"
+            description: stale
                 ? "요청이 최신 상태와 달라 만료됐어요"
-                : fallbackMessage),
+                : (normalized.verified ? normalized.message : fallbackMessage),
         });
     };
 

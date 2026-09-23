@@ -42,3 +42,22 @@ export function codeOnlyProblemBody(
         message: PROBLEM_CATALOG[code].detail["ko-KR"],
     };
 }
+
+/**
+ * Shape an unexpected mutation-boundary failure whose actual result is unknown.
+ * The mapper stamps `UNKNOWN` + `CHECK_STATUS` for uncoded non-GET 5xx errors;
+ * a code-carrying fallback must declare the same facts instead of defaulting
+ * to `NOT_APPLIED`, or clients may treat a possibly-applied mutation as a
+ * safe retry (EM-STATE-01).
+ */
+export function uncertainProblemBody(
+    code: ProblemCode,
+): Pick<ProblemDetails, "code" | "params" | "outcome" | "recovery"> & { message: string } {
+    return {
+        code,
+        params: {},
+        outcome: "UNKNOWN",
+        recovery: { action: "CHECK_STATUS", retry: { mode: "NEVER" } },
+        message: PROBLEM_CATALOG[code].detail["ko-KR"],
+    };
+}

@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { serverAPIClient } from "@/lib/api/server";
-import { getAuthHeaders, getAuthToken, getUpstreamErrorStatus, logUpstreamError, parseBody } from "@/lib/api/route-utils";
+import { errorResponse, getAuthHeaders, getAuthToken, getUpstreamErrorStatus, parseBody } from "@/lib/api/route-utils";
+import { unauthorizedProblemResponse } from "@/lib/api/problem-responses";
 
 const sendReceiptLinkSchema = z.object({
   documentId: z.string().min(1),
@@ -12,7 +13,7 @@ const sendReceiptLinkSchema = z.object({
 export async function POST(request: NextRequest) {
   const token = getAuthToken(request);
   if (!token) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    return unauthorizedProblemResponse();
   }
   const { data, response: invalidBody } = await parseBody(sendReceiptLinkSchema, request);
   if (invalidBody) {
@@ -32,9 +33,9 @@ export async function POST(request: NextRequest) {
         status: getUpstreamErrorStatus(error),
       });
     }
-    // Only log unexpected failures (no upstream response, or a 5xx) — expected business
-    // rejections (not_voucher_client, missing_birthday, etc.) are routine and forwarded above.
-    logUpstreamError("API send receipt link", error);
-    return NextResponse.json({ error: "서버 내부 오류로 영수증 링크를 보내지 못했어요." }, { status: 500 });
+    // Only unexpected failures (no upstream response, or a 5xx) reach the shared problem
+    // boundary: the upstream status is preserved and non-problem bodies get the sanitized
+    // Korean fallback instead of raw internals.
+    return errorResponse(error, "send receipt link");
   }
 }

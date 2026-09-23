@@ -113,7 +113,13 @@ describe("notification API routes", () => {
     const fetchSpy = jest.spyOn(global, "fetch").mockResolvedValue(new Response("{}"));
     const response = await testBroadcast(noCookieRequest("/api/notifications/test-broadcast", "POST"));
     expect(response.status).toBe(401);
-    await expect(response.json()).resolves.toEqual({ error: "Unauthorized" });
+    expect(response.headers.get("Content-Type")).toBe("application/problem+json");
+    await expect(response.json()).resolves.toEqual(expect.objectContaining({
+      code: "AUTH_REQUIRED",
+      status: 401,
+      outcome: "NOT_APPLIED",
+      error: "Unauthorized",
+    }));
     expect(fetchSpy).not.toHaveBeenCalled();
     fetchSpy.mockRestore();
   });

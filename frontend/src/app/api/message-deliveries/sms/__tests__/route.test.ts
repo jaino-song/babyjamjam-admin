@@ -80,4 +80,41 @@ describe("message-deliveries SMS proxy", () => {
       error: "현재 데이터 상태와 요청이 충돌해 처리할 수 없어요.",
     });
   });
+
+  it("rejects an unauthenticated send with a registered 401 problem body", async () => {
+    const response = await POST(
+      createRequest("/api/message-deliveries/sms", { receiver: "010-1111-1111" }, false),
+    );
+
+    expect(response.status).toBe(401);
+    await expect(response.json()).resolves.toMatchObject({
+      code: "AUTH_REQUIRED",
+      status: 401,
+    });
+    expect(response.headers.get("Content-Type")).toContain("application/problem+json");
+    expect(mockPost).not.toHaveBeenCalled();
+  });
+
+  it("sanitizes a transport failure instead of a raw 500 body", async () => {
+    mockPost.mockRejectedValue(new Error("connect ETIMEDOUT 10.0.0.9:443"));
+    const consoleErrorSpy = jest.spyOn(console, "error").mockImplementation(() => undefined);
+
+    try {
+      const response = await POST(
+        createRequest("/api/message-deliveries/sms", {
+          receiver: "010-1111-1111",
+          message: "문구",
+          msgType: "AUTO",
+          triggerType: "immediate",
+        }),
+      );
+
+      expect(response.status).toBe(500);
+      const body = await response.json();
+      expect(typeof body.error).toBe("string");
+      expect(JSON.stringify(body)).not.toContain("10.0.0.9");
+    } finally {
+      consoleErrorSpy.mockRestore();
+    }
+  });
 });

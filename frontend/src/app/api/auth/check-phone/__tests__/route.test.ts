@@ -48,7 +48,11 @@ describe("GET /api/auth/check-phone", () => {
 
     const response = await GET(createRequest("01066211878"));
 
-    await expect(response.json()).resolves.toEqual({ error: "전화번호 중복 확인에 실패했습니다." });
-    expect(response.status).toBe(503);
+    expect(response.status).toBe(500);
+    const body = await response.json();
+    expect(typeof body.error).toBe("string");
+    expect(body.error.length).toBeGreaterThan(0);
+    expect(body.error).not.toContain("backend unavailable");
+    expect(body).not.toHaveProperty("exists");
   });
 });

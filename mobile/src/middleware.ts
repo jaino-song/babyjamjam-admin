@@ -248,8 +248,15 @@ function isApiRoute(pathname: string): boolean {
   return pathname === "/api" || pathname.startsWith("/api/");
 }
 
-function apiJsonResponse(error: string, status: number): NextResponse {
-  return NextResponse.json({ error }, { status });
+/**
+ * Authors a middleware API error body with a machine-readable code plus the
+ * legacy English text as a compatibility alias (EM v1.0 API boundary: clients
+ * compare `code`, never the message text). `AUTH_REQUIRED` is a registered
+ * catalog code; the refresh/branch codes are local-only session signals that
+ * intentionally stay out of the shared catalog (BJJ-319 6d2 precedent).
+ */
+function apiCodeResponse(code: string, error: string, status: number): NextResponse {
+  return NextResponse.json({ code, error }, { status });
 }
 
 export async function middleware(request: NextRequest) {
@@ -377,7 +384,7 @@ export async function middleware(request: NextRequest) {
     const refreshAttempt = await tryRefreshAuthSession(refreshToken);
     if (refreshAttempt?.kind === "concurrent") {
       const response = isApiRoute(pathname)
-        ? apiJsonResponse("Authentication refresh already in progress", 409)
+        ? apiCodeResponse("AUTH_REFRESH_REPLAY_CONCURRENT", "Authentication refresh already in progress", 409)
         : NextResponse.redirect(request.nextUrl);
       response.headers.set("Retry-After", "1");
       return response;
@@ -402,7 +409,7 @@ export async function middleware(request: NextRequest) {
   // No auth token - redirect to login
   if (!authToken || isTokenExpired(authToken)) {
     if (isApiRoute(pathname)) {
-      return apiJsonResponse("Authentication required", 401);
+      return apiCodeResponse("AUTH_REQUIRED", "Authentication required", 401);
     }
 
     const loginUrl = new URL("/login", request.url);
@@ -434,7 +441,7 @@ export async function middleware(request: NextRequest) {
   // For all other routes, check if a branch has been selected by the branch-selection action.
   if (!request.cookies.get("selected_branch_id")?.value) {
     if (isApiRoute(pathname)) {
-      return apiJsonResponse("Branch selection required", 403);
+      return apiCodeResponse("BRANCH_SELECTION_REQUIRED", "Branch selection required", 403);
     }
 
     const selectBranchUrl = new URL("/select-branch", request.url);

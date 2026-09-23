@@ -54,6 +54,13 @@ describe("admin feedback API authorization", () => {
         { params: Promise.resolve({ id: "fb-1" }) },
       );
       expect(response.status).toBe(401);
+      expect(response.headers.get("content-type")).toBe("application/problem+json");
+      await expect(response.json()).resolves.toEqual(expect.objectContaining({
+        code: "AUTH_REQUIRED",
+        status: 401,
+        outcome: "NOT_APPLIED",
+        error: "Unauthorized",
+      }));
       expect(mockFetch).not.toHaveBeenCalled();
     });
 
@@ -61,13 +68,18 @@ describe("admin feedback API authorization", () => {
       setAuthCookie();
       const response = await getFeedbackStats();
       expect(response.status).toBe(401);
+      expect(response.headers.get("content-type")).toBe("application/problem+json");
+      await expect(response.json()).resolves.toEqual(expect.objectContaining({
+        code: "AUTH_REQUIRED",
+        status: 401,
+      }));
       expect(mockFetch).not.toHaveBeenCalled();
     });
   });
 
   it("proxies backend authorization denials when listing feedback", async () => {
     setAuthCookie("user-token");
-    mockFetch.mockResolvedValue({ ok: false, status: 403 });
+    mockFetch.mockResolvedValue({ ok: false, status: 403, text: async () => "" });
 
     const response = await getFeedbackList(createRequest("/api/admin/feedback"));
 
@@ -85,7 +97,7 @@ describe("admin feedback API authorization", () => {
 
   it("proxies backend authorization denials when reading feedback stats", async () => {
     setAuthCookie("user-token");
-    mockFetch.mockResolvedValue({ ok: false, status: 403 });
+    mockFetch.mockResolvedValue({ ok: false, status: 403, text: async () => "" });
 
     const response = await getFeedbackStats();
 
@@ -103,7 +115,7 @@ describe("admin feedback API authorization", () => {
 
   it("proxies backend authorization denials when reading feedback details", async () => {
     setAuthCookie("user-token");
-    mockFetch.mockResolvedValue({ ok: false, status: 403 });
+    mockFetch.mockResolvedValue({ ok: false, status: 403, text: async () => "" });
 
     const response = await getFeedbackDetail(
       createRequest("/api/admin/feedback/fb-1"),

@@ -2,6 +2,7 @@ import { ConflictException, ExecutionContext, RequestMethod } from "@nestjs/comm
 import { GUARDS_METADATA, METHOD_METADATA, PATH_METADATA } from "@nestjs/common/constants";
 import { Test, TestingModule } from "@nestjs/testing";
 import { ScheduleChangeService } from "application/services/schedule-change.service";
+import { codeOnlyProblemBody } from "application/utils/problem-bodies";
 import { JwtGuard } from "infrastructure/auth/jwt.guard";
 import { TenantGuard } from "infrastructure/tenant";
 import { OwnerOrAdminGuard } from "infrastructure/auth/owner-or-admin.guard";
@@ -166,7 +167,7 @@ describe("ScheduleChangeController (Integration)", () => {
 
         it("should preserve conflict response codes from the service", async () => {
             scheduleChangeService.approve.mockRejectedValue(
-                new ConflictException({ code: "REQUEST_STALE" }),
+                new ConflictException(codeOnlyProblemBody("REQUEST_STALE")),
             );
 
             try {
@@ -175,7 +176,13 @@ describe("ScheduleChangeController (Integration)", () => {
             } catch (error) {
                 expect(error).toBeInstanceOf(ConflictException);
                 expect((error as ConflictException).getStatus()).toBe(409);
-                expect((error as ConflictException).getResponse()).toEqual({ code: "REQUEST_STALE" });
+                expect((error as ConflictException).getResponse()).toEqual(
+                    expect.objectContaining({
+                        code: "REQUEST_STALE",
+                        params: {},
+                        outcome: "NOT_APPLIED",
+                    }),
+                );
             }
         });
     });

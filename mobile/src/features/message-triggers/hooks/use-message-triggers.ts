@@ -22,6 +22,10 @@ import type {
     UpdateMessageTriggerRuleBranchActivationDto,
 } from "../types";
 
+// Envelope unwrapping for the two supported read shapes (raw array /
+// `{ data }` wrapper). Any other shape throws so react-query records a
+// failed read through the problem contract instead of silently coercing a
+// malformed payload into an empty success.
 function normalizeArrayPayload<T>(payload: unknown): T[] {
     if (Array.isArray(payload)) {
         return payload as T[];
@@ -34,7 +38,7 @@ function normalizeArrayPayload<T>(payload: unknown): T[] {
         }
     }
 
-    return [];
+    throw new Error("Unexpected message-trigger list payload shape");
 }
 
 function normalizeSinglePayload<T>(payload: unknown): T | null {
@@ -49,7 +53,7 @@ function normalizeSinglePayload<T>(payload: unknown): T | null {
         return payload as T;
     }
 
-    return null;
+    throw new Error("Unexpected message-trigger detail payload shape");
 }
 
 class MessageHistoryContractError extends Error {

@@ -2,6 +2,7 @@ import { Injectable, NotFoundException } from "@nestjs/common";
 
 import type { AgentSessionOwner } from "domain/entities/agent-session.entity";
 import { PrismaService } from "infrastructure/database/prisma.service";
+import { codeOnlyProblemBody } from "application/utils/problem-bodies";
 
 @Injectable()
 export class AgentFeedbackService {
@@ -17,7 +18,7 @@ export class AgentFeedbackService {
             },
             select: { id: true, traceId: true },
         });
-        if (!message) throw new NotFoundException("Agent message not found");
+        if (!message) throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
         return this.prisma.agent_feedback.upsert({
             where: { messageId_userId: { messageId: message.id, userId: owner.userId } },
             create: {

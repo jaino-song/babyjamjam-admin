@@ -1,5 +1,6 @@
 import { ConflictException } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
+import { codeOnlyProblemBody } from "application/utils/problem-bodies";
 
 import {
     lockClientForScheduleWrite,
@@ -213,7 +214,7 @@ export async function lockServiceRecordWriteSet(
         params.clientId,
     );
     if (typeof transaction.$queryRaw === "function" && !clientLocked) {
-        throw new ConflictException({ code: "SERVICE_RECORD_WRITE_TARGET_CHANGED" });
+        throw new ConflictException(codeOnlyProblemBody("SERVICE_RECORD_WRITE_TARGET_CHANGED"));
     }
 
     // Resolve the case only after the owning client row is locked. A case can
@@ -235,11 +236,11 @@ export async function lockServiceRecordWriteSet(
             && (discoveredCase.branchId !== undefined && discoveredCase.branchId !== params.branchId
                 || discoveredCase.clientId !== undefined && discoveredCase.clientId !== params.clientId)
         ) {
-            throw new ConflictException({ code: "SERVICE_RECORD_WRITE_TARGET_CHANGED" });
+            throw new ConflictException(codeOnlyProblemBody("SERVICE_RECORD_WRITE_TARGET_CHANGED"));
         }
         if (params.caseId !== undefined && params.caseId !== null) {
             if (!discoveredCase || discoveredCase.id !== params.caseId) {
-                throw new ConflictException({ code: "SERVICE_RECORD_WRITE_TARGET_CHANGED" });
+                throw new ConflictException(codeOnlyProblemBody("SERVICE_RECORD_WRITE_TARGET_CHANGED"));
             }
         } else {
             effectiveCaseId = discoveredCase?.id ?? null;
@@ -264,7 +265,7 @@ export async function lockServiceRecordWriteSet(
             expectedScheduleIds.length !== rereadScheduleIds.length
             || expectedScheduleIds.some((id, index) => id !== rereadScheduleIds[index])
         ) {
-            throw new ConflictException({ code: "SERVICE_RECORD_WRITE_TARGET_CHANGED" });
+            throw new ConflictException(codeOnlyProblemBody("SERVICE_RECORD_WRITE_TARGET_CHANGED"));
         }
     }
     const scheduleIds = sortedIds([
@@ -288,7 +289,7 @@ export async function lockServiceRecordWriteSet(
             params.clientId,
         );
         if (typeof transaction.$queryRaw === "function" && !caseLocked) {
-            throw new ConflictException({ code: "SERVICE_RECORD_WRITE_TARGET_CHANGED" });
+            throw new ConflictException(codeOnlyProblemBody("SERVICE_RECORD_WRITE_TARGET_CHANGED"));
         }
     }
     await lockEmployeeSchedulesForWrite(transaction, params.branchId, scheduleIds);

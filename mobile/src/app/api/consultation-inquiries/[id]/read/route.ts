@@ -1,12 +1,15 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest } from "next/server";
 import { serverAPIClient } from "@/lib/api/server";
 import {
     backendJsonResponse,
     errorResponse,
     getAuthHeaders,
     getAuthToken,
-    unauthorizedResponse,
 } from "@/lib/api/route-utils";
+import {
+    unauthorizedProblemResponse,
+    validationProblemResponse,
+} from "@/lib/api/problem-responses";
 
 type RouteParams = { params: Promise<{ id: string }> };
 
@@ -14,15 +17,17 @@ function isValidInquiryId(id: string): boolean {
     return /^[A-Za-z0-9_-]+$/.test(id);
 }
 
-function invalidInquiryIdResponse(): NextResponse {
-    return NextResponse.json({ error: "Invalid inquiry id" }, { status: 400 });
+function invalidInquiryIdResponse() {
+    return validationProblemResponse("Invalid inquiry id", [
+        { pointer: "/id", code: "INVALID_FORMAT", detail: "입력 형식이 올바르지 않아요.", location: "path" },
+    ]);
 }
 
 export async function PATCH(request: NextRequest, { params }: RouteParams) {
     try {
         const token = getAuthToken(request);
         if (!token) {
-            return unauthorizedResponse("Unauthorized");
+            return unauthorizedProblemResponse();
         }
 
         const { id } = await params;

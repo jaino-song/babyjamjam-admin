@@ -10,6 +10,11 @@ const DATE_ONLY_RE = /^\d{4}-\d{2}-\d{2}$/;
 const SERVICE_CONTRACT_RE = /서비스\s*계약서/;
 const CONTRACT_TEMPLATE_RE = /계약서/;
 
+// Client-origin pre-condition guards. The thrown messages are locally
+// authored final copy (never upstream response strings), consumed only by
+// in-app callers — no problem contract body exists for them and none may be
+// invented client-side.
+
 export interface BuildClientContractDataParams {
   client: Client;
   employees: readonly Employee[];

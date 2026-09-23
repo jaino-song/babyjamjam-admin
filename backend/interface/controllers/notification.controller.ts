@@ -27,6 +27,7 @@ import {
     UnreadCountResponseDto,
     BroadcastResultResponseDto,
 } from "../dto/notification.dto";
+import { codeOnlyProblemBody } from "application/utils/problem-bodies";
 
 interface JwtPayload {
     userId: string;
@@ -205,7 +206,7 @@ export class NotificationController {
         @CurrentTenant() tenant: { branchId?: string },
     ): Promise<BroadcastResultResponseDto> {
         if (this.configService.get('NODE_ENV') === 'production') {
-            throw new ForbiddenException('Test endpoint disabled in production');
+            throw new ForbiddenException(codeOnlyProblemBody("ACCESS_DENIED"));
         }
         return this.notificationService.broadcastNotification(
             tenant.branchId ?? "",

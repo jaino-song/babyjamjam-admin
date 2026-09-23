@@ -96,7 +96,43 @@ describe("POST /api/auth/token", () => {
         const response = await POST(createRequest());
 
         expect(response.status).toBe(403);
-        await expect(response.json()).resolves.toEqual({ error: "Token exchange failed" });
+        const body = await response.json();
+        expect(body.error).toMatch(/[가-힣]/);
+        expect(body).not.toHaveProperty("code");
+        expect(JSON.stringify(body)).not.toContain("oauth-code");
+        expect(JSON.stringify(body)).not.toContain("internal-api.local");
+    });
+
+    it("maps a network failure to a registered DEPENDENCY_UNAVAILABLE problem at 503", async () => {
+        mockPost.mockRejectedValue(new AxiosError("network down", "ECONNREFUSED"));
+
+        const response = await POST(createRequest());
+
+        expect(response.status).toBe(503);
+        expect(response.headers.get("content-type")).toBe("application/problem+json");
+        await expect(response.json()).resolves.toEqual(expect.objectContaining({
+            code: "DEPENDENCY_UNAVAILABLE",
+            status: 503,
+            outcome: "UNKNOWN",
+            recovery: { action: "CHECK_STATUS", retry: { mode: "NEVER" } },
+        }));
+    });
+
+    it("logs the network failure data-free (name/code/status only, no bodies)", async () => {
+        mockPost.mockRejectedValue(new AxiosError("network down", "ECONNREFUSED"));
+
+        await POST(createRequest());
+
+        const logCall = consoleErrorSpy.mock.calls.find(
+            (call) => typeof call[0] === "string" && call[0].includes("exchange authorization code"),
+        );
+        expect(logCall).toBeDefined();
+        expect(logCall?.[1]).toEqual({ status: 500, code: "ECONNREFUSED", name: "AxiosError" });
+        const logged = consoleErrorSpy.mock.calls
+            .flat()
+            .map((entry) => (typeof entry === "string" ? entry : JSON.stringify(entry)))
+            .join(" ");
+        expect(logged).not.toContain("network down");
     });
 
     it("does not log backend URL or upstream response bodies on token exchange failures", async () => {

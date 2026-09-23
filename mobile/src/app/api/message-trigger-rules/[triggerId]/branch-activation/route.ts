@@ -1,15 +1,18 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest } from "next/server";
 import { z } from "zod";
 
 import { serverAPIClient } from "@/lib/api/server";
 import {
   backendJsonResponse,
+  errorResponse,
   getAuthHeaders,
   getAuthToken,
-  messageTriggerUpstreamErrorResponse,
   parseBody,
-  unauthorizedResponse,
 } from "@/lib/api/route-utils";
+import {
+  unauthorizedProblemResponse,
+  validationProblemResponse,
+} from "@/lib/api/problem-responses";
 
 const branchActivationSchema = z.object({
   isActive: z.boolean(),
@@ -26,12 +29,14 @@ function isValidTriggerId(triggerId: string): boolean {
 export async function PUT(request: NextRequest, context: RouteContext) {
   const token = getAuthToken(request);
   if (!token) {
-    return unauthorizedResponse("Unauthorized");
+    return unauthorizedProblemResponse();
   }
 
   const { triggerId } = await context.params;
   if (!isValidTriggerId(triggerId)) {
-    return NextResponse.json({ error: "Invalid trigger id" }, { status: 400 });
+    return validationProblemResponse("Invalid trigger id", [
+      { pointer: "/triggerId", code: "INVALID_FORMAT", detail: "입력 형식이 올바르지 않아요.", location: "path" },
+    ]);
   }
 
   const { data, response: invalid } = await parseBody(branchActivationSchema, request);
@@ -47,6 +52,6 @@ export async function PUT(request: NextRequest, context: RouteContext) {
     );
     return backendJsonResponse(response);
   } catch (error) {
-    return messageTriggerUpstreamErrorResponse(error, "update message trigger branch activation");
+    return errorResponse(error, "update message trigger branch activation", "mutation");
   }
 }

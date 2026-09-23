@@ -17,6 +17,7 @@ import type { AgentActionEntity, AgentActionOwner } from "domain/entities/agent-
 import { AGENT_ACTION_REPOSITORY, type IAgentActionRepository } from "domain/repositories/agent-action.repository.interface";
 import type { VerifiedTenantPrincipal } from "infrastructure/tenant/tenant.context";
 import { PrismaService } from "infrastructure/database/prisma.service";
+import { codeOnlyProblemBody, problemBody, uncertainProblemBody } from "application/utils/problem-bodies";
 import { CapabilityRegistryService } from "./capability-registry.service";
 import { AgentFlagsService } from "./agent-flags.service";
 import { AgentActionSweepLockService } from "infrastructure/locking/agent-action-sweep-lock.service";
@@ -268,10 +269,15 @@ export class ActionCoordinatorService implements AgentTaskReviewPort {
         });
         const capability = this.registry.get(input.capability);
         if (capability.meta.risk === "read" || !capability.meta.sideEffect) {
-            throw new BadRequestException("Read capabilities cannot create actions");
+            throw new BadRequestException(problemBody("VALIDATION_FAILED", {
+                pointer: "/capability",
+                code: "INVALID_VALUE",
+                detail: "조회 전용 기능으로는 작업 제안을 만들 수 없어요.",
+                location: "body",
+            }));
         }
         if (!await this.flags.isCapabilityEnabled(capability.meta, input.principal)) {
-            throw new ForbiddenException("Capability disabled");
+            throw new ForbiddenException(codeOnlyProblemBody("ACCESS_DENIED"));
         }
         const traceId = input.traceId ?? randomUUID();
         const proposalContext = {
@@ -386,8 +392,8 @@ export class ActionCoordinatorService implements AgentTaskReviewPort {
                 dedupeExpiresAt,
             });
             if (result.status === "created") return result.action;
-            if (result.status === "not_found") throw new NotFoundException("Agent session not found");
-            throw new ConflictException(`Agent session is ${result.status}`);
+            if (result.status === "not_found") throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
+            throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
         } catch (error) {
             if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
                 const raced = await this.prisma.agent_action.findUnique({ where: { requestDedupeKey } });
@@ -429,7 +435,7 @@ export class ActionCoordinatorService implements AgentTaskReviewPort {
             where: { id: existing.id, userId: principal.userId, branchId: principal.branchId },
         });
         if (current) return toEntity(current);
-        throw new ConflictException("Action proposal replacement raced with another request");
+        throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
     }
 
     /** Rotate a request fingerprint only when the row still owns that key. */
@@ -461,7 +467,7 @@ export class ActionCoordinatorService implements AgentTaskReviewPort {
 
     async get(id: string, owner: AgentActionOwner): Promise<AgentActionEntity> {
         const record = await this.prisma.agent_action.findFirst({ where: { id, ...owner } });
-        if (!record) throw new NotFoundException("Agent action not found");
+        if (!record) throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
         return toEntity(record);
     }
 
@@ -509,33 +515,33 @@ export class ActionCoordinatorService implements AgentTaskReviewPort {
             await this.persistResultPart(action.id, action, action.status as Parameters<ActionCoordinatorService["persistResultPart"]>[2]);
             return { action, result: action.result };
         }
-        if ((action.taskId == null) !== (action.taskRevision == null)) throw new ConflictException("Task action binding is incomplete");
-        if (!["proposed", "approved"].includes(action.status)) throw new ConflictException("Action is no longer pending approval");
+        if ((action.taskId == null) !== (action.taskRevision == null)) throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
+        if (!["proposed", "approved"].includes(action.status)) throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
         if (action.expiresAt.getTime() <= Date.now()) {
             await this.expire(id, owner);
-            throw new ConflictException("Action has expired");
+            throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
         }
         const capability = this.registry.get(action.capability);
         const targetVersion = action.targetVersion;
         const hasTargetVersion = targetVersion !== null && targetVersion !== undefined;
         if (expectedRevision !== action.proposalRevision) {
-            throw new ConflictException("Action proposal changed; review the latest proposal");
+            throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
         }
         if (capability.meta.version !== action.capabilityVersion) {
-            throw new ConflictException("Capability changed; create and review a new proposal");
+            throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
         }
         if (hasTargetVersion && !capability.executeApprovedTarget) {
-            throw new ConflictException("Versioned action cannot be executed safely; create a new proposal");
+            throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
         }
         const taskAutomation = this.automationForAction(action);
         const effectiveMeta = taskAutomation ? taskAutomationEffectiveMeta(capability.meta, taskAutomation) : capability.meta;
         if (effectiveMeta.approvalPolicy === "strong"
             && acknowledgementToken !== this.strongAcknowledgementToken(action)) {
-            throw new ConflictException("Strong acknowledgement is required for this action");
+            throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
         }
         if (!await this.flags.isCapabilityEnabled(capability.meta, principal)
             || !await this.flags.isCapabilityEnabled(effectiveMeta, principal)) {
-            throw new ForbiddenException("Capability disabled");
+            throw new ForbiddenException(codeOnlyProblemBody("ACCESS_DENIED"));
         }
         const proposal = jsonObject(action.proposal);
         const actionContext = {
@@ -561,11 +567,13 @@ export class ActionCoordinatorService implements AgentTaskReviewPort {
         }
         if (hasTargetVersion) {
             if (!capability.revalidate) {
-                throw new ConflictException("Target cannot be safely revalidated; create a new proposal");
+                throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
             }
             const revalidation = await capability.revalidate(actionContext, proposal["input"], targetVersion);
             if (!revalidation.valid || (revalidation.currentVersion && revalidation.currentVersion !== targetVersion)) {
-                throw new ConflictException(revalidation.reason ?? "Action target changed; review a new proposal");
+                // The provider-supplied reason is an internal diagnostic; the
+                // public body carries the catalog copy for the code only.
+                throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
             }
         }
         if (action.taskId) {
@@ -583,7 +591,7 @@ export class ActionCoordinatorService implements AgentTaskReviewPort {
             if (approved.count !== 1) {
                 const latest = await this.get(id, owner);
                 if (TERMINAL_STATUSES.includes(latest.status)) return { action: latest, result: latest.result };
-                throw new ConflictException("Action was approved by another request");
+                throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
             }
         }
         const claimed = await this.prisma.agent_action.updateMany({
@@ -593,7 +601,7 @@ export class ActionCoordinatorService implements AgentTaskReviewPort {
         if (claimed.count !== 1) {
             const latest = await this.get(id, owner);
             if (TERMINAL_STATUSES.includes(latest.status)) return { action: latest, result: latest.result };
-            throw new ConflictException("Action was approved by another request");
+            throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
         }
 
         }
@@ -623,7 +631,7 @@ export class ActionCoordinatorService implements AgentTaskReviewPort {
             }
             await this.persistResultPart(updated.id, updated, uncertain ? "uncertain" : "failed");
             if (uncertain) return { action: updated, result: undefined };
-            throw new ConflictException("Action execution failed");
+            throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
         }
 
         const parsed = capability.outputSchema.safeParse(providerResult);
@@ -696,7 +704,9 @@ export class ActionCoordinatorService implements AgentTaskReviewPort {
             } catch {
                 // The expiry sweep will move a stranded executing row to uncertain.
             }
-            throw new ConflictException("Action outcome is uncertain; do not retry execution");
+            // The provider may already have committed, so the business result is
+            // unknown even though this request conflicts at the persistence step.
+            throw new ConflictException(uncertainProblemBody("REQUEST_CONFLICT"));
         }
 
         if (!entity) {
@@ -704,7 +714,7 @@ export class ActionCoordinatorService implements AgentTaskReviewPort {
             return { action: latest, result: latest.result };
         }
         await this.persistResultPart(entity.id, entity, terminalStatus);
-        if (terminalStatus === "failed") throw new ConflictException("Action execution failed");
+        if (terminalStatus === "failed") throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
         return { action: entity, result: parsed.data };
     }
 
@@ -755,7 +765,7 @@ export class ActionCoordinatorService implements AgentTaskReviewPort {
         if (updated.count !== 1) {
             const current = await this.get(id, owner);
             if (current.status === "rejected") return current;
-            throw new ConflictException("Action is no longer pending approval");
+            throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
         }
         const rejected = await this.get(id, owner);
         await this.persistResultPart(rejected.id, rejected, "rejected");
@@ -768,10 +778,10 @@ export class ActionCoordinatorService implements AgentTaskReviewPort {
         const action = await this.get(id, owner);
         if (action.status !== "uncertain") {
             if (action.status === "succeeded" || action.status === "failed") return action;
-            throw new ConflictException("Only uncertain actions can be reconciled");
+            throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
         }
         const capability = this.registry.get(action.capability);
-        if (!capability.reconcile) throw new ConflictException("Provider reconciliation is unavailable");
+        if (!capability.reconcile) throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
         const proposal = jsonObject(action.proposal);
         // Historical linked actions predate automation artifacts. Preserve their
         // read-only result lookup, but never hand them to a newly added recovery
@@ -805,7 +815,7 @@ export class ActionCoordinatorService implements AgentTaskReviewPort {
             ? undefined
             : capability.outputSchema.safeParse(outcome.result);
         if (parsedResult && !parsedResult.success) {
-            throw new ConflictException("Provider reconciliation result was invalid; action remains uncertain");
+            throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
         }
         const result = parsedResult?.success ? parsedResult.data : undefined;
         if (action.taskId) {

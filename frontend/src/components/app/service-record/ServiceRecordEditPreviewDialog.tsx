@@ -23,6 +23,8 @@ export interface ServiceRecordEditPreviewDialogProps {
     onConfirm?: () => void | Promise<void>;
     confirmBusy?: boolean;
     confirmError?: string | null;
+    /** Registered failure status of `confirmError`; gates the stale-retry affordance. */
+    confirmErrorStatus?: number | null;
     confirmResult?: ServiceRecordEditConfirmResponse | null;
     onRefresh?: () => void | Promise<void>;
     "data-component"?: string;
@@ -106,6 +108,7 @@ export function ServiceRecordEditPreviewDialog({
     onConfirm,
     confirmBusy = false,
     confirmError = null,
+    confirmErrorStatus = null,
     confirmResult = null,
     onRefresh,
     "data-component": canonicalDataComponent,
@@ -166,7 +169,9 @@ export function ServiceRecordEditPreviewDialog({
                             <AlertTitle>수정 확정을 완료하지 못했습니다.</AlertTitle>
                             <AlertDescription>
                                 <p>{confirmError}</p>
-                                {onRefresh && confirmError.includes("오래되어") ? (
+                                {/* Stale (409) is discriminated by the registered
+                                    status, never by matching message text. */}
+                                {onRefresh && confirmErrorStatus === 409 ? (
                                     <Button
                                         type="button"
                                         size="sm"

@@ -19,6 +19,7 @@ import { AdminServiceRecordEditService } from "application/services/admin-servic
 import { JwtGuard } from "infrastructure/auth/jwt.guard";
 import { OwnerOrAdminGuard } from "infrastructure/auth/owner-or-admin.guard";
 import { CurrentTenant, TenantGuard, VerifiedTenantPrincipal } from "infrastructure/tenant";
+import { problemBody } from "application/utils/problem-bodies";
 import {
     PrepareAdminServiceRecordLinkDto,
     SendAdminServiceRecordLinkDto,
@@ -40,10 +41,20 @@ export class AdminServiceRecordNoQueryPipe implements PipeTransform {
     transform(value: unknown): Record<string, never> {
         if (value === undefined) return {};
         if (typeof value !== "object" || value === null || Array.isArray(value)) {
-            throw new BadRequestException("관리자 서비스 기록 API는 query parameter를 지원하지 않습니다.");
+            throw new BadRequestException(problemBody("VALIDATION_FAILED", {
+                pointer: "/",
+                code: "UNEXPECTED_FIELD",
+                detail: "관리자 서비스 기록 API는 query parameter를 지원하지 않습니다.",
+                location: "query",
+            }));
         }
         if (Object.keys(value).length > 0) {
-            throw new BadRequestException("관리자 서비스 기록 API는 query parameter를 지원하지 않습니다.");
+            throw new BadRequestException(problemBody("VALIDATION_FAILED", {
+                pointer: "/",
+                code: "UNEXPECTED_FIELD",
+                detail: "관리자 서비스 기록 API는 query parameter를 지원하지 않습니다.",
+                location: "query",
+            }));
         }
         return {};
     }

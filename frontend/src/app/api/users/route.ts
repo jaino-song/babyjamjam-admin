@@ -1,12 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
-import { errorResponse, getAuthHeaders, getAuthToken, unauthorizedResponse } from "@/lib/api/route-utils";
+import { authRequiredResponse, errorResponse, getAuthHeaders, getAuthToken } from "@/lib/api/route-utils";
 import { serverAPIClient } from "@/lib/api/server";
 
 export async function GET(request: NextRequest) {
   const authToken = getAuthToken(request);
 
   if (!authToken) {
-    return unauthorizedResponse("Authentication required. Please log in.");
+    return authRequiredResponse();
   }
 
   try {
@@ -15,12 +15,11 @@ export async function GET(request: NextRequest) {
     });
 
     if (response.status >= 400) {
-      const message = response.data?.error || response.data?.message || "Failed to fetch users";
-      return NextResponse.json({ error: message }, { status: response.status });
+      return errorResponse({ response }, "fetch users", "read");
     }
 
     return NextResponse.json(response.data);
   } catch (error) {
-    return errorResponse(error, "fetch users");
+    return errorResponse(error, "fetch users", "read");
   }
 }
