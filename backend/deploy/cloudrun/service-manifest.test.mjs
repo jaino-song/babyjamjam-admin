@@ -9,7 +9,6 @@ import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import {
     chmodSync,
-    existsSync,
     mkdirSync,
     mkdtempSync,
     readdirSync,
@@ -354,10 +353,6 @@ function stubVersionCount(storeDir, key) {
 
 function stubLatestBytes(storeDir, key) {
     return readFileSync(join(storeDir, "keys", key, `v${stubLatestVersion(storeDir, key)}`));
-}
-
-function stubHasKey(storeDir, key) {
-    return existsSync(join(storeDir, "keys", key));
 }
 
 function makeTempEnvFile(testName, lines) {
