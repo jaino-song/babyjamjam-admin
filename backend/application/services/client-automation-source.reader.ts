@@ -151,6 +151,28 @@ export class ClientAutomationSourceReader {
         clientId: number,
         transaction?: Prisma.TransactionClient,
     ): Promise<ClientAutomationServiceRecordLinkSource[]> {
+        // The dispatch authority resolves the client-owned case by branch+client
+        // (AgentAutomationJobAuthorityService), never by following the token's
+        // serviceRecordCaseId relation: a legacy token can keep a stale null
+        // case id after a case exists, and trusting the relation here would let
+        // preview accept a token/case pair that dispatch later rejects. Read
+        // the same source so preview and dispatch evaluate identical inputs.
+        const serviceRecordCase = await (transaction ?? this.prisma).service_record_case.findFirst({
+            where: { branchId, clientId },
+            select: {
+                id: true,
+                branchId: true,
+                clientId: true,
+                status: true,
+                startDate: true,
+                endDate: true,
+                requiredSessionCount: true,
+                formVersion: true,
+                version: true,
+                finalizedAt: true,
+                updatedAt: true,
+            },
+        });
         const rows = await (transaction ?? this.prisma).employee_schedule.findMany({
             where: { branchId, clientId, replaced: false, terminatedAt: null },
             select: {
@@ -198,21 +220,6 @@ export class ClientAutomationSourceReader {
                         lockedAt: true,
                         failedAttempts: true,
                         createdAt: true,
-                        serviceRecordCase: {
-                            select: {
-                                id: true,
-                                branchId: true,
-                                clientId: true,
-                                status: true,
-                                startDate: true,
-                                endDate: true,
-                                requiredSessionCount: true,
-                                formVersion: true,
-                                version: true,
-                                finalizedAt: true,
-                                updatedAt: true,
-                            },
-                        },
                     },
                 },
             },
@@ -224,8 +231,8 @@ export class ClientAutomationSourceReader {
             const token = row.serviceRecordTokens[0] ?? null;
             return {
                 schedule: row as unknown as ServiceRecordLinkScheduleSource,
-                serviceRecordCase: token?.serviceRecordCase
-                    ? token.serviceRecordCase as ServiceRecordLinkCaseSource
+                serviceRecordCase: token
+                    ? serviceRecordCase as ServiceRecordLinkCaseSource | null
                     : null,
                 token: token
                     ? token as unknown as ServiceRecordLinkTokenSource

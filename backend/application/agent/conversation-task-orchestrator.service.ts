@@ -18,6 +18,7 @@ import {
     type AgentTaskMutationOrigin,
 } from "./agent-task.service";
 import { AgentTaskPolicyService } from "./agent-task-policy.service";
+import type { ConversationTurnOwnership } from "./decision/client-intent-decision";
 import {
     canonicalConversationMessage,
     conversationMessageEventId,
@@ -42,6 +43,9 @@ export interface ConversationTaskTurnInput {
     capabilityId?: "clients.create" | "clients.update";
     formSubmission?: { formId: string; values: Record<string, unknown> };
 }
+
+/** The read-only subset of a user turn the ownership resolver may observe. */
+export type ConversationTurnOwnershipInput = Omit<ConversationTaskTurnInput, "capabilityId">;
 
 export interface ConversationTaskTurnResult {
     canonical: ConversationCanonicalMessage;
@@ -136,7 +140,7 @@ export function explicitConversationTaskCommand(text: string): "prepare-review" 
     return undefined;
 }
 
-function safeTaskInput(input: ConversationTaskTurnInput): ConversationCanonicalMessage {
+function safeTaskInput(input: ConversationTurnOwnershipInput): ConversationCanonicalMessage {
     const text = conversationText(input.message);
     return canonicalConversationMessage({
         userId: input.principal.userId,
@@ -196,6 +200,45 @@ export class ConversationTaskOrchestratorService {
             filtered.push(capability);
         }
         return { capabilities: filtered, taskMode };
+    }
+
+    /**
+     * Read-only resolver for trusted turn ownership. It computes the same
+     * facts `handleUserTurn` acts on without creating, revising, approving,
+     * or cancelling anything: a resolver result may gate intent inference,
+     * never a mutation. A replay conflict/storage error propagates unchanged
+     * — a thrown resolver call must never be converted into "fresh turn".
+     */
+    async resolveTurnOwnership(input: ConversationTurnOwnershipInput): Promise<ConversationTurnOwnership> {
+        // Canonicalize and validate exactly as handleUserTurn does before any
+        // store read; the digest below reuses the same canonical message.
+        safeTaskInput(input);
+        const eventId = conversationMessageEventId({
+            userId: input.principal.userId,
+            branchId: input.principal.branchId,
+            sessionId: input.sessionId,
+            messageId: input.message.id,
+        });
+        const requestHash = conversationMessageHash({
+            userId: input.principal.userId,
+            branchId: input.principal.branchId,
+            sessionId: input.sessionId,
+            messageId: input.message.id,
+            text: conversationText(input.message),
+            ...(input.formSubmission ? { form: input.formSubmission } : {}),
+            ...(input.message.displayedChoice ? { displayedChoice: input.message.displayedChoice } : {}),
+        });
+        const replay = await this.tasks.replayConversationIntake(input.principal, input.sessionId, eventId, requestHash);
+        const text = conversationText(input.message);
+        const submittedCapability = submittedFormCapability(input.formSubmission, input.sessionId);
+        const tasks = await this.tasks.listForConversation(input.principal, input.sessionId);
+        return {
+            replayed: replay !== null,
+            activeTask: activeTask(tasks) !== null,
+            formBound: submittedCapability === "clients.create" || submittedCapability === "clients.update",
+            command: !input.formSubmission && explicitConversationTaskCommand(text) !== undefined,
+            isQuestion: isQuestionLike(text),
+        };
     }
 
     async handleUserTurn(input: ConversationTaskTurnInput): Promise<ConversationTaskTurnResult> {

@@ -4,6 +4,9 @@ import { randomUUID } from "node:crypto";
 import type { AgentTask } from "@babyjamjam/shared";
 import { AgentTaskService } from "./agent-task.service";
 import { AgentTaskPolicyService } from "./agent-task-policy.service";
+import { extractExplicitUserOperations } from "./conversation-task-policy";
+import { decideClientIntent, type ConversationTurnOwnership } from "./decision/client-intent-decision";
+import { CLIENT_INTENTS } from "./decision/decision-contracts";
 import { ConversationTaskOrchestratorService } from "./conversation-task-orchestrator.service";
 import type { VerifiedTenantPrincipal } from "infrastructure/tenant/tenant.context";
 
@@ -14,6 +17,23 @@ const principal: VerifiedTenantPrincipal = {
     branchRole: "manager",
 };
 const sessionId = randomUUID();
+
+const NO_OWNERSHIP: ConversationTurnOwnership = {
+    replayed: false,
+    activeTask: false,
+    formBound: false,
+    command: false,
+    isQuestion: false,
+};
+
+const OFFERED_TASK_CAPABILITIES: readonly ("clients.create" | "clients.update")[] = [
+    "clients.create",
+    "clients.update",
+];
+
+function textMessage(text: string): { id: string; role: "user"; parts: readonly unknown[] } {
+    return { id: randomUUID(), role: "user", parts: [{ type: "text", text }] };
+}
 
 function task(overrides: Partial<AgentTask> = {}): AgentTask {
     return {
@@ -558,5 +578,246 @@ describe("ConversationTaskOrchestratorService", () => {
         expect(current.confirmed.name).toBe("기존 이름");
         expect(patchFromConversation).not.toHaveBeenCalled();
         expect(createFromConversation).not.toHaveBeenCalled();
+    });
+
+    it("refuses a suppressed mutation before any task store read or resolution", async () => {
+        // The runtime's clarification seam reuses the existing allowMutation
+        // guard. This case proves the guard is structural: the refusal fires
+        // before the task store is consulted at all, so no resolution, no
+        // revision check, and no persistence can observe the attempt.
+        const current = task({ confirmed: { name: "기존 이름" }, revision: 3 });
+        const get = jest.fn();
+        const listForConversation = jest.fn();
+        const patchFromConversation = jest.fn();
+        const createFromConversation = jest.fn();
+        const { orchestrator } = build({ get, listForConversation, patchFromConversation, createFromConversation });
+
+        await expect(orchestrator.applyModelMutation({
+            principal,
+            sessionId,
+            capabilityId: "clients.create",
+            taskId: current.taskId,
+            expectedRevision: current.revision,
+            intakeEventId: randomUUID(),
+            operations: [{ op: "set", field: "name", value: "억제된 변경 시도" }],
+            allowMutation: false,
+        })).rejects.toMatchObject({ response: expect.objectContaining({ message: "Question turn is read-only" }) });
+
+        expect(get).not.toHaveBeenCalled();
+        expect(listForConversation).not.toHaveBeenCalled();
+        expect(patchFromConversation).not.toHaveBeenCalled();
+        expect(createFromConversation).not.toHaveBeenCalled();
+    });
+
+    it("maps a create request to the existing clients.create entry point without producing operations", async () => {
+        const { orchestrator, tasks } = build();
+        const text = "새로 상담한 이수진 산모 등록해줘";
+
+        const ownership = await orchestrator.resolveTurnOwnership({ principal, sessionId, message: textMessage(text) });
+        expect(ownership).toEqual(NO_OWNERSHIP);
+
+        const decision = decideClientIntent({ intent: CLIENT_INTENTS.create, ownership, offeredTaskCapabilities: OFFERED_TASK_CAPABILITIES });
+        expect(decision).toEqual({ disposition: "create", capabilityId: "clients.create", readOnly: false });
+        expect(Object.keys(decision).sort()).toEqual(["capabilityId", "disposition", "readOnly"]);
+        expect(extractExplicitUserOperations(text)).toEqual([]);
+
+        // The existing intake still owns collection: even with the mapped
+        // entry point, a bare utterance without labelled facts creates no task.
+        const result = await orchestrator.handleUserTurn({
+            principal,
+            sessionId,
+            capabilityId: "clients.create",
+            message: textMessage(text),
+        });
+        expect(result.mutated).toBe(false);
+        expect(result.task).toBeNull();
+        expect(tasks.createFromConversation).not.toHaveBeenCalled();
+    });
+
+    it("grants update_related at most the clients.update entry point and never an authorization", async () => {
+        const { orchestrator, tasks } = build();
+        const text = "김민지 산모 전화번호가 바뀌었어";
+
+        const ownership = await orchestrator.resolveTurnOwnership({ principal, sessionId, message: textMessage(text) });
+        expect(ownership).toEqual(NO_OWNERSHIP);
+
+        const decision = decideClientIntent({ intent: CLIENT_INTENTS.updateRelated, ownership, offeredTaskCapabilities: OFFERED_TASK_CAPABILITIES });
+        expect(decision).toEqual({ disposition: "update", capabilityId: "clients.update", readOnly: false });
+        // A statement that a phone changed is not proof of the new value: the
+        // decision carries no operation, field value, correction evidence,
+        // target confirmation, or approval.
+        expect(Object.keys(decision).sort()).toEqual(["capabilityId", "disposition", "readOnly"]);
+        expect(extractExplicitUserOperations(text)).toEqual([]);
+        expect(tasks.patchFromConversation).not.toHaveBeenCalled();
+        expect(tasks.recordConversationIntake).not.toHaveBeenCalled();
+        expect(tasks.commandFromConversation).not.toHaveBeenCalled();
+    });
+
+    it("bypasses inference for a question utterance through trusted ownership without any mutation", async () => {
+        const { orchestrator, tasks } = build();
+        const text = "김민지 산모 전화번호는 어떻게 수정해?";
+
+        const ownership = await orchestrator.resolveTurnOwnership({ principal, sessionId, message: textMessage(text) });
+        expect(ownership).toEqual({ ...NO_OWNERSHIP, isQuestion: true });
+
+        const decision = decideClientIntent({ intent: CLIENT_INTENTS.updateRelated, ownership, offeredTaskCapabilities: OFFERED_TASK_CAPABILITIES });
+        expect(decision).toEqual({ disposition: "inference-not-needed", readOnly: true });
+        expect(decision.capabilityId).toBeUndefined();
+
+        expect(tasks.createFromConversation).not.toHaveBeenCalled();
+        expect(tasks.patchFromConversation).not.toHaveBeenCalled();
+        expect(tasks.recordConversationIntake).not.toHaveBeenCalled();
+        expect(tasks.commandFromConversation).not.toHaveBeenCalled();
+    });
+
+    it("handles a read request read-only with no capability id despite the visible list phrasing", async () => {
+        const { orchestrator } = build();
+        const text = "계약 안 보낸 산모들 보여줘";
+
+        // The utterance is also structurally question-like, so trusted
+        // ownership alone already forces read-only handling.
+        const ownership = await orchestrator.resolveTurnOwnership({ principal, sessionId, message: textMessage(text) });
+        expect(ownership.isQuestion).toBe(true);
+        expect(decideClientIntent({ intent: CLIENT_INTENTS.read, ownership, offeredTaskCapabilities: OFFERED_TASK_CAPABILITIES }))
+            .toEqual({ disposition: "inference-not-needed", readOnly: true });
+
+        // And when inference does run on a structurally clean turn, read maps
+        // to read handling — never a write tool.
+        const decision = decideClientIntent({ intent: CLIENT_INTENTS.read, ownership: NO_OWNERSHIP, offeredTaskCapabilities: OFFERED_TASK_CAPABILITIES });
+        expect(decision).toEqual({ disposition: "read", readOnly: true });
+        expect(decision.capabilityId).toBeUndefined();
+        expect(Object.keys(decision)).not.toContain("capabilityId");
+    });
+
+    it("reads despite a creation verb because the mapping never consults verb regexes", async () => {
+        const { orchestrator, tasks } = build();
+        const text = "등록하지 말고 기존 정보만 보여줘";
+
+        const ownership = await orchestrator.resolveTurnOwnership({ principal, sessionId, message: textMessage(text) });
+        expect(ownership.isQuestion).toBe(true);
+
+        // The mapping sees only the classifier's intent — no utterance text,
+        // no verb regex — so the negated creation verb cannot make it a write.
+        const decision = decideClientIntent({ intent: CLIENT_INTENTS.read, ownership: NO_OWNERSHIP, offeredTaskCapabilities: OFFERED_TASK_CAPABILITIES });
+        expect(decision).toEqual({ disposition: "read", readOnly: true });
+        expect(decision.capabilityId).toBeUndefined();
+        expect(extractExplicitUserOperations(text)).toEqual([]);
+        expect(tasks.createFromConversation).not.toHaveBeenCalled();
+        expect(tasks.patchFromConversation).not.toHaveBeenCalled();
+    });
+
+    it("bypasses inference while an update task is active and leaves the active task untouched", async () => {
+        const current = task({ capabilityId: "clients.update", kind: "clients.update", revision: 4 });
+        const snapshot = JSON.stringify(current);
+        const { orchestrator, tasks } = build({ listForConversation: jest.fn().mockResolvedValue([current]) });
+
+        const ownership = await orchestrator.resolveTurnOwnership({
+            principal,
+            sessionId,
+            message: textMessage("새로 상담한 이수진 산모 등록해줘"),
+        });
+        expect(ownership).toEqual({ ...NO_OWNERSHIP, activeTask: true });
+
+        const decision = decideClientIntent({ intent: CLIENT_INTENTS.create, ownership, offeredTaskCapabilities: OFFERED_TASK_CAPABILITIES });
+        expect(decision).toEqual({ disposition: "inference-not-needed", readOnly: false });
+        expect(decision.capabilityId).toBeUndefined();
+
+        expect(JSON.parse(snapshot)).toEqual(current);
+        expect(tasks.createFromConversation).not.toHaveBeenCalled();
+        expect(tasks.patchFromConversation).not.toHaveBeenCalled();
+        expect(tasks.recordConversationIntake).not.toHaveBeenCalled();
+    });
+
+    it("reports replay ownership through a real replayConversationIntake result", async () => {
+        const replayed = task();
+        const replayConversationIntake = jest.fn().mockResolvedValue({ snapshot: replayed, receipt: receipt(replayed.taskId) });
+        const { orchestrator } = build({ replayConversationIntake });
+
+        const ownership = await orchestrator.resolveTurnOwnership({
+            principal,
+            sessionId,
+            message: textMessage("새로 상담한 이수진 산모 등록해줘"),
+        });
+        expect(ownership.replayed).toBe(true);
+
+        const decision = decideClientIntent({
+            intent: CLIENT_INTENTS.create,
+            ownership,
+            offeredTaskCapabilities: ["clients.create"],
+        });
+        expect(decision).toEqual({ disposition: "inference-not-needed", readOnly: false });
+        expect(decision.capabilityId).toBeUndefined();
+    });
+
+    it("never calls a mutating service method from the ownership resolver", async () => {
+        const { orchestrator, tasks } = build();
+
+        const commandOwnership = await orchestrator.resolveTurnOwnership({
+            principal,
+            sessionId,
+            message: textMessage("검토안 준비해 줘"),
+        });
+        expect(commandOwnership).toEqual({ ...NO_OWNERSHIP, command: true });
+
+        const formOwnership = await orchestrator.resolveTurnOwnership({
+            principal,
+            sessionId,
+            message: textMessage(""),
+            formSubmission: { formId: `clients.create-${sessionId}`, values: { name: "폼 산모" } },
+        });
+        expect(formOwnership).toEqual({ ...NO_OWNERSHIP, formBound: true });
+
+        const questionOwnership = await orchestrator.resolveTurnOwnership({
+            principal,
+            sessionId,
+            message: textMessage("김민지 산모 전화번호는 어떻게 수정해?"),
+        });
+        expect(questionOwnership).toEqual({ ...NO_OWNERSHIP, isQuestion: true });
+
+        expect(tasks.replayConversationIntake).toHaveBeenCalledTimes(3);
+        expect(tasks.listForConversation).toHaveBeenCalledTimes(3);
+        expect(tasks.createFromConversation).not.toHaveBeenCalled();
+        expect(tasks.patchFromConversation).not.toHaveBeenCalled();
+        expect(tasks.recordConversationIntake).not.toHaveBeenCalled();
+        expect(tasks.commandFromConversation).not.toHaveBeenCalled();
+        expect(tasks.attachChoices).not.toHaveBeenCalled();
+        expect(tasks.get).not.toHaveBeenCalled();
+    });
+
+    it("propagates a replay conflict error instead of converting it into a fresh turn", async () => {
+        const conflict = new ConflictException("replay conflict");
+        const { orchestrator, tasks } = build({
+            replayConversationIntake: jest.fn().mockRejectedValue(conflict),
+        });
+
+        await expect(orchestrator.resolveTurnOwnership({
+            principal,
+            sessionId,
+            message: textMessage("새로 상담한 이수진 산모 등록해줘"),
+        })).rejects.toBe(conflict);
+        expect(tasks.listForConversation).not.toHaveBeenCalled();
+    });
+
+    it("keeps the pinned question-turn handleUserTurn behavior while exposing the resolver", async () => {
+        const current = task();
+        const recordConversationIntake = jest.fn().mockResolvedValue({ snapshot: current, receipt: receipt(current.taskId) });
+        const { orchestrator } = build({
+            listForConversation: jest.fn().mockResolvedValue([current]),
+            recordConversationIntake,
+        });
+        const text = "이 작업은 어떻게 진행되나요?";
+
+        const ownership = await orchestrator.resolveTurnOwnership({ principal, sessionId, message: textMessage(text) });
+        expect(ownership).toEqual({ ...NO_OWNERSHIP, activeTask: true, isQuestion: true });
+
+        const result = await orchestrator.handleUserTurn({
+            principal,
+            sessionId,
+            message: textMessage(text),
+        });
+        expect(result.isQuestion).toBe(true);
+        expect(result.mutated).toBe(false);
+        expect(result.task?.taskId).toBe(current.taskId);
+        expect(recordConversationIntake).toHaveBeenCalledWith(principal, current.taskId, result.eventId, result.requestHash);
     });
 });

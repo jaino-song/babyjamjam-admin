@@ -1,0 +1,224 @@
+# Jev Rollout Runbook (operator-facing)
+
+Scope: the Jev semantic decision layer (`agent.decisions.jev` runtime seam) and
+its release gate. This runbook covers how rollout proceeds, how to stop it, and
+what recovery must never touch.
+
+**Read this first:** a release profile JSON — including its `approvalReference`
+field — is **metadata, not authority**. It never approves anything by existing.
+An actual operator approval and a protected-branch merge remain separate human
+gates. `backend/scripts/agent/check-jev-readiness.ts` validates and reports
+only; passing it does not enable, deploy, or merge anything, and the committed
+draft profile (`evals/agent/jev/release-profile-v1.json`) is OFF by default
+with a placeholder approval reference.
+
+## 1. Preconditions and gate order
+
+Rollout proceeds strictly in this order. Each gate is a separate, recorded
+step; never skip or reorder:
+
+1. **Repository readiness** — capability manifest/drift checks and the
+   cutover guard pass (`pnpm --filter ./backend agent:manifest:check`,
+   `agent:cutover:guard`); CI green on the protected branch.
+2. **Synthetic evaluation + evidence bridge** — the evaluation CLI
+   (`run-jev-evaluation.ts`) runs the committed synthetic fixture corpus and
+   writes a versioned evaluation report; with an operator-authored
+   attestation file it additionally emits the readiness evidence document
+   (`schemaVersion: "jev-evidence-v1"`). See "Producing evidence" below for
+   the exact commands and the attestation the operator must author.
+3. **Approved shadow scope** — per-kind mode `shadow` under the branch/internal
+   allowlist; disagreements and abstentions are observed, not applied.
+4. **Calibration/holdout** — evidence must attest a non-empty held-out split
+   and a human-reviewed reference, with coverage/agreement floors and the
+   abstention ceiling from the profile.
+5. **P0 enforcement** (`route-domains`, `classify-client-intent`) — enabled
+   only after a readiness check with real evidence passes and an operator has
+   approved.
+6. **P1 activation** (`evaluate-clarification`, `rank-candidates`) — same
+   gates, independently.
+7. **Legacy retirement** — only after the cutover gate authorizes removal;
+   legacy surfaces stay protected until then.
+8. **Protected-branch merge** — the final human gate. No merge without the
+   recorded operator approval.
+
+Run the readiness gate before step 5/6 and record its output:
+
+```bash
+pnpm --filter ./backend exec ts-node scripts/agent/check-jev-readiness.ts \
+  --profile=../evals/agent/jev/release-profile-v1.json \
+  --evidence=../artifacts/jev-fixture-evidence.json
+```
+
+Exit code `0` and `ready: true` are required. A non-zero exit is the designed
+fail-closed outcome, not a tool failure: with no evidence the checker reports
+`evidence-missing`; with fixture-mode evidence it reports
+`metric-denominator-zero` / `coverage-below-floor` (see below).
+
+### Producing evidence (offline bridge)
+
+The evidence document is **not** produced by hand and **not** produced by the
+checker. `run-jev-evaluation.ts` converts its own evaluation report into the
+`jev-evidence-v1` document when given `--evidence-out` together with
+`--attestation`:
+
+```bash
+# Offline, no model call — certifies the corpus, never a model:
+pnpm --filter ./backend exec ts-node scripts/agent/run-jev-evaluation.ts \
+  --mode=fixture \
+  --input=../evals/agent/jev/fixtures-v1.json \
+  --output=../artifacts/jev-fixture-report.json \
+  --evidence-out=../artifacts/jev-fixture-evidence.json \
+  --attestation=../artifacts/jev-attestation.json
+
+# Real model evidence — external calls; every live gate applies
+# (--consent=live-provider-call, TYPESAFE_API_KEY, synthetic-only corpus
+# inside evals/agent/jev/, pinned model id):
+pnpm --filter ./backend exec ts-node scripts/agent/run-jev-evaluation.ts \
+  --mode=live \
+  --input=../evals/agent/jev/fixtures-v1.json \
+  --output=../artifacts/jev-live-report.json \
+  --evidence-out=../artifacts/jev-live-evidence.json \
+  --attestation=../artifacts/jev-attestation.json \
+  --consent=live-provider-call
+```
+
+**The operator authors the attestation.** The conversion is offline and maps
+per-kind raw counts and metric numerator/denominator triples from the report's
+computed metrics only — it never invents a value. The facts a synthetic corpus
+cannot provide come exclusively from an operator-authored JSON file
+(schema `jev-attestation-v1`) at the `--attestation` path:
+
+```json
+{
+  "schemaVersion": "jev-attestation-v1",
+  "attestedBy": "<named operator>",
+  "attestedAt": "YYYY-MM-DD",
+  "modelId": "jev-1.13.0",
+  "holdoutSplit": { "present": true, "caseCount": 12 },
+  "humanReference": { "present": true, "caseCount": 29 },
+  "humanReferenceComparisons": {
+    "route-domains": { "comparableCount": 0, "agreedCount": 0 },
+    "classify-client-intent": { "comparableCount": 0, "agreedCount": 0 },
+    "evaluate-clarification": { "comparableCount": 0, "agreedCount": 0 },
+    "rank-candidates": { "comparableCount": 0, "agreedCount": 0 }
+  },
+  "notes": "What was attested and why the counts are what they are."
+}
+```
+
+- `holdoutSplit` attests that the corpus's `holdout` split was genuinely held
+  out; its `caseCount` must match the report's own holdout count and the run
+  is refused otherwise (a truncated `--max-cases` run counts only its selected
+  cases).
+- `humanReference` attests how many human-reviewed reference cases exist.
+- `humanReferenceComparisons` attests, per decision kind, how many of the
+  model's selections were comparable to the human reference and how many
+  agreed. These counts can never exceed the cases the run actually evaluated.
+- A missing, incomplete, incoherent, or mismatched attestation is a precise
+  non-zero refusal naming the exact gap. The attestation's free-form `notes`
+  are not copied into the evidence document; the evidence carries counts,
+  tokens, and the attestation author/date only — no credentials, no raw text.
+
+**What each kind of evidence can mean:**
+
+- Fixture-mode evidence (`--mode=fixture`) contains no model predictions, so
+  every abstention/precision/agreement denominator is zero and the readiness
+  gate always blocks it. It proves the document **format**, nothing more.
+- A synthetic corpus can satisfy the format, but a **real human reference
+  requires a human-reviewed evaluation set**. Attesting invented comparison
+  counts to pass the gate is evidence fabrication under §5 — every gate that
+  consumed such evidence is treated as failed.
+- Passing the checker is still not enablement: the approval reference in the
+  profile is metadata, not authority (§6), and the human gates of §1 remain.
+
+## 2. Disable first (recovery order)
+
+When anything looks wrong, disable before investigating. In order of blast
+radius, smallest first:
+
+1. **Per-kind disable** — set the offending kind's mode to `off` in the
+   `agent.decisions.jev` setting (`kinds.<kind>.mode: "off"`). Other kinds
+   keep running.
+2. **Global decision disable** — set `globalDisabled: true` in
+   `agent.decisions.jev` (authoritative: forces every kind to `off`).
+3. **Capability/agent kill switches (superior)** — these outrank everything
+   above:
+   - `agent.flags.emergency-disabled` setting → `true`, or
+   - `agent.flags` setting with `enabled: false`, or
+   - environment kill switches: `AGENT_ENABLED=false`
+     (plus `AGENT_READ_ENABLED=false` / risk-specific switches) — these apply
+     regardless of the stored settings.
+
+All of these are fail-closed: a missing or malformed setting disables, never
+enables.
+
+## 3. Observational calls and what must never change
+
+Shadow-mode ("observational") decision calls are canceled at the turn
+deadline (caller-owned `AbortSignal`); results that arrive after cancellation
+are discarded as trace-only. They never influence the turn.
+
+Regardless of mode or recovery action, the following are immutable and are
+never rewritten by rollout or rollback: task records, service-record
+revisions, candidate choices, clarification proposals, approvals, action
+outcomes, and idempotency records. Recovery changes routing/mode only — never
+history.
+
+## 4. Rollback
+
+Roll back to the recorded incumbent mode: set the affected kinds back to
+`off`/`shadow` (per section 2) and the incumbent rule-based path resumes
+immediately — it never stopped running. An enforce-mode failure stays
+conservative. On any decision failure (timeout, transport, invalid output,
+low confidence, policy or profile miss) the decision abstains, and an enforce
+abstention never falls back to the incumbent generative classifier, the
+incumbent regex, or the default `clients` domain — only switching the kind
+back to `off`/`shadow` restores incumbent behavior. Per kind:
+
+- **Route domains:** the router returns `disposition: "clarify"` with no
+  capabilities (also when more than two domains match deterministically). With
+  no live task owning the turn, the runtime answers with a traced, zero-tool
+  turn that asks the user one clarifying question; a live task keeps its
+  continuation unchanged. `disposition: "disabled"` (no enabled domain) keeps
+  the 403 `ACCESS_DENIED` refusal.
+- **Client intent:** no create/update task entry point is derived from the
+  text; a `read` result narrows the turn to read-only capabilities. Trusted
+  turn ownership (active task, bound form, command, replay, question) always
+  bypasses inference.
+- **Clarification advice:** missing or failed advice adds no restriction;
+  deterministic completeness checks and existing refusals still apply, and
+  advice can never clear them.
+- **Candidate ranking:** advisory only; the runtime integration is not built,
+  so the existing chooser and explicit user selection are unchanged.
+
+Re-enabling requires re-running the readiness gate with current evidence and a
+fresh operator approval.
+
+## 5. Evidence retention and incident investigation
+
+- Keep every readiness check output (the versioned JSON result), its input
+  evidence document, and the operator attestation behind it with the release
+  record; they are the audit trail for why a profile was considered ready —
+  and for who attested the holdout split and the human-reference counts.
+- Evidence documents are immutable artifacts: investigate incidents against
+  the retained report, the attestation, and the decision trace events
+  (`semantic-decision-v1`), never by regenerating numbers after the fact.
+- If evidence is found to be wrong or fabricated, treat every gate that
+  consumed it as failed: disable (section 2), roll back (section 4), and
+  re-run the full gate order.
+
+## 6. Approval is a human gate
+
+A JSON `approvalReference` — any string in any file — is not authority to
+operate production. The committed draft profile's `PENDING: …` placeholder is
+by construction not an approval, and even a real-looking reference only
+*records* an approval made elsewhere. Two gates remain permanently separate:
+
+1. A **named operator's recorded approval** for the specific profile version
+   and evidence bundle.
+2. The **protected-branch merge** performed by a human with merge rights.
+
+The readiness checker cannot grant either. If a profile claims enforcement
+(`enabled: true`) while its approval reference is a placeholder, the checker
+blocks with `enforcement-without-approval` — and the runbook still requires
+the human gates above.

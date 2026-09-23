@@ -538,7 +538,7 @@ describe("TriggerRulesManager", () => {
     );
   });
 
-  it("normalizes the legacy system SERVICE_END_NOTICE name without changing user-authored names", async () => {
+  it("hides manual-only SERVICE_END_NOTICE rules while retaining the backend service-record rule", async () => {
     mockSettingsQueries({ providerEnabled: true, senderApproved: true });
     mockedUseMessageTriggerRules.mockReturnValue({
       data: [
@@ -601,25 +601,14 @@ describe("TriggerRulesManager", () => {
 
     render(<TriggerRulesManager dataComponent="desktop_messages_sections_section-content_triggers-section_trigger-rules" />);
 
-    expect(screen.getByText("서비스 종료 안내")).toBeInTheDocument();
-    expect(screen.getByText("수동 영수증 안내")).toBeInTheDocument();
+    expect(screen.queryByText("서비스 종료 안내")).not.toBeInTheDocument();
     expect(screen.queryByText("서비스 종료 안내 (수동 발송)")).not.toBeInTheDocument();
-    fireEvent.click(screen.getByText("서비스 종료 안내"));
-    await waitFor(() => expect(screen.getByLabelText("규칙 이름")).toHaveValue("서비스 종료 안내"));
-    expect(screen.getByLabelText("규칙 이름")).toBeDisabled();
-    fireEvent.click(screen.getByText("수동 영수증 안내"));
-    await waitFor(() => expect(screen.getByLabelText("규칙 이름")).toHaveValue("수동 영수증 안내"));
-    expect(screen.getByLabelText("규칙 이름")).toBeEnabled();
+    expect(screen.queryByText("수동 영수증 안내")).not.toBeInTheDocument();
     expect(screen.getByRole("switch", { name: "제공기록지 작성 링크 활성화" })).toBeInTheDocument();
   });
 
-  it("allows SERVICE_END_NOTICE for a compatible automatic rule and preserves its create payload", () => {
+  it("keeps manual-only SERVICE_END_NOTICE visible but disabled in create and edit template pickers", () => {
     mockSettingsQueries({ providerEnabled: true, senderApproved: true });
-    const mutateAsync = jest.fn().mockResolvedValue({ id: "service-end-notice-rule" });
-    mockedUseCreateMessageTriggerRule.mockReturnValue({
-      isPending: false,
-      mutateAsync,
-    } as unknown as ReturnType<typeof useCreateMessageTriggerRule>);
     mockedUseMessageTriggerTemplates.mockReturnValue({
       data: [
         {
@@ -648,28 +637,18 @@ describe("TriggerRulesManager", () => {
     fireEvent.click(screen.getByRole("button", { name: "새 규칙" }));
     const createTemplateTrigger = screen.getByLabelText("발송 템플릿");
     fireEvent.click(createTemplateTrigger);
-    const serviceEndNoticeOption = screen.getByRole("option", {
-      name: "수동 영수증 안내",
+    const manualOnlyOption = screen.getByRole("option", {
+      name: "수동 영수증 안내 · 수동 발송 전용",
     });
-    expect(serviceEndNoticeOption).not.toHaveAttribute("aria-disabled");
-    fireEvent.click(serviceEndNoticeOption);
-    expect(createTemplateTrigger).toHaveTextContent("수동 영수증 안내");
+    expect(manualOnlyOption).toHaveAttribute("aria-disabled", "true");
+    fireEvent.keyDown(createTemplateTrigger, { key: "Escape" });
 
-    fireEvent.change(screen.getByLabelText("규칙 이름"), {
-      target: { value: "서비스 종료 영수증 안내" },
-    });
-    fireEvent.click(screen.getByRole("button", { name: "저장" }));
-
-    expect(mutateAsync).toHaveBeenCalledWith({
-      name: "서비스 종료 영수증 안내",
-      isActive: true,
-      eventType: "SERVICE_START",
-      offsetType: "BEFORE_DAYS",
-      offsetDays: 7,
-      sendTime: "09:00",
-      recipientType: "CLIENT",
-      templateKey: "SERVICE_END_NOTICE",
-    });
+    fireEvent.click(screen.getByText("서비스 시작 안내"));
+    const editTemplateTrigger = screen.getByLabelText("발송 템플릿");
+    fireEvent.click(editTemplateTrigger);
+    expect(screen.getByRole("option", {
+      name: "수동 영수증 안내 · 수동 발송 전용",
+    })).toHaveAttribute("aria-disabled", "true");
   });
 
   it("renders every backend SMS template in order with deterministic compatibility labels", () => {
@@ -693,7 +672,7 @@ describe("TriggerRulesManager", () => {
       "모니터링 설문",
       "정보 요청",
       "제공기록지 작성 링크 · 제공기록지 전용 자동화에서 관리",
-      "수동 영수증 안내 · 선택한 이벤트와 맞지 않음",
+      "수동 영수증 안내 · 수동 발송 전용",
     ]);
     expect(screen.getByRole("option", { name: "서비스 안내" })).not.toHaveAttribute("aria-disabled");
     for (const name of [
@@ -701,7 +680,7 @@ describe("TriggerRulesManager", () => {
       "인사 메시지 · 선택한 이벤트와 맞지 않음",
       "비용 안내 · 선택한 수신 대상과 맞지 않음",
       "제공기록지 작성 링크 · 제공기록지 전용 자동화에서 관리",
-      "수동 영수증 안내 · 선택한 이벤트와 맞지 않음",
+      "수동 영수증 안내 · 수동 발송 전용",
     ]) {
       expect(screen.getByRole("option", { name })).toHaveAttribute("aria-disabled", "true");
     }
@@ -719,7 +698,7 @@ describe("TriggerRulesManager", () => {
       "모니터링 설문",
       "정보 요청",
       "제공기록지 작성 링크 · 제공기록지 전용 자동화에서 관리",
-      "수동 영수증 안내 · 선택한 이벤트와 맞지 않음",
+      "수동 영수증 안내 · 수동 발송 전용",
     ]);
   });
 
@@ -758,7 +737,7 @@ describe("TriggerRulesManager", () => {
       "예약 완료(입금 확인)",
       "모니터링 설문",
       "정보 요청",
-      "수동 영수증 안내 · 선택한 이벤트와 맞지 않음",
+      "수동 영수증 안내 · 수동 발송 전용",
     ]);
 
     const dedicatedOption = screen.getByRole("option", {
@@ -793,7 +772,7 @@ describe("TriggerRulesManager", () => {
     expect(screen.getByRole("option", { name: "리마인드" })).not.toHaveAttribute("aria-disabled");
     expect(screen.getByRole("option", { name: "서비스 안내 · 선택한 이벤트·수신 대상과 맞지 않음" }))
       .toHaveAttribute("aria-disabled", "true");
-    expect(screen.getByRole("option", { name: "수동 영수증 안내 · 선택한 이벤트·수신 대상과 맞지 않음" }))
+    expect(screen.getByRole("option", { name: "수동 영수증 안내 · 수동 발송 전용" }))
       .toHaveAttribute("aria-disabled", "true");
   });
 
