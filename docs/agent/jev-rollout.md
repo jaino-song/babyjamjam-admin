@@ -169,10 +169,30 @@ history.
 Roll back to the recorded incumbent mode: set the affected kinds back to
 `off`/`shadow` (per section 2) and the incumbent rule-based path resumes
 immediately — it never stopped running. An enforce-mode failure stays
-conservative: on any decision failure (timeout, transport, invalid output,
-policy miss) the runtime falls back to the incumbent/baseline decision and
-abstains rather than guessing. Re-enabling requires re-running the readiness
-gate with current evidence and a fresh operator approval.
+conservative. On any decision failure (timeout, transport, invalid output,
+low confidence, policy or profile miss) the decision abstains, and an enforce
+abstention never falls back to the incumbent generative classifier, the
+incumbent regex, or the default `clients` domain — only switching the kind
+back to `off`/`shadow` restores incumbent behavior. Per kind:
+
+- **Route domains:** the router returns `disposition: "clarify"` with no
+  capabilities (also when more than two domains match deterministically). With
+  no live task owning the turn, the runtime answers with a traced, zero-tool
+  turn that asks the user one clarifying question; a live task keeps its
+  continuation unchanged. `disposition: "disabled"` (no enabled domain) keeps
+  the 403 `ACCESS_DENIED` refusal.
+- **Client intent:** no create/update task entry point is derived from the
+  text; a `read` result narrows the turn to read-only capabilities. Trusted
+  turn ownership (active task, bound form, command, replay, question) always
+  bypasses inference.
+- **Clarification advice:** missing or failed advice adds no restriction;
+  deterministic completeness checks and existing refusals still apply, and
+  advice can never clear them.
+- **Candidate ranking:** advisory only; the runtime integration is not built,
+  so the existing chooser and explicit user selection are unchanged.
+
+Re-enabling requires re-running the readiness gate with current evidence and a
+fresh operator approval.
 
 ## 5. Evidence retention and incident investigation
 
