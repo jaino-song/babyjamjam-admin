@@ -1,12 +1,13 @@
-import { AgentAutomationJobAuthorityService } from "application/services/agent-automation-job-authority.service";
+import { AgentAutomationJobAuthorityService, type CanonicalAutomationRenderer } from "application/services/agent-automation-job-authority.service";
 import { buildClientMessageRecipe, type ClientTriggerSource } from "application/services/message-trigger-recipes";
+import { SmsTriggerDeliveryService } from "application/services/sms-trigger-delivery.service";
 import {
     MessageTriggerEventType,
     MessageTriggerOffsetType,
     MessageTriggerRecipientType,
     MessageTriggerTemplateKey,
 } from "domain/constants/message-trigger-catalog";
-import { SERVICE_END_NOTICE_RULE_ID } from "domain/constants/service-end-notice-message";
+import { SERVICE_END_NOTICE_DEFAULT_CONTENT, SERVICE_END_NOTICE_RULE_ID } from "domain/constants/service-end-notice-message";
 import { MessageTriggerJobEntity } from "domain/entities/message-trigger-job.entity";
 import { MessageTriggerRuleEntity } from "domain/entities/message-trigger-rule.entity";
 
@@ -134,6 +135,18 @@ describe("AgentAutomationJobAuthorityService.checkAutomaticJob ownership gate", 
  * `buildClientMessageRecipe` payload, which never contains a receipt link. An
  * enriched SERVICE_END_NOTICE job must still match its recipe now that the
  * enricher-owned fields are excluded from the bound source payload.
+ *
+ * Re-audit (2026-09-23) found the FIRST version of this test suite gave a
+ * false pass: it mocked `render` to return a canned snapshot, so it never
+ * exercised the real `SmsTriggerDeliveryService.resolveCanonicalDeliverySnapshot`
+ * render, which throws `MissingSmsTemplateVariablesError` for a SERVICE_END_NOTICE
+ * job/recipe missing `receiptUrl` (a required system-template variable --
+ * domain/constants/system-template-registry.ts). This version renders through
+ * the REAL delivery service (only the system-template CONTENT lookup is
+ * stubbed) so it actually proves the placeholder-substitution fix in
+ * `AgentAutomationJobAuthorityService.withServiceEndNoticePreviewLink` works
+ * end-to-end, at both materialize (job has no receiptUrl yet) and dispatch
+ * (job carries the enricher's real link).
  */
 describe("AgentAutomationJobAuthorityService.checkAutomaticJob grandfathered comparison for SERVICE_END_NOTICE (BJJ-342 M1)", () => {
     const branchId = "20000000-0000-4000-8000-000000009161";
@@ -172,7 +185,8 @@ describe("AgentAutomationJobAuthorityService.checkAutomaticJob grandfathered com
     const recipe = buildClientMessageRecipe(rule, client, new Date("2026-09-01T00:00:00.000Z"));
     if (!recipe) throw new Error("test setup: recipe must build");
 
-    function buildEnrichedJob(): MessageTriggerJobEntity {
+    /** The freshly materialized job, exactly as `buildClientMessageRecipe` built it -- no receiptUrl/buttonUrl yet. */
+    function buildUnenrichedJob(): MessageTriggerJobEntity {
         return MessageTriggerJobEntity.reconstitute(
             jobId,
             branchId,
@@ -188,19 +202,18 @@ describe("AgentAutomationJobAuthorityService.checkAutomaticJob grandfathered com
             recipe!.recipientPhone ?? null,
             MessageTriggerTemplateKey.SERVICE_END_NOTICE,
             recipe!.dedupeKey,
-            {
-                ...recipe!.payload,
-                templateVariables: {
-                    ...recipe!.payload.templateVariables,
-                    // ReceiptLinkDeliveryEnricher's mutation: neither field exists
-                    // in the freshly-built recipe.
-                    receiptUrl: "https://example.test/receipt/efr_abc123",
-                },
-                buttonUrl: "https://example.test/receipt/efr_abc123",
-            },
+            { ...recipe!.payload },
             new Date("2026-06-01T00:00:00.000Z"),
             new Date("2026-06-01T00:00:00.000Z"),
         );
+    }
+
+    /** ReceiptLinkDeliveryEnricher's real mutation applied on top of the same job. */
+    function enrich(job: MessageTriggerJobEntity): MessageTriggerJobEntity {
+        return job.withPayloadOverride({
+            templateVariables: { ...job.payload.templateVariables, receiptUrl: "https://example.test/receipt/efr_abc123" },
+            buttonUrl: "https://example.test/receipt/efr_abc123",
+        });
     }
 
     const settings = {
@@ -214,13 +227,30 @@ describe("AgentAutomationJobAuthorityService.checkAutomaticJob grandfathered com
         pastTriggerConfig: { sendIntervalMinutes: 10 },
     };
 
-    const snapshot = {
-        templateKey: MessageTriggerTemplateKey.SERVICE_END_NOTICE,
-        receiver: "01012345678",
-        snapshotHash: "s".repeat(64),
-    };
+    /** Real SmsTriggerDeliveryService; only the DB-backed template content lookup is stubbed. */
+    function buildRealRender(): { render: CanonicalAutomationRenderer; getByKeyForBranch: jest.Mock } {
+        const getByKeyForBranch = jest.fn().mockResolvedValue({ content: SERVICE_END_NOTICE_DEFAULT_CONTENT });
+        const systemTemplateService = { getByKeyForBranch };
+        const delivery = new SmsTriggerDeliveryService(
+            {} as never,
+            systemTemplateService as never,
+            {} as never,
+        );
+        const render: CanonicalAutomationRenderer = (job, transaction) => delivery.resolveCanonicalDeliverySnapshot(job, transaction);
+        return { render, getByKeyForBranch };
+    }
 
-    function buildService(job: MessageTriggerJobEntity) {
+    /**
+     * A minimal stand-in for `AgentAutomationAuthorityService.check` that
+     * models the "no exact authority row, matching grandfathered coverage"
+     * branch: it always calls the real `describe` callback (so the real
+     * render always runs) and translates a non-null effect into "allowed".
+     * `AgentAutomationAuthorityService.check` itself is exercised by its own
+     * unit tests; the full lineage/coverage plumbing is out of scope here --
+     * this suite's job is proving the render/comparison path, not re-testing
+     * the coverage resolver.
+     */
+    function buildService(job: MessageTriggerJobEntity, render: CanonicalAutomationRenderer) {
         const check = jest.fn(async (_tx: unknown, input: { target: unknown }, describe: (arg: unknown) => Promise<unknown>) => {
             const effect = await describe({
                 scope: { ...(input.target as object), clientIdentity, scheduleIdentity: null },
@@ -238,26 +268,44 @@ describe("AgentAutomationJobAuthorityService.checkAutomaticJob grandfathered com
         const sender = { read: jest.fn().mockReturnValue({ availability: "available", identityDigest: "e".repeat(64) }) };
         const service = new AgentAutomationJobAuthorityService({ check } as never, sources as never, sender as never);
         const transaction = { message_trigger_job: { findFirst: jest.fn().mockResolvedValue(job) } };
-        const render = jest.fn().mockResolvedValue(snapshot);
         return { service, transaction, render };
     }
 
-    it("matches the recipe (allowed) once the receipt-link fields are excluded from the bound comparison", async () => {
-        const job = buildEnrichedJob();
-        const { service, transaction, render } = buildService(job);
+    it("is allowed at materialize time, before the receipt link exists, using the real renderer", async () => {
+        const job = buildUnenrichedJob();
+        const { render, getByKeyForBranch } = buildRealRender();
+        const { service, transaction } = buildService(job, render);
 
         const result = await service.checkAutomaticJob(transaction as never, job, "materialize", render);
 
         expect(result).toEqual({ status: "allowed", seal: { version: 1 } });
+        expect(getByKeyForBranch).toHaveBeenCalled();
     });
 
-    it("still refuses when a non-link field is tampered (the exclusion is scoped to the two enricher keys only)", async () => {
-        const job = buildEnrichedJob();
-        job.payload.templateVariables["name"] = "다른이름";
-        const { service, transaction, render } = buildService(job);
+    it("is allowed at dispatch time, after ReceiptLinkDeliveryEnricher has written the real link, using the real renderer", async () => {
+        const job = enrich(buildUnenrichedJob());
+        const { render } = buildRealRender();
+        const { service, transaction } = buildService(job, render);
 
-        const result = await service.checkAutomaticJob(transaction as never, job, "materialize", render);
+        const result = await service.checkAutomaticJob(transaction as never, job, "dispatch", render, undefined);
+
+        expect(result).toEqual({ status: "allowed", seal: { version: 1 } });
+    });
+
+    it("control: tampering a non-link field (name) after enrichment is still refused with the real renderer", async () => {
+        const job = enrich(buildUnenrichedJob());
+        job.payload.templateVariables["name"] = "다른이름";
+        const { render } = buildRealRender();
+        const { service, transaction } = buildService(job, render);
+
+        const result = await service.checkAutomaticJob(transaction as never, job, "dispatch", render, undefined);
 
         expect(result).toEqual({ status: "refused", reason: "automation-consent-denied" });
+    });
+
+    it("sanity: rendering the un-enriched job WITHOUT the placeholder substitution throws (proves the fix is load-bearing)", async () => {
+        const job = buildUnenrichedJob();
+        const { render } = buildRealRender();
+        await expect(render(job, {} as never)).rejects.toThrow(/receiptUrl/);
     });
 });

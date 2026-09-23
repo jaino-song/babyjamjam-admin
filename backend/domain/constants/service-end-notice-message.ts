@@ -26,6 +26,19 @@ export const SERVICE_END_NOTICE_ALREADY_SENT_CANCEL_REASON = "서비스 종료 �
 export const SERVICE_END_NOTICE_RECEIPT_URL_TEMPLATE_VARIABLE = "receiptUrl";
 export const SERVICE_END_NOTICE_BUTTON_URL_PAYLOAD_KEY = "buttonUrl";
 
+/**
+ * Fixed placeholder substituted for the two enricher-owned fields above ONLY
+ * inside effect-preview/comparison rendering (authority materialize/dispatch
+ * checks, impact previews) -- never in the real delivery render path. The
+ * template requires `receiptUrl` (system-template-registry.ts), and the real
+ * value does not exist yet at materialize time (pre-enrichment) and would
+ * otherwise make a pre- vs. post-enrichment comparison render diverge on the
+ * URL text at dispatch time. Using the SAME fixed value on both sides of any
+ * such comparison keeps the rendered text (and its digest) stable while the
+ * real send still renders and hashes the actual, enricher-issued link.
+ */
+export const SERVICE_END_NOTICE_PREVIEW_RECEIPT_URL = "https://placeholder.invalid/receipt/preview";
+
 export const SERVICE_END_NOTICE_DEFAULT_CONTENT = `[사회서비스 제공자 품질평가 A등급]
 안녕하세요, 인천 아이미래로 입니다 :)
 

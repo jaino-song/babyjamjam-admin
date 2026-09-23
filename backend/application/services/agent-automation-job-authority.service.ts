@@ -5,6 +5,11 @@ import { AgentAutomationAuthorityService, type AgentAutomationAuthorityCheck, ty
 import { AGENT_AUTOMATION_JOB_SEAL_PAYLOAD_KEY, isReservedAutomationJob } from "domain/constants/agent-automation-storage";
 import { MessageTriggerEventType, MessageTriggerOffsetType, MessageTriggerRecipientType, MessageTriggerTemplateKey } from "domain/constants/message-trigger-catalog";
 import { isManualMessageTriggerJob } from "domain/constants/message-trigger-job-ownership";
+import {
+    SERVICE_END_NOTICE_BUTTON_URL_PAYLOAD_KEY,
+    SERVICE_END_NOTICE_PREVIEW_RECEIPT_URL,
+    SERVICE_END_NOTICE_RECEIPT_URL_TEMPLATE_VARIABLE,
+} from "domain/constants/service-end-notice-message";
 import { SERVICE_RECORD_LINK_RULE_ID } from "domain/constants/service-record-link-message";
 import type { MessageTriggerJobEntity } from "domain/entities/message-trigger-job.entity";
 import { agentBindingHash } from "domain/repositories/agent-linked-action.types";
@@ -154,11 +159,33 @@ export class AgentAutomationJobAuthorityService {
                 senderApprovedAt: settings.senderApprovedAt?.toISOString() ?? null,
                 pastTriggerEnabled: settings.pastTriggerEnabled, pastTriggerConfig: settings.pastTriggerConfig,
             }, delivery: { resolveCanonicalDeliverySnapshot: async (currentJob) => {
-                const current = await render(currentJob, transaction);
-                const candidate = await render(job, transaction);
-                if (current.snapshotHash !== candidate.snapshotHash
-                    || (preparedSnapshotHash !== undefined && candidate.snapshotHash !== preparedSnapshotHash)) {
+                // SERVICE_END_NOTICE's receiptUrl/buttonUrl are enricher-owned:
+                // absent pre-enrichment (materialize, and always on the
+                // recipe-built `currentJob`, which never carries them) and
+                // real post-enrichment (dispatch, on the actual `job`). The
+                // system template requires receiptUrl, so rendering either
+                // side with its real/missing value would throw (missing
+                // required variable) or make the two renders diverge on link
+                // text alone. Substituting the SAME fixed preview value on
+                // both sides for this structural (recipe-vs-job) comparison
+                // keeps it a text comparison only.
+                const current = await render(this.withServiceEndNoticePreviewLink(currentJob), transaction);
+                const candidate = await render(this.withServiceEndNoticePreviewLink(job), transaction);
+                if (current.snapshotHash !== candidate.snapshotHash) {
                     throw new Error("Automation job no longer matches its current source");
+                }
+                if (preparedSnapshotHash !== undefined) {
+                    // The prepared-snapshot check must prove the REAL staged
+                    // render (with the real, enricher-issued link) is exactly
+                    // what is about to be authorized, so it renders the job
+                    // unpatched. By the time preparedSnapshotHash is supplied
+                    // (authorizeDispatch, after prepareJob has enriched and
+                    // staged the job), the real link is present and this
+                    // render does not throw.
+                    const realCandidate = await render(job, transaction);
+                    if (realCandidate.snapshotHash !== preparedSnapshotHash) {
+                        throw new Error("Automation job no longer matches its current source");
+                    }
                 }
                 return current;
             } } });
@@ -387,6 +414,23 @@ export class AgentAutomationJobAuthorityService {
             change: input.change,
             policy,
             now: new Date(),
+        });
+    }
+
+    /**
+     * A throwaway comparison/preview view of a SERVICE_END_NOTICE job with its
+     * enricher-owned receiptUrl/buttonUrl forced to a fixed placeholder.
+     * No-op for every other template. See the doc comment at the
+     * `resolveCanonicalDeliverySnapshot` call site above for why.
+     */
+    private withServiceEndNoticePreviewLink(job: MessageTriggerJobEntity): MessageTriggerJobEntity {
+        if (job.templateKey !== MessageTriggerTemplateKey.SERVICE_END_NOTICE) return job;
+        return job.withPayloadOverride({
+            templateVariables: {
+                ...job.payload.templateVariables,
+                [SERVICE_END_NOTICE_RECEIPT_URL_TEMPLATE_VARIABLE]: SERVICE_END_NOTICE_PREVIEW_RECEIPT_URL,
+            },
+            [SERVICE_END_NOTICE_BUTTON_URL_PAYLOAD_KEY]: SERVICE_END_NOTICE_PREVIEW_RECEIPT_URL,
         });
     }
 
