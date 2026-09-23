@@ -173,15 +173,8 @@ const TRIGGER_RULE_DETAIL_TABS = [
 const TRIGGER_RULE_APPROVAL_MESSAGE =
   "메시지 발송 승인 후에 설정 가능합니다. 설정에서 메시지 발송 기능을 신청해 주세요.";
 const CLIENT_REGISTRATION_POLICY_QUERY_KEY = ["settings", "client-registration-policy"] as const;
-// Backend ownership classifies every SERVICE_END_NOTICE job as a manual message
-// (`isManualMessageTriggerJob`), so a scheduled rule using this template would
-// never be bound by automation authority and would survive the branch
-// trigger-dispatch fence. Keep the template out of the automatic-routine manager
-// until rule ownership distinguishes automatic receipt rules from the manual rule.
-const MANUAL_ONLY_TRIGGER_TEMPLATE_KEY = "SERVICE_END_NOTICE";
 const TRIGGER_TEMPLATE_OPTION_SUFFIXES = {
   serviceRecordLink: " · 제공기록지 전용 자동화에서 관리",
-  manualOnly: " · 수동 발송 전용",
   eventAndRecipientMismatch: " · 선택한 이벤트·수신 대상과 맞지 않음",
   eventMismatch: " · 선택한 이벤트와 맞지 않음",
   recipientMismatch: " · 선택한 수신 대상과 맞지 않음",
@@ -259,6 +252,11 @@ const TRIGGER_TEMPLATE_MESSAGE_FALLBACKS: Record<TriggerTemplateKey, string> = {
 
 감사합니다 :)`,
 };
+
+// The branchless system rule that anchors manual receipt-link sends (BJJ-305).
+// The backend keeps it manually owned, so it has no automatic toggle and must not
+// appear as a routine; branch SERVICE_END_NOTICE rules are ordinary automatic rules.
+const MANUAL_SERVICE_END_NOTICE_RULE_ID = "system:service_end_notice";
 
 function toFormState(rule: MessageTriggerRule | null, isActiveOverride?: boolean): RuleFormState {
   if (!rule) return getDefaultFormState();
@@ -352,13 +350,6 @@ function getTemplateOptionPresentation(
   if (template.key === "SERVICE_RECORD_LINK") {
     return {
       label: `${template.name}${TRIGGER_TEMPLATE_OPTION_SUFFIXES.serviceRecordLink}`,
-      disabled: true,
-    };
-  }
-
-  if (template.key === MANUAL_ONLY_TRIGGER_TEMPLATE_KEY) {
-    return {
-      label: `${template.name}${TRIGGER_TEMPLATE_OPTION_SUFFIXES.manualOnly}`,
       disabled: true,
     };
   }
@@ -521,8 +512,7 @@ export function TriggerRulesManager({
   const { data: selectedSystemTemplate } = useSystemTemplate(selectedSystemTemplateKey);
 
   const automaticChannelTemplates = useMemo(
-    () => getChannelTemplates(templateQuery.data ?? [], channel)
-      .filter((template) => template.key !== MANUAL_ONLY_TRIGGER_TEMPLATE_KEY),
+    () => getChannelTemplates(templateQuery.data ?? [], channel),
     [channel, templateQuery.data],
   );
   const visibleTemplates = useMemo(
@@ -644,7 +634,7 @@ export function TriggerRulesManager({
   const filteredRules = useMemo(() => {
     return rules.filter((rule) =>
       (isTriggerDispatchOff ? false : rule.isActive) === (statusFilter === "active") &&
-      rule.templateKey !== MANUAL_ONLY_TRIGGER_TEMPLATE_KEY &&
+      rule.id !== MANUAL_SERVICE_END_NOTICE_RULE_ID &&
       isTriggerRuleInChannel(rule, channel)
     );
   }, [channel, isTriggerDispatchOff, rules, statusFilter]);

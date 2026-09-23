@@ -271,7 +271,7 @@ describe("AdminServiceRecordEditService", () => {
     it("captures a realistic 14-field payload without mutating source provenance", async () => {
         const harness = createHarness();
         const changes = {
-            header: { momName: "수정 산모" },
+            header: { momName: "수정산모" },
             sessions: [{
                 sessionIndex: 1,
                 serviceDate: "2026-09-01",
@@ -327,7 +327,7 @@ describe("AdminServiceRecordEditService", () => {
         harness.repository.createOrResumeDraft.mockResolvedValue(active);
 
         const result = await harness.service.startDraft(BRANCH_ID, CLIENT_ID, ACTOR_ID, {
-            changes: { header: { momName: "새 입력" } },
+            changes: { header: { momName: "새입력" } },
         });
 
         expect(result).toMatchObject({ draft: active, sourceChanged: true });
@@ -435,6 +435,98 @@ describe("AdminServiceRecordEditService", () => {
         }));
     });
 
+    it("persists a valid ISO birthday updateDraft with only the edited fields in the patch", async () => {
+        const harness = createHarness();
+
+        const result = await harness.service.updateDraft(BRANCH_ID, DRAFT_ID, ACTOR_ID, {
+            expectedDraftVersion: 1,
+            changes: { header: { momBirth: "1990-01-01", babyBirth: "2026-07-14" } },
+        });
+
+        expect(result.draft).toMatchObject({ id: DRAFT_ID, status: "ACTIVE" });
+        // The patch carries exactly the edited ISO fields; the untouched
+        // historic six-digit source values are never revalidated or included.
+        expect(harness.repository.updateDraft).toHaveBeenCalledWith(expect.objectContaining({
+            changes: { header: { momBirth: "1990-01-01", babyBirth: "2026-07-14" } },
+        }));
+    });
+
+    it("persists ISO leap-day birthday writes without rewriting them", async () => {
+        const source = sourceSnapshot({
+            header: { ...sourceSnapshot().header, momBirth: "1990-01-01", babyBirth: "2024-02-29" },
+        });
+        const harness = createHarness({ source });
+
+        await harness.service.startDraft(BRANCH_ID, CLIENT_ID, ACTOR_ID, {
+            changes: { header: { momBirth: "2024-02-29" } },
+        });
+
+        expect(harness.repository.createOrResumeDraft).toHaveBeenCalledWith(expect.objectContaining({
+            changes: { header: { momBirth: "2024-02-29" } },
+        }));
+    });
+
+    it.each([
+        ["momBirth", "2023-02-29"], // impossible leap day
+        ["momBirth", "2026-02-30"], // impossible calendar day
+        ["momBirth", "2999-12-31"], // future date
+        ["momBirth", "1990-1-1"], // malformed separator shape
+        ["momBirth", "19900101"], // eight digits are not an ISO birthday
+        ["momBirth", " 1990-01-01"], // padded value must not be trimmed into a valid one
+        ["babyBirth", "2023-02-29"],
+        ["babyBirth", "2999-12-31"],
+    ] as const)("rejects invalid ISO %s=%s with the structured date code", async (key, value) => {
+        const harness = createHarness();
+
+        await expect(harness.service.startDraft(BRANCH_ID, CLIENT_ID, ACTOR_ID, {
+            changes: { header: { [key]: value } },
+        })).rejects.toMatchObject({ response: { code: "SERVICE_RECORD_HEADER_DATE_INVALID" } });
+        expect(harness.repository.createOrResumeDraft).not.toHaveBeenCalled();
+    });
+
+    it("keeps legacy six-digit birthday writes valid while ISO writes are introduced", async () => {
+        const harness = createHarness();
+
+        await harness.service.updateDraft(BRANCH_ID, DRAFT_ID, ACTOR_ID, {
+            expectedDraftVersion: 1,
+            changes: { header: { babyBirth: "260615" } },
+        });
+
+        expect(harness.repository.updateDraft).toHaveBeenCalledWith(expect.objectContaining({
+            changes: { header: { babyBirth: "260615" } },
+        }));
+    });
+
+    it("preserves untouched historic header fields on a name-only edit", async () => {
+        const harness = createHarness();
+
+        await harness.service.updateDraft(BRANCH_ID, DRAFT_ID, ACTOR_ID, {
+            expectedDraftVersion: 1,
+            changes: { header: { momName: "새산모" } },
+        });
+
+        expect(harness.repository.updateDraft).toHaveBeenCalledWith(expect.objectContaining({
+            changes: { header: { momName: "새산모" } },
+        }));
+        const call = harness.repository.updateDraft.mock.calls[0]?.[0] as { changes: { header: Record<string, unknown> } };
+        expect(Object.keys(call.changes.header)).toEqual(["momName"]);
+    });
+
+    it.each([
+        ["momName", "김 산모"],
+        ["babyName", "김 아기"],
+        ["deliveryType", "수압분만"],
+    ] as const)("rejects invalid new %s=%s with a structured header code", async (key, value) => {
+        const harness = createHarness();
+
+        await expect(harness.service.startDraft(BRANCH_ID, CLIENT_ID, ACTOR_ID, {
+            changes: { header: { [key]: value } },
+        })).rejects.toMatchObject({ response: {
+            code: key === "deliveryType" ? "SERVICE_RECORD_HEADER_DELIVERY_TYPE_INVALID" : "SERVICE_RECORD_HEADER_NAME_INVALID",
+        } });
+        expect(harness.repository.createOrResumeDraft).not.toHaveBeenCalled();
+    });
+
     it("keeps blank header values and session-only partial patches compatible", async () => {
         const blankHeaderHarness = createHarness();
         await blankHeaderHarness.service.startDraft(BRANCH_ID, CLIENT_ID, ACTOR_ID, {
@@ -514,7 +606,7 @@ describe("AdminServiceRecordEditService", () => {
 
         const operation = harness.service.updateDraft(BRANCH_ID, DRAFT_ID, ACTOR_ID, {
             expectedDraftVersion: 1,
-            changes: { header: { momName: "내 저장" } },
+            changes: { header: { momName: "내저장" } },
         });
         await expect(operation).rejects.toBeInstanceOf(ConflictException);
         await expect(operation).rejects.toMatchObject({
@@ -1314,6 +1406,56 @@ describe("AdminServiceRecordEditService", () => {
         expect(plan.documentStatus).toBe("waiting_for_completion");
         expect(plan.documentJob?.payload["completeness"]).toBe("partial");
         expect(plan.revision?.payload["completeness"]).toBe("partial");
+    });
+
+    it("keeps valid ISO header birthdays through preview and the confirmation plan", async () => {
+        const source = completeSourceSnapshot();
+        source.header = {
+            ...source.header,
+            momBirth: "1990-01-01", // already ISO (earlier ISO save)
+            babyBirth: "260615", // untouched historic six-digit value
+        };
+        const harness = createHarness({ source });
+        const started = await harness.service.startDraft(BRANCH_ID, CLIENT_ID, ACTOR_ID, {
+            changes: { header: { babyBirth: "2026-07-14" } },
+        });
+        if (!started.draft) throw new Error("expected a draft");
+        const activeDraft = started.draft;
+        harness.repository.findDraftById.mockResolvedValue(activeDraft);
+        harness.repository.loadSource.mockResolvedValue(source);
+        const preview = await harness.service.previewDraft(BRANCH_ID, DRAFT_ID, ACTOR_ID, {
+            expectedDraftVersion: activeDraft.draftVersion,
+        });
+        expect(preview.blockingReasons).toEqual([]);
+        harness.repository.confirmDraft.mockResolvedValue({
+            status: "confirmed" as const,
+            caseId: CASE_ID,
+            clientId: CLIENT_ID,
+            draftId: DRAFT_ID,
+            draftVersion: 2,
+            caseVersion: 8,
+            revisionId: "55555555-5555-4555-8555-555555555555",
+            revisionNumber: 1,
+            documentStatus: "capability_unverified" as const,
+            confirmedAt: "2026-09-08T01:02:03.000Z",
+        });
+        await harness.service.confirmDraft(BRANCH_ID, DRAFT_ID, ACTOR_ID, {
+            expectedDraftVersion: activeDraft.draftVersion,
+            previewId: preview.previewId,
+            idempotencyKey: "77777777-7777-4777-8777-777777777777",
+        });
+
+        const input = harness.repository.confirmDraft.mock.calls.at(-1)?.[0] as {
+            prepare: (snapshot: { draft: typeof activeDraft; source: ServiceRecordEditSource }) => unknown;
+        };
+        const plan = input.prepare({ draft: activeDraft, source }) as {
+            header: Record<string, unknown>;
+            revision: { payload: Record<string, unknown> } | null;
+        };
+        // The saved record's header carries the exact ISO values — no rewrite
+        // of the edited field and no conversion of the historic six-digit one.
+        expect(plan.header["momBirth"]).toBe("1990-01-01");
+        expect(plan.header["babyBirth"]).toBe("2026-07-14");
     });
 
     it("forwards the server preview and idempotency contract to the repository", async () => {

@@ -233,4 +233,19 @@ export class MessageTriggerJobEntity {
         this.canceledAt = new Date();
         this.updatedAt = new Date();
     }
+
+    /**
+     * A new entity with the same identity/lifecycle fields but a shallow-merged
+     * payload. Used to build a throwaway rendering/comparison view of a job
+     * (e.g. substituting a fixed preview value for an enricher-owned field)
+     * without mutating the original instance or its payload.
+     */
+    withPayloadOverride(overrides: Partial<MessageTriggerJobPayload>): MessageTriggerJobEntity {
+        return MessageTriggerJobEntity.reconstitute(
+            this.id, this.branchId, this.ruleId, this.status, this.scheduledFor, this.sentAt, this.canceledAt,
+            this.cancelReason, this.clientId, this.employeeScheduleId, this.recipientType, this.recipientPhone,
+            this.templateKey, this.dedupeKey, { ...this.payload, ...overrides }, this.createdAt, this.updatedAt,
+            this.attempts, this.nextAttemptAt, this.claimToken,
+        );
+    }
 }

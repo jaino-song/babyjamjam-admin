@@ -196,6 +196,67 @@ describe("buildServiceRecordDocumentFields", () => {
         expect(map.get("산모 생년월일")).toBe("");
     });
 
+    describe("header birthday values (legacy YYMMDD and ISO YYYY-MM-DD)", () => {
+        it("sends valid ISO birthdays for both fields unchanged and exactly", () => {
+            const map = toMap(buildServiceRecordDocumentFields({
+                header: { ...header, momBirth: "1990-01-01", babyBirth: "2026-07-14" },
+                employeeName: "박제공",
+                days: [day()],
+            }));
+            expect(map.get("산모 생년월일")).toBe("1990-01-01");
+            expect(map.get("신생아 출생일자")).toBe("2026-07-14");
+        });
+
+        it("converts legacy six-digit birthdays exactly as before", () => {
+            const map = toMap(buildServiceRecordDocumentFields({ header, employeeName: "박제공", days: [day()] }));
+            expect(map.get("산모 생년월일")).toBe("1990-01-01"); // 900101 → 1990-01-01
+            expect(map.get("신생아 출생일자")).toBe("2026-06-15"); // 260615 → 2026-06-15
+        });
+
+        it("handles a mixed header: ISO mother, legacy newborn", () => {
+            const map = toMap(buildServiceRecordDocumentFields({
+                header: { ...header, momBirth: "1990-01-01", babyBirth: "260615" },
+                employeeName: "박제공",
+                days: [day()],
+            }));
+            expect(map.get("산모 생년월일")).toBe("1990-01-01");
+            expect(map.get("신생아 출생일자")).toBe("2026-06-15");
+        });
+
+        it("preserves ISO leap days and rejects impossible ones", () => {
+            const leap = toMap(buildServiceRecordDocumentFields({
+                header: { ...header, babyBirth: "2024-02-29" },
+                employeeName: "박제공",
+                days: [day()],
+            }));
+            expect(leap.get("신생아 출생일자")).toBe("2024-02-29");
+
+            const impossible = toMap(buildServiceRecordDocumentFields({
+                header: { ...header, momBirth: "2023-02-29", babyBirth: "2026-02-30" },
+                employeeName: "박제공",
+                days: [day()],
+            }));
+            expect(impossible.get("산모 생년월일")).toBe("");
+            expect(impossible.get("신생아 출생일자")).toBe("");
+        });
+
+        it.each([
+            [null, ""],
+            ["", ""],
+            ["1990-1-1", ""],
+            ["19900101", ""], // eight digits are neither ISO nor legacy
+            ["900101 2", ""],
+        ] as const)("maps malformed momBirth=%p to an explicit blank required field", (value, expected) => {
+            const map = toMap(buildServiceRecordDocumentFields({
+                header: { ...header, momBirth: value },
+                employeeName: "박제공",
+                days: [day()],
+            }));
+            expect(map.get("산모 생년월일")).toBe(expected);
+            expect(map.has("산모 생년월일")).toBe(true); // still present for the creation-step required check
+        });
+    });
+
     it("works with a null header — required header fields sent blank, delivery marks unchecked", () => {
         const map = toMap(buildServiceRecordDocumentFields({ header: null, employeeName: "인력", days: [day()] }));
         expect(map.get("산모 이름")).toBe("");
