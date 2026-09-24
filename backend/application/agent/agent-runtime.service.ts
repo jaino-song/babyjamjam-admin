@@ -11,7 +11,7 @@ import {
     type UIMessageStreamOptions,
 } from "ai";
 
-import { AgentEntitySelectPartSchema, AgentFormSubmitPartSchema, ClientModelTaskOperationsSchema, ClientWriteFieldSchema, projectTaskForSafeChat, type ClientWriteField } from "@babyjamjam/shared";
+import { AgentEntitySelectPartSchema, AgentFormSubmitPartSchema, CLIENT_WRITE_FIELD_NAMES, ClientModelTaskOperationsSchema, ClientWriteFieldSchema, projectTaskForSafeChat, type ClientWriteField } from "@babyjamjam/shared";
 import type { BjjUIMessage } from "@babyjamjam/shared";
 import type { AgentTaskDisplayedChoiceHint } from "@babyjamjam/shared";
 import type { VerifiedTenantPrincipal } from "infrastructure/tenant/tenant.context";
@@ -145,14 +145,55 @@ function taskSafeEntityMemory(value: Record<string, unknown>, protectTaskEntityD
 const CLARIFICATION_MEMORY_LIMIT = 256;
 
 /**
+ * `missingFields` ← fields THIS task's capability still needs before it can
+ * be applied, and that the user has not yet given. Single authoritative
+ * source, for both create and update: the domain task's own `task.required`
+ * issues (`agent-task.service.ts`'s `issues()`/`updateIssues()`, the same
+ * dynamic issues recomputed on every turn — see `DYNAMIC_ISSUE_CODES`).
+ * `task.required` is never invented here; it is read as-is:
+ *
+ * - create: `evaluateClientReadiness` emits a field-scoped `task.required`
+ *   issue per unmet identifier (`name`, `phone`) — those field names ARE
+ *   `missingFields`. An optional field the user never mentioned has no
+ *   issue, so it never appears here.
+ * - update: no single field is individually required, so `updateIssues`
+ *   emits an un-scoped (`field: undefined`) `task.required` issue instead,
+ *   for exactly two conditions: no confirmed target, or a confirmed target
+ *   with zero proposed changes (`state.confirmed` empty and no cleared
+ *   field). Either condition means the capability cannot be applied yet but
+ *   no single field can be blamed for it — at least one of the 18 write
+ *   fields must still be supplied, so the full `CLIENT_WRITE_FIELD_NAMES`
+ *   set is reported as still missing. The moment any one field is
+ *   confirmed or cleared, that issue clears and `missingFields` is empty
+ *   again — the other 17 fields were never individually required and are
+ *   correctly never listed once the disjunctive requirement is satisfied.
+ * - `task.invalid` / `task.duplicate` / `task.stale` are deliberately
+ *   excluded: those mean a value WAS given but rejected, or the target
+ *   decayed — a different meaning from "not yet given" and out of scope
+ *   here (AC-18 only concerns missing input, not invalid input).
+ *   Exception: the domain reports a malformed phone (`phone_must_be_11_digits`)
+ *   as `task.required` on `phone`, so it is listed here as missing.
+ *
+ * This makes the normal path and the (former) fallback path identical: both
+ * read `task.issues`, which is always present on a committed `AgentTask` and
+ * needs no projection that could throw. There is no second definition of
+ * "missing" left to fall back to.
+ */
+export function deriveMissingFields(task: Parameters<typeof projectTaskForSafeChat>[0]): readonly ClientWriteField[] {
+    const requiredIssues = task.issues.filter((issue) => issue.code === "task.required");
+    if (requiredIssues.length === 0) return [];
+    const scopedFields = [...new Set(requiredIssues
+        .map((issue) => issue.field)
+        .filter((field): field is ClientWriteField => field !== undefined))];
+    return scopedFields.length > 0 ? scopedFields : CLIENT_WRITE_FIELD_NAMES;
+}
+
+/**
  * Structural clarification facts, built from existing committed state only
- * (P1 enforce wiring). Sources, in order:
+ * (P1 enforce wiring).
  *
  * - `taskRevision` ← the domain task revision.
- * - `missingFields` ← the safe snapshot's `fieldStatus` entries with status
- *   `missing` (preferred source); if that projection is unavailable the
- *   domain task's `task.required` issues with a field are the fallback.
- *   Both sources carry field names only — never values.
+ * - `missingFields` ← see `deriveMissingFields` above.
  * - `targetConfirmed` ← the task's target presence. Consumed by the façade
  *   request only; no rule in `decideClarification` reads it.
  * - `hasAcceptedUserInput` ← explicit server-validated input accepted on
@@ -165,20 +206,9 @@ const CLARIFICATION_MEMORY_LIMIT = 256;
 function buildClarificationFacts(turn: ConversationTaskTurnResult, askedAtRevision: number | null): ClarificationFacts {
     const task = turn.task;
     if (!task) throw new InternalServerErrorException(uncertainProblemBody("INTERNAL_ERROR"));
-    let missingFields: readonly string[];
-    try {
-        const safe = projectTaskForSafeChat(task);
-        missingFields = safe.fieldStatus
-            .filter((entry) => entry.status === "missing")
-            .map((entry) => entry.field);
-    } catch {
-        missingFields = task.issues
-            .filter((issue) => issue.code === "task.required" && issue.field !== undefined)
-            .map((issue) => issue.field as ClientWriteField);
-    }
     return {
         taskRevision: task.revision,
-        missingFields,
+        missingFields: deriveMissingFields(task),
         targetConfirmed: task.target !== null,
         hasAcceptedUserInput: turn.mutated === true && turn.operations.length > 0,
         mutationBlocked: turn.mutationBlocked === true,
@@ -420,8 +450,28 @@ export class AgentRuntimeService {
                 // Stable per-turn sampling key: opaque ids only, never text or
                 // other personal data.
                 sampleKey: `${session.id}:${input.messages[0]?.id ?? "no-message"}`,
+                branchId: input.principal.branchId,
             });
             decisionCollector = turn.collector;
+            // Branch-scope enforcement, applied once, upstream of every mode
+            // read below (routing, client-intent, clarification, and the
+            // routing decision context handed to the capability router).
+            // `evaluate()` in AgentDecisionService already treats an
+            // out-of-scope turn as disabled (zero port calls), but that
+            // façade-internal guard is defense in depth only: every caller
+            // here reads the per-kind mode directly (routeMode/intentMode/
+            // clarificationMode, and the mode threaded into
+            // routingDecisionContext for the router), and none of those
+            // reads consult `turn.inScope` on their own. Forcing all three
+            // modes to `off` here, before any of them is read, is what makes
+            // an out-of-scope turn behave identically to the feature being
+            // off for every kind — no caller can bypass it by reading a
+            // stale mode.
+            if (!turn.inScope) {
+                routeMode = DECISION_MODES.off;
+                intentMode = DECISION_MODES.off;
+                clarificationMode = DECISION_MODES.off;
+            }
         }
         const routingDecisionContext = turn && this.decisions
             ? { decisions: this.decisions, turn, mode: routeMode }

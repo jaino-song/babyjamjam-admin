@@ -1,8 +1,8 @@
 import { z } from "zod";
 
-import { AgentEntitySelectPartSchema, type AgentTask } from "@babyjamjam/shared";
+import { AgentEntitySelectPartSchema, CLIENT_WRITE_FIELD_NAMES, type AgentTask } from "@babyjamjam/shared";
 import { DeterministicAgentLanguageModel } from "infrastructure/agent/deterministic-agent-language-model";
-import { AgentRuntimeService, buildAuthoritativeModelMessages, buildWriteToolInputSchema, describeAgentStreamError, redactModelValue } from "./agent-runtime.service";
+import { AgentRuntimeService, buildAuthoritativeModelMessages, buildWriteToolInputSchema, deriveMissingFields, describeAgentStreamError, redactModelValue } from "./agent-runtime.service";
 import { DECISION_KINDS, DECISION_MODES } from "./decision/decision-contracts";
 import { createDecisionTraceCollector } from "./decision/decision-trace";
 
@@ -58,6 +58,112 @@ function runtimeTaskSnapshot(overrides: Partial<AgentTask> = {}): AgentTask {
         ...overrides,
     } as AgentTask;
 }
+
+describe("deriveMissingFields (BJJ-344 part 2)", () => {
+    it("returns empty when the task carries no task.required issue", () => {
+        expect(deriveMissingFields(runtimeTaskSnapshot({ issues: [] }))).toEqual([]);
+    });
+
+    it("create: reports exactly the field-scoped task.required issues (e.g. name/phone), never fields the user was never asked for", () => {
+        const task = runtimeTaskSnapshot({
+            capabilityId: "clients.create",
+            kind: "clients.create",
+            issues: [
+                { code: "task.required", field: "name", severity: "error", message: "Additional task information is required" },
+                { code: "task.required", field: "phone", severity: "error", message: "Additional task information is required" },
+                // A duplicate-check-pending issue means a value WAS given
+                // but not yet validated — "invalid", not "missing" — and
+                // must never leak into missingFields.
+                { code: "task.invalid", field: "phone", severity: "error", message: "A valid phone number is required" },
+            ],
+        });
+        expect(deriveMissingFields(task)).toEqual(["name", "phone"]);
+    });
+
+    it("create: an optional field the user never mentioned never counts as missing", () => {
+        const task = runtimeTaskSnapshot({
+            capabilityId: "clients.create",
+            kind: "clients.create",
+            issues: [
+                { code: "task.required", field: "name", severity: "error", message: "Additional task information is required" },
+            ],
+        });
+        const missing = deriveMissingFields(task);
+        expect(missing).toEqual(["name"]);
+        expect(missing).not.toContain("address");
+        expect(missing).not.toContain("serviceStatus");
+    });
+
+    it("dedupes repeated field-scoped task.required issues", () => {
+        const task = runtimeTaskSnapshot({
+            issues: [
+                { code: "task.required", field: "phone", severity: "error", message: "m" },
+                { code: "task.required", field: "phone", severity: "error", message: "m" },
+            ],
+        });
+        expect(deriveMissingFields(task)).toEqual(["phone"]);
+    });
+
+    it("update: no target confirmed → the un-scoped task.required issue reports the full CLIENT_WRITE_FIELD_NAMES set, not an invented token", () => {
+        const task = runtimeTaskSnapshot({
+            capabilityId: "clients.update",
+            kind: "clients.update",
+            target: null,
+            confirmed: {},
+            issues: [
+                { code: "task.required", severity: "error", message: "A customer target is required" },
+            ],
+        });
+        expect(deriveMissingFields(task)).toEqual(CLIENT_WRITE_FIELD_NAMES);
+    });
+
+    it("update: target confirmed but zero proposed changes → the full field set is still reported", () => {
+        const task = runtimeTaskSnapshot({
+            capabilityId: "clients.update",
+            kind: "clients.update",
+            target: { targetRef: "123e4567-e89b-42d3-a456-426614174099", version: "a".repeat(64) },
+            confirmed: {},
+            issues: [
+                { code: "task.required", severity: "error", message: "Additional task information is required" },
+            ],
+        });
+        expect(deriveMissingFields(task)).toEqual(CLIENT_WRITE_FIELD_NAMES);
+    });
+
+    it("update: target confirmed and at least one change given → empty, even though 17 other fields were never mentioned", () => {
+        const task = runtimeTaskSnapshot({
+            capabilityId: "clients.update",
+            kind: "clients.update",
+            target: { targetRef: "123e4567-e89b-42d3-a456-426614174099", version: "a".repeat(64) },
+            confirmed: { address: "서울시 강남구" },
+            issues: [],
+        });
+        expect(deriveMissingFields(task)).toEqual([]);
+    });
+
+    it("update: a cleared field also counts as a proposed change (empty missingFields)", () => {
+        const task = runtimeTaskSnapshot({
+            capabilityId: "clients.update",
+            kind: "clients.update",
+            target: { targetRef: "123e4567-e89b-42d3-a456-426614174099", version: "a".repeat(64) },
+            confirmed: {},
+            clearedFields: ["address"],
+            issues: [],
+        });
+        expect(deriveMissingFields(task)).toEqual([]);
+    });
+
+    it("excludes task.invalid/task.duplicate/task.stale entirely: a rejected or decayed value is not a missing one", () => {
+        const task = runtimeTaskSnapshot({
+            issues: [
+                { code: "task.invalid", field: "phone", severity: "error", message: "m" },
+                { code: "task.duplicate", field: "phone", severity: "error", message: "m" },
+                { code: "task.stale", severity: "error", message: "m" },
+            ],
+        });
+        expect(deriveMissingFields(task)).toEqual([]);
+    });
+});
 
 describe("AgentRuntimeService", () => {
     it("builds model history only from server-persisted text and the current user turn", () => {
@@ -2525,8 +2631,7 @@ describe("AgentRuntimeService", () => {
         // (AGENT_ENABLED=false / emergency-disabled) leaves no enabled domain.
         const route = jest.fn().mockResolvedValue({ domains: [], capabilities: [], disposition: "disabled" });
         const decisions = {
-            createTurnContext: jest.fn().mockImplementation(async (createOptions: { signal: AbortSignal; sampleKey: string }) => ({
-                deadlineAt: Date.now() + 800,
+            createTurnContext: jest.fn().mockImplementation(async (createOptions: { signal: AbortSignal; sampleKey: string; branchId: string }) => ({
                 signal: createOptions.signal,
                 sampleKey: createOptions.sampleKey,
                 collector: createDecisionTraceCollector(),

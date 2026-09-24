@@ -19,3 +19,4 @@ ALIGO_SENDER_KEY  # not read by backend source
 CHANNELTALK_API_URL  # not read by backend source
 TYPESAFE_API_KEY  # optional JEV decision provider; unset degrades to unavailable; production does not set it
 TYPESAFE_BASE_URL  # optional JEV decision provider endpoint; production does not set it
+AGENT_DECISION_ENVIRONMENT  # JEV environment gate; unset keeps JEV off. Preview is deployed from the committed service.preview.yaml (gcloud run services replace), so enabling this on preview requires adding it there and redeploying, not a console edit — a console-only change is wiped on the next deploy.

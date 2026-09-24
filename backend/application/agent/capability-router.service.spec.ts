@@ -326,7 +326,6 @@ describe("CapabilityRouterService", () => {
     describe("decision facade routing", () => {
         function stubTurn(): DecisionTurnContext {
             return {
-                deadlineAt: Date.now() + 60_000,
                 signal: new AbortController().signal,
                 sampleKey: "spec-turn",
                 collector: { record: jest.fn() },
