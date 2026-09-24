@@ -49,7 +49,7 @@ function scenario(overrides: Partial<Scenario> = {}): Scenario {
     return {
         id: "test-scenario",
         category: "lookup",
-        turns: ["나세정 산모 정보 보여줘"],
+        turns: ["도하린 산모 정보 보여줘"],
         intent: "test intent",
         rubric: "test rubric",
         checks: {},
@@ -152,7 +152,7 @@ describe("assembleAgentTurn", () => {
 
     it("maps tool names to capabilities via the manifest, keeping unknown names raw", () => {
         const events: RawStreamEvent[] = [
-            { type: "tool-input-available", toolCallId: "c1", toolName: "clients_search", input: { query: "나세정" } },
+            { type: "tool-input-available", toolCallId: "c1", toolName: "clients_search", input: { query: "도하린" } },
             { type: "tool-output-available", toolCallId: "c1", output: { kind: "entity" } },
             { type: "tool-input-available", toolCallId: "c2", toolName: "some_unknown_tool", input: {} },
         ];
@@ -165,7 +165,7 @@ describe("assembleAgentTurn", () => {
 
     it("correlates tool-output-available by toolCallId, not toolName (which it does not carry)", () => {
         const events: RawStreamEvent[] = [
-            { type: "tool-input-available", toolCallId: "c1", toolName: "employees_search", input: { query: "경미애" } },
+            { type: "tool-input-available", toolCallId: "c1", toolName: "employees_search", input: { query: "남궁솔" } },
             { type: "tool-output-available", toolCallId: "c1", output: { kind: "none" }, preliminary: true },
             { type: "tool-output-available", toolCallId: "c1", output: { kind: "entity" } },
         ];
@@ -301,7 +301,7 @@ describe("heuristicHasQuestion", () => {
         ["이 산모가 맞는 산모인가요", true],
         ["새 전화번호를 알려주세요", true],
         ["언제 끝나나요?", true],
-        ["나세정 산모는 서구에 거주해요.", false],
+        ["도하린 산모는 서구에 거주해요.", false],
         ["", false],
         ["   ", false],
     ])("%s -> %s", (text, expected) => {
@@ -317,7 +317,7 @@ describe("evaluateChecks", () => {
     }
 
     it("expectToolsAnyOf passes/fails based on capabilities used", () => {
-        const used = agentFacts([{ type: "tool-input-available", toolCallId: "c1", toolName: "clients_search", input: { query: "나세정" } }]);
+        const used = agentFacts([{ type: "tool-input-available", toolCallId: "c1", toolName: "clients_search", input: { query: "도하린" } }]);
         expect(evaluateChecks({ expectToolsAnyOf: ["clients.search"] }, used)).toEqual({ expectToolsAnyOf: "pass" });
         expect(evaluateChecks({ expectToolsAnyOf: ["employees.search"] }, used)).toEqual({ expectToolsAnyOf: "fail" });
     });
@@ -337,7 +337,7 @@ describe("evaluateChecks", () => {
 
     it("forbidSearchQueries fails on an exact forbidden query, passes otherwise", () => {
         const literal = agentFacts([{ type: "tool-input-available", toolCallId: "c1", toolName: "clients_search", input: { query: "산모" } }]);
-        const specific = agentFacts([{ type: "tool-input-available", toolCallId: "c1", toolName: "clients_search", input: { query: "나세정" } }]);
+        const specific = agentFacts([{ type: "tool-input-available", toolCallId: "c1", toolName: "clients_search", input: { query: "도하린" } }]);
         expect(evaluateChecks({ forbidSearchQueries: ["산모"] }, literal)).toEqual({ forbidSearchQueries: "fail" });
         expect(evaluateChecks({ forbidSearchQueries: ["산모"] }, specific)).toEqual({ forbidSearchQueries: "pass" });
     });
@@ -345,7 +345,7 @@ describe("evaluateChecks", () => {
     it("expectQuestion passes on the text heuristic or a structured clarification", () => {
         const textQuestion = agentFacts([{ type: "text-start", id: "1" }, { type: "text-delta", id: "1", delta: "어느 산모를 말씀하시는 건가요?" }]);
         const structured = agentFacts([{ type: "data-entity-choice", data: {} }]);
-        const neither = agentFacts([{ type: "text-start", id: "1" }, { type: "text-delta", id: "1", delta: "나세정 산모는 서구에 거주해요." }]);
+        const neither = agentFacts([{ type: "text-start", id: "1" }, { type: "text-delta", id: "1", delta: "도하린 산모는 서구에 거주해요." }]);
         expect(evaluateChecks({ expectQuestion: true }, textQuestion)).toEqual({ expectQuestion: "pass" });
         expect(evaluateChecks({ expectQuestion: true }, structured)).toEqual({ expectQuestion: "pass" });
         expect(evaluateChecks({ expectQuestion: true }, neither)).toEqual({ expectQuestion: "fail" });
@@ -425,7 +425,7 @@ describe("scenario/suite orchestration with a stubbed transport and judge", () =
     it("runs a single-turn scenario against a stubbed agent endpoint end to end", async () => {
         const fetchImpl: FetchLike = async (url) => {
             expect(url).toBe("http://127.0.0.1:3001/ai/agent/chat");
-            const { body, headers } = agentSseBody("나세정 산모는 서구에 거주해요.");
+            const { body, headers } = agentSseBody("도하린 산모는 서구에 거주해요.");
             return fakeResponse({ body, headers });
         };
         const result = await runScenario({
@@ -640,7 +640,7 @@ describe("report rendering", () => {
                 scenarioId: "lookup-1",
                 category: "lookup",
                 target: "agent",
-                turns: [{ userText: "나세정 산모 정보 보여줘", latencyMs: 120, assistantText: "나세정 산모는 서구에 거주해요.", transportError: null, agent: null, legacy: null, rateLimitRetries: 0 }],
+                turns: [{ userText: "도하린 산모 정보 보여줘", latencyMs: 120, assistantText: "도하린 산모는 서구에 거주해요.", transportError: null, agent: null, legacy: null, rateLimitRetries: 0 }],
                 checkResults: { expectToolsAnyOf: "pass" },
                 judge: JUDGE_SCORE,
                 judgeError: null,
@@ -665,7 +665,7 @@ describe("report rendering", () => {
         expect(markdown).toContain("## Aggregate");
         expect(markdown).toContain("## Per category");
         expect(markdown).toContain("### lookup-1 (lookup)");
-        expect(markdown).toContain("나세정 산모는 서구에 거주해요.");
+        expect(markdown).toContain("도하린 산모는 서구에 거주해요.");
     });
 
     it("renders a compare table across two or more reports with per-scenario previews", () => {
